@@ -1,0 +1,16 @@
+data/
+gate/
+# assembled from sibling repos by tools/assemble.sh — never committed
+public/lib
+public/dwell.js
+public/speech.js
+public/index.html
+public/studio.js
+public/pencil
+public/board
+public/lessons.json
+public/sentences.json
+public/runway.json
+public/dist-payload.tar.gz
+public/pilot-verify.ps1
+server.log

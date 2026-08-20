@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New ERA Communications</title>
+<link rel="stylesheet" href="../lib/tokens.css">
+<style>
+  /* Caregiver-facing hub home: first-run setup wizard OR app launcher. */
+  body { margin: 0; font-family: system-ui, sans-serif; background: #101418; color: #eef2f5;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { max-width: 640px; width: 92%; background: #1a2027; border-radius: 18px;
+          padding: 36px 40px; box-shadow: 0 8px 40px rgba(0,0,0,.4); }
+  h1 { margin: 0 0 6px; font-size: 30px; }
+  .sub { color: #9fb0bd; margin: 0 0 26px; font-size: 17px; line-height: 1.5; }
+  label { display: block; font-size: 17px; margin: 18px 0 6px; color: #cfdae2; }
+  input[type=text] { width: 100%; box-sizing: border-box; font-size: 22px; padding: 12px 14px;
+          border-radius: 10px; border: 1px solid #35414c; background: #10151a; color: #eef2f5; }
+  input[type=range] { width: 100%; }
+  .val { color: #9fb0bd; font-size: 15px; }
+  button.go { margin-top: 26px; width: 100%; font-size: 22px; padding: 16px;
+          border: 0; border-radius: 12px; background: #2f9e6e; color: #fff; cursor: pointer; }
+  button.go:disabled { background: #35414c; }
+  .apps { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
+  a.app { display: block; text-decoration: none; background: #232c35; color: #eef2f5;
+          border-radius: 14px; padding: 22px 18px; font-size: 21px; }
+  a.app:hover { background: #2c3742; }
+  a.app small { display: block; color: #9fb0bd; font-size: 14px; margin-top: 6px; }
+  .hidden { display: none; }
+  .note { margin-top: 18px; font-size: 14px; color: #7f929f; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="card">
+  <!-- FIRST-RUN WIZARD -->
+  <div id="setup" class="hidden">
+    <h1>Welcome 👋</h1>
+    <p class="sub">Everything runs on this computer — nothing about your child is
+      uploaded anywhere. Two quick questions and you're in.</p>
+    <label for="name">Your child's first name or nickname</label>
+    <input id="name" type="text" maxlength="40" autocomplete="off" autofocus>
+    <label for="dwell">How long a gaze selects (dwell) — you can tune this anytime
+      <span class="val" id="dwellVal">1.0s</span></label>
+    <input id="dwell" type="range" min="600" max="3000" step="100" value="1000">
+    <button class="go" id="go" disabled>Start</button>
+    <p class="note">Voice, volume cap, and page-change pause live in Settings after
+      setup. Add an ElevenLabs key there for premium voices — the built-in computer
+      voice works with no account at all.</p>
+  </div>
+
+  <!-- LAUNCHER -->
+  <div id="launcher" class="hidden">
+    <h1 id="hello">Hi!</h1>
+    <p class="sub">Pick an app — each one works by eye gaze or touch.</p>
+    <div class="apps">
+      <a class="app" href="/">Making Words<small>guided word building</small></a>
+      <a class="app" href="/pencil/">The Pencil<small>free writing with prediction</small></a>
+      <a class="app" href="/board/">Board<small>daily choices, photos & speech</small></a>
+      <a class="app" href="/settings/">Settings<small>dwell, voice, volume cap</small></a>
+    </div>
+    <p class="note" id="devnote"></p>
+  </div>
+</div>
+<script>
+(async () => {
+  let s = {};
+  try { s = await (await fetch("/settings", { cache: "no-store" })).json(); } catch {}
+  const setup = document.getElementById("setup"), launcher = document.getElementById("launcher");
+  if (s.hasProfile) {
+    launcher.classList.remove("hidden");
+    document.getElementById("hello").textContent = "Hi, " + s.childName + "'s family!";
+    document.getElementById("devnote").textContent =
+      "Hub is running locally on this machine. Dwell: " + ((s.dwellMs||1000)/1000) + "s.";
+    return;
+  }
+  setup.classList.remove("hidden");
+  const name = document.getElementById("name"), go = document.getElementById("go");
+  const dwell = document.getElementById("dwell"), dv = document.getElementById("dwellVal");
+  name.addEventListener("input", () => { go.disabled = !name.value.trim(); });
+  dwell.addEventListener("input", () => { dv.textContent = (dwell.value/1000).toFixed(1) + "s"; });
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    const r = await fetch("/setup", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ childName: name.value.trim(), dwellMs: parseInt(dwell.value, 10) }) });
+    if (r.ok) location.reload(); else { go.disabled = false; alert("Could not save — try again."); }
+  });
+})();
+</script>
+</body>
+</html>

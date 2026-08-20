@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book Reader</title>
+<link rel="stylesheet" href="../lib/tokens.css">
+<style>
+  /* ============================================================
+     Book Reader — Ellie's reading room.
+     Self-directed: SHE turns pages; the app never reads at her
+     uninvited. Every word is a gaze target (look = hear that word);
+     "read to me" speaks the whole page on request. Same visual
+     language as the other apps; >=32pt everywhere; <=12 targets.
+     ============================================================ */
+  :root{
+    --ink:var(--color-ink); --paper:var(--color-paper); --card:#FFFFFF; --line:#D8E0DE;
+    --teal:var(--color-primary); --teal-deep:#0B4E58; --teal-wash:#E4EFEF;
+    --vowel:var(--color-vowel); --vowel-wash:#FBEDE5;
+    --good:var(--color-success); --good-wash:#E5F0EA;
+    --font:"Segoe UI", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box; user-select:none}
+  html,body{height:100%}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--font); overflow:hidden}
+
+  .screen{position:fixed; inset:0; display:none; flex-direction:column;
+          align-items:center; justify-content:center; gap:clamp(20px,3vh,44px); padding:30px}
+  .screen.show{display:flex}
+  .title{font-size:clamp(54px,5vw,84px); font-weight:700}
+  .subtitle{font-size:clamp(30px,2.6vw,44px); color:#5A6A70}
+
+  /* ---- library ---- */
+  #shelf{display:grid; grid-template-columns:repeat(3,1fr); gap:clamp(24px,3vw,48px);
+         width:min(94vw,1560px)}
+  .book{background:var(--card); border:3px solid var(--line); border-radius:26px;
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
+        gap:10px; height:clamp(190px,26vh,300px); padding:14px;
+        box-shadow:0 3px 10px rgba(23,39,46,.08)}
+  .book .cover{font-size:clamp(64px,7vh,100px); line-height:1}
+  .book .name{font-size:clamp(34px,2.6vw,46px); font-weight:650; text-align:center}
+
+  /* ---- reading page ---- */
+  #pageText{flex:1; display:flex; flex-wrap:wrap; align-content:center; justify-content:center;
+            align-items:center; gap:0.18em 0; width:min(92vw,1500px); margin:0 auto;
+            padding:120px 20px 20px}
+  .w{font-size:clamp(64px,6.2vw,108px); font-weight:650; line-height:1.35;
+     padding:0.04em 0.16em; border-radius:16px}
+  #pageBar{flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+           gap:clamp(50px,6vw,110px); padding:0 40px clamp(22px,3.5vh,44px)}
+  .navBtn{min-width:clamp(230px,18vw,330px); height:clamp(110px,14vh,170px); border-radius:24px;
+          background:var(--card); border:3px solid var(--line);
+          display:flex; align-items:center; justify-content:center;
+          font-size:clamp(46px,3.6vw,62px); font-weight:650}
+  .navBtn.primary{background:var(--teal); border-color:var(--teal-deep); color:#fff}
+  #pageNum{position:fixed; right:30px; top:26px; font-size:30px; color:#8A9AA0; font-weight:650}
+  #bookTitle{position:fixed; left:220px; top:60px;   /* beside the door; clear of the tts banner */
+             font-size:32px; color:#8A9AA0; font-weight:650; white-space:nowrap}
+
+  /* door back to the shelf (long dwell, same metaphor as The Pencil) */
+  #door{position:fixed; left:26px; top:26px; width:170px; height:110px; border-radius:18px;
+        background:var(--card); border:3px solid var(--line); z-index:50; display:none;
+        align-items:center; justify-content:center}
+  #door.show{display:flex}
+
+  /* ---- the end ---- */
+  #endRow{display:flex; gap:clamp(50px,6vw,110px)}
+  .action{min-width:clamp(300px,24vw,440px); height:clamp(140px,18vh,210px); border-radius:26px;
+          background:var(--card); border:3px solid var(--line);
+          display:flex; align-items:center; justify-content:center; text-align:center;
+          font-size:clamp(44px,3.4vw,60px); font-weight:650}
+  .action.primary{background:var(--teal); border-color:var(--teal-deep); color:#fff}
+  #endBooks{font-size:clamp(60px,6vh,90px); letter-spacing:0.15em}
+
+  #ttsWarn{display:none; position:fixed; top:0; left:50%; transform:translateX(-50%);
+           background:#B23A48; color:#fff; font-size:20px; padding:8px 22px;
+           border-radius:0 0 12px 12px; z-index:70}
+  #ttsWarn.show{display:block}
+</style>
+</head>
+<body>
+
+<div id="ttsWarn">voice offline — words are on screen</div>
+
+<div id="door" class="dwell show" data-dwell-ms="2400" data-dwell-say="back to the shelf" aria-label="book shelf">
+  <svg viewBox="0 0 24 24" width="60" height="60" fill="none" stroke="#5A6A70" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z" fill="#EDE3D8" stroke="#B98A5E"/>
+    <path d="M9 3v18"/><path d="M19 12h2m0 0l-2-2m2 2l-2 2" stroke="#5A6A70"/>
+  </svg>
+</div>
+
+<div id="sShelf" class="screen show">
+  <div class="title">📚 Ellie&rsquo;s Books</div>
+  <div id="shelf"></div>
+</div>
+
+<div id="sRead" class="screen">
+  <div id="bookTitle"></div>
+  <div id="pageNum"></div>
+  <div id="pageText"></div>
+  <div id="pageBar">
+    <div class="navBtn dwell" data-dwell-ms="1600" id="btnBack" data-dwell-say="go back">◀ back</div>
+    <div class="navBtn dwell" data-dwell-ms="1600" id="btnHear" data-dwell-say="read to me">🔊 read to me</div>
+    <div class="navBtn primary dwell" data-dwell-ms="1600" id="btnNext" data-dwell-say="turn the page">next ▶</div>
+  </div>
+</div>
+
+<div id="sEnd" class="screen">
+  <div class="title">The End! ⭐</div>
+  <div class="subtitle" id="endSub"></div>
+  <div id="endRow">
+    <div class="action dwell" data-dwell-ms="1600" id="btnAgain">↩ read it again</div>
+    <div class="action primary dwell" data-dwell-ms="1600" id="btnShelf"><span id="endBooks">📚</span>&nbsp;more books</div>
+  </div>
+</div>
+
+<script src="../dwell.js"></script>
+<script src="../speech.js"></script>
+<script src="reader.js"></script>
+</body>
+</html>

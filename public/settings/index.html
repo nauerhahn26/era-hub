@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ERAgaze Settings</title>
+<link rel="stylesheet" href="../lib/tokens.css">
+<style>
+  /* ERAgaze — the family gaze settings page. All click-driven, for the
+     grown-up. Talks to the local gaze engine (:49155/config) for cursor tuning
+     and to the app server for the shared voice + dwell time. */
+  :root{
+    --ink:var(--color-ink); --paper:#EEF2F1; --card:#FFFFFF; --line:#D3DCDA;
+    --teal:var(--color-primary); --teal-deep:#0B4E58; --teal-wash:#E4EFEF;
+    --coral:#DE7B52; --good:#2E7D5B; --good-wash:#E5F0EA;
+    --font:"Segoe UI", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--font);
+       font-size:19px; line-height:1.5}
+  .wrap{max-width:920px; margin:0 auto; padding:28px 24px 80px}
+  header{display:flex; align-items:baseline; gap:14px; margin-bottom:6px}
+  h1{font-size:40px; margin:0; font-weight:750}
+  .sub{color:#5A6A70; font-size:20px}
+  .tag{font-size:13px; color:#7A8A90; letter-spacing:.03em}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:16px;
+        padding:22px 24px; margin:18px 0}
+  .card h2{font-size:24px; margin:0 0 6px}
+  .card p.hint{color:#6B7A80; font-size:16px; margin:0 0 18px}
+  .row{display:flex; flex-wrap:wrap; gap:14px; align-items:center}
+  button{font-family:var(--font); font-size:19px; border-radius:12px; border:2px solid var(--line);
+         background:#fff; color:var(--ink); padding:14px 20px; cursor:pointer}
+  button:hover{border-color:var(--teal)}
+  button.sel{background:var(--teal); border-color:var(--teal-deep); color:#fff}
+  button.big{font-size:22px; padding:16px 26px}
+  button.play{border-color:var(--teal); color:var(--teal-deep)}
+  .voice{display:flex; align-items:center; gap:10px; border:2px solid var(--line);
+         border-radius:14px; padding:12px 16px; background:#fff}
+  .voice.sel{border-color:var(--teal); background:var(--teal-wash)}
+  .voice .nm{font-weight:650}
+  .val{font-size:32px; font-weight:750; color:var(--teal-deep); min-width:150px; text-align:center;
+       font-variant-numeric:tabular-nums}
+  .stepper{display:flex; align-items:center; gap:16px}
+  .stepper button{width:76px; height:76px; font-size:40px; border-radius:16px}
+  .desc{font-size:16px; color:#6B7A80; margin-top:8px}
+  .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+         background:var(--good); color:#fff; padding:14px 26px; border-radius:12px;
+         font-size:18px; opacity:0; transition:opacity .25s; z-index:20}
+  .toast.show{opacity:1}
+  .status{font-size:15px; color:#7A8A90; margin-top:4px}
+  .status b{color:var(--good)}
+  .status.bad b{color:var(--coral)}
+  .seg{display:flex; gap:0; border:2px solid var(--line); border-radius:12px; overflow:hidden}
+  .seg button{border:0; border-right:2px solid var(--line); border-radius:0; margin:0}
+  .seg button:last-child{border-right:0}
+  /* Full-shutdown (partner-only) — visually separated, danger but CALM-colored */
+  .danger-zone{margin-top:24px; padding-top:20px; border-top:2px dashed var(--line)}
+  .danger-zone .hint{margin:0 0 12px}
+  button.stopbtn{border-color:#CE9C82; color:#8A4A2C; background:#FBF1EC; font-weight:650; text-align:left}
+  button.stopbtn:hover{border-color:#C0703F}
+  button.stopbtn.armed{background:var(--coral); border-color:#B85C34; color:#fff}
+  .stophint{font-size:15px; color:#8A7266; margin-top:8px}
+  .stophint.armed{color:#B85C34; font-weight:600}
+  /* Persistent stopped state (also shown when the engine is offline on load) */
+  .stopped{display:flex; gap:16px; align-items:flex-start; background:#F5EEEA;
+           border:1px solid #E1CFC5; border-radius:14px; padding:20px 22px}
+  .stopped .ic{font-size:34px; line-height:1}
+  .stopped .ti{font-size:22px; font-weight:750; color:#8A4A2C; margin:0 0 4px}
+  .stopped .bd{font-size:18px; color:#5A6A70; margin:0}
+  .stopped .bd b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ERAgaze</h1>
+    <span class="sub">settings</span>
+  </header>
+  <p class="tag">Your eye-gaze system · changes apply within a couple of seconds</p>
+
+  <div class="card">
+    <h2>🎙 Voice</h2>
+    <p class="hint">The voice that talks to your child in Making Words and The Pencil. Tap any voice to hear it and choose it.</p>
+    <div class="row" id="voices"></div>
+    <div class="status" id="voiceStatus"></div>
+  </div>
+
+  <div class="card">
+    <h2>⏱ Dwell time</h2>
+    <p class="hint">How long she holds her gaze on a button before it activates. Longer = calmer, fewer accidental picks. Shorter = faster once she&rsquo;s confident.</p>
+    <div class="stepper">
+      <button id="dwellDown">−</button>
+      <div class="val"><span id="dwellVal">1200</span> ms</div>
+      <button id="dwellUp">+</button>
+    </div>
+    <div class="desc" id="dwellDesc"></div>
+  </div>
+
+  <div class="card">
+    <h2>🗺 Page-change pause</h2>
+    <p class="hint">After a page changes, gaze buttons wait this long before they can start charging — so a fresh page never grabs the tile she happens to be looking at while she reorients. TD Snap on an I-13 has its own copy of this setting (&ldquo;Delay after page change&rdquo;, set to 0.25 s).</p>
+    <div class="stepper">
+      <button id="settleDown">−</button>
+      <div class="val"><span id="settleVal">0.25</span> s</div>
+      <button id="settleUp">+</button>
+    </div>
+    <div class="desc" id="settleDesc"></div>
+  </div>
+
+  <div class="card">
+    <h2>👁 Cursor feel</h2>
+    <p class="hint">How the gaze cursor moves and settles. If it feels jumpy, choose Calmer. If it feels laggy, choose Snappier.</p>
+    <div class="seg" id="feel">
+      <button data-feel="calm">🐢 Calmer</button>
+      <button data-feel="balanced" class="sel">⚖ Balanced</button>
+      <button data-feel="snappy">🐇 Snappier</button>
+    </div>
+    <div class="desc">Adjusts smoothing and how firmly the cursor locks onto what she&rsquo;s looking at.</div>
+    <div class="status" id="engineStatus"></div>
+  </div>
+
+  <div class="card">
+    <h2>🙈 Look-away forgiveness</h2>
+    <p class="hint">How long she can glance away mid-selection without losing her progress. Rett girls often look away right as they choose — more forgiveness helps.</p>
+    <div class="seg" id="grace">
+      <button data-grace="200">Short</button>
+      <button data-grace="400" class="sel">Normal</button>
+      <button data-grace="700">Generous</button>
+      <button data-grace="1000">Most</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🖱 Cursor visible?</h2>
+    <p class="hint">Show the soft ring where she&rsquo;s looking. On is best for most activities.</p>
+    <div class="seg" id="ring">
+      <button data-ring="on" class="sel">Show ring</button>
+      <button data-ring="off">Hide ring</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🔊 Volume cap</h2>
+    <p class="hint">Keeps the speaker from going louder than the cap — Ellie can still turn it down or mute. It starts by itself at boot and heals itself if it dies (back within 30 minutes). This switch is for <b>pushing it back on right now</b>, or pausing it briefly for testing.</p>
+    <div id="volcapControls" style="display:none">
+      <div class="seg" id="volcap">
+        <button data-volcap="on" class="sel">🔒 Capped</button>
+        <button data-volcap="off">🔓 Off (testing)</button>
+      </div>
+      <div class="desc" id="volcapDesc"></div>
+      <div class="status" id="volcapStatus"></div>
+    </div>
+    <div class="status" id="volcapMissing" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>⏸ Pause eye-gaze (testing)</h2>
+    <p class="hint">Temporarily stop ERAgaze from moving the cursor, so you can check whether another program behaves differently without it. The eye-gaze keeps running in the background and turns back on the moment you tap Running.</p>
+    <div id="pauseControls">
+      <div class="seg" id="paused">
+        <button data-paused="off" class="sel">▶ Running</button>
+        <button data-paused="on">⏸ Paused</button>
+      </div>
+      <div class="desc" id="pausedDesc">Eye-gaze is controlling the cursor normally.</div>
+      <div class="status" id="pausedStatus"></div>
+
+      <div class="danger-zone">
+        <p class="hint">Full stop <b>releases the eye-tracker completely</b> so you can test another eye-gaze app (like Aivota) with no interference. Pause above only holds the cursor still — the tracker connection stays open. Use this when you need ERAgaze fully out of the way.</p>
+        <button id="stopBtn" class="stopbtn">⏻ Stop ERAgaze completely (for testing other eye-gaze apps)</button>
+        <div class="stophint" id="stopHint">Tap once to arm, then tap again to confirm.</div>
+      </div>
+    </div>
+    <div class="stopped" id="stoppedBlock" style="display:none">
+      <div class="ic">⏻</div>
+      <div>
+        <p class="ti">ERAgaze stopped.</p>
+        <p class="bd">To restart: tap the <b>ERAgaze</b> icon on the desktop, or ask Claude.</p>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast">Saved</div>
+
+<script>
+const ENGINE = "http://127.0.0.1:49155";     // ERAgaze on this machine
+const $ = id => document.getElementById(id);
+function toast(msg, ok=true){ const t=$("toast"); t.textContent=msg; t.style.background=ok?"#2E7D5B":"#B23A48"; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1600); }
+
+// ---- Voice ----
+async function loadVoices(){
+  try{
+    const v = await (await fetch("/voices")).json();
+    const box = $("voices"); box.innerHTML="";
+    if(!v.enabled){ $("voiceStatus").innerHTML='<span class="bad">Voice key not set — using the built-in Windows voice.</span>'; }
+    for(const voice of v.voices){
+      const b=document.createElement("button");
+      b.className="voice"+(voice.id===v.current?" sel":"");
+      b.innerHTML='<span class="nm">'+voice.name.split(" — ")[0]+'</span> <span style="color:#7A8A90">'+(voice.name.split(" — ")[1]||"")+'</span>';
+      b.onclick=()=>chooseVoice(voice.id, voice.name, b);
+      box.appendChild(b);
+    }
+  }catch(e){ $("voiceStatus").textContent="Could not reach the app server."; }
+}
+let audio=null;
+async function chooseVoice(id, name, btn){
+  document.querySelectorAll("#voices .voice").forEach(x=>x.classList.remove("sel"));
+  btn.classList.add("sel");
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({voiceId:id})});
+  toast("Voice set: "+name.split(" — ")[0]);
+  // preview
+  try{
+    const r = await fetch("/tts",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:"Hi "+(window.ERA_CHILD_NAME||"friend")+"! I can be your helper voice."})});
+    if(r.ok){ if(audio) audio.pause(); audio=new Audio(URL.createObjectURL(await r.blob())); audio.play().catch(()=>{}); }
+  }catch(e){}
+}
+
+// ---- Dwell ----
+let dwell=1200;
+function dwellDesc(){
+  $("dwellVal").textContent=dwell;
+  $("dwellDesc").textContent = dwell>=1600?"Calm and deliberate — good for new activities."
+    : dwell>=1100?"A relaxed, comfortable hold." : dwell>=900?"Quicker — for when she's confident."
+    : "Fast — only if she's very steady.";
+}
+async function saveDwell(){
+  dwellDesc();
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dwellMs:dwell})});
+  toast("Dwell time: "+dwell+" ms");
+}
+$("dwellUp").onclick=()=>{ dwell=Math.min(3000,dwell+100); saveDwell(); };
+$("dwellDown").onclick=()=>{ dwell=Math.max(600,dwell-100); saveDwell(); };
+
+// ---- Page-change pause (27P #5b; stored in ms, shown in seconds) ----
+let settle=250;
+function settleDesc(){
+  $("settleVal").textContent=(settle/1000).toFixed(2).replace(/0$/,"");
+  $("settleDesc").textContent = settle===0?"Off — pages arm instantly."
+    : settle<=300?"A short breath while she reorients (recommended)."
+    : settle<=600?"A calmer, longer settle." : "Very long — only if pages still grab her gaze.";
+}
+async function saveSettle(){
+  settleDesc();
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settleMs:settle})});
+  toast("Page-change pause: "+(settle/1000).toFixed(2)+" s");
+}
+$("settleUp").onclick=()=>{ settle=Math.min(2000,settle+50); saveSettle(); };
+$("settleDown").onclick=()=>{ settle=Math.max(0,settle-50); saveSettle(); };
+
+// ---- Engine (cursor feel / grace / ring) ----
+const FEEL = {
+  calm:     { minCutoff:0.6, beta:0.004, lockRadius:55, lockOnMs:300, breakRadius:120 },
+  balanced: { minCutoff:1.0, beta:0.007, lockRadius:40, lockOnMs:250, breakRadius:100 },
+  snappy:   { minCutoff:1.4, beta:0.012, lockRadius:32, lockOnMs:180, breakRadius:90 }
+};
+async function postEngine(obj){
+  try{
+    const r = await fetch(ENGINE+"/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)});
+    if(r.ok){ $("engineStatus").className="status"; $("engineStatus").innerHTML='<b>ERAgaze updated ✓</b>'; return true; }
+  }catch(e){}
+  $("engineStatus").className="status bad";
+  $("engineStatus").innerHTML='<b>Could not reach ERAgaze</b> — is the eye-gaze running? (It only works on Ellie&rsquo;s device.)';
+  return false;
+}
+function seg(id, attr, fn){
+  document.querySelectorAll("#"+id+" button").forEach(b=>{
+    b.onclick=async()=>{
+      document.querySelectorAll("#"+id+" button").forEach(x=>x.classList.remove("sel"));
+      b.classList.add("sel");
+      await fn(b.dataset[attr]);
+    };
+  });
+}
+seg("feel","feel", async v=>{ if(await postEngine(FEEL[v])) toast("Cursor feel: "+v); });
+seg("grace","grace", async v=>{ if(await postEngine({graceMs:+v})) toast("Forgiveness updated"); });
+seg("ring","ring", async v=>{ if(await postEngine({radius: v==="off"?0:26})) toast(v==="off"?"Ring hidden":"Ring shown"); });
+
+// ---- Volume cap (VolCap watchdog — its own scheduled task on the gaze devices; ERAgaze relays) ----
+function volcapPaint(s){
+  const box=$("volcapControls"), miss=$("volcapMissing");
+  if(!s || !s.installed){
+    box.style.display="none"; miss.style.display="block";
+    miss.textContent = s ? "Volume cap isn’t installed on this device (it protects her eye-gaze devices, not tablets)."
+                         : "Volume cap status only shows on Ellie’s device while ERAgaze is running.";
+    return;
+  }
+  box.style.display="block"; miss.style.display="none";
+  document.querySelectorAll('#volcap button').forEach(x=>x.classList.remove('sel'));
+  const b=document.querySelector('#volcap button[data-volcap="'+(s.running?'on':'off')+'"]'); if(b) b.classList.add('sel');
+  $("volcapDesc").textContent = s.running
+    ? "Speaker can’t go above "+s.cap+"."
+    : "Cap is OFF — the speaker can reach full volume. It re-arms itself within 30 minutes.";
+  $("volcapStatus").className = "status"+(s.running?"":" bad");
+  $("volcapStatus").innerHTML = s.running ? "<b>Capped at "+s.cap+" ✓</b>" : "<b>Not running</b>";
+}
+async function volcapSet(on){
+  try{
+    const r=await fetch(ENGINE+"/volcap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({on:on})});
+    if(r.ok){ volcapPaint(await r.json()); toast(on?"Volume cap on":"Volume cap off (re-arms itself)"); return; }
+  }catch(e){}
+  toast("Could not reach ERAgaze", false);
+  volcapPaint(null);
+}
+seg("volcap","volcap", v=>volcapSet(v==="on"));
+
+// ---- Pause eye-gaze (testing) : self-contained so its status stays in this card ----
+async function setPaused(on){
+  try{
+    const r = await fetch(ENGINE+"/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paused:on})});
+    if(r.ok){
+      $("pausedDesc").textContent = on ? "Eye-gaze is paused — the cursor is not moving." : "Eye-gaze is controlling the cursor normally.";
+      $("pausedStatus").className="status";
+      $("pausedStatus").innerHTML = on ? '<b style="color:#DE7B52">Paused</b> — cursor is not moving (applies within ~2s)' : '<b>Running ✓</b>';
+      toast(on ? "Eye-gaze paused" : "Eye-gaze running");
+      return true;
+    }
+  }catch(e){}
+  $("pausedStatus").className="status bad";
+  $("pausedStatus").innerHTML='<b>Engine offline</b> — pause only works on Ellie&rsquo;s device while the eye-gaze is running.';
+  return false;
+}
+seg("paused","paused", v=>setPaused(v==="on"));
+
+// ---- Full shutdown (partner-only): two-tap arm, no confirm() dialog ----
+let stopArmed=false, stopTimer=null;
+const STOP_LABEL="⏻ Stop ERAgaze completely (for testing other eye-gaze apps)";
+function disarmStop(){
+  stopArmed=false; if(stopTimer){clearTimeout(stopTimer); stopTimer=null;}
+  const b=$("stopBtn"); b.classList.remove("armed"); b.textContent=STOP_LABEL;
+  const h=$("stopHint"); h.classList.remove("armed"); h.textContent="Tap once to arm, then tap again to confirm.";
+}
+function showStopped(){                       // persistent restart guidance, toggles hidden
+  $("pauseControls").style.display="none";
+  $("stoppedBlock").style.display="flex";
+}
+$("stopBtn").onclick=async()=>{
+  if(!stopArmed){                              // first tap: arm for 5s
+    stopArmed=true;
+    const b=$("stopBtn"); b.classList.add("armed"); b.textContent="⏻ Tap again to STOP ERAgaze completely";
+    const h=$("stopHint"); h.classList.add("armed"); h.textContent="Armed — tap again within 5 seconds to fully stop. (Or wait to cancel.)";
+    stopTimer=setTimeout(disarmStop,5000);
+    return;
+  }
+  if(stopTimer){clearTimeout(stopTimer); stopTimer=null;}   // second tap: fire
+  try{
+    const r=await fetch(ENGINE+"/shutdown",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    if(r.ok){ showStopped(); return; }
+    disarmStop(); $("stopHint").textContent="Could not stop ERAgaze — it answered but refused. Try again.";
+  }catch(e){
+    // The process exits right after replying, so the socket may drop mid-response.
+    // Either way ERAgaze is now gone — show the stopped state.
+    showStopped();
+  }
+};
+
+// ---- init from current state ----
+(async()=>{
+  await loadVoices();
+  try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
+       if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs)); }catch(e){}
+  dwellDesc(); settleDesc();
+  try{
+    const c=await (await fetch(ENGINE+"/config")).json();
+    if(c.radius===0) document.querySelector('#ring button[data-ring="off"]').click();
+    const g=c.graceMs; const gb=document.querySelector('#grace button[data-grace="'+g+'"]');
+    if(gb){ document.querySelectorAll('#grace button').forEach(x=>x.classList.remove('sel')); gb.classList.add('sel'); }
+    $("engineStatus").innerHTML='<b>ERAgaze connected ✓</b>';
+  }catch(e){
+    $("engineStatus").className="status bad";
+    $("engineStatus").innerHTML='ERAgaze not detected here (cursor settings only work on Ellie&rsquo;s device).';
+  }
+  // Volume cap card: needs ERAgaze reachable AND volcap installed on this device.
+  try{ volcapPaint(await (await fetch(ENGINE+"/volcap")).json()); }
+  catch(e){ volcapPaint(null); }
+  // Pause card owns its own engine-alive check via /status: if the engine is offline
+  // (process fully stopped), hide the toggles and show the restart guidance instead.
+  try{
+    const s=await (await fetch(ENGINE+"/status")).json();
+    const pon = s.paused===true;
+    const pb=document.querySelector('#paused button[data-paused="'+(pon?'on':'off')+'"]');
+    document.querySelectorAll('#paused button').forEach(x=>x.classList.remove('sel')); if(pb) pb.classList.add('sel');
+    $("pausedDesc").textContent = pon ? "Eye-gaze is paused — the cursor is not moving." : "Eye-gaze is controlling the cursor normally.";
+    if(pon){ $("pausedStatus").className="status"; $("pausedStatus").innerHTML='<b style="color:#DE7B52">Paused</b> — cursor is not moving'; }
+  }catch(e){
+    showStopped();   // /status unreachable = ERAgaze stopped: show restart guidance, not toggles
+  }
+})();
+</script>
+</body>
+</html>

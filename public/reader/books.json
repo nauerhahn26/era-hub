@@ -1,0 +1,89 @@
+{
+  "_note": "Family-editable. Keep pages to ONE short sentence (<=8 words). Patterns repeat on purpose — that's how beginning readers get traction. Emoji is the cover art.",
+  "books": [
+    {
+      "id": "swim",
+      "title": "The Swim Day",
+      "emoji": "🏊‍♀️",
+      "pages": [
+        "We go to the pool.",
+        "The sun is hot.",
+        "I get in the water.",
+        "Splash! The water is cold.",
+        "I kick and kick.",
+        "Dad swims with me.",
+        "The swim day is the best."
+      ]
+    },
+    {
+      "id": "birthday",
+      "title": "My Birthday",
+      "emoji": "🎂",
+      "pages": [
+        "Today is my birthday.",
+        "I see a big cake.",
+        "I see pink balloons.",
+        "My friends come to play.",
+        "We sing and sing.",
+        "I make a wish.",
+        "Happy birthday to me!"
+      ]
+    },
+    {
+      "id": "wear",
+      "title": "What I Wear",
+      "emoji": "👗",
+      "pages": [
+        "What will I wear today?",
+        "I like my red hat.",
+        "I like my blue dress.",
+        "I like my new shoes.",
+        "It is cold. I get my coat.",
+        "Now look at me!",
+        "I look so good."
+      ]
+    },
+    {
+      "id": "hawaii",
+      "title": "The Trip",
+      "emoji": "🌺",
+      "pages": [
+        "We go on a big trip.",
+        "We fly up in the sky.",
+        "I see the beach.",
+        "The sand is soft.",
+        "The waves go up and down.",
+        "We eat sweet fruit.",
+        "I love this trip."
+      ]
+    },
+    {
+      "id": "family",
+      "title": "My Family",
+      "emoji": "🏡",
+      "pages": [
+        "This is my family.",
+        "Mom reads with me.",
+        "Dad makes me laugh.",
+        "We eat dinner together.",
+        "We watch a movie.",
+        "I love my family.",
+        "My family loves me."
+      ]
+    },
+    {
+      "id": "school",
+      "title": "My Friends",
+      "emoji": "🎒",
+      "pages": [
+        "I go to school.",
+        "I see my friends.",
+        "My teacher says hi.",
+        "We read a big book.",
+        "We play a fun game.",
+        "My friends make me smile.",
+        "School is a good place."
+      ]
+    }
+  ]
+}
