@@ -48,6 +48,7 @@ const RECIPE_PATHS = [
 const WARDROBE_DIR = process.env.ELLIE_WARDROBE_DIR || path.join(DATA, "wardrobe");
 const GEN_ASSETS_DIR = path.join(DATA, "gen-assets");
 const BOOKS_DIR = path.join(DATA, "books");   // book packages (era-book-reader M3)
+const MUSIC_DIR = path.join(DATA, "music");   // songs overlay (Songs Board 8/24)
 const SYMBOLS_CACHE = path.join(DATA, "symbols-cache");
 fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
 
@@ -95,19 +96,22 @@ function booksIndex() {
   return out;
 }
 
-// GET /books/<slug>/... — path-jailed static with an allowlist. Packages are
-// immutable, so media gets a long immutable Cache-Control; manifests no-cache.
-// A/V files get single-range HTTP Range support and are ALWAYS streamed
-// (createReadStream), never buffered whole.
+// GET /books/<slug>/... and /music/... — path-jailed static with an allowlist.
+// Content is immutable, so media gets a long immutable Cache-Control; JSON
+// manifests no-cache. A/V files get single-range HTTP Range support and are
+// ALWAYS streamed (createReadStream), never buffered whole.
 const BOOK_AV_EXTS = [".mp3", ".mp4", ".wav"];
 const BOOK_EXTS = [".json", ".jpg", ".jpeg", ".png", ...BOOK_AV_EXTS];
-function serveBook(req, res, rest) {
+const MUSIC_AV_EXTS = [".m4a", ".mp3", ".wav", ".webm", ".opus"];
+const MUSIC_EXTS = [".json", ".jpg", ".jpeg", ".png", ".webp", ...MUSIC_AV_EXTS];
+function serveBook(req, res, rest) { serveMediaJail(req, res, BOOKS_DIR, rest, BOOK_EXTS, BOOK_AV_EXTS); }
+function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts) {
   if (rest.includes("\0")) { res.writeHead(400).end(); return; }
   if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(403).end(); return; }
-  const file = path.normalize(path.join(BOOKS_DIR, rest));
-  if (file !== BOOKS_DIR && !file.startsWith(BOOKS_DIR + path.sep)) { res.writeHead(403).end(); return; }
+  const file = path.normalize(path.join(jailDir, rest));
+  if (file !== jailDir && !file.startsWith(jailDir + path.sep)) { res.writeHead(403).end(); return; }
   const ext = path.extname(file).toLowerCase();
-  if (!BOOK_EXTS.includes(ext)) { res.writeHead(404).end("not found"); return; }
+  if (!allowedExts.includes(ext)) { res.writeHead(404).end("not found"); return; }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404).end("not found"); return; }
     const type = MIME[ext] || "application/octet-stream";
@@ -120,7 +124,7 @@ function serveBook(req, res, rest) {
       return;
     }
     const headers = { "Content-Type": type, "Cache-Control": "max-age=86400, immutable" };
-    if (!BOOK_AV_EXTS.includes(ext)) {           // images: full streamed 200
+    if (!avExts.includes(ext)) {                 // images: full streamed 200
       headers["Content-Length"] = st.size;
       res.writeHead(200, headers);
       fs.createReadStream(file).pipe(res);
@@ -172,6 +176,69 @@ function serveRecipe(req, res) {
     if (err) { res.writeHead(404).end("not found"); return; }
     res.writeHead(200, headers); res.end(data);
   });
+}
+
+// ---- Songs Board recipe (8/24): GENERATED from <DATA>/music/manifest.json ----
+// Same board shape the outfit board taught her: 3x4, two center rest cells
+// left unpinned at (2,2)(2,3), frozen anchors (More bottom-left, exit
+// bottom-right, back top-left on later pages). 7 songs per page in rank
+// order; Stop tile top-left on page 1. Every button is pinned (a colliding
+// pin falls back to flow silently — pin-everything is the law here).
+// Per-song `v` = audio file mtime, the client-side IndexedDB cache key part.
+// ETag from the manifest stat (every add-song rewrites the manifest).
+const SONG_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3]];
+function songsRecipe() {
+  const mp = path.join(MUSIC_DIR, "manifest.json");
+  const st = fs.statSync(mp);                    // throws -> caller 404s
+  const manifest = JSON.parse(fs.readFileSync(mp, "utf8"));
+  const songs = (Array.isArray(manifest.songs) ? manifest.songs : [])
+    .filter(s => s && s.id && s.audio)
+    .map(s => {
+      let v = 0;
+      try { v = Math.floor(fs.statSync(path.join(MUSIC_DIR, s.audio)).mtimeMs); }
+      catch { return null; }                     // audio file missing: skip the song
+      return { ...s, v };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.rank || 0) - (b.rank || 0));
+  const pages = Math.max(1, Math.ceil(songs.length / SONG_CELLS.length));
+  const boards = [];
+  for (let p = 0; p < pages; p++) {
+    const id = p === 0 ? "songs" : "songs-" + (p + 1);
+    const buttons = [];
+    if (p === 0) {
+      buttons.push({ label: "Stop the music", type: "stop", symbol: "stop", row: 1, col: 1 });
+    } else {
+      buttons.push({ label: "Back", type: "back", symbol: "back",
+                     load: p === 1 ? "songs" : "songs-" + p, row: 1, col: 1 });
+    }
+    songs.slice(p * SONG_CELLS.length, (p + 1) * SONG_CELLS.length).forEach((s, i) => {
+      const [row, col] = SONG_CELLS[i];
+      buttons.push({ label: s.title, say: s.title, type: "song", song_id: s.id,
+                     audio: "music/" + s.audio, v: s.v,
+                     image: s.cover ? "music/" + s.cover : undefined,
+                     duration: s.duration || 0, row, col });
+    });
+    if (p < pages - 1)
+      buttons.push({ label: "More", type: "more", load: "songs-" + (p + 2), row: 3, col: 1 });
+    buttons.push({ label: "All done", type: "exit", symbol: "finished", row: 3, col: 4 });
+    boards.push({ id, name: "What do I want to hear?", rows: 3, columns: 4, buttons });
+  }
+  return {
+    recipe: { locale: "en-US", root: "songs", home_label: "Songs", boards },
+    etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + '"',
+  };
+}
+function serveSongsRecipe(req, res) {
+  let out;
+  try { out = songsRecipe(); }
+  catch { res.writeHead(404).end("not found"); return; }   // no music overlay: honest 404
+  const headers = { "Content-Type": "application/json", "Cache-Control": "no-cache",
+                    "ETag": out.etag, "Access-Control-Allow-Origin": "*" };
+  if ((req.headers["if-none-match"] || "") === out.etag) { res.writeHead(304, headers).end(); return; }
+  if (req.method === "HEAD") { res.writeHead(200, headers).end(); return; }
+  res.writeHead(200, headers);
+  res.end(JSON.stringify(out.recipe));
 }
 
 // Fetch one symbol PNG from ARASAAC into the disk cache. Returns the file path
@@ -251,6 +318,8 @@ const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css
                ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml",
                ".woff2": "font/woff2", ".mp3": "audio/mpeg",
                ".mp4": "video/mp4", ".wav": "audio/wav",
+               ".m4a": "audio/mp4", ".webm": "audio/webm", ".opus": "audio/ogg",
+               ".webp": "image/webp",
                ".jpg": "image/jpeg", ".jpeg": "image/jpeg" };
 
 // ---- email published writing to the family (optional; Resend key + recipient
@@ -472,6 +541,22 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // ---- songs board events: play/stop/end -> family pool (usage visibility) ----
+  if (req.method === "POST" && req.url === "/music-event") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { songId, action } = JSON.parse(body);
+        const ok = ["play", "stop", "end"].includes(action) &&
+          typeof songId === "string" && /^[a-z0-9-]{1,64}$/.test(songId);
+        if (!ok) { res.writeHead(400).end(); return; }
+        pool.append("music-" + action, { songId });
+        res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
   if (req.method === "POST" && req.url === "/log") {
     let body = "";
     req.on("data", c => { body += c; if (body.length > 65536) req.destroy(); });
@@ -505,6 +590,13 @@ const server = http.createServer((req, res) => {
   }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/today.json") {
     serveRecipe(req, res); return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/songs.json") {
+    serveSongsRecipe(req, res); return;
+  }
+  if (req.method === "GET" && urlPath.startsWith("/music/")) {
+    serveMediaJail(req, res, MUSIC_DIR, urlPath.slice("/music/".length), MUSIC_EXTS, MUSIC_AV_EXTS);
+    return;
   }
   if (req.method === "GET" && urlPath.startsWith("/wardrobe/")) {
     serveJailed(res, WARDROBE_DIR, urlPath.slice("/wardrobe/".length), [".jpg", ".jpeg", ".png"]);
