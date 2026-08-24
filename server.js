@@ -178,15 +178,22 @@ function serveRecipe(req, res) {
   });
 }
 
-// ---- Songs Board recipe (8/24): GENERATED from <DATA>/music/manifest.json ----
-// Same board shape the outfit board taught her: 3x4, two center rest cells
-// left unpinned at (2,2)(2,3), frozen anchors (More bottom-left, exit
-// bottom-right, back top-left on later pages). 7 songs per page in rank
-// order; Stop tile top-left on page 1. Every button is pinned (a colliding
-// pin falls back to flow silently — pin-everything is the law here).
-// Per-song `v` = audio file mtime, the client-side IndexedDB cache key part.
-// ETag from the manifest stat (every add-song rewrites the manifest).
+// ---- Songs Board recipe: GENERATED from <DATA>/music/manifest.json ----
+// v2 (dad's 8/24 feedback round). GRID pages: 3x4, 7 song doors per page in
+// rank order at the learned cells, center rests unpinned, More bottom-left,
+// back (big <- glyph) top-left on later pages — NO Stop and NO exit tile on
+// the grid (playback only happens inside a song page, so leaving it IS stop;
+// the msgbar door remains the app exit). Each song door opens its SONG PAGE:
+// the cover hero fills the LEFT HALF (row/col spans), right column = back
+// arrow / Stop / Full song, far-right column all rest black (eye rest).
+// Default play is a CLIP_MS clip (school: scratch the itch, not the day);
+// "Full song" un-caps the running clip (or replays full) — deliberate extra
+// effort by design. Per-song `v` = audio file mtime (client IDB cache key).
+// ETag = manifest stat + RECIPE_REV (bump the rev when this generator's
+// OUTPUT changes without a manifest change, or boards keep their 304 cache).
 const SONG_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3]];
+const CLIP_MS = 40000;
+const RECIPE_REV = 2;
 function songsRecipe() {
   const mp = path.join(MUSIC_DIR, "manifest.json");
   const st = fs.statSync(mp);                    // throws -> caller 404s
@@ -206,27 +213,45 @@ function songsRecipe() {
   for (let p = 0; p < pages; p++) {
     const id = p === 0 ? "songs" : "songs-" + (p + 1);
     const buttons = [];
-    if (p === 0) {
-      buttons.push({ label: "Stop the music", type: "stop", symbol: "stop", row: 1, col: 1 });
-    } else {
-      buttons.push({ label: "Back", type: "back", symbol: "back",
+    if (p > 0) {
+      buttons.push({ label: "", say: "back", type: "back", glyph: "←",
                      load: p === 1 ? "songs" : "songs-" + p, row: 1, col: 1 });
     }
     songs.slice(p * SONG_CELLS.length, (p + 1) * SONG_CELLS.length).forEach((s, i) => {
       const [row, col] = SONG_CELLS[i];
       buttons.push({ label: s.title, say: s.title, type: "song", song_id: s.id,
-                     audio: "music/" + s.audio, v: s.v,
+                     audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
                      image: s.cover ? "music/" + s.cover : undefined,
+                     load: "song-" + s.id,
                      duration: s.duration || 0, row, col });
     });
     if (p < pages - 1)
       buttons.push({ label: "More", type: "more", load: "songs-" + (p + 2), row: 3, col: 1 });
-    buttons.push({ label: "All done", type: "exit", symbol: "finished", row: 3, col: 4 });
     boards.push({ id, name: "What do I want to hear?", rows: 3, columns: 4, buttons });
   }
+  // one page per song: hero left half; back / Stop / Full song down col 3;
+  // col 4 stays unpinned -> a full black rest column.
+  songs.forEach((s, i) => {
+    const gridPage = i < SONG_CELLS.length ? "songs"
+                   : "songs-" + (Math.floor(i / SONG_CELLS.length) + 1);
+    boards.push({
+      id: "song-" + s.id, name: s.title, rows: 3, columns: 4,
+      buttons: [
+        { label: s.title, say: s.title, type: "song", song_id: s.id,
+          audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
+          image: s.cover ? "music/" + s.cover : undefined,
+          duration: s.duration || 0, row: 1, col: 1, row_span: 3, col_span: 2 },
+        { label: "", say: "back", type: "back", glyph: "←",
+          load: gridPage, row: 1, col: 3 },
+        { label: "Stop", say: "stop", type: "stop", row: 2, col: 3 },
+        { label: "Full song", say: "full song", type: "full", song_id: s.id,
+          audio: "music/" + s.audio, v: s.v, row: 3, col: 3 },
+      ],
+    });
+  });
   return {
     recipe: { locale: "en-US", root: "songs", home_label: "Songs", boards },
-    etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + '"',
+    etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + "-r" + RECIPE_REV + '"',
   };
 }
 function serveSongsRecipe(req, res) {
@@ -548,7 +573,7 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const { songId, action } = JSON.parse(body);
-        const ok = ["play", "stop", "end"].includes(action) &&
+        const ok = ["play", "stop", "end", "full"].includes(action) &&
           typeof songId === "string" && /^[a-z0-9-]{1,64}$/.test(songId);
         if (!ok) { res.writeHead(400).end(); return; }
         pool.append("music-" + action, { songId });

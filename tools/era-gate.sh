@@ -24,7 +24,10 @@ done
 # re-point the live-server port in the gate copies only
 grep -rlZ "8377" "$GATE" 2>/dev/null | xargs -0 -r sed -i "s/8377/$PORT/g"
 
-# start the hub test instance
+# start the hub test instance (killing any stale holder of the TEST port first —
+# a survivor from a killed session otherwise fails every live-server suite with
+# EADDRINUSE; bracket trick so pkill never matches this script's own cmdline)
+pkill -f "[n]ode .*server.js $PORT" 2>/dev/null; sleep 0.5
 ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 node "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT

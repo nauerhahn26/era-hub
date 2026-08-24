@@ -91,53 +91,77 @@ function btnAt(board, row, col) {
   return board.buttons.find(b => b.row === row && b.col === col) || null;
 }
 
-test("GET /recipes/songs.json: generated, rank-ordered, page-1 layout with frozen anchors", async () => {
+test("GET /recipes/songs.json v2: grid pages (no Stop/exit) + a page per song", async () => {
   const r = await fetch(`${BASE}/recipes/songs.json`);
   assert.equal(r.status, 200);
   assert.equal(r.headers.get("cache-control"), "no-cache");
   assert.ok(r.headers.get("etag"), "has an ETag");
   const recipe = await r.json();
   assert.equal(recipe.root, "songs");
-  assert.equal(recipe.boards.length, 2, "8 songs -> 2 pages");
+  assert.equal(recipe.boards.length, 2 + N, "2 grid pages + one page per song");
   const p1 = recipe.boards[0];
   assert.equal(p1.id, "songs");
   assert.equal(p1.rows, 3); assert.equal(p1.columns, 4);
 
-  const stop = btnAt(p1, 1, 1);
-  assert.equal(stop.type, "stop", "Stop tile top-left");
+  // v2: NO Stop and NO exit tile on the grid — those cells rest black
+  assert.equal(btnAt(p1, 1, 1), null, "top-left rests (Stop removed)");
+  assert.equal(btnAt(p1, 3, 4), null, "bottom-right rests (All done removed)");
+  assert.ok(!p1.buttons.some(b => b.type === "stop" || b.type === "exit"));
   const more = btnAt(p1, 3, 1);
   assert.equal(more.type, "more", "More bottom-left when a next page exists");
   assert.equal(more.load, "songs-2");
-  const exit = btnAt(p1, 3, 4);
-  assert.equal(exit.type, "exit", "exit anchor bottom-right");
 
   // center rest cells stay unpinned (renderer fills them black)
   assert.equal(btnAt(p1, 2, 2), null);
   assert.equal(btnAt(p1, 2, 3), null);
 
-  // ranks 1-7 in reading order across the song cells
+  // ranks 1-7 in reading order: each song tile is a DOOR to its song page
   const cells = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3]];
   cells.forEach(([row, col], i) => {
     const b = btnAt(p1, row, col);
     assert.equal(b.type, "song", `song tile at (${row},${col})`);
     assert.equal(b.song_id, `song-${i + 1}`, `rank ${i + 1} at (${row},${col})`);
+    assert.equal(b.load, `song-song-${i + 1}`, "song tile opens its page");
     assert.equal(b.audio, `music/song-${i + 1}.wav`);
     assert.equal(b.image, `music/song-${i + 1}.jpg`);
-    assert.equal(b.say, `Song ${i + 1}`);
+    assert.equal(b.clip_ms, 40000, "default 40s clip");
     assert.ok(Number.isFinite(b.v) && b.v > 0, "song carries a cache version");
   });
-
-  // every button is pinned (pin-everything law for hand-built boards)
-  assert.ok(p1.buttons.every(b => b.row >= 1 && b.col >= 1), "all pinned");
 
   const p2 = recipe.boards[1];
   assert.equal(p2.id, "songs-2");
   const back = btnAt(p2, 1, 1);
   assert.equal(back.type, "back", "page 2 back anchor top-left");
+  assert.equal(back.glyph, "←", "back is the big left arrow, not a symbol");
+  assert.equal(back.symbol, undefined);
   assert.equal(back.load, "songs");
   assert.equal(btnAt(p2, 1, 2).song_id, "song-8", "rank 8 opens page 2");
-  assert.equal(btnAt(p2, 3, 4).type, "exit");
   assert.equal(btnAt(p2, 3, 1), null, "no More on the last page");
+});
+
+test("song pages: hero spans the left half; back arrow / Stop / Full song down col 3", async () => {
+  const recipe = await (await fetch(`${BASE}/recipes/songs.json`)).json();
+  const sp = recipe.boards.find(b => b.id === "song-song-1");
+  assert.ok(sp, "song page exists");
+  assert.equal(sp.rows, 3); assert.equal(sp.columns, 4);
+  const hero = btnAt(sp, 1, 1);
+  assert.equal(hero.type, "song");
+  assert.equal(hero.row_span, 3); assert.equal(hero.col_span, 2);
+  assert.equal(hero.load, undefined, "hero replays; it is not a door");
+  assert.equal(hero.clip_ms, 40000);
+  const back = btnAt(sp, 1, 3);
+  assert.equal(back.type, "back"); assert.equal(back.glyph, "←");
+  assert.equal(back.load, "songs", "rank 1's page returns to grid page 1");
+  assert.equal(btnAt(sp, 2, 3).type, "stop");
+  const full = btnAt(sp, 3, 3);
+  assert.equal(full.type, "full");
+  assert.equal(full.song_id, "song-1");
+  assert.ok(full.audio && full.v, "Full song can start playback on its own");
+  // col 4 fully unpinned -> black rest column
+  for (const row of [1, 2, 3]) assert.equal(btnAt(sp, row, 4), null);
+  // a page-2 song's back door returns to grid page 2
+  const sp8 = recipe.boards.find(b => b.id === "song-song-8");
+  assert.equal(btnAt(sp8, 1, 3).load, "songs-2");
 });
 
 test("songs.json ETag: 304 on If-None-Match, HEAD supported, CORS open", async () => {
@@ -197,8 +221,8 @@ test("/music jail: escapes 403 with no leak; disallowed ext 404", async () => {
   assert.equal(r.status, 404);
 });
 
-test("POST /music-event: valid play/stop/end -> 204 + pool append; junk -> 400", async () => {
-  for (const action of ["play", "stop", "end"]) {
+test("POST /music-event: valid play/stop/end/full -> 204 + pool append; junk -> 400", async () => {
+  for (const action of ["play", "stop", "end", "full"]) {
     const r = await fetch(`${BASE}/music-event`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ songId: "song-1", action }),
@@ -217,7 +241,7 @@ test("POST /music-event: valid play/stop/end -> 204 + pool append; junk -> 400",
   const poolFile = path.join(TMP, "pool", "events", "test-dev", day + ".jsonl");
   const lines = fs.readFileSync(poolFile, "utf8").trim().split("\n").map(l => JSON.parse(l));
   const kinds = lines.map(l => l.kind);
-  for (const k of ["music-play", "music-stop", "music-end"])
+  for (const k of ["music-play", "music-stop", "music-end", "music-full"])
     assert.ok(kinds.includes(k), `pool has ${k}`);
   assert.equal(lines.find(l => l.kind === "music-play").songId, "song-1");
 });
