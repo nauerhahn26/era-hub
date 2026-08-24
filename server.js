@@ -47,6 +47,7 @@ const RECIPE_PATHS = [
 // at a temp dir so they never touch the live history.json.
 const WARDROBE_DIR = process.env.ELLIE_WARDROBE_DIR || path.join(DATA, "wardrobe");
 const GEN_ASSETS_DIR = path.join(DATA, "gen-assets");
+const BOOKS_DIR = path.join(DATA, "books");   // book packages (era-book-reader M3)
 const SYMBOLS_CACHE = path.join(DATA, "symbols-cache");
 fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
 
@@ -70,6 +71,87 @@ function serveJailed(res, dir, rest, allowedExts) {
     res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream",
                          "Cache-Control": "no-cache" });
     res.end(data);
+  });
+}
+
+// ---- book packages (era-book-reader M3): <DATA>/books/<slug>/ ----
+// A package is complete iff manifest.json exists and parses (manifest written
+// LAST by the exporter); manifest-less/unparseable dirs are skipped silently.
+// Degraded law: missing books dir -> [] — never a crash.
+function booksIndex() {
+  let dirs = [];
+  try { dirs = fs.readdirSync(BOOKS_DIR, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    try {
+      const m = JSON.parse(fs.readFileSync(path.join(BOOKS_DIR, d.name, "manifest.json"), "utf8"));
+      const pages = Array.isArray(m.pages) ? m.pages : [];
+      out.push({ slug: d.name, title: String(m.title || d.name),
+                 cover: "/books/" + d.name + "/" + (m.cover || "cover.jpg"),
+                 pages: pages.length, hasVideo: pages.some(p => p && p.video) });
+    } catch {}   // incomplete package: skip silently
+  }
+  return out;
+}
+
+// GET /books/<slug>/... — path-jailed static with an allowlist. Packages are
+// immutable, so media gets a long immutable Cache-Control; manifests no-cache.
+// A/V files get single-range HTTP Range support and are ALWAYS streamed
+// (createReadStream), never buffered whole.
+const BOOK_AV_EXTS = [".mp3", ".mp4", ".wav"];
+const BOOK_EXTS = [".json", ".jpg", ".jpeg", ".png", ...BOOK_AV_EXTS];
+function serveBook(req, res, rest) {
+  if (rest.includes("\0")) { res.writeHead(400).end(); return; }
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(403).end(); return; }
+  const file = path.normalize(path.join(BOOKS_DIR, rest));
+  if (file !== BOOKS_DIR && !file.startsWith(BOOKS_DIR + path.sep)) { res.writeHead(403).end(); return; }
+  const ext = path.extname(file).toLowerCase();
+  if (!BOOK_EXTS.includes(ext)) { res.writeHead(404).end("not found"); return; }
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404).end("not found"); return; }
+    const type = MIME[ext] || "application/octet-stream";
+    if (ext === ".json") {                       // manifest.json: small, mutable view
+      fs.readFile(file, (e, data) => {
+        if (e) { res.writeHead(404).end("not found"); return; }
+        res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" });
+        res.end(data);
+      });
+      return;
+    }
+    const headers = { "Content-Type": type, "Cache-Control": "max-age=86400, immutable" };
+    if (!BOOK_AV_EXTS.includes(ext)) {           // images: full streamed 200
+      headers["Content-Length"] = st.size;
+      res.writeHead(200, headers);
+      fs.createReadStream(file).pipe(res);
+      return;
+    }
+    headers["Accept-Ranges"] = "bytes";
+    const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
+    if (m && (m[1] !== "" || m[2] !== "")) {     // single range; malformed -> full 200
+      let start, end;
+      if (m[1] === "") {                         // suffix form: last N bytes
+        const n = parseInt(m[2], 10);
+        start = st.size - n; end = st.size - 1;
+        if (n === 0) start = st.size;            // bytes=-0 is unsatisfiable
+        if (start < 0) start = 0;
+      } else {
+        start = parseInt(m[1], 10);
+        end = m[2] === "" ? st.size - 1 : Math.min(parseInt(m[2], 10), st.size - 1);
+      }
+      if (start >= st.size || start > end) {
+        res.writeHead(416, { "Content-Range": "bytes */" + st.size }).end();
+        return;
+      }
+      headers["Content-Range"] = "bytes " + start + "-" + end + "/" + st.size;
+      headers["Content-Length"] = end - start + 1;
+      res.writeHead(206, headers);
+      fs.createReadStream(file, { start, end }).pipe(res);
+      return;
+    }
+    headers["Content-Length"] = st.size;
+    res.writeHead(200, headers);
+    fs.createReadStream(file).pipe(res);
   });
 }
 
@@ -168,6 +250,7 @@ async function elevenTts(cfg, text) {
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
                ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml",
                ".woff2": "font/woff2", ".mp3": "audio/mpeg",
+               ".mp4": "video/mp4", ".wav": "audio/wav",
                ".jpg": "image/jpeg", ".jpeg": "image/jpeg" };
 
 // ---- email published writing to the family (optional; Resend key + recipient
@@ -429,6 +512,16 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "GET" && urlPath.startsWith("/gen-assets/")) {
     serveJailed(res, GEN_ASSETS_DIR, urlPath.slice("/gen-assets/".length), [".png"]);
+    return;
+  }
+  // ---- book packages: shelf index (rebuilt per request) + jailed files ----
+  if (req.method === "GET" && urlPath === "/books/index.json") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+    res.end(JSON.stringify(booksIndex()));
+    return;
+  }
+  if (req.method === "GET" && urlPath.startsWith("/books/")) {
+    serveBook(req, res, urlPath.slice("/books/".length));
     return;
   }
   if (req.method === "GET" && urlPath.startsWith("/symbol/")) {
