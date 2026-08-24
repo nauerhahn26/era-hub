@@ -106,7 +106,8 @@ test("GET /recipes/songs.json v3: 9-song page 1 (corner cells are songs) + a pag
   // no chrome tiles beyond More: no Stop/exit anywhere on the grid
   assert.ok(!p1.buttons.some(b => b.type === "stop" || b.type === "exit"));
   const more = btnAt(p1, 3, 1);
-  assert.equal(more.type, "more", "More bottom-left when a next page exists");
+  assert.equal(more.type, "control", "More matches the outfit board (teal control)");
+  assert.equal(more.symbol, "more", "with the outfit board's ARASAAC more image");
   assert.equal(more.load, "songs-2");
 
   // center rest cells stay unpinned (renderer fills them black)

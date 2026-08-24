@@ -192,11 +192,11 @@ function serveRecipe(req, res) {
 // ETag = manifest stat + RECIPE_REV (bump the rev when this generator's
 // OUTPUT changes without a manifest change, or boards keep their 304 cache).
 // page 1 has no chrome tiles at the corners (v3, dad 8/24): 9 songs. Later
-// pages keep (1,1) for back, (3,4) rests: 7 songs.
+// pages keep (1,1) for back but use the (3,4) corner too (dad r4): 8 songs.
 const SONG_CELLS_P1 = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
-const SONG_CELLS_PN = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3]];
+const SONG_CELLS_PN = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
 const CLIP_MS = 40000;
-const RECIPE_REV = 3;
+const RECIPE_REV = 4;
 const STOP_SYMBOL = "8289";   // exact ARASAAC id: the red STOP sign (bestsearch "stop" = a bus stop)
 const FULL_SYMBOL = "music";  // sheet-music notes (verified via /symbol/music)
 function songsRecipe() {
@@ -233,8 +233,9 @@ function songsRecipe() {
                      load: "song-" + s.id,
                      duration: s.duration || 0, row, col });
     });
-    if (p < pages - 1)
-      buttons.push({ label: "More", type: "more", load: "songs-" + (p + 2), row: 3, col: 1 });
+    if (p < pages - 1)   // exactly the outfit board's More (teal control + ARASAAC "more")
+      buttons.push({ label: "More", type: "control", symbol: "more",
+                     load: "songs-" + (p + 2), row: 3, col: 1 });
     boards.push({ id, name: "What do I want to hear?", rows: 3, columns: 4, buttons });
   }
   // one page per song: hero left half; back / Stop / Full song down col 3;
