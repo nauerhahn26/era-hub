@@ -191,9 +191,14 @@ function serveRecipe(req, res) {
 // effort by design. Per-song `v` = audio file mtime (client IDB cache key).
 // ETag = manifest stat + RECIPE_REV (bump the rev when this generator's
 // OUTPUT changes without a manifest change, or boards keep their 304 cache).
-const SONG_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3]];
+// page 1 has no chrome tiles at the corners (v3, dad 8/24): 9 songs. Later
+// pages keep (1,1) for back, (3,4) rests: 7 songs.
+const SONG_CELLS_P1 = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
+const SONG_CELLS_PN = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3]];
 const CLIP_MS = 40000;
-const RECIPE_REV = 2;
+const RECIPE_REV = 3;
+const STOP_SYMBOL = "8289";   // exact ARASAAC id: the red STOP sign (bestsearch "stop" = a bus stop)
+const FULL_SYMBOL = "music";  // sheet-music notes (verified via /symbol/music)
 function songsRecipe() {
   const mp = path.join(MUSIC_DIR, "manifest.json");
   const st = fs.statSync(mp);                    // throws -> caller 404s
@@ -208,17 +213,20 @@ function songsRecipe() {
     })
     .filter(Boolean)
     .sort((a, b) => (a.rank || 0) - (b.rank || 0));
-  const pages = Math.max(1, Math.ceil(songs.length / SONG_CELLS.length));
+  const perP1 = SONG_CELLS_P1.length, perPN = SONG_CELLS_PN.length;
+  const pages = songs.length <= perP1 ? 1 : 1 + Math.ceil((songs.length - perP1) / perPN);
   const boards = [];
   for (let p = 0; p < pages; p++) {
     const id = p === 0 ? "songs" : "songs-" + (p + 1);
+    const cells = p === 0 ? SONG_CELLS_P1 : SONG_CELLS_PN;
+    const from = p === 0 ? 0 : perP1 + (p - 1) * perPN;
     const buttons = [];
     if (p > 0) {
-      buttons.push({ label: "", say: "back", type: "back", glyph: "←",
+      buttons.push({ label: "Back", say: "back", type: "back", glyph: "←",
                      load: p === 1 ? "songs" : "songs-" + p, row: 1, col: 1 });
     }
-    songs.slice(p * SONG_CELLS.length, (p + 1) * SONG_CELLS.length).forEach((s, i) => {
-      const [row, col] = SONG_CELLS[i];
+    songs.slice(from, from + cells.length).forEach((s, i) => {
+      const [row, col] = cells[i];
       buttons.push({ label: s.title, say: s.title, type: "song", song_id: s.id,
                      audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
                      image: s.cover ? "music/" + s.cover : undefined,
@@ -232,8 +240,8 @@ function songsRecipe() {
   // one page per song: hero left half; back / Stop / Full song down col 3;
   // col 4 stays unpinned -> a full black rest column.
   songs.forEach((s, i) => {
-    const gridPage = i < SONG_CELLS.length ? "songs"
-                   : "songs-" + (Math.floor(i / SONG_CELLS.length) + 1);
+    const gridPage = i < perP1 ? "songs"
+                   : "songs-" + (Math.floor((i - perP1) / perPN) + 2);
     boards.push({
       id: "song-" + s.id, name: s.title, rows: 3, columns: 4,
       buttons: [
@@ -241,10 +249,11 @@ function songsRecipe() {
           audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
           image: s.cover ? "music/" + s.cover : undefined,
           duration: s.duration || 0, row: 1, col: 1, row_span: 3, col_span: 2 },
-        { label: "", say: "back", type: "back", glyph: "←",
+        { label: "Back", say: "back", type: "back", glyph: "←",
           load: gridPage, row: 1, col: 3 },
-        { label: "Stop", say: "stop", type: "stop", row: 2, col: 3 },
+        { label: "Stop", say: "stop", type: "stop", symbol: STOP_SYMBOL, row: 2, col: 3 },
         { label: "Full song", say: "full song", type: "full", song_id: s.id,
+          symbol: FULL_SYMBOL,
           audio: "music/" + s.audio, v: s.v, row: 3, col: 3 },
       ],
     });
@@ -271,11 +280,17 @@ function serveSongsRecipe(req, res) {
 async function fetchSymbolToCache(name) {
   const file = path.join(SYMBOLS_CACHE, name + ".png");
   try {
-    const r = await fetch(ARASAAC_API + encodeURIComponent(name));
-    if (!r.ok) return null;
-    const hits = await r.json();
-    if (!Array.isArray(hits) || !hits.length) return null;
-    const id = hits[0]._id;
+    let id;
+    if (/^\d+$/.test(name)) {
+      id = name;   // exact ARASAAC pictogram id (recipes pin one when bestsearch
+                   // guesses wrong — "stop" finds a bus stop; 8289 IS the stop sign)
+    } else {
+      const r = await fetch(ARASAAC_API + encodeURIComponent(name));
+      if (!r.ok) return null;
+      const hits = await r.json();
+      if (!Array.isArray(hits) || !hits.length) return null;
+      id = hits[0]._id;
+    }
     const img = await fetch(ARASAAC_IMG.replace(/\{id\}/g, String(id)));
     if (!img.ok) return null;
     const buf = Buffer.from(await img.arrayBuffer());

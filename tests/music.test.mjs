@@ -56,8 +56,8 @@ function makeWav(samples) {
 }
 const WAV = makeWav(800);   // 1644 bytes
 
-// 8 synthetic songs -> page 1 holds ranks 1-7, page 2 holds rank 8.
-const N = 8;
+// 12 synthetic songs -> page 1 holds ranks 1-9 (v3 corners), page 2 ranks 10-12.
+const N = 12;
 before(async () => {
   const music = path.join(TMP, "music");
   fs.mkdirSync(music, { recursive: true });
@@ -91,7 +91,7 @@ function btnAt(board, row, col) {
   return board.buttons.find(b => b.row === row && b.col === col) || null;
 }
 
-test("GET /recipes/songs.json v2: grid pages (no Stop/exit) + a page per song", async () => {
+test("GET /recipes/songs.json v3: 9-song page 1 (corner cells are songs) + a page per song", async () => {
   const r = await fetch(`${BASE}/recipes/songs.json`);
   assert.equal(r.status, 200);
   assert.equal(r.headers.get("cache-control"), "no-cache");
@@ -103,9 +103,7 @@ test("GET /recipes/songs.json v2: grid pages (no Stop/exit) + a page per song", 
   assert.equal(p1.id, "songs");
   assert.equal(p1.rows, 3); assert.equal(p1.columns, 4);
 
-  // v2: NO Stop and NO exit tile on the grid — those cells rest black
-  assert.equal(btnAt(p1, 1, 1), null, "top-left rests (Stop removed)");
-  assert.equal(btnAt(p1, 3, 4), null, "bottom-right rests (All done removed)");
+  // no chrome tiles beyond More: no Stop/exit anywhere on the grid
   assert.ok(!p1.buttons.some(b => b.type === "stop" || b.type === "exit"));
   const more = btnAt(p1, 3, 1);
   assert.equal(more.type, "more", "More bottom-left when a next page exists");
@@ -115,8 +113,8 @@ test("GET /recipes/songs.json v2: grid pages (no Stop/exit) + a page per song", 
   assert.equal(btnAt(p1, 2, 2), null);
   assert.equal(btnAt(p1, 2, 3), null);
 
-  // ranks 1-7 in reading order: each song tile is a DOOR to its song page
-  const cells = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3]];
+  // v3: ranks 1-9 in reading order, INCLUDING the (1,1) and (3,4) corners
+  const cells = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
   cells.forEach(([row, col], i) => {
     const b = btnAt(p1, row, col);
     assert.equal(b.type, "song", `song tile at (${row},${col})`);
@@ -133,9 +131,10 @@ test("GET /recipes/songs.json v2: grid pages (no Stop/exit) + a page per song", 
   const back = btnAt(p2, 1, 1);
   assert.equal(back.type, "back", "page 2 back anchor top-left");
   assert.equal(back.glyph, "←", "back is the big left arrow, not a symbol");
+  assert.equal(back.label, "Back", "arrow AND the word (dad r3)");
   assert.equal(back.symbol, undefined);
   assert.equal(back.load, "songs");
-  assert.equal(btnAt(p2, 1, 2).song_id, "song-8", "rank 8 opens page 2");
+  assert.equal(btnAt(p2, 1, 2).song_id, "song-10", "rank 10 opens page 2");
   assert.equal(btnAt(p2, 3, 1), null, "no More on the last page");
 });
 
@@ -151,17 +150,28 @@ test("song pages: hero spans the left half; back arrow / Stop / Full song down c
   assert.equal(hero.clip_ms, 40000);
   const back = btnAt(sp, 1, 3);
   assert.equal(back.type, "back"); assert.equal(back.glyph, "←");
+  assert.equal(back.label, "Back", "arrow AND the word (dad r3)");
   assert.equal(back.load, "songs", "rank 1's page returns to grid page 1");
-  assert.equal(btnAt(sp, 2, 3).type, "stop");
+  const stop = btnAt(sp, 2, 3);
+  assert.equal(stop.type, "stop");
+  assert.equal(stop.symbol, "8289", "Stop wears the exact-id STOP-sign pictogram");
   const full = btnAt(sp, 3, 3);
   assert.equal(full.type, "full");
+  assert.equal(full.symbol, "music", "Full song wears the sheet-music pictogram");
   assert.equal(full.song_id, "song-1");
   assert.ok(full.audio && full.v, "Full song can start playback on its own");
   // col 4 fully unpinned -> black rest column
   for (const row of [1, 2, 3]) assert.equal(btnAt(sp, row, 4), null);
-  // a page-2 song's back door returns to grid page 2
-  const sp8 = recipe.boards.find(b => b.id === "song-song-8");
-  assert.equal(btnAt(sp8, 1, 3).load, "songs-2");
+  // a page-TWO song's back door returns to grid page 2 (rank 10 with v3 paging)
+  const sp10 = recipe.boards.find(b => b.id === "song-song-10");
+  assert.equal(btnAt(sp10, 1, 3).load, "songs-2");
+});
+
+test("GET /symbol/<numeric-id> serves the exact ARASAAC pictogram (cached)", async () => {
+  const r = await fetch(`${BASE}/symbol/8289`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "image/png");
+  assert.ok((await r.arrayBuffer()).byteLength > 500, "real PNG bytes");
 });
 
 test("songs.json ETag: 304 on If-None-Match, HEAD supported, CORS open", async () => {
