@@ -477,7 +477,9 @@
   // Narration is the package's recorded audio; a spoken dwell preview over it
   // would talk across the story — and this app must NEVER call speechSynthesis.
   // color: the old UI's coral, so the engine's activation flash matches.
-  window.DwellConfig = { audioPreview: false, color: "#de6e4b" };
+  // chime:false — the activation tone beeped over every page turn (dad 8/25);
+  // a listening app must never make its own noise (narration is the audio).
+  window.DwellConfig = { audioPreview: false, chime: false, color: "#de6e4b" };
 </script>
 <script src="../dwell.js"></script>
 <script src="reader.js"></script>
