@@ -168,6 +168,21 @@ test("song pages: hero spans the left half; back arrow / Stop / Full song down c
   assert.equal(btnAt(sp10, 1, 3).load, "songs-2");
 });
 
+test("musicVolCap: /settings round-trip with clamping (default 100)", async () => {
+  const g0 = await (await fetch(`${BASE}/settings`)).json();
+  assert.equal(g0.musicVolCap, 100, "default full volume");
+  const post = (v) => fetch(`${BASE}/settings`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ musicVolCap: v }),
+  });
+  assert.equal((await post(12)).status, 204);
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).musicVolCap, 12, "stored");
+  await post(500);
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).musicVolCap, 100, "clamped high");
+  await post(0);
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).musicVolCap, 1, "clamped low");
+});
+
 test("GET /symbol/<numeric-id> serves the exact ARASAAC pictogram (cached)", async () => {
   const r = await fetch(`${BASE}/symbol/8289`);
   assert.equal(r.status, 200);

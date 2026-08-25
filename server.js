@@ -427,7 +427,8 @@ function pushReaderDwell(ms) {
 const server = http.createServer((req, res) => {
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
-    let s = { dwellMs: 1200, settleMs: 250, voiceId: loadTtsCfg().voiceId,
+    let s = { dwellMs: 1200, settleMs: 250, musicVolCap: 100,
+              voiceId: loadTtsCfg().voiceId,
               childName: PROFILE.childName || "friend", hasProfile: HAS_PROFILE,
               personalWords: [] };
     try {
@@ -450,6 +451,9 @@ const server = http.createServer((req, res) => {
         try { s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")); } catch {}
         if (typeof inc.dwellMs === "number") s.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
         if (typeof inc.settleMs === "number") s.settleMs = Math.max(0, Math.min(2000, inc.settleMs));
+        // music loudness cap, % of speaker volume (Songs Board; dad 8/24)
+        if (typeof inc.musicVolCap === "number")
+          s.musicVolCap = Math.max(1, Math.min(100, Math.round(inc.musicVolCap)));
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // one knob: mirror a dwell change into Book Reader's profile store
         if (typeof inc.dwellMs === "number") pushReaderDwell(s.dwellMs);

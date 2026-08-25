@@ -154,6 +154,17 @@
   </div>
 
   <div class="card">
+    <h2>🎵 Music volume cap</h2>
+    <p class="hint">How loud the Music board is allowed to play, as a share of the speaker&rsquo;s volume. One knob for every device — set low for the classroom. Speech is not affected.</p>
+    <div class="stepper">
+      <button id="mvolDown">−</button>
+      <div class="val"><span id="mvolVal">100</span>%</div>
+      <button id="mvolUp">+</button>
+    </div>
+    <div class="desc" id="mvolDesc"></div>
+  </div>
+
+  <div class="card">
     <h2>⏸ Pause eye-gaze (testing)</h2>
     <p class="hint">Temporarily stop ERAgaze from moving the cursor, so you can check whether another program behaves differently without it. The eye-gaze keeps running in the background and turns back on the moment you tap Running.</p>
     <div id="pauseControls">
@@ -244,6 +255,24 @@ async function saveSettle(){
   await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settleMs:settle})});
   toast("Page-change pause: "+(settle/1000).toFixed(2)+" s");
 }
+
+// ---- Music volume cap (dad 8/24: quiet music for the classroom; the Music
+// board plays at this share of the speaker volume; boards re-read at boot) ----
+let mvol=100;
+function mvolDesc(){
+  $("mvolVal").textContent=mvol;
+  $("mvolDesc").textContent = mvol>=100?"Full volume — the speaker cap alone rules."
+    : mvol>=40?"Softer music, everything else unchanged."
+    : mvol>=15?"Quiet — classroom friendly."
+    : "Very quiet — a whisper of music.";
+}
+async function saveMvol(){
+  mvolDesc();
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({musicVolCap:mvol})});
+  toast("Music volume cap: "+mvol+"%");
+}
+$("mvolDown").onclick=()=>{ mvol=Math.max(1,mvol-(mvol<=20?1:4)); saveMvol(); };
+$("mvolUp").onclick=()=>{ mvol=Math.min(100,mvol+(mvol<20?1:4)); saveMvol(); };
 $("settleUp").onclick=()=>{ settle=Math.min(2000,settle+50); saveSettle(); };
 $("settleDown").onclick=()=>{ settle=Math.max(0,settle-50); saveSettle(); };
 
@@ -357,8 +386,9 @@ $("stopBtn").onclick=async()=>{
 (async()=>{
   await loadVoices();
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
-       if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs)); }catch(e){}
-  dwellDesc(); settleDesc();
+       if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));
+       if(typeof s.musicVolCap==="number") mvol=Math.max(1,Math.min(100,Math.round(s.musicVolCap))); }catch(e){}
+  dwellDesc(); settleDesc(); mvolDesc();
   try{
     const c=await (await fetch(ENGINE+"/config")).json();
     if(c.radius===0) document.querySelector('#ring button[data-ring="off"]').click();
