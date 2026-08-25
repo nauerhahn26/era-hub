@@ -12,6 +12,14 @@ GATE="$HUB/gate"
 # optional private env (e.g. ERA_GAZE_SRC until era-gaze is imported)
 [ -f "$ROOT/era-family/gate-env.sh" ] && . "$ROOT/era-family/gate-env.sh"
 
+# one gate at a time, machine-wide: concurrent runs (e.g. two feature worktrees)
+# thrash CPU and can fight over default ports — the second run WAITS its turn.
+# (Born of the 8/24 two-session collision; see aac-board-builder
+# docs/parallel-worktrees.md.)
+LOCK="/tmp/era-gate.lock"
+exec 9>"$LOCK"
+flock -n 9 || { echo "== era-gate: another gate run is active — queued, waiting… =="; flock 9; }
+
 rm -rf "$GATE"; mkdir -p "$GATE"
 for repo in era-core era-making-words era-pencil era-board era-hub; do
   [ -d "$ROOT/$repo/tests" ] || continue
