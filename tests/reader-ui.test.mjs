@@ -1,15 +1,20 @@
-// reader-ui.test.mjs — Book Reader v1 e2e (era-book-reader M3, spec Piece 3).
+// reader-ui.test.mjs — Book Reader v2 e2e (the OLD Book-Reader UI ported onto
+// the local package data layer; dad: "I like my old layout. Please match.").
 // Spawns the REAL server.js on a scratch port with a throwaway ERA_DATA_DIR and
 // the SYNTHETIC "Luna the Fox" fixture package (never real book content), then
-// drives /reader/ with Playwright. Proves: shelf renders the fixture cover as a
-// dwell target (+ black rest cell), a tap opens the book and narration PLAYS,
-// word-sync highlights >=1 word with a monotonically non-decreasing active
-// index (manifest words AND the interpolation fallback), next/prev/repeat work
-// by synthetic click (touch parity), a textless page shows the advance arrow
-// immediately, auto-advance turns the page when narration ends, every page
-// change arms the dwell settle window (D51), progress lands in the hub log,
-// local resume reopens at the saved page, and speechSynthesis.speak is NEVER
-// called (narration is recorded audio — the old harness's no-TTS law).
+// drives /reader/ with Playwright. Proves: the shelf renders the OLD layout
+// (shelf-card grid, square covers, NO in-grid black rest cell — generous
+// gutters are the drift protection — plus the Back-to-TD-Snap exit tile), a
+// tap opens the book and narration PLAYS, word-sync highlights >=1 token with
+// a monotonically non-decreasing active index (manifest words AND the
+// interpolation fallback), next/prev/Read-Pause work by synthetic click
+// (touch parity), a textless page is ready IMMEDIATELY, narration end PAUSES
+// ON THE PAGE with the big ready-arrow (the old reader's law — the page never
+// turns itself), the arrow stops narration mid-read before turning, the end
+// of the book grows the Library button, every page change arms the dwell
+// settle window (D51), progress lands in the hub log, local resume reopens at
+// the saved page, and speechSynthesis.speak is NEVER called (narration is
+// recorded audio — the old harness's no-TTS law).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -52,16 +57,16 @@ function makeWav(secs) {
 }
 
 before(async () => {
-  // fixture package — three page shapes the reader must handle:
+  // fixture package — four page shapes the reader must handle:
   //   p0: words+audio (manifest timings)   p1: audio, NO words (interpolation)
-  //   p2: textless + silent (advance arrow immediately); p2 is also the LAST page
+  //   p2: textless + silent MIDDLE page (ready arrow IMMEDIATELY)
+  //   p3: LAST page with audio (narration end -> book finished -> Library)
   const book = path.join(TMP, "books", "luna-the-fox");
   fs.mkdirSync(path.join(book, "pages"), { recursive: true });
   fs.mkdirSync(path.join(book, "audio"), { recursive: true });
   fs.writeFileSync(path.join(book, "cover.jpg"), JPEG);
-  for (const n of ["001", "002", "003"]) fs.writeFileSync(path.join(book, "pages", n + ".jpg"), JPEG);
-  fs.writeFileSync(path.join(book, "audio", "001.wav"), makeWav(3));
-  fs.writeFileSync(path.join(book, "audio", "002.wav"), makeWav(3));
+  for (const n of ["001", "002", "003", "004"]) fs.writeFileSync(path.join(book, "pages", n + ".jpg"), JPEG);
+  for (const n of ["001", "002", "004"]) fs.writeFileSync(path.join(book, "audio", n + ".wav"), makeWav(3));
   fs.writeFileSync(path.join(book, "manifest.json"), JSON.stringify({
     schemaVersion: 1,
     id: "00000000-0000-4000-8000-000000000002",
@@ -77,6 +82,7 @@ before(async () => {
                 { word: "now.", start: 1.80, end: 2.60 }] },
       { index: 1, image: "pages/002.jpg", text: "The fox sleeps.", audio: "audio/002.wav" },
       { index: 2, image: "pages/003.jpg", text: "", audio: null },
+      { index: 3, image: "pages/004.jpg", text: "Good night fox.", audio: "audio/004.wav" },
     ],
   }, null, 2));
 
@@ -97,7 +103,7 @@ after(async () => {
   if (child) child.kill("SIGKILL");
 });
 
-// hasTouch contexts: the required next/prev/repeat interactions are the touch
+// hasTouch contexts: the required next/prev/Read interactions are the touch
 // path (synthetic click/tap — parity law); the dwell engine itself is proven in
 // dwell-engine.test.mjs. speechSynthesis.speak is wrapped to COUNT calls.
 async function makePage() {
@@ -116,19 +122,23 @@ async function makePage() {
 }
 const state = (page) => page.evaluate(() => window.Reader.state());
 const openLuna = async (page) => {
-  await page.locator("#shelf .book", { hasText: "Luna the Fox" }).click();
+  await page.locator("#shelfGrid .shelf-card-button", { hasText: "Luna the Fox" }).click();
   await page.waitForFunction(() => window.Reader.state().screen === "sRead");
 };
 
-test("shelf: fixture cover renders as a dwell target, black rest cell present", async () => {
+test("shelf: OLD layout — shelf-card grid, square cover, NO in-grid rest cell, TD Snap exit tile", async () => {
   const { ctx, page } = await makePage();
-  const tile = page.locator("#shelf .book.dwell").first();
+  const tile = page.locator("#shelfGrid .shelf-card-button.dwell").first();
   await tile.waitFor();
-  assert.equal(await tile.locator(".name").textContent(), "Luna the Fox");
-  assert.match(await tile.locator("img.cover").getAttribute("src"),
+  assert.equal(await tile.locator(".shelf-title").textContent(), "Luna the Fox");
+  assert.match(await tile.locator(".shelf-cover img").getAttribute("src"),
     /\/books\/luna-the-fox\/cover\.jpg$/);
-  assert.equal(await page.locator("#shelf .restCell").count(), 1, "black rest cell in the grid");
-  assert.equal(await page.locator("#rest").count(), 1, "fixed black rest area exists");
+  // the OLD shelf's drift protection is its generous gutters — no black cells
+  assert.equal(await page.locator("#shelfGrid .restCell").count(), 0, "no in-grid rest cell (old layout)");
+  assert.equal(await page.locator("#rest").isHidden(), true, "reading-page rest area hidden on the shelf");
+  assert.equal(await page.locator("#shelfGrid .shelf-tdsnap-button").count(), 1, "Back to TD Snap exit tile");
+  assert.equal(await page.locator("#shelfGrid .shelf-tdsnap-button").getAttribute("data-dwell-ms"),
+    "2400", "leaving the app is the highest-consequence hold (EXIT_HOLD_MS)");
   assert.equal((await state(page)).shelfCount, 1);
   await ctx.close();
 });
@@ -143,7 +153,8 @@ test("open book by tap: reading screen, narration audio PLAYS (no speechSynthesi
   const s = await state(page);
   assert.equal(s.slug, "luna-the-fox");
   assert.equal(s.page, 0);
-  assert.equal(s.arrow, false, "no arrow while narration is playing");
+  assert.equal(s.arrow, false, "no ready-arrow while narration is playing");
+  assert.equal(await page.locator("#rest").isHidden(), false, "black rest area shows on the reading page");
   assert.equal(await page.evaluate(() => window.__speakCalls), 0, "speechSynthesis never called");
   await ctx.close();
 });
@@ -157,36 +168,52 @@ test("word sync (manifest words): >=1 highlight, active index never decreases", 
   assert.ok(seq.length >= 1, "at least one word highlighted");
   for (let i = 1; i < seq.length; i++)
     assert.ok(seq[i] >= seq[i - 1], `active index never decreases (${seq.join(",")})`);
-  assert.ok(await page.locator("#pageText .w.hl").count() <= 1, "at most one live highlight");
+  assert.ok(await page.locator("#pageText .reader-token.active").count() <= 1, "at most one live highlight");
   await ctx.close();
 });
 
-test("auto-advance: narration end turns the page by itself", async () => {
+test("OLD-READER LAW: narration end PAUSES on the page with the ready-arrow; HER arrow turns it", async () => {
   const { ctx, page } = await makePage();
   await openLuna(page);
-  await page.waitForFunction(() => window.Reader.state().page === 1, null, { timeout: 10000 });
-  assert.equal((await state(page)).screen, "sRead");
+  // narration (3s) ends -> the big ready-arrow rises and WAITS
+  await page.waitForFunction(() => window.Reader.state().arrow === true, null, { timeout: 10000 });
+  assert.ok(await page.locator("#btnNext.reader-next-button-ready").isVisible(),
+    "next arrow grew into the big centre-right ready-arrow");
+  // the page NEVER turns itself (v1 auto-advanced 600ms after audio — the regression)
+  await page.waitForTimeout(1500);
+  const s = await state(page);
+  assert.equal(s.page, 0, "reader waits on the page — no auto-advance");
+  assert.equal(s.screen, "sRead");
+  await page.locator("#btnNext").click();          // she turns the page
+  assert.equal((await state(page)).page, 1);
   await ctx.close();
 });
 
-test("next/prev/repeat by synthetic click (touch parity)", async () => {
+test("next/prev/Read-Pause by synthetic click (touch parity); arrow stops narration mid-read", async () => {
   const { ctx, page } = await makePage();
   await openLuna(page);
+  // arrow mid-narration: the story stops, the page turns, the new page reads
+  await page.waitForFunction(() => window.Reader.state().audioTime > 0.4, null, { timeout: 6000 });
   await page.locator("#btnNext").click();
   assert.equal((await state(page)).page, 1, "next turns forward");
+  assert.match(await page.evaluate(() => document.getElementById("narration").src),
+    /002\.wav$/, "page 0 narration was stopped — page 1's audio loaded (pauses with the arrow)");
   await page.locator("#btnPrev").click();
   assert.equal((await state(page)).page, 0, "prev turns back");
-  // let narration run, then repeat: time rewinds and the word cursor resets
+  // let narration run, then Read/Pause: pauses in place, resumes in place
   await page.waitForFunction(() => window.Reader.state().audioTime > 0.7, null, { timeout: 6000 });
-  const rewound = await page.evaluate(() => {
-    document.getElementById("btnRepeat").click();
-    return window.Reader.state().audioTime;
-  });
-  assert.ok(rewound < 0.5, `repeat rewinds narration (t=${rewound})`);
-  await page.waitForFunction(() => {
-    const s = window.Reader.state();
-    return s.audio === "playing" && s.activeIdx >= 0;
-  }, null, { timeout: 6000 });
+  await page.locator("#btnRead").click();
+  await page.waitForFunction(() => window.Reader.state().audio === "paused", null, { timeout: 3000 });
+  const tPaused = (await state(page)).audioTime;
+  assert.ok(tPaused > 0.6, `pause keeps her place (t=${tPaused})`);
+  // the pause EVENT (which flips the pill) fires a task after paused=true —
+  // wait for the label rather than racing it
+  await page.waitForFunction(
+    () => document.querySelector("#btnRead .dwell-label").textContent === "Read",
+    null, { timeout: 3000 });
+  await page.locator("#btnRead").click();
+  await page.waitForFunction(() => window.Reader.state().audio === "playing", null, { timeout: 3000 });
+  assert.ok((await state(page)).audioTime >= tPaused - 0.3, "resume continues from where she paused");
   assert.equal(await page.evaluate(() => window.__speakCalls), 0, "still no speechSynthesis");
   await ctx.close();
 });
@@ -205,21 +232,36 @@ test("interpolation fallback: audio with NO word timings still highlights, monot
   await ctx.close();
 });
 
-test("textless page shows the advance arrow IMMEDIATELY; arrow advances (to The End)", async () => {
+test("textless page is ready IMMEDIATELY (big arrow, Read disabled); her arrow advances", async () => {
   const { ctx, page } = await makePage();
   await openLuna(page);
   await page.locator("#btnNext").click();
-  await page.locator("#btnNext").click();          // -> page 2: textless, silent, last
+  await page.locator("#btnNext").click();          // -> page 2: textless, silent, MIDDLE page
   const s = await state(page);
   assert.equal(s.page, 2);
-  assert.equal(s.arrow, true, "advance arrow up immediately, no waiting on audio");
+  assert.equal(s.arrow, true, "ready-arrow up immediately, no waiting on audio");
   assert.equal(s.audio, "paused", "no narration on a silent page");
-  assert.ok(await page.locator("#advanceArrow.show").isVisible());
-  assert.equal(await page.locator("#btnRepeat").evaluate(el => el.style.visibility),
-    "hidden", "repeat hidden with nothing to repeat");
-  await page.locator("#advanceArrow").click();     // last page: arrow finishes the book
-  await page.waitForFunction(() => window.Reader.state().screen === "sEnd");
+  assert.ok(await page.locator("#btnNext.reader-next-button-ready").isVisible());
+  assert.equal(await page.locator("#btnRead").getAttribute("data-dwell-disabled"), "",
+    "Read pill disabled with nothing to read");
+  await page.locator("#btnNext").click();
+  assert.equal((await state(page)).page, 3, "her arrow turns the silent page");
   assert.equal(await page.evaluate(() => window.__speakCalls), 0, "no speechSynthesis, ever");
+  await ctx.close();
+});
+
+test("end of book: last narration ends -> big pulsing Library button invites her back to the shelf", async () => {
+  const { ctx, page } = await makePage();
+  await openLuna(page);
+  for (let i = 0; i < 3; i++) await page.locator("#btnNext").click();  // -> page 3 (last)
+  await page.waitForFunction(() => window.Reader.state().bookFinished === true, null, { timeout: 12000 });
+  const s = await state(page);
+  assert.equal(s.page, 3, "still on the last page — no dead-end screen");
+  assert.equal(s.arrow, false, "no ready-arrow at the end (Library is the invitation)");
+  assert.ok(await page.locator("#btnLibrary.reader-library-button-finished").isVisible(),
+    "Library button grew into the end-of-book invitation");
+  await page.locator("#btnLibrary").click();
+  await page.waitForFunction(() => window.Reader.state().screen === "sShelf");
   await ctx.close();
 });
 

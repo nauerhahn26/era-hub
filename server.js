@@ -90,7 +90,8 @@ function booksIndex() {
       const pages = Array.isArray(m.pages) ? m.pages : [];
       out.push({ slug: d.name, title: String(m.title || d.name),
                  cover: "/books/" + d.name + "/" + (m.cover || "cover.jpg"),
-                 pages: pages.length, hasVideo: pages.some(p => p && p.video) });
+                 pages: pages.length, hasVideo: pages.some(p => p && p.video),
+                 authored: m.authored === true });
     } catch {}   // incomplete package: skip silently
   }
   return out;

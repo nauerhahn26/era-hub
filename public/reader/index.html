@@ -4,152 +4,491 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Book Reader</title>
-<link rel="stylesheet" href="../lib/tokens.css">
 <style>
   /* ============================================================
-     Book Reader v1 — manifest-driven reading room (M3 Piece 3).
-     Books are immutable local packages served by the hub at
-     /books/<slug>/; narration is RECORDED audio from the package
-     (never speechSynthesis) with word-sync highlighting. Shelf =
-     covers as dwell targets (<=12 per screen, More paging, black
-     rest cell); every page keeps a plain black rest area. Same
-     visual language as the other apps; big text-forward targets.
+     Book Reader v2 — the OLD Book-Reader UI (dad: "I like my old
+     layout. Please match.") ported 1:1 from Book-Reader's
+     app/globals.css + reader-client.tsx / library-client.tsx onto
+     the hub's local package data layer. Values below are copied
+     verbatim from globals.css — do not "improve" them.
+     Data stays local: /books/index.json + per-book manifest.json,
+     recorded mp3 narration (NEVER speechSynthesis).
      ============================================================ */
-  :root{
-    --ink:var(--color-ink); --paper:var(--color-paper); --card:#FFFFFF; --line:#D8E0DE;
-    --teal:var(--color-primary); --teal-deep:#0B4E58;
-    --font:"Segoe UI", system-ui, sans-serif;
+  :root {
+    --bg: #f5f7f2;
+    --ink: #1f2b2c;
+    --panel: #ffffff;
+    --line: #d4ddd9;
+    --muted: #5f6d6e;
+    --primary: #0b3a52;
+    --brand-coral: #de6e4b;
+    --highlight-yellow: #f5c43a;
+    --radius: 14px;
   }
-  *{box-sizing:border-box; user-select:none}
-  html,body{height:100%}
-  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--font); overflow:hidden}
+  * { box-sizing: border-box; user-select: none; }
+  html, body { margin: 0; padding: 0; min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Avenir Next', 'Trebuchet MS', sans-serif;
+  }
+  [hidden] { display: none !important; }
+  .muted { color: var(--muted); }
 
-  .screen{position:fixed; inset:0; display:none; flex-direction:column;
-          align-items:center; justify-content:center; gap:clamp(18px,3vh,40px); padding:30px}
-  .screen.show{display:flex}
-  .title{font-size:clamp(54px,5vw,84px); font-weight:700}
-  .subtitle{font-size:clamp(30px,2.6vw,44px); color:#5A6A70}
+  .screen { display: none; }
+  .screen.show { display: block; }
+  #sShelf.show { position: fixed; inset: 0; overflow-y: auto; padding: 18px 14px; }
+  #sRead.show { position: fixed; inset: 0; }
 
-  /* ---- shelf: covers are the dwell targets ---- */
-  #shelf{display:grid; grid-template-columns:repeat(3,1fr); gap:clamp(22px,2.6vw,44px);
-         width:min(94vw,1560px)}
-  .book{background:var(--card); border:3px solid var(--line); border-radius:26px;
-        display:flex; flex-direction:column; align-items:center; justify-content:center;
-        gap:10px; height:clamp(190px,26vh,300px); padding:14px;
-        box-shadow:0 3px 10px rgba(23,39,46,.08)}
-  .book img.cover{max-height:60%; max-width:80%; object-fit:contain; border-radius:12px}
-  .book .name{font-size:clamp(34px,2.4vw,44px); font-weight:650; text-align:center;
-              overflow:hidden; text-overflow:ellipsis}
-  .book.more{font-size:clamp(40px,3vw,56px); font-weight:650; color:#5A6A70}
-  /* the black rest cell: plain and INERT — a safe place to park her gaze */
-  .restCell{background:#000000; border-radius:26px; height:clamp(190px,26vh,300px)}
+  /* ==== dwell targets: era-core dwell.js ENGINE + the old DwellButton LOOK.
+     The engine injects .dwell-fx > .dwell-fill/.dwell-flash/.dwell-ring; we
+     hide its rising fill and restyle its ring into the old conic progress
+     ring (reader.js mirrors fill height into --dwell-progress). ==== */
+  .dwell-button {
+    position: relative;
+    min-height: 72px;
+    padding: 12px 14px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .dwell-button.is-disabled { opacity: 0.4; }
+  .dwell .dwell-fill { opacity: 0 !important; }
+  .dwell .dwell-ring {
+    padding: 2px;
+    box-shadow: none !important;
+    background: conic-gradient(var(--brand-coral) var(--dwell-progress, 0deg), transparent 0deg);
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+  }
+  .dwell-label { position: relative; z-index: 1; }
 
-  /* ---- reading page: art + text line + controls ---- */
-  #sRead{justify-content:flex-start; padding-top:clamp(84px,10vh,120px)}
-  #pageArt{flex:1 1 auto; min-height:0; display:flex; align-items:center;
-           justify-content:center; width:min(92vw,1500px)}
-  #pageArt img{max-width:100%; max-height:100%; object-fit:contain; border-radius:18px}
-  #pageText{flex:0 0 auto; display:flex; flex-wrap:wrap; align-content:center;
-            justify-content:center; gap:0.12em 0.32em; width:min(92vw,1500px)}
-  .w{font-size:clamp(44px,4.2vw,80px); font-weight:650; line-height:1.3;
-     padding:0.04em 0.16em; border-radius:14px}
-  .w.hl{background:var(--teal); color:#fff}
-  .w.read{color:#7A8A90}
-  #pageBar{flex:0 0 auto; display:flex; align-items:center; justify-content:center;
-           gap:clamp(44px,5vw,100px); padding:clamp(12px,2vh,24px) 40px clamp(20px,3.5vh,44px)}
-  .navBtn{min-width:clamp(220px,17vw,320px); height:clamp(104px,13vh,160px); border-radius:24px;
-          background:var(--card); border:3px solid var(--line);
-          display:flex; align-items:center; justify-content:center;
-          font-size:clamp(44px,3.4vw,60px); font-weight:650}
-  .navBtn.primary{background:var(--teal); border-color:var(--teal-deep); color:#fff}
-  #pageNum{position:fixed; right:30px; top:26px; font-size:30px; color:#8A9AA0; font-weight:650}
-  #bookTitle{position:fixed; left:220px; top:60px; font-size:32px; color:#8A9AA0;
-             font-weight:650; white-space:nowrap}
+  /* ===== Ellie's Bookshelf (gaze-first library) — ported verbatim ===== */
+  .shelf { display: grid; gap: 18px; }
+  .shelf-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .shelf-heading { margin: 0; font-size: 2rem; }
+  .shelf-status { font-size: 1.1rem; }
 
-  /* advance arrow — a silent/textless page shows the way forward IMMEDIATELY */
-  #advanceArrow{position:fixed; right:36px; top:50%; transform:translateY(-50%);
-                width:clamp(150px,12vw,220px); height:clamp(160px,18vh,250px); border-radius:26px;
-                background:var(--teal); border:3px solid var(--teal-deep); color:#fff;
-                display:none; align-items:center; justify-content:center;
-                font-size:clamp(70px,6vw,110px); z-index:40}
-  #advanceArrow.show{display:flex}
+  /* Generous gutters so gaze drift between cards lands on dead space,
+     not on the neighbouring card's dwell target. (The old shelf's drift
+     protection — it has NO black rest cells.) */
+  .shelf-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 36px;
+  }
+  .shelf-card { position: relative; }
+  .shelf-card-button.dwell-button {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    padding: 14px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--line);
+    box-shadow: 0 8px 18px rgba(31, 43, 44, 0.08);
+    text-align: center;
+  }
+  .shelf-cover {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    border-radius: 14px;
+    background: #f0ece0;
+  }
+  .shelf-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transform-origin: center;
+  }
+  .shelf-cover-fallback { font-size: 1rem; }
+  .shelf-title {
+    font-size: 1.48rem;
+    font-weight: 700;
+    color: var(--ink);
+    line-height: 1.25;
+    padding-bottom: 4px;
+  }
 
-  /* black rest area — every page has one (UX contract); plain, no handlers */
-  #rest{position:fixed; left:26px; bottom:26px; width:clamp(150px,12vw,210px);
-        height:clamp(96px,11vh,140px); border-radius:18px; background:#000000; z-index:30}
+  /* Personalized ("Ellie's story") books: a warm coral rim so the card reads
+     as special from across the room, without changing its shape or size. */
+  .shelf-card.is-authored .shelf-card-button.dwell-button {
+    border-color: rgba(222, 110, 75, 0.55);
+    box-shadow: 0 8px 18px rgba(222, 110, 75, 0.18);
+  }
+  .shelf-authored-badge {
+    position: absolute;
+    top: 22px;
+    left: 22px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px 5px 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(222, 110, 75, 0.35);
+    background: rgba(255, 255, 255, 0.94);
+    color: var(--brand-coral);
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(31, 43, 44, 0.14);
+    pointer-events: none;
+    z-index: 2;
+  }
 
-  /* door back to the shelf (long dwell, same metaphor as The Pencil) */
-  #door{position:fixed; left:26px; top:26px; width:170px; height:110px; border-radius:18px;
-        background:var(--card); border:3px solid var(--line); z-index:50;
-        display:flex; align-items:center; justify-content:center}
+  /* ===== Shelf: Back to TD Snap tile (the old shelf's exit affordance) ===== */
+  .shelf-tdsnap-button.dwell-button {
+    display: grid;
+    gap: 10px;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    padding: 14px;
+    border-radius: 20px;
+    background: #fdf1ec;
+    border: 1px solid #f0cfc2;
+    box-shadow: 0 8px 18px rgba(31, 43, 44, 0.08);
+    text-align: center;
+  }
+  .shelf-tdsnap-icon {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 14px;
+    background: #fbe3d9;
+    font-size: 6rem;
+    line-height: 1;
+  }
 
-  /* ---- optional per-page video, after narration; dwell skips it ---- */
-  #videoWrap{position:fixed; inset:0; background:#000; z-index:60; display:none;
-             align-items:center; justify-content:center}
-  #videoWrap.show{display:flex}
-  #pageVideo{max-width:100vw; max-height:100vh}
-  #btnSkip{position:fixed; right:36px; bottom:36px; z-index:61}
+  @media (max-width: 680px) {
+    .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 23px; }
+    .shelf-title { font-size: 1.1rem; }
+    .shelf-authored-badge { top: 18px; left: 18px; font-size: 0.72rem; }
+  }
 
-  /* ---- the end ---- */
-  #endRow{display:flex; gap:clamp(50px,6vw,110px)}
-  .action{min-width:clamp(300px,24vw,440px); height:clamp(140px,18vh,210px); border-radius:26px;
-          background:var(--card); border:3px solid var(--line);
-          display:flex; align-items:center; justify-content:center; text-align:center;
-          font-size:clamp(44px,3.4vw,60px); font-weight:650}
-  .action.primary{background:var(--teal); border-color:var(--teal-deep); color:#fff}
+  /* ===== Reading screen — ported verbatim from the old reader ===== */
+  .reader-shell { display: block; margin: 0; padding: 0; height: 100dvh; }
+  .reader-stage {
+    position: relative;
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at top, rgba(255, 245, 224, 0.95), rgba(245, 247, 242, 0.75) 28%),
+      linear-gradient(180deg, #f2efe5 0%, #d6dfd9 100%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  }
+  .reader-overlay-button { pointer-events: auto; }
+  .reader-nav-button.dwell-button,
+  .reader-library-button.dwell-button { position: absolute; }
+  .reader-prev-button { top: 16px; left: 16px; }
+  /* Anchored to the bottom-left of the image frame — sits just above the
+     text panel, clear of the corner arrows. */
+  .reader-library-button { bottom: 12px; left: 16px; }
+  .reader-next-button { top: 16px; right: 16px; }
+
+  .reader-next-button-ready {
+    top: 50%;
+    right: 11%;
+    transform: translateY(-50%) scale(5.625);
+    transform-origin: center;
+    overflow: visible;
+  }
+  /* Attention ring must HUG the dwell surface: the button's own box is the
+     gaze-activatable area, so the visible circle has to match it. */
+  .reader-next-button-ready::before {
+    content: '';
+    position: absolute;
+    inset: -4%;
+    border-radius: 999px;
+    border: 2.5px solid var(--brand-coral);
+    pointer-events: none;
+    opacity: 0.5;
+  }
+  .reader-next-button-pulse::before { animation: reader-next-ring-pulse 1.8s ease-in-out infinite; }
+  @keyframes reader-next-ring-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.08); }
+  }
+
+  .reader-image-frame {
+    position: relative;
+    display: block;
+    min-height: 0;
+    min-width: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  .reader-page-image {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 18px 28px rgba(31, 43, 44, 0.12));
+    transform: translate(-50%, -50%);
+    transform-origin: center;
+  }
+  /* Per-page video sits on top of the static page image inside the same
+     frame (old outro presentation): always mounted, opacity toggled. */
+  .reader-outro-video {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 18px 28px rgba(31, 43, 44, 0.12));
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .reader-outro-video-playing { opacity: 1; }
+
+  .reader-image-fallback {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(680px, 100%);
+    min-height: 320px;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    text-align: center;
+    border-radius: 22px;
+    border: 1px solid rgba(11, 58, 82, 0.14);
+    background: rgba(255, 255, 255, 0.74);
+    backdrop-filter: blur(10px);
+  }
+
+  .reader-bottom-overlay {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px;
+    padding: 10px 16px 14px;
+    max-height: 32vh;
+    min-height: 0;
+    background: rgba(255, 255, 255, 0.92);
+    border-top: 1px solid rgba(11, 58, 82, 0.14);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 -10px 22px rgba(31, 43, 44, 0.06);
+  }
+  .reader-status-row {
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .reader-inline-actions { display: flex; gap: 10px; align-items: center; }
+  .reader-book-title, .reader-page-meta { margin: 0; }
+  .reader-book-title { font-size: 1.15rem; font-weight: 700; }
+  .reader-page-meta { color: var(--muted); font-size: 0.95rem; }
+
+  .reader-text-box {
+    min-height: 0;
+    height: 100%;
+    overflow: auto;
+    padding: 8px 2px 2px;
+    color: var(--ink);
+    line-height: 1.5;
+    font-size: 44px;
+    font-family: Georgia, 'Times New Roman', serif;
+    text-align: center;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .reader-token, .reader-token-gap { white-space: pre-wrap; }
+  .reader-token {
+    border-radius: 8px;
+    transition: background-color 120ms linear, transform 120ms linear;
+  }
+  .reader-token.active { background: var(--highlight-yellow); padding: 0 4px; }
+  .reader-token-gap { color: inherit; }
+  .reader-arrow { font-size: 1.45em; line-height: 1; }
+
+  .reader-overlay-button.dwell-button {
+    min-height: 58px;
+    min-width: 58px;
+    padding: 10px 14px;
+    border-radius: 999px;
+    border-color: rgba(11, 58, 82, 0.18);
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 6px 14px rgba(31, 43, 44, 0.1);
+  }
+  /* Plain-glyph nav arrows: no circular chrome, no background */
+  .reader-nav-button.reader-overlay-button.dwell-button {
+    min-height: auto;
+    min-width: auto;
+    padding: 6px 12px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    z-index: 5;
+    overflow: hidden;
+  }
+  .reader-next-button-ready.reader-nav-button.reader-overlay-button.dwell-button { overflow: visible; }
+  .reader-nav-button .dwell-ring { border-radius: 999px; }
+  .reader-prev-button {
+    color: var(--ink);
+    font-size: 3.2rem;
+    font-weight: 900;
+    line-height: 1;
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+  }
+  .reader-next-button {
+    color: var(--brand-coral);
+    font-size: 3.2rem;
+    font-weight: 900;
+    line-height: 1;
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+  }
+  .reader-library-button.dwell-button,
+  .reader-read-button.dwell-button { min-width: 104px; border-radius: 999px; font-size: 0.98rem; }
+  .reader-read-button { position: static; }
+  .reader-next-button-ready.dwell-button { min-width: 84px; min-height: 84px; padding: 16px; }
+
+  /* End-of-book: the Library button grows 5x at the left-center of the
+     stage and pulses gently (same ring language as the ready next-arrow)
+     to invite the child back to the shelf. */
+  .reader-library-button-finished.dwell-button {
+    bottom: auto;
+    top: 50%;
+    left: 5%;
+    transform: translateY(-50%) scale(5);
+    transform-origin: left center;
+    overflow: visible;
+    z-index: 5;
+    color: var(--brand-coral);
+    font-weight: 800;
+  }
+  .reader-library-button-finished::before {
+    content: '';
+    position: absolute;
+    inset: -18%;
+    border-radius: 999px;
+    border: 2px solid var(--brand-coral);
+    pointer-events: none;
+    opacity: 0.5;
+    animation: reader-next-ring-pulse 2.2s ease-in-out infinite;
+  }
+
+  @media (max-width: 900px) {
+    .reader-stage { border-radius: 18px; }
+    .reader-bottom-overlay { padding: 12px; }
+    .reader-status-row { flex-wrap: wrap; }
+    .reader-text-box { font-size: 34px; }
+    .reader-next-button-ready { right: 84px; transform: translateY(-50%) scale(2.94); }
+  }
+  @media (max-width: 680px) {
+    .reader-prev-button { top: 14px; left: 14px; }
+    .reader-library-button { bottom: 10px; left: 14px; }
+    .reader-next-button, .reader-next-button-ready { right: 14px; }
+    .reader-bottom-overlay { gap: 10px; padding: 12px; }
+    .reader-status-row { align-items: flex-start; flex-direction: column; }
+  }
+
+  /* black rest area — READING page only (contract; the old reading page had
+     none in-frame and the old shelf's drift protection is its gutters).
+     Kept small, bottom-left, unobtrusive — as on dad's device today. */
+  #rest {
+    position: fixed;
+    left: 26px;
+    bottom: 26px;
+    width: clamp(150px, 12vw, 210px);
+    height: clamp(96px, 11vh, 140px);
+    border-radius: 18px;
+    background: #000000;
+    z-index: 30;
+    display: none;
+  }
+  body.reading #rest { display: block; }
 </style>
 </head>
 <body>
 
-<div id="door" class="dwell" data-dwell-ms="2400" data-dwell-say="back to the shelf" aria-label="book shelf">
-  <svg viewBox="0 0 24 24" width="60" height="60" fill="none" stroke="#5A6A70" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4 19V5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z" fill="#EDE3D8" stroke="#B98A5E"/>
-    <path d="M9 3v18"/><path d="M19 12h2m0 0l-2-2m2 2l-2 2" stroke="#5A6A70"/>
-  </svg>
-</div>
-
-<div id="rest" aria-hidden="true"></div>
-
 <div id="sShelf" class="screen show">
-  <div class="title" id="shelfTitle">&#128218; Books</div>
-  <div class="subtitle" id="shelfEmpty" style="display:none">No books on the shelf yet.</div>
-  <div id="shelf"></div>
+  <section class="shelf">
+    <header class="shelf-header">
+      <h2 class="shelf-heading" id="shelfTitle">Ellie&#39;s Bookshelf</h2>
+    </header>
+    <p class="muted shelf-status" id="shelfEmpty" hidden>No books yet.</p>
+    <div class="shelf-grid" id="shelfGrid"></div>
+  </section>
 </div>
 
 <div id="sRead" class="screen">
-  <div id="bookTitle"></div>
-  <div id="pageNum"></div>
-  <div id="pageArt"><img id="pageImg" alt=""></div>
-  <div id="pageText"></div>
-  <div id="pageBar">
-    <div class="navBtn dwell" id="btnPrev" data-dwell-say="go back">&#9664; back</div>
-    <div class="navBtn dwell" id="btnRepeat" data-dwell-say="read it again">&#8635; again</div>
-    <div class="navBtn primary dwell" id="btnNext" data-dwell-say="turn the page">next &#9654;</div>
-  </div>
+  <section class="reader-shell">
+    <div class="reader-stage">
+      <div class="reader-image-frame" id="imageFrame">
+        <img id="pageImg" class="reader-page-image" alt="">
+        <div class="reader-image-fallback" id="imgFallback" hidden><p class="muted">Page image unavailable.</p></div>
+        <video id="pageVideo" class="reader-outro-video" playsinline preload="auto"></video>
+        <div class="dwell dwell-button reader-overlay-button reader-library-button" id="btnLibrary"
+             data-dwell-say="library" aria-label="Back to library"><span class="dwell-label">Library</span></div>
+        <div class="dwell dwell-button reader-overlay-button reader-nav-button reader-prev-button" id="btnPrev"
+             data-dwell-say="go back" aria-label="Previous page"><span class="dwell-label reader-arrow" aria-hidden="true">&#8592;</span></div>
+        <div class="dwell dwell-button reader-overlay-button reader-nav-button reader-next-button" id="btnNext"
+             data-dwell-say="turn the page" aria-label="Next page"><span class="dwell-label reader-arrow" aria-hidden="true">&#8594;</span></div>
+      </div>
+      <div class="reader-bottom-overlay">
+        <div class="reader-status-row">
+          <div>
+            <p class="reader-book-title" id="bookTitle"></p>
+            <p class="reader-page-meta" id="pageMeta"></p>
+          </div>
+          <div class="reader-inline-actions">
+            <div class="dwell dwell-button reader-overlay-button reader-read-button" id="btnRead"
+                 data-dwell-say="read" aria-label="Read page"><span class="dwell-label" id="btnReadLabel">Read</span></div>
+          </div>
+        </div>
+        <div class="reader-text-box" id="pageText"></div>
+      </div>
+    </div>
+  </section>
 </div>
 
-<div id="sEnd" class="screen">
-  <div class="title">The End! &#11088;</div>
-  <div class="subtitle" id="endSub"></div>
-  <div id="endRow">
-    <div class="action dwell" id="btnAgain" data-dwell-say="read it again">&#8617; read it again</div>
-    <div class="action primary dwell" id="btnShelf" data-dwell-say="more books">&#128218; more books</div>
-  </div>
-</div>
-
-<div class="dwell" id="advanceArrow" data-dwell-say="turn the page" aria-label="turn the page">&#9654;</div>
-
-<div id="videoWrap">
-  <video id="pageVideo" playsinline></video>
-  <div class="navBtn dwell" id="btnSkip" data-dwell-say="skip">skip &#9654;</div>
-</div>
+<div id="rest" aria-hidden="true"></div>
 
 <audio id="narration" preload="auto"></audio>
 
 <script>
   // Narration is the package's recorded audio; a spoken dwell preview over it
   // would talk across the story — and this app must NEVER call speechSynthesis.
-  window.DwellConfig = { audioPreview: false };
+  // color: the old UI's coral, so the engine's activation flash matches.
+  window.DwellConfig = { audioPreview: false, color: "#de6e4b" };
 </script>
 <script src="../dwell.js"></script>
 <script src="reader.js"></script>

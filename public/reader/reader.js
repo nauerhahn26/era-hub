@@ -1,43 +1,57 @@
-// Book Reader v1 — manifest-driven reading room (era-book-reader M3, Piece 3).
+// Book Reader v2 — the OLD Book-Reader UI (dad: "I like my old layout. Please
+// match.") ported from components/reader-client.tsx + library-client.tsx onto
+// the hub's LOCAL package data layer (which stays exactly as v1 shipped it):
+// /books/index.json + /books/<slug>/manifest.json, recorded mp3 narration with
+// manifest words[] word-sync (binary search, MONOTONIC), interpolation
+// fallback, /settings dwell knobs, pool /log events, localStorage resume.
+// This app NEVER calls speechSynthesis.
 //
-// Books are immutable local packages the hub serves at /books/<slug>/ (index at
-// /books/index.json). Narration is the package's RECORDED audio; words highlight
-// in sync with it (manifest `words` timings; interpolation when a page has audio
-// but no timings). This app never calls speechSynthesis.
-//
-// Rules of the room: she turns pages by gaze or touch; when narration ends the
-// page turns for her (auto-advance, via the page's optional video first); a
-// silent/textless page shows the advance arrow IMMEDIATELY so she is never
-// stuck. Every page render suppresses dwell for the settle window (D51) — a
-// fresh page never inherits her gaze.
-//
-// Progress: every page render appends a book-progress event to the pool via
-// POST /log (app-log kind) and mirrors it to localStorage for local resume.
-// Resume-from-pool (cross-device read-back) is a follow-up; with nothing
-// available client-side a book opens at page 1. Missing index/manifest/pool
-// degrades to an empty shelf / page 1 — never a dead app (8/19 law).
+// THE OLD READER'S RULES (ported 1:1 — the "pauses with the arrow" behavior):
+//  * A page auto-reads when it appears (page turns queue auto-play; the very
+//    first page reads on open).
+//  * When narration ENDS the reader PAUSES ON THE PAGE: the next-arrow grows
+//    to the big center-right ready-arrow (pulsing after 5s) and WAITS for
+//    her. The page NEVER turns itself. (v1 auto-advanced 600ms after audio —
+//    that is the regression dad called out.)
+//  * Activating an arrow MID-NARRATION stops the current page's narration
+//    before turning — the story never talks across a page turn.
+//  * Triggering the ready arrow on a page WITH a video plays the video first
+//    (overlaid on the page image, old outro presentation; the big arrow
+//    shrinks back to the corner so her gaze on the video can't re-arm it);
+//    the video's end turns the page. On the LAST page the video auto-plays
+//    when audio ends, since there is no arrow left to trigger it.
+//  * End of book: the Library button grows 5x at left-center and pulses —
+//    the invitation back to the shelf. No "The End" screen.
+//  * A textless/silent page is "finished" the moment it shows (ready arrow
+//    immediately) — she is never stuck.
+//  * Read/Pause pill: pauses mid-word, resumes in place, restarts after end.
+// Missing index/manifest degrades to an empty shelf / page 1 — never a dead
+// app (8/19 law). Every page render suppresses dwell for the settle window
+// (D51) — a fresh page never inherits her gaze.
 "use strict";
 
 const S = {
   session: "r" + Date.now(),
-  index: [],          // /books/index.json rows {slug,title,cover,pages,hasVideo}
-  shelfPage: 0,
+  index: [],          // /books/index.json rows {slug,title,cover,pages,hasVideo,authored}
   manifest: null,     // the open book's manifest
   slug: null,
   page: 0,
-  pageText: [],       // current page's word tokens (spans in #pageText, same order)
+  wordSpans: [],      // current page's word-token <span>s, in reading order
   words: null,        // resolved [{word,start,end}] — manifest's or interpolated
   activeIdx: -1,      // word-sync cursor: NEVER decreases within one playback
-  advTimer: null,     // pending auto-advance beat after narration ends
-  videoDone: null,    // finish/skip continuation while the page video shows
+  reading: false,     // narration currently playing
+  paused: false,      // narration paused mid-page (Read/Pause pill)
+  finished: false,    // narration done on this page -> big ready-arrow waits
+  bookFinished: false,// last page done -> big pulsing Library button
+  playingOutro: false,// page video overlay currently showing
+  pulseTimer: null,   // 5s ready -> pulse timer (old reader's nudge)
+  ignorePause: null,  // one-tick latch: our own stop must not read as "Paused"
   renderGen: 0,       // bumps per render — stale async media outcomes are ignored
 };
 
 const $ = (id) => document.getElementById(id);
 const narration = $("narration");
 const video = $("pageVideo");
-
-const PER_SHELF = 8;  // covers per shelf screen: 8 + More + door stays under 12 targets
 
 function log(event, detail) {
   fetch("/log", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -48,9 +62,22 @@ function suppress() { if (window.Dwell && Dwell.suppress) Dwell.suppress(); }
 function show(id) {
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("show"));
   $(id).classList.add("show");
-  $("advanceArrow").classList.remove("show");   // only renderPage may raise it
+  document.body.classList.toggle("reading", id === "sRead");
   suppress();                                    // new surface: settle before gaze arms
 }
+
+// ---------- old DwellButton ring: mirror the engine's fill into the conic
+// progress ring (--dwell-progress, 0..360deg — dwell.js stays untouched) ----
+new MutationObserver((muts) => {
+  for (const mu of muts) {
+    const el = mu.target;
+    if (!el.classList || !el.classList.contains("dwell-fill")) continue;
+    const host = el.closest(".dwell");
+    if (!host) continue;
+    const pct = parseFloat(el.style.height) || 0;
+    host.style.setProperty("--dwell-progress", (pct * 3.6).toFixed(1) + "deg");
+  }
+}).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["style"] });
 
 // ---------- progress (pool event + local mirror for resume) ----------
 const posKey = (slug) => "era-reader:pos:" + slug;
@@ -67,41 +94,76 @@ function loadPos(slug, maxPage) {
 }
 function clearPos(slug) { try { localStorage.removeItem(posKey(slug)); } catch {} }
 
-// ---------- shelf ----------
+// ---------- shelf (old library-client structure: shelf-card grid, coral rim
+// on authored books, Back-to-TD-Snap tile as the exit affordance) ----------
 function renderShelf() {
-  const shelf = $("shelf");
-  shelf.innerHTML = "";
-  $("shelfEmpty").style.display = S.index.length ? "none" : "block";
-  const start = S.shelfPage * PER_SHELF;
-  for (const b of S.index.slice(start, start + PER_SHELF)) {
-    const d = document.createElement("div");
-    d.className = "book dwell";
-    d.setAttribute("data-dwell-say", b.title);
+  const grid = $("shelfGrid");
+  grid.innerHTML = "";
+  $("shelfEmpty").hidden = S.index.length > 0;
+  for (const b of S.index) {
+    const card = document.createElement("div");
+    card.className = b.authored === true ? "shelf-card is-authored" : "shelf-card";
+    const btn = document.createElement("div");
+    btn.className = "dwell dwell-button shelf-card-button";
+    btn.setAttribute("data-dwell-say", b.title);
+    btn.setAttribute("aria-label",
+      b.authored === true ? "Read " + b.title + " — Ellie's story" : "Read " + b.title);
+    const cover = document.createElement("span");
+    cover.className = "shelf-cover";
     const img = document.createElement("img");
-    img.className = "cover"; img.alt = ""; img.src = b.cover;
-    const name = document.createElement("div");
-    name.className = "name"; name.textContent = b.title;
-    d.appendChild(img); d.appendChild(name);
-    d.addEventListener("click", () => openBook(b.slug));
-    shelf.appendChild(d);
+    img.alt = "";
+    img.onerror = () => {
+      img.remove();
+      const fb = document.createElement("span");
+      fb.className = "shelf-cover-fallback muted";
+      fb.textContent = "No cover";
+      cover.appendChild(fb);
+    };
+    img.src = b.cover;
+    cover.appendChild(img);
+    const name = document.createElement("span");
+    name.className = "shelf-title";
+    name.textContent = b.title;
+    btn.appendChild(cover);
+    btn.appendChild(name);
+    btn.addEventListener("click", () => openBook(b.slug));
+    card.appendChild(btn);
+    if (b.authored === true) {
+      const badge = document.createElement("span");
+      badge.className = "shelf-authored-badge";
+      badge.setAttribute("aria-hidden", "true");
+      badge.innerHTML =
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+        '<path d="M12 2.5l2.1 5.6 5.9.3-4.6 3.7 1.6 5.7L12 14.6 6.9 17.8l1.6-5.7L3.9 8.4l5.9-.3Z"/></svg>' +
+        "Ellie's story";
+      card.appendChild(badge);
+    }
+    grid.appendChild(card);
   }
-  // black rest cell — plain and inert; a safe place to park her gaze
-  const rest = document.createElement("div");
-  rest.className = "restCell";
-  rest.setAttribute("aria-hidden", "true");
-  shelf.appendChild(rest);
-  if (S.index.length > PER_SHELF) {
-    const more = document.createElement("div");
-    more.className = "book more dwell";
-    more.setAttribute("data-dwell-say", "more books");
-    more.textContent = "more ▶";
-    more.addEventListener("click", () => {
-      S.shelfPage = (S.shelfPage + 1) % Math.ceil(S.index.length / PER_SHELF);
-      renderShelf();
-      suppress();
-    });
-    shelf.appendChild(more);
-  }
+  // Back to TD Snap — old shelf's exit tile; leaving the app is the
+  // highest-consequence hold (EXIT_HOLD_MS 2400, ux-contract §C).
+  const exitCard = document.createElement("div");
+  exitCard.className = "shelf-card";
+  const exitBtn = document.createElement("div");
+  exitBtn.id = "btnExit";
+  exitBtn.className = "dwell dwell-button shelf-tdsnap-button";
+  exitBtn.setAttribute("data-dwell-ms", "2400");
+  exitBtn.setAttribute("data-dwell-say", "back to TD Snap");
+  exitBtn.setAttribute("aria-label", "Back to TD Snap");
+  exitBtn.innerHTML = '<span class="shelf-tdsnap-icon" aria-hidden="true">\u{1F4AC}</span>' +
+    '<span class="shelf-title">Back to TD Snap</span>';
+  exitBtn.addEventListener("click", exitApp);
+  exitCard.appendChild(exitBtn);
+  grid.appendChild(exitCard);
+}
+
+async function exitApp() {
+  log("door", {});
+  try {
+    const r = await fetch("http://127.0.0.1:49155/app/exit", { method: "POST" });
+    if (r.ok) return;                            // ERAgaze closes this kiosk now
+  } catch { /* no engine here — web fallback */ }
+  location.reload();
 }
 
 async function openBook(slug) {
@@ -118,73 +180,175 @@ async function openBook(slug) {
 }
 
 // ---------- reading ----------
+function clearPulse() {
+  if (S.pulseTimer) { clearTimeout(S.pulseTimer); S.pulseTimer = null; }
+  $("btnNext").classList.remove("reader-next-button-pulse");
+}
+
 function stopMedia() {
-  if (S.advTimer) { clearTimeout(S.advTimer); S.advTimer = null; }
-  try { narration.pause(); } catch {}
-  closeVideo();
+  clearPulse();
+  // stopIgnorePause latch (old reader): our own pause() must not flip the UI
+  // into "Paused" — give the synchronous pause event a tick, then unlatch.
+  S.ignorePause = true;
+  try { narration.pause(); narration.currentTime = 0; } catch {}
+  setTimeout(() => { S.ignorePause = false; }, 0);
+  S.playingOutro = false;
+  video.onended = video.onerror = null;
+  try { video.pause(); } catch {}
+  video.removeAttribute("src");
+  video.classList.remove("reader-outro-video-playing");
+}
+
+function setDisabled(el, disabled) {
+  el.classList.toggle("is-disabled", disabled);
+  if (disabled) el.setAttribute("data-dwell-disabled", "");
+  else el.removeAttribute("data-dwell-disabled");
+}
+
+// Old reader's status line: "Page 3 of 16 · Reading aloud"
+function updateUi() {
+  const m = S.manifest;
+  if (!m) return;
+  const p = m.pages[S.page];
+  const label = S.reading && !S.paused ? "Reading aloud"
+    : S.paused ? "Paused"
+    : !p.audio ? "No voice for this page yet"
+    : "Ready to read";
+  $("pageMeta").textContent = "Page " + (S.page + 1) + " of " + m.pages.length + " · " + label;
+  $("btnReadLabel").textContent = S.reading && !S.paused ? "Pause" : "Read";
+  setDisabled($("btnRead"), !p.audio);
+  setDisabled($("btnPrev"), S.page === 0);
+  setDisabled($("btnNext"), S.page >= m.pages.length - 1);
+  // Once she triggers the ready arrow (starting the video), it shrinks back
+  // to the corner so her gaze on the video can't re-arm it (old reader).
+  const ready = S.finished && !S.playingOutro && !S.bookFinished;
+  $("btnNext").classList.toggle("reader-next-button-ready", ready);
+  if (!ready) $("btnNext").classList.remove("reader-next-button-pulse");
+  $("btnLibrary").classList.toggle("reader-library-button-finished", S.bookFinished);
+}
+
+function resetHighlight() {
+  S.activeIdx = -1;
+  for (const el of S.wordSpans) el.classList.remove("active");
+}
+
+function renderTokens(text) {
+  const holder = $("pageText");
+  holder.innerHTML = "";
+  S.wordSpans = [];
+  const parts = (text || "").split(/(\s+)/);
+  let any = false;
+  for (const part of parts) {
+    if (!part) continue;
+    any = true;
+    const isWord = /[\p{L}\p{N}]/u.test(part);
+    const s = document.createElement("span");
+    s.className = isWord ? "reader-token" : "reader-token-gap";
+    if (!isWord) s.setAttribute("aria-hidden", "true");
+    s.textContent = part;
+    holder.appendChild(s);
+    if (isWord) S.wordSpans.push(s);
+  }
+  if (!any) {
+    const empty = document.createElement("span");
+    empty.className = "muted";
+    empty.textContent = "No page text yet.";
+    holder.appendChild(empty);
+  }
 }
 
 function renderPage() {
   stopMedia();
+  const gen = ++S.renderGen;      // a fast page turn aborts the old play(); its
+                                  // rejection must not mark THIS page ready
   const m = S.manifest, p = m.pages[S.page];
   const base = "/books/" + S.slug + "/";
+  S.reading = false; S.paused = false; S.finished = false;
+  S.bookFinished = false; S.playingOutro = false;
   $("bookTitle").textContent = m.title;
-  $("pageNum").textContent = (S.page + 1) + " / " + m.pages.length;
 
-  const img = $("pageImg");
-  if (p.image) { img.src = base + p.image; img.style.display = ""; }
-  else { img.removeAttribute("src"); img.style.display = "none"; }
-
-  const holder = $("pageText");
-  holder.innerHTML = "";
-  S.pageText = (p.text || "").split(/\s+/).filter(Boolean);
-  for (const w of S.pageText) {
-    const s = document.createElement("span");
-    s.className = "w";
-    s.textContent = w;
-    holder.appendChild(s);
+  // Page image — robust both ways (the old layout's guarantee): the image
+  // frame owns its grid row, so a missing/failed image shows the fallback
+  // card and the text panel NEVER swallows the page (the v1 collapse that
+  // left a broken-image glyph with text filling the screen).
+  const img = $("pageImg"), fallback = $("imgFallback");
+  if (p.image) {
+    img.hidden = false; fallback.hidden = true;
+    img.onerror = () => { if (gen !== S.renderGen) return; img.hidden = true; fallback.hidden = false; };
+    img.src = base + p.image;
+  } else {
+    img.removeAttribute("src");
+    img.hidden = true; fallback.hidden = false;
   }
+
+  renderTokens(p.text);
   S.activeIdx = -1;
   S.words = (Array.isArray(p.words) && p.words.length)
     ? p.words.slice().sort((a, b) => a.start - b.start)
     : null;                                    // may be interpolated on loadedmetadata
 
-  $("btnPrev").style.visibility = S.page === 0 ? "hidden" : "visible";
-  $("btnRepeat").style.visibility = p.audio ? "visible" : "hidden";
-  $("btnNext").textContent = S.page === m.pages.length - 1 ? "The End ▶" : "next ▶";
-
-  const arrow = $("advanceArrow");
-  const gen = ++S.renderGen;      // a fast page turn aborts the old play(); its
-                                  // rejection must not raise the arrow HERE
   if (p.audio) {
-    arrow.classList.remove("show");
-    narration.src = base + p.audio;
+    narration.src = base + p.audio;            // auto-read: the page reads as it appears
     narration.play().catch(() => {
-      if (gen === S.renderGen) arrow.classList.add("show");  // audio blocked: she can still advance
+      // autoplay blocked: show the way forward (ready arrow) instead of a stuck page
+      if (gen === S.renderGen) markReadyForNext();
     });
   } else {
     narration.removeAttribute("src");
-    arrow.classList.add("show");               // textless/silent page: the way forward shows NOW
+    markReadyForNext();                        // textless/silent page: ready NOW (old law)
   }
 
+  updateUi();
   savePos(S.slug, S.page);
   suppress();                                  // page-settle: fresh page never inherits her gaze
 }
 
+// Narration done on this page. NOT last page: the big ready-arrow waits for
+// her (pulse after 5s — the old reader's gentle nudge). LAST page: the outro
+// video auto-plays if there is one (no arrow left to trigger it), otherwise
+// the book is finished and the Library button becomes the invitation.
+function markReadyForNext() {
+  clearPulse();
+  const m = S.manifest;
+  if (!m) return;
+  const p = m.pages[S.page];
+  if (S.page >= m.pages.length - 1) {
+    if (p.video && !S.playingOutro) { startOutro(p); return; }
+    setBookFinished();
+    return;
+  }
+  S.finished = true;
+  S.pulseTimer = setTimeout(() => {
+    if (S.finished && !S.playingOutro) $("btnNext").classList.add("reader-next-button-pulse");
+  }, 5000);
+  updateUi();
+}
+
+function setBookFinished() {
+  S.finished = false;
+  S.playingOutro = false;
+  S.bookFinished = true;
+  clearPos(S.slug);                            // next open starts fresh
+  log("book-done", { slug: S.slug });
+  updateUi();
+}
+
 // interpolation fallback: audio but no word timings -> spread the words evenly
 narration.addEventListener("loadedmetadata", () => {
-  if (S.words || !S.pageText.length) return;
+  if (S.words || !S.wordSpans.length) return;
   const dur = narration.duration;
   if (!isFinite(dur) || dur <= 0) return;
-  const n = S.pageText.length;
-  S.words = S.pageText.map((w, i) => ({ word: w, start: i * dur / n, end: (i + 1) * dur / n }));
+  const n = S.wordSpans.length;
+  S.words = S.wordSpans.map((el, i) =>
+    ({ word: el.textContent, start: i * dur / n, end: (i + 1) * dur / n }));
 });
 
 // word sync: binary search for the last word started by t; MONOTONIC —
 // the active index never decreases within a playback (repeat/page reset it).
+// Visual = the old reader's yellow token highlight.
 function syncWords(t) {
   const words = S.words;
-  if (!words || !words.length) return;
+  if (!words || !words.length || !S.wordSpans.length) return;
   let lo = 0, hi = words.length - 1, hit = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
@@ -192,80 +356,101 @@ function syncWords(t) {
   }
   if (hit <= S.activeIdx) return;
   S.activeIdx = hit;
-  const spans = $("pageText").children;
-  for (let i = 0; i < spans.length; i++) {
-    spans[i].classList.toggle("hl", i === hit);
-    spans[i].classList.toggle("read", i < hit);
-  }
+  const spanIdx = Math.min(hit, S.wordSpans.length - 1);
+  for (let i = 0; i < S.wordSpans.length; i++)
+    S.wordSpans[i].classList.toggle("active", i === spanIdx);
+  const active = S.wordSpans[spanIdx];
+  if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest", inline: "nearest" });
   if (window.__testHooks)
     (window.__hlSeq = window.__hlSeq || []).push({ page: S.page, idx: hit });
 }
 narration.addEventListener("timeupdate", () => syncWords(narration.currentTime));
 
+narration.addEventListener("play", () => {
+  S.reading = true; S.paused = false;
+  updateUi();
+});
+narration.addEventListener("pause", () => {
+  if (S.ignorePause) return;
+  if (narration.ended || !narration.src) return;
+  S.paused = true; S.reading = false;          // Read/Pause pill paused mid-page
+  updateUi();
+});
 narration.addEventListener("ended", () => {
-  const p = S.manifest && S.manifest.pages[S.page];
-  if (!p) return;
-  syncWords(Infinity);                         // land on the final word
-  if (p.video) return playVideo(p);
-  S.advTimer = setTimeout(advance, 600);       // a beat to finish looking, then the page turns
+  S.reading = false; S.paused = false;
+  // old reader clears the highlight when the page finishes reading
+  for (const el of S.wordSpans) el.classList.remove("active");
+  markReadyForNext();
+  updateUi();
 });
 
+// ---------- controls (old reader semantics) ----------
 function advance() {
-  if (S.advTimer) { clearTimeout(S.advTimer); S.advTimer = null; }
-  if (!S.manifest) return;
-  if (S.page >= S.manifest.pages.length - 1) return finishBook();
+  if (!S.manifest || S.page >= S.manifest.pages.length - 1) return;
   S.page++;
-  renderPage();
+  renderPage();                                // stops old narration; new page auto-reads
 }
-function prev() {
+function goNext() {
+  const m = S.manifest;
+  if (!m || S.page >= m.pages.length - 1) return;   // last page: Library finishes the book
+  const p = m.pages[S.page];
+  // Ready arrow on a page WITH a video: play the video first (old outro
+  // behavior); its end turns the page.
+  if (S.finished && p.video && !S.playingOutro) { startOutro(p); return; }
+  advance();                                   // mid-narration: the arrow PAUSES the story
+}
+function goPrev() {
   if (!S.manifest || S.page === 0) return;
   S.page--;
   renderPage();
 }
-function repeat() {
+function toggleRead() {
   const p = S.manifest && S.manifest.pages[S.page];
   if (!p || !p.audio) return;
-  if (S.advTimer) { clearTimeout(S.advTimer); S.advTimer = null; }
-  S.activeIdx = -1;
-  for (const s of $("pageText").children) s.classList.remove("hl", "read");
-  narration.currentTime = 0;
-  narration.play().catch(() => {});
-  log("repeat", { slug: S.slug, page: S.page });
+  if (S.reading && !S.paused) { narration.pause(); return; }
+  clearPulse();
+  S.finished = false;
+  if (S.paused && narration.src && !narration.ended && narration.currentTime > 0) {
+    narration.play().catch(() => {});          // resume exactly where she paused
+  } else {
+    resetHighlight();                          // read it again from the top
+    try { narration.currentTime = 0; } catch {}
+    narration.play().catch(() => {});
+    log("repeat", { slug: S.slug, page: S.page });
+  }
+  updateUi();
+}
+function goLibrary() {
+  stopMedia();
+  S.manifest = null; S.slug = null;
+  S.finished = false; S.bookFinished = false;
+  show("sShelf"); renderShelf(); log("shelf", {});
 }
 
-// ---------- optional per-page video (after narration; dwell skips) ----------
-function playVideo(p) {
-  $("videoWrap").classList.add("show");
+// ---------- per-page video (old outro presentation: overlaid on the page
+// image inside the frame; the video's end turns the page) ----------
+function startOutro(p) {
+  S.playingOutro = true;
+  clearPulse();
+  updateUi();                                  // big arrow shrinks back to the corner
   suppress();
-  let fired = false;
+  const gen = S.renderGen;
   const done = () => {
-    if (fired) return;
-    fired = true;
-    closeVideo();
-    advance();
+    if (gen !== S.renderGen) return;           // page changed under the video
+    S.playingOutro = false;
+    video.onended = video.onerror = null;
+    try { video.pause(); } catch {}
+    video.removeAttribute("src");
+    video.classList.remove("reader-outro-video-playing");
+    if (S.page >= S.manifest.pages.length - 1) setBookFinished();
+    else advance();
   };
-  S.videoDone = done;
   video.onended = done;
   video.onerror = done;                        // a broken video never strands her
   video.src = "/books/" + S.slug + "/" + p.video;
+  video.classList.add("reader-outro-video-playing");
   video.play().catch(done);
   log("video", { slug: S.slug, page: S.page });
-}
-function closeVideo() {
-  S.videoDone = null;
-  video.onended = video.onerror = null;
-  try { video.pause(); } catch {}
-  video.removeAttribute("src");
-  $("videoWrap").classList.remove("show");
-}
-
-// ---------- the end ----------
-function finishBook() {
-  stopMedia();
-  clearPos(S.slug);                            // next open starts fresh
-  log("book-done", { slug: S.slug });
-  $("endSub").textContent = "You read " + S.manifest.title + "!";
-  show("sEnd");
 }
 
 // ---------- boot ----------
@@ -278,7 +463,7 @@ async function boot() {
       if (typeof st.settleMs === "number" && isFinite(st.settleMs))
         Dwell.set({ settleMs: Math.max(0, Math.min(2000, st.settleMs)) });
     }
-    if (st.childName) $("shelfTitle").textContent = "\u{1F4DA} " + st.childName + "'s Books";
+    if (st.childName) $("shelfTitle").textContent = st.childName + "'s Bookshelf";
   } catch { /* defaults stand — never block the shelf on settings */ }
 
   try {
@@ -288,29 +473,10 @@ async function boot() {
   renderShelf();
   suppress();
 
-  $("btnNext").addEventListener("click", advance);
-  $("btnPrev").addEventListener("click", prev);
-  $("btnRepeat").addEventListener("click", repeat);
-  $("advanceArrow").addEventListener("click", advance);
-  $("btnSkip").addEventListener("click", () => { if (S.videoDone) S.videoDone(); });
-  $("btnAgain").addEventListener("click", () => { S.page = 0; show("sRead"); renderPage(); });
-  $("btnShelf").addEventListener("click", () => {
-    stopMedia(); S.manifest = null; S.slug = null;
-    show("sShelf"); renderShelf(); log("shelf", {});
-  });
-  $("door").addEventListener("click", async () => {
-    if (!$("sShelf").classList.contains("show")) {   // in a book: back to the shelf (place saved)
-      stopMedia(); S.manifest = null; S.slug = null;
-      show("sShelf"); renderShelf(); log("shelf", {});
-      return;
-    }
-    log("door", {});                                 // on the shelf: leave the app
-    try {
-      const r = await fetch("http://127.0.0.1:49155/app/exit", { method: "POST" });
-      if (r.ok) return;                              // ERAgaze closes this kiosk now
-    } catch { /* no engine here — web fallback */ }
-    location.reload();
-  });
+  $("btnNext").addEventListener("click", goNext);
+  $("btnPrev").addEventListener("click", goPrev);
+  $("btnRead").addEventListener("click", toggleRead);
+  $("btnLibrary").addEventListener("click", goLibrary);
 
   log("boot", { books: S.index.length });
 }
@@ -318,7 +484,7 @@ boot();
 
 // introspection surface (mirrors window.Board) — tests + field debugging
 window.Reader = {
-  version: "1.0-manifest",
+  version: "2.0-old-ui",
   state: () => ({
     screen: (document.querySelector(".screen.show") || {}).id || null,
     slug: S.slug, page: S.page,
@@ -326,8 +492,10 @@ window.Reader = {
     words: S.words ? S.words.length : 0,
     audio: narration.paused ? "paused" : "playing",
     audioTime: narration.currentTime,
-    arrow: $("advanceArrow").classList.contains("show"),
-    videoShowing: $("videoWrap").classList.contains("show"),
+    arrow: S.finished && !S.playingOutro && !S.bookFinished,  // the big ready-arrow
+    finished: S.finished,
+    bookFinished: S.bookFinished,
+    videoShowing: S.playingOutro,
     shelfCount: S.index.length,
   }),
   open: openBook,

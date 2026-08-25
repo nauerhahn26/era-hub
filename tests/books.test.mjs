@@ -113,6 +113,7 @@ test("GET /books/index.json lists the complete package ONLY, spec shape, no-cach
   assert.deepEqual(idx[0], {
     slug: "luna-the-fox", title: "Luna the Fox",
     cover: "/books/luna-the-fox/cover.jpg", pages: 2, hasVideo: false,
+    authored: false,   // manifest `authored: true` passes through (coral-rim shelf card)
   });
 });
 
