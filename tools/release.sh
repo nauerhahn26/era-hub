@@ -28,7 +28,7 @@ echo "== 3/4 checksums =="
 echo "== 4/4 tag + release =="
 git -C "$HUB" tag -f "$V"
 git -C "$HUB" push -q origin "refs/tags/$V" --force
-NOTES="New ERA suite $V — hub + Gaze-ready apps (Making Words, The Pencil, Morning Outfit Picker board) with bundled Node runtime.
+NOTES="New ERA suite $V — hub + Gaze-ready apps (Making Words, The Pencil, Morning Outfit Picker board, Music board with 40-second clips and offline playback) with bundled Node runtime.
 Install: unzip, run install.ps1, double-click the New ERA shortcut. Uninstall never touches your data.
 sha256 in checksums.txt."
 cp "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz"   # stable name = the website's direct-download URL
