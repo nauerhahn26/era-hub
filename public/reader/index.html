@@ -195,8 +195,8 @@
     min-height: 0;
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
-    border: 1px solid var(--line);
-    border-radius: 24px;
+    border: none;
+    border-radius: 0;   /* full-bleed: the book owns the whole screen (dad 8/25) */
     overflow: hidden;
     background:
       radial-gradient(circle at top, rgba(255, 245, 224, 0.95), rgba(245, 247, 242, 0.75) 28%),
@@ -249,10 +249,10 @@
     position: absolute;
     left: 50%;
     top: 50%;
-    width: auto;
-    height: auto;
-    max-width: 100%;
-    max-height: 100%;
+    /* fill the frame exactly like the video does (dad 8/25: the book fills
+       the screen in read mode, and NO size jump when the video takes over) */
+    width: 100%;
+    height: 100%;
     object-fit: contain;
     filter: drop-shadow(0 18px 28px rgba(31, 43, 44, 0.12));
     transform: translate(-50%, -50%);
@@ -422,19 +422,9 @@
 
   /* black rest area — READING page only (contract; the old reading page had
      none in-frame and the old shelf's drift protection is its gutters).
-     Kept small, bottom-left, unobtrusive — as on dad's device today. */
-  #rest {
-    position: fixed;
-    left: 26px;
-    bottom: 26px;
-    width: clamp(150px, 12vw, 210px);
-    height: clamp(96px, 11vh, 140px);
-    border-radius: 18px;
-    background: #000000;
-    z-index: 30;
-    display: none;
-  }
-  body.reading #rest { display: block; }
+     READER HAS NO BLACK REST SPOT (dad's ruling 8/25, deviates from the
+     board UX contract deliberately: dead margins + the text panel are the
+     park space here; "I don't think necessary for this app"). */
 </style>
 </head>
 <body>
@@ -480,7 +470,6 @@
   </section>
 </div>
 
-<div id="rest" aria-hidden="true"></div>
 
 <audio id="narration" preload="auto"></audio>
 

@@ -110,11 +110,19 @@ test("GET /books/index.json lists the complete package ONLY, spec shape, no-cach
   assert.equal(r.headers.get("cache-control"), "no-cache");
   const idx = await r.json();
   assert.equal(idx.length, 1, "manifest-less + unparseable dirs are excluded");
-  assert.deepEqual(idx[0], {
-    slug: "luna-the-fox", title: "Luna the Fox",
-    cover: "/books/luna-the-fox/cover.jpg", pages: 2, hasVideo: false,
+  // ?v= cache-bust: cover URL carries the package version (manifest mtime),
+  // so a re-exported package escapes the immutable media cache (Tiddler
+  // rotation lesson, 8/25)
+  assert.match(idx[0].cover, /^\/books\/luna-the-fox\/cover\.jpg\?v=[a-z0-9]+$/);
+  assert.equal(typeof idx[0].v, "string");
+  const { cover: _c, v: _v, ...rest } = idx[0];
+  assert.deepEqual(rest, {
+    slug: "luna-the-fox", title: "Luna the Fox", pages: 2, hasVideo: false,
     authored: false,   // manifest `authored: true` passes through (coral-rim shelf card)
   });
+  // and the versioned URL actually serves (query must not break the jail)
+  const cv = await fetch(`${BASE}${idx[0].cover}`);
+  assert.equal(cv.status, 200);
 });
 
 test("manifest.json serves 200 with no-cache", async () => {

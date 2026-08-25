@@ -86,12 +86,17 @@ function booksIndex() {
   for (const d of dirs) {
     if (!d.isDirectory()) continue;
     try {
-      const m = JSON.parse(fs.readFileSync(path.join(BOOKS_DIR, d.name, "manifest.json"), "utf8"));
+      const mPath = path.join(BOOKS_DIR, d.name, "manifest.json");
+      const m = JSON.parse(fs.readFileSync(mPath, "utf8"));
       const pages = Array.isArray(m.pages) ? m.pages : [];
+      // ?v= cache-bust: media is served immutable/24h, so a re-exported package
+      // must change its URLs (manifest mtime = the package version; the CSS
+      // stale-cache law generalized — clients cache the bare URL hard)
+      const v = Math.floor(fs.statSync(mPath).mtimeMs / 1000).toString(36);
       out.push({ slug: d.name, title: String(m.title || d.name),
-                 cover: "/books/" + d.name + "/" + (m.cover || "cover.jpg"),
+                 cover: "/books/" + d.name + "/" + (m.cover || "cover.jpg") + "?v=" + v,
                  pages: pages.length, hasVideo: pages.some(p => p && p.video),
-                 authored: m.authored === true });
+                 authored: m.authored === true, v });
     } catch {}   // incomplete package: skip silently
   }
   return out;

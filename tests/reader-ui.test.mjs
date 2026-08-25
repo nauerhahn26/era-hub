@@ -132,10 +132,10 @@ test("shelf: OLD layout — shelf-card grid, square cover, NO in-grid rest cell,
   await tile.waitFor();
   assert.equal(await tile.locator(".shelf-title").textContent(), "Luna the Fox");
   assert.match(await tile.locator(".shelf-cover img").getAttribute("src"),
-    /\/books\/luna-the-fox\/cover\.jpg$/);
+    /\/books\/luna-the-fox\/cover\.jpg\?v=[a-z0-9]+$/);   // ?v= cache-bust (8/25)
   // the OLD shelf's drift protection is its generous gutters — no black cells
   assert.equal(await page.locator("#shelfGrid .restCell").count(), 0, "no in-grid rest cell (old layout)");
-  assert.equal(await page.locator("#rest").isHidden(), true, "reading-page rest area hidden on the shelf");
+  assert.equal(await page.locator("#rest").count(), 0, "no rest area anywhere (dad 8/25)");
   assert.equal(await page.locator("#shelfGrid .shelf-tdsnap-button").count(), 1, "Back to TD Snap exit tile");
   assert.equal(await page.locator("#shelfGrid .shelf-tdsnap-button").getAttribute("data-dwell-ms"),
     "2400", "leaving the app is the highest-consequence hold (EXIT_HOLD_MS)");
@@ -154,7 +154,7 @@ test("open book by tap: reading screen, narration audio PLAYS (no speechSynthesi
   assert.equal(s.slug, "luna-the-fox");
   assert.equal(s.page, 0);
   assert.equal(s.arrow, false, "no ready-arrow while narration is playing");
-  assert.equal(await page.locator("#rest").isHidden(), false, "black rest area shows on the reading page");
+  assert.equal(await page.locator("#rest").count(), 0, "no black rest spot in the reader (dad 8/25)");
   assert.equal(await page.evaluate(() => window.__speakCalls), 0, "speechSynthesis never called");
   await ctx.close();
 });
@@ -197,7 +197,7 @@ test("next/prev/Read-Pause by synthetic click (touch parity); arrow stops narrat
   await page.locator("#btnNext").click();
   assert.equal((await state(page)).page, 1, "next turns forward");
   assert.match(await page.evaluate(() => document.getElementById("narration").src),
-    /002\.wav$/, "page 0 narration was stopped — page 1's audio loaded (pauses with the arrow)");
+    /002\.wav(\?v=[^&]*)?$/, "page 0 narration was stopped — page 1's audio loaded (pauses with the arrow)");
   await page.locator("#btnPrev").click();
   assert.equal((await state(page)).page, 0, "prev turns back");
   // let narration run, then Read/Pause: pauses in place, resumes in place

@@ -173,6 +173,9 @@ async function openBook(slug) {
   catch { log("book-open-failed", { slug }); return; }   // stay on the shelf, never break
   if (!m || !Array.isArray(m.pages) || !m.pages.length) { log("book-open-failed", { slug }); return; }
   S.manifest = m; S.slug = slug;
+  // ?v= cache-bust: media is served immutable, so a re-exported package must
+  // change its URLs (exportedAt = the package version)
+  S.vq = m.exportedAt ? "?v=" + encodeURIComponent(m.exportedAt) : "";
   S.page = loadPos(slug, m.pages.length - 1);
   log("book-open", { slug, page: S.page });
   show("sRead");
@@ -275,7 +278,7 @@ function renderPage() {
   if (p.image) {
     img.hidden = false; fallback.hidden = true;
     img.onerror = () => { if (gen !== S.renderGen) return; img.hidden = true; fallback.hidden = false; };
-    img.src = base + p.image;
+    img.src = base + p.image + S.vq;
   } else {
     img.removeAttribute("src");
     img.hidden = true; fallback.hidden = false;
@@ -288,7 +291,7 @@ function renderPage() {
     : null;                                    // may be interpolated on loadedmetadata
 
   if (p.audio) {
-    narration.src = base + p.audio;            // auto-read: the page reads as it appears
+    narration.src = base + p.audio + S.vq;     // auto-read: the page reads as it appears
     narration.play().catch(() => {
       // autoplay blocked: show the way forward (ready arrow) instead of a stuck page
       if (gen === S.renderGen) markReadyForNext();
@@ -447,7 +450,7 @@ function startOutro(p) {
   };
   video.onended = done;
   video.onerror = done;                        // a broken video never strands her
-  video.src = "/books/" + S.slug + "/" + p.video;
+  video.src = "/books/" + S.slug + "/" + p.video + S.vq;
   video.classList.add("reader-outro-video-playing");
   video.play().catch(done);
   log("video", { slug: S.slug, page: S.page });
