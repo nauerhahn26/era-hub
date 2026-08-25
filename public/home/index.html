@@ -56,7 +56,7 @@
       <a class="app" href="/">Making Words<small>guided word building</small></a>
       <a class="app" href="/pencil/">The Pencil<small>free writing with prediction</small></a>
       <a class="app" href="/board/">Board<small>daily choices, photos & speech</small></a>
-      <a class="app" href="/board/?recipe=songs">Music<small>favorite songs, audio only</small></a>
+      <a class="app" id="musicApp" href="/board/?recipe=songs" hidden>Music<small>favorite songs, audio only</small></a>
       <a class="app" href="/reader/">Book Reader<small>picture books, read aloud</small></a>
       <a class="app" href="/settings/">Settings<small>dwell, voice, volume cap</small></a>
     </div>
@@ -70,6 +70,11 @@
   const setup = document.getElementById("setup"), launcher = document.getElementById("launcher");
   if (s.hasProfile) {
     launcher.classList.remove("hidden");
+    // Music appears only when a songs library exists (data/music/manifest.json)
+    try {
+      const m = await fetch("/recipes/songs.json", { method: "HEAD", cache: "no-store" });
+      if (m.ok) document.getElementById("musicApp").hidden = false;
+    } catch {}
     document.getElementById("hello").textContent = "Hi, " + s.childName + "'s family!";
     document.getElementById("devnote").textContent =
       "Hub is running locally on this machine. Dwell: " + ((s.dwellMs||1000)/1000) + "s.";
