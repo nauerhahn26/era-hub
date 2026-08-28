@@ -367,7 +367,8 @@ const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css
                ".mp4": "video/mp4", ".wav": "audio/wav",
                ".m4a": "audio/mp4", ".webm": "audio/webm", ".opus": "audio/ogg",
                ".webp": "image/webp",
-               ".jpg": "image/jpeg", ".jpeg": "image/jpeg" };
+               ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".ico": "image/x-icon" };
 
 // ---- email published writing to the family (optional; Resend key + recipient
 // come from the overlay data dir, never from this repo) ----
@@ -678,6 +679,16 @@ const server = http.createServer((req, res) => {
   // static
   let p = safeDecode((req.url || "/").split("?")[0]);
   if (p === null) { res.writeHead(400).end(); return; }
+  // /pencil -> /pencil/ (301, query kept): app dirs typed without the trailing
+  // slash used to 404 with a bare "not found" (install QA 8/28).
+  if (!p.endsWith("/") && !path.extname(p)) {
+    const dir = path.normalize(path.join(PUB, p));
+    if (dir.startsWith(PUB) && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      const q = (req.url || "").split("?")[1];
+      res.writeHead(301, { Location: p + "/" + (q ? "?" + q : "") }).end();
+      return;
+    }
+  }
   if (p.endsWith("/")) p += "index.html";
   const file = path.normalize(path.join(PUB, p));
   if (!file.startsWith(PUB)) { res.writeHead(403).end(); return; }

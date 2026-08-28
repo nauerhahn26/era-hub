@@ -9,7 +9,11 @@
 set -euo pipefail
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
-OUT="${1:-$ROOT/dist/new-era-payload}"
+# Default output lives INSIDE this checkout (worktree-safe: the old $ROOT/dist
+# default made a worktree run rm -rf the main checkout's reference payload).
+# `--with-node` as the first arg is a flag, not an output dir.
+OUT="${1:-$HUB/dist/new-era-payload}"
+[ "$OUT" = "--with-node" ] && OUT="$HUB/dist/new-era-payload"
 VERSION="$(date -u +%Y%m%d.%H%M)"
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
@@ -24,6 +28,7 @@ cp -r "$ROOT/era-board/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"
 cp -r "$HUB/public/home" "$OUT/public/home"
 cp -r "$HUB/public/reader" "$OUT/public/reader"
+cp "$HUB/public/favicon.ico" "$OUT/public/favicon.ico"
 
 # --with-node: bundle a portable Windows Node runtime (no install needed)
 if [ "${2:-}" = "--with-node" ] || [ "${1:-}" = "--with-node" ]; then

@@ -14,3 +14,4 @@ public/runway.json
 public/dist-payload.tar.gz
 public/pilot-verify.ps1
 server.log
+dist/

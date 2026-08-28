@@ -20,10 +20,18 @@ LOCK="/tmp/era-gate.lock"
 exec 9>"$LOCK"
 flock -n 9 || { echo "== era-gate: another gate run is active — queued, waiting… =="; flock 9; }
 
+# a fresh worktree checkout has a bare public/ (the symlink farm is untracked)
+# — assemble it against the gate's data dir so the test hub serves the apps.
+[ -e "$HUB/public/pencil" ] || ERA_DATA_DIR="$DATA" bash "$HUB/tools/assemble.sh"
+
 rm -rf "$GATE"; mkdir -p "$GATE"
 for repo in era-core era-making-words era-pencil era-board era-hub; do
-  [ -d "$ROOT/$repo/tests" ] || continue
-  for f in "$ROOT/$repo"/tests/*; do
+  # era-hub's suites come from THIS checkout — in a worktree gate, a suite
+  # added on the feature branch must run too (8/28: routes.test.mjs silently
+  # skipped because the collector only looked at the main checkout).
+  src="$ROOT/$repo"; [ "$repo" = "era-hub" ] && src="$HUB"
+  [ -d "$src/tests" ] || continue
+  for f in "$src"/tests/*; do
     base="$(basename "$f")"
     [ -d "$f" ] && { cp -r "$f" "$GATE/$base"; continue; }
     cp "$f" "$GATE/$base"
