@@ -23,6 +23,9 @@ cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$HUB/../era-core/NOTICE" "$OUT/"
 cp -rL "$ROOT/era-core/lib" "$OUT/public/lib"
 cp "$ROOT/era-core/dwell.js" "$ROOT/era-core/speech.js" "$OUT/public/"
 cp "$ROOT/era-making-words/app/index.html" "$ROOT/era-making-words/app/studio.js" "$OUT/public/"
+# lesson content ships with the app (dad's 8/28 ruling) — the PUBLIC copy in
+# era-making-words/content, never the family one (runway/sentences stay home)
+cp "$ROOT/era-making-words/content/lessons.json" "$OUT/public/lessons.json"
 cp -r "$ROOT/era-pencil/app" "$OUT/public/pencil"
 cp -r "$ROOT/era-board/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"
