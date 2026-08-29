@@ -55,6 +55,45 @@ const MOVIES_DIR = path.join(DATA, "movies"); // movie catalog + posters (movie-
 const SYMBOLS_CACHE = path.join(DATA, "symbols-cache");
 fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
 
+// ---- app registry (install-with-checkboxes, 8/29): one engine, apps chosen
+// at install and togglable later from the home screen. Enabled set lives in
+// <DATA>/apps.json ({"enabled":[ids]}); absent file = everything (existing
+// installs keep all their apps). Settings is not an app — always present.
+const APPS = [
+  { id: "making-words", title: "Making Words", sub: "guided word building", path: "/" },
+  { id: "pencil", title: "The Pencil", sub: "free writing with prediction", path: "/pencil/" },
+  { id: "board", title: "Board", sub: "daily choices, photos & speech", path: "/board/" },
+  { id: "music", title: "Music", sub: "favorite songs, audio only", path: "/board/?recipe=songs" },
+  { id: "movies", title: "Movies", sub: "shows & movies, her picks", path: "/board/?recipe=movies" },
+  { id: "reader", title: "Book Reader", sub: "picture books, read aloud", path: "/reader/" },
+];
+function loadEnabledApps() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(DATA, "apps.json"), "utf8"));
+    if (Array.isArray(j.enabled)) return j.enabled.filter(id => APPS.some(a => a.id === id));
+  } catch {}
+  return APPS.map(a => a.id);
+}
+// Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
+// best-effort — the home tile is the source of truth, the .lnk a convenience).
+function appShortcut(app, enabled) {
+  if (process.platform !== "win32") return;
+  const { spawn } = require("child_process");
+  const script = enabled
+    ? `$w = New-Object -ComObject WScript.Shell;` +
+      `foreach ($d in @([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))) {` +
+      `$l = $w.CreateShortcut((Join-Path $d '${app.title}.lnk'));` +
+      `$l.TargetPath = '${path.join(__dirname, "start-hub.bat")}';` +
+      `$l.Arguments = '${PORT} "${app.path}"';` +
+      `$l.WorkingDirectory = '${__dirname}'; $l.Save() }`
+    : `foreach ($d in @([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))) {` +
+      `Remove-Item (Join-Path $d '${app.title}.lnk') -Force -ErrorAction SilentlyContinue }`;
+  try {
+    spawn("powershell.exe", ["-NoProfile", "-Command", script], { stdio: "ignore" })
+      .on("error", (e) => console.error("[apps] shortcut: " + e.message));
+  } catch (e) { console.error("[apps] shortcut: " + e.message); }
+}
+
 // ARASAAC lookup ported from packages/generator/aac_board_designer.py
 const ARASAAC_API = "https://api.arasaac.org/api/pictograms/en/bestsearch/";
 const ARASAAC_IMG = "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
@@ -906,6 +945,33 @@ const server = http.createServer((req, res) => {
     serveSymbol(res, urlPath.slice("/symbol/".length)).catch((e) => {
       console.error("[symbol] route error: " + e.message);
       try { res.writeHead(500).end(); } catch {}
+    });
+    return;
+  }
+
+  // ---- app picker: which apps this install offers (install-with-checkboxes,
+  // 8/29 ruling: everything, one, or a few) ----
+  if (req.method === "GET" && urlPath === "/apps") {
+    const enabled = loadEnabledApps();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ apps: APPS.map(a => ({ ...a, enabled: enabled.includes(a.id) })) }));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/apps") {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      try {
+        const { id, enabled } = JSON.parse(body);
+        const app = APPS.find(a => a.id === id);
+        if (!app || typeof enabled !== "boolean") { res.writeHead(400).end(); return; }
+        let set = loadEnabledApps().filter(x => x !== id);
+        if (enabled) set.push(id);
+        fs.writeFileSync(path.join(DATA, "apps.json"),
+          JSON.stringify({ enabled: APPS.map(a => a.id).filter(x => set.includes(x)) }, null, 2));
+        appShortcut(app, enabled);   // Windows: desktop/start-menu .lnk follows the toggle
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
     });
     return;
   }

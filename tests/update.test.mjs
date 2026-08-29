@@ -15,8 +15,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = 8405;      // hub under test (8391-8398, 8402-8404 held by siblings)
-const FEED_PORT = 8406; // fake release server
+const PORT = 8410;      // hub under test (8391-8409 held by sibling suites)
+const FEED_PORT = 8411; // fake release server
 const BASE = `http://127.0.0.1:${PORT}`;
 const OLD_BUILD = "20200101.0000";
 const NEW_BUILD = "20991231.2359";
@@ -117,7 +117,7 @@ test("a second check is a no-op: up-to-date", async () => {
 });
 
 test("a checkout hub keeps the updater disabled", async () => {
-  const PORT2 = 8407;
+  const PORT2 = 8412;
   const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), "era-upd2-"));
   const c2 = spawn("node", ["server.js", String(PORT2)], {
     cwd: HUB, stdio: ["ignore", "ignore", "ignore"],

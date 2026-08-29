@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = 8404; // never live 8377; 8391-8398 + 8402/8403 held by sibling suites
+const PORT = 8409; // never live 8377; 8391-8408 held by sibling suites (movies took 8404-8406)
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-routes-"));
 let child;

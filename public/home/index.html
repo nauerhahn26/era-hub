@@ -52,15 +52,13 @@
   <div id="launcher" class="hidden">
     <h1 id="hello">Hi!</h1>
     <p class="sub">Pick an app — each one works by eye gaze or touch.</p>
-    <div class="apps">
-      <a class="app" href="/">Making Words<small>guided word building</small></a>
-      <a class="app" href="/pencil/">The Pencil<small>free writing with prediction</small></a>
-      <a class="app" href="/board/">Board<small>daily choices, photos & speech</small></a>
-      <a class="app" id="musicApp" href="/board/?recipe=songs" hidden>Music<small>favorite songs, audio only</small></a>
-      <a class="app" id="moviesApp" href="/board/?recipe=movies" hidden>Movies<small>shows &amp; movies, her picks</small></a>
-      <a class="app" href="/reader/">Book Reader<small>picture books, read aloud</small></a>
+    <div class="apps" id="appGrid">
       <a class="app" href="/settings/">Settings<small>dwell, voice, volume cap</small></a>
     </div>
+    <details class="note" id="appMgr" hidden>
+      <summary style="cursor:pointer">Add or remove apps</summary>
+      <div id="appMgrList" style="margin-top:8px"></div>
+    </details>
     <p class="note" id="devnote"></p>
   </div>
 </div>
@@ -71,19 +69,48 @@
   const setup = document.getElementById("setup"), launcher = document.getElementById("launcher");
   if (s.hasProfile) {
     launcher.classList.remove("hidden");
-    // Music appears only when a songs library exists (data/music/manifest.json)
+    // Tiles come from the install's app picker (/apps). Music/Movies stay
+    // content-conditional on top of being enabled: Music needs a songs
+    // library; Movies needs something watchable (its recipe is 200 even
+    // when empty by design).
     try {
-      const m = await fetch("/recipes/songs.json", { method: "HEAD", cache: "no-store" });
-      if (m.ok) document.getElementById("musicApp").hidden = false;
-    } catch {}
-    try {
-      // movies recipe is 200-even-when-empty by design (missing catalog serves a
-      // valid empty recipe) — show the tile only when something is watchable
-      const mv = await fetch("/recipes/movies.json", { cache: "no-store" });
-      if (mv.ok) {
-        const r = await mv.json();
-        if ((r.boards || []).some(b => (b.buttons || []).length > 0))
-          document.getElementById("moviesApp").hidden = false;
+      const { apps } = await (await fetch("/apps", { cache: "no-store" })).json();
+      let hasSongs = false, hasMovies = false;
+      try { hasSongs = (await fetch("/recipes/songs.json", { method: "HEAD", cache: "no-store" })).ok; } catch {}
+      try {
+        const mv = await fetch("/recipes/movies.json", { cache: "no-store" });
+        if (mv.ok) hasMovies = ((await mv.json()).boards || []).some(b => (b.buttons || []).length > 0);
+      } catch {}
+      const grid = document.getElementById("appGrid");
+      for (const a of apps) {
+        if (!a.enabled) continue;
+        if (a.id === "music" && !hasSongs) continue;
+        if (a.id === "movies" && !hasMovies) continue;
+        const el = document.createElement("a");
+        el.className = "app"; el.href = a.path;
+        el.textContent = a.title;
+        const sm = document.createElement("small"); sm.textContent = a.sub;
+        el.appendChild(sm);
+        grid.insertBefore(el, grid.lastElementChild);   // Settings stays last
+      }
+      // grown-up manager: checkboxes mirror the install chooser
+      const mgr = document.getElementById("appMgr"), list = document.getElementById("appMgrList");
+      mgr.hidden = false;
+      for (const a of apps) {
+        const row = document.createElement("label");
+        row.style.cssText = "display:flex;gap:8px;align-items:center;margin:4px 0;font-size:15px";
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = a.enabled;
+        cb.addEventListener("change", async () => {
+          cb.disabled = true;
+          try {
+            await fetch("/apps", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: a.id, enabled: cb.checked }) });
+            location.reload();
+          } catch { cb.disabled = false; }
+        });
+        row.appendChild(cb); row.appendChild(document.createTextNode(a.title));
+        list.appendChild(row);
       }
     } catch {}
     document.getElementById("hello").textContent = "Hi, " + s.childName + "'s family!";

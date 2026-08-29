@@ -43,14 +43,16 @@ fi
 cat > "$OUT/start-hub.bat" <<'BAT'
 @echo off
 rem New ERA hub - local-first: binds 127.0.0.1, state lives in .\data
+rem   start-hub.bat [port] [path]   path = which app page to open (default /home/)
 cd /d %~dp0
 if "%1"=="" (set PORT=8377) else (set PORT=%1)
+if "%2"=="" (set OPEN=/home/) else (set OPEN=%~2)
 if not defined ERA_DATA_DIR set ERA_DATA_DIR=%~dp0data
 set NODE=node
 if exist "%~dp0node\node.exe" set NODE=%~dp0node\node.exe
 start "New ERA hub" /min "%NODE%" server.js %PORT%
 timeout /t 2 /nobreak >nul
-start "" http://127.0.0.1:%PORT%/home/
+start "" http://127.0.0.1:%PORT%%OPEN%
 BAT
 cat > "$OUT/start-hub.sh" <<'SH'
 #!/usr/bin/env bash
@@ -60,34 +62,82 @@ exec node server.js "${1:-8377}"
 SH
 chmod +x "$OUT/start-hub.sh"
 cat > "$OUT/install.ps1" <<'PS1'
-# install.ps1 - per-user setup for the New ERA payload: shortcuts + optional
-# autostart. No admin needed; nothing leaves this folder except .lnk files.
-param([switch]$AutoStart)
+# install.ps1 - per-user setup for the New ERA payload. Pick the apps you want
+# (checkbox dialog; everything, one, or a few) - each chosen app gets its own
+# shortcut, and your choice seeds the home screen. Change it anytime from the
+# home screen's "Add or remove apps". No admin needed; nothing leaves this
+# folder except .lnk files. Non-interactive: -Apps "pencil,reader" or -Apps all.
+param([switch]$AutoStart, [string]$Apps)
 $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$All = @(
+  @{ Id="making-words"; Title="Making Words"; Path="/" },
+  @{ Id="pencil";       Title="The Pencil";   Path="/pencil/" },
+  @{ Id="board";        Title="Board";        Path="/board/" },
+  @{ Id="music";        Title="Music";        Path="/board/?recipe=songs" },
+  @{ Id="movies";       Title="Movies";       Path="/board/?recipe=movies" },
+  @{ Id="reader";       Title="Book Reader";  Path="/reader/" }
+)
+$Chosen = $null
+if ($Apps) {
+  $want = $Apps.Split(",") | ForEach-Object { $_.Trim().ToLower() }
+  if ($want -contains "all") { $Chosen = $All }
+  else { $Chosen = @($All | Where-Object { $want -contains $_.Id }) }
+} else {
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    $f = New-Object Windows.Forms.Form
+    $f.Text = "New ERA - choose your apps"; $f.Width = 380; $f.Height = 330
+    $f.StartPosition = "CenterScreen"; $f.FormBorderStyle = "FixedDialog"
+    $f.MaximizeBox = $false; $f.MinimizeBox = $false
+    $clb = New-Object Windows.Forms.CheckedListBox
+    $clb.CheckOnClick = $true; $clb.Left = 15; $clb.Top = 15
+    $clb.Width = 330; $clb.Height = 205
+    foreach ($a in $All) { [void]$clb.Items.Add($a.Title, $true) }
+    $ok = New-Object Windows.Forms.Button
+    $ok.Text = "Install"; $ok.Left = 15; $ok.Top = 235; $ok.Width = 330; $ok.Height = 38
+    $ok.Add_Click({ $f.DialogResult = "OK"; $f.Close() })
+    $f.Controls.Add($clb); $f.Controls.Add($ok); $f.AcceptButton = $ok
+    if ($f.ShowDialog() -eq "OK") {
+      $Chosen = @()
+      for ($i = 0; $i -lt $All.Count; $i++) { if ($clb.GetItemChecked($i)) { $Chosen += $All[$i] } }
+    }
+  } catch { $Chosen = $null }   # headless / no WinForms: install everything
+}
+if (-not $Chosen -or $Chosen.Count -eq 0) { $Chosen = $All }
 $W = New-Object -ComObject WScript.Shell
-function Mk($dir, $name) {
+function Mk($dir, $name, $argstr) {
   $lnk = $W.CreateShortcut((Join-Path $dir "$name.lnk"))
   $lnk.TargetPath = Join-Path $Here "start-hub.bat"
+  if ($argstr) { $lnk.Arguments = $argstr }
   $lnk.WorkingDirectory = $Here
   $lnk.Description = "New ERA Communications - local eye-gaze apps"
   $lnk.Save()
 }
-Mk ([Environment]::GetFolderPath("Desktop")) "New ERA"
 $sm = Join-Path ([Environment]::GetFolderPath("StartMenu")) "Programs"
-Mk $sm "New ERA"
-if ($AutoStart) { Mk ([Environment]::GetFolderPath("Startup")) "New ERA" }
-Write-Output "INSTALL-OK: shortcuts created$(if($AutoStart){' (+autostart)'})"
+Mk ([Environment]::GetFolderPath("Desktop")) "New ERA" ""
+Mk $sm "New ERA" ""
+foreach ($a in $Chosen) {
+  $argstr = '8377 "' + $a.Path + '"'
+  Mk ([Environment]::GetFolderPath("Desktop")) $a.Title $argstr
+  Mk $sm $a.Title $argstr
+}
+if ($AutoStart) { Mk ([Environment]::GetFolderPath("Startup")) "New ERA" "" }
+New-Item -ItemType Directory -Force -Path (Join-Path $Here "data") | Out-Null
+$ids = @($Chosen | ForEach-Object { $_.Id })
+@{ enabled = $ids } | ConvertTo-Json | Set-Content -Path (Join-Path $Here "data\apps.json") -Encoding ASCII
+Write-Output ("INSTALL-OK: " + ($ids -join ", ") + " (+ home and settings)$(if($AutoStart){' (+autostart)'})")
 PS1
 cat > "$OUT/uninstall.ps1" <<'PS1'
 # uninstall.ps1 - removes shortcuts and stops the hub; NEVER touches .\data -
 # your family's content, settings, and history stay yours.
 $ErrorActionPreference = "SilentlyContinue"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Names = @("New ERA", "Making Words", "The Pencil", "Board", "Music", "Movies", "Book Reader")
 foreach ($d in @([Environment]::GetFolderPath("Desktop"),
                  (Join-Path ([Environment]::GetFolderPath("StartMenu")) "Programs"),
                  [Environment]::GetFolderPath("Startup"))) {
-  Remove-Item (Join-Path $d "New ERA.lnk") -Force
+  foreach ($n in $Names) { Remove-Item (Join-Path $d "$n.lnk") -Force -ErrorAction SilentlyContinue }
 }
 Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
   Where-Object { $_.CommandLine -like ('*' + [WildcardPattern]::Escape($Here) + '*') } |
