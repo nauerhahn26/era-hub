@@ -25,24 +25,31 @@ const enabled = !process.env.ERA_NO_UPDATE &&
 function currentBuild() {
   try { return fs.readFileSync(VERSION_FILE, "utf8").trim(); } catch { return "dev"; }
 }
+// The build this PROCESS is running (frozen at boot). After an update lands
+// on disk the two differ until the restart — /version exposes both so the
+// FE only reloads once new code is actually serving.
+const runningBuild = currentBuild();
 
 function sha256(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-// Detached delayed relaunch of this hub, then the current process exits —
-// the new files are on disk, only the process is old. On Windows `ping -n 3`
-// is the sleep (timeout.exe refuses to run without a console).
+// Relaunch: spawn the new hub directly (no shell — shells proved fragile in
+// kiosk/scheduled-task contexts) and exit shortly after. The new process
+// retry-binds until this one releases the port (server.js EADDRINUSE loop).
+// If even that spawn is refused, the update stays applied on disk and the
+// next launcher press serves the new build (the app bats ensure-start the
+// hub) — report "deferred" instead of pretending.
 function scheduleRestart(port) {
-  if (process.platform === "win32") {
-    spawn("cmd.exe", ["/d", "/s", "/c",
-      'ping -n 3 127.0.0.1 >nul & start "New ERA hub" /min "' + process.execPath + '" server.js ' + port],
+  try {
+    spawn(process.execPath, ["server.js", String(port)],
       { cwd: HERE, detached: true, stdio: "ignore" }).unref();
-  } else {
-    spawn("/bin/sh", ["-c", 'sleep 2; exec "$1" server.js "$2"', "sh", process.execPath, String(port)],
-      { cwd: HERE, detached: true, stdio: "ignore" }).unref();
+    setTimeout(() => process.exit(0), 800);
+    return "restarting";
+  } catch (e) {
+    console.log("[update] restart spawn refused (" + e.message + ") — new build serves on next launch");
+    return "deferred";
   }
-  setTimeout(() => process.exit(0), 800);
 }
 
 let inFlight = false;
@@ -85,9 +92,9 @@ async function check(port) {
                  rel === "node" || rel.startsWith("node" + path.sep));
       }});
       const now = currentBuild();
-      console.log("[update] " + local + " -> " + now + " (" + (latest.version || "") + "); restarting");
-      scheduleRestart(port);
-      return { status: "updated", from: local, to: now, version: latest.version || "" };
+      const restart = scheduleRestart(port);
+      console.log("[update] " + local + " -> " + now + " (" + (latest.version || "") + "); " + restart);
+      return { status: "updated", from: local, to: now, version: latest.version || "", restart };
     } finally {
       try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
     }
@@ -108,4 +115,4 @@ function start(port) {
   setInterval(() => { check(port); }, 6 * 60 * 60 * 1000).unref();
 }
 
-module.exports = { enabled, currentBuild, check, start };
+module.exports = { enabled, currentBuild, runningBuild, check, start };

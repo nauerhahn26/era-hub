@@ -681,7 +681,8 @@ const server = http.createServer((req, res) => {
   // ---- self-update: version probe (FE polls it) + on-demand check ----
   if (req.method === "GET" && urlPath === "/version") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ build: updater.currentBuild(), updater: updater.enabled, pid: process.pid }));
+    res.end(JSON.stringify({ build: updater.runningBuild, disk: updater.currentBuild(),
+                             updater: updater.enabled, pid: process.pid }));
     return;
   }
   if (req.method === "POST" && req.url === "/update/check") {
@@ -715,7 +716,17 @@ const server = http.createServer((req, res) => {
     res.end(data);
   });
 });
-server.listen(PORT, BIND, () => {
+// After a self-update the fresh hub starts while the old one is still
+// letting its last responses drain — retry the bind until the port frees.
+let bindTries = 0;
+server.on("error", (e) => {
+  if (e.code === "EADDRINUSE" && bindTries++ < 40) {
+    setTimeout(() => server.listen(PORT, BIND), 500);
+    return;
+  }
+  throw e;
+});
+server.on("listening", () => {
   console.log("era-hub on http://" + BIND + ":" + PORT);
   updater.start(PORT);   // installed payloads only; checkouts are a no-op
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
@@ -724,3 +735,4 @@ server.listen(PORT, BIND, () => {
     fetchSymbolToCache(name).then(f => { if (f) console.log("[symbol] pre-warmed " + name); });
   }
 });
+server.listen(PORT, BIND);
