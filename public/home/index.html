@@ -80,11 +80,19 @@
     devnote.textContent =
       "Hub is running locally on this machine. Dwell: " + ((s.dwellMs||1000)/1000) + "s.";
     // Listen for updates: the hub self-updates from the website and restarts;
-    // when the build changes under us, reload so this page runs the new code.
+    // when the RUNNING build changes under us, reload so this page runs the
+    // new code — and greet the family with a small "updated" note.
     try {
       const v = await (await fetch("/version", { cache: "no-store" })).json();
       if (v.build && v.build !== "dev") {
         devnote.textContent += " Build " + v.build + ".";
+        if (v.disk && v.disk !== v.build)
+          devnote.textContent += " Update ready — applies on the next start.";
+        let prev = "";
+        try { prev = localStorage.getItem("eraBuild") || ""; } catch {}
+        try { localStorage.setItem("eraBuild", v.build); } catch {}
+        if (prev && prev !== v.build)
+          devnote.textContent += " Updated just now ✓";
         setInterval(async () => {
           try {
             const n = await (await fetch("/version", { cache: "no-store" })).json();
