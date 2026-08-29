@@ -90,7 +90,7 @@ foreach ($d in @([Environment]::GetFolderPath("Desktop"),
   Remove-Item (Join-Path $d "New ERA.lnk") -Force
 }
 Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-  Where-Object { $_.CommandLine -like "*$Here*" } |
+  Where-Object { $_.CommandLine -like ('*' + [WildcardPattern]::Escape($Here) + '*') } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 Write-Output "UNINSTALL-OK: shortcuts removed, hub stopped. Family data kept at $Here\data"
 PS1
