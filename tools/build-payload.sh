@@ -145,6 +145,15 @@ Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
 Write-Output "UNINSTALL-OK: shortcuts removed, hub stopped. Family data kept at $Here\data"
 PS1
 
+# the double-clickable front door: Windows opens .bat with a click, .ps1 with
+# Notepad — a family should never need a right-click menu (dad's 8/29 fail:
+# Win10 can't even open .tar.gz; the zip + this bat are the whole first mile)
+cat > "$OUT/INSTALL.bat" <<'BAT'
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
+pause
+BAT
+
 echo "$VERSION" > "$OUT/VERSION"
 
 # L3: never ship what hasn't been scanned
