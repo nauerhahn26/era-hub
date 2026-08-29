@@ -309,9 +309,11 @@ function serveSongsRecipe(req, res) {
 // — the real v0 catalog ships all-null and the board must still boot).
 // ETag = catalog mtime + size + MOVIE_RECIPE_REV (bump the rev when this
 // generator's OUTPUT changes without a catalog change, or boards keep 304s).
-const MOVIE_CORE_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [3, 2], [3, 3]];
+// D57b (dad 8/29): grid pages carry NO exit tile — the msgbar door is the
+// app exit (songs D56a convention); (3,4) seats content like songs v3.
+const MOVIE_CORE_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [3, 2], [3, 3], [3, 4]];
 const MOVIE_EP_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
-const MOVIE_RECIPE_REV = 1;
+const MOVIE_RECIPE_REV = 2;
 // season/episode order flattened; keeps null-launch episodes so the caller can
 // both filter and count them (pendingCount).
 function movieEpisodesOf(t) {
@@ -388,7 +390,7 @@ function moviesRecipe() {
   }
   const exitCell = () => ({ label: "All done", say: "all done", type: "exit", row: 3, col: 4 });
 
-  const perPage = MOVIE_CORE_CELLS.length;       // 6 core titles per grid page
+  const perPage = MOVIE_CORE_CELLS.length;       // 7 core titles per grid page
   const pages = Math.max(1, Math.ceil(core.length / perPage));
   const boards = [];
   const doorPage = {};                           // titleId -> grid board id (for Back doors)
@@ -415,7 +417,7 @@ function moviesRecipe() {
     if (p < pages - 1)                           // exactly the songs board's More
       buttons.push({ label: "More", type: "control", symbol: "more",
                      load: "movies-" + (p + 2), row: 3, col: 1 });
-    buttons.push(exitCell());
+    // no exit tile (D57b): the msgbar door exits, like every other board
     boards.push({ id, name: "What do I want to watch?", rows: 3, columns: 4, buttons });
   }
 

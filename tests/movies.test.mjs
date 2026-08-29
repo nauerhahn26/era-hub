@@ -159,9 +159,9 @@ test("GET /recipes/movies.json: grid with pinned slots — continue, core order,
   assert.equal(disc.board, "test-discovery-show");
   assert.equal(p1.buttons.filter(b => b.board === "test-discovery-show").length, 1);
 
-  // chrome: exit bottom-right on the grid, no More on a single page, center rests
-  const exit = btnAt(p1, 3, 4);
-  assert.equal(exit.type, "exit"); assert.equal(exit.label, "All done");
+  // chrome (D57b): grid pages carry NO exit tile — msgbar door is the exit
+  assert.ok(!p1.buttons.some(b => b.type === "exit"), "no exit tile on grid pages");
+  assert.equal(btnAt(p1, 3, 4), null, "(3,4) rests in a small catalog");
   assert.equal(btnAt(p1, 3, 1), null, "no More on the only page");
   assert.equal(btnAt(p1, 2, 2), null, "center rest cell stays unpinned");
   assert.equal(btnAt(p1, 2, 3), null, "center rest cell stays unpinned");
@@ -266,7 +266,7 @@ test("pagination + discovery rule: 6 core/page, one discovery per page, comfort 
     assert.ok(p1 && p2, "10 core titles -> two grid pages");
     assert.ok(!rec.boards.some(b => b.id === "movies-3"));
 
-    // page 1: continue + ranks 1-6 + More; page 2: back + ranks 7-10 (comfort last)
+    // page 1: continue + ranks 1-7 + More; page 2: back + ranks 8-10 (comfort last)
     assert.equal(btnAt(p1, 1, 1).mark, "next");
     assert.equal(btnAt(p1, 1, 1).titleId, "test-show-b", "continue = first ranked show");
     assert.equal(btnAt(p1, 1, 2).board, "test-show-b");
@@ -274,14 +274,14 @@ test("pagination + discovery rule: 6 core/page, one discovery per page, comfort 
     const more = btnAt(p1, 3, 1);
     assert.equal(more.type, "control"); assert.equal(more.symbol, "more");
     assert.equal(more.load, "movies-2");
-    assert.equal(btnAt(p1, 3, 4).type, "exit", "exit pinned bottom-right on page 1");
+    assert.equal(btnAt(p1, 3, 4).titleId, "test-movie-6", "rank 7 seats the corner (D57b)");
     const back = btnAt(p2, 1, 1);
     assert.equal(back.type, "back"); assert.equal(back.load, "movies");
-    assert.equal(btnAt(p2, 1, 2).titleId, "test-movie-6");
-    assert.equal(btnAt(p2, 2, 1).board, "test-comfort-show",
+    assert.equal(btnAt(p2, 1, 2).titleId, "test-movie-7");
+    assert.equal(btnAt(p2, 1, 4).board, "test-comfort-show",
       "comfort discovery title rides the core flow instead");
     assert.equal(btnAt(p2, 3, 1), null, "no More on the last page");
-    assert.equal(btnAt(p2, 3, 4).type, "exit", "exit pinned bottom-right on page 2");
+    assert.ok(!p2.buttons.some(b => b.type === "exit"), "no exit tile on page 2 (D57b)");
 
     // exploration slot: one per page, rank order, comfort NEVER seated there
     assert.equal(btnAt(p1, 2, 4).board, "test-disc-one");
@@ -364,7 +364,7 @@ test("POST /movie-event: all six actions -> 204 + pool append (episode round-tri
   assert.deepEqual(launch.episode, { s: 1, e: 2 }, "episode round-trips to the pool");
 });
 
-test("LAW: no movies dir -> a VALID EMPTY recipe (exit-only grid) and the server stays alive", async () => {
+test("LAW: no movies dir -> a VALID EMPTY recipe (all-rest grid) and the server stays alive", async () => {
   const TMP3 = fs.mkdtempSync(path.join(os.tmpdir(), "era-nomovies-"));
   const PORT3 = 8405;
   const c3 = spawnHub(PORT3, TMP3);
@@ -378,8 +378,7 @@ test("LAW: no movies dir -> a VALID EMPTY recipe (exit-only grid) and the server
     assert.equal(rec.boards.length, 1, "one grid page");
     const p1 = rec.boards[0];
     assert.equal(p1.id, "movies");
-    assert.equal(p1.buttons.length, 1, "just the exit door");
-    assert.equal(p1.buttons[0].type, "exit");
+    assert.equal(p1.buttons.length, 0, "no tiles — all cells rest; msgbar door exits (D57b)");
     const s = await fetch(`http://127.0.0.1:${PORT3}/settings`);
     assert.equal(s.status, 200, "server alive after the degraded recipe");
   } finally { c3.kill("SIGKILL"); }
