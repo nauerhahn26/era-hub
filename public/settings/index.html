@@ -79,10 +79,45 @@
   <p class="tag">Your eye-gaze system · changes apply within a couple of seconds</p>
 
   <div class="card">
+    <h2>🧩 Apps</h2>
+    <p class="hint">Which apps this computer offers. Untick to hide an app and remove its shortcut; tick to add it. Same choices as at install.</p>
+    <div id="appsList"></div>
+  </div>
+
+  <div class="card">
     <h2>🎙 Voice</h2>
     <p class="hint">The voice that talks to your child in Making Words and The Pencil. Tap any voice to hear it and choose it.</p>
     <div class="row" id="voices"></div>
     <div class="status" id="voiceStatus"></div>
+    <div style="margin-top:16px">
+      <p class="hint" style="margin-bottom:8px">Premium voices need a free ElevenLabs account: create one at elevenlabs.io, copy your API key, paste it here. Without a key the built-in computer voice is used.</p>
+      <div class="row">
+        <input id="ttsKey" type="password" placeholder="ElevenLabs API key"
+               style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+        <button id="ttsKeySave">Save key</button>
+      </div>
+      <div class="status" id="ttsKeyStatus"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🔗 Integrations · Google Drive</h2>
+    <p class="hint">Connect a Google Drive folder and this computer keeps its content up to date by itself: put book packages in a <b>books</b> subfolder, songs in <b>music</b>, lesson files in <b>content</b>. Checked every 6 hours, or press Sync now.</p>
+    <div id="driveNotConfigured" style="display:none">
+      <p class="hint">One-time grown-up setup is needed first: a Google Cloud OAuth client (free). Ask your helper to follow the guide, then this card lights up.</p>
+    </div>
+    <div id="driveMain" style="display:none">
+      <div class="row" style="margin-bottom:10px">
+        <input id="driveFolder" type="text" placeholder="Drive folder ID (from the folder's link)"
+               style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+        <button id="driveFolderSave">Save folder</button>
+      </div>
+      <div class="row">
+        <button id="driveConnect">Connect Google account</button>
+        <button id="driveSync">Sync now</button>
+      </div>
+      <div class="status" id="driveStatus"></div>
+    </div>
   </div>
 
   <div class="card">
@@ -394,9 +429,83 @@ $("stopBtn").onclick=async()=>{
   }
 };
 
+// ---- Apps (same registry as install + home) ----
+async function loadApps(){
+  try{
+    const { apps } = await (await fetch("/apps",{cache:"no-store"})).json();
+    const box=$("appsList"); box.innerHTML="";
+    for(const a of apps){
+      const row=document.createElement("label");
+      row.style.cssText="display:flex;gap:10px;align-items:center;margin:6px 0;font-size:18px";
+      const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=a.enabled;
+      cb.onchange=async()=>{
+        cb.disabled=true;
+        try{
+          await fetch("/apps",{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({id:a.id,enabled:cb.checked})});
+          toast((cb.checked?"Added ":"Removed ")+a.title);
+        }catch(e){ toast("Could not save",false); cb.checked=!cb.checked; }
+        cb.disabled=false;
+      };
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(a.title+" — "));
+      const s=document.createElement("span"); s.style.color="#6B7A80"; s.textContent=a.sub;
+      row.appendChild(s);
+      box.appendChild(row);
+    }
+  }catch(e){ $("appsList").textContent="Could not reach the app server."; }
+}
+
+// ---- ElevenLabs key ----
+$("ttsKeySave").onclick=async()=>{
+  const k=$("ttsKey").value.trim();
+  if(!k){ toast("Paste a key first",false); return; }
+  const r=await fetch("/tts-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})});
+  if(r.ok){ $("ttsKey").value=""; toast("Voice key saved"); loadVoices(); }
+  else toast("Could not save the key",false);
+};
+
+// ---- Google Drive integration ----
+async function drivePaint(){
+  try{
+    const s=await (await fetch("/integrations/drive/status",{cache:"no-store"})).json();
+    $("driveNotConfigured").style.display = s.configured?"none":"block";
+    $("driveMain").style.display = s.configured?"block":"none";
+    if(!s.configured) return;
+    if(s.folderId) $("driveFolder").placeholder = "Folder set: "+s.folderId;
+    let msg="";
+    if(s.pending) msg='<b>Finish on any phone or computer:</b> go to <b>'+s.pending.verification_url+'</b> and enter code <b style="font-size:22px">'+s.pending.user_code+'</b>';
+    else if(!s.connected) msg="Not connected yet.";
+    else if(s.syncing) msg="<b>Syncing…</b>";
+    else if(s.lastSync) msg = s.lastSync.error ? '<span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
+      : "<b>Connected ✓</b> Last sync "+new Date(s.lastSync.when).toLocaleString()+": "+s.lastSync.files+" new, "+s.lastSync.skipped+" unchanged"+(s.lastSync.errors && s.lastSync.errors.length? ", "+s.lastSync.errors.length+" errors":"");
+    else msg="<b>Connected ✓</b> No sync yet.";
+    $("driveStatus").innerHTML=msg;
+  }catch(e){}
+}
+$("driveConnect").onclick=async()=>{
+  const r=await (await fetch("/integrations/drive/connect",{method:"POST"})).json();
+  if(r.error){ toast("Connect failed: "+r.error,false); return; }
+  drivePaint(); const iv=setInterval(async()=>{ await drivePaint();
+    const s=await (await fetch("/integrations/drive/status")).json();
+    if(s.connected||!s.pending){ clearInterval(iv); } },4000);
+};
+$("driveSync").onclick=async()=>{
+  toast("Sync started");
+  await fetch("/integrations/drive/sync",{method:"POST"});
+  drivePaint();
+};
+$("driveFolderSave").onclick=async()=>{
+  const v=$("driveFolder").value.trim(); if(!v){ toast("Paste the folder ID",false); return; }
+  const r=await fetch("/integrations/drive/folder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderId:v})});
+  if(r.ok){ toast("Folder saved"); $("driveFolder").value=""; drivePaint(); }
+};
+
 // ---- init from current state ----
 (async()=>{
+  await loadApps();
   await loadVoices();
+  await drivePaint();
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
        if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));
        if(typeof s.musicVolCap==="number") mvol=Math.max(1,Math.min(100,Math.round(s.musicVolCap))); }catch(e){}

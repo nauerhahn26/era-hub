@@ -1,7 +1,9 @@
-; installer.nsi — the one-file Windows front door (dad's 8/29 ruling: setup
-; style; SignPath signs this artifact once the Foundation approves).
-; Per-user everything: no admin prompt, installs to %LOCALAPPDATA%\New ERA,
-; uninstall entry in Settings > Apps. App choice stays in the welcome wizard.
+; installer.nsi — the one-file Windows front door (dad's 8/29 rulings: setup
+; style, and the app chooser lives IN the installer — tick what you want
+; before anything installs; the same choices stay editable in Settings and
+; on the home screen). SignPath signs this artifact once approved.
+; Per-user everything: no admin prompt, %LOCALAPPDATA%\New ERA, uninstall
+; entry in Settings > Apps.
 ; Built by release.sh:  makensis -DPAYLOAD=<dir> -DOUTFILE=<exe> -DVERSION=<v>
 Unicode true
 !define APPNAME "New ERA"
@@ -14,9 +16,13 @@ RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
 !include "MUI2.nsh"
+!include "Sections.nsh"
+!include "LogicLib.nsh"
+!define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer. You can add or remove apps any time from the home screen or Settings."
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Open New ERA and pick your apps"
+!define MUI_FINISHPAGE_RUN_TEXT "Open New ERA now"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchHub
+!insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -26,7 +32,8 @@ Function LaunchHub
   ExecShell "open" "$INSTDIR\start-hub.bat"
 FunctionEnd
 
-Section "Install"
+Section "New ERA engine (required)" SecCore
+  SectionIn RO
   SetOutPath "$INSTDIR"
   File /r "${PAYLOAD}/*"
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
@@ -40,6 +47,54 @@ Section "Install"
   WriteRegStr HKCU "${REGKEY}" "InstallLocation" "$INSTDIR"
   WriteRegDWORD HKCU "${REGKEY}" "NoModify" 1
   WriteRegDWORD HKCU "${REGKEY}" "NoRepair" 1
+SectionEnd
+
+; App checkboxes — content ships either way (it is tiny next to the runtime);
+; the selection seeds data\apps.json, which drives tiles + shortcuts.
+Section "Making Words" SecMW
+SectionEnd
+Section "The Pencil" SecPencil
+SectionEnd
+Section "Board" SecBoard
+SectionEnd
+Section "Music" SecMusic
+SectionEnd
+Section "Movies" SecMovies
+SectionEnd
+Section "Book Reader" SecReader
+SectionEnd
+
+Section "-writeApps"
+  CreateDirectory "$INSTDIR\data"
+  FileOpen $0 "$INSTDIR\data\apps.json" w
+  FileWrite $0 '{"enabled":['
+  StrCpy $1 ""
+  ${If} ${SectionIsSelected} ${SecMW}
+    FileWrite $0 '"making-words"'
+    StrCpy $1 ","
+  ${EndIf}
+  ${If} ${SectionIsSelected} ${SecPencil}
+    FileWrite $0 '$1"pencil"'
+    StrCpy $1 ","
+  ${EndIf}
+  ${If} ${SectionIsSelected} ${SecBoard}
+    FileWrite $0 '$1"board"'
+    StrCpy $1 ","
+  ${EndIf}
+  ${If} ${SectionIsSelected} ${SecMusic}
+    FileWrite $0 '$1"music"'
+    StrCpy $1 ","
+  ${EndIf}
+  ${If} ${SectionIsSelected} ${SecMovies}
+    FileWrite $0 '$1"movies"'
+    StrCpy $1 ","
+  ${EndIf}
+  ${If} ${SectionIsSelected} ${SecReader}
+    FileWrite $0 '$1"reader"'
+    StrCpy $1 ","
+  ${EndIf}
+  FileWrite $0 ']}'
+  FileClose $0
 SectionEnd
 
 Section "Uninstall"

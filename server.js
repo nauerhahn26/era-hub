@@ -10,6 +10,7 @@ const fs = require("fs");
 const path = require("path");
 
 const updater = require("./update");
+const drive = require("./drive");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
@@ -992,6 +993,55 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- Settings > Voice: ElevenLabs key entry (never echoed back) ----
+  if (req.method === "POST" && req.url === "/tts-key") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { apiKey } = JSON.parse(body);
+        if (typeof apiKey !== "string" || apiKey.length > 200) { res.writeHead(400).end(); return; }
+        const cfg = loadTtsCfg(); cfg.apiKey = apiKey.trim(); saveTtsCfg(cfg);
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+
+  // ---- Settings > Integrations: Google Drive content (drive.js) ----
+  if (req.method === "GET" && urlPath === "/integrations/drive/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(drive.status()));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/connect") {
+    drive.connect().then(r => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r));
+    }).catch(e => { res.writeHead(502).end(String(e.message)); });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/sync") {
+    drive.sync().then(r => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r));
+    }).catch(e => { res.writeHead(502).end(String(e.message)); });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/folder") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 2048) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { folderId } = JSON.parse(body);
+        if (typeof folderId !== "string" || folderId.length > 128) { res.writeHead(400).end(); return; }
+        drive.setFolder(folderId);
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+
   // ---- self-update: version probe (FE polls it) + on-demand check ----
   if (req.method === "GET" && urlPath === "/version") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -1043,6 +1093,7 @@ server.on("error", (e) => {
 server.on("listening", () => {
   console.log("era-hub on http://" + BIND + ":" + PORT);
   updater.start(PORT);   // installed payloads only; checkouts are a no-op
+  drive.start(DATA);     // Google Drive content mirror (no-op until connected)
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;

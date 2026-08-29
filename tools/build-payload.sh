@@ -17,7 +17,7 @@ OUT="${1:-$HUB/dist/new-era-payload}"
 VERSION="$(date -u +%Y%m%d.%H%M)"
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/drive.js" "$HUB/predict-model.json" "$OUT/"
 cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$HUB/../era-core/NOTICE" "$OUT/" 2>/dev/null || true
 # apps + shared foundation - COPIES, never symlinks
 cp -rL "$ROOT/era-core/lib" "$OUT/public/lib"
@@ -58,7 +58,19 @@ if exist "%~dp0node\node.exe" set NODE=%~dp0node\node.exe
 start "New ERA hub" /min "%NODE%" server.js %PORT%
 timeout /t 2 /nobreak >nul
 :open
-start "" http://127.0.0.1:%PORT%%OPEN%
+rem full-screen, chrome-less app experience (dad 8/29): kiosk mode in Chrome
+rem or Edge with its own profile; a plain browser tab only as a last resort.
+rem Leave an app via its door (back to the hub home); leave the window with
+rem Alt+F4 or the gaze engine's exit.
+set B=
+if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" set B=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set B=%ProgramFiles%\Google\Chrome\Application\chrome.exe
+if not defined B (
+  start "" http://127.0.0.1:%PORT%%OPEN%
+  goto done
+)
+start "" "%B%" --kiosk "http://127.0.0.1:%PORT%%OPEN%" --edge-kiosk-type=fullscreen --user-data-dir="%~dp0data\kiosk-profile" --no-first-run --disable-pinch --overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required
+:done
 BAT
 cat > "$OUT/start-hub.sh" <<'SH'
 #!/usr/bin/env bash
