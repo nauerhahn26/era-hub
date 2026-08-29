@@ -72,9 +72,13 @@
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <h1>ERAgaze</h1>
-    <span class="sub">settings</span>
+  <header style="justify-content:space-between; align-items:center">
+    <div style="display:flex; align-items:baseline; gap:14px">
+      <h1>ERAgaze</h1>
+      <span class="sub">settings</span>
+    </div>
+    <a href="/home/" style="font-size:19px; color:var(--teal-deep); text-decoration:none;
+       border:2px solid var(--line); border-radius:12px; padding:12px 18px; background:#fff">← Back to apps</a>
   </header>
   <p class="tag">Your eye-gaze system · changes apply within a couple of seconds</p>
 
@@ -107,14 +111,22 @@
       <p class="hint">One-time grown-up setup is needed first: a Google Cloud OAuth client (free). Ask your helper to follow the guide, then this card lights up.</p>
     </div>
     <div id="driveMain" style="display:none">
-      <div class="row" style="margin-bottom:10px">
-        <input id="driveFolder" type="text" placeholder="Drive folder ID (from the folder's link)"
-               style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
-        <button id="driveFolderSave">Save folder</button>
+      <div id="driveStep1" style="display:none">
+        <button class="big" id="driveConnect" style="border-color:var(--teal); background:var(--teal); color:#fff">🔑 Log in with Google</button>
+        <div class="status" id="driveCode" style="font-size:18px; margin-top:12px"></div>
       </div>
-      <div class="row">
-        <button id="driveConnect">Connect Google account</button>
-        <button id="driveSync">Sync now</button>
+      <div id="driveStep2" style="display:none">
+        <p class="hint" style="margin-bottom:8px"><b>Step 2:</b> pick the Drive folder to keep in sync. Tip: make one called <b>New ERA Content</b> with <b>books</b>, <b>music</b>, and <b>content</b> folders inside.</p>
+        <div class="row">
+          <select id="driveFolderSel" style="font-family:var(--font);font-size:18px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px"></select>
+          <button id="driveFolderUse">Use this folder</button>
+        </div>
+      </div>
+      <div id="driveStep3" style="display:none">
+        <div class="row">
+          <button id="driveSync">Sync now</button>
+          <button id="driveChangeFolder">Change folder</button>
+        </div>
       </div>
       <div class="status" id="driveStatus"></div>
     </div>
@@ -242,7 +254,8 @@ async function loadVoices(){
   try{
     const v = await (await fetch("/voices")).json();
     const box = $("voices"); box.innerHTML="";
-    if(!v.enabled){ $("voiceStatus").innerHTML='<span class="bad">Voice key not set — using the built-in Windows voice.</span>'; }
+    if(!v.enabled){ $("voiceStatus").innerHTML='<span class="bad">Voice key not set — using the built-in Windows voice.</span>'; $("ttsKeyStatus").innerHTML=""; }
+    else { $("voiceStatus").innerHTML='<b>Premium voices active ✓</b>'; $("ttsKeyStatus").innerHTML='<b>Key saved ✓</b> Tap a voice above to hear it.'; }
     for(const voice of v.voices){
       const b=document.createElement("button");
       b.className="voice"+(voice.id===v.current?" sel":"");
@@ -441,16 +454,29 @@ async function loadApps(){
       cb.onchange=async()=>{
         cb.disabled=true;
         try{
-          await fetch("/apps",{method:"POST",headers:{"Content-Type":"application/json"},
+          const r=await fetch("/apps",{method:"POST",headers:{"Content-Type":"application/json"},
             body:JSON.stringify({id:a.id,enabled:cb.checked})});
-          toast((cb.checked?"Added ":"Removed ")+a.title);
+          let installing=false;
+          try{ installing=(await r.clone().json()).installing===true; }catch(e){}
+          if(installing){
+            toast("Installing "+a.title+"…");
+            prog.textContent=" installing…";
+            const iv=setInterval(async()=>{
+              const { apps }=await (await fetch("/apps",{cache:"no-store"})).json();
+              const cur=apps.find(x=>x.id===a.id);
+              if(cur && cur.installed){ clearInterval(iv); prog.textContent=""; toast(a.title+" installed ✓"); }
+            },3000);
+          } else toast((cb.checked?"Added ":"Removed ")+a.title);
         }catch(e){ toast("Could not save",false); cb.checked=!cb.checked; }
         cb.disabled=false;
       };
       row.appendChild(cb);
       row.appendChild(document.createTextNode(a.title+" — "));
-      const s=document.createElement("span"); s.style.color="#6B7A80"; s.textContent=a.sub;
-      row.appendChild(s);
+      const sub=document.createElement("span"); sub.style.color="#6B7A80"; sub.textContent=a.sub;
+      row.appendChild(sub);
+      const prog=document.createElement("b"); prog.style.color="var(--teal-deep)";
+      if(a.installing) prog.textContent=" installing…";
+      row.appendChild(prog);
       box.appendChild(row);
     }
   }catch(e){ $("appsList").textContent="Could not reach the app server."; }
@@ -465,21 +491,37 @@ $("ttsKeySave").onclick=async()=>{
   else toast("Could not save the key",false);
 };
 
-// ---- Google Drive integration ----
+// ---- Google Drive integration: a babysat 3-step flow (dad 8/29) ----
+let drivePickedFolders=false;
 async function drivePaint(){
   try{
     const s=await (await fetch("/integrations/drive/status",{cache:"no-store"})).json();
     $("driveNotConfigured").style.display = s.configured?"none":"block";
     $("driveMain").style.display = s.configured?"block":"none";
     if(!s.configured) return;
-    if(s.folderId) $("driveFolder").placeholder = "Folder set: "+s.folderId;
+    const step = !s.connected ? 1 : (!s.folderId ? 2 : 3);
+    $("driveStep1").style.display = step===1?"block":"none";
+    $("driveStep2").style.display = step===2?"block":"none";
+    $("driveStep3").style.display = step===3?"block":"none";
+    if(step===1){
+      $("driveCode").innerHTML = s.pending
+        ? '<b>Step 1 of 2:</b> on any phone or computer, go to <b style="font-size:22px">'+s.pending.verification_url+'</b><br>and enter this code: <b style="font-size:30px;letter-spacing:2px">'+s.pending.user_code+'</b><br>This page moves on by itself when you finish.'
+        : "Tap the button, then finish the login on your phone.";
+      $("driveStatus").innerHTML="";
+      return;
+    }
+    if(step===2 && !drivePickedFolders){
+      drivePickedFolders=true;
+      const f=await (await fetch("/integrations/drive/folders")).json();
+      const sel=$("driveFolderSel"); sel.innerHTML="";
+      for(const x of (f.folders||[])){ const o=document.createElement("option"); o.value=x.id; o.textContent=x.name; sel.appendChild(o); }
+      if(!(f.folders||[]).length){ const o=document.createElement("option"); o.textContent="No folders found — make one in Drive first"; o.value=""; sel.appendChild(o); }
+    }
     let msg="";
-    if(s.pending) msg='<b>Finish on any phone or computer:</b> go to <b>'+s.pending.verification_url+'</b> and enter code <b style="font-size:22px">'+s.pending.user_code+'</b>';
-    else if(!s.connected) msg="Not connected yet.";
-    else if(s.syncing) msg="<b>Syncing…</b>";
+    if(s.syncing) msg="<b>Syncing…</b>";
     else if(s.lastSync) msg = s.lastSync.error ? '<span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
       : "<b>Connected ✓</b> Last sync "+new Date(s.lastSync.when).toLocaleString()+": "+s.lastSync.files+" new, "+s.lastSync.skipped+" unchanged"+(s.lastSync.errors && s.lastSync.errors.length? ", "+s.lastSync.errors.length+" errors":"");
-    else msg="<b>Connected ✓</b> No sync yet.";
+    else if(step===3) msg="<b>Connected ✓</b> Content syncs by itself every 6 hours.";
     $("driveStatus").innerHTML=msg;
   }catch(e){}
 }
@@ -488,17 +530,22 @@ $("driveConnect").onclick=async()=>{
   if(r.error){ toast("Connect failed: "+r.error,false); return; }
   drivePaint(); const iv=setInterval(async()=>{ await drivePaint();
     const s=await (await fetch("/integrations/drive/status")).json();
-    if(s.connected||!s.pending){ clearInterval(iv); } },4000);
+    if(s.connected||!s.pending){ clearInterval(iv); drivePaint(); } },4000);
 };
 $("driveSync").onclick=async()=>{
   toast("Sync started");
   await fetch("/integrations/drive/sync",{method:"POST"});
   drivePaint();
 };
-$("driveFolderSave").onclick=async()=>{
-  const v=$("driveFolder").value.trim(); if(!v){ toast("Paste the folder ID",false); return; }
+$("driveFolderUse").onclick=async()=>{
+  const v=$("driveFolderSel").value; if(!v){ toast("Pick a folder first",false); return; }
   const r=await fetch("/integrations/drive/folder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderId:v})});
-  if(r.ok){ toast("Folder saved"); $("driveFolder").value=""; drivePaint(); }
+  if(r.ok){ toast("Folder set — first sync starting"); await fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); }
+};
+$("driveChangeFolder").onclick=async()=>{
+  drivePickedFolders=false;
+  await fetch("/integrations/drive/folder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderId:""})});
+  drivePaint();
 };
 
 // ---- init from current state ----

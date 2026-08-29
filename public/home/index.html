@@ -106,9 +106,18 @@
         cb.addEventListener("change", async () => {
           cb.disabled = true;
           try {
-            await fetch("/apps", { method: "POST", headers: { "Content-Type": "application/json" },
+            const r = await fetch("/apps", { method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ id: a.id, enabled: cb.checked }) });
-            location.reload();
+            let installing = false;
+            try { installing = (await r.clone().json()).installing === true; } catch {}
+            if (installing) {
+              row.appendChild(document.createTextNode(" installing…"));
+              const iv = setInterval(async () => {
+                const { apps } = await (await fetch("/apps", { cache: "no-store" })).json();
+                const cur = apps.find(x => x.id === a.id);
+                if (cur && cur.installed) { clearInterval(iv); location.reload(); }
+              }, 3000);
+            } else location.reload();
           } catch { cb.disabled = false; }
         });
         row.appendChild(cb); row.appendChild(document.createTextNode(a.title));
@@ -116,6 +125,18 @@
       }
     } catch {}
     document.getElementById("hello").textContent = "Hi, " + s.childName + "'s family!";
+    // strongly encourage the premium voice: it is a different product with it
+    try {
+      const v = await (await fetch("/voices", { cache: "no-store" })).json();
+      if (!v.enabled) {
+        const b = document.createElement("a");
+        b.href = "/settings/";
+        b.style.cssText = "display:block;background:#2f9e6e;color:#fff;border-radius:14px;padding:16px 18px;margin:0 0 16px;text-decoration:none;font-size:18px";
+        b.innerHTML = "<b>🎙 Add a premium voice</b> — the free ElevenLabs voice sounds far better than the computer voice. Two minutes in Settings.";
+        const grid = document.getElementById("appGrid");
+        grid.parentNode.insertBefore(b, grid);
+      }
+    } catch {}
     const devnote = document.getElementById("devnote");
     devnote.textContent =
       "Hub is running locally on this machine. Dwell: " + ((s.dwellMs||1000)/1000) + "s.";

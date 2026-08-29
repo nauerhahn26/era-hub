@@ -115,4 +115,4 @@ function start(port) {
   setInterval(() => { check(port); }, 6 * 60 * 60 * 1000).unref();
 }
 
-module.exports = { enabled, currentBuild, runningBuild, check, start };
+module.exports = { enabled, currentBuild, runningBuild, check, start, FEED };

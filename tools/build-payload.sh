@@ -62,9 +62,12 @@ rem full-screen, chrome-less app experience (dad 8/29): kiosk mode in Chrome
 rem or Edge with its own profile; a plain browser tab only as a last resort.
 rem Leave an app via its door (back to the hub home); leave the window with
 rem Alt+F4 or the gaze engine's exit.
+rem (explicit paths: under a 32-bit parent, %ProgramFiles% lies — dad's first
+rem launch fell back to Edge because the installer is a 32-bit process)
 set B=
-if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" set B=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe
-if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set B=%ProgramFiles%\Google\Chrome\Application\chrome.exe
+if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" set B=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" set B=C:\Program Files\Google\Chrome\Application\chrome.exe
+if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" set B=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
 if not defined B (
   start "" http://127.0.0.1:%PORT%%OPEN%
   goto done

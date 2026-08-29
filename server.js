@@ -61,13 +61,40 @@ fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
 // <DATA>/apps.json ({"enabled":[ids]}); absent file = everything (existing
 // installs keep all their apps). Settings is not an app — always present.
 const APPS = [
-  { id: "making-words", title: "Making Words", sub: "guided word building", path: "/" },
-  { id: "pencil", title: "The Pencil", sub: "free writing with prediction", path: "/pencil/" },
-  { id: "board", title: "Board", sub: "daily choices, photos & speech", path: "/board/" },
-  { id: "music", title: "Music", sub: "favorite songs, audio only", path: "/board/?recipe=songs" },
-  { id: "movies", title: "Movies", sub: "shows & movies, her picks", path: "/board/?recipe=movies" },
-  { id: "reader", title: "Book Reader", sub: "picture books, read aloud", path: "/reader/" },
+  { id: "making-words", title: "Making Words", sub: "guided word building", path: "/", pack: null },
+  { id: "pencil", title: "The Pencil", sub: "free writing with prediction", path: "/pencil/", pack: "pencil" },
+  { id: "board", title: "Board", sub: "daily choices, photos & speech", path: "/board/", pack: "board" },
+  { id: "music", title: "Music", sub: "favorite songs, audio only", path: "/board/?recipe=songs", pack: "board" },
+  { id: "movies", title: "Movies", sub: "shows & movies, her picks", path: "/board/?recipe=movies", pack: "board" },
+  { id: "reader", title: "Book Reader", sub: "picture books, read aloud", path: "/reader/", pack: "reader" },
 ];
+// pack = the public/ subdir an app needs on disk (null = rides with the core;
+// board/music/movies share one pack). The installer lays down only chosen
+// packs; enabling later REALLY installs the pack (dad 8/29: never
+// install-everything-and-hide) by pulling it from the release tarball.
+function appInstalled(app) {
+  return !app.pack || fs.existsSync(path.join(PUB, app.pack));
+}
+const appInstalling = {};   // id -> true while a pack download runs
+async function installPack(app) {
+  const os = require("os");
+  const { spawnSync } = require("child_process");
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "era-pack-"));
+  try {
+    const r = await fetch(updater.FEED + "/new-era-suite.tar.gz", { redirect: "follow" });
+    if (!r.ok) throw new Error("download " + r.status);
+    const tarball = path.join(stage, "suite.tar.gz");
+    fs.writeFileSync(tarball, Buffer.from(await r.arrayBuffer()));
+    const t = spawnSync("tar", ["-xzf", tarball, "-C", stage,
+      "new-era-suite/public/" + app.pack], { windowsHide: true });
+    if (t.status !== 0) throw new Error("extract failed");
+    fs.cpSync(path.join(stage, "new-era-suite", "public", app.pack),
+      path.join(PUB, app.pack), { recursive: true, force: true });
+    console.log("[apps] installed pack " + app.pack);
+  } finally {
+    try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
+  }
+}
 function loadEnabledApps() {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(DATA, "apps.json"), "utf8"));
@@ -86,11 +113,15 @@ function appShortcut(app, enabled) {
       `$l = $w.CreateShortcut((Join-Path $d '${app.title}.lnk'));` +
       `$l.TargetPath = '${path.join(__dirname, "start-hub.bat")}';` +
       `$l.Arguments = '${PORT} "${app.path}"';` +
-      `$l.WorkingDirectory = '${__dirname}'; $l.Save() }`
+      `$l.WorkingDirectory = '${__dirname}';` +
+      `$l.WindowStyle = 7; $l.Save() }` +   // 7 = minimized: the launcher console never pops up
+      ``
     : `foreach ($d in @([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))) {` +
       `Remove-Item (Join-Path $d '${app.title}.lnk') -Force -ErrorAction SilentlyContinue }`;
   try {
-    spawn("powershell.exe", ["-NoProfile", "-Command", script], { stdio: "ignore" })
+    // windowsHide: dad watched PowerShell windows appear for every shortcut
+    spawn("powershell.exe", ["-NoProfile", "-Command", script],
+      { stdio: "ignore", windowsHide: true })
       .on("error", (e) => console.error("[apps] shortcut: " + e.message));
   } catch (e) { console.error("[apps] shortcut: " + e.message); }
 }
@@ -971,7 +1002,9 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/apps") {
     const enabled = loadEnabledApps();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ apps: APPS.map(a => ({ ...a, enabled: enabled.includes(a.id) })) }));
+    res.end(JSON.stringify({ apps: APPS.map(a => ({ id: a.id, title: a.title, sub: a.sub, path: a.path,
+      enabled: enabled.includes(a.id), installed: appInstalled(a),
+      installing: !!appInstalling[a.id] })) }));
     return;
   }
   if (req.method === "POST" && req.url === "/apps") {
@@ -987,6 +1020,16 @@ const server = http.createServer((req, res) => {
         fs.writeFileSync(path.join(DATA, "apps.json"),
           JSON.stringify({ enabled: APPS.map(a => a.id).filter(x => set.includes(x)) }, null, 2));
         appShortcut(app, enabled);   // Windows: desktop/start-menu .lnk follows the toggle
+        // enabling an app whose files were never installed REALLY installs it
+        if (enabled && !appInstalled(app) && !appInstalling[app.id]) {
+          appInstalling[app.id] = true;
+          installPack(app)
+            .catch(e => console.error("[apps] pack install failed: " + e.message))
+            .finally(() => { delete appInstalling[app.id]; });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ installing: true }));
+          return;
+        }
         res.writeHead(204).end();
       } catch { res.writeHead(400).end(); }
     });
@@ -1023,6 +1066,13 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && req.url === "/integrations/drive/sync") {
     drive.sync().then(r => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r));
+    }).catch(e => { res.writeHead(502).end(String(e.message)); });
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/integrations/drive/folders") {
+    drive.listFolders().then(r => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(r));
     }).catch(e => { res.writeHead(502).end(String(e.message)); });

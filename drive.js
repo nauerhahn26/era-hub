@@ -161,6 +161,21 @@ async function sync() {
   } finally { syncing = false; }
 }
 
+// Folders the person can pick in Settings (no ID pasting): own + shared,
+// top 100 by name. The picker is the babysat step dad asked for.
+async function listFolders() {
+  const tok = await accessToken();
+  if (!tok) return { error: "not-connected" };
+  const q = new URLSearchParams({
+    q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+    fields: "files(id, name)", pageSize: "100", orderBy: "name",
+  });
+  const r = await fetch(API + "/drive/v3/files?" + q, { headers: { Authorization: "Bearer " + tok } });
+  if (!r.ok) return { error: "list-failed", code: r.status };
+  const j = await r.json();
+  return { folders: (j.files || []).map(f => ({ id: f.id, name: f.name })) };
+}
+
 function setFolder(folderId) {
   const c = loadCfg();
   c.folderId = String(folderId || "").trim();
@@ -176,4 +191,4 @@ function start(dataDir) {
   }
 }
 
-module.exports = { start, status, connect, sync, setFolder };
+module.exports = { start, status, connect, sync, setFolder, listFolders };

@@ -18,7 +18,7 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 !include "Sections.nsh"
 !include "LogicLib.nsh"
-!define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer. You can add or remove apps any time from the home screen or Settings."
+!define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer - only what you tick is installed. Add or remove apps any time from the home screen or Settings. (The ERAgaze eye-gaze engine joins this list in an upcoming release.)"
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open New ERA now"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchHub
@@ -35,7 +35,8 @@ FunctionEnd
 Section "New ERA engine (required)" SecCore
   SectionIn RO
   SetOutPath "$INSTDIR"
-  File /r "${PAYLOAD}/*"
+  ; everything except the per-app packs (their dir names are unique in the tree)
+  File /r /x pencil /x board /x reader "${PAYLOAD}/*"
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -49,11 +50,17 @@ Section "New ERA engine (required)" SecCore
   WriteRegDWORD HKCU "${REGKEY}" "NoRepair" 1
 SectionEnd
 
-; App checkboxes — content ships either way (it is tiny next to the runtime);
-; the selection seeds data\apps.json, which drives tiles + shortcuts.
+; App checkboxes: only ticked apps' files land on disk (dad 8/29: really
+; install what is chosen, never install-everything-and-hide). The selection
+; also seeds data\apps.json (tiles + shortcuts). Enabling later downloads
+; the missing pack from the release. Making Words rides with the core (its
+; lesson engine is part of the hub root). Board, Music, and Movies share
+; one pack, synced in .onSelChange.
 Section "Making Words" SecMW
 SectionEnd
 Section "The Pencil" SecPencil
+  SetOutPath "$INSTDIR\public"
+  File /r "${PAYLOAD}/public/pencil"
 SectionEnd
 Section "Board" SecBoard
 SectionEnd
@@ -62,7 +69,31 @@ SectionEnd
 Section "Movies" SecMovies
 SectionEnd
 Section "Book Reader" SecReader
+  SetOutPath "$INSTDIR\public"
+  File /r "${PAYLOAD}/public/reader"
 SectionEnd
+Section "-board pack" SecBoardPack
+  SetOutPath "$INSTDIR\public"
+  File /r "${PAYLOAD}/public/board"
+SectionEnd
+
+Function .onSelChange
+  StrCpy $2 0
+  ${If} ${SectionIsSelected} ${SecBoard}
+    StrCpy $2 1
+  ${EndIf}
+  ${If} ${SectionIsSelected} ${SecMusic}
+    StrCpy $2 1
+  ${EndIf}
+  ${If} ${SectionIsSelected} ${SecMovies}
+    StrCpy $2 1
+  ${EndIf}
+  ${If} $2 = 1
+    !insertmacro SelectSection ${SecBoardPack}
+  ${Else}
+    !insertmacro UnselectSection ${SecBoardPack}
+  ${EndIf}
+FunctionEnd
 
 Section "-writeApps"
   CreateDirectory "$INSTDIR\data"
