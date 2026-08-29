@@ -25,6 +25,9 @@ flock -n 9 || { echo "== era-gate: another gate run is active — queued, waitin
 [ -e "$HUB/public/pencil" ] || ERA_DATA_DIR="$DATA" bash "$HUB/tools/assemble.sh"
 
 rm -rf "$GATE"; mkdir -p "$GATE"
+# era-hub's own suites come from THIS checkout ($HUB) so a feature-worktree
+# gate runs the worktree's new/changed suites, not the main checkout's copy
+# (identical when run from the main checkout, where $HUB = $ROOT/era-hub).
 for repo in era-core era-making-words era-pencil era-board era-hub; do
   # era-hub's suites come from THIS checkout — in a worktree gate, a suite
   # added on the feature branch must run too (8/28: routes.test.mjs silently

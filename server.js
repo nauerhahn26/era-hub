@@ -51,6 +51,7 @@ const WARDROBE_DIR = process.env.ELLIE_WARDROBE_DIR || path.join(DATA, "wardrobe
 const GEN_ASSETS_DIR = path.join(DATA, "gen-assets");
 const BOOKS_DIR = path.join(DATA, "books");   // book packages (era-book-reader M3)
 const MUSIC_DIR = path.join(DATA, "music");   // songs overlay (Songs Board 8/24)
+const MOVIES_DIR = path.join(DATA, "movies"); // movie catalog + posters (movie-player P1, 8/29)
 const SYMBOLS_CACHE = path.join(DATA, "symbols-cache");
 fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
 
@@ -112,6 +113,9 @@ const BOOK_AV_EXTS = [".mp3", ".mp4", ".wav"];
 const BOOK_EXTS = [".json", ".jpg", ".jpeg", ".png", ...BOOK_AV_EXTS];
 const MUSIC_AV_EXTS = [".m4a", ".mp3", ".wav", ".webm", ".opus"];
 const MUSIC_EXTS = [".json", ".jpg", ".jpeg", ".png", ".webp", ...MUSIC_AV_EXTS];
+// movies jail: images + json ONLY — the hub NEVER serves video for this
+// feature (D57: pixels come from the streaming services, always).
+const MOVIE_EXTS = [".json", ".jpg", ".webp", ".png"];
 function serveBook(req, res, rest) { serveMediaJail(req, res, BOOKS_DIR, rest, BOOK_EXTS, BOOK_AV_EXTS); }
 function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts) {
   if (rest.includes("\0")) { res.writeHead(400).end(); return; }
@@ -276,6 +280,198 @@ function serveSongsRecipe(req, res) {
   let out;
   try { out = songsRecipe(); }
   catch { res.writeHead(404).end("not found"); return; }   // no music overlay: honest 404
+  const headers = { "Content-Type": "application/json", "Cache-Control": "no-cache",
+                    "ETag": out.etag, "Access-Control-Allow-Origin": "*" };
+  if ((req.headers["if-none-match"] || "") === out.etag) { res.writeHead(304, headers).end(); return; }
+  if (req.method === "HEAD") { res.writeHead(200, headers).end(); return; }
+  res.writeHead(200, headers);
+  res.end(JSON.stringify(out.recipe));
+}
+
+// ---- Movies Board recipe: GENERATED from <DATA>/movies/catalog.json ----
+// (movie-player P1; spec docs/superpowers/specs/2026-08-29-movie-player-design.md
+// §2). 3x4 GRID pages with FROZEN slots (spatial memory, contract navAnchors):
+//   (1,1) = continue on page 1 (back arrow on later pages)
+//   six core-title cells in reading order: (1,2)(1,3)(1,4)(2,1)(3,2)(3,3)
+//   (2,4) = THE exploration slot — exactly ONE tier:"discovery" title per grid
+//           page (comfort titles NEVER sit here; a comfort-flagged discovery
+//           title joins the core flow instead)
+//   (3,1) = More on non-last pages; (3,4) = All-done exit on EVERY grid page
+//   (2,2)/(2,3) stay unpinned -> the renderer's black rest cells
+// Show tiles are DOORS (board: <titleId>) -> episode pages (8/page, back
+// top-left, More bottom-left) + a "<titleId>-next" what-next board: the
+// post-episode choice screen that replaces autoplay (next / watch again /
+// something else / all done).
+// GENERATOR RULE: only titles/episodes with a non-null launch.url appear;
+// every null launch is counted in meta.pendingCount (curation backlog
+// visibility). Missing/empty/unparseable catalog -> a VALID EMPTY recipe and
+// the server stays alive (degrade like /books/index.json, NOT like songs' 404
+// — the real v0 catalog ships all-null and the board must still boot).
+// ETag = catalog mtime + size + MOVIE_RECIPE_REV (bump the rev when this
+// generator's OUTPUT changes without a catalog change, or boards keep 304s).
+const MOVIE_CORE_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [3, 2], [3, 3]];
+const MOVIE_EP_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
+const MOVIE_RECIPE_REV = 1;
+// season/episode order flattened; keeps null-launch episodes so the caller can
+// both filter and count them (pendingCount).
+function movieEpisodesOf(t) {
+  const out = [];
+  const seasons = (Array.isArray(t.seasons) ? t.seasons : [])
+    .slice().sort((a, b) => (a && a.n || 0) - (b && b.n || 0));
+  for (const s of seasons) {
+    if (!s) continue;
+    const eps = (Array.isArray(s.episodes) ? s.episodes : [])
+      .slice().sort((a, b) => (a && a.n || 0) - (b && b.n || 0));
+    for (const e of eps) {
+      if (!e) continue;
+      out.push({ s: s.n, e: e.n, title: e.title, url: (e.launch && e.launch.url) || null });
+    }
+  }
+  return out;
+}
+function moviesRecipe() {
+  const cp = path.join(MOVIES_DIR, "catalog.json");
+  let st = null, catalog = null;
+  try {
+    st = fs.statSync(cp);
+    catalog = JSON.parse(fs.readFileSync(cp, "utf8"));
+  } catch {}                                     // degraded: valid empty recipe below
+  const etag = '"' + (st ? Math.floor(st.mtimeMs) + "-" + st.size : "0-0") +
+               "-r" + MOVIE_RECIPE_REV + '"';
+  const titles = (catalog && Array.isArray(catalog.titles) ? catalog.titles : [])
+    .filter(t => t && typeof t.id === "string" && /^[a-z0-9-]{1,64}$/.test(t.id));
+  let pending = 0;                               // null launch.urls awaiting curation
+  const playable = [];
+  for (const t of titles) {
+    if (t.kind === "movie") {
+      const url = (t.launch && t.launch.url) || null;
+      if (url) playable.push({ ...t, url });
+      else pending++;
+    } else if (t.kind === "show") {
+      const eps = movieEpisodesOf(t);
+      pending += eps.filter(e => !e.url).length;
+      if (!eps.length) pending++;                // seasons:[] = the whole show is pending
+      const ok = eps.filter(e => e.url);
+      if (ok.length) playable.push({ ...t, episodes: ok });
+    }
+  }
+  const byRank = (a, b) => (a.rank || 0) - (b.rank || 0) || String(a.id).localeCompare(String(b.id));
+  // comfort go-tos stay accessible but never occupy the exploration slot
+  const core = playable.filter(t => t.tier !== "discovery" || t.comfort === true).sort(byRank);
+  const discovery = playable.filter(t => t.tier === "discovery" && t.comfort !== true).sort(byRank);
+  // P3-SEAM(recommender): v1 "continue" is the most trivial deterministic rule
+  // — the first show (core first, then rank order) that has a playable episode;
+  // its "next" = the first playable episode. P3 replaces this pick (and the
+  // what-next next/again picks below) with lib/recommend.js output — history-
+  // driven next-unwatched of the most recently watched show — WITHOUT touching
+  // the cell contract.
+  const contShow = core.concat(discovery).find(t => t.kind === "show") || null;
+
+  // ---- cell contract (the board agent builds against exactly this) ----
+  function showCell(t, row, col) {
+    const c = { type: "show", label: t.title, board: t.id, row, col };
+    if (t.poster) c.image = "movies/" + t.poster;
+    return c;
+  }
+  function movieCell(t, row, col) {
+    const c = { type: "movie", label: t.title, titleId: t.id, service: t.service,
+                url: t.url, row, col };
+    if (t.poster) c.image = "movies/" + t.poster;
+    return c;
+  }
+  function episodeCell(t, ep, row, col, mark) {
+    const c = { type: "episode", label: ep.title || ("S" + ep.s + " E" + ep.e),
+                titleId: t.id, service: t.service, url: ep.url,
+                episode: { s: ep.s, e: ep.e }, row, col };
+    if (mark) c.mark = mark;                     // "next" | "again"
+    return c;
+  }
+  const exitCell = () => ({ label: "All done", say: "all done", type: "exit", row: 3, col: 4 });
+
+  const perPage = MOVIE_CORE_CELLS.length;       // 6 core titles per grid page
+  const pages = Math.max(1, Math.ceil(core.length / perPage));
+  const boards = [];
+  const doorPage = {};                           // titleId -> grid board id (for Back doors)
+  for (let p = 0; p < pages; p++) {
+    const id = p === 0 ? "movies" : "movies-" + (p + 1);
+    const buttons = [];
+    if (p === 0) {
+      if (contShow)                              // pinned slot 1: continue
+        buttons.push(episodeCell(contShow, contShow.episodes[0], 1, 1, "next"));
+    } else {
+      buttons.push({ label: "Back", say: "back", type: "back", glyph: "←",
+                     load: p === 1 ? "movies" : "movies-" + p, row: 1, col: 1 });
+    }
+    core.slice(p * perPage, (p + 1) * perPage).forEach((t, i) => {
+      const [row, col] = MOVIE_CORE_CELLS[i];
+      doorPage[t.id] = id;
+      buttons.push(t.kind === "show" ? showCell(t, row, col) : movieCell(t, row, col));
+    });
+    if (discovery[p]) {                          // the exploration slot, one per page;
+      const t = discovery[p];                    // supply exhausted -> cell rests black
+      doorPage[t.id] = id;
+      buttons.push(t.kind === "show" ? showCell(t, 2, 4) : movieCell(t, 2, 4));
+    }
+    if (p < pages - 1)                           // exactly the songs board's More
+      buttons.push({ label: "More", type: "control", symbol: "more",
+                     load: "movies-" + (p + 2), row: 3, col: 1 });
+    buttons.push(exitCell());
+    boards.push({ id, name: "What do I want to watch?", rows: 3, columns: 4, buttons });
+  }
+
+  // per-show episode pages + the "<show>-next" what-next board
+  for (const t of core.concat(discovery)) {
+    if (t.kind !== "show") continue;
+    const eps = t.episodes, per = MOVIE_EP_CELLS.length;
+    const epPages = Math.ceil(eps.length / per);
+    for (let p = 0; p < epPages; p++) {
+      const id = p === 0 ? t.id : t.id + "-" + (p + 1);
+      const buttons = [{ label: "Back", say: "back", type: "back", glyph: "←",
+                         load: p === 0 ? (doorPage[t.id] || "movies")
+                             : (p === 1 ? t.id : t.id + "-" + p),
+                         row: 1, col: 1 }];
+      eps.slice(p * per, (p + 1) * per).forEach((ep, i) => {
+        const [row, col] = MOVIE_EP_CELLS[i];
+        buttons.push(episodeCell(t, ep, row, col));
+      });
+      if (p < epPages - 1)
+        buttons.push({ label: "More", type: "control", symbol: "more",
+                       load: t.id + "-" + (p + 2), row: 3, col: 1 });
+      boards.push({ id, name: t.title, rows: 3, columns: 4, buttons });
+    }
+    // the post-episode choice screen (replaces autoplay; spec beat 6).
+    // P3-SEAM(recommender): v1 next = first playable, again = LAST playable
+    // (deterministic stand-ins for next-unwatched / last-watched).
+    boards.push({
+      id: t.id + "-next", name: "What next?", rows: 3, columns: 4,
+      buttons: [
+        episodeCell(t, eps[0], 1, 2, "next"),
+        episodeCell(t, eps[eps.length - 1], 1, 3, "again"),
+        { label: "Something else", say: "something else", type: "control",
+          load: "movies", row: 3, col: 2 },
+        exitCell(),
+      ],
+    });
+  }
+  return {
+    recipe: { locale: "en-US", root: "movies", home_label: "Movies",
+              meta: { pendingCount: pending }, boards },
+    etag,
+  };
+}
+function serveMoviesRecipe(req, res) {
+  let out;
+  try { out = moviesRecipe(); }
+  catch (e) {   // belt & braces: even a generator bug degrades to empty-but-alive
+    console.error("[movies] recipe failed: " + e.message);
+    out = { recipe: { locale: "en-US", root: "movies", home_label: "Movies",
+                      meta: { pendingCount: 0 },
+                      boards: [{ id: "movies", name: "What do I want to watch?",
+                                 rows: 3, columns: 4,
+                                 buttons: [{ label: "All done", say: "all done",
+                                             type: "exit", row: 3, col: 4 }] }] },
+            etag: '"err-' + Date.now() + '"' };
+  }
   const headers = { "Content-Type": "application/json", "Cache-Control": "no-cache",
                     "ETag": out.etag, "Access-Control-Allow-Origin": "*" };
   if ((req.headers["if-none-match"] || "") === out.etag) { res.writeHead(304, headers).end(); return; }
@@ -611,6 +807,31 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // ---- movies board events: launch/playing/pause/end/abandon/alldone ->
+  // family pool (movie-player P1). Feeds the P3 recommender read-side and
+  // dad's curation/demotion review; clone of /music-event. ----
+  if (req.method === "POST" && req.url === "/movie-event") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { titleId, action, service, episode } = JSON.parse(body);
+        const ok = ["launch", "playing", "pause", "end", "abandon", "alldone"].includes(action) &&
+          typeof titleId === "string" && /^[a-z0-9-]{1,64}$/.test(titleId) &&
+          ["disney", "netflix", "prime"].includes(service) &&
+          (episode === undefined ||
+            (episode !== null && typeof episode === "object" &&
+             Number.isInteger(episode.s) && Number.isInteger(episode.e) &&
+             episode.s >= 0 && episode.s <= 999 && episode.e >= 0 && episode.e <= 999));
+        if (!ok) { res.writeHead(400).end(); return; }
+        const rec = { titleId, service };
+        if (episode !== undefined) rec.episode = { s: episode.s, e: episode.e };
+        pool.append("movie-" + action, rec);
+        res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
   if (req.method === "POST" && req.url === "/log") {
     let body = "";
     req.on("data", c => { body += c; if (body.length > 65536) req.destroy(); });
@@ -648,8 +869,17 @@ const server = http.createServer((req, res) => {
   if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/songs.json") {
     serveSongsRecipe(req, res); return;
   }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/movies.json") {
+    serveMoviesRecipe(req, res); return;
+  }
   if (req.method === "GET" && urlPath.startsWith("/music/")) {
     serveMediaJail(req, res, MUSIC_DIR, urlPath.slice("/music/".length), MUSIC_EXTS, MUSIC_AV_EXTS);
+    return;
+  }
+  // movies static jail: posters + catalog only (no AV extensions — the hub
+  // never serves video; av list empty so nothing gets Range handling)
+  if (req.method === "GET" && urlPath.startsWith("/movies/")) {
+    serveMediaJail(req, res, MOVIES_DIR, urlPath.slice("/movies/".length), MOVIE_EXTS, []);
     return;
   }
   if (req.method === "GET" && urlPath.startsWith("/wardrobe/")) {
