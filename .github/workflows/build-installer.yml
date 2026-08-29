@@ -1,0 +1,47 @@
+# Builds New-ERA-Setup.exe from the public repos — the artifact SignPath
+# Foundation signs (their policy requires CI provenance; the signing step is
+# added to this workflow once the project is approved).
+name: build-installer
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out era-hub
+        uses: actions/checkout@v4
+        with: { path: era-hub }
+      - name: Check out sibling app repos
+        run: |
+          for r in era-core era-making-words era-pencil era-board; do
+            git clone --depth 1 "https://github.com/nauerhahn26/$r" "$r"
+          done
+      - name: Fetch portable Node runtime (official, checksum-verified)
+        run: |
+          NODE_VER=v22.22.2
+          mkdir -p era-family/cache
+          curl -fsSLo node.exe "https://nodejs.org/dist/$NODE_VER/win-x64/node.exe"
+          curl -fsSLo SHASUMS256.txt "https://nodejs.org/dist/$NODE_VER/SHASUMS256.txt"
+          grep " win-x64/node.exe$" SHASUMS256.txt | sed 's| win-x64/node.exe| node.exe|' | sha256sum -c -
+          mv node.exe era-family/cache/node-22-win-x64.exe
+      - name: Build payload
+        run: bash era-hub/tools/build-payload.sh "$PWD/dist/new-era-suite" --with-node
+      - name: Install NSIS
+        run: sudo apt-get update -qq && sudo apt-get install -y nsis
+      - name: Build New-ERA-Setup.exe
+        run: |
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          makensis -DPAYLOAD="$PWD/dist/new-era-suite" \
+                   -DOUTFILE="$PWD/dist/New-ERA-Setup.exe" \
+                   -DVERSION="$VERSION" era-hub/tools/installer.nsi
+          sha256sum dist/New-ERA-Setup.exe
+      # SignPath signing step lands here after Foundation approval:
+      #   uses: signpath/github-action-submit-signing-request
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: New-ERA-Setup
+          path: dist/New-ERA-Setup.exe
