@@ -44,14 +44,20 @@ cat > "$OUT/start-hub.bat" <<'BAT'
 @echo off
 rem New ERA hub - local-first: binds 127.0.0.1, state lives in .\data
 rem   start-hub.bat [port] [path]   path = which app page to open (default /home/)
+title New ERA
+echo Starting New ERA...
 cd /d %~dp0
 if "%1"=="" (set PORT=8377) else (set PORT=%1)
 if "%2"=="" (set OPEN=/home/) else (set OPEN=%~2)
 if not defined ERA_DATA_DIR set ERA_DATA_DIR=%~dp0data
+rem already running? just open the page (dad's 8/29 double-click pile-up)
+curl.exe -s -o NUL --max-time 2 http://127.0.0.1:%PORT%/settings
+if not errorlevel 1 goto open
 set NODE=node
 if exist "%~dp0node\node.exe" set NODE=%~dp0node\node.exe
 start "New ERA hub" /min "%NODE%" server.js %PORT%
 timeout /t 2 /nobreak >nul
+:open
 start "" http://127.0.0.1:%PORT%%OPEN%
 BAT
 cat > "$OUT/start-hub.sh" <<'SH'
