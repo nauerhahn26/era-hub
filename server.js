@@ -352,7 +352,7 @@ function serveSongsRecipe(req, res) {
 // app exit (songs D56a convention); (3,4) seats content like songs v3.
 const MOVIE_CORE_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [3, 2], [3, 3], [3, 4]];
 const MOVIE_EP_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
-const MOVIE_RECIPE_REV = 2;
+const MOVIE_RECIPE_REV = 3;
 // season/episode order flattened; keeps null-launch episodes so the caller can
 // both filter and count them (pendingCount).
 function movieEpisodesOf(t) {
@@ -429,11 +429,12 @@ function moviesRecipe() {
   }
   const exitCell = () => ({ label: "All done", say: "all done", type: "exit", row: 3, col: 4 });
 
-  const perPage = MOVIE_CORE_CELLS.length;       // 7 core titles per grid page
-  const pages = Math.max(1, Math.ceil(core.length / perPage));
   const boards = [];
   const doorPage = {};                           // titleId -> grid board id (for Back doors)
-  for (let p = 0; p < pages; p++) {
+  // D57c (dad 8/28, photo review): ONLY the middle pair (2,2)(2,3) ever rests
+  // black — when a page has no discovery title, (2,4) joins the core flow.
+  let ci = 0, p = 0;
+  while (p === 0 || ci < core.length || discovery[p]) {
     const id = p === 0 ? "movies" : "movies-" + (p + 1);
     const buttons = [];
     if (p === 0) {
@@ -443,21 +444,26 @@ function moviesRecipe() {
       buttons.push({ label: "Back", say: "back", type: "back", glyph: "←",
                      load: p === 1 ? "movies" : "movies-" + p, row: 1, col: 1 });
     }
-    core.slice(p * perPage, (p + 1) * perPage).forEach((t, i) => {
-      const [row, col] = MOVIE_CORE_CELLS[i];
+    const disc = discovery[p];
+    const cells = disc ? MOVIE_CORE_CELLS : MOVIE_CORE_CELLS.concat([[2, 4]]);
+    for (const [row, col] of cells) {
+      const t = core[ci]; if (!t) break;
+      ci++;
       doorPage[t.id] = id;
       buttons.push(t.kind === "show" ? showCell(t, row, col) : movieCell(t, row, col));
-    });
-    if (discovery[p]) {                          // the exploration slot, one per page;
-      const t = discovery[p];                    // supply exhausted -> cell rests black
-      doorPage[t.id] = id;
-      buttons.push(t.kind === "show" ? showCell(t, 2, 4) : movieCell(t, 2, 4));
     }
-    if (p < pages - 1)                           // exactly the songs board's More
+    if (disc) {                                  // the exploration slot, one per page
+      doorPage[disc.id] = id;
+      buttons.push(disc.kind === "show" ? showCell(disc, 2, 4) : movieCell(disc, 2, 4));
+    }
+    const morePages = ci < core.length || discovery[p + 1];
+    if (morePages)                               // exactly the songs board's More
       buttons.push({ label: "More", type: "control", symbol: "more",
                      load: "movies-" + (p + 2), row: 3, col: 1 });
     // no exit tile (D57b): the msgbar door exits, like every other board
     boards.push({ id, name: "What do I want to watch?", rows: 3, columns: 4, buttons });
+    p++;
+    if (!morePages) break;
   }
 
   // per-show episode pages + the "<show>-next" what-next board
