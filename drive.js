@@ -33,6 +33,9 @@ function status() {
   const local = detectLocal();
   return {
     mode: c.mode || (c.token ? "api" : "local"),
+    appInstalled: local.appInstalled,
+    signedIn: local.signedIn,
+    content: contentReady(),
     localInstalled: local.installed,
     localRoots: local.roots,
     folderPath: c.folderPath || "",
@@ -177,6 +180,13 @@ async function sync() {
 // subfolders into the data dir. No OAuth client needed anywhere.
 function detectLocal() {
   const os = require("os");
+  // the Drive app can be installed but not yet signed in (no mount yet) —
+  // the Settings checklist shows those as two separate live checks
+  let appInstalled = false;
+  for (const p of ["C:\\Program Files\\Google\\Drive File Stream",
+                   "C:\\Program Files (x86)\\Google\\Drive File Stream"]) {
+    try { if (fs.statSync(p).isDirectory()) appInstalled = true; } catch {}
+  }
   const roots = [];
   for (let c = 68; c <= 90; c++) {              // D:..Z:
     const p = String.fromCharCode(c) + ":\\My Drive";
@@ -186,7 +196,35 @@ function detectLocal() {
                    path.join(os.homedir(), "Google Drive", "My Drive")]) {
     try { if (fs.statSync(p).isDirectory()) roots.push(p); } catch {}
   }
-  return { installed: roots.length > 0, roots };
+  return { installed: roots.length > 0, appInstalled: appInstalled || roots.length > 0,
+           signedIn: roots.length > 0, roots };
+}
+
+// Deep link: open Explorer at the mount root (create your folder there) or
+// at the chosen content folder (drop books/music in). Windows only.
+function openInExplorer(target) {
+  const c = loadCfg();
+  const { roots } = detectLocal();
+  const p = target === "folder" && c.folderPath ? c.folderPath : roots[0];
+  if (!p) return { error: "nothing-to-open" };
+  if (process.platform === "win32") {
+    const { spawn } = require("child_process");
+    spawn("explorer.exe", [p], { detached: true, stdio: "ignore" }).unref();
+  }
+  return { ok: true, opened: p };
+}
+
+// Live content check for the checklist: which known subfolders of the chosen
+// folder actually have something in them.
+function contentReady() {
+  const c = loadCfg();
+  const out = {};
+  for (const sub of MIRROR_SUBDIRS) {
+    out[sub] = false;
+    if (!c.folderPath) continue;
+    try { out[sub] = fs.readdirSync(path.join(c.folderPath, sub)).length > 0; } catch {}
+  }
+  return out;
 }
 
 function browseLocal(dir) {
@@ -266,4 +304,4 @@ function start(dataDir) {
   }
 }
 
-module.exports = { start, status, connect, sync, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder };
+module.exports = { start, status, connect, sync, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer };

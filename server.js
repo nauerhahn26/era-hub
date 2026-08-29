@@ -1092,6 +1092,18 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(drive.detectLocal()));
     return;
   }
+  if (req.method === "POST" && req.url === "/integrations/drive/open") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 512) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { target } = JSON.parse(body || "{}");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(drive.openInExplorer(target === "folder" ? "folder" : "root")));
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
   if (req.method === "GET" && urlPath === "/integrations/drive/browse") {
     const q = new URL(req.url, "http://x").searchParams;
     res.writeHead(200, { "Content-Type": "application/json" });
