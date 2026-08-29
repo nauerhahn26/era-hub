@@ -352,7 +352,7 @@ function serveSongsRecipe(req, res) {
 // app exit (songs D56a convention); (3,4) seats content like songs v3.
 const MOVIE_CORE_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [3, 2], [3, 3], [3, 4]];
 const MOVIE_EP_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
-const MOVIE_RECIPE_REV = 3;
+const MOVIE_RECIPE_REV = 4;
 // season/episode order flattened; keeps null-launch episodes so the caller can
 // both filter and count them (pendingCount).
 function movieEpisodesOf(t) {
@@ -425,6 +425,7 @@ function moviesRecipe() {
                 titleId: t.id, service: t.service, url: ep.url,
                 episode: { s: ep.s, e: ep.e }, row, col };
     if (mark) c.mark = mark;                     // "next" | "again"
+    if (t.poster) c.image = "movies/" + t.poster; // the show's art (continue tile incl.)
     return c;
   }
   const exitCell = () => ({ label: "All done", say: "all done", type: "exit", row: 3, col: 4 });

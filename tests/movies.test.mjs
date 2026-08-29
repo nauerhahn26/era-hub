@@ -138,7 +138,8 @@ test("GET /recipes/movies.json: grid with pinned slots — continue, core order,
   assert.deepEqual(cont, { type: "episode", label: "The First One",
     titleId: "test-show-a", service: "netflix",
     url: "https://example.invalid/watch/101", episode: { s: 1, e: 1 },
-    row: 1, col: 1, mark: "next" }, "continue tile: exact cell contract");
+    row: 1, col: 1, mark: "next", image: "movies/test-show-a.jpg" },
+    "continue tile: exact cell contract (REV4: episode cells carry the show art)");
 
   // core titles by rank in reading order; show tiles are doors, movies launch
   assert.deepEqual(btnAt(p1, 1, 2), { type: "show", label: "Test Show A",
@@ -188,7 +189,8 @@ test("per-show page: episodes in season/episode order, unharvested filtered, bac
     const [s, e, label, n] = want[i];
     assert.deepEqual(btnAt(sp, row, col), { type: "episode", label,
       titleId: "test-show-a", service: "netflix",
-      url: `https://example.invalid/watch/${n}`, episode: { s, e }, row, col },
+      url: `https://example.invalid/watch/${n}`, episode: { s, e }, row, col,
+      image: "movies/test-show-a.jpg" },
       `episode s${s}e${e} at (${row},${col}), no mark`);
   });
   assert.equal(btnAt(sp, 3, 2), null, "the null-launch episode is filtered out");
