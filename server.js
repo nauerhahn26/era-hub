@@ -83,12 +83,17 @@ const APPS = [
   { id: "music", title: "Music", sub: "favorite songs, audio only", path: "/board/?recipe=songs", pack: "board" },
   { id: "movies", title: "Movies", sub: "shows & movies, her picks", path: "/board/?recipe=movies", pack: "board" },
   { id: "reader", title: "Book Reader", sub: "picture books, read aloud", path: "/reader/", pack: "reader" },
+  // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
+  // on-device (Windows' built-in csc) and pairs it with the Tobii runtime
+  // already on Tobii devices (official NuGet as fallback for other PCs)
+  { id: "eragaze", title: "ERAgaze eye-gaze engine", sub: "gaze cursor + dwell for Tobii trackers", path: null, pack: null, engine: true },
 ];
 // pack = the public/ subdir an app needs on disk (null = rides with the core;
 // board/music/movies share one pack). The installer lays down only chosen
 // packs; enabling later REALLY installs the pack (dad 8/29: never
 // install-everything-and-hide) by pulling it from the release tarball.
 function appInstalled(app) {
+  if (app.engine) return gazeCompiled();
   return !app.pack || fs.existsSync(path.join(PUB, app.pack));
 }
 const appInstalling = {};   // id -> true while a pack download runs
@@ -116,23 +121,96 @@ function loadEnabledApps() {
     const j = JSON.parse(fs.readFileSync(path.join(DATA, "apps.json"), "utf8"));
     if (Array.isArray(j.enabled)) return j.enabled.filter(id => APPS.some(a => a.id === id));
   } catch {}
-  return APPS.map(a => a.id);
+  // no apps.json: every APP on, but never auto-enable the ENGINE — existing
+  // installs (and Ellie's device, which runs its own ERAgaze) must not grow
+  // a second gaze engine uninvited
+  return APPS.filter(a => !a.engine).map(a => a.id);
+}
+// A gaze engine is "there" if ours is compiled OR any engine answers the bus
+// (Ellie's device runs the family build — never fight it).
+function gazeBusAlive() {
+  return new Promise((resolve) => {
+    const req2 = http.get({ host: "127.0.0.1", port: 49155, path: "/status", timeout: 900 },
+      (r) => { r.resume(); resolve(true); });
+    req2.on("error", () => resolve(false));
+    req2.on("timeout", () => { req2.destroy(); resolve(false); });
+  });
+}
+const GAZE_DIR = path.join(__dirname, "gaze");
+function gazeCompiled() { return fs.existsSync(path.join(GAZE_DIR, "ERAgaze.exe")); }
+async function installGaze() {
+  if (process.platform !== "win32") throw new Error("windows only");
+  const { spawnSync, spawn } = require("child_process");
+  // 1. the Tobii runtime: prefer the copy already on this (Tobii) device
+  const dllDest = path.join(GAZE_DIR, "tobii_stream_engine.dll");
+  if (!fs.existsSync(dllDest)) {
+    let found = null;
+    for (const base of ["C:\\Program Files\\Tobii", "C:\\Program Files\\Tobii Dynavox",
+                        "C:\\Program Files (x86)\\Tobii", "C:\\Program Files (x86)\\Tobii Dynavox"]) {
+      const stack = [base];
+      while (stack.length && !found) {
+        const dir = stack.pop();
+        let entries = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+        for (const e of entries) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) stack.push(p);
+          else if (e.name.toLowerCase() === "tobii_stream_engine.dll" && !p.includes("x86")) found = p;
+        }
+      }
+      if (found) break;
+    }
+    if (found) fs.copyFileSync(found, dllDest);
+    else {
+      // non-Tobii PC: official Tobii package from NuGet (user pulls from
+      // Tobii's own distribution; we never redistribute their binaries)
+      const os = require("os");
+      const stage = fs.mkdtempSync(path.join(os.tmpdir(), "era-tobii-"));
+      const r = await fetch("https://api.nuget.org/v3-flatcontainer/tobii.streamengine.native/2.2.2.363/tobii.streamengine.native.2.2.2.363.nupkg");
+      if (!r.ok) throw new Error("tobii runtime download failed");
+      const pkg = path.join(stage, "t.zip");
+      fs.writeFileSync(pkg, Buffer.from(await r.arrayBuffer()));
+      spawnSync("tar", ["-xf", pkg, "-C", stage], { windowsHide: true });
+      fs.copyFileSync(path.join(stage, "build", "native", "lib", "x64", "tobii_stream_engine.dll"), dllDest);
+      try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
+    }
+  }
+  // 2. compile our engine with Windows' built-in compiler
+  if (!gazeCompiled()) {
+    const csc = "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe";
+    const c = spawnSync(csc, ["/nologo", "/target:winexe", "/platform:x64",
+      "/out:" + path.join(GAZE_DIR, "ERAgaze.exe"),
+      "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll",
+      "/r:System.Web.Extensions.dll", "/r:System.Management.dll",
+      path.join(GAZE_DIR, "ERAgaze.cs")], { windowsHide: true });
+    if (c.status !== 0) throw new Error("compile failed: " + String(c.stderr || c.stdout));
+  }
+  // 3. shortcuts + autostart + start it (skip start when another engine runs)
+  appShortcut({ title: "ERAgaze", path: null, exe: path.join(GAZE_DIR, "ERAgaze.exe") }, true);
+  if (!(await gazeBusAlive())) {
+    spawn(path.join(GAZE_DIR, "ERAgaze.exe"), [], { cwd: GAZE_DIR, detached: true, stdio: "ignore", windowsHide: true }).unref();
+  }
+  console.log("[gaze] installed");
 }
 // Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
 // best-effort — the home tile is the source of truth, the .lnk a convenience).
 function appShortcut(app, enabled) {
   if (process.platform !== "win32") return;
   const { spawn } = require("child_process");
+  const target = app.exe || path.join(__dirname, "start-hub.bat");
+  const dirs = app.exe
+    ? `@([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'), [Environment]::GetFolderPath('Startup'))`
+    : `@([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))`;
   const script = enabled
     ? `$w = New-Object -ComObject WScript.Shell;` +
-      `foreach ($d in @([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))) {` +
+      `foreach ($d in ${dirs}) {` +
       `$l = $w.CreateShortcut((Join-Path $d '${app.title}.lnk'));` +
-      `$l.TargetPath = '${path.join(__dirname, "start-hub.bat")}';` +
-      `$l.Arguments = '${PORT} "${app.path}"';` +
+      `$l.TargetPath = '${target}';` +
+      (app.exe ? `` : `$l.Arguments = '${PORT} "${app.path}"';`) +
       `$l.WorkingDirectory = '${__dirname}';` +
       `$l.WindowStyle = 7; $l.Save() }` +   // 7 = minimized: the launcher console never pops up
       ``
-    : `foreach ($d in @([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))) {` +
+    : `foreach ($d in ${dirs}) {` +
       `Remove-Item (Join-Path $d '${app.title}.lnk') -Force -ErrorAction SilentlyContinue }`;
   try {
     // windowsHide: dad watched PowerShell windows appear for every shortcut
@@ -1039,7 +1117,7 @@ const server = http.createServer((req, res) => {
         // enabling an app whose files were never installed REALLY installs it
         if (enabled && !appInstalled(app) && !appInstalling[app.id]) {
           appInstalling[app.id] = true;
-          installPack(app)
+          (app.engine ? installGaze() : installPack(app))
             .catch(e => console.error("[apps] pack install failed: " + e.message))
             .finally(() => { delete appInstalling[app.id]; });
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -1049,6 +1127,64 @@ const server = http.createServer((req, res) => {
         res.writeHead(204).end();
       } catch { res.writeHead(400).end(); }
     });
+    return;
+  }
+
+  // ---- open an external site in a NORMAL browser window (URL bar and all)
+  // — kiosk windows trap novices on web logins (dad 8/29) ----
+  if (req.method === "POST" && req.url === "/open-url") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 1024) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { url } = JSON.parse(body);
+        const ALLOW = ["https://www.google.com/drive/", "https://elevenlabs.io/"];
+        if (typeof url !== "string" || !ALLOW.some(a => url.startsWith(a))) { res.writeHead(400).end(); return; }
+        if (process.platform === "win32") {
+          const { spawn } = require("child_process");
+          const browsers = ["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                            "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+                            "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"];
+          const b = browsers.find(p => fs.existsSync(p));
+          if (b) {
+            spawn(b, ["--new-window", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+            res.writeHead(200, { "Content-Type": "application/json" }).end('{"opened":true}');
+            return;
+          }
+        }
+        res.writeHead(200, { "Content-Type": "application/json" }).end('{"opened":false}');
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+
+  // ---- per-app file removal (dad 8/29: uncheck hides; delete should exist) ----
+  if (req.method === "POST" && req.url === "/apps/delete") {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      try {
+        const { id } = JSON.parse(body);
+        const app = APPS.find(a => a.id === id);
+        if (!app) { res.writeHead(400).end(); return; }
+        const enabled = loadEnabledApps();
+        if (enabled.includes(id)) { res.writeHead(409).end("disable first"); return; }
+        if (app.engine) {
+          try { fs.rmSync(GAZE_DIR, { recursive: true, force: true }); } catch {}
+        } else if (app.pack) {
+          // the board pack is shared: only removable when board+music+movies are ALL off
+          const sharers = APPS.filter(a => a.pack === app.pack).map(a => a.id);
+          if (sharers.some(x => enabled.includes(x))) { res.writeHead(409).end("pack in use"); return; }
+          try { fs.rmSync(path.join(PUB, app.pack), { recursive: true, force: true }); } catch {}
+        } else { res.writeHead(400).end("core app"); return; }
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/create-folder") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(drive.createContentFolder()));
     return;
   }
 

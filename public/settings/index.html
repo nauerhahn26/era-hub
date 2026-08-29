@@ -96,8 +96,7 @@
     <div style="margin-top:16px">
       <p class="hint" style="margin-bottom:8px">Premium voices need a free ElevenLabs account. Without a key the built-in computer voice is used.</p>
       <div class="row" style="margin-bottom:10px">
-        <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener"
-           style="display:inline-block;border:2px solid var(--teal);color:var(--teal-deep);border-radius:12px;padding:12px 18px;text-decoration:none;font-size:17px">🔑 Open my ElevenLabs API keys page</a>
+        <button id="elevenOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my ElevenLabs API keys page</button>
       </div>
       <div class="row">
         <input id="ttsKey" type="password" placeholder="ElevenLabs API key"
@@ -467,13 +466,30 @@ async function loadApps(){
       row.appendChild(sub);
       const prog=document.createElement("b"); prog.style.color="var(--teal-deep)";
       if(a.installing) prog.textContent=" installing…";
+      else if(a.engine && a.installed) prog.textContent=" installed ✓";
       row.appendChild(prog);
+      if(!a.enabled && a.installed && (a.engine || ["pencil","board","music","movies","reader"].includes(a.id))){
+        const del=document.createElement("button");
+        del.textContent="🗑 remove files"; del.style.fontSize="14px"; del.style.padding="6px 10px";
+        del.onclick=async(ev)=>{ ev.preventDefault();
+          const r=await fetch("/apps/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:a.id})});
+          if(r.ok){ toast(a.title+" files removed"); loadApps(); }
+          else toast(r.status===409?"Still used by another app — untick those first":"Could not remove",false);
+        };
+        row.appendChild(del);
+      }
       box.appendChild(row);
     }
   }catch(e){ $("appsList").textContent="Could not reach the app server."; }
 }
 
 // ---- ElevenLabs key ----
+async function openSite(url){
+  try{ const r=await (await fetch("/open-url",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})})).json();
+       if(r.opened) return; }catch(e){}
+  window.open(url,"_blank");   // fallback: at least a new tab
+}
+$("elevenOpen").onclick=()=>openSite("https://elevenlabs.io/app/settings/api-keys");
 $("ttsKeySave").onclick=async()=>{
   const k=$("ttsKey").value.trim();
   if(!k){ toast("Paste a key first",false); return; }
@@ -511,12 +527,16 @@ async function drivePaint(){
     const steps=[
       { done:s.appInstalled, title:"1. Get the Google Drive app",
         hint:"Google's own app - it keeps your Drive on this computer.",
-        btn:"⬇ Open download page", fn:()=>window.open("https://www.google.com/drive/download/","_blank") },
+        btn:"⬇ Open download page", fn:()=>openSite("https://www.google.com/drive/download/") },
       { done:s.signedIn, title:"2. Sign in to Google Drive",
         hint:"Open the Drive app it installed and sign in with your Google account. This box ticks by itself." },
-      { done:!!s.folderPath, title:"3. Pick your content folder",
-        hint:"Make a folder in your Drive (New ERA Content works well), then choose it below.",
-        btn:"📁 Open my Drive", fn:async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"root"})}); } },
+      { done:!!s.folderPath, title:"3. Create your content folder",
+        hint:"One tap: makes New ERA Content in your Drive with books, music, content, and clothing folders inside. (Or pick an existing folder below.)",
+        btn:"✨ Create it for me", fn:async()=>{
+          const r=await (await fetch("/integrations/drive/create-folder",{method:"POST"})).json();
+          if(r.ok){ toast("Folder created in your Drive"); fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); }
+          else toast("Could not create: "+(r.error||""),false);
+        } },
       { done:hasContent, title:"4. Put content in it",
         hint:"Inside your folder make books, music, or content folders and drop things in.",
         btn:"📂 Open the folder", fn:async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"folder"})}); } },
@@ -530,8 +550,10 @@ async function drivePaint(){
     const picking = s.signedIn && !s.folderPath;
     $("dlPicker").style.display = picking ? "block":"none";
     if(picking){ if(!dlCur) dlCur = s.localRoots[0] || ""; await dlBrowse(dlCur); }
+    const allDone = steps.every(x=>x.done);
     let msg="";
-    if(s.folderPath) msg="<b>Watching:</b> "+s.folderPath;
+    if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open New ERA Content, and upload straight into those folders). Everything lands here within 6 hours, or press Sync now.<br>';
+    if(s.folderPath) msg+="<b>Watching:</b> "+s.folderPath;
     if(s.syncing) msg+=" · <b>Syncing…</b>";
     else if(s.lastSync) msg += s.lastSync.error ? ' · <span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
       : " · Last sync "+new Date(s.lastSync.when).toLocaleString()+": "+s.lastSync.files+" new, "+s.lastSync.skipped+" unchanged";

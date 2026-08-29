@@ -92,7 +92,7 @@
       } catch {}
       const grid = document.getElementById("appGrid");
       for (const a of apps) {
-        if (!a.enabled) continue;
+        if (a.engine || !a.enabled) continue;   // the gaze engine has no page
         if (a.id === "music" && !hasSongs) continue;
         if (a.id === "movies" && !hasMovies) continue;
         const el = document.createElement("a");
@@ -106,6 +106,7 @@
       const mgr = document.getElementById("appMgr"), list = document.getElementById("appMgrList");
       mgr.hidden = false;
       for (const a of apps) {
+        if (a.engine) continue;   // manage the engine from Settings
         const row = document.createElement("label");
         row.style.cssText = "display:flex;gap:8px;align-items:center;margin:4px 0;font-size:15px";
         const cb = document.createElement("input");

@@ -26,6 +26,12 @@ cp "$ROOT/era-making-words/app/index.html" "$ROOT/era-making-words/app/studio.js
 # lesson content ships with the app (dad's 8/28 ruling) — the PUBLIC copy in
 # era-making-words/content, never the family one (runway/sentences stay home)
 cp "$ROOT/era-making-words/content/lessons.json" "$OUT/public/lessons.json"
+# ERAgaze engine SOURCE ships (dad 8/29: gaze is the point of the product).
+# The hub compiles it on-device with Windows' built-in csc and pairs it with
+# the Tobii runtime already present on Tobii devices (NuGet fallback) — we
+# never redistribute Tobii's binaries.
+mkdir -p "$OUT/gaze"
+cp "$ROOT/era-gaze/device/ERAgaze.cs" "$OUT/gaze/ERAgaze.cs"
 cp -r "$ROOT/era-pencil/app" "$OUT/public/pencil"
 cp -r "$ROOT/era-board/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"

@@ -17,7 +17,9 @@ const path = require("path");
 const OAUTH = process.env.ERA_DRIVE_OAUTH || "https://oauth2.googleapis.com";
 const API = process.env.ERA_DRIVE_API || "https://www.googleapis.com";
 const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
-const MIRROR_SUBDIRS = ["books", "music", "content"];
+// clothing: raw outfit photos staged for the wardrobe pipeline (dad 8/29 -
+// created + mirrored now, processed by a later milestone)
+const MIRROR_SUBDIRS = ["books", "music", "content", "clothing"];
 
 let DATA = null;
 let pendingDevice = null;   // {device_code, user_code, verification_url, interval, expires}
@@ -289,6 +291,22 @@ async function listFolders() {
   return { folders: (j.files || []).map(f => ({ id: f.id, name: f.name })) };
 }
 
+// One-click setup (dad 8/29: "run a job to add the folder - smarter"): the
+// mount is a real folder, so we create New ERA Content + one subfolder per
+// program right in it; the Drive app syncs it up. Also selects it.
+function createContentFolder() {
+  const { roots } = detectLocal();
+  if (!roots.length) return { error: "no-mount" };
+  const base = path.join(roots[0], "New ERA Content");
+  try {
+    for (const sub of MIRROR_SUBDIRS) fs.mkdirSync(path.join(base, sub), { recursive: true });
+  } catch (e) { return { error: String(e.message) }; }
+  const c = loadCfg();
+  c.mode = "local"; c.folderPath = base;
+  saveCfg(c);
+  return { ok: true, folderPath: base };
+}
+
 function setFolder(folderId) {
   const c = loadCfg();
   c.folderId = String(folderId || "").trim();
@@ -304,4 +322,4 @@ function start(dataDir) {
   }
 }
 
-module.exports = { start, status, connect, sync, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer };
+module.exports = { start, status, connect, sync, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder };

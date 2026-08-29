@@ -18,7 +18,7 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 !include "Sections.nsh"
 !include "LogicLib.nsh"
-!define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer - only what you tick is installed. Add or remove apps any time from the home screen or Settings. (The ERAgaze eye-gaze engine joins this list in an upcoming release.)"
+!define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer - only what you tick is installed. Add or remove apps any time from the home screen or Settings."
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open New ERA now"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchHub
@@ -56,6 +56,8 @@ SectionEnd
 ; the missing pack from the release. Making Words rides with the core (its
 ; lesson engine is part of the hub root). Board, Music, and Movies share
 ; one pack, synced in .onSelChange.
+Section "ERAgaze eye-gaze engine (recommended)" SecGaze
+SectionEnd
 Section "Making Words" SecMW
 SectionEnd
 Section "The Pencil" SecPencil
@@ -124,16 +126,25 @@ Section "-writeApps"
     FileWrite $0 '$1"reader"'
     StrCpy $1 ","
   ${EndIf}
+  ${If} ${SectionIsSelected} ${SecGaze}
+    FileWrite $0 '$1"eragaze"'
+    StrCpy $1 ","
+  ${EndIf}
   FileWrite $0 ']}'
   FileClose $0
 SectionEnd
 
 Section "Uninstall"
   ExecWait 'taskkill /IM node.exe /F'
+  ExecWait 'taskkill /IM ERAgaze.exe /F'
   ; everything but data\ — the family's content, settings, and history stay
   Delete "$INSTDIR\*.*"
   RMDir /r "$INSTDIR\node"
   RMDir /r "$INSTDIR\public"
+  RMDir /r "$INSTDIR\gaze"
+  Delete "$DESKTOP\ERAgaze.lnk"
+  Delete "$SMPROGRAMS\ERAgaze.lnk"
+  Delete "$SMSTARTUP\ERAgaze.lnk"
   Delete "$DESKTOP\${APPNAME}.lnk"
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   Delete "$SMSTARTUP\${APPNAME}.lnk"
