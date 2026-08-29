@@ -739,6 +739,15 @@ const server = http.createServer((req, res) => {
           a.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
           fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(a, null, 2));
         }
+        // the wizard's app chooser (the package ships no installer script —
+        // shortcuts are made HERE for the chosen apps)
+        if (Array.isArray(inc.apps)) {
+          const chosen = APPS.filter(a => inc.apps.includes(a.id));
+          fs.writeFileSync(path.join(DATA, "apps.json"),
+            JSON.stringify({ enabled: chosen.map(a => a.id) }, null, 2));
+          for (const a of APPS) appShortcut(a, chosen.some(c => c.id === a.id));
+          appShortcut({ title: "New ERA", path: "/home/" }, true);   // the home door
+        }
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch { res.writeHead(400).end(); }
     });

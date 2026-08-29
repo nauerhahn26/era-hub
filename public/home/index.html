@@ -42,6 +42,8 @@
     <label for="dwell">How long a gaze selects (dwell) — you can tune this anytime
       <span class="val" id="dwellVal">1.0s</span></label>
     <input id="dwell" type="range" min="600" max="3000" step="100" value="1000">
+    <label>Which apps? (change anytime from this screen)</label>
+    <div id="pickApps" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 14px"></div>
     <button class="go" id="go" disabled>Start</button>
     <p class="note">Voice, volume cap, and page-change pause live in Settings after
       setup. Add an ElevenLabs key there for premium voices — the built-in computer
@@ -144,12 +146,29 @@
   setup.classList.remove("hidden");
   const name = document.getElementById("name"), go = document.getElementById("go");
   const dwell = document.getElementById("dwell"), dv = document.getElementById("dwellVal");
+  // the install-time app chooser (8/29: everything, one, or a few) lives HERE
+  // in the wizard — the package ships no installer script at all; the hub
+  // makes the shortcuts for whatever is picked.
+  const pick = document.getElementById("pickApps");
+  try {
+    const { apps } = await (await fetch("/apps", { cache: "no-store" })).json();
+    for (const a of apps) {
+      const row = document.createElement("label");
+      row.style.cssText = "display:flex;gap:8px;align-items:center;margin:2px 0;font-size:16px";
+      const cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = true; cb.dataset.id = a.id;
+      row.appendChild(cb); row.appendChild(document.createTextNode(a.title));
+      pick.appendChild(row);
+    }
+  } catch {}
   name.addEventListener("input", () => { go.disabled = !name.value.trim(); });
   dwell.addEventListener("input", () => { dv.textContent = (dwell.value/1000).toFixed(1) + "s"; });
   go.addEventListener("click", async () => {
     go.disabled = true;
+    const chosen = [...pick.querySelectorAll("input:checked")].map(c => c.dataset.id);
     const r = await fetch("/setup", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ childName: name.value.trim(), dwellMs: parseInt(dwell.value, 10) }) });
+      body: JSON.stringify({ childName: name.value.trim(), dwellMs: parseInt(dwell.value, 10),
+                             apps: chosen }) });
     if (r.ok) location.reload(); else { go.disabled = false; alert("Could not save — try again."); }
   });
 })();

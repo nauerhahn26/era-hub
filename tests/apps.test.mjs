@@ -65,6 +65,16 @@ test("an install-chooser style apps.json (a few apps) is honored", async () => {
   assert.deepEqual(on, ["pencil", "reader"]);
 });
 
+test("wizard setup with an app choice seeds the enabled set", async () => {
+  fs.rmSync(path.join(TMP, "apps.json"), { force: true });
+  const r = await fetch(`${BASE}/setup`, { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ childName: "Zoe", dwellMs: 1200, apps: ["board", "music"] }) });
+  assert.equal(r.status, 204);
+  const { apps } = await (await fetch(`${BASE}/apps`)).json();
+  assert.deepEqual(apps.filter(a => a.enabled).map(a => a.id).sort(), ["board", "music"]);
+});
+
 test("unknown app id or bad body is refused", async () => {
   assert.equal((await fetch(`${BASE}/apps`, { method: "POST",
     body: JSON.stringify({ id: "nope", enabled: true }) })).status, 400);
