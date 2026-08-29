@@ -17,7 +17,7 @@ OUT="${1:-$HUB/dist/new-era-payload}"
 VERSION="$(date -u +%Y%m%d.%H%M)"
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/predict-model.json" "$OUT/"
 cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$HUB/../era-core/NOTICE" "$OUT/" 2>/dev/null || true
 # apps + shared foundation - COPIES, never symlinks
 cp -rL "$ROOT/era-core/lib" "$OUT/public/lib"

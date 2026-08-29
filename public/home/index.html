@@ -76,8 +76,23 @@
       if (m.ok) document.getElementById("musicApp").hidden = false;
     } catch {}
     document.getElementById("hello").textContent = "Hi, " + s.childName + "'s family!";
-    document.getElementById("devnote").textContent =
+    const devnote = document.getElementById("devnote");
+    devnote.textContent =
       "Hub is running locally on this machine. Dwell: " + ((s.dwellMs||1000)/1000) + "s.";
+    // Listen for updates: the hub self-updates from the website and restarts;
+    // when the build changes under us, reload so this page runs the new code.
+    try {
+      const v = await (await fetch("/version", { cache: "no-store" })).json();
+      if (v.build && v.build !== "dev") {
+        devnote.textContent += " Build " + v.build + ".";
+        setInterval(async () => {
+          try {
+            const n = await (await fetch("/version", { cache: "no-store" })).json();
+            if (n.build && n.build !== v.build) location.reload();
+          } catch { /* hub restarting mid-update: next tick catches it */ }
+        }, 60 * 1000);
+      }
+    } catch {}
     return;
   }
   setup.classList.remove("hidden");

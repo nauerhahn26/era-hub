@@ -24,6 +24,12 @@ mv "$TARBALL" "$DIST/new-era-suite-$V.tar.gz"
 
 echo "== 3/4 checksums =="
 ( cd "$DIST" && sha256sum "new-era-suite-$V.tar.gz" > checksums.txt && cat checksums.txt )
+# latest.json = the self-update feed: installed hubs poll releases/latest/
+# download/latest.json and update themselves when `build` is newer.
+BUILD="$(cat "$DIST/new-era-suite/VERSION")"
+SHA="$(cut -d' ' -f1 "$DIST/checksums.txt")"
+printf '{"version":"%s","build":"%s","sha256":"%s"}\n' "$V" "$BUILD" "$SHA" > "$DIST/latest.json"
+cat "$DIST/latest.json"
 
 echo "== 4/4 tag + release =="
 git -C "$HUB" tag -f "$V"
@@ -34,5 +40,5 @@ sha256 in checksums.txt."
 cp "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz"   # stable name = the website's direct-download URL
 gh release create "$V" --repo nauerhahn26/new-era-releases --title "New ERA suite $V" \
   --notes "$NOTES" ${PRE:+--prerelease} \
-  "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/checksums.txt"
+  "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/checksums.txt" "$DIST/latest.json"
 echo "RELEASED: $V"

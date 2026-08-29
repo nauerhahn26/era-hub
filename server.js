@@ -9,6 +9,8 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
+const updater = require("./update");
+
 const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
@@ -676,6 +678,20 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- self-update: version probe (FE polls it) + on-demand check ----
+  if (req.method === "GET" && urlPath === "/version") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ build: updater.currentBuild(), updater: updater.enabled, pid: process.pid }));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/update/check") {
+    updater.check(PORT).then((r) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r));
+    });
+    return;
+  }
+
   // static
   let p = safeDecode((req.url || "/").split("?")[0]);
   if (p === null) { res.writeHead(400).end(); return; }
@@ -701,6 +717,7 @@ const server = http.createServer((req, res) => {
 });
 server.listen(PORT, BIND, () => {
   console.log("era-hub on http://" + BIND + ":" + PORT);
+  updater.start(PORT);   // installed payloads only; checkouts are a no-op
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;
