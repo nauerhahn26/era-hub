@@ -88,7 +88,7 @@
     <div id="appsList"></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="voice">
     <h2>🎙 Voice</h2>
     <p class="hint">The voice that talks to your child in Making Words and The Pencil. Tap any voice to hear it and choose it.</p>
     <div class="row" id="voices"></div>
@@ -104,32 +104,31 @@
     </div>
   </div>
 
-  <div class="card">
-    <h2>🔗 Integrations · Google Drive</h2>
-    <p class="hint">Connect a Google Drive folder and this computer keeps its content up to date by itself: put book packages in a <b>books</b> subfolder, songs in <b>music</b>, lesson files in <b>content</b>. Checked every 6 hours, or press Sync now.</p>
-    <div id="driveNotConfigured" style="display:none">
-      <p class="hint">One-time grown-up setup is needed first: a Google Cloud OAuth client (free). Ask your helper to follow the guide, then this card lights up.</p>
+  <div class="card" id="integrations">
+    <h2>🔗 Add content with Google Drive</h2>
+    <p class="hint">Put things in your Google Drive and they appear here by themselves: book packages in a <b>books</b> folder, songs in <b>music</b>, lesson files in <b>content</b>. Checked every 6 hours.</p>
+    <div id="dlStep1" style="display:none">
+      <p class="hint" style="margin-bottom:10px"><b>Step 1:</b> install Google's own Drive app and sign in with your Google account. Then come back here — this page checks by itself.</p>
+      <a class="big" href="https://www.google.com/drive/download/" target="_blank" rel="noopener"
+         style="display:inline-block;background:var(--teal);color:#fff;border-radius:12px;padding:16px 26px;text-decoration:none;font-size:22px">⬇ Get Google Drive for Windows</a>
+      <div class="status" id="dlDetect" style="margin-top:10px">Waiting for Google Drive…</div>
     </div>
-    <div id="driveMain" style="display:none">
-      <div id="driveStep1" style="display:none">
-        <button class="big" id="driveConnect" style="border-color:var(--teal); background:var(--teal); color:#fff">🔑 Log in with Google</button>
-        <div class="status" id="driveCode" style="font-size:18px; margin-top:12px"></div>
+    <div id="dlStep2" style="display:none">
+      <p class="hint" style="margin-bottom:8px"><b>Step 2:</b> pick the folder to watch. Tip: make one called <b>New ERA Content</b> in your Drive first.</p>
+      <div class="status" id="dlPath" style="margin-bottom:8px"></div>
+      <div class="row" id="dlDirs" style="margin-bottom:10px"></div>
+      <div class="row">
+        <button id="dlUp">⬆ Up one level</button>
+        <button id="dlUse" class="sel">✓ Use this folder</button>
       </div>
-      <div id="driveStep2" style="display:none">
-        <p class="hint" style="margin-bottom:8px"><b>Step 2:</b> pick the Drive folder to keep in sync. Tip: make one called <b>New ERA Content</b> with <b>books</b>, <b>music</b>, and <b>content</b> folders inside.</p>
-        <div class="row">
-          <select id="driveFolderSel" style="font-family:var(--font);font-size:18px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px"></select>
-          <button id="driveFolderUse">Use this folder</button>
-        </div>
-      </div>
-      <div id="driveStep3" style="display:none">
-        <div class="row">
-          <button id="driveSync">Sync now</button>
-          <button id="driveChangeFolder">Change folder</button>
-        </div>
-      </div>
-      <div class="status" id="driveStatus"></div>
     </div>
+    <div id="dlStep3" style="display:none">
+      <div class="row">
+        <button id="driveSync">Sync now</button>
+        <button id="dlChange">Change folder</button>
+      </div>
+    </div>
+    <div class="status" id="driveStatus"></div>
   </div>
 
   <div class="card">
@@ -491,62 +490,63 @@ $("ttsKeySave").onclick=async()=>{
   else toast("Could not save the key",false);
 };
 
-// ---- Google Drive integration: a babysat 3-step flow (dad 8/29) ----
-let drivePickedFolders=false;
+// ---- Google Drive content: local-mount flow (Google Drive for Windows
+// does login+sync; we read the folder — no cloud console, no OAuth) ----
+let dlCur = "";
 async function drivePaint(){
   try{
     const s=await (await fetch("/integrations/drive/status",{cache:"no-store"})).json();
-    $("driveNotConfigured").style.display = s.configured?"none":"block";
-    $("driveMain").style.display = s.configured?"block":"none";
-    if(!s.configured) return;
-    const step = !s.connected ? 1 : (!s.folderId ? 2 : 3);
-    $("driveStep1").style.display = step===1?"block":"none";
-    $("driveStep2").style.display = step===2?"block":"none";
-    $("driveStep3").style.display = step===3?"block":"none";
+    const step = s.folderPath ? 3 : (s.localInstalled ? 2 : 1);
+    $("dlStep1").style.display = step===1?"block":"none";
+    $("dlStep2").style.display = step===2?"block":"none";
+    $("dlStep3").style.display = step===3?"block":"none";
     if(step===1){
-      $("driveCode").innerHTML = s.pending
-        ? '<b>Step 1 of 2:</b> on any phone or computer, go to <b style="font-size:22px">'+s.pending.verification_url+'</b><br>and enter this code: <b style="font-size:30px;letter-spacing:2px">'+s.pending.user_code+'</b><br>This page moves on by itself when you finish.'
-        : "Tap the button, then finish the login on your phone.";
       $("driveStatus").innerHTML="";
       return;
     }
-    if(step===2 && !drivePickedFolders){
-      drivePickedFolders=true;
-      const f=await (await fetch("/integrations/drive/folders")).json();
-      const sel=$("driveFolderSel"); sel.innerHTML="";
-      for(const x of (f.folders||[])){ const o=document.createElement("option"); o.value=x.id; o.textContent=x.name; sel.appendChild(o); }
-      if(!(f.folders||[]).length){ const o=document.createElement("option"); o.textContent="No folders found — make one in Drive first"; o.value=""; sel.appendChild(o); }
+    if(step===2){
+      if(!dlCur) dlCur = s.localRoots[0] || "";
+      await dlBrowse(dlCur);
+      $("driveStatus").innerHTML="";
+      return;
     }
-    let msg="";
-    if(s.syncing) msg="<b>Syncing…</b>";
-    else if(s.lastSync) msg = s.lastSync.error ? '<span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
-      : "<b>Connected ✓</b> Last sync "+new Date(s.lastSync.when).toLocaleString()+": "+s.lastSync.files+" new, "+s.lastSync.skipped+" unchanged"+(s.lastSync.errors && s.lastSync.errors.length? ", "+s.lastSync.errors.length+" errors":"");
-    else if(step===3) msg="<b>Connected ✓</b> Content syncs by itself every 6 hours.";
+    let msg="<b>Watching:</b> "+s.folderPath+"<br>";
+    if(s.syncing) msg+="<b>Syncing…</b>";
+    else if(s.lastSync) msg += s.lastSync.error ? '<span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
+      : "Last sync "+new Date(s.lastSync.when).toLocaleString()+": "+s.lastSync.files+" new, "+s.lastSync.skipped+" unchanged"+(s.lastSync.errors && s.lastSync.errors.length? ", "+s.lastSync.errors.length+" errors":"");
+    else msg+="Content syncs by itself every 6 hours.";
     $("driveStatus").innerHTML=msg;
   }catch(e){}
 }
-$("driveConnect").onclick=async()=>{
-  const r=await (await fetch("/integrations/drive/connect",{method:"POST"})).json();
-  if(r.error){ toast("Connect failed: "+r.error,false); return; }
-  drivePaint(); const iv=setInterval(async()=>{ await drivePaint();
-    const s=await (await fetch("/integrations/drive/status")).json();
-    if(s.connected||!s.pending){ clearInterval(iv); drivePaint(); } },4000);
+async function dlBrowse(p){
+  const r=await (await fetch("/integrations/drive/browse?path="+encodeURIComponent(p))).json();
+  if(r.error) return;
+  dlCur=r.path;
+  $("dlPath").innerHTML="<b>"+r.path+"</b>";
+  const box=$("dlDirs"); box.innerHTML="";
+  for(const d of r.dirs){
+    const b=document.createElement("button"); b.textContent="📁 "+d;
+    b.onclick=()=>dlBrowse(dlCur+"\\"+d);
+    box.appendChild(b);
+  }
+  if(!r.dirs.length){ const e=document.createElement("span"); e.className="status"; e.textContent="No folders inside — you can still use this one."; box.appendChild(e); }
+}
+$("dlUp").onclick=()=>{ const i=dlCur.lastIndexOf("\\"); if(i>2) dlBrowse(dlCur.slice(0,i)); };
+$("dlUse").onclick=async()=>{
+  const r=await fetch("/integrations/drive/localfolder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderPath:dlCur})});
+  if(r.ok){ toast("Folder set — first sync starting"); fetch("/integrations/drive/sync",{method:"POST"}).then(drivePaint); drivePaint(); }
+  else toast("That folder is outside Google Drive",false);
+};
+$("dlChange").onclick=async()=>{
+  await fetch("/integrations/drive/localfolder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderPath:""})}).catch(()=>{});
+  dlCur=""; drivePaint();
 };
 $("driveSync").onclick=async()=>{
   toast("Sync started");
   await fetch("/integrations/drive/sync",{method:"POST"});
   drivePaint();
 };
-$("driveFolderUse").onclick=async()=>{
-  const v=$("driveFolderSel").value; if(!v){ toast("Pick a folder first",false); return; }
-  const r=await fetch("/integrations/drive/folder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderId:v})});
-  if(r.ok){ toast("Folder set — first sync starting"); await fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); }
-};
-$("driveChangeFolder").onclick=async()=>{
-  drivePickedFolders=false;
-  await fetch("/integrations/drive/folder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderId:""})});
-  drivePaint();
-};
+setInterval(drivePaint, 10000);   // step 1 -> 2 advances by itself after the Drive app installs
 
 // ---- init from current state ----
 (async()=>{

@@ -6,28 +6,35 @@
 <title>New ERA Communications</title>
 <link rel="stylesheet" href="../lib/tokens.css">
 <style>
-  /* Caregiver-facing hub home: first-run setup wizard OR app launcher. */
-  body { margin: 0; font-family: system-ui, sans-serif; background: #101418; color: #eef2f5;
+  /* One design language with ERAgaze Settings: light paper, white cards,
+     teal accents (dad 8/29: hub and settings must match — this is the one). */
+  :root{
+    --ink:#22333B; --paper:#EEF2F1; --card:#FFFFFF; --line:#D3DCDA;
+    --teal:#177E89; --teal-deep:#0B4E58; --teal-wash:#E4EFEF; --good:#2E7D5B;
+    --font:"Segoe UI", system-ui, sans-serif;
+  }
+  body { margin: 0; font-family: var(--font); background: var(--paper); color: var(--ink);
          min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-  .card { max-width: 640px; width: 92%; background: #1a2027; border-radius: 18px;
-          padding: 36px 40px; box-shadow: 0 8px 40px rgba(0,0,0,.4); }
-  h1 { margin: 0 0 6px; font-size: 30px; }
-  .sub { color: #9fb0bd; margin: 0 0 26px; font-size: 17px; line-height: 1.5; }
-  label { display: block; font-size: 17px; margin: 18px 0 6px; color: #cfdae2; }
+  .card { max-width: 680px; width: 92%; background: var(--card); border: 1px solid var(--line);
+          border-radius: 18px; padding: 36px 40px; }
+  h1 { margin: 0 0 6px; font-size: 34px; font-weight: 750; }
+  .sub { color: #5A6A70; margin: 0 0 26px; font-size: 18px; line-height: 1.5; }
+  label { display: block; font-size: 17px; margin: 18px 0 6px; color: #44555C; }
   input[type=text] { width: 100%; box-sizing: border-box; font-size: 22px; padding: 12px 14px;
-          border-radius: 10px; border: 1px solid #35414c; background: #10151a; color: #eef2f5; }
+          border-radius: 12px; border: 2px solid var(--line); background: #fff; color: var(--ink); }
   input[type=range] { width: 100%; }
-  .val { color: #9fb0bd; font-size: 15px; }
-  button.go { margin-top: 26px; width: 100%; font-size: 22px; padding: 16px;
-          border: 0; border-radius: 12px; background: #2f9e6e; color: #fff; cursor: pointer; }
-  button.go:disabled { background: #35414c; }
+  .val { color: #5A6A70; font-size: 15px; }
+  button.go { margin-top: 26px; width: 100%; font-size: 22px; padding: 16px; font-family: var(--font);
+          border: 0; border-radius: 12px; background: var(--good); color: #fff; cursor: pointer; }
+  button.go:disabled { background: var(--line); color: #7A8A90; }
   .apps { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
-  a.app { display: block; text-decoration: none; background: #232c35; color: #eef2f5;
-          border-radius: 14px; padding: 22px 18px; font-size: 21px; }
-  a.app:hover { background: #2c3742; }
-  a.app small { display: block; color: #9fb0bd; font-size: 14px; margin-top: 6px; }
+  a.app { display: block; text-decoration: none; background: var(--teal-wash); color: var(--ink);
+          border: 2px solid var(--line); border-radius: 14px; padding: 22px 18px; font-size: 21px;
+          font-weight: 650; }
+  a.app:hover { border-color: var(--teal); }
+  a.app small { display: block; color: #5A6A70; font-size: 14px; margin-top: 6px; font-weight: 400; }
   .hidden { display: none; }
-  .note { margin-top: 18px; font-size: 14px; color: #7f929f; line-height: 1.5; }
+  .note { margin-top: 18px; font-size: 14px; color: #6B7A80; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -130,8 +137,8 @@
       const v = await (await fetch("/voices", { cache: "no-store" })).json();
       if (!v.enabled) {
         const b = document.createElement("a");
-        b.href = "/settings/";
-        b.style.cssText = "display:block;background:#2f9e6e;color:#fff;border-radius:14px;padding:16px 18px;margin:0 0 16px;text-decoration:none;font-size:18px";
+        b.href = "/settings/#voice";
+        b.style.cssText = "display:block;background:#2E7D5B;color:#fff;border-radius:14px;padding:16px 18px;margin:0 0 16px;text-decoration:none;font-size:18px";
         b.innerHTML = "<b>🎙 Add a premium voice</b> — the free ElevenLabs voice sounds far better than the computer voice. Two minutes in Settings.";
         const grid = document.getElementById("appGrid");
         grid.parentNode.insertBefore(b, grid);

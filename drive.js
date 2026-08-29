@@ -30,7 +30,12 @@ function saveCfg(c) { fs.writeFileSync(cfgPath(), JSON.stringify(c, null, 2)); }
 
 function status() {
   const c = loadCfg();
+  const local = detectLocal();
   return {
+    mode: c.mode || (c.token ? "api" : "local"),
+    localInstalled: local.installed,
+    localRoots: local.roots,
+    folderPath: c.folderPath || "",
     configured: !!(c.clientId && c.clientSecret),
     connected: !!(c.token && c.token.refresh_token),
     folderId: c.folderId || "",
@@ -140,6 +145,10 @@ async function mirrorDir(tok, folderId, destDir, stats) {
 async function sync() {
   if (syncing) return { error: "busy" };
   const c = loadCfg();
+  if (c.mode === "local" && c.folderPath) {
+    syncing = true;
+    try { return syncLocal(c); } finally { syncing = false; }
+  }
   if (!c.folderId) return { error: "no-folder" };
   const tok = await accessToken();
   if (!tok) return { error: "not-connected" };
@@ -159,6 +168,72 @@ async function sync() {
     lastSync = { when: new Date().toISOString(), error: String(e.message) };
     return lastSync;
   } finally { syncing = false; }
+}
+
+// ---- LOCAL MODE (the default family path, dad 8/29): Google Drive for
+// Windows makes the person's Drive a local folder — Google's own app does
+// login and syncing, we just read files. detect() finds the mount; the
+// person picks a folder in Settings; sync() copies its books/music/content
+// subfolders into the data dir. No OAuth client needed anywhere.
+function detectLocal() {
+  const os = require("os");
+  const roots = [];
+  for (let c = 68; c <= 90; c++) {              // D:..Z:
+    const p = String.fromCharCode(c) + ":\\My Drive";
+    try { if (fs.statSync(p).isDirectory()) roots.push(p); } catch {}
+  }
+  for (const p of [path.join(os.homedir(), "Google Drive"),
+                   path.join(os.homedir(), "Google Drive", "My Drive")]) {
+    try { if (fs.statSync(p).isDirectory()) roots.push(p); } catch {}
+  }
+  return { installed: roots.length > 0, roots };
+}
+
+function browseLocal(dir) {
+  const { roots } = detectLocal();
+  const norm = path.normalize(dir || "");
+  if (!roots.some(r => norm === r || norm.startsWith(r + path.sep)))
+    return { error: "outside-drive" };
+  try {
+    const dirs = fs.readdirSync(norm, { withFileTypes: true })
+      .filter(d => d.isDirectory() && !d.name.startsWith("."))
+      .map(d => d.name).slice(0, 200);
+    return { path: norm, dirs };
+  } catch (e) { return { error: String(e.message) }; }
+}
+
+function setLocalFolder(p) {
+  const check = browseLocal(p);
+  if (check.error) return check;
+  const c = loadCfg();
+  c.mode = "local"; c.folderPath = path.normalize(p);
+  saveCfg(c);
+  return { ok: true };
+}
+
+function copyTreeLocal(src, dest, stats) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, e.name), d = path.join(dest, e.name);
+    try {
+      if (e.isDirectory()) { copyTreeLocal(s, d, stats); continue; }
+      if (!e.isFile()) continue;
+      if (fs.existsSync(d) && fs.statSync(d).size === fs.statSync(s).size) { stats.skipped++; continue; }
+      fs.copyFileSync(s, d);
+      stats.files++;
+    } catch (err) { stats.errors.push(e.name + ": " + err.message); }
+  }
+}
+
+function syncLocal(cfg) {
+  const stats = { files: 0, skipped: 0, errors: [] };
+  for (const sub of MIRROR_SUBDIRS) {
+    const src = path.join(cfg.folderPath, sub);
+    try { if (!fs.statSync(src).isDirectory()) continue; } catch { continue; }
+    copyTreeLocal(src, path.join(DATA, sub), stats);
+  }
+  lastSync = { when: new Date().toISOString(), ...stats };
+  return lastSync;
 }
 
 // Folders the person can pick in Settings (no ID pasting): own + shared,
@@ -185,10 +260,10 @@ function setFolder(folderId) {
 function start(dataDir) {
   DATA = dataDir;
   const c = loadCfg();
-  if (c.token && c.folderId) {
+  if ((c.mode === "local" && c.folderPath) || (c.token && c.folderId)) {
     setTimeout(() => { sync(); }, 2 * 60 * 1000).unref();       // after boot settles
     setInterval(() => { sync(); }, 6 * 60 * 60 * 1000).unref(); // same cadence as updates
   }
 }
 
-module.exports = { start, status, connect, sync, setFolder, listFolders };
+module.exports = { start, status, connect, sync, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder };

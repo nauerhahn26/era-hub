@@ -20,6 +20,22 @@ const LOGS = path.join(DATA, "logs");
 const TTS_CACHE = path.join(DATA, "tts-cache");
 fs.mkdirSync(LOGS, { recursive: true });
 fs.mkdirSync(TTS_CACHE, { recursive: true });
+
+// On Windows a double-clicked launch would live in a black console window
+// (dad 8/29: weird for a novice). Re-spawn with NO window, log to
+// <data>/logs/hub.log, and let the visible parent exit. ERA_CONSOLE=1
+// keeps the console for debugging.
+if (process.platform === "win32" && !process.env.ERA_CONSOLE && !process.env.ERA_HIDDEN) {
+  try {
+    const { spawn } = require("child_process");
+    const out = fs.openSync(path.join(LOGS, "hub.log"), "a");
+    spawn(process.execPath, [__filename, String(PORT)], {
+      detached: true, windowsHide: true, stdio: ["ignore", out, out],
+      env: { ...process.env, ERA_HIDDEN: "1" },
+    }).unref();
+    process.exit(0);
+  } catch { /* visible console beats no hub */ }
+}
 const crypto = require("crypto");
 const predictor = require("./predict");
 
@@ -1069,6 +1085,30 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(r));
     }).catch(e => { res.writeHead(502).end(String(e.message)); });
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/integrations/drive/detect") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(drive.detectLocal()));
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/integrations/drive/browse") {
+    const q = new URL(req.url, "http://x").searchParams;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(drive.browseLocal(q.get("path") || "")));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/localfolder") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 2048) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { folderPath } = JSON.parse(body);
+        const r = drive.setLocalFolder(String(folderPath || ""));
+        if (r.error) { res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify(r)); return; }
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
     return;
   }
   if (req.method === "GET" && urlPath === "/integrations/drive/folders") {
