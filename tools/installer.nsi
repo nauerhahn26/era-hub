@@ -14,6 +14,7 @@ OutFile "${OUTFILE}"
 InstallDir "$LOCALAPPDATA\New ERA"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
+SetCompressorDictSize 16   ; modest dictionary: the default crashed makensis (bus error) on the build box
 
 !include "MUI2.nsh"
 !include "Sections.nsh"
