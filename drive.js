@@ -187,7 +187,13 @@ function detectLocal() {
   let appInstalled = false;
   for (const p of ["C:\\Program Files\\Google\\Drive File Stream",
                    "C:\\Program Files (x86)\\Google\\Drive File Stream"]) {
-    try { if (fs.statSync(p).isDirectory()) appInstalled = true; } catch {}
+    // an uninstall leaves locked leftovers until reboot — only a version dir
+    // that still holds GoogleDriveFS.exe counts as installed
+    try {
+      for (const d of fs.readdirSync(p)) {
+        if (fs.existsSync(path.join(p, d, "GoogleDriveFS.exe"))) appInstalled = true;
+      }
+    } catch {}
   }
   const roots = [];
   for (let c = 68; c <= 90; c++) {              // D:..Z:
