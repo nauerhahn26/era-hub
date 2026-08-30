@@ -130,7 +130,13 @@
 
   <div class="card" id="ai">
     <h2>🤖 AI helper</h2>
-    <p class="hint">Your own Claude API key lets New ERA prepare content for your child — clothing photos get trimmed, straightened, named and paired into daily outfits automatically. The key stays on this computer and is only used for your own photos.</p>
+    <p class="hint">An AI key lets New ERA prepare content for your child — clothing photos get trimmed, straightened, named and paired into daily outfits automatically. Pick the AI you already use; the key stays on this computer and is only used for your own photos.</p>
+    <p class="hint" style="font-size:15px">Why a key and not a login? The AI companies don&rsquo;t allow signing in with your Claude or ChatGPT account inside apps like New ERA &mdash; your own key is their official way. Getting one takes about a minute, and Google&rsquo;s is free (no card needed).</p>
+    <div class="seg" id="aiProv" style="margin-bottom:10px">
+      <button data-prov="anthropic">Claude</button>
+      <button data-prov="openai">ChatGPT (OpenAI)</button>
+      <button data-prov="google">Google — free</button>
+    </div>
     <div class="row" style="margin-bottom:10px">
       <button id="aiOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Claude API keys page</button>
     </div>
@@ -140,6 +146,7 @@
       <button id="aiKeyPaste">📋 Paste</button>
       <button id="aiKeySave">Save key</button>
     </div>
+    <div class="status" id="aiNote" style="display:none">Note: with Google&rsquo;s free keys, Google may use what&rsquo;s sent to improve its models. Their paid tier (and the other providers) don&rsquo;t.</div>
     <div class="status" id="aiStatus"></div>
   </div>
 
@@ -523,8 +530,24 @@ $("ttsKeySave").onclick=async()=>{
   else toast("Could not save the key",false);
 };
 
-// ---- AI helper key (clothing ingest today; more helpers later) ----
-$("aiOpen").onclick=()=>openSite("https://console.anthropic.com/settings/keys");
+// ---- AI helper key (clothing ingest today; more helpers later). Three
+// providers, bring-your-own key; account login is not a thing the providers
+// permit for third-party apps, so the card explains that instead of faking it.
+const AI_PROVIDERS={
+  anthropic:{name:"Claude", url:"https://console.anthropic.com/settings/keys", ph:"Claude API key (sk-ant-...)"},
+  openai:{name:"OpenAI", url:"https://platform.openai.com/api-keys", ph:"OpenAI API key (sk-...)"},
+  google:{name:"Google AI Studio", url:"https://aistudio.google.com/apikey", ph:"Google AI Studio key (AIza...)"},
+};
+let aiProvSel="anthropic", aiProvTouched=false;
+function aiProvPaint(){
+  const p=AI_PROVIDERS[aiProvSel];
+  document.querySelectorAll("#aiProv button").forEach(b=>b.classList.toggle("sel",b.dataset.prov===aiProvSel));
+  $("aiOpen").textContent="🔑 Open my "+p.name+" keys page";
+  $("aiKey").placeholder=p.ph;
+  $("aiNote").style.display = aiProvSel==="google" ? "" : "none";
+}
+document.querySelectorAll("#aiProv button").forEach(b=>b.onclick=()=>{ aiProvSel=b.dataset.prov; aiProvTouched=true; aiProvPaint(); });
+$("aiOpen").onclick=()=>openSite(AI_PROVIDERS[aiProvSel].url);
 $("aiKeyPaste").onclick=async()=>{
   try{ $("aiKey").value = (await navigator.clipboard.readText()).trim(); $("aiKey").focus(); }
   catch(e){ toast("Tap the box and paste with the keyboard instead",false); }
@@ -532,19 +555,20 @@ $("aiKeyPaste").onclick=async()=>{
 $("aiKeySave").onclick=async()=>{
   const k=$("aiKey").value.trim();
   if(!k){ toast("Paste a key first",false); return; }
-  const r=await fetch("/ai-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})});
-  if(r.ok){ $("aiKey").value=""; toast("AI key saved — preparing your photos"); aiPaint(); }
+  const r=await fetch("/ai-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvSel,apiKey:k})});
+  if(r.ok){ $("aiKey").value=""; aiProvTouched=false; toast("AI key saved — preparing your photos"); aiPaint(); }
   else toast("Could not save the key",false);
 };
 async function aiPaint(){
   try{
     const s=await (await fetch("/clothing/status",{cache:"no-store"})).json();
+    if(s.aiProvider && !aiProvTouched && s.aiProvider!==aiProvSel){ aiProvSel=s.aiProvider; aiProvPaint(); }
     if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos… "+s.ingesting.done+" of "+s.ingesting.total+"</b>";
-    else if(s.aiConfigured) $("aiStatus").innerHTML="<b>Key saved ✓</b>"+(s.cataloged?" "+s.cataloged+" clothing items cataloged.":"");
+    else if(s.aiConfigured) $("aiStatus").innerHTML="<b>"+(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.anthropic).name+" key saved ✓</b>"+(s.cataloged?" "+s.cataloged+" clothing items cataloged.":"");
     else $("aiStatus").innerHTML='<span class="bad">No key yet — clothing photos are shown as plain pictures until one is added.</span>';
   }catch(e){}
 }
-aiPaint(); setInterval(aiPaint, 5000);
+aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
 
 // ---- Google Drive content: a LIVE CHECKLIST coach (dad 8/29, the Mac
 // pattern): every step checks itself off as the person completes it, and

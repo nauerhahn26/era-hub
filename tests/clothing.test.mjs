@@ -34,6 +34,7 @@ const ANSWERS = [
   { name: "Sunflower dress", category: "dress", warmth: "warm", rotate_deg: 0, crop: { x: 0.2, y: 0, w: 0.6, h: 1 } },
 ];
 let calls = 0;
+const wire = [];   // {path, auth} per request — proves each provider's format
 
 before(async () => {
   process.env.ERA_AI_URL = `http://127.0.0.1:${AI_PORT}`;
@@ -42,10 +43,24 @@ before(async () => {
     req.on("data", c => body += c);
     req.on("end", () => {
       const parsed = JSON.parse(body);
-      assert.equal(parsed.messages[0].content[0].type, "image");
       const answer = ANSWERS[Math.min(calls, ANSWERS.length - 1)]; calls++;
+      const text = "Here you go:\n" + JSON.stringify(answer);
+      let out;
+      if (req.url === "/v1/messages") {                       // anthropic
+        assert.equal(parsed.messages[0].content[0].type, "image");
+        wire.push({ path: req.url, auth: req.headers["x-api-key"] });
+        out = { content: [{ type: "text", text }] };
+      } else if (req.url === "/v1/chat/completions") {        // openai
+        assert.equal(parsed.messages[0].content[0].type, "image_url");
+        wire.push({ path: req.url, auth: req.headers["authorization"] });
+        out = { choices: [{ message: { content: text } }] };
+      } else if (req.url.startsWith("/v1beta/models/")) {     // google
+        assert.ok(parsed.contents[0].parts[0].inline_data.data.length > 0);
+        wire.push({ path: req.url, auth: req.headers["x-goog-api-key"] });
+        out = { candidates: [{ content: { parts: [{ text }] } }] };
+      } else { res.writeHead(404).end(); return; }
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ content: [{ type: "text", text: "Here you go:\n" + JSON.stringify(answer) }] }));
+      res.end(JSON.stringify(out));
     });
   });
   await new Promise(r => ai.listen(AI_PORT, "127.0.0.1", r));
@@ -114,4 +129,30 @@ test("second regenerate makes no further AI calls (catalog is durable)", async (
   const before = calls;
   await clothing.regenerate(true);
   assert.equal(calls, before, "already-cataloged photos are never re-sent");
+  assert.ok(wire.slice(0, 3).every(w => w.path === "/v1/messages" && w.auth === "sk-test"),
+    "anthropic calls used /v1/messages with x-api-key");
+});
+
+test("preferred-LLM: an OpenAI key ingests new photos through their wire format", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "openai", apiKey: "sk-oa-test" }));
+  makeJpg(path.join(TMP, "clothing", "photo_d.jpg"), 90, 90, 220);
+  await clothing.regenerate(true);
+  const w = wire[wire.length - 1];
+  assert.equal(w.path, "/v1/chat/completions");
+  assert.equal(w.auth, "Bearer sk-oa-test");
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(cat.items["photo_d.jpg"].ok, "photo cataloged via OpenAI");
+});
+
+test("preferred-LLM: a Google key ingests through generateContent with x-goog-api-key", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "google", apiKey: "AIza-test" }));
+  makeJpg(path.join(TMP, "clothing", "photo_e.jpg"), 90, 220, 120);
+  await clothing.regenerate(true);
+  const w = wire[wire.length - 1];
+  assert.ok(w.path.startsWith("/v1beta/models/") && w.path.endsWith(":generateContent"), w.path);
+  assert.equal(w.auth, "AIza-test", "key travels in the header, never the URL");
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(cat.items["photo_e.jpg"].ok, "photo cataloged via Google");
 });

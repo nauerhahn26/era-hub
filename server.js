@@ -1259,10 +1259,11 @@ const server = http.createServer((req, res) => {
     req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
     req.on("end", () => {
       try {
-        const { apiKey } = JSON.parse(body);
+        const { apiKey, provider } = JSON.parse(body);
         if (typeof apiKey !== "string" || apiKey.length > 300) { res.writeHead(400).end(); return; }
+        const prov = ["anthropic", "openai", "google"].includes(provider) ? provider : "anthropic";
         fs.writeFileSync(path.join(DATA, "ai-config.json"),
-          JSON.stringify({ provider: "anthropic", apiKey: apiKey.trim() }, null, 1));
+          JSON.stringify({ provider: prov, apiKey: apiKey.trim() }, null, 1));
         res.writeHead(204).end();
         // a key arriving is the cue to catalog waiting photos right away
         setTimeout(() => clothing.regenerate(true).catch(() => {}), 500);

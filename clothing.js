@@ -17,8 +17,16 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-const AI_URL = process.env.ERA_AI_URL || "https://api.anthropic.com";
-const AI_MODEL = "claude-haiku-4-5-20251001"; // vision, cheap: one call per new photo
+// Bring-your-own key, any of the big three (dad 8/30: "preferred LLM").
+// Account LOGIN is not offered because the providers forbid it for
+// third-party products (Anthropic's credential-use policy is explicit);
+// keys are the sanctioned path. Cheapest vision model per provider, one
+// call per new photo. ERA_AI_URL overrides every base URL (test seam).
+const PROVIDERS = {
+  anthropic: { base: "https://api.anthropic.com", model: "claude-haiku-4-5-20251001" },
+  openai: { base: "https://api.openai.com", model: "gpt-5-mini" },
+  google: { base: "https://generativelanguage.googleapis.com", model: "gemini-2.5-flash" },
+};
 
 let DATA = null;
 let building = false;
@@ -35,15 +43,20 @@ const RECIPES = () => path.join(DATA, "recipes");
 
 function isBuilding() { return building || !!ingesting; }
 function status() {
+  const cfg = aiCfg();
   return { building, ingesting,
     cataloged: Object.values(loadCatalog().items || {}).filter(i => i.ok).length,
-    aiConfigured: !!aiKey() };
+    aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null };
 }
 
-function aiKey() {
-  try { return JSON.parse(fs.readFileSync(path.join(DATA, "ai-config.json"), "utf8")).apiKey || ""; }
-  catch { return ""; }
+function aiCfg() {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(DATA, "ai-config.json"), "utf8"));
+    if (typeof c.apiKey !== "string" || !c.apiKey) return null;
+    return { apiKey: c.apiKey, provider: PROVIDERS[c.provider] ? c.provider : "anthropic" };
+  } catch { return null; }
 }
+function aiKey() { const c = aiCfg(); return c ? c.apiKey : ""; }
 function loadCatalog() {
   try { return JSON.parse(fs.readFileSync(CATALOG(), "utf8")); } catch { return { items: {} }; }
 }
@@ -155,33 +168,54 @@ function composite(fileA, fileB, dest) {
 }
 
 // ---- ingest: one small vision call per new photo ----
-async function askModel(key, jpgFile) {
+const INGEST_PROMPT =
+  'This photo shows one clothing item (or a matching set) laid flat. Reply with ONLY a JSON object, no prose: ' +
+  '{"name": short shopping-style name like "Pink leggings" or "Heart print tee", ' +
+  '"category": one of "top","pants","shorts","dress","set", ' +
+  '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
+  '"rotate_deg": 0, 90, 180 or 270 clockwise so the item stands upright, ' +
+  '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the UPRIGHT image tightly around the item with a little margin}';
+
+async function askModel(cfg, jpgFile) {
   const b64 = fs.readFileSync(jpgFile).toString("base64");
-  const r = await fetch(AI_URL + "/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: AI_MODEL, max_tokens: 300,
+  const p = PROVIDERS[cfg.provider];
+  const base = process.env.ERA_AI_URL || p.base;
+  let url, headers, body, extract;
+  if (cfg.provider === "openai") {
+    url = base + "/v1/chat/completions";
+    headers = { "Authorization": "Bearer " + cfg.apiKey, "content-type": "application/json" };
+    body = { model: p.model, max_completion_tokens: 300,
+      messages: [{ role: "user", content: [
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64," + b64 } },
+        { type: "text", text: INGEST_PROMPT } ] }] };
+    extract = (j) => j.choices[0].message.content;
+  } else if (cfg.provider === "google") {
+    url = base + "/v1beta/models/" + p.model + ":generateContent";
+    headers = { "x-goog-api-key": cfg.apiKey, "content-type": "application/json" };
+    body = { contents: [{ parts: [
+        { inline_data: { mime_type: "image/jpeg", data: b64 } },
+        { text: INGEST_PROMPT } ] }],
+      generationConfig: { maxOutputTokens: 300 } };
+    extract = (j) => j.candidates[0].content.parts.map(x => x.text || "").join("");
+  } else {
+    url = base + "/v1/messages";
+    headers = { "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" };
+    body = { model: p.model, max_tokens: 300,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
-        { type: "text", text:
-          'This photo shows one clothing item (or a matching set) laid flat. Reply with ONLY a JSON object, no prose: ' +
-          '{"name": short shopping-style name like "Pink leggings" or "Heart print tee", ' +
-          '"category": one of "top","pants","shorts","dress","set", ' +
-          '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
-          '"rotate_deg": 0, 90, 180 or 270 clockwise so the item stands upright, ' +
-          '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the UPRIGHT image tightly around the item with a little margin}' } ] }],
-    }),
-    signal: AbortSignal.timeout(45000),
-  });
-  if (!r.ok) throw new Error("ai " + r.status + " " + (await r.text()).slice(0, 160));
-  const txt = (await r.json()).content.map(c => c.text || "").join("");
+        { type: "text", text: INGEST_PROMPT } ] }] };
+    extract = (j) => j.content.map(c => c.text || "").join("");
+  }
+  const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body),
+    signal: AbortSignal.timeout(45000) });
+  if (!r.ok) throw new Error("ai(" + cfg.provider + ") " + r.status + " " + (await r.text()).slice(0, 160));
+  const txt = extract(await r.json());
   return JSON.parse(txt.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
 }
 
 async function ingest() {
-  const key = aiKey();
-  if (!key) return { skipped: "no-ai-key" };
+  const cfg = aiCfg();
+  if (!cfg) return { skipped: "no-ai-key" };
   const cat = loadCatalog();
   let files = [];
   try { files = fs.readdirSync(CLOTHING()).filter(f =>
@@ -197,7 +231,7 @@ async function ingest() {
         const work = scaleRgba(full, 1100);
         const probe = path.join(ITEMS(), "_probe.jpg");
         writeJpg(scaleRgba(work, 700), probe, 80);
-        const meta = await askModel(key, probe);
+        const meta = await askModel(cfg, probe);
         const rot = [90, 180, 270].includes(meta.rotate_deg) ? meta.rotate_deg : 0;
         const id = "item_" + crypto.createHash("md5").update(f).digest("hex").slice(0, 10);
         writeJpg(padSquare(cropRgba(rotateRgba(work, rot), meta.crop || {}), 640),
