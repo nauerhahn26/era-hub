@@ -119,6 +119,10 @@
         <button id="dlUse" class="sel">✓ Use this folder</button>
       </div>
     </div>
+    <div class="row" id="dlAlways" style="display:none; margin-top:10px">
+      <button id="dlSyncNow">🔄 Sync now</button>
+      <button id="dlOpenFolder">📂 Open the folder</button>
+    </div>
     <div class="status" id="driveStatus"></div>
   </div>
 
@@ -541,12 +545,12 @@ async function drivePaint(){
         hint:"Inside your folder make books, music, or content folders and drop things in.",
         btn:"📂 Open the folder", fn:async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"folder"})}); } },
       { done:synced, title:"5. Synced to this computer",
-        hint:"Happens by itself every 6 hours, or press the button.",
-        btn:"🔄 Sync now", fn:async()=>{ toast("Sync started"); await fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); } },
+        hint:"Happens by itself every 10 minutes." },
     ];
     let activeIdx = steps.findIndex(x=>!x.done); if(activeIdx<0) activeIdx=steps.length-1;
     const box=$("dlChecklist"); box.innerHTML="";
     steps.forEach((st,i)=>box.appendChild(dlRow(st.done, i===activeIdx, st.title, st.hint, st.btn, st.fn)));
+    $("dlAlways").style.display = s.folderPath ? "flex" : "none";
     const picking = s.signedIn && !s.folderPath;
     $("dlPicker").style.display = picking ? "block":"none";
     if(picking){ if(!dlCur) dlCur = s.localRoots[0] || ""; await dlBrowse(dlCur); }
@@ -584,6 +588,8 @@ $("dlUse").onclick=async()=>{
   if(r.ok){ toast("Folder set — first sync starting"); fetch("/integrations/drive/sync",{method:"POST"}).then(drivePaint); drivePaint(); }
   else toast("That folder is outside Google Drive",false);
 };
+$("dlSyncNow").onclick=async()=>{ toast("Sync started"); await fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); };
+$("dlOpenFolder").onclick=async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"folder"})}); };
 setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
 
 
