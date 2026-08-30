@@ -30,7 +30,7 @@ SetCompressorDictSize 16   ; modest dictionary: the default crashed makensis (bu
 !insertmacro MUI_LANGUAGE "English"
 
 Function LaunchHub
-  ExecShell "open" "$INSTDIR\start-hub.bat"
+  ExecShell "open" "$INSTDIR\start-hub.bat" "" SW_SHOWMINIMIZED   ; no black console at first launch
 FunctionEnd
 
 Section "New ERA engine (required)" SecCore
@@ -57,7 +57,7 @@ SectionEnd
 ; the missing pack from the release. Making Words rides with the core (its
 ; lesson engine is part of the hub root). Board, Music, and Movies share
 ; one pack, synced in .onSelChange.
-Section "ERAgaze eye gaze (recommended)" SecGaze
+Section "ERA eye gaze (recommended)" SecGaze
 SectionEnd
 Section "Making Words" SecMW
 SectionEnd

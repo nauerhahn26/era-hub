@@ -210,6 +210,23 @@ async function installGaze() {
 }
 // Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
 // best-effort — the home tile is the source of truth, the .lnk a convenience).
+// Minimize our kiosk windows so an externally opened window (browser page,
+// Explorer) is actually visible — background processes cannot steal the
+// foreground on Windows, but we can step aside (dad 8/29).
+function stepAsideFromKiosk() {
+  if (process.platform !== "win32") return;
+  const { spawn } = require("child_process");
+  const ps = `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int n);';` +
+    `Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\" | ` +
+    `Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { ` +
+    `$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; ` +
+    `if ($p -and $p.MainWindowHandle -ne 0) { [U.W]::ShowWindow($p.MainWindowHandle, 6) } }`;
+  try {
+    spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+      { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  } catch {}
+}
+
 function appShortcut(app, enabled) {
   if (process.platform !== "win32") return;
   const { spawn } = require("child_process");
@@ -1090,6 +1107,15 @@ const server = http.createServer((req, res) => {
     serveJailed(res, WARDROBE_DIR, urlPath.slice("/wardrobe/".length), [".jpg", ".jpeg", ".png"]);
     return;
   }
+  // cataloged item tiles + daily composite outfits (clothing.js ingest output)
+  if (req.method === "GET" && urlPath.startsWith("/wardrobe-items/")) {
+    serveJailed(res, path.join(DATA, "wardrobe-items"), safeDecode(urlPath.slice("/wardrobe-items/".length)) || "", [".jpg"]);
+    return;
+  }
+  if (req.method === "GET" && urlPath.startsWith("/wardrobe-outfits/")) {
+    serveJailed(res, path.join(DATA, "wardrobe-outfits"), safeDecode(urlPath.slice("/wardrobe-outfits/".length)) || "", [".jpg"]);
+    return;
+  }
   if (req.method === "GET" && urlPath.startsWith("/gen-assets/")) {
     serveJailed(res, GEN_ASSETS_DIR, urlPath.slice("/gen-assets/".length), [".png"]);
     return;
@@ -1170,11 +1196,7 @@ const server = http.createServer((req, res) => {
           const b = browsers.find(p => fs.existsSync(p));
           if (b) {
             spawn(b, ["--new-window", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
-            // the kiosk holds the foreground — nudge the new window on top
-            const ps = `Start-Sleep -Milliseconds 1800; $sh = New-Object -ComObject WScript.Shell;` +
-              `foreach ($n in 'Chrome','Edge') { if ($sh.AppActivate($n)) { break } }`;
-            spawn("powershell.exe", ["-NoProfile", "-Command", ps],
-              { detached: true, stdio: "ignore", windowsHide: true }).unref();
+            setTimeout(stepAsideFromKiosk, 1200);   // our kiosk yields; the new window shows
             res.writeHead(200, { "Content-Type": "application/json" }).end('{"opened":true}');
             return;
           }
@@ -1230,6 +1252,30 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- Settings > AI helper: family's own model key (never echoed back).
+  // Used by the Clothing Picker's photo ingest today; book-reader QA later.
+  if (req.method === "POST" && req.url === "/ai-key") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { apiKey } = JSON.parse(body);
+        if (typeof apiKey !== "string" || apiKey.length > 300) { res.writeHead(400).end(); return; }
+        fs.writeFileSync(path.join(DATA, "ai-config.json"),
+          JSON.stringify({ provider: "anthropic", apiKey: apiKey.trim() }, null, 1));
+        res.writeHead(204).end();
+        // a key arriving is the cue to catalog waiting photos right away
+        setTimeout(() => clothing.regenerate(true).catch(() => {}), 500);
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/clothing/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(clothing.status()));
+    return;
+  }
+
   // ---- Settings > Integrations: Google Drive content (drive.js) ----
   if (req.method === "GET" && urlPath === "/integrations/drive/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -1261,8 +1307,10 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const { target } = JSON.parse(body || "{}");
+        const r = drive.openInExplorer(target === "folder" ? "folder" : "root");
+        if (r.ok) setTimeout(stepAsideFromKiosk, 900);
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(drive.openInExplorer(target === "folder" ? "folder" : "root")));
+        res.end(JSON.stringify(r));
       } catch { res.writeHead(400).end(); }
     });
     return;

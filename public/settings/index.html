@@ -128,6 +128,21 @@
     <div class="status" id="driveStatus"></div>
   </div>
 
+  <div class="card" id="ai">
+    <h2>🤖 AI helper</h2>
+    <p class="hint">Your own Claude API key lets New ERA prepare content for your child — clothing photos get trimmed, straightened, named and paired into daily outfits automatically. The key stays on this computer and is only used for your own photos.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button id="aiOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Claude API keys page</button>
+    </div>
+    <div class="row">
+      <input id="aiKey" type="password" placeholder="Claude API key (sk-ant-...)"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="aiKeyPaste">📋 Paste</button>
+      <button id="aiKeySave">Save key</button>
+    </div>
+    <div class="status" id="aiStatus"></div>
+  </div>
+
   <div class="card">
     <h2>⏱ Dwell time</h2>
     <p class="hint">How long she holds her gaze on a button before it activates. Longer = calmer, fewer accidental picks. Shorter = faster once she&rsquo;s confident.</p>
@@ -507,6 +522,29 @@ $("ttsKeySave").onclick=async()=>{
   if(r.ok){ $("ttsKey").value=""; toast("Voice key saved"); loadVoices(); }
   else toast("Could not save the key",false);
 };
+
+// ---- AI helper key (clothing ingest today; more helpers later) ----
+$("aiOpen").onclick=()=>openSite("https://console.anthropic.com/settings/keys");
+$("aiKeyPaste").onclick=async()=>{
+  try{ $("aiKey").value = (await navigator.clipboard.readText()).trim(); $("aiKey").focus(); }
+  catch(e){ toast("Tap the box and paste with the keyboard instead",false); }
+};
+$("aiKeySave").onclick=async()=>{
+  const k=$("aiKey").value.trim();
+  if(!k){ toast("Paste a key first",false); return; }
+  const r=await fetch("/ai-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})});
+  if(r.ok){ $("aiKey").value=""; toast("AI key saved — preparing your photos"); aiPaint(); }
+  else toast("Could not save the key",false);
+};
+async function aiPaint(){
+  try{
+    const s=await (await fetch("/clothing/status",{cache:"no-store"})).json();
+    if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos… "+s.ingesting.done+" of "+s.ingesting.total+"</b>";
+    else if(s.aiConfigured) $("aiStatus").innerHTML="<b>Key saved ✓</b>"+(s.cataloged?" "+s.cataloged+" clothing items cataloged.":"");
+    else $("aiStatus").innerHTML='<span class="bad">No key yet — clothing photos are shown as plain pictures until one is added.</span>';
+  }catch(e){}
+}
+aiPaint(); setInterval(aiPaint, 5000);
 
 // ---- Google Drive content: a LIVE CHECKLIST coach (dad 8/29, the Mac
 // pattern): every step checks itself off as the person completes it, and
