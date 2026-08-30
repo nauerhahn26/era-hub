@@ -1097,7 +1097,7 @@ const server = http.createServer((req, res) => {
     const enabled = loadEnabledApps();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ apps: APPS.map(a => ({ id: a.id, title: a.title, sub: a.sub, path: a.path,
-      enabled: enabled.includes(a.id), installed: appInstalled(a),
+      engine: !!a.engine, enabled: enabled.includes(a.id), installed: appInstalled(a),
       installing: !!appInstalling[a.id] })) }));
     return;
   }

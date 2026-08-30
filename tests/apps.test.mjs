@@ -30,14 +30,17 @@ before(async () => {
 });
 after(() => { if (child) child.kill("SIGKILL"); });
 
-test("fresh install: every app enabled, registry carries title/sub/path", async () => {
+test("fresh install: every APP enabled; the gaze ENGINE stays off by default", async () => {
   const { apps } = await (await fetch(`${BASE}/apps`)).json();
-  assert.ok(apps.length >= 6);
-  assert.ok(apps.every(a => a.enabled === true));
+  assert.ok(apps.length >= 7);
+  assert.ok(apps.filter(a => !a.engine).every(a => a.enabled === true));
+  const gaze = apps.find(a => a.id === "eragaze");
+  assert.equal(gaze.engine, true);
+  assert.equal(gaze.enabled, false, "second engines are never auto-enabled");
   const pencil = apps.find(a => a.id === "pencil");
   assert.equal(pencil.title, "The Pencil");
   assert.equal(pencil.path, "/pencil/");
-  assert.ok(apps.every(a => a.title && a.sub && a.path));
+  assert.ok(apps.every(a => a.title && a.sub && (a.path || a.engine)));   // engines have no page
 });
 
 test("disable persists to data/apps.json; re-enable restores", async () => {
@@ -63,6 +66,11 @@ test("an install-chooser style apps.json (a few apps) is honored", async () => {
   const { apps } = await (await fetch(`${BASE}/apps`)).json();
   const on = apps.filter(a => a.enabled).map(a => a.id).sort();
   assert.deepEqual(on, ["pencil", "reader"]);
+});
+
+test("registry exposes installed flags", async () => {
+  const { apps } = await (await fetch(`${BASE}/apps`)).json();
+  assert.ok(apps.every(a => typeof a.installed === "boolean"));
 });
 
 test("wizard setup with an app choice seeds the enabled set", async () => {
