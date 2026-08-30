@@ -486,7 +486,7 @@ async function loadApps(){
 // ---- ElevenLabs key ----
 async function openSite(url){
   try{ const r=await (await fetch("/open-url",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})})).json();
-       if(r.opened) return; }catch(e){}
+       if(r.opened){ toast("Opened in a browser window — press Alt+Tab if you don't see it"); return; } }catch(e){}
   window.open(url,"_blank");   // fallback: at least a new tab
 }
 $("elevenOpen").onclick=()=>openSite("https://elevenlabs.io/app/settings/api-keys");
@@ -550,6 +550,11 @@ async function drivePaint(){
     const picking = s.signedIn && !s.folderPath;
     $("dlPicker").style.display = picking ? "block":"none";
     if(picking){ if(!dlCur) dlCur = s.localRoots[0] || ""; await dlBrowse(dlCur); }
+    if(hasContent && s.lastSync && !s.lastSync.error && s.lastSync.files===0 && !s.syncing && !window.__autoSynced){
+      window.__autoSynced = true;
+      toast("New content found — syncing");
+      fetch("/integrations/drive/sync",{method:"POST"}).then(drivePaint);
+    }
     const allDone = steps.every(x=>x.done);
     let msg="";
     if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open New ERA Content, and upload straight into those folders). Everything lands here within 6 hours, or press Sync now.<br>';

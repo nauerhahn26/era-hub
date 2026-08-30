@@ -56,7 +56,7 @@ SectionEnd
 ; the missing pack from the release. Making Words rides with the core (its
 ; lesson engine is part of the hub root). Board, Music, and Movies share
 ; one pack, synced in .onSelChange.
-Section "ERAgaze eye-gaze engine (recommended)" SecGaze
+Section "ERAgaze eye gaze (recommended)" SecGaze
 SectionEnd
 Section "Making Words" SecMW
 SectionEnd
@@ -64,7 +64,7 @@ Section "The Pencil" SecPencil
   SetOutPath "$INSTDIR\public"
   File /r "${PAYLOAD}/public/pencil"
 SectionEnd
-Section "Board" SecBoard
+Section "Clothing Picker" SecBoard
 SectionEnd
 Section "Music" SecMusic
 SectionEnd
@@ -143,6 +143,7 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\public"
   RMDir /r "$INSTDIR\gaze"
   Delete "$DESKTOP\ERAgaze.lnk"
+  Delete "$DESKTOP\ERAgaze eye-gaze engine.lnk"
   Delete "$SMPROGRAMS\ERAgaze.lnk"
   Delete "$SMSTARTUP\ERAgaze.lnk"
   Delete "$DESKTOP\${APPNAME}.lnk"
@@ -152,12 +153,14 @@ Section "Uninstall"
   Delete "$DESKTOP\Making Words.lnk"
   Delete "$DESKTOP\The Pencil.lnk"
   Delete "$DESKTOP\Board.lnk"
+  Delete "$DESKTOP\Clothing Picker.lnk"
   Delete "$DESKTOP\Music.lnk"
   Delete "$DESKTOP\Movies.lnk"
   Delete "$DESKTOP\Book Reader.lnk"
   Delete "$SMPROGRAMS\Making Words.lnk"
   Delete "$SMPROGRAMS\The Pencil.lnk"
   Delete "$SMPROGRAMS\Board.lnk"
+  Delete "$SMPROGRAMS\Clothing Picker.lnk"
   Delete "$SMPROGRAMS\Music.lnk"
   Delete "$SMPROGRAMS\Movies.lnk"
   Delete "$SMPROGRAMS\Book Reader.lnk"

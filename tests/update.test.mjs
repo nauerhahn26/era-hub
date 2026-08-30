@@ -29,7 +29,7 @@ let feed, child;
 // A minimal but real install: the hub's own js + a tiny public tree.
 function makeInstall(dir, build, marker) {
   fs.mkdirSync(path.join(dir, "public", "home"), { recursive: true });
-  for (const f of ["server.js", "update.js", "drive.js", "pool.js", "predict.js", "predict-model.json"])
+  for (const f of ["server.js", "update.js", "drive.js", "clothing.js", "pool.js", "predict.js", "predict-model.json"])
     fs.copyFileSync(path.join(HUB, f), path.join(dir, f));
   fs.copyFileSync(path.join(HUB, "public", "home", "index.html"),
                   path.join(dir, "public", "home", "index.html"));

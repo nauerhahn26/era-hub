@@ -11,6 +11,7 @@ const path = require("path");
 
 const updater = require("./update");
 const drive = require("./drive");
+const clothing = require("./clothing");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
@@ -79,14 +80,14 @@ fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
 const APPS = [
   { id: "making-words", title: "Making Words", sub: "guided word building", path: "/", pack: null },
   { id: "pencil", title: "The Pencil", sub: "free writing with prediction", path: "/pencil/", pack: "pencil" },
-  { id: "board", title: "Board", sub: "daily choices, photos & speech", path: "/board/", pack: "board" },
+  { id: "board", title: "Clothing Picker", sub: "daily outfits, checked against the weather", path: "/board/", pack: "board" },
   { id: "music", title: "Music", sub: "favorite songs, audio only", path: "/board/?recipe=songs", pack: "board" },
   { id: "movies", title: "Movies", sub: "shows & movies, her picks", path: "/board/?recipe=movies", pack: "board" },
   { id: "reader", title: "Book Reader", sub: "picture books, read aloud", path: "/reader/", pack: "reader" },
   // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
   // on-device (Windows' built-in csc) and pairs it with the Tobii runtime
   // already on Tobii devices (official NuGet as fallback for other PCs)
-  { id: "eragaze", title: "ERAgaze eye-gaze engine", sub: "gaze cursor + dwell for Tobii trackers", path: null, pack: null, engine: true },
+  { id: "eragaze", title: "ERAgaze", sub: "eye-gaze cursor + dwell for Tobii trackers", path: null, pack: null, engine: true },
 ];
 // pack = the public/ subdir an app needs on disk (null = rides with the core;
 // board/music/movies share one pack). The installer lays down only chosen
@@ -97,6 +98,21 @@ function appInstalled(app) {
   return !app.pack || fs.existsSync(path.join(PUB, app.pack));
 }
 const appInstalling = {};   // id -> true while a pack download runs
+// Anything enabled (installer checkboxes, wizard, restored apps.json) but not
+// on disk gets installed — runs at boot and after /setup. Dad's cold test
+// 8/29: the ERAgaze checkbox did nothing because only the Settings toggle
+// triggered installs.
+function reconcileApps() {
+  const enabled = loadEnabledApps();
+  for (const app of APPS) {
+    if (!enabled.includes(app.id) || appInstalled(app) || appInstalling[app.id]) continue;
+    appInstalling[app.id] = true;
+    (app.engine ? installGaze() : installPack(app))
+      .then(() => console.log("[apps] reconciled " + app.id))
+      .catch(e => console.error("[apps] reconcile " + app.id + ": " + e.message))
+      .finally(() => { delete appInstalling[app.id]; });
+  }
+}
 async function installPack(app) {
   const os = require("os");
   const { spawnSync } = require("child_process");
@@ -873,6 +889,7 @@ const server = http.createServer((req, res) => {
             JSON.stringify({ enabled: chosen.map(a => a.id) }, null, 2));
           for (const a of APPS) appShortcut(a, chosen.some(c => c.id === a.id));
           appShortcut({ title: "New ERA", path: "/home/" }, true);   // the home door
+          reconcileApps();   // chosen-but-missing apps (the gaze engine) install now
         }
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch { res.writeHead(400).end(); }
@@ -1065,6 +1082,10 @@ const server = http.createServer((req, res) => {
     serveMediaJail(req, res, MOVIES_DIR, urlPath.slice("/movies/".length), MOVIE_EXTS, []);
     return;
   }
+  if (req.method === "GET" && urlPath.startsWith("/clothing-web/")) {
+    serveJailed(res, path.join(DATA, "clothing-web"), safeDecode(urlPath.slice("/clothing-web/".length)) || "", [".jpg", ".jpeg", ".png", ".webp"]);
+    return;
+  }
   if (req.method === "GET" && urlPath.startsWith("/wardrobe/")) {
     serveJailed(res, WARDROBE_DIR, urlPath.slice("/wardrobe/".length), [".jpg", ".jpeg", ".png"]);
     return;
@@ -1098,7 +1119,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ apps: APPS.map(a => ({ id: a.id, title: a.title, sub: a.sub, path: a.path,
       engine: !!a.engine, enabled: enabled.includes(a.id), installed: appInstalled(a),
-      installing: !!appInstalling[a.id] })) }));
+      installing: !!appInstalling[a.id],
+      building: a.id === "board" ? clothing.isBuilding() : false })) }));
     return;
   }
   if (req.method === "POST" && req.url === "/apps") {
@@ -1148,6 +1170,11 @@ const server = http.createServer((req, res) => {
           const b = browsers.find(p => fs.existsSync(p));
           if (b) {
             spawn(b, ["--new-window", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+            // the kiosk holds the foreground — nudge the new window on top
+            const ps = `Start-Sleep -Milliseconds 1800; $sh = New-Object -ComObject WScript.Shell;` +
+              `foreach ($n in 'Chrome','Edge') { if ($sh.AppActivate($n)) { break } }`;
+            spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+              { detached: true, stdio: "ignore", windowsHide: true }).unref();
             res.writeHead(200, { "Content-Type": "application/json" }).end('{"opened":true}');
             return;
           }
@@ -1332,6 +1359,9 @@ server.on("listening", () => {
   console.log("era-hub on http://" + BIND + ":" + PORT);
   updater.start(PORT);   // installed payloads only; checkouts are a no-op
   drive.start(DATA);     // Google Drive content mirror (no-op until connected)
+  drive.onSynced = () => clothing.regenerate(true).catch(() => {});   // fresh photos -> fresh board
+  clothing.start(DATA);  // the Clothing Picker generator (no-op without photos)
+  setTimeout(reconcileApps, 5000).unref();   // installer-chosen apps install at first boot
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;

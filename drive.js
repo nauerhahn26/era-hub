@@ -279,6 +279,7 @@ function syncLocal(cfg) {
     copyTreeLocal(src, path.join(DATA, sub), stats);
   }
   lastSync = { when: new Date().toISOString(), ...stats };
+  if (module.exports.onSynced) try { module.exports.onSynced(lastSync); } catch {}
   return lastSync;
 }
 
@@ -322,9 +323,12 @@ function setFolder(folderId) {
 function start(dataDir) {
   DATA = dataDir;
   const c = loadCfg();
-  if ((c.mode === "local" && c.folderPath) || (c.token && c.folderId)) {
-    setTimeout(() => { sync(); }, 2 * 60 * 1000).unref();       // after boot settles
-    setInterval(() => { sync(); }, 6 * 60 * 60 * 1000).unref(); // same cadence as updates
+  if (c.mode === "local" && c.folderPath) {
+    setTimeout(() => { sync(); }, 60 * 1000).unref();
+    setInterval(() => { sync(); }, 10 * 60 * 1000).unref();  // local copy: cheap, keep it fresh
+  } else if (c.token && c.folderId) {
+    setTimeout(() => { sync(); }, 2 * 60 * 1000).unref();
+    setInterval(() => { sync(); }, 6 * 60 * 60 * 1000).unref();
   }
 }
 
