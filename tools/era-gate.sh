@@ -58,12 +58,12 @@ pass=0; fail=0; failed=""
 # legacy CJS playwright suites (same set as aac-studio tests/all.sh)
 for t in run parts transfer mistakes pencil narrow sortfix fltest bargein sortbugs rhymecount transfercount phonetic; do
   [ -f "$t.js" ] || continue
-  if node "$t.js" >"$t.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
+  if timeout 420 node "$t.js" >"$t.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
   else fail=$((fail+1)); failed="$failed $t"; echo "FAIL $t (see gate/$t.out)"; fi
 done
 # node:test suites
 for t in *.test.mjs; do
-  if node --test "$t" >"${t%.mjs}.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
+  if timeout 600 node --test "$t" >"${t%.mjs}.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
   else fail=$((fail+1)); failed="$failed $t"; echo "FAIL $t (see gate/${t%.mjs}.out)"; fi
 done
 echo "== era-gate: $pass passed, $fail failed${failed:+ →$failed} =="
