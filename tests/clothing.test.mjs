@@ -74,12 +74,24 @@ before(async () => {
 });
 after(() => { if (ai) ai.close(); delete process.env.ERA_AI_URL; });
 
-test("no AI key: plain photo tiles still make a board (v1 fallback)", async () => {
+test("photos but no AI key: no board, a no-key guidance state (dad 8/31: coach, don't dump raw tiles)", async () => {
   const r = await clothing.regenerate(true);
-  assert.equal(r.mode, "plain");
-  const recipe = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
-  assert.equal(recipe.root, "today");
-  assert.ok(recipe.boards.find(b => b.id === "today").buttons.some(x => x.label === "This one"));
+  assert.equal(r.guidance, "no-key");
+  assert.equal(r.photos, 3);
+  assert.ok(!fs.existsSync(path.join(TMP, "recipes", "today.json")), "no recipe written");
+  const s = clothing.status();
+  assert.equal(s.photos, 3);
+  assert.equal(s.aiConfigured, false);
+  assert.equal(s.cataloged, 0);
+});
+
+test("a stale v1 plain recipe is cleared so the splash can coach", async () => {
+  fs.mkdirSync(path.join(TMP, "recipes"), { recursive: true });
+  fs.writeFileSync(path.join(TMP, "recipes", "today.json"), JSON.stringify({
+    home_label: "Clothing", root: "today",
+    boards: [{ id: "today", buttons: [{ label: "This one" }] }] }));
+  await clothing.regenerate(true);
+  assert.ok(!fs.existsSync(path.join(TMP, "recipes", "today.json")), "plain recipe removed");
 });
 
 test("with a key: photos are cataloged and the board is her exact graph", async () => {

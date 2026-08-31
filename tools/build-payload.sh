@@ -17,7 +17,7 @@ OUT="${1:-$HUB/dist/new-era-payload}"
 VERSION="$(date -u +%Y%m%d.%H%M)"
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/predict-model.json" "$OUT/"
 cp -r "$HUB/vendor" "$OUT/vendor"   # HEIC decode (libheif, LGPL - see NOTICE) + jpeg-js
 cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$HUB/../era-core/NOTICE" "$OUT/" 2>/dev/null || true
 # apps + shared foundation - COPIES, never symlinks
