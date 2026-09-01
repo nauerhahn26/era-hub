@@ -22,7 +22,7 @@ function aiCfg() {
   try {
     const c = JSON.parse(fs.readFileSync(path.join(DATA, "ai-config.json"), "utf8"));
     if (typeof c.apiKey !== "string" || !c.apiKey) return null;
-    return { provider: PROVIDERS.includes(c.provider) ? c.provider : "anthropic" };
+    return { provider: PROVIDERS.includes(c.provider) ? c.provider : "google" };
   } catch { return null; }
 }
 
@@ -77,10 +77,38 @@ function regenerate(force) {
   });
 }
 
-function start(dataDir) {
-  DATA = dataDir;
-  setTimeout(() => { regenerate(false).catch(e => console.error("[clothing] " + e.message)); }, 20 * 1000).unref();
-  setInterval(() => { regenerate(false).catch(() => {}); }, 30 * 60 * 1000).unref();
+// Scheduling (dad 9/1: "run locally each morning if it's awake, or as soon as
+// it wakes, and re-sort by the weather"). Three triggers, all local:
+//   * shortly after the hub starts  — covers "the computer just woke up"
+//   * every 15 minutes, but only ACTS when the day's board is missing or was
+//     built before this morning's cutoff — covers "it was already awake"
+//   * the Drive sync's onSynced hook (new photos land -> rebuild)
+// The build itself always re-reads the weather, so the outfits are sorted for
+// the day the child is actually dressing for.
+const MORNING_HOUR = 5;   // local time from which "today's board" is expected
+
+function boardIsFresh(dataDir) {
+  try {
+    const f = path.join(dataDir, "recipes", "today.json");
+    const built = fs.statSync(f).mtime;
+    const now = new Date();
+    const cutoff = new Date(now); cutoff.setHours(MORNING_HOUR, 0, 0, 0);
+    // before 5am the previous evening's board still counts as today's
+    if (now < cutoff) cutoff.setDate(cutoff.getDate() - 1);
+    return built >= cutoff;
+  } catch { return false; }
 }
 
-module.exports = { start, regenerate, isBuilding, status };
+function tick(reason) {
+  if (boardIsFresh(DATA)) return;
+  console.log("[clothing] building today's board (" + reason + ")");
+  regenerate(true).catch(e => console.error("[clothing] " + e.message));
+}
+
+function start(dataDir) {
+  DATA = dataDir;
+  setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
+  setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
+}
+
+module.exports = { start, regenerate, isBuilding, status, boardIsFresh };

@@ -169,6 +169,27 @@ test("with a key: photos are cataloged and the board is her exact graph", async 
   assert.ok(!yes.symbol, "no pictogram on Yes");
 });
 
+test("morning rule: a board built yesterday is stale, one built after 5am today is fresh (dad 9/1)", async () => {
+  const recipe = path.join(TMP, "recipes", "today.json");
+  const isFresh = () => clothing.boardIsFresh(TMP);
+  const setBuilt = (d) => fs.utimesSync(recipe, d, d);
+
+  const now = new Date();
+  const beforeCutoff = new Date(now); beforeCutoff.setHours(4, 30, 0, 0);
+  const afterCutoff = new Date(now); afterCutoff.setHours(6, 30, 0, 0);
+  const yesterday = new Date(now.getTime() - 24 * 3600e3);
+
+  setBuilt(yesterday);
+  assert.equal(isFresh(), false, "yesterday's board must be rebuilt");
+  if (now.getHours() >= 7) {          // only meaningful once past the cutoff
+    setBuilt(afterCutoff);
+    assert.equal(isFresh(), true, "a board built this morning stands");
+    setBuilt(beforeCutoff);
+    assert.equal(isFresh(), false, "a 4:30am board is last night's");
+  }
+  setBuilt(now);
+});
+
 test("second regenerate makes no further AI calls (catalog is durable)", async () => {
   const before = calls;
   await clothing.regenerate(true);

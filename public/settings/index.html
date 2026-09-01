@@ -135,7 +135,7 @@
     <div class="seg" id="aiProv" style="margin-bottom:10px">
       <button data-prov="anthropic">Claude</button>
       <button data-prov="openai">ChatGPT (OpenAI)</button>
-      <button data-prov="google">Google — free</button>
+      <button data-prov="google">Google — free (default)</button>
     </div>
     <div class="row" style="margin-bottom:10px">
       <button id="aiOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Claude API keys page</button>
@@ -272,8 +272,18 @@ async function loadVoices(){
   try{
     const v = await (await fetch("/voices")).json();
     const box = $("voices"); box.innerHTML="";
-    if(!v.enabled){ $("voiceStatus").innerHTML='<span class="bad">Voice key not set — using the built-in Windows voice.</span>'; $("ttsKeyStatus").innerHTML=""; }
-    else { $("voiceStatus").innerHTML='<b>Premium voices active ✓</b>'; $("ttsKeyStatus").innerHTML='<b>Key saved ✓</b> Tap a voice above to hear it.'; }
+    if(v.enabled){
+      $("voiceStatus").innerHTML='<b>Premium voices active ✓</b>';
+      $("ttsKeyStatus").innerHTML='<b>Key checked and working ✓</b> Tap a voice above to hear it.';
+    } else if(v.keyPresent){
+      // a key is stored but ElevenLabs rejected it — say so plainly instead of
+      // claiming success and then going silent (QA 9/1)
+      $("voiceStatus").innerHTML='<span class="bad">The saved voice key is not working — using the built-in Windows voice.</span>';
+      $("ttsKeyStatus").innerHTML='<span class="bad">'+(v.keyError||"ElevenLabs rejected that key")+'. Copy it again from your ElevenLabs page and paste it here.</span>';
+    } else {
+      $("voiceStatus").innerHTML='<span class="bad">Voice key not set — using the built-in Windows voice.</span>';
+      $("ttsKeyStatus").innerHTML="";
+    }
     for(const voice of v.voices){
       const b=document.createElement("button");
       b.className="voice"+(voice.id===v.current?" sel":"");
@@ -525,9 +535,14 @@ $("ttsKeyPaste").onclick=async()=>{
 $("ttsKeySave").onclick=async()=>{
   const k=$("ttsKey").value.trim();
   if(!k){ toast("Paste a key first",false); return; }
+  $("ttsKeyStatus").innerHTML="Checking the key with ElevenLabs…";
   const r=await fetch("/tts-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})});
-  if(r.ok){ $("ttsKey").value=""; toast("Voice key saved"); loadVoices(); }
-  else toast("Could not save the key",false);
+  if(!r.ok){ toast("Could not save the key",false); return; }
+  let v={}; try{ v=await r.json(); }catch(e){}
+  $("ttsKey").value="";
+  if(v.ok){ toast("Voice key saved and working"); }
+  else { toast(v.error||"That key did not work",false); }
+  loadVoices();
 };
 
 // ---- AI helper key (clothing ingest today; more helpers later). Three
@@ -538,7 +553,7 @@ const AI_PROVIDERS={
   openai:{name:"OpenAI", url:"https://platform.openai.com/api-keys", ph:"OpenAI API key (sk-...)"},
   google:{name:"Google AI Studio", url:"https://aistudio.google.com/apikey", ph:"Google AI Studio key (AIza...)"},
 };
-let aiProvSel="anthropic", aiProvTouched=false;
+let aiProvSel="google", aiProvTouched=false;   // free tier is the default (dad 9/1: everything must work on free services)
 function aiProvPaint(){
   const p=AI_PROVIDERS[aiProvSel];
   document.querySelectorAll("#aiProv button").forEach(b=>b.classList.toggle("sel",b.dataset.prov===aiProvSel));

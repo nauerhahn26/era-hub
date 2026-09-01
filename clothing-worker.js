@@ -53,7 +53,7 @@ function aiCfg() {
   try {
     const c = JSON.parse(fs.readFileSync(path.join(DATA, "ai-config.json"), "utf8"));
     if (typeof c.apiKey !== "string" || !c.apiKey) return null;
-    return { apiKey: c.apiKey, provider: PROVIDERS[c.provider] ? c.provider : "anthropic" };
+    return { apiKey: c.apiKey, provider: PROVIDERS[c.provider] ? c.provider : "google" };
   } catch { return null; }
 }
 function aiKey() { const c = aiCfg(); return c ? c.apiKey : ""; }

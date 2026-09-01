@@ -785,6 +785,21 @@ const CURATED_VOICES = [
   { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda — friendly" },
   { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily — warm British" }
 ];
+// Is this ElevenLabs key real? (cheap call, no synthesis, no quota spend)
+async function verifyTtsKey(key) {
+  try {
+    const r = await fetch("https://api.elevenlabs.io/v1/user/subscription",
+      { headers: { "xi-api-key": key }, signal: AbortSignal.timeout(15000) });
+    if (r.ok) {
+      let tier = "";
+      try { tier = (await r.json()).tier || ""; } catch {}
+      return { ok: true, tier };
+    }
+    if (r.status === 401) return { ok: false, error: "ElevenLabs did not recognise that key - check for a missing character" };
+    return { ok: false, error: "ElevenLabs replied " + r.status };
+  } catch (e) { return { ok: false, error: "could not reach ElevenLabs (offline?)" }; }
+}
+
 function loadTtsCfg() {
   let cfg = { apiKey: process.env.ELEVENLABS_API_KEY || "", voiceId: CURATED_VOICES[0].id,
               modelId: "eleven_flash_v2_5" };
@@ -960,7 +975,12 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && req.url === "/voices") {
     const cfg = loadTtsCfg();
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ enabled: !!cfg.apiKey, current: cfg.voiceId, voices: CURATED_VOICES }));
+    // enabled means "this key actually works", not "a key is present": a
+    // mistyped key used to show 'Premium voices active' and then say nothing
+    // out loud (QA 9/1). cfg.keyOk is set when the key is saved/verified.
+    res.end(JSON.stringify({ enabled: !!cfg.apiKey && cfg.keyOk !== false,
+      keyPresent: !!cfg.apiKey, keyOk: cfg.keyOk === true,
+      keyError: cfg.keyError || "", current: cfg.voiceId, voices: CURATED_VOICES }));
     return;
   }
   if (req.method === "POST" && req.url === "/voice") {
@@ -1289,8 +1309,18 @@ const server = http.createServer((req, res) => {
       try {
         const { apiKey } = JSON.parse(body);
         if (typeof apiKey !== "string" || apiKey.length > 200) { res.writeHead(400).end(); return; }
-        const cfg = loadTtsCfg(); cfg.apiKey = apiKey.trim(); saveTtsCfg(cfg);
-        res.writeHead(204).end();
+        const cfg = loadTtsCfg();
+        cfg.apiKey = apiKey.trim(); cfg.keyOk = undefined; cfg.keyError = "";
+        saveTtsCfg(cfg);
+        // Ask ElevenLabs whether the key is real before telling the family it
+        // is. A dropped character otherwise reads as success and then silence.
+        verifyTtsKey(cfg.apiKey).then((v) => {
+          const c = loadTtsCfg();
+          c.keyOk = v.ok; c.keyError = v.error || ""; saveTtsCfg(c);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(v));
+        }).catch(() => { res.writeHead(200, { "Content-Type": "application/json" })
+          .end('{"ok":false,"error":"could not reach ElevenLabs"}'); });
       } catch { res.writeHead(400).end(); }
     });
     return;
@@ -1305,7 +1335,7 @@ const server = http.createServer((req, res) => {
       try {
         const { apiKey, provider } = JSON.parse(body);
         if (typeof apiKey !== "string" || apiKey.length > 300) { res.writeHead(400).end(); return; }
-        const prov = ["anthropic", "openai", "google"].includes(provider) ? provider : "anthropic";
+        const prov = ["anthropic", "openai", "google"].includes(provider) ? provider : "google";
         fs.writeFileSync(path.join(DATA, "ai-config.json"),
           JSON.stringify({ provider: prov, apiKey: apiKey.trim() }, null, 1));
         res.writeHead(204).end();
