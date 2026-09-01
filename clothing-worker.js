@@ -170,52 +170,59 @@ function writeJpg(img, file, q) { ensureCodecs(); fs.writeFileSync(file, jpeg.en
 function removeBackground(img) {
   const { data, width: w, height: h } = img;
   const n = w * h;
-  const bg = new Uint8Array(n);          // 1 = background
-  const stack = [];
   const NEAR = 30;      // max per-channel step between touching pixels
-  const SEED = 74;      // max drift from the border's own colour
-  // seed colour = median of the frame border
-  const samples = [];
-  for (let x = 0; x < w; x += 2) { samples.push((0 * w + x) * 4); samples.push(((h - 1) * w + x) * 4); }
-  for (let y = 0; y < h; y += 2) { samples.push((y * w) * 4); samples.push((y * w + w - 1) * 4); }
-  const med = [0, 1, 2].map(c => {
-    const v = samples.map(o => data[o + c]).sort((a, b) => a - b);
-    return v[Math.floor(v.length / 2)];
-  });
-  const push = (i) => { if (!bg[i]) { bg[i] = 1; stack.push(i); } };
-  for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
-  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  const SEED = 74;      // max drift from a seed colour
+  const bg = new Uint8Array(n);
+  const border = [];
+  for (let x = 0; x < w; x++) { border.push(x); border.push((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { border.push(y * w); border.push(y * w + w - 1); }
+
   const close = (a, b, lim) =>
     Math.abs(data[a] - data[b]) <= lim &&
     Math.abs(data[a + 1] - data[b + 1]) <= lim &&
     Math.abs(data[a + 2] - data[b + 2]) <= lim;
-  const nearSeed = (o) =>
-    Math.abs(data[o] - med[0]) <= SEED &&
-    Math.abs(data[o + 1] - med[1]) <= SEED &&
-    Math.abs(data[o + 2] - med[2]) <= SEED;
-  while (stack.length) {
-    const i = stack.pop();
-    const x = i % w, y = (i / w) | 0, o = i * 4;
-    const step = (j) => {
-      if (bg[j]) return;
-      const oj = j * 4;
-      if (close(o, oj, NEAR) && nearSeed(oj)) { bg[j] = 1; stack.push(j); }
-    };
-    if (x > 0) step(i - 1);
-    if (x < w - 1) step(i + 1);
-    if (y > 0) step(i - w);
-    if (y < h - 1) step(i + w);
+
+  // Floors are rarely one tone (pale board + dark grain), so flood in PASSES:
+  // each pass re-seeds from the border pixels still unclaimed. Two tones of
+  // wood used to survive as slabs beside the garment (QA 9/1).
+  for (let pass = 0; pass < 3; pass++) {
+    const rest = border.filter(i => !bg[i]);
+    if (!rest.length) break;
+    const med = [0, 1, 2].map(c => {
+      const v = rest.map(i => data[i * 4 + c]).sort((a, b) => a - b);
+      return v[Math.floor(v.length / 2)];
+    });
+    const nearSeed = (o) =>
+      Math.abs(data[o] - med[0]) <= SEED &&
+      Math.abs(data[o + 1] - med[1]) <= SEED &&
+      Math.abs(data[o + 2] - med[2]) <= SEED;
+    const stack = [];
+    for (const i of rest) if (nearSeed(i * 4)) { bg[i] = 1; stack.push(i); }
+    while (stack.length) {
+      const i = stack.pop();
+      const x = i % w, y = (i / w) | 0, o = i * 4;
+      const step = (j) => {
+        if (bg[j]) return;
+        const oj = j * 4;
+        if (close(o, oj, NEAR) && nearSeed(oj)) { bg[j] = 1; stack.push(j); }
+      };
+      if (x > 0) step(i - 1);
+      if (x < w - 1) step(i + 1);
+      if (y > 0) step(i - w);
+      if (y < h - 1) step(i + w);
+    }
   }
+
   let painted = 0;
   for (let i = 0; i < n; i++) if (bg[i]) painted++;
-  // a garment that fills the frame (or a background we could not read) must be
-  // left alone rather than bleached
-  if (painted < n * 0.05 || painted > n * 0.94) return img;
-  // Keep only the biggest surviving blob — the garment. Wood grain that the
-  // flood could not reach leaves streaks otherwise (her pipeline does the same
-  // with scipy's keep_largest_blob).
+  // Too little removed = we never found the background. Too much = the flood
+  // walked INTO a garment whose colour matches the floor (mint shorts, QA 9/1)
+  // and would hand a child a shredded picture. Either way, don't touch it.
+  if (painted < n * 0.05 || painted > n * 0.88) return img;
+
+  // keep the largest surviving blob — the garment (her keep_largest_blob)
   const label = new Int32Array(n).fill(-1);
-  let best = -1, bestSize = 0, cur = 0;
+  let best = -1, bestSize = 0, cur = 0, kept = 0;
   const q = [];
   for (let i = 0; i < n; i++) {
     if (bg[i] || label[i] !== -1) continue;
@@ -229,12 +236,32 @@ function removeBackground(img) {
       if (y > 0) visit(j - w);
       if (y < h - 1) visit(j + w);
     }
+    kept += size;
     if (size > bestSize) { bestSize = size; best = cur; }
     cur++;
   }
+  // A garment survives as ONE piece. If the biggest blob is only a fraction of
+  // what remains, the flood shredded it — leave the photo alone.
+  if (!kept || bestSize / kept < 0.60) return img;
+  if (bestSize < n * 0.04) return img;
+  // Shape check: a garment is a solid shape, so its outline is short relative
+  // to its area. A flood that walked into fabric leaves a lace-like fringe with
+  // an enormous perimeter (the mint shorts, QA 9/1) — refuse those outright.
+  let perim = 0;
+  for (let i = 0; i < n; i++) {
+    if (bg[i] || label[i] !== best) continue;
+    const x = i % w, y = (i / w) | 0;
+    if (x === 0 || x === w - 1 || y === 0 || y === h - 1 ||
+        bg[i - 1] || bg[i + 1] || bg[i - w] || bg[i + w] ||
+        label[i - 1] !== best || label[i + 1] !== best ||
+        label[i - w] !== best || label[i + w] !== best) perim++;
+  }
+  const compactness = perim / (2 * Math.sqrt(Math.PI * bestSize));
+  if (compactness > 2.6) return img;
+
   const out = Buffer.from(data);
   for (let i = 0; i < n; i++) {
-    if (!bg[i] && label[i] === best) continue;   // the garment stays
+    if (!bg[i] && label[i] === best) continue;
     const o = i * 4;
     out[o] = 255; out[o + 1] = 255; out[o + 2] = 255; out[o + 3] = 255;
   }
