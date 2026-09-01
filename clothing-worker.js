@@ -230,7 +230,9 @@ async function askModel(cfg, jpgFile) {
     body = { contents: [{ parts: [
         { inline_data: { mime_type: "image/jpeg", data: b64 } },
         { text: INGEST_PROMPT } ] }],
-      generationConfig: { maxOutputTokens: 300 } };
+      // thinking off: -latest aliases resolve to thinking models that burn
+      // the whole token budget and 45s+ reasoning about a t-shirt (QA 9/1)
+      generationConfig: { maxOutputTokens: 2000, thinkingConfig: { thinkingBudget: 0 } } };
     extract = (j) => j.candidates[0].content.parts.map(x => x.text || "").join("");
   } else {
     url = base + "/v1/messages";
@@ -242,7 +244,7 @@ async function askModel(cfg, jpgFile) {
     extract = (j) => j.content.map(c => c.text || "").join("");
   }
   const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body),
-    signal: AbortSignal.timeout(45000) });
+    signal: AbortSignal.timeout(120000) });
   if (!r.ok) throw new Error("ai(" + cfg.provider + ") " + r.status + " " + (await r.text()).slice(0, 160));
   const txt = extract(await r.json());
   return JSON.parse(txt.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
