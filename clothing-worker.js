@@ -154,19 +154,53 @@ function writeJpg(img, file, q) { ensureCodecs(); fs.writeFileSync(file, jpeg.en
 // crop each photo to the garment (strip white margins), scale to nearly FILL
 // its half (pad 6), 840x560 landscape, top LEFT / bottom RIGHT. Dad 9/1: the
 // old version scaled the padded photo, so tall narrow bottoms looked tiny.
+// Trim to the garment (dad: "it trimmed every image"). Ellie's photos are
+// laid on floors and tables, not white sweeps, so a white-margin test finds
+// nothing (QA 9/1: every tile showed wood floor). Instead: sample the frame
+// border to learn the background colour, then shrink to the box of pixels
+// that differ from it. Falls back to the whole image when the garment fills
+// the frame or the background is not uniform.
 function cropToContent(img, tol) {
   const { data, width: w, height: h } = img;
-  const t = 255 - (tol || 16);
-  let x0 = w, y0 = h, x1 = -1, y1 = -1;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const i = (y * w + x) * 4;
-    if (data[i] < t || data[i + 1] < t || data[i + 2] < t) {
-      if (x < x0) x0 = x; if (x > x1) x1 = x;
-      if (y < y0) y0 = y; if (y > y1) y1 = y;
-    }
+  const T = tol || 34;
+  // background = median-ish sample of the outer 3% frame
+  const px = [];
+  const m = Math.max(2, Math.round(Math.min(w, h) * 0.03));
+  for (let x = 0; x < w; x += 3) {
+    for (const y of [0, 1, h - 2, h - 1]) px.push((y * w + x) * 4);
   }
-  if (x1 < 0) return img;   // all white
-  return cropRgba(img, { x: x0 / w, y: y0 / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h });
+  for (let y = 0; y < h; y += 3) {
+    for (const x of [0, 1, w - 2, w - 1]) px.push((y * w + x) * 4);
+  }
+  const chan = (o) => [data[o], data[o + 1], data[o + 2]];
+  const med = [0, 1, 2].map((c) => {
+    const v = px.map((o) => data[o + c]).sort((a, b) => a - b);
+    return v[Math.floor(v.length / 2)];
+  });
+  const differs = (o) => {
+    const [r, g, b] = chan(o);
+    return Math.abs(r - med[0]) + Math.abs(g - med[1]) + Math.abs(b - med[2]) > T * 3;
+  };
+  // a row/column counts as garment when enough of its pixels differ
+  const need = Math.max(3, Math.round(Math.min(w, h) * 0.02));
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    let n = 0;
+    for (let x = 0; x < w; x += 2) if (differs((y * w + x) * 4)) n++;
+    if (n >= need) { if (y < y0) y0 = y; y1 = y; }
+  }
+  for (let x = 0; x < w; x++) {
+    let n = 0;
+    for (let y = 0; y < h; y += 2) if (differs((y * w + x) * 4)) n++;
+    if (n >= need) { if (x < x0) x0 = x; x1 = x; }
+  }
+  if (x1 < 0 || y1 < 0) return img;
+  const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+  if (cw < w * 0.15 || ch < h * 0.15) return img;   // implausible: keep all
+  const pad = Math.round(Math.min(cw, ch) * 0.02);
+  return cropRgba(img, {
+    x: Math.max(0, x0 - pad) / w, y: Math.max(0, y0 - pad) / h,
+    w: Math.min(w, cw + 2 * pad) / w, h: Math.min(h, ch + 2 * pad) / h });
 }
 
 function fitBox(img, boxW, boxH) {
@@ -214,11 +248,11 @@ function composite(fileA, fileB, dest) {
 // ---- ingest: one small vision call per new photo ----
 const INGEST_PROMPT =
   'This photo shows one clothing item (or a matching set) laid flat. Reply with ONLY a JSON object, no prose: ' +
-  '{"name": short shopping-style name like "Pink leggings" or "Heart print tee", ' +
+  '{"name": a SHORT name, 2-3 words max, like "Pink leggings" or "Daisy tee" (a child picks by picture; long names do not fit the button), ' +
   '"category": one of "top","pants","shorts","dress","set", ' +
   '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
   '"rotate_deg": 0, 90, 180 or 270 clockwise so the item stands upright, ' +
-  '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the UPRIGHT image tightly around the item with a little margin}';
+  '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the UPRIGHT image bounding the garment TIGHTLY - exclude floor, table, carpet and every background pixel you can, touching the garment edges}';
 
 async function askModel(cfg, jpgFile) {
   const p = PROVIDERS[cfg.provider];
@@ -318,7 +352,7 @@ async function ingest() {
         const id = "item_" + crypto.createHash("md5").update(f).digest("hex").slice(0, 10);
         writeJpg(padSquare(cropRgba(rotateRgba(work, rot), meta.crop || {}), 640),
           path.join(ITEMS(), id + ".jpg"), 85);
-        cat.items[f] = { id, ok: true, name: String(meta.name || "Clothes").slice(0, 40),
+        cat.items[f] = { id, ok: true, name: shortLabel(meta.name),
           category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any" };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
@@ -381,6 +415,23 @@ function forBand(items, band) {
   const near = items.filter(i => dist(i) <= 1);
   return near.length ? near : items;
 }
+// Button plates are small by design (the PHOTO is the message) — a long name
+// clipped mid-word on the board (QA 9/1). Keep names to ~3 words / 22 chars,
+// dropping leading adjectives rather than truncating a word.
+function shortLabel(raw) {
+  let n = String(raw || "Clothes").trim().replace(/\s+/g, " ");
+  if (n.length <= 22) return n;
+  // Squeeze the MIDDLE, never the ends: the first word is usually the colour
+  // and the last is the garment, so "Light wash denim shorts" becomes "Light
+  // denim shorts" (which is exactly what a parent would have written).
+  const w = n.split(" ");
+  while (w.length > 3 && w.join(" ").length > 22) w.splice(1, 1);
+  n = w.join(" ");
+  if (n.length <= 26) return n;
+  const tail = w.slice(-2).join(" ");
+  return (w[0] + " " + tail).length <= 26 ? w[0] + " " + tail : tail;
+}
+
 function shortName(item) {
   const words = item.name.split(" ");
   return words.length <= 2 ? item.name : words.slice(-2).join(" ");
