@@ -141,21 +141,65 @@ function readImageRgba(file) {
 
 function writeJpg(img, file, q) { ensureCodecs(); fs.writeFileSync(file, jpeg.encode(img, q || 85).data); }
 
-// side-by-side composite, her outfit-tile look: top on the left, bottom right
+// Composites follow Ellie's generator exactly (outfit_set.py fit/compose):
+// crop each photo to the garment (strip white margins), scale to nearly FILL
+// its half (pad 6), 840x560 landscape, top LEFT / bottom RIGHT. Dad 9/1: the
+// old version scaled the padded photo, so tall narrow bottoms looked tiny.
+function cropToContent(img, tol) {
+  const { data, width: w, height: h } = img;
+  const t = 255 - (tol || 16);
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    if (data[i] < t || data[i + 1] < t || data[i + 2] < t) {
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return img;   // all white
+  return cropRgba(img, { x: x0 / w, y: y0 / h, w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h });
+}
+
+function fitBox(img, boxW, boxH) {
+  const pad = 6;
+  const im = cropToContent(img);
+  const scale = Math.min((boxW - 2 * pad) / im.width, (boxH - 2 * pad) / im.height);
+  const nw = Math.max(1, Math.round(im.width * scale)), nh = Math.max(1, Math.round(im.height * scale));
+  const scaled = exactScale(im, nw, nh);
+  const out = Buffer.alloc(boxW * boxH * 4, 255);
+  const ox = Math.floor((boxW - nw) / 2), oy = Math.floor((boxH - nh) / 2);
+  for (let y = 0; y < nh; y++)
+    scaled.data.copy(out, ((oy + y) * boxW + ox) * 4, y * nw * 4, (y + 1) * nw * 4);
+  return { data: out, width: boxW, height: boxH };
+}
+
+function exactScale(img, nw, nh) {
+  const { data, width: w, height: h } = img;
+  const out = Buffer.alloc(nw * nh * 4);
+  for (let y = 0; y < nh; y++) {
+    const sy = Math.min(h - 1, Math.floor(y * h / nh));
+    for (let x = 0; x < nw; x++) {
+      const sx = Math.min(w - 1, Math.floor(x * w / nw));
+      const si = (sy * w + sx) * 4, di = (y * nw + x) * 4;
+      out[di] = data[si]; out[di + 1] = data[si + 1]; out[di + 2] = data[si + 2]; out[di + 3] = 255;
+    }
+  }
+  return { data: out, width: nw, height: nh };
+}
+
 function composite(fileA, fileB, dest) {
   ensureCodecs();
-  const W = 880, H = 460, HALF = 440;
+  const W = 840, H = 560;
   const out = { data: Buffer.alloc(W * H * 4, 255), width: W, height: H };
-  const place = (file, ox) => {
+  const place = (file, ox, boxW) => {
     const d = jpeg.decode(fs.readFileSync(file), { formatAsRGBA: true });
-    const s = scaleRgba({ data: Buffer.from(d.data), width: d.width, height: d.height }, 420);
-    const oy = Math.floor((H - s.height) / 2), oxx = ox + Math.floor((HALF - s.width) / 2);
-    for (let y = 0; y < s.height; y++)
-      s.data.copy(out.data, ((oy + y) * W + oxx) * 4, y * s.width * 4, (y + 1) * s.width * 4);
+    const f = fitBox({ data: Buffer.from(d.data), width: d.width, height: d.height }, boxW, H);
+    for (let y = 0; y < H; y++)
+      f.data.copy(out.data, (y * W + ox) * 4, y * boxW * 4, (y + 1) * boxW * 4);
   };
-  place(fileA, 0);
-  if (fileB) place(fileB, HALF);
-  writeJpg(out, dest, 85);
+  if (fileB) { place(fileA, 0, 420); place(fileB, 420, 420); }
+  else place(fileA, 0, 840);
+  writeJpg(out, dest, 88);
 }
 
 // ---- ingest: one small vision call per new photo ----
@@ -333,48 +377,69 @@ async function buildCataloged(cat) {
   const today = [];
   const usedTop = new Set(), usedBottom = new Set();
   for (const c of combos) {
-    if (today.length >= 7) break;
+    if (today.length >= 12) break;
     if (c.top && (usedTop.has(c.top.id) || usedBottom.has(c.bottom.id))) continue;
     today.push(c);
     if (c.top) { usedTop.add(c.top.id); usedBottom.add(c.bottom.id); }
   }
   for (const c of combos) {
-    if (today.length >= 7) break;
+    if (today.length >= 12) break;
     if (!today.includes(c)) today.push(c);
   }
   for (const c of today) hist.shown[c.key] = new Date().toISOString();
   saveHistory(hist);
 
   fs.mkdirSync(OUTFITS(), { recursive: true });
+  // Layout per board-design-rules.md (dad 9/1): HARD CAP 6 outfits per page
+  // (few real choices), STABLE slots so buttons never move, and empties form
+  // the calm rest strip along the bottom row — never scattered mid-grid.
+  //   [1,1] weather (Back on later pages)   [1,2][1,3][1,4] outfits 1-3
+  //   [2,1][2,2][2,3] outfits 4-6           [2,4] More (when needed)
+  //   [3,1..3,3] rest boxes                 [3,4] Build my own, every page
+  const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,2],[2,3]];
   const boards = [];
-  const todayButtons = [];
-  if (w) todayButtons.push({ label: w.t + "°  " + w.band, type: "control", symbol: w.symbol,
-    say: "Today it is " + w.band + ", about " + w.t + " degrees.",
-    footnote: "updated " + new Date().toLocaleString("en-US",
-      { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
-    row: 1, col: 1 });
-  today.forEach((c, i) => {
-    const label = c.one ? c.one.name : shortName(c.top) + " + " + shortName(c.bottom);
-    const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
-    const img = "outfit_" + i + ".jpg";
-    try {
-      composite(path.join(ITEMS(), (c.one || c.top).id + ".jpg"),
-        c.one ? null : path.join(ITEMS(), c.bottom.id + ".jpg"), path.join(OUTFITS(), img));
-    } catch (e) { console.error("[clothing] composite: " + e.message); return; }
-    const combo = c.one ? [c.one.id] : [c.top.id, c.bottom.id];
-    todayButtons.push({ label, say, type: "outfit", image: "wardrobe-outfits/" + img,
-      load: "confirm_" + i, say_on_load: true, combo });
-    boards.push({ id: "confirm_" + i, name: "This one?", rows: 3, columns: 2, buttons: [
-      { label, say, type: "outfit", image: "wardrobe-outfits/" + img, combo },
-      { label: "Yes", type: "yes", symbol: "yes", say: "Yes", combo },
-      { label: "Change top", type: "category", symbol: "shirt", load: "cat_top" },
-      { label: "Change bottoms", type: "category", symbol: "trousers", load: "choose_bottom" },
-      { label: "Back", type: "back", glyph: "←", load: "today" },
-    ]});
-  });
-  todayButtons.push({ label: "Build my own", type: "category", symbol: "clothes", load: "build", row: 3, col: 4 });
-  boards.unshift({ id: "today", name: "What will I wear today?", rows: 3, columns: 4, buttons: todayButtons });
-
+  const pages = Math.max(1, Math.ceil(today.length / 6));
+  for (let pg = 0; pg < pages; pg++) {
+    const pid = pg === 0 ? "today" : "today_" + (pg + 1);
+    const buttons = [];
+    if (pg === 0) {
+      if (w) buttons.push({ label: w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
+        say: "Today it is " + w.band + ", about " + w.t + " degrees.",
+        footnote: "updated " + new Date().toLocaleString("en-US",
+          { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+        row: 1, col: 1 });
+    } else {
+      buttons.push({ label: "Back", type: "back", glyph: "\u2190",
+        load: pg === 1 ? "today" : "today_" + pg, row: 1, col: 1 });
+    }
+    today.slice(pg * 6, pg * 6 + 6).forEach((c, k) => {
+      const i = pg * 6 + k;
+      const label = c.one ? c.one.name : shortName(c.top) + " + " + shortName(c.bottom);
+      const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
+      const img = "outfit_" + i + ".jpg";
+      try {
+        composite(path.join(ITEMS(), (c.one || c.top).id + ".jpg"),
+          c.one ? null : path.join(ITEMS(), c.bottom.id + ".jpg"), path.join(OUTFITS(), img));
+      } catch (e) { console.error("[clothing] composite: " + e.message); return; }
+      const combo = c.one ? [c.one.id] : [c.top.id, c.bottom.id];
+      buttons.push({ label, say, type: "outfit", image: "wardrobe-outfits/" + img,
+        load: "confirm_" + i, say_on_load: true, combo,
+        row: SLOTS[k][0], col: SLOTS[k][1] });
+      boards.push({ id: "confirm_" + i, name: "This one?", rows: 3, columns: 2, buttons: [
+        { label, say, type: "outfit", image: "wardrobe-outfits/" + img, combo, row: 1, col: 1 },
+        { label: "Yes", type: "yes", glyph: "\u2713", say: "Yes", combo, row: 1, col: 2 },
+        { label: "Change top", type: "category", symbol: "shirt", load: "cat_top", row: 2, col: 1 },
+        { label: "Change bottoms", type: "category", symbol: "trousers", load: "choose_bottom", row: 2, col: 2 },
+        { label: "Back", type: "back", glyph: "\u2190", load: pid, row: 3, col: 1 },
+      ]});
+    });
+    if ((pg + 1) * 6 < today.length)
+      buttons.push({ label: "More", type: "control", symbol: "more", load: "today_" + (pg + 2), row: 2, col: 4 });
+    buttons.push({ label: "Build my own", type: "category", symbol: "clothes", load: "build", row: 3, col: 4 });
+    boards.push({ id: pid, name: "What will I wear today?", rows: 3, columns: 4, buttons });
+  }
+  // hoist today pages to the front so `today` is the root board in order
+  boards.sort((a, b) => (a.id.startsWith("today") ? 0 : 1) - (b.id.startsWith("today") ? 0 : 1));
   boards.push({ id: "build", name: "Build my own", rows: 3, columns: 2, buttons: [
     { label: "Tops", type: "category", symbol: "shirt", load: "cat_top" },
     { label: "Bottoms", type: "category", symbol: "trousers", load: "choose_bottom" },

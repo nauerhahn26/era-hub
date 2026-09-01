@@ -135,6 +135,22 @@ test("with a key: photos are cataloged and the board is her exact graph", async 
   const item = catTop.buttons.find(x => x.type === "clothing");
   assert.equal(item.label, "Heart print tee", "items carry their AI-given names");
   assert.ok(item.image.startsWith("wardrobe-items/"));
+
+  // board-design-rules.md, re-affirmed by dad 9/1: hard cap 6 outfits per
+  // page in stable slots; the bottom row (except Build at [3,4]) stays a
+  // black rest strip — no actionable tile may sit in [3,1..3,3]; the Yes
+  // tile is a TD-Snap-style green CHECK, not a pictogram.
+  const outfits = todayB.buttons.filter(x => x.type === "outfit");
+  assert.ok(outfits.length <= 6, "max 6 outfit choices per page");
+  for (const o of outfits) {
+    assert.ok(o.row && o.col, "outfit tiles pinned to stable slots");
+    assert.ok(!(o.row === 3 && o.col <= 3), "bottom row is the rest strip");
+  }
+  const build = todayB.buttons.find(x => x.label === "Build my own");
+  assert.equal(build.row + "," + build.col, "3,4", "Build my own pinned bottom-right");
+  const yes = confirm.buttons.find(x => x.label === "Yes");
+  assert.equal(yes.glyph, "✓", "Yes is the green check");
+  assert.ok(!yes.symbol, "no pictogram on Yes");
 });
 
 test("second regenerate makes no further AI calls (catalog is durable)", async () => {
