@@ -225,9 +225,12 @@ function stepAsideFromKiosk() {
     `$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; ` +
     `if ($p -and $p.MainWindowHandle -ne 0) { [U.W]::ShowWindow($p.MainWindowHandle, 6) } }`;
   try {
+    // NOT detached: DETACHED_PROCESS leaves powershell console-less and it
+    // exits 0 without running the pipeline (nodetest on the QA VM, 9/1);
+    // the hub is long-lived so the child needs no detach to outlive anything.
     spawn("powershell.exe",
       ["-NoProfile", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")],
-      { detached: true, stdio: "ignore", windowsHide: true }).unref();
+      { stdio: "ignore", windowsHide: true }).unref();
   } catch {}
 }
 
