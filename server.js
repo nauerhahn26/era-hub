@@ -282,6 +282,9 @@ function appShortcut(app, enabled) {
       `$l.TargetPath = '${target}';` +
       (app.exe ? `` : `$l.Arguments = '${PORT} "${app.path}"';`) +
       `$l.WorkingDirectory = '${__dirname}';` +
+      // every shortcut wore a generic gear (QA 9/1) — carry the suite icon so
+      // a parent can find the app on a crowded desktop
+      `$l.IconLocation = '${path.join(__dirname, "public", "favicon.ico")},0';` +
       `$l.WindowStyle = 7; $l.Save() }` +   // 7 = minimized: the launcher console never pops up
       ``
     : `foreach ($d in ${dirs}) {` +
