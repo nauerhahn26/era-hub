@@ -16,6 +16,7 @@ let worker = null;
 let ingesting = null;   // {done, total} live from the worker
 let lastResult = null;
 let queued = false;     // a regenerate asked for while one was running
+let waiters = [];       // callers that arrived mid-build, awaiting the queued run
 
 function aiCfg() {
   try {
@@ -44,9 +45,12 @@ function status() {
 }
 
 function regenerate(force) {
-  if (worker) {           // one build at a time; run again when this one ends
+  // One build at a time. A caller that arrives mid-build gets the QUEUED run's
+  // result, not a bare {busy} it would have to poll for (9/1: a sync landing
+  // during a build silently did nothing from the caller's point of view).
+  if (worker) {
     queued = true;
-    return Promise.resolve({ busy: true });
+    return new Promise((resolve) => { waiters.push(resolve); });
   }
   return new Promise((resolve) => {
     worker = new Worker(path.join(__dirname, "clothing-worker.js"),
@@ -58,8 +62,17 @@ function regenerate(force) {
     worker.on("error", (e) => console.error("[clothing] worker: " + e.message));
     worker.on("exit", () => {
       worker = null; ingesting = null;
-      resolve(lastResult || {});
-      if (queued) { queued = false; regenerate(true).catch(() => {}); }
+      const result = lastResult || {};
+      resolve(result);
+      if (queued) {
+        queued = false;
+        const pending = waiters; waiters = [];
+        regenerate(true).then(r => pending.forEach(w => w(r)),
+                              () => pending.forEach(w => w({})));
+      } else if (waiters.length) {
+        const pending = waiters; waiters = [];
+        pending.forEach(w => w(result));
+      }
     });
   });
 }

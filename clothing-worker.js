@@ -243,11 +243,26 @@ async function askModel(cfg, jpgFile) {
         { type: "text", text: INGEST_PROMPT } ] }] };
     extract = (j) => j.content.map(c => c.text || "").join("");
   }
-  const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120000) });
-  if (!r.ok) throw new Error("ai(" + cfg.provider + ") " + r.status + " " + (await r.text()).slice(0, 160));
-  const txt = extract(await r.json());
-  return JSON.parse(txt.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
+  // Providers throttle (Google 503 "high demand" hit EVERY call on the free
+  // tier, live QA 9/1) and a whole wardrobe must not die on a transient.
+  // Retry with backoff on 429/5xx; a permanent error (bad key, 404 model)
+  // fails fast so the family sees a real message.
+  let last = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, 4000 * attempt * attempt));  // 4s, 16s, 36s
+    let r;
+    try {
+      r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120000) });
+    } catch (e) { last = e.message; continue; }        // timeout/network: retry
+    if (r.ok) {
+      const txt = extract(await r.json());
+      return JSON.parse(txt.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
+    }
+    last = r.status + " " + (await r.text()).slice(0, 120);
+    if (r.status !== 429 && r.status < 500) break;      // permanent: stop now
+  }
+  throw new Error("ai(" + cfg.provider + ") " + last);
 }
 
 async function ingest() {
@@ -261,6 +276,7 @@ async function ingest() {
   if (!todo.length) return { done: 0 };
   fs.mkdirSync(ITEMS(), { recursive: true });
   ingesting = { done: 0, total: todo.length };
+  let busyCount = 0;
   if (parentPort) parentPort.postMessage({ ingesting });
   try {
     for (const f of todo) {
@@ -279,8 +295,13 @@ async function ingest() {
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any" };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
         console.log("[clothing] cataloged " + f + " -> " + cat.items[f].name + " (" + cat.items[f].category + ")");
-      } catch (e) { console.error("[clothing] ingest " + f + ": " + e.message); }
+      } catch (e) {
+        console.error("[clothing] ingest " + f + ": " + e.message);
+        if (/\b(429|503|502|500|high demand|timeout)\b/i.test(e.message)) busyCount++;
+      }
       ingesting.done++;
+      await new Promise(r => setTimeout(r, 1500));   // free tiers are RPM-limited
+
       if (parentPort) parentPort.postMessage({ ingesting });
     }
   } finally {
@@ -288,7 +309,7 @@ async function ingest() {
     ingesting = null;
     if (parentPort) parentPort.postMessage({ ingesting });
   }
-  return { done: todo.length };
+  return { done: todo.length, busy: busyCount > 0 && busyCount === todo.length };
 }
 
 // ---- weather (keyless; cached 3h; null offline = board just has no tile) ----
@@ -485,13 +506,14 @@ async function regenerate(force) {
   let prevSig = ""; try { prevSig = fs.readFileSync(SIG(), "utf8"); } catch {}
   if (!force && sig === prevSig) return { unchanged: true };
 
-  await ingest(); // no-op without a key or when everything is already cataloged
+  const ing = await ingest(); // no-op without a key or when everything is already cataloged
+  const busy = !!(ing && ing.busy);
   const cat = loadCatalog();
   const haveCatalog = Object.values(cat.items).some(i => i.ok);
   if (!haveCatalog) {
     clearPlainRecipe();
     const guidance = !photos.length ? (aiCfg() ? "no-photos" : "nothing")
-                   : (aiCfg() ? "ingest-failed" : "no-key");
+                   : (aiCfg() ? (busy ? "ai-busy" : "ingest-failed") : "no-key");
     try { fs.writeFileSync(SIG(), sig); } catch {}
     return { guidance, photos: photos.length };
   }

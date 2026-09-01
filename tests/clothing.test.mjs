@@ -34,6 +34,7 @@ const ANSWERS = [
   { name: "Sunflower dress", category: "dress", warmth: "warm", rotate_deg: 0, crop: { x: 0.2, y: 0, w: 0.6, h: 1 } },
 ];
 let calls = 0;
+let flaky = 0;                  // >0 = answer this many calls with a 503 first
 const wire = [];   // {path, auth} per request — proves each provider's format
 
 before(async () => {
@@ -43,7 +44,16 @@ before(async () => {
     req.on("data", c => body += c);
     req.on("end", () => {
       const parsed = JSON.parse(body);
-      const answer = ANSWERS[Math.min(calls, ANSWERS.length - 1)]; calls++;
+      calls++;
+      if (flaky > 0) {
+        flaky--;
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end('{"error":{"code":503,"message":"This model is currently experiencing high demand."}}');
+        return;
+      }
+      // answer by PHOTO, not call index: retries and later tests must not
+      // shift which garment the fake describes (test-order pollution, 9/1)
+      const answer = ANSWERS[wire.length % ANSWERS.length];
       const text = "Here you go:\n" + JSON.stringify(answer);
       let out;
       if (req.url === "/v1/messages") {                       // anthropic
@@ -173,12 +183,25 @@ test("preferred-LLM: an OpenAI key ingests new photos through their wire format"
   assert.ok(cat.items["photo_d.jpg"].ok, "photo cataloged via OpenAI");
 });
 
+test("a transient provider 503 is retried, not fatal (Google free tier, live QA 9/1)", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "anthropic", apiKey: "sk-retry" }));
+  makeJpg(path.join(TMP, "clothing", "photo_r.jpg"), 30, 140, 200);
+  flaky = 2;                    // first two calls answer 503, third succeeds
+  const before = calls;
+  await clothing.regenerate(true);
+  assert.ok(calls >= before + 3, "retried through the 503s");
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(cat.items["photo_r.jpg"].ok, "photo cataloged despite the transient");
+  assert.equal(flaky, 0);
+});
+
 test("preferred-LLM: a Google key ingests through generateContent with x-goog-api-key", async () => {
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
     JSON.stringify({ provider: "google", apiKey: "AIza-test" }));
   makeJpg(path.join(TMP, "clothing", "photo_e.jpg"), 90, 220, 120);
   await clothing.regenerate(true);
-  const w = wire[wire.length - 1];
+  const w = wire.filter(x => x.path.startsWith("/v1beta/models/")).pop();
   assert.ok(w.path.startsWith("/v1beta/models/") && w.path.endsWith(":generateContent"), w.path);
   assert.equal(w.auth, "AIza-test", "key travels in the header, never the URL");
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
