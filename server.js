@@ -216,21 +216,25 @@ async function installGaze() {
 function stepAsideFromKiosk() {
   if (process.platform !== "win32") return;
   const { spawn } = require("child_process");
-  // -EncodedCommand: node's arg escaping mangled embedded quotes when this
-  // went through -Command — the CIM filter silently matched nothing, so the
-  // kiosk never yielded and dad stared at an unchanged screen (VM QA 8/31).
-  const ps = `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);';` +
-    `Get-CimInstance Win32_Process -Filter "Name='chrome.exe' or Name='msedge.exe'" | ` +
-    `Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { ` +
-    `$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; ` +
-    `if ($p -and $p.MainWindowHandle -ne 0) { [U.W]::ShowWindow($p.MainWindowHandle, 6) } }`;
+  // Shaped exactly like appShortcut's call — the one powershell spawn PROVEN
+  // to work from the production (detached, console-less) hub: -Command, not
+  // detached, windowsHide. No double quotes anywhere in the script (node's
+  // arg re-quoting mangled them and the CIM filter matched nothing, VM QA
+  // 9/1); WQL strings use PS single-quote doubling instead. Output lands in
+  // logs/stepaside.log so any future failure explains itself.
+  const ps =
+    "Add-Type -Name W -Namespace U -MemberDefinition '[DllImport(" + JSON.stringify("user32.dll") + ")] public static extern bool ShowWindow(IntPtr h, int n);'; " +
+    "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" + " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
+    "Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { " +
+    "$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; " +
+    "if ($p -and $p.MainWindowHandle -ne 0) { 'minimized ' + $_.ProcessId + ' rc ' + [U.W]::ShowWindow($p.MainWindowHandle, 6) } }";
   try {
-    // NOT detached: DETACHED_PROCESS leaves powershell console-less and it
-    // exits 0 without running the pipeline (nodetest on the QA VM, 9/1);
-    // the hub is long-lived so the child needs no detach to outlive anything.
-    spawn("powershell.exe",
-      ["-NoProfile", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")],
-      { stdio: "ignore", windowsHide: true }).unref();
+    const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+    fs.writeSync(out, new Date().toISOString() + " step-aside\n");
+    const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+      { stdio: ["ignore", out, out], windowsHide: true });
+    c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+    c.unref();
   } catch {}
 }
 
