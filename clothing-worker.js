@@ -335,23 +335,23 @@ function shortName(item) {
   return words.length <= 2 ? item.name : words.slice(-2).join(" ");
 }
 
-// 3x4 item pages (her cat_* style): Back r1c1, up to 11 items, More chains pages
+// 3x4 browse pages per ux-contract: Back top-left [1,1], up to 6 items in
+// fixed slots, More bottom-LEFT [3,1]; empties become center/bottom rest cells.
 function gridPages(id, name, items, backLoad) {
   const pages = [];
-  const per = 11;
+  const per = 6;
+  const CELLS = [[1,2],[1,3],[1,4],[2,1],[2,2],[2,3]];
   for (let p = 0; p * per < items.length || p === 0; p++) {
     const pid = p === 0 ? id : id + "_" + (p + 1);
-    const buttons = [{ label: "Back", type: "back", glyph: "←",
+    const buttons = [{ label: "Back", type: "back", glyph: "\u2190",
       load: p === 0 ? backLoad : (p === 1 ? id : id + "_" + p), row: 1, col: 1 }];
-    let cell = 1;
-    for (const it of items.slice(p * per, (p + 1) * per)) {
+    items.slice(p * per, (p + 1) * per).forEach((it, k) => {
       buttons.push({ label: it.name, say: it.name, type: "clothing",
         image: "wardrobe-items/" + it.id + ".jpg",
-        row: Math.floor(cell / 4) + 1, col: (cell % 4) + 1 });
-      cell++;
-    }
+        row: CELLS[k][0], col: CELLS[k][1] });
+    });
     if ((p + 1) * per < items.length)
-      buttons.push({ label: "More", type: "control", symbol: "more", load: id + "_" + (p + 2), row: 3, col: 4 });
+      buttons.push({ label: "More", type: "control", symbol: "more", load: id + "_" + (p + 2), row: 3, col: 1 });
     pages.push({ id: pid, name, rows: 3, columns: 4, buttons });
     if ((p + 1) * per >= items.length) break;
   }
@@ -390,15 +390,13 @@ async function buildCataloged(cat) {
   saveHistory(hist);
 
   fs.mkdirSync(OUTFITS(), { recursive: true });
-  // Layout per board-design-rules.md (dad 9/1): HARD CAP 6 outfits per page
-  // (few real choices), STABLE slots so buttons never move, and empties form
-  // the calm rest strip along the bottom row — never scattered mid-grid.
-  //   [1,1] weather (Back on later pages)   [1,2][1,3][1,4] outfits 1-3
-  //   [2,1][2,2][2,3] outfits 4-6           [2,4] More (when needed)
-  //   [3,1..3,3] rest boxes                 [3,4] Build my own, every page
-  const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,2],[2,3]];
+  // Layout per ux-contract.md placement LAW (dad 9/1: "follow the docs"):
+  // More = bottom-LEFT [3,1] (TD-Snap muscle memory), Build/exit = bottom-
+  // RIGHT [3,4], Back/weather top-left [1,1], rest cells = the two CENTER
+  // cells [2,2][2,3]; outfit_set.py caps outfits at 4 per page.
+  const SLOTS = [[1,2],[1,3],[1,4],[2,1]];
   const boards = [];
-  const pages = Math.max(1, Math.ceil(today.length / 6));
+  const pages = Math.max(1, Math.ceil(today.length / 4));
   for (let pg = 0; pg < pages; pg++) {
     const pid = pg === 0 ? "today" : "today_" + (pg + 1);
     const buttons = [];
@@ -412,8 +410,8 @@ async function buildCataloged(cat) {
       buttons.push({ label: "Back", type: "back", glyph: "\u2190",
         load: pg === 1 ? "today" : "today_" + pg, row: 1, col: 1 });
     }
-    today.slice(pg * 6, pg * 6 + 6).forEach((c, k) => {
-      const i = pg * 6 + k;
+    today.slice(pg * 4, pg * 4 + 4).forEach((c, k) => {
+      const i = pg * 4 + k;
       const label = c.one ? c.one.name : shortName(c.top) + " + " + shortName(c.bottom);
       const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
       const img = "outfit_" + i + ".jpg";
@@ -433,8 +431,8 @@ async function buildCataloged(cat) {
         { label: "Back", type: "back", glyph: "\u2190", load: pid, row: 3, col: 1 },
       ]});
     });
-    if ((pg + 1) * 6 < today.length)
-      buttons.push({ label: "More", type: "control", symbol: "more", load: "today_" + (pg + 2), row: 2, col: 4 });
+    if ((pg + 1) * 4 < today.length)
+      buttons.push({ label: "More", type: "control", symbol: "more", load: "today_" + (pg + 2), row: 3, col: 1 });
     buttons.push({ label: "Build my own", type: "category", symbol: "clothes", load: "build", row: 3, col: 4 });
     boards.push({ id: pid, name: "What will I wear today?", rows: 3, columns: 4, buttons });
   }
