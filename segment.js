@@ -39,7 +39,12 @@ async function getSession() {
     ort.env.logLevel = "error";
     // single-threaded: no worker plumbing, and one photo at a time is plenty
     ort.env.wasm.numThreads = 1;
-    ort.env.wasm.wasmPaths = path.join(__dirname, "vendor", "onnxruntime-web", "dist") + path.sep;
+    // A file:// URL, not a bare path: the runtime dynamically imports its wasm
+    // glue, and Windows rejects "C:\..." as an ESM specifier (QA VM 9/1:
+    // ERR_UNSUPPORTED_ESM_URL_SCHEME, "Received protocol 'c:'"). Linux never
+    // hit it because "/..." happens to be a legal specifier.
+    const distDir = path.join(__dirname, "vendor", "onnxruntime-web", "dist");
+    ort.env.wasm.wasmPaths = require("url").pathToFileURL(distDir).href + "/";
     session = await ort.InferenceSession.create(modelPath(), {
       executionProviders: ["wasm"],
       graphOptimizationLevel: "all",
