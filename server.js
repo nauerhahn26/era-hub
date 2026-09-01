@@ -238,6 +238,36 @@ function stepAsideFromKiosk() {
   } catch {}
 }
 
+// One-time stage-clearing at the very first boot after install (dad 9/1:
+// the welcome kiosk opened BEHIND the browser the family had just downloaded
+// with — "did anything happen?"). Windows won't let a background process
+// foreground our window, but it will let us MINIMIZE the covering browsers;
+// the kiosk is then the visible surface. Same proven spawn shape as
+// stepAsideFromKiosk, inverted filter (non-kiosk browser windows), logged.
+function clearStageOnce() {
+  if (process.platform !== "win32") return;
+  const marker = path.join(DATA, ".first-launch-done");
+  if (fs.existsSync(marker)) return;
+  try { fs.writeFileSync(marker, new Date().toISOString()); } catch {}
+  const { spawn } = require("child_process");
+  const ps =
+    "Add-Type -Name W -Namespace U -MemberDefinition '[DllImport(" + JSON.stringify("user32.dll") + ")] public static extern bool ShowWindow(IntPtr h, int n);'; " +
+    "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" + " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
+    "Where-Object { $_.CommandLine -notlike '*kiosk-profile*' -and $_.CommandLine -notlike '*--type=*' } | ForEach-Object { " +
+    "$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; " +
+    "if ($p -and $p.MainWindowHandle -ne 0) { 'cleared ' + $_.ProcessId + ' rc ' + [U.W]::ShowWindow($p.MainWindowHandle, 6) } }";
+  setTimeout(() => {
+    try {
+      const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+      fs.writeSync(out, new Date().toISOString() + " clear-stage (first launch)\n");
+      const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+        { stdio: ["ignore", out, out], windowsHide: true });
+      c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+      c.unref();
+    } catch {}
+  }, 9000);   // the kiosk browser needs a moment to exist before the stage clears
+}
+
 function appShortcut(app, enabled) {
   if (process.platform !== "win32") return;
   const { spawn } = require("child_process");
@@ -1421,6 +1451,7 @@ server.on("listening", () => {
   drive.start(DATA);     // Google Drive content mirror (no-op until connected)
   drive.onSynced = () => clothing.regenerate(true).catch(() => {});   // fresh photos -> fresh board
   clothing.start(DATA);  // the Clothing Picker generator (no-op without photos)
+  clearStageOnce();      // first boot after install: minimize covering browsers
   setTimeout(reconcileApps, 5000).unref();   // installer-chosen apps install at first boot
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
