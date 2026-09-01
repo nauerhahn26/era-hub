@@ -363,10 +363,17 @@ const INGEST_PROMPT =
   '"rotate_deg": 0, 90, 180 or 270 clockwise so the item stands upright, ' +
   '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the UPRIGHT image bounding the garment TIGHTLY - exclude floor, table, carpet and every background pixel you can, touching the garment edges}';
 
+let quotaSpent = false;   // provider said "out of quota" — stop asking
+
 async function askModel(cfg, jpgFile) {
+  // Once the daily allowance is gone, every extra call is wasted: with four
+  // models and a retry each, one photo could fire EIGHT requests into a wall
+  // and eat the next day's headroom (dad 9/2 asked how many photos a free key
+  // manages — this is why the answer was smaller than it should be).
+  if (quotaSpent) throw new Error("ai(" + cfg.provider + ") 429 daily allowance spent");
   const p = PROVIDERS[cfg.provider];
   const list = chosenModel ? [chosenModel] : p.models;
-  let lastErr = "";
+  let lastErr = "", quotaTally = 0;
   for (const model of list) {
     try {
       const out = await callModel(cfg, jpgFile, model);
@@ -375,9 +382,12 @@ async function askModel(cfg, jpgFile) {
     } catch (e) {
       lastErr = e.message;
       if (/\bpermanent\b/.test(e.message)) throw e;   // bad key etc: stop
+      if (/\b429\b|RESOURCE_EXHAUSTED|quota/i.test(e.message)) quotaTally++;
       console.error("[clothing] model " + model + ": " + e.message);
     }
   }
+  // every model refused for quota — the key is done for today
+  if (quotaTally >= list.length) quotaSpent = true;
   throw new Error(lastErr || "no model answered");
 }
 
@@ -431,6 +441,7 @@ async function callModel(cfg, jpgFile, model) {
     }
     last = r.status + " " + (await r.text()).slice(0, 120);
     if (r.status === 401 || r.status === 403) throw new Error("permanent: bad key (" + r.status + ")");
+    if (r.status === 429) break;     // no point retrying a spent allowance
     if (r.status !== 429 && r.status < 500) break;      // 400/404: try next model
   }
   throw new Error("ai(" + cfg.provider + "/" + model + ") " + last);
