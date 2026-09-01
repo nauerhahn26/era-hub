@@ -454,8 +454,13 @@ async function ingest() {
       try {
         const full = await readImageRgba(path.join(CLOTHING(), f));
         const work = scaleRgba(full, 1100);
+        // 384px, not 700: providers bill images by tile, and at this size a
+        // photo is a SINGLE tile (~258 tokens on Gemini). The model only has
+        // to name and categorise now — u2netp does the cut-out — so the extra
+        // pixels bought nothing and spent a family's free daily allowance
+        // faster (dad 9/2: keep it frugal even when paying a little).
         const probe = path.join(ITEMS(), "_probe.jpg");
-        writeJpg(scaleRgba(work, 700), probe, 80);
+        writeJpg(scaleRgba(work, 384), probe, 78);
         const meta = await askModel(cfg, probe);
         const rot = [90, 180, 270].includes(meta.rotate_deg) ? meta.rotate_deg : 0;
         const id = "item_" + crypto.createHash("md5").update(f).digest("hex").slice(0, 10);
