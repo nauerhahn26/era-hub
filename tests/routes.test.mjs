@@ -61,3 +61,13 @@ test("/favicon.ico serves with an image content type", async () => {
   assert.equal(r.status, 200);
   assert.match(r.headers.get("content-type") || "", /icon|image/);
 });
+
+// The exit door's closer (dad 9/1: Making Words and The Pencil returned him to
+// TD Snap but kept running behind it — the gaze engine's sweep missed our
+// kiosk). The hub is always present, so it owns closing its own window; the
+// route must answer immediately and never fail the caller.
+test("POST /kiosk/close answers ok and never throws", async () => {
+  const r = await fetch(`${BASE}/kiosk/close`, { method: "POST" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true });
+});

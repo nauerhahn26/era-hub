@@ -153,6 +153,17 @@ function gazeBusAlive() {
   });
 }
 const GAZE_DIR = path.join(__dirname, "gaze");
+// The engine is compiled ON the device, so a source fix shipped by the updater
+// only lands if we notice the .cs is newer than the .exe (dad 9/1: the exit-door
+// fix could never have reached an installed machine otherwise).
+function gazeNeedsCompile() {
+  const exe = path.join(GAZE_DIR, "ERAgaze.exe");
+  const src = path.join(GAZE_DIR, "ERAgaze.cs");
+  try {
+    if (!fs.existsSync(exe)) return true;
+    return fs.statSync(src).mtimeMs > fs.statSync(exe).mtimeMs;
+  } catch { return !fs.existsSync(exe); }
+}
 function gazeCompiled() { return fs.existsSync(path.join(GAZE_DIR, "ERAgaze.exe")); }
 async function installGaze() {
   if (process.platform !== "win32") throw new Error("windows only");
@@ -191,15 +202,27 @@ async function installGaze() {
       try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
     }
   }
-  // 2. compile our engine with Windows' built-in compiler
-  if (!gazeCompiled()) {
+  // 2. compile our engine with Windows' built-in compiler (also on UPDATE,
+  // when the shipped source is newer than the exe on disk)
+  if (gazeNeedsCompile()) {
+    const exePath = path.join(GAZE_DIR, "ERAgaze.exe");
+    const fresh = !fs.existsSync(exePath);
+    // keep the working build so a bad compile is one rename from recovery
+    if (!fresh) { try { fs.copyFileSync(exePath, path.join(GAZE_DIR, "ERAgaze.prev.exe")); } catch {} }
     const csc = "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe";
+    const out = fresh ? exePath : path.join(GAZE_DIR, "ERAgaze.new.exe");
     const c = spawnSync(csc, ["/nologo", "/target:winexe", "/platform:x64",
-      "/out:" + path.join(GAZE_DIR, "ERAgaze.exe"),
+      "/out:" + out,
       "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll",
       "/r:System.Web.Extensions.dll", "/r:System.Management.dll",
       path.join(GAZE_DIR, "ERAgaze.cs")], { windowsHide: true });
     if (c.status !== 0) throw new Error("compile failed: " + String(c.stderr || c.stdout));
+    if (!fresh) {
+      // A running engine holds its exe open; swap when we can, otherwise leave
+      // the new build staged and let the next logon pick it up.
+      try { fs.renameSync(out, exePath); console.log("[gaze] recompiled from updated source"); }
+      catch { console.log("[gaze] new engine staged (running build is locked); it starts at next logon"); }
+    }
   }
   // 3. shortcuts + autostart + start it (skip start when another engine runs)
   appShortcut({ title: "ERAgaze", path: null, exe: path.join(GAZE_DIR, "ERAgaze.exe") }, true);
@@ -1323,6 +1346,32 @@ const server = http.createServer((req, res) => {
           .end('{"ok":false,"error":"could not reach ElevenLabs"}'); });
       } catch { res.writeHead(400).end(); }
     });
+    return;
+  }
+
+  // ---- exit door fallback: close this app's kiosk window ----
+  // The apps ask ERAgaze to close them (it also foregrounds TD Snap), but an
+  // engine compiled before 9/1 swept only chrome.exe and matched the wrong
+  // tag, so the app stayed running behind TD Snap (dad 9/1, Making Words and
+  // The Pencil). The hub is always present and can always close its own kiosk.
+  if (req.method === "POST" && urlPath === "/kiosk/close") {
+    res.writeHead(200, { "Content-Type": "application/json" }).end('{"ok":true}');
+    if (process.platform === "win32") {
+      const { spawn } = require("child_process");
+      const ps =
+        "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" +
+        " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
+        "Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { " +
+        "Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; 'closed ' + $_.ProcessId }";
+      try {
+        const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+        fs.writeSync(out, new Date().toISOString() + " kiosk-close\n");
+        const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+          { stdio: ["ignore", out, out], windowsHide: true });
+        c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+        c.unref();
+      } catch {}
+    }
     return;
   }
 
