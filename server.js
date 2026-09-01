@@ -216,13 +216,17 @@ async function installGaze() {
 function stepAsideFromKiosk() {
   if (process.platform !== "win32") return;
   const { spawn } = require("child_process");
-  const ps = `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int n);';` +
-    `Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\" | ` +
+  // -EncodedCommand: node's arg escaping mangled embedded quotes when this
+  // went through -Command — the CIM filter silently matched nothing, so the
+  // kiosk never yielded and dad stared at an unchanged screen (VM QA 8/31).
+  const ps = `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);';` +
+    `Get-CimInstance Win32_Process -Filter "Name='chrome.exe' or Name='msedge.exe'" | ` +
     `Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { ` +
     `$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; ` +
     `if ($p -and $p.MainWindowHandle -ne 0) { [U.W]::ShowWindow($p.MainWindowHandle, 6) } }`;
   try {
-    spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+    spawn("powershell.exe",
+      ["-NoProfile", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")],
       { detached: true, stdio: "ignore", windowsHide: true }).unref();
   } catch {}
 }

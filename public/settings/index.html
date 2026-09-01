@@ -565,7 +565,7 @@ async function aiPaint(){
     if(s.aiProvider && !aiProvTouched && s.aiProvider!==aiProvSel){ aiProvSel=s.aiProvider; aiProvPaint(); }
     if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos… "+s.ingesting.done+" of "+s.ingesting.total+"</b>";
     else if(s.aiConfigured) $("aiStatus").innerHTML="<b>"+(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.anthropic).name+" key saved ✓</b>"+(s.cataloged?" "+s.cataloged+" clothing items cataloged.":"");
-    else $("aiStatus").innerHTML='<span class="bad">No key yet — clothing photos are shown as plain pictures until one is added.</span>';
+    else $("aiStatus").innerHTML='<span class="bad">No key yet — the Clothing Picker waits for one (its screen walks you through this too).</span>';
   }catch(e){}
 }
 aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
