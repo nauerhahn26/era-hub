@@ -350,8 +350,16 @@ async function ingest() {
         const meta = await askModel(cfg, probe);
         const rot = [90, 180, 270].includes(meta.rotate_deg) ? meta.rotate_deg : 0;
         const id = "item_" + crypto.createHash("md5").update(f).digest("hex").slice(0, 10);
-        writeJpg(padSquare(cropRgba(rotateRgba(work, rot), meta.crop || {}), 640),
-          path.join(ITEMS(), id + ".jpg"), 85);
+        // Trim on the FULL upright photo — its border really is floor/table, so
+        // the background sample is honest. (Doing this after the model's crop
+        // sampled the GARMENT and trimmed nothing: wood floor survived onto the
+        // board, QA 9/1.) Keep whichever box is tighter.
+        const upright = rotateRgba(work, rot);
+        const trimmed = cropToContent(upright);
+        const modelCrop = cropRgba(upright, meta.crop || {});
+        const area = (im) => im.width * im.height;
+        const best = area(trimmed) <= area(modelCrop) ? trimmed : modelCrop;
+        writeJpg(padSquare(best, 640), path.join(ITEMS(), id + ".jpg"), 85);
         cat.items[f] = { id, ok: true, name: shortLabel(meta.name),
           category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any" };
@@ -434,7 +442,8 @@ function shortLabel(raw) {
 
 function shortName(item) {
   const words = item.name.split(" ");
-  return words.length <= 2 ? item.name : words.slice(-2).join(" ");
+  const n = words.length <= 2 ? item.name : words.slice(-2).join(" ");
+  return n.charAt(0).toUpperCase() + n.slice(1);   // never start a tile lowercase
 }
 
 // 3x4 browse pages per ux-contract: Back top-left [1,1], up to 6 items in
