@@ -419,7 +419,7 @@ async function ingest() {
   if (!todo.length) return { done: 0 };
   fs.mkdirSync(ITEMS(), { recursive: true });
   ingesting = { done: 0, total: todo.length };
-  let busyCount = 0;
+  let busyCount = 0, quotaCount = 0;
   if (parentPort) parentPort.postMessage({ ingesting });
   try {
     for (const f of todo) {
@@ -448,7 +448,8 @@ async function ingest() {
         console.log("[clothing] cataloged " + f + " -> " + cat.items[f].name + " (" + cat.items[f].category + ")");
       } catch (e) {
         console.error("[clothing] ingest " + f + ": " + e.message);
-        if (/\b(429|503|502|500|high demand|timeout)\b/i.test(e.message)) busyCount++;
+        if (/\b429\b|RESOURCE_EXHAUSTED|quota/i.test(e.message)) quotaCount++;
+        else if (/\b(503|502|500|high demand|timeout)\b/i.test(e.message)) busyCount++;
       }
       ingesting.done++;
       await new Promise(r => setTimeout(r, 1500));   // free tiers are RPM-limited
@@ -460,7 +461,9 @@ async function ingest() {
     ingesting = null;
     if (parentPort) parentPort.postMessage({ ingesting });
   }
-  return { done: todo.length, busy: busyCount > 0 && busyCount === todo.length };
+  return { done: todo.length,
+    busy: busyCount > 0 && (busyCount + quotaCount) === todo.length,
+    quota: quotaCount > 0 && (busyCount + quotaCount) === todo.length && quotaCount >= busyCount };
 }
 
 // ---- weather (keyless; cached 3h; null offline = board just has no tile) ----
@@ -679,12 +682,13 @@ async function regenerate(force) {
 
   const ing = await ingest(); // no-op without a key or when everything is already cataloged
   const busy = !!(ing && ing.busy);
+  const quota = !!(ing && ing.quota);
   const cat = loadCatalog();
   const haveCatalog = Object.values(cat.items).some(i => i.ok);
   if (!haveCatalog) {
     clearPlainRecipe();
     const guidance = !photos.length ? (aiCfg() ? "no-photos" : "nothing")
-                   : (aiCfg() ? (busy ? "ai-busy" : "ingest-failed") : "no-key");
+                   : (aiCfg() ? (quota ? "ai-quota" : busy ? "ai-busy" : "ingest-failed") : "no-key");
     try { fs.writeFileSync(SIG(), sig); } catch {}
     return { guidance, photos: photos.length };
   }
