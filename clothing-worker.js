@@ -26,7 +26,7 @@ const crypto = require("crypto");
 const PROVIDERS = {
   anthropic: { base: "https://api.anthropic.com", model: "claude-haiku-4-5-20251001" },
   openai: { base: "https://api.openai.com", model: "gpt-5-mini" },
-  google: { base: "https://generativelanguage.googleapis.com", model: "gemini-2.5-flash" },
+  google: { base: "https://generativelanguage.googleapis.com", model: "gemini-flash-latest" },
 };
 
 const DATA = workerData.dataDir;
