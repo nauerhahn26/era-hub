@@ -323,7 +323,7 @@ function appShortcut(app, enabled) {
 // ARASAAC lookup ported from packages/generator/aac_board_designer.py
 const ARASAAC_API = "https://api.arasaac.org/api/pictograms/en/bestsearch/";
 const ARASAAC_IMG = "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
-const PREWARM = ["sun", "cloud", "cold", "more", "shirt", "trousers", "dress",
+const PREWARM = ["sun", "cloud", "cold", "more", "shirt", "trousers", "13638", "dress",
                  "clothes", "house", "clock", "snack", "back", "yes"];
 
 // Serve a file from a jail dir if it exists, has an allowed extension, and does

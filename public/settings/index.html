@@ -578,8 +578,10 @@ async function aiPaint(){
   try{
     const s=await (await fetch("/clothing/status",{cache:"no-store"})).json();
     if(s.aiProvider && !aiProvTouched && s.aiProvider!==aiProvSel){ aiProvSel=s.aiProvider; aiProvPaint(); }
-    if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos… "+s.ingesting.done+" of "+s.ingesting.total+"</b>";
-    else if(s.aiConfigured) $("aiStatus").innerHTML="<b>"+(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.anthropic).name+" key saved ✓</b>"+(s.cataloged?" "+s.cataloged+" clothing items cataloged.":"");
+    // no library-wide count here either: the batch total shifts as Drive keeps
+    // materialising files (dad 9/1)
+    if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos…</b> "+s.ingesting.done+" done so far.";
+    else if(s.aiConfigured) $("aiStatus").innerHTML="<b>"+(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.google).name+" key saved ✓</b>"+(s.cataloged?" Clothing items are catalogued and the board is building itself.":"");
     else $("aiStatus").innerHTML='<span class="bad">No key yet — the Clothing Picker waits for one (its screen walks you through this too).</span>';
   }catch(e){}
 }

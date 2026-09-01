@@ -160,6 +160,87 @@ function writeJpg(img, file, q) { ensureCodecs(); fs.writeFileSync(file, jpeg.en
 // border to learn the background colour, then shrink to the box of pixels
 // that differ from it. Falls back to the whole image when the garment fills
 // the frame or the background is not uniform.
+// Background REMOVAL, not just cropping (dad 9/1: "no trim was performed" —
+// his tiles showed the wood floor while Ellie's tablet shows garments cut out
+// on white). Her pipeline uses rembg/u2netp in Python; we have neither Python
+// nor a model here, so: flood the background inward from the frame border,
+// growing region-by-region so a wood grain's gradual variation is followed
+// while the garment's hard edge stops it. Everything reached from the border
+// becomes white; the garment (never border-connected) survives untouched.
+function removeBackground(img) {
+  const { data, width: w, height: h } = img;
+  const n = w * h;
+  const bg = new Uint8Array(n);          // 1 = background
+  const stack = [];
+  const NEAR = 30;      // max per-channel step between touching pixels
+  const SEED = 74;      // max drift from the border's own colour
+  // seed colour = median of the frame border
+  const samples = [];
+  for (let x = 0; x < w; x += 2) { samples.push((0 * w + x) * 4); samples.push(((h - 1) * w + x) * 4); }
+  for (let y = 0; y < h; y += 2) { samples.push((y * w) * 4); samples.push((y * w + w - 1) * 4); }
+  const med = [0, 1, 2].map(c => {
+    const v = samples.map(o => data[o + c]).sort((a, b) => a - b);
+    return v[Math.floor(v.length / 2)];
+  });
+  const push = (i) => { if (!bg[i]) { bg[i] = 1; stack.push(i); } };
+  for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  const close = (a, b, lim) =>
+    Math.abs(data[a] - data[b]) <= lim &&
+    Math.abs(data[a + 1] - data[b + 1]) <= lim &&
+    Math.abs(data[a + 2] - data[b + 2]) <= lim;
+  const nearSeed = (o) =>
+    Math.abs(data[o] - med[0]) <= SEED &&
+    Math.abs(data[o + 1] - med[1]) <= SEED &&
+    Math.abs(data[o + 2] - med[2]) <= SEED;
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % w, y = (i / w) | 0, o = i * 4;
+    const step = (j) => {
+      if (bg[j]) return;
+      const oj = j * 4;
+      if (close(o, oj, NEAR) && nearSeed(oj)) { bg[j] = 1; stack.push(j); }
+    };
+    if (x > 0) step(i - 1);
+    if (x < w - 1) step(i + 1);
+    if (y > 0) step(i - w);
+    if (y < h - 1) step(i + w);
+  }
+  let painted = 0;
+  for (let i = 0; i < n; i++) if (bg[i]) painted++;
+  // a garment that fills the frame (or a background we could not read) must be
+  // left alone rather than bleached
+  if (painted < n * 0.05 || painted > n * 0.94) return img;
+  // Keep only the biggest surviving blob — the garment. Wood grain that the
+  // flood could not reach leaves streaks otherwise (her pipeline does the same
+  // with scipy's keep_largest_blob).
+  const label = new Int32Array(n).fill(-1);
+  let best = -1, bestSize = 0, cur = 0;
+  const q = [];
+  for (let i = 0; i < n; i++) {
+    if (bg[i] || label[i] !== -1) continue;
+    let size = 0; q.length = 0; q.push(i); label[i] = cur;
+    while (q.length) {
+      const j = q.pop(); size++;
+      const x = j % w, y = (j / w) | 0;
+      const visit = (k) => { if (!bg[k] && label[k] === -1) { label[k] = cur; q.push(k); } };
+      if (x > 0) visit(j - 1);
+      if (x < w - 1) visit(j + 1);
+      if (y > 0) visit(j - w);
+      if (y < h - 1) visit(j + w);
+    }
+    if (size > bestSize) { bestSize = size; best = cur; }
+    cur++;
+  }
+  const out = Buffer.from(data);
+  for (let i = 0; i < n; i++) {
+    if (!bg[i] && label[i] === best) continue;   // the garment stays
+    const o = i * 4;
+    out[o] = 255; out[o + 1] = 255; out[o + 2] = 255; out[o + 3] = 255;
+  }
+  return { data: out, width: w, height: h };
+}
+
 function cropToContent(img, tol) {
   const { data, width: w, height: h } = img;
   const T = tol || 34;
@@ -354,7 +435,7 @@ async function ingest() {
         // the background sample is honest. (Doing this after the model's crop
         // sampled the GARMENT and trimmed nothing: wood floor survived onto the
         // board, QA 9/1.) Keep whichever box is tighter.
-        const upright = rotateRgba(work, rot);
+        const upright = removeBackground(rotateRgba(work, rot));
         const trimmed = cropToContent(upright);
         const modelCrop = cropRgba(upright, meta.crop || {});
         const area = (im) => im.width * im.height;
@@ -558,7 +639,9 @@ async function buildCataloged(cat) {
   ]});
   boards.push({ id: "choose_bottom", name: "Pants or shorts?", rows: 2, columns: 2, buttons: [
     { label: "Pants", type: "category", symbol: "trousers", load: "cat_pants" },
-    { label: "Shorts", type: "category", symbol: "trousers", load: "cat_shorts" },
+    // "shorts" has no ARASAAC bestsearch hit; 13638 IS the shorts pictogram
+    // (dad 9/1: "the shorts image are pants" — both tiles wore the same jeans)
+    { label: "Shorts", type: "category", symbol: "13638", load: "cat_shorts" },
     { label: "Back", type: "back", glyph: "←", load: "today" },
   ]});
   boards.push(...gridPages("cat_top", "Tops", items.filter(i => i.category === "top"), "today"));
