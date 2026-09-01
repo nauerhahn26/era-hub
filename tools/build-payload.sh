@@ -17,8 +17,16 @@ OUT="${1:-$HUB/dist/new-era-payload}"
 VERSION="$(date -u +%Y%m%d.%H%M)"
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/segment.js" "$HUB/predict-model.json" "$OUT/"
 cp -r "$HUB/vendor" "$OUT/vendor"   # HEIC decode (libheif, LGPL - see NOTICE) + jpeg-js
+# Garment cut-out (dad 9/1: "add the 50mb so trim is nice looking") — U^2-Net
+# u2netp through ONNX Runtime, the same model her Python pipeline uses. Ship
+# ONLY the Windows x64 CPU binaries: the npm package carries every platform and
+# the DirectML/dxcompiler GPU providers we never ask for (285MB -> ~31MB).
+rm -rf "$OUT/vendor/onnxruntime-node/bin/napi-v6/linux" \
+       "$OUT/vendor/onnxruntime-node/bin/napi-v6/darwin" \
+       "$OUT/vendor/onnxruntime-node/bin/napi-v6"/*/arm64
+du -sh "$OUT/vendor/onnxruntime-node" "$OUT/vendor/models" 2>/dev/null || true
 cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$HUB/../era-core/NOTICE" "$OUT/" 2>/dev/null || true
 # apps + shared foundation - COPIES, never symlinks
 cp -rL "$ROOT/era-core/lib" "$OUT/public/lib"

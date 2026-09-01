@@ -247,3 +247,18 @@ test("preferred-LLM: a Google key ingests through generateContent with x-goog-ap
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.ok(cat.items["photo_e.jpg"].ok, "photo cataloged via Google");
 });
+
+// The garment cut-out ships as a real model (dad 9/1: "add the 50mb so trim is
+// nice looking"). The payload must actually carry it, and the code must fall
+// back rather than fail when a machine lacks the runtime.
+test("the segmentation model and its runtime are present and loadable", async () => {
+  const seg = require("./segment.js");
+  assert.ok(fs.existsSync(seg.modelPath()), "u2netp.onnx ships beside the app");
+  assert.ok(fs.statSync(seg.modelPath()).size > 3e6, "model file is whole");
+  // a plain grey field has no salient object — the model must DECLINE rather
+  // than hand back a blank tile
+  const w = 200, h = 200, data = Buffer.alloc(w * h * 4, 128);
+  for (let i = 3; i < data.length; i += 4) data[i] = 255;
+  const out = await seg.cutOut({ data, width: w, height: h });
+  assert.ok(out === null || (out.kept > 0.02 && out.kept < 0.97), "no blank tiles");
+});

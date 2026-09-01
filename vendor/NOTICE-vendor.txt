@@ -2,3 +2,16 @@ Vendored third-party libraries (used for on-device photo conversion):
 - libheif.js (libheif compiled to JavaScript) - LGPL-3.0, https://github.com/strukturag/libheif
   Unmodified library, dynamically loaded; source available at the project above.
 - jpeg-js - BSD-3-Clause, https://github.com/jpeg-js/jpeg-js
+
+--------------------------------------------------------------------------
+onnxruntime-node (Microsoft) — MIT License.
+  vendor/onnxruntime-node/ — Windows x64 CPU binaries only; the GPU
+  execution providers (DirectML, dxcompiler, dxil) and other platforms are
+  stripped from the shipped payload.
+
+U^2-Net ("u2netp") — Apache License 2.0.
+  Qin et al., "U2-Net: Going Deeper with Nested U-Structure for Salient
+  Object Detection" (Pattern Recognition, 2020).
+  vendor/models/u2netp.onnx — weights as distributed by the rembg project
+  (Daniel Gatis, MIT License). Used locally, on the family's own machine,
+  to cut clothing photos out of their background. No image is uploaded.

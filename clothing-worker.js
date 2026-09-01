@@ -17,6 +17,7 @@ const { parentPort, workerData } = require("worker_threads");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const segment = require("./segment.js");
 
 // Bring-your-own key, any of the big three (dad 8/30: "preferred LLM").
 // Account LOGIN is not offered because the providers forbid it for
@@ -462,7 +463,13 @@ async function ingest() {
         // the background sample is honest. (Doing this after the model's crop
         // sampled the GARMENT and trimmed nothing: wood floor survived onto the
         // board, QA 9/1.) Keep whichever box is tighter.
-        const upright = removeBackground(rotateRgba(work, rot));
+        // Cut the garment out with the model (same one her Python pipeline
+        // uses); the colour-flood heuristic remains the fallback for a machine
+        // without the runtime, where it trims what it safely can.
+        const rotated = rotateRgba(work, rot);
+        let cutOut = null;
+        try { cutOut = await segment.cutOut(rotated); } catch (e) { console.error("[segment] " + e.message); }
+        const upright = cutOut || removeBackground(rotated);
         const trimmed = cropToContent(upright);
         const modelCrop = cropRgba(upright, meta.crop || {});
         const area = (im) => im.width * im.height;

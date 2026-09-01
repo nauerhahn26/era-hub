@@ -15,3 +15,7 @@ public/dist-payload.tar.gz
 public/pilot-verify.ps1
 server.log
 dist/
+
+# ONNX Runtime: only the Windows x64 CPU binaries ship. The linux build is
+# a local convenience for running the segmentation tests on this machine.
+vendor/onnxruntime-node/bin/napi-v6/linux/
