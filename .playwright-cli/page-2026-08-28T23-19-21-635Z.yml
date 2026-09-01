@@ -1,0 +1,24 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e23]: ⚠ Voice not working — words are shown on screen. Check Windows audio/TTS.
+  - generic "door" [ref=e2]
+  - generic [ref=e24]: 🔊
+  - generic:
+    - button "⏸ pause"
+    - button "🔁 repeat"
+    - button "⏭ skip word"
+    - button "🐢 dwell +200"
+    - button "🐇 dwell −200"
+    - button "🎙 voice"
+    - button "🏁 end session"
+    - button "✕"
+  - generic [ref=e25]:
+    - generic [ref=e27]:
+      - generic [ref=e28]: Use 2 letters to spell at.
+      - generic [ref=e29]: Word 1 of 9
+    - generic [ref=e34]:
+      - generic [ref=e35]: a
+      - generic [ref=e36]: d
+      - generic [ref=e37]: "n"
+      - generic [ref=e38]: s
+      - generic [ref=e39]: t
+      - generic [ref=e40]: ⌫

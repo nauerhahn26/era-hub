@@ -1,0 +1,29 @@
+- generic [ref=f3e3]:
+  - heading "Hi, Demo's family!" [level=1] [ref=f3e4]
+  - paragraph [ref=f3e5]: Pick an app — each one works by eye gaze or touch.
+  - generic [ref=f3e6]:
+    - link "Making Words guided word building" [ref=f3e7] [cursor=pointer]:
+      - /url: /
+      - text: Making Words
+      - generic [ref=f3e8]: guided word building
+    - link "The Pencil free writing with prediction" [ref=f3e9] [cursor=pointer]:
+      - /url: /pencil/
+      - text: The Pencil
+      - generic [ref=f3e10]: free writing with prediction
+    - link "Board daily choices, photos & speech" [ref=f3e11] [cursor=pointer]:
+      - /url: /board/
+      - text: Board
+      - generic [ref=f3e12]: daily choices, photos & speech
+    - link "Music favorite songs, audio only" [ref=f3e13] [cursor=pointer]:
+      - /url: /board/?recipe=songs
+      - text: Music
+      - generic [ref=f3e14]: favorite songs, audio only
+    - link "Book Reader picture books, read aloud" [ref=f3e15] [cursor=pointer]:
+      - /url: /reader/
+      - text: Book Reader
+      - generic [ref=f3e16]: picture books, read aloud
+    - link "Settings dwell, voice, volume cap" [ref=f3e17] [cursor=pointer]:
+      - /url: /settings/
+      - text: Settings
+      - generic [ref=f3e18]: dwell, voice, volume cap
+  - paragraph [ref=f3e19]: "Hub is running locally on this machine. Dwell: 1s. Build 20260829.0100."

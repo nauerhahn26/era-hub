@@ -1,0 +1,13 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]: ⚠ Voice not working — check Windows audio/TTS.
+  - main [ref=e3]:
+    - generic [ref=e4]:
+      - button "door" [ref=e5] [cursor=pointer]: 🚪
+      - generic [ref=e7]:
+        - button "Speak" [disabled] [ref=e8]
+        - button "Clear" [disabled] [ref=e9]
+    - generic [ref=e10]:
+      - button "80° hot" [ref=e11] [cursor=pointer]:
+        - generic: updated Sun, Aug 30, 4:07 AM
+      - button "This one" [ref=e13] [cursor=pointer]
+      - button "This one" [ref=e15] [cursor=pointer]

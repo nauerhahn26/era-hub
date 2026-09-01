@@ -1,0 +1,161 @@
+- generic [active] [ref=f4e1]:
+  - generic [ref=f4e2]:
+    - banner [ref=f4e3]:
+      - generic [ref=f4e4]:
+        - heading "ERAgaze" [level=1] [ref=f4e5]
+        - generic [ref=f4e6]: settings
+      - link "← Back to apps" [ref=f4e7] [cursor=pointer]:
+        - /url: /home/
+    - paragraph [ref=f4e8]: Your eye-gaze system · changes apply within a couple of seconds
+    - generic [ref=f4e9]:
+      - heading "🧩 Apps" [level=2] [ref=f4e10]
+      - paragraph [ref=f4e11]: Which apps this computer offers. Untick to hide an app and remove its shortcut; tick to add it. Same choices as at install.
+      - generic [ref=f4e12]:
+        - generic [ref=f4e13]:
+          - checkbox "Making Words — guided word building" [ref=f4e14]
+          - text: Making Words —
+          - generic [ref=f4e15]: guided word building
+        - generic [ref=f4e16]:
+          - checkbox "The Pencil — free writing with prediction" [ref=f4e17]
+          - text: The Pencil —
+          - generic [ref=f4e18]: free writing with prediction
+        - generic [ref=f4e19]:
+          - checkbox "Board — daily choices, photos & speech" [ref=f4e20]
+          - text: Board —
+          - generic [ref=f4e21]: daily choices, photos & speech
+        - generic [ref=f4e22]:
+          - checkbox "Music — favorite songs, audio only" [ref=f4e23]
+          - text: Music —
+          - generic [ref=f4e24]: favorite songs, audio only
+        - generic [ref=f4e25]:
+          - checkbox "Movies — shows & movies, her picks" [ref=f4e26]
+          - text: Movies —
+          - generic [ref=f4e27]: shows & movies, her picks
+        - generic [ref=f4e28]:
+          - checkbox "Book Reader — picture books, read aloud" [checked] [ref=f4e29]
+          - text: Book Reader —
+          - generic [ref=f4e30]: picture books, read aloud
+    - generic [ref=f4e31]:
+      - heading "🎙 Voice" [level=2] [ref=f4e32]
+      - paragraph [ref=f4e33]: The voice that talks to your child in Making Words and The Pencil. Tap any voice to hear it and choose it.
+      - generic [ref=f4e34]:
+        - button "Jessica playful American" [ref=f4e35] [cursor=pointer]:
+          - generic [ref=f4e36]: Jessica
+          - generic [ref=f4e37]: playful American
+        - button "Sarah soft & warm" [ref=f4e38] [cursor=pointer]:
+          - generic [ref=f4e39]: Sarah
+          - generic [ref=f4e40]: soft & warm
+        - button "Rachel calm narrator" [ref=f4e41] [cursor=pointer]:
+          - generic [ref=f4e42]: Rachel
+          - generic [ref=f4e43]: calm narrator
+        - button "Matilda friendly" [ref=f4e44] [cursor=pointer]:
+          - generic [ref=f4e45]: Matilda
+          - generic [ref=f4e46]: friendly
+        - button "Lily warm British" [ref=f4e47] [cursor=pointer]:
+          - generic [ref=f4e48]: Lily
+          - generic [ref=f4e49]: warm British
+      - generic [ref=f4e50]: Voice key not set — using the built-in Windows voice.
+      - generic [ref=f4e51]:
+        - paragraph [ref=f4e52]: Premium voices need a free ElevenLabs account. Without a key the built-in computer voice is used.
+        - link "🔑 Open my ElevenLabs API keys page" [ref=f4e54] [cursor=pointer]:
+          - /url: https://elevenlabs.io/app/settings/api-keys
+        - generic [ref=f4e55]:
+          - textbox "ElevenLabs API key" [ref=f4e56]
+          - button "Save key" [ref=f4e57] [cursor=pointer]
+    - generic [ref=f4e58]:
+      - heading "🔗 Add content with Google Drive" [level=2] [ref=f4e59]
+      - paragraph [ref=f4e60]: "Put things in your Google Drive and they appear here by themselves: book packages in a books folder, songs in music, lesson files in content. Checked every 6 hours."
+      - generic [ref=f4e61]:
+        - generic [ref=f4e62]:
+          - generic [ref=f4e63]: ⬜
+          - generic [ref=f4e64]:
+            - generic [ref=f4e65]: 1. Get the Google Drive app
+            - generic [ref=f4e66]: Google's own app - it keeps your Drive on this computer.
+          - button "⬇ Open download page" [ref=f4e67] [cursor=pointer]
+        - generic [ref=f4e68]:
+          - generic [ref=f4e69]: ⬜
+          - generic [ref=f4e70]:
+            - generic [ref=f4e71]: 2. Sign in to Google Drive
+            - generic [ref=f4e72]: Open the Drive app it installed and sign in with your Google account. This box ticks by itself.
+        - generic [ref=f4e73]:
+          - generic [ref=f4e74]: ⬜
+          - generic [ref=f4e75]:
+            - generic [ref=f4e76]: 3. Pick your content folder
+            - generic [ref=f4e77]: Make a folder in your Drive (New ERA Content works well), then choose it below.
+          - button "📁 Open my Drive" [ref=f4e78] [cursor=pointer]
+        - generic [ref=f4e79]:
+          - generic [ref=f4e80]: ⬜
+          - generic [ref=f4e81]:
+            - generic [ref=f4e82]: 4. Put content in it
+            - generic [ref=f4e83]: Inside your folder make books, music, or content folders and drop things in.
+          - button "📂 Open the folder" [ref=f4e84] [cursor=pointer]
+        - generic [ref=f4e85]:
+          - generic [ref=f4e86]: ⬜
+          - generic [ref=f4e87]:
+            - generic [ref=f4e88]: 5. Synced to this computer
+            - generic [ref=f4e89]: Happens by itself every 6 hours, or press the button.
+          - button "🔄 Sync now" [ref=f4e90] [cursor=pointer]
+    - generic [ref=f4e91]:
+      - heading "⏱ Dwell time" [level=2] [ref=f4e92]
+      - paragraph [ref=f4e93]: How long she holds her gaze on a button before it activates. Longer = calmer, fewer accidental picks. Shorter = faster once she’s confident.
+      - generic [ref=f4e94]:
+        - button "−" [ref=f4e95] [cursor=pointer]
+        - generic [ref=f4e96]: 1000 ms
+        - button "+" [ref=f4e97] [cursor=pointer]
+      - generic [ref=f4e98]: Quicker — for when she's confident.
+    - generic [ref=f4e99]:
+      - heading "🗺 Page-change pause" [level=2] [ref=f4e100]
+      - paragraph [ref=f4e101]: After a page changes, gaze buttons wait this long before they can start charging — so a fresh page never grabs the tile she happens to be looking at while she reorients. TD Snap on an I-13 has its own copy of this setting (“Delay after page change”, set to 0.25 s).
+      - generic [ref=f4e102]:
+        - button "−" [ref=f4e103] [cursor=pointer]
+        - generic [ref=f4e104]: 0.25 s
+        - button "+" [ref=f4e105] [cursor=pointer]
+      - generic [ref=f4e106]: A short breath while she reorients (recommended).
+    - generic [ref=f4e107]:
+      - heading "👁 Cursor feel" [level=2] [ref=f4e108]
+      - paragraph [ref=f4e109]: How the gaze cursor moves and settles. If it feels jumpy, choose Calmer. If it feels laggy, choose Snappier.
+      - generic [ref=f4e110]:
+        - button "🐢 Calmer" [ref=f4e111] [cursor=pointer]
+        - button "⚖ Balanced" [ref=f4e112] [cursor=pointer]
+        - button "🐇 Snappier" [ref=f4e113] [cursor=pointer]
+      - generic [ref=f4e114]: Adjusts smoothing and how firmly the cursor locks onto what she’s looking at.
+      - generic [ref=f4e115]: ERAgaze not detected here (cursor settings only work on Ellie’s device).
+    - generic [ref=f4e116]:
+      - heading "🙈 Look-away forgiveness" [level=2] [ref=f4e117]
+      - paragraph [ref=f4e118]: How long she can glance away mid-selection without losing her progress. Rett girls often look away right as they choose — more forgiveness helps.
+      - generic [ref=f4e119]:
+        - button "Short" [ref=f4e120] [cursor=pointer]
+        - button "Normal" [ref=f4e121] [cursor=pointer]
+        - button "Generous" [ref=f4e122] [cursor=pointer]
+        - button "Most" [ref=f4e123] [cursor=pointer]
+    - generic [ref=f4e124]:
+      - heading "🖱 Cursor visible?" [level=2] [ref=f4e125]
+      - paragraph [ref=f4e126]: Show the soft ring where she’s looking. On is best for most activities.
+      - generic [ref=f4e127]:
+        - button "Show ring" [ref=f4e128] [cursor=pointer]
+        - button "Hide ring" [ref=f4e129] [cursor=pointer]
+    - generic [ref=f4e130]:
+      - heading "🔊 Volume cap" [level=2] [ref=f4e131]
+      - paragraph [ref=f4e132]: Keeps the speaker from going louder than the cap — Ellie can still turn it down or mute. It starts by itself at boot and heals itself if it dies (back within 30 minutes). This switch is for pushing it back on right now, or pausing it briefly for testing.
+      - generic [ref=f4e133]: Volume cap status only shows on Ellie’s device while ERAgaze is running.
+    - generic [ref=f4e134]:
+      - heading "🎵 Music volume cap" [level=2] [ref=f4e135]
+      - paragraph [ref=f4e136]: How loud the Music board is allowed to play, as a share of the speaker’s volume. One knob for every device — an open Music board follows within half a minute. Speech is not affected.
+      - generic [ref=f4e137]:
+        - button "🏫 Classroom (8%)" [ref=f4e138] [cursor=pointer]
+        - button "🏠 Quiet (40%)" [ref=f4e139] [cursor=pointer]
+        - button "🔊 Full" [ref=f4e140] [cursor=pointer]
+      - generic [ref=f4e141]:
+        - button "−" [ref=f4e142] [cursor=pointer]
+        - generic [ref=f4e143]: 100%
+        - button "+" [ref=f4e144] [cursor=pointer]
+      - generic [ref=f4e145]: Full volume — the speaker cap alone rules.
+    - generic [ref=f4e146]:
+      - heading "⏸ Pause eye-gaze (testing)" [level=2] [ref=f4e147]
+      - paragraph [ref=f4e148]: Temporarily stop ERAgaze from moving the cursor, so you can check whether another program behaves differently without it. The eye-gaze keeps running in the background and turns back on the moment you tap Running.
+      - generic [ref=f4e149]:
+        - generic [ref=f4e150]: ⏻
+        - generic [ref=f4e151]:
+          - paragraph [ref=f4e152]: ERAgaze stopped.
+          - paragraph [ref=f4e153]: "To restart: tap the ERAgaze icon on the desktop, or ask Claude."
+  - generic [ref=f4e154]: Saved

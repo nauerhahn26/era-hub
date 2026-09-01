@@ -4,9 +4,13 @@
 // heuristic flood could only trim about half of real photos safely, because a
 // garment whose colour matches the floor cannot be separated by colour alone.
 //
-// Nothing leaves the machine: the model file sits next to the app and runs on
-// the CPU. Ships Windows x64 only (~31MB); everything degrades to the
-// heuristic when the runtime is missing (see clothing-worker.js).
+// Nothing leaves the machine: the model sits next to the app and runs on the
+// CPU. We use the WEBASSEMBLY build, not the native binding: a clean Windows
+// 10 has no Visual C++ runtime, so the native .node refused to load on the QA
+// machine ("the specified module could not be found") and would have done the
+// same on any freshly-installed family PC. WASM needs nothing but Node, is
+// half the size, and takes about a second per photo. Everything degrades to
+// the colour heuristic if the runtime is missing (see clothing-worker.js).
 //
 // Licences: U^2-Net model Apache-2.0 (Qin et al.), rembg MIT (the weights we
 // fetch), ONNX Runtime MIT — see vendor/NOTICE-vendor.txt.
@@ -21,16 +25,23 @@ const STD = [0.229, 0.224, 0.225];
 let session = null;
 let unavailable = false;
 
+function loadOrt() {
+  return require("./vendor/onnxruntime-web/dist/ort.node.min.js");
+}
+
 function modelPath() { return path.join(__dirname, "vendor", "models", "u2netp.onnx"); }
 
 async function getSession() {
   if (session) return session;
   if (unavailable) return null;
   try {
-    const ort = require("./vendor/onnxruntime-node");
+    const ort = loadOrt();
     ort.env.logLevel = "error";
+    // single-threaded: no worker plumbing, and one photo at a time is plenty
+    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.wasmPaths = path.join(__dirname, "vendor", "onnxruntime-web", "dist") + path.sep;
     session = await ort.InferenceSession.create(modelPath(), {
-      executionProviders: ["cpu"],
+      executionProviders: ["wasm"],
       graphOptimizationLevel: "all",
     });
     return session;
@@ -64,7 +75,7 @@ function toTensorInput(img) {
 async function cutOut(img, opts) {
   const s = await getSession();
   if (!s) return null;
-  const ort = require("./vendor/onnxruntime-node");
+  const ort = loadOrt();
   const input = new ort.Tensor("float32", toTensorInput(img), [1, 3, SIZE, SIZE]);
   const out = await s.run({ [s.inputNames[0]]: input });
   const mask = out[s.outputNames[0]].data;    // d0: [1,1,320,320]

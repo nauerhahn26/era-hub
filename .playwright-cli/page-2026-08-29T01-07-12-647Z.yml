@@ -1,0 +1,29 @@
+- generic [ref=f5e3]:
+  - heading "Hi!" [level=1] [ref=f5e4]
+  - paragraph [ref=f5e5]: Pick an app — each one works by eye gaze or touch.
+  - generic [ref=f5e6]:
+    - link "Making Words guided word building" [ref=f5e7] [cursor=pointer]:
+      - /url: /
+      - text: Making Words
+      - generic [ref=f5e8]: guided word building
+    - link "The Pencil free writing with prediction" [ref=f5e9] [cursor=pointer]:
+      - /url: /pencil/
+      - text: The Pencil
+      - generic [ref=f5e10]: free writing with prediction
+    - link "Board daily choices, photos & speech" [ref=f5e11] [cursor=pointer]:
+      - /url: /board/
+      - text: Board
+      - generic [ref=f5e12]: daily choices, photos & speech
+    - link "Music favorite songs, audio only" [ref=f5e13] [cursor=pointer]:
+      - /url: /board/?recipe=songs
+      - text: Music
+      - generic [ref=f5e14]: favorite songs, audio only
+    - link "Book Reader picture books, read aloud" [ref=f5e15] [cursor=pointer]:
+      - /url: /reader/
+      - text: Book Reader
+      - generic [ref=f5e16]: picture books, read aloud
+    - link "Settings dwell, voice, volume cap" [ref=f5e17] [cursor=pointer]:
+      - /url: /settings/
+      - text: Settings
+      - generic [ref=f5e18]: dwell, voice, volume cap
+  - paragraph

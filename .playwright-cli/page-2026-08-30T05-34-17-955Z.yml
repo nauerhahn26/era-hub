@@ -1,0 +1,137 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - heading "ERAgaze" [level=1] [ref=e5]
+        - generic [ref=e6]: settings
+      - link "← Back to apps" [ref=e7] [cursor=pointer]:
+        - /url: /home/
+    - paragraph [ref=e8]: Your eye-gaze system · changes apply within a couple of seconds
+    - generic [ref=e9]:
+      - heading "🧩 Apps" [level=2] [ref=e10]
+      - paragraph [ref=e11]: Which apps this computer offers. Untick to hide an app and remove its shortcut; tick to add it. Same choices as at install.
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - checkbox "Making Words — guided word building" [checked] [ref=e14]
+          - text: Making Words —
+          - generic [ref=e15]: guided word building
+        - generic [ref=e16]:
+          - checkbox "The Pencil — free writing with prediction" [checked] [ref=e17]
+          - text: The Pencil —
+          - generic [ref=e18]: free writing with prediction
+        - generic [ref=e19]:
+          - checkbox "Clothing Picker — daily outfits, checked against the weather" [checked] [ref=e20]
+          - text: Clothing Picker —
+          - generic [ref=e21]: daily outfits, checked against the weather
+        - generic [ref=e22]:
+          - checkbox "Music — favorite songs, audio only 🗑 remove files" [ref=e23]
+          - text: Music —
+          - generic [ref=e24]: favorite songs, audio only
+          - button "🗑 remove files" [ref=e25] [cursor=pointer]
+        - generic [ref=e26]:
+          - checkbox "Movies — shows & movies, her picks 🗑 remove files" [ref=e27]
+          - text: Movies —
+          - generic [ref=e28]: shows & movies, her picks
+          - button "🗑 remove files" [ref=e29] [cursor=pointer]
+        - generic [ref=e30]:
+          - checkbox "Book Reader — picture books, read aloud" [ref=e31]
+          - text: Book Reader —
+          - generic [ref=e32]: picture books, read aloud
+        - generic [ref=e33]:
+          - checkbox "ERAgaze — eye-gaze cursor + dwell for Tobii trackers installed ✓" [checked] [ref=e34]
+          - text: ERAgaze —
+          - generic [ref=e35]: eye-gaze cursor + dwell for Tobii trackers
+          - generic [ref=e36]: installed ✓
+    - generic [ref=e37]:
+      - heading "🎙 Voice" [level=2] [ref=e38]
+      - paragraph [ref=e39]: The voice that talks to your child in Making Words and The Pencil. Tap any voice to hear it and choose it.
+      - generic [ref=e40]:
+        - button "Jessica playful American" [ref=e41] [cursor=pointer]:
+          - generic [ref=e42]: Jessica
+          - generic [ref=e43]: playful American
+        - button "Sarah soft & warm" [ref=e44] [cursor=pointer]:
+          - generic [ref=e45]: Sarah
+          - generic [ref=e46]: soft & warm
+        - button "Rachel calm narrator" [ref=e47] [cursor=pointer]:
+          - generic [ref=e48]: Rachel
+          - generic [ref=e49]: calm narrator
+        - button "Matilda friendly" [ref=e50] [cursor=pointer]:
+          - generic [ref=e51]: Matilda
+          - generic [ref=e52]: friendly
+        - button "Lily warm British" [ref=e53] [cursor=pointer]:
+          - generic [ref=e54]: Lily
+          - generic [ref=e55]: warm British
+      - generic [ref=e56]: Premium voices active ✓
+      - generic [ref=e57]:
+        - paragraph [ref=e58]: Premium voices need a free ElevenLabs account. Without a key the built-in computer voice is used.
+        - button "🔑 Open my ElevenLabs API keys page" [ref=e60] [cursor=pointer]
+        - generic [ref=e61]:
+          - textbox "ElevenLabs API key" [ref=e62]
+          - button "Save key" [ref=e63] [cursor=pointer]
+        - generic [ref=e64]: Key saved ✓ Tap a voice above to hear it.
+    - generic [ref=e65]:
+      - heading "🔗 Add content with Google Drive" [level=2] [ref=e66]
+      - paragraph [ref=e67]: "Put things in your Google Drive and they appear here by themselves: book packages in a books folder, songs in music, lesson files in content. Checked every 6 hours."
+    - generic [ref=e68]:
+      - heading "⏱ Dwell time" [level=2] [ref=e69]
+      - paragraph [ref=e70]: How long she holds her gaze on a button before it activates. Longer = calmer, fewer accidental picks. Shorter = faster once she’s confident.
+      - generic [ref=e71]:
+        - button "−" [ref=e72] [cursor=pointer]
+        - generic [ref=e73]: 1200 ms
+        - button "+" [ref=e74] [cursor=pointer]
+    - generic [ref=e75]:
+      - heading "🗺 Page-change pause" [level=2] [ref=e76]
+      - paragraph [ref=e77]: After a page changes, gaze buttons wait this long before they can start charging — so a fresh page never grabs the tile she happens to be looking at while she reorients. TD Snap on an I-13 has its own copy of this setting (“Delay after page change”, set to 0.25 s).
+      - generic [ref=e78]:
+        - button "−" [ref=e79] [cursor=pointer]
+        - generic [ref=e80]: 0.25 s
+        - button "+" [ref=e81] [cursor=pointer]
+    - generic [ref=e82]:
+      - heading "👁 Cursor feel" [level=2] [ref=e83]
+      - paragraph [ref=e84]: How the gaze cursor moves and settles. If it feels jumpy, choose Calmer. If it feels laggy, choose Snappier.
+      - generic [ref=e85]:
+        - button "🐢 Calmer" [ref=e86] [cursor=pointer]
+        - button "⚖ Balanced" [ref=e87] [cursor=pointer]
+        - button "🐇 Snappier" [ref=e88] [cursor=pointer]
+      - generic [ref=e89]: Adjusts smoothing and how firmly the cursor locks onto what she’s looking at.
+    - generic [ref=e90]:
+      - heading "🙈 Look-away forgiveness" [level=2] [ref=e91]
+      - paragraph [ref=e92]: How long she can glance away mid-selection without losing her progress. Rett girls often look away right as they choose — more forgiveness helps.
+      - generic [ref=e93]:
+        - button "Short" [ref=e94] [cursor=pointer]
+        - button "Normal" [ref=e95] [cursor=pointer]
+        - button "Generous" [ref=e96] [cursor=pointer]
+        - button "Most" [ref=e97] [cursor=pointer]
+    - generic [ref=e98]:
+      - heading "🖱 Cursor visible?" [level=2] [ref=e99]
+      - paragraph [ref=e100]: Show the soft ring where she’s looking. On is best for most activities.
+      - generic [ref=e101]:
+        - button "Show ring" [ref=e102] [cursor=pointer]
+        - button "Hide ring" [ref=e103] [cursor=pointer]
+    - generic [ref=e104]:
+      - heading "🔊 Volume cap" [level=2] [ref=e105]
+      - paragraph [ref=e106]: Keeps the speaker from going louder than the cap — Ellie can still turn it down or mute. It starts by itself at boot and heals itself if it dies (back within 30 minutes). This switch is for pushing it back on right now, or pausing it briefly for testing.
+    - generic [ref=e107]:
+      - heading "🎵 Music volume cap" [level=2] [ref=e108]
+      - paragraph [ref=e109]: How loud the Music board is allowed to play, as a share of the speaker’s volume. One knob for every device — an open Music board follows within half a minute. Speech is not affected.
+      - generic [ref=e110]:
+        - button "🏫 Classroom (8%)" [ref=e111] [cursor=pointer]
+        - button "🏠 Quiet (40%)" [ref=e112] [cursor=pointer]
+        - button "🔊 Full" [ref=e113] [cursor=pointer]
+      - generic [ref=e114]:
+        - button "−" [ref=e115] [cursor=pointer]
+        - generic [ref=e116]: 100%
+        - button "+" [ref=e117] [cursor=pointer]
+    - generic [ref=e118]:
+      - heading "⏸ Pause eye-gaze (testing)" [level=2] [ref=e119]
+      - paragraph [ref=e120]: Temporarily stop ERAgaze from moving the cursor, so you can check whether another program behaves differently without it. The eye-gaze keeps running in the background and turns back on the moment you tap Running.
+      - generic [ref=e121]:
+        - generic [ref=e122]:
+          - button "▶ Running" [ref=e123] [cursor=pointer]
+          - button "⏸ Paused" [ref=e124] [cursor=pointer]
+        - generic [ref=e125]: Eye-gaze is controlling the cursor normally.
+        - generic [ref=e126]:
+          - paragraph [ref=e127]: Full stop releases the eye-tracker completely so you can test another eye-gaze app (like Aivota) with no interference. Pause above only holds the cursor still — the tracker connection stays open. Use this when you need ERAgaze fully out of the way.
+          - button "⏻ Stop ERAgaze completely (for testing other eye-gaze apps)" [ref=e128] [cursor=pointer]
+          - generic [ref=e129]: Tap once to arm, then tap again to confirm.
+  - generic [ref=e130]: Saved

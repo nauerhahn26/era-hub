@@ -1,0 +1,5 @@
+[     167ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:49155/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:8390/dwell.js:343
+[    1170ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:49155/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:8390/dwell.js:343
+[    3171ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:49155/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:8390/dwell.js:343
+[    7182ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:49155/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:8390/dwell.js:343
+[   15186ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:49155/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:8390/dwell.js:343

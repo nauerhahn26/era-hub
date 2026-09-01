@@ -1,0 +1,24 @@
+- generic [active] [ref=e1]:
+  - generic "door" [ref=e2]
+  - generic:
+    - button "⏸ pause"
+    - button "🔁 repeat"
+    - button "⏭ skip word"
+    - button "🐢 dwell +200"
+    - button "🐇 dwell −200"
+    - button "🎙 voice"
+    - button "🏁 end session"
+    - button "✕"
+  - generic [ref=e9]:
+    - button "◀" [ref=e10]
+    - generic [ref=e11]: Lesson 1 · stand
+    - button "▶" [ref=e12]
+    - generic [ref=e13]: "|"
+    - button "whole" [ref=e14]
+    - button "make" [ref=e15]
+    - button "sort" [ref=e16]
+    - button "transfer" [ref=e17]
+  - generic [ref=e18]:
+    - generic [ref=e19]: Making Words
+    - generic [ref=e20]: "Today: letters a · d · n · s · t"
+    - generic [ref=e21]: Let’s play! ▶

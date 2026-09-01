@@ -4,10 +4,10 @@ Vendored third-party libraries (used for on-device photo conversion):
 - jpeg-js - BSD-3-Clause, https://github.com/jpeg-js/jpeg-js
 
 --------------------------------------------------------------------------
-onnxruntime-node (Microsoft) — MIT License.
-  vendor/onnxruntime-node/ — Windows x64 CPU binaries only; the GPU
-  execution providers (DirectML, dxcompiler, dxil) and other platforms are
-  stripped from the shipped payload.
+onnxruntime-web (Microsoft) — MIT License.
+  vendor/onnxruntime-web/ — the WebAssembly build (single-threaded SIMD
+  kernel plus its Node entry point). Chosen over the native binding because
+  it needs no Visual C++ runtime, which a freshly installed Windows lacks.
 
 U^2-Net ("u2netp") — Apache License 2.0.
   Qin et al., "U2-Net: Going Deeper with Nested U-Structure for Salient

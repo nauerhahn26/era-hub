@@ -1,0 +1,19 @@
+- generic [ref=e3]:
+  - heading "Hi, Demo's family!" [level=1] [ref=e4]
+  - paragraph [ref=e5]: Pick an app — each one works by eye gaze or touch.
+  - generic [ref=e6]:
+    - link "The Pencil free writing with prediction" [ref=e7] [cursor=pointer]:
+      - /url: /pencil/
+      - text: The Pencil
+      - generic [ref=e8]: free writing with prediction
+    - link "Book Reader picture books, read aloud" [ref=e9] [cursor=pointer]:
+      - /url: /reader/
+      - text: Book Reader
+      - generic [ref=e10]: picture books, read aloud
+    - link "Settings dwell, voice, volume cap" [ref=e11] [cursor=pointer]:
+      - /url: /settings/
+      - text: Settings
+      - generic [ref=e12]: dwell, voice, volume cap
+  - group [ref=e13]:
+    - generic "Add or remove apps" [ref=e14] [cursor=pointer]
+  - paragraph [ref=e15]: "Hub is running locally on this machine. Dwell: 1s."
