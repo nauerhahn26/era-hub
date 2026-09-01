@@ -35,6 +35,7 @@ const ANSWERS = [
 ];
 let calls = 0;
 let flaky = 0;                  // >0 = answer this many calls with a 503 first
+let throttleModel = "";         // a model id that always answers 429
 const wire = [];   // {path, auth} per request — proves each provider's format
 
 before(async () => {
@@ -45,6 +46,11 @@ before(async () => {
     req.on("end", () => {
       const parsed = JSON.parse(body);
       calls++;
+      if (throttleModel && req.url.includes(throttleModel)) {
+        res.writeHead(429, { "Content-Type": "application/json" });
+        res.end('{"error":{"code":429,"message":"Resource exhausted"}}');
+        return;
+      }
       if (flaky > 0) {
         flaky--;
         res.writeHead(503, { "Content-Type": "application/json" });
@@ -194,6 +200,19 @@ test("a transient provider 503 is retried, not fatal (Google free tier, live QA 
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.ok(cat.items["photo_r.jpg"].ok, "photo cataloged despite the transient");
   assert.equal(flaky, 0);
+});
+
+test("a throttled model falls through to the next one (Google 429 on -latest, 9/1)", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "google", apiKey: "AIza-fallback" }));
+  makeJpg(path.join(TMP, "clothing", "photo_f.jpg"), 10, 60, 200);
+  throttleModel = "gemini-flash-latest";     // first choice answers 429 forever
+  await clothing.regenerate(true);
+  const paths = wire.filter(x => x.path.startsWith("/v1beta/models/")).map(x => x.path);
+  assert.ok(paths.some(x => x.includes("gemini-3.5-flash")), "fell through to the next model");
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(cat.items["photo_f.jpg"].ok, "photo cataloged by the fallback model");
+  throttleModel = "";
 });
 
 test("preferred-LLM: a Google key ingests through generateContent with x-goog-api-key", async () => {

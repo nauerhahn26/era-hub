@@ -23,11 +23,20 @@ const crypto = require("crypto");
 // third-party products (Anthropic's credential-use policy is explicit);
 // keys are the sanctioned path. Cheapest vision model per provider, one
 // call per new photo. ERA_AI_URL overrides every base URL (test seam).
+// Each provider carries a LIST of models, tried in order. Model availability
+// is not static: a hardcoded id 404s for new accounts, a -latest alias can be
+// rate-limited (429) for hours while a sibling answers instantly — both seen
+// live on the family's own free key (QA 9/1). The first model that answers
+// wins and is remembered for the rest of the run.
 const PROVIDERS = {
-  anthropic: { base: "https://api.anthropic.com", model: "claude-haiku-4-5-20251001" },
-  openai: { base: "https://api.openai.com", model: "gpt-5-mini" },
-  google: { base: "https://generativelanguage.googleapis.com", model: "gemini-flash-latest" },
+  anthropic: { base: "https://api.anthropic.com",
+    models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"] },
+  openai: { base: "https://api.openai.com",
+    models: ["gpt-5-mini", "gpt-4o-mini"] },
+  google: { base: "https://generativelanguage.googleapis.com",
+    models: ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-flash"] },
 };
+let chosenModel = null;   // sticky once a model answers
 
 const DATA = workerData.dataDir;
 let ingesting = null; // {done, total} while naming photos — relayed to the shell
@@ -212,6 +221,24 @@ const INGEST_PROMPT =
   '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the UPRIGHT image tightly around the item with a little margin}';
 
 async function askModel(cfg, jpgFile) {
+  const p = PROVIDERS[cfg.provider];
+  const list = chosenModel ? [chosenModel] : p.models;
+  let lastErr = "";
+  for (const model of list) {
+    try {
+      const out = await callModel(cfg, jpgFile, model);
+      chosenModel = model;                       // this one works; stay on it
+      return out;
+    } catch (e) {
+      lastErr = e.message;
+      if (/\bpermanent\b/.test(e.message)) throw e;   // bad key etc: stop
+      console.error("[clothing] model " + model + ": " + e.message);
+    }
+  }
+  throw new Error(lastErr || "no model answered");
+}
+
+async function callModel(cfg, jpgFile, model) {
   const b64 = fs.readFileSync(jpgFile).toString("base64");
   const p = PROVIDERS[cfg.provider];
   const base = process.env.ERA_AI_URL || p.base;
@@ -219,13 +246,13 @@ async function askModel(cfg, jpgFile) {
   if (cfg.provider === "openai") {
     url = base + "/v1/chat/completions";
     headers = { "Authorization": "Bearer " + cfg.apiKey, "content-type": "application/json" };
-    body = { model: p.model, max_completion_tokens: 300,
+    body = { model, max_completion_tokens: 300,
       messages: [{ role: "user", content: [
         { type: "image_url", image_url: { url: "data:image/jpeg;base64," + b64 } },
         { type: "text", text: INGEST_PROMPT } ] }] };
     extract = (j) => j.choices[0].message.content;
   } else if (cfg.provider === "google") {
-    url = base + "/v1beta/models/" + p.model + ":generateContent";
+    url = base + "/v1beta/models/" + model + ":generateContent";
     headers = { "x-goog-api-key": cfg.apiKey, "content-type": "application/json" };
     body = { contents: [{ parts: [
         { inline_data: { mime_type: "image/jpeg", data: b64 } },
@@ -237,7 +264,7 @@ async function askModel(cfg, jpgFile) {
   } else {
     url = base + "/v1/messages";
     headers = { "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" };
-    body = { model: p.model, max_tokens: 300,
+    body = { model, max_tokens: 300,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
         { type: "text", text: INGEST_PROMPT } ] }] };
@@ -248,8 +275,8 @@ async function askModel(cfg, jpgFile) {
   // Retry with backoff on 429/5xx; a permanent error (bad key, 404 model)
   // fails fast so the family sees a real message.
   let last = "";
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (attempt) await new Promise(r => setTimeout(r, 4000 * attempt * attempt));  // 4s, 16s, 36s
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, 3000));   // one quick retry, then next model
     let r;
     try {
       r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body),
@@ -260,9 +287,10 @@ async function askModel(cfg, jpgFile) {
       return JSON.parse(txt.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
     }
     last = r.status + " " + (await r.text()).slice(0, 120);
-    if (r.status !== 429 && r.status < 500) break;      // permanent: stop now
+    if (r.status === 401 || r.status === 403) throw new Error("permanent: bad key (" + r.status + ")");
+    if (r.status !== 429 && r.status < 500) break;      // 400/404: try next model
   }
-  throw new Error("ai(" + cfg.provider + ") " + last);
+  throw new Error("ai(" + cfg.provider + "/" + model + ") " + last);
 }
 
 async function ingest() {
