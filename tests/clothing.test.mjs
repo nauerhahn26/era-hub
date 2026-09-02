@@ -262,3 +262,45 @@ test("the segmentation model and its runtime are present and loadable", async ()
   const out = await seg.cutOut({ data, width: w, height: h });
   assert.ok(out === null || (out.kept > 0.02 && out.kept < 0.97), "no blank tiles");
 });
+
+// A picture can go missing while its catalogue entry survives — a half-restored
+// backup, a tidied folder, or (QA 9/2) a wipe that lands while the worker is
+// still holding the catalogue in memory. Before this, the item was skipped
+// forever ("nothing to do") and EVERY outfit died on composite ENOENT, so the
+// child got a black board. The rebuild must heal itself, and must not spend a
+// single AI call doing it: the name and category are already known.
+test("a missing tile is redrawn without asking the AI again", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "google", apiKey: "AIza-test" }));
+  makeJpg(path.join(TMP, "clothing", "photo_f.jpg"), 40, 80, 200);
+  await clothing.regenerate(true);
+
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const entry = cat.items["photo_f.jpg"];
+  assert.ok(entry && entry.ok, "photo cataloged first");
+  const tile = path.join(TMP, "wardrobe-items", entry.id + ".jpg");
+  assert.ok(fs.existsSync(tile), "tile written");
+
+  fs.rmSync(tile);                       // the picture disappears
+  const before = calls;
+  await clothing.regenerate(true);
+
+  assert.ok(fs.existsSync(tile), "the tile is redrawn on the next build");
+  assert.equal(calls, before, "no AI call was spent redrawing a known garment");
+  const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.equal(after.items["photo_f.jpg"].name, entry.name, "name survives the repair");
+  assert.equal(after.items["photo_f.jpg"].category, entry.category, "category survives");
+});
+
+// Until the repair runs, one absent picture must not empty the board.
+test("an item with no tile is left off the board, not fatal to it", async () => {
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  cat.items["ghost.jpg"] = { id: "item_ghost", ok: true, name: "Ghost tee",
+    category: "top", warmth: "any" };
+  fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify(cat));
+  await clothing.regenerate(true);
+  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const labels = JSON.stringify(rec.boards);
+  assert.ok(!labels.includes("Ghost tee"), "the item with no picture is skipped");
+  assert.ok(rec.boards.some(b => String(b.id).startsWith("confirm_")), "the board still builds");
+});

@@ -47,6 +47,11 @@ let ingesting = null; // {done, total} while naming photos — relayed to the sh
 const CLOTHING = () => path.join(DATA, "clothing");
 const WEB = () => path.join(DATA, "clothing-web");
 const ITEMS = () => path.join(DATA, "wardrobe-items");
+// Is this item's picture actually on disk? A catalogue entry alone is not
+// enough to draw anything (QA 9/2).
+function hasTile(id) {
+  try { return fs.statSync(path.join(ITEMS(), id + ".jpg")).size > 0; } catch { return false; }
+}
 const OUTFITS = () => path.join(DATA, "wardrobe-outfits");
 const CATALOG = () => path.join(DATA, "wardrobe.json");
 const HISTORY = () => path.join(DATA, "clothing-history.json");
@@ -457,7 +462,13 @@ async function ingest() {
   let files = [];
   try { files = fs.readdirSync(CLOTHING()).filter(f =>
     [".heic", ".heif", ".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase())); } catch {}
-  const todo = files.filter(f => !cat.items[f] || !cat.items[f].ok);
+  // Re-do a photo when it is new, when it failed before, OR when its tile has
+  // gone missing while the catalogue entry survived. Without the last case the
+  // item is skipped forever and the board can never heal itself (QA 9/2: a
+  // wipe that landed mid-run left 20 catalogued items with 5 tiles, and every
+  // later run said "nothing to do"). The repair costs NO AI call — the name,
+  // category and warmth are already known, so only the pixels are redone.
+  const todo = files.filter(f => !cat.items[f] || !cat.items[f].ok || !hasTile(cat.items[f].id));
   if (!todo.length) return { done: 0 };
   fs.mkdirSync(ITEMS(), { recursive: true });
   ingesting = { done: 0, total: todo.length };
@@ -465,6 +476,7 @@ async function ingest() {
   if (parentPort) parentPort.postMessage({ ingesting });
   try {
     for (const f of todo) {
+      let usedAi = false;
       try {
         const full = await readImageRgba(path.join(CLOTHING(), f));
         const work = scaleRgba(full, 1100);
@@ -473,9 +485,18 @@ async function ingest() {
         // to name and categorise now — u2netp does the cut-out — so the extra
         // pixels bought nothing and spent a family's free daily allowance
         // faster (dad 9/2: keep it frugal even when paying a little).
-        const probe = path.join(ITEMS(), "_probe.jpg");
-        writeJpg(scaleRgba(work, 384), probe, 78);
-        const meta = await askModel(cfg, probe);
+        // Known garment, missing tile: redraw from what we already learned.
+        const known = cat.items[f] && cat.items[f].ok ? cat.items[f] : null;
+        let meta;
+        if (known) {
+          meta = { name: known.name, category: known.category, warmth: known.warmth,
+                   rotate_deg: known.rotate_deg || 0, crop: known.crop || {} };
+        } else {
+          const probe = path.join(ITEMS(), "_probe.jpg");
+          writeJpg(scaleRgba(work, 384), probe, 78);
+          usedAi = true;
+          meta = await askModel(cfg, probe);
+        }
         const rot = [90, 180, 270].includes(meta.rotate_deg) ? meta.rotate_deg : 0;
         const id = "item_" + crypto.createHash("md5").update(f).digest("hex").slice(0, 10);
         // Trim on the FULL upright photo — its border really is floor/table, so
@@ -494,11 +515,15 @@ async function ingest() {
         const area = (im) => im.width * im.height;
         const best = area(trimmed) <= area(modelCrop) ? trimmed : modelCrop;
         writeJpg(padSquare(best, 640), path.join(ITEMS(), id + ".jpg"), 85);
+        // Keep the geometry: a later tile repair can then reproduce the same
+        // picture without asking the model again.
         cat.items[f] = { id, ok: true, name: shortLabel(meta.name),
+          rotate_deg: rot, crop: meta.crop || {},
           category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any" };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
-        console.log("[clothing] cataloged " + f + " -> " + cat.items[f].name + " (" + cat.items[f].category + ")");
+        console.log("[clothing] " + (known ? "redrew " : "cataloged ") + f +
+          " -> " + cat.items[f].name + " (" + cat.items[f].category + ")");
       } catch (e) {
         console.error("[clothing] ingest " + f + ": " + e.message);
         if (/\b429\b|RESOURCE_EXHAUSTED|quota/i.test(e.message)) quotaCount++;
@@ -510,7 +535,8 @@ async function ingest() {
       // tripping 429/503 constantly (dad 9/1-9/2). 5s keeps a family
       // comfortably under it: a 40-item wardrobe still finishes in ~5 minutes,
       // once, in the background.
-      await new Promise(r => setTimeout(r, 5000));
+      // ...but a tile repair asked nobody anything, so it need not wait.
+      if (usedAi) await new Promise(r => setTimeout(r, 5000));
 
       if (parentPort) parentPort.postMessage({ ingesting });
     }
@@ -614,7 +640,11 @@ function gridPages(id, name, items, backLoad) {
 async function buildCataloged(cat) {
   const w = await weather();
   const band = w ? w.band : null;
-  const items = Object.values(cat.items).filter(i => i.ok);
+  // A catalogued item whose tile is gone cannot be drawn. Leave it out rather
+  // than let one missing file empty the whole board (QA 9/2: every outfit died
+  // on "composite: ENOENT" and Ellie got a black screen). Ingest repairs the
+  // tile on the next run; the board stays usable meanwhile.
+  const items = Object.values(cat.items).filter(i => i.ok && hasTile(i.id));
   const tops = forBand(items.filter(i => i.category === "top"), band);
   const bottoms = forBand(items.filter(i => i.category === "pants" || i.category === "shorts"), band);
   const ones = forBand(items.filter(i => i.category === "dress" || i.category === "set"), band);
@@ -732,7 +762,11 @@ async function regenerate(force) {
   try { files = fs.readdirSync(CLOTHING()).sort(); } catch {}
   const photos = files.filter(f =>
     [".heic", ".heif", ".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase()));
-  const sig = new Date().toDateString() + "|" + (aiKey() ? "ai" : "none") + "|" + files.map(f => {
+  // Tile count is part of the signature: if pictures disappear, the day's work
+  // is NOT "already done", even though the photos have not changed (QA 9/2).
+  let tiles = 0;
+  try { tiles = fs.readdirSync(ITEMS()).filter(f => f.endsWith(".jpg")).length; } catch {}
+  const sig = new Date().toDateString() + "|" + (aiKey() ? "ai" : "none") + "|t" + tiles + "|" + files.map(f => {
     try { return f + fs.statSync(path.join(CLOTHING(), f)).size; } catch { return f; }
   }).join(",");
   let prevSig = ""; try { prevSig = fs.readFileSync(SIG(), "utf8"); } catch {}
