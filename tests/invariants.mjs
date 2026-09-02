@@ -13,7 +13,8 @@
 // CLI:         node tests/invariants.mjs /  /pencil/  /board/
 //
 // Laws enforced per visible .dwell target / page (see comments at each check):
-//   1. size floor + fully on-screen + center not occluded + gap-or-adjacency
+//   1. size floor (message-bar chrome instead fills the strip and is 2x as wide
+//      as tall — dad 9/2) + fully on-screen + center not occluded + gap-or-adjacency
 //   2. data-dwell-ms on the hold ladder (unknown-but-in-band = warn)
 //   3. park corner is inert (not a .dwell target)
 //   4. no h-scroll; font floors (44 absolute; 74 text-tile @1920 unless reduced)
@@ -98,17 +99,40 @@ function MEASURE(C) {
   const V = (code, detail) => violations.push({ code, detail });
   const W = (code, detail) => warns.push({ code, detail });
 
-  // is this target a photo tile? (contract has an explicit photo-tile concept:
-  // photoFontMin/photoPlateMin/photoLabelShare — text-tile font floors don't
-  // apply; §E#20 "photo tiles are exempt".) Generic detection: the tile or its
-  // label opts into the photo plate convention.
+  // is this target a PICTURE-LED tile? The picture is the message and the text
+  // rides small next to it, so the text-tile font floors don't apply — only the
+  // photo floor. Two kinds:
+  //  (a) photo tiles: contract has an explicit concept (photoFontMin /
+  //      photoPlateMin / photoLabelShare; §E#20 "photo tiles are exempt").
+  //      Generic detection: the tile or its label opts into the plate convention.
+  //  (b) the board's weather plate — dad's EXPLICIT ruling 9/2: "weather text is
+  //      too big cannot see sunny/cloudy image". The sun/cloud now leads at 45%
+  //      of the tile and "76°/warm" reads beside it, below the 74px text floor
+  //      on purpose. Same bargain as a photo tile, so the same exemption.
   const isPhoto = (el) =>
-    el.matches(".photo, .tile.photo") || !!el.querySelector(".plate, .tile-label.plate");
+    el.matches(".photo, .tile.photo, .tile.weather") ||
+    !!el.querySelector(".plate, .tile-label.plate");
 
   // --- law 1: size, on-screen, occlusion ---
   for (const { el, r, label } of rects) {
     const mn = Math.min(r.width, r.height);
-    if (mn < C.sizeFloor - 0.5)
+    // Message-bar chrome is judged against the STRIP, not the 90px text-line
+    // floor (dad 9/2: "the header is still too big... the icon for the exit can
+    // be smaller... items in the top corners are more easily accessible"). A bar
+    // door cannot reach 90px inside a <=9% strip, so the law it must satisfy is
+    // stated differently and still enforced: it FILLS the strip's content height
+    // and is at least twice as wide as tall, in the easiest corner on screen.
+    const bar = el.closest && el.closest(".msgbar");
+    if (bar) {
+      const bs = getComputedStyle(bar), br = bar.getBoundingClientRect();
+      const num = (v) => parseFloat(v) || 0;
+      const inner = br.height - num(bs.paddingTop) - num(bs.paddingBottom)
+                              - num(bs.borderTopWidth) - num(bs.borderBottomWidth);
+      if (r.height < inner - 1.5)
+        V("SIZE", `${label} h=${r.height.toFixed(0)} does not fill the bar (${inner.toFixed(0)})`);
+      if (r.width < r.height * 2 - 1.5)
+        V("SIZE", `${label} w=${r.width.toFixed(0)} < 2x its height`);
+    } else if (mn < C.sizeFloor - 0.5)
       V("SIZE", `${label} min=${mn.toFixed(0)}<${C.sizeFloor.toFixed(0)}`);
     if (r.left < -0.5 || r.top < -0.5 || r.right > vw + 0.5 || r.bottom > vh + 0.5)
       V("OFFSCREEN", `${label} [${r.left.toFixed(0)},${r.top.toFixed(0)},${r.right.toFixed(0)},${r.bottom.toFixed(0)}]`);
