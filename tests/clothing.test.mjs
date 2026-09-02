@@ -296,6 +296,53 @@ test("a missing tile is redrawn without asking the AI again", async () => {
   assert.equal(after.items["photo_f.jpg"].category, entry.category, "category survives");
 });
 
+// Dad 9/2: "someone may want to delete clothes from the library that no
+// longer fit … all that should just work by adding to the clothing directory".
+// A photo that leaves the folder leaves the wardrobe: entry, tile, outfits.
+test("a photo removed from clothing/ leaves the catalogue, its tile and the board", async () => {
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const entry = cat.items["photo_f.jpg"];
+  const tile = path.join(TMP, "wardrobe-items", entry.id + ".jpg");
+  assert.ok(fs.existsSync(tile), "starts on the board");
+
+  fs.rmSync(path.join(TMP, "clothing", "photo_f.jpg"));   // it no longer fits
+  const before = calls;
+  await clothing.regenerate(true);
+
+  const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.equal(after.items["photo_f.jpg"], undefined, "catalogue entry pruned");
+  assert.ok(!fs.existsSync(tile), "tile removed");
+  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  assert.ok(!JSON.stringify(rec.boards).includes(entry.id), "no outfit still wears it");
+  assert.equal(calls, before, "removing a garment costs no AI call");
+  assert.ok(rec.boards.some(b => String(b.id).startsWith("confirm_")), "the board still builds");
+});
+
+// The 15-minute tick only ACTS on a stale board — but a family that adds or
+// removes photos at 3pm expects the board to follow that afternoon, not
+// tomorrow morning. The tick therefore also acts when the photo set changed.
+test("the tick rebuilds a fresh board when the photo set changes (add or remove)", async () => {
+  await clothing.regenerate(true);
+  assert.equal(clothing.boardIsFresh(TMP), true, "board is fresh");
+  await clothing.tick("test");   // settle: earlier tests moved photos since the startup tick looked
+  assert.equal(clothing.tick("test"), null, "fresh board, same photos: nothing to do");
+
+  makeJpg(path.join(TMP, "clothing", "photo_g.jpg"), 90, 200, 90);   // a new dress arrives
+  const p = clothing.tick("test");
+  assert.ok(p, "a new photo makes the tick act even though the board is fresh");
+  await p;
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(cat.items["photo_g.jpg"] && cat.items["photo_g.jpg"].ok, "the new photo was catalogued");
+  assert.equal(clothing.tick("test"), null, "settled again");
+
+  fs.rmSync(path.join(TMP, "clothing", "photo_g.jpg"));
+  const q = clothing.tick("test");
+  assert.ok(q, "a removed photo makes the tick act too");
+  await q;
+  const cat2 = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.equal(cat2.items["photo_g.jpg"], undefined, "and it is gone from the wardrobe");
+});
+
 // Until the repair runs, one absent picture must not empty the board.
 test("an item with no tile is left off the board, not fatal to it", async () => {
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
@@ -322,6 +369,8 @@ test("a combo label is budgeted as a whole, so it never clips", async () => {
     "long_top.jpg":    { id: tileId, ok: true, name: "Ribbed camisole", category: "top",    warmth: "any" },
     "long_bottom.jpg": { id: tileId, ok: true, name: "Green shorts",    category: "shorts", warmth: "any" },
   }}));
+  for (const f of ["long_top.jpg", "long_bottom.jpg"])   // the photos must exist or the entries are pruned
+    fs.copyFileSync(path.join(TMP, "clothing", "photo_a.jpg"), path.join(TMP, "clothing", f));
   await clothing.regenerate(true);
 
   const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
@@ -351,6 +400,7 @@ function fiveGarments() {
   const items = {};
   const mk = (id, name, category) => {
     fs.copyFileSync(src, path.join(TMP, "wardrobe-items", id + ".jpg"));
+    fs.copyFileSync(src, path.join(TMP, "clothing", id + ".jpg"));   // a photo that has left the folder is pruned
     items[id + ".jpg"] = { id, ok: true, name, category, warmth: "any" };
   };
   mk("item_top1", "Heart tee", "top"); mk("item_top2", "Striped tee", "top"); mk("item_top3", "Cat tee", "top");

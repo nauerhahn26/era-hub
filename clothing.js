@@ -97,10 +97,26 @@ function boardIsFresh(dataDir) {
   } catch { return false; }
 }
 
+// What the tick last saw in clothing/ (names + sizes). A family that adds or
+// deletes photos at 3pm — Drive folder or the data folder itself — expects
+// the board to follow that afternoon, not tomorrow morning (dad 9/2: "all
+// that should just work by adding to the clothing directory").
+let seenPhotos = null;
+function photoSet(dataDir) {
+  const dir = path.join(dataDir, "clothing");
+  return listPhotos(dir).map(f => {
+    try { return f + ":" + fs.statSync(path.join(dir, f)).size; } catch { return f; }
+  }).join("\n");
+}
+
+// Returns the build's promise when it acts, null when there is nothing to do.
 function tick(reason) {
-  if (boardIsFresh(DATA)) return;
-  console.log("[clothing] building today's board (" + reason + ")");
-  regenerate(true).catch(e => console.error("[clothing] " + e.message));
+  const now = photoSet(DATA);
+  const changed = seenPhotos !== null && now !== seenPhotos;
+  seenPhotos = now;
+  if (!changed && boardIsFresh(DATA)) return null;
+  console.log("[clothing] building today's board (" + (changed ? "photos changed, " : "") + reason + ")");
+  return regenerate(true).catch(e => console.error("[clothing] " + e.message));
 }
 
 function start(dataDir) {
@@ -109,4 +125,4 @@ function start(dataDir) {
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
 }
 
-module.exports = { start, regenerate, isBuilding, status, boardIsFresh };
+module.exports = { start, regenerate, isBuilding, status, boardIsFresh, tick };

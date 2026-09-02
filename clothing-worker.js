@@ -498,6 +498,26 @@ async function callModel(cfg, jpgFile, model) {
   throw new Error("ai(" + cfg.provider + "/" + model + ") " + last);
 }
 
+// A photo that left clothing/ leaves the wardrobe: the family deletes what no
+// longer fits (dad 9/2: "all that should just work by adding to the clothing
+// directory") and the garment must not keep turning up in outfits. Entry and
+// tile go here; outfit images are redrawn every build anyway. Needs no AI key
+// — a family whose key lapsed can still take things out.
+function prune(files) {
+  const cat = loadCatalog();
+  const have = new Set(files);
+  let gone = 0;
+  for (const f of Object.keys(cat.items)) {
+    if (have.has(f)) continue;
+    const id = cat.items[f].id;
+    delete cat.items[f];
+    if (id) try { fs.rmSync(path.join(ITEMS(), id + ".jpg"), { force: true }); } catch {}
+    gone++;
+  }
+  if (gone) { saveCatalog(cat); console.log("[clothing] " + gone + " photo(s) left the folder -> out of the wardrobe"); }
+  return gone;
+}
+
 async function ingest() {
   const cfg = aiCfg();
   if (!cfg) return { skipped: "no-ai-key" };
@@ -834,6 +854,7 @@ const SIG = () => path.join(DATA, ".clothing-sig");
 async function regenerate(force) {
   const files = listPhotos(CLOTHING());
   const photos = files;
+  prune(files);               // what left the folder leaves the wardrobe (before the tile count below)
   // Tile count is part of the signature: if pictures disappear, the day's work
   // is NOT "already done", even though the photos have not changed (QA 9/2).
   let tiles = 0;

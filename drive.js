@@ -125,6 +125,34 @@ async function listChildren(tok, folderId) {
   return out;
 }
 
+// Which libraries are a TRUE mirror — a file deleted in Drive is deleted here
+// too. clothing/ must be (dad 9/2: "delete clothes that no longer fit … all
+// that should just work"): a garment that stays on disk stays in the outfits.
+// books/music/content keep the copy-only rule until their pipelines learn to
+// let go of a removed file.
+const MIRROR_DELETES = ["clothing"];
+
+// Remove from dest what the source no longer has. keep(rel) says whether the
+// source still holds that relative path. Dotfiles are left alone (Drive/macOS
+// droppings, never ours to judge); an emptied album folder goes with its last
+// photo. Callers only prune when the source listing SUCCEEDED — an offline
+// Drive is not an empty one.
+function pruneTree(dest, keep, stats, rel = "") {
+  let ents = [];
+  try { ents = fs.readdirSync(path.join(dest, rel), { withFileTypes: true }); } catch { return; }
+  for (const e of ents) {
+    if (e.name.startsWith(".")) continue;
+    const r = rel ? rel + "/" + e.name : e.name;
+    const abs = path.join(dest, r);
+    if (e.isDirectory()) {
+      pruneTree(dest, keep, stats, r);
+      try { if (!fs.readdirSync(abs).length) fs.rmdirSync(abs); } catch {}
+    } else if (e.isFile() && !keep(r)) {
+      try { fs.rmSync(abs); stats.removed++; } catch (err) { stats.errors.push(e.name + ": " + err.message); }
+    }
+  }
+}
+
 async function mirrorDir(tok, folderId, destDir, stats) {
   fs.mkdirSync(destDir, { recursive: true });
   for (const f of await listChildren(tok, folderId)) {
@@ -135,6 +163,7 @@ async function mirrorDir(tok, folderId, destDir, stats) {
       continue;
     }
     if (f.mimeType.startsWith("application/vnd.google-apps")) continue; // native docs: skip
+    stats.seen.add(dest);   // still in Drive (even if this download fails) -> never pruned
     try {
       if (fs.existsSync(dest) && f.size && fs.statSync(dest).size === Number(f.size)) { stats.skipped++; continue; }
       const r = await fetch(API + "/drive/v3/files/" + f.id + "?alt=media",
@@ -146,7 +175,8 @@ async function mirrorDir(tok, folderId, destDir, stats) {
   }
 }
 
-// Mirror the configured folder's known subfolders into DATA. Never deletes.
+// Mirror the configured folder's known subfolders into DATA. Copy-only,
+// except MIRROR_DELETES, which follow deletions too.
 async function sync() {
   if (syncing) return { error: "busy" };
   const c = loadCfg();
@@ -158,16 +188,20 @@ async function sync() {
   const tok = await accessToken();
   if (!tok) return { error: "not-connected" };
   syncing = true;
-  const stats = { files: 0, skipped: 0, errors: [] };
+  const stats = { files: 0, skipped: 0, removed: 0, errors: [], seen: new Set() };
   try {
     const top = await listChildren(tok, c.folderId);
     for (const f of top) {
       if (f.mimeType !== "application/vnd.google-apps.folder") continue;
       const name = f.name.toLowerCase();
       if (!MIRROR_SUBDIRS.includes(name)) continue;
-      await mirrorDir(tok, f.id, path.join(DATA, name), stats);
+      const dest = path.join(DATA, name);
+      await mirrorDir(tok, f.id, dest, stats);   // a listing failure throws -> no prune below
+      if (MIRROR_DELETES.includes(name)) pruneTree(dest, r => stats.seen.has(path.join(dest, r)), stats);
     }
+    delete stats.seen;
     lastSync = { when: new Date().toISOString(), ...stats };
+    if (module.exports.onSynced) try { module.exports.onSynced(lastSync); } catch {}
     return lastSync;
   } catch (e) {
     lastSync = { when: new Date().toISOString(), error: String(e.message) };
@@ -272,11 +306,14 @@ function copyTreeLocal(src, dest, stats) {
 }
 
 function syncLocal(cfg) {
-  const stats = { files: 0, skipped: 0, errors: [] };
+  const stats = { files: 0, skipped: 0, removed: 0, errors: [] };
   for (const sub of MIRROR_SUBDIRS) {
     const src = path.join(cfg.folderPath, sub);
-    try { if (!fs.statSync(src).isDirectory()) continue; } catch { continue; }
-    copyTreeLocal(src, path.join(DATA, sub), stats);
+    try { if (!fs.statSync(src).isDirectory()) continue; } catch { continue; }   // absent/offline: leave ours alone
+    const dest = path.join(DATA, sub);
+    copyTreeLocal(src, dest, stats);
+    if (MIRROR_DELETES.includes(sub))
+      pruneTree(dest, r => { try { return fs.statSync(path.join(src, r)).isFile(); } catch { return false; } }, stats);
   }
   lastSync = { when: new Date().toISOString(), ...stats };
   if (module.exports.onSynced) try { module.exports.onSynced(lastSync); } catch {}

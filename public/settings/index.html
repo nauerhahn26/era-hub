@@ -709,7 +709,7 @@ async function drivePaint(){
     if(s.folderPath) msg+="<b>Watching:</b> "+s.folderPath;
     if(s.syncing) msg+=" · <b>Syncing…</b>";
     else if(s.lastSync) msg += s.lastSync.error ? ' · <span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
-      : " · Last sync "+new Date(s.lastSync.when).toLocaleString()+": "+s.lastSync.files+" new, "+s.lastSync.skipped+" unchanged";
+      : " · Last sync "+new Date(s.lastSync.when).toLocaleString()+": "+s.lastSync.files+" new, "+s.lastSync.skipped+" unchanged"+(s.lastSync.removed?", "+s.lastSync.removed+" removed":"");
     $("driveStatus").innerHTML=msg;
   }catch(e){}
 }
