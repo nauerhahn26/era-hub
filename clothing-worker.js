@@ -35,7 +35,9 @@ const PROVIDERS = {
   openai: { base: "https://api.openai.com",
     models: ["gpt-5-mini", "gpt-4o-mini"] },
   google: { base: "https://generativelanguage.googleapis.com",
-    models: ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-flash"] },
+    // gemini-2.5-flash is gone for accounts created now ("no longer available
+    // to new users") — keeping it only spent a request per photo (9/2)
+    models: ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview"] },
 };
 let chosenModel = null;   // sticky once a model answers
 
@@ -386,8 +388,9 @@ async function askModel(cfg, jpgFile) {
       console.error("[clothing] model " + model + ": " + e.message);
     }
   }
-  // every model refused for quota — the key is done for today
-  if (quotaTally >= list.length) quotaSpent = true;
+  // A single 429 means the allowance is gone; the other models share the same
+  // key and the same daily budget, so trying them just burns tomorrow's too.
+  if (quotaTally > 0) quotaSpent = true;
   throw new Error(lastErr || "no model answered");
 }
 
