@@ -45,6 +45,10 @@ const DATA = workerData.dataDir;
 let ingesting = null; // {done, total} while naming photos — relayed to the shell
 
 const CLOTHING = () => path.join(DATA, "clothing");
+// Photos as paths relative to clothing/, subfolders included: a family that
+// drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
+// "15 new", the board said "No content yet") must get a board like anyone else.
+const { listPhotos } = require("./clothing-photos");
 const WEB = () => path.join(DATA, "clothing-web");
 const ITEMS = () => path.join(DATA, "wardrobe-items");
 // Is this item's picture actually on disk? A catalogue entry alone is not
@@ -498,9 +502,7 @@ async function ingest() {
   const cfg = aiCfg();
   if (!cfg) return { skipped: "no-ai-key" };
   const cat = loadCatalog();
-  let files = [];
-  try { files = fs.readdirSync(CLOTHING()).filter(f =>
-    [".heic", ".heif", ".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase())); } catch {}
+  const files = listPhotos(CLOTHING());
   // Re-do a photo when it is new, when it failed before, OR when its tile has
   // gone missing while the catalogue entry survived. Without the last case the
   // item is skipped forever and the board can never heal itself (QA 9/2: a
@@ -830,10 +832,8 @@ function clearPlainRecipe() {
 const SIG = () => path.join(DATA, ".clothing-sig");
 
 async function regenerate(force) {
-  let files = [];
-  try { files = fs.readdirSync(CLOTHING()).sort(); } catch {}
-  const photos = files.filter(f =>
-    [".heic", ".heif", ".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase()));
+  const files = listPhotos(CLOTHING());
+  const photos = files;
   // Tile count is part of the signature: if pictures disappear, the day's work
   // is NOT "already done", even though the photos have not changed (QA 9/2).
   let tiles = 0;

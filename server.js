@@ -1204,6 +1204,9 @@ const server = http.createServer((req, res) => {
         const evs = h.events[day] = h.events[day] || [];
         // cap per day: a stuck client can't grow the file unboundedly
         if (evs.length < 200) evs.push({ kind, combo, at: new Date().toISOString() });
+        // a fresh install has no wardrobe/ yet — without this every pick 400'd
+        // and the board dropped it, so favourites were never learned (QA 9/2)
+        fs.mkdirSync(WARDROBE_DIR, { recursive: true });
         fs.writeFileSync(hp, JSON.stringify(h, null, 2) + "\n");
         pool.append("outfit-" + kind, { combo });
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();

@@ -26,7 +26,8 @@ const HDAY = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Ang
 let child;
 
 before(async () => {
-  fs.mkdirSync(path.join(TMP, "wardrobe"), { recursive: true });
+  // NO wardrobe/ up front: a fresh install has none, and the route must make
+  // it — until 9/2 every pick on a new install 400'd and was dropped
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
     env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1", ERA_DEVICE_ID: "test-dev" },

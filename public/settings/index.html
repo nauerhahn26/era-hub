@@ -497,7 +497,10 @@ async function loadApps(){
     const box=$("appsList"); box.innerHTML="";
     for(const a of apps){
       const row=document.createElement("label");
-      row.style.cssText="display:flex;gap:10px;align-items:center;margin:6px 0;font-size:18px";
+      // width:max-content — a full-width label made the empty space to the
+      // right of "Making Words" a toggle; one stray click removed the app and
+      // its desktop shortcut (QA 9/2). Only the box and its words toggle now.
+      row.style.cssText="display:flex;gap:10px;align-items:center;margin:6px 0;font-size:18px;width:max-content;max-width:100%";
       const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=a.enabled;
       cb.onchange=async()=>{
         cb.disabled=true;

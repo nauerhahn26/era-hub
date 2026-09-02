@@ -84,7 +84,10 @@ before(async () => {
   fs.mkdirSync(path.join(TMP, "clothing"), { recursive: true });
   makeJpg(path.join(TMP, "clothing", "photo_a.jpg"), 220, 60, 90);
   makeJpg(path.join(TMP, "clothing", "photo_b.jpg"), 240, 170, 200);
-  makeJpg(path.join(TMP, "clothing", "photo_c.jpg"), 250, 210, 60);
+  // one photo inside an album folder: families drop folders into Drive's
+  // clothing/, and a folder must count exactly like loose files (QA 9/2)
+  fs.mkdirSync(path.join(TMP, "clothing", "album"), { recursive: true });
+  makeJpg(path.join(TMP, "clothing", "album", "photo_c.jpg"), 250, 210, 60);
   clothing = require("./clothing.js");
   clothing.start(TMP);   // timers are unref'd; we drive regenerate() directly
 });
@@ -120,6 +123,7 @@ test("with a key: photos are cataloged and the board is her exact graph", async 
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   const items = Object.values(cat.items);
   assert.equal(items.length, 3);
+  assert.ok(cat.items["album/photo_c.jpg"] && cat.items["album/photo_c.jpg"].ok, "the album-folder photo was cataloged too");
   assert.deepEqual(items.map(i => i.category).sort(), ["dress", "pants", "top"]);
   for (const i of items)
     assert.ok(fs.existsSync(path.join(TMP, "wardrobe-items", i.id + ".jpg")), "item tile " + i.name);

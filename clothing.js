@@ -8,6 +8,7 @@
 const fs = require("fs");
 const path = require("path");
 const { Worker } = require("worker_threads");
+const { listPhotos } = require("./clothing-photos");
 
 const PROVIDERS = ["anthropic", "openai", "google"];
 
@@ -35,10 +36,7 @@ function status() {
     const cat = JSON.parse(fs.readFileSync(path.join(DATA, "wardrobe.json"), "utf8"));
     cataloged = Object.values(cat.items || {}).filter(i => i.ok).length;
   } catch {}
-  try {
-    photos = fs.readdirSync(path.join(DATA, "clothing")).filter(f =>
-      [".heic", ".heif", ".jpg", ".jpeg", ".png"].includes(path.extname(f).toLowerCase())).length;
-  } catch {}
+  photos = listPhotos(path.join(DATA, "clothing")).length;
   return { building: !!worker, ingesting, cataloged, photos,
     aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null,
     guidance: lastResult && lastResult.guidance ? lastResult.guidance : null };
