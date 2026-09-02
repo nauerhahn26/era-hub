@@ -304,3 +304,29 @@ test("an item with no tile is left off the board, not fatal to it", async () => 
   assert.ok(!labels.includes("Ghost tee"), "the item with no picture is skipped");
   assert.ok(rec.boards.some(b => String(b.id).startsWith("confirm_")), "the board still builds");
 });
+
+// Each half of a combo was shortened on its own, so two long halves made a
+// 30-character plate that wrapped to a third line and got CLIPPED by the tile
+// (QA 9/2: "Ribbed camisole + Green shorts" lost "Green shorts" off the
+// bottom). Dad's standing rule is that a label is never cut mid-word.
+test("a combo label is budgeted as a whole, so it never clips", async () => {
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  // reuse a real tile so the pair can actually be composited
+  const tileId = Object.values(cat.items).find(i => i.ok &&
+    fs.existsSync(path.join(TMP, "wardrobe-items", i.id + ".jpg"))).id;
+  fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
+    "long_top.jpg":    { id: tileId, ok: true, name: "Ribbed camisole", category: "top",    warmth: "any" },
+    "long_bottom.jpg": { id: tileId, ok: true, name: "Green shorts",    category: "shorts", warmth: "any" },
+  }}));
+  await clothing.regenerate(true);
+
+  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const combos = [];
+  for (const b of rec.boards) for (const btn of b.buttons || [])
+    if (btn.type === "outfit") combos.push(btn.label);
+  assert.ok(combos.length, "the pair produced an outfit");
+  for (const label of combos)
+    assert.ok(label.length <= 26, `outfit plate too long to fit: "${label}" (${label.length})`);
+  // the garment nouns survive — they are what tell two outfits apart
+  assert.ok(combos.some(l => /shorts/i.test(l)), "the bottom garment is still named");
+});

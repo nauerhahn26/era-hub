@@ -614,6 +614,25 @@ function shortName(item) {
   return n.charAt(0).toUpperCase() + n.slice(1);   // never start a tile lowercase
 }
 
+// The two halves of a combo are named independently, so the plate can run to
+// 30 characters, wrap to a third line, and get CLIPPED by the tile (QA 9/2:
+// "Ribbed camisole + Green shorts" lost "Green shorts" off the bottom, while
+// "Ribbed cami + Green shorts" at 26 fitted). Budget the WHOLE label: drop
+// leading words from whichever half is longer, never below its last word —
+// the garment noun at the end is what tells two outfits apart.
+const COMBO_MAX = 26;
+function comboLabel(top, bottom) {
+  const a = shortName(top).split(" ");
+  const b = shortName(bottom).split(" ");
+  const len = () => a.join(" ").length + 3 + b.join(" ").length;
+  while (len() > COMBO_MAX && (a.length > 1 || b.length > 1)) {
+    if (a.length > 1 && (a.join(" ").length >= b.join(" ").length || b.length === 1)) a.shift();
+    else b.shift();
+  }
+  const cap = (w) => { const s = w.join(" "); return s.charAt(0).toUpperCase() + s.slice(1); };
+  return cap(a) + " + " + cap(b);
+}
+
 // 3x4 browse pages per ux-contract: Back top-left [1,1], up to 6 items in
 // fixed slots, More bottom-LEFT [3,1]; empties become center/bottom rest cells.
 function gridPages(id, name, items, backLoad) {
@@ -695,7 +714,7 @@ async function buildCataloged(cat) {
     }
     today.slice(pg * 4, pg * 4 + 4).forEach((c, k) => {
       const i = pg * 4 + k;
-      const label = c.one ? c.one.name : shortName(c.top) + " + " + shortName(c.bottom);
+      const label = c.one ? c.one.name : comboLabel(c.top, c.bottom);
       const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
       const img = "outfit_" + i + ".jpg";
       try {
