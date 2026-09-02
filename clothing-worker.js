@@ -620,14 +620,19 @@ function shortName(item) {
 // "Ribbed cami + Green shorts" at 26 fitted). Budget the WHOLE label: drop
 // leading words from whichever half is longer, never below its last word —
 // the garment noun at the end is what tells two outfits apart.
-const COMBO_MAX = 26;
+// 28 is measured, not guessed: "Ribbed cami + Green shorts" (26) sits on two
+// lines, "Ribbed camisole + Green shorts" (30) needs three and clips.
+const COMBO_MAX = 28;
 function comboLabel(top, bottom) {
   const a = shortName(top).split(" ");
   const b = shortName(bottom).split(" ");
   const len = () => a.join(" ").length + 3 + b.join(" ").length;
+  // Shrink the TOP half first. Trimming either half costs a word like "Green"
+  // or "Crinkle", but two pairs of shorts are told apart by their colour far
+  // more often than two tops are, and a board full of "... + Shorts" tells a
+  // parent nothing (QA 9/2, first attempt at this).
   while (len() > COMBO_MAX && (a.length > 1 || b.length > 1)) {
-    if (a.length > 1 && (a.join(" ").length >= b.join(" ").length || b.length === 1)) a.shift();
-    else b.shift();
+    if (a.length > 1) a.shift(); else b.shift();
   }
   const cap = (w) => { const s = w.join(" "); return s.charAt(0).toUpperCase() + s.slice(1); };
   return cap(a) + " + " + cap(b);

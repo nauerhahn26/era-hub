@@ -326,7 +326,9 @@ test("a combo label is budgeted as a whole, so it never clips", async () => {
     if (btn.type === "outfit") combos.push(btn.label);
   assert.ok(combos.length, "the pair produced an outfit");
   for (const label of combos)
-    assert.ok(label.length <= 26, `outfit plate too long to fit: "${label}" (${label.length})`);
-  // the garment nouns survive — they are what tell two outfits apart
-  assert.ok(combos.some(l => /shorts/i.test(l)), "the bottom garment is still named");
+    assert.ok(label.length <= 28, `outfit plate too long to fit: "${label}" (${label.length})`);
+  // the garment nouns survive — they are what tell two outfits apart — and the
+  // bottom keeps the colour that distinguishes one pair of shorts from another
+  assert.ok(combos.some(l => /green shorts/i.test(l)),
+    `the bottom kept its colour, got ${JSON.stringify(combos)}`);
 });
