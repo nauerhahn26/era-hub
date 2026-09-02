@@ -32,6 +32,7 @@
 
 const S = {
   session: "r" + Date.now(),
+  childName: "",      // from /settings at boot — the shelf title and the "…'s story" badge
   index: [],          // /books/index.json rows {slug,title,cover,pages,hasVideo,authored}
   manifest: null,     // the open book's manifest
   slug: null,
@@ -50,6 +51,8 @@ const S = {
 };
 
 const $ = (id) => document.getElementById(id);
+// "Maya's story" when Settings knows her name, "My story" until it does
+const whose = () => (S.childName ? S.childName + "'s" : "My");
 const narration = $("narration");
 const video = $("pageVideo");
 
@@ -107,7 +110,7 @@ function renderShelf() {
     btn.className = "dwell dwell-button shelf-card-button";
     btn.setAttribute("data-dwell-say", b.title);
     btn.setAttribute("aria-label",
-      b.authored === true ? "Read " + b.title + " — Ellie's story" : "Read " + b.title);
+      b.authored === true ? "Read " + b.title + " — " + whose() + " story" : "Read " + b.title);
     const cover = document.createElement("span");
     cover.className = "shelf-cover";
     const img = document.createElement("img");
@@ -135,7 +138,7 @@ function renderShelf() {
       badge.innerHTML =
         '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
         '<path d="M12 2.5l2.1 5.6 5.9.3-4.6 3.7 1.6 5.7L12 14.6 6.9 17.8l1.6-5.7L3.9 8.4l5.9-.3Z"/></svg>' +
-        "Ellie's story";
+        whose() + " story";   // her name from Settings, not ours (QA 9/2)
       card.appendChild(badge);
     }
     grid.appendChild(card);
@@ -466,7 +469,7 @@ async function boot() {
       if (typeof st.settleMs === "number" && isFinite(st.settleMs))
         Dwell.set({ settleMs: Math.max(0, Math.min(2000, st.settleMs)) });
     }
-    if (st.childName) $("shelfTitle").textContent = st.childName + "'s Bookshelf";
+    if (st.childName) { S.childName = st.childName; $("shelfTitle").textContent = st.childName + "'s Bookshelf"; }
   } catch { /* defaults stand — never block the shelf on settings */ }
 
   try {
@@ -475,6 +478,18 @@ async function boot() {
   } catch { S.index = []; }                    // degraded law: empty shelf, alive app
   renderShelf();
   suppress();
+  // An empty shelf keeps looking: Drive delivers the first book minutes after
+  // "set it up in Settings", and "No books yet" must not need a relaunch to
+  // notice (VM QA 9/2). Stops the moment a book appears.
+  if (!S.index.length) {
+    const again = setInterval(async () => {
+      if (S.index.length) { clearInterval(again); return; }
+      try {
+        const idx = await (await fetch("/books/index.json")).json();
+        if (Array.isArray(idx) && idx.length) { S.index = idx; if (!S.slug) renderShelf(); }
+      } catch {}
+    }, 20000);
+  }
 
   $("btnNext").addEventListener("click", goNext);
   $("btnPrev").addEventListener("click", goPrev);
