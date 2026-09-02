@@ -551,10 +551,15 @@ async function openSite(url){
   window.open(url,"_blank");   // fallback: at least a new tab
 }
 $("elevenOpen").onclick=()=>openSite("https://elevenlabs.io/app/settings/api-keys");
-$("ttsKeyPaste").onclick=async()=>{
-  try{ $("ttsKey").value = (await navigator.clipboard.readText()).trim(); $("ttsKey").focus(); }
-  catch(e){ toast("Tap the box and paste with the keyboard instead",false); }
-};
+// Paste buttons: the FIRST tap makes Edge ask "wants to see text copied to the
+// clipboard" in the kiosk's top-left corner and the read waits on that answer
+// (VM QA 9/2 — the box looked dead until Allow was found). Say so while waiting.
+async function pasteInto(id){
+  let hint=setTimeout(()=>toast("If Edge asks at the top-left, choose Allow"),700);
+  try{ $(id).value = (await navigator.clipboard.readText()).trim(); clearTimeout(hint); $(id).focus(); }
+  catch(e){ clearTimeout(hint); toast("Tap the box and paste with the keyboard instead",false); }
+}
+$("ttsKeyPaste").onclick=()=>pasteInto("ttsKey");
 $("ttsKeySave").onclick=async()=>{
   const k=$("ttsKey").value.trim();
   if(!k){ toast("Paste a key first",false); return; }
@@ -589,10 +594,7 @@ async function loadMail(){
   }catch(e){ $("mailStatus").textContent="Could not reach the app server."; }
 }
 $("resendOpen").onclick=()=>openSite("https://resend.com/api-keys");
-$("mailKeyPaste").onclick=async()=>{
-  try{ $("mailKey").value = (await navigator.clipboard.readText()).trim(); $("mailKey").focus(); }
-  catch(e){ toast("Tap the box and paste with the keyboard instead",false); }
-};
+$("mailKeyPaste").onclick=()=>pasteInto("mailKey");
 $("mailSave").onclick=async()=>{
   const email=$("mailTo").value.trim(), k=$("mailKey").value.trim();
   if(!email){ toast("Type your email address first",false); return; }
@@ -611,7 +613,7 @@ $("mailSave").onclick=async()=>{
 const AI_PROVIDERS={
   anthropic:{name:"Claude", url:"https://console.anthropic.com/settings/keys", ph:"Claude API key (sk-ant-...)"},
   openai:{name:"OpenAI", url:"https://platform.openai.com/api-keys", ph:"OpenAI API key (sk-...)"},
-  google:{name:"Google AI Studio", url:"https://aistudio.google.com/apikey", ph:"Google AI Studio key (AIza...)"},
+  google:{name:"Google AI Studio", url:"https://aistudio.google.com/apikey", ph:"Google AI Studio key (AQ.... or AIza...)"},   // new AI Studio keys start AQ. (dad's 9/2); older ones AIza
 };
 let aiProvSel="google", aiProvTouched=false;   // free tier is the default (dad 9/1: everything must work on free services)
 function aiProvPaint(){
@@ -623,10 +625,7 @@ function aiProvPaint(){
 }
 document.querySelectorAll("#aiProv button").forEach(b=>b.onclick=()=>{ aiProvSel=b.dataset.prov; aiProvTouched=true; aiProvPaint(); });
 $("aiOpen").onclick=()=>openSite(AI_PROVIDERS[aiProvSel].url);
-$("aiKeyPaste").onclick=async()=>{
-  try{ $("aiKey").value = (await navigator.clipboard.readText()).trim(); $("aiKey").focus(); }
-  catch(e){ toast("Tap the box and paste with the keyboard instead",false); }
-};
+$("aiKeyPaste").onclick=()=>pasteInto("aiKey");
 $("aiKeySave").onclick=async()=>{
   const k=$("aiKey").value.trim();
   if(!k){ toast("Paste a key first",false); return; }
