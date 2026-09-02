@@ -502,7 +502,12 @@ async function ingest() {
         else if (/\b(503|502|500|high demand|timeout)\b/i.test(e.message)) busyCount++;
       }
       ingesting.done++;
-      await new Promise(r => setTimeout(r, 1500));   // free tiers are RPM-limited
+      // Free tiers cap REQUESTS PER MINUTE (~10-15 for Flash). At 1.5s plus a
+      // few seconds of cut-out we were running right at that ceiling and
+      // tripping 429/503 constantly (dad 9/1-9/2). 5s keeps a family
+      // comfortably under it: a 40-item wardrobe still finishes in ~5 minutes,
+      // once, in the background.
+      await new Promise(r => setTimeout(r, 5000));
 
       if (parentPort) parentPort.postMessage({ ingesting });
     }

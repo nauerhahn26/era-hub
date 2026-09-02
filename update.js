@@ -42,8 +42,17 @@ function sha256(file) {
 // hub) — report "deferred" instead of pretending.
 function scheduleRestart(port) {
   try {
+    // Log where the family (and we) can find it: with stdio "ignore" the
+    // restarted hub wrote nothing anywhere, so every message after an update
+    // was lost — including the ones that explain a failed photo (9/2).
+    let out = "ignore";
+    try {
+      fs.mkdirSync(path.join(HERE, "data", "logs"), { recursive: true });
+      out = fs.openSync(path.join(HERE, "data", "logs", "hub.log"), "a");
+    } catch {}
     spawn(process.execPath, ["server.js", String(port)],
-      { cwd: HERE, detached: true, stdio: "ignore" }).unref();
+      { cwd: HERE, detached: true,
+        stdio: out === "ignore" ? "ignore" : ["ignore", out, out] }).unref();
     setTimeout(() => process.exit(0), 800);
     return "restarting";
   } catch (e) {
