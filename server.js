@@ -859,6 +859,14 @@ const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css
 
 // ---- email published writing to the family (optional; Resend key + recipient
 // come from the overlay data dir, never from this repo) ----
+// Audit 9/2: nothing in the product ever WROTE these two values, so on every
+// public install The Pencil said "Sent! Your words are on their way" while the
+// hub logged "writing saved only". Settings now has a card for them
+// (POST /mail-config, which proves the pair by sending a real test email),
+// /publish reports honestly whether the words were mailed, and unsent
+// writings are retried so a flaky moment never loses her message.
+const RESEND_URL = process.env.ERA_RESEND_URL || "https://api.resend.com/emails";
+const WRITINGS = () => path.join(DATA, "writings");
 function resendKey() {
   try {
     const env = fs.readFileSync(path.join(DATA, "credentials.env"), "utf8");
@@ -866,27 +874,93 @@ function resendKey() {
     return m ? m[1].trim() : null;
   } catch { return null; }
 }
-async function emailWriting(rec) {
-  const key = resendKey(), to = PROFILE.publishEmail;
-  if (!key || !to) { console.error("[mail] no RESEND_API_KEY/publishEmail configured; writing saved only"); return; }
-  const who = PROFILE.childName || "your writer";
-  const when = new Date(rec.t || Date.now()).toLocaleString("en-US", { timeZone: TZ });
-  const r = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: "The Pencil <onboarding@resend.dev>",
-      to: [to],
-      subject: "✏️ " + who + " wrote: \u201C" + String(rec.text).slice(0, 60) + "\u201D",
-      html: "<div style=\"font-family:Georgia,serif\">" +
-            "<p style=\"font-size:28px;line-height:1.5\">\u201C" + String(rec.text) + "\u201D</p>" +
-            "<p style=\"color:#777\">— " + who + ", with The Pencil · " + when + "</p>" +
-            "<p style=\"color:#999;font-size:13px\">Write back — a young writer loves an audience that answers.</p></div>"
-    })
-  });
-  if (!r.ok) throw new Error("resend " + r.status + " " + (await r.text()).slice(0, 120));
-  console.log("[mail] sent:", String(rec.text).slice(0, 40));
+function saveResendKey(key) {
+  const f = path.join(DATA, "credentials.env");
+  let env = ""; try { env = fs.readFileSync(f, "utf8"); } catch {}
+  env = env.split(/\r?\n/).filter(l => l && !l.startsWith("RESEND_API_KEY=")).join("\n");
+  fs.writeFileSync(f, (env ? env + "\n" : "") + "RESEND_API_KEY=" + key + "\n", { mode: 0o600 });
 }
+function mailConfigured() { return !!(resendKey() && PROFILE.publishEmail); }
+// Resend's own error text is developer-speak; say what a parent can act on.
+function mailErrorFor(status, text) {
+  if (status === 401) return "Resend did not recognise that key — check for a missing character";
+  if (status === 403 || /own email|testing emails/i.test(text))
+    return "Resend's free sender only delivers to the email address you signed up to Resend with — use that one here";
+  if (status === 422) return "Resend did not accept that email address";
+  if (status === 429) return "Resend says too many emails for now — try again in a minute";
+  return "Resend answered " + status + " — try again in a minute";
+}
+async function resendSend(key, to, subject, html) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(RESEND_URL, {
+      method: "POST", signal: ctl.signal,
+      headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: "The Pencil <onboarding@resend.dev>", to: [to], subject, html })
+    });
+    if (!r.ok) { const t = (await r.text()).slice(0, 200); return { ok: false, error: mailErrorFor(r.status, t), detail: t }; }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: "could not reach Resend (" + (e.name === "AbortError" ? "timed out" : "no connection") + ")" };
+  } finally { clearTimeout(timer); }
+}
+function writingHtml(rec, who, when) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+  return "<div style=\"font-family:Georgia,serif\">" +
+    "<p style=\"font-size:28px;line-height:1.5\">“" + esc(rec.text) + "”</p>" +
+    "<p style=\"color:#777\">— " + esc(who) + ", with The Pencil · " + esc(when) + "</p>" +
+    "<p style=\"color:#999;font-size:13px\">Write back — a young writer loves an audience that answers.</p></div>";
+}
+// Send one saved writing. Returns {ok, error}; never throws. The writing file
+// carries `mailed` so a failed send is retried later, not forgotten.
+async function emailWriting(rec, file) {
+  const key = resendKey(), to = PROFILE.publishEmail;
+  let v;
+  if (!key || !to) { console.log("[mail] no family email set up; writing saved for Settings"); v = { ok: false, error: "not configured" }; }
+  else {
+    const who = PROFILE.childName || "your writer";
+    const when = new Date(rec.t || Date.now()).toLocaleString("en-US", { timeZone: TZ });
+    v = await resendSend(key, to,
+      "✏️ " + who + " wrote: “" + String(rec.text).slice(0, 60) + "”", writingHtml(rec, who, when));
+    if (v.ok) console.log("[mail] sent:", String(rec.text).slice(0, 40));
+    else console.error("[mail] not sent:", v.error, v.detail || "");
+  }
+  if (file) {
+    try {
+      const cur = JSON.parse(fs.readFileSync(file, "utf8"));
+      cur.mailed = v.ok ? new Date().toISOString() : false;
+      if (v.ok) delete cur.mailError; else cur.mailError = v.error;
+      fs.writeFileSync(file, JSON.stringify(cur, null, 2));
+    } catch {}
+  }
+  return v;
+}
+function listWritings(limit) {
+  let out = [];
+  try {
+    out = fs.readdirSync(WRITINGS()).filter(f => f.endsWith(".json")).sort().reverse().slice(0, limit || 20)
+      .map(f => { try { return { file: f, ...JSON.parse(fs.readFileSync(path.join(WRITINGS(), f), "utf8")) }; } catch { return null; } })
+      .filter(r => r && typeof r.text === "string");
+  } catch {}
+  return out.map(r => ({ file: r.file, t: r.t, text: r.text, mailed: r.mailed || false, mailError: r.mailError }));
+}
+// Retry writings that never went out (boot + every 30 min): a send that failed
+// because the wifi blinked, or one written before the family set up email,
+// must not stay "Saved" forever once mail works.
+let mailRetryBusy = false;
+async function retryUnsentWritings() {
+  if (mailRetryBusy || !mailConfigured()) return;
+  mailRetryBusy = true;
+  try {
+    for (const r of listWritings(50).filter(r => !r.mailed).reverse()) {
+      const v = await emailWriting(r, path.join(WRITINGS(), r.file));
+      if (!v.ok) break;   // provider down or key bad — try again next time
+    }
+  } finally { mailRetryBusy = false; }
+}
+setTimeout(() => retryUnsentWritings().catch(() => {}), 20000).unref();
+setInterval(() => retryUnsentWritings().catch(() => {}), 30 * 60 * 1000).unref();
 
 function safeDecode(u) {
   try { return decodeURIComponent(u); } catch { return null; }
@@ -1056,12 +1130,54 @@ const server = http.createServer((req, res) => {
     req.on("end", async () => {
       try {
         const rec = JSON.parse(body);
-        const dir = path.join(DATA, "writings");
-        fs.mkdirSync(dir, { recursive: true });
+        if (typeof rec.text !== "string" || !rec.text.trim()) { res.writeHead(400).end(); return; }
+        fs.mkdirSync(WRITINGS(), { recursive: true });
         const name = new Date().toISOString().replace(/[:.]/g, "-") + ".json";
-        fs.writeFileSync(path.join(dir, name), JSON.stringify(rec, null, 2));
-        res.writeHead(204).end();          // never make her wait on email delivery
-        emailWriting(rec).catch(e => console.error("[mail]", e.message));
+        const file = path.join(WRITINGS(), name);
+        fs.writeFileSync(file, JSON.stringify({ ...rec, mailed: false }, null, 2));
+        // Her words are safe on disk before anything else. Then tell The Pencil
+        // the truth: mailed (a real Resend accept, ≤8s), saved-for-Settings
+        // (no family email set up), or saved-and-will-retry (send failed).
+        const v = mailConfigured() ? await emailWriting(rec, file) : { ok: false, error: "not configured" };
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ saved: true, mailed: v.ok,
+          reason: v.ok ? undefined : (v.error === "not configured" ? "not configured" : "failed") }));
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  // ---- family email for The Pencil (Settings card) ----
+  if (req.method === "GET" && req.url === "/mail-config") {
+    let st = {}; try { st = JSON.parse(fs.readFileSync(path.join(DATA, "mail-status.json"), "utf8")); } catch {}
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ email: PROFILE.publishEmail || "", hasKey: !!resendKey(),
+      ok: st.ok, error: st.error || "", writings: listWritings(10) }));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/mail-config") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", async () => {
+      try {
+        const inc = JSON.parse(body);
+        const email = String(inc.email || "").trim().slice(0, 120);
+        const key = typeof inc.apiKey === "string" ? inc.apiKey.trim().slice(0, 200) : "";
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { res.writeHead(400).end("email"); return; }
+        if (!key && !resendKey()) { res.writeHead(400).end("key"); return; }
+        let cur = {}; try { cur = JSON.parse(fs.readFileSync(path.join(DATA, "profile.json"), "utf8")); } catch {}
+        fs.writeFileSync(path.join(DATA, "profile.json"), JSON.stringify({ ...cur, publishEmail: email }, null, 2) + "\n");
+        if (key) saveResendKey(key);
+        loadProfile();
+        // Prove the pair the way /tts-key proves a voice key: a real send. The
+        // family sees the test email land, or a reason they can act on.
+        const who = PROFILE.childName || "your child";
+        const v = await resendSend(resendKey(), email, "✏️ The Pencil is connected",
+          "<div style=\"font-family:Georgia,serif\"><p style=\"font-size:22px\">When " +
+          who.replace(/[&<>]/g, "") + " sends a message from The Pencil, it will arrive here.</p></div>");
+        fs.writeFileSync(path.join(DATA, "mail-status.json"), JSON.stringify({ ok: v.ok, error: v.error || "", at: new Date().toISOString() }));
+        if (v.ok) retryUnsentWritings().catch(() => {});
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: v.ok, error: v.error }));
       } catch { res.writeHead(400).end(); }
     });
     return;

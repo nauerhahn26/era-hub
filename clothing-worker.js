@@ -74,6 +74,45 @@ function loadHistory() {
 }
 function saveHistory(h) { fs.writeFileSync(HISTORY(), JSON.stringify(h, null, 1)); }
 
+// ---- her favourites (ported from outfit_set.py, dad's variety plan 8/5) ----
+// The board reports every outfit she gazes and every Yes to the hub, which
+// keeps them in wardrobe/history.json {events: {day: [{kind, combo}]}}.
+// Until the audit (9/2) the product's generator never read them: a Yes
+// changed nothing about tomorrow. Now a Yes is a confirmed wear (1.0) and a
+// day with no Yes credits her last-selected outfit at half weight, exactly
+// as dad's pipeline does; the most-picked looks earn the STAPLE slots.
+const PICKS = () => path.join(DATA, "wardrobe", "history.json");
+const YES_WEIGHT = 1.0, INFERRED_WEIGHT = 0.5;
+const STAPLE_SLOTS = 2;   // page-1 slots for proven favourites
+const STAPLE_POOL = 5;    // rotate among the top N so none squats daily
+function derivePicks(today) {
+  let h = {};
+  try { h = JSON.parse(fs.readFileSync(PICKS(), "utf8")); } catch {}
+  const picks = {};
+  for (const [day, evs] of Object.entries((h && h.events) || {})) {
+    if (!Array.isArray(evs) || day >= today) continue;   // only finished days count
+    const key = e => Array.isArray(e.combo) ? e.combo.join("+") : "";
+    const yes = new Set(evs.filter(e => e && e.kind === "yes" && key(e)).map(key));
+    if (yes.size) { for (const k of yes) picks[k] = (picks[k] || 0) + YES_WEIGHT; continue; }
+    const sel = evs.filter(e => e && e.kind === "select" && key(e)).pop();
+    if (sel) picks[key(sel)] = (picks[key(sel)] || 0) + INFERRED_WEIGHT;
+  }
+  return picks;
+}
+// Which of today's candidate combos take the staple slots: the top few by
+// pick weight, rotated by date so a single favourite is not on page 1 every
+// morning (continuity, not monotony).
+function staplesFor(combos, picks, dayIndex) {
+  const pool = combos.filter(c => (picks[c.key] || 0) > 0)
+    .sort((a, b) => picks[b.key] - picks[a.key] || a.key.localeCompare(b.key))
+    .slice(0, STAPLE_POOL);
+  if (!pool.length) return [];
+  const out = [];
+  for (let i = 0; i < pool.length && out.length < STAPLE_SLOTS; i++)
+    out.push(pool[(dayIndex + i) % pool.length]);
+  return out;
+}
+
 // ---- image plumbing (vendored decoders; RGBA in Buffers throughout) ----
 let libheif = null, jpeg = null;
 function ensureCodecs() {
@@ -681,9 +720,18 @@ async function buildCataloged(cat) {
   for (const d of ones) combos.push({ key: d.id, one: d });
   combos.sort((a, b) =>
     (hist.shown[a.key] || "").localeCompare(hist.shown[b.key] || "") || Math.random() - 0.5);
+  // Her favourites lead page 1 (up to two staple slots), then the freshest
+  // looks fill the rest — variety by prioritisation, never exclusion.
+  const dayStr = new Date().toLocaleDateString("en-CA");   // same day bucket as /outfit-event
+  const staples = staplesFor(combos, derivePicks(dayStr), Math.floor(Date.now() / 86400000));
   const today = [];
   const usedTop = new Set(), usedBottom = new Set();
+  for (const c of staples) {
+    today.push(c);
+    if (c.top) { usedTop.add(c.top.id); usedBottom.add(c.bottom.id); }
+  }
   for (const c of combos) {
+    if (today.includes(c)) continue;
     if (today.length >= 12) break;
     if (c.top && (usedTop.has(c.top.id) || usedBottom.has(c.bottom.id))) continue;
     today.push(c);

@@ -109,6 +109,26 @@
     </div>
   </div>
 
+  <div class="card" id="writing">
+    <h2>✏️ Her writing from The Pencil</h2>
+    <p class="hint">When your child taps <b>Send</b> in The Pencil, her words are saved here — and emailed to you if you set that up. Email needs a free <b>Resend</b> account (no card). Its free sender only delivers to the address you sign up with, so use that one.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button id="resendOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Resend API keys page</button>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <input id="mailTo" type="email" placeholder="Your email address"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+    </div>
+    <div class="row">
+      <input id="mailKey" type="password" placeholder="Resend API key (re_...)"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="mailKeyPaste">📋 Paste</button>
+      <button id="mailSave">Save &amp; send a test email</button>
+    </div>
+    <div class="status" id="mailStatus"></div>
+    <div id="writings" style="margin-top:14px"></div>
+  </div>
+
   <div class="card" id="integrations">
     <h2>🔗 Add content with Google Drive</h2>
     <p class="hint">Put things in your Google Drive and they appear here by themselves: book packages in a <b>books</b> folder, songs in <b>music</b>, lesson files in <b>content</b>. Checked every 6 hours.</p>
@@ -545,6 +565,43 @@ $("ttsKeySave").onclick=async()=>{
   loadVoices();
 };
 
+// ---- Her writing: family email for The Pencil (audit 9/2 — nothing wrote
+// these values before, so "Sent!" was never true on a public install) ----
+async function loadMail(){
+  try{
+    const m = await (await fetch("/mail-config")).json();
+    if(m.email && !$("mailTo").value) $("mailTo").value = m.email;
+    if(m.email && m.hasKey && m.ok) $("mailStatus").innerHTML='<b>Email working ✓</b> Her messages go to '+m.email+'.';
+    else if(m.email && m.hasKey) $("mailStatus").innerHTML='<span class="bad">Email is set up but the last test failed: '+(m.error||"unknown")+'</span>';
+    else $("mailStatus").innerHTML='No email set up yet — her messages are kept here in Settings.';
+    const box=$("writings"); box.innerHTML="";
+    if(!m.writings.length){ box.innerHTML='<div class="status">Nothing written yet.</div>'; return; }
+    for(const w of m.writings){
+      const d=document.createElement("div");
+      d.style.cssText="border-top:1px solid var(--line);padding:10px 0;font-size:20px";
+      const when=w.t?new Date(w.t).toLocaleString("en-US",{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"";
+      d.innerHTML='&ldquo;'+w.text.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))+'&rdquo; <span style="color:#7A8A90;font-size:15px">'+when+(w.mailed?" · emailed ✓":"")+'</span>';
+      box.appendChild(d);
+    }
+  }catch(e){ $("mailStatus").textContent="Could not reach the app server."; }
+}
+$("resendOpen").onclick=()=>openSite("https://resend.com/api-keys");
+$("mailKeyPaste").onclick=async()=>{
+  try{ $("mailKey").value = (await navigator.clipboard.readText()).trim(); $("mailKey").focus(); }
+  catch(e){ toast("Tap the box and paste with the keyboard instead",false); }
+};
+$("mailSave").onclick=async()=>{
+  const email=$("mailTo").value.trim(), k=$("mailKey").value.trim();
+  if(!email){ toast("Type your email address first",false); return; }
+  $("mailStatus").innerHTML="Sending a test email…";
+  const r=await fetch("/mail-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,apiKey:k})});
+  if(!r.ok){ toast(r.status===400?"Paste your Resend key too":"Could not save",false); $("mailStatus").innerHTML=""; return; }
+  let v={}; try{ v=await r.json(); }catch(e){}
+  $("mailKey").value="";
+  if(v.ok) toast("Test email sent — check your inbox"); else toast(v.error||"That did not work",false);
+  loadMail();
+};
+
 // ---- AI helper key (clothing ingest today; more helpers later). Three
 // providers, bring-your-own key; account login is not a thing the providers
 // permit for third-party apps, so the card explains that instead of faking it.
@@ -682,6 +739,7 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
 (async()=>{
   await loadApps();
   await loadVoices();
+  await loadMail();
   await drivePaint();
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
        if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));

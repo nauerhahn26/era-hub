@@ -332,3 +332,74 @@ test("a combo label is budgeted as a whole, so it never clips", async () => {
   assert.ok(combos.some(l => /green shorts/i.test(l)),
     `the bottom kept its colour, got ${JSON.stringify(combos)}`);
 });
+
+// ---- her favourites (audit 9/2) ----
+// The board has always reported her gazes and Yeses to the hub
+// (wardrobe/history.json), but the product's generator never read them: a
+// Yes changed nothing about tomorrow. Dad's plan (outfit_set.py, 8/5): a Yes
+// is a confirmed wear, a day without one credits the last select at half
+// weight, and the most-worn looks lead page 1 in two staple slots — variety
+// by prioritisation, never exclusion.
+const dayAgo = n => new Date(Date.now() - n * 86400e3).toLocaleDateString("en-CA");
+function fiveGarments() {
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const src = path.join(TMP, "wardrobe-items", Object.values(cat.items).find(i => i.ok).id + ".jpg");
+  const items = {};
+  const mk = (id, name, category) => {
+    fs.copyFileSync(src, path.join(TMP, "wardrobe-items", id + ".jpg"));
+    items[id + ".jpg"] = { id, ok: true, name, category, warmth: "any" };
+  };
+  mk("item_top1", "Heart tee", "top"); mk("item_top2", "Striped tee", "top"); mk("item_top3", "Cat tee", "top");
+  mk("item_pants1", "Pink leggings", "pants"); mk("item_pants2", "Blue jeans", "pants");
+  fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items }));
+}
+const firstCombos = () => {
+  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const today = rec.boards.find(b => b.id === "today");
+  return today.buttons.filter(x => x.type === "outfit")
+    .sort((a, b) => a.load.localeCompare(b.load)).map(x => x.combo.join("+"));
+};
+const writePicks = events =>
+  (fs.mkdirSync(path.join(TMP, "wardrobe"), { recursive: true }),
+   fs.writeFileSync(path.join(TMP, "wardrobe", "history.json"), JSON.stringify({ events })));
+
+test("with no picks yet, today is pure rotation (nothing seated)", async () => {
+  fiveGarments();
+  fs.rmSync(path.join(TMP, "wardrobe", "history.json"), { force: true });
+  await clothing.regenerate(true);
+  const first = firstCombos();
+  assert.equal(first.length, 4, "four outfits on page 1");
+  // two bottoms → the first two looks share neither top nor bottom; the
+  // remaining slots are then filled from what is left (never exclusion)
+  const [a, b] = first.map(k => k.split("+"));
+  assert.notEqual(a[0], b[0], "no top repeat while alternatives remain");
+  assert.notEqual(a[1], b[1], "no bottom repeat while alternatives remain");
+});
+
+test("a Yes yesterday seats that outfit first on page 1 today — a Yes today waits for tomorrow", async () => {
+  writePicks({
+    [dayAgo(1)]: [{ kind: "select", combo: ["item_top1", "item_pants1"] },
+                  { kind: "yes",    combo: ["item_top3", "item_pants2"] }],
+    [dayAgo(0)]: [{ kind: "yes",    combo: ["item_top2", "item_pants1"] }],
+  });
+  await clothing.regenerate(true);
+  assert.equal(firstCombos()[0], "item_top3+item_pants2", "yesterday's Yes leads the board");
+  // a second rebuild the same day keeps her favourite up front (LRU would have buried it)
+  await clothing.regenerate(true);
+  assert.equal(firstCombos()[0], "item_top3+item_pants2", "still first on a rebuild");
+});
+
+test("a day with no Yes credits her last-selected outfit at half weight; only the top looks are seated", async () => {
+  writePicks({
+    [dayAgo(3)]: [{ kind: "yes", combo: ["item_top3", "item_pants2"] }],
+    [dayAgo(2)]: [{ kind: "yes", combo: ["item_top3", "item_pants2"] }],
+    [dayAgo(1)]: [{ kind: "select", combo: ["item_top2", "item_pants2"] },
+                  { kind: "select", combo: ["item_top1", "item_pants1"] }],   // last look of the day
+  });
+  await clothing.regenerate(true);
+  const seated = firstCombos().slice(0, 2);
+  assert.ok(seated.includes("item_top3+item_pants2"), "twice-worn look is seated");
+  assert.ok(seated.includes("item_top1+item_pants1"), "the inferred wear is seated at half weight");
+  assert.ok(!seated.includes("item_top2+item_pants2"), "an earlier gaze that day is not a wear");
+  assert.equal(firstCombos().length, 4, "the rest of page 1 is still fresh rotation");
+});
