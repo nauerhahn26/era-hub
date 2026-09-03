@@ -11,6 +11,14 @@ DIST="${2:?usage: build-dist.sh vX.Y.Z <dist dir>}"
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 
+# A full disk makes makensis die with SIGBUS and no message (9/3: 46 MB free,
+# rc=1 after "== installer =="). A cut needs ~300 MB; insist on 2 GB headroom.
+FREE_MB="$(df -Pm "$(dirname "$DIST")" | awk 'NR==2 {print $4}')"
+if [ "$FREE_MB" -lt 2048 ]; then
+  echo "only ${FREE_MB} MB free under $(dirname "$DIST") — clear old dist/release-* dirs first; no build."
+  exit 1
+fi
+
 echo "== payload =="
 bash "$HUB/tools/build-payload.sh" "$DIST/new-era-suite" --with-node
 TARBALL="$(ls -t "$DIST"/new-era-suite-*.tar.gz | head -1)"
@@ -24,10 +32,19 @@ NSIS="$ROOT/era-family/cache/nsis"
 # -DSIGN: makensis hands the uninstaller stub and the finished Setup.exe to
 # sign-installer.sh (!uninstfinalize / !finalize). Without a cert it prints
 # UNSIGNED and the build proceeds; with one, a signing failure fails the cut.
-NSISDIR="$NSIS/usr/share/nsis" "$NSIS/usr/bin/makensis" \
+# Full output goes to makensis.log; the console gets the interesting lines, and
+# the log's tail on failure (the grep used to swallow the reason).
+if NSISDIR="$NSIS/usr/share/nsis" "$NSIS/usr/bin/makensis" \
   -DPAYLOAD="$DIST/new-era-suite" -DOUTFILE="$DIST/New-ERA-Setup.exe" -DVERSION="$V" \
   -DSIGN="$HUB/tools/sign-installer.sh" \
-  "$HUB/tools/installer.nsi" | grep -E "^sign:|Total size|[Ee]rror"
+  "$HUB/tools/installer.nsi" > "$DIST/makensis.log" 2>&1; then
+  grep -E "^sign:|Total size|[Ee]rror" "$DIST/makensis.log" || true
+else
+  RC=$?
+  echo "makensis failed (rc=$RC) — tail of $DIST/makensis.log:"; tail -n 20 "$DIST/makensis.log"
+  exit 1
+fi
+[ -s "$DIST/New-ERA-Setup.exe" ] || { echo "New-ERA-Setup.exe missing or empty — no release."; exit 1; }
 if [ -f "$ROOT/era-family/data/signing.env" ]; then
   "$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode" verify -in "$DIST/New-ERA-Setup.exe" | grep -q "Signature verification: ok" \
     || { echo "SIGNING CONFIGURED BUT Setup.exe NOT VERIFIED — no release."; exit 1; }
