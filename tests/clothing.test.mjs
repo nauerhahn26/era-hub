@@ -28,6 +28,27 @@ function makeJpg(file, r, g, b) {
   fs.writeFileSync(file, jpeg.encode({ data, width: w, height: h }, 85).data);
 }
 
+// A phone photo: top half red, bottom half blue, plus an EXIF Orientation
+// tag that every viewer honours (3 = shown turned 180, so blue on top).
+function makeTurnedJpg(file, orientation) {
+  const jpeg = require("./vendor/jpeg-js");
+  const w = 320, h = 480;
+  const data = Buffer.alloc(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    const top = Math.floor(i / w) < h / 2;
+    data[i * 4] = top ? 230 : 20; data[i * 4 + 1] = 20; data[i * 4 + 2] = top ? 20 : 230; data[i * 4 + 3] = 255;
+  }
+  const jpg = jpeg.encode({ data, width: w, height: h }, 90).data;
+  const tiff = Buffer.alloc(8 + 2 + 12 + 4);
+  tiff.write("II", 0, "latin1"); tiff.writeUInt16LE(0x2A, 2); tiff.writeUInt32LE(8, 4);
+  tiff.writeUInt16LE(1, 8);                       // one IFD0 entry
+  tiff.writeUInt16LE(0x0112, 10); tiff.writeUInt16LE(3, 12); tiff.writeUInt32LE(1, 14);
+  tiff.writeUInt16LE(orientation, 18);
+  const app1 = Buffer.concat([Buffer.from([0xFF, 0xE1, 0, 0]), Buffer.from("Exif\0\0", "latin1"), tiff]);
+  app1.writeUInt16BE(app1.length - 2, 2);
+  fs.writeFileSync(file, Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]));
+}
+
 const ANSWERS = [
   { name: "Heart print tee", category: "top", warmth: "warm", rotate_deg: 90, crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } },
   { name: "Pink leggings", category: "pants", warmth: "any", rotate_deg: 0, crop: { x: 0, y: 0, w: 1, h: 1 } },
@@ -39,6 +60,7 @@ let throttleModel = "";         // a model id that always answers 429
 let throttleAfter = 0;          // ...but only once `calls` passes this (a quota that runs out mid-build)
 const wire = [];   // {path, auth} per request — proves each provider's format
 const hits = [];   // every request path, 429s included
+let lastProbe = ""; // base64 of the last picture a Google call was shown
 
 before(async () => {
   process.env.ERA_AI_URL = `http://127.0.0.1:${AI_PORT}`;
@@ -75,6 +97,7 @@ before(async () => {
         out = { choices: [{ message: { content: text } }] };
       } else if (req.url.startsWith("/v1beta/models/")) {     // google
         assert.ok(parsed.contents[0].parts[0].inline_data.data.length > 0);
+        lastProbe = parsed.contents[0].parts[0].inline_data.data;
         wire.push({ path: req.url, auth: req.headers["x-goog-api-key"] });
         out = { candidates: [{ content: { parts: [{ text }] } }] };
       } else { res.writeHead(404).end(); return; }
@@ -336,6 +359,46 @@ test("a photo removed from clothing/ leaves the catalogue, its tile and the boar
   assert.ok(!JSON.stringify(rec.boards).includes(entry.id), "no outfit still wears it");
   assert.equal(calls, before, "removing a garment costs no AI call");
   assert.ok(rec.boards.some(b => String(b.id).startsWith("confirm_")), "the board still builds");
+});
+
+// Dad 9/3, the i13 board: "some upside down images". Phones store the sensor's
+// pixels and an EXIF Orientation tag; jpeg-js ignores the tag, so the model
+// (and the tile) saw the garment on its head. The photo must be turned the
+// way a viewer shows it BEFORE anything looks at it.
+test("a phone photo with EXIF orientation is turned upright before the model sees it and before the tile is cut", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "google", apiKey: "AIza-test" }));
+  makeTurnedJpg(path.join(TMP, "clothing", "photo_g.jpg"), 3);   // shot red-over-blue, viewers show blue-over-red
+  lastProbe = "";
+  await clothing.regenerate(true);
+  assert.ok(lastProbe, "the model was asked about the new photo");
+  const jpeg = require("./vendor/jpeg-js");
+  const probe = jpeg.decode(Buffer.from(lastProbe, "base64"), { formatAsRGBA: true });
+  const px = (x, y) => probe.data.subarray((y * probe.width + x) * 4, (y * probe.width + x) * 4 + 3);
+  const top = px(probe.width >> 1, 4), bottom = px(probe.width >> 1, probe.height - 5);
+  assert.ok(top[2] > 150 && top[0] < 100, "top of the probe is blue: the model saw it turned as a viewer would");
+  assert.ok(bottom[0] > 150 && bottom[2] < 100, "bottom of the probe is red");
+
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const entry = cat.items["photo_g.jpg"];
+  assert.equal(entry.exif, 3, "the orientation the tile was drawn with is remembered");
+  const tile = path.join(TMP, "wardrobe-items", entry.id + ".jpg");
+  assert.ok(fs.existsSync(tile), "tile written");
+
+  // A wardrobe catalogued before this fix (no `exif` field) gets its turned
+  // photos redrawn — with no AI call, the name and category are known.
+  delete entry.exif; entry.rotate_deg = 0;
+  fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify(cat));
+  const stamp = fs.statSync(tile).mtimeMs;
+  const before = calls;
+  await new Promise(r => setTimeout(r, 20));
+  await clothing.regenerate(true);
+  assert.equal(calls, before, "the legacy redraw costs no AI call");
+  const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.equal(after.items["photo_g.jpg"].exif, 3, "legacy entry migrated");
+  assert.ok(fs.statSync(tile).mtimeMs > stamp, "its tile was redrawn");
+  fs.rmSync(path.join(TMP, "clothing", "photo_g.jpg"));   // leave the later tests their photo set
+  await clothing.regenerate(true);
 });
 
 // The 15-minute tick only ACTS on a stale board — but a family that adds or

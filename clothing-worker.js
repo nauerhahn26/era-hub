@@ -18,6 +18,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const segment = require("./segment.js");
+const { exifOrientation, rotateRgba, upright } = require("./image-orient.js");
 
 // Bring-your-own key, any of the big three (dad 8/30: "preferred LLM").
 // Account LOGIN is not offered because the providers forbid it for
@@ -145,22 +146,6 @@ function scaleRgba(img, maxDim) {
   return { data: out, width: nw, height: nh };
 }
 
-function rotateRgba(img, deg) {
-  const { data, width: w, height: h } = img;
-  if (!deg) return img;
-  const [nw, nh] = deg === 180 ? [w, h] : [h, w];
-  const out = Buffer.alloc(nw * nh * 4);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    let nx, ny;
-    if (deg === 90) { nx = h - 1 - y; ny = x; }
-    else if (deg === 180) { nx = w - 1 - x; ny = h - 1 - y; }
-    else { nx = y; ny = w - 1 - x; }
-    const si = (y * w + x) * 4, di = (ny * nw + nx) * 4;
-    out[di] = data[si]; out[di + 1] = data[si + 1]; out[di + 2] = data[si + 2]; out[di + 3] = 255;
-  }
-  return { data: out, width: nw, height: nh };
-}
-
 function cropRgba(img, frac) {
   const { data, width: w, height: h } = img;
   let x0 = Math.max(0, Math.floor((frac.x || 0) * w)), y0 = Math.max(0, Math.floor((frac.y || 0) * h));
@@ -199,8 +184,18 @@ function readImageRgba(file) {
       });
     });
   }
+  // jpeg-js hands back the sensor's pixels; turn them the way the phone's
+  // EXIF Orientation says (image-orient.js). libheif already does this for HEIC.
   const d = jpeg.decode(buf, { maxMemoryUsageInMB: 1024, formatAsRGBA: true });
-  return Promise.resolve({ data: Buffer.from(d.data), width: d.width, height: d.height });
+  return Promise.resolve(upright({ data: Buffer.from(d.data), width: d.width, height: d.height },
+                                 exifOrientation(buf)));
+}
+
+// Orientation a JPEG on disk carries (1 = none); HEIC/others report 1
+// because their decoder already turns them.
+function photoOrientation(file) {
+  if (![".jpg", ".jpeg"].includes(path.extname(file).toLowerCase())) return 1;
+  try { return exifOrientation(fs.readFileSync(file)); } catch { return 1; }
 }
 
 function writeJpg(img, file, q) { ensureCodecs(); fs.writeFileSync(file, jpeg.encode(img, q || 85).data); }
@@ -532,7 +527,12 @@ async function ingest() {
   // wipe that landed mid-run left 20 catalogued items with 5 tiles, and every
   // later run said "nothing to do"). The repair costs NO AI call — the name,
   // category and warmth are already known, so only the pixels are redone.
-  const todo = files.filter(f => !cat.items[f] || !cat.items[f].ok || !hasTile(cat.items[f].id));
+  // ...and once more, without AI, for a garment catalogued before we honoured
+  // EXIF orientation (no `exif` field) whose photo carries a turn: its tile
+  // was drawn from sideways pixels (dad 9/3, the upside-down tees).
+  const legacyTurn = (f) => cat.items[f] && cat.items[f].ok && cat.items[f].exif === undefined &&
+    photoOrientation(path.join(CLOTHING(), f)) !== 1;
+  const todo = files.filter(f => !cat.items[f] || !cat.items[f].ok || !hasTile(cat.items[f].id) || legacyTurn(f));
   if (!todo.length) return { done: 0 };
   fs.mkdirSync(ITEMS(), { recursive: true });
   ingesting = { done: 0, total: todo.length };
@@ -551,10 +551,14 @@ async function ingest() {
         // faster (dad 9/2: keep it frugal even when paying a little).
         // Known garment, missing tile: redraw from what we already learned.
         const known = cat.items[f] && cat.items[f].ok ? cat.items[f] : null;
+        const orient = photoOrientation(path.join(CLOTHING(), f));
         let meta;
         if (known) {
+          // A pre-EXIF entry's rotate_deg was the model compensating for the
+          // sideways decode; now that the photo is turned as shot, drop it.
+          const legacy = known.exif === undefined && orient !== 1;
           meta = { name: known.name, category: known.category, warmth: known.warmth,
-                   rotate_deg: known.rotate_deg || 0, crop: known.crop || {} };
+                   rotate_deg: legacy ? 0 : known.rotate_deg || 0, crop: known.crop || {} };
         } else {
           const probe = path.join(ITEMS(), "_probe.jpg");
           writeJpg(scaleRgba(work, 384), probe, 78);
@@ -573,16 +577,16 @@ async function ingest() {
         const rotated = rotateRgba(work, rot);
         let cutOut = null;
         try { cutOut = await segment.cutOut(rotated); } catch (e) { console.error("[segment] " + e.message); }
-        const upright = cutOut || removeBackground(rotated);
-        const trimmed = cropToContent(upright);
-        const modelCrop = cropRgba(upright, meta.crop || {});
+        const cut = cutOut || removeBackground(rotated);
+        const trimmed = cropToContent(cut);
+        const modelCrop = cropRgba(cut, meta.crop || {});
         const area = (im) => im.width * im.height;
         const best = area(trimmed) <= area(modelCrop) ? trimmed : modelCrop;
         writeJpg(padSquare(best, 640), path.join(ITEMS(), id + ".jpg"), 85);
         // Keep the geometry: a later tile repair can then reproduce the same
         // picture without asking the model again.
         cat.items[f] = { id, ok: true, name: shortLabel(meta.name),
-          rotate_deg: rot, crop: meta.crop || {},
+          rotate_deg: rot, crop: meta.crop || {}, exif: orient,
           category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any" };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
