@@ -32,9 +32,10 @@ if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V in $DIST — not tagged,
 echo "== 4/4 tag + release =="
 git -C "$HUB" tag -f "$V"
 git -C "$HUB" push -q origin "refs/tags/$V" --force
-NOTES="New ERA suite $V — hub + Gaze-ready apps (Making Words, The Pencil, Morning Outfit Picker board, Music board with 40-second clips and offline playback) with bundled Node runtime.
-Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. (Windows may ask once: choose More info, then Run anyway.) The portable .zip works too. Uninstall never touches your data.
-sha256 in checksums.txt."
+# the app list is server.js APPS — keep the two in step
+NOTES="New ERA suite $V — free eye-gaze apps for a child on a Tobii device, all running on the family's own PC: Making Words, The Pencil, Clothing Picker, Music, Movies, Book Reader, plus the ERAgaze engine for PCs without one. Bundled Node runtime; nothing about your child leaves the machine.
+Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. (Windows may ask once: choose More info, then Run anyway.) The portable .zip works too. Installed copies update themselves; Uninstall never touches your data.
+Every release is installed and driven end to end on a clean Windows 10 before it is published. sha256 in checksums.txt."
 gh release create "$V" --repo nauerhahn26/new-era-releases --title "New ERA suite $V" \
   --notes "$NOTES" ${PRE:+--prerelease} \
   "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/new-era-suite.zip" "$DIST/New-ERA-Setup.exe" "$DIST/checksums.txt" "$DIST/latest.json"
