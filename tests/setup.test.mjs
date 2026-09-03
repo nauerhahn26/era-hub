@@ -65,3 +65,25 @@ test("validation: empty name 400; junk body 400", async () => {
   assert.equal((await fetch(`${BASE}/setup`, { method: "POST", body: '{"childName":"  "}' })).status, 400);
   assert.equal((await fetch(`${BASE}/setup`, { method: "POST", body: "not json" })).status, 400);
 });
+
+// Every "Open my … page" button in Settings hands its URL to /open-url so it
+// opens in a NORMAL browser window that comes to the front. A URL missing
+// from the server's allowlist gets a 400 and the page falls back to
+// window.open inside the kiosk — dad hit that on Resend 9/3. Scrape the
+// literals from settings/index.html so a new button can't ship unlisted.
+test("every Settings 'open site' URL is accepted by /open-url; junk is not", async () => {
+  const html = fs.readFileSync(path.join(HUB, "public", "settings", "index.html"), "utf8");
+  const urls = new Set([
+    ...[...html.matchAll(/openSite\("(https:[^"]+)"\)/g)].map(m => m[1]),
+    ...[...html.matchAll(/url:"(https:[^"]+)"/g)].map(m => m[1]),
+  ]);
+  assert.ok(urls.size >= 5, `found ${urls.size} site URLs in settings`);
+  for (const url of urls) {
+    const r = await fetch(`${BASE}/open-url`, { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+    assert.equal(r.status, 200, `${url} must be on the /open-url allowlist`);
+  }
+  const bad = await fetch(`${BASE}/open-url`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://evil.example/x" }) });
+  assert.equal(bad.status, 400);
+});

@@ -1,7 +1,8 @@
 ; installer.nsi — the one-file Windows front door (dad's 8/29 rulings: setup
 ; style, and the app chooser lives IN the installer — tick what you want
 ; before anything installs; the same choices stay editable in Settings and
-; on the home screen). SignPath signs this artifact once approved.
+; on the home screen). Signing: tools/sign-installer.sh runs on the uninstaller
+; stub and on the finished Setup.exe (no-op until the Certum cert lands).
 ; Per-user everything: no admin prompt, %LOCALAPPDATA%\New ERA, uninstall
 ; entry in Settings > Apps.
 ; Built by release.sh:  makensis -DPAYLOAD=<dir> -DOUTFILE=<exe> -DVERSION=<v>
@@ -11,6 +12,10 @@ Unicode true
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
+!ifdef SIGN
+  !uninstfinalize '"${SIGN}" "%1"'
+  !finalize '"${SIGN}" "%1"'
+!endif
 InstallDir "$LOCALAPPDATA\New ERA"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma

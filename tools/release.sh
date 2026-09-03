@@ -25,11 +25,19 @@ mv "$TARBALL" "$DIST/new-era-suite-$V.tar.gz"
 echo "== 2b/4 zip (what the website hands to Windows; Win10 can't open .tar.gz) =="
 ( cd "$DIST" && python3 -m zipfile -c "new-era-suite.zip" new-era-suite/ )
 
-echo "== 2c/4 installer (New-ERA-Setup.exe; unsigned until SignPath lands) =="
+echo "== 2c/4 installer (New-ERA-Setup.exe; signed iff era-family/data/signing.env exists — docs/signing-plan.md) =="
 NSIS="$ROOT/era-family/cache/nsis"
+# -DSIGN: makensis hands the uninstaller stub and the finished Setup.exe to
+# sign-installer.sh (!uninstfinalize / !finalize). Without a cert it prints
+# UNSIGNED and the build proceeds; with one, a signing failure fails the cut.
 NSISDIR="$NSIS/usr/share/nsis" "$NSIS/usr/bin/makensis" \
   -DPAYLOAD="$DIST/new-era-suite" -DOUTFILE="$DIST/New-ERA-Setup.exe" -DVERSION="$V" \
-  "$HUB/tools/installer.nsi" | tail -1
+  -DSIGN="$HUB/tools/sign-installer.sh" \
+  "$HUB/tools/installer.nsi" | grep -E "^sign:|Total size|[Ee]rror"
+if [ -f "$ROOT/era-family/data/signing.env" ]; then
+  "$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode" verify -in "$DIST/New-ERA-Setup.exe" | grep -q "Signature verification: ok" \
+    || { echo "SIGNING CONFIGURED BUT Setup.exe NOT VERIFIED — no release."; exit 1; }
+fi
 
 echo "== 3/4 checksums =="
 ( cd "$DIST" && sha256sum "new-era-suite-$V.tar.gz" "new-era-suite.zip" "New-ERA-Setup.exe" > checksums.txt && cat checksums.txt )

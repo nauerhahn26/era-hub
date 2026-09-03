@@ -1392,7 +1392,13 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const { url } = JSON.parse(body);
-        const ALLOW = ["https://www.google.com/drive/", "https://elevenlabs.io/"];
+        // every "Open my … keys page" button in Settings must be here, or the
+        // page falls back to window.open INSIDE the kiosk — dad hit that on
+        // Resend during his 9/3 novice run ("match the way Drive/ElevenLabs
+        // work, they come to the front")
+        const ALLOW = ["https://www.google.com/drive/", "https://elevenlabs.io/",
+                       "https://resend.com/", "https://console.anthropic.com/",
+                       "https://platform.openai.com/", "https://aistudio.google.com/"];
         if (typeof url !== "string" || !ALLOW.some(a => url.startsWith(a))) { res.writeHead(400).end(); return; }
         if (process.platform === "win32") {
           const { spawn } = require("child_process");
