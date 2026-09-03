@@ -29,13 +29,28 @@ let feed, child;
 // A minimal but real install: the hub's own js + a tiny public tree.
 function makeInstall(dir, build, marker) {
   fs.mkdirSync(path.join(dir, "public", "home"), { recursive: true });
-  for (const f of ["server.js", "update.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "pool.js", "predict.js", "predict-model.json"])
+  for (const f of ["server.js", "update.js", "packs.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "pool.js", "predict.js", "predict-model.json"])
     fs.copyFileSync(path.join(HUB, f), path.join(dir, f));
   fs.copyFileSync(path.join(HUB, "public", "home", "index.html"),
                   path.join(dir, "public", "home", "index.html"));
   fs.writeFileSync(path.join(dir, "VERSION"), build + "\n");
   if (marker) fs.writeFileSync(path.join(dir, "public", "updated-marker.txt"), marker);
 }
+// Pack files as the release ships them (packs.js): the pencil pack, the
+// reader pack, and the board pack with its cut-out runtime under vendor/;
+// jpeg-js is core. Each file's content names the build it came from.
+const PACK_FILES = ["public/pencil/index.html", "public/reader/index.html", "public/board/index.html",
+  "vendor/onnxruntime-web/dist/ort.node.min.js", "vendor/models/u2netp.onnx", "vendor/libheif.js",
+  "vendor/jpeg-js/index.js"];
+function layPacks(dir, build, only) {
+  for (const f of PACK_FILES) {
+    if (only && !only.includes(f)) continue;
+    fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+    fs.writeFileSync(path.join(dir, f), build + "\n");
+  }
+}
+const at = (f) => path.join(INSTALL, f);
+const has = (f) => fs.existsSync(at(f));
 
 before(async () => {
   // a prior run's self-restarted hub may still hold the port (it outlives its
@@ -43,11 +58,18 @@ before(async () => {
   spawnSync("pkill", ["-f", `server[.]js ${PORT}`]);
   await new Promise(r => setTimeout(r, 300));
   makeInstall(INSTALL, OLD_BUILD, null);
+  // the family ticked Making Words + The Pencil at install: only the pencil
+  // pack (and the core's jpeg-js) is on disk, and apps.json says so — else
+  // the boot reconcile would pull every pack from the feed below
+  layPacks(INSTALL, OLD_BUILD, ["public/pencil/index.html", "vendor/jpeg-js/index.js"]);
+  fs.mkdirSync(DATADIR, { recursive: true });
+  fs.writeFileSync(path.join(DATADIR, "apps.json"), JSON.stringify({ enabled: ["making-words", "pencil"] }));
 
   // The "newer release": same install shape, new VERSION + a marker file,
   // tar'd with the payload's real top-dir name.
   const relDir = path.join(TMP, "rel");
   makeInstall(path.join(relDir, "new-era-suite"), NEW_BUILD, "hello from the new build\n");
+  layPacks(path.join(relDir, "new-era-suite"), NEW_BUILD);
   execFileSync("tar", ["-czf", path.join(TMP, "new-era-suite.tar.gz"), "-C", relDir, "new-era-suite"]);
   const tarball = fs.readFileSync(path.join(TMP, "new-era-suite.tar.gz"));
   const sha = crypto.createHash("sha256").update(tarball).digest("hex");
@@ -108,6 +130,44 @@ test("check applies a newer release and the hub restarts on the new build", asyn
   }
   assert.equal(build, NEW_BUILD, "restarted hub serves the new build");
   assert.notEqual(pid, pid0, "a fresh process took over the port");
+});
+
+// Dad 9/3: the installer's "Space required" never moved when apps were
+// unticked — the cut-out runtime rode with the core, and a self-update then
+// re-laid every pack the family had declined. The overlay refreshes what is
+// installed and leaves the rest alone.
+test("the update refreshes installed packs and never lays down unchosen ones", () => {
+  assert.equal(fs.readFileSync(at("public/pencil/index.html"), "utf8"), NEW_BUILD + "\n", "installed pack refreshed");
+  assert.equal(fs.readFileSync(at("vendor/jpeg-js/index.js"), "utf8"), NEW_BUILD + "\n", "core vendor refreshed");
+  for (const f of ["public/reader", "public/board", "vendor/onnxruntime-web", "vendor/models", "vendor/libheif.js"])
+    assert.ok(!has(f), f + " stays absent (its app was not chosen)");
+});
+
+test("enabling Clothing later installs the board pack WITH its cut-out runtime; removing drops all of it", async () => {
+  let r = await fetch(`${BASE}/apps`, { method: "POST", body: JSON.stringify({ id: "board", enabled: true }) });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { installing: true }, "enable kicks off the pack download");
+  let installed = false;
+  for (let i = 0; i < 100 && !installed; i++) {
+    await new Promise(rr => setTimeout(rr, 100));
+    const { apps } = await (await fetch(`${BASE}/apps`)).json();
+    installed = apps.find(a => a.id === "board").installed;
+  }
+  assert.ok(installed, "board pack installed from the release feed");
+  for (const f of ["public/board/index.html", "vendor/onnxruntime-web/dist/ort.node.min.js", "vendor/models/u2netp.onnx", "vendor/libheif.js"])
+    assert.equal(fs.readFileSync(at(f), "utf8"), NEW_BUILD + "\n", f + " landed");
+  assert.ok(!has("public/reader"), "the reader pack is still not on disk");
+
+  r = await fetch(`${BASE}/apps/delete`, { method: "POST", body: JSON.stringify({ id: "board" }) });
+  assert.equal(r.status, 409, "still enabled: refuse");
+  await fetch(`${BASE}/apps`, { method: "POST", body: JSON.stringify({ id: "board", enabled: false }) });
+  r = await fetch(`${BASE}/apps/delete`, { method: "POST", body: JSON.stringify({ id: "board" }) });
+  assert.equal(r.status, 204);
+  for (const f of ["public/board", "vendor/onnxruntime-web", "vendor/models", "vendor/libheif.js"])
+    assert.ok(!has(f), f + " removed with the pack");
+  assert.ok(has("vendor/jpeg-js/index.js"), "core vendor untouched by pack removal");
+  const { apps } = await (await fetch(`${BASE}/apps`)).json();
+  assert.equal(apps.find(a => a.id === "board").installed, false);
 });
 
 test("a second check is a no-op: up-to-date", async () => {

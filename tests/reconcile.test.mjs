@@ -23,7 +23,7 @@ let feed, child;
 before(async () => {
   // minimal install: hub js + home page, NO reader pack, apps.json wants reader
   fs.mkdirSync(path.join(INSTALL, "public", "home"), { recursive: true });
-  for (const f of ["server.js", "update.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "pool.js", "predict.js", "predict-model.json"])
+  for (const f of ["server.js", "update.js", "packs.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "pool.js", "predict.js", "predict-model.json"])
     fs.copyFileSync(path.join(HUB, f), path.join(INSTALL, f));
   fs.copyFileSync(path.join(HUB, "public", "home", "index.html"),
                   path.join(INSTALL, "public", "home", "index.html"));

@@ -13,6 +13,7 @@ const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
 const { spawn, spawnSync } = require("child_process");
+const packs = require("./packs.js");
 
 const HERE = __dirname;
 const VERSION_FILE = path.join(HERE, "VERSION");
@@ -95,10 +96,16 @@ async function check(port) {
       // Overlay onto this install. Never data/ (not in the tarball anyway,
       // belt+braces) and never node/ — node.exe is the running binary and is
       // locked on Windows; a runtime bump lands on the next fresh install.
+      // App packs (packs.js): refresh the ones on disk, never lay down one
+      // the family did not choose — an update must not undo the installer's
+      // checkboxes (dad 9/3). Enabling later still installs from the feed.
+      const absent = Object.keys(packs.PACKS).filter(id => !packs.packInstalled(HERE, id));
       fs.cpSync(root, HERE, { recursive: true, force: true, filter: (src) => {
         const rel = path.relative(root, src);
-        return !(rel === "data" || rel.startsWith("data" + path.sep) ||
-                 rel === "node" || rel.startsWith("node" + path.sep));
+        if (rel === "data" || rel.startsWith("data" + path.sep) ||
+            rel === "node" || rel.startsWith("node" + path.sep)) return false;
+        const pack = packs.packOf(rel);
+        return !(pack && absent.includes(pack));
       }});
       const now = currentBuild();
       const restart = scheduleRestart(port);

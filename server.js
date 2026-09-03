@@ -89,13 +89,15 @@ const APPS = [
   // already on Tobii devices (official NuGet as fallback for other PCs)
   { id: "eragaze", title: "ERAgaze", sub: "eye-gaze cursor + dwell for Tobii trackers", path: null, pack: null, engine: true },
 ];
-// pack = the public/ subdir an app needs on disk (null = rides with the core;
-// board/music/movies share one pack). The installer lays down only chosen
+// pack = the files an app needs on disk, listed in packs.js (null = rides
+// with the core; board/music/movies share one pack, which also carries the
+// garment cut-out runtime under vendor/). The installer lays down only chosen
 // packs; enabling later REALLY installs the pack (dad 8/29: never
 // install-everything-and-hide) by pulling it from the release tarball.
+const packs = require("./packs.js");
 function appInstalled(app) {
   if (app.engine) return gazeCompiled();
-  return !app.pack || fs.existsSync(path.join(PUB, app.pack));
+  return !app.pack || packs.packInstalled(__dirname, app.pack);
 }
 const appInstalling = {};   // id -> true while a pack download runs
 // Anything enabled (installer checkboxes, wizard, restored apps.json) but not
@@ -122,12 +124,18 @@ async function installPack(app) {
     if (!r.ok) throw new Error("download " + r.status);
     const tarball = path.join(stage, "suite.tar.gz");
     fs.writeFileSync(tarball, Buffer.from(await r.arrayBuffer()));
+    const paths = packs.packPaths(app.pack);
     const t = spawnSync("tar", ["-xzf", tarball, "-C", stage,
-      "new-era-suite/public/" + app.pack], { windowsHide: true });
+      ...paths.map(p => "new-era-suite/" + p)], { windowsHide: true });
     if (t.status !== 0) throw new Error("extract failed");
-    fs.cpSync(path.join(stage, "new-era-suite", "public", app.pack),
-      path.join(PUB, app.pack), { recursive: true, force: true });
-    console.log("[apps] installed pack " + app.pack);
+    // presence marker (first path) last, so a half-landed pack never counts as installed
+    for (const p of [...paths.slice(1), paths[0]]) {
+      const parts = p.split("/");
+      const dest = path.join(__dirname, ...parts);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.cpSync(path.join(stage, "new-era-suite", ...parts), dest, { recursive: true, force: true });
+    }
+    console.log("[apps] installed pack " + app.pack + " (" + paths.join(", ") + ")");
   } finally {
     try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
   }
@@ -1436,7 +1444,8 @@ const server = http.createServer((req, res) => {
           // the board pack is shared: only removable when board+music+movies are ALL off
           const sharers = APPS.filter(a => a.pack === app.pack).map(a => a.id);
           if (sharers.some(x => enabled.includes(x))) { res.writeHead(409).end("pack in use"); return; }
-          try { fs.rmSync(path.join(PUB, app.pack), { recursive: true, force: true }); } catch {}
+          for (const p of packs.packPaths(app.pack))
+            try { fs.rmSync(path.join(__dirname, ...p.split("/")), { recursive: true, force: true }); } catch {}
         } else { res.writeHead(400).end("core app"); return; }
         res.writeHead(204).end();
       } catch { res.writeHead(400).end(); }

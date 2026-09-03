@@ -41,8 +41,9 @@ FunctionEnd
 Section "New ERA engine (required)" SecCore
   SectionIn RO
   SetOutPath "$INSTDIR"
-  ; everything except the per-app packs (their dir names are unique in the tree)
-  File /r /x pencil /x board /x reader "${PAYLOAD}/*"
+  ; everything except the per-app packs (their names are unique in the tree;
+  ; the list mirrors packs.js — tests/packs.test.mjs keeps them equal)
+  File /r /x pencil /x board /x reader /x onnxruntime-web /x models /x libheif.js "${PAYLOAD}/*"
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -80,9 +81,16 @@ Section "Book Reader" SecReader
   SetOutPath "$INSTDIR\public"
   File /r "${PAYLOAD}/public/reader"
 SectionEnd
+; The board pack carries the Clothing Picker's garment cut-out too (ONNX
+; runtime + model + HEIC decoder, ~21 MB) so unticking Clothing/Music/Movies
+; visibly shrinks "Space required" (dad 9/3: "the size stays the same").
 Section "-board pack" SecBoardPack
   SetOutPath "$INSTDIR\public"
   File /r "${PAYLOAD}/public/board"
+  SetOutPath "$INSTDIR\vendor"
+  File /r "${PAYLOAD}/vendor/onnxruntime-web"
+  File /r "${PAYLOAD}/vendor/models"
+  File "${PAYLOAD}/vendor/libheif.js"
 SectionEnd
 
 Function .onSelChange
@@ -148,6 +156,7 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\node"
   RMDir /r "$INSTDIR\public"
   RMDir /r "$INSTDIR\gaze"
+  RMDir /r "$INSTDIR\vendor"   ; was left behind (21 MB) before 9/3
   Delete "$DESKTOP\ERAgaze.lnk"
   Delete "$DESKTOP\ERAgaze eye-gaze engine.lnk"
   Delete "$SMPROGRAMS\ERAgaze.lnk"

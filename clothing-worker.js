@@ -123,10 +123,14 @@ function staplesFor(combos, picks, dayIndex) {
 }
 
 // ---- image plumbing (vendored decoders; RGBA in Buffers throughout) ----
+// jpeg-js rides with the core; libheif ships in the board pack (packs.js)
+// and is loaded only when a HEIC actually turns up.
 let libheif = null, jpeg = null;
 function ensureCodecs() {
-  if (!libheif) libheif = require("./vendor/libheif.js")();
   if (!jpeg) jpeg = require("./vendor/jpeg-js");
+}
+function ensureHeif() {
+  if (!libheif) libheif = require("./vendor/libheif.js")();
 }
 
 function scaleRgba(img, maxDim) {
@@ -172,6 +176,7 @@ function readImageRgba(file) {
   const buf = fs.readFileSync(file);
   const ext = path.extname(file).toLowerCase();
   if ([".heic", ".heif"].includes(ext)) {
+    ensureHeif();
     const images = new libheif.HeifDecoder().decode(buf);
     if (!images.length) throw new Error("no image in heic");
     const im = images[0];
