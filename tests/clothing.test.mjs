@@ -183,15 +183,18 @@ test("with a key: photos are cataloged and the board is her exact graph", async 
   assert.equal(item.label, "Heart print tee", "items carry their AI-given names");
   assert.ok(item.image.startsWith("wardrobe-items/"));
 
-  // board-design-rules.md, re-affirmed by dad 9/1: hard cap 6 outfits per
-  // page in stable slots; the bottom row (except Build at [3,4]) stays a
-  // black rest strip — no actionable tile may sit in [3,1..3,3]; the Yes
+  // Outfits sit in stable slots; the two CENTER cells [2,2][2,3] are the
+  // rest cells (lib contract restCells: "center"), More [3,1] and Build
+  // [3,4] own the corners. Dad 9/3 (I-13 photo): the bottom-middle pair and
+  // the middle-right cell hold outfits too when there are enough - seven a
+  // page, overruling the 9/1 six-cap and bottom-row rest strip. The Yes
   // tile is a TD-Snap-style green CHECK, not a pictogram.
   const outfits = todayB.buttons.filter(x => x.type === "outfit");
-  assert.ok(outfits.length <= 6, "max 6 outfit choices per page");
+  assert.ok(outfits.length <= 7, "max 7 outfit choices per page");
   for (const o of outfits) {
     assert.ok(o.row && o.col, "outfit tiles pinned to stable slots");
-    assert.ok(!(o.row === 3 && o.col <= 3), "bottom row is the rest strip");
+    assert.ok(!(o.row === 2 && (o.col === 2 || o.col === 3)), "center rest cells stay black");
+    assert.ok(!(o.row === 3 && (o.col === 1 || o.col === 4)), "More and Build own the bottom corners");
   }
   const build = todayB.buttons.find(x => x.label === "Build my own");
   assert.equal(build.row + "," + build.col, "3,4", "Build my own pinned bottom-right");
@@ -635,7 +638,7 @@ test("with no picks yet, today is pure rotation (nothing seated)", async () => {
   fs.rmSync(path.join(TMP, "wardrobe", "history.json"), { force: true });
   await clothing.regenerate(true);
   const first = firstCombos();
-  assert.equal(first.length, 4, "four outfits on page 1");
+  assert.equal(first.length, 7, "page 1 is full: seven outfit slots (dad 9/3), the wardrobe has more");
   // two bottoms → the first two looks share neither top nor bottom; the
   // remaining slots are then filled from what is left (never exclusion)
   const [a, b] = first.map(k => k.split("+"));
@@ -668,5 +671,5 @@ test("a day with no Yes credits her last-selected outfit at half weight; only th
   assert.ok(seated.includes("item_top3+item_pants2"), "twice-worn look is seated");
   assert.ok(seated.includes("item_top1+item_pants1"), "the inferred wear is seated at half weight");
   assert.ok(!seated.includes("item_top2+item_pants2"), "an earlier gaze that day is not a wear");
-  assert.equal(firstCombos().length, 4, "the rest of page 1 is still fresh rotation");
+  assert.equal(firstCombos().length, 7, "the rest of page 1 is still fresh rotation");
 });

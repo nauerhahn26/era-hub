@@ -34,8 +34,15 @@ NSIS="$ROOT/era-family/cache/nsis"
 # UNSIGNED and the build proceeds; with one, a signing failure fails the cut.
 # Full output goes to makensis.log; the console gets the interesting lines, and
 # the log's tail on failure (the grep used to swallow the reason).
+# Whole-MB sizes for the components page's hover text (installer.nsi): the
+# engine (everything but the app packs) and the shared board pack.
+mb() { du -sb "$@" 2>/dev/null | awk '{s+=$1} END {printf "%d", (s + 524288) / 1048576}'; }
+P="$DIST/new-era-suite"
+SZ_BOARD="$(mb "$P/public/board" "$P/vendor/onnxruntime-web" "$P/vendor/models" "$P/vendor/libheif.js")"
+SZ_CORE=$(( $(mb "$P") - SZ_BOARD - $(mb "$P/public/pencil" "$P/public/reader") ))
 if NSISDIR="$NSIS/usr/share/nsis" "$NSIS/usr/bin/makensis" \
   -DPAYLOAD="$DIST/new-era-suite" -DOUTFILE="$DIST/New-ERA-Setup.exe" -DVERSION="$V" \
+  -DSZ_CORE="$SZ_CORE" -DSZ_BOARD="$SZ_BOARD" \
   -DSIGN="$HUB/tools/sign-installer.sh" \
   "$HUB/tools/installer.nsi" > "$DIST/makensis.log" 2>&1; then
   grep -E "^sign:|Total size|[Ee]rror" "$DIST/makensis.log" || true

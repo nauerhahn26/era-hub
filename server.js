@@ -1647,6 +1647,17 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // The board's partner button "new outfits" (dad 9/3: photos added after the
+  // first run must reach today's board without waiting for the next poll):
+  // pull Drive now, then a forced rebuild - the board's status footer follows
+  // the work. 202: the build runs on; /clothing/status tells the rest.
+  if (req.method === "POST" && req.url === "/clothing/regenerate") {
+    Promise.resolve().then(() => drive.sync()).catch(() => {})
+      .then(() => clothing.regenerate(true)).catch(() => {});
+    res.writeHead(202, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ started: true }));
+    return;
+  }
   if (req.method === "GET" && urlPath === "/clothing/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(clothing.status()));

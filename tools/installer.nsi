@@ -24,7 +24,17 @@ SetCompressorDictSize 16   ; modest dictionary: the default crashed makensis (bu
 !include "MUI2.nsh"
 !include "Sections.nsh"
 !include "LogicLib.nsh"
-!define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer - only what you tick is installed. Add or remove apps any time from the home screen or Settings."
+; Sizes come from build-dist.sh (du over the payload) so the description box
+; can say where the megabytes are: dad unticked Music/Movies/Book Reader on
+; 9/3 and "Space required" did not move - correctly, the engine is ~80 MB and
+; those apps are under 1 MB each, but nothing on the page said so.
+!ifndef SZ_CORE
+  !define SZ_CORE "about 85"
+!endif
+!ifndef SZ_BOARD
+  !define SZ_BOARD "about 20"
+!endif
+!define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer - only what you tick is installed. Add or remove apps any time from the home screen or Settings. Most of the space is the engine (${SZ_CORE} MB); the apps themselves are small."
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open New ERA now"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchHub
@@ -92,6 +102,19 @@ Section "-board pack" SecBoardPack
   File /r "${PAYLOAD}/vendor/models"
   File "${PAYLOAD}/vendor/libheif.js"
 SectionEnd
+
+; Hover text on the components page: what each tick costs, and why the
+; total barely moves for most of them.
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} "The New ERA hub with its own bundled runtime - ${SZ_CORE} MB, and the only big part. Every app runs on it."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecGaze} "ERAgaze: a steady, gentle eye-gaze cursor tuned for kids. For PCs without their own gaze software. Under 1 MB."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMW} "Making Words: the daily letter lesson. Part of the engine - no extra space."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecPencil} "The Pencil: free writing with word prediction. Under 1 MB."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecBoard} "Clothing Picker: today's outfit from the child's real wardrobe. Shares a ${SZ_BOARD} MB photo cut-out pack with Music and Movies - the pack is skipped only when all three are unticked."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMusic} "Music: favorite songs on big picture tiles. Shares the ${SZ_BOARD} MB pack with Clothing Picker and Movies."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMovies} "Movies: the family's films, one look to play. Shares the ${SZ_BOARD} MB pack with Clothing Picker and Music."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecReader} "Book Reader: page-by-page books with gaze. Under 1 MB (books live in your data folder)."
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Function .onSelChange
   StrCpy $2 0

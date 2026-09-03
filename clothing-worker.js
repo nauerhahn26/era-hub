@@ -736,6 +736,12 @@ function gridPages(id, name, items, backLoad) {
   return pages;
 }
 
+// today pages: the 3x4 grid minus weather/Back [1,1], More [3,1], Build [3,4]
+// and the two CENTER rest cells [2,2][2,3] (lib contract restCells: "center")
+const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,2],[3,3]];
+const PER_PAGE = SLOTS.length;
+const PAGES = 3;   // how many "More" pages a day gets at most
+
 async function buildCataloged(cat) {
   const w = await weather();
   const band = w ? w.band : null;
@@ -768,13 +774,13 @@ async function buildCataloged(cat) {
   }
   for (const c of combos) {
     if (today.includes(c)) continue;
-    if (today.length >= 12) break;
+    if (today.length >= PER_PAGE * PAGES) break;
     if (c.top && (usedTop.has(c.top.id) || usedBottom.has(c.bottom.id))) continue;
     today.push(c);
     if (c.top) { usedTop.add(c.top.id); usedBottom.add(c.bottom.id); }
   }
   for (const c of combos) {
-    if (today.length >= 12) break;
+    if (today.length >= PER_PAGE * PAGES) break;
     if (!today.includes(c)) today.push(c);
   }
   for (const c of today) hist.shown[c.key] = new Date().toISOString();
@@ -784,10 +790,14 @@ async function buildCataloged(cat) {
   // Layout per ux-contract.md placement LAW (dad 9/1: "follow the docs"):
   // More = bottom-LEFT [3,1] (TD-Snap muscle memory), Build/exit = bottom-
   // RIGHT [3,4], Back/weather top-left [1,1], rest cells = the two CENTER
-  // cells [2,2][2,3]; outfit_set.py caps outfits at 4 per page.
-  const SLOTS = [[1,2],[1,3],[1,4],[2,1]];
+  // cells [2,2][2,3]. The other seven cells hold outfits when the wardrobe
+  // has them (dad 9/3, I-13 photo: "fill the black 2 bottom tiles and the
+  // middle-right tile with outfits on each page when enough available" -
+  // this overrules the 9/1 six-per-page cap and the bottom-row rest strip);
+  // cells left over stay black. Ten targets = under the contract's
+  // comfortable 12.
   const boards = [];
-  const pages = Math.max(1, Math.ceil(today.length / 4));
+  const pages = Math.max(1, Math.ceil(today.length / PER_PAGE));
   for (let pg = 0; pg < pages; pg++) {
     const pid = pg === 0 ? "today" : "today_" + (pg + 1);
     const buttons = [];
@@ -801,8 +811,8 @@ async function buildCataloged(cat) {
       buttons.push({ label: "Back", type: "back", glyph: "\u2190",
         load: pg === 1 ? "today" : "today_" + pg, row: 1, col: 1 });
     }
-    today.slice(pg * 4, pg * 4 + 4).forEach((c, k) => {
-      const i = pg * 4 + k;
+    today.slice(pg * PER_PAGE, (pg + 1) * PER_PAGE).forEach((c, k) => {
+      const i = pg * PER_PAGE + k;
       const label = c.one ? c.one.name : comboLabel(c.top, c.bottom);
       const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
       const img = "outfit_" + i + ".jpg";
@@ -822,7 +832,7 @@ async function buildCataloged(cat) {
         { label: "Back", type: "back", glyph: "\u2190", load: pid, row: 3, col: 1 },
       ]});
     });
-    if ((pg + 1) * 4 < today.length)
+    if ((pg + 1) * PER_PAGE < today.length)
       buttons.push({ label: "More", type: "control", symbol: "more", load: "today_" + (pg + 2), row: 3, col: 1 });
     buttons.push({ label: "Build my own", type: "category", symbol: "clothes", load: "build", row: 3, col: 4 });
     boards.push({ id: pid, name: "What will I wear today?", rows: 3, columns: 4, buttons });
