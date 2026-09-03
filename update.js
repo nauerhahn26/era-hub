@@ -123,12 +123,21 @@ async function check(port) {
 
 // Quiet background cadence: first look shortly after boot (let the network
 // settle), then every 6 hours. Failures just wait for the next tick.
-function start(port) {
+// `ready()` says whether the hub may restart itself right now: the boot
+// check used to fire 90 s in, which on a first launch is mid-wizard — the
+// hub restarted under the family's "Go" and the wizard stuck with its button
+// greyed (VM leg B, 9/3). A manual POST /update/check is never gated.
+const BOOT_MS = Number(process.env.ERA_UPDATE_BOOT_MS) || 90 * 1000;
+function start(port, ready = () => true) {
   if (!enabled) return;
-  setTimeout(() => { check(port).then(r => {
-    if (r.status !== "up-to-date") console.log("[update] boot check: " + r.status);
-  }); }, 90 * 1000).unref();
-  setInterval(() => { check(port); }, 6 * 60 * 60 * 1000).unref();
+  const boot = () => {
+    if (!ready()) { setTimeout(boot, BOOT_MS).unref(); return; }
+    check(port).then(r => {
+      if (r.status !== "up-to-date") console.log("[update] boot check: " + r.status);
+    });
+  };
+  setTimeout(boot, BOOT_MS).unref();
+  setInterval(() => { if (ready()) check(port); }, 6 * 60 * 60 * 1000).unref();
 }
 
 module.exports = { enabled, currentBuild, runningBuild, check, start, FEED };

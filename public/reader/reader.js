@@ -33,7 +33,8 @@
 const S = {
   session: "r" + Date.now(),
   childName: "",      // from /settings at boot — the shelf title and the "…'s story" badge
-  exitTo: "tdsnap",   // from /settings: where the door goes ("tdsnap" | "home") — names the tile
+  exitTo: "tdsnap",   // from /settings: where the door will REALLY go (doorGoes: TD Snap only
+                      // with an engine on the bus, else home) — names the tile
   index: [],          // /books/index.json rows {slug,title,cover,pages,hasVideo,authored}
   manifest: null,     // the open book's manifest
   slug: null,
@@ -478,7 +479,9 @@ async function boot() {
     // before setup, and "friend's story" is nobody's (QA 9/2: every book was
     // "Ellie's story" for every family)
     if (st.hasProfile && st.childName) { S.childName = st.childName; $("shelfTitle").textContent = st.childName + "'s Bookshelf"; }
-    if (st.exitTo === "home") S.exitTo = "home";
+    // doorGoes (hub ≥ 0.31.4) is what /kiosk/exit will answer; older hubs
+    // only say the setting
+    if ((st.doorGoes || st.exitTo) === "home") S.exitTo = "home";
   } catch { /* defaults stand — never block the shelf on settings */ }
 
   try {

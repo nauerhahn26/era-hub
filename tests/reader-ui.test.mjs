@@ -144,33 +144,51 @@ test("shelf: OLD layout — shelf-card grid, square cover, NO in-grid rest cell,
   await ctx.close();
 });
 
-// The door goes where Settings says (dad 9/3). The tile is named for its
-// destination, and both answers of the hub's /kiosk/exit are followed.
-test("exit tile: named for the door's destination; follows /kiosk/exit (closed stays, home navigates)", async () => {
+// The door goes where Settings says (dad 9/3). The tile is named for where
+// the door will REALLY go — TD Snap only when a gaze engine answers the bus
+// (VM leg B 9/3: a PC with no engine promised "Back to TD Snap" and went
+// home) — and both answers of the hub's /kiosk/exit are followed.
+test("exit tile: named for the door's REAL destination; follows /kiosk/exit (closed stays, home navigates)", async () => {
   const setExit = (v) => fetch(`${BASE}/settings`, { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ exitTo: v }) });
+  // a stand-in ERAgaze on its fixed port; skip that half (not fail) if a real one holds it
+  const http = await import("node:http");
+  const engine = http.createServer((q, s) => { s.writeHead(200).end("ok"); });
+  const bound = await new Promise((res) => { engine.once("error", () => res(false)); engine.listen(49155, "127.0.0.1", () => res(true)); });
   try {
     await setExit("home");
     const { ctx, page } = await makePage();
     const tile = page.locator("#shelfGrid .shelf-tdsnap-button");
     assert.equal(await tile.locator(".shelf-title").textContent(), "Back to New ERA");
     assert.equal(await tile.getAttribute("data-dwell-say"), "back to new era");
-    await tile.click();                                   // live hub, no engine → home
+    await tile.click();                                   // live hub → home
     await page.waitForURL(/\/home\/?$/, { timeout: 8000 });
     await ctx.close();
 
     await setExit("tdsnap");
-    const { ctx: c2, page: p2 } = await makePage();
-    const t2 = p2.locator("#shelfGrid .shelf-tdsnap-button");
-    assert.equal(await t2.locator(".shelf-title").textContent(), "Back to TD Snap");
-    let hits = 0;
-    await c2.route("**/kiosk/exit", (r) => { hits++; r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' }); });
-    await t2.click();
-    await p2.waitForTimeout(300);
-    assert.equal(hits, 1, "door POSTs /kiosk/exit exactly once");
-    assert.match(p2.url(), /\/reader\//, "closed: the hub is closing the kiosk — no navigation");
-    await c2.close();
-  } finally { await setExit("tdsnap"); }
+    if (bound) {
+      const { ctx: c2, page: p2 } = await makePage();
+      const t2 = p2.locator("#shelfGrid .shelf-tdsnap-button");
+      assert.equal(await t2.locator(".shelf-title").textContent(), "Back to TD Snap", "an engine on the bus: the door really goes to TD Snap");
+      let hits = 0;
+      await c2.route("**/kiosk/exit", (r) => { hits++; r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' }); });
+      await t2.click();
+      await p2.waitForTimeout(300);
+      assert.equal(hits, 1, "door POSTs /kiosk/exit exactly once");
+      assert.match(p2.url(), /\/reader\//, "closed: the hub is closing the kiosk — no navigation");
+      await c2.close();
+      engine.close();
+      await new Promise((r) => engine.once("close", r));
+    } else console.log("# 49155 busy — engine stand-in half skipped");
+
+    // Settings still says TD Snap, but no engine answers: the tile must not promise it
+    const { ctx: c3, page: p3 } = await makePage();
+    const t3 = p3.locator("#shelfGrid .shelf-tdsnap-button");
+    assert.equal(await t3.locator(".shelf-title").textContent(), "Back to New ERA", "no engine: the door goes home and the tile says so");
+    await t3.click();
+    await p3.waitForURL(/\/home\/?$/, { timeout: 8000 });
+    await c3.close();
+  } finally { if (bound && engine.listening) engine.close(); await setExit("tdsnap"); }
 });
 
 test("open book by tap: reading screen, narration audio PLAYS (no speechSynthesis)", async () => {

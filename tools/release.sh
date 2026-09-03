@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# release.sh <version> [--prerelease] — cut a New ERA suite release.
+# release.sh <version> [--prerelease] [--dry-run] — cut a New ERA suite release.
 # Server-driven (the machine that already runs the gate + holds the siblings):
 #   1. era-gate must be fully green (no release on a red gate, ever)
-#   2. build the payload WITH bundled node (era-scan enforced inside the build)
-#   3. checksums
+#   2. build: payload WITH bundled node (era-scan enforced inside), zip,
+#      installer, checksums, latest.json  (tools/build-dist.sh)
+#   3. VM e2e must be fully green: the very files about to be published,
+#      installed and driven on a pristine Windows 10 (tools/vm-e2e.sh)
 #   4. tag era-hub + GitHub Release with tarball + checksums + notes
+#   --dry-run: stop after 3 (build + both gates), publish nothing
 # The website's download links point at the latest release assets.
 set -euo pipefail
-V="${1:?usage: release.sh vX.Y.Z [--prerelease]}"
-PRE="${2:-}"
+V="${1:?usage: release.sh vX.Y.Z [--prerelease] [--dry-run]}"; shift
+PRE=""; DRY=0
+for a in "$@"; do case "$a" in --prerelease) PRE=1;; --dry-run) DRY=1;; *) echo "release.sh: unknown flag $a"; exit 2;; esac; done
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 DIST="$ROOT/dist/release-$V"
@@ -17,44 +21,20 @@ echo "== 1/4 gate =="
 bash "$HUB/tools/era-gate.sh" | tail -1 | tee /tmp/era-release-gate.txt
 grep -q " 0 failed" /tmp/era-release-gate.txt || { echo "GATE NOT GREEN — no release."; exit 1; }
 
-echo "== 2/4 payload =="
-bash "$HUB/tools/build-payload.sh" "$DIST/new-era-suite" --with-node
-TARBALL="$(ls -t "$DIST"/new-era-suite-*.tar.gz | head -1)"
-mv "$TARBALL" "$DIST/new-era-suite-$V.tar.gz"
+echo "== 2/4 build (payload, zip, installer, checksums, latest.json) =="
+bash "$HUB/tools/build-dist.sh" "$V" "$DIST"
 
-echo "== 2b/4 zip (what the website hands to Windows; Win10 can't open .tar.gz) =="
-( cd "$DIST" && python3 -m zipfile -c "new-era-suite.zip" new-era-suite/ )
+echo "== 3/4 VM e2e (the candidate installed and driven on a pristine Windows 10; the previous release self-updating to it) =="
+bash "$HUB/tools/vm-e2e.sh" "$DIST" | tee /tmp/era-release-vm-e2e.txt | tail -20
+grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
 
-echo "== 2c/4 installer (New-ERA-Setup.exe; signed iff era-family/data/signing.env exists — docs/signing-plan.md) =="
-NSIS="$ROOT/era-family/cache/nsis"
-# -DSIGN: makensis hands the uninstaller stub and the finished Setup.exe to
-# sign-installer.sh (!uninstfinalize / !finalize). Without a cert it prints
-# UNSIGNED and the build proceeds; with one, a signing failure fails the cut.
-NSISDIR="$NSIS/usr/share/nsis" "$NSIS/usr/bin/makensis" \
-  -DPAYLOAD="$DIST/new-era-suite" -DOUTFILE="$DIST/New-ERA-Setup.exe" -DVERSION="$V" \
-  -DSIGN="$HUB/tools/sign-installer.sh" \
-  "$HUB/tools/installer.nsi" | grep -E "^sign:|Total size|[Ee]rror"
-if [ -f "$ROOT/era-family/data/signing.env" ]; then
-  "$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode" verify -in "$DIST/New-ERA-Setup.exe" | grep -q "Signature verification: ok" \
-    || { echo "SIGNING CONFIGURED BUT Setup.exe NOT VERIFIED — no release."; exit 1; }
-fi
-
-echo "== 3/4 checksums =="
-( cd "$DIST" && sha256sum "new-era-suite-$V.tar.gz" "new-era-suite.zip" "New-ERA-Setup.exe" > checksums.txt && cat checksums.txt )
-# latest.json = the self-update feed: installed hubs poll releases/latest/
-# download/latest.json and update themselves when `build` is newer.
-BUILD="$(cat "$DIST/new-era-suite/VERSION")"
-SHA="$(head -1 "$DIST/checksums.txt" | cut -d' ' -f1)"   # tarball line = the updater's asset
-printf '{"version":"%s","build":"%s","sha256":"%s"}\n' "$V" "$BUILD" "$SHA" > "$DIST/latest.json"
-cat "$DIST/latest.json"
-
+if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V in $DIST — not tagged, not published."; exit 0; fi
 echo "== 4/4 tag + release =="
 git -C "$HUB" tag -f "$V"
 git -C "$HUB" push -q origin "refs/tags/$V" --force
 NOTES="New ERA suite $V — hub + Gaze-ready apps (Making Words, The Pencil, Morning Outfit Picker board, Music board with 40-second clips and offline playback) with bundled Node runtime.
 Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. (Windows may ask once: choose More info, then Run anyway.) The portable .zip works too. Uninstall never touches your data.
 sha256 in checksums.txt."
-cp "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz"   # stable name = the website's direct-download URL
 gh release create "$V" --repo nauerhahn26/new-era-releases --title "New ERA suite $V" \
   --notes "$NOTES" ${PRE:+--prerelease} \
   "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/new-era-suite.zip" "$DIST/New-ERA-Setup.exe" "$DIST/checksums.txt" "$DIST/latest.json"

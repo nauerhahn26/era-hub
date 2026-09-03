@@ -195,10 +195,19 @@
   go.addEventListener("click", async () => {
     go.disabled = true;
     const chosen = [...pick.querySelectorAll("input:checked")].map(c => c.dataset.id);
-    const r = await fetch("/setup", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ childName: name.value.trim(), dwellMs: parseInt(dwell.value, 10),
-                             apps: chosen }) });
-    if (r.ok) location.reload(); else { go.disabled = false; alert("Could not save — try again."); }
+    const body = JSON.stringify({ childName: name.value.trim(), dwellMs: parseInt(dwell.value, 10),
+                                  apps: chosen });
+    // The hub can be restarting under us (a self-update landing right as the
+    // family presses Go — leg B, 9/3: the fetch threw, the button stayed grey
+    // and nothing happened). Keep trying for a while before giving up.
+    let ok = false;
+    for (let i = 0; i < 20 && !ok; i++) {
+      try {
+        const r = await fetch("/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+        if (r.ok) ok = true; else break;
+      } catch { await new Promise(r => setTimeout(r, 1500)); }
+    }
+    if (ok) location.reload(); else { go.disabled = false; alert("Could not save — try again."); }
   });
 })();
 </script>

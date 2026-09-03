@@ -17,7 +17,14 @@ OUT="${1:-$HUB/dist/new-era-payload}"
 VERSION="$(date -u +%Y%m%d.%H%M)"
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/segment.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/segment.js" "$HUB/image-orient.js" "$HUB/predict-model.json" "$OUT/"
+# every local require of the hub's modules must resolve INSIDE the payload —
+# a module added to the repo but not to the list above shipped a hub that
+# died on its first line (packs.js, caught by the VM e2e 9/3, never by the
+# tier-1 gate, which runs from the checkout)
+for m in $(grep -ho 'require("\./[a-z-]*\(\.js\)\?")' "$OUT"/*.js | sed 's/require("\.\///; s/")//; s/\.js$//' | sort -u); do
+  [ -f "$OUT/$m.js" ] || { echo "build-payload: $m.js is required by the hub but not in the payload"; exit 1; }
+done
 cp -r "$HUB/vendor" "$OUT/vendor"   # HEIC decode (libheif, LGPL - see NOTICE) + jpeg-js
 # Garment cut-out (dad 9/1: "add the 50mb so trim is nice looking") — U^2-Net
 # u2netp, the same model her Python pipeline uses, run through ONNX Runtime's

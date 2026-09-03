@@ -92,6 +92,8 @@ test("POST /kiosk/exit → home when no engine answers (TD Snap chosen but unrea
   const r = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { action: "home" });
+  // ...and /settings tells the apps so (the Reader's tile is named for it)
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).doorGoes, "home", "no engine on the bus: doorGoes=home even though exitTo=tdsnap");
 });
 
 test("POST /kiosk/exit → closed when the engine takes the screen; → home when Settings says New ERA", async () => {
@@ -105,6 +107,8 @@ test("POST /kiosk/exit → closed when the engine takes the screen; → home whe
   });
   if (!bound) { console.log("# 49155 busy — engine stand-in skipped"); return; }
   try {
+    assert.equal((await (await fetch(`${BASE}/settings`)).json()).doorGoes, "tdsnap", "/settings says where the door really goes");
+    hits.length = 0;                                   // (that probe was /status)
     const r = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
     assert.deepEqual(await r.json(), { action: "closed" });
     assert.deepEqual(hits, ["/app/exit"], "TD Snap: the hub asks the engine to hand the screen over");
@@ -112,6 +116,7 @@ test("POST /kiosk/exit → closed when the engine takes the screen; → home whe
     await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ exitTo: "home" }) });
     hits.length = 0;
+    assert.equal((await (await fetch(`${BASE}/settings`)).json()).doorGoes, "home");
     const r2 = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
     assert.deepEqual(await r2.json(), { action: "home" });
     await new Promise((res) => setTimeout(res, 200));

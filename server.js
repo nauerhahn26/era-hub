@@ -107,6 +107,11 @@ const appInstalling = {};   // id -> true while a pack download runs
 function reconcileApps() {
   const enabled = loadEnabledApps();
   for (const app of APPS) {
+    // the OFF side too: an engine the family never chose but a previous
+    // build compiled and started anyway (v0.31.3, bug 38) is still running
+    // — and in Startup — after the self-update; the first door would hand
+    // the kiosk to it (leg B, 9/3). Stop it and its autostart at every boot.
+    if (app.engine && !enabled.includes(app.id) && appInstalled(app)) { stopGaze(); continue; }
     if (!enabled.includes(app.id) || appInstalled(app) || appInstalling[app.id]) continue;
     appInstalling[app.id] = true;
     (app.engine ? installGaze() : installPack(app))
@@ -239,6 +244,24 @@ async function installGaze() {
   }
   console.log("[gaze] installed");
 }
+// The engine turned OFF (wizard or Settings): stop OUR running build and its
+// autostart, or the next door still hands the screen to it (VM 9/3: the
+// wizard unticked ERAgaze, the engine kept running, the first door closed
+// the kiosk). Matched by path — a family build of the engine on Ellie's
+// device is never ours to stop.
+function stopGaze() {
+  console.log("[gaze] turned off — stopping the engine and its autostart");
+  const exe = path.join(GAZE_DIR, "ERAgaze.exe");
+  appShortcut({ title: "ERAgaze", path: null, exe }, false);   // Desktop + Start menu + Startup
+  if (process.platform !== "win32") return;
+  const { spawn } = require("child_process");
+  try {
+    spawn("powershell.exe", ["-NoProfile", "-Command",
+      `Get-Process ERAgaze -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq '${exe}' } | Stop-Process -Force`],
+      { stdio: "ignore", windowsHide: true })
+      .on("error", (e) => console.error("[gaze] stop: " + e.message));
+  } catch (e) { console.error("[gaze] stop: " + e.message); }
+}
 // Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
 // best-effort — the home tile is the source of truth, the .lnk a convenience).
 // Minimize our kiosk windows so an externally opened window (browser page,
@@ -275,18 +298,38 @@ function stepAsideFromKiosk() {
 // foreground our window, but it will let us MINIMIZE the covering browsers;
 // the kiosk is then the visible surface. Same proven spawn shape as
 // stepAsideFromKiosk, inverted filter (non-kiosk browser windows), logged.
+// Then the kiosk itself is SETTLED: on a cold first launch Edge's full-screen
+// window sometimes lands at (10,10) with the taskbar over it (VM 9/3, four
+// runs out of ~eight — a race Edge loses while the disk is still busy) and
+// the focus stays with the desktop. SetWindowPos puts it on the screen,
+// SetForegroundWindow gives it the focus; when Windows refuses (a background
+// process may not foreground) a minimize+restore of the window is allowed
+// and does it — proven from the VM. Waits up to 2 min for the window.
 function clearStageOnce() {
   if (process.platform !== "win32") return;
   const marker = path.join(DATA, ".first-launch-done");
   if (fs.existsSync(marker)) return;
   try { fs.writeFileSync(marker, new Date().toISOString()); } catch {}
   const { spawn } = require("child_process");
+  const dll = "[DllImport(" + JSON.stringify("user32.dll") + ")] public static extern ";
   const ps =
-    "Add-Type -Name W -Namespace U -MemberDefinition '[DllImport(" + JSON.stringify("user32.dll") + ")] public static extern bool ShowWindow(IntPtr h, int n);'; " +
-    "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" + " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
-    "Where-Object { $_.CommandLine -notlike '*kiosk-profile*' -and $_.CommandLine -notlike '*--type=*' } | ForEach-Object { " +
+    "Add-Type -Name W -Namespace U -MemberDefinition '" +
+    dll + "bool ShowWindow(IntPtr h, int n); " +
+    dll + "bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f); " +
+    dll + "bool SetForegroundWindow(IntPtr h); " +
+    dll + "IntPtr GetForegroundWindow(); " +
+    dll + "int GetSystemMetrics(int n);'; " +
+    "$browsers = { Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" + " or Name=" + "''" + "msedge.exe" + "''" + "' | Where-Object { $_.CommandLine -notlike '*--type=*' } }; " +
+    "& $browsers | Where-Object { $_.CommandLine -notlike '*kiosk-profile*' } | ForEach-Object { " +
     "$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; " +
-    "if ($p -and $p.MainWindowHandle -ne 0) { 'cleared ' + $_.ProcessId + ' rc ' + [U.W]::ShowWindow($p.MainWindowHandle, 6) } }";
+    "if ($p -and $p.MainWindowHandle -ne 0) { 'cleared ' + $_.ProcessId + ' rc ' + [U.W]::ShowWindow($p.MainWindowHandle, 6) } }; " +
+    "$k = $null; for ($i = 0; $i -lt 24 -and -not $k; $i++) { " +
+    "$k = & $browsers | Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; " +
+    "if (-not $k) { Start-Sleep -Seconds 5 } }; " +
+    "if ($k) { $h = $k.MainWindowHandle; " +
+    "'settle ' + $k.Id + ' pos ' + [U.W]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, [U.W]::GetSystemMetrics(0), [U.W]::GetSystemMetrics(1), 0x40) + ' fg ' + [U.W]::SetForegroundWindow($h); " +
+    "if ([U.W]::GetForegroundWindow() -ne $h) { 'settle min ' + [U.W]::ShowWindow($h, 6); Start-Sleep -Milliseconds 700; 'settle restore ' + [U.W]::ShowWindow($h, 9) + ' fg ' + [U.W]::SetForegroundWindow($h) }; " +
+    "'settle front ' + ([U.W]::GetForegroundWindow() -eq $h) } else { 'settle: no kiosk window in 2 min' }";
   setTimeout(() => {
     try {
       const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
@@ -1059,8 +1102,16 @@ const server = http.createServer((req, res) => {
     } catch {}
     try { s = { ...s, ...JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")) }; } catch {}
     s.voiceId = loadTtsCfg().voiceId;
-    res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-    res.end(JSON.stringify(s));
+    // where the door will ACTUALLY go: TD Snap needs a gaze engine on the
+    // bus (Ellie's device runs its own); without one /kiosk/exit answers
+    // home — so a tile named for the door (the Reader's) must not promise
+    // "Back to TD Snap" on a PC that has none (VM leg B, 9/3: a fresh
+    // v0.31.3 profile showed exactly that). Same probe as the door itself.
+    (s.exitTo === "tdsnap" ? gazeBusAlive() : Promise.resolve(false)).then((alive) => {
+      s.doorGoes = alive ? "tdsnap" : "home";
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify(s));
+    });
     return;
   }
   if (req.method === "POST" && req.url === "/settings") {
@@ -1118,6 +1169,7 @@ const server = http.createServer((req, res) => {
             JSON.stringify({ enabled: chosen.map(a => a.id) }, null, 2));
           for (const a of APPS) appShortcut(a, chosen.some(c => c.id === a.id));
           appShortcut({ title: "New ERA", path: "/home/" }, true);   // the home door
+          if (!chosen.some(a => a.engine)) stopGaze();   // unticked: an engine already up must go
           reconcileApps();   // chosen-but-missing apps (the gaze engine) install now
         }
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
@@ -1424,6 +1476,7 @@ const server = http.createServer((req, res) => {
         fs.writeFileSync(path.join(DATA, "apps.json"),
           JSON.stringify({ enabled: APPS.map(a => a.id).filter(x => set.includes(x)) }, null, 2));
         appShortcut(app, enabled);   // Windows: desktop/start-menu .lnk follows the toggle
+        if (app.engine && !enabled) stopGaze();
         // enabling an app whose files were never installed REALLY installs it
         if (enabled && !appInstalled(app) && !appInstalling[app.id]) {
           appInstalling[app.id] = true;
@@ -1718,12 +1771,22 @@ server.on("error", (e) => {
 });
 server.on("listening", () => {
   console.log("era-hub on http://" + BIND + ":" + PORT);
-  updater.start(PORT);   // installed payloads only; checkouts are a no-op
+  // installed payloads only; checkouts are a no-op. Never restart under the
+  // welcome wizard: the timers wait for a profile (leg B, 9/3)
+  updater.start(PORT, () => HAS_PROFILE);
   drive.start(DATA);     // Google Drive content mirror (no-op until connected)
   drive.onSynced = () => clothing.regenerate(true).catch(() => {});   // fresh photos -> fresh board
   clothing.start(DATA);  // the Clothing Picker generator (no-op without photos)
   clearStageOnce();      // first boot after install: minimize covering browsers
-  setTimeout(reconcileApps, 5000).unref();   // installer-chosen apps install at first boot
+  // installer-chosen apps install at first boot — but the wizard has the final
+  // say, and until it is answered the installer's ticks are only its pre-fill.
+  // VM 9/3: a silent install ticks everything, the engine compiled and STARTED
+  // before the family unticked it, and the first door handed their kiosk to
+  // an engine they never chose.
+  setTimeout(() => {
+    if (!HAS_PROFILE) { console.log("[apps] reconcile deferred until the wizard is answered"); return; }
+    reconcileApps();
+  }, 5000).unref();
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;
