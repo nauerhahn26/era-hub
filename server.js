@@ -238,7 +238,7 @@ async function installGaze() {
     }
   }
   // 3. shortcuts + autostart + start it (skip start when another engine runs)
-  appShortcut({ title: "ERAgaze", path: null, exe: path.join(GAZE_DIR, "ERAgaze.exe") }, true);
+  appShortcut({ id: "eragaze", title: "ERAgaze", path: null, exe: path.join(GAZE_DIR, "ERAgaze.exe") }, true);
   if (!(await gazeBusAlive())) {
     spawn(path.join(GAZE_DIR, "ERAgaze.exe"), [], { cwd: GAZE_DIR, detached: true, stdio: "ignore", windowsHide: true }).unref();
   }
@@ -252,7 +252,7 @@ async function installGaze() {
 function stopGaze() {
   console.log("[gaze] turned off — stopping the engine and its autostart");
   const exe = path.join(GAZE_DIR, "ERAgaze.exe");
-  appShortcut({ title: "ERAgaze", path: null, exe }, false);   // Desktop + Start menu + Startup
+  appShortcut({ id: "eragaze", title: "ERAgaze", path: null, exe }, false);   // Desktop + Start menu + Startup
   if (process.platform !== "win32") return;
   const { spawn } = require("child_process");
   try {
@@ -342,10 +342,20 @@ function clearStageOnce() {
   }, 9000);   // the kiosk browser needs a moment to exist before the stage clears
 }
 
+// Every app's own icon — Ellie's originals from her i13 (dad 9/3: "use icons
+// from Ellie's original for all the new era products"), Music/Movies drawn to
+// match. public/icons/<id>.png feeds the home tile, <id>.ico the shortcut;
+// an app without one falls back to the suite icon.
+function appIcon(app, ext) {
+  const f = app.id ? path.join(__dirname, "public", "icons", app.id + "." + ext) : "";
+  return f && fs.existsSync(f) ? f : null;
+}
+
 function appShortcut(app, enabled) {
   if (process.platform !== "win32") return;
   const { spawn } = require("child_process");
   const target = app.exe || path.join(__dirname, "start-hub.bat");
+  const icon = appIcon(app, "ico") || path.join(__dirname, "public", "favicon.ico");
   const dirs = app.exe
     ? `@([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'), [Environment]::GetFolderPath('Startup'))`
     : `@([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))`;
@@ -356,9 +366,9 @@ function appShortcut(app, enabled) {
       `$l.TargetPath = '${target}';` +
       (app.exe ? `` : `$l.Arguments = '${PORT} "${app.path}"';`) +
       `$l.WorkingDirectory = '${__dirname}';` +
-      // every shortcut wore a generic gear (QA 9/1) — carry the suite icon so
-      // a parent can find the app on a crowded desktop
-      `$l.IconLocation = '${path.join(__dirname, "public", "favicon.ico")},0';` +
+      // every shortcut wore a generic gear (QA 9/1) — carry an icon so a
+      // parent can find the app on a crowded desktop
+      `$l.IconLocation = '${icon},0';` +
       `$l.WindowStyle = 7; $l.Save() }` +   // 7 = minimized: the launcher console never pops up
       ``
     : `foreach ($d in ${dirs}) {` +
@@ -1458,6 +1468,7 @@ const server = http.createServer((req, res) => {
     const enabled = loadEnabledApps();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ apps: APPS.map(a => ({ id: a.id, title: a.title, sub: a.sub, path: a.path,
+      icon: appIcon(a, "png") ? "/icons/" + a.id + ".png" : null,
       engine: !!a.engine, enabled: enabled.includes(a.id), installed: appInstalled(a),
       installing: !!appInstalling[a.id],
       building: a.id === "board" ? clothing.isBuilding() : false })) }));

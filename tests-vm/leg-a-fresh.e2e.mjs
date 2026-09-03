@@ -86,6 +86,16 @@ test("wizard: name + dwell + Making Words & The Pencil only → the launcher gre
   const apps = vm.hubGet("/apps").apps;
   assert.deepEqual(apps.filter((a) => a.enabled).map((a) => a.id), ["making-words", "pencil"]);
   assert.ok(!apps.find((a) => a.id === "eragaze").enabled, "the gaze engine stays off unless chosen");
+  // the chosen apps' desktop shortcuts wear their own icons — Ellie's originals
+  // (dad 9/3), not the suite favicon every .lnk used to carry
+  await vm.waitFor(() => vm.exists(GUEST_HOME + "\\Desktop\\Making Words.lnk") && { ok: 1 }, { what: "Making Words.lnk on the desktop" });
+  vm.bat("lnk-icons", [
+    `powershell -NoProfile -Command "$w = New-Object -ComObject WScript.Shell; foreach ($n in 'Making Words','The Pencil') { $l = $w.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) ($n + '.lnk'))); Write-Output ($n + '=' + $l.IconLocation) }" > ${GUEST_HOME}\\lnk-icons.txt`,
+  ]);
+  const icons = vm.guestText("lnk-icons.txt");
+  assert.match(icons, /Making Words=.*\\public\\icons\\making-words\.ico,0/, "Making Words shortcut icon — got " + JSON.stringify(icons));
+  assert.match(icons, /The Pencil=.*\\public\\icons\\pencil\.ico,0/, "The Pencil shortcut icon — got " + JSON.stringify(icons));
+  assert.ok(vm.exists(INSTDIR + "\\public\\icons\\pencil.ico"), "the icon file the shortcut points at is installed");
   vm.shot("launcher");
 });
 

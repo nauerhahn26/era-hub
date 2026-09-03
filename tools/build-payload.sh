@@ -52,6 +52,7 @@ cp -r "$HUB/public/settings" "$OUT/public/settings"
 cp -r "$HUB/public/home" "$OUT/public/home"
 cp -r "$HUB/public/reader" "$OUT/public/reader"
 cp "$HUB/public/favicon.ico" "$OUT/public/favicon.ico"
+cp -r "$HUB/public/icons" "$OUT/public/icons"   # per-app icons (tiles + shortcuts)
 
 # --with-node: bundle a portable Windows Node runtime (no install needed)
 if [ "${2:-}" = "--with-node" ] || [ "${1:-}" = "--with-node" ]; then
