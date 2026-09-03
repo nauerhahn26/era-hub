@@ -143,6 +143,7 @@
     </div>
     <div class="row" id="dlAlways" style="display:none; margin-top:10px">
       <button id="dlSyncNow">🔄 Sync now</button>
+      <button id="dlOutfitsNow">👕 New outfits from new photos</button>
       <button id="dlOpenFolder">📂 Open the folder</button>
     </div>
     <div class="status" id="driveStatus"></div>
@@ -765,6 +766,10 @@ $("dlUse").onclick=async()=>{
   else toast("That folder is outside Google Drive",false);
 };
 $("dlSyncNow").onclick=async()=>{ toast("Sync started"); await fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); };
+// dad 9/3: added clothing photos after the first run and wanted to re-run
+// today's outfits with them right away (the hub does it by itself within
+// ~10 minutes of a sync; the Clothing Picker's footer shows the progress)
+$("dlOutfitsNow").onclick=async()=>{ toast("Looking for new clothing photos — the Clothing Picker shows the progress"); await fetch("/clothing/regenerate",{method:"POST"}); };
 $("dlOpenFolder").onclick=async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"folder"})}); };
 setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
 
