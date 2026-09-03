@@ -816,10 +816,13 @@ const CURATED_VOICES = [
   { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda — friendly" },
   { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily — warm British" }
 ];
+// ERA_ELEVEN_URL: a stand-in for the tests, like ERA_RESEND_URL (bug 14: the
+// key-check must be proven against a server that says no).
+const ELEVEN_URL = process.env.ERA_ELEVEN_URL || "https://api.elevenlabs.io";
 // Is this ElevenLabs key real? (cheap call, no synthesis, no quota spend)
 async function verifyTtsKey(key) {
   try {
-    const r = await fetch("https://api.elevenlabs.io/v1/user/subscription",
+    const r = await fetch(ELEVEN_URL + "/v1/user/subscription",
       { headers: { "xi-api-key": key }, signal: AbortSignal.timeout(15000) });
     if (r.ok) {
       let tier = "";
@@ -843,7 +846,7 @@ async function elevenTts(cfg, text) {
   const key = crypto.createHash("sha1").update(cfg.voiceId + "|" + cfg.modelId + "|" + text).digest("hex");
   const file = path.join(TTS_CACHE, key + ".mp3");
   if (fs.existsSync(file)) return fs.readFileSync(file);       // repeat lines are free
-  const r = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + cfg.voiceId +
+  const r = await fetch(ELEVEN_URL + "/v1/text-to-speech/" + cfg.voiceId +
                         "?output_format=mp3_22050_32", {
     method: "POST",
     headers: { "xi-api-key": cfg.apiKey, "Content-Type": "application/json" },

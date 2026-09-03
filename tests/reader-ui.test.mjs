@@ -72,6 +72,7 @@ before(async () => {
     id: "00000000-0000-4000-8000-000000000002",
     slug: "luna-the-fox",
     title: "Luna the Fox",
+    authored: true,          // a family-made book — wears the "…'s story" badge
     exportedAt: "2026-08-24T00:00:00Z",
     narration: { provider: "synthetic", model: "fixture", voice: "none" },
     cover: "cover.jpg",
@@ -328,5 +329,57 @@ test("LAW: fresh client with no saved progress opens at page 1", async () => {
   const { ctx, page } = await makePage();          // new context = clean localStorage
   await openLuna(page);
   assert.equal((await state(page)).page, 0, "nothing client-side -> page 1 (resume-from-pool is a follow-up)");
+  await ctx.close();
+});
+
+// Bug 32 (QA 9/2): every authored book was badged "Ellie's story" for every
+// family. The badge and the shelf heading take her name from Settings, and
+// say "My" until the family has given one.
+test("the authored badge and shelf heading carry HER name from Settings, 'My' before setup (bug 32)", async () => {
+  let { ctx, page } = await makePage();            // no profile.json yet
+  const badge = page.locator("#shelfGrid .shelf-authored-badge").first();
+  await badge.waitFor();
+  assert.equal((await badge.textContent()).trim(), "My story");
+  assert.equal(await page.locator("#shelfTitle").textContent(), "My Bookshelf");
+  await ctx.close();
+
+  const r = await fetch(`${BASE}/setup`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ childName: "Maya" }) });
+  assert.ok(r.ok, "setup saved");
+  ({ ctx, page } = await makePage());
+  await page.waitForFunction(() => document.getElementById("shelfTitle").textContent.startsWith("Maya"));
+  assert.equal((await page.locator("#shelfGrid .shelf-authored-badge").first().textContent()).trim(), "Maya's story");
+  assert.equal(await page.locator("#shelfTitle").textContent(), "Maya's Bookshelf");
+  assert.doesNotMatch(await page.evaluate(() => document.body.innerText), /Ellie/, "nobody else's name on the shelf");
+  await ctx.close();
+});
+
+// Bug 31 (VM QA 9/2): an empty bookshelf never noticed the first Drive book
+// without a relaunch. The empty shelf keeps asking for the index and the
+// cover appears on its own. The hub's index is stood in for so the poll can
+// be driven without waiting 20 real seconds.
+test("an empty shelf notices the first book without a relaunch (bug 31)", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+  await ctx.addInitScript(() => {
+    window.__timers = [];
+    const si = window.setInterval.bind(window);
+    window.setInterval = (fn, ms) => { window.__timers.push({ fn, ms }); return si(fn, ms); };
+  });
+  let empty = true;
+  await ctx.route("**/books/index.json", r => empty
+    ? r.fulfill({ status: 200, contentType: "application/json", body: "[]" }) : r.continue());
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
+  await page.waitForFunction(() => window.Reader && window.Reader.state().shelfCount === 0);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), false, "'No books yet' shows");
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0);
+  const poll = await page.evaluate(() => (window.__timers.find(t => t.ms === 20000) || {}).ms);
+  assert.equal(poll, 20000, "the empty shelf keeps asking for the index");
+
+  empty = false;                                   // Drive delivered the first book
+  await page.evaluate(() => window.__timers.filter(t => t.ms === 20000).forEach(t => t.fn()));
+  await page.waitForFunction(() => window.Reader.state().shelfCount === 1);
+  await page.locator("#shelfGrid .shelf-card-button", { hasText: "Luna the Fox" }).waitFor();
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), true, "the notice is gone");
   await ctx.close();
 });

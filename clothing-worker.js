@@ -670,6 +670,7 @@ function forBand(items, band) {
 // dropping leading adjectives rather than truncating a word.
 function shortLabel(raw) {
   let n = String(raw || "Clothes").trim().replace(/\s+/g, " ");
+  n = n.charAt(0).toUpperCase() + n.slice(1);   // never start a tile lowercase (QA 9/1)
   if (n.length <= 22) return n;
   // Squeeze the MIDDLE, never the ends: the first word is usually the colour
   // and the last is the garment, so "Light wash denim shorts" becomes "Light

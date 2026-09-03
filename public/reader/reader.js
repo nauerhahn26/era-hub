@@ -474,7 +474,10 @@ async function boot() {
       if (typeof st.settleMs === "number" && isFinite(st.settleMs))
         Dwell.set({ settleMs: Math.max(0, Math.min(2000, st.settleMs)) });
     }
-    if (st.childName) { S.childName = st.childName; $("shelfTitle").textContent = st.childName + "'s Bookshelf"; }
+    // her name only once the family has given one: the hub answers "friend"
+    // before setup, and "friend's story" is nobody's (QA 9/2: every book was
+    // "Ellie's story" for every family)
+    if (st.hasProfile && st.childName) { S.childName = st.childName; $("shelfTitle").textContent = st.childName + "'s Bookshelf"; }
     if (st.exitTo === "home") S.exitTo = "home";
   } catch { /* defaults stand — never block the shelf on settings */ }
 

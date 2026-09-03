@@ -55,6 +55,7 @@ const ANSWERS = [
   { name: "Sunflower dress", category: "dress", warmth: "warm", rotate_deg: 0, crop: { x: 0.2, y: 0, w: 0.6, h: 1 } },
 ];
 let calls = 0;
+let forceAnswer = null;         // when set, every photo is described this way (label tests)
 let flaky = 0;                  // >0 = answer this many calls with a 503 first
 let throttleModel = "";         // a model id that always answers 429
 let throttleAfter = 0;          // ...but only once `calls` passes this (a quota that runs out mid-build)
@@ -84,7 +85,7 @@ before(async () => {
       }
       // answer by PHOTO, not call index: retries and later tests must not
       // shift which garment the fake describes (test-order pollution, 9/1)
-      const answer = ANSWERS[wire.length % ANSWERS.length];
+      const answer = forceAnswer || ANSWERS[wire.length % ANSWERS.length];
       const text = "Here you go:\n" + JSON.stringify(answer);
       let out;
       if (req.url === "/v1/messages") {                       // anthropic
@@ -551,6 +552,51 @@ test("a combo label is budgeted as a whole, so it never clips", async () => {
   // bottom keeps the colour that distinguishes one pair of shorts from another
   assert.ok(combos.some(l => /green shorts/i.test(l)),
     `the bottom kept its colour, got ${JSON.stringify(combos)}`);
+});
+
+// Bugs 10 + 11 (QA 9/1): a long AI name clipped mid-word on the plate, and a
+// tile could start lowercase ("graphic tee + ..."). The name is squeezed in
+// the MIDDLE (colour first, garment last — what a parent would have written)
+// and every tile starts with a capital, single garment or combo.
+test("a long or lowercase AI name lands as a short, capitalised label (bugs 10, 11)", async () => {
+  forceAnswer = { name: "light wash denim shorts", category: "shorts", warmth: "hot",
+    rotate_deg: 0, crop: { x: 0, y: 0, w: 1, h: 1 } };
+  try {
+    makeJpg(path.join(TMP, "clothing", "photo_long.jpg"), 120, 160, 210);
+    await clothing.regenerate(true);
+  } finally { forceAnswer = null; }
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const it = cat.items["photo_long.jpg"];
+  assert.ok(it && it.ok, "the photo was catalogued");
+  assert.equal(it.name, "Light denim shorts", "middle squeezed, colour and garment kept, capitalised");
+  assert.ok(it.name.length <= 22, "fits the plate");
+
+  // a combo of two lowercase halves is sentence-cased on both sides (the
+  // names are edited in place — a rewritten catalogue would re-ingest every
+  // photo through the model, ~2 min)
+  const top = Object.values(cat.items).find(i => i.ok && i.category === "top");
+  top.name = "graphic tee"; it.name = "green shorts";
+  fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify(cat));
+  await clothing.regenerate(true);
+  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const combos = [];
+  for (const b of rec.boards) for (const btn of b.buttons || [])
+    if (btn.type === "outfit") combos.push(btn.label);
+  assert.ok(combos.some(l => l.startsWith("Graphic tee + ")), `top half cased, got ${JSON.stringify(combos)}`);
+  assert.ok(combos.some(l => l.endsWith(" + Green shorts")), `bottom half cased, got ${JSON.stringify(combos)}`);
+  for (const l of combos) assert.doesNotMatch(l, /(^| \+ )[a-z]/, "no tile half starts lowercase: " + l);
+  for (const l of combos) assert.match(l, /^[A-Z]/, "no tile starts lowercase: " + l);
+});
+
+// Bug 22 (dad 9/1: "the shorts image are pants"): both tiles of "Pants or
+// shorts?" wore the same jeans pictogram. Shorts is pinned to ARASAAC 13638.
+test("the Shorts tile does not wear the Pants pictogram (bug 22)", () => {
+  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const b = rec.boards.find(x => x.id === "choose_bottom");
+  assert.ok(b, "choose_bottom board exists");
+  const sym = label => b.buttons.find(x => x.label === label).symbol;
+  assert.equal(sym("Shorts"), "13638");
+  assert.notEqual(sym("Shorts"), sym("Pants"));
 });
 
 // ---- her favourites (audit 9/2) ----
