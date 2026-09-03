@@ -310,6 +310,41 @@ test("the segmentation model and its runtime are present and loadable", async ()
   assert.ok(out === null || (out.kept > 0.02 && out.kept < 0.97), "no blank tiles");
 });
 
+// Dad 9/3: "some extra pieces in places that need to be cleaned up" — the
+// model keeps every above-threshold speck (a bit of floor, a label, a
+// shadow). Only the garment's main piece(s) survive: the largest blob plus
+// anything at least 5% of it (a two-piece set), never the specks.
+test("stray specks around the garment are dropped; a real second piece is kept", () => {
+  const seg = require("./segment.js");
+  const W = 40, H = 40;
+  const grid = () => new Uint8Array(W * H);
+  const fill = (b, x0, y0, x1, y1) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) b[y * W + x] = 1; };
+  const count = (b) => b.reduce((n, v) => n + v, 0);
+
+  // a 20×20 shirt, three 1–2 px specks, and one 1×3 sliver touching nothing
+  const b = grid();
+  fill(b, 10, 10, 30, 30);
+  fill(b, 2, 2, 3, 3); fill(b, 36, 5, 38, 6); fill(b, 5, 35, 6, 38); fill(b, 33, 33, 34, 34);
+  assert.equal(seg.keepMainPieces(b, W, H), 1, "one piece: the shirt");
+  assert.equal(count(b), 400, "every speck gone, the shirt intact");
+  assert.equal(b[2 * W + 2], 0); assert.equal(b[35 * W + 5], 0);
+
+  // shorts (largest) + a 6×6 belt = 9% of it: a legitimate second piece stays
+  const c = grid();
+  fill(c, 2, 2, 22, 22); fill(c, 30, 30, 36, 36); fill(c, 0, 39, 2, 40);
+  assert.equal(seg.keepMainPieces(c, W, H), 2, "two pieces");
+  assert.equal(count(c), 400 + 36, "belt kept, the 2 px sliver dropped");
+
+  // diagonal touch is NOT a connection (4-neighbourhood): a corner speck goes
+  const d = grid();
+  fill(d, 10, 10, 20, 20); d[9 * W + 9] = 1;
+  seg.keepMainPieces(d, W, H);
+  assert.equal(d[9 * W + 9], 0);
+
+  // an empty mask is a no-op, not a crash
+  assert.equal(seg.keepMainPieces(grid(), W, H), 0);
+});
+
 // A picture can go missing while its catalogue entry survives — a half-restored
 // backup, a tidied folder, or (QA 9/2) a wipe that lands while the worker is
 // still holding the catalogue in memory. Before this, the item was skipped

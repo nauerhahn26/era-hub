@@ -75,6 +75,36 @@ function toTensorInput(img) {
   return f;
 }
 
+// Keep only the garment's main piece(s) of a binary mask (Uint8Array, 1 =
+// keep, W×H): the largest 4-connected blob plus any blob at least `minFrac`
+// of its area (a two-piece set, a strap the model split off). Everything
+// smaller is a speck of floor, a label, a shadow the model liked — dad 9/3:
+// "some extra pieces in places that need to be cleaned up". Returns the
+// number of pieces kept; mutates `bin` in place.
+function keepMainPieces(bin, W, H, minFrac) {
+  const label = new Int32Array(W * H);       // 0 = unvisited/background, else blob id
+  const area = [0];
+  const stack = new Int32Array(W * H);
+  for (let start = 0; start < W * H; start++) {
+    if (!bin[start] || label[start]) continue;
+    const id = area.length; area.push(0);
+    let sp = 0; stack[sp++] = start; label[start] = id;
+    while (sp) {
+      const i = stack[--sp]; area[id]++;
+      const x = i % W, y = (i - x) / W;
+      const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
+      for (const j of nb) if (j >= 0 && bin[j] && !label[j]) { label[j] = id; stack[sp++] = j; }
+    }
+  }
+  let largest = 0;                            // (no spread: a noisy mask has thousands of blobs)
+  for (const a of area) if (a > largest) largest = a;
+  if (!largest) return 0;
+  const keep = area.map(a => a >= largest * (minFrac == null ? 0.05 : minFrac));
+  keep[0] = false;
+  for (let i = 0; i < W * H; i++) if (bin[i] && !keep[label[i]]) bin[i] = 0;
+  return keep.filter(Boolean).length;
+}
+
 // Run the model and paint everything it calls background pure white. Returns
 // null when the runtime is unavailable so the caller can fall back.
 async function cutOut(img, opts) {
@@ -89,6 +119,11 @@ async function cutOut(img, opts) {
   for (let i = 0; i < mask.length; i++) { if (mask[i] < lo) lo = mask[i]; if (mask[i] > hi) hi = mask[i]; }
   const span = hi - lo || 1;
   const cut = (opts && opts.threshold) || 0.5;
+  // threshold on the model's grid, then drop the stray specks there (cheap:
+  // 320×320 regardless of photo size) before painting the full-size photo
+  const bin = new Uint8Array(SIZE * SIZE);
+  for (let i = 0; i < bin.length; i++) bin[i] = (mask[i] - lo) / span >= cut ? 1 : 0;
+  const pieces = keepMainPieces(bin, SIZE, SIZE, opts && opts.minPiece);
 
   const { data, width: w, height: h } = img;
   const res = Buffer.from(data);
@@ -97,9 +132,8 @@ async function cutOut(img, opts) {
     const my = Math.min(SIZE - 1, Math.round((y + 0.5) * SIZE / h - 0.5));
     for (let x = 0; x < w; x++) {
       const mx = Math.min(SIZE - 1, Math.round((x + 0.5) * SIZE / w - 0.5));
-      const v = (mask[my * SIZE + mx] - lo) / span;
       const o = (y * w + x) * 4;
-      if (v < cut) { res[o] = 255; res[o + 1] = 255; res[o + 2] = 255; res[o + 3] = 255; }
+      if (!bin[my * SIZE + mx]) { res[o] = 255; res[o + 1] = 255; res[o + 2] = 255; res[o + 3] = 255; }
       else keptPx++;
     }
   }
@@ -107,9 +141,9 @@ async function cutOut(img, opts) {
   // no clear subject — say so rather than hand back a blank tile.
   const frac = keptPx / (w * h);
   if (frac < 0.02 || frac > 0.97) return null;
-  return { data: res, width: w, height: h, kept: frac };
+  return { data: res, width: w, height: h, kept: frac, pieces };
 }
 
 function available() { return !unavailable; }
 
-module.exports = { cutOut, available, modelPath };
+module.exports = { cutOut, available, modelPath, keepMainPieces };
