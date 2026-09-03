@@ -33,6 +33,7 @@
 const S = {
   session: "r" + Date.now(),
   childName: "",      // from /settings at boot — the shelf title and the "…'s story" badge
+  exitTo: "tdsnap",   // from /settings: where the door goes ("tdsnap" | "home") — names the tile
   index: [],          // /books/index.json rows {slug,title,cover,pages,hasVideo,authored}
   manifest: null,     // the open book's manifest
   slug: null,
@@ -143,18 +144,21 @@ function renderShelf() {
     }
     grid.appendChild(card);
   }
-  // Back to TD Snap — old shelf's exit tile; leaving the app is the
-  // highest-consequence hold (EXIT_HOLD_MS 2400, ux-contract §C).
+  // Back to TD Snap / New ERA — old shelf's exit tile, named for where the
+  // door goes (Settings, dad 9/3); leaving the app is the highest-consequence
+  // hold (EXIT_HOLD_MS 2400, ux-contract §C).
+  const exitLabel = S.exitTo === "home" ? "Back to New ERA" : "Back to TD Snap";
   const exitCard = document.createElement("div");
   exitCard.className = "shelf-card";
   const exitBtn = document.createElement("div");
   exitBtn.id = "btnExit";
   exitBtn.className = "dwell dwell-button shelf-tdsnap-button";
   exitBtn.setAttribute("data-dwell-ms", "2400");
-  exitBtn.setAttribute("data-dwell-say", "back to TD Snap");
-  exitBtn.setAttribute("aria-label", "Back to TD Snap");
-  exitBtn.innerHTML = '<span class="shelf-tdsnap-icon" aria-hidden="true">\u{1F4AC}</span>' +
-    '<span class="shelf-title">Back to TD Snap</span>';
+  exitBtn.setAttribute("data-dwell-say", exitLabel.toLowerCase());
+  exitBtn.setAttribute("aria-label", exitLabel);
+  exitBtn.innerHTML = '<span class="shelf-tdsnap-icon" aria-hidden="true">' +
+    (S.exitTo === "home" ? "\u{1F3E0}" : "\u{1F4AC}") + '</span>' +
+    '<span class="shelf-title">' + exitLabel + '</span>';
   exitBtn.addEventListener("click", exitApp);
   exitCard.appendChild(exitBtn);
   grid.appendChild(exitCard);
@@ -162,11 +166,12 @@ function renderShelf() {
 
 async function exitApp() {
   log("door", {});
-  try {
-    const r = await fetch("http://127.0.0.1:49155/app/exit", { method: "POST" });
-    if (r.ok) return;                            // ERAgaze closes this kiosk now
-  } catch { /* no engine here — web fallback */ }
-  location.href = "/home/";   // product exit: back to the hub
+  // The hub decides (Settings > where the door goes): "closed" = ERAgaze took
+  // the screen and this kiosk is closing; anything else = New ERA's home.
+  let action = "home";
+  try { action = (await (await fetch("/kiosk/exit", { method: "POST" })).json()).action; } catch {}
+  if (action === "closed") return;
+  location.href = "/home/";
 }
 
 async function openBook(slug) {
@@ -470,6 +475,7 @@ async function boot() {
         Dwell.set({ settleMs: Math.max(0, Math.min(2000, st.settleMs)) });
     }
     if (st.childName) { S.childName = st.childName; $("shelfTitle").textContent = st.childName + "'s Bookshelf"; }
+    if (st.exitTo === "home") S.exitTo = "home";
   } catch { /* defaults stand — never block the shelf on settings */ }
 
   try {

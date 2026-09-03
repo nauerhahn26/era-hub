@@ -170,6 +170,16 @@
     <div class="status" id="aiStatus"></div>
   </div>
 
+  <div class="card" id="exit">
+    <h2>🚪 Where the door goes</h2>
+    <p class="hint">Every app has a door in its corner. Choose what she lands on when she looks at it.</p>
+    <div class="seg" id="exitTo">
+      <button data-exit="tdsnap" class="sel">💬 TD Snap</button>
+      <button data-exit="home">🏠 New ERA home</button>
+    </div>
+    <div class="desc" id="exitDesc"></div>
+  </div>
+
   <div class="card">
     <h2>⏱ Dwell time</h2>
     <p class="hint">How long she holds her gaze on a button before it activates. Longer = calmer, fewer accidental picks. Shorter = faster once she&rsquo;s confident.</p>
@@ -408,6 +418,23 @@ function seg(id, attr, fn){
     };
   });
 }
+// Where the door goes (dad 9/3): the hub's /kiosk/exit reads this setting.
+// "tdsnap" closes the app and hands the screen back to TD Snap (needs
+// ERAgaze; without it the door falls back to home); "home" stays in New ERA.
+function exitDesc(v){
+  $("exitDesc").textContent = v==="home"
+    ? "The door closes the app and shows New ERA's home page, ready for the next app."
+    : "The door closes the app and brings TD Snap back to the front. On a computer without ERAgaze it shows New ERA's home instead.";
+}
+function exitPaint(v){
+  document.querySelectorAll("#exitTo button").forEach(x=>x.classList.toggle("sel", x.dataset.exit===v));
+  exitDesc(v);
+}
+seg("exitTo","exit", async v=>{
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({exitTo:v})});
+  exitDesc(v);
+  toast(r.ok ? (v==="home" ? "Door goes to New ERA home" : "Door goes to TD Snap") : "Could not save", r.ok);
+});
 seg("feel","feel", async v=>{ if(await postEngine(FEEL[v])) toast("Cursor feel: "+v); });
 seg("grace","grace", async v=>{ if(await postEngine({graceMs:+v})) toast("Forgiveness updated"); });
 seg("ring","ring", async v=>{ if(await postEngine({radius: v==="off"?0:26})) toast(v==="off"?"Ring hidden":"Ring shown"); });
@@ -750,7 +777,8 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
   await drivePaint();
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
        if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));
-       if(typeof s.musicVolCap==="number") mvol=Math.max(1,Math.min(100,Math.round(s.musicVolCap))); }catch(e){}
+       if(typeof s.musicVolCap==="number") mvol=Math.max(1,Math.min(100,Math.round(s.musicVolCap)));
+       exitPaint(s.exitTo==="home"?"home":"tdsnap"); }catch(e){ exitPaint("tdsnap"); }
   dwellDesc(); settleDesc(); mvolDesc();
   try{
     const c=await (await fetch(ENGINE+"/config")).json();

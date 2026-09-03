@@ -71,3 +71,54 @@ test("POST /kiosk/close answers ok and never throws", async () => {
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true });
 });
+
+// The door, decided in one place (dad 9/3: "configure where you return to
+// when an app closes — TD Snap or New ERA"). Every app POSTs /kiosk/exit and
+// follows the answer; the setting round-trips through /settings.
+test("Settings exitTo round-trips and rejects junk", async () => {
+  const s0 = await (await fetch(`${BASE}/settings`)).json();
+  assert.equal(s0.exitTo, "tdsnap", "TD Snap is the default door");
+  const post = (exitTo) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ exitTo }) });
+  await post("home");
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).exitTo, "home");
+  await post("elsewhere");
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).exitTo, "home", "unknown values are ignored");
+  await post("tdsnap");
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).exitTo, "tdsnap");
+});
+
+test("POST /kiosk/exit → home when no engine answers (TD Snap chosen but unreachable)", async () => {
+  const r = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { action: "home" });
+});
+
+test("POST /kiosk/exit → closed when the engine takes the screen; → home when Settings says New ERA", async () => {
+  // a stand-in ERAgaze on its fixed port; skip (not fail) if a real one holds it
+  const http = await import("node:http");
+  const hits = [];
+  const engine = http.createServer((q, s) => { hits.push(q.url); s.writeHead(200).end("ok"); });
+  const bound = await new Promise((res) => {
+    engine.once("error", () => res(false));
+    engine.listen(49155, "127.0.0.1", () => res(true));
+  });
+  if (!bound) { console.log("# 49155 busy — engine stand-in skipped"); return; }
+  try {
+    const r = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
+    assert.deepEqual(await r.json(), { action: "closed" });
+    assert.deepEqual(hits, ["/app/exit"], "TD Snap: the hub asks the engine to hand the screen over");
+
+    await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exitTo: "home" }) });
+    hits.length = 0;
+    const r2 = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
+    assert.deepEqual(await r2.json(), { action: "home" });
+    await new Promise((res) => setTimeout(res, 200));
+    assert.deepEqual(hits, ["/app/park"], "New ERA: no hand-over, only the park override is cleared");
+  } finally {
+    engine.close();
+    await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exitTo: "tdsnap" }) });
+  }
+});

@@ -1000,10 +1000,53 @@ function pushReaderDwell(ms) {
     .catch(e => console.error("reader dwell push failed:", e.message));
 }
 
+// Where an app's door goes (Settings): "tdsnap" hands the screen to the
+// engine's ForegroundApp (TD Snap on Ellie's device); "home" stays in New ERA.
+function exitTarget() {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
+    if (s.exitTo === "home") return "home";
+  } catch {}
+  return "tdsnap";
+}
+// POST to the local gaze engine; resolves true on 2xx, false when it is not
+// there (dev box, family without ERAgaze) or slow — never throws.
+function enginePost(p, body) {
+  return new Promise((resolve) => {
+    const r = http.request({ host: "127.0.0.1", port: 49155, path: p, method: "POST", timeout: 1500,
+      headers: { "Content-Length": Buffer.byteLength(body) } }, (rs) => {
+      rs.resume(); resolve(rs.statusCode >= 200 && rs.statusCode < 300);
+    });
+    r.on("timeout", () => { r.destroy(); resolve(false); });
+    r.on("error", () => resolve(false));
+    r.end(body);
+  });
+}
+// Close our kiosk window(s) — the ones launched with the kiosk-profile
+// user-data-dir — via the one powershell spawn shape proven from the
+// detached production hub (see stepAsideFromKiosk). Windows only; logged.
+function closeKiosk() {
+  if (process.platform !== "win32") return;
+  const { spawn } = require("child_process");
+  const ps =
+    "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" +
+    " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
+    "Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { " +
+    "Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; 'closed ' + $_.ProcessId }";
+  try {
+    const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+    fs.writeSync(out, new Date().toISOString() + " kiosk-close\n");
+    const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+      { stdio: ["ignore", out, out], windowsHide: true });
+    c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+    c.unref();
+  } catch {}
+}
+
 const server = http.createServer((req, res) => {
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
-    let s = { dwellMs: 1200, settleMs: 250, musicVolCap: 100,
+    let s = { dwellMs: 1200, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
               voiceId: loadTtsCfg().voiceId,
               childName: PROFILE.childName || "friend", hasProfile: HAS_PROFILE,
               personalWords: [] };
@@ -1030,6 +1073,8 @@ const server = http.createServer((req, res) => {
         // music loudness cap, % of speaker volume (Songs Board; dad 8/24)
         if (typeof inc.musicVolCap === "number")
           s.musicVolCap = Math.max(1, Math.min(100, Math.round(inc.musicVolCap)));
+        // where every app's door goes (dad 9/3): her talker, or New ERA's home
+        if (inc.exitTo === "tdsnap" || inc.exitTo === "home") s.exitTo = inc.exitTo;
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // one knob: mirror a dwell change into Book Reader's profile store
         if (typeof inc.dwellMs === "number") pushReaderDwell(s.dwellMs);
@@ -1490,22 +1535,29 @@ const server = http.createServer((req, res) => {
   // The Pencil). The hub is always present and can always close its own kiosk.
   if (req.method === "POST" && urlPath === "/kiosk/close") {
     res.writeHead(200, { "Content-Type": "application/json" }).end('{"ok":true}');
-    if (process.platform === "win32") {
-      const { spawn } = require("child_process");
-      const ps =
-        "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" +
-        " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
-        "Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { " +
-        "Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; 'closed ' + $_.ProcessId }";
-      try {
-        const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
-        fs.writeSync(out, new Date().toISOString() + " kiosk-close\n");
-        const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
-          { stdio: ["ignore", out, out], windowsHide: true });
-        c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
-        c.unref();
-      } catch {}
+    closeKiosk();
+    return;
+  }
+  // ---- the door, decided in one place (dad 9/3: "configure where you
+  // return to when an app closes — TD Snap or New ERA"). Every app's door
+  // POSTs here and follows the answer: "closed" = the engine took the screen
+  // (kiosk closing, TD Snap coming forward); "home" = navigate to /home/ in
+  // this window. Settings > exitTo: "tdsnap" (default) | "home"; with no
+  // engine reachable the door always goes home, as it always did.
+  if (req.method === "POST" && urlPath === "/kiosk/exit") {
+    const answer = (action) => {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ action }));
+    };
+    if (exitTarget() === "home") {
+      // stay in the kiosk; just drop the app's park override so the corner park returns
+      enginePost("/app/park", "{}").catch(() => {});
+      answer("home");
+      return;
     }
+    enginePost("/app/exit", "").then((ok) => {
+      if (ok) { closeKiosk(); answer("closed"); } else answer("home");
+    });
     return;
   }
 

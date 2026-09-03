@@ -143,6 +143,35 @@ test("shelf: OLD layout — shelf-card grid, square cover, NO in-grid rest cell,
   await ctx.close();
 });
 
+// The door goes where Settings says (dad 9/3). The tile is named for its
+// destination, and both answers of the hub's /kiosk/exit are followed.
+test("exit tile: named for the door's destination; follows /kiosk/exit (closed stays, home navigates)", async () => {
+  const setExit = (v) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ exitTo: v }) });
+  try {
+    await setExit("home");
+    const { ctx, page } = await makePage();
+    const tile = page.locator("#shelfGrid .shelf-tdsnap-button");
+    assert.equal(await tile.locator(".shelf-title").textContent(), "Back to New ERA");
+    assert.equal(await tile.getAttribute("data-dwell-say"), "back to new era");
+    await tile.click();                                   // live hub, no engine → home
+    await page.waitForURL(/\/home\/?$/, { timeout: 8000 });
+    await ctx.close();
+
+    await setExit("tdsnap");
+    const { ctx: c2, page: p2 } = await makePage();
+    const t2 = p2.locator("#shelfGrid .shelf-tdsnap-button");
+    assert.equal(await t2.locator(".shelf-title").textContent(), "Back to TD Snap");
+    let hits = 0;
+    await c2.route("**/kiosk/exit", (r) => { hits++; r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' }); });
+    await t2.click();
+    await p2.waitForTimeout(300);
+    assert.equal(hits, 1, "door POSTs /kiosk/exit exactly once");
+    assert.match(p2.url(), /\/reader\//, "closed: the hub is closing the kiosk — no navigation");
+    await c2.close();
+  } finally { await setExit("tdsnap"); }
+});
+
 test("open book by tap: reading screen, narration audio PLAYS (no speechSynthesis)", async () => {
   const { ctx, page } = await makePage();
   await openLuna(page);

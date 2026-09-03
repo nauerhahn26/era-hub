@@ -140,3 +140,40 @@ test("email on file at boot: Send is live and opens the confirm screen", async (
   assert.match(await page.textContent("#confirmSub"), /a/, "her words on the confirm screen");
   await ctx.close();
 });
+
+// The door goes where Settings says (dad 9/3): the hub's /kiosk/exit decides;
+// the Pencil only follows — "closed" stays put (kiosk closing), else home.
+test("door: follows the hub's /kiosk/exit — home navigates, closed stays", async () => {
+  const setExit = (v) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ exitTo: v }) });
+  const quickSpeech = (ctx) => ctx.addInitScript(() => {   // no 5 s wait for the goodbye line
+    if (window.speechSynthesis) speechSynthesis.speak = (u) => setTimeout(() => u.onend && u.onend(), 0);
+  });
+  try {
+    await setExit("home");
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+    await quickSpeech(ctx);
+    await ctx.route("**/tts", r => r.fulfill({ status: 503, body: "" }));
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/pencil/`, { waitUntil: "load" });
+    await page.waitForFunction(() => window.Pencil && window.Pencil.state().mailChecked);
+    await page.locator("#door").click();                  // live hub, no engine → home
+    await page.waitForURL(/\/home\/?$/, { timeout: 10000 });
+    await ctx.close();
+
+    await setExit("tdsnap");
+    const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+    await quickSpeech(c2);
+    await c2.route("**/tts", r => r.fulfill({ status: 503, body: "" }));
+    let hits = 0;
+    await c2.route("**/kiosk/exit", (r) => { hits++; r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' }); });
+    const p2 = await c2.newPage();
+    await p2.goto(`${BASE}/pencil/`, { waitUntil: "load" });
+    await p2.waitForFunction(() => window.Pencil && window.Pencil.state().mailChecked);
+    await p2.locator("#door").click();
+    await p2.waitForTimeout(600);
+    assert.equal(hits, 1, "door POSTs /kiosk/exit exactly once");
+    assert.match(p2.url(), /\/pencil\//, "closed: the hub is closing the kiosk — no navigation");
+    await c2.close();
+  } finally { await setExit("tdsnap"); }
+});
