@@ -37,9 +37,13 @@ const PROVIDERS = {
   google: { base: "https://generativelanguage.googleapis.com",
     // gemini-2.5-flash is gone for accounts created now ("no longer available
     // to new users") — keeping it only spent a request per photo (9/2)
-    models: ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview"] },
+    // Google's free tier is 20 requests per day PER MODEL (429 body 9/2:
+    // GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20), so every model
+    // listed here is another 20 photos a day for a family on a free key.
+    models: ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite"] },
 };
 let chosenModel = null;   // sticky once a model answers
+const spentModels = new Set();   // models whose daily allowance is gone
 
 const DATA = workerData.dataDir;
 let ingesting = null; // {done, total} while naming photos — relayed to the shell
@@ -413,17 +417,19 @@ const INGEST_PROMPT =
   '"rotate_deg": 0, 90, 180 or 270 clockwise so the item stands upright, ' +
   '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the UPRIGHT image bounding the garment TIGHTLY - exclude floor, table, carpet and every background pixel you can, touching the garment edges}';
 
-let quotaSpent = false;   // provider said "out of quota" — stop asking
-
 async function askModel(cfg, jpgFile) {
-  // Once the daily allowance is gone, every extra call is wasted: with four
-  // models and a retry each, one photo could fire EIGHT requests into a wall
-  // and eat the next day's headroom (dad 9/2 asked how many photos a free key
-  // manages — this is why the answer was smaller than it should be).
-  if (quotaSpent) throw new Error("ai(" + cfg.provider + ") 429 daily allowance spent");
+  // A 429 retires THAT model for the rest of this build — the allowance is
+  // per model, so the next one in the list is a fresh 20 photos. Once every
+  // model is spent, stop asking: with a retry each, one photo could fire
+  // EIGHT requests into a wall and eat tomorrow's headroom (dad 9/2 asked how
+  // many photos a free key manages). Live 9/2: the sticky model 429'd after 7
+  // photos and the old "one 429 = day over" rule left 12 photos and three
+  // untouched models on the table.
   const p = PROVIDERS[cfg.provider];
-  const list = chosenModel ? [chosenModel] : p.models;
-  let lastErr = "", quotaTally = 0;
+  const order = chosenModel ? [chosenModel, ...p.models.filter(m => m !== chosenModel)] : p.models;
+  const list = order.filter(m => !spentModels.has(m));
+  if (!list.length) throw new Error("ai(" + cfg.provider + ") 429 daily allowance spent");
+  let lastErr = "";
   for (const model of list) {
     try {
       const out = await callModel(cfg, jpgFile, model);
@@ -432,13 +438,10 @@ async function askModel(cfg, jpgFile) {
     } catch (e) {
       lastErr = e.message;
       if (/\bpermanent\b/.test(e.message)) throw e;   // bad key etc: stop
-      if (/\b429\b|RESOURCE_EXHAUSTED|quota/i.test(e.message)) quotaTally++;
+      if (/\b429\b|RESOURCE_EXHAUSTED|quota/i.test(e.message)) spentModels.add(model);
       console.error("[clothing] model " + model + ": " + e.message);
     }
   }
-  // A single 429 means the allowance is gone; the other models share the same
-  // key and the same daily budget, so trying them just burns tomorrow's too.
-  if (quotaTally > 0) quotaSpent = true;
   throw new Error(lastErr || "no model answered");
 }
 
@@ -533,7 +536,7 @@ async function ingest() {
   if (!todo.length) return { done: 0 };
   fs.mkdirSync(ITEMS(), { recursive: true });
   ingesting = { done: 0, total: todo.length };
-  let busyCount = 0, quotaCount = 0;
+  let busyCount = 0, quotaCount = 0, landed = 0;
   if (parentPort) parentPort.postMessage({ ingesting });
   try {
     for (const f of todo) {
@@ -583,6 +586,7 @@ async function ingest() {
           category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any" };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
+        landed++;
         console.log("[clothing] " + (known ? "redrew " : "cataloged ") + f +
           " -> " + cat.items[f].name + " (" + cat.items[f].category + ")");
       } catch (e) {
@@ -606,7 +610,7 @@ async function ingest() {
     ingesting = null;
     if (parentPort) parentPort.postMessage({ ingesting });
   }
-  return { done: todo.length,
+  return { done: todo.length, landed, left: todo.length - landed, quotaHit: quotaCount > 0,
     busy: busyCount > 0 && (busyCount + quotaCount) === todo.length,
     quota: quotaCount > 0 && (busyCount + quotaCount) === todo.length && quotaCount >= busyCount };
 }
@@ -868,6 +872,9 @@ async function regenerate(force) {
   const ing = await ingest(); // no-op without a key or when everything is already cataloged
   const busy = !!(ing && ing.busy);
   const quota = !!(ing && ing.quota);
+  // What the shell needs to decide on a same-day retry: how many photos are
+  // still waiting, and whether this build ran into the day's allowance.
+  const tally = { landed: (ing && ing.landed) || 0, left: (ing && ing.left) || 0, quotaHit: !!(ing && ing.quotaHit) };
   const cat = loadCatalog();
   const haveCatalog = Object.values(cat.items).some(i => i.ok);
   if (!haveCatalog) {
@@ -875,15 +882,16 @@ async function regenerate(force) {
     const guidance = !photos.length ? (aiCfg() ? "no-photos" : "nothing")
                    : (aiCfg() ? (quota ? "ai-quota" : busy ? "ai-busy" : "ingest-failed") : "no-key");
     try { fs.writeFileSync(SIG(), sig); } catch {}
-    return { guidance, photos: photos.length };
+    return { guidance, photos: photos.length, ...tally };
   }
   const boards = await buildCataloged(cat);
   fs.mkdirSync(RECIPES(), { recursive: true });
   fs.writeFileSync(path.join(RECIPES(), "today.json"), JSON.stringify({
     locale: "en-US", root: "today", home_label: "Clothing", boards }, null, 1));
   try { fs.writeFileSync(SIG(), sig); } catch {}
-  console.log("[clothing] board built (" + boards.length + " boards)");
-  return { built: boards.length, mode: "cataloged", photos: photos.length };
+  console.log("[clothing] board built (" + boards.length + " boards)" +
+    (tally.left ? ", " + tally.left + " photo(s) still waiting" + (tally.quotaHit ? " (daily allowance)" : "") : ""));
+  return { built: boards.length, mode: "cataloged", photos: photos.length, ...tally };
 }
 
 regenerate(!!workerData.force)

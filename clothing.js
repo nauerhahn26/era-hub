@@ -39,6 +39,8 @@ function status() {
   photos = listPhotos(path.join(DATA, "clothing")).length;
   return { building: !!worker, ingesting, cataloged, photos,
     aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null,
+    // photos not named yet, and whether today's free allowance is what stops them
+    waiting: cfg ? pendingPhotos(DATA) : 0, heldToday: holdDay === new Date().toDateString(),
     guidance: lastResult && lastResult.guidance ? lastResult.guidance : null };
 }
 
@@ -55,7 +57,14 @@ function regenerate(force) {
       { workerData: { dataDir: DATA, force: !!force } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
-      if (m.done) lastResult = m.done;
+      if (m.done) {
+        lastResult = m.done;
+        // Photos left behind by the day's allowance wait for tomorrow, and so
+        // does a photo that failed twice (a retry that landed nothing): an
+        // hourly loop into the same wall would only spend the free requests.
+        if (m.done.left && (m.done.quotaHit || (retryBuild && !m.done.landed))) holdDay = new Date().toDateString();
+        retryBuild = false;
+      }
     });
     worker.on("error", (e) => console.error("[clothing] worker: " + e.message));
     worker.on("exit", () => {
@@ -109,13 +118,35 @@ function photoSet(dataDir) {
   }).join("\n");
 }
 
+// Photos the AI has not named yet. A transient 503 or a hub restart mid-batch
+// must not park a garment until tomorrow's 5am build (QA 9/2: 12 of 20 photos
+// waited a day) — the tick tries the leftovers again about once an hour,
+// except on a day the allowance already ran out (holdDay).
+let holdDay = "";
+let lastRetry = 0;
+let retryBuild = false;   // the running build is a retry of leftovers
+const RETRY_EVERY = 60 * 60 * 1000;
+function pendingPhotos(dataDir) {
+  let items = {};
+  try { items = JSON.parse(fs.readFileSync(path.join(dataDir, "wardrobe.json"), "utf8")).items || {}; } catch {}
+  return listPhotos(path.join(dataDir, "clothing")).filter(f => !(items[f] && items[f].ok)).length;
+}
+
 // Returns the build's promise when it acts, null when there is nothing to do.
 function tick(reason) {
   const now = photoSet(DATA);
   const changed = seenPhotos !== null && now !== seenPhotos;
   seenPhotos = now;
-  if (!changed && boardIsFresh(DATA)) return null;
-  console.log("[clothing] building today's board (" + (changed ? "photos changed, " : "") + reason + ")");
+  let why = changed ? "photos changed, " : "";
+  if (!changed && boardIsFresh(DATA)) {
+    const retry = aiCfg() && holdDay !== new Date().toDateString() &&
+      Date.now() - lastRetry >= RETRY_EVERY && pendingPhotos(DATA) > 0;
+    if (!retry) return null;
+    lastRetry = Date.now();
+    retryBuild = true;
+    why = "photos still waiting, ";
+  }
+  console.log("[clothing] building today's board (" + why + reason + ")");
   return regenerate(true).catch(e => console.error("[clothing] " + e.message));
 }
 
@@ -125,4 +156,5 @@ function start(dataDir) {
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
 }
 
-module.exports = { start, regenerate, isBuilding, status, boardIsFresh, tick };
+module.exports = { start, regenerate, isBuilding, status, boardIsFresh, tick,
+  _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false; } };

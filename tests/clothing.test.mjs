@@ -36,7 +36,9 @@ const ANSWERS = [
 let calls = 0;
 let flaky = 0;                  // >0 = answer this many calls with a 503 first
 let throttleModel = "";         // a model id that always answers 429
+let throttleAfter = 0;          // ...but only once `calls` passes this (a quota that runs out mid-build)
 const wire = [];   // {path, auth} per request — proves each provider's format
+const hits = [];   // every request path, 429s included
 
 before(async () => {
   process.env.ERA_AI_URL = `http://127.0.0.1:${AI_PORT}`;
@@ -46,7 +48,8 @@ before(async () => {
     req.on("end", () => {
       const parsed = JSON.parse(body);
       calls++;
-      if (throttleModel && req.url.includes(throttleModel)) {
+      hits.push(req.url);
+      if (throttleModel && req.url.includes(throttleModel) && calls > throttleAfter) {
         res.writeHead(429, { "Content-Type": "application/json" });
         res.end('{"error":{"code":429,"message":"Resource exhausted"}}');
         return;
@@ -240,6 +243,23 @@ test("a throttled model falls through to the next one (Google 429 on -latest, 9/
   throttleModel = "";
 });
 
+test("a model whose daily allowance runs out mid-build is retired, the next model carries on (live 9/2: 7 of 20 photos, 12 abandoned)", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "google", apiKey: "AIza-quota" }));
+  for (const n of ["photo_q1", "photo_q2", "photo_q3"]) makeJpg(path.join(TMP, "clothing", n + ".jpg"), 30, 90, 150);
+  throttleModel = "gemini-flash-latest";
+  throttleAfter = calls + 1;                 // answers the first photo, then 429 forever
+  const before = hits.length;
+  await clothing.regenerate(true);
+  const mine = hits.slice(before);
+  const latest = mine.filter(p => p.includes("gemini-flash-latest")).length;
+  assert.equal(latest, 2, "one answer + one 429, then never asked again this build");
+  assert.ok(mine.some(p => p.includes("gemini-3.5-flash:")), "the next model took over");
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  for (const n of ["photo_q1", "photo_q2", "photo_q3"]) assert.ok(cat.items[n + ".jpg"].ok, n + " cataloged");
+  throttleModel = ""; throttleAfter = 0;
+});
+
 test("preferred-LLM: a Google key ingests through generateContent with x-goog-api-key", async () => {
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
     JSON.stringify({ provider: "google", apiKey: "AIza-test" }));
@@ -341,6 +361,55 @@ test("the tick rebuilds a fresh board when the photo set changes (add or remove)
   await q;
   const cat2 = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.equal(cat2.items["photo_g.jpg"], undefined, "and it is gone from the wardrobe");
+});
+
+test("a photo the day's allowance left behind waits for tomorrow; one a transient left behind is retried the same day (QA 9/2)", async () => {
+  clothing._testReset();
+  await clothing.regenerate(true);
+  await clothing.tick("test");   // settle the photo-set memory
+  assert.equal(clothing.tick("test"), null, "settled");
+
+  // 1. quota: every Google model answers 429 -> the photo is left, the day is held
+  makeJpg(path.join(TMP, "clothing", "photo_h.jpg"), 60, 120, 240);
+  throttleModel = "gemini";
+  const r = await clothing.tick("test");
+  assert.equal(r.left, 1); assert.equal(r.quotaHit, true);
+  throttleModel = "";
+  clothing._testReset({ keepHold: true });
+  assert.equal(clothing.tick("test"), null, "allowance spent today: no same-day retry");
+  let cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(!(cat.items["photo_h.jpg"] && cat.items["photo_h.jpg"].ok), "still waiting");
+
+  // 2. transient: a new day (reset); a 503 storm hits the first photo of a
+  //    build -> it is left, the other lands, and the leftover is retried within the hour
+  clothing._testReset();
+  makeJpg(path.join(TMP, "clothing", "photo_i.jpg"), 200, 60, 120);
+  flaky = 8;   // 4 models x 2 attempts: the build gives up on photo_h, but not for the day
+  const r1 = await clothing.tick("test");   // acts: the photo set changed
+  assert.equal(flaky, 0);
+  assert.deepEqual([r1.landed, r1.left, r1.quotaHit], [1, 1, false]);
+  const p = clothing.tick("test");
+  assert.ok(p, "photos still waiting -> the tick retries even though the board is fresh");
+  const r2 = await p;
+  assert.equal(r2.left, 0);
+  cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(cat.items["photo_h.jpg"].ok && cat.items["photo_i.jpg"].ok, "both landed");
+  assert.equal(clothing.tick("test"), null, "nothing waiting: quiet again");
+
+  // 3. a retry that lands nothing holds the day: a photo the AI cannot name
+  //    gets two builds a day, not a request every hour
+  clothing._testReset();
+  makeJpg(path.join(TMP, "clothing", "photo_j.jpg"), 120, 200, 60);
+  flaky = 8;
+  await clothing.tick("test");              // change build: photo_j left
+  flaky = 8;
+  const r3 = await clothing.tick("test");   // the retry: left again
+  assert.equal(r3.left, 1);
+  clothing._testReset({ keepHold: true });  // the hour is up; the day's hold is what stops it
+  assert.equal(clothing.tick("test"), null, "failed twice: waits for tomorrow");
+  fs.rmSync(path.join(TMP, "clothing", "photo_j.jpg"));
+  await clothing.tick("test");              // removing it is still a change build
+  assert.equal(clothing.tick("test"), null);
 });
 
 // Until the repair runs, one absent picture must not empty the board.

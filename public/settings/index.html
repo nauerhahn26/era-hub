@@ -131,7 +131,7 @@
 
   <div class="card" id="integrations">
     <h2>🔗 Add content with Google Drive</h2>
-    <p class="hint">Put things in your Google Drive and they appear here by themselves: book packages in a <b>books</b> folder, songs in <b>music</b>, lesson files in <b>content</b>. Checked every 6 hours.</p>
+    <p class="hint">Put things in your Google Drive and they appear here by themselves: photos of her clothes in a <b>clothing</b> folder, book packages in <b>books</b>, songs in <b>music</b>, lesson files in <b>content</b>. Checked every 10 minutes (every 6 hours without the Drive app).</p>
     <div id="dlChecklist" style="margin-bottom:10px"></div>
     <div id="dlPicker" style="display:none; border-top:2px dashed var(--line); padding-top:14px">
       <div class="status" id="dlPath" style="margin-bottom:8px"></div>
@@ -640,7 +640,12 @@ async function aiPaint(){
     // no library-wide count here either: the batch total shifts as Drive keeps
     // materialising files (dad 9/1)
     if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos…</b> "+s.ingesting.done+" done so far.";
-    else if(s.aiConfigured) $("aiStatus").innerHTML="<b>"+(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.google).name+" key saved ✓</b>"+(s.cataloged?" Clothing items are catalogued and the board is building itself.":"");
+    else if(s.aiConfigured){
+      let m="<b>"+(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.google).name+" key saved ✓</b>"+(s.cataloged?" "+s.cataloged+" clothing item"+(s.cataloged===1?"":"s")+" catalogued; the board builds itself.":"");
+      // a free key names about 20 photos a day per model (Google); say where the rest are
+      if(s.waiting) m+=" <b>"+s.waiting+" photo"+(s.waiting===1?"":"s")+" waiting</b> — "+(s.heldToday?"today's free allowance is used up; they will be named tomorrow morning by themselves.":"the next try is within the hour.");
+      $("aiStatus").innerHTML=m;
+    }
     else $("aiStatus").innerHTML='<span class="bad">No key yet — the Clothing Picker waits for one (its screen walks you through this too).</span>';
   }catch(e){}
 }
@@ -705,7 +710,7 @@ async function drivePaint(){
     }
     const allDone = steps.every(x=>x.done);
     let msg="";
-    if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open New ERA Content, and upload straight into those folders). Everything lands here within 6 hours, or press Sync now.<br>';
+    if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open New ERA Content, and upload straight into those folders). Everything lands here within 10 minutes, or press Sync now.<br>';
     if(s.folderPath) msg+="<b>Watching:</b> "+s.folderPath;
     if(s.syncing) msg+=" · <b>Syncing…</b>";
     else if(s.lastSync) msg += s.lastSync.error ? ' · <span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
