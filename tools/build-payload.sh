@@ -85,7 +85,12 @@ if not defined B (
   start "" http://127.0.0.1:%PORT%%OPEN%
   goto done
 )
-start "" "%B%" --kiosk "http://127.0.0.1:%PORT%%OPEN%" --edge-kiosk-type=fullscreen --user-data-dir="%~dp0data\kiosk-profile" --no-first-run --disable-pinch --overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required
+rem QA only: the unattended VM e2e drives this very window over DevTools.
+rem The flag exists only when the launcher's environment sets ERA_QA_CDP —
+rem a family's double-click never has it.
+set CDP=
+if defined ERA_QA_CDP set CDP=--remote-debugging-port=%ERA_QA_CDP%
+start "" "%B%" --kiosk "http://127.0.0.1:%PORT%%OPEN%" --edge-kiosk-type=fullscreen --user-data-dir="%~dp0data\kiosk-profile" --no-first-run --disable-pinch --overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required %CDP%
 :done
 BAT
 cat > "$OUT/start-hub.sh" <<'SH'
