@@ -14,7 +14,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PROMPT_VERSION, transcribePrompt, reviewPrompt } from '../lib/prompts.mjs';
+import prompts, { PROMPT_VERSION, transcribePrompt, transcribePromptV2, reviewPrompt } from '../lib/prompts.mjs';
 
 // --- byte pins (v2, carried unchanged through v3) ----------------------------------
 const PINNED_RULES = {
@@ -25,6 +25,18 @@ const PINNED_RULES = {
   7: '7. If the page has no printed story text at all (a full-bleed illustration, an endpaper), return an empty string for "text".',
   8: '8. LINE AND STANZA BREAKS: use a single newline between printed lines of verse and a blank line between stanzas or separate text blocks. Do not re-wrap prose.',
   9: '9. FLAG, DO NOT GUESS: list in "uncertain" every word you are not fully confident about (obscured, blurred, cut off, or ambiguous). Still put your best reading in "text"; the list is for human review.',
+};
+
+// --- byte pins (v2, the wording the hub's transcriber is pinned to) -------------
+// v2 is not history: era-hub's content-providers.js pins its transcribe pass to this
+// exact string, because that is how the bake-off measured the winning pair (the
+// transcriber under v2, its partner under v3). Recovered from a 06:33 worktree
+// snapshot of this repo - inside the window the cache's v2 records span - and it
+// differs from v3 in PROMPT_VERSION and rules 5 and 6 and nothing else, exactly as
+// the v3 changelog says. These two lines are the pin that keeps it that way.
+const PINNED_V2_RULES = {
+  5: '5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - lettering painted on objects such as boat hulls or signs, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark).',
+  6: '6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end.',
 };
 
 const PINNED_OUTPUT_CONTRACT = [
@@ -111,4 +123,41 @@ test('the review prompt embeds the same policy, rule for rule', () => {
   const r = rules(reviewPrompt('an invented draft'));
   assert.deepEqual(r, t, 'a rule change must reach the review pass too');
   assert.ok(reviewPrompt('an invented draft').includes('an invented draft'), 'the draft is interpolated');
+});
+
+test('the v2 wording differs from v3 in rules 5 and 6 and nowhere else', () => {
+  const three = rules(transcribePrompt());
+  const two = rules(transcribePromptV2());
+  for (const n of [1, 2, 3, 4, 7, 8, 9]) {
+    assert.equal(two[n], three[n], `rule ${n} is carried unchanged from v2 into v3`);
+  }
+  for (const n of [5, 6]) {
+    assert.equal(two[n], PINNED_V2_RULES[n], `v2 rule ${n} is not the string that was measured`);
+    assert.notEqual(two[n], three[n], `rule ${n} is the whole reason v3 exists`);
+  }
+  // the trade, in one line each: v2 drops signs as art, v3 keeps them as story;
+  // v2 says nothing about what a gift inscription on our own copy is.
+  assert.ok(!two[5].includes('PART OF THE STORY'), 'v2 rule 5 has no keep clause');
+  assert.ok(!two[6].includes('inscription'), 'v2 rule 6 says nothing about inscriptions');
+});
+
+test('the v2 wording is, byte for byte, v3 with those two rules put back', () => {
+  // The strongest form of "copied, not paraphrased": rebuild v2 out of the v3 string
+  // by swapping exactly the two pinned rules, and require the result to BE it. A
+  // stray space, a curly quote or a tidied hyphen anywhere else fails here.
+  const three = rules(transcribePrompt());
+  const rebuilt = transcribePrompt()
+    .replace(three[5], PINNED_V2_RULES[5])
+    .replace(three[6], PINNED_V2_RULES[6]);
+  assert.equal(transcribePromptV2(), rebuilt, 'v2 is not v3-with-rules-5-and-6-restored');
+  assert.ok(transcribePromptV2().endsWith(PINNED_OUTPUT_CONTRACT), 'v2 ends with the same contract');
+  assert.equal(transcribePromptV2().split(PINNED_OUTPUT_CONTRACT).length - 1, 1);
+});
+
+test('PROMPT_VERSION does not move because v2 is exported', () => {
+  // The per-call cache keys on PROMPT_VERSION, so re-exporting an older wording must
+  // not restamp what the harness itself sends: transcribePrompt() is still v3's.
+  assert.equal(PROMPT_VERSION, 'v3');
+  assert.notEqual(transcribePrompt(), transcribePromptV2());
+  assert.equal(prompts.transcribePromptV2, transcribePromptV2, 'the default export carries it too');
 });

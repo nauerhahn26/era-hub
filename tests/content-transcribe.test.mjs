@@ -687,29 +687,31 @@ test("the pick is a google model, so a key for another provider gets its OWN lad
 // does (Addendum §6; README "v3 is not an upgrade - it is a trade": each of the
 // two reads better under its own version).
 //
-// AND V2'S TEXT IS NOT IN THIS REPO. The harness holds only its current version
-// and its changelog says what v3 changed, never what v2 said word for word, so
-// the wording the transcriber was measured under cannot be ported — and a
-// reconstruction of it, sent under the name of a measured wording, is the one
-// thing worse than sending the other pass's. So both passes are pinned to v3
-// (the wording this repo can PROVE, byte for byte, against the harness) and the
-// gap is written down in the module header. These tests guard both halves: the
-// wording really is the harness's, and re-pinning a pass stays a one-line
-// config change so the day v2 is recovered is a small day.
+// AND THE TWO PASSES SEND DIFFERENT WORDINGS, because that is how the pair was
+// measured: the transcriber under v2, its partner under v3. v2 was recovered
+// (L7) from a worktree snapshot taken inside the window its cached records span
+// and now lives in the harness as a second exported wording, so the hub PORTS
+// both rather than paraphrasing either. These tests guard both halves: each
+// wording really is the harness's, byte for byte, and re-pinning a pass stays a
+// one-line config change.
 const V3_ONLY = "PART OF THE STORY";
 
 test("the passes are named, and the wording they send is the harness's own, byte for byte", async () => {
   contentCfg(null);
   assert.deepEqual(providers.PASSES, ["transcribe", "second-opinion"]);
-  assert.equal(providers.DEFAULT_PROMPTS.transcribe, "v3");
+  assert.equal(providers.DEFAULT_PROMPTS.transcribe, "v2",
+    "the transcriber sends the wording the bake-off measured IT under");
   assert.equal(providers.DEFAULT_PROMPTS["second-opinion"], "v3");
   const two = providers.PROMPT_TEXT;
-  assert.deepEqual(Object.keys(two), ["v3"],
-    "one wording is in this repo; the day v2 is recovered it is added HERE and re-pinned");
+  assert.deepEqual(Object.keys(two).sort(), ["v2", "v3"],
+    "both measured wordings, and only those two");
   assert.ok(two.v3.includes(V3_ONLY));
-  assert.match(two.v3, /VERBATIM PRINTED TEXT ONLY/);
-  assert.match(two.v3, /9\. FLAG, DO NOT GUESS/);
-  assert.match(two.v3, /Use "uncertain": \[\] when you are confident about every word\./);
+  assert.ok(!two.v2.includes(V3_ONLY), "v2 is the wording BEFORE rule 5 grew its keep clause");
+  for (const v of ["v2", "v3"]) {
+    assert.match(two[v], /VERBATIM PRINTED TEXT ONLY/);
+    assert.match(two[v], /9\. FLAG, DO NOT GUESS/);
+    assert.match(two[v], /Use "uncertain": \[\] when you are confident about every word\./);
+  }
   // PORTED VERBATIM, and provably so: the harness the numbers came from is ESM
   // and cannot be require()d by the hub (Node 18 floor), but a test can import
   // it. If a re-run bumps that file's wording, this fails and the pinning is a
@@ -717,23 +719,32 @@ test("the passes are named, and the wording they send is the harness's own, byte
   const bakeoff = await import(path.join(HUB, "tools/ocr-bakeoff/lib/prompts.mjs"));
   assert.equal(bakeoff.PROMPT_VERSION, "v3", "the harness still holds v3");
   assert.equal(two.v3, bakeoff.transcribePrompt(), "the wording is the harness's, byte for byte");
-  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), two.v3);
+  assert.equal(two.v2, bakeoff.transcribePromptV2(), "and so is v2, byte for byte");
+  assert.notEqual(two.v2, two.v3, "two wordings, or the pair decorrelates by model alone");
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), two.v2);
   assert.equal(providers.promptFor(providers.loadConfig(DATA), "second-opinion"), two.v3);
-  assert.equal(providers.TRANSCRIBE_PROMPT, two.v3);
+  assert.equal(providers.TRANSCRIBE_PROMPT, two.v2);
 });
 
 // The KNOWN GAP, stated as a test so it cannot be forgotten quietly: nothing in
 // the hub may invent a wording. Every string a model is sent is one of the
 // versions in PROMPT_TEXT, and every one of those is the harness's.
 test("no wording the bake-off never measured is ever sent", async () => {
+  const bakeoff = await import(path.join(HUB, "tools/ocr-bakeoff/lib/prompts.mjs"));
+  const measured = [bakeoff.transcribePromptV2(), bakeoff.transcribePrompt()];
+  for (const [v, text] of Object.entries(providers.PROMPT_TEXT))
+    assert.ok(measured.includes(text), `PROMPT_TEXT.${v} is not one of the harness's own wordings`);
+
   reset({ answers: [{ text: "Nine mice on the ice.", uncertain: [] }] });
   await providers.transcribeBook(book("Only Measured Wordings"), { dataDir: DATA });
   assert.equal(calls.length, 2, "two models still read the page");
   const known = Object.values(providers.PROMPT_TEXT);
   for (const c of calls)
     assert.ok(known.includes(c.prompt), "a model was sent a wording that is not in PROMPT_TEXT");
-  assert.equal(calls[0].prompt, calls[1].prompt,
-    "one wording in the repo means one wording on the wire - the pair decorrelates by MODEL today");
+  assert.notEqual(calls[0].prompt, calls[1].prompt,
+    "the pair decorrelates by WORDING as well as by model - that is the measured configuration");
+  assert.equal(calls[0].prompt, providers.PROMPT_TEXT.v2, "the transcriber reads under v2");
+  assert.equal(calls[1].prompt, providers.PROMPT_TEXT.v3, "its partner reads under v3");
 });
 
 test("the escalation call speaks with the second opinion's wording", async () => {
@@ -755,10 +766,10 @@ test("the escalation call speaks with the second opinion's wording", async () =>
 });
 
 test("which wording each pass sends is config, not code", async () => {
-  // The day v2 is recovered, re-pinning the transcribe pass to it is one line in
-  // PROMPT_TEXT and one in the config - never an edit at the five call sites.
-  // Until then this is what the seam can be shown doing: a pass asks by NAME,
-  // and the name is looked up per call.
+  // Re-pinning a pass is one line in the config - never an edit at the five call
+  // sites. Here both passes are pinned to v3, which is exactly the move the
+  // module header forbids doing by accident and allows on purpose: a pass asks
+  // by NAME, and the name is looked up per call.
   reset({ config: { transcribe: { prompts: { transcribe: "v3", "second-opinion": "v3" } } },
           answers: [{ text: "Nine mice on the ice.", uncertain: [] }] });
   await providers.transcribeBook(book("Repinned"), { dataDir: DATA });
@@ -766,13 +777,14 @@ test("which wording each pass sends is config, not code", async () => {
   for (const c of calls) assert.equal(c.prompt, providers.PROMPT_TEXT.v3);
 
   // A version this hub does not hold is not a wordless page, and it is NOT an
-  // invented one either: the pinned default stands. That is what makes adding
-  // `v2` to PROMPT_TEXT the whole change, and a config naming a version that is
-  // not there safe on a hub that has not been updated yet.
-  contentCfg({ transcribe: { prompts: { transcribe: "v2" } } });
-  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), providers.PROMPT_TEXT.v3);
+  // invented one either: the pinned default stands. That is what keeps a config
+  // written for a newer hub safe on one that has not been updated yet.
+  contentCfg({ transcribe: { prompts: { "second-opinion": "v2" } } });
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "second-opinion"), providers.PROMPT_TEXT.v2,
+    "a version this hub DOES hold is honoured");
   contentCfg({ transcribe: { prompts: { transcribe: "v99" } } });
-  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), providers.PROMPT_TEXT.v3);
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), providers.PROMPT_TEXT.v2,
+    "and one it does not falls back to the pinned default, never to an invented string");
   contentCfg(null);
 });
 

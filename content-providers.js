@@ -5,14 +5,12 @@
 // This file holds three things and nothing else:
 //
 //   1. THE POLICY, as TWO NAMED PASSES (`transcribe` and `second-opinion`) with
-//      the config naming which wording each one sends. The only wording this
-//      repo can prove is v3, ported verbatim from
+//      the config naming which wording each one sends. The bake-off measured the
+//      pair ASYMMETRICALLY — the transcriber under v2, its partner under v3 —
+//      and this hub sends exactly that: both wordings are ported verbatim from
 //      tools/ocr-bakeoff/lib/prompts.mjs and asserted against it byte for byte,
-//      so today both passes send v3 and the pair decorrelates by MODEL alone.
-//      The bake-off measured the pair asymmetrically (the transcriber under v2)
-//      and v2's exact text is not recoverable here — that KNOWN GAP, and how to
-//      close it, is written out under "the policy" below. Changing a word
-//      invalidates the bake-off's numbers.
+//      so the pair decorrelates by WORDING as well as by model, the way the
+//      numbers were taken. Changing a word invalidates the bake-off's numbers.
 //   2. THE LADDER. Three adapters (google / anthropic / openai) in the exact
 //      request shape clothing-worker.js already proved on the family's own
 //      keys, with its two hard-won rules kept intact:
@@ -67,7 +65,7 @@ const { aiRoles } = require("./ai-config.js");
 
 // ---------------------------------------------------------------- the policy
 
-// TWO NAMED PASSES, AND — TODAY — ONE WORDING (E3, 9/4, amended after review).
+// TWO NAMED PASSES, TWO WORDINGS (E3, 9/4; the gap below CLOSED by L7, 9/4).
 //
 // WHAT THE BAKE-OFF MEASURED. Its pair was measured ASYMMETRICALLY: the
 // transcriber (gemini-3.1-flash-lite) read under the older v2 wording and its
@@ -81,33 +79,23 @@ const { aiRoles } = require("./ai-config.js");
 // "the transcriber runs v2; v3 is used only as the decorrelating partner
 // prompt".
 //
-// KNOWN GAP: V2'S EXACT TEXT IS NOT IN THIS REPO, and it could not be found.
-// tools/ocr-bakeoff/lib/prompts.mjs holds only the CURRENT version (v3) and has
-// exactly one commit; its changelog says what v3 CHANGED and why, never what
-// v2's rules said word for word; and the harness's per-call cache keys on the
-// prompt VERSION and stores the answer, never the prompt — so there is nothing
-// to port v2 from. A hand-reconstruction of it shipped here for a day and was
-// wrong in a way that mattered: it put "or signs" in rule 5 on the strength of a
-// changelog sentence that describes an early draft of V3, and dropped a word
-// from it on no evidence at all. That made the transcriber's request a THIRD
-// wording nobody has ever measured, sent under the name of one that was — which
-// is worse than honestly sending the other pass's, because it looks measured.
+// THE KNOWN GAP IS CLOSED (L7, 9/4). For a day this file could only prove v3, so
+// both passes sent it and the pair decorrelated by MODEL alone. v2's exact text
+// has since been RECOVERED — the harness file as it stood in a worktree snapshot
+// taken at 07:11, inside the 06:33–07:26 window the private cache's 3,120 v2
+// records span, differing from v3 in nothing but PROMPT_VERSION and rules 5 and
+// 6, exactly as v3's changelog says it should. It now lives in the harness as a
+// second exported wording (`transcribePromptV2()`), so this hub PORTS it, and the
+// suite asserts both wordings against that file byte for byte. The port is a copy
+// rather than a require() because the harness is ESM and the hub's Windows floor
+// is Node 18, where require(esm) does not exist (plan §A3); a test can import it,
+// and does.
 //
-// SO, TODAY: both passes send v3, and the pair decorrelates by MODEL only. v3 is
-// the one wording this repo can prove — it is ported verbatim (not required:
-// that harness is ESM and the hub's Windows floor is Node 18, where require(esm)
-// does not exist, plan §A3) and the suite asserts it against the harness itself,
-// byte for byte. Two free models still read every page and still disagree
-// independently; what is lost is the prompt half of the decorrelation, and that
-// loss is written down here rather than papered over.
-//
-// TO CLOSE IT (a follow-up, not a guess): recover v2's exact string — from a run
-// that still has it, or by landing it in tools/ocr-bakeoff/lib/prompts.mjs as a
-// second exported wording so the hub can port rather than paraphrase — add it to
-// PROMPT_TEXT below as `v2` and re-pin DEFAULT_PROMPTS.transcribe to it, with a
-// byte-for-byte assertion beside the v3 one. The machinery for exactly that is
-// what is left standing here: the passes are named, the version each one sends
-// is config, and nothing in the rest of this file picks a wording by itself.
+// Why "port, never paraphrase" is written this hard: the wording that shipped
+// here before the recovery was a hand-reconstruction, and it was wrong in a way
+// that mattered — it put "or signs" into rule 5 from a changelog sentence that
+// describes an early draft of V3 — which made the transcriber's request a THIRD
+// wording nobody had ever measured, sent under the name of one that was.
 //
 // And whatever is pinned: NEVER "upgrade both" in one move. Bumping one pass to
 // the other's version, or a future v4 to both, quietly re-runs the pair as one
@@ -131,23 +119,46 @@ const POLICY_V3 = `You are transcribing one photographed page of a printed child
 8. LINE AND STANZA BREAKS: use a single newline between printed lines of verse and a blank line between stanzas or separate text blocks. Do not re-wrap prose.
 9. FLAG, DO NOT GUESS: list in "uncertain" every word you are not fully confident about (obscured, blurred, cut off, or ambiguous). Still put your best reading in "text"; the list is for human review.`;
 
+// The v2 policy, ported verbatim from the same file (POLICY_V2 there). This is
+// the wording the TRANSCRIBER was measured under, and the only thing that
+// separates it from v3 is rules 5 and 6: v2 drops all lettering painted into the
+// art (signs included), and says nothing about what a gift inscription on our own
+// copy is. That difference is the point - v3 is a TRADE, not an upgrade, and
+// 3.1-flash-lite reads better under this one.
+const POLICY_V2 = `You are transcribing one photographed page of a printed children's picture book so it can be read aloud by a speech synthesiser. A single wrong word is a failure. Follow these rules exactly.
+
+1. VERBATIM PRINTED TEXT ONLY. Transcribe the words exactly as printed. Never modernise, localise or correct spelling (British spelling stays British). Never add, expand or paraphrase words that are not printed. Do not translate.
+2. READING ORDER follows the visual and narrative flow of the page, not raw top-to-bottom geometry. For rhyming verse use rhyme and metre as an ordering signal across columns, panels and speech bubbles, so the text reads coherently start to finish.
+3. ELLIPSES: render any printed ellipsis, including a spaced ". . .", as three dots "...". Keep leading or trailing ellipses that are used as page-turn continuations.
+4. QUOTES: transcribe quotation marks exactly as printed, even when they are unbalanced on this page (a speech may continue across pages).
+5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - lettering painted on objects such as boat hulls or signs, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark).
+6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end.
+7. If the page has no printed story text at all (a full-bleed illustration, an endpaper), return an empty string for "text".
+8. LINE AND STANZA BREAKS: use a single newline between printed lines of verse and a blank line between stanzas or separate text blocks. Do not re-wrap prose.
+9. FLAG, DO NOT GUESS: list in "uncertain" every word you are not fully confident about (obscured, blurred, cut off, or ambiguous). Still put your best reading in "text"; the list is for human review.`;
+
 // The shape of the answer, the same for every wording there has ever been
 // (the harness's changelog: OUTPUT_CONTRACT is byte-identical across v2 and v3).
 const OUTPUT_CONTRACT = `Reply with a single JSON object and nothing else - no prose, no markdown code fence:
 {"text": "<the full page transcription>", "uncertain": ["<word>", ...]}
 Use "uncertain": [] when you are confident about every word.`;
 
-// Version id -> the exact string a model is sent. ONE entry today; the KNOWN
-// GAP above is closed by adding `v2` here and re-pinning the transcribe pass.
-const PROMPT_TEXT = { v3: POLICY_V3 + "\n\n" + OUTPUT_CONTRACT };
+// Version id -> the exact string a model is sent. Both entries are the harness's
+// own, and the suite asserts each one against it byte for byte.
+const PROMPT_TEXT = {
+  v2: POLICY_V2 + "\n\n" + OUTPUT_CONTRACT,
+  v3: POLICY_V3 + "\n\n" + OUTPUT_CONTRACT,
+};
 
 // The two PASSES, and the version each one is pinned to. The pass name is what
 // the rest of this file asks for, so no call site can pick a wording by
 // accident — and re-pinning one pass is one line here, not an edit in five
-// places. `transcribe` is the pass the bake-off measured under v2; until that
-// text is recovered it sends the only wording this repo can prove.
+// places. The pinning below is the measured configuration itself: `transcribe`
+// asks under v2 because that is how the bake-off asked the transcriber, and
+// `second-opinion` under v3 because a shared wording correlates two models'
+// mistakes as surely as a shared model does.
 const PASSES = ["transcribe", "second-opinion"];
-const DEFAULT_PROMPTS = { "transcribe": "v3", "second-opinion": "v3" };
+const DEFAULT_PROMPTS = { "transcribe": "v2", "second-opinion": "v3" };
 
 // The first pass's wording, for a caller that has no config to hand (and the
 // name the older tests know it by).

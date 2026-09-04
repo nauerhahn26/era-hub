@@ -45,6 +45,11 @@
 //                   the book, the models correctly ignored them, and the reference
 //                   wrongly contained them; the reference is amended (see the private
 //                   dataset's amendments.json) and the prompt now says so.
+//                   v2 IS STILL EXPORTED, as POLICY_V2 / transcribePromptV2(), because
+//                   the decision the bake-off reached runs the pair asymmetrically and
+//                   era-hub's book transcriber pins its first pass to v2 (see below).
+//                   It is a second exported wording, not a second version: the cache
+//                   key, and what this harness itself sends, stay v3.
 export const PROMPT_VERSION = 'v3';
 
 const POLICY = `You are transcribing one photographed page of a printed children's picture book so it can be read aloud by a speech synthesiser. A single wrong word is a failure. Follow these rules exactly.
@@ -59,12 +64,38 @@ const POLICY = `You are transcribing one photographed page of a printed children
 8. LINE AND STANZA BREAKS: use a single newline between printed lines of verse and a blank line between stanzas or separate text blocks. Do not re-wrap prose.
 9. FLAG, DO NOT GUESS: list in "uncertain" every word you are not fully confident about (obscured, blurred, cut off, or ambiguous). Still put your best reading in "text"; the list is for human review.`;
 
+// v2, VERBATIM, because it is still being sent. The bake-off measured its winning
+// pair asymmetrically - the transcriber (gemini-3.1-flash-lite) under v2, its
+// decorrelating partner (gemini-3.5-flash-lite) under v3 - so era-hub's
+// content-providers.js pins its transcribe pass to THIS string and asserts it
+// against this file byte for byte. v3 is not an upgrade, it is a trade (README:
+// 3.1 reads better under v2, 3.5 under v3), so exporting v2 is not keeping a
+// museum piece: it is keeping the wording the 89.2% row was measured under.
+// PROMPT_VERSION stays 'v3' - it stamps the cache key for what the HARNESS sends,
+// which is transcribePrompt(), and restamping it would invalidate real records.
+// Copied from the 06:33 worktree snapshot it was recovered from, never retyped.
+const POLICY_V2 = `You are transcribing one photographed page of a printed children's picture book so it can be read aloud by a speech synthesiser. A single wrong word is a failure. Follow these rules exactly.
+
+1. VERBATIM PRINTED TEXT ONLY. Transcribe the words exactly as printed. Never modernise, localise or correct spelling (British spelling stays British). Never add, expand or paraphrase words that are not printed. Do not translate.
+2. READING ORDER follows the visual and narrative flow of the page, not raw top-to-bottom geometry. For rhyming verse use rhyme and metre as an ordering signal across columns, panels and speech bubbles, so the text reads coherently start to finish.
+3. ELLIPSES: render any printed ellipsis, including a spaced ". . .", as three dots "...". Keep leading or trailing ellipses that are used as page-turn continuations.
+4. QUOTES: transcribe quotation marks exactly as printed, even when they are unbalanced on this page (a speech may continue across pages).
+5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - lettering painted on objects such as boat hulls or signs, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark).
+6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end.
+7. If the page has no printed story text at all (a full-bleed illustration, an endpaper), return an empty string for "text".
+8. LINE AND STANZA BREAKS: use a single newline between printed lines of verse and a blank line between stanzas or separate text blocks. Do not re-wrap prose.
+9. FLAG, DO NOT GUESS: list in "uncertain" every word you are not fully confident about (obscured, blurred, cut off, or ambiguous). Still put your best reading in "text"; the list is for human review.`;
+
 const OUTPUT_CONTRACT = `Reply with a single JSON object and nothing else - no prose, no markdown code fence:
 {"text": "<the full page transcription>", "uncertain": ["<word>", ...]}
 Use "uncertain": [] when you are confident about every word.`;
 
 export function transcribePrompt() {
   return `${POLICY}\n\n${OUTPUT_CONTRACT}`;
+}
+
+export function transcribePromptV2() {
+  return `${POLICY_V2}\n\n${OUTPUT_CONTRACT}`;
 }
 
 export function reviewPrompt(draft) {
@@ -84,4 +115,4 @@ Return the CORRECTED FULL page text - not a diff, not a list of comments - plus 
 ${OUTPUT_CONTRACT}`;
 }
 
-export default { PROMPT_VERSION, transcribePrompt, reviewPrompt };
+export default { PROMPT_VERSION, transcribePrompt, transcribePromptV2, reviewPrompt };
