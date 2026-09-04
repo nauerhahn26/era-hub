@@ -41,13 +41,18 @@ const driveCfg = (cfg) => fs.writeFileSync(path.join(DATA, "drive.json"), JSON.s
 const jpg = (n) => Buffer.alloc(64, n);
 
 // A book folder in whatever state the test needs. `photos` is the raw pile a
-// parent dropped in (an inbox); `pages`/`job` are what the builder has left
-// behind by now. Never real book content — one word per page.
+// parent dropped in (an inbox); `sources` is the same pile after ingest has
+// moved it aside; `pages`/`job` are what the builder has left behind by now.
+// Never real book content — one word per page.
 function book(name, o) {
   const opts = o || {};
   const dir = path.join(BOOKS, name);
   fs.mkdirSync(dir, { recursive: true });
   for (const f of opts.photos || []) fs.writeFileSync(path.join(dir, f), jpg(1));
+  if (opts.sources) {
+    fs.mkdirSync(path.join(dir, "sources"), { recursive: true });
+    for (const f of opts.sources) fs.writeFileSync(path.join(dir, "sources", f), jpg(1));
+  }
   if (opts.pages) {
     fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
     const text = [], narr = [];
@@ -127,6 +132,50 @@ test("a pile of photos nobody has claimed is a job waiting to start", async () =
   assert.equal(j.step, "ingest");
   assert.equal(j.progress.pages, 3);
   assert.equal(j.published, false);
+});
+
+// L2, from the 16-page live run of 9/4: ingest MOVES the pile into sources/ one
+// photo at a time (content-ingest.js), so counting only the loose files made
+// /content/status say 16 → 3 → 6 → 11 → 15 → 16 while nothing was lost — a
+// parent watching the card saw their book shrink. A photo is one page of the
+// book wherever it sits, so the total must not move while the move runs.
+test("the page count does not dip while ingest moves the pile into sources/", async () => {
+  const names = ["IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg", "IMG_0004.jpg"];
+  const dir = book("Moving Book", { photos: names });
+  const pagesNow = async () => (jobOf((await statusOf()).body, "moving-book") || {}).progress.pages;
+  assert.equal(await pagesNow(), 4, "the pile before ingest touches it");
+  fs.mkdirSync(path.join(dir, "sources"), { recursive: true });
+  for (const f of names) {
+    fs.renameSync(path.join(dir, f), path.join(dir, "sources", f));
+    assert.equal(await pagesNow(), 4, "still four pages after " + f + " moved");
+  }
+  // ...and pages/ filling in behind it changes nothing either.
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  for (let i = 1; i <= names.length; i++) {
+    fs.writeFileSync(path.join(dir, "pages", String(i).padStart(3, "0") + ".jpg"), jpg(i));
+    assert.equal(await pagesNow(), 4, "still four pages after page " + i + " was built");
+  }
+  // The publish step drops cover.jpg in the book root from page 1's bytes
+  // (content-publish.COVER) — the hub's own output, not a photo the parent put
+  // there, and counting it made a finished four-page book claim five. Ingest
+  // skips the same file by the same name (content-ingest.OURS).
+  fs.writeFileSync(path.join(dir, "cover.jpg"), jpg(1));
+  assert.equal(await pagesNow(), 4, "the cover the publish step wrote is not a fifth page");
+});
+
+// The other half of "wherever it sits": ingest pages JPEG only and leaves a
+// HEIC exactly where the parent put it, naming it in the log
+// (content-ingest.OTHER_IMAGE_EXTS). That photo is still a page of the book the
+// hub has not got — "15 of 16" with a log line saying which one is the truth a
+// parent can act on; dropping it to "15 of 15" hides a lost page.
+test("a photo ingest could not page still counts as a page of the book", async () => {
+  const dir = book("Phone Book", { sources: ["IMG_0001.jpg", "IMG_0002.jpg"] });
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "pages", "001.jpg"), jpg(1));
+  fs.writeFileSync(path.join(dir, "pages", "002.jpg"), jpg(2));
+  fs.writeFileSync(path.join(dir, "IMG_0003.heic"), jpg(3));
+  const j = jobOf((await statusOf()).body, "phone-book");
+  assert.equal(j.progress.pages, 3);
 });
 
 test("a book part-way through says which step it owes and how far it has got", async () => {

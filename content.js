@@ -70,25 +70,63 @@ const iso = (now) => new Date(now).toISOString();
 
 // ------------------------------------------------------------- the folder scan
 
-// Top-level photos only: this is the pile the parent dropped in, not the
-// pages/ and sources/ the builder makes afterwards (by then job.json exists and
-// the folder is no longer an inbox). clothing-photos.js owns the "what counts
-// as a photo" list so the two pipelines can never disagree; a HEIC counts here
-// even though content-ingest.js cannot page it yet — the folder IS an inbox,
-// and the ingest log is where that gets explained.
-function listing(dir) {
+// The photo files sitting directly in one directory, unsorted, or null if it
+// cannot be read. clothing-photos.js owns the "what counts as a photo" list so
+// the two pipelines can never disagree; a HEIC counts even though
+// content-ingest.js cannot page it yet — it is a page of the book the hub has
+// not got, and the ingest log is where that gets explained.
+function photoNames(dir) {
   let ents = [];
   try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
-  const parts = [];
+  const out = [];
   for (const e of ents) {
     if (e.name.startsWith(".") || !e.isFile()) continue;
     if (!PHOTO_EXT.has(path.extname(e.name).toLowerCase())) continue;
-    let size = -1;
-    try { size = fs.statSync(path.join(dir, e.name)).size; } catch {}
-    parts.push(e.name + ":" + size);
+    out.push(e.name);
   }
+  return out;
+}
+
+// Top-level photos only, with their sizes: this is the pile the parent dropped
+// in, not the pages/ and sources/ the builder makes afterwards (by then
+// job.json exists and the folder is no longer an inbox). The signature is what
+// the quiet period watches, so it must see the loose files and only those — a
+// folder is still changing while photos are landing in IT, never while ingest
+// is tidying them away.
+function listing(dir) {
+  const names = photoNames(dir);
+  if (!names) return null;
+  const parts = names.map(n => {
+    let size = -1;
+    try { size = fs.statSync(path.join(dir, n)).size; } catch {}
+    return n + ":" + size;
+  });
   parts.sort();
   return { count: parts.length, sig: parts.join("\n") };
+}
+
+// Where ingest puts the originals once it has taken them in (content-ingest.js
+// owns the name; it is not exported because requiring that module here would
+// drag the JPEG decoder into the hub's main process for one string).
+const SOURCES = "sources";
+// The one .jpg in a book root that is not a photo a parent dropped in: the
+// publish step copies page 1's bytes there as the shelf's cover
+// (content-publish.COVER). Ingest skips it by the same name (its OURS list) so
+// it never becomes a page, and it must not be counted as one either — a
+// finished sixteen-page book said seventeen without this.
+const NOT_A_PAGE = new Set(["cover.jpg"]);
+
+// How many photos a book folder holds, WHEREVER THEY SIT. The pile starts
+// loose in the folder and ingest MOVES it into sources/ one file at a time, so
+// counting only the loose ones made the total fall as the move ran and climb
+// back as pages/ filled behind it: live, on the 16-page run of 9/4,
+// /content/status said 16 → 3 → 6 → 11 → 15 → 16 while nothing was lost, and a
+// parent watching the card saw their book shrink. A photo is one page of the
+// book on either side of the move, and every file leaves one side exactly as it
+// joins the other, so this sum holds still the whole way across.
+function photoCount(dir) {
+  const loose = (photoNames(dir) || []).filter(n => !NOT_A_PAGE.has(n.toLowerCase()));
+  return loose.length + (photoNames(path.join(dir, SOURCES)) || []).length;
 }
 
 // What the last scan saw, per folder: {sig, since}. `since` is the moment the
@@ -366,10 +404,11 @@ function jobFor(name, dir, slug) {
   // only text.json's entries makes M chase N and a twelve-page book part-way
   // through says "4 of 4" — finished, when it is a third done. The built pages
   // are the honest total (ingest's own record, or pages/ for a folder built by
-  // hand); before ingest has run, the pile of photos is.
+  // hand); before ingest has run, and while it is running, the pile of photos is
+  // — counted on both sides of the move it is half way through (photoCount).
   let built = [];
   try { built = pagesOf(dir); } catch {}
-  const count = Math.max(built.length, pages.length, (listing(dir) || { count: 0 }).count);
+  const count = Math.max(built.length, pages.length, photoCount(dir));
   // TWO COUNTS, because there are two kinds of mark and they are not the same
   // sentence to a parent. `flags` is WORDS somebody was unsure of, the ones the
   // review page highlights inside the page's own text; `pageFlags` is whole
