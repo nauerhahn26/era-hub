@@ -134,15 +134,23 @@ async function narrateBook(dir, opts) {
   const errors = [];
   let narrated = 0, reused = 0, permanent = false;
 
-  for (const page of text.pages) {
+  // The entry AND the file have to be there for a page to count as narrated: an
+  // mp3 someone deleted (or a Drive mirror that never landed) must be re-done,
+  // or publish points the reader at a 404 forever.
+  const kept = (i) => {
+    const d = have.get(i);
+    return d && fs.existsSync(path.join(dir, "audio", pad3(i) + ".mp3"))
+      ? { index: i, audio: audioRel(i), words: d.words || [] } : null;
+  };
+
+  let stoppedAt = -1;
+  for (let i = 0; i < text.pages.length; i++) {
+    const page = text.pages[i];
     // A page with no words is a picture page: silent by design, no call, no
     // entry, and the reader already knows how to show one.
     if (!page.text || !page.text.trim()) { have.delete(page.index); continue; }
     const mp3 = path.join(dir, "audio", pad3(page.index) + ".mp3");
     const done = have.get(page.index);
-    // The entry AND the file: an mp3 someone deleted (or a Drive mirror that
-    // never landed) has to be re-narrated, or publish points the reader at a
-    // 404 forever.
     const doneOk = !!done && fs.existsSync(mp3);
     const forced = !!only && only.has(page.index);
     if (doneOk && !forced) {
@@ -165,9 +173,28 @@ async function narrateBook(dir, opts) {
       const msg = store.redact(e && e.message ? e.message : String(e));
       errors.push(msg);
       store.appendLog(dir, "narrate", "page " + page.index + " failed: " + msg, { now: o.now });
+      // A failed attempt leaves the page exactly as it was. If it already had
+      // audio (a re-narrate that the provider refused), the old mp3 and its
+      // timings stay in the manifest — the book keeps reading aloud, and the
+      // family is not billed again for a page they already own.
+      const k = kept(page.index);
+      if (k) { out.push(k); reused++; }
       // A refused key will refuse every remaining page too. Stop; a transient
       // one only costs this page, and the next run picks it up.
-      if (/^permanent:/.test(msg)) { permanent = true; break; }
+      if (/^permanent:/.test(msg)) { permanent = true; stoppedAt = i; break; }
+    }
+  }
+
+  // Stopping early must not COST anything. The pages past the break were never
+  // looked at, so their entries are still good — carry them through, or the
+  // rewrite below would erase timings the family already paid for and the next
+  // run would buy them a second time.
+  if (stoppedAt >= 0) {
+    for (let i = stoppedAt + 1; i < text.pages.length; i++) {
+      const p = text.pages[i];
+      if (!p.text || !p.text.trim()) continue;
+      const k = kept(p.index);
+      if (k) { out.push(k); reused++; }
     }
   }
 

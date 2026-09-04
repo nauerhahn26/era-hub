@@ -270,6 +270,25 @@ test("a permanent error stops the run at the first page — no burning the book"
   assert.ok(!r.errors[0].includes(FAKE_KEY));
 });
 
+test("a permanent stop never throws away timings the family already paid for", async () => {
+  calls = [];
+  const dir = book("keep", ["A busy bee.", "It went home.", "The end."]);
+  const first = await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(first.narrated, 3);
+  // The Voice card's key is revoked, and a parent hits "Re-narrate page 0".
+  mode = "401";
+  try { await narrate.narrateBook(dir, { cfg: cfg(), only: [0] }); } finally { mode = "ok"; }
+  const saved = narrate.readNarration(dir);
+  assert.deepEqual(saved.pages.map(p => p.index), [0, 1, 2],
+    "pages after the refusal keep their entries — re-narrating them costs real money");
+  assert.deepEqual(saved.pages[2].words.map(w => w.word), ["The", "end."]);
+  // and with the key working again, nothing is paid for twice
+  calls = [];
+  const r = await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 0);
+  assert.equal(r.reused, 3);
+});
+
 test("nothing this step writes contains the key", async () => {
   calls = [];
   const dir = book("nosecret", ["A busy bee."]);
