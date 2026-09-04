@@ -17,12 +17,16 @@ OUT="${1:-$HUB/dist/new-era-payload}"
 VERSION="$(date -u +%Y%m%d.%H%M)"
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-ingest.js" "$HUB/content-narrate.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/predict-model.json" "$OUT/"
 # every local require of the hub's modules must resolve INSIDE the payload —
 # a module added to the repo but not to the list above shipped a hub that
 # died on its first line (packs.js, caught by the VM e2e 9/3, never by the
-# tier-1 gate, which runs from the checkout)
-for m in $(grep -ho 'require("\./[a-z-]*\(\.js\)\?")' "$OUT"/*.js | sed 's/require("\.\///; s/")//; s/\.js$//' | sort -u); do
+# tier-1 gate, which runs from the checkout).
+# A WORKER is loaded by PATH, not by require, so it is invisible to a grep for
+# require() — clothing-worker.js and content-worker.js would have gone missing
+# in exactly the same silent way. Both forms are collected here.
+workers="$(grep -ho 'new Worker(path\.join(__dirname, "[a-z-]*\.js")' "$OUT"/*.js | sed 's/.*__dirname, "//; s/\.js")$//' | sort -u)"
+for m in $(grep -ho 'require("\./[a-z-]*\(\.js\)\?")' "$OUT"/*.js | sed 's/require("\.\///; s/")//; s/\.js$//' | sort -u) $workers; do
   [ -f "$OUT/$m.js" ] || { echo "build-payload: $m.js is required by the hub but not in the payload"; exit 1; }
 done
 cp -r "$HUB/vendor" "$OUT/vendor"   # HEIC decode (libheif, LGPL - see NOTICE) + jpeg-js

@@ -12,6 +12,7 @@ const path = require("path");
 const updater = require("./update");
 const drive = require("./drive");
 const clothing = require("./clothing");
+const content = require("./content.js");
 const { slugify } = require("./slug.js");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
@@ -1896,8 +1897,18 @@ server.on("listening", () => {
   // welcome wizard: the timers wait for a profile (leg B, 9/3)
   updater.start(PORT, () => HAS_PROFILE);
   drive.start(DATA);     // Google Drive content mirror (no-op until connected)
-  drive.onSynced = () => clothing.regenerate(true).catch(() => {});   // fresh photos -> fresh board
+  // A finished sync feeds BOTH pipelines. onSynced is one property, so the
+  // fan-out lives here rather than in either module: whoever is added next
+  // adds a line, and neither clothing.js nor content.js has to know the other
+  // exists (or risk quietly overwriting it — that is how a slot with two
+  // owners loses one).
+  drive.onSynced = () => {
+    clothing.regenerate(true).catch(() => {});              // fresh photos -> fresh board
+    try { content.tick("drive sync"); }                     // fresh books -> a build
+    catch (e) { console.error("[content] " + e.message); }
+  };
   clothing.start(DATA);  // the Clothing Picker generator (no-op without photos)
+  content.start(DATA);   // book jobs in the family's Drive folder (local mode only)
   clearStageOnce();      // first boot after install: minimize covering browsers
   // installer-chosen apps install at first boot — but the wizard has the final
   // say, and until it is answered the installer's ticks are only its pre-fill.

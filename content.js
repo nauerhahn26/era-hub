@@ -33,6 +33,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { Worker } = require("worker_threads");
 const drive = require("./drive.js");
 const store = require("./content-store.js");
 const { slugify } = require("./slug.js");
@@ -52,6 +53,7 @@ let DATA = null;
 let running = null;     // {kind, slug, dir, step} of the job in flight
 let inflight = null;    // its promise, for idle()
 let queue = [];         // [{job, waiters[]}] — books asked for while one runs
+let progress = null;    // {step, state} the running worker last reported
 let lastScan = null;    // small JSON-safe summary for status()
 
 // Who holds the claim, written into job.json and read by the other devices.
@@ -169,14 +171,32 @@ function scan(opts) {
 
 // ------------------------------------------------------------- one at a time
 
-// The step table. content-worker.js is spawned here (T2.4) exactly as
-// clothing.js:55 spawns clothing-worker.js; until then a claimed book simply
-// sits with its claim, which is the safe half of the deal — the folder is
-// marked as ours and nothing has been spent. Assigned onto module.exports so
-// the worker wiring (and the tests) can replace it in one place.
+// The step table lives in content-worker.js and runs in a WORKER THREAD, for
+// the reason clothing.js:56 spawns one: the build reads and re-encodes whole
+// photo albums, and on the main thread that froze every hub page for minutes
+// (dad 8/31). The shell only relays progress and the final result, so
+// /content/status answers instantly while a book is being built.
+// Assigned onto module.exports so the tests can replace it in one place.
 function runJob(job) {
-  console.log("[content] " + job.slug + " is claimed; the build steps arrive with content-worker.js");
-  return Promise.resolve({ slug: job.slug, skipped: "no-worker" });
+  return new Promise((resolve) => {
+    let result = null;
+    const w = new Worker(path.join(__dirname, "content-worker.js"), {
+      workerData: { dataDir: job.dataDir || DATA, dir: job.dir, kind: job.kind,
+                    slug: job.slug, name: job.name || null, step: job.step || null },
+    });
+    w.on("message", (m) => {
+      if (m && m.step) progress = { step: m.step, state: m.state || null };
+      if (m && m.done) result = m.done;
+    });
+    // The worker already turned a step's own failure into a {done:{error}}; an
+    // error HERE is the thread itself dying, which the exit handler answers for.
+    w.on("error", (e) => console.error("[content] " + job.slug + " worker: " + e.message));
+    w.on("exit", (code) => {
+      progress = null;
+      resolve(result || { slug: job.slug,
+        error: "the builder stopped before it finished (exit " + code + ")" });
+    });
+  });
 }
 
 const keyOf = (job) => job.dir + "|" + (job.step || "");
@@ -246,7 +266,8 @@ function status() {
     mode: st.mode,
     local: st.mode === "local" && !!st.folderPath,
     building: !!running,
-    job: running ? { kind: running.kind, slug: running.slug, step: running.step || null } : null,
+    job: running ? { kind: running.kind, slug: running.slug,
+                     step: (progress && progress.step) || running.step || null } : null,
     queued: queue.map(q => q.job.slug),
     lastScan,
   };
@@ -271,7 +292,8 @@ module.exports = {
   start, scan, tick, run, runJob, isBuilding, idle, status, beat, claim,
   QUIET_MS, STALE_MS,
   _testReset: () => {
-    running = null; inflight = null; queue = []; seen = new Map(); lastScan = null;
+    running = null; inflight = null; queue = []; seen = new Map();
+    progress = null; lastScan = null;
     module.exports.runJob = runJob;
   },
 };
