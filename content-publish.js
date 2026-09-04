@@ -15,7 +15,10 @@
 //  2. IT NEVER NAMES A FILE THAT IS NOT THERE. Every image, mp3 and mp4 is
 //     stat'd on the way in. A page whose mp3 never landed (a Drive mirror still
 //     catching up, a narration that failed) publishes SILENT — no `audio` key,
-//     no `words` — which is a page the reader already knows how to show.
+//     no `words` — which is a page the reader already knows how to show. Nor
+//     does it name audio that speaks OTHER words: an mp3 bought for a sentence
+//     a grown-up has since rewritten is checked off narration.json's `said`
+//     fingerprint and left out until the page is narrated again.
 //  3. AN IMPERFECT BOOK STILL PUBLISHES. Flagged pages publish (ruling 9/4: a
 //     small mistake is tolerable, a book that never appears is not) and their
 //     flags stay in text.json for the review page. A page the transcriber never
@@ -37,7 +40,7 @@ const path = require("path");
 const crypto = require("crypto");
 const store = require("./content-store.js");
 const { pagesOf } = require("./content-providers.js");
-const { readNarration } = require("./content-narrate.js");
+const { readNarration, said: saidOf } = require("./content-narrate.js");
 const { slugify } = require("./slug.js");
 
 const MANIFEST = "manifest.json";
@@ -135,7 +138,16 @@ function publishBook(dir, opts) {
     // The mp3 has to BE there. A page listed in narration.json whose audio has
     // not mirrored yet is silent for now and gains its voice on the next
     // publish — far better than a reader that stalls on a 404.
-    if (said && present(dir, said.audio)) {
+    // And it has to say THESE words. A page rewritten since it spoke — a
+    // grown-up's correction, a re-reading of the photo — still has its old mp3
+    // and its old timings sitting on disk, and naming them here is worse than
+    // naming nothing: the reader would play one sentence while highlighting
+    // another, word by word, and the person being misled cannot read yet.
+    // Silent is honest, and the next narrate walk hands the page its voice back
+    // (content-narrate.js buys exactly the pages whose words moved).
+    // A book from an older hub carries no fingerprint and keeps its audio: what
+    // it says has not changed just because we started writing this down.
+    if (said && present(dir, said.audio) && (!said.said || !t || said.said === saidOf(t.text))) {
       page.audio = said.audio;
       page.words = Array.isArray(said.words) ? said.words : [];
     } else silent++;

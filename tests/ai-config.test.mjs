@@ -77,7 +77,8 @@ test("both files together fill both roles", () => {
     "tts-config.json": { apiKey: TKEY, voiceId: "EXAVITQu4vr4xnSDxMaL", keyOk: true } });
   const r = aiRoles(dir);
   assert.deepEqual(r.vision, { provider: "google", apiKey: VKEY });
-  assert.deepEqual(r.elevenlabs, { apiKey: TKEY, voiceId: "EXAVITQu4vr4xnSDxMaL" });
+  assert.deepEqual(r.elevenlabs,
+    { apiKey: TKEY, voiceId: "EXAVITQu4vr4xnSDxMaL", modelId: "eleven_flash_v2_5" });
 });
 
 test("an empty <DATA> is every role null, not a throw", () => {
@@ -119,6 +120,20 @@ test("a key not verified yet still counts (server.js's own enabled rule)", () =>
   assert.equal(r.elevenlabs.apiKey, TKEY);
   // no voice chosen yet -> the same default voice the Voice card shows first
   assert.equal(r.elevenlabs.voiceId, "cgSgspJ2msm6clMCkdW9");
+  // and the same model it shows first (server.js loadTtsCfg). The role used to
+  // carry no model at all, so the narrate step fell through to a default of its
+  // own and the 3-page run of 9/4 recorded eleven_multilingual_v2 for a family
+  // whose card says flash — the book credited a voice it was never read in.
+  assert.equal(r.elevenlabs.modelId, "eleven_flash_v2_5");
+});
+
+test("the model the family chose on the Voice card is the one the role carries", () => {
+  const dir = dataDir({ "tts-config.json": {
+    apiKey: TKEY, voiceId: "EXAVITQu4vr4xnSDxMaL", modelId: "eleven_turbo_v2_5", keyOk: true } });
+  assert.equal(aiRoles(dir).elevenlabs.modelId, "eleven_turbo_v2_5");
+  // a blank one is not a choice, it is an empty box on the card
+  const dir2 = dataDir({ "tts-config.json": { apiKey: TKEY, modelId: "  " } });
+  assert.equal(aiRoles(dir2).elevenlabs.modelId, "eleven_flash_v2_5");
 });
 
 test("ELEVENLABS_API_KEY in the environment fills the voice role", () => {

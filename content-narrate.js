@@ -13,10 +13,14 @@
 //     and no Voice card still gets their book — with text and no audio (spec §4
 //     "free Google" row). narrateBook() returns {skipped:"no-eleven-key"} and
 //     the job walks on to publish.
-//  2. NOTHING IS RE-NARRATED FOR FREE. Every call costs the family characters,
-//     so a page whose mp3 and timings are already on disk is reused, and a
-//     re-run of the step after a crash resumes rather than starts over. Only
-//     `only:[index]` (the review page's "Re-narrate this page") pays again.
+//  2. NOTHING IS RE-NARRATED FOR FREE — AND NOTHING SPEAKS THE WRONG WORDS.
+//     Every call costs the family characters, so a page whose mp3 and timings
+//     are already on disk is reused, and a re-run of the step after a crash
+//     resumes rather than starts over. The one page that IS bought again is the
+//     page whose words have changed since it spoke: every entry records the
+//     fingerprint of the text it was bought for (`said`), and a page whose
+//     fingerprint disagrees owes a new recording. `only:[index]` (the review
+//     page's "Re-narrate this page") pays again on request.
 //  3. NO KEY REACHES DISK. ElevenLabs' error bodies echo the request back at
 //     you, so every message that lands in narration.json, log.jsonl or a return
 //     value goes through content-store's redact() first.
@@ -28,15 +32,19 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const store = require("./content-store.js");
 const words = require("./words.js");
-const { aiRoles } = require("./ai-config.js");
+const { aiRoles, DEFAULT_MODEL_ID } = require("./ai-config.js");
 
-// The voice model her other books were narrated with (verified from the live
-// event log of the existing packages): multilingual v2, not the cheaper flash
-// the board's chat coach uses — a story is read once and listened to fifty
-// times, so the better voice is worth the characters.
-const DEFAULT_MODEL_ID = "eleven_multilingual_v2";
+// The model is the FAMILY'S, off the Voice card, and ai-config.js's elevenRole
+// now carries it here (it did not until 9/4, so this module fell through to a
+// preference of its own — eleven_multilingual_v2 — and the 3-page run was read,
+// and credited in the manifest, in a model the card does not name). There is one
+// default now and it is the card's own: ai-config.DEFAULT_MODEL_ID, the same
+// eleven_flash_v2_5 server.js's loadTtsCfg() starts every card at. A family who
+// wants the richer multilingual voice picks it there, once, for everything the
+// hub speaks in.
 // mp3 at 44.1 kHz / 128 kbps: what `with-timestamps` is documented to align
 // against, and what the reader's <audio> already plays.
 const OUTPUT_FORMAT = "mp3_44100_128";
@@ -52,6 +60,23 @@ function pad3(n) { return String(n).padStart(3, "0"); }
 
 function audioRel(index) { return "audio/" + pad3(index) + ".mp3"; }
 function narrationPath(dir) { return path.join(store.buildDir(dir), "narration.json"); }
+
+// WHAT THIS PAGE SAID. Rule 2 above used to be decided by one question — is
+// there an mp3? — and that question cannot tell a page that is already narrated
+// from a page whose WORDS HAVE CHANGED since it was. forgetPage() below is the
+// answer for the one writer that knows it changed them (the review page's edit
+// button); it is not the only writer of text.json — "read the photos again"
+// rewrites every unedited page, power mode lets a parent edit the file by hand,
+// and a future step can too. None of those can be relied on to say so. So the
+// entry carries the fingerprint of the exact text it was bought for and the walk
+// asks the words themselves: a page whose fingerprint disagrees is re-narrated,
+// and content-publish.js will not name audio whose fingerprint disagrees (e2e
+// 9/4: a book published showing a grown-up's correction and SPEAKING — and
+// highlighting, word by word — the sentence it replaced, on all three pages).
+// Sixteen hex characters tell two versions of one page apart and keep
+// narration.json small enough for Drive to mirror on every publish.
+const said = (text) => crypto.createHash("sha1")
+  .update(String(text == null ? "" : text)).digest("hex").slice(0, 16);
 
 // ------------------------------------------------------------------ one page
 
@@ -152,10 +177,11 @@ function forgetPage(dir, index) {
 // INTERFACE NOTE for the wiring task (T2.4/T2.8): the word timings cannot live
 // in text.json — that file's schema is fixed at {index, source, text, flags,
 // cover} and is the hand-editable interop point. They go in
-// .build/narration.json as {pages:[{index, audio, words}]}, written atomically,
-// which is also what makes rule 2 (never pay twice) possible across a crash.
-// The publish step reads it with readNarration(dir) and copies `audio` and
-// `words` onto the manifest's pages; a page missing from it publishes silent.
+// .build/narration.json as {pages:[{index, audio, words, said}]}, written
+// atomically, which is also what makes rule 2 (never pay twice) possible across
+// a crash. The publish step reads it with readNarration(dir) and copies `audio`
+// and `words` onto the manifest's pages; a page missing from it — or one whose
+// `said` no longer matches its words — publishes silent.
 async function narrateBook(dir, opts) {
   const o = opts || {};
   const cfg = o.cfg || (o.dataDir ? aiRoles(o.dataDir).elevenlabs : null);
@@ -181,7 +207,7 @@ async function narrateBook(dir, opts) {
   const kept = (i) => {
     const d = have.get(i);
     return d && fs.existsSync(path.join(dir, "audio", pad3(i) + ".mp3"))
-      ? { index: i, audio: audioRel(i), words: d.words || [] } : null;
+      ? { index: i, audio: audioRel(i), words: d.words || [], said: d.said } : null;
   };
 
   let stoppedAt = -1;
@@ -192,10 +218,23 @@ async function narrateBook(dir, opts) {
     if (!page.text || !page.text.trim()) { have.delete(page.index); continue; }
     const mp3 = path.join(dir, "audio", pad3(page.index) + ".mp3");
     const done = have.get(page.index);
-    const doneOk = !!done && fs.existsSync(mp3);
+    // A page whose words were rewritten since it spoke owes a new recording —
+    // that is the one page a family WANTS to pay for again. A book narrated by
+    // an older hub carries no fingerprint at all, and is never re-narrated for
+    // that (those recordings are bought, and for a page nobody edited they are
+    // also right), so the test is "there is one AND it disagrees".
+    const rewritten = !!done && !!done.said && done.said !== said(page.text);
+    const doneOk = !!done && fs.existsSync(mp3) && !rewritten;
     const forced = !!only && only.has(page.index);
     if (doneOk && !forced) {
-      out.push({ index: page.index, audio: audioRel(page.index), words: done.words || [] });
+      // ADOPTION, the same first-sight rule the mirror ledger uses: a page
+      // narrated before fingerprints existed takes one now, from the words it is
+      // sitting beside. It is NOT re-narrated for it — nothing about what that
+      // page says changed just because we started writing it down — but from
+      // here on the book is guarded like any other, instead of staying
+      // unguarded until every page happens to be narrated again.
+      out.push({ index: page.index, audio: audioRel(page.index),
+                 words: done.words || [], said: done.said || said(page.text) });
       reused++;
       continue;
     }
@@ -207,7 +246,8 @@ async function narrateBook(dir, opts) {
       // The mp3 lands before the entry that points at it, and both land
       // atomically: a torn write here is a page that plays static.
       store.writeAtomic(mp3, r.audio);
-      out.push({ index: page.index, audio: audioRel(page.index), words: r.words });
+      out.push({ index: page.index, audio: audioRel(page.index), words: r.words,
+                 said: said(page.text) });
       narrated++;
       store.appendLog(dir, "narrate", "page " + page.index + ": " + r.words.length + " words", { now: o.now });
     } catch (e) {
@@ -255,6 +295,6 @@ async function narrateBook(dir, opts) {
 
 module.exports = {
   DEFAULT_MODEL_ID, OUTPUT_FORMAT, TIMEOUT_MS,
-  elevenBase, pad3, audioRel, narrationPath, readNarration, forgetPage,
+  elevenBase, pad3, audioRel, narrationPath, readNarration, forgetPage, said,
   narratePage, narrateBook,
 };

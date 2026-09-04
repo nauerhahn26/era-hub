@@ -6,7 +6,8 @@
 // for the animate step), so ai-config.json grows from the flat
 // {provider, apiKey} it has today into a map keyed by ROLE:
 //
-//   { vision: {provider, apiKey}, elevenlabs: {apiKey, voiceId}, fal: {apiKey} }
+//   { vision: {provider, apiKey}, elevenlabs: {apiKey, voiceId, modelId},
+//     fal: {apiKey} }
 //
 // Two rules make that growth safe on a machine that already has keys:
 //
@@ -32,6 +33,14 @@ const DEFAULT_VISION_PROVIDER = "google";
 // Same voice the Voice card offers first (CURATED_VOICES[0] in server.js), so
 // a family that saved a key but never picked a voice still gets narration.
 const DEFAULT_VOICE_ID = "cgSgspJ2msm6clMCkdW9";
+// And the same MODEL the Voice card defaults to — server.js's loadTtsCfg()
+// starts every card at eleven_flash_v2_5, and the board's chat has been speaking
+// in it since the card existed. This role carried no model at all until now, so
+// the narrate step fell through to a default of its own: the 3-page run of 9/4
+// was read (and credited in the manifest) in eleven_multilingual_v2 for a family
+// whose card says flash. Two defaults is one too many. The card is the family's
+// answer to "which voice reads to my child", and this is where it is read.
+const DEFAULT_MODEL_ID = "eleven_flash_v2_5";
 
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
@@ -68,7 +77,8 @@ function elevenRole(dir) {
   // key at all — exactly what /voices reports to the Voice card. keyOk
   // undefined (never verified, or set from the environment) still counts.
   if (!apiKey || cfg.keyOk === false) return null;
-  return { apiKey, voiceId: key(cfg.voiceId) || DEFAULT_VOICE_ID };
+  return { apiKey, voiceId: key(cfg.voiceId) || DEFAULT_VOICE_ID,
+           modelId: key(cfg.modelId) || DEFAULT_MODEL_ID };
 }
 
 // The one export: a snapshot of every role, read fresh each call (a key saved
@@ -87,4 +97,4 @@ function haveRoles(dir) {
   return { vision: !!r.vision, elevenlabs: !!r.elevenlabs, fal: !!r.fal };
 }
 
-module.exports = { aiRoles, haveRoles, VISION_PROVIDERS };
+module.exports = { aiRoles, haveRoles, VISION_PROVIDERS, DEFAULT_MODEL_ID };

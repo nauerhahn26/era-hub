@@ -31,6 +31,10 @@ const BOOKS = path.join(TMP, "books");
 
 const store = require("./content-store.js");
 const publish = require("./content-publish.js");
+// For said() only — the fingerprint publish compares against. content-publish.js
+// already loads this module, so requiring it here adds no reach: nothing in it
+// is called except the pure hash.
+const narrate = require("./content-narrate.js");
 
 let child;
 
@@ -163,6 +167,54 @@ test("an mp3 that is not on disk publishes as a silent page, never as a 404", as
   const m = read(dir);
   assert.equal("audio" in m.pages[0], false);
   assert.equal(m.pages[0].text, "The witch had a cat.");
+});
+
+// An mp3 that is on disk is not the same thing as an mp3 that says these words.
+// Live 9/4: a grown-up fixed a page, the narrate walk reused the old recording
+// (its only question was "is there an mp3?") and the book published the new
+// sentence under the old voice, with the old word timings highlighting it. A
+// child who cannot read is the one being misled by that, so the manifest names
+// audio only when its fingerprint agrees with the words beside it.
+test("a page rewritten since it spoke publishes silent; its neighbours keep their voices", async () => {
+  const dir = book("Fix A Word", [
+    { text: "Tabby McTat", audio: true },
+    { text: "The butchers cat.", audio: true },
+    { text: "The end.", audio: true },
+  ]);
+  // stamp the fingerprints today's narrate step writes
+  const np = path.join(dir, ".build", "narration.json");
+  const n = JSON.parse(fs.readFileSync(np, "utf8"));
+  ["Tabby McTat", "The butchers cat.", "The end."].forEach((t, i) => { n.pages[i].said = narrate.said(t); });
+  store.writeAtomic(np, n);
+  // and a grown-up puts the apostrophe back on page 2
+  const t = store.readText(dir);
+  t.pages[1].text = "The butcher's cat.";
+  store.writeText(dir, t);
+
+  const r = await publish.publishBook(dir, { slug: "fix-a-word", now: "2026-09-04T11:00:00.000Z" });
+  assert.equal(r.silent, 1);
+  const m = read(dir);
+  assert.equal(m.pages[1].text, "The butcher's cat.");
+  assert.equal("audio" in m.pages[1], false, "the old recording says the old sentence");
+  assert.equal("words" in m.pages[1], false, "and its timings would highlight it word by word");
+  assert.equal(m.pages[0].audio, "audio/001.mp3", "the pages nobody touched still read aloud");
+  assert.equal(m.pages[2].audio, "audio/003.mp3");
+  assert.ok(fs.existsSync(path.join(dir, "audio", "002.mp3")),
+    "the mp3 is left where it is — the next narrate walk overwrites it and the page gets its voice back");
+});
+
+test("a book narrated before fingerprints existed keeps every voice it has", async () => {
+  // book() writes the older hub's narration.json: entries, no `said`. Nothing
+  // about what those pages say has changed just because we started writing it
+  // down, so an existing shelf must not go silent on a hub upgrade.
+  const dir = book("Older Shelf", [
+    { text: "A mouse took a stroll.", audio: true },
+    { text: "The end.", audio: true },
+  ]);
+  const r = await publish.publishBook(dir, { slug: "older-shelf", now: "2026-09-04T11:05:00.000Z" });
+  assert.equal(r.silent, 0);
+  const m = read(dir);
+  assert.deepEqual(m.pages.map(p => p.audio), ["audio/001.mp3", "audio/002.mp3"]);
 });
 
 test("a page the transcriber never reached publishes as a picture page", async () => {

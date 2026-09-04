@@ -222,6 +222,111 @@ test("forgetPage drops one page's entry, so the next walk buys that page again",
   assert.equal(r.narrated, 1);
   assert.equal(r.reused, 1, "and the page beside it is not bought again");
   assert.deepEqual(r.pages.map(p => p.index), [0, 1]);
+  assert.equal(narrate.readNarration(dir).pages[1].said, narrate.said("It went home."),
+    "the page it just bought records the words it was bought for");
+});
+
+// ------------------------------------------------- the words it actually said
+//
+// forgetPage above is the CHEAP, EXPLICIT path: the edit button knows it changed
+// the words, so it says so. It is not the only writer of text.json — "read the
+// photos again" rewrites every unedited page, a parent can edit the file by hand
+// in power mode, and a future step can too. None of those call forgetPage, and
+// under the old rule ("is there an mp3?") every one of them left the book
+// speaking sentences that are no longer on the page. The fingerprint is the
+// guard underneath the button: it asks the words themselves.
+
+test("a book nobody has touched is not re-narrated: every fingerprint still agrees", async () => {
+  calls = [];
+  const dir = book("said-idem", ["A busy bee.", "It went home.", "The end."]);
+  await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 3);
+  assert.deepEqual(narrate.readNarration(dir).pages.map(p => p.said),
+    ["A busy bee.", "It went home.", "The end."].map(narrate.said),
+    "every page records the words it was bought for");
+  calls = [];
+  const r = await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 0, "nothing was rewritten, so nothing is bought again");
+  assert.equal(r.reused, 3);
+  assert.equal(r.narrated, 0);
+});
+
+test("a page whose words changed without forgetPage is bought again, and only that page", async () => {
+  calls = [];
+  const dir = book("said-rewrite", ["A busy bee.", "It went home.", "The end."]);
+  await narrate.narrateBook(dir, { cfg: cfg() });
+  // The general case: text.json is rewritten by something that never told this
+  // module — a re-read of the photos, a hand edit, a future step.
+  const t = store.readText(dir);
+  t.pages[0].text = "A busy wasp.";
+  store.writeText(dir, t);
+  // Sentinels. The stand-in returns the same bytes for every page, so the only
+  // honest way to prove pages 1 and 2 were left alone is to make their mp3s
+  // unmistakable first: if either comes back as ID3 bytes, the family was billed.
+  fs.writeFileSync(path.join(dir, "audio", "001.mp3"), "keep-001");
+  fs.writeFileSync(path.join(dir, "audio", "002.mp3"), "keep-002");
+  calls = [];
+  const r = await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 1, "exactly the rewritten page, and exactly once");
+  assert.equal(calls[0].body.text, "A busy wasp.");
+  assert.equal(r.narrated, 1);
+  assert.equal(r.reused, 2);
+  assert.equal(fs.readFileSync(path.join(dir, "audio", "001.mp3"), "utf8"), "keep-001");
+  assert.equal(fs.readFileSync(path.join(dir, "audio", "002.mp3"), "utf8"), "keep-002");
+  const saved = narrate.readNarration(dir);
+  assert.equal(saved.pages[0].said, narrate.said("A busy wasp."));
+  assert.deepEqual(saved.pages[0].words.map(w => w.word), ["A", "busy", "wasp."]);
+  assert.equal(saved.pages[1].said, narrate.said("It went home."), "the others keep theirs");
+});
+
+test("a book narrated before fingerprints existed adopts one, and is never re-billed for it", async () => {
+  calls = [];
+  const dir = book("said-legacy", ["A busy bee.", "It went home."]);
+  await narrate.narrateBook(dir, { cfg: cfg() });
+  // Exactly what an older hub's narration.json looks like: entries, no
+  // fingerprints. The family's shelf is full of these and every recording on it
+  // is bought and paid for.
+  const raw = JSON.parse(fs.readFileSync(narrate.narrationPath(dir), "utf8"));
+  for (const p of raw.pages) delete p.said;
+  fs.writeFileSync(narrate.narrationPath(dir), JSON.stringify(raw));
+  calls = [];
+  const r = await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 0, "upgrading the hub must not re-buy an existing shelf");
+  assert.equal(r.reused, 2);
+  assert.deepEqual(narrate.readNarration(dir).pages.map(p => p.said),
+    ["A busy bee.", "It went home."].map(narrate.said),
+    "adopted on first sight, so the book is protected from here on");
+});
+
+// ------------------------------------------------------------- the Voice card
+
+test("the model the family chose on the Voice card is the model that speaks", async () => {
+  calls = [];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "era-narr-model-"));
+  fs.writeFileSync(path.join(dataDir, "tts-config.json"), JSON.stringify(
+    { apiKey: FAKE_KEY, voiceId: VOICE, modelId: "eleven_turbo_v2_5", keyOk: true }));
+  const dir = book("model", ["A busy bee."]);
+  await narrate.narrateBook(dir, { dataDir });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body.model_id, "eleven_turbo_v2_5", "the card's model reached the request");
+  assert.equal(narrate.readNarration(dir).model, "eleven_turbo_v2_5",
+    "and narration.json records what actually spoke, not a default");
+});
+
+test("a card that never named a model gets the card's own default, not a second one", async () => {
+  calls = [];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "era-narr-model-default-"));
+  fs.writeFileSync(path.join(dataDir, "tts-config.json"), JSON.stringify(
+    { apiKey: FAKE_KEY, voiceId: VOICE, keyOk: true }));
+  const dir = book("model-default", ["A busy bee."]);
+  await narrate.narrateBook(dir, { dataDir });
+  assert.equal(calls.length, 1);
+  // The 9/4 finding: this module had a default of its own, so a family whose
+  // card says flash was read in multilingual and the manifest credited a model
+  // nobody chose. One default, and it is the card's.
+  assert.equal(narrate.DEFAULT_MODEL_ID, "eleven_flash_v2_5");
+  assert.equal(calls[0].body.model_id, "eleven_flash_v2_5");
+  assert.equal(narrate.readNarration(dir).model, "eleven_flash_v2_5");
 });
 
 test("a page whose mp3 has gone missing is re-narrated, never reported as done", async () => {
