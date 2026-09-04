@@ -58,31 +58,27 @@ const ONLY = workerData.step || null;   // POST /content/run {step}: re-run one 
 // laptop that was closed mid-book.
 const BEAT_EVERY = 60 * 1000;
 
+// Names come from content-store.STEP_OWED so this table and the one
+// /content/status names (and POST /content/run validates against) can never
+// drift apart — the state machine's owner names its own steps.
 const STEPS = [
-  { name: "ingest",     owes: "inbox",        then: "transcribing",
+  { name: store.STEP_OWED.inbox,        owes: "inbox",        then: "transcribing",
     run: (c) => ingest(c.dir) },
-  { name: "transcribe", owes: "transcribing", then: "reviewing",
+  { name: store.STEP_OWED.transcribing, owes: "transcribing", then: "reviewing",
     run: (c) => transcribeBook(c.dir, { dataDir: c.dataDir, job: c.job }) },
-  { name: "narrate",    owes: "reviewing",    then: "narrating",
+  { name: store.STEP_OWED.reviewing,    owes: "reviewing",    then: "narrating",
     run: (c) => narrateBook(c.dir, { dataDir: c.dataDir }) },
-  { name: "publish",    owes: "narrating",    then: "published",
+  { name: store.STEP_OWED.narrating,    owes: "narrating",    then: "published",
     run: (c) => publishBook(c.dir, { slug: c.slug, title: c.name }) },
 ];
 
 const byName = (n) => STEPS.find(s => s.name === n);
 const post = (m) => { if (parentPort) parentPort.postMessage(m); };
 
-// A book that fell over transiently resumes at the step it fell over on:
-// content-store.js keeps `failedFrom`, so "failed" is not a dead end. A
-// PERMANENT failure (a key the provider refused, the convention
-// content-narrate.js already uses) is left alone — re-running it every half
-// hour would only spend the family's allowance on the same refusal.
-function owedState(job) {
-  if (job.state !== "failed") return job.state;
-  const last = (job.errors || [])[job.errors.length - 1];
-  if (last && /^permanent:/.test(String(last.msg || ""))) return null;
-  return job.failedFrom || "inbox";
-}
+// A book that fell over transiently resumes at the step it fell over on, and a
+// permanent failure is left alone: content-store.js owns that rule now, so
+// /content/status shows the family exactly the step this walk would take.
+const owedState = store.owedState;
 
 // What the shell (and later /content/status) is told about a finished step.
 // Deliberately small and JSON-safe: a step's own result can carry page arrays

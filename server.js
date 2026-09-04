@@ -1764,6 +1764,39 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- book jobs: what every book is doing, and the button that kicks one ----
+  // The same deal /clothing/status makes: no-store, because the Settings card
+  // and the board note poll this while a book builds and a cached answer is a
+  // card that lies. content.js decides what is safe to say - no key, no device
+  // name, no folder path, nothing about the family but the book's own title.
+  if (req.method === "GET" && urlPath === "/content/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(content.status()));
+    return;
+  }
+  // POST /content/run {kind, slug, step} - re-run one step of one book (the
+  // review page's "re-narrate this page", Settings' "start this book"). 202 and
+  // the build runs on behind it, like /clothing/regenerate: a transcription can
+  // take minutes and no browser should hold a socket open for it.
+  if (req.method === "POST" && req.url === "/content/run") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.runStep(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      if (out.error) { res.writeHead(400, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: out.error })); return; }
+      // Nothing this hub builds in API mode could ever reach the family's Drive
+      // (Gap 1), so the request is refused rather than half-honoured.
+      if (out.skipped) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: out.skipped })); return; }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ started: true }));
+    });
+    return;
+  }
+
   // ---- Settings > Integrations: Google Drive content (drive.js) ----
   if (req.method === "GET" && urlPath === "/integrations/drive/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });

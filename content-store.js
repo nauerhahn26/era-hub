@@ -44,6 +44,36 @@ const LEGAL = {
   failed:       STATES.filter(s => s !== "failed"),
 };
 
+// A book's state is the name of the step it still OWES, so this map is the one
+// place the walk is written down. Three readers: content-worker.js builds its
+// step table from it, /content/status names the owed step for the Settings
+// card, and POST /content/run validates {step} against it. A state that owes
+// nothing (published with no fal key, done, failed) is simply absent.
+const STEP_OWED = {
+  inbox: "ingest",
+  transcribing: "transcribe",
+  reviewing: "narrate",
+  narrating: "publish",
+};
+const STEP_NAMES = Object.values(STEP_OWED);
+
+function stepOwed(state) { return STEP_OWED[state] || null; }
+
+// Which state's work a job is actually waiting on. Normally its own; a job that
+// fell over transiently owes the step it fell over ON, because content-store
+// keeps `failedFrom` and "failed" is not a dead end. A PERMANENT failure — a key
+// the provider refused, the "permanent:" convention content-narrate.js and
+// content-providers.js both use — owes nothing: re-running it every half hour
+// would only spend the family's allowance on the same refusal. Returns null for
+// that case, and for a job that has finished.
+function owedState(job) {
+  if (!job) return null;
+  if (job.state !== "failed") return job.state;
+  const last = (job.errors || [])[job.errors.length - 1];
+  if (last && /^permanent:/.test(String(last.msg || ""))) return null;
+  return job.failedFrom || "inbox";
+}
+
 function buildDir(dir) { return path.join(dir, BUILD_DIR); }
 function jobPath(dir)  { return path.join(buildDir(dir), "job.json"); }
 function textPath(dir) { return path.join(buildDir(dir), "text.json"); }
@@ -266,7 +296,7 @@ function readLog(dir) {
 }
 
 module.exports = {
-  BUILD_DIR, STATES, LEGAL,
+  BUILD_DIR, STATES, LEGAL, STEP_OWED, STEP_NAMES, stepOwed, owedState,
   buildDir, jobPath, textPath, logPath, tmpPathFor,
   writeAtomic, readJson, redact,
   normalizeText, readText, writeText,

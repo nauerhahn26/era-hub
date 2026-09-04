@@ -38,6 +38,7 @@ const drive = require("./drive.js");
 const store = require("./content-store.js");
 const { slugify } = require("./slug.js");
 const { EXT: PHOTO_EXT } = require("./clothing-photos.js");
+const { narrationPath } = require("./content-narrate.js");
 
 // A folder must look identical across two observations at least this far apart
 // before it is claimed (spec §2 "Quiet period"; the local mirror syncs every
@@ -255,20 +256,133 @@ function beat(dir, now) {
   return store.writeJob(dir, next);
 }
 
+// --------------------------------------------------------------- the job list
+
+// The kinds /content/run will act on. Music and movies are catalogue writes,
+// not folder builds, and get their own routes in Phases 4 and 5 — an unknown
+// kind is refused here rather than quietly treated as a book.
+const KINDS = ["books"];
+
+// books/<Title> for a slug, or null. The slug is derived, never stored, so this
+// is the only translation between what a URL says and what is on disk — the
+// same rule booksIndex() follows on the serving side (server.js). A slug that
+// matches no folder is refused; nothing is created from a URL.
+function bookFor(slug, st) {
+  const root = path.join(st.folderPath, "books");
+  for (const name of dirsIn(root) || [])
+    if (slugify(name) === slug) return { name, dir: path.join(root, name) };
+  return null;
+}
+
+// What one book folder looks like from outside, and NOTHING else: no absolute
+// path (a status page is not a map of the family's disk), no claimedBy device
+// name, no key — content.js never reads one and this payload is public.
+// The book's title is the one identifying thing in here, and it is the one
+// thing a parent needs to recognise their own book.
+function jobFor(name, dir) {
+  const job = store.readJob(dir);
+  const text = store.readText(dir);
+  const narr = store.readJson(narrationPath(dir));
+  const narrated = new Set(((narr && narr.pages) || []).map(p => p.index));
+  const pages = (text && text.pages) || [];
+  // No text.json yet means the pile of photos IS the page count.
+  const count = pages.length || (listing(dir) || { count: 0 }).count;
+  let characters = 0, spent = 0, transcribed = 0, flags = 0;
+  for (const p of pages) {
+    const n = p.text.length;
+    characters += n;
+    if (n) transcribed++;
+    if (narrated.has(p.index)) spent += n;
+    flags += p.flags.length;
+  }
+  const owed = job ? store.owedState(job) : "inbox";
+  const last = job && (job.errors || [])[job.errors.length - 1];
+  return {
+    kind: "books",
+    slug: slugify(name),
+    title: name,
+    // A folder nobody has claimed is still a job — it is an inbox waiting for
+    // its quiet ten minutes, and the Settings card must be able to say so.
+    state: job ? job.state : "inbox",
+    step: store.stepOwed(owed),
+    progress: { pages: count, transcribed, narrated: narrated.size },
+    // The only unit a book's spend can be counted in until the fal card lands
+    // (Phase 6): ElevenLabs characters owed, and the ones already paid for.
+    cost: { characters, narrated: spent },
+    flags,
+    pausedUntil: (job && job.pausedUntil) || null,
+    note: (job && job.pausedNote) || null,
+    published: fs.existsSync(path.join(dir, "manifest.json")),
+    // Only while it IS failed. job.errors is a history kept on purpose (a book
+    // that fell over twice for two reasons is the one a parent needs the whole
+    // story of), but a card that keeps showing yesterday's error under a book
+    // that has since published is a card nobody believes.
+    error: job && job.state === "failed" && last ? last.msg : null,
+  };
+}
+
+// Every book folder, cheapest-first: three small reads per book and no walk of
+// pages/. The running job's live step wins over the one job.json owes, so the
+// card follows the work rather than lagging a whole step behind it.
+function jobs() {
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return [];
+  const out = [];
+  for (const name of dirsIn(path.join(st.folderPath, "books")) || []) {
+    const dir = path.join(st.folderPath, "books", name);
+    let j;
+    // A folder that vanished mid-read, or a hand-edited text.json the schema
+    // refuses: one bad book must never blank the whole card.
+    try { j = jobFor(name, dir); } catch { continue; }
+    if (running && running.dir === dir && progress && progress.step) j.step = progress.step;
+    out.push(j);
+  }
+  return out;
+}
+
+// POST /content/run's whole decision, kept here so the route stays four lines
+// and so the same validation is available to anything else that kicks a build.
+// Returns {started:true}, {skipped:"needs-local-drive"} (409) or {error} (400).
+// An omitted step means "carry on from wherever this book is".
+function runStep(o) {
+  const req = o || {};
+  const step = req.step == null || req.step === "" ? null : req.step;
+  if (!KINDS.includes(req.kind)) return { error: "unknown kind" };
+  if (typeof req.slug !== "string" || !req.slug) return { error: "unknown book" };
+  if (step !== null && !store.STEP_NAMES.includes(step)) return { error: "unknown step" };
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
+  const found = bookFor(req.slug, st);
+  if (!found) return { error: "unknown book" };
+  // A parent pressing "start this book" must not have to wait for the quiet
+  // period they have just decided is over: an unclaimed folder is claimed here
+  // and then built, exactly as scan() would have done in its own time.
+  const job = store.readJob(found.dir);
+  if (!job) claim(found.dir, null, Date.now());
+  run({ kind: req.kind, slug: req.slug, name: found.name, dir: found.dir,
+        dataDir: DATA, step }).catch(() => {});
+  return { started: true };
+}
+
 // ------------------------------------------------------------------- status
 
 // Deliberately thin, and deliberately free of the claim's device name and of
-// anything key-shaped: /content/status is public. The per-book job list the
-// Settings card reads is built on top of this (T2.9).
+// anything key-shaped: /content/status is public.
 function status() {
   const st = drive.status();
+  const local = st.mode === "local" && !!st.folderPath;
   return {
     mode: st.mode,
-    local: st.mode === "local" && !!st.folderPath,
+    local,
+    // Why there is nothing to show, in the one word Settings turns into a
+    // sentence: the hub's Drive scope is read-only, so a book built in API mode
+    // could never reach the family's Drive (Gap 1).
+    skipped: local ? null : "needs-local-drive",
     building: !!running,
     job: running ? { kind: running.kind, slug: running.slug,
                      step: (progress && progress.step) || running.step || null } : null,
     queued: queue.map(q => q.job.slug),
+    jobs: jobs(),
     lastScan,
   };
 }
@@ -289,8 +403,8 @@ function start(dataDir) {
 }
 
 module.exports = {
-  start, scan, tick, run, runJob, isBuilding, idle, status, beat, claim,
-  QUIET_MS, STALE_MS,
+  start, scan, tick, run, runJob, runStep, isBuilding, idle, status, beat, claim,
+  jobs, jobFor, bookFor, KINDS, QUIET_MS, STALE_MS,
   _testReset: () => {
     running = null; inflight = null; queue = []; seen = new Map();
     progress = null; lastScan = null;
