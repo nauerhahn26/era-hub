@@ -178,9 +178,23 @@ function normalizeText(obj) {
         index: p.index,
         source: p.source,
         text: p.text,
+        // A flag is one of two things, and the difference is the `word`:
+        //   {word: "mattress", reason} a WORD on this page to come and look at
+        //   {word: null, reason}       a mark on the WHOLE PAGE — nobody could
+        //                              check it, and no word is in doubt
+        // The whole-page mark MUST say why (a mark with no word and no reason
+        // is nothing a parent could act on), and it may never borrow the word
+        // channel: a flag whose word was the literal string "page" was rendered
+        // by the review page as a highlight over any page that used the word.
         flags: flags.map((f) => {
-          if (!f || typeof f.word !== "string" || !f.word) throw new Error(at + ": every flag needs a word");
-          return { word: f.word, reason: typeof f.reason === "string" ? f.reason : "" };
+          if (!f || typeof f !== "object") throw new Error(at + ": every flag is an object");
+          const reason = typeof f.reason === "string" ? f.reason : "";
+          if (f.word == null || f.word === "") {
+            if (!reason) throw new Error(at + ": a flag with no word must say why");
+            return { word: null, reason };
+          }
+          if (typeof f.word !== "string") throw new Error(at + ": a flag's word must be a string");
+          return { word: f.word, reason };
         }),
         cover: !!p.cover,
         edited: !!p.edited,

@@ -490,11 +490,19 @@ function syncLocal(cfg) {
 // The ledger still learns about the files (a book mirrored this way is the
 // mirror's to take away again when the parent deletes the folder in Drive);
 // everything else is copyTreeLocal's, manifest LAST and .part-atomic included.
-// Returns {book, files, skipped, errors} or {error}/{skipped:"needs-local-drive"}.
+// Returns {book, files, skipped, removed, errors} or {error}/{blocked:"…"}.
+//
+// `blocked` is a WORD and `skipped` is a COUNT, and they are separate keys
+// because one key meant both for a day: `skipped` is the number of files that
+// had not changed and did not need re-copying, so on the second publish of a
+// book (a repair, a re-read — the common case) the caller read the count as the
+// reason and printed "is built but not shelved: 1" over a book sitting happily
+// on the shelf. Anything that stops the copy from being possible at all says so
+// in `blocked`; anything that went wrong inside it is in `errors`.
 function mirrorBook(name) {
   if (!DATA) return { error: "not-started" };
   const c = loadCfg();
-  if (c.mode !== "local" || !c.folderPath) return { skipped: "needs-local-drive" };
+  if (c.mode !== "local" || !c.folderPath) return { blocked: "needs-local-drive" };
   // A NAME, never a path: this walks a folder inside the family's Drive and
   // writes into the data dir, and the caller is a hook two modules away.
   const safe = path.basename(String(name || ""));

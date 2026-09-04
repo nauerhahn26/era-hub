@@ -134,7 +134,7 @@ test("a book part-way through says which step it owes and how far it has got", a
     job: { state: "transcribing" },
     pages: [{ text: "one two three", audio: true },
             { text: "four five", flags: [{ word: "five", reason: "smudged" }] },
-            { text: "" }],
+            { text: "", flags: [{ word: null, reason: "no second model checked this page" }] }],
   });
   const { body } = await statusOf();
   const j = jobOf(body, "tabby-mctat");
@@ -142,7 +142,12 @@ test("a book part-way through says which step it owes and how far it has got", a
   assert.equal(j.state, "transcribing");
   assert.equal(j.step, "transcribe");
   assert.deepEqual(j.progress, { pages: 3, transcribed: 2, narrated: 1 });
+  // Two counts, because there are two kinds of mark: a WORD somebody was unsure
+  // of (the review page highlights it), and a whole PAGE nobody could check,
+  // which names no word at all. Adding the second to the first told a parent
+  // there were words to look at and showed them none (E2).
   assert.equal(j.flags, 1);
+  assert.equal(j.pageFlags, 1);
   // The only unit a book's spend can be counted in before the fal card exists:
   // ElevenLabs characters owed, and the ones already paid for.
   assert.equal(j.cost.characters, "one two three".length + "four five".length);

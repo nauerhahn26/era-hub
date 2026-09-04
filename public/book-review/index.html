@@ -97,6 +97,10 @@
      a colour is a mark half the family cannot see. */
   .txt mark{background:#FBE6C8; color:var(--ink); border-radius:4px; padding:0 2px;
             box-shadow:inset 0 -2px 0 var(--coral)}
+  /* A mark on the WHOLE page — nobody could check it. There is no word to
+     highlight, so it is a sentence under the words instead. */
+  .pagenote{margin-top:6px; font-size:16px; color:var(--ink); background:#FBE6C8;
+            border-radius:8px; padding:6px 10px}
   /* The per-page buttons. Mouse and touch only — 46px tall because a parent
      does this standing up with a mug in the other hand, not because anything
      here is ever a gaze target. */
@@ -287,8 +291,15 @@ function paintBook(j) {
   if (p.pages) s += ' <span style="color:#5A6A70">' + p.transcribed + " of " + p.pages + " pages read"
                  + (p.narrated ? ", " + p.narrated + " of " + p.pages + " narrated" : "") + ".</span>";
   $("bookState").innerHTML = s;
-  if (j.flags) {
-    $("bookFlags").innerHTML = j.flags + " word" + (j.flags === 1 ? "" : "s") + " the AI was unsure of.";
+  // Two counts, two sentences (E2). A WORD the AI was unsure of is highlighted
+  // in the page's own text below; a PAGE to check names no word — nobody could
+  // read it twice — and saying "N words" about it sends a parent hunting for
+  // highlights that are not there.
+  const bits = [];
+  if (j.flags) bits.push(j.flags + " word" + (j.flags === 1 ? "" : "s") + " the AI was unsure of");
+  if (j.pageFlags) bits.push(j.pageFlags + " page" + (j.pageFlags === 1 ? "" : "s") + " to check");
+  if (bits.length) {
+    $("bookFlags").textContent = bits.join(", ") + ".";
     show("bookFlags", true);
   }
   show("book", true);
@@ -438,6 +449,18 @@ function paintBody(li, p) {
   if (has) txt.appendChild(marked(p.text, p.flags));
   else txt.textContent = "No words read off this page yet.";
   body.appendChild(txt);
+  // A flag with NO word is a mark on the whole page — "nobody checked this
+  // page", or two readings that differed with no one word to point at. It has
+  // nothing to highlight, so it is said in a sentence instead; without this it
+  // was counted and never shown (E2, 9/4: every page of a book marked, the
+  // parent shown nothing at all).
+  const notes = (p.flags || []).filter(f => f && !f.word && f.reason);
+  if (notes.length) {
+    const note = document.createElement("div");
+    note.className = "pagenote";
+    note.textContent = "⚠ " + notes.map(f => f.reason).join(" · ");
+    body.appendChild(note);
+  }
   const tools = document.createElement("div");
   tools.className = "tools";
   tools.appendChild(btn("edit", "✎ Fix the words"));

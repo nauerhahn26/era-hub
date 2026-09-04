@@ -105,7 +105,15 @@ test("text.json normalises the sloppy shapes and rejects the wrong ones", () => 
   assert.throws(() => store.normalizeText({ pages: [{ index: "0", source: "a.jpg", text: "" }] }), /index/);
   assert.throws(() => store.normalizeText({ pages: [{ index: 0, text: "" }] }), /source/);
   assert.throws(() => store.normalizeText({ pages: [{ index: 0, source: "a.jpg", text: 7 }] }), /text/);
-  assert.throws(() => store.normalizeText({ pages: [{ index: 0, source: "a.jpg", text: "", flags: [{ reason: "x" }] }] }), /word/);
+  // A flag with a reason and NO word is the whole-page mark ("nobody checked
+  // this page"): it is kept, with word null, because the review page shows the
+  // note rather than highlighting a word that was never in doubt.
+  assert.deepEqual(store.normalizeText({ pages: [{ index: 0, source: "a.jpg", text: "",
+                                                   flags: [{ reason: "nobody checked this" }] }] }).pages[0].flags,
+                   [{ word: null, reason: "nobody checked this" }]);
+  // …but a mark with neither a word nor a reason says nothing a parent could act on
+  assert.throws(() => store.normalizeText({ pages: [{ index: 0, source: "a.jpg", text: "", flags: [{}] }] }), /why/);
+  assert.throws(() => store.normalizeText({ pages: [{ index: 0, source: "a.jpg", text: "", flags: [{ word: 7, reason: "x" }] }] }), /word/);
   assert.throws(() => store.normalizeText({ pages: {} }), /pages/);
 });
 

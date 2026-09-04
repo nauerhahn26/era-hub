@@ -100,6 +100,22 @@ test("a short line with no digits in it is left alone", () => {
   assert.equal(imprint.isImprintLine("Ada"), false);
 });
 
+// A PICTURE BOOK IS PRINTED IN CAPITALS, and a counting book is made of nothing
+// but these lines. The short-line code rule used to eat every one of them: two
+// words, all capitals, a digit somewhere — the same shape as "FSC C000000". A
+// counting book losing "3 BEARS" loses the page's whole sentence, silently, on
+// BOTH readings at once (both are stripped before they are compared), so the
+// page is not even flagged for a grown-up to notice.
+test("a counting book in capitals is a book, not a code", () => {
+  for (const line of ["3 BEARS", "1 DUCK", "5 DUCKS", "10 SHEEP", "CHAPTER 3",
+                      "DAY 1", "PART 2", "PAGE 4", "ONE 1"])
+    assert.equal(imprint.isImprintLine(line), false, "should be story: " + line);
+  // …and the codes it was written for still go: a token with letters AND digits
+  // in it is a code, and so is a line of nothing but digits.
+  for (const line of ["FSC C000000", "978-1-00000-000-0", "2019", "MIX-1 C000000"])
+    assert.equal(imprint.isImprintLine(line), true, "should be imprint: " + line);
+});
+
 // ----------------------------------------------------------------- the page
 
 test("furniture comes out of a page and the story stays, in its own order", () => {

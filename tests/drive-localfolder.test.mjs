@@ -131,3 +131,55 @@ test("the variable is read fresh on every call, never cached at load", () => {
   } finally { delete process.env.ERA_DRIVE_LOCAL_ROOTS; }
   assert.deepEqual(drive.detectLocal().roots, [], "unset again: back to today's behaviour exactly");
 });
+
+// ------------------------------------------------- shelving one finished book
+//
+// mirrorBook() is the hook server.js hangs off content.onPublished (F5): the
+// book that has just been written into the family's Drive folder is copied
+// straight onto the Reader's shelf instead of waiting for the ten-minute
+// mirror. The hook has to be able to tell three answers apart, and until this
+// it could not: `skipped` was BOTH the count of files that had not changed and
+// the word "needs-local-drive", so a second publish — a repair, a re-read, the
+// common case — came back {files:1, skipped:1} and the hub printed "is built
+// but not shelved: 1" over a book that was on the shelf. `blocked` is the
+// answer to "could this be shelved at all", and it never counts anything.
+test("shelving one book: a re-publish is a success, and only a hub with no local Drive is blocked", () => {
+  const drive = require("./drive.js");
+  const data = fs.mkdtempSync(path.join(TMP, "shelf-data-"));
+  const folder = fs.mkdtempSync(path.join(TMP, "shelf-drive-"));
+  const src = path.join(folder, "books", "The Bramblewick Bus");
+  fs.mkdirSync(path.join(src, "pages"), { recursive: true });
+  fs.writeFileSync(path.join(src, "pages", "001.jpg"), Buffer.alloc(16, 3));
+  fs.writeFileSync(path.join(src, "manifest.json"), JSON.stringify({ schemaVersion: 1, pages: [] }));
+
+  // No local Drive folder yet: nothing to shelve FROM, and the hub has to say
+  // so in a word no counter can ever be mistaken for.
+  fs.writeFileSync(path.join(data, "drive.json"), JSON.stringify({ mode: "off" }));
+  drive.start(data);
+  const off = drive.mirrorBook("The Bramblewick Bus");
+  assert.equal(off.blocked, "needs-local-drive");
+  assert.equal(off.skipped, undefined, "'blocked' is a reason, never a count");
+
+  fs.writeFileSync(path.join(data, "drive.json"),
+                   JSON.stringify({ mode: "local", folderPath: folder }));
+  drive.start(data);
+  const first = drive.mirrorBook("The Bramblewick Bus");
+  assert.equal(first.blocked, undefined, "a book that WAS shelved is not blocked");
+  assert.equal(first.files, 2);
+  assert.deepEqual(first.errors, []);
+  assert.ok(fs.existsSync(path.join(data, "books", "The Bramblewick Bus", "manifest.json")));
+
+  // The re-publish: only the manifest moved, so the photo is not copied again —
+  // and the book is on the shelf just the same.
+  fs.writeFileSync(path.join(src, "manifest.json"),
+                   JSON.stringify({ schemaVersion: 1, pages: [], exportedAt: "2026-09-04T12:00:00.000Z" }));
+  const again = drive.mirrorBook("The Bramblewick Bus");
+  assert.equal(again.blocked, undefined, "an unchanged file is not a book that failed to shelve");
+  assert.equal(again.files, 1, "the manifest, and nothing that had not changed");
+  assert.equal(again.skipped, 1, "the count is still there — it is just not the reason");
+  assert.deepEqual(again.errors, []);
+
+  const unknown = drive.mirrorBook("No Such Book");
+  assert.equal(unknown.error, "unknown book");
+  assert.equal(unknown.blocked, undefined);
+});

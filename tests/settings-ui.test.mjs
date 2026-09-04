@@ -177,6 +177,12 @@ test("the books card is #content and names the recommended setup (spec §4)", as
 // checking each other is what the 9/4 bake-off bought, and it is free.
 test("the free Google key is described honestly, and books are steered to it (E8)", async () => {
   const { ctx, page } = await settingsPage();
+  // VISIBLE, not merely present: the note ships display:none and one line of
+  // script reveals it for the Google tier. Reading textContent off a hidden
+  // node passes whether or not a parent can ever see the disclosure, which is
+  // the whole reason this test exists.
+  assert.equal(await page.isVisible("#aiNote"), true,
+    "the free tier is the default, so its disclosure has to be on screen");
   const note = await page.$eval("#aiNote", e => e.textContent);
   assert.match(note, /free AI Studio/i, note);
   assert.match(note, /improve Google’s products/i, note);
@@ -185,6 +191,13 @@ test("the free Google key is described honestly, and books are steered to it (E8
   const tiers = await page.$eval("#contentTiers", e => e.textContent);
   assert.match(tiers, /Books read best with a free Google AI Studio key/i, tiers);
   assert.match(tiers, /two free readers check every page/i, tiers);
+  // …and it belongs to the tier it describes: the other two providers are not
+  // used that way, so the sentence goes away when they are picked.
+  await page.click('#aiProv button[data-prov="anthropic"]');
+  assert.equal(await page.isVisible("#aiNote"), false,
+    "a pay-as-you-go provider must not be given the free tier's warning");
+  await page.click('#aiProv button[data-prov="google"]');
+  assert.equal(await page.isVisible("#aiNote"), true);
   await ctx.close();
 });
 
@@ -225,7 +238,7 @@ test("a quota pause says tomorrow, and a flagged book links to its review page",
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [
     bookJob({ pausedUntil: "2026-09-05" }),
     bookJob({ slug: "the-gruffalo", title: "The Gruffalo", state: "published",
-              step: null, flags: 2, published: true,
+              step: null, flags: 2, pageFlags: 3, published: true,
               progress: { pages: 8, transcribed: 8, narrated: 8 } }),
   ] }));
   await page.waitForSelector('#contentBooks [data-slug="the-gruffalo"]');
@@ -237,7 +250,11 @@ test("a quota pause says tomorrow, and a flagged book links to its review page",
   assert.equal(link.href, "/book-review/?slug=the-gruffalo");
   assert.match(link.text, /Review this book/i);
   const flagged = await page.$eval('#contentBooks [data-slug="the-gruffalo"]', e => e.textContent);
-  assert.match(flagged, /2 word/, "the flag count is named");
+  assert.match(flagged, /2 words/, "the flag count is named");
+  // The whole-page marks are counted as PAGES, in their own sentence: they name
+  // no word, so folding them into the word count promises a parent highlights
+  // that are not there (E2).
+  assert.match(flagged, /3 pages nobody could check/i, flagged);
   // E8: what a parent DOES about a flag — glance at those pages on the review
   // page — rather than only how many the AI was unsure of.
   assert.match(flagged, /pages to glance at/i, flagged);

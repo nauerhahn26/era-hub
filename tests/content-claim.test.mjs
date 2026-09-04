@@ -279,6 +279,31 @@ test("a book waiting for its quota is left alone until the moment the pause ends
   content._testReset();
 });
 
+// A SHORT PAUSE HAS TO END WHEN THE QUOTA DOES (F6's other half). The book that
+// holds keeps its claim and writes a FRESH heartbeat as it holds
+// (content-worker.js holdHere) so no other device mistakes it for abandoned —
+// which means, if the heartbeat still had to go stale first, a 429 answered
+// with "come back in 47 seconds" cost the book half an hour instead. That is
+// most of what the pause was written to recover.
+test("a pause that has passed wakes the book, even with a heartbeat minutes old", () => {
+  const dir = book("Short Pause", { "IMG_1.jpg": 10 });
+  const until = new Date(T0 + 47 * 1000).toISOString();          // the provider's own "47s"
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  job = { ...job, pausedUntil: until, pausedNote: "waiting for tomorrow's quota" };
+  store.writeJob(dir, job);
+  assert.equal(job.heartbeat, new Date(T0).toISOString(), "the hold beat as it held");
+
+  // Still paused: nothing to do, and nothing written into the family's folder.
+  assert.equal(found(content.scan({ now: T0 + 30 * 1000 }), "Short Pause").takeable, false);
+  // A minute later the allowance is back and the book is takeable — the stale
+  // window is about an ABANDONED claim, and this claim said when it would wake.
+  content.runJob = () => Promise.resolve({ ok: true });
+  const res = content.scan({ now: T0 + MIN });
+  assert.equal(found(res, "Short Pause").takeable, true);
+  assert.deepEqual(res.claimed, ["short-pause"]);
+  content._testReset();
+});
+
 test("two scans in a row do not claim the same book twice", async () => {
   const dir = book("Once", { "IMG_1.jpg": 10 });
   const jobs = [];

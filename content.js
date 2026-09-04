@@ -125,7 +125,17 @@ function takeable(job, now) {
   // every thirty minutes until the quota comes back. The pause is a MOMENT
   // (content-providers.js F6), so this wakes the book the first scan after it
   // passes rather than at some local midnight.
-  if (pauseHolds(job.pausedUntil, now)) return false;
+  //
+  // A PAUSE IS ITS OWN ANSWER, and the heartbeat has nothing to add to it. The
+  // book that held wrote a FRESH heartbeat as it held (content-worker.js
+  // holdHere) precisely so no other device would treat it as abandoned — so if
+  // the stale window still had to pass on top, a 429 answered with "come back
+  // in 47 seconds" cost half an hour of waiting instead of a minute, which is
+  // most of what the pause was written to recover. A job carrying a pausedUntil
+  // is parked by definition (a finished step deletes it, holdHere writes it),
+  // so the moment it names is the whole rule for it.
+  if (job.pausedUntil != null && job.pausedUntil !== "")
+    return !pauseHolds(job.pausedUntil, now);
   const beat = Date.parse(job.heartbeat);
   return !(beat >= 0) || now - beat > STALE_MS;
 }
@@ -360,13 +370,20 @@ function jobFor(name, dir, slug) {
   let built = [];
   try { built = pagesOf(dir); } catch {}
   const count = Math.max(built.length, pages.length, (listing(dir) || { count: 0 }).count);
-  let characters = 0, spent = 0, transcribed = 0, flags = 0;
+  // TWO COUNTS, because there are two kinds of mark and they are not the same
+  // sentence to a parent. `flags` is WORDS somebody was unsure of, the ones the
+  // review page highlights inside the page's own text; `pageFlags` is whole
+  // PAGES to come and look at (a page nobody could check, a disagreement with
+  // no word to point at) and those name no word at all. Counting the second as
+  // the first told a parent "30 words the AI was unsure of" and then showed
+  // them a book with nothing highlighted anywhere in it (E2, 9/4).
+  let characters = 0, spent = 0, transcribed = 0, flags = 0, pageFlags = 0;
   for (const p of pages) {
     const n = p.text.length;
     characters += n;
     if (n) transcribed++;
     if (narrated.has(p.index)) spent += n;
-    flags += p.flags.length;
+    for (const f of p.flags) { if (f && f.word) flags++; else pageFlags++; }
   }
   const owed = job ? store.owedState(job) : "inbox";
   const last = job && (job.errors || [])[job.errors.length - 1];
@@ -391,6 +408,7 @@ function jobFor(name, dir, slug) {
     // (Phase 6): ElevenLabs characters owed, and the ones already paid for.
     cost: { characters, narrated: spent },
     flags,
+    pageFlags,
     pausedUntil: (job && job.pausedUntil) || null,
     note: (job && job.pausedNote) || null,
     published: fs.existsSync(path.join(dir, "manifest.json")),

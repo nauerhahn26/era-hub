@@ -1998,10 +1998,17 @@ server.on("listening", () => {
   // minutes (F5, 9/4). drive.mirrorBook copies THAT BOOK and nothing else —
   // deliberately not drive.sync(), which ends in the fan-out above and would
   // spend the family's vision quota on the clothing board on every publish.
+  // `blocked` and `error` are the two ways a book does not reach the shelf;
+  // `skipped` is a COUNT of files that had not changed since the last publish
+  // and is not a failure of any kind (drive.js says why the two are separate
+  // keys). A file that would not copy is neither: the book IS shelved, minus
+  // that file, and the errors are said out loud rather than swallowed.
   content.onPublished = (b) => {
     const r = drive.mirrorBook(b.name) || {};
-    if (r.error || r.skipped) console.error("[content] " + b.slug + " is built but not shelved: " + (r.error || r.skipped));
+    const failed = (r.errors || []).length;
+    if (r.error || r.blocked) console.error("[content] " + b.slug + " is built but not shelved: " + (r.error || r.blocked));
     else console.log("[content] shelved " + b.slug + " (" + r.files + " file(s) copied)");
+    if (failed) console.error("[content] " + b.slug + ": " + failed + " file(s) would not copy onto the shelf: " + r.errors.join("; "));
   };
   clothing.start(DATA);  // the Clothing Picker generator (no-op without photos)
   content.start(DATA);   // book jobs in the family's Drive folder (local mode only)

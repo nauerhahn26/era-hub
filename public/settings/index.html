@@ -763,11 +763,16 @@ function ctRow(j){
   // hour cold. So a stopped book gets its own button, which asks the hub to run
   // this one book (POST /content/run) and starts it there and then.
   if(j.error) h+='<div class="status bad">'+CT_ESC(ctSorry(j.error))+'</div>';
-  // A flag count on its own tells a parent nothing to do with it. j.flags counts
-  // the MARKS the two readers left (a word they disagreed on, or a whole page
-  // nobody could check), so the count keeps its own unit — but the sentence says
-  // what a mark is for: pages to glance at, and the review page below fixes them.
-  if(j.flags) h+='<div class="status">'+j.flags+' word'+(j.flags===1?"":"s")+' the AI was unsure of'
+  // A flag count on its own tells a parent nothing to do with it, and the two
+  // kinds of mark are not the same sentence: j.flags counts WORDS the readers
+  // were unsure of (the review page highlights those inside the page's own
+  // words), j.pageFlags counts whole PAGES nobody could check, which name no
+  // word at all. Counting the second as the first promised a parent thirty
+  // doubtful words and showed them a book with nothing highlighted in it (E2).
+  const ctMarks=[];
+  if(j.flags) ctMarks.push(j.flags+' word'+(j.flags===1?"":"s")+' the AI was unsure of');
+  if(j.pageFlags) ctMarks.push(j.pageFlags+' page'+(j.pageFlags===1?"":"s")+' nobody could check');
+  if(ctMarks.length) h+='<div class="status">'+ctMarks.join(", ")
     +' &mdash; pages to glance at, and the review page fixes them.</div>';
   // The review page is where a parent fixes words, reorders pages and picks the
   // cover; it is worth offering for every book, not only flagged ones.

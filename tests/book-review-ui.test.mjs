@@ -96,7 +96,9 @@ function jpg(index) {
 // book content.
 // `o.flags` is keyed by the page's one-based index: {2:["mat"]} is "the model
 // was not sure of `mat` on page two", which is exactly what the transcriber
-// leaves behind for this page to show.
+// leaves behind for this page to show. `o.notes` is keyed the same way and is
+// the OTHER kind of flag: a mark on the whole page, naming no word at all
+// ({1:"no second model checked this page"}).
 function book(name, texts, opts) {
   const o = opts || {};
   const dir = path.join(BOOKS, name);
@@ -106,7 +108,8 @@ function book(name, texts, opts) {
     const index = i + 1, pad = String(index).padStart(3, "0");
     fs.writeFileSync(path.join(dir, "pages", pad + ".jpg"), jpg(index));
     pages.push({ index, source: "sources/IMG_000" + index + ".jpg", text: t,
-                 flags: ((o.flags || {})[index] || []).map(w => ({ word: w, reason: UNSURE })),
+                 flags: ((o.flags || {})[index] || []).map(w => ({ word: w, reason: UNSURE }))
+                          .concat((o.notes || {})[index] ? [{ word: null, reason: (o.notes || {})[index] }] : []),
                  cover: index === 1 });
   });
   store.writeText(dir, { pages });
@@ -425,6 +428,34 @@ test("the words the model was unsure of are picked out of the page's own text", 
   // And "Clear flag" is only offered on the page that has one.
   assert.equal(await page.locator("#strip .page:nth-child(2) .clear").count(), 1);
   assert.equal(await page.locator("#strip .page:nth-child(1) .clear").count(), 0);
+  await ctx.close();
+});
+
+// E2's OTHER mark: "nobody checked this page". It names no word — the page was
+// read once, by one model, and no word is in doubt — so it has to be SHOWN as
+// the sentence it is. While it borrowed the word channel (the literal string
+// "page") the header promised N doubtful words, the page highlighted none of
+// them, and a page that used the word "page" got a correctly-read word
+// highlighted with a misleading tooltip. On the 9/4 book, where the partner
+// rung 400'd on every page, that was thirty phantom words.
+test("a page nobody could check says so, and highlights no word", async () => {
+  book("Unchecked", ["Turn the page and see", "on the mat"],
+       { notes: { 1: "no second model checked this page" } });
+  const { ctx, page } = await review("unchecked");
+  const note = page.locator("#strip .page:nth-child(1) .pagenote");
+  assert.equal(await note.count(), 1, "the whole-page mark is on the page it is about");
+  assert.match(await note.textContent(), /no second model checked this page/);
+  assert.deepEqual(await marksOn(page, 1), [],
+    "no word was in doubt, so no word is highlighted - not even the word 'page'");
+  assert.equal((await strip(page))[0].text, "Turn the page and see");
+  assert.equal(await page.locator("#strip .page:nth-child(2) .pagenote").count(), 0);
+  // and a parent can still say "that is fine": the mark is a question too.
+  assert.equal(await page.locator("#strip .page:nth-child(1) .clear").count(), 1);
+  // The count above the strip has to say what it counts: this is one page to
+  // look at, and NOT one word the AI was unsure of.
+  const head = await page.$eval("#bookFlags", e => e.textContent);
+  assert.match(head, /1 page to check/i, head);
+  assert.doesNotMatch(head, /1 word/i, head);
   await ctx.close();
 });
 

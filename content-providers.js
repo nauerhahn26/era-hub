@@ -4,13 +4,15 @@
 //
 // This file holds three things and nothing else:
 //
-//   1. THE POLICY — TWO of it. The bake-off measured its pair asymmetrically:
-//      the transcriber under the v2 wording, the second opinion under v3. Both
-//      are verbatim ports of tools/ocr-bakeoff/lib/prompts.mjs, kept here as
-//      NAMED, PINNED prompts (`transcribe` and `second-opinion`) with the
-//      config naming which each pass sends. Changing a word invalidates the
-//      bake-off's numbers; changing BOTH to one version throws away the
-//      decorrelation the pair exists for. See "the policy" below.
+//   1. THE POLICY, as TWO NAMED PASSES (`transcribe` and `second-opinion`) with
+//      the config naming which wording each one sends. The only wording this
+//      repo can prove is v3, ported verbatim from
+//      tools/ocr-bakeoff/lib/prompts.mjs and asserted against it byte for byte,
+//      so today both passes send v3 and the pair decorrelates by MODEL alone.
+//      The bake-off measured the pair asymmetrically (the transcriber under v2)
+//      and v2's exact text is not recoverable here — that KNOWN GAP, and how to
+//      close it, is written out under "the policy" below. Changing a word
+//      invalidates the bake-off's numbers.
 //   2. THE LADDER. Three adapters (google / anthropic / openai) in the exact
 //      request shape clothing-worker.js already proved on the family's own
 //      keys, with its two hard-won rules kept intact:
@@ -65,76 +67,87 @@ const { aiRoles } = require("./ai-config.js");
 
 // ---------------------------------------------------------------- the policy
 
-// TWO WORDINGS, PINNED BY NAME (E3, 9/4 — this closes the gap T2.6a wrote down
-// and left open). The bake-off never measured two models asked the SAME
-// question: it measured the transcriber (gemini-3.1-flash-lite) under the older
-// v2 wording and its partner (gemini-3.5-flash-lite) under v3, because a shared
-// wording correlates two models' mistakes as surely as a shared model does —
-// and because v3 is not an upgrade, it is a TRADE (README "v3 is not an upgrade
-// - it is a trade": scored like for like against the same amended reference,
-// 3.1 reads better under v2, 3.5 reads better under v3). The 89.2%
-// auto-publish, zero-silent-error number the whole decision rests on is a
-// number about THIS pair asked THESE two ways.
+// TWO NAMED PASSES, AND — TODAY — ONE WORDING (E3, 9/4, amended after review).
 //
-// So: NEVER "upgrade both". Bumping one pass to the other's version, or a
-// future v4 to both, throws away the decorrelation and quietly re-runs the pair
-// as one measurement nobody has made. If a re-validation (tools/ocr-bakeoff/
-// README.md, due 2027-03) says a new wording wins, add it below and re-pin ONE
-// pass at a time, with the re-run's numbers to say which.
+// WHAT THE BAKE-OFF MEASURED. Its pair was measured ASYMMETRICALLY: the
+// transcriber (gemini-3.1-flash-lite) read under the older v2 wording and its
+// partner (gemini-3.5-flash-lite) under v3, because a shared wording correlates
+// two models' mistakes as surely as a shared model does — and because v3 is not
+// an upgrade, it is a TRADE (README "v3 is not an upgrade - it is a trade":
+// scored like for like against the same amended reference, 3.1 reads better
+// under v2, 3.5 reads better under v3). The 89.2% auto-publish,
+// zero-silent-error number the whole decision rests on is a number about THIS
+// pair asked THOSE two ways, and the decision memo says so in as many words:
+// "the transcriber runs v2; v3 is used only as the decorrelating partner
+// prompt".
 //
-// Both texts are ported — not required: that harness is ESM and the hub's
-// Windows floor is Node 18, where require(esm) does not exist (plan §A3) — from
-// tools/ocr-bakeoff/lib/prompts.mjs. That file holds v3, and its changelog
-// holds the two rules v3 changed and the reasons each one changed (a cover has
-// no narrative order; a character's hand-lettered sign IS story text; our copy
-// of a book carries a gift inscription the book does not). That file holds only
-// its current version, so v2 here is its v3 text with exactly those two rules as
-// they read BEFORE that change, which is what its changelog says v2 was ("two
-// rules changed, everything else including OUTPUT_CONTRACT byte-identical to
-// v2") — and it is why only those two are spelled out per version below:
-// everything else is one shared text, so the two wordings cannot drift anywhere
-// the bake-off did not measure them drifting. The suite proves the v3 half
-// against the harness itself, byte for byte.
-const RULES_1_4 = `You are transcribing one photographed page of a printed children's picture book so it can be read aloud by a speech synthesiser. A single wrong word is a failure. Follow these rules exactly.
+// KNOWN GAP: V2'S EXACT TEXT IS NOT IN THIS REPO, and it could not be found.
+// tools/ocr-bakeoff/lib/prompts.mjs holds only the CURRENT version (v3) and has
+// exactly one commit; its changelog says what v3 CHANGED and why, never what
+// v2's rules said word for word; and the harness's per-call cache keys on the
+// prompt VERSION and stores the answer, never the prompt — so there is nothing
+// to port v2 from. A hand-reconstruction of it shipped here for a day and was
+// wrong in a way that mattered: it put "or signs" in rule 5 on the strength of a
+// changelog sentence that describes an early draft of V3, and dropped a word
+// from it on no evidence at all. That made the transcriber's request a THIRD
+// wording nobody has ever measured, sent under the name of one that was — which
+// is worse than honestly sending the other pass's, because it looks measured.
+//
+// SO, TODAY: both passes send v3, and the pair decorrelates by MODEL only. v3 is
+// the one wording this repo can prove — it is ported verbatim (not required:
+// that harness is ESM and the hub's Windows floor is Node 18, where require(esm)
+// does not exist, plan §A3) and the suite asserts it against the harness itself,
+// byte for byte. Two free models still read every page and still disagree
+// independently; what is lost is the prompt half of the decorrelation, and that
+// loss is written down here rather than papered over.
+//
+// TO CLOSE IT (a follow-up, not a guess): recover v2's exact string — from a run
+// that still has it, or by landing it in tools/ocr-bakeoff/lib/prompts.mjs as a
+// second exported wording so the hub can port rather than paraphrase — add it to
+// PROMPT_TEXT below as `v2` and re-pin DEFAULT_PROMPTS.transcribe to it, with a
+// byte-for-byte assertion beside the v3 one. The machinery for exactly that is
+// what is left standing here: the passes are named, the version each one sends
+// is config, and nothing in the rest of this file picks a wording by itself.
+//
+// And whatever is pinned: NEVER "upgrade both" in one move. Bumping one pass to
+// the other's version, or a future v4 to both, quietly re-runs the pair as one
+// measurement nobody has made. If the re-validation (tools/ocr-bakeoff/README.md,
+// due 2027-03) says a new wording wins, add it below and re-pin ONE pass at a
+// time, with the re-run's numbers to say which.
+
+// The v3 policy, ported verbatim from tools/ocr-bakeoff/lib/prompts.mjs
+// (POLICY there). One string, because a wording is one thing: the suite
+// asserts it against that file byte for byte, and a re-run that changes a
+// word there fails this hub's tests rather than drifting past them.
+const POLICY_V3 = `You are transcribing one photographed page of a printed children's picture book so it can be read aloud by a speech synthesiser. A single wrong word is a failure. Follow these rules exactly.
 
 1. VERBATIM PRINTED TEXT ONLY. Transcribe the words exactly as printed. Never modernise, localise or correct spelling (British spelling stays British). Never add, expand or paraphrase words that are not printed. Do not translate.
 2. READING ORDER follows the visual and narrative flow of the page, not raw top-to-bottom geometry. For rhyming verse use rhyme and metre as an ordering signal across columns, panels and speech bubbles, so the text reads coherently start to finish.
 3. ELLIPSES: render any printed ellipsis, including a spaced ". . .", as three dots "...". Keep leading or trailing ellipses that are used as page-turn continuations.
-4. QUOTES: transcribe quotation marks exactly as printed, even when they are unbalanced on this page (a speech may continue across pages).`;
-
-// Rule 5, the one v3 rewrote: v2's "drop illustration lettering" over-fired on a
-// page whose punchline is painted into the picture.
-const RULE_5 = {
-  v2: `5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - lettering painted on objects such as boat hulls or signs, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark).`,
-  v3: `5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - decorative lettering painted on objects such as boat hulls, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark). BUT lettering that is PART OF THE STORY is story text and MUST be transcribed, in its place in reading order, even when it is hand-lettered or drawn into the art: words a character writes, reads, holds up or paints - a sign, a blackboard, a banner, a letter shown to the reader. If the words carry the story's meaning, they belong in "text". Publisher furniture is still dropped, always: running heads (the title or chapter repeated in the margin or the art), printed page numbers, ISBN and barcode lines, imprint, publisher and printer lines, and price stickers.`,
-};
-
-// Rule 6, the other: both versions pin a cover's reading order top to bottom
-// (that is v2's whole reason to exist); v3 adds the sentence that ignores what
-// was added to OUR copy — the inscription, the name sticker.
-const RULE_6 = {
-  v2: `6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end.`,
-  v3: `6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end. Anything added to this particular copy is NOT part of the book and must be ignored entirely: handwritten inscriptions, gift dedications, an owner's name written or printed on a label, library stamps, and stickers of any kind. Only text PRINTED as part of the cover is transcribed, top to bottom as printed.`,
-};
-
-const RULES_7_9 = `7. If the page has no printed story text at all (a full-bleed illustration, an endpaper), return an empty string for "text".
+4. QUOTES: transcribe quotation marks exactly as printed, even when they are unbalanced on this page (a speech may continue across pages).
+5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - decorative lettering painted on objects such as boat hulls, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark). BUT lettering that is PART OF THE STORY is story text and MUST be transcribed, in its place in reading order, even when it is hand-lettered or drawn into the art: words a character writes, reads, holds up or paints - a sign, a blackboard, a banner, a letter shown to the reader. If the words carry the story's meaning, they belong in "text". Publisher furniture is still dropped, always: running heads (the title or chapter repeated in the margin or the art), printed page numbers, ISBN and barcode lines, imprint, publisher and printer lines, and price stickers.
+6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end. Anything added to this particular copy is NOT part of the book and must be ignored entirely: handwritten inscriptions, gift dedications, an owner's name written or printed on a label, library stamps, and stickers of any kind. Only text PRINTED as part of the cover is transcribed, top to bottom as printed.
+7. If the page has no printed story text at all (a full-bleed illustration, an endpaper), return an empty string for "text".
 8. LINE AND STANZA BREAKS: use a single newline between printed lines of verse and a blank line between stanzas or separate text blocks. Do not re-wrap prose.
 9. FLAG, DO NOT GUESS: list in "uncertain" every word you are not fully confident about (obscured, blurred, cut off, or ambiguous). Still put your best reading in "text"; the list is for human review.`;
 
+// The shape of the answer, the same for every wording there has ever been
+// (the harness's changelog: OUTPUT_CONTRACT is byte-identical across v2 and v3).
 const OUTPUT_CONTRACT = `Reply with a single JSON object and nothing else - no prose, no markdown code fence:
 {"text": "<the full page transcription>", "uncertain": ["<word>", ...]}
 Use "uncertain": [] when you are confident about every word.`;
 
-// The wording a version is: version id -> the exact string a model is sent.
-const promptText = (v) =>
-  [RULES_1_4, RULE_5[v], RULE_6[v], RULES_7_9].join("\n") + "\n\n" + OUTPUT_CONTRACT;
-const PROMPT_TEXT = { v2: promptText("v2"), v3: promptText("v3") };
+// Version id -> the exact string a model is sent. ONE entry today; the KNOWN
+// GAP above is closed by adding `v2` here and re-pinning the transcribe pass.
+const PROMPT_TEXT = { v3: POLICY_V3 + "\n\n" + OUTPUT_CONTRACT };
 
-// The two PASSES, and the version each one is pinned to. This is the asymmetry
-// itself, in one object: the pass name is what the rest of this file asks for,
-// so no call site can pick a wording by accident.
+// The two PASSES, and the version each one is pinned to. The pass name is what
+// the rest of this file asks for, so no call site can pick a wording by
+// accident — and re-pinning one pass is one line here, not an edit in five
+// places. `transcribe` is the pass the bake-off measured under v2; until that
+// text is recovered it sends the only wording this repo can prove.
 const PASSES = ["transcribe", "second-opinion"];
-const DEFAULT_PROMPTS = { "transcribe": "v2", "second-opinion": "v3" };
+const DEFAULT_PROMPTS = { "transcribe": "v3", "second-opinion": "v3" };
 
 // The first pass's wording, for a caller that has no config to hand (and the
 // name the older tests know it by).
@@ -201,10 +214,12 @@ function baseFor(provider) { return aiBase() || (PROVIDERS[provider] || PROVIDER
 //   agreementPass true = the page is read twice, by the transcriber and by the
 //                 next rung (the partner), and only published unflagged when
 //                 the two readings agree. Costs one extra free call per page.
-//   prompts       which WORDING each pass sends, by name: {"transcribe": "v2",
-//                 "second-opinion": "v3"}. The asymmetry is the measurement
-//                 (see "the policy" above) — re-pin ONE pass at a time, with a
-//                 re-run's numbers, and never "upgrade both".
+//   prompts       which WORDING each pass sends, by name: {"transcribe": "v3",
+//                 "second-opinion": "v3"} today, because v3 is the only wording
+//                 this repo holds (the KNOWN GAP under "the policy" above). The
+//                 asymmetry the bake-off measured is the point of this field —
+//                 re-pin ONE pass at a time, with a re-run's numbers, and never
+//                 "upgrade both".
 //   escalateTo    the model a disagreement is handed to, which then pre-fills
 //                 the parent's answer. null = ask NOBODY: keep the
 //                 transcriber's reading and flag the page for the parent. That
@@ -349,16 +364,27 @@ const isPermanent = (msg) => /^permanent:/.test(String(msg));
 // model actually takes. So the transcriber keeps the exact request its accuracy
 // was measured under for as long as that request is accepted, which is what
 // keeps the bake-off's numbers numbers about this hub.
+//
+// AND THE MEMO IS ONLY WRITTEN WHEN THE RE-SHAPED CALL IS ACCEPTED. A 400
+// INVALID_ARGUMENT is not proof that the knob was the problem: a corrupt photo,
+// a page too big to send, a field Google stopped taking all come back the same
+// way, and the live body says only "Request contains an invalid argument" —
+// there is nothing in it to read. Adopting the new shape on the strength of the
+// refusal alone re-pinned the transcriber's request for the whole process the
+// first time ANY page was refused for ANY reason, and the model quietly stopped
+// being sent the request its accuracy was measured under. Getting it wrong now
+// costs one extra call on the page that was refused, and nothing after it.
 const THINKING_OFF = { thinkingBudget: 0 };             // 2.x, 3.1: no thinking at all
 const THINKING_MINIMAL = { thinkingLevel: "minimal" };  // 3.5+: the least it will do
-const thinkingShape = new Map();                        // model id -> the shape it accepted
+const thinkingShape = new Map();                        // model id -> the shape it ACCEPTED
 function thinkingFor(model) { return thinkingShape.get(model) || THINKING_OFF; }
-// A model that refused the shape we sent has told us which one it wants. Returns
-// true when there is another shape left to try, i.e. the call is worth re-sending.
-function retune(model, body) {
-  if (thinkingShape.get(model) === THINKING_MINIMAL) return false;
-  thinkingShape.set(model, THINKING_MINIMAL);
-  body.generationConfig.thinkingConfig = THINKING_MINIMAL;
+// A model that refused the shape we sent may want the other one. Re-shapes THIS
+// call only and returns true when there was another shape left to try, i.e. the
+// call is worth re-sending. Nothing is remembered here — see callModel.
+function retune(body) {
+  const gen = body.generationConfig;
+  if (!gen || gen.thinkingConfig === THINKING_MINIMAL) return false;
+  gen.thinkingConfig = THINKING_MINIMAL;
   return true;
 }
 
@@ -411,7 +437,7 @@ async function callModel(o) {
   // Providers throttle (Google 503 "high demand" hit EVERY call on the free
   // tier, QA 9/1) and a whole book must not die on a transient. One quick
   // retry, then the ladder's next rung.
-  let last = "", retryMs = null;
+  let last = "", retry = null, retuned = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt) await new Promise(r => setTimeout(r, 3000));
     let r;
@@ -420,14 +446,19 @@ async function callModel(o) {
         signal: AbortSignal.timeout(o.timeoutMs || TIMEOUT_MS) });
     } catch (e) { last = store.redact(e.message); continue; }
     if (r.ok) {
+      // ACCEPTED — so now we know what this model takes, and every later call
+      // in this process starts in that shape (see the thinking knob above).
+      if (retuned) thinkingShape.set(model, THINKING_MINIMAL);
       const parsed = parseModelJson(extract(await r.json()));
       return { text: parsed.text, uncertain: parsed.uncertain, parseError: parsed.parseError, model };
     }
-    // The WHOLE body first — the 429's RetryInfo lives past the 160 characters
-    // the log keeps (F6) — and only then the short, redacted line we may write
-    // down. Nothing but the delay is taken from it.
+    // The WHOLE body first, for every question we ask of it — the 429's
+    // RetryInfo lives past the 160 characters the log keeps (F6), and so does
+    // the "status": "INVALID_ARGUMENT" that Google puts LAST in the envelope
+    // once its message names the offending field. Only then the short, redacted
+    // line we may write down. Nothing but the delay is taken from it.
     const raw = await r.text().catch(() => "");
-    if (r.status === 429) retryMs = soonest(retryMs, retryAfterMs(raw));
+    if (r.status === 429) retry = soonest(retry, quotaHint(raw));
     last = r.status + " " + store.redact(raw.slice(0, 160));
     if (r.status === 401 || r.status === 403)
       throw new Error("permanent: the AI provider did not accept that key (" + r.status +
@@ -436,15 +467,15 @@ async function callModel(o) {
     // attempt: the two attempts exist for a provider that is throttling, and
     // this is a provider that is answering — it is telling us the request is the
     // wrong shape. retune() gives up after one re-shape, so this cannot spin.
-    if (r.status === 400 && provider === "google" && /INVALID_ARGUMENT/.test(last) &&
-        retune(model, body)) { attempt--; continue; }
+    if (r.status === 400 && provider === "google" && /INVALID_ARGUMENT/.test(raw) &&
+        retune(body)) { retuned = true; attempt--; continue; }
     if (r.status === 429) break;                     // no point retrying a spent allowance
     if (r.status < 500) break;                       // 400/404: try the next model
   }
   const err = new Error("ai(" + provider + "/" + model + ") " + last);
-  // Carried, never logged: how long this rung asked us to wait. The pause is
-  // seeded from it (F6).
-  if (retryMs != null) err.retryAfterMs = retryMs;
+  // Carried, never logged: when this rung asked us to come back, and whether it
+  // was the DAY that ran out. The pause is seeded from both (F6).
+  if (retry) err.retryAfter = retry;
   throw err;
 }
 
@@ -472,7 +503,7 @@ async function transcribePage(o) {
     e.quota = true;
     throw e;
   }
-  let lastErr = "", retryMs = null;
+  let lastErr = "", retry = null;
   for (const model of list) {
     try {
       return await callModel({ imagePath: o.imagePath, prompt, cfg, model, timeoutMs: o.timeoutMs });
@@ -480,13 +511,13 @@ async function transcribePage(o) {
       lastErr = e.message;
       if (isPermanent(e.message)) throw e;           // a bad key refuses every rung
       if (isQuota(e.message)) spent.add(model);
-      retryMs = soonest(retryMs, e.retryAfterMs);
+      retry = soonest(retry, e.retryAfter);
       console.error("[content] transcribe " + model + ": " + e.message);
     }
   }
   const err = new Error(lastErr || "no model answered");
   if (all.every(m => spent.has(m))) err.quota = true;
-  if (retryMs != null) err.retryAfterMs = retryMs;   // when the ladder said to come back
+  if (retry) err.retryAfter = retry;                 // when the ladder said to come back
   throw err;
 }
 
@@ -506,13 +537,18 @@ async function transcribePage(o) {
 //
 // So the pause is a MOMENT, and it is seeded from the best answer available:
 //
-//   1. the 429's own google.rpc.RetryInfo.retryDelay ("47s"). Google sends it
-//      in seconds for the per-minute limit AND for the per-day one (the
-//      QuotaFailure alongside it names which, quotaId "…PerDay…"), so there is
-//      nothing to interpret: it is the provider telling us when to come back.
+//   1. the 429's own google.rpc.RetryInfo.retryDelay ("47s") — but ONLY when
+//      the QuotaFailure beside it does not say the DAY is what ran out. Google
+//      sends a few seconds' delay for both limits, and taking it at face value
+//      on a per-day 429 woke the book seconds later to be refused again, all
+//      day: about forty-eight wakes, five refused requests each, and a job.json
+//      and log.jsonl rewrite INSIDE the family's Drive folder every time, for
+//      Drive to re-upload and re-mirror to every device. The QuotaFailure names
+//      which limit it is (quotaId "…PerDay…"), so there is nothing to guess.
 //   2. the next midnight in America/Los_Angeles, computed through Intl's own
 //      time-zone data (no npm, no offset table, and correct across both DST
-//      changes — the offset is 7 hours in summer and 8 in winter).
+//      changes — the offset is 7 hours in summer and 8 in winter). This is the
+//      answer for a spent DAY, and the delay is only a floor under it.
 //   3. the old local-day rule, if this Node has no zone data to compute (2)
 //      with. Wrong by hours on a UTC box, but never wrong by a day the way a
 //      pause that failed to be written at all would be.
@@ -559,20 +595,27 @@ function nextZoneMidnight(t, zone) {
   return wall - zoneOffset(wall - zoneOffset(t, tz), tz);
 }
 
-// The moment a paused book may knock again, as an ISO timestamp.
-function pausedUntilFor(now, retryMs) {
+// The moment a paused book may knock again, as an ISO timestamp. `retry` is a
+// hint from the 429 itself — {ms, perDay} — and a bare number is still read as
+// the delay it used to be. A per-day refusal takes the midnight rule with the
+// delay only as a floor under it; anything else (a per-minute throttle, or a
+// 429 that names no limit) is over when the delay says it is.
+function pausedUntilFor(now, retry, perDayFlag) {
   const t = now == null ? Date.now() : now;
-  if (Number.isFinite(retryMs) && retryMs > 0 && retryMs <= MAX_RETRY_MS)
-    return new Date(t + retryMs).toISOString();
+  const hint = retry && typeof retry === "object" ? retry : { ms: retry, perDay: !!perDayFlag };
+  const ms = hint.ms;
+  const floor = Number.isFinite(ms) && ms > 0 && ms <= MAX_RETRY_MS ? t + ms : null;
+  if (floor != null && !hint.perDay) return new Date(floor).toISOString();
+  const notBefore = (at) => new Date(floor == null ? at : Math.max(at, floor)).toISOString();
   try {
     const at = nextZoneMidnight(t, QUOTA_TZ);
-    if (Number.isFinite(at) && at > t) return new Date(at).toISOString();
+    if (Number.isFinite(at) && at > t) return notBefore(at);
   } catch (e) {
     console.error("[content] no time-zone data for " + QUOTA_TZ + " (" + e.message +
                   ") - falling back to this computer's own midnight");
   }
   const d = new Date(t);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).toISOString();
+  return notBefore(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime());
 }
 
 // Is a recorded pause still running? Understands BOTH shapes: a timestamp (what
@@ -614,11 +657,35 @@ function retryAfterMs(raw) {
   return m ? Math.round(Number(m[1]) * 1000) : null;
 }
 
-// The EARLIEST of the delays a run collected: when the ladder is spent, the
-// first rung to come back is the one that decides when the book wakes.
+// Which limit was hit. The google.rpc.QuotaFailure beside the RetryInfo names
+// it — quotaId "GenerateRequestsPerDayPerProjectPerModel-FreeTier" — and the
+// difference is a book that sleeps for forty-seven seconds against one that
+// sleeps until California's midnight. Read WHOLE, like the delay: this detail
+// sits at the front of the envelope, but a body that is not quite the JSON we
+// expect still says the word.
+function perDayQuota(raw) {
+  if (raw == null) return false;
+  const s = String(raw);
+  try {
+    const j = JSON.parse(s);
+    const details = (j && j.error && Array.isArray(j.error.details)) ? j.error.details : [];
+    for (const d of details) for (const v of (d && Array.isArray(d.violations) ? d.violations : []))
+      if (v && /PerDay/i.test(String(v.quotaId || ""))) return true;
+    if (details.length) return false;
+  } catch {}
+  return /"quotaId"\s*:\s*"[^"]*PerDay/i.test(s);
+}
+
+// Everything a 429's body has to say about when to come back: {ms, perDay}.
+const quotaHint = (raw) => ({ ms: retryAfterMs(raw), perDay: perDayQuota(raw) });
+
+// The EARLIEST of the hints a run collected: when the ladder is spent, the
+// first rung to come back is the one that decides when the book wakes — and it
+// brings its own answer to "was that the whole day?" with it.
 function soonest(a, b) {
-  if (!Number.isFinite(b) || b <= 0) return a;
-  return Number.isFinite(a) && a > 0 ? Math.min(a, b) : b;
+  if (!b || !Number.isFinite(b.ms) || b.ms <= 0) return a;
+  if (!a || !Number.isFinite(a.ms) || a.ms <= 0) return b;
+  return b.ms < a.ms ? b : a;
 }
 
 // ---------------------------------------------------------------- one book
@@ -687,7 +754,7 @@ async function transcribeBook(dir, opts) {
   const out = [];
   const errors = [];
   let transcribed = 0, reused = 0, escalated = 0, calls = 0, quota = false, permanent = null;
-  let retryMs = null;                               // when the spent ladder asked us back
+  let retry = null;                                 // when the spent ladder asked us back, and whether the DAY is what ran out
 
   for (const page of pages) {
     // A page that already has text is DONE — including a page a parent typed
@@ -736,10 +803,13 @@ async function transcribeBook(dir, opts) {
       // spent rung is remembered for the rest of the book. Only a refused key
       // (which refuses everything) escapes.
       if (agree) {
-        // A DIFFERENT MODEL, ASKED A DIFFERENT WAY. Both halves are the safety
-        // net: the partner is a second opinion only as far as it can be wrong
-        // independently, and two models reading from the same words are wrong
-        // together more often than the bake-off's 89.2% assumes.
+        // A DIFFERENT MODEL — and, when there is a second wording to ask it
+        // under, a different question. The partner is a second opinion only as
+        // far as it can be wrong independently, and two models reading the same
+        // page from the same words are wrong together more often than the
+        // bake-off's 89.2% assumes; asking each pass by NAME is what keeps the
+        // wordings re-pinnable one at a time (see "the policy" above, where
+        // both names currently resolve to v3 and why).
         const secondPolicy = promptFor(config, "second-opinion");
         const second = ladderFor(cfg, config).filter(m => !spent.has(m) && m !== first.model);
         let b = null, bText = null, unchecked = null;
@@ -771,7 +841,16 @@ async function transcribeBook(dir, opts) {
         if (unchecked) {
           log("page " + page.index + ": no second opinion (" + unchecked + ")");
           note = "no second model checked this page";
-          unsure.push({ word: "page", reason: note });
+          // A MARK ON THE PAGE, and it names no word — because nobody was unsure
+          // of one. The review page highlights a flag's `word` wherever it finds
+          // it in the page's own text, so a whole-page mark that borrowed the
+          // word channel (it used to carry the literal string "page") promised a
+          // parent a doubtful word, highlighted nothing, and counted itself in
+          // "N words the AI was unsure of" — 30 of them on a 30-page book the
+          // day the partner rung was down. `word: null` is the whole-page
+          // channel; content.js counts it as a page and the review page shows
+          // the note.
+          unsure.push({ word: null, reason: note });
         } else if (normalizeLoose(bText) !== normalizeLoose(text)) {
           checkedBy = b.model; agreed = false;
           const word = firstDivergence(text, bText);
@@ -808,13 +887,19 @@ async function transcribeBook(dir, opts) {
             // so. A flagged page still publishes (ruling 9/4).
             note = "two models read this page differently and there was no third to ask";
           }
-          unsure.push({ word: word || "page", reason: note });
+          // The word they parted company on, when there is one to point at; a
+          // whole-page mark when there is not (see `word: null` above).
+          unsure.push({ word: word || null, reason: note });
         } else { checkedBy = b.model; agreed = true; }
       }
 
+      // A flag is either a WORD the model was unsure of (the model's own
+      // `uncertain` list, and the word two readings parted company on) or a
+      // mark on the WHOLE PAGE, which names no word: `word` is null there, and
+      // every reader of this list has to expect it.
       const flags = unsure.map(u => typeof u === "string"
         ? { word: u, reason: FLAG_UNSURE }
-        : { word: u.word, reason: u.reason });
+        : { word: u.word == null ? null : u.word, reason: u.reason });
       out.push({ index: page.index, source: page.source, text,
                  flags, cover: done ? !!done.cover : page.index === 1,
                  read: { model: readBy, checkedBy, agreed } });
@@ -830,7 +915,7 @@ async function transcribeBook(dir, opts) {
       if (e && e.quota) {
         // Not an error. The book keeps the pages it already has and waits.
         quota = true;
-        retryMs = soonest(retryMs, e.retryAfterMs);
+        retry = soonest(retry, e.retryAfter);
         log("every model's daily allowance is spent - " + QUOTA_NOTE);
         continue;
       }
@@ -857,7 +942,7 @@ async function transcribeBook(dir, opts) {
 
   if (permanent) throw new Error(permanent);
   const res = { transcribed, reused, escalated, pages: out, calls, errors };
-  if (quota) { res.hold = "quota"; res.pausedUntil = pausedUntilFor(o.now, retryMs); res.note = QUOTA_NOTE; }
+  if (quota) { res.hold = "quota"; res.pausedUntil = pausedUntilFor(o.now, retry); res.note = QUOTA_NOTE; }
   return res;
 }
 

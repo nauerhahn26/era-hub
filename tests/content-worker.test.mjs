@@ -533,12 +533,19 @@ test("a book that publishes lands on the shelf at once, and syncs nothing else",
   await new Promise(r => ai.listen(0, "127.0.0.1", r));
   await new Promise(r => eleven.listen(0, "127.0.0.1", r));
 
+  // Piped, not inherited, because the hub SAYS what it shelved and the sentence
+  // is the only place the outcome of the hook appears (it is fire-and-forget
+  // from content.js's side). Echoed on, so a failure here still shows the
+  // server's own log the way the other spawned tests do.
+  let said2 = "";
   const child = spawn("node", ["server.js", String(PORT)], {
-    cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
+    cwd: HUB, stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ERA_DATA_DIR: data3, ERA_BIND: "127.0.0.1",
            ERA_AI_URL: `http://127.0.0.1:${ai.address().port}`,
            ERA_ELEVEN_URL: `http://127.0.0.1:${eleven.address().port}` },
   });
+  for (const pipe of [child.stdout, child.stderr])
+    pipe.on("data", (c) => { said2 += c; process.stderr.write(c); });
   const base = `http://127.0.0.1:${PORT}`;
   const shelved = path.join(data3, "books", "Stick Man", "manifest.json");
   let mirroredAt = 0, publishedAt = 0;
@@ -589,6 +596,14 @@ test("a book that publishes lands on the shelf at once, and syncs nothing else",
   // ERA_ELEVEN_URL and was billed to the family.
   assert.deepEqual(said, ["Page one.", "Page two."]);
   assert.equal(aiCalls, 0);
+  // AND THE HUB SAID SO. drive.mirrorBook answers with a `blocked` word when it
+  // could not shelve the book and with counts when it did — `skipped` among
+  // them, which is the number of files that had not changed since the last
+  // publish. Reading that count as the reason printed "is built but not
+  // shelved" over every re-publish of a book that was on the shelf.
+  assert.match(said2, /\[content\] shelved stick-man \(\d+ file\(s\) copied\)/);
+  assert.doesNotMatch(said2, /is built but not shelved/);
+  assert.doesNotMatch(said2, /would not copy onto the shelf/);
 });
 
 // --------------------------- read the photos again, and hear the new words (E7b)

@@ -52,8 +52,21 @@ let answers = [];          // queued replies, consumed in order
 let throttle = new Set();  // model ids that answer 429 (a spent daily allowance)
 // What a live 429 carries when Google feels like saying so: the
 // google.rpc.RetryInfo `retryDelay` ("47s"), alongside the QuotaFailure whose
-// quotaId names the PerDay limit. null = a bare 429 that says nothing.
+// quotaId names WHICH limit was hit. null = a bare 429 that says nothing.
 let retryDelay = null;
+// The quotaId in that QuotaFailure. A free key has both limits and they are not
+// the same news: the per-day one means the book sleeps until California's
+// midnight, the per-minute one means it sleeps for the delay and carries on.
+const PER_DAY = "GenerateRequestsPerDayPerProjectPerModel-FreeTier";
+const PER_MINUTE = "GenerateRequestsPerMinutePerProjectPerModel-FreeTier";
+let quotaId = PER_DAY;
+// A 400 INVALID_ARGUMENT that has NOTHING to do with the thinking knob (a
+// corrupt image, an oversized payload, a field Google stopped taking): the
+// count of leading calls that are refused that way, whatever they contain.
+let bad400 = 0;
+// Google's newer 400s name the offending field, which puts "INVALID_ARGUMENT"
+// — the last key in the envelope — well past the 160 characters the log keeps.
+let wordy400 = false;
 let broken = new Set();    // model ids that answer 500 (a rung that is simply down)
 // The live 9/4 failure: gemini-3.5 replaced thinkingBudget with thinkingLevel and
 // answers the old numeric knob with a flat 400 INVALID_ARGUMENT. With this on,
@@ -107,10 +120,28 @@ before(async () => {
         res.end('{"error":{"message":"API key not valid"}}');
         return;
       }
+      // A 400 that is not about thinking at all, and does not know what the
+      // request contained: it refuses the first `bad400` calls whatever they
+      // are. Nothing in the body says "thinking", because nothing in a live
+      // one does either.
+      if (bad400 > 0) {
+        bad400--;
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { code: 400,
+          message: "Provided image is not valid.", status: "INVALID_ARGUMENT" } }, null, 2));
+        return;
+      }
       const thinking = (parsed.generationConfig || {}).thinkingConfig;
       if (budget400 && provider === "google" && thinking && thinking.thinkingBudget !== undefined) {
+        // The terse body is the one the family's own run collected (9/4); the
+        // wordy one is what Google's newer 400s look like — they name the
+        // offending field, and "status" is the LAST key in the envelope.
+        const message = wordy400
+          ? "Unable to submit request because thinking_budget is not supported by this model. " +
+            "Learn more: https://ai.google.dev/gemini-api/docs/thinking"
+          : "Request contains an invalid argument.";
         res.writeHead(400, { "content-type": "application/json" });
-        res.end('{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}');
+        res.end(JSON.stringify({ error: { code: 400, message, status: "INVALID_ARGUMENT" } }, null, 2));
         return;
       }
       if (broken.has(model)) {
@@ -126,7 +157,7 @@ before(async () => {
         const details = retryDelay ? [
           { "@type": "type.googleapis.com/google.rpc.QuotaFailure",
             violations: [{ quotaMetric: "generativelanguage.googleapis.com/generate_content_free_tier_requests",
-                           quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier" }] },
+                           quotaId }] },
           { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay },
         ] : undefined;
         res.writeHead(429, { "content-type": "application/json" });
@@ -210,8 +241,11 @@ function reset(opts = {}) {
   answers = opts.answers || [{ text: "The cat sat on the mat.", uncertain: [] }];
   throttle = new Set(opts.throttle || []);
   retryDelay = opts.retryDelay || null;
+  quotaId = opts.quotaId || PER_DAY;
   broken = new Set(opts.broken || []);
   budget400 = !!opts.budget400;
+  bad400 = opts.bad400 || 0;
+  wordy400 = !!opts.wordy400;
   mode = opts.mode || "ok";
   visionKey(opts.provider || "google");
   contentCfg(opts.config === undefined ? null : opts.config);
@@ -345,7 +379,8 @@ test("every model spent: the book PAUSES until the allowance comes back and is n
 // extra day.
 test("a 429 that says WHEN is believed: the pause ends when Google says the allowance does", async () => {
   const ladder = providers.ladderFor({ provider: "google" });
-  reset({ throttle: ladder, retryDelay: "47s" });
+  // The PER-MINUTE limit: a throttle, not the day being over.
+  reset({ throttle: ladder, retryDelay: "47s", quotaId: PER_MINUTE });
   const dir = book("Retry Info");
   const r = await providers.transcribeBook(dir, { dataDir: DATA, now: NOW });
 
@@ -354,11 +389,34 @@ test("a 429 that says WHEN is believed: the pause ends when Google says the allo
     "RetryInfo.retryDelay is the provider's own answer to 'when?' - take it");
   // …and the book is awake again the moment it passes, without waiting for any
   // midnight at all: a per-minute limit costs a minute, not a day.
-  reset({ retryDelay: "47s" });
+  reset({ retryDelay: "47s", quotaId: PER_MINUTE });
   const back = await providers.transcribeBook(dir, { dataDir: DATA, now: NOW + 48000,
                                                     job: { pausedUntil: r.pausedUntil } });
   assert.equal(back.hold, undefined, "the pause ended when the quota did");
   assert.equal(back.transcribed, 1);
+});
+
+// The live 9/4 body pairs the two: a QuotaFailure naming the PER-DAY limit and
+// a RetryInfo of a few seconds. Believing the delay on its own woke the book
+// seconds later to be refused again, all day: ~48 wakes, five refused requests
+// each, and a job.json + log.jsonl rewrite INSIDE the family's Drive folder
+// every time, for Drive to re-upload to every device. The QuotaFailure says
+// which limit it is, so there is nothing to guess at.
+test("a per-DAY 429 sleeps until California's midnight, whatever short delay comes with it", async () => {
+  const ladder = providers.ladderFor({ provider: "google" });
+  reset({ throttle: ladder, retryDelay: "47s", quotaId: PER_DAY });
+  const r = await providers.transcribeBook(book("Day Is Over"), { dataDir: DATA, now: NOW });
+
+  assert.equal(r.hold, "quota");
+  assert.ok(Date.parse(r.pausedUntil) > NOW + 47000,
+    "the day being over is not a forty-seven second throttle");
+  const p = laParts(new Date(r.pausedUntil));
+  assert.equal(p.hour + ":" + p.minute + ":" + p.second, "00:00:00",
+    "a spent DAY comes back when the day does, where the allowance is counted");
+  assert.equal(Number(p.day), Number(laParts(new Date(NOW)).day) + 1);
+  // and the book stays asleep through the whole afternoon it used to spend
+  // knocking every half hour
+  assert.equal(providers.pauseHolds(r.pausedUntil, NOW + 6 * 60 * MIN), true);
 });
 
 test("a 429 that says nothing waits for the ALLOWANCE's midnight, not this computer's", async () => {
@@ -592,51 +650,55 @@ test("the pick is a google model, so a key for another provider gets its OWN lad
 // the transcriber under the older v2 wording and the partner under v3, because
 // a shared wording correlates two models' mistakes as surely as a shared model
 // does (Addendum §6; README "v3 is not an upgrade - it is a trade": each of the
-// two reads better under its own version). These tests are the guard that the
-// asymmetry survives, i.e. that nobody ever "upgrades both".
+// two reads better under its own version).
 //
-// The sentinels are one phrase each that exists in exactly one of the two
-// wordings: v2's rule 5 drops lettering on "boat hulls or signs", which v3
-// rewrote (a sign a character holds up IS story text there); v3's rule 5 is the
-// only one that shouts PART OF THE STORY.
-const V2_ONLY = "boat hulls or signs";
+// AND V2'S TEXT IS NOT IN THIS REPO. The harness holds only its current version
+// and its changelog says what v3 changed, never what v2 said word for word, so
+// the wording the transcriber was measured under cannot be ported — and a
+// reconstruction of it, sent under the name of a measured wording, is the one
+// thing worse than sending the other pass's. So both passes are pinned to v3
+// (the wording this repo can PROVE, byte for byte, against the harness) and the
+// gap is written down in the module header. These tests guard both halves: the
+// wording really is the harness's, and re-pinning a pass stays a one-line
+// config change so the day v2 is recovered is a small day.
 const V3_ONLY = "PART OF THE STORY";
 
-test("the two wordings are pinned, named, and both are really the bake-off's", async () => {
+test("the passes are named, and the wording they send is the harness's own, byte for byte", async () => {
   contentCfg(null);
-  assert.equal(providers.DEFAULT_PROMPTS.transcribe, "v2", "the transcriber reads under v2");
-  assert.equal(providers.DEFAULT_PROMPTS["second-opinion"], "v3", "the partner reads under v3");
+  assert.deepEqual(providers.PASSES, ["transcribe", "second-opinion"]);
+  assert.equal(providers.DEFAULT_PROMPTS.transcribe, "v3");
+  assert.equal(providers.DEFAULT_PROMPTS["second-opinion"], "v3");
   const two = providers.PROMPT_TEXT;
-  assert.ok(two.v2.includes(V2_ONLY) && !two.v2.includes(V3_ONLY));
-  assert.ok(two.v3.includes(V3_ONLY) && !two.v3.includes(V2_ONLY));
-  // both are the same policy: same nine rules, same output contract, two rules apart
-  for (const v of ["v2", "v3"]) {
-    assert.match(two[v], /VERBATIM PRINTED TEXT ONLY/);
-    assert.match(two[v], /9\. FLAG, DO NOT GUESS/);
-    assert.match(two[v], /Use "uncertain": \[\] when you are confident about every word\./);
-  }
+  assert.deepEqual(Object.keys(two), ["v3"],
+    "one wording is in this repo; the day v2 is recovered it is added HERE and re-pinned");
+  assert.ok(two.v3.includes(V3_ONLY));
+  assert.match(two.v3, /VERBATIM PRINTED TEXT ONLY/);
+  assert.match(two.v3, /9\. FLAG, DO NOT GUESS/);
+  assert.match(two.v3, /Use "uncertain": \[\] when you are confident about every word\./);
   // PORTED VERBATIM, and provably so: the harness the numbers came from is ESM
   // and cannot be require()d by the hub (Node 18 floor), but a test can import
   // it. If a re-run bumps that file's wording, this fails and the pinning is a
   // DECISION again instead of a drift.
   const bakeoff = await import(path.join(HUB, "tools/ocr-bakeoff/lib/prompts.mjs"));
   assert.equal(bakeoff.PROMPT_VERSION, "v3", "the harness still holds v3");
-  assert.equal(two.v3, bakeoff.transcribePrompt(), "the second opinion's wording is the harness's, byte for byte");
-  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), two.v2);
+  assert.equal(two.v3, bakeoff.transcribePrompt(), "the wording is the harness's, byte for byte");
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), two.v3);
   assert.equal(providers.promptFor(providers.loadConfig(DATA), "second-opinion"), two.v3);
+  assert.equal(providers.TRANSCRIBE_PROMPT, two.v3);
 });
 
-test("one page, two calls, TWO DIFFERENT WORDINGS - the pairing the bake-off measured", async () => {
+// The KNOWN GAP, stated as a test so it cannot be forgotten quietly: nothing in
+// the hub may invent a wording. Every string a model is sent is one of the
+// versions in PROMPT_TEXT, and every one of those is the harness's.
+test("no wording the bake-off never measured is ever sent", async () => {
   reset({ answers: [{ text: "Nine mice on the ice.", uncertain: [] }] });
-  await providers.transcribeBook(book("Two Wordings"), { dataDir: DATA });
-
-  assert.equal(calls.length, 2);
-  assert.notEqual(calls[0].prompt, calls[1].prompt,
-    "asking both models the same question correlates their mistakes - the whole point of the pair is that it does not");
-  assert.ok(calls[0].prompt.includes(V2_ONLY), "the transcriber gets v2");
-  assert.ok(!calls[0].prompt.includes(V3_ONLY));
-  assert.ok(calls[1].prompt.includes(V3_ONLY), "the second opinion gets v3");
-  assert.ok(!calls[1].prompt.includes(V2_ONLY));
+  await providers.transcribeBook(book("Only Measured Wordings"), { dataDir: DATA });
+  assert.equal(calls.length, 2, "two models still read the page");
+  const known = Object.values(providers.PROMPT_TEXT);
+  for (const c of calls)
+    assert.ok(known.includes(c.prompt), "a model was sent a wording that is not in PROMPT_TEXT");
+  assert.equal(calls[0].prompt, calls[1].prompt,
+    "one wording in the repo means one wording on the wire - the pair decorrelates by MODEL today");
 });
 
 test("the escalation call speaks with the second opinion's wording", async () => {
@@ -652,23 +714,30 @@ test("the escalation call speaks with the second opinion's wording", async () =>
 
   assert.equal(calls.length, 3);
   assert.equal(calls[2].model, STRONG);
-  assert.ok(calls[0].prompt.includes(V2_ONLY), "the reading being checked was made under v2");
-  assert.ok(calls[2].prompt.includes(V3_ONLY), "the decider is asked the second opinion's question");
-  assert.ok(!calls[2].prompt.includes(V2_ONLY));
+  assert.equal(calls[2].prompt, providers.promptFor(providers.loadConfig(DATA), "second-opinion"),
+    "the decider is asked the second opinion's question, whatever that pass is pinned to");
+  assert.ok(calls[2].prompt.includes(V3_ONLY));
 });
 
 test("which wording each pass sends is config, not code", async () => {
-  // A family (or the next re-validation) can re-pin either pass without a code
-  // change - including, deliberately, back to one wording for both.
-  reset({ config: { transcribe: { prompts: { transcribe: "v3", "second-opinion": "v2" } } },
+  // The day v2 is recovered, re-pinning the transcribe pass to it is one line in
+  // PROMPT_TEXT and one in the config - never an edit at the five call sites.
+  // Until then this is what the seam can be shown doing: a pass asks by NAME,
+  // and the name is looked up per call.
+  reset({ config: { transcribe: { prompts: { transcribe: "v3", "second-opinion": "v3" } } },
           answers: [{ text: "Nine mice on the ice.", uncertain: [] }] });
   await providers.transcribeBook(book("Repinned"), { dataDir: DATA });
-  assert.ok(calls[0].prompt.includes(V3_ONLY));
-  assert.ok(calls[1].prompt.includes(V2_ONLY));
+  assert.equal(calls.length, 2);
+  for (const c of calls) assert.equal(c.prompt, providers.PROMPT_TEXT.v3);
 
-  // an unknown version is not a wordless page: the pinned default stands
+  // A version this hub does not hold is not a wordless page, and it is NOT an
+  // invented one either: the pinned default stands. That is what makes adding
+  // `v2` to PROMPT_TEXT the whole change, and a config naming a version that is
+  // not there safe on a hub that has not been updated yet.
+  contentCfg({ transcribe: { prompts: { transcribe: "v2" } } });
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), providers.PROMPT_TEXT.v3);
   contentCfg({ transcribe: { prompts: { transcribe: "v99" } } });
-  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), providers.PROMPT_TEXT.v2);
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), providers.PROMPT_TEXT.v3);
   contentCfg(null);
 });
 
@@ -685,7 +754,7 @@ test("nothing the book writes down carries the prompt", async () => {
   const written = fs.readFileSync(path.join(store.buildDir(dir), "log.jsonl"), "utf8") +
                   fs.readFileSync(path.join(store.buildDir(dir), "text.json"), "utf8");
   assert.ok(written.includes("Nine mice"), "the page's own words ARE written down");
-  for (const phrase of [V2_ONLY, V3_ONLY, "VERBATIM PRINTED TEXT ONLY", "JUNK REMOVAL",
+  for (const phrase of [V3_ONLY, "VERBATIM PRINTED TEXT ONLY", "JUNK REMOVAL",
                         "Reply with a single JSON object"])
     assert.ok(!written.includes(phrase), "the build must not write the prompt down: " + phrase);
 });
@@ -718,9 +787,63 @@ test("a model that refuses the thinking knob is asked again in the shape it take
   assert.equal(knob(calls[1]).thinkingLevel, "minimal");
   assert.equal(knob(calls[1]).thinkingBudget, undefined, "the refused field is gone, not sent alongside");
   assert.equal(knob(calls[2]).thinkingLevel, "minimal", "page two starts in the shape that worked");
-  // and thinking is still OFF-as-it-can-be: a transcription must not spend its
-  // token budget deliberating (QA 9/1)
-  assert.equal(providers.MAX_TOKENS > 0, true);
+  // and the ceiling that stops a model hallucinating a novel travelled with it:
+  // a transcription must not spend its token budget deliberating (QA 9/1).
+  assert.equal(calls[2].body.generationConfig.maxOutputTokens, providers.MAX_TOKENS);
+});
+
+// The memo is a MEASUREMENT of what a model accepted, so it may only be written
+// down when the re-shaped request was actually accepted. Google answers 400
+// INVALID_ARGUMENT for plenty of things that are not the thinking knob — a
+// corrupt photo, an oversized page, a field it stopped taking — and the live
+// body says only "Request contains an invalid argument", so the refusal cannot
+// be read. Adopting the re-shape on the strength of ANY 400 quietly re-shapes
+// every page after it, and the transcriber stops sending the request the
+// bake-off measured its accuracy under.
+test("a 400 that was never about thinking does not re-shape the pages after it", async () => {
+  // Its OWN model id: what a model accepts is remembered for the life of the
+  // process (that is the point of it), so a test about the memo must not read
+  // the one an earlier test taught.
+  const transcriber = "gemini-flash-latest";
+  reset({ config: { transcribe: { agreementPass: false, model: transcriber } },
+          bad400: 2,                            // both attempts of page one refused
+          answers: [{ text: "Ten green bottles on the wall.", uncertain: [] }] });
+  const dir = book("Not The Knob", 2);
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+
+  const knob = (c) => c.body.generationConfig.thinkingConfig;
+  const its = calls.filter(c => c.model === transcriber);
+  assert.equal(knob(its[0]).thinkingBudget, 0, "the first call is the measured request");
+  assert.equal(knob(its[1]).thinkingLevel, "minimal", "one re-shape is worth trying");
+  // Page one's re-shape was refused too, so nothing was learned from it: page
+  // two is sent the request this model's accuracy was measured under.
+  assert.equal(its.length, 3, "page two knocks on the transcriber's door again");
+  assert.equal(knob(its[2]).thinkingBudget, 0,
+    "a 400 nobody could read must not re-pin the transcriber's request for the whole run");
+  assert.equal(knob(its[2]).thinkingLevel, undefined);
+  assert.equal(r.transcribed, 2, "and both pages are still read");
+});
+
+// Google's newer 400s name the offending field, which pushes "INVALID_ARGUMENT"
+// — the last key in the envelope — past the 160 characters kept for the log.
+// The re-shape used to be decided on that truncated line, so a wordier refusal
+// escaped it entirely: the partner rung 400s on every page, silently, which is
+// the exact failure this was written to end.
+test("a WORDY invalid-argument refusal is still recognised: the raw body is what is read", async () => {
+  reset({ config: { transcribe: { agreementPass: false, model: "gemini-3.5-flash" } },
+          budget400: true, wordy400: true,
+          answers: [{ text: "Ten green bottles on the wall.", uncertain: [] }] });
+  const dir = book("Wordy Refusal");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+
+  assert.equal(r.transcribed, 1);
+  assert.equal(calls.length, 2, "refused once, re-shaped once, answered");
+  assert.deepEqual(calls.map(c => c.model), ["gemini-3.5-flash", "gemini-3.5-flash"],
+    "the ladder is never walked: the rung answered, it just wanted a different word");
+  assert.equal(calls[1].body.generationConfig.thinkingConfig.thinkingLevel, "minimal");
+  // and the log still keeps only its 160 characters of it
+  const log = store.readLog(dir).map(l => l.msg).join("\n");
+  assert.ok(!log.includes("ai.google.dev"), "the log line is short, and stays short");
 });
 
 test("the thinking knob is a google field: the other two providers' requests are untouched", async () => {
@@ -750,6 +873,13 @@ test("a page the partner could not read is published WITH A MARK ON IT, not as a
   assert.equal(page.text, "The moon came out, round and white.");
   assert.equal(page.flags.length, 1, "one reading is not a checked page");
   assert.match(page.flags[0].reason, /no second model checked this page/);
+  // A MARK ON THE PAGE, NOT ON A WORD. The review page highlights a flag's
+  // `word` where it finds it in the page's own text, so a whole-page mark
+  // carrying the literal word "page" told a parent there was a word to look at,
+  // highlighted nothing (or worse, highlighted the word "page" on a page that
+  // happened to use it) and counted itself as a doubtful word in the Settings
+  // card. No word means no word.
+  assert.equal(page.flags[0].word, null, "nobody was unsure of a WORD - nobody read the page twice");
   assert.ok(store.readLog(dir).some(l => l.msg.includes("no second opinion")),
     "the log still says why the second opinion could not be bought");
 

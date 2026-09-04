@@ -77,13 +77,44 @@ const PATTERNS = [
 const COMPANY = /\b(?:Ltd|Limited|Inc|LLC|PLC|GmbH)\b/;
 
 // A line of two words or fewer that is ONLY a year, or only a code. This is the
-// "2019" under a title and the "FSC C000000" in the gutter. Two guards keep a
-// story line out: there has to be a digit in it (so "The end." is safe), and a
-// code has to be all capitals and digits (so "Chapter 3" and "3 buses" are).
+// "2019" under a title and the "FSC C000000" in the gutter.
+//
+// THREE guards keep a story line out, and the third one is the one that matters:
+// there has to be a digit in the line (so "The end." is safe), the line has to
+// be all capitals, digits and punctuation (so "Chapter 3" and "3 buses" are),
+// and — because A PICTURE BOOK IS PRINTED IN CAPITALS — every token in it has to
+// look like part of a code rather than like a word. Without that last test the
+// rule ate the whole of a counting book: "3 BEARS", "1 DUCK", "CHAPTER 3",
+// "DAY 1" are all two words, all capitals, all with a digit in them, and every
+// one of them is the page's only sentence. Losing one is silent twice over —
+// both readings are stripped before they are compared, so the page agrees with
+// itself and is never flagged.
+//
+// A token is part of a code when it is DIGITS and punctuation ("2019",
+// "978-1-00000-000-0", "#4") or when letters and digits are mixed INSIDE the one
+// token ("C000000", "MIX-1"). A bare capitalised word ("BEARS", "CHAPTER") is
+// neither, so a line only reads as a code when the line is all numbers, or when
+// something in it is unmistakably a code and nothing in it is a number standing
+// on its own next to a word.
 const ONLY_YEAR = /^\(?(?:1[6-9]|20)\d{2}\)?[.,;:]?$/;
 const ONLY_CODE = /^[A-Z0-9][A-Z0-9\s.\-–—/#:]*$/;
+const NUMBER_TOKEN = (w) => /\d/.test(w) && !/[A-Za-z]/.test(w);
+const CODE_TOKEN = (w) => /\d/.test(w) && /[A-Za-z]/.test(w);
+const LABEL_TOKEN = (w) => /^[A-Z.\-–—/#:]+$/.test(w);      // "FSC", "ISBN": the capitals that LABEL a code
 
-function wordCount(s) { return s.split(/\s+/).filter(Boolean).length; }
+function tokens(s) { return s.split(/\s+/).filter(Boolean); }
+function wordCount(s) { return tokens(s).length; }
+
+function looksLikeCode(s) {
+  const ws = tokens(s);
+  if (!ws.length) return false;
+  if (ws.every(NUMBER_TOKEN)) return true;                  // "2019", an ISBN on its own line
+  // Something in the line IS a code, and everything else is a code, a number or
+  // the capitals that label one ("FSC C000000"). "3 BEARS" has no code token in
+  // it at all, so it never reaches this test as anything but a story line.
+  return ws.some(CODE_TOKEN) &&
+         ws.every(w => CODE_TOKEN(w) || NUMBER_TOKEN(w) || LABEL_TOKEN(w));
+}
 
 // isImprintLine(line) — is this ONE line the publisher talking?
 //
@@ -96,7 +127,8 @@ function isImprintLine(line) {
   if (COPYRIGHT_HEAD.test(s)) return true;
   for (const re of PATTERNS) if (re.test(s)) return true;
   if (COMPANY.test(s) && s.includes(",")) return true;
-  if (wordCount(s) < 3 && /\d/.test(s) && (ONLY_YEAR.test(s) || ONLY_CODE.test(s))) return true;
+  if (wordCount(s) < 3 && /\d/.test(s) &&
+      (ONLY_YEAR.test(s) || (ONLY_CODE.test(s) && looksLikeCode(s)))) return true;
   return false;
 }
 
