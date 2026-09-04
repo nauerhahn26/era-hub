@@ -3,6 +3,10 @@
 // slash form (query string kept) instead of 404ing, and /favicon.ico serves
 // so browsers stop logging a 404 on every app. Born of the v0.12.0 payload
 // QA: a family typing 127.0.0.1:8377/pencil got a bare "not found".
+// Also the review page's front door (T3.1): /book-review/ is a PLAIN static
+// directory, deliberately outside /books/ — that prefix is the media jail and
+// 404s any extension-less path, so the page could never have been served from
+// inside it.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -49,6 +53,28 @@ test("redirected app dirs then serve 200", async () => {
     const r = await fetch(`${BASE}${dir}`); // follow redirects
     assert.equal(r.status, 200, `${dir} should land on index.html`);
   }
+});
+
+// The review page (T3.1). /books/review/ was the spec's URL and is
+// unreachable: /books/ is the media jail, which 404s a path with no file
+// extension before the static handler is ever asked. /book-review/ is a free
+// prefix and needs no route of its own — it is just a directory under public/.
+test("/book-review serves the review page and keeps ?slug= across the 301", async () => {
+  const r = await fetch(`${BASE}/book-review?slug=tabby-mctat`, { redirect: "manual" });
+  assert.equal(r.status, 301);
+  assert.equal(r.headers.get("location"), "/book-review/?slug=tabby-mctat");
+  const page = await fetch(`${BASE}/book-review/?slug=tabby-mctat`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-type") || "", /text\/html/);
+  const html = await page.text();
+  // Mouse/touch only: a grown-up page must never carry a gaze target, or a
+  // stray dwell would let her reorder her own book by looking at it. The
+  // page's own comments SAY "dwell" — the check is on the markup, so strip
+  // them (both comment forms) before looking.
+  const code = html.replace(/<!--[\s\S]*?-->/g, "").replace(/\/\*[\s\S]*?\*\//g, "")
+                   .replace(/^\s*\/\/.*$/gm, "");
+  assert.equal(/dwell/i.test(code), false, "no dwell engine and no .dwell class on the review page");
+  assert.match(html, /invariants/, "the header says why it is not in invariants' STATES");
 });
 
 test("missing paths still 404 (no blind redirecting)", async () => {

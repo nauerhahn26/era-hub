@@ -55,6 +55,11 @@ cp -r "$ROOT/era-board/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"
 cp -r "$HUB/public/home" "$OUT/public/home"
 cp -r "$HUB/public/reader" "$OUT/public/reader"
+# the book review page (spec §5) — CORE, like settings/home/reader: it is the
+# only builder UI, it is a few KB of html, and a family whose book came out with
+# its pages in the wrong order needs it on the machine that built the book. No
+# /x in installer.nsi: every /x there belongs to a pack (tests/packs.test.mjs).
+cp -r "$HUB/public/book-review" "$OUT/public/book-review"
 cp "$HUB/public/favicon.ico" "$OUT/public/favicon.ico"
 cp -r "$HUB/public/icons" "$OUT/public/icons"   # per-app icons (tiles + shortcuts)
 

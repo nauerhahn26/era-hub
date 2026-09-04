@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review a book</title>
+<link rel="stylesheet" href="../lib/tokens.css">
+<style>
+  /* ============================================================
+     Review a book — the ONE builder screen (spec §5). A grown-up
+     stands at the computer with a mug of tea and fixes what the AI
+     got wrong: the page order, the cover, a misread word.
+
+     MOUSE AND TOUCH ONLY. There is no `.dwell` class, no gaze
+     handler and no dwell.js on this page, and there must never be
+     one: a dwell target here would let her reorder her own book by
+     looking at it. That is also why the page is deliberately NOT in
+     the STATES list that tests/invariants.mjs audits — that audit
+     measures gaze-target size and spacing on HER screens, and a
+     page with no gaze targets would only measure nothing.
+
+     URL: /book-review/?slug=<book>. It lives at /book-review/ and
+     not at the spec's /books/review/ because /books/ is the media
+     jail (server.js serveBook): the jail answers first and 404s any
+     path with no file extension, so /books/review/ could never have
+     reached the static handler. This directory needs no route of
+     its own — the static handler serves it, and the trailing-slash
+     301 keeps ?slug= (tests/routes.test.mjs).
+
+     Core, not a pack: shipped by tools/build-payload.sh and laid
+     down by the installer's core File /r (no /x — every /x belongs
+     to a pack, tests/packs.test.mjs).
+     ============================================================ */
+  :root{
+    --ink:var(--color-ink); --paper:#EEF2F1; --card:#FFFFFF; --line:#D3DCDA;
+    --teal:var(--color-primary); --teal-deep:#0B4E58; --teal-wash:#E4EFEF;
+    --coral:#DE7B52; --muted:#5A6A70;
+    --font:"Segoe UI", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--font);
+       font-size:19px; line-height:1.5}
+  .wrap{max-width:980px; margin:0 auto; padding:28px 24px 80px}
+  header{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:6px}
+  h1{font-size:38px; margin:0; font-weight:750}
+  .sub{color:var(--muted); font-size:20px}
+  .back{font-size:17px; color:var(--teal-deep); text-decoration:none; font-weight:650;
+        border:2px solid var(--line); border-radius:12px; padding:8px 14px; background:#fff}
+  .back:hover{border-color:var(--teal)}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:16px;
+        padding:22px 24px; margin:18px 0}
+  .card h2{font-size:26px; margin:0 0 6px}
+  .status{font-size:17px; color:var(--muted); margin-top:4px}
+  .status.bad{color:var(--coral)}
+  .status b{color:var(--ink)}
+  .booklink{display:block; text-decoration:none; color:inherit; border:2px solid var(--line);
+            border-radius:14px; padding:14px 18px; margin:10px 0; background:#fff; cursor:pointer}
+  .booklink:hover{border-color:var(--teal); background:var(--teal-wash)}
+  .booklink .nm{font-size:22px; font-weight:650}
+  .placeholder{border:2px dashed var(--line); border-radius:14px; padding:18px 20px;
+               color:var(--muted); font-size:17px}
+  [hidden]{display:none !important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📖 Review a book</h1>
+    <span class="sub" id="sub">Loading…</span>
+    <a class="back" href="/settings/#content">← Settings</a>
+  </header>
+
+  <!-- Gap 1: books are built in place inside the family's own Drive folder,
+       so only the computer running the Google Drive app can build one. -->
+  <div class="card" id="notLocal" hidden>
+    <h2>This computer does not build books</h2>
+    <p class="status">Books are built on the computer that has the <b>Google Drive</b> app
+    and the content folder set up in Settings. Set that up there and New ERA starts on its own.</p>
+  </div>
+
+  <!-- No ?slug=, or a slug for a folder that is not there any more. -->
+  <div class="card" id="picker" hidden>
+    <h2 id="pickerTitle">Which book?</h2>
+    <p class="status" id="pickerHint"></p>
+    <div id="pickerList"></div>
+  </div>
+
+  <div id="book" hidden>
+    <div class="card">
+      <h2 id="bookTitle"></h2>
+      <div class="status" id="bookState"></div>
+      <div class="status" id="bookFlags" hidden></div>
+    </div>
+    <!-- Filled in by the tasks that follow: the page strip (drag to reorder,
+         tap to mark the cover), the per-page controls, the book-level
+         buttons. The shell keeps their homes so each one lands in one place. -->
+    <div class="card">
+      <h2>Pages</h2>
+      <div class="placeholder" id="pages">The page strip lands here.</div>
+    </div>
+    <div class="card">
+      <h2>This whole book</h2>
+      <div class="placeholder" id="bookActions">Rebuild, remove and animate land here.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// A book title is family text and the only family text on this page, so it is
+// escaped everywhere it is printed, exactly as the Settings card does it.
+const ESC = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const $ = id => document.getElementById(id);
+const show = (id, on) => { $(id).hidden = !on; };
+
+// The one identifier this page runs on. Read client-side (the 301 onto the
+// trailing slash keeps the query, so a link from Settings survives it).
+const SLUG = new URL(location.href).searchParams.get("slug") || "";
+
+// state -> what the book is doing, in the parent's words. Same wording as the
+// Settings card: a parent who read it there must not meet a different sentence
+// here. No state name and no step name ever reaches the screen.
+const DOING = {
+  inbox: "Waiting to start — New ERA looks for new photos every few minutes.",
+  transcribing: "Reading the words off the photos…",
+  reviewing: "Words read — about to record the narration.",
+  narrating: "Recording the narration…",
+  published: "Ready to read in Book Reader ✓",
+  animating: "Ready to read ✓ — adding animation.",
+  done: "Ready to read in Book Reader ✓",
+  failed: "Stopped part-way.",
+};
+
+function paintPicker(jobs, missing) {
+  $("pickerTitle").textContent = missing ? "That book is not there any more" : "Which book?";
+  $("pickerHint").innerHTML = jobs.length
+    ? (missing
+        ? "The folder for <b>" + ESC(missing) + "</b> is not in your Drive folder. Here is what is:"
+        : "Pick the book you want to look through.")
+    : "No books yet — make a folder inside <b>books</b> named after the book and drop the page photos in it.";
+  const list = $("pickerList");
+  list.innerHTML = "";
+  for (const j of jobs) {
+    const a = document.createElement("a");
+    a.className = "booklink";
+    a.href = "/book-review/?slug=" + encodeURIComponent(j.slug);
+    a.innerHTML = '<div class="nm">' + ESC(j.title || j.slug) + "</div>"
+                + '<div class="status">' + (DOING[j.state] || "Working…") + "</div>";
+    list.appendChild(a);
+  }
+  show("picker", true);
+}
+
+function paintBook(j) {
+  document.title = (j.title || j.slug) + " — review";
+  $("bookTitle").textContent = j.title || j.slug;
+  const p = j.progress || { pages: 0, transcribed: 0, narrated: 0 };
+  let s = DOING[j.state] || "Working…";
+  if (p.pages) s += ' <span style="color:#5A6A70">' + p.transcribed + " of " + p.pages + " pages read"
+                 + (p.narrated ? ", " + p.narrated + " of " + p.pages + " narrated" : "") + ".</span>";
+  $("bookState").innerHTML = s;
+  if (j.flags) {
+    $("bookFlags").innerHTML = j.flags + " word" + (j.flags === 1 ? "" : "s") + " the AI was unsure of.";
+    show("bookFlags", true);
+  }
+  show("book", true);
+}
+
+async function paint() {
+  let s;
+  try { s = await (await fetch("/content/status", { cache: "no-store" })).json(); }
+  catch (e) { $("sub").textContent = "New ERA is not answering."; return; }
+  $("sub").textContent = "";
+  if (!s.local) { show("notLocal", true); return; }
+  const jobs = s.jobs || [];
+  const j = SLUG ? jobs.find(b => b.slug === SLUG) : null;
+  if (j) paintBook(j);
+  else paintPicker(jobs, SLUG || null);
+}
+paint();
+</script>
+</body>
+</html>
