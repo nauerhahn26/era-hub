@@ -180,6 +180,20 @@
     <div class="status" id="aiStatus"></div>
   </div>
 
+  <div class="card" id="content">
+    <h2>📚 Your books</h2>
+    <p class="hint">Photograph the pages of one of her picture books, make a folder inside <b>books</b> in your Google Drive named after the book, and put the photos in it. New ERA reads the words off the photos, records the narration and the book turns up in <b>Book Reader</b> on every device in the family &mdash; you only pay for it once. Nothing ever leaves your own Drive.</p>
+    <div class="row" id="contentActions" style="display:none; margin-bottom:10px">
+      <button id="ctLook">📚 Look for new books now</button>
+    </div>
+    <div class="status" id="contentStatus"></div>
+    <div id="contentBooks" style="margin-top:6px"></div>
+    <div class="desc" id="contentTiers" style="margin-top:14px">
+      With only the <b>free</b> Google key above: the words, a few pages a day, and the reader turns the pages silently. Add an <b>ElevenLabs</b> voice key and she hears the book read to her, for a few cents.
+      <b>Recommended:</b> a paid AI key (Claude, ChatGPT, or Google&rsquo;s paid tier) plus ElevenLabs &mdash; a whole book the same day, still only cents. Nothing is locked: every setup builds books, the cheaper ones just take longer or stay silent.
+    </div>
+  </div>
+
   <div class="card" id="exit">
     <h2>🚪 Where the door goes</h2>
     <p class="hint">Every app has a door in its corner. Choose what she lands on when she looks at it.</p>
@@ -687,6 +701,79 @@ async function aiPaint(){
   }catch(e){}
 }
 aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
+
+// ---- Your books: /content/status turned into sentences (T2.10). The card
+// never shows a state name, a step name or a date stamp — a parent needs to
+// know what is happening to THEIR book and what, if anything, they must do.
+// A book title is the only family text in here, so it is escaped like The
+// Pencil's writings are.
+const CT_ESC = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+// state -> what the book is doing, in the parent's words. `reviewing` owes the
+// narration step, so it reads as "about to record" rather than "under review":
+// there is no human review in the middle of a build (the review page is for
+// afterwards).
+const CT_DOING = {
+  inbox: "Waiting to start — New ERA looks for new photos every few minutes.",
+  transcribing: "Reading the words off the photos…",
+  reviewing: "Words read — about to record the narration.",
+  narrating: "Recording the narration…",
+  published: "Ready to read in Book Reader ✓",
+  animating: "Ready to read ✓ — adding animation.",
+  done: "Ready to read in Book Reader ✓",
+  failed: "Stopped part-way.",
+};
+function ctRow(j){
+  const d=document.createElement("div");
+  d.dataset.slug=j.slug;
+  d.style.cssText="border-top:1px solid var(--line);padding:10px 0";
+  const p=j.progress||{pages:0,transcribed:0,narrated:0};
+  let h='<div style="font-size:20px;font-weight:650">'+CT_ESC(j.title||j.slug)+'</div>';
+  h+='<div class="status" style="margin-top:2px">'+(CT_DOING[j.state]||"Working…");
+  // Two counts, because they are the two things that cost money and time. The
+  // narration count only appears once there is one — "0 of 12 narrated" under a
+  // book that has not reached that step reads like a failure.
+  if(p.pages) h+=' <span style="color:#5A6A70">'+p.transcribed+' of '+p.pages+' pages read'
+    +(p.narrated?', '+p.narrated+' of '+p.pages+' narrated':'')+'.</span>';
+  h+='</div>';
+  // A free key's daily allowance: the job is not stuck and there is nothing to
+  // press, so say the one thing that is true — it carries on by itself.
+  if(j.pausedUntil) h+='<div class="status">Today&rsquo;s free AI allowance is used up — the rest of this book carries on <b>tomorrow morning</b> by itself.</div>';
+  if(j.error) h+='<div class="status bad"><b>'+CT_ESC(j.error)+'</b> Press &ldquo;Look for new books now&rdquo; to try it again.</div>';
+  if(j.flags) h+='<div class="status">'+j.flags+' word'+(j.flags===1?"":"s")+' the AI was unsure of.</div>';
+  // The review page is where a parent fixes words, reorders pages and picks the
+  // cover; it is worth offering for every book, not only flagged ones.
+  h+='<div class="row" style="margin-top:8px"><a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'
+   +' style="font-size:17px;color:var(--teal-deep);text-decoration:none;font-weight:650;'
+   +'border:2px solid var(--teal);border-radius:12px;padding:10px 16px;background:#fff">📖 Review this book</a></div>';
+  d.innerHTML=h;
+  return d;
+}
+async function contentPaint(){
+  let s; try{ s=await (await fetch("/content/status",{cache:"no-store"})).json(); }catch(e){ return; }
+  const list=$("contentBooks"), st=$("contentStatus");
+  // Gap 1: the hub's Drive scope is read-only, so a book built without the
+  // Drive app on this computer could never reach the family's Drive. Say which
+  // computer does the work instead of printing the code word.
+  if(!s.local){
+    $("contentActions").style.display="none";
+    st.innerHTML='<span class="bad">Books are built on the computer that has the <b>Google Drive</b> app and the folder set up in the card above.</span> Set that up and New ERA starts on its own.';
+    list.innerHTML=""; return;
+  }
+  $("contentActions").style.display="";
+  const jobs=s.jobs||[];
+  if(!jobs.length){
+    st.innerHTML='No books yet — make a folder inside <b>books</b> named after the book and drop the page photos in it.';
+    list.innerHTML=""; return;
+  }
+  st.innerHTML='<b>'+jobs.length+' book'+(jobs.length===1?'':'s')+'</b> in your Drive folder.';
+  list.innerHTML="";
+  for(const j of jobs) list.appendChild(ctRow(j));
+}
+// A sync is what finds new books (server.js fans drive.onSynced out to the
+// book scan), so this button is the same one the Drive card offers — said in
+// the words of this card.
+$("ctLook").onclick=async()=>{ toast("Looking for new books — this card shows the progress"); try{ await fetch("/integrations/drive/sync",{method:"POST"}); }catch(e){} contentPaint(); };
+contentPaint(); setInterval(contentPaint, 5000);
 
 // ---- Google Drive content: a LIVE CHECKLIST coach (dad 8/29, the Mac
 // pattern): every step checks itself off as the person completes it, and

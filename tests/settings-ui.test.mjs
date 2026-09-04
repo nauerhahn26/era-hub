@@ -10,6 +10,12 @@
 //   30  a stray tap beside the Apps row must not untick an app
 //   14  an ElevenLabs key is verified: a key ElevenLabs rejects never shows
 //       "Premium voices active"
+// Plus the "Your books" content card (T2.10): it is #content (Settings is
+// deep-linked by fragment), it says what a book costs and what "Recommended"
+// means, and it turns /content/status into sentences a parent can act on -
+// including "this computer cannot build books" (Gap 1) and "tomorrow's
+// allowance". /content/status is stubbed per test so the states are reachable
+// without a Drive folder; no key is ever in play here.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -58,14 +64,32 @@ after(async () => {
   fake.close();
 });
 
-async function settingsPage() {
+async function settingsPage(contentStatus) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
   // ERAgaze lives on 127.0.0.1:49155 on the family PC; here nothing answers
   await ctx.route("http://127.0.0.1:49155/**", r => r.abort());
+  // A book job needs a local Drive folder full of photos; the card's job is to
+  // turn whatever /content/status says into sentences, so the payload is the
+  // fixture and the real route is left alone unless a test asks for one.
+  if (contentStatus) await ctx.route("**/content/status", r => r.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify(contentStatus) }));
   const page = await ctx.newPage();
   await page.goto(`${BASE}/settings/`, { waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll("#appsList label").length > 0);
   return { ctx, page };
+}
+
+// The shape content.js:status() returns, with the parts a test cares about
+// overridden. Kept next to the tests so a change to that payload breaks here.
+function statusPayload(over) {
+  return { mode: "local", local: true, skipped: null, building: false, job: null,
+           queued: [], jobs: [], lastScan: null, ...over };
+}
+function bookJob(over) {
+  return { kind: "books", slug: "tabby-mctat", title: "Tabby McTat", state: "transcribing",
+           step: "transcribe", progress: { pages: 12, transcribed: 3, narrated: 0 },
+           cost: { characters: 0, narrated: 0 }, flags: 0, pausedUntil: null, note: null,
+           published: false, error: null, ...over };
 }
 
 test("the AI helper defaults to Google — free services first (bug 16)", async () => {
@@ -130,5 +154,72 @@ test("a voice key ElevenLabs rejects never shows 'Premium voices active' (bug 14
   assert.match(await page.$eval("#ttsKeyStatus", e => e.textContent), /Key checked and working/);
   v = await (await fetch(`${BASE}/voices`)).json();
   assert.equal(v.enabled, true); assert.equal(v.keyOk, true);
+  await ctx.close();
+});
+
+// ---- "Your books" content card (T2.10) ----
+
+test("the books card is #content and names the recommended setup (spec §4)", async () => {
+  const { ctx, page } = await settingsPage();
+  assert.equal(await page.$eval("#content h2", h => h.textContent.includes("books")), true,
+    "the card is headed 'Your books'");
+  const tiers = await page.$eval("#contentTiers", e => e.textContent);
+  assert.match(tiers, /Recommended/);
+  assert.match(tiers, /ElevenLabs/);
+  assert.match(tiers, /free/i, "the free-key row is spelled out too");
+  assert.doesNotMatch(tiers, /\$\s*\?/, "no placeholder prices");
+  await ctx.close();
+});
+
+test("no Drive folder: the books card says which computer builds books (Gap 1)", async () => {
+  const { ctx, page } = await settingsPage(
+    statusPayload({ mode: "off", local: false, skipped: "needs-local-drive" }));
+  await page.waitForFunction(() => /\S/.test(document.getElementById("contentStatus").textContent));
+  const s = await page.$eval("#contentStatus", e => e.textContent);
+  assert.match(s, /Google Drive/);
+  assert.doesNotMatch(s, /needs-local-drive/, "the code word never reaches the parent");
+  assert.equal(await page.$eval("#contentBooks", e => e.children.length), 0);
+  await ctx.close();
+});
+
+test("zero books: the card says how to add one", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [] }));
+  await page.waitForFunction(() => /\S/.test(document.getElementById("contentStatus").textContent));
+  const s = await page.$eval("#contentStatus", e => e.textContent);
+  assert.match(s, /No books yet/i);
+  assert.match(s, /books/, "it names the folder to drop photos in");
+  await ctx.close();
+});
+
+test("a book being built shows its title and how far it has got", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    building: true, job: { kind: "books", slug: "tabby-mctat", step: "transcribe" },
+    jobs: [bookJob()] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(row, /Tabby McTat/);
+  assert.match(row, /3 of 12/, "pages read out of pages photographed");
+  assert.match(row, /read/i, "the step is said in words, not as 'transcribe'");
+  assert.doesNotMatch(row, /transcribing/, "the state name is not shown raw");
+  await ctx.close();
+});
+
+test("a quota pause says tomorrow, and a flagged book links to its review page", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [
+    bookJob({ pausedUntil: "2026-09-05" }),
+    bookJob({ slug: "the-gruffalo", title: "The Gruffalo", state: "published",
+              step: null, flags: 2, published: true,
+              progress: { pages: 8, transcribed: 8, narrated: 8 } }),
+  ] }));
+  await page.waitForSelector('#contentBooks [data-slug="the-gruffalo"]');
+  const paused = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(paused, /tomorrow/i);
+  assert.doesNotMatch(paused, /2026-09-05/, "a date stamp is not a sentence");
+  const link = await page.$eval('#contentBooks [data-slug="the-gruffalo"] a', a =>
+    ({ href: a.getAttribute("href"), text: a.textContent }));
+  assert.equal(link.href, "/book-review/?slug=the-gruffalo");
+  assert.match(link.text, /Review this book/i);
+  const flagged = await page.$eval('#contentBooks [data-slug="the-gruffalo"]', e => e.textContent);
+  assert.match(flagged, /2 word/, "the flag count is named");
   await ctx.close();
 });
