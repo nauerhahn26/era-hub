@@ -463,6 +463,221 @@ test("a Drive sync feeds the Clothing Picker AND the book scan", async () => {
   assert.equal(elevenCalls, 0);
 });
 
+// ------------------------------------- a finished book reaches the shelf (E7a)
+//
+// F5, and every parent meets it: the worker publishes INTO the family's Drive
+// folder, and the Reader serves <DATA>/books. Until 9/4 the only thing that
+// carried a finished package across was the ten-minute mirror (or a hand on
+// "Sync now"), so the Settings card said "finished" and the shelf stayed as it
+// was for up to ten minutes. server.js now hangs a content->drive hook beside
+// the drive.onSynced fan-out, and this spawns the real hub to watch the shelf.
+//
+// Half of this test is what the hook must NOT do. A bare drive.sync() would
+// fire onSynced, and the clothing leg of that fan-out is clothing.regenerate
+// (true) — a vision spend on EVERY book publish. Two witnesses: /clothing/status
+// stays quiet (its own startup tick is 20 s away and this test is long over by
+// then) and /integrations/drive/status still reports no sync at all.
+
+// A voice stand-in that actually answers, with the mp3 bytes made out of the
+// words it was asked to say — so "this page was never re-recorded" is a byte
+// comparison and not a guess.
+function goodVoice(onSaid) {
+  return http.createServer((req, res) => {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      let text = "";
+      try { text = JSON.parse(body).text || ""; } catch {}
+      onSaid(text);
+      const chars = [...text];
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        audio_base64: Buffer.from("ID3" + text).toString("base64"),
+        alignment: { characters: chars,
+                     character_start_times_seconds: chars.map((_, i) => i * 0.1),
+                     character_end_times_seconds: chars.map((_, i) => i * 0.1 + 0.1) },
+      }));
+    });
+  });
+}
+
+// A book that has been read but not yet narrated: pages, text, and a job that
+// owes narration. `root` is the family's Drive folder.
+function reviewedBook(root, name, texts) {
+  const dir = book(root, name, {});
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  texts.forEach((t, i) => fs.writeFileSync(
+    path.join(dir, "pages", String(i + 1).padStart(3, "0") + ".jpg"), Buffer.alloc(24, i + 1)));
+  store.writeText(dir, { pages: texts.map((t, i) => ({
+    index: i + 1, source: "sources/IMG_" + (i + 1) + ".jpg",
+    text: typeof t === "string" ? t : t.text, flags: [], cover: i === 0,
+    edited: typeof t === "string" ? false : !!t.edited })) });
+  store.writeJob(dir, store.newJob({ claimedBy: "test", state: "reviewing", now: T0 }));
+  return dir;
+}
+
+test("a book that publishes lands on the shelf at once, and syncs nothing else", async () => {
+  const data3 = path.join(TMP, "shelf-data");
+  const folder3 = path.join(TMP, "shelf-drive");
+  fs.mkdirSync(path.join(folder3, "books"), { recursive: true });
+  driveCfg({ mode: "local", folderPath: folder3 }, data3);
+  // Stand-in credential, assembled at runtime so era-scan never sees a
+  // key-shaped run in a tracked file.
+  fs.writeFileSync(path.join(data3, "tts-config.json"), JSON.stringify(
+    { apiKey: ["test", "-", "voice", "-", "key"].join(""), voiceId: "cgSgspJ2msm6clMCkdW9" }));
+  const dir = reviewedBook(folder3, "Stick Man", ["Page one.", "Page two."]);
+
+  let aiCalls = 0, said = [];
+  const ai = http.createServer((req, res) => { aiCalls++; res.writeHead(404).end(); });
+  const eleven = goodVoice(t => said.push(t));
+  await new Promise(r => ai.listen(0, "127.0.0.1", r));
+  await new Promise(r => eleven.listen(0, "127.0.0.1", r));
+
+  const child = spawn("node", ["server.js", String(PORT)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env, ERA_DATA_DIR: data3, ERA_BIND: "127.0.0.1",
+           ERA_AI_URL: `http://127.0.0.1:${ai.address().port}`,
+           ERA_ELEVEN_URL: `http://127.0.0.1:${eleven.address().port}` },
+  });
+  const base = `http://127.0.0.1:${PORT}`;
+  const shelved = path.join(data3, "books", "Stick Man", "manifest.json");
+  let mirroredAt = 0, publishedAt = 0;
+  try {
+    let up = false;
+    for (let i = 0; i < 150; i++) {
+      try { await fetch(`${base}/settings`); up = true; break; } catch {}
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.ok(up, "the hub never came up");
+
+    const run = await fetch(`${base}/content/run`, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "books", slug: "stick-man" }) });
+    assert.equal(run.status, 202);
+
+    for (let i = 0; i < 300; i++) {
+      if (!publishedAt && fs.existsSync(path.join(dir, "manifest.json"))) publishedAt = Date.now();
+      if (fs.existsSync(shelved)) { mirroredAt = Date.now(); break; }
+      await new Promise(r => setTimeout(r, 50));
+    }
+    assert.ok(publishedAt, "the book never published into the family's Drive folder");
+    assert.ok(mirroredAt, "the finished book never reached <DATA>/books — the Reader's shelf");
+    // NOW, not on the next mirror pass. The ten-minute interval (and the 60 s
+    // first sync drive.start arms) are the only other things that could have
+    // copied this, and both are minutes away.
+    assert.ok(mirroredAt - publishedAt < 5000,
+      "the shelf copy has to follow the publish, not the mirror's ten-minute clock");
+    assert.deepEqual(JSON.parse(fs.readFileSync(shelved, "utf8")),
+                     JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")));
+    // and the Reader can open it through its own door
+    const shelf = await (await fetch(`${base}/books/index.json`)).json();
+    assert.ok(shelf.some(b => b.slug === "stick-man"), "the shelf route must list the new book");
+    assert.equal((await fetch(`${base}/books/stick-man/manifest.json`)).status, 200);
+
+    // WHAT IT MUST NOT HAVE DONE. onSynced's clothing leg spends vision quota,
+    // and a whole-folder sync would have fired it.
+    assert.equal((await (await fetch(`${base}/clothing/status`)).json()).guidance, null,
+      "publishing a book must never reach clothing.regenerate");
+    assert.equal((await (await fetch(`${base}/integrations/drive/status`)).json()).lastSync, null,
+      "the hook mirrors THAT BOOK, never the whole folder");
+  } finally {
+    child.kill("SIGKILL");
+    ai.close(); eleven.close();
+  }
+  // The narration went through the seam, and the vision provider was never
+  // needed: a count of zero on the voice would mean the request escaped
+  // ERA_ELEVEN_URL and was billed to the family.
+  assert.deepEqual(said, ["Page one.", "Page two."]);
+  assert.equal(aiCalls, 0);
+});
+
+// --------------------------- read the photos again, and hear the new words (E7b)
+//
+// The other half of F5. "Read the photos again" (content.rebuildPages -> the
+// worker's republish-only path) rewrites the words, and since E6 a page whose
+// words moved publishes SILENT — its mp3 speaks the sentence it replaced. So
+// the re-read has to walk on: narrate the pages whose fingerprint moved, and
+// only those, then publish. A page a grown-up typed themselves is not re-read
+// (the "keep my edits" tick) and must not be re-recorded either.
+test("a re-read buys the voice back for the page that changed, and no other", async () => {
+  const RB = path.join(TMP, "rebuild-data");
+  fs.mkdirSync(RB, { recursive: true });
+  fs.writeFileSync(path.join(RB, "tts-config.json"), JSON.stringify(
+    { apiKey: ["test", "-", "voice", "-", "key"].join(""), voiceId: "cgSgspJ2msm6clMCkdW9" }));
+  fs.writeFileSync(path.join(RB, "ai-config.json"), JSON.stringify(
+    { vision: { provider: "google", apiKey: ["AIza", "S", "y", "0".repeat(30)].join("") } }));
+  // One reading per page: the second-opinion pass is a policy this test is not
+  // about, and it would double every call count below.
+  fs.writeFileSync(path.join(RB, "content-config.json"),
+    JSON.stringify({ transcribe: { agreementPass: false } }));
+
+  let said = [], answers = [], aiCalls = 0;
+  const eleven = goodVoice(t => said.push(t));
+  const ai = http.createServer((req, res) => {
+    aiCalls++;
+    let body = ""; req.on("data", c => { body += c; });
+    req.on("end", () => {
+      const text = answers.shift();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ candidates: [{ content: { parts: [
+        { text: JSON.stringify({ text, uncertain: [] }) }] } }] }));
+    });
+  });
+  await new Promise(r => eleven.listen(0, "127.0.0.1", r));
+  await new Promise(r => ai.listen(0, "127.0.0.1", r));
+  const wasEleven = process.env.ERA_ELEVEN_URL, wasAi = process.env.ERA_AI_URL;
+  process.env.ERA_ELEVEN_URL = `http://127.0.0.1:${eleven.address().port}`;
+  process.env.ERA_AI_URL = `http://127.0.0.1:${ai.address().port}`;
+
+  try {
+    const dir = reviewedBook(FOLDER, "The Paper Dolls",
+      ["The cat sat.", "The dog ran.", { text: "Grandma's own words.", edited: true }]);
+    const first = await content.run({ kind: "books", slug: "the-paper-dolls", dir, dataDir: RB });
+    assert.deepEqual(first.steps.map(s => s.step), ["narrate", "publish"]);
+    assert.equal(said.length, 3, "the book starts fully narrated");
+    const mp3 = (i) => fs.readFileSync(path.join(dir, "audio", "00" + i + ".mp3"));
+    const was = [1, 2, 3].map(mp3);
+    const before = manifestIn(dir);
+
+    // The button: read the photos again, keeping the words a grown-up typed.
+    const pages = content.rebuildPages(dir, true);
+    assert.deepEqual(pages, [1, 2], "the page a grown-up typed is not read again");
+    said = []; aiCalls = 0;
+    answers = ["The cat sat.", "The dog ran fast."];   // page 1 the same, page 2 moved
+    const r = await content.run({ kind: "books", slug: "the-paper-dolls", dir, dataDir: RB,
+                                  step: "transcribe", pages });
+    assert.equal(r.error, undefined);
+    assert.deepEqual(r.steps.map(s => s.step), ["transcribe", "narrate", "publish"],
+      "the re-read has to walk on through narration to a fresh manifest");
+    assert.equal(aiCalls, 2, "two pages were read again, and the edited one was not");
+    assert.deepEqual(said, ["The dog ran fast."], "only the page whose words moved is bought again");
+
+    // The two pages nobody rewrote keep the exact bytes they were bought with.
+    assert.ok(mp3(1).equals(was[0]), "page 1 was re-read to the same words: same recording");
+    assert.ok(mp3(3).equals(was[2]), "the page a grown-up typed keeps its voice untouched");
+    assert.ok(!mp3(2).equals(was[1]), "and the page that changed speaks the new sentence");
+
+    const after = manifestIn(dir);
+    assert.equal(after.pages.length, 3);
+    assert.ok(after.pages.every(p => p.audio), "no page may be left silent by a re-read");
+    assert.deepEqual(after.pages[1].words.map(w => w.word), ["The", "dog", "ran", "fast."]);
+    assert.ok(after.exportedAt > before.exportedAt, "the reader cache-busts on exportedAt");
+    assert.equal(after.id, before.id, "and it is the same book, not a new one");
+    assert.equal(store.readJob(dir).state, "done", "a repair never walks the job backwards");
+    const text = store.readText(dir);
+    assert.equal(text.pages[2].text, "Grandma's own words.");
+    assert.equal(text.pages[2].edited, true);
+  } finally {
+    eleven.close(); ai.close();
+    // Restored rather than overwritten: an env var set to the STRING
+    // "undefined" is a base URL, and the next suite in this file would send the
+    // family's narration to it.
+    for (const [k, v] of [["ERA_ELEVEN_URL", wasEleven], ["ERA_AI_URL", wasAi]]) {
+      if (v == null) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
 after(() => {
   if (voice) voice.close();
   delete process.env.ERA_ELEVEN_URL;

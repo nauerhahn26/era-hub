@@ -661,8 +661,17 @@ test("Read the photos again keeps the words a grown-up typed and re-reads the re
   assert.deepEqual(pages.map(p => p.cover), [true, false], "…nor move the cover");
   // ONE call: the page nobody typed. The one that was typed was never sent.
   assert.equal(spent("read", at), 1, "only the pages that needed reading were bought");
-  assert.equal(calls[calls.length - 1].key, FAKE_AI_KEY);
-  assert.ok(!calls[calls.length - 1].url.includes(FAKE_AI_KEY), "the key must never travel in a URL");
+  const read = calls.filter(c => c.kind === "read");
+  assert.equal(read[read.length - 1].key, FAKE_AI_KEY);
+  assert.ok(!read[read.length - 1].url.includes(FAKE_AI_KEY), "the key must never travel in a URL");
+  // AND THE NEW WORDS ARE SPOKEN (E7b, 9/4). A page whose words moved publishes
+  // SILENT — its recording still says the sentence it replaced — so the re-read
+  // walks on into narration for exactly the pages that changed under it, and
+  // for no others: the page a grown-up typed was not re-read here and is not
+  // re-recorded either.
+  assert.equal(spent("narrate", at), 1, "the page that was read again gets its voice back");
+  assert.deepEqual(calls.filter(c => c.kind === "narrate").slice(-1).map(c => c.text), [READ],
+    "and it says the words that are on the page now");
   // On the screen, without a reload — a parent who pressed the button watches it.
   await page.waitForFunction(t => document.querySelector("#strip .page:nth-child(2) .txt").textContent.trim() === t,
                              READ, { timeout: 15000 });
@@ -675,6 +684,7 @@ test("Read the photos again keeps the words a grown-up typed and re-reads the re
     await new Promise(r => setTimeout(r, 100));
   }
   assert.deepEqual(m.pages.map(p => p.text), ["The cat sat", READ]);
+  assert.ok(m.pages[1].audio, "the shelf gets the new words AND the voice that says them");
   if (VIDEO) await page.waitForTimeout(1200);
   await ctx.close();
 });
@@ -694,6 +704,7 @@ test("with 'keep my words' unticked the photos win, even on a page a grown-up ty
   assert.deepEqual(textOf("Start Over").map(p => p.text), [READ, READ],
     "unticked means every page is read off its photo again");
   assert.equal(spent("read", at), 2, "two pages re-read is two calls, and no more");
+  assert.equal(spent("narrate", at), 2, "both pages moved, so both are narrated again");
   await ctx.close();
 });
 
@@ -809,11 +820,15 @@ test("with Drive not in local mode a book cannot be removed at all", async () =>
 test("every provider call the whole suite made went to the stand-in, and to nothing else", () => {
   // A count that is not exactly these means a request escaped a seam (or the
   // page bought pages nobody asked for) and the family was billed for it.
-  assert.equal(spent("narrate", 0), 1,
-    "exactly one page of narration was ever asked for; the stand-in saw " + spent("narrate", 0));
+  // Four narrations: the one page a parent pressed "Re-narrate this page" on,
+  // plus the three pages whose words a re-read moved under them (E7b — a page
+  // that is read again publishes silent until it is narrated again, so the
+  // re-read pays for its own pages and for no others).
+  assert.equal(spent("narrate", 0), 4,
+    "one page re-narrated by hand and three read again; the stand-in saw " + spent("narrate", 0));
   assert.equal(spent("read", 0), 3,
     "three pages were ever asked to be read again; the stand-in saw " + spent("read", 0));
-  assert.equal(calls.length, 4, "and nothing else reached a provider at all");
+  assert.equal(calls.length, 7, "and nothing else reached a provider at all");
   assert.ok(calls.every(c => c.kind === "narrate" || c.kind === "read"),
     "the only provider shapes this page may reach are one page of narration and one page read");
 });

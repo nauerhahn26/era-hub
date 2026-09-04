@@ -271,12 +271,40 @@ function begin(job) {
     })
     .then((result) => {
       running = null; inflight = null;
+      // Before the next book in the queue starts (a transcription is minutes
+      // long, and this book is finished now).
+      announce(job, result);
       const next = queue.shift();
       if (next) begin(next.job).then(r => next.waiters.forEach(w => w(r)));
       return result;
     });
   inflight = p;
   return p;
+}
+
+// A BOOK THAT PUBLISHED IS NOT YET ON THE SHELF (F5, 9/4). The walk writes
+// manifest.json inside the family's Drive folder; the Reader serves
+// <DATA>/books, and the only thing that carried a package across was the
+// ten-minute mirror or a hand on "Sync now" — a parent watched the card say
+// "finished", opened the Reader, and the book was not there.
+//
+// So a run that published says so, once, through the same one-property shape
+// drive.onSynced uses: server.js hangs the copy off it (drive.mirrorBook — that
+// book and no more; a whole sync would fire onSynced's clothing leg and spend
+// vision quota on every publish), and nothing in this file has to know that the
+// mirror exists. Unset — every test that drives content.js directly — it is a
+// no-op, and a hook that throws is the hook's problem, never the book's.
+function announce(job, result) {
+  const steps = result && Array.isArray(result.steps) ? result.steps : [];
+  if (!steps.some(s => s && s.published)) return;
+  const hook = module.exports.onPublished;
+  if (typeof hook !== "function") return;
+  try {
+    hook({ kind: job.kind, slug: job.slug, dir: job.dir,
+           name: job.name || path.basename(job.dir) });
+  } catch (e) {
+    console.error("[content] " + job.slug + ": " + store.redact(e.message));
+  }
 }
 
 function isBuilding() { return !!running; }
@@ -819,6 +847,10 @@ function start(dataDir) {
 }
 
 module.exports = {
+  // Set by server.js: {kind, slug, name, dir} for a book that just published.
+  // One property, one owner — the same shape (and the same warning about a slot
+  // with two owners) as drive.onSynced.
+  onPublished: null,
   start, scan, tick, run, runJob, runStep, isBuilding, idle, status, beat, claim,
   jobs, jobFor, bookFor, pagesFor, pageFile, saveOrder, savePage, saveText,
   rebuildPages, removeBook,
@@ -827,5 +859,6 @@ module.exports = {
     running = null; inflight = null; queue = []; seen = new Map();
     progress = null; lastScan = null;
     module.exports.runJob = runJob;
+    module.exports.onPublished = null;
   },
 };

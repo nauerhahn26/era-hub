@@ -472,6 +472,50 @@ function syncLocal(cfg) {
   return lastSync;
 }
 
+// mirrorBook(name) — ONE finished book, from the family's Drive folder onto the
+// Reader's shelf, right now (F5, 9/4).
+//
+// The book builder works IN PLACE inside <folderPath>/books/<Title> because
+// that is what Google Drive for Windows uploads to the family's other devices
+// (content.js's first law). The Reader, though, serves <DATA>/books — so until
+// this existed the ONLY thing that carried a finished package across was the
+// ten-minute mirror above, or a parent's hand on "Sync now": the Settings card
+// said "finished" and the shelf did not change for up to ten minutes.
+//
+// WHY NOT JUST CALL sync(). Because sync() ends in onSynced, and the fan-out
+// server.js hangs there starts clothing.regenerate(true) — a vision spend, on
+// every book publish, for photos nobody touched. This is the narrow version of
+// the same copy: one book folder, no prune, no onSynced, nothing else read.
+//
+// The ledger still learns about the files (a book mirrored this way is the
+// mirror's to take away again when the parent deletes the folder in Drive);
+// everything else is copyTreeLocal's, manifest LAST and .part-atomic included.
+// Returns {book, files, skipped, errors} or {error}/{skipped:"needs-local-drive"}.
+function mirrorBook(name) {
+  if (!DATA) return { error: "not-started" };
+  const c = loadCfg();
+  if (c.mode !== "local" || !c.folderPath) return { skipped: "needs-local-drive" };
+  // A NAME, never a path: this walks a folder inside the family's Drive and
+  // writes into the data dir, and the caller is a hook two modules away.
+  const safe = path.basename(String(name || ""));
+  if (!safe || safe === "." || safe === "..") return { error: "unknown book" };
+  const src = path.join(c.folderPath, "books", safe);
+  try { if (!fs.statSync(src).isDirectory()) return { error: "unknown book" }; }
+  catch { return { error: "unknown book" }; }
+  const dest = path.join(DATA, "books", safe);
+  const stats = { files: 0, skipped: 0, removed: 0, errors: [] };
+  const have = { files: new Set(), dirs: new Set() };
+  copyTreeLocal(src, dest, stats, have);
+  // The ledger is kept for the whole books library, so this book's paths go in
+  // under its folder name. Merged, never replaced: the other books on the shelf
+  // are still the mirror's.
+  const lib = path.join(DATA, "books");
+  const owned = loadLedger(lib, "books");
+  for (const r of have.files) owned.add(safe + "/" + r);
+  saveLedger(lib, owned);
+  return { book: safe, ...stats };
+}
+
 // Folders the person can pick in Settings (no ID pasting): own + shared,
 // top 100 by name. The picker is the babysat step dad asked for.
 async function listFolders() {
@@ -521,4 +565,4 @@ function start(dataDir) {
   }
 }
 
-module.exports = { start, status, connect, sync, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast };
+module.exports = { start, status, connect, sync, mirrorBook, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast };

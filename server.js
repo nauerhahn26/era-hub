@@ -1991,6 +1991,18 @@ server.on("listening", () => {
     try { content.tick("drive sync"); }                     // fresh books -> a build
     catch (e) { console.error("[content] " + e.message); }
   };
+  // And the way back: a book that just published is in the family's DRIVE
+  // folder, and the Reader serves <DATA>/books. Only the ten-minute mirror (or
+  // a hand on "Sync now") carried it across, so a parent watched the card say
+  // "finished", opened the Reader, and the book was not there for up to ten
+  // minutes (F5, 9/4). drive.mirrorBook copies THAT BOOK and nothing else —
+  // deliberately not drive.sync(), which ends in the fan-out above and would
+  // spend the family's vision quota on the clothing board on every publish.
+  content.onPublished = (b) => {
+    const r = drive.mirrorBook(b.name) || {};
+    if (r.error || r.skipped) console.error("[content] " + b.slug + " is built but not shelved: " + (r.error || r.skipped));
+    else console.log("[content] shelved " + b.slug + " (" + r.files + " file(s) copied)");
+  };
   clothing.start(DATA);  // the Clothing Picker generator (no-op without photos)
   content.start(DATA);   // book jobs in the family's Drive folder (local mode only)
   clearStageOnce();      // first boot after install: minimize covering browsers

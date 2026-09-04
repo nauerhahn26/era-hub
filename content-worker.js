@@ -69,7 +69,7 @@ const fs = require("fs");
 const path = require("path");
 const store = require("./content-store.js");
 const { ingest } = require("./content-ingest.js");
-const { narrateBook } = require("./content-narrate.js");
+const { narrateBook, said } = require("./content-narrate.js");
 const { transcribeBook } = require("./content-providers.js");
 const { publishBook } = require("./content-publish.js");
 
@@ -112,9 +112,11 @@ const STEPS = [
   { name: store.STEP_OWED.reviewing,    owes: "reviewing",    then: "narrating",
     // `only` is what keeps a re-narrate to ONE page: every other page of the
     // book keeps the audio and the timings already bought for it, untouched and
-    // unpaid-for a second time (content-narrate.js rule 2).
+    // unpaid-for a second time (content-narrate.js rule 2). `c.only` is the
+    // same knob for a LIST — renarrate() below hands it the pages a re-read
+    // rewrote — and it is never set by the walk itself.
     run: (c) => narrateBook(c.dir, { dataDir: c.dataDir,
-                                     only: c.page == null ? null : [c.page] }) },
+                                     only: c.only || (c.page == null ? null : [c.page]) }) },
   { name: store.STEP_OWED.narrating,    owes: "narrating",    then: "published",
     run: (c) => publishBook(c.dir, { slug: c.slug, title: c.name }) },
 ];
@@ -133,8 +135,12 @@ const owedState = store.owedState;
 function summary(step, result) {
   const r = result && typeof result === "object" ? result : {};
   const out = { step };
+  // `published` is in the list for the shell rather than for the card: content.js
+  // reads it to tell whoever is listening that a finished book is sitting in the
+  // family's Drive folder and is not on the Reader's shelf yet (F5).
   for (const k of ["pages", "wrote", "copied", "transcribed", "escalated", "calls",
-                   "narrated", "reused", "skipped", "silent", "flagged", "blank", "errors"]) {
+                   "narrated", "reused", "skipped", "silent", "flagged", "blank",
+                   "published", "errors"]) {
     const v = r[k];
     if (Array.isArray(v)) out[k] = v.length;
     else if (v != null) out[k] = v;
@@ -192,6 +198,56 @@ function settle(job) {
 // A book that has NOT published yet is deliberately left alone: freezing a
 // half-built book into a package she could open is worse than making her wait
 // for the walk to reach publish in its own time.
+// THE WORDS AS THEY STAND, page by page: {index -> fingerprint}, in the very
+// shape content-narrate.js records against the audio it buys (`said`). Taken
+// before a step that can rewrite them and again after, it is the whole of
+// renarrate()'s question — which pages actually moved — and it asks the same
+// module the narrate walk asks, so the two can never disagree about what
+// "changed" means.
+function wordsNow() {
+  const out = new Map();
+  let text = null;
+  try { text = store.readText(DIR); } catch {}
+  for (const p of (text && text.pages) || []) out.set(p.index, said(p.text));
+  return out;
+}
+
+// "READ THE PHOTOS AGAIN" DOES NOT END AT THE WORDS (F5, 9/4). Since E6 a page
+// whose text moved publishes SILENT — its mp3 speaks the sentence it replaced,
+// and naming it would highlight one sentence while saying another to a child
+// who cannot read. Nothing then re-narrated it, so a re-read left the family
+// with a book that had quietly lost its voice on exactly the pages they asked
+// to have read again.
+//
+// So the repair walks on, through the step table's own narrate step — the one
+// the state that owes narrate names — rather than a side path of its own, and
+// it pays for EXACTLY the pages whose fingerprint moved. Not the book: a book
+// that published silent for want of a Voice card must not be bought outright
+// because a grown-up pressed a button about the PHOTOS. `before` is the
+// fingerprint map from before the re-read; a page nobody rewrote is not in
+// `changed` and is not asked for.
+//
+// What it could not record goes on the job's history rather than failing the
+// book: this is a repair to a package that is already on the shelf, and the
+// pages it could not buy publish silent (content-publish.js), which is the
+// honest shape and the one the next walk mends.
+async function renarrate(before, steps) {
+  const nar = STEPS.find(s => s.owes === "reviewing");
+  if (!before || !nar || !nar.run || ONLY === nar.name) return;
+  const after = wordsNow();
+  const changed = [];
+  for (const [index, fingerprint] of after)
+    if (before.has(index) && before.get(index) !== fingerprint) changed.push(index);
+  if (!changed.length) return;
+  post({ step: nar.name, state: (store.readJob(DIR) || {}).state || null, slug: SLUG });
+  const r = await nar.run({ dir: DIR, dataDir: DATA, job: store.readJob(DIR),
+                            slug: SLUG, name: NAME, only: changed });
+  steps.push(summary(nar.name, r));
+  const errors = r && Array.isArray(r.errors) ? r.errors.filter(Boolean) : [];
+  const job = store.readJob(DIR);
+  if (errors.length && job) store.writeJob(DIR, store.noteErrors(job, errors));
+}
+
 async function republish(steps) {
   const pub = STEPS.find(s => s.owes === "narrating");
   if (!pub || ONLY === pub.name) return;                 // publish just ran
@@ -216,6 +272,10 @@ async function walk() {
     if (!step.run) return { slug: SLUG, state: job.state, steps, pending: step.name };
 
     post({ step: step.name, state: job.state, slug: SLUG });
+    // The words BEFORE this step, for the one step that rewrites them: a
+    // re-read has to be followed by the narration the new words owe, and only
+    // for the pages that actually changed (renarrate below).
+    const wordsBefore = ONLY && step.owes === "transcribing" ? wordsNow() : null;
     const result = await step.run({ dir: DIR, dataDir: DATA, job, slug: SLUG, name: NAME,
                                     page: PAGE, pages: PAGES });
 
@@ -264,6 +324,7 @@ async function walk() {
     if (PAGE == null && owedState(now) === step.owes)
       store.writeJob(DIR, unpause(store.transition(now, step.then)));
     if (ONLY) {
+      await renarrate(wordsBefore, steps);
       await republish(steps);
       return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
     }
