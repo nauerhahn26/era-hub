@@ -9,8 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const { Worker } = require("worker_threads");
 const { listPhotos } = require("./clothing-photos");
-
-const PROVIDERS = ["anthropic", "openai", "google"];
+const { aiRoles } = require("./ai-config.js");
 
 let DATA = null;
 let worker = null;
@@ -19,12 +18,12 @@ let lastResult = null;
 let queued = false;     // a regenerate asked for while one was running
 let waiters = [];       // callers that arrived mid-build, awaiting the queued run
 
+// The shell only ever needs to SAY which provider is configured (/clothing/status
+// is public), so it drops the key on the floor here; the worker reads the same
+// role for the calls it makes.
 function aiCfg() {
-  try {
-    const c = JSON.parse(fs.readFileSync(path.join(DATA, "ai-config.json"), "utf8"));
-    if (typeof c.apiKey !== "string" || !c.apiKey) return null;
-    return { provider: PROVIDERS.includes(c.provider) ? c.provider : "google" };
-  } catch { return null; }
+  const v = aiRoles(DATA).vision;
+  return v ? { provider: v.provider } : null;
 }
 
 function isBuilding() { return !!worker; }

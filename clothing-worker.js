@@ -19,6 +19,7 @@ const path = require("path");
 const crypto = require("crypto");
 const segment = require("./segment.js");
 const { exifOrientation, rotateRgba, upright } = require("./image-orient.js");
+const { aiRoles } = require("./ai-config.js");
 
 // Bring-your-own key, any of the big three (dad 8/30: "preferred LLM").
 // Account LOGIN is not offered because the providers forbid it for
@@ -66,13 +67,9 @@ const CATALOG = () => path.join(DATA, "wardrobe.json");
 const HISTORY = () => path.join(DATA, "clothing-history.json");
 const RECIPES = () => path.join(DATA, "recipes");
 
-function aiCfg() {
-  try {
-    const c = JSON.parse(fs.readFileSync(path.join(DATA, "ai-config.json"), "utf8"));
-    if (typeof c.apiKey !== "string" || !c.apiKey) return null;
-    return { apiKey: c.apiKey, provider: PROVIDERS[c.provider] ? c.provider : "google" };
-  } catch { return null; }
-}
+// One reader for every key the hub holds (ai-config.js), so the flat
+// {provider, apiKey} file and the role-keyed one both keep working here.
+function aiCfg() { return aiRoles(DATA).vision; }
 function aiKey() { const c = aiCfg(); return c ? c.apiKey : ""; }
 function loadCatalog() {
   try { return JSON.parse(fs.readFileSync(CATALOG(), "utf8")); } catch { return { items: {} }; }
