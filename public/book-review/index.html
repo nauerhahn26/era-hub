@@ -519,7 +519,19 @@ async function write(body) {
 
 // One write, for a drag and for a cover tap alike: the whole order plus the one
 // cover, so a half-applied change is not a shape the server ever sees.
-const saveStrip = () => write({ slug: SLUG, order: order(), cover: coverIndex() });
+//
+// The star comes BACK from the server, and the screen takes its answer. On a
+// book where nothing wears the cover yet — a folder built by hand in power mode,
+// or one whose first page was dropped — coverIndex() sends null and content.js
+// picks a page rather than publish a book with no cover at all. Without this,
+// the shelf would show a cover the parent was never shown choosing.
+async function saveStrip() {
+  const out = await write({ slug: SLUG, order: order(), cover: coverIndex() });
+  if (!out || !Number.isInteger(out.cover)) return;
+  for (const li of Array.from(strip.children))
+    paintCover(li.querySelector(".cover"), Number(li.dataset.index) === out.cover);
+  for (const p of PAGES) p.cover = p.index === out.cover;
+}
 
 // ---- one page's words. The page is named, so the server writes THAT page and
 // touches neither the order nor the cover: a parent fixing a word cannot lose

@@ -772,8 +772,12 @@ function ctRow(j){
   if(again) again.onclick=async()=>{
     again.disabled=true;
     toast("Starting "+(j.title||j.slug)+" again");
+    // retry:true is what makes this press different from every other run: it is
+    // the one thing in the hub that lifts a PERMANENT failure (a key the
+    // provider refused) and puts the book back on the walk. content.js takes it
+    // from nobody else, so a save on the review page cannot do it by accident.
     try{ await fetch("/content/run",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({kind:"books",slug:j.slug,step:null})}); }catch(e){}
+      body:JSON.stringify({kind:"books",slug:j.slug,step:null,retry:true})}); }catch(e){}
     contentPaint();
   };
   return d;

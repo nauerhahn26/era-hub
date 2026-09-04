@@ -337,6 +337,27 @@ test("exactly one page is the cover, and tapping another moves it", async () => 
   await ctx.close();
 });
 
+// A book nobody has starred yet — a folder built by hand in power mode, or one
+// whose original first page was dropped. The server picks a cover rather than
+// publish a book without one, so the star it picked has to appear on the screen:
+// a parent who is shown no star at all has no idea which page is on the shelf.
+test("a book with no cover yet is given one, and the screen says which", async () => {
+  book("Nobody's Cover", ["one", "two", "three"], { publish: false });
+  const dir = path.join(BOOKS, "Nobody's Cover");
+  store.writeText(dir, { pages: store.readText(dir).pages.map(p => ({ ...p, cover: false })) });
+  const { ctx, page } = await review("nobodys-cover");
+  assert.deepEqual((await strip(page)).map(r => r.cover), [false, false, false]);
+  await dragPage(page, 3, 1);
+  await page.waitForFunction(() => document.getElementById("strip").dataset.saved === "1");
+  const written = textOf("Nobody's Cover");
+  assert.deepEqual(written.map(p => p.index), [3, 1, 2]);
+  assert.equal(written.filter(p => p.cover).length, 1, "the book on the shelf has exactly one cover");
+  const shown = await strip(page);
+  assert.deepEqual(shown.map(r => r.cover), written.map(p => p.cover),
+    "and the star on the screen is the page the book actually publishes");
+  await ctx.close();
+});
+
 // ------------------------------------------------------- the write, on its own
 
 test("a write that is not this book's pages is refused rather than half-applied", async () => {
@@ -730,6 +751,44 @@ test("a remove that does not name a book of this family's is refused, and delete
   assert.equal((await remove("{not json")).status, 400);
   assert.ok(fs.existsSync(path.join(BOOKS, "Still Here")));
   assert.ok(fs.existsSync(FOLDER), "nothing above the books folder is reachable from here");
+});
+
+// A page on any other site the family has open can POST to 127.0.0.1 without
+// asking anybody, as long as it never sets a header a browser would have to get
+// permission for first. These three doors delete a family's photos, rewrite
+// their book and spend their money, so all three refuse that shape outright.
+test("a page from somewhere else cannot delete, rewrite or spend through these doors", async () => {
+  const at = calls.length;
+  book("Not Yours", ["one", "two"]);
+  const dir = path.join(BOOKS, "Not Yours");
+  // Exactly what an HTML form with enctype="text/plain" sends, from any origin
+  // at all: no preflight is asked for, so nothing stands between that page and
+  // this one's doors except the doors themselves.
+  const simple = (door, body) => fetch(`${BASE}${door}`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=UTF-8",
+               "Origin": "https://not-the-hub.example", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify(body),
+  });
+  const doors = [
+    ["/content/remove", { kind: "books", slug: "not-yours" }],
+    ["/content/text", { slug: "not-yours", order: [2, 1] }],
+    ["/content/text", { slug: "not-yours", page: 1, text: "not their words" }],
+    ["/content/run", { kind: "books", slug: "not-yours", step: "narrate", page: 1 }],
+  ];
+  for (const [door, body] of doors)
+    assert.equal((await simple(door, body)).status, 403, door + " answered a cross-site press");
+  // And the same body with the Content-Type a browser WOULD have to ask about
+  // is refused too, when it says out loud where it came from.
+  assert.equal((await fetch(`${BASE}/content/remove`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ kind: "books", slug: "not-yours" }),
+  })).status, 403);
+  assert.ok(fs.existsSync(dir), "the book is still on the family's disk");
+  assert.deepEqual(orderOf("Not Yours"), [1, 2], "in the order they left it");
+  assert.equal(textOf("Not Yours")[0].text, "one", "with the words they left in it");
+  assert.equal(spent("narrate", at) + spent("read", at), 0, "and nothing was bought");
 });
 
 test("with Drive not in local mode a book cannot be removed at all", async () => {

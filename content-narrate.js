@@ -106,6 +106,37 @@ function readNarration(dir) {
   };
 }
 
+// forgetPage(dir, index) — "this page's audio speaks words that are no longer
+// on this page." Drops ONE page's entry from narration.json and nothing else.
+//
+// Rule 2 of this module is "never pay twice": a page with an entry and an mp3 is
+// done for ever, and no walk here compares the mp3 against the words it was
+// bought for. That is exactly right while the words come off the photos — and
+// exactly wrong the moment a grown-up retypes a line on the review page, because
+// the book would then be published showing the corrected words while speaking
+// (and highlighting) the misread ones, for ever. So the door that changes a
+// page's words says so here, and the page publishes SILENT until it is narrated
+// again — a shape content-publish.js already handles, and one that costs the
+// family nothing on its own.
+//
+// The mp3 is left where it is: publish reads narration.json and never the audio
+// directory, so an orphan file says nothing to anybody, and the next narrate
+// walk overwrites it atomically. The book's credits (provider, model, voice)
+// stay — they are the record of what spoke the pages that DID keep their audio.
+//
+// Returns true when something was actually dropped, false when there was
+// nothing to drop (no narration yet, or a page it never knew about) — a caller
+// on a hot path must not rewrite a file inside the family's Drive folder for
+// nothing, because Drive re-uploads every byte of it to every device.
+function forgetPage(dir, index) {
+  const raw = store.readJson(narrationPath(dir));
+  if (!raw || !Array.isArray(raw.pages)) return false;
+  const pages = raw.pages.filter(p => !(p && p.index === index));
+  if (pages.length === raw.pages.length) return false;
+  store.writeAtomic(narrationPath(dir), { ...raw, pages });
+  return true;
+}
+
 // narrateBook(dir, opts) — narrate every page of `dir` that has text.
 //
 //   opts.cfg      {apiKey, voiceId, modelId} — for a caller that already has it
@@ -224,6 +255,6 @@ async function narrateBook(dir, opts) {
 
 module.exports = {
   DEFAULT_MODEL_ID, OUTPUT_FORMAT, TIMEOUT_MS,
-  elevenBase, pad3, audioRel, narrationPath, readNarration,
+  elevenBase, pad3, audioRel, narrationPath, readNarration, forgetPage,
   narratePage, narrateBook,
 };

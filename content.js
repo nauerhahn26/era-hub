@@ -38,7 +38,7 @@ const drive = require("./drive.js");
 const store = require("./content-store.js");
 const booksIndex = require("./books-index.js");
 const { EXT: PHOTO_EXT } = require("./clothing-photos.js");
-const { narrationPath } = require("./content-narrate.js");
+const { narrationPath, forgetPage } = require("./content-narrate.js");
 const { pagesOf } = require("./content-providers.js");
 // Booleans only — which roles the family has set up. No key is read in this
 // file and none ever will be (see the header).
@@ -488,11 +488,38 @@ function runStep(o) {
   // asking a key the provider refused only buys the same refusal — but by the
   // time a parent presses this they have usually just fixed the key the card
   // told them about, so the job goes back on the step it fell over on.
-  else if (job.state === "failed" && store.owedState(job) === null)
+  //
+  // `retry` IS THE PRESS, and nothing else is. Every accepted write on the
+  // review page re-publishes the book through this same door, so without the
+  // flag a parent fixing one typo would put a refused book back on the
+  // half-hourly walk against the key the provider had already turned down —
+  // for ever, and started by somebody who never asked for it.
+  else if (req.retry === true && job.state === "failed" && store.owedState(job) === null)
     store.writeJob(found.dir, store.transition(job, job.failedFrom || "inbox"));
   run({ kind: req.kind, slug: req.slug, name: found.name, dir: found.dir,
         dataDir: DATA, step, page, pages }).catch(() => {});
   return { started: true };
+}
+
+// ---------------------------------------- "not while it is being built" (§5)
+
+// A worker owns a book's folder outright while it has it: content-providers.js
+// reads the whole of text.json into memory at the top of a transcription and
+// writes the whole array back from that snapshot minutes later. So a write that
+// lands in between is not a write at all — it is thrown away silently, and the
+// parent who made it was told "Saved ✓".
+//
+// Every door that writes into a book folder asks this first, and they all say
+// the same two sentences, because to a parent "it is building" and "it is about
+// to build" are the same answer: come back in a minute.
+// Returns {error} for a folder that is spoken for, or null.
+function busyWith(dir) {
+  const at = path.resolve(dir);
+  if (running && path.resolve(running.dir) === at)
+    return { error: "New ERA is working on this book right now — try again in a minute." };
+  if (queue.some(q => path.resolve(q.job.dir) === at))
+    return { error: "New ERA is about to work on this book — try again in a minute." };
+  return null;
 }
 
 // ------------------------------------------------------- "Remove this book"
@@ -528,12 +555,19 @@ function removeBook(o) {
   // A DIRECT CHILD of books/, and nothing else: not books/ itself, not a
   // grandchild, not a sideways step out of it.
   if (path.dirname(dir) !== root || dir === root) return { error: "unknown book" };
-  if (running && path.resolve(running.dir) === dir)
-    return { error: "New ERA is working on this book right now — try again in a minute." };
-  if (queue.some(q => path.resolve(q.job.dir) === dir))
-    return { error: "New ERA is about to work on this book — try again in a minute." };
+  const busy = busyWith(dir);
+  if (busy) return busy;
   try { fs.rmSync(dir, { recursive: true, force: true }); }
-  catch (e) { return { error: "That book could not be removed: " + store.redact(e.message) }; }
+  catch (e) {
+    // The reason belongs in the hub's own console, not in the answer: rmSync's
+    // message carries the whole path it fell over on, and store.redact only
+    // takes out things that look like keys. A status page is not a map of the
+    // family's disk (jobFor's law, six lines above it), and this door is the
+    // one place that had been handing one out.
+    console.error("[content] could not remove " + found.name + ": " + store.redact(e.message));
+    return { error: "That book could not be removed — close anything that has its "
+                  + "folder open on this computer and try again." };
+  }
   seen.delete(found.dir);                       // no quiet clock for a folder that is gone
   console.log("[content] removed the book folder " + found.name + " (a grown-up asked)");
   return { removed: true, slug: req.slug, title: found.name };
@@ -616,6 +650,11 @@ function saveOrder(o) {
   if (typeof req.slug !== "string" || !req.slug) return { error: "unknown book" };
   const found = bookFor(req.slug, st);
   if (!found) return { error: "unknown book" };
+  // The same rule the remove door has, and for the same reason: a drag made
+  // while "Read the photos again" is running is a drag the transcriber writes
+  // back over without either of them noticing.
+  const busy = busyWith(found.dir);
+  if (busy) return busy;
   let text;
   try { text = store.readText(found.dir); }
   catch { return { error: "this book's text.json needs fixing by hand" }; }
@@ -669,6 +708,10 @@ function savePage(o) {
   const found = bookFor(req.slug, st);
   if (!found) return { error: "unknown book" };
   if (!Number.isInteger(req.page)) return { error: "the page must be a whole number" };
+  // As above: the words a parent types while the transcriber holds this book
+  // are words the transcriber writes back over.
+  const busy = busyWith(found.dir);
+  if (busy) return busy;
   let text;
   try { text = store.readText(found.dir); }
   catch { return { error: "this book's text.json needs fixing by hand" }; }
@@ -687,6 +730,15 @@ function savePage(o) {
   const next = pages.slice();
   const p = { ...next[at] };
   if (words) {
+    // THE AUDIO NO LONGER SAYS WHAT THE PAGE SAYS. Narration is bought per page
+    // and never re-checked against the words it was bought for (content-narrate
+    // rule 2), so a page republished now would SHOW the corrected line and SPEAK
+    // — and highlight — the misread one, for ever: the next narrate walk would
+    // reuse the mp3 too. The entry goes, the page publishes silent, and the walk
+    // (or the Re-narrate button beside this one) buys the right recording.
+    // Only when the words actually changed: a parent who opened the field and
+    // typed nothing must not be charged for the page a second time.
+    if (req.text !== p.text) forgetPage(found.dir, req.page);
     p.text = req.text;
     // WHOSE WORDS THESE ARE. The button next to this one reads the photos
     // again, and it keeps the pages a grown-up typed themselves (spec §5, the

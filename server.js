@@ -1147,6 +1147,36 @@ function closeKiosk() {
   } catch {}
 }
 
+// ------------------------------- doors only THIS hub's own pages may press ---
+//
+// The hub answers on 127.0.0.1 with no login, because the family PC is the
+// family's. That is fine for a door that reads. It is not fine for the three
+// that DELETE a family's photos, REWRITE their book or SPEND their allowance:
+// any web page open in any tab on that machine can POST to 127.0.0.1 without
+// asking anybody, and a page written for the purpose does not need to read the
+// answer to have done the damage.
+//
+// What a cross-site page cannot do is set a Content-Type the browser has to ask
+// permission for first. `application/json` is exactly that: requiring it means
+// the browser must send a CORS preflight, this hub answers no preflight, and
+// the request never leaves the attacker's tab. Sec-Fetch-Site is the belt to
+// that brace — every current browser sends it, and it says out loud where the
+// press came from ("same-origin", or "none" for a URL somebody typed). A tool
+// that sends neither header (curl, a test's fetch) is not a browser being
+// steered by a page it did not choose, and is let through.
+//
+// Applied to the doors that cannot be taken back, not to the whole hub: the
+// kiosk's own apps and the board post to plenty of others.
+function ownDoor(req, res) {
+  const type = String(req.headers["content-type"] || "").toLowerCase();
+  const site = req.headers["sec-fetch-site"];
+  if (type.startsWith("application/json") && (!site || site === "same-origin" || site === "none"))
+    return true;
+  res.writeHead(403, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "That came from somewhere else, so New ERA did not do it." }));
+  return false;
+}
+
 const server = http.createServer((req, res) => {
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
@@ -1728,6 +1758,7 @@ const server = http.createServer((req, res) => {
   // the build runs on behind it, like /clothing/regenerate: a transcription can
   // take minutes and no browser should hold a socket open for it.
   if (req.method === "POST" && req.url === "/content/run") {
+    if (!ownDoor(req, res)) return;             // it spends money — this hub's own pages only
     let body = "";
     req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
     req.on("end", () => {
@@ -1752,6 +1783,7 @@ const server = http.createServer((req, res) => {
   // is owed the truth about whether the book is gone. content.js owns the jail,
   // the "not while it is being built" rule and the sentence a refusal says.
   if (req.method === "POST" && urlPath === "/content/remove") {
+    if (!ownDoor(req, res)) return;             // it deletes photos — this hub's own pages only
     let body = "";
     req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
     req.on("end", () => {
@@ -1783,6 +1815,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "POST" && urlPath === "/content/text") {
+    if (!ownDoor(req, res)) return;             // it rewrites the book — this hub's own pages only
     let body = "";
     // Room for a long book's order, or one page of a picture book in the words
     // a parent just typed (content.MAX_PAGE_TEXT), and nothing more.

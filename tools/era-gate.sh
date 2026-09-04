@@ -62,8 +62,13 @@ for t in run parts transfer mistakes pencil narrow sortfix fltest bargein sortbu
   else fail=$((fail+1)); failed="$failed $t"; echo "FAIL $t (see gate/$t.out)"; fi
 done
 # node:test suites
+# 900 s, not 600: clothing.test.mjs decodes and re-encodes real photographs and
+# takes ~607 s on this box, so the old ceiling cut it mid-subtest and the gate
+# went red with no `not ok` and no assertion in the .out file — a failure that
+# looks like a bug and is only a stopwatch. A suite that genuinely wedges still
+# stops the gate, five minutes later.
 for t in *.test.mjs; do
-  if timeout 600 node --test "$t" >"${t%.mjs}.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
+  if timeout 900 node --test "$t" >"${t%.mjs}.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
   else fail=$((fail+1)); failed="$failed $t"; echo "FAIL $t (see gate/${t%.mjs}.out)"; fi
 done
 echo "== era-gate: $pass passed, $fail failed${failed:+ →$failed} =="

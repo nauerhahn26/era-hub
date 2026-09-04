@@ -243,6 +243,11 @@ test("a stopped book says so in plain words and offers its own try-again button"
     page.waitForRequest(r => r.url().includes("/content/run") && r.method() === "POST"),
     page.click('#contentBooks [data-slug="tabby-mctat"] button[data-run]'),
   ]);
-  assert.deepEqual(JSON.parse(req.postData()), { kind: "books", slug: "tabby-mctat", step: null });
+  // retry:true is what makes this press different from every other run: it is
+  // the only thing in the hub that lifts a PERMANENT failure and puts the book
+  // back on the walk, so a save on the review page (which re-publishes through
+  // the same door) cannot restart a refused key by accident.
+  assert.deepEqual(JSON.parse(req.postData()),
+                   { kind: "books", slug: "tabby-mctat", step: null, retry: true });
   await ctx.close();
 });

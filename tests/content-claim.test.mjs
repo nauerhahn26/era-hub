@@ -18,7 +18,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-claim-"));
 const DATA = path.join(TMP, "data");
 const FOLDER = path.join(TMP, "My Drive", "New ERA Content");   // what Drive for Desktop shows
 
-let content, store, drive, booksIndex;
+let content, store, drive, booksIndex, narrate;
 
 const MIN = 60 * 1000;
 const T0 = Date.parse("2026-09-04T09:00:00.000Z");
@@ -48,6 +48,7 @@ before(() => {
   drive.start(DATA);
   store = require("./content-store.js");
   booksIndex = require("./books-index.js");
+  narrate = require("./content-narrate.js");
   content = require("./content.js");
   content.start(DATA);
 });
@@ -419,6 +420,110 @@ test("a remove can only ever name a folder directly inside books/", () => {
   assert.ok(fs.existsSync(dir));
   assert.ok(fs.existsSync(outside), "nothing beside books/ is reachable from this door");
   assert.ok(fs.existsSync(path.join(FOLDER, "books")));
+});
+
+test("a remove that fails says so without naming a folder on the family's disk", () => {
+  const dir = reviewedBook("Wedged");
+  // A folder something else holds open (a virus scanner, Drive itself, a file
+  // manager) is the way this fails in a family's house; the message it throws
+  // carries the whole path, and that path is not this page's to hand out.
+  const real = fs.rmSync;
+  let out;
+  try {
+    fs.rmSync = () => {
+      throw new Error("EACCES: permission denied, rmdir '" + path.join(dir, "pages") + "'");
+    };
+    out = content.removeBook({ kind: "books", slug: "wedged" });
+  } finally { fs.rmSync = real; }
+  assert.ok(out.error, "a failure is a sentence, not a throw");
+  assert.ok(!out.error.includes(path.sep + "books"), "no folder on the family's disk: " + out.error);
+  assert.ok(!out.error.includes(FOLDER), "and nothing above it either: " + out.error);
+  assert.ok(!out.error.includes("EACCES"), "nor the provider's own words: " + out.error);
+  assert.ok(fs.existsSync(dir), "and the book is still there to try again");
+});
+
+// ------------------------------------------ the review page's writes (T3.2/3.3)
+//
+// Three rules the browser suite cannot reach: the audio a rewritten page must
+// no longer claim, the worker that owns a folder while a parent is typing into
+// it, and the permanent failure that only a deliberate press may lift.
+
+// The record of what was bought for a book, in the shape content-publish.js
+// reads back: page 1 and page 2 each have an mp3 and word timings.
+function narrated(dir) {
+  fs.mkdirSync(path.join(dir, "audio"), { recursive: true });
+  for (const i of [1, 2])
+    fs.writeFileSync(path.join(dir, "audio", String(i).padStart(3, "0") + ".mp3"), "ID3");
+  store.writeAtomic(narrate.narrationPath(dir), {
+    provider: "elevenlabs", model: "eleven_v3", voice: "V0",
+    pages: [{ index: 1, audio: "audio/001.mp3", words: [{ word: "read", start: 0, end: 0.4 }] },
+            { index: 2, audio: "audio/002.mp3", words: [{ word: "typed", start: 0, end: 0.5 }] }],
+  });
+}
+const spoken = (dir) => narrate.readNarration(dir).pages.map(p => p.index);
+
+test("fixing a page's words drops the audio that speaks the old ones", () => {
+  const dir = reviewedBook("Misread");
+  narrated(dir);
+  const out = content.saveText({ kind: "books", slug: "misread", page: 1, text: "what it really says" });
+  assert.equal(out.saved, true);
+  assert.deepEqual(spoken(dir), [2],
+    "page 1 speaks yesterday's words, so it publishes silent until it is narrated again");
+  assert.equal(narrate.readNarration(dir).voice, "V0", "the book's credits are not lost with it");
+  assert.equal(store.readText(dir).pages[0].text, "what it really says");
+});
+
+test("a save that changes no words keeps every second of audio already paid for", () => {
+  const dir = reviewedBook("Unchanged");
+  narrated(dir);
+  // The same words back again (a parent who opened the field and thought better
+  // of it), and the flags cleared: neither is a reason to buy the page twice.
+  content.saveText({ kind: "books", slug: "unchanged", page: 1, text: "read by the model" });
+  content.saveText({ kind: "books", slug: "unchanged", page: 2, flags: [] });
+  assert.deepEqual(spoken(dir), [1, 2]);
+  // Nor is a drag: the order moves, the words do not.
+  content.saveText({ kind: "books", slug: "unchanged", order: [3, 2, 1] });
+  assert.deepEqual(spoken(dir), [1, 2]);
+});
+
+test("a book being built right now cannot be written to out from under the worker", async () => {
+  const dir = reviewedBook("Busy Words");
+  const was = JSON.stringify(store.readText(dir));
+  let release;
+  content.runJob = () => new Promise((res) => { release = () => res({ ok: true }); });
+  const running = content.run({ kind: "books", slug: "busy-words", name: "Busy Words", dir });
+  // The transcriber holds the whole of text.json in memory for minutes and
+  // writes it back from that snapshot, so a save landing now is a save that is
+  // silently thrown away — and the page would have said "Saved ✓".
+  for (const req of [{ order: [3, 2, 1] }, { page: 1, text: "typed while it ran" },
+                     { page: 1, flags: [] }]) {
+    const no = content.saveText({ kind: "books", slug: "busy-words", ...req });
+    assert.match(no.error, /right now/, JSON.stringify(req));
+  }
+  assert.equal(JSON.stringify(store.readText(dir)), was, "and not a word of it changed");
+  release();
+  await running;
+  // Once it has stopped, the same press lands.
+  assert.equal(content.saveText({ kind: "books", slug: "busy-words", order: [3, 2, 1] }).saved, true);
+});
+
+test("only a deliberate 'try this book again' lifts a permanent failure", () => {
+  const dir = reviewedBook("Refused Key");
+  let job = store.newJob({ claimedBy: "test:1", state: "reviewing", now: T0 });
+  job = store.fail(job, "permanent: that key was refused", { now: T0 });
+  store.writeJob(dir, job);
+  // Every write on the review page re-publishes the book. A publish is not a
+  // retry of the step that fell over, so it must not put the book back on the
+  // half-hourly walk against the key the provider already refused.
+  assert.deepEqual(content.runStep({ kind: "books", slug: "refused-key", step: "publish" }),
+                   { started: true });
+  assert.equal(jobOf(dir).state, "failed", "a publish leaves the refusal exactly where it was");
+  assert.deepEqual(content.scan({ now: T0 + 31 * MIN }).claimed, [],
+                   "and no scan picks the book up again");
+  // The button in Settings says so out loud, and that is the one that lifts it.
+  assert.deepEqual(content.runStep({ kind: "books", slug: "refused-key", retry: true }),
+                   { started: true });
+  assert.equal(jobOf(dir).state, "reviewing", "back on the step it fell over on");
 });
 
 // -------------------------------------------------------------------- status

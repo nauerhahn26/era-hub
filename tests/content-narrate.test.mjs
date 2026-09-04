@@ -200,6 +200,30 @@ test("only:[n] re-narrates exactly that page (the review page's Re-narrate butto
   assert.deepEqual(r.pages[0].words.map(w => w.word), ["A", "busy", "bee."], "page 0 kept its old timings");
 });
 
+// The review page's "fix a misread word" writes new words onto a page whose
+// audio speaks the OLD ones. Nothing else in this module could ever notice —
+// a page with an entry and an mp3 is "done" for ever — so the door that changes
+// the words has to say so here, and this is the sentence it says it in.
+test("forgetPage drops one page's entry, so the next walk buys that page again", async () => {
+  calls = [];
+  const dir = book("forget");
+  await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 2);
+  assert.equal(narrate.forgetPage(dir, 1), true);
+  const left = narrate.readNarration(dir);
+  assert.deepEqual(left.pages.map(p => p.index), [0], "page 0 keeps what was paid for");
+  assert.equal(left.provider, "elevenlabs", "and the book's credits do not go with it");
+  assert.equal(left.voice, VOICE);
+  assert.equal(narrate.forgetPage(dir, 1), false, "a page it has already forgotten is not a rewrite");
+  assert.equal(narrate.forgetPage(book("never"), 0), false, "and neither is a book nothing has narrated");
+  calls = [];
+  const r = await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 1, "exactly the forgotten page is bought a second time");
+  assert.equal(r.narrated, 1);
+  assert.equal(r.reused, 1, "and the page beside it is not bought again");
+  assert.deepEqual(r.pages.map(p => p.index), [0, 1]);
+});
+
 test("a page whose mp3 has gone missing is re-narrated, never reported as done", async () => {
   calls = [];
   const dir = book("gone");
