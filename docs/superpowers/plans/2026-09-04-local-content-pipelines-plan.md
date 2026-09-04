@@ -1202,3 +1202,78 @@ directive"*.
    the family's Google trash for 30 days) behind a confirm; mirror deletes follow.
 5. **`media-tools` pack checksum** (Gap 14) — **answered:** accept for now;
    follow-up filed to reuse `latest.json`'s sha256 in `installPack`.
+
+---
+
+## Retrospective: Phase 1
+
+Five commits on `feat/audit-fixes` (`7d81f77`, `d3e8785`, `315c6e2`, `6fc0a84`,
+`04906b1`) covering T1.1–T1.4 plus one review-fix pass. Touched `drive.js`,
+`server.js`, new `slug.js`, `public/settings/index.html`, `tools/build-payload.sh`,
+and the suites `tests/drive-mirror.test.mjs`, `tests/books.test.mjs`,
+`tests/reconcile.test.mjs`, `tests/update.test.mjs`, `tests/update-boot.test.mjs`.
+
+### Decisions
+- **Manifests mirror last.** One shared `manifestsLast()` ordering rule drives both
+  `copyTreeLocal` and `mirrorDir`: a directory's plain files, then its subfolders,
+  then `manifest.json` / `catalog.json`. The reader treats the manifest's existence
+  as "the book is here", so ordering is the whole safety property.
+- **`movies` joins the mirror set**, and books/music/movies join `MIRROR_DELETES`
+  now that books are *built in place* in Drive — the shelf a parent tidies must be
+  the shelf the tablet shows. `content/` stays copy-only (lesson overrides, not a
+  library).
+- **Deny is 404, not 403.** `sources/` and `.build/` are denied by path segment
+  inside `serveMediaJail` (books jail only; music/movies must not inherit it), and a
+  denied name looks exactly like a name that is not there. Segments are lower-cased
+  because the family's Windows filesystem opens `SOURCES/` as the same directory.
+- **Slug identity is first-come.** `slug.js` (shipped in the payload) is the single
+  slugify; the hub keeps a slug→directory map cached on the books-dir mtime. A folder
+  already named as its own slug keeps that slug whatever else wants it, collisions get
+  `-2`/`-3` and a log line, and an unknown slug is 404 even when a literal directory of
+  that name exists — one package, one URL.
+
+### Observations
+- The audit's blocker was real and reachable by one tap: with books/music/movies in
+  `MIRROR_DELETES`, "✨ Create it for me" makes five *empty* subfolders and Settings
+  syncs the moment it returns, deleting a family's pre-existing books, music and
+  `movies/catalog.json`. Fixed with a provenance ledger (`<DATA>/<sub>/.mirrored.json`,
+  a dotfile the prune skips): the mirror prunes only what the mirror wrote. Skipping
+  the prune for an empty source would have been both insufficient and wrong — dad's 9/2
+  rule means an emptied wardrobe folder really does empty the wardrobe.
+- Manifests compared by **size** were the quiet one: a re-publish that only bumps
+  `exportedAt` keeps the same byte length, and `exportedAt` is the reader's cache-bust
+  key — so every fix after the first was stranded on the device that built it. Now bytes
+  (local) / md5 (API).
+- Copying onto a live manifest truncates it first; a shelf load mid-copy read half a
+  book. Manifests now land via a `.part` sibling + rename.
+- Reading positions are per-slug in the reader's `localStorage`; the first-come rule
+  is what keeps today's shelf from resetting.
+
+### Adaptations
+- Added `slug.js` to `tools/build-payload.sh` and to the three payload-list suites; the
+  require-guard was proven to fail before the entry was added.
+- Ordering tests force the bad listing order rather than trusting filesystem readdir
+  order — otherwise they pass for the wrong reason.
+- Prune safety rules from clothing were carried over *and pinned by tests*: an absent
+  source prunes nothing (an offline Drive is not an empty Drive), dotfiles are never
+  pruned (that is what keeps a half-built package's `.build/` claim alive), and only a
+  listing that succeeded may prune at all.
+- `clothing` adopts what it already mirrored (a true mirror since 9/2), so a photo
+  deleted while the hub was down still goes on the next sync.
+
+### Follow-ups
+- `installPack` still does not verify the pack checksum (Gap 14) — reuse `latest.json`'s
+  sha256.
+- Slug collisions only log; no Settings-visible signal that two folders fought for a name.
+- The `.mirrored.json` ledger has no compaction or repair path if it is lost or corrupted
+  (today: a lost ledger means the mirror prunes nothing, which is the safe direction).
+- Phase 1 is unit-verified only; the VM walkthrough (install → drop a book → watch it
+  publish) is Phase 7's gate and has not run against these changes.
+
+### Confidence and risks
+Confidence **high** on T1.1–T1.4 as specified — all mechanical, all covered by tests
+written before the change. Residual risk sits in the delete semantics: `MIRROR_DELETES`
+now points at three libraries a family may have filled before ever seeing this hub, and
+the ledger is the only thing standing between them and a prune. Second risk is Windows
+filesystem behaviour (name resolution of trailing dots/spaces, case folding) — handled
+where it was found, but this is the only platform that ships and the suites run on Linux.
