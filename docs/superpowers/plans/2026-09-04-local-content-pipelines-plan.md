@@ -1393,3 +1393,99 @@ every device, so any write-loop is a bandwidth bug as well as a logic bug — th
 pause path: a family whose first book arrives on a spent day sees a book sitting
 still, and their whole impression of the product rests on the Settings card
 saying so in words. Phase 7's VM walkthrough has not run against any of this.
+
+## Retrospective: Phase 3
+
+Phase 3 is the grown-up's review page — `/book-review/` — and the five doors behind
+it. Five commits: `c9e601b` (T3.1 front door), `75a00bc` (T3.2 order + cover),
+`7e9ba69` (T3.3 fix a word, re-narrate a page), `124b4f8` (T3.4 re-read, remove,
+disabled animate) and `8440984` (review fixes). Every task was written test-first;
+`tests/book-review-ui.test.mjs` grew from nothing to the phase's largest suite.
+
+### Decisions
+- **`text.json`'s array IS the book's order.** The drag does not write a separate
+  order file; publish walks the array. One representation, so the shelf can never
+  disagree with the page the parent just dragged.
+- **A page is not a step.** Re-narrating one page never ticks the book's narrate
+  step off — otherwise a parent who re-recorded page one would publish a book with
+  every other page silent for ever. A named step on an already-published book is
+  followed by a publish, so the correction reaches the manifest with a fresh
+  `exportedAt`; a book that has not published yet is left alone.
+- **Flags are cleared over HTTP, never authored.** Only the transcriber may say it
+  was unsure. An edit clears that page's flags — a parent who retyped the line has
+  answered the question.
+- **`edited` is set only by the inline field.** "Read the photos again" keeps
+  hand-typed pages by default, and the tick that spends money names exactly the
+  pages it will pay for (`only`), so no page is bought twice.
+- **The words are rendered as nodes, never assembled HTML.** It is the family's
+  text going back onto the family's screen.
+- **Refusals in words, before a worker is spawned.** No ElevenLabs key, no AI key,
+  every page typed by hand — each is a sentence a parent can act on, not a 500.
+
+### Observations
+- The correction path had a silent, permanent bug: a fixed page republished the
+  book *showing* the new line and *speaking* the old one, for ever, because the
+  narrate walk reuses any page whose mp3 exists. `forgetPage` now drops the
+  narration entry when the words actually changed — the page publishes silent
+  until the walk buys the right recording. Costs nothing on its own.
+- Every accepted write on the review page re-publishes through `runStep`, so a
+  parent fixing a typo was quietly lifting a PERMANENT failure and putting a
+  refused key back on the half-hourly walk. `runStep` now lifts one only on
+  `retry:true` — Settings' "try this book again" is the single press that says it.
+- `saveOrder`/`savePage` needed the "not while it is being built" guard `removeBook`
+  already had: the transcriber holds `text.json` for minutes and writes the whole
+  array back from its snapshot, so an edit made during a re-read was thrown away
+  under a "Saved ✓".
+- `POST /content/remove`, `/content/text` and `/content/run` accepted a
+  cross-origin `enctype="text/plain"` form — any page open on the family PC could
+  delete a book folder, rewrite the words, or spend. They now require
+  `application/json` and refuse a cross-site `Sec-Fetch-Site`.
+- The delete is jailed to a direct child of `<folderPath>/books`, resolved off the
+  disk and re-checked after resolution, and refused mid-build. A failed remove no
+  longer hands the browser an absolute path — `jobFor`'s law: a status page is not
+  a map of the family's disk.
+- `content-claim.test.mjs` was flaky about one run in four until `beforeEach` waited
+  for the previous test's build and stubbed the worker; a real thread was writing
+  into a folder the next test had deleted.
+- Money guardrails held: the browser suite points every provider seam at one
+  stand-in and asserts the whole suite made exactly one narrate call and three page
+  reads, key in the header and never in a URL. No key file on this box was read.
+
+### Adaptations
+- `tools/era-gate.sh` per-suite timeout raised 600 s → 900 s. `clothing.test.mjs`
+  takes ~607 s here and was being cut mid-subtest — a red gate with no assertion in
+  it. Timeout raised, not the suite split; splitting is a follow-up.
+- A re-read no longer reshuffles pages into camera order; the existing array order
+  is kept, so a parent's drag survives the button. Found only because T3.2 landed
+  before T3.4.
+- The star the server picks for a book nobody has starred is painted back onto the
+  strip, so the shelf never shows a cover the parent was not shown.
+- "Animate this book" ships present-and-disabled, saying it needs a fal key
+  (Phase 6), rather than being left out of the page — the strip's shape is then
+  final for the VM walkthrough.
+
+### Follow-ups
+- Split `clothing.test.mjs`; a 10-minute suite inside a 15-minute ceiling is a gate
+  that will go red again on a slower box.
+- Nothing in the UI says a book is paused on a spent free tier — the Settings card
+  says it, the review page does not.
+- No undo on "Remove this book"; the Drive folder is the only copy the mirror
+  restores from.
+- `edited` is per page, never surfaced — a parent cannot see which pages the
+  re-read will skip until they untick.
+- Concurrency is guarded by refusal, not queueing: a parent who presses during a
+  build is told no rather than having the write applied after.
+- Phase 1's `installPack` checksum (Gap 14) and `log.jsonl` compaction still open.
+
+### Confidence and risks
+Confidence **high** on the page and its doors: every control was written test-first
+against a browser suite that drives the real HTML, and the review fixes commit was a
+genuine adversarial pass that found four real defects (the speaking-the-old-word bug
+chief among them). Confidence **medium** on the correction *loop end-to-end* — the
+re-narrate and re-read paths are proven against stand-ins only; a real key has still
+never been spent from this code path, so quota, refusal and partial-failure
+behaviour is the untested half. Chief residual risk is the mid-build write: the
+guard refuses cleanly, but a parent who fixes three typos while a re-read runs sees
+three refusals and no queue, and the shape of that failure has not been in front of
+a real parent. Second risk is that the whole phase is unverified on Windows —
+Phase 7's VM walkthrough has not run against any of it.
