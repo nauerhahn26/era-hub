@@ -33,6 +33,22 @@
 // A hold keeps the claim and does not advance the state; the pages already
 // built are kept, and the next scan picks the book up where it stopped.
 //
+// A step that DID work but lost pages on the way reports them in `errors[]`,
+// and this walk keeps them on the job (content-store.noteErrors) so
+// /content/status and the Settings card can say so. Two outcomes follow:
+//   errors[] and no `permanent`  the step still owes those pages, so the walk
+//     holds ({hold:"retry"}) rather than advancing — publishing now would
+//     freeze the loss into the book, and every page already bought is kept.
+//   permanent:true               a key the provider refused. The book stops and
+//     names the reason; a scan never retries it (the same refusal costs the
+//     same), but a parent who fixes the key can (content.js runStep).
+// A DELIBERATE empty outcome is neither: no key at all, or a page the model
+// correctly read as wordless, reports no error and the walk carries on.
+//
+// The last state is `done`: `published` owes no step, so a walk that stopped
+// there would leave every finished book looking claimable half an hour later,
+// for ever. settle() below writes that last transition.
+//
 // Nothing here reads a key. The steps that spend money take their config from
 // ai-config.js at the moment they need it, and content-store.js redacts every
 // message that reaches job.json or log.jsonl.
@@ -87,7 +103,7 @@ function summary(step, result) {
   const r = result && typeof result === "object" ? result : {};
   const out = { step };
   for (const k of ["pages", "wrote", "copied", "transcribed", "escalated", "calls",
-                   "narrated", "reused", "skipped", "silent", "flagged", "blank"]) {
+                   "narrated", "reused", "skipped", "silent", "flagged", "blank", "errors"]) {
     const v = r[k];
     if (Array.isArray(v)) out[k] = v.length;
     else if (v != null) out[k] = v;
@@ -95,10 +111,12 @@ function summary(step, result) {
   return out;
 }
 
-// A finished step drops the pause it was waiting under.
+// A finished step drops the pause — and the hold — it was waiting under: the
+// allowance came back, or the page it lost was read this time, so nothing must
+// keep telling the family otherwise.
 function unpause(job) {
   const out = { ...job };
-  delete out.pausedUntil; delete out.pausedNote;
+  delete out.pausedUntil; delete out.pausedNote; delete out.held;
   return out;
 }
 
@@ -108,12 +126,30 @@ function unpause(job) {
 function holdHere(job, step, hold, steps) {
   if (job) {
     const held = store.transition(job, job.state);
+    // Why it stopped here, kept on the job so the next reader knows: a resumed
+    // book that is merely waiting must not look like a book that fell over
+    // (content.js reads this to decide whether to show the last error).
+    held.held = hold.hold;
     if (hold.pausedUntil) { held.pausedUntil = hold.pausedUntil; held.pausedNote = hold.note || null; }
     store.writeJob(DIR, held);
   }
   const out = { slug: SLUG, state: job ? job.state : null, steps, held: hold.hold, step: step.name };
   if (hold.pausedUntil) { out.pausedUntil = hold.pausedUntil; out.note = hold.note || null; }
   return out;
+}
+
+// The end of the road. `published` owes no step (animation is optional and has
+// no step yet), so a walk that simply stopped there left every finished book in
+// a state content.js's claim rules still consider live: re-claimed and
+// re-spawned every half hour for ever, rewriting job.json and log.jsonl inside
+// the family's Drive folder each time, for Drive to re-upload and re-mirror.
+// `done` is the state nothing takes back. Written from the step table itself,
+// so the day an animate step owes `published` this stops firing on its own.
+function settle(job) {
+  if (!job) return null;
+  if (owedState(job) === "published" && !STEPS.some(s => s.owes === "published"))
+    return store.writeJob(DIR, store.transition(job, "done")).state;
+  return job.state;
 }
 
 async function walk() {
@@ -127,7 +163,7 @@ async function walk() {
     if (owed === null) return { slug: SLUG, state: job.state, steps, failed: true };
     const step = ONLY ? byName(ONLY) : STEPS.find(s => s.owes === owed);
     if (ONLY && !step) throw new Error("no such build step: " + ONLY);
-    if (!step) return { slug: SLUG, state: job.state, steps, finished: true };
+    if (!step) return { slug: SLUG, state: settle(job), steps, finished: true };
     if (!step.run) return { slug: SLUG, state: job.state, steps, pending: step.name };
 
     post({ step: step.name, state: job.state, slug: SLUG });
@@ -135,19 +171,45 @@ async function walk() {
 
     // Re-read: the step just wrote to .build/ itself, and the heartbeat may
     // have moved under us while it worked.
-    const now = store.readJob(DIR);
+    let now = store.readJob(DIR);
     const hold = result && typeof result === "object" && result.hold ? result : null;
     if (hold) return holdHere(now, step, hold, steps);
     steps.push(summary(step.name, result));
+
+    // WHAT THE STEP COULD NOT DO. A step reports the pages it lost in
+    // `errors[]`, and `permanent:true` when the provider refused outright.
+    // Neither used to be read at all, so a page whose call 500'd was left
+    // wordless or silent, the job walked on to published, and nothing in
+    // job.json, /content/status or the Settings card ever said so.
+    const errors = result && Array.isArray(result.errors) ? result.errors.filter(Boolean) : [];
+    const permanent = !!(result && result.permanent);
+    // fail() writes the last message itself, so it is not noted twice.
+    const keep = permanent ? errors.slice(0, -1) : errors;
+    if (keep.length && now) now = store.writeJob(DIR, store.noteErrors(now, keep));
+
+    // A refusal will refuse every retry too (a key the provider will not take),
+    // so the book stops and says why. It is not a dead end: content-store keeps
+    // failedFrom, and a parent pressing "try this book again" after fixing the
+    // key resumes at this very step (content.js runStep).
+    if (permanent && now) {
+      const why = errors.length ? errors[errors.length - 1] : "the provider refused";
+      store.writeJob(DIR, store.fail(now, /^permanent:/.test(why) ? why : "permanent: " + why));
+      return { slug: SLUG, state: "failed", steps, failed: true, step: step.name };
+    }
+    // Something transient went wrong and this step still owes those pages. Hold
+    // rather than advance: publishing now would freeze the loss into the book,
+    // and the step is resumable — every page already bought is kept, so the
+    // next scan only pays for the ones that are still missing.
+    if (errors.length) return holdHere(now, step, { hold: "retry" }, steps);
 
     // A named step re-run out of order (a parent re-narrating page 7) must
     // never walk the job backwards — it only advances the state it owed.
     // A step that finished also clears any pause it was under: the allowance
     // came back, so nothing must keep telling the family it has not.
     if (owedState(now) === step.owes) store.writeJob(DIR, unpause(store.transition(now, step.then)));
-    if (ONLY) return { slug: SLUG, state: store.readJob(DIR).state, steps, finished: true };
+    if (ONLY) return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
   }
-  return { slug: SLUG, state: store.readJob(DIR).state, steps, finished: true };
+  return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
 }
 
 const beat = setInterval(() => {

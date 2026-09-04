@@ -223,3 +223,26 @@ test("a quota pause says tomorrow, and a flagged book links to its review page",
   assert.match(flagged, /2 word/, "the flag count is named");
   await ctx.close();
 });
+
+// A book that stopped needs a button that actually restarts IT. "Look for new
+// books now" only asks Drive to sync, and the scan behind it will not re-claim
+// a book whose heartbeat is fresh for another thirty minutes — so the card was
+// telling a parent to press something that could not work. The raw provider
+// string is for log.jsonl, never for the card.
+test("a stopped book says so in plain words and offers its own try-again button", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
+    state: "failed", step: "transcribe",
+    error: "ai(google/gemini-3-flash-preview) 500 boom" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] button[data-run]');
+  const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.doesNotMatch(row, /gemini|500|boom|ai\(/, "the raw provider error never reaches the parent");
+  assert.doesNotMatch(row, /Look for new books now/, "that button cannot restart this book");
+  assert.match(row, /again/i, "the card says what pressing it does");
+
+  const [req] = await Promise.all([
+    page.waitForRequest(r => r.url().includes("/content/run") && r.method() === "POST"),
+    page.click('#contentBooks [data-slug="tabby-mctat"] button[data-run]'),
+  ]);
+  assert.deepEqual(JSON.parse(req.postData()), { kind: "books", slug: "tabby-mctat", step: null });
+  await ctx.close();
+});

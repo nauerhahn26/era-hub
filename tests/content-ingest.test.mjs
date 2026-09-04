@@ -153,6 +153,26 @@ test("re-running with unchanged inputs is a no-op", () => {
   assert.deepEqual(fs.readdirSync(path.join(dir, "pages")).sort(), ["001.jpg", "002.jpg"], "no .tmp litter");
 });
 
+// The builder's OWN output sits in the book root beside the parent's photos:
+// content-publish.js writes cover.jpg there. Swallowing it into sources/ would
+// make it page 1 and shift every page index by one, orphaning every text.json
+// entry and every audio/NNN.mp3 — and the shelf would lose its cover.
+test("the cover the publish step wrote is never taken in as a page", () => {
+  const dir = book("cover");
+  drop(dir, "a.jpg", photo(20, 30, 10));
+  drop(dir, "b.jpg", photo(20, 30, 200));
+  const first = ingest.ingest(dir);
+  // what publish does next: page 1's bytes, copied to the book root
+  fs.copyFileSync(path.join(dir, "pages", "001.jpg"), path.join(dir, "cover.jpg"));
+
+  const again = ingest.ingest(dir);
+  assert.equal(again.skipped, true, "a published book re-ingests to nothing at all");
+  assert.deepEqual(again.pages, first.pages);
+  assert.deepEqual(fs.readdirSync(path.join(dir, "sources")).sort(), ["a.jpg", "b.jpg"],
+    "cover.jpg must never land in sources/");
+  assert.ok(fs.existsSync(path.join(dir, "cover.jpg")), "and the shelf's cover stays where it was");
+});
+
 test("a new photo re-runs the step and renumbers; a vanished page is swept", () => {
   const dir = book("renumber");
   drop(dir, "b.jpg", photo(20, 20, 200));

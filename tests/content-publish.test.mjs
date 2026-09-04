@@ -198,7 +198,10 @@ test("an animated page carries its video; a folder with no pages holds instead",
 
 // -------------------------------------------------------------- the wiring
 
-test("the worker's publish step moves a narrating job to published", async () => {
+// The walk does not stop at `published`: that state owes no step, so a job left
+// there would look claimable to every hub in the family half an hour later, for
+// ever. `done` is the state nothing takes back (content-worker.js settle()).
+test("the worker's publish step walks a narrating job all the way to done", async () => {
   const dir = book("The Snail and the Whale", [{ text: "This is the tale.", audio: true }]);
   store.writeJob(dir, store.newJob({ claimedBy: "test", state: "narrating" }));
   const done = await new Promise((resolve, reject) => {
@@ -213,7 +216,8 @@ test("the worker's publish step moves a narrating job to published", async () =>
   assert.ok(done, "the worker must post a {done}");
   assert.equal(done.error, undefined);
   assert.deepEqual(done.steps.map(s => s.step), ["publish"]);
-  assert.equal(store.readJob(dir).state, "published");
+  assert.equal(store.readJob(dir).state, "done");
+  assert.equal(done.state, "done");
   assert.equal(read(dir).title, "The Snail and the Whale");
 });
 

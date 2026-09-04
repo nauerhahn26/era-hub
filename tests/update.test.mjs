@@ -26,10 +26,19 @@ const INSTALL = path.join(TMP, "install");
 const DATADIR = path.join(TMP, "data");
 let feed, child;
 
+// The hub's own modules, read from build-payload.sh's copy list instead of
+// duplicated here. A hand-kept fourth copy of that list is a fourth way for a
+// new module to go missing from an install, and this suite is the only thing
+// that boots a real one (9/4: content.js grew two new requires and this list
+// did not, so the installed hub died on its first line and only the gate said
+// so — the very failure tools/build-payload.sh's own guard exists to prevent).
+const HUB_MODULES = [...fs.readFileSync(path.join(HUB, "tools", "build-payload.sh"), "utf8")
+  .matchAll(/"\$HUB\/([A-Za-z0-9._-]+\.(?:json|js))"/g)].map(m => m[1]);
+
 // A minimal but real install: the hub's own js + a tiny public tree.
 function makeInstall(dir, build, marker) {
   fs.mkdirSync(path.join(dir, "public", "home"), { recursive: true });
-  for (const f of ["server.js", "update.js", "packs.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "content.js", "content-worker.js", "content-store.js", "content-ingest.js", "content-narrate.js", "words.js", "slug.js", "pool.js", "predict.js", "predict-model.json", "image-orient.js", "image-util.js", "ai-config.js"])
+  for (const f of HUB_MODULES)
     fs.copyFileSync(path.join(HUB, f), path.join(dir, f));
   fs.copyFileSync(path.join(HUB, "public", "home", "index.html"),
                   path.join(dir, "public", "home", "index.html"));

@@ -39,6 +39,11 @@ const FAKE_KEY = ["AIza", "S", "y", "0".repeat(30)].join("");
 let providers;
 let server;
 let calls = [];            // one entry per request the stand-in actually saw
+// The per-test tally above is cleared by reset() at the head of nearly every
+// test, so it can only ever prove the LAST test made a call. `total` is the
+// suite's own running count and NOTHING resets it: it is what the closing money
+// guardrail asserts on.
+let total = 0;
 let answers = [];          // queued replies, consumed in order
 let throttle = new Set();  // model ids that answer 429 (a spent daily allowance)
 let mode = "ok";           // ok | 401 | chatty
@@ -80,6 +85,7 @@ before(async () => {
         }
       } else { res.writeHead(404).end(); return; }
 
+      total++;
       calls.push({ url: req.url, provider, model, prompt, image,
                    key: req.headers["x-goog-api-key"] || req.headers["x-api-key"] || req.headers["authorization"] });
 
@@ -447,6 +453,11 @@ test("the pick is a google model, so a key for another provider gets its OWN lad
 // --------------------------------------------------------------- the tally
 
 test("the stand-in saw every call this suite made, and the family paid for none", () => {
+  // `total` counts the WHOLE suite (reset() clears `calls`, never this), so a
+  // request that escaped ERA_AI_URL in any test above shows up here as a total
+  // lower than the calls those tests each asserted for themselves.
+  assert.ok(total >= 25,
+    "the stand-in only recorded " + total + " calls for the whole suite — a request escaped ERA_AI_URL");
   assert.ok(calls.length > 0,
     "ZERO recorded calls would mean a request escaped ERA_AI_URL and reached a real provider");
   for (const c of calls) {

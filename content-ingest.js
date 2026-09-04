@@ -47,6 +47,12 @@ const OTHER_IMAGE_EXTS = [".heic", ".heif", ".png", ".webp", ".gif", ".bmp", ".t
 const SOURCES = "sources";
 const PAGES = "pages";
 const STATE = "ingest.json";                 // in .build/, beside job.json
+// The one .jpg in the book root that is NOT a photo a parent dropped in: the
+// publish step writes it there (content-publish.COVER) from page 1's bytes. It
+// is our own output, so taking it in would make it page 1 on the next run and
+// shift every page index by one — orphaning every text.json entry and every
+// audio/NNN.mp3, and stealing the shelf's cover off the disk while it was at it.
+const OURS = ["cover.jpg"];
 
 const ext = (f) => path.extname(f).toLowerCase();
 const isPage = (f) => PAGE_EXTS.includes(ext(f));
@@ -125,7 +131,7 @@ function ingest(dir, opts) {
   let loose = [];
   try { loose = fs.readdirSync(dir, { withFileTypes: true }).filter(d => d.isFile()).map(d => d.name); }
   catch { return { pages: [], wrote: 0, copied: 0, skipped: true }; }
-  const incoming = loose.filter(isPage).sort(naturalCmp);
+  const incoming = loose.filter(f => isPage(f) && !OURS.includes(f.toLowerCase())).sort(naturalCmp);
   const strangers = loose.filter(f => OTHER_IMAGE_EXTS.includes(ext(f)));
   if (strangers.length)
     log(strangers.length + " file(s) left as they are — only JPEG photos become pages: " +

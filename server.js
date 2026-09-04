@@ -13,7 +13,7 @@ const updater = require("./update");
 const drive = require("./drive");
 const clothing = require("./clothing");
 const content = require("./content.js");
-const { slugify } = require("./slug.js");
+const booksIndex_ = require("./books-index.js");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
@@ -419,63 +419,11 @@ function serveJailed(res, dir, rest, allowedExts) {
 // folder name cannot carry that — a newcomer whose folder is already in slug
 // form would win on name alone — so ownership is written down here. Dotfile, so
 // the Drive mirror's prune leaves it be.
-const BOOK_SLUGS = () => path.join(BOOKS_DIR, ".slugs.json");
-function loadBookSlugs() {
-  try {
-    const j = JSON.parse(fs.readFileSync(BOOK_SLUGS(), "utf8"));
-    return j && typeof j === "object" && !Array.isArray(j) ? j : {};
-  } catch { return {}; }
-}
-let bookIdxCache = null, bookIdxAt = -1;
-function bookDirs(force) {
-  let at = -1;
-  try { at = fs.statSync(BOOKS_DIR).mtimeMs; } catch { return { list: [], bySlug: new Map() }; }
-  if (!force && bookIdxCache && at === bookIdxAt) return bookIdxCache;
-  let names = [];
-  try {
-    names = fs.readdirSync(BOOKS_DIR, { withFileTypes: true })
-      .filter(d => d.isDirectory()).map(d => d.name).sort();
-  } catch { return { list: [], bySlug: new Map() }; }
-  const bySlug = new Map(), slugOf = new Map();
-  const claim = (s, n) => { bySlug.set(s, n); slugOf.set(n, s); };
-  // Pass 0: whoever already owns a slug keeps it. Entries whose directory is
-  // gone are dropped, which frees the slug for the next package that wants it.
-  const have = new Set(names);
-  for (const [s, n] of Object.entries(loadBookSlugs()))
-    if (have.has(n) && !bySlug.has(s) && !slugOf.has(n)) claim(s, n);
-  // Pass 1: an unclaimed folder already named as its own slug keeps that name.
-  const rest = [];
-  for (const n of names) {
-    if (slugOf.has(n)) continue;
-    if (slugify(n) === n && !bySlug.has(n)) claim(n, n); else rest.push(n);
-  }
-  // Pass 2: the rest in name order; a taken slug gets -2, -3, ... Two folders
-  // must never collapse onto one slug — that would hide a whole book.
-  for (const n of rest) {
-    const base = slugify(n) || "book";
-    let s = base;
-    for (let i = 2; bySlug.has(s); i++) s = base + "-" + i;
-    if (s !== base) console.warn("[books] slug " + base + " is taken; " + n + " serves as " + s);
-    claim(s, n);
-  }
-  saveBookSlugs(bySlug);
-  bookIdxCache = { list: names.map(n => ({ slug: slugOf.get(n), dir: n })), bySlug };
-  bookIdxAt = at;
-  return bookIdxCache;
-}
-// Written only when the map actually changed: creating the file bumps the books
-// dir's mtime once (one extra rebuild), rewriting it does not, so the mtime
-// cache above stays stable. A read-only data dir just means ownership is not
-// remembered — never a crash, never a 500 on a shelf load.
-function saveBookSlugs(bySlug) {
-  const next = {};
-  for (const [s, n] of [...bySlug].sort()) next[s] = n;
-  const cur = loadBookSlugs();
-  const same = Object.keys(next).length === Object.keys(cur).length &&
-               Object.entries(next).every(([s, n]) => cur[s] === n);
-  if (same) return;
-  try { fs.writeFileSync(BOOK_SLUGS(), JSON.stringify(next, null, 2)); } catch {}
-}
+// The map itself lives in books-index.js, because the BUILDER needs the very
+// same answer over the family's Drive folder (content.js) — two slug rules
+// would mean the shelf serves a book the Settings card links to by another
+// name. This is the shelf's root; content.js passes its own.
+function bookDirs(force) { return booksIndex_.bookDirs(BOOKS_DIR, force); }
 
 // A package is complete iff manifest.json exists and parses (manifest written
 // LAST by the exporter); manifest-less/unparseable dirs are skipped silently.
@@ -523,7 +471,7 @@ function serveBook(req, res, rest) {
     // Books only: the first segment is a SLUG, not a directory name. An unknown
     // slug is 404 even when a directory of that literal name exists, so a
     // package has exactly one URL and the parent's folder name is not a second.
-    (s) => bookDirs().bySlug.get(s) ?? bookDirs(true).bySlug.get(s) ?? null);
+    (s) => booksIndex_.dirFor(BOOKS_DIR, s));
 }
 function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, resolveDir) {
   if (rest.includes("\0")) { res.writeHead(400).end(); return; }

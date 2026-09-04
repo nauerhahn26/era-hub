@@ -18,7 +18,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-claim-"));
 const DATA = path.join(TMP, "data");
 const FOLDER = path.join(TMP, "My Drive", "New ERA Content");   // what Drive for Desktop shows
 
-let content, store, drive;
+let content, store, drive, booksIndex;
 
 const MIN = 60 * 1000;
 const T0 = Date.parse("2026-09-04T09:00:00.000Z");
@@ -47,6 +47,7 @@ before(() => {
   drive = require("./drive.js");
   drive.start(DATA);
   store = require("./content-store.js");
+  booksIndex = require("./books-index.js");
   content = require("./content.js");
   content.start(DATA);
 });
@@ -213,6 +214,32 @@ test("a finished book is never taken over, however old its heartbeat", () => {
   assert.equal(jobOf(dir).claimedBy, "other-hub");
 });
 
+// Every published book sits in the family's Drive folder for good. If the only
+// exemption were `done`, a published one would be re-claimed on the first scan
+// after its heartbeat went stale and then every thirty minutes forever, and each
+// re-claim rewrites job.json and appends to log.jsonl INSIDE the Drive folder —
+// which Drive then re-uploads and re-mirrors to every device, for ever.
+test("a published book is never re-claimed, however old its heartbeat", () => {
+  const dir = book("Out", { "IMG_1.jpg": 10 });
+  const was = store.writeJob(dir, store.newJob({ claimedBy: "other-hub", state: "published", now: T0 }));
+  const res = content.scan({ now: T0 + 31 * MIN });
+  assert.equal(found(res, "Out").takeable, false);
+  assert.deepEqual(res.claimed, []);
+  assert.deepEqual(jobOf(dir), was, "the scan rewrote nothing in the family's Drive folder");
+  assert.equal(store.readLog(dir).length, 0, "and appended nothing to the log");
+});
+
+test("a book that failed for good is never re-claimed — the refusal costs nothing to repeat", () => {
+  const dir = book("Refused", { "IMG_1.jpg": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  job = store.fail(job, "permanent: that key was refused", { now: T0 });
+  const was = store.writeJob(dir, job);
+  const res = content.scan({ now: T0 + 31 * MIN });
+  assert.equal(found(res, "Refused").takeable, false);
+  assert.deepEqual(res.claimed, []);
+  assert.deepEqual(jobOf(dir), was);
+});
+
 test("two scans in a row do not claim the same book twice", async () => {
   const dir = book("Once", { "IMG_1.jpg": 10 });
   const jobs = [];
@@ -275,6 +302,48 @@ test("a job that throws does not wedge the queue", async () => {
   assert.deepEqual(await good, { ok: true });
   assert.deepEqual(seen, ["bad", "good"]);
   assert.equal(content.isBuilding(), false);
+});
+
+// ---------------------------------------------------------------- the job list
+
+// The Settings card renders "N of M pages read" and the board renders "page N
+// of M" straight off progress. Counting only the pages already transcribed
+// makes M chase N, so a twelve-page book part-way through says "4 of 4" and
+// reads as finished.
+test("a part-read book's page total is the whole book, not the pages read so far", () => {
+  const dir = book("Twelve Pages", {});
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  for (let i = 1; i <= 12; i++)
+    fs.writeFileSync(path.join(dir, "pages", String(i).padStart(3, "0") + ".jpg"), Buffer.alloc(8, 7));
+  store.writeJob(dir, store.newJob({ claimedBy: "test", state: "transcribing", now: T0 }));
+  store.writeText(dir, { pages: [1, 2, 3, 4].map(i =>
+    ({ index: i, source: "sources/IMG_" + i + ".jpg", text: "a word", flags: [] })) });
+  const j = content.jobs().find(x => x.title === "Twelve Pages");
+  assert.equal(j.progress.pages, 12, "the card would otherwise say '4 of 4 pages read'");
+  assert.equal(j.progress.transcribed, 4);
+});
+
+// One resolver assigns every slug (books-index.js). Bare slugify() cannot: two
+// titles collapse onto one slug (so /content/run and the review link address
+// the wrong folder) and a title with no Latin letters slugifies to nothing at
+// all (so the link is dead), while the shelf serves both perfectly well.
+test("two titles that slugify alike, and one with no Latin letters, get one slug each", async () => {
+  // A worker still finishing an earlier test can recreate its folder under us,
+  // so this test speaks only about the three books it made itself.
+  await content.idle();
+  const titles = ["Tabby McTat", "Tabby, McTat!", "えほん"];
+  for (const t of titles) book(t, { "IMG_1.jpg": 10 });
+  const jobs = content.jobs().filter(j => titles.includes(j.title));
+  const slugs = jobs.map(j => j.slug);
+  assert.equal(slugs.length, 3);
+  assert.equal(new Set(slugs).size, 3, "two books must never share a slug: " + slugs.join(" "));
+  assert.ok(slugs.every(Boolean), "a book with no slug has no review link: " + slugs.join(" "));
+  // The shelf and the builder must agree, or Settings' "Review this book" and
+  // the board's review link point at a book the reader does not serve.
+  const shelf = booksIndex.bookDirs(path.join(FOLDER, "books")).list
+    .filter(e => titles.includes(e.dir)).map(e => e.slug);
+  assert.deepEqual(slugs.slice().sort(), shelf.slice().sort());
+  for (const j of jobs) assert.equal(content.bookFor(j.slug, { folderPath: FOLDER }).name, j.title);
 });
 
 // -------------------------------------------------------------------- status

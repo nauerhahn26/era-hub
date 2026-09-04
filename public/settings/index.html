@@ -722,6 +722,22 @@ const CT_DOING = {
   done: "Ready to read in Book Reader ✓",
   failed: "Stopped part-way.",
 };
+// A stopped book in the parent's words. The raw string is a provider's own
+// error — "ai(google/gemini-3-flash-preview) 500 boom" — which belongs in
+// log.jsonl and nowhere near this card: it names nothing a parent can act on
+// and reads like a crash. Matched loosest-last, so the specific cases win.
+function ctSorry(msg){
+  const m=String(msg||"");
+  if(/permanent:|\b(401|403)\b|not accept|invalid[_ ]api|refused/i.test(m))
+    return "One of the keys in the cards above was not accepted. Check it, then press the button below.";
+  if(/\b429\b|quota|allowance|RESOURCE_EXHAUSTED/i.test(m))
+    return "Today’s free AI allowance ran out part-way. It carries on tomorrow morning by itself.";
+  if(/\b5\d\d\b|timeout|timed out|network|fetch failed|ENOTFOUND|ECONNREFUSED/i.test(m))
+    return "The AI service could not be reached for some pages. This is usually temporary.";
+  if(/no pages|no photos|text\.json|manifest/i.test(m))
+    return "Some of this book’s files could not be read. Check the folder still has its photos.";
+  return "This book stopped part-way through.";
+}
 function ctRow(j){
   const d=document.createElement("div");
   d.dataset.slug=j.slug;
@@ -738,14 +754,28 @@ function ctRow(j){
   // A free key's daily allowance: the job is not stuck and there is nothing to
   // press, so say the one thing that is true — it carries on by itself.
   if(j.pausedUntil) h+='<div class="status">Today&rsquo;s free AI allowance is used up — the rest of this book carries on <b>tomorrow morning</b> by itself.</div>';
-  if(j.error) h+='<div class="status bad"><b>'+CT_ESC(j.error)+'</b> Press &ldquo;Look for new books now&rdquo; to try it again.</div>';
+  // "Look for new books now" cannot restart THIS book: it asks Drive to sync,
+  // and the scan behind it leaves a claim alone until its heartbeat is half an
+  // hour cold. So a stopped book gets its own button, which asks the hub to run
+  // this one book (POST /content/run) and starts it there and then.
+  if(j.error) h+='<div class="status bad">'+CT_ESC(ctSorry(j.error))+'</div>';
   if(j.flags) h+='<div class="status">'+j.flags+' word'+(j.flags===1?"":"s")+' the AI was unsure of.</div>';
   // The review page is where a parent fixes words, reorders pages and picks the
   // cover; it is worth offering for every book, not only flagged ones.
   h+='<div class="row" style="margin-top:8px"><a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'
    +' style="font-size:17px;color:var(--teal-deep);text-decoration:none;font-weight:650;'
-   +'border:2px solid var(--teal);border-radius:12px;padding:10px 16px;background:#fff">📖 Review this book</a></div>';
+   +'border:2px solid var(--teal);border-radius:12px;padding:10px 16px;background:#fff">📖 Review this book</a>'
+   +(j.error?'<button data-run="'+CT_ESC(j.slug)+'">🔄 Try this book again</button>':'')
+   +'</div>';
   d.innerHTML=h;
+  const again=d.querySelector("button[data-run]");
+  if(again) again.onclick=async()=>{
+    again.disabled=true;
+    toast("Starting "+(j.title||j.slug)+" again");
+    try{ await fetch("/content/run",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({kind:"books",slug:j.slug,step:null})}); }catch(e){}
+    contentPaint();
+  };
   return d;
 }
 async function contentPaint(){

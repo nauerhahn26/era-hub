@@ -36,9 +36,10 @@ const path = require("path");
 const { Worker } = require("worker_threads");
 const drive = require("./drive.js");
 const store = require("./content-store.js");
-const { slugify } = require("./slug.js");
+const booksIndex = require("./books-index.js");
 const { EXT: PHOTO_EXT } = require("./clothing-photos.js");
 const { narrationPath } = require("./content-narrate.js");
+const { pagesOf } = require("./content-providers.js");
 
 // A folder must look identical across two observations at least this far apart
 // before it is claimed (spec §2 "Quiet period"; the local mirror syncs every
@@ -99,20 +100,33 @@ function observe(dir, sig, now) {
 }
 
 // A claim is stale when its heartbeat stopped long enough ago — or when it is
-// unreadable, which is the same thing from here. A finished book is never
-// taken over, however old it is.
+// unreadable, which is the same thing from here.
+//
+// A book with no work left is NEVER taken over, however old it is. That is the
+// difference between a shelf that settles down and one that churns: every
+// re-claim rewrites job.json and appends to log.jsonl INSIDE the family's Drive
+// folder, which Drive then re-uploads and re-mirrors to every device. Three
+// kinds owe nothing —
+//   done       the walk finished (content-worker.js settles `published` to it)
+//   published  a hub that stopped between the manifest and the settle
+//   permanent  a key the provider refused; asking again only buys the same
+//              answer (store.owedState returns null for it)
+// — and a scan half an hour later must find nothing to do with any of them.
 function takeable(job, now) {
-  if (!job || job.state === "done") return false;
+  if (!job || job.state === "done" || job.state === "published") return false;
+  if (store.owedState(job) === null) return false;
   const beat = Date.parse(job.heartbeat);
   return !(beat >= 0) || now - beat > STALE_MS;
 }
 
-function dirsIn(root) {
-  try {
-    return fs.readdirSync(root, { withFileTypes: true })
-      .filter(e => e.isDirectory() && !e.name.startsWith("."))
-      .map(e => e.name).sort();
-  } catch { return null; }
+// Every book folder under `<folderPath>/books`, each with the slug it owns.
+// books-index.js is the ONE place a slug is assigned — the shelf server.js
+// serves calls the same function over its own root — so the URL in a Settings
+// link, in the board's review link and in POST /content/run always names the
+// book the reader actually serves.
+function shelfOf(st) {
+  const root = path.join(st.folderPath, "books");
+  return { root, list: booksIndex.bookDirs(root).list };
 }
 
 // Write the claim. A fresh inbox gets a new job.json; a takeover keeps the
@@ -137,10 +151,9 @@ function scan(opts) {
   const st = drive.status();
   if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
 
-  const root = path.join(st.folderPath, "books");
-  const names = dirsIn(root);
+  const { root, list: shelf } = shelfOf(st);
   const books = [], claimed = [];
-  for (const name of names || []) {
+  for (const { slug, dir: name } of shelf) {
     const dir = path.join(root, name);
     const list = listing(dir);
     if (!list) continue;                      // vanished between readdir and stat
@@ -151,7 +164,7 @@ function scan(opts) {
     if (!inbox) seen.delete(dir);
     const quiet = inbox && observe(dir, list.sig, now) >= QUIET_MS;
     const stale = takeable(job, now);
-    const b = { name, slug: slugify(name), images: list.count, inbox,
+    const b = { name, slug, images: list.count, inbox,
                 quiet, takeable: stale, state: job ? job.state : null };
     books.push(b);
     if (!quiet && !stale) continue;
@@ -263,15 +276,15 @@ function beat(dir, now) {
 // kind is refused here rather than quietly treated as a book.
 const KINDS = ["books"];
 
-// books/<Title> for a slug, or null. The slug is derived, never stored, so this
-// is the only translation between what a URL says and what is on disk — the
-// same rule booksIndex() follows on the serving side (server.js). A slug that
-// matches no folder is refused; nothing is created from a URL.
+// books/<Title> for a slug, or null. books-index.js owns the translation
+// between what a URL says and what is on disk — the same function server.js's
+// serveBook resolves through — so a slug can never name one folder here and
+// another one on the shelf. A slug that matches no folder is refused; nothing
+// is created from a URL.
 function bookFor(slug, st) {
   const root = path.join(st.folderPath, "books");
-  for (const name of dirsIn(root) || [])
-    if (slugify(name) === slug) return { name, dir: path.join(root, name) };
-  return null;
+  const name = booksIndex.dirFor(root, slug);
+  return name ? { name, dir: path.join(root, name) } : null;
 }
 
 // What one book folder looks like from outside, and NOTHING else: no absolute
@@ -279,14 +292,21 @@ function bookFor(slug, st) {
 // name, no key — content.js never reads one and this payload is public.
 // The book's title is the one identifying thing in here, and it is the one
 // thing a parent needs to recognise their own book.
-function jobFor(name, dir) {
+function jobFor(name, dir, slug) {
   const job = store.readJob(dir);
   const text = store.readText(dir);
   const narr = store.readJson(narrationPath(dir));
   const narrated = new Set(((narr && narr.pages) || []).map(p => p.index));
   const pages = (text && text.pages) || [];
-  // No text.json yet means the pile of photos IS the page count.
-  const count = pages.length || (listing(dir) || { count: 0 }).count;
+  // How many pages the BOOK has, which is not how many have been read yet: the
+  // card renders "N of M pages read" and the board "page N of M", so counting
+  // only text.json's entries makes M chase N and a twelve-page book part-way
+  // through says "4 of 4" — finished, when it is a third done. The built pages
+  // are the honest total (ingest's own record, or pages/ for a folder built by
+  // hand); before ingest has run, the pile of photos is.
+  let built = [];
+  try { built = pagesOf(dir); } catch {}
+  const count = Math.max(built.length, pages.length, (listing(dir) || { count: 0 }).count);
   let characters = 0, spent = 0, transcribed = 0, flags = 0;
   for (const p of pages) {
     const n = p.text.length;
@@ -297,9 +317,17 @@ function jobFor(name, dir) {
   }
   const owed = job ? store.owedState(job) : "inbox";
   const last = job && (job.errors || [])[job.errors.length - 1];
+  // Worth showing while the book is stopped for good, and while the step it is
+  // ON gave up part-way (job.held === "retry", written by content-worker.js for
+  // a page the provider would not read). A finished step clears the hold, so a
+  // book that has since moved on stops showing it — a card that keeps printing
+  // yesterday's error under a book that has since published is a card nobody
+  // believes. A quota pause is not this: it has its own sentence and nothing to
+  // press.
+  const stuck = !!last && (job.state === "failed" || job.held === "retry");
   return {
     kind: "books",
-    slug: slugify(name),
+    slug: slug || booksIndex.slugFor(path.dirname(dir), name) || "book",
     title: name,
     // A folder nobody has claimed is still a job — it is an inbox waiting for
     // its quiet ten minutes, and the Settings card must be able to say so.
@@ -313,11 +341,11 @@ function jobFor(name, dir) {
     pausedUntil: (job && job.pausedUntil) || null,
     note: (job && job.pausedNote) || null,
     published: fs.existsSync(path.join(dir, "manifest.json")),
-    // Only while it IS failed. job.errors is a history kept on purpose (a book
-    // that fell over twice for two reasons is the one a parent needs the whole
-    // story of), but a card that keeps showing yesterday's error under a book
-    // that has since published is a card nobody believes.
-    error: job && job.state === "failed" && last ? last.msg : null,
+    // job.errors is a history kept on purpose (a book that fell over twice for
+    // two reasons is the one a parent needs the whole story of); `error` is only
+    // the current one. Settings turns it into a sentence — the raw provider
+    // text stays in log.jsonl, where it is for us and not for the family.
+    error: stuck ? last.msg : null,
   };
 }
 
@@ -327,13 +355,14 @@ function jobFor(name, dir) {
 function jobs() {
   const st = drive.status();
   if (st.mode !== "local" || !st.folderPath) return [];
+  const { root, list: shelf } = shelfOf(st);
   const out = [];
-  for (const name of dirsIn(path.join(st.folderPath, "books")) || []) {
-    const dir = path.join(st.folderPath, "books", name);
+  for (const { slug, dir: name } of shelf) {
+    const dir = path.join(root, name);
     let j;
     // A folder that vanished mid-read, or a hand-edited text.json the schema
     // refuses: one bad book must never blank the whole card.
-    try { j = jobFor(name, dir); } catch { continue; }
+    try { j = jobFor(name, dir, slug); } catch { continue; }
     if (running && running.dir === dir && progress && progress.step) j.step = progress.step;
     out.push(j);
   }
@@ -359,6 +388,13 @@ function runStep(o) {
   // and then built, exactly as scan() would have done in its own time.
   const job = store.readJob(found.dir);
   if (!job) claim(found.dir, null, Date.now());
+  // A parent pressing "try this book again" is a deliberate decision, and it is
+  // the ONLY thing that lifts a permanent failure. A scan never retries one —
+  // asking a key the provider refused only buys the same refusal — but by the
+  // time a parent presses this they have usually just fixed the key the card
+  // told them about, so the job goes back on the step it fell over on.
+  else if (job.state === "failed" && store.owedState(job) === null)
+    store.writeJob(found.dir, store.transition(job, job.failedFrom || "inbox"));
   run({ kind: req.kind, slug: req.slug, name: found.name, dir: found.dir,
         dataDir: DATA, step }).catch(() => {});
   return { started: true };

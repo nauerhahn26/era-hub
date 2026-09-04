@@ -6,7 +6,7 @@
 // bad parse away from erasing the key the family typed in. So aiRoles() only
 // reads, tolerates the old shape forever, and answers null for a role with no
 // usable key. No port, no network, no key is spent here.
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -26,10 +26,27 @@ function dataDir(files) {
   return dir;
 }
 
+// ai-config.js reads ELEVENLABS_API_KEY as the operator's way in (server.js
+// documents it), so an operator who exports it in their shell would turn every
+// "this role is null" case below green-then-red. The variable is put out of the
+// way for the whole suite and handed back afterwards; the one test that is
+// ABOUT the variable sets it itself.
+let hadEleven;
+before(() => { hadEleven = process.env.ELEVENLABS_API_KEY; delete process.env.ELEVENLABS_API_KEY; });
+after(() => { if (hadEleven === undefined) delete process.env.ELEVENLABS_API_KEY;
+              else process.env.ELEVENLABS_API_KEY = hadEleven; });
+
 // Stand-in key material only — never a real credential (plan §B.3).
 const VKEY = "test-vision-key";
 const TKEY = "test-eleven-key";
 const FKEY = "test-fal-key";
+
+test("no ElevenLabs key is in the environment while this suite runs", () => {
+  // Without the guard above, every "the voice role is null" case below would be
+  // testing the operator's shell rather than the files on disk, and would fail
+  // on any box that exports the variable the hub documents.
+  assert.equal(process.env.ELEVENLABS_API_KEY, undefined);
+});
 
 test("legacy flat ai-config.json still names the vision key", () => {
   const dir = dataDir({ "ai-config.json": { provider: "anthropic", apiKey: VKEY } });

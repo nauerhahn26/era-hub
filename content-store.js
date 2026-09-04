@@ -95,7 +95,12 @@ const REDACTIONS = [
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]"],
   [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, "[redacted]"],              // anthropic
   [/\bsk[-_][A-Za-z0-9]{16,}/g, "[redacted]"],                // openai, elevenlabs
-  [/\bAIza[A-Za-z0-9_-]{10,}/g, "[redacted]"],                // google
+  [/\bAIza[A-Za-z0-9_-]{10,}/g, "[redacted]"],                // google, the older form
+  // Google, the form AI Studio issues TODAY — and the one the Settings card
+  // tells families to paste ("AQ.... or AIza..."). Without this rule a bare
+  // occurrence in a provider's error body lands in log.jsonl and job.json,
+  // files that live inside the family's Drive folder and mirror to every device.
+  [/\bAQ\.[A-Za-z0-9._~+/=-]{16,}/g, "[redacted]"],           // google, AI Studio
   [/\bfal[-_][A-Za-z0-9_-]{8,}/g, "[redacted]"],              // fal
   // fal's "<uuid>:<secret>" pair
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[A-Za-z0-9]{8,}/g, "[redacted]"],
@@ -249,6 +254,24 @@ function fail(job, msg, opts) {
   return out;
 }
 
+// Keep what a step could not do, WITHOUT calling the book failed. A step that
+// read nine pages of ten and lost the tenth to a 500 has not fallen over — it
+// still owes that page — but the reason has to survive somewhere a parent can
+// be told about it, or the book silently publishes wordless and nothing in
+// /content/status or the Settings card ever says why (content-worker.js walks
+// this in). The state and the claim are untouched; only the history grows.
+// Capped, because this appends on every retry and job.json mirrors to Drive.
+const KEEP_ERRORS = 20;
+function noteErrors(job, msgs, opts) {
+  const o = opts || {};
+  const t = iso(o.now);
+  const add = (Array.isArray(msgs) ? msgs : [msgs])
+    .filter(m => m != null && String(m).trim())
+    .map(m => ({ t, state: job.state, msg: redact(String(m)) }));
+  if (!add.length) return job;
+  return { ...job, errors: (job.errors || []).concat(add).slice(-KEEP_ERRORS) };
+}
+
 function readJob(dir) {
   const raw = readJson(jobPath(dir));
   if (!raw || typeof raw !== "object") return null;
@@ -300,6 +323,6 @@ module.exports = {
   buildDir, jobPath, textPath, logPath, tmpPathFor,
   writeAtomic, readJson, redact,
   normalizeText, readText, writeText,
-  newJob, canTransition, transition, fail, readJob, writeJob,
+  newJob, canTransition, transition, fail, noteErrors, readJob, writeJob,
   appendLog, readLog,
 };

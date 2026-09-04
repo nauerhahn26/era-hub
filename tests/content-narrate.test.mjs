@@ -33,6 +33,10 @@ const VOICE = "cgSgspJ2msm6clMCkdW9";
 
 let server, narrate;
 let calls = [];            // one entry per request the stand-in actually saw
+// Cleared at the head of nearly every test, so `calls` can only ever prove the
+// LAST test made a call. `total` is the suite's own running count and nothing
+// resets it — that is what the closing money guardrail asserts on.
+let total = 0;
 let mode = "ok";           // ok | normalized | no-alignment | 401 | 500
 let audioBytes = Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x21]);  // "ID3" + junk
 
@@ -56,6 +60,7 @@ before(async () => {
     req.on("end", () => {
       let parsed = null;
       try { parsed = JSON.parse(body); } catch {}
+      total++;
       calls.push({ method: req.method, url: req.url, key: req.headers["xi-api-key"], body: parsed });
       if (mode === "401") {
         res.writeHead(401, { "Content-Type": "application/json" });
@@ -315,4 +320,8 @@ test("the stand-in recorded every call — none escaped the seam", () => {
   assert.equal(process.env.ERA_ELEVEN_URL, `http://127.0.0.1:${ELEVEN_PORT}`);
   assert.equal(narrate.elevenBase(), `http://127.0.0.1:${ELEVEN_PORT}`);
   assert.ok(calls.length > 0, "the stand-in must have seen the traffic");
+  // The whole-suite count, which nothing above resets: a request that escaped
+  // the seam in an earlier test shows up here and nowhere else.
+  assert.ok(total >= 15,
+    "the stand-in only recorded " + total + " calls for the whole suite — one escaped ERA_ELEVEN_URL");
 });

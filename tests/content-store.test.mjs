@@ -225,6 +225,9 @@ test("a log line that carries a key-looking string is redacted", () => {
     ["openai", fake("sk", "-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIII") + " rejected", "AAAABBBB"],
     ["elevenlabs", "used " + fake("sk", "_", HEX, "01234567"), HEX],
     ["google url", "GET https://generativelanguage.googleapis.com/v1/models?key=" + fake("AIza", "SyFAKE0123456789abcdefGHIJ"), "SyFAKE"],
+    // The form the Settings card tells families to paste TODAY (AI Studio keys
+    // start "AQ."), bare in a sentence with no `key=` in front of it to catch it.
+    ["google bare", "provider said: " + fake("AQ", ".", "Ab8RN6", "0123456789abcdefGHIJ"), "Ab8RN6"],
     ["bearer", "header Bearer " + fake("abcdef0123456789abcdef"), "abcdef0123456789"],
     ["xi-api-key", "xi-api-key " + HEX, HEX],
     ["assignment", 'api_key="hunter2hunter2hunter2"', "hunter2"],
