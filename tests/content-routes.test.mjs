@@ -60,7 +60,7 @@ function book(name, o) {
       const index = i + 1, pad = String(index).padStart(3, "0");
       fs.writeFileSync(path.join(dir, "pages", pad + ".jpg"), jpg(index));
       text.push({ index, source: "sources/IMG_000" + index + ".jpg", text: p.text || "",
-                  flags: p.flags || [], cover: index === 1 });
+                  flags: p.flags || [], cover: index === 1, edited: !!p.edited });
       if (p.audio) {
         fs.mkdirSync(path.join(dir, "audio"), { recursive: true });
         fs.writeFileSync(path.join(dir, "audio", pad + ".mp3"), Buffer.alloc(16, index));
@@ -230,6 +230,41 @@ test("a book that predates the ledger still reports the pages it paid for", asyn
   });
   const j = jobOf((await statusOf()).body, "old-ledger");
   assert.equal(j.cost.narrated, "one two three".length + "four five".length);
+});
+
+// L6, from the same live run: a page a grown-up retyped has its `read` dropped
+// (the words are theirs, not a model's), so from outside it was indistinguishable
+// from a page nobody ever checked — and `edited` was written on the page and then
+// never said anywhere. The count is its own number, and it is NOT a mark to fix:
+// it belongs beside the flag counts, never inside them.
+test("a page a grown-up typed is counted as theirs, and never as a page nobody checked", async () => {
+  book("My Own Words", {
+    job: { state: "published" },
+    pages: [{ text: "the words I typed", edited: true },
+            { text: "off the photo", flags: [{ word: null, reason: "no second model checked this page" }] },
+            { text: "off the photo too" }],
+  });
+  const j = jobOf((await statusOf()).body, "my-own-words");
+  assert.equal(j.edited, 1, "one page of this book is in a grown-up's own words");
+  assert.equal(j.pageFlags, 1, "and the page nobody could check is still counted, on its own");
+  assert.equal(j.flags, 0, "a page somebody typed is not a word the AI was unsure of");
+});
+
+test("a book nobody has typed on says so with a zero, never with a missing field", async () => {
+  book("Untouched", { job: { state: "published" }, pages: [{ text: "one" }, { text: "two" }] });
+  assert.equal(jobOf((await statusOf()).body, "untouched").edited, 0);
+});
+
+// The review page paints the badge off THIS payload, so the flag has to reach it.
+test("GET /content/text says which pages a grown-up typed", async () => {
+  book("Typed Here", {
+    job: { state: "published" },
+    pages: [{ text: "mine" }, { text: "also mine", edited: true }],
+  });
+  const r = await fetch(`${BASE}/content/text?slug=typed-here`);
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.deepEqual(body.pages.map(p => p.edited), [false, true]);
 });
 
 test("a book waiting for tomorrow's free quota is paused, never failed", async () => {

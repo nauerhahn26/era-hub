@@ -98,7 +98,8 @@ function jpg(index) {
 // was not sure of `mat` on page two", which is exactly what the transcriber
 // leaves behind for this page to show. `o.notes` is keyed the same way and is
 // the OTHER kind of flag: a mark on the whole page, naming no word at all
-// ({1:"no second model checked this page"}).
+// ({1:"no second model checked this page"}). `o.edited` is keyed the same way
+// and says the page's words are a grown-up's own ({1:true}).
 function book(name, texts, opts) {
   const o = opts || {};
   const dir = path.join(BOOKS, name);
@@ -110,7 +111,11 @@ function book(name, texts, opts) {
     pages.push({ index, source: "sources/IMG_000" + index + ".jpg", text: t,
                  flags: ((o.flags || {})[index] || []).map(w => ({ word: w, reason: UNSURE }))
                           .concat((o.notes || {})[index] ? [{ word: null, reason: (o.notes || {})[index] }] : []),
-                 cover: index === 1 });
+                 cover: index === 1,
+                 // `o.edited` is the same shape again ({1:true}): the page's
+                 // words are a grown-up's own, typed over whatever was read off
+                 // the photo, which is what the inline field below leaves behind.
+                 edited: !!(o.edited || {})[index] });
   });
   store.writeText(dir, { pages });
   store.writeJob(dir, { ...store.newJob({ claimedBy: "test:1" }), state: o.state || "published" });
@@ -504,6 +509,59 @@ test("an inline field puts the parent's words into text.json, and the shelf foll
   await ctx.close();
 });
 
+// L6, from the 16-page live run of 9/4. A page a grown-up retyped has its `read`
+// dropped on purpose — the words are theirs and no model may be named as their
+// author — and `edited` was written on the page and then said nowhere at all. So
+// the most carefully checked page in the book was the one page that looked like
+// nobody had ever looked at it. It wears the badge instead.
+//
+// Pointer-only markup, like everything else on this page: a badge is something
+// to READ, and the dwell rule keeps gaze for the board's door.
+const badgeOn = (page, n) =>
+  page.$$eval(`#strip .page:nth-child(${n}) .mine`, els => els.map(e => e.textContent.trim()));
+
+test("a page a grown-up typed says so, and never that nobody checked it", async () => {
+  book("My Words", ["the words I typed", "off the photo"],
+       { edited: { 1: true }, notes: { 2: "no second model checked this page" } });
+  const { ctx, page } = await review("my-words");
+  const [badge] = await badgeOn(page, 1);
+  assert.match(badge, /edited by you/i, badge);
+  assert.equal(await page.locator("#strip .page:nth-child(1) .pagenote").count(), 0,
+    "a page in a grown-up's own words is never shown as a page nobody checked");
+  // A page nobody typed wears no badge, or the badge would mean nothing.
+  assert.deepEqual(await badgeOn(page, 2), []);
+  assert.equal(await page.locator("#strip .page:nth-child(2) .pagenote").count(), 1,
+    "and the page that really was unchecked still says so");
+  // The badge is markup, not a target: no dwell class anywhere, on this page or
+  // on the badge itself.
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".dwell").length), 0);
+  assert.equal(await page.evaluate(
+    () => document.querySelector("#strip .page .mine").getAttributeNames().join(",")), "class");
+  await ctx.close();
+});
+
+test("fixing the words puts the badge on the page there and then, and a reload keeps it", async () => {
+  book("Badge Now", ["The cat sta", "on the mat"],
+       { notes: { 1: "no second model checked this page" } });
+  const { ctx, page } = await review("badge-now");
+  assert.deepEqual(await badgeOn(page, 1), [], "nothing is claimed before a parent types");
+  await page.locator("#strip .page:nth-child(1) .edit").click();
+  await page.locator("#strip .page:nth-child(1) textarea").fill("The cat sat");
+  await page.locator("#strip .page:nth-child(1) .save").click();
+  await page.waitForFunction(() => document.getElementById("strip").dataset.saved === "1");
+  // On the screen the parent is looking at, without a reload…
+  assert.match((await badgeOn(page, 1))[0] || "", /edited by you/i);
+  assert.equal(await page.locator("#strip .page:nth-child(1) .pagenote").count(), 0,
+    "the mark that said nobody checked it went with the edit");
+  assert.equal(textOf("Badge Now")[0].edited, true);
+  // …and again when they come back to the book tomorrow.
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => document.querySelectorAll("#strip .page").length > 0);
+  assert.match((await badgeOn(page, 1))[0] || "", /edited by you/i);
+  assert.deepEqual(await badgeOn(page, 2), []);
+  await ctx.close();
+});
+
 test("an edit a parent thought better of writes nothing at all", async () => {
   book("Second Thoughts", ["The cat sat", "on the mat"]);
   const { ctx, page } = await review("second-thoughts");
@@ -707,6 +765,10 @@ test("Read the photos again keeps the words a grown-up typed and re-reads the re
   await page.waitForFunction(t => document.querySelector("#strip .page:nth-child(2) .txt").textContent.trim() === t,
                              READ, { timeout: 15000 });
   assert.equal((await strip(page))[0].text, "The cat sat");
+  // And the page they typed still says whose words those are (L6): the re-read
+  // walked past it, so the badge is exactly what tells them which page it kept.
+  assert.match((await badgeOn(page, 1))[0] || "", /edited by you/i);
+  assert.deepEqual(await badgeOn(page, 2), [], "the page that came off the photo again is the model's");
   // The book was on the shelf, so the shelf follows the re-read.
   let m;
   for (let i = 0; i < 100; i++) {
@@ -734,6 +796,9 @@ test("with 'keep my words' unticked the photos win, even on a page a grown-up ty
                              null, { timeout: 30000 });
   assert.deepEqual(textOf("Start Over").map(p => p.text), [READ, READ],
     "unticked means every page is read off its photo again");
+  // The badge follows the words: these are the model's now, so the page must not
+  // go on claiming a grown-up typed them — nor be skipped by the next re-read.
+  assert.deepEqual(textOf("Start Over").map(p => p.edited), [false, false]);
   assert.equal(spent("read", at), 2, "two pages re-read is two calls, and no more");
   assert.equal(spent("narrate", at), 2, "both pages moved, so both are narrated again");
   await ctx.close();

@@ -416,12 +416,20 @@ function jobFor(name, dir, slug) {
   // no word to point at) and those name no word at all. Counting the second as
   // the first told a parent "30 words the AI was unsure of" and then showed
   // them a book with nothing highlighted anywhere in it (E2, 9/4).
-  let characters = 0, spent = 0, transcribed = 0, flags = 0, pageFlags = 0;
+  // AND A THIRD COUNT, WHICH IS NOT A MARK (L6, the 16-page live run of 9/4).
+  // A page a grown-up retyped has its `read` dropped — the words are theirs, and
+  // naming a model as their author would be a lie — so from out here it was
+  // indistinguishable from a page nobody ever checked, when it is the opposite:
+  // it is the most checked page in the book. `edited` is that page counted, and
+  // it is deliberately its own number rather than a flag: there is nothing to go
+  // and fix, and it is what the next "Read the photos again" will keep.
+  let characters = 0, spent = 0, transcribed = 0, flags = 0, pageFlags = 0, edited = 0;
   for (const p of pages) {
     const n = p.text.length;
     characters += n;
     if (n) transcribed++;
     if (narrated.has(p.index)) spent += n;
+    if (p.edited) edited++;
     for (const f of p.flags) { if (f && f.word) flags++; else pageFlags++; }
   }
   // WHAT WAS BOUGHT, not what is on the pages (L5, the 16-page live run of 9/4).
@@ -463,6 +471,7 @@ function jobFor(name, dir, slug) {
     cost: { characters, narrated: Math.max(spent, ledger) },
     flags,
     pageFlags,
+    edited,
     pausedUntil: (job && job.pausedUntil) || null,
     note: (job && job.pausedNote) || null,
     published: fs.existsSync(path.join(dir, "manifest.json")),
@@ -714,6 +723,12 @@ function pagesFor(slug) {
     published: fs.existsSync(path.join(found.dir, "manifest.json")),
     pages: text.pages.map(p => ({
       index: p.index, text: p.text, flags: p.flags, cover: p.cover,
+      // WHOSE WORDS THESE ARE (L6). The words a grown-up typed have no `read`
+      // and never will, so this is the only thing that can tell the review page
+      // "you wrote this page" instead of leaving it looking unread. `read`
+      // itself stays off this payload: a model name is provenance for the log,
+      // not a sentence for a parent.
+      edited: !!p.edited,
       // Null for a page text.json knows about but no photo was built for — the
       // card draws its own empty frame rather than an <img> onto a 404.
       image: built.has(p.index)
@@ -868,7 +883,10 @@ function savePage(o) {
   store.appendLog(found.dir, "review", words
     ? "a grown-up rewrote page " + req.page + " (" + p.text.length + " character(s))"
     : "a grown-up cleared the flags on page " + req.page);
-  return { saved: true, page: req.page, text: p.text, flags: p.flags,
+  // `edited` comes back with the words so the card can wear its badge there and
+  // then (L6): a parent who has just typed a page must not have to reload the
+  // book to see that it is now theirs.
+  return { saved: true, page: req.page, text: p.text, flags: p.flags, edited: !!p.edited,
            published: fs.existsSync(path.join(found.dir, "manifest.json")) };
 }
 

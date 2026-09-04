@@ -774,6 +774,13 @@ function ctRow(j){
   if(j.pageFlags) ctMarks.push(j.pageFlags+' page'+(j.pageFlags===1?"":"s")+' nobody could check');
   if(ctMarks.length) h+='<div class="status">'+ctMarks.join(", ")
     +' &mdash; pages to glance at, and the review page fixes them.</div>';
+  // NOT a mark, and so not in that sentence (L6, the 16-page live run of 9/4).
+  // A page a grown-up retyped has no model named against it, which read from out
+  // here as a page nobody ever checked — the opposite of the truth. There is
+  // nothing to fix on it; the one thing worth saying is that the re-read leaves
+  // it alone, which is the tick a parent meets on the review page.
+  if(j.edited) h+='<div class="status">'+j.edited+' page'+(j.edited===1?' has':'s have')
+    +' words you typed yourself &mdash; &ldquo;Read the photos again&rdquo; keeps them.</div>';
   // The review page is where a parent fixes words, reorders pages and picks the
   // cover; it is worth offering for every book, not only flagged ones.
   h+='<div class="row" style="margin-top:8px"><a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'

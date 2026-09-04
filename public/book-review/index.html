@@ -101,6 +101,10 @@
      highlight, so it is a sentence under the words instead. */
   .pagenote{margin-top:6px; font-size:16px; color:var(--ink); background:#FBE6C8;
             border-radius:8px; padding:6px 10px}
+  /* The opposite mark, and it is not a warning: these words are the parent's
+     own, so it is said in the calm colour and never in the amber one. Plain
+     markup to READ — mouse, touch and nothing else, like the rest of the page. */
+  .mine{margin-top:6px; font-size:16px; color:var(--teal-deep)}
   /* The per-page buttons. Mouse and touch only — 46px tall because a parent
      does this standing up with a mug in the other hand, not because anything
      here is ever a gaze target. */
@@ -454,6 +458,17 @@ function paintBody(li, p) {
   // nothing to highlight, so it is said in a sentence instead; without this it
   // was counted and never shown (E2, 9/4: every page of a book marked, the
   // parent shown nothing at all).
+  // WHOSE WORDS THESE ARE (L6, the 16-page live run of 9/4). A page a grown-up
+  // retyped has no `read` — the words are theirs, and no model may be named as
+  // their author — so the most carefully checked page in the book was the one
+  // page that looked like nobody had ever looked at it. The badge says it plainly,
+  // and it doubles as the answer to "which pages does the tick below keep?".
+  if (p.edited) {
+    const mine = document.createElement("div");
+    mine.className = "mine";
+    mine.textContent = "✎ Edited by you";
+    body.appendChild(mine);
+  }
   const notes = (p.flags || []).filter(f => f && !f.word && f.reason);
   if (notes.length) {
     const note = document.createElement("div");
@@ -564,6 +579,10 @@ async function savePage(li, p, body) {
   if (!out) return false;       // the typed words stay on the screen to try again
   p.text = out.text;
   p.flags = out.flags;
+  // The server's answer, not a guess made here: "Clear flag" writes through this
+  // same door and does NOT make the page a parent's own words, so only content.js
+  // can say which of the two just happened (L6).
+  p.edited = !!out.edited;
   paintBody(li, p);
   return true;
 }

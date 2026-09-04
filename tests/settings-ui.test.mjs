@@ -88,8 +88,8 @@ function statusPayload(over) {
 function bookJob(over) {
   return { kind: "books", slug: "tabby-mctat", title: "Tabby McTat", state: "transcribing",
            step: "transcribe", progress: { pages: 12, transcribed: 3, narrated: 0 },
-           cost: { characters: 0, narrated: 0 }, flags: 0, pausedUntil: null, note: null,
-           published: false, error: null, ...over };
+           cost: { characters: 0, narrated: 0 }, flags: 0, pageFlags: 0, edited: 0,
+           pausedUntil: null, note: null, published: false, error: null, ...over };
 }
 
 test("the AI helper defaults to Google — free services first (bug 16)", async () => {
@@ -258,6 +258,38 @@ test("a quota pause says tomorrow, and a flagged book links to its review page",
   // E8: what a parent DOES about a flag — glance at those pages on the review
   // page — rather than only how many the AI was unsure of.
   assert.match(flagged, /pages to glance at/i, flagged);
+  await ctx.close();
+});
+
+// L6 (the 16-page live run, 9/4). A page a grown-up retyped loses its `read` —
+// the words are theirs, and no model may be named as their author — so from the
+// card's side it looked exactly like a page nobody ever checked. It is the
+// opposite: it is the most checked page in the book. The card says so in the
+// same books card, next to the marks, and it is NOT a mark: nothing here is
+// something to go and fix.
+test("the books card says which pages carry words a grown-up typed", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [
+    bookJob({ slug: "the-gruffalo", title: "The Gruffalo", state: "published", step: null,
+              edited: 2, published: true, progress: { pages: 8, transcribed: 8, narrated: 8 } }),
+  ] }));
+  await page.waitForSelector('#contentBooks [data-slug="the-gruffalo"]');
+  const row = await page.$eval('#contentBooks [data-slug="the-gruffalo"]', e => e.textContent);
+  assert.match(row, /2 pages have words you typed/i, row);
+  assert.doesNotMatch(row, /nobody could check/i, "a page they typed is not a page nobody checked");
+  assert.doesNotMatch(row, /glance at/i, "and it is not a mark to go and fix");
+  await ctx.close();
+});
+
+// One page is one page, and a card that says "1 pages" is a card written by a
+// machine. The same sentence also has to say what it is FOR: the re-read keeps
+// exactly these pages, which is the tick a parent meets on the review page.
+test("one typed page is said in the singular, and the card says the re-read keeps it", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({ edited: 1 })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(row, /1 page has words you typed/i, row);
+  assert.doesNotMatch(row, /1 pages/, row);
+  assert.match(row, /read the photos again/i, "the sentence says the re-read keeps them");
   await ctx.close();
 });
 
