@@ -145,6 +145,77 @@ test("local mode: a book's manifest is copied after its pages, at every level", 
                             path.join("pages", "manifest.json"), "manifest.json"]);
 });
 
+// The Drive folder is the library for BOOKS and SONGS and MOVIES too, not just
+// clothes: a book the parent removes there has to leave every device, or the
+// shelf only ever grows. Same rails, same three safety rules (dotfiles kept,
+// absent source prunes nothing, empty folders go with their last file).
+test("a book folder deleted in Drive is deleted from data/books", async () => {
+  fs.rmSync(path.join(SRC, "books", "Story"), { recursive: true });
+  const r = await drive.sync();
+  assert.equal(r.removed, 4, "the book's four files went");
+  assert.ok(!fs.existsSync(local("books", "Story")), "the empty package folder went too");
+  assert.ok(fs.existsSync(local("books", "cat.pdf")), "the rest of the shelf stayed");
+});
+
+test("a song removed from Drive is removed from data/music; the rest of the album stays", async () => {
+  fs.mkdirSync(path.join(SRC, "music"), { recursive: true });
+  fs.writeFileSync(path.join(SRC, "music", "one.mp3"), "one");
+  fs.writeFileSync(path.join(SRC, "music", "two.mp3"), "two");
+  fs.writeFileSync(path.join(SRC, "music", "manifest.json"), "{}");
+  await drive.sync();
+  assert.ok(fs.existsSync(local("music", "one.mp3")));
+
+  fs.rmSync(path.join(SRC, "music", "one.mp3"));
+  const r = await drive.sync();
+  assert.equal(r.removed, 1, "just the one song");
+  assert.ok(!fs.existsSync(local("music", "one.mp3")), "one.mp3 gone");
+  assert.ok(fs.existsSync(local("music", "two.mp3")), "two.mp3 stayed");
+  assert.ok(fs.existsSync(local("music", "manifest.json")), "so did the manifest");
+});
+
+// movies/ was never in the mirror set at all, so a title a parent added lived on
+// one device and vanished on reinstall (audit 9/4).
+test("movies mirrors, catalog and posters, and the Settings checklist can see it", async () => {
+  fs.mkdirSync(path.join(SRC, "movies", "posters"), { recursive: true });
+  fs.writeFileSync(path.join(SRC, "movies", "posters", "moana.jpg"), "poster");
+  fs.writeFileSync(path.join(SRC, "movies", "catalog.json"), "{}");
+  await drive.sync();
+  assert.ok(fs.existsSync(local("movies", "catalog.json")), "catalog mirrored");
+  assert.ok(fs.existsSync(local("movies", "posters", "moana.jpg")), "poster mirrored");
+
+  // contentReady(), createContentFolder() and syncLocal() all walk the one
+  // MIRROR_SUBDIRS list, so pinning what the checklist reports pins all three.
+  assert.deepEqual(Object.keys(drive.status().content),
+    ["books", "music", "movies", "content", "clothing"]);
+  assert.equal(drive.status().content.movies, true, "the checklist ticks for movies");
+
+  fs.rmSync(path.join(SRC, "movies", "posters", "moana.jpg"));
+  const r = await drive.sync();
+  assert.equal(r.removed, 1, "a dropped poster is dropped here too");
+  assert.ok(fs.existsSync(local("movies", "catalog.json")), "the catalog stayed");
+});
+
+test("an absent books folder in Drive prunes nothing", async () => {
+  fs.renameSync(path.join(SRC, "books"), path.join(SRC, "books-offline"));
+  const r = await drive.sync();
+  assert.equal(r.removed || 0, 0, "an absent source is not an empty source");
+  assert.ok(fs.existsSync(local("books", "cat.pdf")), "the shelf survives");
+  fs.renameSync(path.join(SRC, "books-offline"), path.join(SRC, "books"));
+});
+
+test("the hub's own .build/ inside a book package is never pruned", async () => {
+  // .build/job.json is the claim the builder writes; it is a dotfile, and
+  // pruneTree leaves dotfiles alone, so a package mid-build cannot lose it.
+  fs.mkdirSync(path.join(SRC, "books", "Draft"), { recursive: true });
+  fs.writeFileSync(path.join(SRC, "books", "Draft", "IMG_0001.jpg"), "img");
+  await drive.sync();
+  fs.mkdirSync(local("books", "Draft", ".build"), { recursive: true });
+  fs.writeFileSync(local("books", "Draft", ".build", "job.json"), "{}");
+  const r = await drive.sync();
+  assert.equal(r.removed, 0);
+  assert.ok(fs.existsSync(local("books", "Draft", ".build", "job.json")), "the claim survived");
+});
+
 test("API mode: the manifest is downloaded after the media it names", async () => {
   fs.mkdirSync(API_DATA, { recursive: true });
   fs.writeFileSync(path.join(API_DATA, "drive.json"), JSON.stringify({

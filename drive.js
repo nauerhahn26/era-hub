@@ -5,6 +5,7 @@
 // folder's known subfolders into the data dir on demand and every 6 hours:
 //   <folder>/books/...  -> <DATA>/books/...   (book packages)
 //   <folder>/music/...  -> <DATA>/music/...   (songs + manifest)
+//   <folder>/movies/... -> <DATA>/movies/...  (catalog + posters)
 //   <folder>/content/... -> <DATA>/content/... (lessons overrides)
 // Read-only scope; nothing is ever uploaded. Config in <DATA>/drive.json:
 //   { clientId, clientSecret, folderId, token:{...} } — clientId/secret come
@@ -19,7 +20,11 @@ const API = process.env.ERA_DRIVE_API || "https://www.googleapis.com";
 const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 // clothing: raw outfit photos staged for the wardrobe pipeline (dad 8/29 -
 // created + mirrored now, processed by a later milestone)
-const MIRROR_SUBDIRS = ["books", "music", "content", "clothing"];
+// movies: added 9/4 - it was the one library that never mirrored, so a title a
+// parent added lived on one device and vanished on the next reinstall.
+// This ONE list is the mirror set: syncLocal(), sync()'s subfolder filter,
+// createContentFolder()'s one-tap setup and the Settings checklist all walk it.
+const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing"];
 
 let DATA = null;
 let pendingDevice = null;   // {device_code, user_code, verification_url, interval, expires}
@@ -128,9 +133,16 @@ async function listChildren(tok, folderId) {
 // Which libraries are a TRUE mirror — a file deleted in Drive is deleted here
 // too. clothing/ must be (dad 9/2: "delete clothes that no longer fit … all
 // that should just work"): a garment that stays on disk stays in the outfits.
-// books/music/content keep the copy-only rule until their pipelines learn to
-// let go of a removed file.
-const MIRROR_DELETES = ["clothing"];
+// books/music/movies join it 9/4, now that the Drive folder is where those are
+// BUILT and not just dropped: the shelf a parent tidies has to be the shelf the
+// tablet shows, or it only ever grows. content/ stays copy-only — it is lesson
+// overrides layered on what ships in the box, not a library.
+// Three safety rules keep this from eating anything: an absent source folder
+// prunes nothing (syncLocal:324, and a failed listing throws before the prune
+// in sync()), dotfiles are never pruned (pruneTree:145 — that is what keeps a
+// package's .build/ claim alive mid-build), and only a listing that SUCCEEDED
+// may prune.
+const MIRROR_DELETES = ["clothing", "books", "music", "movies"];
 
 // Remove from dest what the source no longer has. keep(rel) says whether the
 // source still holds that relative path. Dotfiles are left alone (Drive/macOS

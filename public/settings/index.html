@@ -712,7 +712,7 @@ function dlRow(done, active, title, hint, btnLabel, fn){
 async function drivePaint(){
   try{
     const s=await (await fetch("/integrations/drive/status",{cache:"no-store"})).json();
-    const hasContent = s.content && (s.content.books||s.content.music||s.content.content||s.content.clothing);
+    const hasContent = s.content && (s.content.books||s.content.music||s.content.movies||s.content.content||s.content.clothing);
     const synced = !!(s.lastSync && !s.lastSync.error);
     const steps=[
       { done:s.appInstalled, title:"1. Get the Google Drive app",
@@ -721,7 +721,7 @@ async function drivePaint(){
       { done:s.signedIn, title:"2. Sign in to Google Drive",
         hint:"Open the Drive app it installed and sign in with your Google account. This box ticks by itself." },
       { done:!!s.folderPath, title:"3. Create your content folder",
-        hint:"One tap: makes New ERA Content in your Drive with books, music, content, and clothing folders inside. (Or pick an existing folder below.)",
+        hint:"One tap: makes New ERA Content in your Drive with books, music, movies, content, and clothing folders inside. (Or pick an existing folder below.)",
         btn:"✨ Create it for me", fn:async()=>{
           const r=await (await fetch("/integrations/drive/create-folder",{method:"POST"})).json();
           if(r.ok){ toast("Folder created in your Drive"); fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); }
