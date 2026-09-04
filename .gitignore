@@ -19,3 +19,8 @@ dist/
 # ONNX Runtime: only the Windows x64 CPU binaries ship. The linux build is
 # a local convenience for running the segmentation tests on this machine.
 vendor/onnxruntime-node/
+
+# yt-dlp (media-tools pack) is ~18 MB of binary and is never committed: the
+# build fetches the release pinned in tools/yt-dlp.pin. This line is here so a
+# copy dropped in for local testing cannot be committed by accident.
+vendor/yt-dlp/

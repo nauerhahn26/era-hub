@@ -34,6 +34,9 @@ SetCompressorDictSize 16   ; modest dictionary: the default crashed makensis (bu
 !ifndef SZ_BOARD
   !define SZ_BOARD "about 20"
 !endif
+!ifndef SZ_MEDIA
+  !define SZ_MEDIA "about 18"
+!endif
 !define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer - only what you tick is installed. Add or remove apps any time from the home screen or Settings. Most of the space is the engine (${SZ_CORE} MB); the apps themselves are small."
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open New ERA now"
@@ -53,7 +56,7 @@ Section "New ERA engine (required)" SecCore
   SetOutPath "$INSTDIR"
   ; everything except the per-app packs (their names are unique in the tree;
   ; the list mirrors packs.js — tests/packs.test.mjs keeps them equal)
-  File /r /x pencil /x board /x reader /x onnxruntime-web /x models /x libheif.js "${PAYLOAD}/*"
+  File /r /x pencil /x board /x reader /x onnxruntime-web /x models /x libheif.js /x yt-dlp "${PAYLOAD}/*"
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -102,6 +105,13 @@ Section "-board pack" SecBoardPack
   File /r "${PAYLOAD}/vendor/models"
   File "${PAYLOAD}/vendor/libheif.js"
 SectionEnd
+; Off by default: Music plays the songs already in the family's folder without
+; it. Tick it here to add songs from the web straight away, or leave it - the
+; "+ Add a song" sheet offers the same download in one click later.
+Section /o "Add songs from the web" SecMedia
+  SetOutPath "$INSTDIR\vendor"
+  File /r "${PAYLOAD}/vendor/yt-dlp"
+SectionEnd
 
 ; Hover text on the components page: what each tick costs, and why the
 ; total barely moves for most of them.
@@ -114,6 +124,7 @@ SectionEnd
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMusic} "Music: favorite songs on big picture tiles. Shares the ${SZ_BOARD} MB pack with Clothing Picker and Movies."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMovies} "Movies: the family's films, one look to play. Shares the ${SZ_BOARD} MB pack with Clothing Picker and Music."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecReader} "Book Reader: page-by-page books with gaze. Under 1 MB (books live in your data folder)."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMedia} "Lets Music's + Add button fetch a song from a web link - ${SZ_MEDIA} MB for the downloader. Not needed to play the songs already in your folder, and you can add it later from Music."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Function .onSelChange

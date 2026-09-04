@@ -15,6 +15,9 @@ ROOT="$(dirname "$HUB")"
 OUT="${1:-$HUB/dist/new-era-payload}"
 [ "$OUT" = "--with-node" ] && OUT="$HUB/dist/new-era-payload"
 VERSION="$(date -u +%Y%m%d.%H%M)"
+# a RELEASE payload (bundled Windows node) — the cut, not a dev assemble
+RELEASE=0
+if [ "${1:-}" = "--with-node" ] || [ "${2:-}" = "--with-node" ]; then RELEASE=1; fi
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
 cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/predict-model.json" "$OUT/"
@@ -36,6 +39,38 @@ cp -r "$HUB/vendor" "$OUT/vendor"   # HEIC decode (libheif, LGPL - see NOTICE) +
 # ships no Visual C++ runtime, so the .node refused to load on the QA machine
 # and would fail the same way on a family's fresh PC. WASM needs only Node.
 du -sh "$OUT/vendor/onnxruntime-web" "$OUT/vendor/models" 2>/dev/null || true
+
+# media-tools pack (packs.js): yt-dlp.exe, the downloader behind Music's
+# "+ Add a song". ~18 MB of standalone Windows binary (it bundles its own
+# Python), so it is NOT committed — it is fetched from the release PINNED in
+# tools/yt-dlp.pin, checked against that release's own sha256, and kept on the
+# same shelf as the bundled node.exe so a re-build never re-downloads it.
+# Wrong hash = no build, ever. Missing (no network on a dev box) = the pack is
+# simply absent from a dev payload; on a release cut it stops the cut.
+# shellcheck source=./yt-dlp.pin
+. "$HUB/tools/yt-dlp.pin"
+YTDLP="$ROOT/era-family/cache/yt-dlp-$YTDLP_VERSION.exe"
+ytdlp_sha_ok() { [ -f "$YTDLP" ] && [ "$(sha256sum "$YTDLP" | cut -d' ' -f1)" = "$YTDLP_EXE_SHA256" ]; }
+if ! ytdlp_sha_ok; then
+  URL="https://github.com/yt-dlp/yt-dlp/releases/download/$YTDLP_VERSION/yt-dlp.exe"
+  echo "fetching yt-dlp $YTDLP_VERSION (media-tools pack)"
+  mkdir -p "$(dirname "$YTDLP")"
+  if curl -fsSL --retry 2 -o "$YTDLP.part" "$URL"; then
+    mv "$YTDLP.part" "$YTDLP"
+    ytdlp_sha_ok || { echo "yt-dlp.exe DOES NOT MATCH tools/yt-dlp.pin ($YTDLP_EXE_SHA256) - refusing to ship it"; rm -f "$YTDLP"; exit 1; }
+  else
+    rm -f "$YTDLP.part"
+    if [ "$RELEASE" = 1 ]; then
+      echo "could not download $URL - the media-tools pack is part of a release; no build."
+      exit 1
+    fi
+    echo "note: yt-dlp not available (no network?) - this payload ships without the media-tools pack"
+  fi
+fi
+if ytdlp_sha_ok; then
+  mkdir -p "$OUT/vendor/yt-dlp"
+  cp "$YTDLP" "$OUT/vendor/yt-dlp/yt-dlp.exe"
+fi
 cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$HUB/../era-core/NOTICE" "$OUT/" 2>/dev/null || true
 # apps + shared foundation - COPIES, never symlinks
 cp -rL "$ROOT/era-core/lib" "$OUT/public/lib"

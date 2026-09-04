@@ -15,3 +15,10 @@ U^2-Net ("u2netp") — Apache License 2.0.
   vendor/models/u2netp.onnx — weights as distributed by the rembg project
   (Daniel Gatis, MIT License). Used locally, on the family's own machine,
   to cut clothing photos out of their background. No image is uploaded.
+
+--------------------------------------------------------------------------
+yt-dlp — Unlicense (public domain).
+  vendor/yt-dlp/yt-dlp.exe — the standalone Windows build (it carries its own
+  Python), unmodified, from the release pinned in tools/yt-dlp.pin and
+  verified against that release's published sha256 at build time. It runs
+  only on this machine, only when someone adds a song from a link.

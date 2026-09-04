@@ -46,11 +46,12 @@ function makeInstall(dir, build, marker) {
   if (marker) fs.writeFileSync(path.join(dir, "public", "updated-marker.txt"), marker);
 }
 // Pack files as the release ships them (packs.js): the pencil pack, the
-// reader pack, and the board pack with its cut-out runtime under vendor/;
+// reader pack, the board pack with its cut-out runtime under vendor/, and the
+// media-tools pack (yt-dlp, the "add a song from the web" downloader);
 // jpeg-js is core. Each file's content names the build it came from.
 const PACK_FILES = ["public/pencil/index.html", "public/reader/index.html", "public/board/index.html",
   "vendor/onnxruntime-web/dist/ort.node.min.js", "vendor/models/u2netp.onnx", "vendor/libheif.js",
-  "vendor/jpeg-js/index.js"];
+  "vendor/yt-dlp/yt-dlp.exe", "vendor/jpeg-js/index.js"];
 function layPacks(dir, build, only) {
   for (const f of PACK_FILES) {
     if (only && !only.includes(f)) continue;
@@ -148,7 +149,8 @@ test("check applies a newer release and the hub restarts on the new build", asyn
 test("the update refreshes installed packs and never lays down unchosen ones", () => {
   assert.equal(fs.readFileSync(at("public/pencil/index.html"), "utf8"), NEW_BUILD + "\n", "installed pack refreshed");
   assert.equal(fs.readFileSync(at("vendor/jpeg-js/index.js"), "utf8"), NEW_BUILD + "\n", "core vendor refreshed");
-  for (const f of ["public/reader", "public/board", "vendor/onnxruntime-web", "vendor/models", "vendor/libheif.js"])
+  for (const f of ["public/reader", "public/board", "vendor/onnxruntime-web", "vendor/models", "vendor/libheif.js",
+                   "vendor/yt-dlp"])
     assert.ok(!has(f), f + " stays absent (its app was not chosen)");
 });
 
