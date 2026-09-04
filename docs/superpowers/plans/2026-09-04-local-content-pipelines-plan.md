@@ -1277,3 +1277,119 @@ now points at three libraries a family may have filled before ever seeing this h
 the ledger is the only thing standing between them and a prune. Second risk is Windows
 filesystem behaviour (name resolution of trailing dots/spaces, case folding) — handled
 where it was found, but this is the only platform that ships and the suites run on Linux.
+
+---
+
+## Retrospective: Phase 2
+
+Eleven hub commits on `feat/audit-fixes` (`e410e21`, `405bb29`, `f2f506a`,
+`f173b83`, `e50b2b9`, `c3e9976`, `93eb11c`, `d3e7810`, `01ea63c`, `5358200`,
+`05d942a`, `c374180`, `ba82a5f`) plus one review-fix pass (`fb8e854`), and one
+board commit on `feat/content-strip` (`bb5cfbe`, T2.11). New hub modules:
+`ai-config.js`, `content.js`, `content-store.js`, `content-worker.js`,
+`content-providers.js`, `content-narrate.js`, `content-publish.js`,
+`content-ingest.js`, `image-util.js`, `books-index.js`, plus
+`tools/ocr-bakeoff/`. New suites: `ai-config`, `content-claim`, `content-store`,
+`content-worker`, `content-ingest`, `content-transcribe`, `content-narrate`,
+`content-publish`, `content-routes`, `image-util`, and additions to
+`settings-ui`, `reconcile`, `update`, `update-boot`.
+
+### Decisions
+- **A job's state names the step it still owes.** One `STEP_OWED` table in
+  `content-store.js` is read by the worker, by `/content/status` and by
+  `POST /content/run`'s validation, so the three cannot drift. `reviewing` owes
+  narration — review never blocks a book (ruling 9/4).
+- **HOLD is a third outcome, beside advance and fail.** A step that ran but
+  still owes its state (no key yet, a spent free allowance, a transient page
+  loss) stops the walk where it is, refreshes the heartbeat and keeps the claim
+  and every byte already built. A book is never marked failed for running out of
+  a free tier; it gains `pausedUntil` and resumes tomorrow on the pages already
+  paid for.
+- **Two free readings, and only a disagreement reaches dad.** The 9/4 OCR
+  bake-off (109 scored pages, 8 books) picked `gemini-3.1-flash-lite` +
+  `gemini-3.5-flash-lite` on deliberately different prompt versions: 89.2% of
+  pages auto-publish with zero measured silent errors, ~11% go to a parent and
+  contain 100% of the errors, $0 and no credit card in the default path.
+  `escalateTo: null` now asks **nobody** rather than falling to the next rung —
+  an unmeasured adjudicator must not overwrite a good reading. A named model
+  only leads the ladder of its own provider.
+- **`manifest.json` is written last, atomically, and never names a byte that is
+  not beside it.** Its existence is what makes `booksIndex()` see a package, so
+  ordering is the whole safety property on the device Drive mirrors to. A page
+  with no mp3 publishes silent; a page never transcribed publishes as a picture;
+  only a folder with no pages at all holds.
+- **A status page is not a map of the family's disk.** `/content/status` carries
+  no key, no claiming device name, no absolute path, and the suite asserts it by
+  scanning the serialized JSON. `POST /content/run` answers 202 and builds
+  behind it (a transcription takes minutes), 400s an unknown kind/book/step, and
+  409s outside local Drive mode.
+- **One function assigns every slug.** `books-index.js` moved the sticky,
+  collision-resolving map out of `server.js` so the shelf and the builder agree.
+
+### Observations
+- The nine confirmed review findings clustered on **what happens after a step
+  goes wrong**: `errors[]` and `permanent:true` were written and never read, so a
+  page whose provider call 500'd left the book wordless and the walk continued;
+  and `published` never settled to `done`, so every finished book looked
+  claimable again half an hour later — each re-claim rewriting `job.json` and
+  appending to `log.jsonl` *inside the family's Drive folder*, for Drive to
+  re-upload, for ever. Build artefacts living in the synced folder turns any
+  idle-loop bug into unbounded network traffic.
+- The publish step's `cover.jpg` was being swallowed by ingest into `sources/`,
+  becoming page 1 and shifting every page index by one — orphaning every
+  `text.json` entry and every mp3. Two steps sharing a directory need an
+  explicit contract about which filenames are inputs.
+- The money guardrails were passing for the wrong reason: the per-test call
+  array was reset between tests, so "no test spends a key" only ever proved it
+  of the last test. They now count the whole suite.
+- Three suites kept a fourth hand-written copy of the installed-file list;
+  `content.js` grew two requires that copy did not have, so the installed hub
+  died on its first line and only the gate caught it. They now read
+  `tools/build-payload.sh`.
+- A worker is loaded by *path*, so the payload require-guard could never see it —
+  `clothing-worker.js` had been one grep away from shipping missing since 8/31.
+
+### Adaptations
+- `prompts.mjs` v3 was ported from the ESM bake-off harness to CommonJS: the
+  harness is ESM but the Windows floor is Node 18 and the hub is CommonJS.
+- The bake-off's measured asymmetry (two passes, two prompt wordings) is **not**
+  yet reproduced in the hub — both passes send v3. Noted in code at
+  `PROMPT_VERSION` rather than silently diverging from the measurement.
+- `drive.onSynced` was a single property clothing already owned; a second owner
+  would have silently replaced it. The fan-out moved to `server.js` so neither
+  module knows about the other.
+- Settings gained a per-book "Try this book again" (`POST /content/run`) because
+  the only other door was a sync that cannot re-claim for 30 minutes; a parent's
+  press is also the one thing that lifts a permanent failure, since by then they
+  have usually fixed the key.
+- `redact()` was extended to the `AQ.` AI Studio key form the Settings card tells
+  families to paste today, not only the older `AIza` one.
+- Board T2.11 landed as a footer strip on `feat/content-strip`, obeying the
+  amended design rules: touch-only, never a gaze target, door stays the only
+  dwell target in the msgbar.
+
+### Follow-ups
+- Ship the bake-off's prompt asymmetry (pass B on v2) — the agreement rate was
+  measured with it and the code does not yet have it.
+- No compaction for `log.jsonl`; it grows forever inside the Drive folder.
+- Slug collisions still only log; nothing in Settings says two folders fought.
+- `installPack` checksum (Gap 14) still open from Phase 1.
+- Re-validate the bake-off in ~6 months; models, prices and free-tier limits move
+  fastest, and an unpriced candidate cannot be cost-capped.
+- Phase 2 is unit-verified only; no real key has ever been spent by a test, which
+  also means the three provider adapters' *real* request shapes are proven only
+  by their similarity to `clothing-worker.js`.
+
+### Confidence and risks
+Confidence **high** on the rails (T2.1–T2.5, T2.8–T2.10): they copy a shape
+`clothing.js` has run in a family's house since 8/31, and every one was written
+test-first. Confidence **medium** on the transcribe and narrate steps — the
+policy is backed by real measurement, but the adapters have never spoken to a
+live endpoint from this code path, and quota/refusal handling is exactly the
+behaviour that only shows up on a real key. Chief residual risk is the Drive
+folder doubling as the build directory: `job.json` and `log.jsonl` mirror to
+every device, so any write-loop is a bandwidth bug as well as a logic bug — the
+`done` fix closes the one we found, not the class. Second risk is the free-tier
+pause path: a family whose first book arrives on a spent day sees a book sitting
+still, and their whole impression of the product rests on the Settings card
+saying so in words. Phase 7's VM walkthrough has not run against any of this.
