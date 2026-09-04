@@ -10,7 +10,9 @@
 // Read-only scope; nothing is ever uploaded. Config in <DATA>/drive.json:
 //   { clientId, clientSecret, folderId, token:{...} } — clientId/secret come
 // from the family's own Google Cloud OAuth client (Settings explains).
-// Test seams: ERA_DRIVE_OAUTH / ERA_DRIVE_API point at fake servers.
+// Test seams: ERA_DRIVE_OAUTH / ERA_DRIVE_API point at fake servers, and
+// ERA_DRIVE_LOCAL_ROOTS names extra local mount roots (path.delimiter-
+// separated) so the local-mode door is drivable off Windows — see detectLocal().
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -353,6 +355,27 @@ function detectLocal() {
   for (const p of [path.join(os.homedir(), "Google Drive"),
                    path.join(os.homedir(), "Google Drive", "My Drive")]) {
     try { if (fs.statSync(p).isDirectory()) roots.push(p); } catch {}
+  }
+  // Test seam, in the shape ERA_DRIVE_OAUTH / ERA_DRIVE_API already have
+  // (header): extra mount roots, path.delimiter-separated, read FRESH on every
+  // call — the Settings checklist re-reads detect() live, so a root that turns
+  // up after boot has to be seen. Both probes above are Windows-and-a-real-
+  // Drive-app only, so off Windows the roots list was empty, browseLocal()
+  // jailed against nothing, and POST /integrations/drive/localfolder answered
+  // 400 outside-drive for EVERY path: on the QA box (and in CI) the whole book
+  // pipeline was unreachable through its own door, the one a family uses. This
+  // is a seam, not a loosened jail — unset, a family's hub behaves exactly as
+  // it does today, and set, the jail still admits only what the variable names.
+  for (const raw of String(process.env.ERA_DRIVE_LOCAL_ROOTS || "").split(path.delimiter)) {
+    if (!raw) continue;
+    // A pasted path usually carries a trailing separator, and normalize() keeps
+    // it — browseLocal() compares against a normalize()d pick with none, so
+    // "…/My Drive/" would match nothing at all. Fail open-eyed, not shut.
+    // (a drive/filesystem root IS its separator — "C:\" and "/" keep theirs)
+    let n = path.normalize(raw);
+    const stem = path.parse(n).root;
+    while (n.length > stem.length && (n.endsWith(path.sep) || n.endsWith("/"))) n = n.slice(0, -1);
+    try { if (fs.statSync(n).isDirectory() && !roots.includes(n)) roots.push(n); } catch {}
   }
   return { installed: roots.length > 0, appInstalled: appInstalled || roots.length > 0,
            signedIn: roots.length > 0, roots };
