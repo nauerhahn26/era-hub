@@ -27,6 +27,13 @@
      its own — the static handler serves it, and the trailing-slash
      301 keeps ?slug= (tests/routes.test.mjs).
 
+     Four doors, all in content.js: GET /content/status (which
+     books there are), GET /content/text?slug= (this book's pages),
+     GET /content/page?slug=&index= (one page's photo, straight out
+     of the build folder — the Drive mirror is ten minutes behind a
+     book being reviewed), and POST /content/text (the new order and
+     the cover), followed by POST /content/run to re-publish.
+
      Core, not a pack: shipped by tools/build-payload.sh and laid
      down by the installer's core File /r (no /x — every /x belongs
      to a pack, tests/packs.test.mjs).
@@ -59,6 +66,34 @@
   .booklink .nm{font-size:22px; font-weight:650}
   .placeholder{border:2px dashed var(--line); border-radius:14px; padding:18px 20px;
                color:var(--muted); font-size:17px}
+
+  /* The page strip. One row per page of the book, in reading order. The row is
+     dragged by its handle and by nothing else: the rest of the row is where the
+     inline text field and the per-page buttons go, and a parent who starts to
+     select a word must not find they have moved the page instead. */
+  .strip{list-style:none; margin:14px 0 0; padding:0; display:flex; flex-direction:column; gap:10px}
+  .page{display:flex; align-items:flex-start; gap:14px; background:#fff;
+        border:2px solid var(--line); border-radius:14px; padding:12px 14px}
+  .page.dragging{border-color:var(--teal); box-shadow:0 8px 20px rgba(0,0,0,.18)}
+  /* touch-action:none so a finger on the handle DRAGS instead of scrolling the
+     page under it; everywhere else the strip scrolls normally. */
+  .grip{flex:none; width:46px; align-self:stretch; display:flex; align-items:center;
+        justify-content:center; font-size:26px; color:var(--muted); background:var(--teal-wash);
+        border-radius:10px; cursor:grab; touch-action:none; user-select:none}
+  .grip:active{cursor:grabbing}
+  .page img{flex:none; width:76px; height:100px; object-fit:cover; border-radius:8px;
+            border:1px solid var(--line); background:var(--paper)}
+  .noimg{flex:none; width:76px; height:100px; border-radius:8px; border:1px dashed var(--line)}
+  .page .body{flex:1 1 auto; min-width:0}
+  .no{font-size:16px; font-weight:700; color:var(--teal-deep)}
+  .txt{font-size:18px; margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere}
+  .txt.none{color:var(--muted); font-style:italic}
+  .cover{flex:none; font:inherit; font-size:16px; font-weight:650; min-height:46px;
+         padding:8px 14px; border:2px solid var(--line); border-radius:12px;
+         background:#fff; color:var(--muted); cursor:pointer}
+  .cover:hover{border-color:var(--teal)}
+  .cover[aria-pressed="true"]{border-color:var(--teal); background:var(--teal-wash);
+                              color:var(--teal-deep)}
   [hidden]{display:none !important}
 </style>
 </head>
@@ -91,12 +126,13 @@
       <div class="status" id="bookState"></div>
       <div class="status" id="bookFlags" hidden></div>
     </div>
-    <!-- Filled in by the tasks that follow: the page strip (drag to reorder,
-         tap to mark the cover), the per-page controls, the book-level
-         buttons. The shell keeps their homes so each one lands in one place. -->
+    <!-- The page strip. The per-page controls (inline edit, re-narrate, clear
+         flag) land inside these rows next; the book-level buttons below. -->
     <div class="card">
       <h2>Pages</h2>
-      <div class="placeholder" id="pages">The page strip lands here.</div>
+      <p class="status" id="stripHint">Loading the pages…</p>
+      <ol class="strip" id="strip"></ol>
+      <div class="status" id="stripNote" hidden></div>
     </div>
     <div class="card">
       <h2>This whole book</h2>
@@ -165,6 +201,189 @@ function paintBook(j) {
   show("book", true);
 }
 
+// ============================================================ the page strip
+//
+// THE ORDER OF A BOOK is the order of text.json's `pages` ARRAY; a page's
+// `index` is its identity — the photo it came from, and the narration, the
+// flags and the characters already bought for it. So a drag permutes the array
+// and renames nothing: nothing paid for is lost, and Google Drive is not handed
+// every page of the book to re-upload. content.js writes it and
+// content-publish.js reads the same order, so the shelf follows the drag.
+//
+// Pointer events, not HTML5 drag-and-drop: the same code then serves a mouse
+// and a finger, which is what a parent at a laptop and a parent at the family
+// touchscreen each have. No gaze anywhere — see the header.
+
+const strip = $("strip");
+let PAGES = [];          // what the server last told us, in reading order
+let PUBLISHED = false;   // is this book already on Ellie's shelf?
+let SAVES = 0;           // bumped on every accepted write (the tests watch it)
+
+// The position a parent reads ("Page 3"), which after a drag is no longer the
+// index the scanner gave the photo. The position is the one that means
+// anything to them, so it is the one on the card.
+const order = () => Array.from(strip.children).map(li => Number(li.dataset.index));
+function renumber() {
+  Array.from(strip.children).forEach((li, i) => {
+    li.querySelector(".no").textContent = "Page " + (i + 1);
+  });
+}
+function coverIndex() {
+  const b = strip.querySelector('.cover[aria-pressed="true"]');
+  return b ? Number(b.closest(".page").dataset.index) : null;
+}
+function note(msg, bad) {
+  const el = $("stripNote");
+  el.textContent = msg;
+  el.classList.toggle("bad", !!bad);
+  show("stripNote", !!msg);
+}
+
+// A page's text is family text (the words off their own photos), so it is set
+// as textContent and never as HTML.
+function cardFor(p) {
+  const li = document.createElement("li");
+  li.className = "page";
+  li.dataset.index = String(p.index);
+  const grip = document.createElement("div");
+  grip.className = "grip";
+  grip.textContent = "⠿";
+  grip.title = "Drag to move this page";
+  li.appendChild(grip);
+  if (p.image) {
+    const img = document.createElement("img");
+    img.src = p.image;
+    img.alt = "";                       // decorative: the words beside it say it
+    img.draggable = false;              // the handle drags, not the picture
+    li.appendChild(img);
+  } else {
+    const box = document.createElement("div");
+    box.className = "noimg";
+    li.appendChild(box);
+  }
+  const body = document.createElement("div");
+  body.className = "body";
+  const no = document.createElement("div");
+  no.className = "no";
+  const txt = document.createElement("div");
+  txt.className = "txt" + (p.text.trim() ? "" : " none");
+  txt.textContent = p.text.trim() ? p.text : "No words read off this page yet.";
+  body.appendChild(no); body.appendChild(txt);
+  li.appendChild(body);
+  const cov = document.createElement("button");
+  cov.className = "cover";
+  cov.type = "button";
+  li.appendChild(cov);
+  paintCover(cov, p.cover);
+  return li;
+}
+
+function paintCover(btn, on) {
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.textContent = on ? "★ Cover" : "☆ Make this the cover";
+}
+
+function paintStrip(book) {
+  PAGES = book.pages || [];
+  PUBLISHED = !!book.published;
+  strip.innerHTML = "";
+  for (const p of PAGES) strip.appendChild(cardFor(p));
+  renumber();
+  $("stripHint").textContent = PAGES.length
+    ? "Drag a page by its ⠿ handle to put the book in the right order. Tap ☆ to choose the cover."
+    : "No pages yet — New ERA makes them from the photos in this book's folder.";
+}
+
+// One write, for a drag and for a cover tap alike: the whole order plus the one
+// cover, so a half-applied change is not a shape the server ever sees.
+async function saveStrip() {
+  note("Saving…", false);
+  let r, out;
+  try {
+    r = await fetch("/content/text", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: SLUG, order: order(), cover: coverIndex() }),
+    });
+    out = await r.json();
+  } catch (e) { note("New ERA is not answering — nothing was saved.", true); return; }
+  if (!r.ok) { note("That change was not saved: " + ((out && out.error) || "New ERA said no."), true); return; }
+  note("Saved ✓", false);
+  strip.dataset.saved = String(++SAVES);
+  // Spec §5: the write lands in text.json, then the book is re-published so the
+  // shelf follows. Only a book that is ALREADY on the shelf — kicking a publish
+  // at a book still being read would freeze a half-built book into a package
+  // Ellie could open.
+  if (out.published) {
+    PUBLISHED = true;
+    fetch("/content/run", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "books", slug: SLUG, step: "publish" }),
+    }).catch(() => {});
+  }
+}
+
+// ---- the drag itself. Capture on the STRIP, never on the row: a captured row
+// is moved in and out of the DOM as the drag goes and would lose the pointer
+// half way down the book.
+let drag = null;
+strip.addEventListener("pointerdown", (e) => {
+  if (e.button > 0) return;                       // right/middle click is not a drag
+  const grip = e.target.closest(".grip");
+  if (!grip) return;
+  drag = { li: grip.closest(".page"), was: order().join(","), y0: e.clientY, moved: false };
+  drag.li.classList.add("dragging");
+  try { strip.setPointerCapture(e.pointerId); } catch (err) {}
+  e.preventDefault();                             // no text selection while dragging
+});
+strip.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  // A few pixels of slop, so a tap that wobbles is still a tap.
+  if (!drag.moved && Math.abs(e.clientY - drag.y0) < 4) return;
+  drag.moved = true;
+  for (const other of Array.from(strip.children)) {
+    if (other === drag.li) continue;
+    const r = other.getBoundingClientRect();
+    if (e.clientY < r.top || e.clientY > r.bottom) continue;
+    strip.insertBefore(drag.li, e.clientY > r.top + r.height / 2 ? other.nextSibling : other);
+    break;
+  }
+  renumber();
+});
+function endDrag(e) {
+  if (!drag) return;
+  const d = drag; drag = null;
+  d.li.classList.remove("dragging");
+  try { strip.releasePointerCapture(e.pointerId); } catch (err) {}
+  // Dropped a page back where it started: nothing to write, and nothing for
+  // Drive to re-upload.
+  if (d.moved && order().join(",") !== d.was) saveStrip();
+}
+strip.addEventListener("pointerup", endDrag);
+strip.addEventListener("pointercancel", endDrag);
+
+// ---- the cover. Exactly one, always: the tap moves the star rather than
+// adding a second one, and content.js refuses anything else.
+strip.addEventListener("click", (e) => {
+  const btn = e.target.closest(".cover");
+  if (!btn) return;
+  const li = btn.closest(".page");
+  for (const other of Array.from(strip.children))
+    paintCover(other.querySelector(".cover"), other === li);
+  saveStrip();
+});
+
+async function loadStrip() {
+  let r, book;
+  try {
+    r = await fetch("/content/text?slug=" + encodeURIComponent(SLUG), { cache: "no-store" });
+    book = await r.json();
+  } catch (e) { $("stripHint").textContent = "New ERA is not answering."; return; }
+  if (!r.ok) { $("stripHint").textContent = book && book.error === "needs-local-drive"
+    ? "This computer does not build books."
+    : "These pages could not be read: " + ((book && book.error) || "New ERA said no."); return; }
+  paintStrip(book);
+}
+
 async function paint() {
   let s;
   try { s = await (await fetch("/content/status", { cache: "no-store" })).json(); }
@@ -173,7 +392,7 @@ async function paint() {
   if (!s.local) { show("notLocal", true); return; }
   const jobs = s.jobs || [];
   const j = SLUG ? jobs.find(b => b.slug === SLUG) : null;
-  if (j) paintBook(j);
+  if (j) { paintBook(j); await loadStrip(); }
   else paintPicker(jobs, SLUG || null);
 }
 paint();

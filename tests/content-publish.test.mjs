@@ -174,6 +174,40 @@ test("a page the transcriber never reached publishes as a picture page", async (
   assert.equal(m.pages[1].image, "pages/002.jpg");
 });
 
+// The review page's drag (plan T3.2) permutes text.json's ARRAY and renames
+// nothing: a page's `index` stays welded to its photo, its audio and the flags
+// bought for it. Publish has to read that array order, or the parent's drag
+// lives only on the review page and the shelf keeps the scanner's guess.
+test("the reading order is text.json's array order, not the scanner's numbering", async () => {
+  const dir = book("Room on the Broom", [
+    { text: "one", audio: true }, { text: "two", audio: true }, { text: "three", audio: true },
+  ]);
+  const was = store.readText(dir).pages;
+  // the last page dragged to the front, exactly what content.js saveOrder writes
+  store.writeText(dir, { pages: [{ ...was[2], cover: true },
+                                 { ...was[0], cover: false }, { ...was[1], cover: false }] });
+  await publish.publishBook(dir, { slug: "room-on-the-broom" });
+  const m = read(dir);
+  assert.deepEqual(m.pages.map(p => p.text), ["three", "one", "two"]);
+  // every page keeps the photo and the voice that were bought for it
+  assert.deepEqual(m.pages.map(p => p.image), ["pages/003.jpg", "pages/001.jpg", "pages/002.jpg"]);
+  assert.deepEqual(m.pages.map(p => p.audio), ["audio/003.mp3", "audio/001.mp3", "audio/002.mp3"]);
+  assert.deepEqual(m.pages.map(p => p.index), [3, 1, 2]);
+  // and the cover is the page the parent starred, not page 1
+  assert.ok(fs.readFileSync(path.join(dir, "cover.jpg")).equals(jpg(3)));
+});
+
+test("a photo added since text.json was written follows on the end, never dropped", async () => {
+  const dir = book("The Gruffalo", [{ text: "a mouse", audio: true }, { text: "took a stroll" }]);
+  // page 3's photo landed after the transcriber wrote text.json
+  fs.writeFileSync(path.join(dir, "pages", "003.jpg"), jpg(3));
+  await publish.publishBook(dir, { slug: "the-gruffalo" });
+  const m = read(dir);
+  assert.deepEqual(m.pages.map(p => p.image),
+    ["pages/001.jpg", "pages/002.jpg", "pages/003.jpg"]);
+  assert.equal(m.pages[2].text, "");
+});
+
 test("a second publish bumps exportedAt and keeps the book's id", async () => {
   const dir = path.join(BOOKS, "Zog");
   const before = read(dir);

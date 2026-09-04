@@ -102,17 +102,26 @@ function publishBook(dir, opts) {
   const slug = o.slug || slugify(title) || "book";
   const exportedAt = iso(o.now);
 
+  const text = ((store.readText(dir) || { pages: [] }).pages) || [];
+  const byIndex = new Map(text.map(t => [t.index, t]));
+
+  // READING ORDER is text.json's ARRAY order — that is what the review page's
+  // drag rewrites (spec §5, content.js saveOrder) — while a page's `index`
+  // stays welded to the photo, the audio and the flags bought for it. Without
+  // this the manifest would keep the order the scanner happened to give the
+  // photos and the parent's drag would live only on the review page.
+  // A page text.json does not mention (a photo added since it was written)
+  // keeps its scanner order and follows on the end, so nothing is ever dropped.
   // pagesOf() is the same reader the transcriber uses: ingest's own record when
   // it is there, the pages/ directory itself when it is not (a folder built by
   // hand in power mode still publishes).
-  const built = pagesOf(dir).filter(p => present(dir, p.image)).sort((a, b) => a.index - b.index);
+  const seats = new Map(text.map((t, i) => [t.index, i]));
+  const seat = (p) => (seats.has(p.index) ? seats.get(p.index) : text.length + p.index);
+  const built = pagesOf(dir).filter(p => present(dir, p.image)).sort((a, b) => seat(a) - seat(b));
   if (!built.length) {
     store.appendLog(dir, "publish", "no pages yet - nothing to publish", { now: o.now });
     return { hold: "no-pages", published: false, pages: [] };
   }
-
-  const text = ((store.readText(dir) || { pages: [] }).pages) || [];
-  const byIndex = new Map(text.map(t => [t.index, t]));
   const narration = readNarration(dir);
   const spoke = new Map(narration.pages.map(p => [p.index, p]));
 

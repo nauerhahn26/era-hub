@@ -400,6 +400,112 @@ function runStep(o) {
   return { started: true };
 }
 
+// ------------------------------------------------------- the review page (§5)
+
+// THE ORDER OF A BOOK. text.json's ARRAY order is the reading order; a page's
+// `index` is its identity — the photo it was made from, and the audio, the
+// flags and the characters already bought for it. A parent dragging page four
+// to the front permutes the array and touches nothing else, so nothing that
+// was paid for is lost and no file is renamed inside the family's Drive folder
+// (which would hand Drive every page to re-upload). content-publish.js reads
+// the same array order, so the shelf follows the drag.
+
+// Every page of one book, for the strip the review page draws. Same law as
+// jobFor(): no absolute path, no claim, nothing key-shaped — the photo comes
+// back as a URL onto the route below, never as a path on the family's disk.
+function pagesFor(slug) {
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
+  if (typeof slug !== "string" || !slug) return { error: "unknown book" };
+  const found = bookFor(slug, st);
+  if (!found) return { error: "unknown book" };
+  // A hand-edited text.json the schema refuses must say so plainly, not 500:
+  // the parent who broke it in power mode is the one reading this page.
+  let text;
+  try { text = store.readText(found.dir) || { pages: [] }; }
+  catch { return { error: "this book's text.json needs fixing by hand" }; }
+  let built = new Map();
+  try { built = new Map(pagesOf(found.dir).map(p => [p.index, p])); } catch {}
+  const job = store.readJob(found.dir);
+  return {
+    slug, title: found.name,
+    state: job ? job.state : "inbox",
+    published: fs.existsSync(path.join(found.dir, "manifest.json")),
+    pages: text.pages.map(p => ({
+      index: p.index, text: p.text, flags: p.flags, cover: p.cover,
+      // Null for a page text.json knows about but no photo was built for — the
+      // card draws its own empty frame rather than an <img> onto a 404.
+      image: built.has(p.index)
+        ? "/content/page?slug=" + encodeURIComponent(slug) + "&index=" + p.index : null,
+    })),
+  };
+}
+
+// The file behind one page's photo. The path NEVER comes from the URL: the
+// index is looked up in ingest's own record (content-providers.pagesOf) and the
+// answer is re-checked to be inside this book's pages/ before it is served.
+// Straight from the build folder rather than through /books/<slug>/, because
+// the Drive mirror runs every ten minutes and a book being reviewed is nearly
+// always newer than the mirror's copy.
+function pageFile(slug, index) {
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
+  if (typeof slug !== "string" || !slug) return { error: "unknown book" };
+  if (!Number.isInteger(index)) return { error: "unknown page" };
+  const found = bookFor(slug, st);
+  if (!found) return { error: "unknown book" };
+  let page = null;
+  try { page = pagesOf(found.dir).find(p => p.index === index) || null; } catch {}
+  if (!page) return { error: "unknown page" };
+  const file = path.resolve(found.dir, page.image);
+  const jail = path.resolve(found.dir, "pages") + path.sep;
+  if (!file.startsWith(jail)) return { error: "unknown page" };
+  try { if (!fs.statSync(file).size) return { error: "unknown page" }; }
+  catch { return { error: "unknown page" }; }
+  return { file };
+}
+
+// POST /content/text's whole decision: the new reading order and which page
+// wears the cover. Refused outright unless `order` names every page of THIS
+// book exactly once — a half-applied order would lose a page out of the book,
+// and the parent's only sign of it would be a shorter shelf entry.
+// Returns {saved}, {skipped:"needs-local-drive"} (409) or {error} (400).
+function saveOrder(o) {
+  const req = o || {};
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
+  if (typeof req.slug !== "string" || !req.slug) return { error: "unknown book" };
+  const found = bookFor(req.slug, st);
+  if (!found) return { error: "unknown book" };
+  let text;
+  try { text = store.readText(found.dir); }
+  catch { return { error: "this book's text.json needs fixing by hand" }; }
+  const pages = (text && text.pages) || [];
+  if (!pages.length) return { error: "no pages yet" };
+
+  const by = new Map(pages.map(p => [p.index, p]));
+  const order = req.order == null ? pages.map(p => p.index) : req.order;
+  if (!Array.isArray(order)) return { error: "the new order must be a list of pages" };
+  if (order.length !== pages.length || new Set(order).size !== order.length
+      || !order.every(i => Number.isInteger(i) && by.has(i)))
+    return { error: "the new order must name every page of this book, once" };
+
+  // An omitted cover keeps whichever page has it (the first page if none does);
+  // an explicit null means the same thing. content-publish.writeCover() reads
+  // exactly one `cover:true`, so exactly one is what is written.
+  const keep = pages.find(p => p.cover);
+  let cover = req.cover === undefined || req.cover === null
+    ? (keep ? keep.index : order[0]) : req.cover;
+  if (!Number.isInteger(cover) || !by.has(cover)) return { error: "unknown cover page" };
+
+  const next = order.map(i => ({ ...by.get(i), cover: i === cover }));
+  store.writeText(found.dir, { pages: next });
+  store.appendLog(found.dir, "review",
+    "a grown-up set the page order and the cover (" + next.length + " page(s), cover " + cover + ")");
+  return { saved: true, pages: next.length, cover,
+           published: fs.existsSync(path.join(found.dir, "manifest.json")) };
+}
+
 // ------------------------------------------------------------------- status
 
 // Deliberately thin, and deliberately free of the claim's device name and of
@@ -440,7 +546,7 @@ function start(dataDir) {
 
 module.exports = {
   start, scan, tick, run, runJob, runStep, isBuilding, idle, status, beat, claim,
-  jobs, jobFor, bookFor, KINDS, QUIET_MS, STALE_MS,
+  jobs, jobFor, bookFor, pagesFor, pageFile, saveOrder, KINDS, QUIET_MS, STALE_MS,
   _testReset: () => {
     running = null; inflight = null; queue = []; seen = new Map();
     progress = null; lastScan = null;

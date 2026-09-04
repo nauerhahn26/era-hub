@@ -1745,6 +1745,52 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- the review page's strip (spec §5): read the pages, write their order --
+  // GET /content/text?slug= - every page of one book in reading order, with the
+  // URL of its own photo. POST the same path writes that order (and the cover)
+  // back into text.json. content.js owns both decisions, so the jail, the
+  // "every page exactly once" rule and the local-Drive refusal are written down
+  // in one place and the routes stay four lines each.
+  if (req.method === "GET" && urlPath === "/content/text") {
+    const out = content.pagesFor(new URL(req.url, "http://x").searchParams.get("slug") || "");
+    const code = out.error ? 400 : out.skipped ? 409 : 200;
+    res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out.skipped ? { error: out.skipped } : out));
+    return;
+  }
+  if (req.method === "POST" && urlPath === "/content/text") {
+    let body = "";
+    // Room for a long book's order and nothing more: the biggest honest body is
+    // a list of page numbers.
+    req.on("data", c => { body += c; if (body.length > 8192) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.saveOrder(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      const code = out.error ? 400 : out.skipped ? 409 : 200;
+      res.writeHead(code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out.error ? { error: out.error }
+        : out.skipped ? { error: out.skipped } : out));
+    });
+    return;
+  }
+  // GET /content/page?slug=&index= - one page's photo, straight out of the book
+  // folder. The Drive mirror only runs every ten minutes, so /books/<slug>/ is
+  // usually behind the book a parent is reviewing right now. no-store for the
+  // same reason: a re-ingested page keeps its URL and changes its bytes.
+  if (req.method === "GET" && urlPath === "/content/page") {
+    const q = new URL(req.url, "http://x").searchParams;
+    const out = content.pageFile(q.get("slug") || "", parseInt(q.get("index"), 10));
+    if (out.skipped) { res.writeHead(409).end(); return; }
+    if (out.error) { res.writeHead(404).end("not found"); return; }
+    fs.readFile(out.file, (err, data) => {
+      if (err) { res.writeHead(404).end("not found"); return; }
+      res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "no-store" });
+      res.end(data);
+    });
+    return;
+  }
+
   // ---- Settings > Integrations: Google Drive content (drive.js) ----
   if (req.method === "GET" && urlPath === "/integrations/drive/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
