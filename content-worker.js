@@ -9,7 +9,7 @@
 // content-store.js defines:
 //
 //   inbox        owes ingest       -> transcribing   (content-ingest.js)
-//   transcribing owes transcribe   -> reviewing      (T2.6)
+//   transcribing owes transcribe   -> reviewing      (content-providers.js)
 //   reviewing    owes narrate      -> narrating      (content-narrate.js)
 //   narrating    owes publish      -> published      (T2.8)
 //
@@ -23,6 +23,16 @@
 // heartbeat and every byte already built exactly where they are. That is the
 // safe half of the deal while the pipeline is being written a step at a time.
 //
+// A step that RAN may ask for the same treatment by returning {hold}: it did
+// what it could and the job still owes this step. Two live cases:
+//   {hold:"no-ai-key"}   nothing to spend yet — the book waits in the folder.
+//   {hold:"quota", pausedUntil:"YYYY-MM-DD"}   a free key's daily allowance is
+//     gone. The day is recorded on the job so tomorrow's run knows not to
+//     knock before then, the state stays exactly where it was, and the book is
+//     NEVER marked failed for it (spec §4 step 2, §7 risks).
+// A hold keeps the claim and does not advance the state; the pages already
+// built are kept, and the next scan picks the book up where it stopped.
+//
 // Nothing here reads a key. The steps that spend money take their config from
 // ai-config.js at the moment they need it, and content-store.js redacts every
 // message that reaches job.json or log.jsonl.
@@ -32,6 +42,7 @@ const path = require("path");
 const store = require("./content-store.js");
 const { ingest } = require("./content-ingest.js");
 const { narrateBook } = require("./content-narrate.js");
+const { transcribeBook } = require("./content-providers.js");
 
 const DIR = workerData.dir;
 const DATA = workerData.dataDir;
@@ -46,7 +57,8 @@ const BEAT_EVERY = 60 * 1000;
 const STEPS = [
   { name: "ingest",     owes: "inbox",        then: "transcribing",
     run: (c) => ingest(c.dir) },
-  { name: "transcribe", owes: "transcribing", then: "reviewing",    run: null },
+  { name: "transcribe", owes: "transcribing", then: "reviewing",
+    run: (c) => transcribeBook(c.dir, { dataDir: c.dataDir, job: c.job }) },
   { name: "narrate",    owes: "reviewing",    then: "narrating",
     run: (c) => narrateBook(c.dir, { dataDir: c.dataDir }) },
   { name: "publish",    owes: "narrating",    then: "published",    run: null },
@@ -73,11 +85,32 @@ function owedState(job) {
 function summary(step, result) {
   const r = result && typeof result === "object" ? result : {};
   const out = { step };
-  for (const k of ["pages", "wrote", "copied", "narrated", "reused", "skipped"]) {
+  for (const k of ["pages", "wrote", "copied", "transcribed", "escalated", "calls", "narrated", "reused", "skipped"]) {
     const v = r[k];
     if (Array.isArray(v)) out[k] = v.length;
     else if (v != null) out[k] = v;
   }
+  return out;
+}
+
+// A finished step drops the pause it was waiting under.
+function unpause(job) {
+  const out = { ...job };
+  delete out.pausedUntil; delete out.pausedNote;
+  return out;
+}
+
+// The job stays exactly where it is: same state, same claim, fresh heartbeat
+// (so no other device mistakes a waiting book for an abandoned one), plus the
+// day it may try again and the sentence Settings shows meanwhile.
+function holdHere(job, step, hold, steps) {
+  if (job) {
+    const held = store.transition(job, job.state);
+    if (hold.pausedUntil) { held.pausedUntil = hold.pausedUntil; held.pausedNote = hold.note || null; }
+    store.writeJob(DIR, held);
+  }
+  const out = { slug: SLUG, state: job ? job.state : null, steps, held: hold.hold, step: step.name };
+  if (hold.pausedUntil) { out.pausedUntil = hold.pausedUntil; out.note = hold.note || null; }
   return out;
 }
 
@@ -97,14 +130,19 @@ async function walk() {
 
     post({ step: step.name, state: job.state, slug: SLUG });
     const result = await step.run({ dir: DIR, dataDir: DATA, job, slug: SLUG });
-    steps.push(summary(step.name, result));
 
     // Re-read: the step just wrote to .build/ itself, and the heartbeat may
     // have moved under us while it worked.
     const now = store.readJob(DIR);
+    const hold = result && typeof result === "object" && result.hold ? result : null;
+    if (hold) return holdHere(now, step, hold, steps);
+    steps.push(summary(step.name, result));
+
     // A named step re-run out of order (a parent re-narrating page 7) must
     // never walk the job backwards — it only advances the state it owed.
-    if (owedState(now) === step.owes) store.writeJob(DIR, store.transition(now, step.then));
+    // A step that finished also clears any pause it was under: the allowance
+    // came back, so nothing must keep telling the family it has not.
+    if (owedState(now) === step.owes) store.writeJob(DIR, unpause(store.transition(now, step.then)));
     if (ONLY) return { slug: SLUG, state: store.readJob(DIR).state, steps, finished: true };
   }
   return { slug: SLUG, state: store.readJob(DIR).state, steps, finished: true };

@@ -10,9 +10,11 @@
 // MONEY GUARDRAIL (plan §B.2, Gap 20). The gate's default data dir holds a
 // real, billable ElevenLabs credential, so the spawned hub gets its own
 // mkdtemp ERA_DATA_DIR and ERA_AI_URL / ERA_ELEVEN_URL pointed at stand-ins.
-// This suite deliberately never reaches a provider step — transcription (T2.6)
-// is not in the table yet — so here the expected recorded call count is ZERO
-// and the assertion is what proves the walk stopped where we think it did.
+// No data dir in this suite holds an AI key, so transcription HOLDS the moment
+// the walk reaches it and no provider step ever runs: the expected recorded
+// call count is ZERO, and the assertion is what proves the walk stopped where
+// we think it did. (The provider steps themselves are covered against their own
+// stand-ins in content-transcribe.test.mjs and content-narrate.test.mjs.)
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -77,8 +79,9 @@ test("the worker posts the step it is on, then the finished walk", async () => {
     w.on("exit", () => resolve(null));
   });
   assert.ok(done, "the worker must post a {done} before it exits");
-  // progress first, result last — the shape clothing-worker.js posts
-  assert.deepEqual(seen.filter(m => m.step).map(m => m.step), ["ingest"]);
+  // progress first, result last — the shape clothing-worker.js posts.
+  // transcribe is announced and then holds: this data dir has no AI key.
+  assert.deepEqual(seen.filter(m => m.step).map(m => m.step), ["ingest", "transcribe"]);
   assert.equal(seen[seen.length - 1].done, done);
   assert.equal(done.slug, "tabby-mctat");
 });
@@ -91,8 +94,10 @@ test("run() walks a claimed inbox as far as the table goes", async () => {
   const r = await content.run({ kind: "books", slug: "the-gruffalo", dir, dataDir: DATA });
   assert.equal(r.error, undefined);
   assert.deepEqual(r.steps.map(s => s.step), ["ingest"]);
-  // the walk stops at the first step nobody has written yet, and says which
-  assert.equal(r.pending, "transcribe");
+  // the walk stops at the first step that cannot go on, and says which and why:
+  // there is no AI key in this data dir, so transcription holds (T2.6)
+  assert.equal(r.held, "no-ai-key");
+  assert.equal(r.step, "transcribe");
   assert.equal(store.readJob(dir).state, "transcribing");
   assert.ok(fs.existsSync(path.join(dir, "pages", "001.jpg")));
   assert.ok(fs.existsSync(path.join(dir, "sources", "IMG_0001.jpg")));
@@ -172,7 +177,8 @@ test("every worker the hub spawns is in build-payload.sh's copy list", () => {
   assert.ok(targets.has("content-worker.js"), "content.js must spawn content-worker.js by path");
   assert.ok(targets.has("clothing-worker.js"));
   for (const t of targets) assert.ok(copied.has(t), t + " is spawned by the hub but not copied into the payload");
-  for (const m of ["content.js", "content-store.js", "content-ingest.js", "content-narrate.js", "words.js"])
+  for (const m of ["content.js", "content-store.js", "content-ingest.js", "content-narrate.js",
+                   "content-providers.js", "words.js"])
     assert.ok(copied.has(m), m + " is required by the hub but not copied into the payload");
 });
 
@@ -238,8 +244,8 @@ test("a Drive sync feeds the Clothing Picker AND the book scan", async () => {
     child.kill("SIGKILL");
     ai.close(); eleven.close();
   }
-  // The walk stops before transcription, so neither provider may have been
-  // touched. A non-zero count here means a step escaped its seam.
+  // The walk holds AT transcription for want of a key, so neither provider may
+  // have been touched. A non-zero count here means a step escaped its seam.
   assert.equal(aiCalls, 0);
   assert.equal(elevenCalls, 0);
 });
