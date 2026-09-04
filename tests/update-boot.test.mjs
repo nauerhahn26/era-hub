@@ -30,7 +30,7 @@ let feed, child;
 
 function makeInstall(dir, build) {
   fs.mkdirSync(path.join(dir, "public", "home"), { recursive: true });
-  for (const f of ["server.js", "update.js", "packs.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "pool.js", "predict.js", "predict-model.json", "image-orient.js"])
+  for (const f of ["server.js", "update.js", "packs.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "slug.js", "pool.js", "predict.js", "predict-model.json", "image-orient.js"])
     fs.copyFileSync(path.join(HUB, f), path.join(dir, f));
   fs.copyFileSync(path.join(HUB, "public", "home", "index.html"), path.join(dir, "public", "home", "index.html"));
   for (const f of ["public/pencil/index.html", "vendor/jpeg-js/index.js"]) {

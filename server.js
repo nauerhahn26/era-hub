@@ -12,6 +12,7 @@ const path = require("path");
 const updater = require("./update");
 const drive = require("./drive");
 const clothing = require("./clothing");
+const { slugify } = require("./slug.js");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
@@ -405,25 +406,60 @@ function serveJailed(res, dir, rest, allowedExts) {
 }
 
 // ---- book packages (era-book-reader M3): <DATA>/books/<slug>/ ----
+// The builder builds IN PLACE inside the family's Drive folder, so a package's
+// directory is whatever a parent typed ("Tabby McTat") while its URL is a slug
+// (/books/tabby-mctat/). This map is the ONE place that identity lives: the
+// index publishes the slug, serveBook resolves it back to the directory. Cached
+// on the books dir's mtime (adding/removing a package bumps it) and rebuilt on
+// a miss, so a package that lands mid-second is still reachable.
+let bookIdxCache = null, bookIdxAt = -1;
+function bookDirs(force) {
+  let at = -1;
+  try { at = fs.statSync(BOOKS_DIR).mtimeMs; } catch { return { list: [], bySlug: new Map() }; }
+  if (!force && bookIdxCache && at === bookIdxAt) return bookIdxCache;
+  let names = [];
+  try {
+    names = fs.readdirSync(BOOKS_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory()).map(d => d.name).sort();
+  } catch { return { list: [], bySlug: new Map() }; }
+  const bySlug = new Map();
+  // Pass 1: a folder already named as its own slug KEEPS it, whatever else
+  // wants it. Those are the packages the reader has saved positions for
+  // (savePos is keyed by slug) — a newcomer must never take an existing URL.
+  const rest = [];
+  for (const n of names) (slugify(n) === n ? bySlug.set(n, n) : rest.push(n));
+  // Pass 2: the rest in name order; a taken slug gets -2, -3, ... Two folders
+  // must never collapse onto one slug — that would hide a whole book.
+  const slugOf = new Map();
+  for (const [s, n] of bySlug) slugOf.set(n, s);
+  for (const n of rest) {
+    const base = slugify(n) || "book";
+    let s = base;
+    for (let i = 2; bySlug.has(s); i++) s = base + "-" + i;
+    if (s !== base) console.warn("[books] slug " + base + " is taken; " + n + " serves as " + s);
+    bySlug.set(s, n); slugOf.set(n, s);
+  }
+  bookIdxCache = { list: names.map(n => ({ slug: slugOf.get(n), dir: n })), bySlug };
+  bookIdxAt = at;
+  return bookIdxCache;
+}
+
 // A package is complete iff manifest.json exists and parses (manifest written
 // LAST by the exporter); manifest-less/unparseable dirs are skipped silently.
 // Degraded law: missing books dir -> [] — never a crash.
 function booksIndex() {
-  let dirs = [];
-  try { dirs = fs.readdirSync(BOOKS_DIR, { withFileTypes: true }); } catch { return []; }
   const out = [];
-  for (const d of dirs) {
-    if (!d.isDirectory()) continue;
+  for (const { slug, dir } of bookDirs().list) {
     try {
-      const mPath = path.join(BOOKS_DIR, d.name, "manifest.json");
+      const mPath = path.join(BOOKS_DIR, dir, "manifest.json");
       const m = JSON.parse(fs.readFileSync(mPath, "utf8"));
       const pages = Array.isArray(m.pages) ? m.pages : [];
       // ?v= cache-bust: media is served immutable/24h, so a re-exported package
       // must change its URLs (manifest mtime = the package version; the CSS
       // stale-cache law generalized — clients cache the bare URL hard)
       const v = Math.floor(fs.statSync(mPath).mtimeMs / 1000).toString(36);
-      out.push({ slug: d.name, title: String(m.title || d.name),
-                 cover: "/books/" + d.name + "/" + (m.cover || "cover.jpg") + "?v=" + v,
+      out.push({ slug, title: String(m.title || dir),
+                 cover: "/books/" + slug + "/" + (m.cover || "cover.jpg") + "?v=" + v,
                  pages: pages.length, hasVideo: pages.some(p => p && p.video),
                  authored: m.authored === true, v });
     } catch {}   // incomplete package: skip silently
@@ -450,11 +486,22 @@ const MOVIE_EXTS = [".json", ".jpg", ".webp", ".png"];
 // not inherit the restriction.
 const BOOK_DENY_DIRS = ["sources", ".build"];
 function serveBook(req, res, rest) {
-  serveMediaJail(req, res, BOOKS_DIR, rest, BOOK_EXTS, BOOK_AV_EXTS, BOOK_DENY_DIRS);
+  serveMediaJail(req, res, BOOKS_DIR, rest, BOOK_EXTS, BOOK_AV_EXTS, BOOK_DENY_DIRS,
+    // Books only: the first segment is a SLUG, not a directory name. An unknown
+    // slug is 404 even when a directory of that literal name exists, so a
+    // package has exactly one URL and the parent's folder name is not a second.
+    (s) => bookDirs().bySlug.get(s) ?? bookDirs(true).bySlug.get(s) ?? null);
 }
-function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs) {
+function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, resolveDir) {
   if (rest.includes("\0")) { res.writeHead(400).end(); return; }
   if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(403).end(); return; }
+  // after the escape guards (an escape stays 403), before the join
+  if (resolveDir) {
+    const i = rest.indexOf("/");
+    const dir = resolveDir(i === -1 ? rest : rest.slice(0, i));
+    if (dir === null) { res.writeHead(404).end("not found"); return; }
+    rest = i === -1 ? dir : dir + rest.slice(i);
+  }
   const file = path.normalize(path.join(jailDir, rest));
   if (file !== jailDir && !file.startsWith(jailDir + path.sep)) { res.writeHead(403).end(); return; }
   // Private path segment anywhere under the jail -> 404 (not 403: a denied name
