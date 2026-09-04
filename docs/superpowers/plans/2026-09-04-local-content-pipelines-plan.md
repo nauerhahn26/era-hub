@@ -1671,3 +1671,101 @@ guard refuses cleanly, but a parent who fixes three typos while a re-read runs s
 three refusals and no queue, and the shape of that failure has not been in front of
 a real parent. Second risk is that the whole phase is unverified on Windows —
 Phase 7's VM walkthrough has not run against any of it.
+
+---
+
+## Retrospective: Phase E (fixes from the 3-page live run)
+
+Twelve commits on `feat/audit-fixes` (`84ba1e1` … `11b735b`), eight of them code:
+E1 `84ba1e1`, E8 `043b314`, E6 `38ea6e6`, E2 `eb89f3d`, E3 `c5c54ae`, E4 `8399387`,
+E5 `dbc28cf`, E7 `8c84fe8`, plus the adversarial review pass `c8909ce` and three
+doc commits (`0822ebd` free-tier design, `0c32ab8` Phase L, `11b735b` Phase L
+re-cut). 27 files, +2847/−166. Touched `drive.js`, `content.js`,
+`content-providers.js`, `content-narrate.js`, `content-publish.js`,
+`content-store.js`, `ai-config.js`, `server.js`, new `content-imprint.js`,
+`public/settings/index.html`, `public/book-review/index.html`,
+`tools/build-payload.sh`, and eleven suites under `tests/`.
+
+### What the 3-page live run found
+The pipeline ran end to end and still shipped four kinds of lie:
+- **The second opinion was never asked.** The agreement pass existed but did not
+  fire, so a page read once was presented as a page two models agreed on. A page
+  nobody checked now says so — as a mark on the *page*, not a fake word-level flag.
+- **The audio did not have to say the words.** No fingerprint tied an mp3 to the
+  text it spoke, so an edited page kept reading the sentence it replaced. And the
+  module's own `eleven_multilingual_v2` default silently beat the family's Voice
+  card; the default now lives once, in `ai-config.js`.
+- **The book never reached the shelf.** The worker publishes into Drive, the Reader
+  serves `<DATA>/books`; only the ten-minute mirror crossed. `content.onPublished`
+  → `drive.mirrorBook(name)` closes it *without* touching `onSynced`, whose
+  clothing leg would have spent vision quota on the wardrobe every publish.
+- **Publisher furniture was read as story.** ISBNs, imprints and FSC codes reached
+  the page and were stripped from neither reading, so both readings agreed on the
+  junk. `content-imprint.js` is a pure, anchored, English-only stripper applied to
+  *both* readings before comparison.
+Plus: the quota pause always slept until "tomorrow" whatever the 429 said; and the
+local-folder Drive door was unreachable off Windows, which is why QA could not
+drive it at all (`ERA_DRIVE_LOCAL_ROOTS`, env-only so no request can widen the jail).
+
+### Decisions
+- **Pause until the quota returns, not until tomorrow.** `pausedUntil` is an ISO
+  instant read from the 429's RetryInfo, but believed *only* for a per-minute
+  throttle; a spent **day** waits for midnight in the zone the allowance counts in
+  (verified over 14,206 instants of 2026, both DST changes, zero bad).
+- **Repair pays for exactly what moved.** A re-read narrates only the pages whose
+  fingerprint changed in that run — never the whole book, which would buy a shelf
+  of audio because someone pressed a button about the photos.
+- **Ship only wording this repo can prove.** E3 pinned transcribe=v2 /
+  second-opinion=v3, but the v2 text was reconstructed, not recovered; the review
+  reversed that half and pinned both passes to v3 (asserted byte-for-byte against
+  the harness) with the gap written in the header. `11b735b` then recut Phase L
+  around the **recovered** v2 found in a 06:33 worktree snapshot — L7 re-pins it.
+- **Counts are two numbers, not one.** "Words the AI was unsure of" and "pages to
+  check" are different questions; conflating them printed "30 words" over a book
+  with no highlight in it.
+- **Settings tells the truth about free.** The AI card now says what the free
+  Google key costs and steers to it; a paid key buys speed, not better words.
+
+### Adaptations
+- E1's patch was **not** applied verbatim: `path.normalize` keeps a trailing
+  separator that `browseLocal`'s prefix test would never match, so the seam would
+  have failed shut — the exact bug it exists to fix. Trailing separators are
+  trimmed down to `path.parse(n).root`.
+- E3's patch 03 was a truncated fragment; the intended shape was ported from the
+  frozen snapshot and the brace bookkeeping redone.
+- `content-imprint.js` was added to `tools/build-payload.sh` in the same commit
+  that created it (plan Gap 10 — an unshipped require dies on the hub's first line).
+- Two existing assertions were changed because the behaviour they pinned *was* the
+  bug (`pausedUntil === tomorrow()`); `content.savePage` now deletes `read` so a
+  page never claims a model produced the parent's own words.
+- No agent ran the full `tools/era-gate.sh` mid-phase (three agents editing one
+  worktree, and the sequential suites exceed the tool ceiling); the review commit
+  did: **67 passed, 0 failed**.
+
+### Follow-ups
+- **L7: re-pin the transcriber to the recovered v2.** Until then the hub sends one
+  wording, and the memo's headline (89.2%, best row v2 two-pass) describes a
+  configuration this hub is not sending.
+- `QUOTA_NOTE` and Settings still say "carries on tomorrow morning" for what may be
+  a 47-second throttle; `tests/settings-ui.test.mjs` pins `/tomorrow/i`.
+- Nothing reads `page.read` yet — the review page could name who read a page.
+- `clothing-worker.js:42` is now the only place asserting the stale "20 requests
+  per day per model".
+- The Voice card offers no model picker, so every family gets `eleven_flash_v2_5`.
+- Flags can still name a word the stripper removed; `^Printed in the sand …` is
+  still eaten by the imprint anchors.
+- `tests/icons.test.mjs` fails on this box (targets `:8377`, here an ssh tunnel).
+- `gate/` holds a stale untracked copy of `content-transcribe.test.mjs`.
+
+### Confidence and risks
+Confidence **high** on the defects themselves: every one was found by a real
+3-page run, fixed test-first, and the adversarial pass on top produced ten more
+confirmed findings — the counting-book strip ("3 BEARS" eaten as a code), the
+thinking-knob memo written on a *refusal*, the per-day 429 waking in 47 seconds.
+Confidence **medium** on the pipeline end to end: every provider is a stand-in
+behind an env-URL seam, so quota, refusal and partial-failure shapes are proven
+only against fakes. Chief residual risk is prompt fidelity — the hub currently
+sends a decorrelation by model alone, so live accuracy should not be assumed to
+match the bake-off until L7 lands. Second risk: none of Phase E has run on
+Windows; the Phase 7 VM walkthrough is still the first real test of the local-roots
+seam, the shelf hook and the imprint stripper on a family's own box.
