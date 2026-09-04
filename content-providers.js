@@ -4,13 +4,13 @@
 //
 // This file holds three things and nothing else:
 //
-//   1. THE POLICY. TRANSCRIBE_PROMPT is a verbatim port of the prompt the OCR
-//      bake-off measured every candidate against
-//      (tools/ocr-bakeoff/lib/prompts.mjs, PROMPT_VERSION v3 — ported, not
-//      required: that harness is ESM and the hub's Windows floor is Node 18,
-//      where require(esm) does not exist, plan §A3). Changing a word here
-//      invalidates the bake-off's numbers, so bump PROMPT_VERSION when you do
-//      and say why in the changelog there.
+//   1. THE POLICY — TWO of it. The bake-off measured its pair asymmetrically:
+//      the transcriber under the v2 wording, the second opinion under v3. Both
+//      are verbatim ports of tools/ocr-bakeoff/lib/prompts.mjs, kept here as
+//      NAMED, PINNED prompts (`transcribe` and `second-opinion`) with the
+//      config naming which each pass sends. Changing a word invalidates the
+//      bake-off's numbers; changing BOTH to one version throws away the
+//      decorrelation the pair exists for. See "the policy" below.
 //   2. THE LADDER. Three adapters (google / anthropic / openai) in the exact
 //      request shape clothing-worker.js already proved on the family's own
 //      keys, with its two hard-won rules kept intact:
@@ -62,31 +62,59 @@ const { aiRoles } = require("./ai-config.js");
 
 // ---------------------------------------------------------------- the policy
 
-// Ported verbatim from tools/ocr-bakeoff/lib/prompts.mjs @ v3. The rules are
-// numbered there and the reasons each one exists (a cover has no narrative
-// order; a character's hand-lettered sign IS story text) are in that file's
-// changelog, which is the evidence trail for why the words are these words.
-const PROMPT_VERSION = "v3";
-
-// KNOWN GAP, left open by T2.6a on purpose (it is code, not config, and this
-// task changed only defaults): the bake-off's pairing asks the transcriber and
-// its partner the question in TWO DIFFERENT WORDINGS — the partner's v3 and
-// the transcriber's older v2 — because a shared wording correlates their
-// mistakes as surely as a shared model does. Both passes here send v3. The
-// pair still catches more than one pass alone, which is why it is on; it is
-// not yet the pairing that was measured at its best. Closing this means two
-// NAMED, PINNED prompts (`transcribe` = v2, `second-opinion` = v3) and a
-// config field naming which each pass sends — and then never "upgrading both".
-
-const POLICY = `You are transcribing one photographed page of a printed children's picture book so it can be read aloud by a speech synthesiser. A single wrong word is a failure. Follow these rules exactly.
+// TWO WORDINGS, PINNED BY NAME (E3, 9/4 — this closes the gap T2.6a wrote down
+// and left open). The bake-off never measured two models asked the SAME
+// question: it measured the transcriber (gemini-3.1-flash-lite) under the older
+// v2 wording and its partner (gemini-3.5-flash-lite) under v3, because a shared
+// wording correlates two models' mistakes as surely as a shared model does —
+// and because v3 is not an upgrade, it is a TRADE (README "v3 is not an upgrade
+// - it is a trade": scored like for like against the same amended reference,
+// 3.1 reads better under v2, 3.5 reads better under v3). The 89.2%
+// auto-publish, zero-silent-error number the whole decision rests on is a
+// number about THIS pair asked THESE two ways.
+//
+// So: NEVER "upgrade both". Bumping one pass to the other's version, or a
+// future v4 to both, throws away the decorrelation and quietly re-runs the pair
+// as one measurement nobody has made. If a re-validation (tools/ocr-bakeoff/
+// README.md, due 2027-03) says a new wording wins, add it below and re-pin ONE
+// pass at a time, with the re-run's numbers to say which.
+//
+// Both texts are ported — not required: that harness is ESM and the hub's
+// Windows floor is Node 18, where require(esm) does not exist (plan §A3) — from
+// tools/ocr-bakeoff/lib/prompts.mjs. That file holds v3, and its changelog
+// holds the two rules v3 changed and the reasons each one changed (a cover has
+// no narrative order; a character's hand-lettered sign IS story text; our copy
+// of a book carries a gift inscription the book does not). That file holds only
+// its current version, so v2 here is its v3 text with exactly those two rules as
+// they read BEFORE that change, which is what its changelog says v2 was ("two
+// rules changed, everything else including OUTPUT_CONTRACT byte-identical to
+// v2") — and it is why only those two are spelled out per version below:
+// everything else is one shared text, so the two wordings cannot drift anywhere
+// the bake-off did not measure them drifting. The suite proves the v3 half
+// against the harness itself, byte for byte.
+const RULES_1_4 = `You are transcribing one photographed page of a printed children's picture book so it can be read aloud by a speech synthesiser. A single wrong word is a failure. Follow these rules exactly.
 
 1. VERBATIM PRINTED TEXT ONLY. Transcribe the words exactly as printed. Never modernise, localise or correct spelling (British spelling stays British). Never add, expand or paraphrase words that are not printed. Do not translate.
 2. READING ORDER follows the visual and narrative flow of the page, not raw top-to-bottom geometry. For rhyming verse use rhyme and metre as an ordering signal across columns, panels and speech bubbles, so the text reads coherently start to finish.
 3. ELLIPSES: render any printed ellipsis, including a spaced ". . .", as three dots "...". Keep leading or trailing ellipses that are used as page-turn continuations.
-4. QUOTES: transcribe quotation marks exactly as printed, even when they are unbalanced on this page (a speech may continue across pages).
-5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - decorative lettering painted on objects such as boat hulls, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark). BUT lettering that is PART OF THE STORY is story text and MUST be transcribed, in its place in reading order, even when it is hand-lettered or drawn into the art: words a character writes, reads, holds up or paints - a sign, a blackboard, a banner, a letter shown to the reader. If the words carry the story's meaning, they belong in "text". Publisher furniture is still dropped, always: running heads (the title or chapter repeated in the margin or the art), printed page numbers, ISBN and barcode lines, imprint, publisher and printer lines, and price stickers.
-6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end. Anything added to this particular copy is NOT part of the book and must be ignored entirely: handwritten inscriptions, gift dedications, an owner's name written or printed on a label, library stamps, and stickers of any kind. Only text PRINTED as part of the cover is transcribed, top to bottom as printed.
-7. If the page has no printed story text at all (a full-bleed illustration, an endpaper), return an empty string for "text".
+4. QUOTES: transcribe quotation marks exactly as printed, even when they are unbalanced on this page (a speech may continue across pages).`;
+
+// Rule 5, the one v3 rewrote: v2's "drop illustration lettering" over-fired on a
+// page whose punchline is painted into the picture.
+const RULE_5 = {
+  v2: `5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - lettering painted on objects such as boat hulls or signs, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark).`,
+  v3: `5. JUNK REMOVAL: drop text that belongs to the illustration rather than the story - decorative lettering painted on objects such as boat hulls, barcodes, printed page numbers, publisher furniture, and misread glyphs (for example a stray "99" that is really a quotation mark). BUT lettering that is PART OF THE STORY is story text and MUST be transcribed, in its place in reading order, even when it is hand-lettered or drawn into the art: words a character writes, reads, holds up or paints - a sign, a blackboard, a banner, a letter shown to the reader. If the words carry the story's meaning, they belong in "text". Publisher furniture is still dropped, always: running heads (the title or chapter repeated in the margin or the art), printed page numbers, ISBN and barcode lines, imprint, publisher and printer lines, and price stickers.`,
+};
+
+// Rule 6, the other: both versions pin a cover's reading order top to bottom
+// (that is v2's whole reason to exist); v3 adds the sentence that ignores what
+// was added to OUR copy — the inscription, the name sticker.
+const RULE_6 = {
+  v2: `6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end.`,
+  v3: `6. COVERS: if this page is a cover, transcribe the printed title, author and illustrator with the casing exactly as printed. Do not invent a byline that is not printed. ORDER ON A COVER IS FIXED, because a cover has no narrative flow: transcribe the printed blocks strictly TOP TO BOTTOM in the order they appear on the page. On many picture books the author and illustrator names are printed ABOVE the title - when they are, they come first. Do not promote the title to the front, and do not group the names with a byline at the end. Anything added to this particular copy is NOT part of the book and must be ignored entirely: handwritten inscriptions, gift dedications, an owner's name written or printed on a label, library stamps, and stickers of any kind. Only text PRINTED as part of the cover is transcribed, top to bottom as printed.`,
+};
+
+const RULES_7_9 = `7. If the page has no printed story text at all (a full-bleed illustration, an endpaper), return an empty string for "text".
 8. LINE AND STANZA BREAKS: use a single newline between printed lines of verse and a blank line between stanzas or separate text blocks. Do not re-wrap prose.
 9. FLAG, DO NOT GUESS: list in "uncertain" every word you are not fully confident about (obscured, blurred, cut off, or ambiguous). Still put your best reading in "text"; the list is for human review.`;
 
@@ -94,7 +122,27 @@ const OUTPUT_CONTRACT = `Reply with a single JSON object and nothing else - no p
 {"text": "<the full page transcription>", "uncertain": ["<word>", ...]}
 Use "uncertain": [] when you are confident about every word.`;
 
-const TRANSCRIBE_PROMPT = POLICY + "\n\n" + OUTPUT_CONTRACT;
+// The wording a version is: version id -> the exact string a model is sent.
+const promptText = (v) =>
+  [RULES_1_4, RULE_5[v], RULE_6[v], RULES_7_9].join("\n") + "\n\n" + OUTPUT_CONTRACT;
+const PROMPT_TEXT = { v2: promptText("v2"), v3: promptText("v3") };
+
+// The two PASSES, and the version each one is pinned to. This is the asymmetry
+// itself, in one object: the pass name is what the rest of this file asks for,
+// so no call site can pick a wording by accident.
+const PASSES = ["transcribe", "second-opinion"];
+const DEFAULT_PROMPTS = { "transcribe": "v2", "second-opinion": "v3" };
+
+// The first pass's wording, for a caller that has no config to hand (and the
+// name the older tests know it by).
+const TRANSCRIBE_PROMPT = PROMPT_TEXT[DEFAULT_PROMPTS.transcribe];
+
+// Which wording this pass sends, under this config. An unknown version is not a
+// wordless page: the pinned default stands.
+function promptFor(config, pass) {
+  const pinned = (config && config.transcribe && config.transcribe.prompts) || DEFAULT_PROMPTS;
+  return PROMPT_TEXT[pinned[pass]] || PROMPT_TEXT[DEFAULT_PROMPTS[pass]] || TRANSCRIBE_PROMPT;
+}
 
 // ---------------------------------------------------------------- the ladder
 
@@ -150,6 +198,10 @@ function baseFor(provider) { return aiBase() || (PROVIDERS[provider] || PROVIDER
 //   agreementPass true = the page is read twice, by the transcriber and by the
 //                 next rung (the partner), and only published unflagged when
 //                 the two readings agree. Costs one extra free call per page.
+//   prompts       which WORDING each pass sends, by name: {"transcribe": "v2",
+//                 "second-opinion": "v3"}. The asymmetry is the measurement
+//                 (see "the policy" above) — re-pin ONE pass at a time, with a
+//                 re-run's numbers, and never "upgrade both".
 //   escalateTo    the model a disagreement is handed to, which then pre-fills
 //                 the parent's answer. null = ask NOBODY: keep the
 //                 transcriber's reading and flag the page for the parent. That
@@ -168,6 +220,7 @@ const DEFAULTS = {
     model: "gemini-3.1-flash-lite",
     agreementPass: true,
     escalateTo: null,
+    prompts: DEFAULT_PROMPTS,
   },
 };
 
@@ -175,8 +228,19 @@ function loadConfig(dataDir) {
   let raw = null;
   try { raw = JSON.parse(fs.readFileSync(path.join(dataDir || "", CONFIG_FILE), "utf8")); } catch {}
   const t = (raw && typeof raw.transcribe === "object" && raw.transcribe) || {};
-  const out = { transcribe: { ...DEFAULTS.transcribe } };
-  for (const k of Object.keys(DEFAULTS.transcribe)) if (t[k] !== undefined && t[k] !== null) out.transcribe[k] = t[k];
+  // `prompts` is copied, never shared: DEFAULTS is one object the whole process
+  // reads, and a config file must not be able to edit it.
+  const out = { transcribe: { ...DEFAULTS.transcribe, prompts: { ...DEFAULT_PROMPTS } } };
+  for (const k of Object.keys(DEFAULTS.transcribe)) {
+    if (k === "prompts") continue;
+    if (t[k] !== undefined && t[k] !== null) out.transcribe[k] = t[k];
+  }
+  // Merged PER PASS, and only for a version this hub actually holds: a file that
+  // re-pins one pass must not silently un-pin the other (that is how a pair
+  // becomes two models reading the same words), and a typo must not send a page
+  // an empty prompt.
+  const p = (t.prompts && typeof t.prompts === "object") ? t.prompts : {};
+  for (const pass of PASSES) if (PROMPT_TEXT[p[pass]]) out.transcribe.prompts[pass] = p[pass];
   return out;
 }
 
@@ -380,11 +444,14 @@ async function callModel(o) {
 //   models  the rungs to try (default: the provider's ladder)
 //   spent   a Set of model ids whose daily allowance is gone — shared across a
 //           whole book, so page two never knocks on a door page one found shut
+//   policy  the wording to send (default: this config's `transcribe` pass —
+//           never the other pass's, so a caller that forgets cannot be the one
+//           that accidentally asks both models the same question)
 // Throws with `.quota = true` when every rung is spent: that is a PAUSE, not a
 // failure, and transcribeBook turns it into one.
 async function transcribePage(o) {
   const cfg = o.cfg || {};
-  const prompt = o.policy || TRANSCRIBE_PROMPT;
+  const prompt = o.policy || promptFor(o.config, "transcribe");
   const spent = o.spent instanceof Set ? o.spent : new Set();
   const all = o.models || ladderFor(cfg, o.config);
   const list = all.filter(m => !spent.has(m));
@@ -497,8 +564,10 @@ async function transcribeBook(dir, opts) {
     const imagePath = path.join(dir, page.image);
     try {
       // No `models`: transcribePage walks the whole ladder minus what this book
-      // has already found shut.
-      const first = await transcribePage({ imagePath, cfg, config, spent });
+      // has already found shut. The `transcribe` wording, which is the one the
+      // transcriber's accuracy was measured under.
+      const first = await transcribePage({ imagePath, cfg, config, spent,
+                                           policy: promptFor(config, "transcribe") });
       calls++;
       let text = first.text, unsure = first.uncertain.slice(), note = null;
 
@@ -510,11 +579,16 @@ async function transcribeBook(dir, opts) {
       // spent rung is remembered for the rest of the book. Only a refused key
       // (which refuses everything) escapes.
       if (agree) {
+        // A DIFFERENT MODEL, ASKED A DIFFERENT WAY. Both halves are the safety
+        // net: the partner is a second opinion only as far as it can be wrong
+        // independently, and two models reading from the same words are wrong
+        // together more often than the bake-off's 89.2% assumes.
+        const secondPolicy = promptFor(config, "second-opinion");
         const second = ladderFor(cfg, config).filter(m => !spent.has(m) && m !== first.model);
         let b = null, unchecked = null;
         if (!second.length) unchecked = "no second model was left to ask";
         else {
-          try { b = await transcribePage({ imagePath, cfg, config, spent, models: [second[0]] }); calls++; }
+          try { b = await transcribePage({ imagePath, cfg, config, spent, models: [second[0]], policy: secondPolicy }); calls++; }
           catch (e) {
             if (isPermanent(e.message)) throw e;
             unchecked = store.redact(e.message);
@@ -549,7 +623,11 @@ async function transcribeBook(dir, opts) {
           const strong = strongId && !spent.has(strongId) ? [strongId] : [];
           let c = null;
           if (strong.length) {
-            try { c = await transcribePage({ imagePath, cfg, config, spent, models: [strong[0]] }); calls++; }
+            // The decider is a CHECKER, so it is asked the checker's question:
+            // it arrives after a reading made under the other wording, and
+            // sending it the transcriber's own words would tilt it towards the
+            // reading it is here to weigh.
+            try { c = await transcribePage({ imagePath, cfg, config, spent, models: [strong[0]], policy: secondPolicy }); calls++; }
             catch (e) {
               if (isPermanent(e.message)) throw e;
               log("page " + page.index + ": no decider (" + store.redact(e.message) + ")");
@@ -612,7 +690,8 @@ async function transcribeBook(dir, opts) {
 }
 
 module.exports = {
-  PROMPT_VERSION, TRANSCRIBE_PROMPT, PROVIDERS, DEFAULTS, CONFIG_FILE,
+  PROMPT_TEXT, DEFAULT_PROMPTS, PASSES, TRANSCRIBE_PROMPT, promptFor,
+  PROVIDERS, DEFAULTS, CONFIG_FILE,
   QUOTA_NOTE, TIMEOUT_MS, MAX_TOKENS,
   aiBase, baseFor, loadConfig, ladderFor, parseModelJson, normalizeLoose, firstDivergence,
   dayOf, tomorrow, pagesOf,

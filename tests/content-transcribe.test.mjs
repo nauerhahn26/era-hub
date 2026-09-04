@@ -486,6 +486,110 @@ test("the pick is a google model, so a key for another provider gets its OWN lad
                    "no page pays for a call that cannot succeed");
 });
 
+// --------------------------------------------- the pinned prompt pair (E3)
+
+// The bake-off did not measure two models asked the SAME question: it measured
+// the transcriber under the older v2 wording and the partner under v3, because
+// a shared wording correlates two models' mistakes as surely as a shared model
+// does (Addendum §6; README "v3 is not an upgrade - it is a trade": each of the
+// two reads better under its own version). These tests are the guard that the
+// asymmetry survives, i.e. that nobody ever "upgrades both".
+//
+// The sentinels are one phrase each that exists in exactly one of the two
+// wordings: v2's rule 5 drops lettering on "boat hulls or signs", which v3
+// rewrote (a sign a character holds up IS story text there); v3's rule 5 is the
+// only one that shouts PART OF THE STORY.
+const V2_ONLY = "boat hulls or signs";
+const V3_ONLY = "PART OF THE STORY";
+
+test("the two wordings are pinned, named, and both are really the bake-off's", async () => {
+  contentCfg(null);
+  assert.equal(providers.DEFAULT_PROMPTS.transcribe, "v2", "the transcriber reads under v2");
+  assert.equal(providers.DEFAULT_PROMPTS["second-opinion"], "v3", "the partner reads under v3");
+  const two = providers.PROMPT_TEXT;
+  assert.ok(two.v2.includes(V2_ONLY) && !two.v2.includes(V3_ONLY));
+  assert.ok(two.v3.includes(V3_ONLY) && !two.v3.includes(V2_ONLY));
+  // both are the same policy: same nine rules, same output contract, two rules apart
+  for (const v of ["v2", "v3"]) {
+    assert.match(two[v], /VERBATIM PRINTED TEXT ONLY/);
+    assert.match(two[v], /9\. FLAG, DO NOT GUESS/);
+    assert.match(two[v], /Use "uncertain": \[\] when you are confident about every word\./);
+  }
+  // PORTED VERBATIM, and provably so: the harness the numbers came from is ESM
+  // and cannot be require()d by the hub (Node 18 floor), but a test can import
+  // it. If a re-run bumps that file's wording, this fails and the pinning is a
+  // DECISION again instead of a drift.
+  const bakeoff = await import(path.join(HUB, "tools/ocr-bakeoff/lib/prompts.mjs"));
+  assert.equal(bakeoff.PROMPT_VERSION, "v3", "the harness still holds v3");
+  assert.equal(two.v3, bakeoff.transcribePrompt(), "the second opinion's wording is the harness's, byte for byte");
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), two.v2);
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "second-opinion"), two.v3);
+});
+
+test("one page, two calls, TWO DIFFERENT WORDINGS - the pairing the bake-off measured", async () => {
+  reset({ answers: [{ text: "Nine mice on the ice.", uncertain: [] }] });
+  await providers.transcribeBook(book("Two Wordings"), { dataDir: DATA });
+
+  assert.equal(calls.length, 2);
+  assert.notEqual(calls[0].prompt, calls[1].prompt,
+    "asking both models the same question correlates their mistakes - the whole point of the pair is that it does not");
+  assert.ok(calls[0].prompt.includes(V2_ONLY), "the transcriber gets v2");
+  assert.ok(!calls[0].prompt.includes(V3_ONLY));
+  assert.ok(calls[1].prompt.includes(V3_ONLY), "the second opinion gets v3");
+  assert.ok(!calls[1].prompt.includes(V2_ONLY));
+});
+
+test("the escalation call speaks with the second opinion's wording", async () => {
+  const ladder = providers.ladderFor({ provider: "google" });
+  const STRONG = ladder[3];
+  reset({ config: { transcribe: { agreementPass: true, escalateTo: STRONG } },
+          answers: [
+            ({ model }) => model === ladder[0] ? { text: "Nine mice on the ice.", uncertain: [] }
+                         : model === ladder[1] ? { text: "Nine mice on the rice.", uncertain: [] }
+                         : { text: "Nine mice on the ice.", uncertain: [] },
+          ] });
+  await providers.transcribeBook(book("Decider Wording"), { dataDir: DATA });
+
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].model, STRONG);
+  assert.ok(calls[0].prompt.includes(V2_ONLY), "the reading being checked was made under v2");
+  assert.ok(calls[2].prompt.includes(V3_ONLY), "the decider is asked the second opinion's question");
+  assert.ok(!calls[2].prompt.includes(V2_ONLY));
+});
+
+test("which wording each pass sends is config, not code", async () => {
+  // A family (or the next re-validation) can re-pin either pass without a code
+  // change - including, deliberately, back to one wording for both.
+  reset({ config: { transcribe: { prompts: { transcribe: "v3", "second-opinion": "v2" } } },
+          answers: [{ text: "Nine mice on the ice.", uncertain: [] }] });
+  await providers.transcribeBook(book("Repinned"), { dataDir: DATA });
+  assert.ok(calls[0].prompt.includes(V3_ONLY));
+  assert.ok(calls[1].prompt.includes(V2_ONLY));
+
+  // an unknown version is not a wordless page: the pinned default stands
+  contentCfg({ transcribe: { prompts: { transcribe: "v99" } } });
+  assert.equal(providers.promptFor(providers.loadConfig(DATA), "transcribe"), providers.PROMPT_TEXT.v2);
+  contentCfg(null);
+});
+
+test("nothing the book writes down carries the prompt", async () => {
+  // log.jsonl and text.json live INSIDE the family's Drive folder and mirror to
+  // every device; a page's words belong there, a kilobyte of policy does not.
+  reset({ answers: [
+    ({ model }) => model === "gemini-3.1-flash-lite"
+      ? { text: "Nine mice on the ice.", uncertain: [] }
+      : { text: "Nine mice on the rice.", uncertain: [] },
+  ] });
+  const dir = book("Quiet Log");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  const written = fs.readFileSync(path.join(store.buildDir(dir), "log.jsonl"), "utf8") +
+                  fs.readFileSync(path.join(store.buildDir(dir), "text.json"), "utf8");
+  assert.ok(written.includes("Nine mice"), "the page's own words ARE written down");
+  for (const phrase of [V2_ONLY, V3_ONLY, "VERBATIM PRINTED TEXT ONLY", "JUNK REMOVAL",
+                        "Reply with a single JSON object"])
+    assert.ok(!written.includes(phrase), "the build must not write the prompt down: " + phrase);
+});
+
 // ------------------------------------------------- what the live run found
 
 // e2e 9/4, the first real book: every agreement-pass call to
