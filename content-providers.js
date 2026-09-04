@@ -14,11 +14,15 @@
 //   2. THE LADDER. Three adapters (google / anthropic / openai) in the exact
 //      request shape clothing-worker.js already proved on the family's own
 //      keys, with its two hard-won rules kept intact:
-//        * a 429 retires THAT MODEL, not the day. Google's free tier is 20
-//          requests per day PER MODEL, so the next rung is another 20 pages
-//          (dad 9/2: the sticky model 429'd after 7 photos and the old
-//          "one 429 = day over" rule left 12 photos and three untouched
-//          models on the table).
+//        * a 429 retires THAT MODEL, not the day. Google's free allowance is
+//          counted PER MODEL PER DAY, so a rung that is spent leaves the next
+//          rung a fresh allowance of its own and the book keeps going (dad 9/2:
+//          the sticky model 429'd after 7 photos and the old "one 429 = day
+//          over" rule left 12 photos and three untouched models on the table).
+//          No number is written here on purpose: nothing in this file reads a
+//          quota, the ceiling is Google's to change (the 9/4 live run was told
+//          500/day for gemini-3.1-flash-lite, where an older note here said 20),
+//          and the ladder needs only the 429 itself to do the right thing.
 //        * 401/403 is "permanent:" — a refused key will refuse every page, so
 //          stop and tell the family instead of burning the ladder.
 //      Base URL comes from ERA_AI_URL, read FRESH on every call, so no test
@@ -261,6 +265,36 @@ function firstDivergence(a, b) {
 const isQuota = (msg) => /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(String(msg));
 const isPermanent = (msg) => /^permanent:/.test(String(msg));
 
+// THE THINKING KNOB IS NOT THE SAME SHAPE ON EVERY GEMINI. Thinking off is what
+// stops a transcription spending its whole token budget deliberating over a
+// picture book (QA 9/1), but the field that turns it off changed with the
+// generation: gemini-3.1 takes the numeric {thinkingBudget:0} the bake-off
+// measured the transcriber under, while gemini-3.5 replaced it with a LEVEL and
+// answers the budget with a flat 400 "Request contains an invalid argument".
+// Sent blind, that 400 is not a model that reads worse — it is a rung that never
+// answers at all, and it is the very rung the agreement pass buys its second
+// opinion from (e2e 9/4: all three pages of the first real book published
+// unchecked because gemini-3.5-flash-lite 400'd on every one of them).
+//
+// Nothing here guesses at Google's version numbering — the next change of shape
+// would break it again in the same silent way. The FIRST refusal teaches this
+// process, once per model id, and every call after it is sent the shape that
+// model actually takes. So the transcriber keeps the exact request its accuracy
+// was measured under for as long as that request is accepted, which is what
+// keeps the bake-off's numbers numbers about this hub.
+const THINKING_OFF = { thinkingBudget: 0 };             // 2.x, 3.1: no thinking at all
+const THINKING_MINIMAL = { thinkingLevel: "minimal" };  // 3.5+: the least it will do
+const thinkingShape = new Map();                        // model id -> the shape it accepted
+function thinkingFor(model) { return thinkingShape.get(model) || THINKING_OFF; }
+// A model that refused the shape we sent has told us which one it wants. Returns
+// true when there is another shape left to try, i.e. the call is worth re-sending.
+function retune(model, body) {
+  if (thinkingShape.get(model) === THINKING_MINIMAL) return false;
+  thinkingShape.set(model, THINKING_MINIMAL);
+  body.generationConfig.thinkingConfig = THINKING_MINIMAL;
+  return true;
+}
+
 // One provider call for one page. The three request shapes are
 // clothing-worker.js:455-541's, unchanged apart from the prompt and the token
 // ceiling, so a family whose key already names garments can already read books.
@@ -294,8 +328,9 @@ async function callModel(o) {
       // Thinking off and temperature 0: reading a page is transcription, not
       // reasoning, and a -latest alias that resolves to a thinking model burns
       // the whole token budget deliberating over a picture book (QA 9/1).
+      // WHICH shape turns it off is the model's to say — see thinkingFor().
       generationConfig: { temperature: 0, responseMimeType: "application/json",
-        maxOutputTokens: MAX_TOKENS, thinkingConfig: { thinkingBudget: 0 } } };
+        maxOutputTokens: MAX_TOKENS, thinkingConfig: thinkingFor(model) } };
     extract = (j) => (j.candidates[0].content.parts || []).map(x => x.text || "").join("");
   } else {
     url = base + "/v1/messages";
@@ -325,6 +360,12 @@ async function callModel(o) {
     if (r.status === 401 || r.status === 403)
       throw new Error("permanent: the AI provider did not accept that key (" + r.status +
                       ") — check the key in Settings");
+    // The thinking knob, refused. Re-shaped and sent again WITHOUT spending an
+    // attempt: the two attempts exist for a provider that is throttling, and
+    // this is a provider that is answering — it is telling us the request is the
+    // wrong shape. retune() gives up after one re-shape, so this cannot spin.
+    if (r.status === 400 && provider === "google" && /INVALID_ARGUMENT/.test(last) &&
+        retune(model, body)) { attempt--; continue; }
     if (r.status === 429) break;                     // no point retrying a spent allowance
     if (r.status < 500) break;                       // 400/404: try the next model
   }
@@ -470,45 +511,60 @@ async function transcribeBook(dir, opts) {
       // (which refuses everything) escapes.
       if (agree) {
         const second = ladderFor(cfg, config).filter(m => !spent.has(m) && m !== first.model);
-        if (!second.length) log("page " + page.index + ": no second model left for the agreement pass");
+        let b = null, unchecked = null;
+        if (!second.length) unchecked = "no second model was left to ask";
         else {
-          let b = null;
           try { b = await transcribePage({ imagePath, cfg, config, spent, models: [second[0]] }); calls++; }
           catch (e) {
             if (isPermanent(e.message)) throw e;
-            log("page " + page.index + ": no second opinion (" + store.redact(e.message) + ")");
+            unchecked = store.redact(e.message);
           }
-          if (b && normalizeLoose(b.text) !== normalizeLoose(text)) {
-            const word = firstDivergence(text, b.text);
-            // Only a CONFIGURED adjudicator decides (spec §4.2: "the strongest
-            // configured model"). With none — the free default — the
-            // transcriber's reading stands and the page goes to the parent.
-            // The bake-off measured a paid adjudicator, and a parent; it never
-            // measured a third model of the same free family, and two models
-            // from one family are wrong together often enough that a guess
-            // overwriting a good reading is worse than no guess. The page is
-            // flagged for a human either way.
-            const strongId = config.transcribe.escalateTo;
-            const strong = strongId && !spent.has(strongId) ? [strongId] : [];
-            let c = null;
-            if (strong.length) {
-              try { c = await transcribePage({ imagePath, cfg, config, spent, models: [strong[0]] }); calls++; }
-              catch (e) {
-                if (isPermanent(e.message)) throw e;
-                log("page " + page.index + ": no decider (" + store.redact(e.message) + ")");
-              }
+        }
+        // NOBODY CHECKED THIS PAGE. The second model IS the safety net — the
+        // decision memo's whole reason for buying a pair is that the chosen
+        // transcriber never flags its own mistakes — so a page that could not be
+        // checked must not come out looking like a page that was checked and
+        // agreed. It publishes either way (the ruling of 9/4 stands); it just
+        // goes to the parent with a mark on it. When the partner rung is down
+        // this marks EVERY page of the book, and that is the intended signal:
+        // the book was read once, not twice, and it says so.
+        // Until this, the only trace was a line in log.jsonl: on 9/4 the partner
+        // rung 400'd on every page of a real book and job.json, /content/status
+        // and the Settings card all said the book had nothing to review.
+        if (unchecked) {
+          log("page " + page.index + ": no second opinion (" + unchecked + ")");
+          note = "no second model checked this page";
+          unsure.push({ word: "page", reason: note });
+        } else if (normalizeLoose(b.text) !== normalizeLoose(text)) {
+          const word = firstDivergence(text, b.text);
+          // Only a CONFIGURED adjudicator decides (spec §4.2: "the strongest
+          // configured model"). With none — the free default — the
+          // transcriber's reading stands and the page goes to the parent.
+          // The bake-off measured a paid adjudicator, and a parent; it never
+          // measured a third model of the same free family, and two models
+          // from one family are wrong together often enough that a guess
+          // overwriting a good reading is worse than no guess. The page is
+          // flagged for a human either way.
+          const strongId = config.transcribe.escalateTo;
+          const strong = strongId && !spent.has(strongId) ? [strongId] : [];
+          let c = null;
+          if (strong.length) {
+            try { c = await transcribePage({ imagePath, cfg, config, spent, models: [strong[0]] }); calls++; }
+            catch (e) {
+              if (isPermanent(e.message)) throw e;
+              log("page " + page.index + ": no decider (" + store.redact(e.message) + ")");
             }
-            if (c) {
-              escalated++;
-              text = c.text; unsure = c.uncertain.slice();
-              note = "two models read this page differently; " + c.model + " decided";
-            } else {
-              // Nothing left to break the tie: keep the first reading and say
-              // so. A flagged page still publishes (ruling 9/4).
-              note = "two models read this page differently and there was no third to ask";
-            }
-            unsure.push({ word: word || "page", reason: note });
           }
+          if (c) {
+            escalated++;
+            text = c.text; unsure = c.uncertain.slice();
+            note = "two models read this page differently; " + c.model + " decided";
+          } else {
+            // Nothing left to break the tie: keep the first reading and say
+            // so. A flagged page still publishes (ruling 9/4).
+            note = "two models read this page differently and there was no third to ask";
+          }
+          unsure.push({ word: word || "page", reason: note });
         }
       }
 

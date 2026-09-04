@@ -26,6 +26,10 @@ const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const AI_PORT = 8430;
 const require = createRequire(import.meta.url);
 const store = require(path.join(HUB, "content-store.js"));
+// Step 3 reads what step 2 wrote: a page nobody could check has to reach the
+// manifest's `flagged` count, which is what /content/status and the Settings
+// card show the parent.
+const publish = require(path.join(HUB, "content-publish.js"));
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-transcribe-"));
 const DATA = path.join(TMP, "data");
@@ -46,6 +50,11 @@ let calls = [];            // one entry per request the stand-in actually saw
 let total = 0;
 let answers = [];          // queued replies, consumed in order
 let throttle = new Set();  // model ids that answer 429 (a spent daily allowance)
+let broken = new Set();    // model ids that answer 500 (a rung that is simply down)
+// The live 9/4 failure: gemini-3.5 replaced thinkingBudget with thinkingLevel and
+// answers the old numeric knob with a flat 400 INVALID_ARGUMENT. With this on,
+// the stand-in is that model: it refuses the budget shape and answers the level.
+let budget400 = false;
 let mode = "ok";           // ok | 401 | chatty
 
 // ------------------------------------------------------------- the stand-in
@@ -86,12 +95,23 @@ before(async () => {
       } else { res.writeHead(404).end(); return; }
 
       total++;
-      calls.push({ url: req.url, provider, model, prompt, image,
+      calls.push({ url: req.url, provider, model, prompt, image, body: parsed,
                    key: req.headers["x-goog-api-key"] || req.headers["x-api-key"] || req.headers["authorization"] });
 
       if (mode === "401") {
         res.writeHead(401, { "content-type": "application/json" });
         res.end('{"error":{"message":"API key not valid"}}');
+        return;
+      }
+      const thinking = (parsed.generationConfig || {}).thinkingConfig;
+      if (budget400 && provider === "google" && thinking && thinking.thinkingBudget !== undefined) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end('{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}');
+        return;
+      }
+      if (broken.has(model)) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end('{"error":{"code":500,"message":"The model is overloaded."}}');
         return;
       }
       if (throttle.has(model)) {
@@ -155,6 +175,8 @@ function reset(opts = {}) {
   calls = [];
   answers = opts.answers || [{ text: "The cat sat on the mat.", uncertain: [] }];
   throttle = new Set(opts.throttle || []);
+  broken = new Set(opts.broken || []);
+  budget400 = !!opts.budget400;
   mode = opts.mode || "ok";
   visionKey(opts.provider || "google");
   contentCfg(opts.config === undefined ? null : opts.config);
@@ -462,6 +484,77 @@ test("the pick is a google model, so a key for another provider gets its OWN lad
   assert.ok(calls.every(c => c.provider === "openai"), "every call went to the key's own provider");
   assert.deepEqual(calls.map(c => c.model), providers.PROVIDERS.openai.models.slice(0, 2),
                    "no page pays for a call that cannot succeed");
+});
+
+// ------------------------------------------------- what the live run found
+
+// e2e 9/4, the first real book: every agreement-pass call to
+// gemini-3.5-flash-lite came back 400 INVALID_ARGUMENT because that generation
+// wants thinkingLevel where 3.1 wants thinkingBudget, and every page published
+// with ONE reading and NO flag. Two separate failures, one silent book: the
+// partner rung never answered, and nothing said so.
+
+test("a model that refuses the thinking knob is asked again in the shape it takes - once, and remembered", async () => {
+  reset({ config: SINGLE, budget400: true,
+          answers: [{ text: "Ten green bottles on the wall.", uncertain: [] }] });
+  const dir = book("Thinking Knob", 2);
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+
+  assert.equal(r.transcribed, 2, "a refused REQUEST SHAPE is not a model that cannot read");
+  assert.equal(store.readText(dir).pages[0].text, "Ten green bottles on the wall.");
+  // page one costs two requests (the refusal and the re-shape), page two costs
+  // one: the shape this model takes is remembered for the rest of the run.
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls.map(c => c.model),
+    ["gemini-3.1-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite"],
+    "the ladder is never walked - the rung answered, it just wanted a different word");
+  const knob = (c) => c.body.generationConfig.thinkingConfig;
+  assert.equal(knob(calls[0]).thinkingBudget, 0,
+    "the first call is the exact request the bake-off measured the transcriber under");
+  assert.equal(knob(calls[1]).thinkingLevel, "minimal");
+  assert.equal(knob(calls[1]).thinkingBudget, undefined, "the refused field is gone, not sent alongside");
+  assert.equal(knob(calls[2]).thinkingLevel, "minimal", "page two starts in the shape that worked");
+  // and thinking is still OFF-as-it-can-be: a transcription must not spend its
+  // token budget deliberating (QA 9/1)
+  assert.equal(providers.MAX_TOKENS > 0, true);
+});
+
+test("the thinking knob is a google field: the other two providers' requests are untouched", async () => {
+  for (const provider of ["openai", "anthropic"]) {
+    reset({ provider, config: SINGLE, budget400: true });
+    const r = await providers.transcribeBook(book("Untouched " + provider), { dataDir: DATA });
+    assert.equal(r.transcribed, 1);
+    assert.equal(calls.length, 1, provider + ": one page, one call");
+    assert.equal(calls[0].provider, provider);
+    assert.equal(calls[0].body.generationConfig, undefined,
+      provider + " has no generationConfig, and must never grow one");
+    assert.ok(!JSON.stringify(calls[0].body).includes("thinking"),
+      provider + ": no thinking knob of any shape travels to a provider that has none");
+  }
+});
+
+test("a page the partner could not read is published WITH A MARK ON IT, not as an agreed page", async () => {
+  const ladder = providers.ladderFor({ provider: "google" });
+  reset({ broken: [ladder[1]],               // the partner rung is simply down
+          answers: [{ text: "The moon came out, round and white.", uncertain: [] }] });
+  const dir = book("Nobody Checked");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+
+  assert.equal(r.transcribed, 1, "the reading we already paid for is never thrown away");
+  assert.equal(r.escalated, 0);
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "The moon came out, round and white.");
+  assert.equal(page.flags.length, 1, "one reading is not a checked page");
+  assert.match(page.flags[0].reason, /no second model checked this page/);
+  assert.ok(store.readLog(dir).some(l => l.msg.includes("no second opinion")),
+    "the log still says why the second opinion could not be bought");
+
+  // and the mark travels: the manifest is where the parent's 'come and look'
+  // count comes from (content.js /content/status, the Settings books card).
+  const p = publish.publishBook(dir, { slug: "nobody-checked", now: "2026-09-04T12:00:00.000Z" });
+  assert.equal(p.published, true, "a flagged page still publishes - the ruling of 9/4");
+  assert.equal(p.pages.length, 1);
+  assert.equal(p.flagged, 1);
 });
 
 // --------------------------------------------------------------- the tally
