@@ -137,12 +137,13 @@ if its outputs exist and inputs are unchanged):
 
 1. **Ingest.** Move originals to `sources/`; order by EXIF `DateTimeOriginal`,
    falling back to filename; downscale to `pages/<n>.jpg` (long edge 2048,
-   EXIF orientation applied). No pure-JS codec and no native dep: on Windows
-   the worker spawns `powershell` with `System.Drawing` (present on every
-   Windows install); on Linux (Claude Code operator) it uses `ffmpeg`; if
-   neither works the original is used as the page image and the log says so.
-   The vision providers downscale server-side, so transcription never depends
-   on this step succeeding.
+   EXIF orientation applied) with the pure-JS JPEG path the hub already ships
+   for clothing (`clothing-worker.js` `ensureCodecs`/`scaleRgba`/`writeJpg`
+   over `vendor/jpeg-js`, orientation from `image-orient.js`), extracted into a
+   shared module. No spawn, no native dep, identical on the Linux operator. If
+   a decode fails the original is used as the page image and the log says so;
+   the vision providers downscale server-side, so transcription never depends
+   on this step.
 2. **Transcribe → `text.json`.** Per page, one vision call under the
    transcription policy (verbatim printed text, narrative reading order, `...`
    for ellipses, quotes as printed, drop illustration junk and page numbers,
@@ -200,7 +201,7 @@ meets the word-timing bar.
 
 ## 5. Review-and-reorder page
 
-The only builder UI. Served by the hub at `/books/review/?slug=…`, linked from
+The only builder UI. Served by the hub at `/book-review/?slug=…` (a free prefix; `/books/` is the media jail), linked from
 the Settings content card and from the board splash when a job finishes with
 flags. Mouse/touch only.
 
@@ -322,9 +323,13 @@ room for `suggested[]` without a schema bump.
 **Risks.**
 
 - **Hardware floor.** I-13 has no GPU and a 2C/4T CPU: all AI remote; local
-  work limited to JPEG resize (via `System.Drawing`) and file moves. If the
-  resize spawn proves slow on the I-13, the reader can serve the originals —
-  nothing downstream depends on `pages/`.
+  work limited to the pure-JS JPEG resize (already proven on the I-13 by the
+  clothing worker) and file moves. If it proves slow for 24-megapixel photos,
+  the reader can serve the originals — nothing downstream depends on `pages/`.
+- **Drive write path.** The hub's Drive API mode is read-only (`drive.js:19`,
+  `drive.readonly`), so content jobs run only in local mode (Google Drive for
+  Desktop mount), building in place inside the mounted folder. API-mode
+  building is out of scope; Settings says "needs Google Drive for desktop".
 - **Free-tier quotas.** A free Google key transcribes ~20 pages/day/model; the
   worker must pause, not fail, and Settings must say "waiting for tomorrow's
   quota". The bake-off records the exact limits.

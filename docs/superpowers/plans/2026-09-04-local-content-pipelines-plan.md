@@ -1,0 +1,1204 @@
+# Implementation plan: local content pipelines (books, music, movies)
+
+Date: 2026-09-04. Produced by `rae-flow:planning` (subagent mode, no user
+interaction — every unresolved question is written down, not asked).
+
+- **Design source:** `docs/superpowers/specs/2026-09-04-local-content-pipelines-design.md`
+- **Repos touched:** `era-hub` (worktree `era-hub--wt-install-qa`, branch
+  `feat/audit-fixes`) and `era-board` (currently `master` — needs its own
+  branch/worktree; `era-hub/public/board` is a symlink to `era-board/app`,
+  gitignored, so board work is a *separate commit in a separate repo*).
+- **Preflight verdict:** PASS WITH WARNINGS — 3 near-blockers with agreed
+  mitigations, 14 warnings, 9 infos. Full detail in §A below; the mitigations
+  are folded into the tasks as constraints.
+
+---
+
+## A. Preflight results (design vs repo reality)
+
+Status: **PASS WITH WARNINGS**. No blocker without a viable resolution path,
+so the skeleton is produced. Each gap below carries a task id where it is paid.
+
+### A1. Near-blockers (resolved by a scope constraint, must not be skipped)
+
+**Gap 1 — The hub has no write path into Drive.**
+*Category:* Structure. *Design assumes:* outputs land in the family's
+`New ERA Content/` folder and reach other devices through the existing mirror
+(spec §1, §4 "Once per family"). *Repo reality:* `drive.js:9` — "Read-only
+scope; nothing is ever uploaded"; the OAuth scope is
+`drive.readonly` (`drive.js:19`); `sync()`/`syncLocal()` only copy
+Drive → `<DATA>` (`drive.js:180-210`, `drive.js:308-321`). There is no upload
+code anywhere. *Impact:* in **API mode** a built book can never reach the
+family's Drive or a second device — the whole "pay once per family" promise
+fails silently. *Classification:* Blocker for API mode, Warning for local mode.
+*Mitigation (adopted):* **content jobs run only in local mode** — the worker
+builds *in place* inside `cfg.folderPath/books/<Title>/` (a real folder that
+Google Drive for Windows uploads for us), and the existing mirror copies the
+result into `<DATA>` for serving. `content.scan()` returns
+`{skipped:"needs-local-drive"}` when `drive.status().mode !== "local"`, and
+Settings says so. API-mode building is explicitly out of scope for this plan.
+*Paid in:* T2.2, T2.10.
+
+**Gap 2 — `movies/` is not mirrored at all.**
+*Category:* Dependency. *Design assumes:* `New ERA Content/movies/` mirrors
+like the others (spec §2 folder contract, §2 mirror change 2). *Repo reality:*
+`drive.js:22` — `MIRROR_SUBDIRS = ["books", "music", "content", "clothing"]`.
+`movies` is absent, so `createContentFolder()` (`drive.js:341-352`) never
+creates it and `syncLocal()` never copies it; `<DATA>/movies` (`server.js:72`)
+is populated only by the installer/dev tooling today. *Impact:* every movie a
+parent adds from the board would live on one device and vanish on reinstall.
+*Mitigation:* add `"movies"` to `MIRROR_SUBDIRS`; note it also changes
+`contentReady()` (`drive.js:261-270`) and therefore the Settings checklist.
+*Paid in:* T1.2.
+
+**Gap 3 — the movies catalog schema in the spec is not the schema the recipe reads.**
+*Category:* Structure. *Design assumes:* the writer stores
+`{title, year, tmdbId?, link, provider, poster, addedBy}` (spec §6).
+*Repo reality:* `moviesRecipe()` requires `id` matching `/^[a-z0-9-]{1,64}$/`
+(`server.js:670`), `kind: "movie"|"show"` (`server.js:674,678`),
+`launch.url` (`server.js:675`), and sorts by `tier`/`rank`/`comfort`
+(`server.js:686-689`); posters are `"movies/" + t.poster` where `poster` is
+`"posters/<slug>.jpg"` (`era-family/tools/fetch-posters.mjs:64,76`). A title
+written in the spec's shape is silently dropped by the filter at
+`server.js:670`. *Impact:* "add a movie" appears to work and nothing shows on
+the board. *Mitigation:* the writer emits the **existing** schema and adds the
+spec's provenance fields alongside (`tmdbId?`, `addedBy`, `year?`), defaulting
+`kind:"movie"`, `tier:"core"`, `rank:` next free. *Paid in:* T5.1.
+
+### A2. Warnings (documented, mitigated, proceed)
+
+| # | Gap | Evidence | Mitigation | Task |
+|---|---|---|---|---|
+| 4 | `/books/review/` is unreachable — the `/books/` catch-all jail fires first and 404s a extension-less path | `server.js:1453-1456` routes before static `server.js:1761`; `serveMediaJail` 404s ext `""` at `server.js:452` | Serve the page at **`/book-review/`** (`public/book-review/index.html`), a free prefix. If the spec's URL is insisted on, add an explicit `urlPath === "/books/review/"` branch *above* line 1453 plus its own 301. | T3.1 |
+| 5 | The serve-side "allowlist" is by **extension**, not by name — `sources/*.jpg` and `.build/*.json` are served today | `BOOK_EXTS` `server.js:439`; `serveMediaJail` `server.js:446-452` | Add a path-segment deny for `sources` and `.build` inside `serveMediaJail` for the books jail only. (`.build/log.jsonl` is already denied — `.jsonl` is not in `BOOK_EXTS`.) | T1.3 |
+| 6 | Slugify breaks the slug↔directory identity `serveBook` relies on | `booksIndex()` uses `d.name` verbatim as the slug (`server.js:411-431`); `serveBook` jails `rest` straight into `BOOKS_DIR` (`server.js:445`) | `booksIndex()` returns `{slug, dir}`; `serveBook` resolves the first path segment slug→dir through a memoized index before jailing. Reader reading-position keys are per-slug (`savePos(slug)`, `public/reader/reader.js`) so existing positions reset once — acceptable, note it. | T1.4 |
+| 7 | The spec's PowerShell `System.Drawing` / `ffmpeg` resize is a pattern the repo does not use and does not need | the hub already does pure-JS JPEG decode → scale → encode: `ensureCodecs` `clothing-worker.js:129`, `scaleRgba` `:136`, `writeJpg` `:206`, `jpeg.decode` `:194`, vendored `vendor/jpeg-js/lib/{decoder,encoder}.js`; EXIF orientation in `image-orient.js:13,78` | **Do the resize in JS** by extracting the existing helpers into a shared module; no spawn, no platform branch, works identically for the Linux operator. Keep "use the original if resize fails" as the documented fallback (spec §4 step 1). | T2.5 |
+| 8 | ElevenLabs key is **not** in `ai-config.json` | key lives in `<DATA>/tts-config.json` (`server.js:864,890-897`), written by `POST /tts-key` (`server.js:1574-1596`); `ai-config.json` is `{provider, apiKey}` only (`server.js:1641`) | The role reader merges both files: `vision` from `ai-config.json` (old flat shape migrated on read), `elevenlabs` from `tts-config.json`, `fal` new. Writers stay where they are so `/tts-key`, `/voices`, `/tts` are untouched. Never rewrite a key file the user did not just save. | T2.1 |
+| 9 | There is **no migration hook** in self-update — `<DATA>` is excluded from the overlay and nothing ever touches it | `update.js:97-109` `fs.cpSync` with `rel === "data"` filtered out; no manifest, no deletes | New `<DATA>` files survive updates unconditionally (good), but the role migration must run **at boot, on read, forever tolerant of the old shape**. No "one-shot migration" scripts. | T2.1 |
+| 10 | `content-worker.js` would ship broken and the build would not notice | `tools/build-payload.sh:20` is an explicit `cp` list; the guard at `:21-27` only greps literal `require("./x.js")`, and a worker is loaded by **path** (`clothing.js:56`) | Add `content.js` **and** `content-worker.js` to line 20 in the same commit that creates them, and extend the guard to also scan for `new Worker(path.join(__dirname, "…"))`. | T2.4 |
+| 11 | The board gates reject *any* `.msgbar` child; a partner button was already built and reverted for this | `board-input.test.mjs:153` `assert.deepEqual(bar.kids, ["barDoor"])`; `board-pixel.test.mjs:131-132,210` `BAR_EXTRAS`; `board-wardrobe-note.test.mjs:53`; `board-splash-door.test.mjs:43`; era-board commits `7e9012f` → `d4a7556` | Dad's 9/4 amendment authorizes the strip. Amend the three assertions to allow exactly one `#partnerStrip` child that carries **no** `.dwell` and keeps the bar ≤ 9.1 % vh (`board-input.test.mjs:155`, `board-pixel.test.mjs:209`); add a positive assertion mirroring `board-wardrobe-note.test.mjs:54`. **Escape hatch:** if the strip cannot fit the 9 % slab, mount it as a *sibling* of `.msgbar` inside `#app` — that dodges all four gates but costs grid height. | T4.4 |
+| 12 | Drag-to-reorder will fire a phantom tile activation | `dwell.js:302-312` schedules a 150 ms tap-rescue `el.click()` on `pointerup`; every tile carries `touch-action:none` from `dwell.js:63`; `board-render.js:703` binds `click` → `onTile` | Arrange mode must (a) set a flag `onTile` (`board-render.js:615`) checks first, and (b) cancel the rescue (`preventDefault` on `pointerdown` in arrange mode, or a `data-dwell-disabled` attribute on tiles — `dwell.js:154` honours it). | T4.5 |
+| 13 | The gate's headless Chromium cannot decode AAC, so an `.m4a` song is untestable there | `era-family/tools/add-song.sh:37-39` — "mp3 (not m4a): plays everywhere including the gate's test Chromium (no AAC codec there)"; `era-family/test-data/music/*.wav` | The hub *serves* `.m4a` fine (`MUSIC_AV_EXTS` `server.js:440`, MIME `server.js:919`) and real kiosk Edge decodes AAC. Keep `.m4a` for the family (it avoids ffmpeg), but **no gate test may assert playback of an m4a** — assert the manifest entry and a 200 + `Accept-Ranges` instead. Fixtures stay `.wav`. | T4.2 |
+| 14 | Pack install downloads the *entire* suite tarball with **no checksum**, unlike self-update | `server.js:124-141` `installPack` (no sha256); contrast `update.js:87-88` | A 17 MB `media-tools` pack costs a full-suite download on enable. Accept for now (same cost as every existing pack); file a follow-up to reuse `latest.json`'s sha256 in `installPack`. | T4.1 + Follow-up |
+| 15 | Advertised installer sizes are computed from a **hand-duplicated** copy of the pack path list | `tools/build-dist.sh:39-42` repeats `packs.js:18-21` paths; no test pins the duplication | Update `build-dist.sh` in the same commit as `packs.js`; add an assertion to `tests/packs.test.mjs` that every `PACKS` path appears in `build-dist.sh`. | T4.1 |
+| 16 | Free-tier quota shape is per-model-per-day, and the retry ladder already exists but is clothing-specific | `clothing-worker.js:33-47` (`PROVIDERS`, `spentModels`), `:453-476` `askModel`, `:514-534` `callModel`, `clothing.js:125-151` `holdDay`/`tick` | Lift the provider ladder into a shared module rather than re-deriving it; keep the "429 retires *that model*, not the day" rule and the `holdDay` pause. Status must say "waiting for tomorrow's quota" (spec §7 risk). | T2.6 |
+| 17 | `drive.onSynced` is a **single-slot** callback already owned by clothing | `server.js:1800` `drive.onSynced = () => clothing.regenerate(true)...` | Replace with a fan-out that calls clothing *and* `content.scan()`; never overwrite the slot from `content.js` itself. | T2.4 |
+| 18 | The quiet-period rule is calibrated to the local sync cadence only | local sync = 10 min (`drive.js:365`); API sync = 6 h (`drive.js:368`) | Local mode gives "two consecutive syncs ≥ 10 min" = ~20 min, as intended. Since Gap 1 restricts building to local mode, this is consistent — but the quiet period must be measured on **its own timer**, not on sync count, so a manual `POST /integrations/drive/sync` burst cannot claim a half-uploaded book. | T2.2 |
+| 19 | `invariants.mjs` audits a fixed `STATES` list; a new page is not covered unless added | `tests/invariants.mjs:250-270` | The review page is mouse/touch-only (no `.dwell`), so leave it out of `STATES` and say so in its header comment. | T3.2 |
+| 20 | **A real, billable ElevenLabs credential sits in the directory the gate uses as `ERA_DATA_DIR`** | `era-family/test-data/tts-config.json` (mode `0600`) is the gate's data dir (`tools/era-gate.sh:9,50`). Nothing spends it *today* only because every browser suite routes `**/tts*` → 503 **before** the request reaches the server (`board-pixel.test.mjs:172-173`, `board-input.test.mjs:26-27`) | **Near-blocker for "no test spends a key".** Every new suite that can reach a narration path MUST set `ERA_ELEVEN_URL` to a local stand-in in its spawn env (`tests/settings-ui.test.mjs:42-52` shows the exact shape) **and** route `**/tts*` in any Playwright context. Add an assertion to the narrate suite that the fake server saw the call — if it saw zero calls, the request went somewhere real. | T2.7, T3.3 |
+| 21 | New test suites collide on ports; two tracked suites already share 8423 | `tests/settings-ui.test.mjs:24` and `tests/update-boot.test.mjs:19` both use 8423 (safe only because `era-gate.sh:65-68` runs serially); highest tracked port is 8424; 8425 is held by an ssh tunnel on this box; 8427 is reserved by `tools/vm-e2e.sh:22` | **New suites claim 8428, 8429, 8430… one per suite, recorded in the suite header.** Manual/ad-hoc hub instances use **8450+**. Never touch 8377–8416. | all new suites |
+| 22 | `board-routes.test.mjs` resolves the **main** checkout and **live** data, not the worktree | `era-board/tests/board-routes.test.mjs:12-13` (`HUB = resolve(STUDIO,"../era-hub")`); `era-gate.sh:50` sets `ERA_DATA_DIR` on the server command only, not for suite processes | Do not extend that suite for this work; put new board-route coverage in a new suite that spawns its own hub with an explicit `ERA_DATA_DIR=mkdtemp`. | T4.4, T5.4 |
+
+### A3. Info (context for implementers)
+
+- **Module system:** the hub is 100 % CommonJS; there is no `package.json`
+  anywhere, so `.js` = CJS and `.mjs` = ESM by extension. The bundled Windows
+  runtime is Node **v22.22.2** (`.github/workflows/build-installer.yml:23`,
+  `tools/build-payload.sh:59`), and `require()` of a non-TLA `.mjs` was
+  **empirically verified to work** on it. But `tools/build-payload.sh:3`
+  declares the floor as "Node 18+", where `require(esm)` does *not* exist.
+  **Therefore: port bake-off adapters to CommonJS rather than requiring the
+  `.mjs` files.** If a dynamic `import()` is ever unavoidable it must use
+  `pathToFileURL()` (a bare `C:\…` path throws on Windows) and the file must be
+  hand-added to `build-payload.sh:20` (the require-guard cannot see it).
+- **Test seams already in the codebase:** `ERA_AI_URL` (`clothing-worker.js:485`,
+  used by `tests/clothing.test.mjs:67`), `ERA_ELEVEN_URL` (`server.js:874`),
+  `ERA_DRIVE_OAUTH` / `ERA_DRIVE_API` (`drive.js:17-18`), `ERA_UPDATE_URL`
+  (`update.js:20`), `ERA_DATA_DIR` (`server.js:19`). A new `ERA_FAL_URL` seam
+  follows the same shape. **This is how "no test spends a key" is achieved.**
+- **Manifest contract (unchanged, spec §2 is correct):** top-level
+  `{schemaVersion:1, id, slug, title, exportedAt, narration{provider,model,voice},
+  cover, authored, pages[]}`; page =
+  `{index, image, text, audio, words[{word,start,end}], video}`; media paths are
+  **zero-padded three digits** (`pages/001.jpg`, `audio/001.mp3`,
+  `video/001.mp4`) — verified against
+  `era-family/data/books/ellie-and-the-garden-rescue/manifest.json`. The reader
+  cache-busts on `m.exportedAt` (`public/reader/reader.js:187`), so **every
+  re-publish must bump `exportedAt`** or media stays cached for 24 h.
+- **Word grouping to port** (`/home/claude/ellie-this-week/src/ellie/book/audio.py:29-51`,
+  `words_from_chars`): a word is a maximal run of non-whitespace characters;
+  `start` = first char's start, `end` = last char's end; punctuation stays glued
+  to the word; no smoothing, clamping, rounding or epsilon; `zip` truncates to
+  the shortest of the three arrays. Whitespace flushes only a non-empty
+  accumulator, and a trailing accumulator is flushed after the loop. Zero
+  dependencies. Source fields:
+  `alignment` (falling back to `normalized_alignment`) →
+  `characters`, `character_start_times_seconds`, `character_end_times_seconds`;
+  audio arrives as `audio_base64`. Endpoint
+  `POST /v1/text-to-speech/{voice}/with-timestamps?output_format=mp3_44100_128`,
+  header `xi-api-key`. Python golden cases:
+  `/home/claude/ellie-this-week/tests/book/test_audio.py`.
+- **`<DATA>` on Windows** is `C:\Users\<user>\AppData\Local\New ERA\data\`
+  (`server.js:19`, `tools/installer.nsi:19`, `tools/build-payload.sh:73`); the
+  uninstaller deliberately spares it (`installer.nsi:177-178,206`).
+- **PowerShell spawn law** (only if Gap 7's mitigation is ever reversed):
+  `server.js:275-281` — copy `appShortcut`'s shape exactly, `-Command`, not
+  detached, `windowsHide`, and **no double quotes anywhere in the script**.
+  Separately, `tests/start-hub-bat.test.mjs:29-33` fails the build if the word
+  `powershell` appears in a generated `.bat` (Defender law) — that applies to
+  launchers, not to runtime spawns.
+- **Movie launch contract:** the board POSTs to
+  `http://127.0.0.1:49155/app/launch` with **no `Content-Type` header**
+  (a CORS simple request — adding one triggers a preflight the native listener
+  does not answer): `board-render.js:582-600`, ERAgaze side
+  `era-gaze/device/ERAgaze.cs:685-697`. Known dead code: `nextEpisodeOf`
+  (`board-render.js:568`) reads `EC.session`, which `era-core/lib/contract.js`
+  does not define, so `body.next` is never sent — and
+  `board-movies.test.mjs:187-190` pins the bug. Out of scope; recorded as a
+  follow-up.
+- **Splash today** (`era-board/app/board.js:102-176`) only coaches for
+  `?recipe=today`; songs/movies get no coach, and there is no book hook at all.
+- **Tests are `node:test` `.mjs` files in `tests/`; `gate/` is generated and
+  gitignored** (`.gitignore:2`, `tools/era-gate.sh:27`). Never edit `gate/`.
+
+---
+
+## B. Guardrails that apply to every task
+
+1. **TDD (`superpowers:test-driven-development`) is required** for every task
+   except the ones marked *scaffolding/config*. Red first, then green.
+2. **No test may spend a key.** Every provider call goes through an adapter
+   whose base URL comes from an env seam (`ERA_AI_URL`, `ERA_ELEVEN_URL`,
+   `ERA_FAL_URL`, `ERA_STREAMING_URL`). Tests stand up a local `http.createServer`
+   and point the seam at it, exactly as `tests/clothing.test.mjs:66-121` does.
+   A task whose test needs a real key is mis-scoped — STOP and escalate.
+   **This is not theoretical:** the gate's `ERA_DATA_DIR`
+   (`era-family/test-data`) holds a real ElevenLabs credential (Gap 20). A
+   narration test that forgets `ERA_ELEVEN_URL` bills the family. Every such
+   suite must (a) set the seam in its spawn env, (b) route `**/tts*` in any
+   Playwright context, and (c) **assert the fake server recorded the expected
+   call count** — zero recorded calls means the request went somewhere real.
+3. **Never write a secret value anywhere** — not in `job.json`, not in
+   `log.jsonl`, not in a status payload, not in a test fixture, not in a commit
+   message. Keys are referenced by file/env-var name only.
+4. **Repo commit scan.** `.github/workflows/scan.yml` runs
+   `.github/era-scan.sh` with a denylist on every push and PR, plus
+   `node --check` over every tracked `.js`/`.mjs`. Keep prose free of
+   family-identifying and denylisted terms (this plan says "Linux box" and "QA
+   host" deliberately).
+5. **Verification sequence** for every task: `node --check` on changed files →
+   the task's own targeted `node --test` → the full `bash tools/era-gate.sh` at
+   the phase boundary.
+6. **Adaptation protocol (STOP)** is stated per task. The generic rule: an
+   unexpected finding stops execution; triage blocker / warning / discovery;
+   document in the workpad Outbox; only proceed on a documented, in-scope
+   adaptation.
+7. **Code-review gate at every phase boundary:** invoke `rae-flow:reviewing`
+   (or `superpowers:requesting-code-review`) against the design spec section the
+   phase implements. Loop until APPROVED before starting the next phase.
+8. **Phase retrospective** after every phase: decisions made, observations,
+   adaptations, follow-ups, confidence + risks.
+
+### Standing verification commands
+
+| What | Command (cwd = era-hub worktree unless noted) | Expected |
+|---|---|---|
+| Syntax (what CI actually runs) | `for f in $(git ls-files '*.js' '*.mjs'); do node --check "$f"; done` | no output, exit 0 |
+| One suite | `node --test tests/<name>.test.mjs` | `# fail 0` |
+| Full gate (era-core + era-making-words + era-pencil + era-board + this worktree) | `bash tools/era-gate.sh` | final line `== era-gate: N passed, 0 failed ==`, exit 0 |
+| Board gates only | `bash tools/era-gate.sh`, then read `gate/board-input.test.out` and `gate/board-pixel.test.out` | both `# fail 0` |
+| Payload builds | `bash tools/build-payload.sh /tmp/era-payload-check` | exit 0; no "required by the hub but not in the payload" |
+
+**Never use `bash tests/all.sh`.** It is a stale copy from era-making-words —
+its loop names `.js` files that do not exist in `tests/`, and it points at 8377.
+
+**`gate/` is generated and gitignored** (`.gitignore:2`; `tools/era-gate.sh:27`
+does `rm -rf "$GATE"` every run). Author tests in `tests/` (hub) or
+`era-board/tests/` (board) — **never** in `gate/`. The gate collects from this
+worktree (`era-gate.sh:31-42`), so a new suite on this branch does run.
+
+**CI runs no tests** — `.github/workflows/scan.yml` is a denylist scan plus
+`node --check` only. The gate is local and is enforced by `tools/release.sh:21-22`,
+which refuses to publish unless the last gate line contains `" 0 failed"`.
+There is no `gh act` step to validate.
+
+**Port hygiene (memory: tunnel ports are never test ports).** Never bind or
+assert against `8377`–`8416` — an ssh tunnel to a family device answers HTTP as
+that device's live hub and silently poisons the gate (and three tracked suites —
+`icons`, `invariants`, `predict` — plus every era-board suite target 8377 until
+the gate's `sed` re-points them). `tools/era-gate.sh` keeps its default `8378`.
+**New suites claim 8428, 8429, 8430… one per suite, stated in the suite header**
+(8423 is already double-booked by `settings-ui` and `update-boot`; 8425 is held
+by an ssh tunnel on this box; 8427 is reserved by `tools/vm-e2e.sh:22`).
+Ad-hoc/manual hub instances use **8450+**. Check first:
+`ss -ltnp | grep -E ':(83[7-9][0-9]|84[0-4][0-9])'`.
+
+**Port allocation for the new suites in this plan** (claim exactly one, and put
+it in the suite header comment):
+
+| Suite | Port |
+|---|---|
+| `tests/ai-config.test.mjs` | in-process, none |
+| `tests/content-claim.test.mjs`, `tests/content-store.test.mjs`, `tests/words.test.mjs`, `tests/image-util.test.mjs` | in-process, none |
+| `tests/content-worker.test.mjs` | 8428 |
+| `tests/content-transcribe.test.mjs` | 8429 (hub) + 8430 (fake AI) |
+| `tests/content-narrate.test.mjs` | 8431 (hub) + 8432 (fake ElevenLabs) |
+| `tests/content-publish.test.mjs` | 8433 |
+| `tests/content-routes.test.mjs` | 8434 |
+| `tests/book-review-ui.test.mjs` | 8435 |
+| `tests/music-add.test.mjs` | 8436 |
+| `tests/movies-add.test.mjs` | 8437 |
+| `tests/movies-lookup.test.mjs` | 8438 (fake provider) |
+| `tests/fal-key.test.mjs`, `tests/content-animate.test.mjs` | 8439 (hub) + 8441 (fake fal) |
+
+---
+
+## C. Task skeleton
+
+Phases follow the spec's migration sequence (§7). Every task is sized for one
+fresh subagent context: one module or one endpoint plus its test.
+
+---
+
+### Phase 1: Mirror fixes and slugify
+**Posture hint:** implementing.
+**Rationale:** four numbered, mechanical changes to code that already has a
+test suite (`tests/drive-mirror.test.mjs`, `tests/books.test.mjs`); tests are
+writable before the change; no interpretation needed. Ambiguity 1/5.
+**Spec section:** §2 "Mirror changes", §2 "Build in place".
+
+**T1.1 — `copyTreeLocal` / `mirrorDir` copy manifests last**
+- **Acceptance:** in every directory, `manifest.json` and `catalog.json` are
+  copied *after* all other entries (files and subdirectories), in both local
+  mode (`drive.js:294-306`) and API mode (`drive.js:156-176`). Existing copy
+  semantics (size-equal skip, error collection) unchanged.
+- **Files:** `drive.js`; `tests/drive-mirror.test.mjs`.
+- **TDD:** required. Red test: a source dir with `manifest.json` + `a.jpg`
+  where the fs is instrumented (wrap `fs.copyFileSync` / record order) asserts
+  the manifest lands last; also assert a *nested* dir's manifest lands after
+  that dir's media.
+- **Verification:** `node --test tests/drive-mirror.test.mjs` → `# fail 0`.
+- **Adaptation:** if `readdirSync` order already happens to pass on this fs,
+  the test is not proving anything — assert the recorded order explicitly, do
+  not rely on incidental ordering. If instrumenting `fs` proves brittle, STOP
+  and instead export a pure `orderEntries(entries)` helper and test that.
+- **Gate:** rolls into the phase gate.
+
+**T1.2 — mirror deletes for books/music/movies; add `movies` to the mirror set**
+- **Acceptance:** `MIRROR_SUBDIRS` (`drive.js:22`) becomes
+  `["books","music","movies","content","clothing"]`; `MIRROR_DELETES`
+  (`drive.js:133`) becomes `["clothing","books","music","movies"]`;
+  `createContentFolder()` creates a `movies/` subfolder; `contentReady()`
+  reports it. A file removed from the Drive folder disappears from `<DATA>` for
+  all four libraries; dotfiles are still never pruned (`drive.js:145`); an
+  offline/absent source still never prunes (`drive.js:312`).
+- **Files:** `drive.js`; `tests/drive-mirror.test.mjs`.
+- **TDD:** required. Tests: (a) a book folder deleted in Drive is deleted in
+  `<DATA>`; (b) a song file deleted is deleted; (c) `movies/catalog.json`
+  mirrors; (d) an *absent* source dir prunes nothing; (e) `.build/` survives
+  pruning because dotfiles are skipped.
+- **Verification:** `node --test tests/drive-mirror.test.mjs`; then
+  `node --test tests/books.test.mjs tests/music.test.mjs tests/movies.test.mjs`
+  → all `# fail 0`.
+- **Adaptation:** if adding `movies` to `MIRROR_SUBDIRS` makes an existing
+  Settings-checklist test fail, that is expected — update the assertion and note
+  it. If pruning `books` would delete a package a family built *before* the
+  folder existed in Drive, STOP: that is data loss; escalate before shipping.
+- **Gate:** phase gate.
+
+**T1.3 — serve-side deny of `sources/` and `.build/`**
+- **Acceptance:** `GET /books/<slug>/sources/IMG_0001.jpg` → 404;
+  `GET /books/<slug>/.build/job.json` → 404;
+  `GET /books/<slug>/.build/text.json` → 404; normal package files unaffected;
+  jail-escape behaviour (403) unchanged (`server.js:448-450`).
+- **Files:** `server.js` (`serveMediaJail` / `serveBook`, ~`:434-498`);
+  `tests/books.test.mjs`.
+- **TDD:** required. Add cases to the existing books route suite, including a
+  raw-path request (the suite already has `rawGet`, `tests/books.test.mjs:17-30`).
+- **Verification:** `node --test tests/books.test.mjs` → `# fail 0`.
+- **Adaptation:** the deny must apply to the **books** jail only — music and
+  movies have no such folders and must not gain a shared restriction. If the
+  cleanest implementation is a shared `denySegments` parameter, that is fine;
+  do not hard-code names inside `serveMediaJail`'s generic body.
+- **Gate:** phase gate.
+
+**T1.4 — `booksIndex` slugify + slug→directory resolution**
+- **Acceptance:** a folder `Tabby McTat` is indexed as slug `tabby-mctat` and
+  `GET /books/tabby-mctat/manifest.json` serves
+  `<DATA>/books/Tabby McTat/manifest.json`. Slugify is one exported function
+  used by both `booksIndex()` and the future worker (parity is testable).
+  Collisions (two folders slugifying the same) are resolved deterministically
+  and logged. A folder whose name is already a slug behaves exactly as today.
+- **Files:** `server.js` (`booksIndex` `:411`, `serveBook` `:445`); a small
+  shared `slugify` (new module or an export from `content.js` if it exists yet —
+  in this phase put it in `server.js` and re-export later);
+  `tests/books.test.mjs`.
+- **TDD:** required. Cases: spaces, punctuation, accents, leading/trailing
+  dashes, case, a collision pair, an already-slug folder, and a
+  **slugify-parity** test asserting index slug === the slug the resolver accepts.
+- **Verification:** `node --test tests/books.test.mjs` → `# fail 0`.
+- **Adaptation:** the reader stores reading position per slug, so existing
+  positions reset once. That is acceptable (document it), **but** if any current
+  package's directory name would slugify to a *different* existing package's
+  slug, STOP — silently merging two books is data loss.
+- **Gate:** **`rae-flow:reviewing` against spec §2.** Scope: `drive.js` +
+  books routing. Pass criteria: mirror ordering and deletes proven by test; no
+  `.build`/`sources` reachable over HTTP; slug parity proven; full gate green.
+- **Phase retrospective:** decisions (slug collision rule, where `slugify`
+  lives), observations (did instrumenting copy order work?), adaptations,
+  follow-ups, confidence.
+
+**Phase 1 exit verification:** `bash tools/era-gate.sh` →
+`== era-gate: N passed, 0 failed ==`.
+
+---
+
+### Phase 2: Content rails, book builder (text + narration), key roles, Settings card, splash
+**Posture hint:** implementing, with one collaborating escape hatch (T2.6).
+**Rationale:** `clothing.js` / `clothing-worker.js` are a complete reference
+implementation of every rail (worker spawn, single-flight, status shape, key
+read, provider ladder, quota pause) — spec §3 is explicitly "copy its shape".
+Acceptance criteria are numbered and testable. Ambiguity 2/5, except the
+transcription policy, which is decided by data (T2.6a).
+**Spec sections:** §3, §4 steps 1–4, §7 keys.
+
+**T2.1 — key roles: a read-only `aiRoles()` with forever-tolerant migration**
+- **Acceptance:** one exported function returns
+  `{vision:{provider,apiKey}|null, elevenlabs:{apiKey,voiceId}|null, fal:{apiKey}|null}`.
+  It reads the **new** role-keyed `<DATA>/ai-config.json` if present; falls back
+  to the legacy flat `{provider, apiKey}` (`server.js:1641-1642`) for `vision`;
+  reads `elevenlabs` from `<DATA>/tts-config.json` (`server.js:864,890`);
+  returns `null` for a role with no usable key. It **never writes** and **never
+  logs a key**. `clothing.js:22-28` and `clothing-worker.js:70-75` are switched
+  to it with identical behaviour.
+- **Files:** new `ai-config.js`; `clothing.js`; `clothing-worker.js`; new
+  `tests/ai-config.test.mjs`.
+- **TDD:** required. Cases: legacy-only file; role file; both; missing file;
+  empty `apiKey`; unknown provider falls back to `google`
+  (`clothing.js:26`); tts key present but `keyOk === false`; assert that no
+  function in the module calls `fs.writeFileSync`.
+- **Verification:** `node --test tests/ai-config.test.mjs tests/clothing.test.mjs`
+  → `# fail 0`.
+- **Adaptation:** if switching `clothing-worker.js` changes clothing behaviour
+  in any test, STOP — the migration must be behaviour-preserving. Do **not**
+  change `POST /ai-key` or `POST /tts-key` in this task.
+- **Guardrails:** never write a secret; never echo a key back over HTTP.
+
+**T2.2 — `content.js` shell: scan, inbox test, quiet period, claim/stale**
+- **Acceptance:** `content.scan()` walks `<folderPath>/books/*` (local Drive
+  mode only — returns `{skipped:"needs-local-drive"}` otherwise, per Gap 1);
+  a folder is an **inbox** when it holds images and no `.build/job.json`; a
+  folder is **claimable** only when its listing (names + sizes) is unchanged
+  across two observations ≥ 10 min apart, measured on `content.js`'s own timer
+  (Gap 18); claiming writes `job.json` `{state,claimedBy,heartbeat,startedAt,
+  steps{},errors[]}` atomically; a claim whose `heartbeat` is older than 30 min
+  may be taken over; one job at a time (single-flight, queued follow-up), copied
+  from `clothing.js:47-85`.
+- **Files:** new `content.js`; new `tests/content-claim.test.mjs`.
+- **TDD:** required. Cases: images + no job.json = inbox; job.json present = not
+  inbox; listing changed between observations = not claimable; unchanged and
+  ≥ 10 min = claimable; fresh heartbeat = not takeable; 31-min heartbeat =
+  takeable; two `scan()` calls do not double-claim; non-local drive mode skips.
+  Use a fake clock (inject `now()`), never real sleeps.
+- **Verification:** `node --test tests/content-claim.test.mjs` → `# fail 0`;
+  the whole suite must finish in seconds (no real 10-minute waits).
+- **Adaptation:** if a fake clock cannot be injected cleanly, STOP and refactor
+  the timing into a pure predicate `isQuiet(prevListing, nowListing, elapsedMs)`
+  before writing more code.
+
+**T2.3 — `text.json` / `job.json` schemas + `log.jsonl` writer + atomic write helper**
+- **Acceptance:** one module owns the three artefacts:
+  `text.json = {pages:[{index, source, text, flags:[{word,reason}], cover:bool}]}`,
+  round-trips losslessly; `job.json` state machine
+  `inbox → transcribing → reviewing → narrating → published → animating → done`
+  with `failed` reachable from any state and errors retained; illegal
+  transitions throw; `log.jsonl` appends one JSON object per line with
+  `{t, step, msg}` and **never** a key or a URL containing one; `writeAtomic()`
+  writes `<name>.tmp` then `fs.renameSync` (used for `job.json`, `text.json`,
+  `manifest.json`, `catalog.json`, `music/manifest.json`).
+- **Files:** new `content-store.js` (or a section of `content.js`); new
+  `tests/content-store.test.mjs`.
+- **TDD:** required. Cases: round trip with flags and unicode; every legal
+  transition; two illegal transitions; `failed` from mid-state keeps prior
+  errors; atomic write leaves no `.tmp` behind on success and does not clobber
+  the target on a write failure; a log line containing a key-looking string is
+  rejected/redacted.
+- **Verification:** `node --test tests/content-store.test.mjs` → `# fail 0`.
+
+**T2.4 — `content-worker.js` spawn wiring, `onSynced` fan-out, payload shipping**
+- **Acceptance:** `content.js` spawns `content-worker.js` in a
+  `worker_threads` Worker exactly as `clothing.js:56-84` does (progress via
+  `postMessage`, one worker at a time, `error`/`exit` handled, promise
+  resolution for mid-run callers); `server.js:1800`'s single-slot
+  `drive.onSynced` becomes a fan-out that calls **both** `clothing.regenerate`
+  and `content.scan()`; `content.start(DATA)` is called from
+  `server.js` "listening" beside `clothing.start(DATA)`;
+  `tools/build-payload.sh:20` lists `content.js` and `content-worker.js`, and
+  the guard at `:21-27` also detects `new Worker(path.join(__dirname, "…"))`.
+- **Files:** `content.js`; new `content-worker.js` (skeleton: receives
+  `workerData {dataDir, folderPath, slug, step}`, runs a step table, posts
+  progress); `server.js`; `tools/build-payload.sh`; `tests/content-worker.test.mjs`;
+  `tests/update.test.mjs` / `tests/reconcile.test.mjs` / `tests/update-boot.test.mjs`
+  hub-module lists.
+- **TDD:** required for the shell and the payload guard; *scaffolding* for the
+  empty step table (note it).
+- **Verification:**
+  1. `node --test tests/content-worker.test.mjs` → `# fail 0`
+  2. `bash tools/build-payload.sh /tmp/era-payload-check` → exit 0
+  3. deliberately remove `content-worker.js` from line 20, re-run (2) → the
+     guard must **fail**; restore it. (Prove the guard, don't assume it.)
+- **Adaptation:** if the payload guard cannot be extended without false
+  positives, STOP and instead add an explicit list assertion to
+  `tests/packs.test.mjs`-style unit test that every `new Worker(...)` target is
+  in the `cp` line. Do not ship without one of the two.
+
+**T2.5 — ingest step: order, EXIF orientation, downscale (pure JS)**
+- **Acceptance:** originals move to `sources/`; page order comes from EXIF
+  `DateTimeOriginal`, falling back to filename natural sort; each page is
+  written as `pages/NNN.jpg` (zero-padded three digits, long edge ≤ 2048, EXIF
+  orientation applied) using the **existing** vendored JPEG path
+  (`clothing-worker.js:129-206`, `image-orient.js`) extracted into a shared
+  module — **no process spawn** (Gap 7); if decoding or encoding throws, the
+  original is copied to `pages/NNN.jpg` unchanged and `log.jsonl` records why;
+  re-running the step with unchanged inputs is a no-op.
+- **Files:** new `image-util.js` (extracted `ensureCodecs`/`scaleRgba`/
+  `writeJpg`/`readJpg`); `clothing-worker.js` (use the extraction — behaviour
+  must not change); `content-worker.js`; `tests/image-util.test.mjs`;
+  `tests/content-ingest.test.mjs`.
+- **TDD:** required. Cases: a 1×1 synthetic JPEG survives; a wide image is
+  scaled to long-edge 2048; orientation 6 is rotated (reuse
+  `tests/image-orient.test.mjs` fixtures); a corrupt JPEG falls back to a copy
+  and logs; ordering by EXIF beats filename; missing EXIF falls back to
+  filename; the step is idempotent.
+- **Verification:** `node --test tests/image-util.test.mjs tests/content-ingest.test.mjs tests/clothing.test.mjs tests/image-orient.test.mjs`
+  → all `# fail 0` (the clothing suite proves the extraction was behaviour-preserving).
+- **Adaptation:** if pure-JS decode of a real 12 MP photo is unacceptably slow
+  on the hardware floor, that is a *discovery*, not a blocker — the fallback
+  ("serve the originals; nothing downstream depends on `pages/`", spec §7
+  risks) already exists. Record a timing measurement in the workpad; only then
+  consider the spec's spawn. Do **not** add a spawn on speculation.
+
+**T2.6 — transcribe step behind a provider adapter interface**
+- **Acceptance:** one interface `transcribePage({imagePath, policy, cfg}) →
+  {text, uncertain[]}`; adapters for `google` / `anthropic` / `openai` reuse the
+  shape and model ladder of `clothing-worker.js:478-541` (base URL from
+  `ERA_AI_URL`; 429 retires *that model*, not the day; `permanent:` on 401/403);
+  a daily-quota exhaustion sets a `pausedUntil` day on the job and leaves state
+  `transcribing` with `heartbeat` ticking — **never** `failed` (spec §4 step 2);
+  the transcription policy prompt is a named constant (verbatim printed text,
+  narrative reading order, `...` for ellipses, quotes as printed, drop
+  illustration junk and page numbers, cover = title/author/illustrator);
+  the model's `uncertain[]` becomes `flags[]` in `text.json`;
+  **which provider is the default and whether an agreement pass runs are
+  config values**, not code (`<DATA>/content-config.json`, defaults in one
+  place).
+- **Files:** new `content-providers.js`; `content-worker.js`;
+  `tests/content-transcribe.test.mjs`.
+- **TDD:** required. Fake provider server per `tests/clothing.test.mjs:66-121`.
+  Cases: happy path text+uncertain → `text.json`; 429 on model A falls through
+  to model B; all models 429 → job paused, not failed, status says "waiting for
+  tomorrow's quota"; 401 → permanent failure with a human message; malformed
+  JSON reply is tolerated (the `replace(/^[^{]*/…)` salvage at
+  `clothing-worker.js:509`); agreement pass **on** → two cheap calls, a
+  disagreement escalates to the strongest configured model and adds a flag;
+  agreement pass **off** → exactly one call per page.
+- **Verification:** `node --test tests/content-transcribe.test.mjs` → `# fail 0`;
+  assert the fake server saw the expected number of calls (proves no key spend
+  and no accidental extra passes).
+- **Posture:** implementing, **escape hatch → collaborating** if the bake-off's
+  chosen provider needs a request shape none of the three existing adapters
+  cover (e.g. a batch or files API).
+
+**T2.6a — adopt the OCR bake-off decision** *(consumes an in-flight input; do not wait on it)*
+- **Acceptance:** `<DATA>/content-config.json` defaults are set from
+  `era-family/data/ocr-bakeoff/results/2026-09-04/DECISION.md` —
+  `{transcribe:{provider, model, agreementPass:bool, escalateTo}}` — and a short
+  note in the module header cites the decision date and the re-run instructions
+  (`tools/ocr-bakeoff/README.md`, re-runnable in six months). **As of
+  2026-09-04 the results directory did not exist yet** (the bake-off harness is
+  still being written under `tools/ocr-bakeoff/`). If the decision file is still
+  absent when this task runs, ship the spec's stated policy as the default
+  (cheapest model within 0.1 pp of best on loose WER; agreement pass **off**)
+  and leave the config value and this task's checkbox open.
+- **Files:** `content-providers.js` (defaults only); `tests/content-transcribe.test.mjs`
+  (a test that the defaults parse and are honoured).
+- **TDD:** *config* — no new behaviour, but a test must assert the default
+  object shape and that a config file overrides it.
+- **Verification:** `node --test tests/content-transcribe.test.mjs` → `# fail 0`.
+- **Adaptation:** the decision file is **private** (`era-family/data/...`) —
+  read the chosen provider/model names from it, copy **no** measurements,
+  **no** page content, and **no** keys into this repo. If the decision names a
+  provider with no adapter, STOP and escalate (that is a T2.6 scope change).
+
+**T2.7 — narrate step: ElevenLabs with-timestamps + word grouping port**
+- **Acceptance:** `narratePage(text, cfg)` calls
+  `POST {ELEVEN_URL}/v1/text-to-speech/{voiceId}/with-timestamps?output_format=mp3_44100_128`
+  with header `xi-api-key` and body `{text, model_id}`; writes
+  `audio/NNN.mp3` from `audio_base64`; groups `alignment` (falling back to
+  `normalized_alignment`) into `words[{word,start,end}]` by a **faithful port**
+  of `words_from_chars` (see §A3 for the exact algorithm); voice comes from the
+  ElevenLabs card (`loadTtsCfg().voiceId`, `server.js:890-896`); base URL from
+  the existing `ERA_ELEVEN_URL` seam (`server.js:874`); a missing ElevenLabs key
+  is **not** an error — the book publishes with text and no audio (spec §4
+  table, free-Google row).
+- **Files:** new `words.js` (pure, dependency-free); `content-worker.js`;
+  `tests/words.test.mjs`; `tests/content-narrate.test.mjs`.
+- **TDD:** required. `tests/words.test.mjs` ports the two Python golden cases
+  (`"A busy bee."` at 0.1 s/char → `["A","busy","bee."]` with
+  `words[1].start === 0.2` and `words[2].end === ends[-1]`; and
+  `[" ","h","i"," "," ","y","o"]` → `["hi","yo"]` with starts `0.1`/`0.5`) plus:
+  trailing text with no final whitespace is flushed; arrays of unequal length
+  truncate to the shortest; punctuation stays glued; empty input → `[]`.
+  Add a **round-trip fixture test** against a recorded (synthetic) alignment
+  payload asserting the output matches the on-disk manifest shape.
+- **Verification:** `node --test tests/words.test.mjs tests/content-narrate.test.mjs`
+  → `# fail 0`; the fake ElevenLabs server must record **exactly one call per
+  page** — assert the count.
+- **Guardrails (money):** `tests/content-narrate.test.mjs` MUST spawn the hub
+  with `ERA_ELEVEN_URL` pointed at its own stand-in and `ERA_DATA_DIR` at a
+  `mkdtemp` dir (`tests/settings-ui.test.mjs:42-52` is the template). Gap 20:
+  the gate's default data dir holds a real, billable ElevenLabs credential. A
+  recorded call count of **zero** is a test failure, not a pass — it means the
+  request escaped the seam.
+- **Adaptation:** if a real ElevenLabs response ever contains multi-codepoint
+  entries in `characters`, treat each entry as an opaque string and concatenate
+  (do not split into code points) — the Python source does the same.
+
+**T2.8 — publish step: `manifest.json` last, atomic, flagged pages included**
+- **Acceptance:** once every page has text (audio optional), write
+  `manifest.json` via `writeAtomic` with
+  `{schemaVersion:1, id, slug, title, exportedAt:<new ISO>, narration{provider,
+  model, voice}, cover, authored:false, pages:[{index, image, text, audio,
+  words, video}]}`, paths zero-padded three digits; **flagged pages publish**
+  (ruling 9/4) and their flags remain in `text.json` and in `/content/status`;
+  every re-publish bumps `exportedAt` (reader cache-bust,
+  `public/reader/reader.js:187`); job state moves to `published`.
+- **Files:** `content-worker.js`; `tests/content-publish.test.mjs`.
+- **TDD:** required. Cases: a 3-page book publishes and `booksIndex()` lists it
+  with the right slug and page count; a flagged page still appears; no
+  `manifest.tmp` remains; a second publish bumps `exportedAt`; a book with text
+  but no audio publishes (pages have no `audio` key) and the reader's
+  "textless/silent page" path is satisfied; `manifest.json` is written *after*
+  all media exist on disk.
+- **Verification:** `node --test tests/content-publish.test.mjs tests/books.test.mjs`
+  → `# fail 0`.
+
+**T2.9 — `GET /content/status` and `POST /content/run`**
+- **Acceptance:** `GET /content/status` returns
+  `{jobs:[{kind, slug, state, step, progress, cost, flags, pausedUntil}]}`
+  with `Cache-Control: no-store`, mirroring `/clothing/status`
+  (`server.js:1661-1665`); it **never** includes a key, a folder path outside
+  the content folder, or PII beyond the book title.
+  `POST /content/run {kind, slug, step}` validates its body (≤ 4 KB cap +
+  `req.destroy()`, the `server.js:1307-1308` pattern), replies `202
+  {"started":true}` like `/clothing/regenerate` (`server.js:1654-1660`), and
+  runs the named step behind the response. Unknown `kind`/`slug`/`step` → 400.
+- **Files:** `server.js`; `content.js`; `tests/content-routes.test.mjs`.
+- **TDD:** required. Cases: status shape with zero jobs; with one running job;
+  202 on a valid run; 400 on each invalid field; oversized body is destroyed;
+  status contains no `apiKey`-like field (assert by scanning the serialized
+  JSON); `no-store` header present.
+- **Verification:** `node --test tests/content-routes.test.mjs` → `# fail 0`.
+- **Adaptation:** `/content` is a free namespace today (no route matches it in
+  `server.js`) — if that changes, STOP rather than shadowing an existing route.
+
+**T2.10 — Settings "Your books" content card**
+- **Acceptance:** a new `<div class="card" id="content">` in
+  `public/settings/index.html` matching the existing card anatomy (h2, `p.hint`,
+  `.row` of buttons, `.status` div — see `#voice` `:101-119` and `#ai`
+  `:161-181`): shows per-book state from `/content/status`, a "Review this book"
+  link to the review page (Phase 3), a plain-language line for
+  `needs-local-drive` (Gap 1) and for "waiting for tomorrow's quota", and the
+  recommended-tier explanation from spec §4. **No new key card here** — fal is
+  Phase 6. Reuses `pasteInto`/`toast` (`:591-598`).
+- **Files:** `public/settings/index.html`; `tests/settings-ui.test.mjs`.
+- **TDD:** required (UI assertions, not screenshots). Cases: the card renders
+  with zero jobs; renders a running job's progress; renders the
+  `needs-local-drive` guidance; the card's id is `#content` (Settings deep-links
+  by fragment, per VM QA practice).
+- **Verification:** `node --test tests/settings-ui.test.mjs` → `# fail 0`.
+- **Browser verification:** required at the phase gate — **video/gif, not a
+  screenshot** — of the card moving through at least two states.
+
+**T2.11 — board splash + footer note for book jobs** *(era-board repo)*
+- **Acceptance:** `showSplash()`'s coach (`era-board/app/board.js:121-176`) and
+  `startWardrobeWatch()` (`:215-249`) are generalized so a **book** job in
+  progress produces a note, without changing any clothing behaviour; the note is
+  touch-only, carries no `.dwell`, and is a sibling of the existing
+  `#wardrobeNote` pattern (`era-board/app/index.html:26`,
+  `board.css:125-135`); when a job finishes **with flags**, the note links to
+  the review page.
+- **Files:** `era-board/app/board.js`, `era-board/app/board.css`;
+  `era-board/tests/board-clothing-coach.test.mjs` (extend) or a new
+  `board-content-note.test.mjs`.
+- **TDD:** required. Cases: a content job in progress shows the note; the note
+  has no `.dwell` class (clone `board-wardrobe-note.test.mjs:54`); the bar still
+  has exactly one child (`board-wardrobe-note.test.mjs:53` must still pass —
+  this task adds **no** header element).
+- **Verification:** `bash tools/era-gate.sh` (collects era-board/tests) →
+  `0 failed`.
+- **Adaptation:** this task must **not** touch `.msgbar`. If the note cannot be
+  placed without a header change, defer that to T4.4 where the gates are amended.
+
+- **Gate (Phase 2):** **`rae-flow:reviewing` against spec §3, §4 steps 1–4, §7
+  keys.** Scope: `content.js`, `content-worker.js`, `content-providers.js`,
+  `words.js`, `ai-config.js`, `image-util.js`, the two new routes, the Settings
+  card, the board note. Pass criteria: a book builds end-to-end against **fake**
+  providers in a test; no key appears in any artefact; `bash tools/era-gate.sh`
+  green; payload guard proven.
+- **Phase 2 retrospective:** decisions (adapter interface shape, where the
+  quota pause lives), observations (how close the clothing rails actually were),
+  adaptations, follow-ups, confidence.
+
+---
+
+### Phase 3: Review-and-reorder page
+**Posture hint:** implementing.
+**Rationale:** spec §5 enumerates every control and every write target; the page
+is mouse/touch-only so it inherits no gaze contract; DOM assertions are writable
+first. Ambiguity 2/5 (only the URL choice, settled by Gap 4).
+**Spec section:** §5.
+
+**T3.1 — route and page shell at `/book-review/`**
+- **Acceptance:** `GET /book-review/` serves
+  `public/book-review/index.html` through the existing static handler
+  (`server.js:1761-1782`), `/book-review` 301s to it with the query preserved
+  (`server.js:1765-1771`), and `?slug=…` is read client-side. The page is **not**
+  added to `tests/invariants.mjs`'s `STATES` (Gap 19) and its header comment says
+  why. `tools/build-payload.sh` copies `public/book-review` (a **core**
+  directory, so **no** `/x` exclusion in `installer.nsi` — `tests/packs.test.mjs:30-31`
+  asserts every `/x` belongs to a pack).
+- **Files:** new `public/book-review/index.html`; `tools/build-payload.sh`;
+  `tests/routes.test.mjs`.
+- **TDD:** required (route tests); *scaffolding* for the empty page body.
+- **Verification:** `node --test tests/routes.test.mjs` → `# fail 0`;
+  `bash tools/build-payload.sh /tmp/era-payload-check && ls /tmp/era-payload-check/public/book-review/index.html`
+  → the file exists.
+- **Adaptation:** if the spec's `/books/review/` URL is required by a
+  stakeholder, add an explicit branch **above** `server.js:1453` and a matching
+  301 — do not reorder the whole route table.
+
+**T3.2 — page strip: order, drag-to-reorder, cover marking**
+- **Acceptance:** pages render in `text.json` order with image + text; drag
+  reorders and writes the new order back to `text.json` via `POST /content/run`
+  (or a dedicated `POST /content/text`); tap marks the cover (`cover:true` on
+  exactly one page); a reorder followed by a reload shows the new order.
+  Pointer-only: no `.dwell` classes anywhere on the page.
+- **Files:** `public/book-review/index.html`; `server.js` (write endpoint);
+  `tests/book-review-ui.test.mjs`.
+- **TDD:** required. Cases: renders N pages in order; a simulated drag writes
+  the expected `text.json`; exactly one cover; a malformed write is rejected 400;
+  `document.querySelectorAll(".dwell").length === 0`.
+- **Verification:** `node --test tests/book-review-ui.test.mjs` → `# fail 0`.
+- **Browser verification:** required — **video/gif** of a drag-reorder.
+
+**T3.3 — per-page controls: inline edit, re-narrate, clear flag**
+- **Acceptance:** flagged words are highlighted; an inline field edits page
+  text into `text.json`; "Re-narrate this page" calls
+  `POST /content/run {kind:"book", slug, step:"narrate", page:N}` and the page's
+  audio + `words` are replaced and the book re-published with a bumped
+  `exportedAt`; "Clear flag" removes the flag without touching text.
+- **Files:** `public/book-review/index.html`; `content.js`/`content-worker.js`
+  (single-page step); `tests/book-review-ui.test.mjs`,
+  `tests/content-narrate.test.mjs`.
+- **TDD:** required. Cases: edit persists; re-narrate replaces only page N's
+  audio/words; re-narrate bumps `exportedAt`; clear-flag leaves text intact;
+  re-narrate with no ElevenLabs key returns a human message, not a 500.
+- **Verification:** `node --test tests/book-review-ui.test.mjs tests/content-narrate.test.mjs`
+  → `# fail 0`.
+- **Guardrails (money):** re-narrate is a second path to ElevenLabs — the suite
+  must set `ERA_ELEVEN_URL` and assert the stand-in's call count (Gap 20).
+
+**T3.4 — book-level actions: rebuild text, remove book, animate placeholder**
+- **Acceptance:** "Rebuild text" re-runs step 2 with a "keep my edits" checkbox
+  (default **on**); "Remove book" deletes the folder in the Drive content folder
+  and relies on the Phase 1 mirror deletes to clear `<DATA>` (confirm dialog
+  required); "Animate this book (≈ $x)" is present but **disabled** with a
+  "needs a fal key" hint until Phase 6.
+- **Files:** `public/book-review/index.html`; `server.js`; `content.js`;
+  `tests/book-review-ui.test.mjs`.
+- **TDD:** required. Cases: rebuild with keep-edits preserves edited text;
+  rebuild without it overwrites; remove requires confirmation and deletes the
+  source folder; remove is refused for a slug outside the content folder (path
+  jail); the animate button is disabled with no fal key.
+- **Verification:** `node --test tests/book-review-ui.test.mjs` → `# fail 0`.
+- **Adaptation:** "Remove book" deletes family data. If the deletion cannot be
+  jailed to `<folderPath>/books/<dir>` with certainty, STOP — ship the page
+  without the button rather than risk a wider delete.
+
+- **Gate (Phase 3):** **`rae-flow:reviewing` against spec §5.** Pass criteria:
+  every §5 control exists and writes only `text.json`/`job.json`; no `.dwell` on
+  the page; delete is jailed; full gate green; drag recording attached.
+- **Phase 3 retrospective.**
+
+---
+
+### Phase 4: Music strip, `media-tools` pack, `POST /music/add`
+**Posture hint:** implementing. T4.4's placement is decided (inside `.msgbar`,
+pointer-only; gates amended under dad's 9/4 amendment; sibling placement is the
+escape hatch, not a question).
+**Spec sections:** §6 Music, §7 packs.
+
+**T4.1 — declare and ship the `media-tools` pack**
+- **Acceptance:** `packs.js:17-21` gains
+  `"media-tools": ["vendor/yt-dlp"]` (first entry = the presence marker);
+  `tools/installer.nsi:56` gains `/x yt-dlp` and a dedicated `Section` that lays
+  it down exactly once (`tests/packs.test.mjs:26-27` asserts `laid.length === 1`);
+  `MUI_DESCRIPTION_TEXT` hover text names the MB;
+  `tools/build-dist.sh:39-42` gains an `SZ_MEDIA` term subtracted from
+  `SZ_CORE`; `tools/build-payload.sh` copies the pack payload;
+  `packs.packInstalled(root,"media-tools")` answers correctly.
+- **Files:** `packs.js`, `tools/installer.nsi`, `tools/build-dist.sh`,
+  `tools/build-payload.sh`, `tests/packs.test.mjs`, `tests/update.test.mjs`
+  (`PACK_FILES`).
+- **TDD:** required. New assertion: **every path in `PACKS` appears in
+  `build-dist.sh`'s size computation** (Gap 15) — this closes the hand-duplication
+  hole. Plus the existing `/x`-belongs-to-a-pack and laid-once assertions.
+- **Verification:** `node --test tests/packs.test.mjs tests/update.test.mjs` →
+  `# fail 0`; `bash tools/build-payload.sh /tmp/era-payload-check` → exit 0.
+- **Adaptation:** yt-dlp is a **binary blob**. It is a new file for Defender to
+  flag (spec §7 risk) — it must be re-verified on the VM in Phase 7, and the
+  release notes must say a pack binary was added. If the binary cannot be
+  vendored under an acceptable licence/provenance, STOP and escalate.
+- **Guardrails:** *config/scaffolding* for the NSIS sections (no TDD on
+  installer text), TDD required for `packs.js` and the size assertion.
+
+**T4.2 — `POST /music/add` (resolve, download, append)**
+- **Acceptance:** accepts `{url}` or `{query}`; without the pack it replies a
+  structured "pack missing" answer the sheet can render (never a 500); with the
+  pack it spawns `yt-dlp --js-runtimes node` (node is on the box) with
+  `-f "ba[ext=m4a]/ba"` and **no `-x` / no `--convert-thumbnails`** so **ffmpeg
+  is never required** (spec §6), writes `<slug>.m4a` and `<slug>.webp` into the
+  Drive content folder's `music/`, and appends to `music/manifest.json` with the
+  next free `rank` via `writeAtomic`. Slug is `[a-z0-9-]` only. Replies `202`
+  and does the work behind it (`/clothing/regenerate` pattern). Retires
+  `era-family/tools/add-song.sh` as the only writer.
+- **Files:** new `music-add.js`; `server.js`; `tests/music-add.test.mjs`.
+- **TDD:** required, with `yt-dlp` **mocked** (inject the binary path /
+  spawn function; never invoke the real one, never hit YouTube in a test).
+  Cases: pack-missing answer; a successful add appends one entry with the next
+  rank; a duplicate slug replaces in place; a non-`[a-z0-9-]` slug is rejected;
+  a yt-dlp non-zero exit surfaces a human message; manifest is written atomically;
+  **no test asserts audio playback of an `.m4a`** (Gap 13) — assert the manifest
+  entry plus `GET /music/<slug>.m4a` → 200 with `Accept-Ranges`.
+- **Verification:** `node --test tests/music-add.test.mjs tests/music.test.mjs`
+  → `# fail 0`.
+- **Adaptation:** if `songsRecipe()` (`server.js:540-604`) drops the new entry
+  (it skips songs whose audio file is missing, `:548-549`), the add wrote to the
+  wrong directory — STOP and re-check whether the write target is the Drive
+  content folder or `<DATA>` (Gap 1: build in the Drive folder, serve from
+  `<DATA>` after the mirror).
+
+**T4.3 — reorder endpoint (writes `rank`)**
+- **Acceptance:** `POST /music/order {ids:[…]}` rewrites `rank` in
+  `music/manifest.json` atomically, preserving every other field; unknown ids
+  are rejected 400; the recipe's ETag changes so boards refresh
+  (`server.js:602`).
+- **Files:** `music-add.js`/`server.js`; `tests/music-add.test.mjs`.
+- **TDD:** required. Cases: reorder changes ranks and only ranks; partial id
+  list is rejected; the recipe ETag differs before/after.
+- **Verification:** `node --test tests/music-add.test.mjs tests/music.test.mjs`
+  → `# fail 0`.
+
+**T4.4 — the partner strip in the board header** *(era-board repo; posture: implementing — placement decided 9/4, see below)*
+- **Acceptance:** a `#partnerStrip` with `+ Add` and `⇅ Arrange` renders on
+  `?recipe=songs` and `?recipe=movies` only; it carries **no** `.dwell` class and
+  **no** gaze handlers; the door stays the msgbar's only dwell target; the bar
+  stays ≤ 9.1 % of viewport height; centre cells `[2,2][2,3]` stay black. The
+  four gate assertions are **amended, not deleted**, to allow exactly this one
+  extra child and to assert positively that it is not a dwell target:
+  `board-input.test.mjs:153`, `board-pixel.test.mjs:131-132`+`:210`,
+  `board-wardrobe-note.test.mjs:53`, `board-splash-door.test.mjs:43`.
+- **Files:** `era-board/app/index.html`, `board-render.js` (`mountDoorBar`
+  `:125-157`), `board.css`; `era-board/tests/board-input.test.mjs`,
+  `board-pixel.test.mjs`, `board-wardrobe-note.test.mjs`,
+  `board-splash-door.test.mjs`.
+- **Placement (decided by the orchestrator 9/4, under dad's 9/4 amendment):**
+  inside `.msgbar`, at the end opposite the door, sized to the existing bar
+  height; the four gates are amended to allow exactly one `#partnerStrip`
+  child that carries no `.dwell`. The 9/3 revert (`7e9012f` → `d4a7556`) was a
+  *dwell-reachable* button — the amendment authorizes only a pointer-only strip,
+  which is what this task builds. The sibling-of-`.msgbar` placement is the
+  escape hatch below, not a choice to bring back to dad.
+- **TDD:** required — write the amended gate assertions **first**, watch them
+  fail against the current board, then build the strip.
+- **Verification:** `bash tools/era-gate.sh`; then
+  `gate/board-input.test.out` and `gate/board-pixel.test.out` both `# fail 0`.
+  Also confirm `board-pixel` still reports zero `BAR_TOO_TALL`.
+- **Browser verification:** required — **video/gif** showing (a) a mouse
+  reaching the strip and (b) the gaze/dwell path never firing on it.
+- **Adaptation:** if the strip cannot fit inside the 9 % bar without shrinking
+  the door, STOP and take the sibling-of-`.msgbar` placement (it dodges all four
+  gates at the cost of grid height) — and record that the spec's "in the header"
+  wording was satisfied by position, not by DOM parentage.
+- **Guardrails:** the board's gates are law (memory: *board design rules are
+  law*); amending them is authorized **only** for a non-`.dwell` strip. Never
+  weaken the centre-cell or door assertions.
+
+**T4.5 — arrange mode: drag tiles, cancel the dwell tap-rescue**
+- **Acceptance:** `⇅ Arrange` toggles a mode in which a pointer drag reorders
+  tiles and, on release, `POST /music/order` persists it; `onTile`
+  (`board-render.js:615`) does **not** activate during a drag; `dwell.js`'s
+  150 ms tap-rescue (`dwell.js:302-312`) never synthesizes a click at the end of
+  a drag (use `data-dwell-disabled`, which `dwell.js:154` honours, or
+  `preventDefault` on `pointerdown` in arrange mode); leaving arrange mode
+  restores normal activation.
+- **Files:** new `era-board/app/board-arrange.js`; `board-render.js`
+  (`mountBoard` API `:720-727`, `onTile` `:615`); `board.css`;
+  new `era-board/tests/board-arrange.test.mjs`.
+- **TDD:** required. Cases: a drag reorders the DOM; the dragged tile does not
+  activate; no synthetic click fires within 300 ms of release; the POST body
+  matches the new order; exiting arrange mode re-enables activation; arrange
+  mode is unreachable by gaze.
+- **Verification:** `bash tools/era-gate.sh` → `0 failed`.
+- **Adaptation:** if suppressing the tap-rescue proves impossible without
+  editing `era-core/dwell.js`, that is a **third-repo** change — STOP, document
+  the blast radius (dwell.js is shared by every app), and escalate before editing.
+
+- **Gate (Phase 4):** **`rae-flow:reviewing` against spec §6 Music and §7 packs.**
+  Pass criteria: pack ships and installs; add/reorder write atomically to the
+  Drive content folder; the strip passes the amended gates and is provably
+  gaze-unreachable; recordings attached.
+- **Phase 4 retrospective.**
+
+---
+
+### Phase 5: Movies strip, catalog writer, posters, availability adapter
+**Posture hint:** implementing.
+**Spec section:** §6 Movies.
+
+**T5.1 — catalog writer against the real schema**
+- **Acceptance:** `POST /movies/add {url}` writes a `titles[]` entry that
+  `moviesRecipe()` actually renders: `{id:<slug matching /^[a-z0-9-]{1,64}$/>,
+  kind:"movie"|"show", title, say, service, tier:"core", rank:<next free>,
+  poster, launch:{url}}` **plus** provenance `{year?, tmdbId?, addedBy:"url"|"search"}`
+  (Gap 3). Written atomically to `movies/catalog.json` in the Drive content
+  folder; a duplicate id updates in place; the recipe's ETag changes.
+- **Files:** new `movies-add.js`; `server.js`; `tests/movies-add.test.mjs`.
+- **TDD:** required. Cases: an added title **appears in `/recipes/movies.json`**
+  (this is the assertion that would have caught Gap 3); an entry missing
+  `launch.url` counts toward `meta.pendingCount` and does not render; an invalid
+  id is rejected; rank is the next free; `(2,2)`/`(2,3)` stay unpinned after the
+  add (clone `tests/movies.test.mjs:167-168`).
+- **Verification:** `node --test tests/movies-add.test.mjs tests/movies.test.mjs`
+  → `# fail 0`.
+
+**T5.2 — poster fetch (`og:image`, TMDB fallback)**
+- **Acceptance:** on add, a poster is fetched from the deep link's `og:image`
+  or from TMDB when a key is configured, saved as
+  `movies/posters/<slug>.jpg`, and the entry's `poster` field is set to
+  `"posters/<slug>.jpg"` — matching `era-family/tools/fetch-posters.mjs:64,76`
+  and the `"movies/" + t.poster` join at `server.js:701`. Failure is silent:
+  the title is added with `poster:null` and still renders.
+- **Files:** `movies-add.js`; `tests/movies-add.test.mjs`.
+- **TDD:** required, with a **local fake** page/TMDB server (`ERA_STREAMING_URL`
+  or a dedicated seam). Cases: `og:image` found; no `og:image` and no key →
+  `poster:null`; a non-image body is rejected; the saved path is the one the
+  recipe joins.
+- **Adaptation:** TMDB terms require attribution (see
+  `era-family/tools/fetch-posters.mjs:8-9`). If a poster source's terms forbid
+  local caching, STOP and link instead of caching.
+
+**T5.3 — streaming-availability adapter behind an interface** *(posture: implementing — provider decided 9/4: TMDB + Watchmode, spec §6 and `docs/research/2026-09-04-streaming-availability.md`)*
+- **Acceptance:** one interface
+  `lookupTitle(query, region) → [{title, year, tmdbId?, providers:[{name, deepLink}], poster, similar?[]}]`
+  with (a) a **null adapter** that returns `[]` so URL-paste works with no key
+  configured, and (b) at least one real adapter selected by
+  `<DATA>/content-config.json` `{movies:{provider, region}}`. The provider name
+  is a **config value, not code** (spec §7 "provider drift"). Base URL from an
+  `ERA_STREAMING_URL` seam; a missing key degrades to the null adapter with a
+  Settings hint, never an error.
+- **Input (landed 9/4):** `docs/research/2026-09-04-streaming-availability.md`.
+  Real adapters: **TMDB** (`/search/multi` → title/year/tmdbId/poster/age
+  certification; `/watch/providers` → provider flags) and **Watchmode**
+  (`/search` by TMDB id → `web_url` deep link per source, `us_rating`,
+  `similar_titles`). TMDB `provider_id` == Watchmode `packageId` (Netflix 8,
+  Prime 9, Disney+ 337, Apple TV 350) — one provider table. Without a Watchmode
+  key the result carries `providers[].name` but no `deepLink` ("found on
+  Netflix"), and the sheet falls back to URL paste. Link shapes to pin in a
+  test: Netflix `/watch/{id}`, Disney+ `/browse/entity-{uuid}`, Prime
+  `primevideo.com/detail/{ASIN}` (never `watch.amazon.com?gti=`). The first
+  implementation step is to obtain a Watchmode key and confirm the literal
+  `web_url` strings — the memo could not verify them without signing the family
+  up. Keys: `TMDB_API_KEY` exists in `era-family/data/tmdb.env`; Watchmode key
+  is new (Settings card, optional).
+- **Files:** new `movies-lookup.js`; `movies-add.js`; `server.js`;
+  `tests/movies-lookup.test.mjs`.
+- **Classification rationale (implementing):** provider, request shapes and
+  fallback are decided and documented; JustWatch is excluded by ToS (dev
+  reference only).
+- **TDD:** required for the interface and the null adapter; the real adapter is
+  tested against a recorded fake response only.
+- **Verification:** `node --test tests/movies-lookup.test.mjs` → `# fail 0`; the
+  fake server records exactly the calls expected (no key spend).
+- **Adaptation:** if the memo's chosen provider needs a paid key a parent
+  cannot get "in minutes" (spec §6 requirement), STOP and escalate — that is a
+  requirement violation, not an implementation detail.
+
+**T5.4 — the movies sheet: URL paste and search-result grid** *(era-board repo)*
+- **Acceptance:** `+ Add` on `?recipe=movies` opens the same sheet shape as
+  music: paste a deep link (Netflix / Disney+ / Prime / Apple TV / YouTube) →
+  `POST /movies/add`; type a name → results render as a selection grid (poster,
+  title, year, "on <service>"); picking one adds it. The hub still never serves
+  video (D57) — playback stays with the ERAgaze launch
+  (`board-render.js:582-600`, **no `Content-Type` header**). Arrange mode from
+  T4.5 is reused, writing `rank` back.
+- **Files:** `era-board/app/` (sheet module), `board.css`;
+  `era-board/tests/board-movies.test.mjs` (extend).
+- **TDD:** required. Cases: paste posts the right body; search renders N result
+  cells; picking posts the right body; the sheet is pointer-only (no `.dwell`);
+  the launch payload is unchanged by this work.
+- **Verification:** `bash tools/era-gate.sh` → `0 failed`.
+- **Browser verification:** required — **video/gif** of a paste-add and a
+  search-add.
+
+- **Gate (Phase 5):** **`rae-flow:reviewing` against spec §6 Movies.** Pass
+  criteria: an added title renders on the board; posters resolve or degrade
+  cleanly; the availability provider is a config value with a null default;
+  full gate green.
+- **Phase 5 retrospective.**
+
+---
+
+### Phase 6: Animate (fal card + cost gate)
+**Posture hint:** implementing.
+**Rationale:** the prompting approach, model, duration and negative prompt are
+already decided and documented (`/home/claude/Book-Reader/docs/book-ingest-policies.md`,
+`ellie-this-week/src/ellie/book/{animate,prompts}.py`); the only new UI is one
+Settings card cloned from `#voice`. Ambiguity 2/5.
+**Spec section:** §4 step 5, §7 keys.
+
+**T6.1 — fal key card + `POST /fal-key` + probe**
+- **Acceptance:** a new `<div class="card" id="fal">` cloned from `#voice`
+  (`public/settings/index.html:101-119`) with a password input, `📋 Paste`
+  (reusing `pasteInto`, `:594-598`) and Save; `POST /fal-key` stores the key
+  under the `fal` role, **never echoes it back**, and proves it with **one real
+  call** exactly as `/tts-key` does (`server.js:1574-1596`, `verifyTtsKey`
+  `:876-888`), returning `{ok, error?, perClipPrice?}`. Base URL from a new
+  `ERA_FAL_URL` seam.
+- **Files:** `server.js`; `public/settings/index.html`; `ai-config.js`;
+  `tests/settings-ui.test.mjs`, new `tests/fal-key.test.mjs`.
+- **TDD:** required, against a **fake fal server**. Cases: a good key → `{ok:true}`;
+  401 → a human message; unreachable → "could not reach fal"; the key is never
+  in any response body; the card shows the saved state without the key.
+- **Verification:** `node --test tests/fal-key.test.mjs tests/settings-ui.test.mjs`
+  → `# fail 0`.
+
+**T6.2 — animate step, cost gate, incremental re-publish**
+- **Acceptance:** off by default; `/content/status` reports an estimated book
+  cost (`pages × perClipPrice` from the T6.1 probe) and the review page's
+  "Animate this book (≈ $x)" button is enabled only with a fal key; a click
+  posts `POST /content/run {step:"animate"}`; the worker generates
+  `video/NNN.mp4` per page using the documented prompting (per-book style bible;
+  action-cam duel template for confrontation pages; the standing negative
+  prompt; duration `"5"`; poll fal's returned `status_url`/`response_url`
+  verbatim, never hand-built paths); after **each** clip the manifest is
+  re-published with a bumped `exportedAt` so pages gain video as it arrives; a
+  clip failure logs and continues.
+- **Files:** new `content-animate.js`; `content-worker.js`;
+  `public/book-review/index.html`; `tests/content-animate.test.mjs`.
+- **TDD:** required, against a fake fal server. Cases: no key → the step refuses
+  with a human message and the button stays disabled; the cost estimate matches
+  pages × price; each clip triggers a re-publish with a new `exportedAt`; a
+  failed clip does not abort the book; the request never contains the key in a
+  URL or a log line.
+- **Verification:** `node --test tests/content-animate.test.mjs tests/books.test.mjs`
+  → `# fail 0`.
+- **Adaptation:** fal spends real money. The cost gate is **mandatory** — if the
+  estimate cannot be computed, the button stays disabled. Never auto-start
+  animation from `scan()`.
+
+- **Gate (Phase 6):** **`rae-flow:reviewing` against spec §4 step 5 and §7.**
+  Pass criteria: cost gate enforced; no auto-spend path exists; keys never
+  logged; full gate green.
+- **Phase 6 retrospective.**
+
+---
+
+### Phase 7 (FINAL, MANDATORY): Behavioral verification, including Windows VM QA
+**Posture hint:** implementing.
+**Rationale:** every step is a concrete command with a concrete expected output.
+The judgement is only in reading the result. Ambiguity 1/5.
+**Spec section:** §7 "Testing" — *"End: front-end QA on the Windows VM per dad's
+directive"*.
+
+> Unit and integration tests are necessary but **not sufficient**. This phase
+> verifies the feature as the family experiences it, with real files and a real
+> installer, not mocks.
+
+**T7.1 — full workspace gate, green**
+- **Acceptance:** every suite in era-core, era-making-words, era-pencil,
+  era-board and this era-hub worktree passes.
+- **Verification:** `bash tools/era-gate.sh` (from the era-hub worktree).
+  **Expected output:** final line `== era-gate: N passed, 0 failed ==`, exit 0.
+  Before running: `ss -ltnp | grep -E ':(83[7-9][0-9]|84[01][0-9])'` returns
+  nothing that is an ssh tunnel to a family device (a tunnel answers as that
+  device's live hub and poisons the gate).
+- **Evidence:** paste the final line and the per-suite PASS list into the workpad.
+
+**T7.2 — board gates, explicitly**
+- **Acceptance:** `board-input`, `board-pixel`, `board-wardrobe-note` and
+  `board-splash-door` pass with the amended strip assertions, and `board-pixel`
+  reports zero `BAR_EXTRAS` beyond `#partnerStrip` and zero `BAR_TOO_TALL`.
+- **Verification:** after T7.1, read `gate/board-input.test.out`,
+  `gate/board-pixel.test.out`, `gate/board-wardrobe-note.test.out`,
+  `gate/board-splash-door.test.out`. **Expected:** `# fail 0` in each.
+- **Evidence:** the four `# fail 0` lines in the workpad.
+
+**T7.3 — the payload actually ships every new file**
+- **Acceptance:** `content.js`, `content-worker.js`, `content-providers.js`,
+  `words.js`, `ai-config.js`, `image-util.js`, `music-add.js`, `movies-add.js`,
+  `movies-lookup.js`, `content-animate.js` and `public/book-review/` are all in
+  the built payload, and the built hub boots.
+- **Verification:**
+  1. `bash tools/build-payload.sh /tmp/era-payload-final` → exit 0
+  2. `ls /tmp/era-payload-final/*.js /tmp/era-payload-final/public/book-review/index.html`
+     → every file listed above present
+  3. `ERA_DATA_DIR=/tmp/era-payload-data ERA_NO_UPDATE=1 node /tmp/era-payload-final/server.js 8450`
+     run **in the foreground** (a `start /min`-style launch hides a crash) →
+     logs `era-hub on http://127.0.0.1:8450`; then
+     `curl -sf http://127.0.0.1:8450/content/status` → valid JSON.
+- **Evidence:** the boot line and the JSON body.
+
+**T7.4 — a real book, end to end, from photos on disk**
+- **Acceptance:** starting from a folder of real page photos in a local
+  Drive-shaped folder, the hub claims it, transcribes (against the configured
+  provider — this is the **one** place a real key may be used, by a human, never
+  by a test), narrates, publishes, and the reader plays it with word highlighting.
+- **Verification (Linux box, before the VM):**
+  1. `mkdir -p /tmp/era-content/books/"Test Book"` and drop 3 page images in
+  2. `printf '%s' '{"mode":"local","folderPath":"/tmp/era-content"}' > /tmp/era-data/drive.json`
+  3. start the hub on **8450** with `ERA_DATA_DIR=/tmp/era-data`
+  4. `curl -sX POST localhost:8450/integrations/drive/sync` then poll
+     `curl -s localhost:8450/content/status` until `state` reaches `published`
+  5. `curl -s localhost:8450/books/index.json` → the book appears with the right
+     slug and page count
+  6. `curl -sI "localhost:8450/books/test-book/audio/001.mp3"` → `200` with
+     `Accept-Ranges: bytes`
+  7. `curl -s localhost:8450/books/test-book/manifest.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.pages.every(p=>Array.isArray(p.words)&&p.words.length))})'`
+     → `true`
+  8. `curl -sI "localhost:8450/books/test-book/.build/job.json"` → `404`;
+     `curl -sI "localhost:8450/books/test-book/sources/IMG_0001.jpg"` → `404`
+- **Evidence:** the status transitions, the index entry, and the two 404s.
+- **Guardrails:** use throwaway images, never real family book photos, and
+  never commit any of it.
+
+**T7.5 — Windows VM QA (unattended legs first)**
+- **Acceptance:** the candidate installs on the pristine VM, the hub boots, the
+  new pack installs on demand, and nothing regressed in legs A and B.
+- **Verification:**
+  1. Build the release: `bash tools/release.sh` (it refuses to cut with < 2 GB
+     free and keeps `makensis.log`; prune `dist/release-*` first — memory:
+     *disk full → makensis SIGBUS*).
+  2. `bash tools/vm-e2e.sh <dist dir>` → legs A and B, `0 failed`; artefacts in
+     `gate/vm-e2e/`.
+  3. **Defender FastPath re-verify** the freshly cut installer by downloading it
+     through Edge **on the VM** (memory: *Defender FastPath* — a hash-flag on an
+     unsigned re-cut is normal; a re-cut clears it). The new yt-dlp binary is an
+     extra file to watch (spec §7 risk).
+- **Evidence:** the leg A/B summary lines and the Edge download screenshot.
+
+**T7.6 — Windows VM QA (driven by hand, the parts no harness covers)**
+- **Acceptance:** a person can, on the VM, drop a book into the Drive folder and
+  watch it publish; add a song and a movie from the board **with a mouse**; and
+  confirm gaze cannot reach the strip.
+- **Concrete driving steps** (from the VM driving lessons memory; drivers live
+  in `era-family/tools/vm/`, creds in `era-family/data/vm.env`):
+  1. Revert to `pristine2` (`/root/vm-revert.sh`). **After a revert, qemu
+     restarts and the VNC agent writes "ok" into a dead socket** — send
+     `reconnect` (or restart `vmagent.py` with a *separate* ssh call) before
+     believing any click.
+  2. `warmEdge()` from `tests-vm/lib/vm.mjs` (~60 s) before opening the kiosk —
+     a cold Edge on the emulated disk loses its first navigation.
+  3. Install the candidate: Edge download → hover → the **right** "…" (the left
+     button is the trash) → Keep → "Delete ▾" → Keep anyway → SmartScreen More
+     info → Run anyway. **The installer opens BEHIND Edge.** Never send `esc`
+     while an NSIS window exists — it cancels the install silently.
+  4. Launch the hub in her session with the schtasks pattern
+     (`schtasks /create … /it /rl highest /f` then `/run`); a `schtasks`-created
+     task **will not start on battery** — `Set-ScheduledTask` to clear that
+     first (memory: *schtasks battery default*).
+  5. Drive: sign in, let `New ERA Content` appear, then ship the page photos with
+     `ship.sh` and move them into `books\Test Book\` via a **`.ps1`** (paths with
+     spaces mangle through `vm.sh guest`).
+  6. Watch it publish: `vm.sh guest 'curl -s http://127.0.0.1:8377/content/status'`
+     (guest `curl` through `vm.sh guest` works for hub JSON; PowerShell pipelines
+     do not — .ps1 only). Poll with one Bash call ≤ 9 min
+     (`for … sleep 15` with a break condition).
+  7. Open the Book Reader from its desktop icon (Book Reader 38,630; New ERA
+     38,235) and confirm the book reads with highlighting.
+  8. Open the board on `?recipe=songs`, click `+ Add` **with the mouse**, paste a
+     URL via `clip.sh` (wait ≥ 3 s, click the field, `ctrl-v`, **screenshot
+     before Enter** — a paste has landed empty and has pasted stale clipboard).
+     First 📋 Paste triggers Edge's clipboard prompt in the kiosk's **top-left**
+     (Allow at ~299,132). Confirm the tile appears.
+  9. Repeat on `?recipe=movies` with a deep link; confirm the tile launches
+     through ERAgaze.
+  10. **Gaze cannot reach the strip:** with the engine running, dwell on the
+      strip's buttons for ≥ 3× the dwell time and confirm nothing fires; then
+      confirm the door still fires. Record it.
+  11. Screenshots: `vm.sh shot` writes `/tmp/era-vm-claude/vm.png` and
+      **overwrites** it — copy each shot to a named file. A 190-byte PNG means a
+      blank display; `vm.sh wake` (QEMU monitor `sendkey ctrl`) wakes it —
+      VNC input does not.
+- **Evidence required in the workpad:** named screenshots for steps 3, 7, 8, 9;
+  a **video/gif** for step 10; the `/content/status` transitions from step 6.
+- **Adaptation:** if the VM stalls, check
+  `wmic path Win32_PerfFormattedData_PerfProc_Process get Name,PercentProcessorTime`
+  for `MsMpEng` / `MpSigStub` / `TiWorker` / `System` **before** calling it a
+  hang — servicing starvation has cost hours twice.
+
+**T7.7 — device restore note (not a code task)**
+- **Acceptance:** if the family device was used for testing, the restore is done
+  per `/home/claude/aac-board-builder/docs/i13-qa-cycle.md` (the three parked
+  keeps: `ellie-data-keep`, `raegaze-keep`, `gdrive-clothing-keep`; restores
+  **move** them back). Device tunnels use `ssh -f -N -L 8425:127.0.0.1:8377 i13`
+  — port **8425+**, never 8377–8416. A reboot may need a hand wake.
+- **Verification:** the verify script (`tools/i13-verify-zero.ps1` for a
+  teardown) or a manual check that TD Snap tiles launch again.
+
+- **Gate (Phase 7):** **`rae-flow:reviewing` final pass against the whole spec.**
+  Pass criteria: every §7 "Testing" bullet has evidence in the workpad — unit
+  tests per rail, mocked adapters with no key spend, board gates green, and the
+  VM walkthrough (install → drop a book → watch it publish → add a song and a
+  movie with a mouse → gaze cannot reach the strip).
+- **Phase 7 retrospective:** decisions, observations (what the VM found that the
+  gate did not), adaptations, follow-ups, confidence + residual risks.
+
+---
+
+## D. Posture summary
+
+| Task | Posture hint | Confidence | Rationale |
+|---|---|---|---|
+| T1.1–T1.4 | implementing | High | Mechanical, existing suites, tests writable first |
+| T2.1–T2.5 | implementing | High | `clothing.js`/`clothing-worker.js` are a working reference for every rail |
+| T2.6 | implementing + escape hatch | Medium | Adapter shape is known; a bake-off winner outside the big three would change it |
+| T2.6a | implementing (config) | Medium | Trivial once the decision lands; may ship with the spec's default |
+| T2.7–T2.9 | implementing | High | Algorithm and route patterns are fully specified |
+| T2.10–T2.11 | implementing | High | Clone existing card / note patterns |
+| T3.1–T3.4 | implementing | High | §5 enumerates every control |
+| T4.1–T4.3 | implementing | High | Pack + endpoint patterns exist |
+| T4.4 | implementing | Medium | Placement decided (inside `.msgbar`, pointer-only, gates amended per dad's 9/4 amendment); escape hatch documented |
+| T4.5 | implementing | Medium | Greenfield drag code in a codebase with none, plus a known dwell landmine |
+| T5.1–T5.2 | implementing | High | Schema and poster conventions are pinned by existing code |
+| T5.3 | implementing | High | Provider decided 9/4: TMDB (search/poster/discover) + Watchmode (deep links), Watchmode optional with TMDB-only fallback |
+| T5.4 | implementing | Medium | Reuses T4.4/T4.5 once those settle |
+| T6.1–T6.2 | implementing | High | Prompting, model and duration already decided and documented |
+| T7.1–T7.7 | implementing | High | Concrete commands with concrete expected output |
+
+---
+
+## E. Execution readiness
+
+- **Ready:** Phases 1, 2 (except T2.6a's default), 3, 4, 5, 6, 7.
+- **Ready with a stated default:** T2.6a (ship the spec's policy if the
+  decision file is absent). T5.3's provider is decided (TMDB + Watchmode).
+- **Needs a call during execution:** none. Open questions below were answered
+  by the orchestrator on 9/4 (answers inline).
+- **Out of scope, recorded:** API-mode Drive upload (Gap 1); merging
+  `clothing.js` onto the new rails (spec §3 says YAGNI); the recommendation
+  engine (spec §6 "Long term"); `installPack` checksum verification (Gap 14);
+  the `EC.session` / `body.next` dead code in `board-render.js:568`.
+
+## F. Open questions (documented, not asked — subagent mode)
+
+1. **Strip placement** (T4.4) — **answered:** inside `.msgbar`, gates amended
+   for one pointer-only child; sibling placement only as the escape hatch.
+2. **API-mode building** (Gap 1) — **answered:** local Drive mode only for v1.
+   API mode is dormant and has no Settings UI; an upload path is a later scope.
+3. **Review-page URL** (Gap 4) — **answered:** `/book-review/`.
+4. **Book removal** (T3.4) — **answered:** delete the Drive folder (lands in
+   the family's Google trash for 30 days) behind a confirm; mirror deletes follow.
+5. **`media-tools` pack checksum** (Gap 14) — **answered:** accept for now;
+   follow-up filed to reuse `latest.json`'s sha256 in `installPack`.
