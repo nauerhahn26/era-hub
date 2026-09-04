@@ -89,6 +89,15 @@
     <div id="appsList"></div>
   </div>
 
+  <div class="card" id="updates">
+    <h2>⬆️ Updates</h2>
+    <p class="hint">New ERA looks for a newer version by itself — shortly after it starts and every 6 hours after that — and installs it quietly. Press the button to look right now instead of waiting.</p>
+    <div class="row">
+      <button id="updCheck">⬆️ Check for updates now</button>
+    </div>
+    <div class="status" id="updStatus"></div>
+  </div>
+
   <div class="card" id="voice">
     <h2>🎙 Voice</h2>
     <p class="hint">The voice that talks to your child in Making Words and The Pencil. Tap any voice to hear it and choose it.</p>
@@ -770,6 +779,47 @@ $("dlSyncNow").onclick=async()=>{ toast("Sync started"); await fetch("/integrati
 // today's outfits with them right away (the hub does it by itself within
 // ~10 minutes of a sync; the Clothing Picker's footer shows the progress)
 $("dlOutfitsNow").onclick=async()=>{ toast("Looking for new clothing photos — the Clothing Picker shows the progress"); await fetch("/clothing/regenerate",{method:"POST"}); };
+
+// ---- Updates: what is running, and a "look now" that shows the outcome ----
+// (dad 9/3: the boot check only runs 90 s after the hub STARTS, so a hub that
+// has been up since morning never sees an afternoon release until its 6-hour
+// tick; the Alt+F4-and-reopen a normal user tries does not restart the hub.)
+let updDisabled=false;
+async function paintVersion(){
+  try{
+    const v=await (await fetch("/version",{cache:"no-store"})).json();
+    updDisabled=!v.updater;
+    $("updStatus").innerHTML = v.updater
+      ? "Running build <b>"+v.build+"</b>"+(v.disk&&v.disk!==v.build?" — build <b>"+v.disk+"</b> is installed and starts next time New ERA opens":"")
+      : "Running build <b>"+v.build+"</b> · this copy does not update itself (a developer checkout)";
+    return v;
+  }catch(e){ $("updStatus").textContent="Can't read the version right now."; return null; }
+}
+$("updCheck").onclick=async()=>{
+  const b=$("updCheck"); b.disabled=true;
+  $("updStatus").innerHTML="Looking for a newer version…";
+  try{
+    const r=await (await fetch("/update/check",{method:"POST"})).json();
+    if(r.status==="up-to-date"){ $("updStatus").innerHTML="<b>You're on the latest</b> — build "+r.build+(r.latest?" ("+r.latest+")":""); toast("Up to date ✓"); }
+    else if(r.status==="updated"){
+      $("updStatus").innerHTML="<b>Updated to build "+r.to+"</b>"+(r.version?" ("+r.version+")":"")+" — New ERA restarts itself in a moment; this page follows.";
+      toast("Updated ✓");
+      // the hub restarts: wait for the new build to answer, then reload here
+      const was=r.from; let tries=0;
+      const poll=setInterval(async()=>{
+        tries++;
+        try{ const v=await (await fetch("/version",{cache:"no-store"})).json(); if(v.build!==was){ clearInterval(poll); location.reload(); } }catch(e){}
+        if(tries>90) clearInterval(poll);
+      },2000);
+      return;
+    }
+    else if(r.status==="busy"){ $("updStatus").textContent="Already checking — give it a moment."; }
+    else if(r.status==="disabled"){ $("updStatus").textContent="This copy does not update itself (a developer checkout)."; }
+    else { $("updStatus").innerHTML="<b>Couldn't fetch an update</b> ("+r.status+(r.code?" "+r.code:"")+(r.message?": "+r.message:"")+"). Check the internet connection and try again; New ERA keeps trying by itself every 6 hours."; toast("Update check failed", false); }
+  }catch(e){ $("updStatus").textContent="Couldn't reach New ERA to check."; toast("Update check failed", false); }
+  b.disabled=false;
+};
+paintVersion();
 $("dlOpenFolder").onclick=async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"folder"})}); };
 setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
 

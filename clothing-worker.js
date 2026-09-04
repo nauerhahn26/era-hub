@@ -323,7 +323,16 @@ function removeBackground(img) {
   return { data: out, width: w, height: h };
 }
 
-function cropToContent(img, tol) {
+// `tol`/`need` default to a real photo's floor: a row or column is garment
+// only when a clear 2% of its pixels differ from the border colour by more
+// than 34 a channel. On a CUT-OUT or a tile the background is pure white and
+// the garment's thinnest parts — a pale cuff, a sleeve tie, a strap — are a
+// handful of pixels a column; the photo thresholds threw those away and the
+// leopard top lost its sleeves below the elbow (dad 9/3: "over trimmed
+// shirt"). WHITE_BG is the setting for that case: anything visibly off-white,
+// two samples a line, is garment.
+const WHITE_BG = { tol: 14, need: 2 };
+function cropToContent(img, tol, need_) {
   const { data, width: w, height: h } = img;
   const T = tol || 34;
   // background = median-ish sample of the outer 3% frame
@@ -345,7 +354,7 @@ function cropToContent(img, tol) {
     return Math.abs(r - med[0]) + Math.abs(g - med[1]) + Math.abs(b - med[2]) > T * 3;
   };
   // a row/column counts as garment when enough of its pixels differ
-  const need = Math.max(3, Math.round(Math.min(w, h) * 0.02));
+  const need = need_ || Math.max(3, Math.round(Math.min(w, h) * 0.02));
   let x0 = w, y0 = h, x1 = -1, y1 = -1;
   for (let y = 0; y < h; y++) {
     let n = 0;
@@ -368,7 +377,7 @@ function cropToContent(img, tol) {
 
 function fitBox(img, boxW, boxH) {
   const pad = 6;
-  const im = cropToContent(img);
+  const im = cropToContent(img, WHITE_BG.tol, WHITE_BG.need);   // a tile: garment on white
   const scale = Math.min((boxW - 2 * pad) / im.width, (boxH - 2 * pad) / im.height);
   const nw = Math.max(1, Math.round(im.width * scale)), nh = Math.max(1, Math.round(im.height * scale));
   const scaled = exactScale(im, nw, nh);
@@ -409,13 +418,36 @@ function composite(fileA, fileB, dest) {
 }
 
 // ---- ingest: one small vision call per new photo ----
+// Orientation is asked as WHERE the garment's top lies, not as an angle. The
+// old "rotate_deg clockwise" answer was a coin toss on a sideways photo: the
+// i13 wardrobe (dad 9/3) had two of three sideways shorts answered 90 when
+// 270 was right — the model can see a waistband on the right edge, it just
+// cannot do the mental turn. We do the turn (SIDE_DEG).
 const INGEST_PROMPT =
   'This photo shows one clothing item (or a matching set) laid flat. Reply with ONLY a JSON object, no prose: ' +
   '{"name": a SHORT name, 2-3 words max, like "Pink leggings" or "Daisy tee" (a child picks by picture; long names do not fit the button), ' +
   '"category": one of "top","pants","shorts","dress","set", ' +
   '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
-  '"rotate_deg": 0, 90, 180 or 270 clockwise so the item stands upright, ' +
-  '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the UPRIGHT image bounding the garment TIGHTLY - exclude floor, table, carpet and every background pixel you can, touching the garment edges}';
+  '"top_side": which EDGE of this photo the garment\'s top is nearest - the neckline/shoulders of a top or dress, the WAISTBAND of pants or shorts - one of "top","bottom","left","right", ' +
+  '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the image bounding the garment - exclude floor, table, carpet, but never cut into the garment}';
+// clockwise turn that brings that edge to the top
+const SIDE_DEG = { top: 0, left: 90, bottom: 180, right: 270 };
+function turnFor(meta) {
+  if (meta && SIDE_DEG[meta.top_side] !== undefined) return SIDE_DEG[meta.top_side];
+  return [90, 180, 270].includes(meta && meta.rotate_deg) ? meta.rotate_deg : 0;   // older answers / catalogues
+}
+// The model's box is a hint, not a cut: it comes off a 384px probe and lands
+// short of a sleeve or a cuff (the leopard top, dad 9/3: "over trimmed").
+// Take it only when it is a well-formed box; malformed answers ({"y":2.7},
+// {"box_2d":...}, a missing side) mean "no box".
+function saneCrop(c) {
+  if (!c || typeof c !== "object") return null;
+  const v = ["x", "y", "w", "h"].map(k => c[k]);
+  if (!v.every(n => typeof n === "number" && n >= 0 && n <= 1)) return null;
+  const [x, y, w, h] = v;
+  if (w < 0.1 || h < 0.1 || x + w > 1.02 || y + h > 1.02) return null;
+  return { x, y, w, h };
+}
 
 async function askModel(cfg, jpgFile) {
   // A 429 retires THAT model for the rest of this build — the allowance is
@@ -570,12 +602,12 @@ async function ingest() {
           usedAi = true;
           meta = await askModel(cfg, probe);
         }
-        const rot = [90, 180, 270].includes(meta.rotate_deg) ? meta.rotate_deg : 0;
+        const rot = turnFor(meta);
         const id = "item_" + crypto.createHash("md5").update(f).digest("hex").slice(0, 10);
         // Trim on the FULL upright photo — its border really is floor/table, so
         // the background sample is honest. (Doing this after the model's crop
         // sampled the GARMENT and trimmed nothing: wood floor survived onto the
-        // board, QA 9/1.) Keep whichever box is tighter.
+        // board, QA 9/1.)
         // Cut the garment out with the model (same one her Python pipeline
         // uses); the colour-flood heuristic remains the fallback for a machine
         // without the runtime, where it trims what it safely can.
@@ -583,15 +615,24 @@ async function ingest() {
         let cutOut = null;
         try { cutOut = await segment.cutOut(rotated); } catch (e) { console.error("[segment] " + e.message); }
         const cut = cutOut || removeBackground(rotated);
-        const trimmed = cropToContent(cut);
-        const modelCrop = cropRgba(cut, meta.crop || {});
+        const trimmed = cutOut ? cropToContent(cut, WHITE_BG.tol, WHITE_BG.need) : cropToContent(cut);
+        // A cut-out already IS the garment: the box around its pixels is the
+        // whole garment and nothing else. The model's box only helps the
+        // fallback, where the flood may have left floor around the garment —
+        // and even then only when it is tighter. Letting it win over the
+        // cut-out sliced sleeves and cuffs off (dad 9/3: "over trimmed shirt").
+        const hint = saneCrop(meta.crop);
         const area = (im) => im.width * im.height;
-        const best = area(trimmed) <= area(modelCrop) ? trimmed : modelCrop;
+        let best = trimmed;
+        if (!cutOut && hint) {
+          const modelCrop = cropRgba(cut, hint);
+          if (area(modelCrop) < area(trimmed)) best = modelCrop;
+        }
         writeJpg(padSquare(best, 640), path.join(ITEMS(), id + ".jpg"), 85);
         // Keep the geometry: a later tile repair can then reproduce the same
         // picture without asking the model again.
         cat.items[f] = { id, ok: true, name: shortLabel(meta.name),
-          rotate_deg: rot, crop: meta.crop || {}, exif: orient,
+          rotate_deg: rot, crop: hint || {}, exif: orient,
           category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any" };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes

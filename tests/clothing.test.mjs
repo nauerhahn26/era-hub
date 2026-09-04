@@ -440,6 +440,106 @@ test("a phone photo with EXIF orientation is turned upright before the model see
   await clothing.regenerate(true);
 });
 
+// A laid-flat "garment" for the pipeline: a red body (0.15..0.85 of the frame)
+// with a BLUE waistband strip along one of its edges, on a grey floor. The
+// waistband is what must end up on top; the strip is what an over-tight box
+// would slice off. Phone-sized (a tile never upscales a small photo).
+function makeGarmentJpg(file, waistbandSide) {
+  const jpeg = require("./vendor/jpeg-js");
+  const w = 1200, h = 1200;
+  const data = Buffer.alloc(w * h * 4);
+  const x0 = Math.round(w * 0.15), x1 = Math.round(w * 0.85), y0 = Math.round(h * 0.15), y1 = Math.round(h * 0.85);
+  const band = Math.round(w * 0.08);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4;
+    let rgb = [150, 150, 150];                                   // floor
+    if (x >= x0 && x < x1 && y >= y0 && y < y1) {
+      rgb = [220, 30, 30];                                       // body
+      const onBand = waistbandSide === "right" ? x >= x1 - band : waistbandSide === "left" ? x < x0 + band :
+                     waistbandSide === "bottom" ? y >= y1 - band : y < y0 + band;
+      if (onBand) rgb = [30, 30, 220];                           // waistband
+    }
+    data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2]; data[o + 3] = 255;
+  }
+  fs.writeFileSync(file, jpeg.encode({ data, width: w, height: h }, 90).data);
+}
+function readTile(TMP, id) {
+  const jpeg = require("./vendor/jpeg-js");
+  const t = jpeg.decode(fs.readFileSync(path.join(TMP, "wardrobe-items", id + ".jpg")), { formatAsRGBA: true });
+  const px = (x, y) => t.data.subarray((y * t.width + x) * 4, (y * t.width + x) * 4 + 3);
+  // the tile's drawn area, ignoring the white padSquare frame
+  let top = t.height, bottom = -1;
+  for (let y = 0; y < t.height; y++) { const p = px(t.width >> 1, y); if (p[0] < 200 || p[1] < 200 || p[2] < 200) { if (y < top) top = y; bottom = y; } }
+  const isBlue = (p) => p[2] > 150 && p[0] < 110;
+  const isRed = (p) => p[0] > 150 && p[2] < 110;
+  return { t, px, top, bottom, isBlue, isRed };
+}
+
+// Dad 9/3, the i13 board: "Green shorts" (and the Floral bloomers) upside
+// down — the waistband at the bottom. Both photos lay with the waistband on
+// the RIGHT; the model answered "rotate 90 clockwise" where 270 was right.
+// Asked instead WHERE the waistband is, it only has to look, and we turn.
+test("a sideways photo is turned by where the model saw the garment's top, not by an angle it computed (dad 9/3, the upside-down shorts)", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "google", apiKey: "AIza-test" }));
+  makeGarmentJpg(path.join(TMP, "clothing", "photo_side.jpg"), "right");
+  forceAnswer = { name: "Green shorts", category: "shorts", warmth: "hot", top_side: "right",
+    // ...and the same wrong angle the live model gave, which must now be ignored
+    rotate_deg: 90, crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } };
+  try {
+    await clothing.regenerate(true);
+  } finally { forceAnswer = null; }
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const entry = cat.items["photo_side.jpg"];
+  assert.ok(entry && entry.ok, "catalogued");
+  assert.equal(entry.rotate_deg, 270, "waistband on the right = a 270 clockwise turn, remembered for tile repairs");
+  const { px, top, bottom, isBlue, isRed, t } = readTile(TMP, entry.id);
+  assert.ok(bottom > top, "something was drawn");
+  assert.ok(isBlue(px(t.width >> 1, top + 6)), "the waistband is at the TOP of the tile");
+  assert.ok(isRed(px(t.width >> 1, bottom - 6)), "the legs hang below it");
+
+  // and the older answer shape still works for a model that ignores top_side
+  makeGarmentJpg(path.join(TMP, "clothing", "photo_side2.jpg"), "left");
+  forceAnswer = { name: "Blue shorts", category: "shorts", warmth: "hot", rotate_deg: 90, crop: {} };
+  try { await clothing.regenerate(true); } finally { forceAnswer = null; }
+  const e2 = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8")).items["photo_side2.jpg"];
+  assert.equal(e2.rotate_deg, 90, "rotate_deg alone is still honoured");
+  const r2 = readTile(TMP, e2.id);
+  assert.ok(r2.isBlue(r2.px(r2.t.width >> 1, r2.top + 6)), "waistband on the left, turned 90: on top");
+  for (const f of ["photo_side.jpg", "photo_side2.jpg"]) fs.rmSync(path.join(TMP, "clothing", f));
+  await clothing.regenerate(true);
+});
+
+// Dad 9/3: the leopard top's sleeves were sliced off ("over trimmed shirt").
+// The model's box, guessed off a 384px probe, was tighter than the garment
+// and won over the cut-out because it was smaller. The cut-out IS the garment:
+// its own bounding box is the crop; the model's box is at most a hint for
+// the fallback path, and a malformed one is no box at all.
+test("the model's box cannot cut into a garment the cut-out already found (dad 9/3, the over-trimmed top)", async () => {
+  makeGarmentJpg(path.join(TMP, "clothing", "photo_tight.jpg"), "top");
+  forceAnswer = { name: "Leopard top", category: "top", warmth: "warm", top_side: "top",
+    crop: { x: 0.3, y: 0.3, w: 0.4, h: 0.4 } };            // well inside the garment
+  try { await clothing.regenerate(true); } finally { forceAnswer = null; }
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const entry = cat.items["photo_tight.jpg"];
+  const { px, top, bottom, isBlue, isRed, t } = readTile(TMP, entry.id);
+  assert.ok(isBlue(px(t.width >> 1, top + 6)), "the waistband strip at the garment's edge survived the model's tight box");
+  assert.ok(isRed(px(t.width >> 1, bottom - 6)), "so did the hem");
+  // the garment fills the tile's drawn area: a tight-but-complete cut, not a slice
+  assert.ok(bottom - top > t.height * 0.8, `garment spans the tile (${bottom - top} of ${t.height})`);
+
+  // malformed boxes (the live catalogue had {"y":2.7}, {"box_2d":...}, no "h") are dropped, not applied
+  makeGarmentJpg(path.join(TMP, "clothing", "photo_junk.jpg"), "top");
+  forceAnswer = { name: "Odd top", category: "top", warmth: "warm", top_side: "top", crop: { x: 0.08, y: 2.7, w: 0.8 } };
+  try { await clothing.regenerate(true); } finally { forceAnswer = null; }
+  const junk = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8")).items["photo_junk.jpg"];
+  assert.deepEqual(junk.crop, {}, "a malformed box is not remembered as geometry");
+  const rj = readTile(TMP, junk.id);
+  assert.ok(rj.isBlue(rj.px(rj.t.width >> 1, rj.top + 6)), "and the tile is whole");
+  for (const f of ["photo_tight.jpg", "photo_junk.jpg"]) fs.rmSync(path.join(TMP, "clothing", f));
+  await clothing.regenerate(true);
+});
+
 // The 15-minute tick only ACTS on a stale board — but a family that adds or
 // removes photos at 3pm expects the board to follow that afternoon, not
 // tomorrow morning. The tick therefore also acts when the photo set changed.
@@ -556,6 +656,57 @@ test("a combo label is budgeted as a whole, so it never clips", async () => {
   assert.ok(combos.some(l => /green shorts/i.test(l)),
     `the bottom kept its colour, got ${JSON.stringify(combos)}`);
 });
+
+// ...and the second cut, from the tile into the outfit picture, was the one
+// that actually took the leopard top's sleeves: the tile was whole, but the
+// composite's trim asked for a solid 2% of a column to differ from white, and
+// a pale cuff with its thin tie is not that. On a tile the background IS
+// white — anything off-white is garment, however thin.
+test("a thin sleeve tie on a tile survives into the outfit picture (dad 9/3, the over-trimmed top)", async () => {
+  const jpeg = require("./vendor/jpeg-js");
+  const dim = 640, data = Buffer.alloc(dim * dim * 4, 255);
+  const set = (x, y, r, g, b) => { const o = (y * dim + x) * 4; data[o] = r; data[o + 1] = g; data[o + 2] = b; };
+  for (let y = 200; y < 440; y++) for (let x = 200; x < 440; x++) set(x, y, 220, 30, 30);   // body
+  for (let y = 318; y < 322; y++) for (let x = 60; x < 200; x++) set(x, y, 30, 30, 220);    // a 4px tie to the left
+  fs.mkdirSync(path.join(TMP, "wardrobe-items"), { recursive: true });
+  fs.writeFileSync(path.join(TMP, "wardrobe-items", "item_tie.jpg"), jpeg.encode({ data, width: dim, height: dim }, 85).data);
+  const saved = fs.readFileSync(path.join(TMP, "wardrobe.json"));
+  const bottomId = Object.values(JSON.parse(saved.toString("utf8")).items)
+    .find(i => i.ok && fs.existsSync(path.join(TMP, "wardrobe-items", i.id + ".jpg"))).id;
+  fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
+    "tie_top.jpg":    { id: "item_tie", ok: true, name: "Tie top", category: "top",   warmth: "any" },
+    "tie_bottom.jpg": { id: bottomId,   ok: true, name: "Pants",   category: "pants", warmth: "any" },
+  }}));
+  // A wardrobe of exactly these two: the other photos step aside (else they
+  // are re-ingested and the day's 21 outfits may not include this pair).
+  const aside = path.join(TMP, "clothing-aside");
+  fs.renameSync(path.join(TMP, "clothing"), aside);
+  fs.mkdirSync(path.join(TMP, "clothing"));
+  for (const f of ["tie_top.jpg", "tie_bottom.jpg"])
+    fs.copyFileSync(path.join(aside, "photo_a.jpg"), path.join(TMP, "clothing", f));
+  await clothing.regenerate(true);
+
+  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const outfit = rec.boards.flatMap(b => b.buttons || []).find(b => b.type === "outfit" && /tie top/i.test(b.label));
+  assert.ok(outfit, "the pair produced an outfit");
+  const c = jpeg.decode(fs.readFileSync(path.join(TMP, "wardrobe-outfits", path.basename(outfit.image))), { formatAsRGBA: true });
+  // the top sits in the LEFT half (420 wide); find the leftmost drawn column there
+  let firstX = -1, blueSeen = false;
+  for (let x = 0; x < 420 && firstX < 0; x++)
+    for (let y = 0; y < c.height; y++) {
+      const o = (y * c.width + x) * 4;
+      if (c.data[o] < 200 || c.data[o + 1] < 200 || c.data[o + 2] < 200) { firstX = x; blueSeen = c.data[o + 2] > 150 && c.data[o] < 110; break; }
+    }
+  assert.ok(firstX >= 0, "the top was drawn");
+  assert.ok(blueSeen, `the garment's leftmost pixels are the tie, not the body — the tie was cut off (first drawn column ${firstX})`);
+  fs.rmSync(path.join(TMP, "clothing"), { recursive: true, force: true });
+  fs.renameSync(aside, path.join(TMP, "clothing"));
+  fs.rmSync(path.join(TMP, "wardrobe-items", "item_tie.jpg"), { force: true });
+  fs.writeFileSync(path.join(TMP, "wardrobe.json"), saved);
+  await clothing.regenerate(true);
+});
+
+
 
 // Bugs 10 + 11 (QA 9/1): a long AI name clipped mid-word on the plate, and a
 // tile could start lowercase ("graphic tee + ..."). The name is squeezed in

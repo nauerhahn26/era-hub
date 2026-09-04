@@ -176,6 +176,26 @@ test("a second check is a no-op: up-to-date", async () => {
   assert.equal(r.build, NEW_BUILD);
 });
 
+// Settings has a "Check for updates now" button (dad 9/3: a hub that has been
+// up since morning only notices an afternoon release at its 6-hour tick, and
+// closing/reopening New ERA does not restart the hub). The button POSTs the
+// same route as the timer and must have a plain-English line for every
+// status the route can answer — an unknown status falls into the generic
+// "couldn't fetch" line, never a blank card.
+test("Settings' 'Check for updates now' hits /update/check and speaks every status", () => {
+  const html = fs.readFileSync(path.join(HUB, "public", "settings", "index.html"), "utf8");
+  assert.match(html, /id="updCheck"/, "the button exists");
+  assert.match(html, /fetch\("\/update\/check",\{method:"POST"\}\)/, "the button POSTs the updater's route");
+  assert.match(html, /fetch\("\/version"/, "the card shows the running build");
+  const src = fs.readFileSync(path.join(HUB, "update.js"), "utf8");
+  const statuses = new Set([...src.matchAll(/status: *"([a-z-]+)"/g)].map(m => m[1]));
+  for (const s of ["updated", "up-to-date", "busy", "disabled"]) {
+    assert.ok(statuses.has(s), `update.js still answers ${s}`);
+    assert.ok(html.includes(`r.status==="${s}"`), `settings speaks "${s}"`);
+  }
+  assert.match(html, /Couldn't fetch an update/, "every other status gets the generic try-again line");
+});
+
 test("a checkout hub keeps the updater disabled", async () => {
   const PORT2 = 8412;
   const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), "era-upd2-"));
