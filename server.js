@@ -442,12 +442,28 @@ const MUSIC_EXTS = [".json", ".jpg", ".jpeg", ".png", ".webp", ...MUSIC_AV_EXTS]
 // movies jail: images + json ONLY — the hub NEVER serves video for this
 // feature (D57: pixels come from the streaming services, always).
 const MOVIE_EXTS = [".json", ".jpg", ".webp", ".png"];
-function serveBook(req, res, rest) { serveMediaJail(req, res, BOOKS_DIR, rest, BOOK_EXTS, BOOK_AV_EXTS); }
-function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts) {
+// The books allowlist is by EXTENSION, so the builder's scratch folders —
+// sources/ (the originals a parent dropped in) and .build/ (job.json,
+// text.json) — would be public .jpg/.json under it. They live INSIDE the
+// package on purpose (Drive mirrors them between devices), so the serve side
+// denies them by name. Books only: music/movies have no such folders and must
+// not inherit the restriction.
+const BOOK_DENY_DIRS = ["sources", ".build"];
+function serveBook(req, res, rest) {
+  serveMediaJail(req, res, BOOKS_DIR, rest, BOOK_EXTS, BOOK_AV_EXTS, BOOK_DENY_DIRS);
+}
+function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs) {
   if (rest.includes("\0")) { res.writeHead(400).end(); return; }
   if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(403).end(); return; }
   const file = path.normalize(path.join(jailDir, rest));
   if (file !== jailDir && !file.startsWith(jailDir + path.sep)) { res.writeHead(403).end(); return; }
+  // Private path segment anywhere under the jail -> 404 (not 403: a denied name
+  // is indistinguishable from a name that is not there). Lower-cased because
+  // the family's Windows fs matches SOURCES/ to the same directory.
+  if (denyDirs && denyDirs.length) {
+    const segs = path.relative(jailDir, file).split(/[\\/]/).map(s => s.toLowerCase());
+    if (segs.some(s => denyDirs.includes(s))) { res.writeHead(404).end("not found"); return; }
+  }
   const ext = path.extname(file).toLowerCase();
   if (!allowedExts.includes(ext)) { res.writeHead(404).end("not found"); return; }
   fs.stat(file, (err, st) => {

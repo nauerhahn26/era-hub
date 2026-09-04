@@ -81,6 +81,19 @@ before(async () => {
       { index: 1, image: "pages/002.jpg", text: "", audio: null },
     ],
   }, null, 2));
+  // builder scratch: the originals the parent dropped in, plus the job state
+  // machine. These live INSIDE the package (so Drive mirrors them between
+  // devices) but must never be reachable over HTTP — .jpg/.json are allowlisted
+  // extensions, so only a name-based deny keeps them private.
+  fs.mkdirSync(path.join(book, "sources"), { recursive: true });
+  fs.mkdirSync(path.join(book, ".build"), { recursive: true });
+  fs.writeFileSync(path.join(book, "sources", "IMG_0001.jpg"), JPEG);
+  fs.writeFileSync(path.join(book, ".build", "job.json"), '{"state":"claimed"}');
+  fs.writeFileSync(path.join(book, ".build", "text.json"), '{"pages":[]}');
+  fs.writeFileSync(path.join(book, ".build", "log.jsonl"), '{"step":"ingest"}\n');
+  // the SAME names under the music jail: the deny is books-only, so these serve
+  fs.mkdirSync(path.join(TMP, "music", "sources"), { recursive: true });
+  fs.writeFileSync(path.join(TMP, "music", "sources", "cover.jpg"), JPEG);
   // an incomplete package (mid-export: media present, NO manifest) — must be skipped
   const partial = path.join(TMP, "books", "half-exported");
   fs.mkdirSync(partial, { recursive: true });
@@ -218,6 +231,48 @@ test("jail escape is 403 and never leaks the file", async () => {
 test("disallowed extension in the jail is 404", async () => {
   const r = await fetch(`${BASE}/books/luna-the-fox/manifest.txt`);
   assert.equal(r.status, 404);
+});
+
+// The builder's scratch folders sit inside the package so Drive mirrors them,
+// but the serve-side allowlist is by EXTENSION — sources/*.jpg and
+// .build/*.json would otherwise be public. Deny by path segment, books only.
+test("builder scratch is never served: sources/ and .build/ are 404", async () => {
+  for (const p of ["/books/luna-the-fox/sources/IMG_0001.jpg",
+                   "/books/luna-the-fox/.build/job.json",
+                   "/books/luna-the-fox/.build/text.json",
+                   "/books/luna-the-fox/.build/log.jsonl"]) {
+    const r = await fetch(`${BASE}${p}`);
+    assert.equal(r.status, 404, `denied: ${p}`);
+    const body = await r.text();
+    assert.ok(!body.includes("claimed"), `no leak for ${p}`);
+  }
+});
+
+test("scratch deny survives raw paths: percent-encoding and a trailing slash", async () => {
+  for (const p of ["/books/luna-the-fox/%2Ebuild/job.json",   // .build re-encoded
+                   "/books/luna-the-fox/%73ources/IMG_0001.jpg", // sources
+                   "/books/luna-the-fox/SOURCES/IMG_0001.jpg", // case-insensitive fs
+                   "/books/luna-the-fox/sources/"]) {
+    const r = await rawGet(PORT, p);
+    assert.equal(r.status, 404, `denied: ${p}`);
+    assert.ok(!r.body.includes("claimed"), `no leak for ${p}`);
+  }
+});
+
+test("the deny is books-only: /music/sources/ still serves", async () => {
+  const r = await fetch(`${BASE}/music/sources/cover.jpg`);
+  assert.equal(r.status, 200, "music and movies have no scratch folders to hide");
+  const body = Buffer.from(await r.arrayBuffer());
+  assert.ok(body.equals(JPEG));
+});
+
+test("normal package files are unaffected by the deny", async () => {
+  for (const p of ["/books/luna-the-fox/manifest.json",
+                   "/books/luna-the-fox/cover.jpg",
+                   "/books/luna-the-fox/pages/001.jpg",
+                   "/books/luna-the-fox/audio/001.wav"]) {
+    assert.equal((await fetch(`${BASE}${p}`)).status, 200, `still served: ${p}`);
+  }
 });
 
 test("LAW: missing books dir -> index [] and the server stays alive", async () => {
