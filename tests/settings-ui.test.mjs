@@ -171,6 +171,23 @@ test("the books card is #content and names the recommended setup (spec §4)", as
   await ctx.close();
 });
 
+// E8: the free tier is the default, so the card that recommends it owes the
+// parent the one thing the free tier costs — Google may train on what is sent.
+// The books card steers to that same free key on purpose: two free readers
+// checking each other is what the 9/4 bake-off bought, and it is free.
+test("the free Google key is described honestly, and books are steered to it (E8)", async () => {
+  const { ctx, page } = await settingsPage();
+  const note = await page.$eval("#aiNote", e => e.textContent);
+  assert.match(note, /free AI Studio/i, note);
+  assert.match(note, /improve Google’s products/i, note);
+  assert.match(note, /pay-as-you-go/i, note);
+  assert.match(note, /Google’s terms/i, note);
+  const tiers = await page.$eval("#contentTiers", e => e.textContent);
+  assert.match(tiers, /Books read best with a free Google AI Studio key/i, tiers);
+  assert.match(tiers, /two free readers check every page/i, tiers);
+  await ctx.close();
+});
+
 test("no Drive folder: the books card says which computer builds books (Gap 1)", async () => {
   const { ctx, page } = await settingsPage(
     statusPayload({ mode: "off", local: false, skipped: "needs-local-drive" }));
@@ -221,6 +238,9 @@ test("a quota pause says tomorrow, and a flagged book links to its review page",
   assert.match(link.text, /Review this book/i);
   const flagged = await page.$eval('#contentBooks [data-slug="the-gruffalo"]', e => e.textContent);
   assert.match(flagged, /2 word/, "the flag count is named");
+  // E8: what a parent DOES about a flag — glance at those pages on the review
+  // page — rather than only how many the AI was unsure of.
+  assert.match(flagged, /pages to glance at/i, flagged);
   await ctx.close();
 });
 

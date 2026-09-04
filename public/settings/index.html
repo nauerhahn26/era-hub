@@ -167,6 +167,10 @@
       <button data-prov="openai">ChatGPT (OpenAI)</button>
       <button data-prov="google">Google — free (default)</button>
     </div>
+    <!-- The free tier is the default, so the sentence about what it costs
+         belongs under the buttons that pick it, not below the Save key row a
+         parent has already walked past. aiProvPaint() shows it for Google only. -->
+    <div class="status" id="aiNote" style="display:none;margin-bottom:10px">Note: Google&rsquo;s <b>free</b> AI Studio tier may use what is sent to it &mdash; her clothing photos, the words on her book pages &mdash; to improve Google&rsquo;s products; that is in <b>Google&rsquo;s terms</b>. A pay-as-you-go Google key is not used that way, and neither are the other providers.</div>
     <div class="row" style="margin-bottom:10px">
       <button id="aiOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Claude API keys page</button>
     </div>
@@ -176,7 +180,6 @@
       <button id="aiKeyPaste">📋 Paste</button>
       <button id="aiKeySave">Save key</button>
     </div>
-    <div class="status" id="aiNote" style="display:none">Note: with Google&rsquo;s free keys, Google may use what&rsquo;s sent to improve its models. Their paid tier (and the other providers) don&rsquo;t.</div>
     <div class="status" id="aiStatus"></div>
   </div>
 
@@ -189,8 +192,9 @@
     <div class="status" id="contentStatus"></div>
     <div id="contentBooks" style="margin-top:6px"></div>
     <div class="desc" id="contentTiers" style="margin-top:14px">
-      With only the <b>free</b> Google key above: the words, a few pages a day, and the reader turns the pages silently. Add an <b>ElevenLabs</b> voice key and she hears the book read to her, for a few cents.
-      <b>Recommended:</b> a paid AI key (Claude, ChatGPT, or Google&rsquo;s paid tier) plus ElevenLabs &mdash; a whole book the same day, still only cents. Nothing is locked: every setup builds books, the cheaper ones just take longer or stay silent.
+      Books read best with a free <b>Google AI Studio</b> key &mdash; two free readers check every page, and the pages they disagree on are the ones marked for you to glance at.
+      With only that free key: the words, a few pages a day, and the reader turns the pages silently. Add an <b>ElevenLabs</b> voice key and she hears the book read to her, for a few cents.
+      <b>Recommended:</b> the free Google key plus ElevenLabs &mdash; every page read twice, the whole book read aloud, still only cents. A paid AI key (Claude, ChatGPT, or Google&rsquo;s paid tier) buys speed rather than words: a whole book the same day instead of a few pages a day. Nothing is locked: every setup builds books, the cheaper ones just take longer or stay silent.
     </div>
   </div>
 
@@ -759,7 +763,12 @@ function ctRow(j){
   // hour cold. So a stopped book gets its own button, which asks the hub to run
   // this one book (POST /content/run) and starts it there and then.
   if(j.error) h+='<div class="status bad">'+CT_ESC(ctSorry(j.error))+'</div>';
-  if(j.flags) h+='<div class="status">'+j.flags+' word'+(j.flags===1?"":"s")+' the AI was unsure of.</div>';
+  // A flag count on its own tells a parent nothing to do with it. j.flags counts
+  // the MARKS the two readers left (a word they disagreed on, or a whole page
+  // nobody could check), so the count keeps its own unit — but the sentence says
+  // what a mark is for: pages to glance at, and the review page below fixes them.
+  if(j.flags) h+='<div class="status">'+j.flags+' word'+(j.flags===1?"":"s")+' the AI was unsure of'
+    +' &mdash; pages to glance at, and the review page fixes them.</div>';
   // The review page is where a parent fixes words, reorders pages and picks the
   // cover; it is worth offering for every book, not only flagged ones.
   h+='<div class="row" style="margin-top:8px"><a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'
