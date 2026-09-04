@@ -57,7 +57,7 @@ before(async () => {
   // minimal install: hub js + home page, NO reader pack, NO profile (the
   // wizard is still to come); apps.json = the installer's ticks: reader + the engine
   fs.mkdirSync(path.join(INSTALL, "public", "home"), { recursive: true });
-  for (const f of ["server.js", "update.js", "packs.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "slug.js", "pool.js", "predict.js", "predict-model.json"])
+  for (const f of ["server.js", "update.js", "packs.js", "drive.js", "clothing.js", "clothing-worker.js", "clothing-photos.js", "slug.js", "pool.js", "predict.js", "predict-model.json", "image-orient.js", "image-util.js", "ai-config.js"])
     fs.copyFileSync(path.join(HUB, f), path.join(INSTALL, f));
   fs.copyFileSync(path.join(HUB, "public", "home", "index.html"),
                   path.join(INSTALL, "public", "home", "index.html"));

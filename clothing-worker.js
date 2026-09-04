@@ -120,32 +120,17 @@ function staplesFor(combos, picks, dayIndex) {
 }
 
 // ---- image plumbing (vendored decoders; RGBA in Buffers throughout) ----
-// jpeg-js rides with the core; libheif ships in the board pack (packs.js)
-// and is loaded only when a HEIC actually turns up.
-let libheif = null, jpeg = null;
-function ensureCodecs() {
-  if (!jpeg) jpeg = require("./vendor/jpeg-js");
-}
+// The JPEG half (decode / upright / scale / encode) lives in image-util.js now
+// that the book ingest step needs exactly the same four operations — one
+// resampler, one place a sideways photo can hide. What stays here is what is
+// the Clothing Picker's alone: HEIC (libheif ships in the board pack, packs.js,
+// and is loaded only when a HEIC actually turns up), cropping, padding and the
+// background flood.
+let libheif = null;
 function ensureHeif() {
   if (!libheif) libheif = require("./vendor/libheif.js")();
 }
-
-function scaleRgba(img, maxDim) {
-  const { data, width: w, height: h } = img;
-  if (Math.max(w, h) <= maxDim) return img;
-  const s = maxDim / Math.max(w, h);
-  const nw = Math.max(1, Math.round(w * s)), nh = Math.max(1, Math.round(h * s));
-  const out = Buffer.alloc(nw * nh * 4);
-  for (let y = 0; y < nh; y++) {
-    const sy = Math.min(h - 1, Math.round(y / s));
-    for (let x = 0; x < nw; x++) {
-      const sx = Math.min(w - 1, Math.round(x / s));
-      const si = (sy * w + sx) * 4, di = (y * nw + x) * 4;
-      out[di] = data[si]; out[di + 1] = data[si + 1]; out[di + 2] = data[si + 2]; out[di + 3] = 255;
-    }
-  }
-  return { data: out, width: nw, height: nh };
-}
+const { decodeJpg, scaleRgba, writeJpg } = require("./image-util.js");
 
 function cropRgba(img, frac) {
   const { data, width: w, height: h } = img;
@@ -169,7 +154,6 @@ function padSquare(img, dim) {
 }
 
 function readImageRgba(file) {
-  ensureCodecs();
   const buf = fs.readFileSync(file);
   const ext = path.extname(file).toLowerCase();
   if ([".heic", ".heif"].includes(ext)) {
@@ -188,9 +172,7 @@ function readImageRgba(file) {
   }
   // jpeg-js hands back the sensor's pixels; turn them the way the phone's
   // EXIF Orientation says (image-orient.js). libheif already does this for HEIC.
-  const d = jpeg.decode(buf, { maxMemoryUsageInMB: 1024, formatAsRGBA: true });
-  return Promise.resolve(upright({ data: Buffer.from(d.data), width: d.width, height: d.height },
-                                 exifOrientation(buf)));
+  return Promise.resolve(upright(decodeJpg(buf, { maxMemoryUsageInMB: 1024 }), exifOrientation(buf)));
 }
 
 // Orientation a JPEG on disk carries (1 = none); HEIC/others report 1
@@ -199,8 +181,6 @@ function photoOrientation(file) {
   if (![".jpg", ".jpeg"].includes(path.extname(file).toLowerCase())) return 1;
   try { return exifOrientation(fs.readFileSync(file)); } catch { return 1; }
 }
-
-function writeJpg(img, file, q) { ensureCodecs(); fs.writeFileSync(file, jpeg.encode(img, q || 85).data); }
 
 // Composites follow Ellie's generator exactly (outfit_set.py fit/compose):
 // crop each photo to the garment (strip white margins), scale to nearly FILL
@@ -400,12 +380,10 @@ function exactScale(img, nw, nh) {
 }
 
 function composite(fileA, fileB, dest) {
-  ensureCodecs();
   const W = 840, H = 560;
   const out = { data: Buffer.alloc(W * H * 4, 255), width: W, height: H };
   const place = (file, ox, boxW) => {
-    const d = jpeg.decode(fs.readFileSync(file), { formatAsRGBA: true });
-    const f = fitBox({ data: Buffer.from(d.data), width: d.width, height: d.height }, boxW, H);
+    const f = fitBox(decodeJpg(fs.readFileSync(file)), boxW, H);
     for (let y = 0; y < H; y++)
       f.data.copy(out.data, (y * W + ox) * 4, y * boxW * 4, (y + 1) * boxW * 4);
   };
