@@ -1102,13 +1102,12 @@ surfaced is status/log truthfulness, not pipeline correctness. Each item is
 small and has a reproducer in the run's artefacts. Ambiguity 1/5.
 **Spec section:** §4, §7 risks ("the parent must be able to trust the card").
 
-**L1 — `skipped` is a count AND a reason** — `server.js` ~`:2001-2005` reads
-`mirrorBook`'s numeric `skipped` (files already on the shelf, `drive.js` ~`:506/516`)
-as the string reason `drive.js` ~`:497` returns (`"needs-local-drive"`). Every
-re-publish logs "built but not shelved: 19" although the copy succeeded, and
-the success line never prints. Fix: separate fields (`reason` string vs
-`skipped` number) or `typeof === "string"`; test both branches in
-`tests/content-publish.test.mjs` (or the drive suite that owns `mirrorBook`).
+**L1 — `skipped` is a count AND a reason** — **LANDED in `c8909ce` (Phase E
+review fixes, finding 6)**: `mirrorBook` now returns `blocked` (string reason)
+beside `skipped` (count); `server.js` logs "built but not shelved" only on
+`error || blocked`; pinned in `tests/drive-localfolder.test.mjs` (blocked vs
+skipped count, re-publish, unknown book) and `tests/content-worker.test.mjs`
+(the spawned hub's shelving line, from piped stdout). Nothing left to do.
 
 **L2 — the page count shrinks and grows back during ingest** — `content.js`
 ~`:360-362` `jobFor` takes `max(built, text.pages, listing(dir).count)` and
@@ -1128,11 +1127,15 @@ already read (the existing per-page skip must honour them). Test: fake AI
 answers 3 pages then the worker is stopped → `text.json` has 3; the re-run asks
 only for the rest (fake call count).
 
-**L4 — the thinking-shape retune is silent** — `content-providers.js`
-~`:439-440` re-sends after a 400 with no log line, so the request ledger cannot
-be reconciled (32 accounted, possibly 33 sent). One `log.jsonl` line per
-retune (model, from → to). Test: fake 400 on `thinkingBudget` → exactly one
-log line, one extra call.
+**L4 — the thinking-shape retune is silent** — **LANDED in `c8909ce` (Phase E
+review fixes, finding 2)**: the retune (`content-providers.js` `retune()`,
+`thinkingShape` map) now happens only on a 400 that names the thinking field,
+the memo is written only when the re-shaped call is ACCEPTED, and the refusal
+is read off the whole body. Pinned in `tests/content-transcribe.test.mjs`
+("400-that-was-never-about-thinking", "wordy INVALID_ARGUMENT past 160
+chars"). The one thing that commit did NOT add is the `log.jsonl` line per
+retune — fold it into L3's per-page write if it is a one-liner there,
+otherwise leave it: the memo is now deterministic, so the ledger reconciles.
 
 **L5 — `cost.narrated` counts pages, not purchases** — `content.js` ~`:363-370`
 sums CURRENT text lengths, so a re-narrated page is counted once (card said
@@ -1147,8 +1150,39 @@ review page and `/content/status` say **"edited by you"** for such a page (and
 never "unchecked"); the rebuild-with-edits path keeps the badge. Test in
 `tests/book-review-ui.test.mjs` with a fake status carrying `edited:true`.
 
-- **Gate (Phase L):** the four content suites + the review-page suite green;
-  full gate at the phase boundary.
+**L7 — re-pin the transcriber to the RECOVERED v2 wording (closes the KNOWN GAP
+in `content-providers.js` ~`:84-116`)** — the Phase E review found E3's v2 was
+a hand-reconstruction (a third wording nobody measured) and, unable to find the
+real text, pinned both passes to v3 (`c8909ce`). The real v2 has since been
+recovered: `tools/ocr-bakeoff/lib/prompts.mjs` as it stood in a stale worktree
+snapshot of this repo (`PROMPT_VERSION = 'v2'`, mtime 2026-09-04 06:33 UTC).
+Provenance: the private cache's 3,120 v2 records span **06:33–07:26 UTC** — the
+first is stamped the same minute as that file — the snapshot was taken at 07:11
+(inside the window), and v3's records start 08:37; the file differs from v3
+ONLY in `PROMPT_VERSION` and rules 5 and 6, exactly as v3's changelog says. So
+this is the string the 89.2% "v2 two-pass" row was measured under, not a
+paraphrase. The workflow passes its path as `args.v2File` (sha256 prefix
+`738e2355f1ab0527`); copy, never retype.
+Do exactly what `content-providers.js:104-110` asks: (1) land it in the harness
+as a second exported wording — `POLICY_V2` + `export function
+transcribePromptV2()` composed like `transcribePrompt()`, `PROMPT_VERSION` stays
+`'v3'` (the cache keys on it), changelog line under v3 saying v2 is kept
+exported because the hub's transcriber pins it; harness test: `transcribePromptV2()`
+differs from `transcribePrompt()` only in rules 5 and 6 (reuse the rule-splitting
+in `tools/ocr-bakeoff/test/prompts.test.mjs`) and equals the recovered file's
+string byte for byte; (2) `PROMPT_TEXT.v2 = POLICY_V2 + "\n\n" + OUTPUT_CONTRACT`
+in the hub, `DEFAULT_PROMPTS.transcribe = "v2"`, second-opinion stays v3;
+(3) in `tests/content-transcribe.test.mjs` a byte-for-byte assertion of `two.v2`
+against `bakeoff.transcribePromptV2()` beside the v3 one, and "no wording the
+bake-off never measured is ever sent" extended to the v2 entry; (4) rewrite the
+KNOWN GAP block as CLOSED (keep the "never upgrade both in one move" rule, drop
+the "not recoverable" paragraphs, keep one sentence on why the reconstruction
+was wrong). The `tools/ocr-bakeoff/` read-only rule is LIFTED for this task
+only, for `lib/prompts.mjs` and `test/prompts.test.mjs`; the bake-off cache,
+dataset and README numbers are untouched.
+
+- **Gate (Phase L):** the four content suites + the review-page suite +
+  `tools/ocr-bakeoff/test` green; full gate at the phase boundary.
 - **Phase L retrospective.**
 
 ---
