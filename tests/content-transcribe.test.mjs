@@ -50,6 +50,10 @@ let calls = [];            // one entry per request the stand-in actually saw
 let total = 0;
 let answers = [];          // queued replies, consumed in order
 let throttle = new Set();  // model ids that answer 429 (a spent daily allowance)
+// What a live 429 carries when Google feels like saying so: the
+// google.rpc.RetryInfo `retryDelay` ("47s"), alongside the QuotaFailure whose
+// quotaId names the PerDay limit. null = a bare 429 that says nothing.
+let retryDelay = null;
 let broken = new Set();    // model ids that answer 500 (a rung that is simply down)
 // The live 9/4 failure: gemini-3.5 replaced thinkingBudget with thinkingLevel and
 // answers the old numeric knob with a flat 400 INVALID_ARGUMENT. With this on,
@@ -115,8 +119,20 @@ before(async () => {
         return;
       }
       if (throttle.has(model)) {
+        // The live body (9/4), not a tidy one: the details array is long enough
+        // that the 160 characters content-providers keeps for the log cut the
+        // RetryInfo clean off the end, so a pause that believes it has to read
+        // the WHOLE body, before any truncation.
+        const details = retryDelay ? [
+          { "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            violations: [{ quotaMetric: "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+                           quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier" }] },
+          { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay },
+        ] : undefined;
         res.writeHead(429, { "content-type": "application/json" });
-        res.end('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"quota exceeded"}}');
+        res.end(JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED",
+                                          message: "You exceeded your current quota, please check your plan and billing details.",
+                                          details } }));
         return;
       }
       const next = answers.length > 1 ? answers.shift() : answers[0];
@@ -166,6 +182,24 @@ function book(name, pages = 1) {
   return dir;
 }
 
+// A pinned clock for the quota tests: 11:20 in the morning in California, and
+// the same instant is already the AFTERNOON of the same day in UTC — so this
+// box's own midnight and the allowance's are seven hours apart, which is the
+// gap F6 exists to close.
+const NOW = Date.parse("2026-09-04T18:20:00.000Z");
+const MIN = 60 * 1000;
+
+// The wall clock in California at an instant, through Intl itself — never
+// through a hard-coded offset, because it is 7 hours in summer and 8 in winter.
+function laParts(d) {
+  const out = {};
+  for (const p of new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles", hourCycle: "h23", year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(d)) if (p.type !== "literal") out[p.type] = p.value;
+  return out;
+}
+
 // The single pass is no longer the default (T2.6a adopted the bake-off's
 // second-opinion policy), so every test that is about the LADDER rather than
 // the policy pins it off and counts calls against that.
@@ -175,6 +209,7 @@ function reset(opts = {}) {
   calls = [];
   answers = opts.answers || [{ text: "The cat sat on the mat.", uncertain: [] }];
   throttle = new Set(opts.throttle || []);
+  retryDelay = opts.retryDelay || null;
   broken = new Set(opts.broken || []);
   budget400 = !!opts.budget400;
   mode = opts.mode || "ok";
@@ -282,23 +317,86 @@ test("a model that is spent is not asked again for the rest of the book", async 
   assert.equal(calls.filter(c => c.model === ladder[0]).length, 1);
 });
 
-test("every model spent: the book PAUSES until tomorrow and is never failed", async () => {
+test("every model spent: the book PAUSES until the allowance comes back and is never failed", async () => {
   const ladder = providers.ladderFor({ provider: "google" });
   reset({ throttle: ladder });
   const dir = book("Out Of Quota", 2);
-  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+  const r = await providers.transcribeBook(dir, { dataDir: DATA, now: NOW });
 
   assert.equal(calls.length, ladder.length, "every rung tried exactly once, then stop");
-  assert.equal(r.pausedUntil, providers.tomorrow());
+  assert.equal(r.pausedUntil, providers.pausedUntilFor(NOW), "a MOMENT, not a day (F6)");
   assert.equal(r.note, providers.QUOTA_NOTE);
   assert.match(providers.QUOTA_NOTE, /waiting for tomorrow's quota/);
   assert.ok(!r.failed, "a spent allowance is not a failure");
 
-  // and a re-run on the same day spends NOTHING at all
+  // and a re-run while the pause is still running spends NOTHING at all
   const before = calls.length;
-  const again = await providers.transcribeBook(dir, { dataDir: DATA, job: { pausedUntil: providers.tomorrow() } });
-  assert.equal(calls.length, before, "a paused book must not knock on the door again today");
-  assert.equal(again.pausedUntil, providers.tomorrow());
+  const again = await providers.transcribeBook(dir, { dataDir: DATA, now: NOW + MIN,
+                                                     job: { pausedUntil: r.pausedUntil } });
+  assert.equal(calls.length, before, "a paused book must not knock on the door again");
+  assert.equal(again.pausedUntil, r.pausedUntil);
+  assert.equal(again.hold, "quota");
+});
+
+// F6, the bug this closes: the pause used to be a LOCAL calendar day, and this
+// box runs on UTC. Google's free-tier daily allowance resets at midnight
+// Pacific, so a book that woke at 00:00 UTC — five o'clock the previous
+// afternoon in California — collected a fresh 429 and paused itself for a whole
+// extra day.
+test("a 429 that says WHEN is believed: the pause ends when Google says the allowance does", async () => {
+  const ladder = providers.ladderFor({ provider: "google" });
+  reset({ throttle: ladder, retryDelay: "47s" });
+  const dir = book("Retry Info");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA, now: NOW });
+
+  assert.equal(r.hold, "quota");
+  assert.equal(r.pausedUntil, new Date(NOW + 47000).toISOString(),
+    "RetryInfo.retryDelay is the provider's own answer to 'when?' - take it");
+  // …and the book is awake again the moment it passes, without waiting for any
+  // midnight at all: a per-minute limit costs a minute, not a day.
+  reset({ retryDelay: "47s" });
+  const back = await providers.transcribeBook(dir, { dataDir: DATA, now: NOW + 48000,
+                                                    job: { pausedUntil: r.pausedUntil } });
+  assert.equal(back.hold, undefined, "the pause ended when the quota did");
+  assert.equal(back.transcribed, 1);
+});
+
+test("a 429 that says nothing waits for the ALLOWANCE's midnight, not this computer's", async () => {
+  const ladder = providers.ladderFor({ provider: "google" });
+  reset({ throttle: ladder });                       // a bare 429: no RetryInfo
+  const r = await providers.transcribeBook(book("Pacific Midnight"), { dataDir: DATA, now: NOW });
+
+  const at = new Date(r.pausedUntil);
+  assert.ok(at.getTime() > NOW, "a pause that has already passed is not a pause");
+  // Asserted through Intl itself rather than against a hard-coded offset: the
+  // Pacific offset is 7 or 8 hours depending on the date, and pinning either
+  // number here would make this test wrong for half the year.
+  const p = laParts(at);
+  assert.equal(p.hour + ":" + p.minute + ":" + p.second, "00:00:00",
+    "the pause ends at midnight where the allowance is counted");
+  assert.equal(Number(p.day), Number(laParts(new Date(NOW)).day) + 1, "the NEXT Californian day");
+  // On this QA box (UTC) the old rule's answer is seven hours early, which is
+  // the whole bug: 00:00 UTC is five in the afternoon in California.
+  if (new Date(NOW).getTimezoneOffset() === 0)
+    assert.notEqual(r.pausedUntil, new Date(Date.UTC(2026, 8, 5)).toISOString(),
+      "the host's own midnight is not the quota's midnight");
+});
+
+test("a pause an older hub wrote as a DAY is still a pause", async () => {
+  // job.json files written before F6 hold "YYYY-MM-DD". A hub that updates must
+  // read them as the local day they meant, not as a broken timestamp that lets
+  // it knock on a door it was told this morning was shut.
+  reset({ throttle: providers.ladderFor({ provider: "google" }) });
+  const dir = book("Old Shape");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA, now: NOW,
+                                                  job: { pausedUntil: providers.tomorrow(NOW) } });
+  assert.equal(r.hold, "quota");
+  assert.equal(r.pausedUntil, providers.tomorrow(NOW), "echoed back exactly as it was written");
+  assert.equal(calls.length, 0, "not one request spent to be told the same thing");
+  // and yesterday's day string does not hold anything back
+  assert.equal(providers.pauseHolds(providers.dayOf(NOW), NOW), false);
+  assert.equal(providers.pauseHolds(providers.tomorrow(NOW), NOW), true);
+  assert.equal(providers.pauseHolds(null, NOW), false);
 });
 
 test("the worker leaves a paused book claimed, transcribing, and saying why", async () => {
@@ -315,10 +413,12 @@ test("the worker leaves a paused book claimed, transcribing, and saying why", as
   });
   const job = store.readJob(dir);
   assert.equal(job.state, "transcribing", "never 'failed'");
-  assert.equal(job.pausedUntil, providers.tomorrow());
+  // The moment the allowance is expected back (F6) — kept on the job so the
+  // next scan can leave the book alone until then.
+  assert.ok(Date.parse(job.pausedUntil) > Date.now(), "a pause that has not passed yet");
   assert.equal(job.pausedNote, providers.QUOTA_NOTE);
   assert.ok(job.claimedBy, "the claim is kept");
-  assert.equal(done.pausedUntil, providers.tomorrow());
+  assert.equal(done.pausedUntil, job.pausedUntil);
   assert.ok(store.readLog(dir).some(l => l.msg.includes("quota")), "the log says why it stopped");
 });
 
@@ -659,6 +759,77 @@ test("a page the partner could not read is published WITH A MARK ON IT, not as a
   assert.equal(p.published, true, "a flagged page still publishes - the ruling of 9/4");
   assert.equal(p.pages.length, 1);
   assert.equal(p.flagged, 1);
+});
+
+// --------------------------------------------------- who read this page (F7)
+
+// A page's words used to arrive with no record of WHICH rung produced them or
+// whether anybody checked. The flag said "come and look"; it never said who
+// looked. `read` is that record, written per page, and it is OPTIONAL — an
+// older text.json, or one a parent wrote by hand in power mode, simply has none.
+
+test("an agreed page names the model that read it and the model that checked it", async () => {
+  reset();                                       // the bake-off's own defaults
+  const dir = book("Who Read This");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  const page = store.readText(dir).pages[0];
+  assert.deepEqual(page.read, { model: "gemini-3.1-flash-lite",
+                                checkedBy: "gemini-3.5-flash-lite", agreed: true });
+  assert.equal(page.flags.length, 0, "an agreed page is still not flagged");
+});
+
+test("a page the two models read differently says so, and names them both", async () => {
+  reset({ answers: [
+    ({ model }) => model === "gemini-3.1-flash-lite"
+      ? { text: "Nine mice on the ice.", uncertain: [] }
+      : { text: "Nine mice on the rice.", uncertain: [] },
+  ] });
+  const dir = book("Read Differently");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "Nine mice on the ice.", "the transcriber's reading stands");
+  assert.equal(page.read.model, "gemini-3.1-flash-lite");
+  assert.equal(page.read.checkedBy, "gemini-3.5-flash-lite");
+  assert.equal(page.read.agreed, false);
+});
+
+test("the PARTNER reads the page when the transcriber's allowance is gone, and the page says so", async () => {
+  // The live shape of a free key part-way through a book: the transcriber's
+  // rung is spent, the partner answers instead — so the words on this page came
+  // from the model the review page would otherwise call the checker, and
+  // nobody checked them at all.
+  const ladder = providers.ladderFor({ provider: "google" });
+  reset({ throttle: ladder.filter(m => m !== ladder[1]),
+          answers: [{ text: "The moon came out, round and white.", uncertain: [] }] });
+  const dir = book("Partner Read It");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA, now: NOW });
+
+  assert.equal(r.transcribed, 1);
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "The moon came out, round and white.");
+  assert.equal(page.read.model, ladder[1], "the words came from the PARTNER, not the transcriber");
+  assert.equal(page.read.checkedBy, null, "and there was nobody left to check them");
+  assert.equal(page.read.agreed, null);
+  assert.equal(page.flags.length, 1, "a page one model read alone goes to the parent");
+  assert.match(page.flags[0].reason, /no second model checked this page/);
+});
+
+test("the escalated page names the DECIDER as its reader", async () => {
+  const ladder = providers.ladderFor({ provider: "google" });
+  const STRONG = ladder[3];
+  reset({ config: { transcribe: { agreementPass: true, escalateTo: STRONG } },
+          answers: [
+            ({ model }) => model === ladder[0] ? { text: "The owl and the pussycat went to sea.", uncertain: [] }
+                         : model === ladder[1] ? { text: "The owl and the puddycat went to sea.", uncertain: [] }
+                         : { text: "The owl and the pussy-cat went to sea.", uncertain: [] },
+          ] });
+  const dir = book("Decider Read It");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "The owl and the pussy-cat went to sea.");
+  assert.equal(page.read.model, STRONG, "`model` is whichever rung produced the WORDS");
+  assert.equal(page.read.checkedBy, ladder[1]);
+  assert.equal(page.read.agreed, false);
 });
 
 // --------------------------------------------------------------- the tally

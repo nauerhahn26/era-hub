@@ -174,7 +174,7 @@ function normalizeText(obj) {
       if (typeof p.text !== "string") throw new Error(at + ": text must be a string");
       const flags = p.flags == null ? [] : p.flags;
       if (!Array.isArray(flags)) throw new Error(at + ": flags must be an array");
-      return {
+      const out = {
         index: p.index,
         source: p.source,
         text: p.text,
@@ -185,6 +185,27 @@ function normalizeText(obj) {
         cover: !!p.cover,
         edited: !!p.edited,
       };
+      // WHO READ THIS PAGE, and who checked them (F7). OPTIONAL, and defaulted
+      // AWAY rather than to a shape: every text.json written before this has
+      // none, so does every page a parent typed by hand in power mode, and a
+      // reader that never asked for it must see exactly the object it saw
+      // before. A `read` that names no model is not provenance, so it is
+      // dropped rather than thrown at anybody — a hand-edited file is a thing
+      // to be forgiving about (this is the same rule flags/cover follow).
+      //   model      the rung whose words these are - NOT always the configured
+      //              transcriber (a spent allowance hands the page to the
+      //              partner, a disagreement hands it to the decider)
+      //   checkedBy  the second model that read it, or null when nobody could
+      //   agreed     true/false when it was checked, null when it was not
+      const r = p.read;
+      if (r && typeof r === "object" && !Array.isArray(r) && typeof r.model === "string" && r.model) {
+        out.read = {
+          model: r.model,
+          checkedBy: typeof r.checkedBy === "string" && r.checkedBy ? r.checkedBy : null,
+          agreed: typeof r.agreed === "boolean" ? r.agreed : null,
+        };
+      }
+      return out;
     }),
   };
 }

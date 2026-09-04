@@ -28,10 +28,12 @@
 //      Base URL comes from ERA_AI_URL, read FRESH on every call, so no test
 //      can ever reach a real provider on the family's key.
 //   3. THE STEP. transcribeBook() walks the pages, and when the whole ladder
-//      is spent it PAUSES the book until tomorrow — job stays claimed, state
-//      stays "transcribing", status says "waiting for tomorrow's quota"
-//      (spec §7 risks). A free key builds a book over several days; it must
-//      never look like a failure.
+//      is spent it PAUSES the book until the allowance is expected back — the
+//      429's own RetryInfo, else midnight in California where a free key's day
+//      is counted, never this computer's midnight ("the pause", below). The job
+//      stays claimed, the state stays "transcribing", and status says "waiting
+//      for tomorrow's quota" (spec §7 risks). A free key builds a book over
+//      several days; it must never look like a failure.
 //
 // WHICH provider, WHICH model and WHETHER a second opinion is bought are
 // CONFIG, not code: DEFAULTS below, overridden by <DATA>/content-config.json.
@@ -408,7 +410,7 @@ async function callModel(o) {
   // Providers throttle (Google 503 "high demand" hit EVERY call on the free
   // tier, QA 9/1) and a whole book must not die on a transient. One quick
   // retry, then the ladder's next rung.
-  let last = "";
+  let last = "", retryMs = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt) await new Promise(r => setTimeout(r, 3000));
     let r;
@@ -420,7 +422,12 @@ async function callModel(o) {
       const parsed = parseModelJson(extract(await r.json()));
       return { text: parsed.text, uncertain: parsed.uncertain, parseError: parsed.parseError, model };
     }
-    last = r.status + " " + store.redact((await r.text().catch(() => "")).slice(0, 160));
+    // The WHOLE body first — the 429's RetryInfo lives past the 160 characters
+    // the log keeps (F6) — and only then the short, redacted line we may write
+    // down. Nothing but the delay is taken from it.
+    const raw = await r.text().catch(() => "");
+    if (r.status === 429) retryMs = soonest(retryMs, retryAfterMs(raw));
+    last = r.status + " " + store.redact(raw.slice(0, 160));
     if (r.status === 401 || r.status === 403)
       throw new Error("permanent: the AI provider did not accept that key (" + r.status +
                       ") — check the key in Settings");
@@ -433,7 +440,11 @@ async function callModel(o) {
     if (r.status === 429) break;                     // no point retrying a spent allowance
     if (r.status < 500) break;                       // 400/404: try the next model
   }
-  throw new Error("ai(" + provider + "/" + model + ") " + last);
+  const err = new Error("ai(" + provider + "/" + model + ") " + last);
+  // Carried, never logged: how long this rung asked us to wait. The pause is
+  // seeded from it (F6).
+  if (retryMs != null) err.retryAfterMs = retryMs;
+  throw err;
 }
 
 // ---------------------------------------------------------------- one page
@@ -460,7 +471,7 @@ async function transcribePage(o) {
     e.quota = true;
     throw e;
   }
-  let lastErr = "";
+  let lastErr = "", retryMs = null;
   for (const model of list) {
     try {
       return await callModel({ imagePath: o.imagePath, prompt, cfg, model, timeoutMs: o.timeoutMs });
@@ -468,24 +479,148 @@ async function transcribePage(o) {
       lastErr = e.message;
       if (isPermanent(e.message)) throw e;           // a bad key refuses every rung
       if (isQuota(e.message)) spent.add(model);
+      retryMs = soonest(retryMs, e.retryAfterMs);
       console.error("[content] transcribe " + model + ": " + e.message);
     }
   }
   const err = new Error(lastErr || "no model answered");
   if (all.every(m => spent.has(m))) err.quota = true;
+  if (retryMs != null) err.retryAfterMs = retryMs;   // when the ladder said to come back
   throw err;
 }
 
-// ---------------------------------------------------------------- one book
+// ------------------------------------------------------------- the pause
 
-// "Paused until" is a DAY, not a timestamp: free-tier allowances reset on a
-// day boundary, and a book that waits an extra hour costs nobody anything
-// while a book that asks an hour early spends a request to be told no.
+// WHEN DOES A SPENT ALLOWANCE COME BACK? (F6, 9/4.) This used to be a local
+// calendar DAY, and it was wrong twice over on this family's hardware:
+//
+//   * Google's free tier resets at midnight AMERICA/LOS_ANGELES, which is where
+//     the allowance is counted. A hub running on UTC — every QA box, and any
+//     machine whose clock is not Californian — woke at its own 00:00, five in
+//     the afternoon in California, collected a fresh 429 and paused itself for
+//     a WHOLE EXTRA DAY. A book that should have finished overnight took three.
+//   * A 429 is not always the day being over. The free tier also limits
+//     requests per MINUTE, and a book that pauses until tomorrow over a
+//     forty-seven second throttle has thrown the whole evening away.
+//
+// So the pause is a MOMENT, and it is seeded from the best answer available:
+//
+//   1. the 429's own google.rpc.RetryInfo.retryDelay ("47s"). Google sends it
+//      in seconds for the per-minute limit AND for the per-day one (the
+//      QuotaFailure alongside it names which, quotaId "…PerDay…"), so there is
+//      nothing to interpret: it is the provider telling us when to come back.
+//   2. the next midnight in America/Los_Angeles, computed through Intl's own
+//      time-zone data (no npm, no offset table, and correct across both DST
+//      changes — the offset is 7 hours in summer and 8 in winter).
+//   3. the old local-day rule, if this Node has no zone data to compute (2)
+//      with. Wrong by hours on a UTC box, but never wrong by a day the way a
+//      pause that failed to be written at all would be.
+//
+// Everything downstream (job.json's pausedUntil, /content/status, the scan)
+// goes through pauseHolds(), which still understands the "YYYY-MM-DD" a hub
+// older than this wrote — a family updating mid-book must not have its paused
+// book either wake early or sleep for ever.
 function dayOf(now) {
   const d = new Date(now == null ? Date.now() : now);
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 function tomorrow(now) { return dayOf((now == null ? Date.now() : now) + 24 * 60 * 60 * 1000); }
+
+// Where Google counts a free key's day.
+const QUOTA_TZ = "America/Los_Angeles";
+// A retryDelay longer than this is not a daily allowance coming back, it is a
+// misread body: fall through to the midnight rule rather than park a book for
+// a week on one number nobody can see.
+const MAX_RETRY_MS = 26 * 60 * 60 * 1000;
+
+// The wall clock in `tz` at instant `t`, as numbers. Intl is the only thing in
+// Node that knows when California last changed its clocks.
+function zoneParts(t, tz) {
+  const out = {};
+  for (const p of new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(new Date(t))) if (p.type !== "literal") out[p.type] = Number(p.value);
+  return out;
+}
+// How far `tz` is from UTC at that instant, in ms (negative west of Greenwich).
+function zoneOffset(t, tz) {
+  const p = zoneParts(t, tz);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(t / 1000) * 1000;
+}
+// The instant of the next 00:00:00 in `tz`. Computed twice on purpose: the
+// offset at the boundary is not always the offset now (the night the clocks
+// change), and the second pass is the one that lands on the real midnight.
+function nextZoneMidnight(t, zone) {
+  const tz = zone || QUOTA_TZ;
+  const p = zoneParts(t, tz);
+  const wall = Date.UTC(p.year, p.month - 1, p.day + 1);
+  return wall - zoneOffset(wall - zoneOffset(t, tz), tz);
+}
+
+// The moment a paused book may knock again, as an ISO timestamp.
+function pausedUntilFor(now, retryMs) {
+  const t = now == null ? Date.now() : now;
+  if (Number.isFinite(retryMs) && retryMs > 0 && retryMs <= MAX_RETRY_MS)
+    return new Date(t + retryMs).toISOString();
+  try {
+    const at = nextZoneMidnight(t, QUOTA_TZ);
+    if (Number.isFinite(at) && at > t) return new Date(at).toISOString();
+  } catch (e) {
+    console.error("[content] no time-zone data for " + QUOTA_TZ + " (" + e.message +
+                  ") - falling back to this computer's own midnight");
+  }
+  const d = new Date(t);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).toISOString();
+}
+
+// Is a recorded pause still running? Understands BOTH shapes: a timestamp (what
+// this hub writes) and the bare "YYYY-MM-DD" a hub older than F6 wrote, which
+// meant "not before tomorrow, local time".
+function pauseHolds(until, now) {
+  if (until == null || until === "") return false;
+  const t = now == null ? Date.now() : now;
+  if (typeof until === "number") return until > t;
+  const s = String(until);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s > dayOf(t);
+  const at = Date.parse(s);
+  return Number.isFinite(at) ? at > t : false;
+}
+
+// The 429's own answer to "when may I ask again?", in ms. The body is read
+// WHOLE and before any truncation: the RetryInfo detail sits at the end of a
+// body several hundred characters long, and the 160 characters we keep for the
+// log cut it clean off.
+function retryAfterMs(raw) {
+  if (raw == null) return null;
+  const s = String(raw);
+  let details = null;
+  try {
+    const j = JSON.parse(s);
+    if (j && j.error && Array.isArray(j.error.details)) details = j.error.details;
+  } catch {}
+  const seconds = (v) => {
+    const m = /^\s*(\d+(?:\.\d+)?)s\s*$/.exec(String(v == null ? "" : v));
+    return m ? Math.round(Number(m[1]) * 1000) : null;
+  };
+  for (const d of details || []) if (d && d.retryDelay != null) {
+    const ms = seconds(d.retryDelay);
+    if (ms != null) return ms;
+  }
+  // A body that is not the JSON we expected still usually SAYS it, and a
+  // provider's exact envelope is not something to bet a day of a book on.
+  const m = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(s);
+  return m ? Math.round(Number(m[1]) * 1000) : null;
+}
+
+// The EARLIEST of the delays a run collected: when the ladder is spent, the
+// first rung to come back is the one that decides when the book wakes.
+function soonest(a, b) {
+  if (!Number.isFinite(b) || b <= 0) return a;
+  return Number.isFinite(a) && a > 0 ? Math.min(a, b) : b;
+}
+
+// ---------------------------------------------------------------- one book
 
 // What Settings and the board splash say while a free key waits (spec §7).
 const QUOTA_NOTE = "waiting for tomorrow's quota";
@@ -511,12 +646,13 @@ function pagesOf(dir) {
 //   opts.cfg      {provider, apiKey} — for a caller that already has it
 //   opts.config   an already-loaded content config (skips the read)
 //   opts.only     [index, …] pay again for exactly these pages
-//   opts.job      the job as read from job.json, for its pausedUntil day
+//   opts.job      the job as read from job.json, for its pausedUntil moment
 //   opts.now      pinned clock (tests)
 //
 // Returns {transcribed, reused, escalated, pages, calls, errors} on a normal
 // run, {hold:"no-ai-key"} when there is no key to spend, and
-// {hold:"quota", pausedUntil, note} when the ladder is spent for the day.
+// {hold:"quota", pausedUntil, note} when the ladder is spent — pausedUntil is
+// the ISO moment the allowance is expected back (see "the pause" above).
 // Throws only for a permanent refusal — content-worker.js turns that into a
 // failed job with the provider's own words, and never retries it.
 async function transcribeBook(dir, opts) {
@@ -524,7 +660,6 @@ async function transcribeBook(dir, opts) {
   const cfg = o.cfg || (o.dataDir ? aiRoles(o.dataDir).vision : null);
   const config = o.config || loadConfig(o.dataDir);
   const log = (msg) => store.appendLog(dir, "transcribe", msg, { now: o.now });
-  const today = dayOf(o.now);
 
   if (!cfg || !cfg.apiKey) {
     // A hold, not a failure: the parent has not added a key yet, and the book
@@ -532,11 +667,12 @@ async function transcribeBook(dir, opts) {
     log("no AI key yet - add one in Settings and the book will read itself");
     return { hold: "no-ai-key", transcribed: 0, reused: 0, escalated: 0, pages: [], calls: 0, errors: [] };
   }
-  // Already told "not today". Asking again costs a request to hear the same
-  // thing, and on a free key that request is a page we could have read
-  // tomorrow.
+  // Already told "not yet". Asking again costs a request to hear the same
+  // thing, and on a free key that request is a page we could have read once the
+  // allowance is back. The recorded moment is echoed back exactly as it was
+  // written — including the plain day a hub older than F6 wrote there.
   const paused = o.job && o.job.pausedUntil;
-  if (paused && paused > today)
+  if (pauseHolds(paused, o.now))
     return { hold: "quota", pausedUntil: paused, note: QUOTA_NOTE,
              transcribed: 0, reused: 0, escalated: 0, pages: [], calls: 0, errors: [] };
 
@@ -550,6 +686,7 @@ async function transcribeBook(dir, opts) {
   const out = [];
   const errors = [];
   let transcribed = 0, reused = 0, escalated = 0, calls = 0, quota = false, permanent = null;
+  let retryMs = null;                               // when the spent ladder asked us back
 
   for (const page of pages) {
     // A page that already has text is DONE — including a page a parent typed
@@ -570,6 +707,13 @@ async function transcribeBook(dir, opts) {
                                            policy: promptFor(config, "transcribe") });
       calls++;
       let text = first.text, unsure = first.uncertain.slice(), note = null;
+      // WHO READ THIS PAGE (F7). `readBy` is whichever rung produced the words
+      // that end up on the page — the transcriber usually, the partner when the
+      // transcriber's allowance ran out mid-book, the decider when there was a
+      // disagreement and something to settle it. It is not always the model the
+      // config names, and a review page that assumes it is tells the parent a
+      // model read a page it never saw.
+      let readBy = first.model, checkedBy = null, agreed = null;
 
       // The optional second opinion (spec §4.2). Two cheap rungs read the page;
       // if a listener could tell their readings apart, a stronger model decides
@@ -610,6 +754,7 @@ async function transcribeBook(dir, opts) {
           note = "no second model checked this page";
           unsure.push({ word: "page", reason: note });
         } else if (normalizeLoose(b.text) !== normalizeLoose(text)) {
+          checkedBy = b.model; agreed = false;
           const word = firstDivergence(text, b.text);
           // Only a CONFIGURED adjudicator decides (spec §4.2: "the strongest
           // configured model"). With none — the free default — the
@@ -635,7 +780,7 @@ async function transcribeBook(dir, opts) {
           }
           if (c) {
             escalated++;
-            text = c.text; unsure = c.uncertain.slice();
+            text = c.text; unsure = c.uncertain.slice(); readBy = c.model;
             note = "two models read this page differently; " + c.model + " decided";
           } else {
             // Nothing left to break the tie: keep the first reading and say
@@ -643,14 +788,15 @@ async function transcribeBook(dir, opts) {
             note = "two models read this page differently and there was no third to ask";
           }
           unsure.push({ word: word || "page", reason: note });
-        }
+        } else { checkedBy = b.model; agreed = true; }
       }
 
       const flags = unsure.map(u => typeof u === "string"
         ? { word: u, reason: FLAG_UNSURE }
         : { word: u.word, reason: u.reason });
       out.push({ index: page.index, source: page.source, text,
-                 flags, cover: done ? !!done.cover : page.index === 1 });
+                 flags, cover: done ? !!done.cover : page.index === 1,
+                 read: { model: readBy, checkedBy, agreed } });
       transcribed++;
       log("page " + page.index + ": " + text.split(/\s+/).filter(Boolean).length + " word(s)" +
           (flags.length ? ", " + flags.length + " flag(s)" : "") + (note ? " - " + note : ""));
@@ -659,6 +805,7 @@ async function transcribeBook(dir, opts) {
       if (e && e.quota) {
         // Not an error. The book keeps the pages it already has and waits.
         quota = true;
+        retryMs = soonest(retryMs, e.retryAfterMs);
         log("every model's daily allowance is spent - " + QUOTA_NOTE);
         continue;
       }
@@ -685,15 +832,16 @@ async function transcribeBook(dir, opts) {
 
   if (permanent) throw new Error(permanent);
   const res = { transcribed, reused, escalated, pages: out, calls, errors };
-  if (quota) { res.hold = "quota"; res.pausedUntil = tomorrow(o.now); res.note = QUOTA_NOTE; }
+  if (quota) { res.hold = "quota"; res.pausedUntil = pausedUntilFor(o.now, retryMs); res.note = QUOTA_NOTE; }
   return res;
 }
 
 module.exports = {
   PROMPT_TEXT, DEFAULT_PROMPTS, PASSES, TRANSCRIBE_PROMPT, promptFor,
   PROVIDERS, DEFAULTS, CONFIG_FILE,
-  QUOTA_NOTE, TIMEOUT_MS, MAX_TOKENS,
+  QUOTA_NOTE, TIMEOUT_MS, MAX_TOKENS, QUOTA_TZ,
   aiBase, baseFor, loadConfig, ladderFor, parseModelJson, normalizeLoose, firstDivergence,
   dayOf, tomorrow, pagesOf,
+  retryAfterMs, nextZoneMidnight, pausedUntilFor, pauseHolds,
   callModel, transcribePage, transcribeBook,
 };

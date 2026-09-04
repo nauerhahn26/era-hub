@@ -109,6 +109,31 @@ test("text.json normalises the sloppy shapes and rejects the wrong ones", () => 
   assert.throws(() => store.normalizeText({ pages: {} }), /pages/);
 });
 
+// F7. `read` is who produced the words on this page and who checked them —
+// written by the transcribe step, read by the review page. It is OPTIONAL on
+// purpose: every text.json written before it, and every one a parent typed by
+// hand in power mode, has none, and none of them may start failing to load.
+test("a page may say who read it - and a page that does not is unchanged", () => {
+  const dir = book("provenance");
+  const read = { model: "a-model", checkedBy: "another-model", agreed: false };
+  const back = store.writeText(dir, { pages: [
+    { index: 1, source: "a.jpg", text: "hi", read },
+    { index: 2, source: "b.jpg", text: "ho" },
+  ] });
+  assert.deepEqual(back.pages[0].read, read, "it survives a write and a read");
+  assert.deepEqual(store.readText(dir).pages[0].read, read);
+  assert.ok(!("read" in back.pages[1]), "a page nobody recorded a reader for grows no field");
+
+  // nobody checked it: the two partner fields are null, never absent
+  assert.deepEqual(store.normalizeText({ pages: [{ index: 1, source: "a.jpg", text: "", read: { model: "m" } }] })
+    .pages[0].read, { model: "m", checkedBy: null, agreed: null });
+  // …and a `read` that names no model is not provenance at all, so it is
+  // defaulted away rather than thrown at a reader that never asked for it
+  for (const bad of [{}, { model: "" }, { model: 7 }, "a-model", null, []])
+    assert.ok(!("read" in store.normalizeText({ pages: [{ index: 1, source: "a.jpg", text: "", read: bad }] }).pages[0]),
+      "a malformed read is dropped, not fatal: " + JSON.stringify(bad));
+});
+
 test("readText on a folder with no build dir is null, not a throw", () => {
   assert.equal(store.readText(book("notext")), null);
 });

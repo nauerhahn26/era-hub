@@ -39,7 +39,7 @@ const store = require("./content-store.js");
 const booksIndex = require("./books-index.js");
 const { EXT: PHOTO_EXT } = require("./clothing-photos.js");
 const { narrationPath, forgetPage } = require("./content-narrate.js");
-const { pagesOf } = require("./content-providers.js");
+const { pagesOf, pauseHolds } = require("./content-providers.js");
 // Booleans only — which roles the family has set up. No key is read in this
 // file and none ever will be (see the header).
 const { haveRoles } = require("./ai-config.js");
@@ -118,6 +118,14 @@ function observe(dir, sig, now) {
 function takeable(job, now) {
   if (!job || job.state === "done" || job.state === "published") return false;
   if (store.owedState(job) === null) return false;
+  // A book waiting for a spent allowance keeps its claim but stops beating, so
+  // half an hour later it looks exactly like an abandoned one. Taking it over
+  // buys nothing — the worker reads the same pause and holds again — and it
+  // costs a job.json rewrite and a log line inside the family's Drive folder
+  // every thirty minutes until the quota comes back. The pause is a MOMENT
+  // (content-providers.js F6), so this wakes the book the first scan after it
+  // passes rather than at some local midnight.
+  if (pauseHolds(job.pausedUntil, now)) return false;
   const beat = Date.parse(job.heartbeat);
   return !(beat >= 0) || now - beat > STALE_MS;
 }
@@ -749,6 +757,10 @@ function savePage(o) {
     // would go on counting words the model was unsure of under words the model
     // never wrote.
     p.flags = [];
+    // And these are nobody's reading: `read` says which model produced the
+    // words and who checked them (F7), and the words are now the parent's own.
+    // `edited` is the provenance of a typed page.
+    delete p.read;
   }
   if (flags) p.flags = [];
   next[at] = p;

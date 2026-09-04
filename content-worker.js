@@ -26,10 +26,12 @@
 // A step that RAN may ask for the same treatment by returning {hold}: it did
 // what it could and the job still owes this step. Two live cases:
 //   {hold:"no-ai-key"}   nothing to spend yet — the book waits in the folder.
-//   {hold:"quota", pausedUntil:"YYYY-MM-DD"}   a free key's daily allowance is
-//     gone. The day is recorded on the job so tomorrow's run knows not to
-//     knock before then, the state stays exactly where it was, and the book is
-//     NEVER marked failed for it (spec §4 step 2, §7 risks).
+//   {hold:"quota", pausedUntil:"<ISO timestamp>"}   a free key's allowance is
+//     gone. The MOMENT it is expected back (content-providers.js F6: the 429's
+//     own RetryInfo, else midnight where the allowance is counted, which is
+//     California and not this computer) is recorded on the job so neither the
+//     next run nor the scan knocks before then, the state stays where it was,
+//     and the book is NEVER marked failed for it (spec §4 step 2, §7 risks).
 // A hold keeps the claim and does not advance the state; the pages already
 // built are kept, and the next scan picks the book up where it stopped.
 //

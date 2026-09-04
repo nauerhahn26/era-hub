@@ -253,6 +253,32 @@ test("a book that failed for good is never re-claimed — the refusal costs noth
   assert.deepEqual(jobOf(dir), was);
 });
 
+// F6. A book waiting for tomorrow's free allowance keeps its claim but stops
+// beating, so half an hour later it looks exactly like an abandoned one. Taking
+// it over buys nothing — the worker reads the same pause and holds again — and
+// it costs a job.json rewrite and a log line INSIDE the family's Drive folder
+// every thirty minutes until the quota comes back, all of it re-uploaded and
+// re-mirrored to every device.
+test("a book waiting for its quota is left alone until the moment the pause ends", () => {
+  const dir = book("Paused", { "IMG_1.jpg": 10 });
+  const until = new Date(T0 + 6 * 60 * MIN).toISOString();
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  job = { ...job, pausedUntil: until, pausedNote: "waiting for tomorrow's quota" };
+  const was = store.writeJob(dir, job);
+
+  const res = content.scan({ now: T0 + 31 * MIN });      // heartbeat stale, pause still running
+  assert.equal(found(res, "Paused").takeable, false);
+  assert.deepEqual(res.claimed, []);
+  assert.deepEqual(jobOf(dir), was, "the scan rewrote nothing in the family's Drive folder");
+
+  // …and the first scan after the pause ends picks it straight back up.
+  content.runJob = () => Promise.resolve({ ok: true });
+  const after = content.scan({ now: T0 + 6 * 60 * MIN + MIN });
+  assert.equal(found(after, "Paused").takeable, true);
+  assert.deepEqual(after.claimed, ["paused"]);
+  content._testReset();
+});
+
 test("two scans in a row do not claim the same book twice", async () => {
   const dir = book("Once", { "IMG_1.jpg": 10 });
   const jobs = [];
