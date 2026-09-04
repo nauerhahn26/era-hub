@@ -1200,6 +1200,58 @@ test("a partial write never drops a page the pass has not reached yet", async ()
   assert.deepEqual(store.readText(dir).pages.map(p => p.index), [3, 1, 2]);
 });
 
+// A book stops dead on a refused key, and the pages BELOW the one that met it
+// were never looked at. The final write is the only one that prunes, and it used
+// to prune to whatever the walk happened to be holding — so a refusal on page
+// three deleted page four's words, which a free key had already paid for. The
+// half-way writes keep everything they have not reached for exactly this reason;
+// the last one has to as well.
+test("a refusal part-way down keeps the words of every page below it", async () => {
+  reset({ config: SINGLE, mode: "401" });
+  const dir = book("Refused Mid-Book", 4);
+  // Pages one, two and four already have words — a gap in the middle is what
+  // yesterday's transient failure leaves behind, and what a re-read of one early
+  // page walks past. Page three is the one that owes a reading.
+  store.writeText(dir, { pages: [1, 2, 4].map(i => ({
+    index: i, source: "sources/IMG_000" + i + ".jpg", flags: [], cover: i === 1,
+    text: "page " + i + ", in words somebody already paid for" })) });
+
+  await assert.rejects(() => providers.transcribeBook(dir, { dataDir: DATA }), /permanent/);
+  const after = store.readText(dir);
+  assert.deepEqual(after.pages.map(p => p.index), [1, 2, 4],
+    "a book that stopped may lose nothing: text.json is " + JSON.stringify(after.pages.map(p => p.index)));
+  for (const p of after.pages)
+    assert.match(p.text, /already paid for/, "page " + p.index + " lost its words");
+  mode = "ok";
+});
+
+// The re-shape memo is remembered for the LIFE OF THE PROCESS, and the next pass
+// seeds itself from it — so a line skipped on the way out of a page is a
+// re-shape nobody ever writes down, in this run or any run after it. It used to
+// be skipped on exactly the two exits a throttled free key takes: the quota
+// `continue` and the permanent `break`.
+test("a re-shape on the page that then meets a refused key is still written down", async () => {
+  // Its OWN model id, for the same reason the 400 tests above pin theirs: what a
+  // model accepts is remembered across the whole suite.
+  const transcriber = "gemini-3-flash-preview";
+  reset({ config: { transcribe: { model: transcriber } }, budget400: true,
+          // The transcriber re-shapes and is answered; the key is refused from
+          // the very next request on, which is the partner rung's.
+          answers: [() => { mode = "401"; return { text: "Ten green bottles on the wall.", uncertain: [] }; }] });
+  const dir = book("Refused After Re-shape");
+  try {
+    await assert.rejects(() => providers.transcribeBook(dir, { dataDir: DATA }), /permanent/);
+  } finally { mode = "ok"; }
+
+  assert.deepEqual(calls.map(c => c.model), [transcriber, transcriber, "gemini-3.1-flash-lite"],
+    "refused once, re-shaped once, answered - and then the partner met the refused key");
+  assert.equal(calls[1].body.generationConfig.thinkingConfig.thinkingLevel, "minimal");
+  const retunes = store.readLog(dir).filter(l => l.msg.includes("re-shaped the thinking knob"));
+  assert.equal(retunes.length, 1,
+    "the re-shape happened and the ledger has to say so: " + JSON.stringify(store.readLog(dir).map(l => l.msg)));
+  assert.ok(retunes[0].msg.startsWith(transcriber + ":"), "and it names the model that asked for it");
+});
+
 // --------------------------------------------------------------- the tally
 
 test("the stand-in saw every call this suite made, and the family paid for none", () => {

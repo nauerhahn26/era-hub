@@ -178,6 +178,23 @@ test("a photo ingest could not page still counts as a page of the book", async (
   assert.equal(j.progress.pages, 3);
 });
 
+// ...but only while the folder is still the INBOX, which is the window that
+// sentence is true in. Once the book has been built, nothing will ever ingest a
+// photo dropped beside it — the job owes no step — so a loose file counted then
+// inflates the total for ever: a finished three-page book on the shelf saying
+// "3 of 4 pages read", with nothing that could ever make it four.
+test("a photo dropped beside a finished book does not add a page it will never get", async () => {
+  const dir = book("Finished Book", {
+    job: { state: "done" },
+    sources: ["IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg"],
+    pages: [{ text: "one" }, { text: "two" }, { text: "three" }],
+  });
+  assert.equal(jobOf((await statusOf()).body, "finished-book").progress.pages, 3);
+  fs.writeFileSync(path.join(dir, "IMG_9999.jpg"), jpg(9));
+  assert.equal(jobOf((await statusOf()).body, "finished-book").progress.pages, 3,
+    "a book nothing will ingest again may not grow a page it can never read");
+});
+
 test("a book part-way through says which step it owes and how far it has got", async () => {
   book("Tabby McTat", {
     job: { state: "transcribing" },

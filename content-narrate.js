@@ -105,10 +105,15 @@ function bill(dir, chars) {
 
 // ------------------------------------------------------------------ one page
 
-// narratePage(text, cfg) -> {audio: Buffer, words: [{word,start,end}]}
+// narratePage(text, cfg, onCharged) -> {audio: Buffer, words: [{word,start,end}]}
 // cfg = {apiKey, voiceId, modelId?}. Throws "permanent: …" for a refusal that
 // retrying cannot fix (a bad or revoked key), plain Errors for everything else.
-async function narratePage(text, cfg) {
+//
+// `onCharged` is called — once, and before anything else can throw — the moment
+// the provider's answer is known to be a 200, because THAT is the moment the
+// synthesis was performed and billed. It is not called for a refusal, which
+// costs nothing. See bill() above for why the caller cannot wait for the return.
+async function narratePage(text, cfg, onCharged) {
   const c = cfg || {};
   if (!c.apiKey) throw new Error("permanent: no ElevenLabs key");
   if (!c.voiceId) throw new Error("permanent: no ElevenLabs voice");
@@ -128,6 +133,13 @@ async function narratePage(text, cfg) {
       throw new Error("permanent: ElevenLabs did not accept that key (" + r.status + ") " + body);
     throw new Error("elevenlabs " + r.status + " " + body);
   }
+  // A 200 IS A PURCHASE, whatever the body turns out to hold. Everything below
+  // this line can still refuse the page — a reply with no alignment, or none
+  // with audio in it, both of which are shapes this provider really produces —
+  // and every one of those throws was unwinding past the caller's ledger write,
+  // so a page ElevenLabs had been paid for was recorded as free. That is the
+  // very under-count the ledger exists to end.
+  if (onCharged) onCharged();
   const reply = await r.json();
   const w = words.wordsFromAlignment(reply);
   // No timings means no highlighting, and a silent-but-timed page is not a
@@ -271,11 +283,13 @@ async function narrateBook(dir, opts) {
     // than quietly spending on them.
     if (only && !forced) continue;
     try {
-      const r = await narratePage(page.text, cfg);
-      // The provider has been paid by the time it answers, so the ledger is
-      // written before anything that could still go wrong here.
-      bill(dir, page.text.length);
-      spent += page.text.length;
+      // The ledger is written from INSIDE the call, the instant the provider's
+      // 200 arrives — not out here, where a reply that carried no alignment (or
+      // no audio) would throw straight past it with the page already paid for.
+      const r = await narratePage(page.text, cfg, () => {
+        bill(dir, page.text.length);
+        spent += page.text.length;
+      });
       // The mp3 lands before the entry that points at it, and both land
       // atomically: a torn write here is a page that plays static.
       store.writeAtomic(mp3, r.audio);

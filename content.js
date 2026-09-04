@@ -124,9 +124,20 @@ const NOT_A_PAGE = new Set(["cover.jpg"]);
 // parent watching the card saw their book shrink. A photo is one page of the
 // book on either side of the move, and every file leaves one side exactly as it
 // joins the other, so this sum holds still the whole way across.
-function photoCount(dir) {
-  const loose = (photoNames(dir) || []).filter(n => !NOT_A_PAGE.has(n.toLowerCase()));
-  return loose.length + (photoNames(path.join(dir, SOURCES)) || []).length;
+//
+// THE LOOSE PILE ONLY COUNTS WHILE THE FOLDER IS STILL THE INBOX — the window
+// above, where ingest is emptying it (the job is still in `inbox`; the worker
+// only moves it on once the step has returned). Counting it forever is a
+// promise the hub cannot keep: a photo ingest could not page (a HEIC left
+// exactly where the parent put it), or one dropped beside a book that has since
+// published, is never ingested again, so the total it inflates never closes —
+// a finished fifteen-page book says "15 of 16 pages read" for the rest of its
+// life, with nothing that will ever make it sixteen.
+function photoCount(dir, job) {
+  const inbox = !job || store.owedState(job) === "inbox";
+  const loose = inbox
+    ? (photoNames(dir) || []).filter(n => !NOT_A_PAGE.has(n.toLowerCase())).length : 0;
+  return loose + (photoNames(path.join(dir, SOURCES)) || []).length;
 }
 
 // What the last scan saw, per folder: {sig, since}. `since` is the moment the
@@ -408,7 +419,7 @@ function jobFor(name, dir, slug) {
   // — counted on both sides of the move it is half way through (photoCount).
   let built = [];
   try { built = pagesOf(dir); } catch {}
-  const count = Math.max(built.length, pages.length, photoCount(dir));
+  const count = Math.max(built.length, pages.length, photoCount(dir, job));
   // TWO COUNTS, because there are two kinds of mark and they are not the same
   // sentence to a parent. `flags` is WORDS somebody was unsure of, the ones the
   // review page highlights inside the page's own text; `pageFlags` is whole
@@ -860,22 +871,31 @@ function savePage(o) {
     // reuse the mp3 too. The entry goes, the page publishes silent, and the walk
     // (or the Re-narrate button beside this one) buys the right recording.
     // Only when the words actually changed: a parent who opened the field and
-    // typed nothing must not be charged for the page a second time.
-    if (req.text !== p.text) forgetPage(found.dir, req.page);
+    // typed nothing must not be charged for the page a second time — and must
+    // not have the page's authorship rewritten either. The review page posts the
+    // textarea verbatim on every Save press, with no equality check of its own,
+    // so "opened the editor, pressed Save" is an ordinary thing to do and it
+    // used to cost the page its provenance: the model that read it forgotten,
+    // the page badged "Edited by you", and "Read the photos again" told to keep
+    // words nobody typed, for ever.
+    const changed = req.text !== p.text;
+    if (changed) forgetPage(found.dir, req.page);
     p.text = req.text;
-    // WHOSE WORDS THESE ARE. The button next to this one reads the photos
-    // again, and it keeps the pages a grown-up typed themselves (spec §5, the
-    // "keep my edits" tick) — so the page has to remember that it was typed.
-    p.edited = true;
-    // A flag is a question ("did I read this word right?") and a parent who has
-    // just retyped the line has answered it. Left behind, the Settings card
-    // would go on counting words the model was unsure of under words the model
-    // never wrote.
+    if (changed) {
+      // WHOSE WORDS THESE ARE. The button next to this one reads the photos
+      // again, and it keeps the pages a grown-up typed themselves (spec §5, the
+      // "keep my edits" tick) — so the page has to remember that it was typed.
+      p.edited = true;
+      // And these are nobody's reading: `read` says which model produced the
+      // words and who checked them (F7), and the words are now the parent's own.
+      // `edited` is the provenance of a typed page.
+      delete p.read;
+    }
+    // Cleared either way. A flag is a question ("did I read this word right?")
+    // and a parent who pressed Save on the line has answered it, whether or not
+    // they changed a letter. Left behind, the Settings card would go on counting
+    // words the model was unsure of under words a grown-up has looked at.
     p.flags = [];
-    // And these are nobody's reading: `read` says which model produced the
-    // words and who checked them (F7), and the words are now the parent's own.
-    // `edited` is the provenance of a typed page.
-    delete p.read;
   }
   if (flags) p.flags = [];
   next[at] = p;

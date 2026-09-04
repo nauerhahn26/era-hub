@@ -243,6 +243,27 @@ test("a reused page is not billed again, and a page nobody could narrate is not 
   assert.equal(store.readJob(lost).spent, undefined, "a call the provider refused buys nothing");
 });
 
+// The other half of "a 200 is a purchase". ElevenLabs answers 200 and sends a
+// body with no alignment in it (mode "no-alignment" above is a shape this suite
+// has modelled since T2.7): the synthesis was performed and charged for, and the
+// page is still lost. Billing on the way OUT of the call meant the throw
+// unwound past the ledger — the exact 4614-vs-4986 under-count L5 exists to end.
+test("a page the provider answered but could not be used is still billed", async () => {
+  calls = [];
+  const dir = book("ledger-no-alignment", ["A busy bee."]);
+  store.writeJob(dir, store.newJob({ claimedBy: "hub-test", state: "reviewing" }));
+  mode = "no-alignment";
+  let r;
+  try { r = await narrate.narrateBook(dir, { cfg: cfg() }); } finally { mode = "ok"; }
+  assert.equal(calls.length, 1, "the provider was asked, and answered");
+  assert.equal(r.narrated, 0, "and the page is still lost");
+  assert.ok(r.errors.some(e => /alignment/i.test(e)), "and the book says which page: " + JSON.stringify(r.errors));
+  assert.deepEqual(store.readJob(dir).spent,
+    { narrate: { chars: "A busy bee.".length, calls: 1 } },
+    "a page ElevenLabs was paid for may never be reported as free");
+  assert.equal(r.chars, "A busy bee.".length, "and the run's own summary says the same");
+});
+
 // narrateBook is also driven straight from a test and from power mode, on a
 // folder with no claim in it at all. A ledger is a note in the margin of a job
 // that exists — it must never conjure one, and never lose the book if it cannot

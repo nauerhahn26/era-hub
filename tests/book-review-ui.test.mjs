@@ -115,7 +115,11 @@ function book(name, texts, opts) {
                  // `o.edited` is the same shape again ({1:true}): the page's
                  // words are a grown-up's own, typed over whatever was read off
                  // the photo, which is what the inline field below leaves behind.
-                 edited: !!(o.edited || {})[index] });
+                 edited: !!(o.edited || {})[index],
+                 // And `o.read` names the model whose words these are ({1:"a-model"}),
+                 // the provenance the transcriber leaves on every page it reads.
+                 ...((o.read || {})[index]
+                   ? { read: { model: (o.read || {})[index], checkedBy: null, agreed: null } } : {}) });
   });
   store.writeText(dir, { pages });
   store.writeJob(dir, { ...store.newJob({ claimedBy: "test:1" }), state: o.state || "published" });
@@ -559,6 +563,32 @@ test("fixing the words puts the badge on the page there and then, and a reload k
   await page.waitForFunction(() => document.querySelectorAll("#strip .page").length > 0);
   assert.match((await badgeOn(page, 1))[0] || "", /edited by you/i);
   assert.deepEqual(await badgeOn(page, 2), []);
+  await ctx.close();
+});
+
+// The badge is a CLAIM, and a claim has to be true. The review page posts the
+// textarea verbatim on every Save press — it has no equality check of its own —
+// so "opened the editor, read the line, pressed Save" used to badge the page
+// "Edited by you", throw away the model that read it, and pin the page against
+// every future "Read the photos again", for words nobody had typed.
+test("pressing Save without changing a word claims nothing and forgets nobody", async () => {
+  book("No Change", ["The cat sat", "on the mat"],
+       { read: { 1: "gemini-3.1-flash-lite" }, flags: { 1: ["sat"] } });
+  const { ctx, page } = await review("no-change");
+  await page.locator("#strip .page:nth-child(1) .edit").click();
+  await page.locator("#strip .page:nth-child(1) .save").click();     // the field, untouched
+  await page.waitForFunction(() => document.getElementById("strip").dataset.saved === "1");
+  assert.deepEqual(await badgeOn(page, 1), [],
+    "a page nobody retyped may not be shown to a parent as their own words");
+  const p = textOf("No Change")[0];
+  assert.equal(p.text, "The cat sat", "and not a letter moved");
+  assert.equal(p.edited, false);
+  assert.deepEqual(p.read, { model: "gemini-3.1-flash-lite", checkedBy: null, agreed: null },
+    "the model that read this page is still on it");
+  // The flag goes either way: a parent who pressed Save on the line has answered
+  // the question, whether or not they changed a letter.
+  assert.deepEqual(p.flags, []);
+  assert.deepEqual(await marksOn(page, 1), []);
   await ctx.close();
 });
 

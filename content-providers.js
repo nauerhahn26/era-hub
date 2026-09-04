@@ -765,6 +765,11 @@ async function transcribeBook(dir, opts) {
   const out = [];
   const errors = [];
   let transcribed = 0, reused = 0, escalated = 0, calls = 0, quota = false, permanent = null;
+  // Did the walk get all the way to the end of the book? Only then may the
+  // final write prune (see the bottom of this function). A quota pause leaves
+  // this true on purpose: every page it skipped was skipped AFTER the pages
+  // that already had words were carried into `out`, so nothing is lost.
+  let walked = true;
   let retry = null;                                 // when the spent ladder asked us back, and whether the DAY is what ran out
 
   // THE ORDER text.json ALREADY HAS IS THE BOOK'S ORDER, because a grown-up may
@@ -971,22 +976,37 @@ async function transcribeBook(dir, opts) {
       }
       errors.push(msg);
       log("page " + page.index + " failed: " + msg);
-      if (isPermanent(msg)) { permanent = msg; break; }
+      if (isPermanent(msg)) { permanent = msg; walked = false; break; }
       if (done) { out.push(done); reused++; }
+    } finally {
+      // SAID ON EVERY WAY OUT OF THE PAGE, not just the happy one. The memo is
+      // remembered for the life of the process and the next pass seeds `shaped`
+      // from it, so a line skipped here is a re-shape that is never written down
+      // by anybody: a model that re-shaped on the page that then 429'd (the
+      // free-tier path this exists for) or on the page that met a refused key
+      // used to change the request the transcriber's accuracy was measured
+      // under, silently, for the whole run and every run after it.
+      sayRetunes();
     }
-    sayRetunes();
     // The page is on disk before the next one is asked for.
     if (transcribed > before) save();
   }
 
-  // The last word, and the only one that PRUNES: a page whose photo has gone is
-  // dropped here, where the walk has seen the whole book, and never by a
-  // half-way write (which keeps everything it has not reached).
-  out.sort((a, b) => place(a) - place(b) || a.index - b.index);
-  if (out.length) store.writeText(dir, { pages: out });
+  // The last word, and the only one that may PRUNE: a page whose photo has gone
+  // is dropped here — but ONLY where the walk actually reached the end of the
+  // book. A permanent refusal part-way through breaks out of the loop, and the
+  // pages BELOW it were never looked at: pruning to what the walk happened to
+  // hold would delete text somebody already paid for (a mid-book gap left by
+  // yesterday's transient failure, or a re-read of one early page), and the
+  // half-way writes deliberately keep everything they have not reached for
+  // exactly that reason. So the unreached pages come through here too.
+  const seen = new Set(out.map(p => p.index));
+  const rest = walked ? [] : [...had.values()].filter(p => !seen.has(p.index));
+  const all = inOrder(out.concat(rest));
+  if (all.length) store.writeText(dir, { pages: all });
 
   if (permanent) throw new Error(permanent);
-  const res = { transcribed, reused, escalated, pages: out, calls, errors };
+  const res = { transcribed, reused, escalated, pages: all, calls, errors };
   if (quota) { res.hold = "quota"; res.pausedUntil = pausedUntilFor(o.now, retry); res.note = QUOTA_NOTE; }
   return res;
 }
