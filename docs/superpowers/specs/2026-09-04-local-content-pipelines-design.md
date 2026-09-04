@@ -251,11 +251,28 @@ a pointer is present (hover/touch, not gaze).
 title, return where it streams in the family's region with a deep link that
 opens the player, from a free or cheap key a parent can obtain in minutes, and
 with enough "similar titles" signal to seed the long-term recommendation
-engine. Candidates under research (TMDB watch/providers, Watchmode, Streaming
-Availability API, JustWatch unofficial, Wikidata IDs) — **provider choice is an
-open question owned by the streaming-API research task**, and this spec does
-not pick one. The catalog writer is provider-agnostic: it stores
-`{title, year, tmdbId?, link, provider, poster, addedBy:'search'|'url'}`.
+engine. **Resolved 9/4** by `docs/research/2026-09-04-streaming-availability.md`:
+
+- **TMDB** (key the family already needs for posters; free) for search, poster,
+  `tmdbId`, age certification, and the future recommendation engine
+  (`/discover` with `with_watch_providers` + `certification.lte`, and
+  `/recommendations` — never `/similar`). TMDB's watch/providers says *where* a
+  title streams but gives no deep link, and its JustWatch-sourced data may not
+  be cached longer than six months.
+- **Watchmode** (free 2,500 req/month, web-form signup, no card) for the deep
+  link per service (`web_url`), `us_rating`, and `similar_titles[]` as backup.
+  TMDB `provider_id` equals JustWatch/Watchmode `packageId`, so one provider
+  table serves both.
+- JustWatch's keyless GraphQL has the best data but its ToS forbid this use;
+  it stays a developer reference, never the shipped default.
+- Fallback without a Watchmode key: TMDB-only ("found on Netflix", no link)
+  plus the URL-paste path.
+
+The catalog writer is provider-agnostic behind an `availability` interface and
+stores `{title, year, tmdbId?, providerRef?, link, provider, poster, ageRating,
+addedBy:'search'|'url', availabilityCheckedAt}`. A background job re-checks
+active titles weekly (≈ 10 % of the free Watchmode tier) and marks moved titles
+"ask a grown-up" rather than deleting them.
 
 **Long term.** The recommendation engine (not in this spec) runs on these same
 rails: a periodic content job that proposes titles/songs into a "suggested"
@@ -272,7 +289,7 @@ room for `suggested[]` without a schema bump.
 | voice | ElevenLabs | exists (`/tts-key`) | narration |
 | video | fal | **new** | optional animation |
 | (none) | yt-dlp pack | pack install | music add |
-| streaming lookup | TBD by research task | new, optional | movie search (URL paste works without it) |
+| streaming lookup | TMDB (search, posters, recommendations) + Watchmode (deep links) | new, optional | movie search (URL paste works without them) |
 
 **Migration sequence (ships in this order).**
 
