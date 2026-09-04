@@ -202,7 +202,11 @@ function runJob(job) {
                     slug: job.slug, name: job.name || null, step: job.step || null,
                     // One page, for the review page's "Re-narrate this page".
                     // Null (the normal case) means the whole book.
-                    page: Number.isInteger(job.page) ? job.page : null },
+                    page: Number.isInteger(job.page) ? job.page : null,
+                    // The pages the review page's "Read the photos again" wants
+                    // read AGAIN (spec §5). Null means "whatever the step owes",
+                    // which for the transcriber is every page with no words yet.
+                    pages: Array.isArray(job.pages) ? job.pages.slice() : null },
     });
     w.on("message", (m) => {
       if (m && m.step) progress = { step: m.step, state: m.state || null };
@@ -220,11 +224,13 @@ function runJob(job) {
 }
 
 // Two runs are the same run when they are the same step of the same book — and
-// the page counts: re-narrating page four is not the run that re-narrates page
-// seven, and joining one to the other would leave a parent's second press
-// silently unanswered.
+// the pages count: re-narrating page four is not the run that re-narrates page
+// seven, and reading two pages again is not the run that reads one of them, so
+// joining either to the other would leave a parent's second press silently
+// unanswered.
 const keyOf = (job) => job.dir + "|" + (job.step || "") + "|" +
-                       (Number.isInteger(job.page) ? job.page : "");
+                       (Number.isInteger(job.page) ? job.page : "") + "|" +
+                       (Array.isArray(job.pages) ? job.pages.join(",") : "");
 
 // One job at a time, and a caller that arrives mid-build gets the result of the
 // run it asked for rather than a bare {busy} it would have to poll for — the
@@ -384,6 +390,39 @@ function jobs() {
 // that has never been given a voice. Words, not a status code and not a step
 // name: the Voice card is where the fix is, so the message points at it.
 const NO_VOICE = "New ERA has no voice yet — add an ElevenLabs key to the Voice card in Settings, then ask for this page again.";
+// The same deal for "Read the photos again": reading a page costs a vision
+// call, and a hub with no AI helper key would simply hold and change nothing.
+const NO_VISION = "New ERA cannot read pages yet — add a key to the AI helper card in Settings, then ask for this book again.";
+// And the one case where the button is right to do nothing: every page of the
+// book is a page a grown-up typed, and they asked us to keep those.
+const ALL_EDITED = "Every page of this book has words you typed yourself, and you asked to keep them — so there is nothing to read again.";
+
+// WHICH PAGES "Read the photos again" ASKS FOR (spec §5 "Rebuild text", T3.4).
+// The transcriber never re-reads a page that already has words — that rule is
+// what makes a book resumable over several days on a free key — so a re-read
+// has to name the pages it wants read a second time.
+//
+// `keepEdits` (the tick, on by default) leaves out every page a grown-up typed
+// themselves: their words are the whole point of this page, and a button that
+// threw them away next to the button that saved them would be a trap. Unticked,
+// the photos win everywhere and the parent's words go with the rest.
+//
+// The list is the union of the pages that were BUILT and the pages text.json
+// knows about, so a photo that was never read (a book that ran out of free
+// quota half way) is picked up by the same press.
+function rebuildPages(dir, keepEdits) {
+  let text = null;
+  try { text = store.readText(dir); } catch { return null; }
+  const pages = (text && text.pages) || [];
+  // Nothing has been read yet: the ordinary step does exactly the right thing,
+  // so it is asked for nothing in particular.
+  if (!pages.length) return null;
+  let built = [];
+  try { built = pagesOf(dir); } catch {}
+  const keep = new Set(keepEdits ? pages.filter(p => p.edited).map(p => p.index) : []);
+  const all = new Set([...built.map(p => p.index), ...pages.map(p => p.index)]);
+  return [...all].filter(i => !keep.has(i)).sort((a, b) => a - b);
+}
 
 // POST /content/run's whole decision, kept here so the route stays four lines
 // and so the same validation is available to anything else that kicks a build.
@@ -425,6 +464,20 @@ function runStep(o) {
   // that quietly does not change.
   if (step === store.STEP_OWED.reviewing && !(DATA && haveRoles(DATA).elevenlabs))
     return { error: NO_VOICE };
+
+  // "READ THE PHOTOS AGAIN" (spec §5). Only the reading step can be asked to go
+  // over pages it has already read — every other step either has nothing to
+  // re-do or does the whole book anyway — and every refusal happens here, before
+  // a thread is spawned, for the reason above: after that the family is billed.
+  let pages = null;
+  if (req.rebuild) {
+    if (step !== store.STEP_OWED.transcribing)
+      return { error: "only the reading step can be run again over pages it has already read" };
+    if (page !== null) return { error: "reading the photos again is done to the whole book" };
+    if (!(DATA && haveRoles(DATA).vision)) return { error: NO_VISION };
+    pages = rebuildPages(found.dir, req.keepEdits !== false);
+    if (pages && !pages.length) return { error: ALL_EDITED };
+  }
   // A parent pressing "start this book" must not have to wait for the quiet
   // period they have just decided is over: an unclaimed folder is claimed here
   // and then built, exactly as scan() would have done in its own time.
@@ -438,8 +491,52 @@ function runStep(o) {
   else if (job.state === "failed" && store.owedState(job) === null)
     store.writeJob(found.dir, store.transition(job, job.failedFrom || "inbox"));
   run({ kind: req.kind, slug: req.slug, name: found.name, dir: found.dir,
-        dataDir: DATA, step, page }).catch(() => {});
+        dataDir: DATA, step, page, pages }).catch(() => {});
   return { started: true };
+}
+
+// ------------------------------------------------------- "Remove this book"
+
+// THE ONE DOOR IN THE SUITE THAT DELETES A FAMILY'S OWN FILES (spec §5). It
+// removes the book's folder inside the family's Drive folder; the Phase 1 mirror
+// then takes the copy in <DATA> away on its next pass, so there is exactly one
+// delete and it happens where the parent can see it in their own Drive.
+//
+// Three rules, and the button does not ship without all three:
+//   1. A SLUG IS NEVER A PATH. bookFor() answers only with a directory NAME
+//      books-index.js read off the disk, so "../.." names no book at all. The
+//      resolved path is re-checked below anyway: the whole licence to delete
+//      rests on that one property, and a jail worth having is one that does not
+//      depend on a function three modules away staying the way it is today.
+//   2. NOT WHILE IT IS BEING BUILT. A worker with the folder open would write
+//      job.json back underneath us and leave half a book behind.
+//   3. NOTHING IS LOGGED INTO THE FOLDER. It is about to go; the record goes to
+//      the hub's own console (and never names anything but the book's title).
+//
+// Returns {removed, slug, title}, {skipped:"needs-local-drive"} (409) or
+// {error} (400).
+function removeBook(o) {
+  const req = o || {};
+  if (!KINDS.includes(req.kind)) return { error: "unknown kind" };
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
+  if (typeof req.slug !== "string" || !req.slug) return { error: "unknown book" };
+  const found = bookFor(req.slug, st);
+  if (!found) return { error: "unknown book" };
+  const root = path.resolve(st.folderPath, "books");
+  const dir = path.resolve(root, found.name);
+  // A DIRECT CHILD of books/, and nothing else: not books/ itself, not a
+  // grandchild, not a sideways step out of it.
+  if (path.dirname(dir) !== root || dir === root) return { error: "unknown book" };
+  if (running && path.resolve(running.dir) === dir)
+    return { error: "New ERA is working on this book right now — try again in a minute." };
+  if (queue.some(q => path.resolve(q.job.dir) === dir))
+    return { error: "New ERA is about to work on this book — try again in a minute." };
+  try { fs.rmSync(dir, { recursive: true, force: true }); }
+  catch (e) { return { error: "That book could not be removed: " + store.redact(e.message) }; }
+  seen.delete(found.dir);                       // no quiet clock for a folder that is gone
+  console.log("[content] removed the book folder " + found.name + " (a grown-up asked)");
+  return { removed: true, slug: req.slug, title: found.name };
 }
 
 // ------------------------------------------------------- the review page (§5)
@@ -591,6 +688,10 @@ function savePage(o) {
   const p = { ...next[at] };
   if (words) {
     p.text = req.text;
+    // WHOSE WORDS THESE ARE. The button next to this one reads the photos
+    // again, and it keeps the pages a grown-up typed themselves (spec §5, the
+    // "keep my edits" tick) — so the page has to remember that it was typed.
+    p.edited = true;
     // A flag is a question ("did I read this word right?") and a parent who has
     // just retyped the line has answered it. Left behind, the Settings card
     // would go on counting words the model was unsure of under words the model
@@ -656,7 +757,8 @@ function start(dataDir) {
 module.exports = {
   start, scan, tick, run, runJob, runStep, isBuilding, idle, status, beat, claim,
   jobs, jobFor, bookFor, pagesFor, pageFile, saveOrder, savePage, saveText,
-  KINDS, QUIET_MS, STALE_MS, MAX_PAGE_TEXT, NO_VOICE,
+  rebuildPages, removeBook,
+  KINDS, QUIET_MS, STALE_MS, MAX_PAGE_TEXT, NO_VOICE, NO_VISION, ALL_EDITED,
   _testReset: () => {
     running = null; inflight = null; queue = []; seen = new Map();
     progress = null; lastScan = null;

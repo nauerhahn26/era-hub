@@ -1,9 +1,11 @@
-// book-review-ui.test.mjs — the review page (plan T3.2 + T3.3, spec §5): every
-// page in the order text.json keeps them, drag to reorder, tap to mark the
-// cover, and then the per-page controls a parent actually came here for — the
+// book-review-ui.test.mjs — the review page (plan T3.2, T3.3, T3.4, spec §5):
+// every page in the order text.json keeps them, drag to reorder, tap to mark the
+// cover, then the per-page controls a parent actually came here for — the
 // flagged words picked out, an inline field to fix them, "Re-narrate this page"
-// and "Clear flag". A real browser drives it, because a drag is the whole
-// feature and a DOM assertion about a drag that never happened proves nothing.
+// and "Clear flag" — and finally the three that act on the WHOLE book: read the
+// photos again, remove the book, and the animate button that is not built yet.
+// A real browser drives it, because a drag is the whole feature and a DOM
+// assertion about a drag that never happened proves nothing.
 //
 // PORTS: 8435 (the real server.js) + 8440 (the provider stand-in below).
 // 8440 is the free slot between the plan's 8439 (fal hub) and 8441 (fake fal);
@@ -14,17 +16,19 @@
 // ERA_DATA_DIR, so the gate's real ElevenLabs credential is nowhere near this
 // suite, AND every provider seam (ERA_AI_URL, ERA_ELEVEN_URL, ERA_FAL_URL) is
 // pointed at one local stand-in that records every request it is handed.
-// Re-narrating is the one thing on this page that spends the family's money, so
-// the count is asserted twice: nothing at all is bought up to the point the
-// voice is set up, and after it exactly ONE page is bought — never the book.
-// Playwright also routes **/tts* so a page that grew a second narration path
-// could not reach one either. There is no key in this file (the stand-in's is
-// assembled at runtime) and no key file on this machine is read.
+// Two buttons on this page spend, so both are counted to the call: "Re-narrate
+// this page" buys exactly ONE page of narration and never the book, and "Read
+// the photos again" buys exactly the pages it was told to re-read and never the
+// ones a parent typed themselves. Nothing at all is bought before a parent
+// presses either. Playwright also routes **/tts* so a page that grew a second
+// narration path could not reach one either. There is no key in this file (the
+// stand-in's are assembled at runtime) and no key file on this machine is read.
 //
-// A VIDEO of the page working: set ERA_REVIEW_VIDEO=<dir> and the drag test and
-// the re-narrate test each record themselves there as .webm (that is how the
-// task's recordings were made). Unset — the gate — nothing is recorded and
-// nothing costs anything.
+// A VIDEO of the page working: set ERA_REVIEW_VIDEO=<dir> and the four tests
+// marked {video:true} — the drag, the re-narrate, the re-read and the removal —
+// each record themselves there as .webm, in that order (that is how the tasks'
+// recordings were made). Unset — the gate — nothing is recorded and nothing
+// costs anything.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -56,7 +60,14 @@ const { encodeJpg } = require("./image-util.js");
 // run in a tracked file as a fatal secret hit, and a fixture that looks like a
 // key is indistinguishable from one that is.
 const FAKE_KEY = ["sk", "_", "bookreview", "0".repeat(24)].join("");
+// The AI-helper card's key, for the same reason and by the same rule: nothing
+// in a tracked file may LOOK like a credential either.
+const FAKE_AI_KEY = ["AQ", ".", "bookreview", "0".repeat(24)].join("");
 const VOICE = "cgSgspJ2msm6clMCkdW9";
+// What the stand-in transcriber "reads" off every photo it is shown. Nothing a
+// parent could mistake for their own words, so a page that was re-read and a
+// page that was kept are told apart at a glance.
+const READ = "the photo says this";
 // What the transcriber writes when a model could not read a word
 // (content-providers.FLAG_UNSURE) — the sentence a parent meets on this page.
 const UNSURE = "the model was not sure of this word";
@@ -120,18 +131,31 @@ before(async () => {
   fs.writeFileSync(path.join(DATA, "drive.json"),
     JSON.stringify({ mode: "local", folderPath: FOLDER }));
   // Anything that reaches a provider lands here instead, and is recorded. It
-  // answers exactly ONE shape — ElevenLabs' with-timestamps reply, the only
-  // provider call this page can make — and 500s everything else, so a seam this
-  // suite did not expect to be used is loud rather than silently satisfied.
+  // answers exactly TWO shapes — ElevenLabs' with-timestamps reply and Google's
+  // generateContent, the only two provider calls this page can make — and 500s
+  // everything else, so a seam this suite did not expect to be used is loud
+  // rather than silently satisfied.
   fake = http.createServer((req, res) => {
     let body = "";
     req.on("data", c => { body += c; });
     req.on("end", () => {
       let parsed = null;
       try { parsed = JSON.parse(body); } catch {}
-      calls.push({ url: req.url, key: req.headers["xi-api-key"] || null,
+      const kind = /\/with-timestamps/.test(req.url) ? "narrate"
+                 : /:generateContent/.test(req.url) ? "read" : "?";
+      calls.push({ kind, url: req.url,
+                   key: req.headers["xi-api-key"] || req.headers["x-goog-api-key"] || null,
                    text: (parsed && parsed.text) || null });
-      if (!/\/with-timestamps/.test(req.url)) { res.writeHead(500).end("{}"); return; }
+      // The transcriber (content-providers.js, google adapter): one page's photo
+      // in, one JSON object of words out. Always the same words — this stand-in
+      // cannot read, and the test only needs to know a page WAS re-read.
+      if (kind === "read") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ candidates: [{ content: { parts: [
+          { text: JSON.stringify({ text: READ, uncertain: [] }) } ] } }] }));
+        return;
+      }
+      if (kind !== "narrate") { res.writeHead(500).end("{}"); return; }
       // 0.1 s per character, so a word's timings can be worked out by hand.
       const chars = [...((parsed && parsed.text) || "")];
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -543,13 +567,194 @@ test("Re-narrate this page buys that page and nothing else, and the shelf follow
   await ctx.close();
 });
 
+// --------------------------------------------- the whole book (T3.4, spec §5)
+//
+// The three buttons under the strip: read the photos again (keeping the words a
+// grown-up typed unless they say otherwise), remove the book, and animate —
+// which is not built until Phase 6 and must say so rather than lie.
+
+const remove = (body) => fetch(`${BASE}/content/remove`, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: typeof body === "string" ? body : JSON.stringify(body),
+});
+// How many calls of one kind the stand-in has seen since `from`. Every money
+// assertion below is a DELTA, so one test's spend can never be read as another's.
+const spent = (kind, from) => calls.slice(from).filter(c => c.kind === kind).length;
+
+test("Animate this book is on the page, and there is nothing to press yet", async () => {
+  book("Not Yet", ["one", "two"]);
+  const { ctx, page } = await review("not-yet");
+  assert.equal(await page.locator("#animate").count(), 1, "the button spec §5 asks for is there");
+  assert.equal(await page.locator("#animate").isDisabled(), true);
+  // A disabled button with no reason beside it is a button a parent presses
+  // twice and then writes to us about. Spec §5 puts "(≈ $x)" in the label; with
+  // no fal card yet there is no $x, so the hint promises the price instead of
+  // inventing one on the button that would spend it.
+  const hint = await page.locator("#animateHint").textContent();
+  assert.match(hint, /fal/i);
+  assert.match(hint, /cost/i);
+  assert.ok(!/\$\s*\d|\d+\s*p\b/.test(hint), "no made-up price: " + hint);
+  await ctx.close();
+});
+
+test("Read the photos again with no AI key is a sentence, not a 500 — and buys nothing", async () => {
+  const at = calls.length;
+  book("No Reader Yet", ["one", "two"]);
+  const { ctx, page } = await review("no-reader-yet");
+  await page.locator("#rebuild").click();
+  await page.waitForFunction(() => /key/i.test(document.getElementById("bookNote").textContent));
+  const msg = (await page.locator("#bookNote").textContent()).trim();
+  assert.ok(!/\d{3}/.test(msg), "a parent gets words, not a status code: " + msg);
+  assert.equal(spent("read", at), 0, "nothing was asked of a provider");
+  assert.deepEqual(textOf("No Reader Yet").map(p => p.text), ["one", "two"]);
+  await ctx.close();
+});
+
+test("Read the photos again keeps the words a grown-up typed and re-reads the rest", async () => {
+  // The AI-helper card as a parent leaves it, pointed at the stand-in by
+  // ERA_AI_URL. The agreement pass is off so one page is exactly one call —
+  // this suite is counting calls, not measuring transcription.
+  fs.writeFileSync(path.join(DATA, "ai-config.json"),
+    JSON.stringify({ vision: { provider: "google", apiKey: FAKE_AI_KEY } }));
+  fs.writeFileSync(path.join(DATA, "content-config.json"),
+    JSON.stringify({ transcribe: { agreementPass: false } }));
+  const at = calls.length;
+  book("Read It Again", ["The cat sta", "on the mat"], { flags: { 1: ["sta"] } });
+  const { ctx, page } = await review("read-it-again", { video: true });
+  // A grown-up fixes page one by hand…
+  await page.locator("#strip .page:nth-child(1) .edit").click();
+  await page.locator("#strip .page:nth-child(1) textarea").fill("The cat sat");
+  await page.locator("#strip .page:nth-child(1) .save").click();
+  await page.waitForFunction(() => document.getElementById("strip").dataset.saved === "1");
+  // …and then asks for the photos to be read again. Keeping their own words is
+  // the default, because the parent who typed them is the one pressing this.
+  assert.equal(await page.locator("#keepEdits").isChecked(), true);
+  await page.locator("#rebuild").click();
+  await page.waitForFunction(() => /✓/.test(document.getElementById("bookNote").textContent),
+                             null, { timeout: 30000 });
+  // On disk: page one is still the parent's, page two came off the photo again.
+  const pages = textOf("Read It Again");
+  assert.equal(pages[0].text, "The cat sat", "a page a grown-up typed is not overwritten");
+  assert.equal(pages[1].text, READ, "every other page is read off the photo again");
+  assert.deepEqual(pages.map(p => p.index), [1, 2], "a re-read must not shuffle the book");
+  assert.deepEqual(pages.map(p => p.cover), [true, false], "…nor move the cover");
+  // ONE call: the page nobody typed. The one that was typed was never sent.
+  assert.equal(spent("read", at), 1, "only the pages that needed reading were bought");
+  assert.equal(calls[calls.length - 1].key, FAKE_AI_KEY);
+  assert.ok(!calls[calls.length - 1].url.includes(FAKE_AI_KEY), "the key must never travel in a URL");
+  // On the screen, without a reload — a parent who pressed the button watches it.
+  await page.waitForFunction(t => document.querySelector("#strip .page:nth-child(2) .txt").textContent.trim() === t,
+                             READ, { timeout: 15000 });
+  assert.equal((await strip(page))[0].text, "The cat sat");
+  // The book was on the shelf, so the shelf follows the re-read.
+  let m;
+  for (let i = 0; i < 100; i++) {
+    m = manifestOf("Read It Again");
+    if (m.pages[1].text === READ) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  assert.deepEqual(m.pages.map(p => p.text), ["The cat sat", READ]);
+  if (VIDEO) await page.waitForTimeout(1200);
+  await ctx.close();
+});
+
+test("with 'keep my words' unticked the photos win, even on a page a grown-up typed", async () => {
+  const at = calls.length;
+  book("Start Over", ["one", "two"]);
+  const { ctx, page } = await review("start-over");
+  await page.locator("#strip .page:nth-child(1) .edit").click();
+  await page.locator("#strip .page:nth-child(1) textarea").fill("my own words");
+  await page.locator("#strip .page:nth-child(1) .save").click();
+  await page.waitForFunction(() => document.getElementById("strip").dataset.saved === "1");
+  await page.locator("#keepEdits").uncheck();
+  await page.locator("#rebuild").click();
+  await page.waitForFunction(() => /✓/.test(document.getElementById("bookNote").textContent),
+                             null, { timeout: 30000 });
+  assert.deepEqual(textOf("Start Over").map(p => p.text), [READ, READ],
+    "unticked means every page is read off its photo again");
+  assert.equal(spent("read", at), 2, "two pages re-read is two calls, and no more");
+  await ctx.close();
+});
+
+test("Remove this book asks first, and only then is the folder gone", async () => {
+  const at = calls.length;
+  book("Gone Tomorrow", ["one", "two"]);
+  const dir = path.join(BOOKS, "Gone Tomorrow");
+  const { ctx, page } = await review("gone-tomorrow", { video: true });
+  // First press: nothing is deleted, the question is asked.
+  await page.locator("#remove").click();
+  await page.locator("#removeYes").waitFor({ state: "visible" });
+  assert.match(await page.locator("#removeAsk").textContent(), /Gone Tomorrow/,
+    "the question names the book, so a parent cannot delete the wrong one");
+  // Thought better of it.
+  await page.locator("#removeNo").click();
+  await page.locator("#removeYes").waitFor({ state: "hidden" });
+  assert.ok(fs.existsSync(dir), "a book must never go on one press");
+  // Asked again, and answered.
+  await page.locator("#remove").click();
+  await page.locator("#removeYes").click();
+  await page.waitForFunction(() => /Removed/.test(document.getElementById("bookNote").textContent),
+                             null, { timeout: 15000 });
+  assert.ok(!fs.existsSync(dir), "the folder in the family's Drive folder is gone");
+  // The books beside it are untouched, and so is the folder that holds them.
+  assert.ok(fs.existsSync(BOOKS));
+  assert.ok(fs.existsSync(path.join(BOOKS, "Not Yet")));
+  // The book's page cannot stand once the book has gone, so the page hands the
+  // parent back the list of the books they still have.
+  await page.waitForFunction(() => {
+    const p = document.getElementById("picker");
+    return !!p && !p.hidden;
+  }, null, { timeout: 15000 });
+  assert.equal(spent("read", at) + spent("narrate", at), 0, "removing a book buys nothing");
+  if (VIDEO) await page.waitForTimeout(1200);
+  await ctx.close();
+});
+
+test("a remove that does not name a book of this family's is refused, and deletes nothing", async () => {
+  book("Still Here", ["one"]);
+  const bad = [
+    { kind: "books", slug: "../.." },                  // out of the books folder
+    { kind: "books", slug: "../clothing" },            // a sideways step
+    { kind: "books", slug: "/etc" },                   // an absolute path
+    { kind: "books", slug: "." },
+    { kind: "books", slug: "no-such-book" },
+    { kind: "books" },                                 // no slug at all
+    { slug: "still-here" },                            // no kind
+    { kind: "music", slug: "still-here" },             // not a folder build
+  ];
+  for (const b of bad) {
+    const r = await remove(b);
+    assert.equal(r.status, 400, JSON.stringify(b) + " should be refused");
+    assert.ok((await r.json()).error, "a refusal says why");
+  }
+  assert.equal((await remove("{not json")).status, 400);
+  assert.ok(fs.existsSync(path.join(BOOKS, "Still Here")));
+  assert.ok(fs.existsSync(FOLDER), "nothing above the books folder is reachable from here");
+});
+
+test("with Drive not in local mode a book cannot be removed at all", async () => {
+  const drive = path.join(DATA, "drive.json");
+  fs.writeFileSync(drive, JSON.stringify({ mode: "api", folderId: "F0", token: { refresh_token: "x" } }));
+  try {
+    const r = await remove({ kind: "books", slug: "still-here" });
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).error, "needs-local-drive");
+  } finally {
+    fs.writeFileSync(drive, JSON.stringify({ mode: "local", folderPath: FOLDER }));
+  }
+  assert.ok(fs.existsSync(path.join(BOOKS, "Still Here")));
+});
+
 // ------------------------------------------------------------- the money, part 2
 
-test("every provider call the whole suite made went to the stand-in, and there was one", () => {
-  // A count of anything but one means a request escaped ERA_ELEVEN_URL (or the
+test("every provider call the whole suite made went to the stand-in, and to nothing else", () => {
+  // A count that is not exactly these means a request escaped a seam (or the
   // page bought pages nobody asked for) and the family was billed for it.
-  assert.equal(calls.length, 1,
-    "the stand-in recorded " + calls.length + " calls; exactly one page was ever asked for");
-  assert.ok(calls.every(c => /with-timestamps/.test(c.url)),
-    "the only provider shape this page may ever reach is one page of narration");
+  assert.equal(spent("narrate", 0), 1,
+    "exactly one page of narration was ever asked for; the stand-in saw " + spent("narrate", 0));
+  assert.equal(spent("read", 0), 3,
+    "three pages were ever asked to be read again; the stand-in saw " + spent("read", 0));
+  assert.equal(calls.length, 4, "and nothing else reached a provider at all");
+  assert.ok(calls.every(c => c.kind === "narrate" || c.kind === "read"),
+    "the only provider shapes this page may reach are one page of narration and one page read");
 });

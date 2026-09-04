@@ -537,7 +537,16 @@ async function transcribeBook(dir, opts) {
 
   // Written before we throw or pause: half a book of text is progress a free
   // key paid for, and tomorrow's run must not buy it again.
-  out.sort((a, b) => a.index - b.index);
+  //
+  // THE ORDER text.json ALREADY HAS IS THE BOOK'S ORDER, because a grown-up may
+  // have dragged the pages about on the review page (spec §5) and a re-read must
+  // not shuffle the book back to the order the camera happened to number the
+  // photos in. Pages this pass already knew about keep their places; anything
+  // new lands after them, by index — which for a first pass (nothing known) is
+  // exactly the plain index sort this used to do.
+  const was = new Map([...had.keys()].map((index, at) => [index, at]));
+  const place = (p) => (was.has(p.index) ? was.get(p.index) : was.size + p.index);
+  out.sort((a, b) => place(a) - place(b) || a.index - b.index);
   if (out.length) store.writeText(dir, { pages: out });
 
   if (permanent) throw new Error(permanent);

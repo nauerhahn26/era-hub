@@ -27,14 +27,16 @@
      its own — the static handler serves it, and the trailing-slash
      301 keeps ?slug= (tests/routes.test.mjs).
 
-     Five doors, all in content.js: GET /content/status (which
+     Six doors, all in content.js: GET /content/status (which
      books there are), GET /content/text?slug= (this book's pages),
      GET /content/page?slug=&index= (one page's photo, straight out
      of the build folder — the Drive mirror is ten minutes behind a
      book being reviewed), POST /content/text (the new order and the
-     cover, or ONE page's words and flags), and POST /content/run,
-     which re-publishes the book and is the one door on this page
-     that spends the family's money (a single page's narration).
+     cover, or ONE page's words and flags), POST /content/run, which
+     re-publishes the book and is the only door here that spends the
+     family's money (one page's narration, or reading the photos
+     again), and POST /content/remove, the only door in the hub that
+     deletes a family's own files.
 
      Core, not a pack: shipped by tools/build-payload.sh and laid
      down by the installer's core File /r (no /x — every /x belongs
@@ -99,11 +101,12 @@
      does this standing up with a mug in the other hand, not because anything
      here is ever a gaze target. */
   .tools{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px}
-  .tools button{font:inherit; font-size:16px; font-weight:650; min-height:46px;
-                padding:8px 14px; border:2px solid var(--line); border-radius:12px;
+  .tools button, .actions button, .danger button{font:inherit; font-size:16px; font-weight:650;
+                min-height:46px; padding:8px 14px; border:2px solid var(--line); border-radius:12px;
                 background:#fff; color:var(--teal-deep); cursor:pointer}
-  .tools button:hover{border-color:var(--teal); background:var(--teal-wash)}
-  .tools button[disabled]{opacity:.55; cursor:default; background:#fff; border-color:var(--line)}
+  .tools button:hover, .actions button:hover{border-color:var(--teal); background:var(--teal-wash)}
+  .tools button[disabled], .actions button[disabled], .danger button[disabled]{opacity:.55;
+                cursor:default; background:#fff; border-color:var(--line)}
   .tools .save{border-color:var(--teal); background:var(--teal-wash)}
   .tools .cancel{color:var(--muted)}
   .page textarea{width:100%; font:inherit; font-size:18px; line-height:1.45; margin-top:3px;
@@ -115,6 +118,24 @@
   .cover:hover{border-color:var(--teal)}
   .cover[aria-pressed="true"]{border-color:var(--teal); background:var(--teal-wash);
                               color:var(--teal-deep)}
+
+  /* The three that act on the whole book. Each one sits above its own sentence
+     saying what it will do, because two of them are irreversible: reading the
+     photos again throws away a reading, and removing the book throws away the
+     book. */
+  .actions{display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:12px}
+  .tick{display:flex; align-items:center; gap:8px; font-size:17px; cursor:pointer}
+  .tick input{width:22px; height:22px; accent-color:var(--teal)}
+  /* Removing a book deletes the family's own photos out of their Drive folder,
+     so it does not sit in the same row as the buttons that only make things —
+     it has its own fenced-off strip at the bottom, and it asks first. */
+  .danger{margin-top:20px; padding-top:16px; border-top:2px solid var(--line)}
+  .danger button{color:var(--coral)}
+  .danger button:hover{border-color:var(--coral); background:#FBECE4}
+  .ask{margin-top:12px; border:2px solid var(--coral); border-radius:14px;
+       padding:14px 16px; background:#FDF3EE}
+  .ask p{margin:0 0 10px; font-size:18px}
+  .ask .yes{border-color:var(--coral); background:#fff}
   [hidden]{display:none !important}
 </style>
 </head>
@@ -147,17 +168,60 @@
       <div class="status" id="bookState"></div>
       <div class="status" id="bookFlags" hidden></div>
     </div>
-    <!-- The page strip. The per-page controls (inline edit, re-narrate, clear
-         flag) land inside these rows next; the book-level buttons below. -->
+    <!-- The page strip, with the per-page controls (inline edit, re-narrate,
+         clear flag) inside its rows; the book-level buttons below. -->
     <div class="card">
       <h2>Pages</h2>
       <p class="status" id="stripHint">Loading the pages…</p>
       <ol class="strip" id="strip"></ol>
       <div class="status" id="stripNote" hidden></div>
     </div>
+
+    <!-- The whole book (spec §5): read the photos again, animate, remove. -->
     <div class="card">
       <h2>This whole book</h2>
-      <div class="placeholder" id="bookActions">Rebuild, remove and animate land here.</div>
+
+      <div class="actions">
+        <button id="rebuild" type="button">📷 Read the photos again</button>
+        <label class="tick" for="keepEdits">
+          <input type="checkbox" id="keepEdits" checked>
+          Keep the words I have fixed myself
+        </label>
+      </div>
+      <!-- What it costs and what it does NOT touch. The narration is the
+           expensive half of a book and it is not re-bought here, so a parent
+           pressing this is spending pennies on reading, not pounds on a voice. -->
+      <p class="status">New ERA looks at every photo again and writes down the words it sees.
+      The narration already recorded is kept — only the words change.</p>
+
+      <div class="actions">
+        <button id="animate" type="button" disabled>🎬 Animate this book</button>
+        <!-- Spec §5 writes this button "Animate this book (≈ $x)". There is no
+             $x to put in it until the fal card lands (Phase 6), and a made-up
+             number on the one button that would spend real money is worse than
+             none — so the promise is made in words instead. -->
+        <span class="status" id="animateHint">Not yet — moving pictures need a fal key,
+        and New ERA cannot make them on this computer today. When it can, this button
+        will say what a book costs before it spends anything.</span>
+      </div>
+
+      <div class="danger">
+        <button id="remove" type="button">🗑 Remove this book</button>
+        <p class="status">This deletes the book&rsquo;s folder from your Google Drive folder,
+        on every computer in the family. New ERA cannot put it back.</p>
+        <!-- Asked, never assumed: the question names the book, and the answer
+             is a different button in a different place, so the press that
+             removes a book can never be the second half of a double-tap. -->
+        <div class="ask" id="removeAsk" hidden>
+          <p id="removeWhat"></p>
+          <div class="actions" style="margin-top:0">
+            <button id="removeYes" class="yes" type="button">Yes, remove it</button>
+            <button id="removeNo" type="button">No, keep it</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="status" id="bookNote" hidden></div>
     </div>
   </div>
 </div>
@@ -172,6 +236,9 @@ const show = (id, on) => { $(id).hidden = !on; };
 // The one identifier this page runs on. Read client-side (the 301 onto the
 // trailing slash keeps the query, so a link from Settings survives it).
 const SLUG = new URL(location.href).searchParams.get("slug") || "";
+// The book's own title, as the parent typed it on their phone. Only the
+// removal question needs it after the heading is painted.
+let TITLE = SLUG;
 
 // state -> what the book is doing, in the parent's words. Same wording as the
 // Settings card: a parent who read it there must not meet a different sentence
@@ -208,8 +275,13 @@ function paintPicker(jobs, missing) {
 }
 
 function paintBook(j) {
-  document.title = (j.title || j.slug) + " — review";
-  $("bookTitle").textContent = j.title || j.slug;
+  TITLE = j.title || j.slug;
+  document.title = TITLE + " — review";
+  $("bookTitle").textContent = TITLE;
+  // The removal question names the book, so a parent with two review tabs open
+  // cannot answer the wrong one.
+  $("removeWhat").innerHTML = "Remove <b>" + ESC(TITLE)
+    + "</b> and the photos in its folder?";
   const p = j.progress || { pages: 0, transcribed: 0, narrated: 0 };
   let s = DOING[j.state] || "Working…";
   if (p.pages) s += ' <span style="color:#5A6A70">' + p.transcribed + " of " + p.pages + " pages read"
@@ -577,6 +649,86 @@ strip.addEventListener("click", (e) => {
   if (e.target.closest(".clear")) { savePage(li, p, { flags: [] }); return; }
   const nar = e.target.closest(".narrate");
   if (nar) renarrate(li, p, nar);
+});
+
+// ======================================================= the whole book (§5)
+//
+// Three buttons, and two of them cannot be taken back. Both irreversible ones
+// therefore behave the same way: they say what they are about to do BEFORE they
+// do it, they answer in the parent's own words when they will not, and neither
+// of them is ever the second half of a press aimed at something else.
+
+function bookNote(msg, bad) {
+  const el = $("bookNote");
+  el.textContent = msg;
+  el.classList.toggle("bad", !!bad);
+  show("bookNote", !!msg);
+}
+
+// "Read the photos again" (rebuild text, spec §5). The tick decides what
+// happens to the pages a parent typed themselves, and content.js does the
+// deciding — the page only carries the answer, because the rule that keeps a
+// parent's own words has to hold for anything that presses this door, not just
+// for this button.
+async function rebuild() {
+  const button = $("rebuild");
+  button.disabled = true;
+  bookNote("Reading the photos again…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "transcribe",
+                                         rebuild: true, keepEdits: $("keepEdits").checked });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    bookNote("New ERA is not answering — nothing was read.", true);
+    button.disabled = false; return;
+  }
+  // A refusal is already a sentence (no AI key yet, every page is one you typed
+  // and you asked to keep those) — shown as it came, not decorated.
+  if (!r.ok) {
+    bookNote((out && out.error) || "New ERA could not read this book again.", true);
+    button.disabled = false; return;
+  }
+  const s = await settled();
+  button.disabled = false;
+  const job = s && (s.jobs || []).find(b => b.slug === SLUG);
+  if (job && job.error) { bookNote("The photos were not read: " + job.error, true); return; }
+  // The words on the screen are now yesterday's, so the strip is re-read from
+  // disk rather than left for the parent to reload themselves.
+  await loadStrip();
+  bookNote("Read again ✓ — the words below came off the photos.", false);
+}
+$("rebuild").addEventListener("click", rebuild);
+
+// "Remove this book". The only thing on this page that deletes anything, so it
+// asks first — and the answer is a different button in a different place.
+const askRemove = (on) => { show("removeAsk", on); if (on) $("removeYes").focus(); };
+$("remove").addEventListener("click", () => { bookNote("", false); askRemove(true); });
+$("removeNo").addEventListener("click", () => askRemove(false));
+$("removeYes").addEventListener("click", async () => {
+  $("removeYes").disabled = true;
+  bookNote("Removing " + TITLE + "…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/remove", { kind: "books", slug: SLUG });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    bookNote("New ERA is not answering — nothing was removed.", true);
+    $("removeYes").disabled = false; return;
+  }
+  if (!r.ok) {
+    bookNote((out && out.error) || "That book was not removed.", true);
+    $("removeYes").disabled = false; askRemove(false); return;
+  }
+  askRemove(false);
+  // Nothing here has anything left to act on; the line below is the only thing
+  // on the card that still means something, so it is the only thing left alive.
+  for (const id of ["rebuild", "animate", "remove"]) $(id).disabled = true;
+  bookNote("Removed ✓ — " + TITLE + " is gone from your Drive folder. "
+         + "The copy on Ellie's shelf goes at the next sync.", false);
+  // A page about a book that is no longer there cannot stand, so the parent is
+  // handed back the books they still have. Long enough to read the line first.
+  setTimeout(() => location.replace("/book-review/"), 1200);
 });
 
 async function loadStrip() {

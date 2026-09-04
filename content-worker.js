@@ -55,6 +55,8 @@
 // never ticks the book's step off (it only did one page of it), and a named
 // step on a book that is already on the shelf is followed by a publish, because
 // the manifest is the only thing the reader ever reads.
+// A run may instead name a LIST of pages ("Read the photos again"): that is the
+// whole step, done to the pages it names, so it does tick the step off.
 //
 // Nothing here reads a key. The steps that spend money take their config from
 // ai-config.js at the moment they need it, and content-store.js redacts every
@@ -80,6 +82,14 @@ const ONLY = workerData.step || null;   // POST /content/run {step}: re-run one 
 // named page is a REPAIR, not the book's step — see the two rules it changes in
 // walk() below. `null` (the normal case) means the whole book.
 const PAGE = Number.isInteger(workerData.page) ? workerData.page : null;
+// POST /content/run {step:"transcribe", rebuild:true}: the review page's "Read
+// the photos again". A LIST of pages to read a SECOND time — the transcriber
+// otherwise skips every page that already has words, which is what makes a book
+// resumable on a free key. content.js decides the list (which pages a grown-up
+// typed themselves, and whether they asked to keep them); this only carries it.
+// null (the normal case) means "whatever the step owes".
+const PAGES = Array.isArray(workerData.pages)
+  ? workerData.pages.filter(Number.isInteger) : null;
 
 // How often a step in flight refreshes the claim. Well inside content.js's
 // thirty-minute stale window, so a long transcription is never mistaken for a
@@ -93,7 +103,10 @@ const STEPS = [
   { name: store.STEP_OWED.inbox,        owes: "inbox",        then: "transcribing",
     run: (c) => ingest(c.dir) },
   { name: store.STEP_OWED.transcribing, owes: "transcribing", then: "reviewing",
-    run: (c) => transcribeBook(c.dir, { dataDir: c.dataDir, job: c.job }) },
+    // `only` is what makes "Read the photos again" pay for exactly the pages a
+    // parent asked to have read again, and for no others — the pages they typed
+    // themselves keep the words they typed (content.rebuildPages).
+    run: (c) => transcribeBook(c.dir, { dataDir: c.dataDir, job: c.job, only: c.pages }) },
   { name: store.STEP_OWED.reviewing,    owes: "reviewing",    then: "narrating",
     // `only` is what keeps a re-narrate to ONE page: every other page of the
     // book keeps the audio and the timings already bought for it, untouched and
@@ -201,7 +214,8 @@ async function walk() {
     if (!step.run) return { slug: SLUG, state: job.state, steps, pending: step.name };
 
     post({ step: step.name, state: job.state, slug: SLUG });
-    const result = await step.run({ dir: DIR, dataDir: DATA, job, slug: SLUG, name: NAME, page: PAGE });
+    const result = await step.run({ dir: DIR, dataDir: DATA, job, slug: SLUG, name: NAME,
+                                    page: PAGE, pages: PAGES });
 
     // Re-read: the step just wrote to .build/ itself, and the heartbeat may
     // have moved under us while it worked.

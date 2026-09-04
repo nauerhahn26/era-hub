@@ -1723,7 +1723,8 @@ const server = http.createServer((req, res) => {
     return;
   }
   // POST /content/run {kind, slug, step} - re-run one step of one book (the
-  // review page's "re-narrate this page", Settings' "start this book"). 202 and
+  // review page's "re-narrate this page" and its "read the photos again",
+  // Settings' "start this book"). 202 and
   // the build runs on behind it, like /clothing/regenerate: a transcription can
   // take minutes and no browser should hold a socket open for it.
   if (req.method === "POST" && req.url === "/content/run") {
@@ -1741,6 +1742,26 @@ const server = http.createServer((req, res) => {
         .end(JSON.stringify({ error: out.skipped })); return; }
       res.writeHead(202, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ started: true }));
+    });
+    return;
+  }
+
+  // POST /content/remove {kind, slug} - the review page's "Remove this book".
+  // The ONE door in the hub that deletes a family's own files, so it answers
+  // when the delete is DONE rather than 202-and-hope: a parent who pressed it
+  // is owed the truth about whether the book is gone. content.js owns the jail,
+  // the "not while it is being built" rule and the sentence a refusal says.
+  if (req.method === "POST" && urlPath === "/content/remove") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.removeBook(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      const code = out.error ? 400 : out.skipped ? 409 : 200;
+      res.writeHead(code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out.error ? { error: out.error }
+        : out.skipped ? { error: out.skipped } : out));
     });
     return;
   }

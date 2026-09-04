@@ -79,8 +79,11 @@ test("text.json round-trips losslessly with flags and unicode", () => {
   const text = {
     pages: [
       { index: 0, source: "IMG_0001.jpg", text: "Zoë’s garden — 花 was in trouble.",
-        flags: [{ word: "Zoë’s", reason: "low-confidence" }], cover: true },
-      { index: 1, source: "IMG_0002.JPG", text: "", flags: [], cover: false },
+        flags: [{ word: "Zoë’s", reason: "low-confidence" }], cover: true, edited: false },
+      // `edited` is "a grown-up typed these words" — the one thing that decides
+      // whether "Read the photos again" keeps a page or re-reads it (spec §5),
+      // so it has to survive a write and a read like every other field.
+      { index: 1, source: "IMG_0002.JPG", text: "", flags: [], cover: false, edited: true },
     ],
   };
   const written = store.writeText(dir, text);
@@ -96,7 +99,8 @@ test("text.json round-trips losslessly with flags and unicode", () => {
 test("text.json normalises the sloppy shapes and rejects the wrong ones", () => {
   // missing flags/cover fill in; index/source/text are required
   const norm = store.normalizeText({ pages: [{ index: 2, source: "a.jpg", text: "hi" }] });
-  assert.deepEqual(norm, { pages: [{ index: 2, source: "a.jpg", text: "hi", flags: [], cover: false }] });
+  assert.deepEqual(norm, { pages: [{ index: 2, source: "a.jpg", text: "hi",
+                                     flags: [], cover: false, edited: false }] });
   assert.deepEqual(store.normalizeText({}), { pages: [] });
   assert.throws(() => store.normalizeText({ pages: [{ index: "0", source: "a.jpg", text: "" }] }), /index/);
   assert.throws(() => store.normalizeText({ pages: [{ index: 0, text: "" }] }), /source/);

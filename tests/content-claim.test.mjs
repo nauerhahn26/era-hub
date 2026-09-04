@@ -52,11 +52,23 @@ before(() => {
   content.start(DATA);
 });
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Let anything the LAST test started finish before its folder is taken away.
+  // A claim spawns a build, and a build that is still running while the next
+  // test wipes books/ raced it: `rmSync` walked a directory a worker thread was
+  // still writing into and threw ENOTEMPTY, failing whichever test happened to
+  // be next (about one run in four before this line existed).
+  await content.idle();
   fs.rmSync(path.join(FOLDER, "books"), { recursive: true, force: true });
   fs.mkdirSync(path.join(FOLDER, "books"), { recursive: true });
   driveCfg({ mode: "local", folderPath: FOLDER });
   content._testReset();
+  // …and no build here is a REAL one. This suite is about which folder gets
+  // claimed, not about what a build does (content-worker.test.mjs is), and
+  // _testReset puts the real worker back, so every scan() below would otherwise
+  // spawn a thread that reads and writes inside a folder the next test deletes.
+  // A test that cares what was started replaces this with a stub of its own.
+  content.runJob = () => Promise.resolve({ ok: true });
 });
 
 // ------------------------------------------------------------ where it runs
@@ -344,6 +356,69 @@ test("two titles that slugify alike, and one with no Latin letters, get one slug
     .filter(e => titles.includes(e.dir)).map(e => e.slug);
   assert.deepEqual(slugs.slice().sort(), shelf.slice().sort());
   for (const j of jobs) assert.equal(content.bookFor(j.slug, { folderPath: FOLDER }).name, j.title);
+});
+
+// ------------------------------------------ the whole-book actions (T3.4, §5)
+//
+// The two rules the review page's own suite cannot reach from a browser: which
+// pages "Read the photos again" would pay for, and the refusal that stops a
+// book being deleted out from under the worker that is building it.
+
+// A book with text.json already written, one page of it typed by a grown-up.
+function reviewedBook(name) {
+  const dir = book(name, {});
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  for (const i of [1, 2, 3])
+    fs.writeFileSync(path.join(dir, "pages", String(i).padStart(3, "0") + ".jpg"), Buffer.alloc(8, i));
+  store.writeText(dir, {
+    pages: [
+      { index: 1, source: "pages/001.jpg", text: "read by the model", flags: [], cover: true },
+      { index: 2, source: "pages/002.jpg", text: "typed by a grown-up", flags: [], edited: true },
+      { index: 3, source: "pages/003.jpg", text: "read by the model", flags: [] },
+    ],
+  });
+  return dir;
+}
+
+test("'read the photos again' pays for the pages a grown-up did not type", () => {
+  const dir = reviewedBook("Rebuildable");
+  assert.deepEqual(content.rebuildPages(dir, true), [1, 3], "the page they typed is kept");
+  assert.deepEqual(content.rebuildPages(dir, false), [1, 2, 3], "unticked, the photos win everywhere");
+  // A photo that was never read at all is picked up by the same press: the
+  // union of what is on disk and what text.json knows about.
+  fs.writeFileSync(path.join(dir, "pages", "004.jpg"), Buffer.alloc(8, 4));
+  assert.deepEqual(content.rebuildPages(dir, true), [1, 3, 4]);
+  // A book nothing has read yet asks for nothing in particular — the ordinary
+  // step already reads every page with no words.
+  assert.equal(content.rebuildPages(book("Untouched", { "IMG_1.jpg": 10 }), true), null);
+});
+
+test("a book being built right now cannot be removed out from under the worker", async () => {
+  const dir = book("Busy", { "IMG_1.jpg": 10 });
+  let release;
+  content.runJob = () => new Promise((res) => { release = () => res({ ok: true }); });
+  const running = content.run({ kind: "books", slug: "busy", name: "Busy", dir });
+  const no = content.removeBook({ kind: "books", slug: "busy" });
+  assert.match(no.error, /right now/);
+  assert.ok(fs.existsSync(dir), "and the folder is still there");
+  release();
+  await running;
+  // Once it has stopped, the same press removes it.
+  const yes = content.removeBook({ kind: "books", slug: "busy" });
+  assert.deepEqual(yes, { removed: true, slug: "busy", title: "Busy" });
+  assert.ok(!fs.existsSync(dir));
+});
+
+test("a remove can only ever name a folder directly inside books/", () => {
+  const dir = book("Keep Me", { "IMG_1.jpg": 10 });
+  const outside = path.join(FOLDER, "clothing");
+  fs.mkdirSync(outside, { recursive: true });
+  for (const slug of ["..", "../..", "../clothing", "/etc", ".", "keep-me/pages", "no-such-book"])
+    assert.equal(content.removeBook({ kind: "books", slug }).error, "unknown book", slug);
+  assert.equal(content.removeBook({ kind: "music", slug: "keep-me" }).error, "unknown kind");
+  assert.ok(fs.existsSync(dir));
+  assert.ok(fs.existsSync(outside), "nothing beside books/ is reachable from this door");
+  assert.ok(fs.existsSync(path.join(FOLDER, "books")));
 });
 
 // -------------------------------------------------------------------- status

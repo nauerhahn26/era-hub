@@ -211,6 +211,20 @@ test("a page already in text.json is never paid for twice", async () => {
   assert.equal(one.transcribed, 1);
 });
 
+test("a re-read leaves the book in the order a grown-up dragged it into", async () => {
+  reset({ config: SINGLE });
+  const dir = book("Dragged", 3);
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  // A grown-up puts the last page first on the review page (content.saveOrder
+  // writes the ARRAY in reading order; the index stays welded to the photo).
+  const pages = store.readText(dir).pages;
+  store.writeText(dir, { pages: [pages[2], pages[0], pages[1]] });
+  // …and then asks for the photos to be read again (plan T3.4).
+  await providers.transcribeBook(dir, { dataDir: DATA, only: [1, 2, 3] });
+  assert.deepEqual(store.readText(dir).pages.map(p => p.index), [3, 1, 2],
+    "a re-read must not shuffle the book back to the order the camera numbered it in");
+});
+
 test("no key is a hold, not a failure: the book waits for one", async () => {
   reset();
   try { fs.unlinkSync(path.join(DATA, "ai-config.json")); } catch {}

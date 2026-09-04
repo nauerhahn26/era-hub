@@ -151,9 +151,16 @@ function readJson(file) {
 
 // ------------------------------------------------------------------ text.json
 
-// {pages:[{index, source, text, flags:[{word, reason}], cover}]}. Strict about
-// the four fields the rest of the pipeline reads, forgiving about the two it
-// can default — a hand-written text.json from power mode usually omits both.
+// {pages:[{index, source, text, flags:[{word, reason}], cover, edited}]}. Strict
+// about the four fields the rest of the pipeline reads, forgiving about the two
+// it can default — a hand-written text.json from power mode usually omits both.
+//
+// `edited` means "a grown-up typed these words themselves" (content.savePage,
+// the review page's inline field). One reader: "Read the photos again" keeps an
+// edited page's words and re-reads the rest (spec §5, plan T3.4), so without it
+// a parent's own corrections would be thrown away by the button next to them.
+// A page the transcriber reads is written without it — it is the model's
+// reading again, not the parent's.
 function normalizeText(obj) {
   const src = obj && typeof obj === "object" ? obj : {};
   const pages = src.pages == null ? [] : src.pages;
@@ -176,6 +183,7 @@ function normalizeText(obj) {
           return { word: f.word, reason: typeof f.reason === "string" ? f.reason : "" };
         }),
         cover: !!p.cover,
+        edited: !!p.edited,
       };
     }),
   };
