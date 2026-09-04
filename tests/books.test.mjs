@@ -95,6 +95,16 @@ before(async () => {
   fs.writeFileSync(path.join(book, ".build", "job.json"), '{"state":"claimed"}');
   fs.writeFileSync(path.join(book, ".build", "text.json"), '{"pages":[]}');
   fs.writeFileSync(path.join(book, ".build", "log.jsonl"), '{"step":"ingest"}\n');
+  // The family's PC is the only platform this ships to, and Windows resolves a
+  // component's TRAILING dots and spaces away ("sources." IS sources/) and
+  // matches names case-insensitively. Linux does not — so the deny is only
+  // provably a deny if those spellings exist here as REAL directories holding
+  // real bytes: without the canonicalising compare each one would serve 200.
+  for (const d of ["Sources", "sources.", "sources ", ".Build", ".build."]) {
+    fs.mkdirSync(path.join(book, d), { recursive: true });
+    fs.writeFileSync(path.join(book, d, "IMG_0001.jpg"), JPEG);
+    fs.writeFileSync(path.join(book, d, "job.json"), '{"state":"claimed"}');
+  }
   // the SAME names under the music jail: the deny is books-only, so these serve
   fs.mkdirSync(path.join(TMP, "music", "sources"), { recursive: true });
   fs.writeFileSync(path.join(TMP, "music", "sources", "cover.jpg"), JPEG);
@@ -287,6 +297,24 @@ test("scratch deny survives raw paths: percent-encoding and a trailing slash", a
   }
 });
 
+// Windows canonicalises a path component's trailing dots and spaces away and
+// matches names case-insensitively, so on the family's PC every spelling below
+// opens the SAME sources/ and .build/ the deny is meant to hide. The fixture
+// creates each one for real, so these are 200s without the canonicalising
+// compare — the deny has to be applied to the path Windows resolves.
+test("the deny follows Windows path canonicalisation: case, trailing dots and spaces", async () => {
+  for (const p of ["/books/luna-the-fox/Sources/IMG_0001.jpg",
+                   "/books/luna-the-fox/sources./IMG_0001.jpg",
+                   "/books/luna-the-fox/sources%20/IMG_0001.jpg",
+                   "/books/luna-the-fox/.Build/job.json",
+                   "/books/luna-the-fox/.build./job.json"]) {
+    const r = await rawGet(PORT, p);
+    assert.equal(r.status, 404, `denied: ${p}`);
+    assert.ok(!r.body.includes("claimed"), `no leak for ${p}`);
+    assert.ok(!r.body.includes("JFIF"), `no photo leak for ${p}`);
+  }
+});
+
 test("the deny is books-only: /music/sources/ still serves", async () => {
   const r = await fetch(`${BASE}/music/sources/cover.jpg`);
   assert.equal(r.status, 200, "music and movies have no scratch folders to hide");
@@ -382,6 +410,34 @@ test("slug resolution never widens the jail: escapes and denies still hold", asy
   assert.equal((await rawGet(PORT, "/books/tabby-mctat/../../secret.json")).status, 403);
   assert.equal((await fetch(`${BASE}/books/no-such-book/manifest.json`)).status, 404);
   assert.equal((await fetch(`${BASE}/books/tabby-mctat/sources/IMG_0001.jpg`)).status, 404);
+});
+
+// A slug is a URL the reader saves a position against and the board links to.
+// Deriving ownership from the FOLDER NAME meant a package added later whose
+// folder happens to already be in slug form took the slug off the package that
+// had been serving under it — that one moved to <slug>-2, lost its reading
+// position and broke every existing link. Ownership is remembered instead.
+test("a slug belongs to the package that got it first, not to a later slug-named folder", async () => {
+  const before = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(before.find(x => x.title === "Tabby McTat").slug, "tabby-mctat");
+
+  const newcomer = path.join(TMP, "books", "tabby-mctat");   // literally the slug
+  fs.mkdirSync(newcomer, { recursive: true });
+  fs.writeFileSync(path.join(newcomer, "cover.jpg"), JPEG);
+  fs.writeFileSync(path.join(newcomer, "manifest.json"), JSON.stringify({
+    schemaVersion: 1, title: "A Different Book", exportedAt: "2026-09-05T00:00:00Z",
+    cover: "cover.jpg", pages: [{ index: 0, image: "cover.jpg", text: "hi" }],
+  }));
+
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(x => x.title === "Tabby McTat").slug, "tabby-mctat",
+    "the package that held the URL keeps it");
+  assert.equal(idx.find(x => x.title === "A Different Book").slug, "tabby-mctat-2",
+    "the newcomer is suffixed, not handed someone else's URL");
+  const m = await (await fetch(`${BASE}/books/tabby-mctat/manifest.json`)).json();
+  assert.equal(m.title, "Tabby McTat", "and /books/tabby-mctat/ still serves the same book");
+  assert.equal((await (await fetch(`${BASE}/books/tabby-mctat-2/manifest.json`)).json()).title,
+    "A Different Book", "the newcomer is reachable, not lost");
 });
 
 test("LAW: missing books dir -> index [] and the server stays alive", async () => {

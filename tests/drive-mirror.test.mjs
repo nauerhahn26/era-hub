@@ -17,6 +17,10 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-drv-"));
 const DATA = path.join(TMP, "data");
 const API_DATA = path.join(TMP, "data-api");   // the API-mode half keeps its own dir
 const SRC = path.join(TMP, "My Drive", "New ERA Content");   // what Drive for Desktop shows
+// the provenance half (below): a data dir with a library the family already had
+// and a brand-new, EMPTY content folder — exactly what "Create it for me" makes
+const OLD_DATA = path.join(TMP, "data-preexisting");
+const NEW_SRC = path.join(TMP, "My Drive", "Fresh Content");
 const require = createRequire(path.join(HUB, "server.js"));
 let drive, api;
 const synced = [];
@@ -216,6 +220,103 @@ test("the hub's own .build/ inside a book package is never pruned", async () => 
   assert.ok(fs.existsSync(local("books", "Draft", ".build", "job.json")), "the claim survived");
 });
 
+// ---- provenance: a mirror may only delete what a mirror put there ----------
+// The audit's blocker (9/4): "✨ Create it for me" makes five EMPTY subfolders
+// and Settings syncs the moment it returns. With books/music/movies following
+// deletions, an empty source folder read as "everything was deleted" would take
+// the 8 book packages, the songs and the movie catalog a family had before they
+// ever pointed the hub at Drive. Those files are not the mirror's to prune.
+test("a library the family already had is never pruned by an empty Drive folder", async () => {
+  fs.mkdirSync(path.join(OLD_DATA, "books", "tabby-mctat"), { recursive: true });
+  fs.mkdirSync(path.join(OLD_DATA, "movies", "posters"), { recursive: true });
+  fs.mkdirSync(path.join(OLD_DATA, "music"), { recursive: true });
+  fs.writeFileSync(path.join(OLD_DATA, "books", "tabby-mctat", "manifest.json"), "{}");
+  fs.writeFileSync(path.join(OLD_DATA, "music", "beyond.mp3"), "song");
+  fs.writeFileSync(path.join(OLD_DATA, "movies", "catalog.json"), "[]");
+  fs.writeFileSync(path.join(OLD_DATA, "movies", "posters", "moana.jpg"), "poster");
+  for (const sub of ["books", "music", "movies", "content", "clothing"])
+    fs.mkdirSync(path.join(NEW_SRC, sub), { recursive: true });   // createContentFolder()
+  fs.writeFileSync(path.join(OLD_DATA, "drive.json"),
+    JSON.stringify({ mode: "local", folderPath: NEW_SRC }));
+  drive.start(OLD_DATA);   // re-points DATA; timers are unref'd
+
+  const r = await drive.sync();
+  assert.equal(r.removed, 0, "an empty Drive folder is not a delete-everything order");
+  for (const p of [["books", "tabby-mctat", "manifest.json"], ["music", "beyond.mp3"],
+                   ["movies", "catalog.json"], ["movies", "posters", "moana.jpg"]])
+    assert.ok(fs.existsSync(path.join(OLD_DATA, ...p)), p.join("/") + " survived");
+});
+
+test("the mirror still prunes what the mirror wrote, and only that", async () => {
+  const src = path.join(NEW_SRC, "books", "New Book");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "manifest.json"), "{}");
+  await drive.sync();
+  assert.ok(fs.existsSync(path.join(OLD_DATA, "books", "New Book", "manifest.json")));
+
+  fs.rmSync(src, { recursive: true });
+  const r = await drive.sync();
+  assert.equal(r.removed, 1, "the package the mirror wrote went with it");
+  assert.ok(!fs.existsSync(path.join(OLD_DATA, "books", "New Book")), "folder and all");
+  assert.ok(fs.existsSync(path.join(OLD_DATA, "books", "tabby-mctat", "manifest.json")),
+    "the family's own shelf is still outside the mirror's jurisdiction");
+});
+
+// The reader cache-busts on exportedAt, and an ISO stamp is always the same
+// length — so a size-equal skip means "fix a page and re-publish" never leaves
+// the building device.
+test("a re-published manifest of the same byte length still reaches the device", async () => {
+  const src = path.join(NEW_SRC, "books", "Re Published");
+  fs.mkdirSync(src, { recursive: true });
+  const stamped = (d) => JSON.stringify({ schemaVersion: 1, exportedAt: d, pages: [] });
+  fs.writeFileSync(path.join(src, "manifest.json"), stamped("2026-09-04T00:00:00Z"));
+  await drive.sync();
+  fs.writeFileSync(path.join(src, "manifest.json"), stamped("2026-09-05T11:22:33Z"));
+  await drive.sync();
+  const got = JSON.parse(fs.readFileSync(
+    path.join(OLD_DATA, "books", "Re Published", "manifest.json"), "utf8"));
+  assert.equal(got.exportedAt, "2026-09-05T11:22:33Z", "the cache-bust key actually changed");
+});
+
+// A manifest carries every page's words[]; copying straight onto the live path
+// truncates it first, so a shelf load or a reader fetch mid-copy sees half a
+// book. Rename within a directory is atomic on NTFS and ext4 alike.
+test("a manifest lands atomically: copied to a .part sibling, then renamed into place", async () => {
+  const src = path.join(NEW_SRC, "books", "Atomic");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "manifest.json"), '{"pages":[]}');
+  const realCopy = fs.copyFileSync, realRename = fs.renameSync;
+  const dests = [], renames = [];
+  fs.copyFileSync = (s, d) => { dests.push(String(d)); return realCopy(s, d); };
+  fs.renameSync = (a, b) => { renames.push([String(a), String(b)]); return realRename(a, b); };
+  try { await drive.sync(); } finally { fs.copyFileSync = realCopy; fs.renameSync = realRename; }
+
+  const live = path.join(OLD_DATA, "books", "Atomic", "manifest.json");
+  assert.ok(!dests.includes(live), "the live manifest is never written in place");
+  assert.ok(dests.includes(live + ".part"), "copied to a .part sibling first");
+  assert.deepEqual(renames.find(([, b]) => b === live), [live + ".part", live], "then renamed");
+  assert.deepEqual(JSON.parse(fs.readFileSync(live, "utf8")), { pages: [] });
+});
+
+// pruneTree skips dotfiles (that is what keeps a .build/ claim alive mid-build),
+// so a package deleted in Drive used to leave an empty-but-for-.build/ folder
+// behind forever — a permanent orphan still holding the package's slug.
+test("a package deleted in Drive leaves no .build orphan holding its slug", async () => {
+  const src = path.join(NEW_SRC, "books", "Orphan");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "IMG_0001.jpg"), "img");
+  await drive.sync();
+  fs.mkdirSync(path.join(OLD_DATA, "books", "Orphan", ".build"), { recursive: true });
+  fs.writeFileSync(path.join(OLD_DATA, "books", "Orphan", ".build", "job.json"), "{}");
+
+  fs.rmSync(src, { recursive: true });
+  await drive.sync();
+  assert.ok(!fs.existsSync(path.join(OLD_DATA, "books", "Orphan")),
+    "the folder went, .build and all");
+  assert.ok(fs.existsSync(path.join(OLD_DATA, "books", "tabby-mctat", "manifest.json")),
+    "and nothing of the family's went with it");
+});
+
 test("API mode: the manifest is downloaded after the media it names", async () => {
   fs.mkdirSync(API_DATA, { recursive: true });
   fs.writeFileSync(path.join(API_DATA, "drive.json"), JSON.stringify({
@@ -228,4 +329,30 @@ test("API mode: the manifest is downloaded after the media it names", async () =
   assert.equal(r.files, 4, "four files came down");
   assert.deepEqual(downloads, ["a1", "p1", "m2", "m1"], "media first, nested manifest, then the book's");
   assert.ok(fs.existsSync(path.join(API_DATA, "books", "Story", "manifest.json")));
+});
+
+// The ledger's own upgrade gap: clothing has been a TRUE mirror since 9/2, so
+// everything in <DATA>/clothing got there through this mirror. Starting its
+// ledger empty would make a photo deleted in Drive while the hub was down an
+// orphan forever, quietly breaking dad's "clothes that no longer fit" rule.
+// books/music/movies get NO such adoption — that content predates the mirror.
+test("clothing adopts what it already mirrored; the other libraries do not", async () => {
+  const D = path.join(TMP, "data-wardrobe"), S = path.join(TMP, "My Drive", "Wardrobe Content");
+  fs.mkdirSync(path.join(D, "clothing"), { recursive: true });
+  fs.mkdirSync(path.join(D, "books", "tiddler"), { recursive: true });
+  fs.writeFileSync(path.join(D, "clothing", "tee.jpg"), "tee");     // mirrored by an older build
+  fs.writeFileSync(path.join(D, "clothing", "dress.jpg"), "dress");
+  fs.writeFileSync(path.join(D, "books", "tiddler", "manifest.json"), "{}");
+  fs.mkdirSync(path.join(S, "clothing"), { recursive: true });
+  fs.mkdirSync(path.join(S, "books"), { recursive: true });
+  fs.writeFileSync(path.join(S, "clothing", "dress.jpg"), "dress");  // tee.jpg left the folder
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+
+  const r = await drive.sync();
+  assert.equal(r.removed, 1, "just the photo that left the wardrobe");
+  assert.ok(!fs.existsSync(path.join(D, "clothing", "tee.jpg")), "tee.jpg went on the first sync");
+  assert.ok(fs.existsSync(path.join(D, "clothing", "dress.jpg")), "dress.jpg stayed");
+  assert.ok(fs.existsSync(path.join(D, "books", "tiddler", "manifest.json")),
+    "and the shelf is still nobody's to prune");
 });

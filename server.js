@@ -412,6 +412,19 @@ function serveJailed(res, dir, rest, allowedExts) {
 // index publishes the slug, serveBook resolves it back to the directory. Cached
 // on the books dir's mtime (adding/removing a package bumps it) and rebuilt on
 // a miss, so a package that lands mid-second is still reachable.
+// A slug, once handed out, BELONGS to that directory for as long as it exists:
+// the reader saves reading positions per slug and the board links by slug, so a
+// package must never be moved to <slug>-2 by something that arrived later. The
+// folder name cannot carry that — a newcomer whose folder is already in slug
+// form would win on name alone — so ownership is written down here. Dotfile, so
+// the Drive mirror's prune leaves it be.
+const BOOK_SLUGS = () => path.join(BOOKS_DIR, ".slugs.json");
+function loadBookSlugs() {
+  try {
+    const j = JSON.parse(fs.readFileSync(BOOK_SLUGS(), "utf8"));
+    return j && typeof j === "object" && !Array.isArray(j) ? j : {};
+  } catch { return {}; }
+}
 let bookIdxCache = null, bookIdxAt = -1;
 function bookDirs(force) {
   let at = -1;
@@ -422,26 +435,45 @@ function bookDirs(force) {
     names = fs.readdirSync(BOOKS_DIR, { withFileTypes: true })
       .filter(d => d.isDirectory()).map(d => d.name).sort();
   } catch { return { list: [], bySlug: new Map() }; }
-  const bySlug = new Map();
-  // Pass 1: a folder already named as its own slug KEEPS it, whatever else
-  // wants it. Those are the packages the reader has saved positions for
-  // (savePos is keyed by slug) — a newcomer must never take an existing URL.
+  const bySlug = new Map(), slugOf = new Map();
+  const claim = (s, n) => { bySlug.set(s, n); slugOf.set(n, s); };
+  // Pass 0: whoever already owns a slug keeps it. Entries whose directory is
+  // gone are dropped, which frees the slug for the next package that wants it.
+  const have = new Set(names);
+  for (const [s, n] of Object.entries(loadBookSlugs()))
+    if (have.has(n) && !bySlug.has(s) && !slugOf.has(n)) claim(s, n);
+  // Pass 1: an unclaimed folder already named as its own slug keeps that name.
   const rest = [];
-  for (const n of names) (slugify(n) === n ? bySlug.set(n, n) : rest.push(n));
+  for (const n of names) {
+    if (slugOf.has(n)) continue;
+    if (slugify(n) === n && !bySlug.has(n)) claim(n, n); else rest.push(n);
+  }
   // Pass 2: the rest in name order; a taken slug gets -2, -3, ... Two folders
   // must never collapse onto one slug — that would hide a whole book.
-  const slugOf = new Map();
-  for (const [s, n] of bySlug) slugOf.set(n, s);
   for (const n of rest) {
     const base = slugify(n) || "book";
     let s = base;
     for (let i = 2; bySlug.has(s); i++) s = base + "-" + i;
     if (s !== base) console.warn("[books] slug " + base + " is taken; " + n + " serves as " + s);
-    bySlug.set(s, n); slugOf.set(n, s);
+    claim(s, n);
   }
+  saveBookSlugs(bySlug);
   bookIdxCache = { list: names.map(n => ({ slug: slugOf.get(n), dir: n })), bySlug };
   bookIdxAt = at;
   return bookIdxCache;
+}
+// Written only when the map actually changed: creating the file bumps the books
+// dir's mtime once (one extra rebuild), rewriting it does not, so the mtime
+// cache above stays stable. A read-only data dir just means ownership is not
+// remembered — never a crash, never a 500 on a shelf load.
+function saveBookSlugs(bySlug) {
+  const next = {};
+  for (const [s, n] of [...bySlug].sort()) next[s] = n;
+  const cur = loadBookSlugs();
+  const same = Object.keys(next).length === Object.keys(cur).length &&
+               Object.entries(next).every(([s, n]) => cur[s] === n);
+  if (same) return;
+  try { fs.writeFileSync(BOOK_SLUGS(), JSON.stringify(next, null, 2)); } catch {}
 }
 
 // A package is complete iff manifest.json exists and parses (manifest written
@@ -505,10 +537,14 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
   const file = path.normalize(path.join(jailDir, rest));
   if (file !== jailDir && !file.startsWith(jailDir + path.sep)) { res.writeHead(403).end(); return; }
   // Private path segment anywhere under the jail -> 404 (not 403: a denied name
-  // is indistinguishable from a name that is not there). Lower-cased because
-  // the family's Windows fs matches SOURCES/ to the same directory.
+  // is indistinguishable from a name that is not there). Compared against the
+  // name WINDOWS resolves, not the one the client typed: the family's fs
+  // matches SOURCES/ to the same directory and drops a component's trailing
+  // dots and spaces, so "sources./IMG.jpg" and "sources /IMG.jpg" open the very
+  // photos this deny exists to hide.
   if (denyDirs && denyDirs.length) {
-    const segs = path.relative(jailDir, file).split(/[\\/]/).map(s => s.toLowerCase());
+    const segs = path.relative(jailDir, file).split(/[\\/]/)
+      .map(s => s.toLowerCase().replace(/[. ]+$/, ""));
     if (segs.some(s => denyDirs.includes(s))) { res.writeHead(404).end("not found"); return; }
   }
   const ext = path.extname(file).toLowerCase();

@@ -14,6 +14,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const OAUTH = process.env.ERA_DRIVE_OAUTH || "https://oauth2.googleapis.com";
 const API = process.env.ERA_DRIVE_API || "https://www.googleapis.com";
@@ -137,18 +138,69 @@ async function listChildren(tok, folderId) {
 // BUILT and not just dropped: the shelf a parent tidies has to be the shelf the
 // tablet shows, or it only ever grows. content/ stays copy-only — it is lesson
 // overrides layered on what ships in the box, not a library.
-// Three safety rules keep this from eating anything: an absent source folder
-// prunes nothing (syncLocal:324, and a failed listing throws before the prune
-// in sync()), dotfiles are never pruned (pruneTree:145 — that is what keeps a
-// package's .build/ claim alive mid-build), and only a listing that SUCCEEDED
-// may prune.
+// Four safety rules keep this from eating anything: an absent source folder
+// prunes nothing (syncLocal, and a failed listing throws before the prune in
+// sync()), dotfiles are never pruned (pruneTree — that is what keeps a
+// package's .build/ claim alive mid-build), only a listing that SUCCEEDED may
+// prune, and — the one the 9/4 audit added — a mirror may only delete what a
+// MIRROR PUT THERE (the ledger below).
 const MIRROR_DELETES = ["clothing", "books", "music", "movies"];
 
-// Remove from dest what the source no longer has. keep(rel) says whether the
-// source still holds that relative path. Dotfiles are left alone (Drive/macOS
-// droppings, never ours to judge); an emptied album folder goes with its last
-// photo. Callers only prune when the source listing SUCCEEDED — an offline
-// Drive is not an empty one.
+// PROVENANCE LEDGER. <DATA>/<sub>/.mirrored.json lists, one relative path per
+// entry, the files this mirror has actually mirrored into that library. It is a
+// dotfile, so pruneTree never touches it.
+//
+// Why it exists: "✨ Create it for me" makes five EMPTY subfolders in the Drive
+// folder and Settings syncs the moment it returns. Without a ledger, an empty
+// source read as "the parent deleted everything" would take the 8 book
+// packages, the songs and the movie catalog a family had BEFORE they ever
+// pointed the hub at Drive — none of which the mirror put there. (Skipping the
+// prune for an empty source is NOT enough on its own and is wrong besides: dad
+// 9/2's clothing rule means an emptied wardrobe folder really does empty the
+// wardrobe. The rule is provenance, not emptiness.)
+//
+// So: a path in the ledger is the mirror's to delete when it leaves the source;
+// a path that is not is the family's, and stays. The first sync after an
+// upgrade finds no ledger, prunes nothing, and adopts what the source holds.
+const LEDGER_NAME = ".mirrored.json";
+// The one library that gets a ledger for free the first time. clothing has been
+// a TRUE mirror since 9/2, so everything under <DATA>/clothing arrived through
+// this mirror: starting its ledger empty would make a photo deleted in Drive
+// while the hub was down an orphan forever. books/music/movies get no such
+// adoption — that content predates the mirror by weeks.
+const ADOPT_ON_FIRST_SYNC = ["clothing"];
+const relKey = (base, abs) => path.relative(base, abs).split(path.sep).join("/");
+function loadLedger(dest, sub) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dest, LEDGER_NAME), "utf8"));
+    if (Array.isArray(j)) return new Set(j);
+  } catch { /* no ledger yet: fall through to adoption */ }
+  return ADOPT_ON_FIRST_SYNC.includes(sub) ? listTree(dest) : new Set();
+}
+// Every non-dot file under dir, as relative "/"-joined paths.
+function listTree(dir, rel = "", out = new Set()) {
+  let ents = [];
+  try { ents = fs.readdirSync(path.join(dir, rel), { withFileTypes: true }); } catch { return out; }
+  for (const e of ents) {
+    if (e.name.startsWith(".")) continue;
+    const r = rel ? rel + "/" + e.name : e.name;
+    if (e.isDirectory()) listTree(dir, r, out);
+    else if (e.isFile()) out.add(r);
+  }
+  return out;
+}
+function saveLedger(dest, rels) {
+  try {
+    fs.mkdirSync(dest, { recursive: true });
+    fs.writeFileSync(path.join(dest, LEDGER_NAME), JSON.stringify([...rels].sort()));
+  } catch { /* read-only data dir: worst case we adopt again next sync */ }
+}
+
+// Remove from dest what the source no longer has. keep(rel, isDir) says whether
+// that relative path may stay. Dotfiles are left alone (Drive/macOS droppings,
+// plus our own .build/ claim, never ours to judge); an emptied album folder goes
+// with its last photo. Callers only prune when the source listing SUCCEEDED —
+// an offline Drive is not an empty one.
 function pruneTree(dest, keep, stats, rel = "") {
   let ents = [];
   try { ents = fs.readdirSync(path.join(dest, rel), { withFileTypes: true }); } catch { return; }
@@ -158,8 +210,18 @@ function pruneTree(dest, keep, stats, rel = "") {
     const abs = path.join(dest, r);
     if (e.isDirectory()) {
       pruneTree(dest, keep, stats, r);
-      try { if (!fs.readdirSync(abs).length) fs.rmdirSync(abs); } catch {}
-    } else if (e.isFile() && !keep(r)) {
+      try {
+        const left = fs.readdirSync(abs);
+        if (!left.length) fs.rmdirSync(abs);
+        // The source dropped this folder and the prune took everything the
+        // mirror owned in it; what is left is only our own scratch (.build/,
+        // which pruneTree skips). Left alone it lives forever and keeps holding
+        // the package's slug — so take it wholesale. Never when something of
+        // the family's survived the prune: that is a library, not a leftover.
+        else if (!keep(r, true) && left.every(n => n.startsWith(".")))
+          fs.rmSync(abs, { recursive: true, force: true });
+      } catch {}
+    } else if (e.isFile() && !keep(r, false)) {
       try { fs.rmSync(abs); stats.removed++; } catch (err) { stats.errors.push(e.name + ": " + err.message); }
     }
   }
@@ -177,23 +239,47 @@ function manifestsLast(entries) {
   return rest.concat(last);
 }
 
-async function mirrorDir(tok, folderId, destDir, stats) {
+const isManifest = (name) => MANIFEST_NAMES.includes(String(name).toLowerCase());
+const md5 = (p) => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex");
+
+// Write through a .part sibling, then rename. copyFileSync/writeFileSync
+// truncate the destination and only then fill it, so a shelf load or a reader
+// fetch that lands mid-copy reads half a manifest — the very failure the
+// manifests-LAST ordering exists to prevent. A rename inside one directory is
+// atomic on NTFS and ext4 alike. (.part is in no serve allowlist; a crash
+// mid-copy leaves one behind and the next sync overwrites it.)
+function atomically(dest, write) {
+  const tmp = dest + ".part";
+  try { write(tmp); fs.renameSync(tmp, dest); }
+  catch (e) { try { fs.rmSync(tmp, { force: true }); } catch {} throw e; }
+}
+
+async function mirrorDir(tok, folderId, destDir, stats, have) {
   fs.mkdirSync(destDir, { recursive: true });
+  have.dirs.add(destDir);
   for (const f of manifestsLast(await listChildren(tok, folderId))) {
     const safe = f.name.replace(/[\\/:*?"<>|]/g, "_");
     const dest = path.join(destDir, safe);
     if (f.mimeType === "application/vnd.google-apps.folder") {
-      await mirrorDir(tok, f.id, dest, stats);
+      await mirrorDir(tok, f.id, dest, stats, have);
       continue;
     }
     if (f.mimeType.startsWith("application/vnd.google-apps")) continue; // native docs: skip
-    stats.seen.add(dest);   // still in Drive (even if this download fails) -> never pruned
+    have.files.add(dest);   // still in Drive (even if this download fails) -> never pruned
     try {
-      if (fs.existsSync(dest) && f.size && fs.statSync(dest).size === Number(f.size)) { stats.skipped++; continue; }
+      // A re-publish that only bumps exportedAt does not change the manifest's
+      // LENGTH (an ISO stamp is always the same size), so the size-equal skip
+      // would keep the old one forever — and exportedAt is exactly the reader's
+      // cache-bust key. Manifests compare by checksum instead; everything else
+      // is content-addressed enough by size.
+      if (fs.existsSync(dest) && (isManifest(safe)
+            ? (f.md5Checksum && md5(dest) === f.md5Checksum)
+            : (f.size && fs.statSync(dest).size === Number(f.size)))) { stats.skipped++; continue; }
       const r = await fetch(API + "/drive/v3/files/" + f.id + "?alt=media",
         { headers: { Authorization: "Bearer " + tok } });
       if (!r.ok) throw new Error("download " + r.status);
-      fs.writeFileSync(dest, Buffer.from(await r.arrayBuffer()));
+      const body = Buffer.from(await r.arrayBuffer());
+      atomically(dest, (tmp) => fs.writeFileSync(tmp, body));
       stats.files++;
     } catch (e) { stats.errors.push(safe + ": " + e.message); }
   }
@@ -212,7 +298,7 @@ async function sync() {
   const tok = await accessToken();
   if (!tok) return { error: "not-connected" };
   syncing = true;
-  const stats = { files: 0, skipped: 0, removed: 0, errors: [], seen: new Set() };
+  const stats = { files: 0, skipped: 0, removed: 0, errors: [] };
   try {
     const top = await listChildren(tok, c.folderId);
     for (const f of top) {
@@ -220,10 +306,16 @@ async function sync() {
       const name = f.name.toLowerCase();
       if (!MIRROR_SUBDIRS.includes(name)) continue;
       const dest = path.join(DATA, name);
-      await mirrorDir(tok, f.id, dest, stats);   // a listing failure throws -> no prune below
-      if (MIRROR_DELETES.includes(name)) pruneTree(dest, r => stats.seen.has(path.join(dest, r)), stats);
+      const have = { files: new Set(), dirs: new Set() };   // absolute dest paths still in Drive
+      await mirrorDir(tok, f.id, dest, stats, have);   // a listing failure throws -> no prune below
+      if (!MIRROR_DELETES.includes(name)) continue;
+      const owned = loadLedger(dest, name);
+      pruneTree(dest, (r, isDir) => {
+        const abs = path.join(dest, r);
+        return isDir ? have.dirs.has(abs) : (have.files.has(abs) || !owned.has(r));
+      }, stats);
+      saveLedger(dest, [...have.files].map(a => relKey(dest, a)));
     }
-    delete stats.seen;
     lastSync = { when: new Date().toISOString(), ...stats };
     if (module.exports.onSynced) try { module.exports.onSynced(lastSync); } catch {}
     return lastSync;
@@ -315,15 +407,24 @@ function setLocalFolder(p) {
   return { ok: true };
 }
 
-function copyTreeLocal(src, dest, stats) {
+// have = {files, dirs}: the relative paths the SOURCE holds right now. It is
+// what the prune keeps and what the ledger records — one walk, no re-statting.
+function copyTreeLocal(src, dest, stats, have, rel = "") {
   fs.mkdirSync(dest, { recursive: true });
   for (const e of manifestsLast(fs.readdirSync(src, { withFileTypes: true }))) {
     const s = path.join(src, e.name), d = path.join(dest, e.name);
+    const r = rel ? rel + "/" + e.name : e.name;
     try {
-      if (e.isDirectory()) { copyTreeLocal(s, d, stats); continue; }
+      if (e.isDirectory()) { have.dirs.add(r); copyTreeLocal(s, d, stats, have, r); continue; }
       if (!e.isFile()) continue;
-      if (fs.existsSync(d) && fs.statSync(d).size === fs.statSync(s).size) { stats.skipped++; continue; }
-      fs.copyFileSync(s, d);
+      have.files.add(r);
+      // Manifests compare by BYTES, not size: a re-publish that only bumps
+      // exportedAt keeps the same length, and exportedAt is the reader's
+      // cache-bust key — size-equal would strand every fix on the one device.
+      if (fs.existsSync(d) && (isManifest(e.name)
+            ? fs.readFileSync(d).equals(fs.readFileSync(s))
+            : fs.statSync(d).size === fs.statSync(s).size)) { stats.skipped++; continue; }
+      atomically(d, (tmp) => fs.copyFileSync(s, tmp));
       stats.files++;
     } catch (err) { stats.errors.push(e.name + ": " + err.message); }
   }
@@ -335,9 +436,13 @@ function syncLocal(cfg) {
     const src = path.join(cfg.folderPath, sub);
     try { if (!fs.statSync(src).isDirectory()) continue; } catch { continue; }   // absent/offline: leave ours alone
     const dest = path.join(DATA, sub);
-    copyTreeLocal(src, dest, stats);
-    if (MIRROR_DELETES.includes(sub))
-      pruneTree(dest, r => { try { return fs.statSync(path.join(src, r)).isFile(); } catch { return false; } }, stats);
+    const have = { files: new Set(), dirs: new Set() };
+    copyTreeLocal(src, dest, stats, have);
+    if (!MIRROR_DELETES.includes(sub)) continue;
+    const owned = loadLedger(dest, sub);
+    pruneTree(dest, (r, isDir) =>
+      isDir ? have.dirs.has(r) : (have.files.has(r) || !owned.has(r)), stats);
+    saveLedger(dest, have.files);
   }
   lastSync = { when: new Date().toISOString(), ...stats };
   if (module.exports.onSynced) try { module.exports.onSynced(lastSync); } catch {}
