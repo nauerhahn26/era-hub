@@ -90,10 +90,20 @@ async function narratePage(text, cfg) {
 
 // ---------------------------------------------------------------- one book
 
+// {provider, model, voice, pages[{index, audio, words}]}. The three credits are
+// the record of what actually spoke, written here because the publish step must
+// not read them off the Voice card — a family who changed voices last week
+// would have every older book claim the new one. A book narrated by an older
+// hub has no credits and says so (nulls), rather than claiming a voice.
 function readNarration(dir) {
   const raw = store.readJson(narrationPath(dir));
-  if (!raw || !Array.isArray(raw.pages)) return { pages: [] };
-  return { pages: raw.pages.filter(p => p && Number.isInteger(p.index)) };
+  if (!raw || !Array.isArray(raw.pages)) return { provider: null, model: null, voice: null, pages: [] };
+  return {
+    provider: typeof raw.provider === "string" ? raw.provider : null,
+    model: typeof raw.model === "string" ? raw.model : null,
+    voice: typeof raw.voice === "string" ? raw.voice : null,
+    pages: raw.pages.filter(p => p && Number.isInteger(p.index)),
+  };
 }
 
 // narrateBook(dir, opts) — narrate every page of `dir` that has text.
@@ -201,7 +211,12 @@ async function narrateBook(dir, opts) {
   out.sort((a, b) => a.index - b.index);
   // Written even when nothing changed: it is also the record of which pages are
   // deliberately silent, and publish reads it rather than the audio directory.
-  store.writeAtomic(narrationPath(dir), { pages: out });
+  // The voice id is not a secret (it travels in the request URL and sits in
+  // tts-config.json already); the key it was called with never comes near here.
+  store.writeAtomic(narrationPath(dir), {
+    provider: "elevenlabs", model: cfg.modelId || DEFAULT_MODEL_ID, voice: cfg.voiceId,
+    pages: out,
+  });
   const res = { narrated, reused, pages: out, errors };
   if (permanent) res.permanent = true;
   return res;

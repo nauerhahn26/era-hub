@@ -11,7 +11,7 @@
 //   inbox        owes ingest       -> transcribing   (content-ingest.js)
 //   transcribing owes transcribe   -> reviewing      (content-providers.js)
 //   reviewing    owes narrate      -> narrating      (content-narrate.js)
-//   narrating    owes publish      -> published      (T2.8)
+//   narrating    owes publish      -> published      (content-publish.js)
 //
 // "reviewing" owes narration because review never blocks a book: a flagged
 // page publishes anyway and a parent fixes it afterwards (ruling 9/4 — "a
@@ -43,10 +43,14 @@ const store = require("./content-store.js");
 const { ingest } = require("./content-ingest.js");
 const { narrateBook } = require("./content-narrate.js");
 const { transcribeBook } = require("./content-providers.js");
+const { publishBook } = require("./content-publish.js");
 
 const DIR = workerData.dir;
 const DATA = workerData.dataDir;
 const SLUG = workerData.slug || path.basename(DIR || "");
+// The folder name as the parent typed it ("Tabby McTat") — the book's title.
+// The slug is the URL; this is what a reader sees on the shelf.
+const NAME = workerData.name || path.basename(DIR || "");
 const ONLY = workerData.step || null;   // POST /content/run {step}: re-run one step
 
 // How often a step in flight refreshes the claim. Well inside content.js's
@@ -61,7 +65,8 @@ const STEPS = [
     run: (c) => transcribeBook(c.dir, { dataDir: c.dataDir, job: c.job }) },
   { name: "narrate",    owes: "reviewing",    then: "narrating",
     run: (c) => narrateBook(c.dir, { dataDir: c.dataDir }) },
-  { name: "publish",    owes: "narrating",    then: "published",    run: null },
+  { name: "publish",    owes: "narrating",    then: "published",
+    run: (c) => publishBook(c.dir, { slug: c.slug, title: c.name }) },
 ];
 
 const byName = (n) => STEPS.find(s => s.name === n);
@@ -85,7 +90,8 @@ function owedState(job) {
 function summary(step, result) {
   const r = result && typeof result === "object" ? result : {};
   const out = { step };
-  for (const k of ["pages", "wrote", "copied", "transcribed", "escalated", "calls", "narrated", "reused", "skipped"]) {
+  for (const k of ["pages", "wrote", "copied", "transcribed", "escalated", "calls",
+                   "narrated", "reused", "skipped", "silent", "flagged", "blank"]) {
     const v = r[k];
     if (Array.isArray(v)) out[k] = v.length;
     else if (v != null) out[k] = v;
@@ -129,7 +135,7 @@ async function walk() {
     if (!step.run) return { slug: SLUG, state: job.state, steps, pending: step.name };
 
     post({ step: step.name, state: job.state, slug: SLUG });
-    const result = await step.run({ dir: DIR, dataDir: DATA, job, slug: SLUG });
+    const result = await step.run({ dir: DIR, dataDir: DATA, job, slug: SLUG, name: NAME });
 
     // Re-read: the step just wrote to .build/ itself, and the heartbeat may
     // have moved under us while it worked.
