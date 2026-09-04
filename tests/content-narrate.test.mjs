@@ -354,6 +354,34 @@ test("a page whose text is blank is silent, not an error and not a call", async 
   assert.deepEqual(r.errors, []);
 });
 
+// E5. A copyright page is ALL publisher furniture, so content-imprint.js takes
+// every line of it and the page arrives here with nothing on it. An empty
+// string is still a request, still a charge (ElevenLabs bills per character and
+// a minimum applies), and still an mp3 of silence the reader would sit through.
+// The whole book being furniture is the shape that would bill a family for a
+// book of nothing, so it is asserted against the stand-in, not reasoned about.
+test("a page the imprint stripper emptied is skipped, never bought as an empty string", async () => {
+  calls = [];
+  const dir = book("imprint", [""]);
+  const r = await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 0, "an empty page must not cost the family a request");
+  assert.deepEqual(r.pages, []);
+  assert.equal(r.narrated, 0);
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(narrate.readNarration(dir).pages, [], "a silent page claims no audio");
+  assert.ok(!fs.existsSync(path.join(dir, "audio", "000.mp3")));
+});
+
+test("no page of a book is ever asked for with empty or blank text", async () => {
+  calls = [];
+  const dir = book("blankmix", ["", "The bus was old, and it was red.", "   \n  "]);
+  await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(calls.length, 1);
+  for (const c of calls)
+    assert.ok(c.body && typeof c.body.text === "string" && c.body.text.trim(),
+      "a request went out with nothing to say: " + JSON.stringify(c.body));
+});
+
 test("no ElevenLabs key is NOT an error — the book goes on to publish silent", async () => {
   calls = [];
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "era-narr-nokey-"));

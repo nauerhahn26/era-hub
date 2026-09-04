@@ -60,6 +60,7 @@
 const fs = require("fs");
 const path = require("path");
 const store = require("./content-store.js");
+const imprint = require("./content-imprint.js");
 const { aiRoles } = require("./ai-config.js");
 
 // ---------------------------------------------------------------- the policy
@@ -706,7 +707,19 @@ async function transcribeBook(dir, opts) {
       const first = await transcribePage({ imagePath, cfg, config, spent,
                                            policy: promptFor(config, "transcribe") });
       calls++;
-      let text = first.text, unsure = first.uncertain.slice(), note = null;
+      // THE PUBLISHER IS NOT THE BOOK (E5, 9/4). Every reading is stripped of
+      // its imprint lines the moment it arrives — BEFORE the agreement
+      // comparison and before anything is stored — because the furniture is
+      // the one part of a page the two models were never going to agree about
+      // (an ISBN is thirteen digits of chances to differ) and because a reader
+      // would say it out loud. The prompt asks for the same thing and the
+      // bake-off watched every wording fail to get it; content-imprint.js is
+      // the rule rather than the request. `stripped` is the count for the
+      // reading that ENDS UP ON THE PAGE — the number that explains the missing
+      // lines to a parent — and it goes in the log, never in text.json.
+      const firstRead = imprint.strip(first.text);
+      let text = firstRead.text, unsure = first.uncertain.slice(), note = null;
+      let stripped = firstRead.removed;
       // WHO READ THIS PAGE (F7). `readBy` is whichever rung produced the words
       // that end up on the page — the transcriber usually, the partner when the
       // transcriber's allowance ran out mid-book, the decider when there was a
@@ -729,10 +742,16 @@ async function transcribeBook(dir, opts) {
         // together more often than the bake-off's 89.2% assumes.
         const secondPolicy = promptFor(config, "second-opinion");
         const second = ladderFor(cfg, config).filter(m => !spent.has(m) && m !== first.model);
-        let b = null, unchecked = null;
+        let b = null, bText = null, unchecked = null;
         if (!second.length) unchecked = "no second model was left to ask";
         else {
-          try { b = await transcribePage({ imagePath, cfg, config, spent, models: [second[0]], policy: secondPolicy }); calls++; }
+          try {
+            b = await transcribePage({ imagePath, cfg, config, spent, models: [second[0]], policy: secondPolicy });
+            calls++;
+            // Stripped on arrival, like the first reading: the two are compared
+            // on the words the book is made of and on nothing else.
+            bText = imprint.strip(b.text).text;
+          }
           catch (e) {
             if (isPermanent(e.message)) throw e;
             unchecked = store.redact(e.message);
@@ -753,9 +772,9 @@ async function transcribeBook(dir, opts) {
           log("page " + page.index + ": no second opinion (" + unchecked + ")");
           note = "no second model checked this page";
           unsure.push({ word: "page", reason: note });
-        } else if (normalizeLoose(b.text) !== normalizeLoose(text)) {
+        } else if (normalizeLoose(bText) !== normalizeLoose(text)) {
           checkedBy = b.model; agreed = false;
-          const word = firstDivergence(text, b.text);
+          const word = firstDivergence(text, bText);
           // Only a CONFIGURED adjudicator decides (spec §4.2: "the strongest
           // configured model"). With none — the free default — the
           // transcriber's reading stands and the page goes to the parent.
@@ -780,7 +799,9 @@ async function transcribeBook(dir, opts) {
           }
           if (c) {
             escalated++;
-            text = c.text; unsure = c.uncertain.slice(); readBy = c.model;
+            const cRead = imprint.strip(c.text);
+            text = cRead.text; stripped = cRead.removed;
+            unsure = c.uncertain.slice(); readBy = c.model;
             note = "two models read this page differently; " + c.model + " decided";
           } else {
             // Nothing left to break the tie: keep the first reading and say
@@ -798,6 +819,10 @@ async function transcribeBook(dir, opts) {
                  flags, cover: done ? !!done.cover : page.index === 1,
                  read: { model: readBy, checkedBy, agreed } });
       transcribed++;
+      // Said out loud in the log because it is the only place it is said: a
+      // parent looking at a title page that came out with two words on it (or
+      // none at all) can see that the rest of it was the publisher's.
+      if (stripped) log("page " + page.index + ": imprint lines removed: " + stripped);
       log("page " + page.index + ": " + text.split(/\s+/).filter(Boolean).length + " word(s)" +
           (flags.length ? ", " + flags.length + " flag(s)" : "") + (note ? " - " + note : ""));
     } catch (e) {

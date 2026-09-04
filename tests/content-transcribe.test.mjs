@@ -832,6 +832,114 @@ test("the escalated page names the DECIDER as its reader", async () => {
   assert.equal(page.read.agreed, false);
 });
 
+// -------------------------------------------- the publisher's own lines (E5)
+
+// content-imprint.js is tested on its own (tests/content-imprint.test.mjs);
+// these are about the WIRING — both readings stripped, before the agreement
+// comparison and before anything is stored. Every line below is invented: a
+// fake publisher (Puddleduck Press), a fake book and a fake ISBN, never a page
+// of anybody's real one.
+
+test("the publisher's own lines never reach text.json, and the log says how many went", async () => {
+  reset({ config: SINGLE, answers: [{ text: [
+    "The Bramblewick Bus",
+    "First published in Wobblonia in 2019 by Puddleduck Press.",
+    "Text copyright © 2019 Ada Bramblewick",
+    "ISBN 978-1-00000-000-0",
+    "The bus was old, and it was red.",
+  ].join("\n"), uncertain: [] }] });
+  const dir = book("Imprint");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "The Bramblewick Bus\nThe bus was old, and it was red.");
+  assert.ok(!/ISBN|copyright|Puddleduck/i.test(page.text), "nothing the publisher said is left");
+  // the count is a line in the log and NOWHERE in text.json - that file's
+  // schema is fixed and hand-editable
+  assert.ok(store.readLog(dir).some(l => l.msg.includes("imprint lines removed: 3")),
+    "the log has to say how many lines went: " + JSON.stringify(store.readLog(dir).map(l => l.msg)));
+  assert.ok(!JSON.stringify(store.readText(dir)).includes("imprint"),
+    "the count never lands in text.json");
+});
+
+test("a page that is nothing but the publisher's furniture comes out EMPTY, not flagged", async () => {
+  reset({ config: SINGLE, answers: [{ text: [
+    "Puddleduck Press Ltd, 12 Marigold Lane, Fakebury, FK1 2ZZ",
+    "All rights reserved.",
+    "www.puddleduckpress.example",
+    "A CIP catalogue record for this book is available from the National Library.",
+  ].join("\n"), uncertain: [] }] });
+  const dir = book("All Imprint");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "", "a copyright page has no words a reader should say out loud");
+  assert.ok(store.readLog(dir).some(l => l.msg.includes("imprint lines removed: 4")));
+});
+
+test("an imprint line only ONE model read never flags the page", async () => {
+  // The live shape this exists for: the transcriber narrates the copyright
+  // block off a title page and the partner does not (or reads three of the
+  // ISBN's digits differently). The STORY is the same in both readings, so the
+  // page is agreed - before this, it went to a grown-up over a line neither
+  // reading was ever going to keep.
+  reset({ answers: [
+    ({ model }) => model === "gemini-3.1-flash-lite"
+      ? { text: "The bus was old, and it was red.\n© 2019 Puddleduck Press\nISBN 978-1-00000-000-0", uncertain: [] }
+      : { text: "ISBN 978-1-OOOOO-OOO-O\nThe bus was old, and it was red.", uncertain: [] },
+  ] });
+  const dir = book("Furniture Disagreement");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+
+  assert.equal(calls.length, 2, "two cheap readings and NO decider - they agree");
+  assert.equal(r.escalated, 0);
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "The bus was old, and it was red.");
+  assert.equal(page.flags.length, 0, "an imprint difference is not a disagreement");
+  assert.equal(page.read.agreed, true);
+});
+
+test("two models that really do read the STORY differently are still caught", async () => {
+  // The other half of the same rule: stripping furniture must not quietly
+  // strip the disagreement with it.
+  reset({ answers: [
+    ({ model }) => model === "gemini-3.1-flash-lite"
+      ? { text: "© 2019 Puddleduck Press\nNine mice on the ice.", uncertain: [] }
+      : { text: "Nine mice on the rice.", uncertain: [] },
+  ] });
+  const dir = book("Real Disagreement");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "Nine mice on the ice.");
+  assert.equal(page.flags.length, 1);
+  assert.equal(page.flags[0].word, "ice", "the first word they part company on, furniture aside");
+  assert.equal(page.read.agreed, false);
+});
+
+test("the DECIDER's reading is stripped too, on its way to the page", async () => {
+  const ladder = providers.ladderFor({ provider: "google" });
+  const STRONG = ladder[3];
+  reset({ config: { transcribe: { agreementPass: true, escalateTo: STRONG } },
+          answers: [
+            ({ model }) => model === ladder[0] ? { text: "Nine mice on the ice.", uncertain: [] }
+                         : model === ladder[1] ? { text: "Nine mice on the rice.", uncertain: [] }
+                         : { text: "Nine mice on the ice.\nAll rights reserved.", uncertain: [] },
+          ] });
+  const dir = book("Decider Imprint");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "Nine mice on the ice.", "the decider does not get to add furniture");
+  assert.equal(page.read.model, STRONG);
+});
+
+test("a page with no furniture on it is never logged as having had some", async () => {
+  reset({ config: SINGLE, answers: [{ text: "The bus published a great grey cloud of steam.", uncertain: [] }] });
+  const dir = book("Clean Page");
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.equal(store.readText(dir).pages[0].text, "The bus published a great grey cloud of steam.");
+  assert.ok(!store.readLog(dir).some(l => l.msg.includes("imprint lines removed")),
+    "a sentence containing 'published' is a sentence");
+});
+
 // --------------------------------------------------------------- the tally
 
 test("the stand-in saw every call this suite made, and the family paid for none", () => {
