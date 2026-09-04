@@ -1769,3 +1769,104 @@ sends a decorrelation by model alone, so live accuracy should not be assumed to
 match the bake-off until L7 lands. Second risk: none of Phase E has run on
 Windows; the Phase 7 VM walkthrough is still the first real test of the local-roots
 seam, the shelf hook and the imprint stripper on a family's own box.
+
+---
+
+## Retrospective: Phase L
+
+Follow-ups from the one full live run (16 pages, 9/4, commit `0822ebd`, port
+8453). L1 and L4 had already landed in the Phase E review commit `c8909ce`, so
+this phase ran L2, L3, L5, L6, L7 and then a review pass over all five.
+
+### What landed
+- `e3c4f13` **L2 — the page count holds still.** `photoCount()` counts loose
+  photos and `sources/` together, so ingest moving the pile one file at a time
+  can no longer make a card read 16 → 3 → 6 → 11 → 15 → 16. `cover.jpg` is the
+  one non-page kept out (a finished 16-page book was saying seventeen);
+  `listing()` still watches the loose pile alone, because the quiet period must
+  see a folder as changing while photos land and *not* while ingest tidies.
+- `df47f00` **L3 — every page is written down the moment it is read.**
+  `text.json` is written per page (tmp + rename), so `progress.transcribed`
+  climbs and a killed worker resumes instead of re-buying pages a free key
+  already paid for. Pages the walk has not reached ride along in each write;
+  only the final write may prune. L4's leftover `log.jsonl` line for the
+  thinking re-shape folded in here.
+- `5937cd0` **L5 — `cost.narrated` counts purchases, not pages.** A per-job
+  ledger (`content-store.addSpend` → `job.spent.narrate {chars, calls}`,
+  counters not a list, because `job.json` re-uploads to every device on every
+  write) is billed per accepted call. The page sum stays as the floor so books
+  narrated before the ledger existed never under-report to one page.
+- `ee4b94c` **L6 — a page you typed says "Edited by you".** `edited` per page on
+  `/content/text` and back with a save, plus its own count on `/content/status`
+  (never folded into flags — there is nothing to fix on such a page); a
+  pointer-only badge on the review card and one sentence in Settings.
+- `e37a361` **L7 — the transcriber sends the RECOVERED v2.** v2 was found in a
+  07:11 worktree snapshot (inside the cache's 06:33–07:26 v2 window, v3's start
+  08:37) and differs from v3 only in `PROMPT_VERSION` and rules 5 and 6, as v3's
+  changelog says. It lands in the harness as `POLICY_V2` /
+  `transcribePromptV2()` (`PROMPT_VERSION` stays `v3` — it keys the cache) and is
+  copied byte for byte into the hub; `DEFAULT_PROMPTS.transcribe = "v2"`,
+  second-opinion stays v3, KNOWN GAP rewritten as closed.
+- `983b680` **review fixes.** Five confirmed findings: the final write pruned on
+  a permanent refusal that never reached the end of the book (deleting paid-for
+  pages below it); the thinking memo was written on only one of three exits, and
+  it seeds the next run for the life of the process; a loose photo counted as a
+  page for ever, so a published 15-page book said "15 of 16"; Save without
+  typing badged a page "Edited by you" and threw away the model that read it;
+  and the narrate ledger sat outside the call, so a 200 with no alignment was a
+  page ElevenLabs charged for and nothing recorded.
+
+### Decisions
+- **A page is a page wherever it sits.** Counting is by identity, not by folder,
+  and only the two files that are provably not pages (`cover.jpg`) are excluded —
+  a HEIC ingest could not convert still counts, because it *is* a page of the
+  book the hub has not got.
+- **A write may only delete what the writer has actually seen.** Per-page writes
+  never prune; the final write prunes only when the walk reached the end.
+- **Money is recorded at the instant it is spent**, inside the call, not by
+  summing state afterwards — the same rule for `job.spent` as for `text.json`.
+- **Two counts, never one**, again: `edited` is its own number beside flags,
+  because "check this" and "you wrote this" are different questions.
+- **Ship only wording this repo can prove** — now satisfied rather than deferred:
+  the pair the hub sends is the pair the 89.2% row measured.
+
+### Adaptations
+- L4's `log.jsonl` line was folded into L3 rather than left, as the plan allowed:
+  it was a one-liner once the per-page write existed.
+- `job.spent` is counters, not a list of calls, because `job.json` re-uploads to
+  every device on every write.
+- The Phase L review pass was run and its findings fixed in-phase (`983b680`)
+  rather than deferred to Phase 7 — four of the five were data-loss or
+  money-truth bugs in code written this same phase.
+
+### Verification
+Phase L gate, re-run at the phase boundary: the four content suites +
+`content-store` + the review-page and Settings UI suites — **163 pass, 0 fail**;
+`tools/ocr-bakeoff/test/prompts.test.mjs` — **10 pass, 0 fail**.
+
+### Follow-ups
+- `QUOTA_NOTE` and Settings still say "carries on tomorrow morning" for what may
+  be a 47-second throttle; `tests/settings-ui.test.mjs` pins `/tomorrow/i`.
+- Nothing reads `page.read` on the review page yet — it could name who read a page.
+- `clothing-worker.js:42` still asserts the stale "20 requests per day per model".
+- The Voice card offers no model picker; every family gets `eleven_flash_v2_5`.
+- Flags can still name a word the stripper removed; `^Printed in the sand …` is
+  still eaten by the imprint anchors.
+- `tests/icons.test.mjs` fails on this box (targets `:8377`, an ssh tunnel here).
+- `gate/` still holds a stale untracked copy of `content-transcribe.test.mjs`.
+- The page-sum floor for `cost.narrated` means a pre-ledger book still reports a
+  number that is too low by every re-narration it has had; it self-heals only on
+  the next narrate.
+
+### Confidence and risks
+Confidence **high** on the five defects and the review's five on top: each came
+from artefacts of a real 16-page run or from reading the code that run exposed,
+each was fixed test-first, and the gate is green. Confidence **medium** on the
+pipeline end to end, unchanged from Phase E: every provider is still a stand-in
+behind an env-URL seam, so quota, refusal and partial-failure shapes are proven
+against fakes only. L7 removes the prompt-fidelity risk — the hub now sends the
+measured pair — leaving the chief residual risk with **Phase 7**: none of Phase
+E or L has run on Windows, and the VM walkthrough is still the first real test
+of the local-roots seam, the shelf hook and the imprint stripper on a family's
+own box. Second risk: the per-page `text.json` write multiplies small writes on
+a Drive-synced folder; the 16-page run predates it, so its cost is unmeasured.
