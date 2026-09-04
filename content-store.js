@@ -315,6 +315,41 @@ function noteErrors(job, msgs, opts) {
   return { ...job, errors: (job.errors || []).concat(add).slice(-KEEP_ERRORS) };
 }
 
+// WHAT THE FAMILY WAS ACTUALLY BILLED. A book's cost cannot be worked out from
+// what is on its pages: a page a grown-up corrected and had read again was
+// bought twice and sits on disk once, so the Settings card said 4614 characters
+// while ElevenLabs had been sent 4986 (L5, the 16-page live run of 9/4). Only
+// the step doing the spending knows, and only while it spends it — so it says
+// so here, one charge at a time, and content.js adds the ledger up instead of
+// the pages.
+//
+// Deliberately COUNTERS and not a list of purchases: job.json lives inside the
+// family's Drive folder and every byte of it is re-uploaded to every device on
+// every write, and a book re-narrated a page at a time over a week would grow
+// an unbounded array there. Two numbers per step keep the file the size it is
+// and still answer the only question a parent asks ("what has this cost me?").
+// The unit is the step's own — characters for narrate — and is not mixed.
+//
+// Returns a NEW job, like transition() and noteErrors(): a caller still holding
+// the old one must not see it move under them. A charge that is not a positive
+// number is not a charge and is ignored rather than thrown at anybody — a
+// ledger must never be the reason a book stops building.
+function addSpend(job, step, chars) {
+  const n = Number(chars);
+  if (!job || !Number.isFinite(n) || n <= 0) return job;
+  const prev = (job.spent && typeof job.spent === "object" && job.spent[step]) || null;
+  return {
+    ...job,
+    spent: {
+      ...(job.spent && typeof job.spent === "object" ? job.spent : {}),
+      [step]: {
+        chars: (Number(prev && prev.chars) || 0) + n,
+        calls: (Number(prev && prev.calls) || 0) + 1,
+      },
+    },
+  };
+}
+
 function readJob(dir) {
   const raw = readJson(jobPath(dir));
   if (!raw || typeof raw !== "object") return null;
@@ -366,6 +401,6 @@ module.exports = {
   buildDir, jobPath, textPath, logPath, tmpPathFor,
   writeAtomic, readJson, redact,
   normalizeText, readText, writeText,
-  newJob, canTransition, transition, fail, noteErrors, readJob, writeJob,
+  newJob, canTransition, transition, fail, noteErrors, addSpend, readJob, writeJob,
   appendLog, readLog,
 };

@@ -78,6 +78,31 @@ function narrationPath(dir) { return path.join(store.buildDir(dir), "narration.j
 const said = (text) => crypto.createHash("sha1")
   .update(String(text == null ? "" : text)).digest("hex").slice(0, 16);
 
+// BILL IT WHILE YOU SPEND IT (L5, the 16-page live run of 9/4). The characters
+// a page cost cannot be read back off the page afterwards: a page corrected on
+// the review page and read again was bought twice and sits on disk once, and
+// the card that added the pages up said 4614 while ElevenLabs had been sent
+// 4986. So every accepted call writes its own charge onto the job the moment it
+// lands, before anything else can rewrite the words it was bought for.
+//
+// Per call rather than once at the end, for the same reason the mp3 lands per
+// page: a worker killed half way through a free key's long afternoon has still
+// spent every character it sent, and a ledger that only exists in memory would
+// hand the family back a book that looks free.
+//
+// Never throws and never creates a job: narrateBook is also driven straight
+// from a test and from power mode, on a folder with no claim in it at all. A
+// note in the margin is not worth losing a book over — the same law appendLog
+// lives by.
+function bill(dir, chars) {
+  try {
+    const job = store.readJob(dir);
+    if (job) store.writeJob(dir, store.addSpend(job, "narrate", chars));
+  } catch (e) {
+    console.error("[content-narrate] ledger write failed: " + e.message);
+  }
+}
+
 // ------------------------------------------------------------------ one page
 
 // narratePage(text, cfg) -> {audio: Buffer, words: [{word,start,end}]}
@@ -170,7 +195,9 @@ function forgetPage(dir, index) {
 //   opts.text     an already-loaded text.json (skips the read)
 //   opts.now      pinned clock for the log
 //
-// Returns {narrated, reused, pages:[{index, audio, words}], errors:[…]}, plus
+// Returns {narrated, reused, chars, pages:[{index, audio, words}], errors:[…]},
+// where `chars` is what THIS run sent (the book's running total is the job's
+// own ledger — store.addSpend, written per call by bill() above), plus
 // {skipped:"no-eleven-key"} when there is no key and {permanent:true} when the
 // provider refused the key outright.
 //
@@ -190,7 +217,7 @@ async function narrateBook(dir, opts) {
     // free-tier story, and a parent who never bought a voice should not meet a
     // red line in their book's log every single run.
     store.appendLog(dir, "narrate", "no ElevenLabs key - the book will publish with text and no audio", { now: o.now });
-    return { skipped: "no-eleven-key", narrated: 0, reused: 0, pages: [], errors: [] };
+    return { skipped: "no-eleven-key", narrated: 0, reused: 0, chars: 0, pages: [], errors: [] };
   }
   const text = o.text || store.readText(dir);
   if (!text) throw new Error("narrate: no text.json in " + path.basename(dir));
@@ -199,7 +226,9 @@ async function narrateBook(dir, opts) {
   const have = new Map(readNarration(dir).pages.map(p => [p.index, p]));
   const out = [];
   const errors = [];
-  let narrated = 0, reused = 0, permanent = false;
+  // The characters THIS run sent, for the caller's summary; the book's running
+  // total lives on the job (bill() above) because a run is not a book.
+  let narrated = 0, reused = 0, spent = 0, permanent = false;
 
   // The entry AND the file have to be there for a page to count as narrated: an
   // mp3 someone deleted (or a Drive mirror that never landed) must be re-done,
@@ -243,6 +272,10 @@ async function narrateBook(dir, opts) {
     if (only && !forced) continue;
     try {
       const r = await narratePage(page.text, cfg);
+      // The provider has been paid by the time it answers, so the ledger is
+      // written before anything that could still go wrong here.
+      bill(dir, page.text.length);
+      spent += page.text.length;
       // The mp3 lands before the entry that points at it, and both land
       // atomically: a torn write here is a page that plays static.
       store.writeAtomic(mp3, r.audio);
@@ -288,7 +321,7 @@ async function narrateBook(dir, opts) {
     provider: "elevenlabs", model: cfg.modelId || DEFAULT_MODEL_ID, voice: cfg.voiceId,
     pages: out,
   });
-  const res = { narrated, reused, pages: out, errors };
+  const res = { narrated, reused, chars: spent, pages: out, errors };
   if (permanent) res.permanent = true;
   return res;
 }

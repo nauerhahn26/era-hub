@@ -228,6 +228,41 @@ test("job.json round-trips and a bad state is refused", () => {
   assert.throws(() => store.writeJob(dir, { ...job, state: "melting" }), /melting/);
 });
 
+// -------------------------------------------------------------- the ledger
+
+// L5, from the 16-page live run of 9/4: what a book COST cannot be worked out
+// from what is on its pages, because a page bought twice sits there once. The
+// ledger is the running record of what each step actually sent, and the only
+// thing that can be added up honestly.
+test("addSpend keeps a running total of what a step actually sent", () => {
+  const job = store.newJob({ claimedBy: "hub-a", now: "2026-09-04T00:00:00.000Z" });
+  assert.equal(job.spent, undefined, "a new job has bought nothing");
+  const one = store.addSpend(job, "narrate", 120);
+  assert.deepEqual(one.spent, { narrate: { chars: 120, calls: 1 } });
+  const two = store.addSpend(one, "narrate", 30);
+  assert.deepEqual(two.spent, { narrate: { chars: 150, calls: 2 } });
+  // A NEW job every time, like transition()/noteErrors(): a caller still
+  // holding the old one must not see it move under them.
+  assert.deepEqual(one.spent, { narrate: { chars: 120, calls: 1 } });
+  assert.equal(two.state, job.state);
+  assert.equal(two.claimedBy, "hub-a");
+});
+
+test("addSpend ignores a charge that is not a positive number", () => {
+  const job = store.addSpend(store.newJob({}), "narrate", 40);
+  for (const bad of [0, -5, NaN, null, undefined, "many", {}]) {
+    assert.deepEqual(store.addSpend(job, "narrate", bad).spent,
+      { narrate: { chars: 40, calls: 1 } }, "charge " + String(bad) + " must not move the ledger");
+  }
+});
+
+test("the ledger survives a round trip through job.json, step by step", () => {
+  const dir = book("ledger");
+  store.writeJob(dir, store.addSpend(store.newJob({ claimedBy: "hub-a" }), "narrate", 11));
+  store.writeJob(dir, store.addSpend(store.readJob(dir), "narrate", 22));
+  assert.deepEqual(store.readJob(dir).spent, { narrate: { chars: 33, calls: 2 } });
+});
+
 // ----------------------------------------------------------------- log.jsonl
 
 test("log.jsonl is one {t, step, msg} object per line", () => {

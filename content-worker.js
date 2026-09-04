@@ -139,7 +139,7 @@ function summary(step, result) {
   // reads it to tell whoever is listening that a finished book is sitting in the
   // family's Drive folder and is not on the Reader's shelf yet (F5).
   for (const k of ["pages", "wrote", "copied", "transcribed", "escalated", "calls",
-                   "narrated", "reused", "skipped", "silent", "flagged", "blank",
+                   "narrated", "reused", "chars", "skipped", "silent", "flagged", "blank",
                    "published", "errors"]) {
     const v = r[k];
     if (Array.isArray(v)) out[k] = v.length;

@@ -205,6 +205,33 @@ test("a book part-way through says which step it owes and how far it has got", a
   assert.equal(j.error, null);
 });
 
+// L5, from the 16-page live run of 9/4: `cost.narrated` summed the text on the
+// pages that had audio, so a page bought twice was counted once and the card
+// said 4614 characters while ElevenLabs had been sent 4986. The narrate step
+// now keeps a ledger of what it actually spent, and the card reports THAT.
+test("cost.narrated is what was bought, not what is on the pages", async () => {
+  book("Bought Twice", {
+    job: { state: "narrating", spent: { narrate: { chars: 40, calls: 3 } } },
+    pages: [{ text: "one two three", audio: true }, { text: "four five", audio: true }],
+  });
+  const j = jobOf((await statusOf()).body, "bought-twice");
+  assert.equal(j.cost.characters, "one two three".length + "four five".length);   // 22, the book
+  assert.equal(j.cost.narrated, 40, "the ledger, not the 22 characters sitting on the pages");
+});
+
+// A book narrated before the ledger existed carries none, and one narrated then
+// and re-narrated since carries only its latest purchase. Neither may make the
+// card claim a whole book cost one page: the pages that DO have audio are the
+// floor under the number, exactly as they were before the ledger.
+test("a book that predates the ledger still reports the pages it paid for", async () => {
+  book("Old Ledger", {
+    job: { state: "narrating", spent: { narrate: { chars: 5, calls: 1 } } },
+    pages: [{ text: "one two three", audio: true }, { text: "four five", audio: true }],
+  });
+  const j = jobOf((await statusOf()).body, "old-ledger");
+  assert.equal(j.cost.narrated, "one two three".length + "four five".length);
+});
+
 test("a book waiting for tomorrow's free quota is paused, never failed", async () => {
   book("Slow Book", {
     job: { state: "transcribing", pausedUntil: "2026-09-05",

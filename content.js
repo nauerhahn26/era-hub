@@ -424,6 +424,21 @@ function jobFor(name, dir, slug) {
     if (narrated.has(p.index)) spent += n;
     for (const f of p.flags) { if (f && f.word) flags++; else pageFlags++; }
   }
+  // WHAT WAS BOUGHT, not what is on the pages (L5, the 16-page live run of 9/4).
+  // `spent` above adds up the CURRENT text of every page that has audio, so a
+  // page a grown-up corrected and had read again — bought twice, sitting on
+  // disk once — was counted once, and at its new length: the card said 4614
+  // characters while ElevenLabs had been sent 4986. The narrate step keeps its
+  // own running ledger as it spends (content-store.addSpend), and that is the
+  // number a parent is owed.
+  //
+  // The page sum stays as the FLOOR under it. A book narrated before the ledger
+  // existed carries none at all, and one narrated then and re-narrated since
+  // carries only its latest purchase; reporting either at face value would tell
+  // a family a whole book had cost them one page. So: the ledger when it is
+  // ahead (the re-narrate case, which is the whole point), the pages that
+  // demonstrably have audio when it is behind, and never less than before.
+  const ledger = Number(job && job.spent && job.spent.narrate && job.spent.narrate.chars) || 0;
   const owed = job ? store.owedState(job) : "inbox";
   const last = job && (job.errors || [])[job.errors.length - 1];
   // Worth showing while the book is stopped for good, and while the step it is
@@ -445,7 +460,7 @@ function jobFor(name, dir, slug) {
     progress: { pages: count, transcribed, narrated: narrated.size },
     // The only unit a book's spend can be counted in until the fal card lands
     // (Phase 6): ElevenLabs characters owed, and the ones already paid for.
-    cost: { characters, narrated: spent },
+    cost: { characters, narrated: Math.max(spent, ledger) },
     flags,
     pageFlags,
     pausedUntil: (job && job.pausedUntil) || null,

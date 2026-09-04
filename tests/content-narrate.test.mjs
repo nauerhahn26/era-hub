@@ -200,6 +200,61 @@ test("only:[n] re-narrates exactly that page (the review page's Re-narrate butto
   assert.deepEqual(r.pages[0].words.map(w => w.word), ["A", "busy", "bee."], "page 0 kept its old timings");
 });
 
+// ------------------------------------------------------------- the ledger
+
+// L5, from the 16-page live run of 9/4: the Settings card added up the text on
+// the pages that had audio and called that the bill (4614 characters), while
+// ElevenLabs had actually been sent 4986 — the difference is one page a
+// grown-up corrected and had read again. A page bought twice sits on disk once,
+// so the only honest number is the one the step keeps as it spends it.
+test("every call is billed to the job's ledger — a page bought twice is counted twice", async () => {
+  calls = [];
+  const dir = book("ledger");                       // "A busy bee." + "It went home."
+  store.writeJob(dir, store.newJob({ claimedBy: "hub-test", state: "reviewing" }));
+  await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.deepEqual(store.readJob(dir).spent,
+    { narrate: { chars: "A busy bee.".length + "It went home.".length, calls: 2 } });
+  // A grown-up retypes page one on the review page and presses "Re-narrate".
+  fs.writeFileSync(path.join(dir, ".build", "text.json"), JSON.stringify({ pages: [
+    { index: 0, source: "IMG_0000.jpg", text: "A busy bee.", flags: [], cover: true },
+    { index: 1, source: "IMG_0001.jpg", text: "It flew away.", flags: [], cover: false }] }));
+  await narrate.narrateBook(dir, { cfg: cfg(), only: [1] });
+  assert.equal(calls.length, 3, "two pages, then the one that was corrected");
+  const spent = store.readJob(dir).spent;
+  assert.deepEqual(spent, { narrate: {
+    chars: "A busy bee.".length + "It went home.".length + "It flew away.".length, calls: 3 } });
+  // The whole point: what is on the pages now is LESS than what was paid for.
+  const onThePage = store.readText(dir).pages.reduce((n, p) => n + p.text.length, 0);
+  assert.ok(spent.narrate.chars > onThePage, "the ledger must outgrow the page sum");
+});
+
+test("a reused page is not billed again, and a page nobody could narrate is not billed at all", async () => {
+  calls = [];
+  const dir = book("ledger-reuse", ["A busy bee."]);
+  store.writeJob(dir, store.newJob({ claimedBy: "hub-test", state: "reviewing" }));
+  await narrate.narrateBook(dir, { cfg: cfg() });
+  const after = store.readJob(dir).spent;
+  await narrate.narrateBook(dir, { cfg: cfg() });                // every page reused
+  assert.deepEqual(store.readJob(dir).spent, after, "reuse costs nothing and bills nothing");
+  const lost = book("ledger-fail", ["A busy bee."]);
+  store.writeJob(lost, store.newJob({ claimedBy: "hub-test", state: "reviewing" }));
+  mode = "500";
+  try { await narrate.narrateBook(lost, { cfg: cfg() }); } finally { mode = "ok"; }
+  assert.equal(store.readJob(lost).spent, undefined, "a call the provider refused buys nothing");
+});
+
+// narrateBook is also driven straight from a test and from power mode, on a
+// folder with no claim in it at all. A ledger is a note in the margin of a job
+// that exists — it must never conjure one, and never lose the book if it cannot
+// be written (the same law appendLog lives by).
+test("a book with no job.json narrates fine and grows no job.json", async () => {
+  calls = [];
+  const dir = book("ledger-nojob", ["A busy bee."]);
+  const r = await narrate.narrateBook(dir, { cfg: cfg() });
+  assert.equal(r.narrated, 1);
+  assert.equal(store.readJob(dir), null, "no claim was invented to bill");
+});
+
 // The review page's "fix a misread word" writes new words onto a page whose
 // audio speaks the OLD ones. Nothing else in this module could ever notice —
 // a page with an entry and an mp3 is "done" for ever — so the door that changes
