@@ -78,4 +78,13 @@ function aiRoles(dir) {
   return { vision: visionRole(cfg), elevenlabs: elevenRole(dir), fal: falRole(cfg) };
 }
 
-module.exports = { aiRoles, VISION_PROVIDERS };
+// Which roles are SET UP, and nothing about what they are set up WITH. A caller
+// that only needs to know whether the family has bought a voice yet — content.js
+// refusing a re-narrate before it spawns a worker (spec §5) — must not have to
+// hold a key to find that out, and "no key is read in that file" stays true.
+function haveRoles(dir) {
+  const r = aiRoles(dir);
+  return { vision: !!r.vision, elevenlabs: !!r.elevenlabs, fal: !!r.fal };
+}
+
+module.exports = { aiRoles, haveRoles, VISION_PROVIDERS };

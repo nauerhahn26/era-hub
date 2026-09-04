@@ -1745,12 +1745,15 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // ---- the review page's strip (spec §5): read the pages, write their order --
+  // ---- the review page's strip (spec §5): read the pages, write their words --
   // GET /content/text?slug= - every page of one book in reading order, with the
-  // URL of its own photo. POST the same path writes that order (and the cover)
-  // back into text.json. content.js owns both decisions, so the jail, the
-  // "every page exactly once" rule and the local-Drive refusal are written down
-  // in one place and the routes stay four lines each.
+  // URL of its own photo. POST the same path writes back either the whole
+  // book's order and cover (a drag) or ONE page's words and flags (a parent
+  // fixing a misread word) - content.saveText picks by whether a page is named.
+  // content.js owns every one of those decisions, so the jail, the "every page
+  // exactly once" rule, the "flags are cleared, never authored" rule and the
+  // local-Drive refusal are written down in one place and the routes stay four
+  // lines each.
   if (req.method === "GET" && urlPath === "/content/text") {
     const out = content.pagesFor(new URL(req.url, "http://x").searchParams.get("slug") || "");
     const code = out.error ? 400 : out.skipped ? 409 : 200;
@@ -1760,12 +1763,12 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && urlPath === "/content/text") {
     let body = "";
-    // Room for a long book's order and nothing more: the biggest honest body is
-    // a list of page numbers.
-    req.on("data", c => { body += c; if (body.length > 8192) req.destroy(); });
+    // Room for a long book's order, or one page of a picture book in the words
+    // a parent just typed (content.MAX_PAGE_TEXT), and nothing more.
+    req.on("data", c => { body += c; if (body.length > 16384) req.destroy(); });
     req.on("end", () => {
       let out;
-      try { out = content.saveOrder(JSON.parse(body)); }
+      try { out = content.saveText(JSON.parse(body)); }
       catch { res.writeHead(400).end(); return; }
       const code = out.error ? 400 : out.skipped ? 409 : 200;
       res.writeHead(code, { "Content-Type": "application/json" });

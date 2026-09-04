@@ -49,11 +49,19 @@
 // there would leave every finished book looking claimable half an hour later,
 // for ever. settle() below writes that last transition.
 //
+// ONE STEP, ONE PAGE (spec §5, the review page's "Re-narrate this page"). A run
+// may name a step and a page. Both narrow the walk to a repair rather than a
+// pass of the pipeline, and both change what happens afterwards: a named page
+// never ticks the book's step off (it only did one page of it), and a named
+// step on a book that is already on the shelf is followed by a publish, because
+// the manifest is the only thing the reader ever reads.
+//
 // Nothing here reads a key. The steps that spend money take their config from
 // ai-config.js at the moment they need it, and content-store.js redacts every
 // message that reaches job.json or log.jsonl.
 "use strict";
 const { parentPort, workerData } = require("worker_threads");
+const fs = require("fs");
 const path = require("path");
 const store = require("./content-store.js");
 const { ingest } = require("./content-ingest.js");
@@ -68,6 +76,10 @@ const SLUG = workerData.slug || path.basename(DIR || "");
 // The slug is the URL; this is what a reader sees on the shelf.
 const NAME = workerData.name || path.basename(DIR || "");
 const ONLY = workerData.step || null;   // POST /content/run {step}: re-run one step
+// POST /content/run {step, page}: the review page's "Re-narrate this page". A
+// named page is a REPAIR, not the book's step — see the two rules it changes in
+// walk() below. `null` (the normal case) means the whole book.
+const PAGE = Number.isInteger(workerData.page) ? workerData.page : null;
 
 // How often a step in flight refreshes the claim. Well inside content.js's
 // thirty-minute stale window, so a long transcription is never mistaken for a
@@ -83,7 +95,11 @@ const STEPS = [
   { name: store.STEP_OWED.transcribing, owes: "transcribing", then: "reviewing",
     run: (c) => transcribeBook(c.dir, { dataDir: c.dataDir, job: c.job }) },
   { name: store.STEP_OWED.reviewing,    owes: "reviewing",    then: "narrating",
-    run: (c) => narrateBook(c.dir, { dataDir: c.dataDir }) },
+    // `only` is what keeps a re-narrate to ONE page: every other page of the
+    // book keeps the audio and the timings already bought for it, untouched and
+    // unpaid-for a second time (content-narrate.js rule 2).
+    run: (c) => narrateBook(c.dir, { dataDir: c.dataDir,
+                                     only: c.page == null ? null : [c.page] }) },
   { name: store.STEP_OWED.narrating,    owes: "narrating",    then: "published",
     run: (c) => publishBook(c.dir, { slug: c.slug, title: c.name }) },
 ];
@@ -152,6 +168,24 @@ function settle(job) {
   return job.state;
 }
 
+// A single step re-run on a book that is ALREADY on Ellie's shelf has to be
+// followed by a publish. The manifest is the only thing the reader reads, so a
+// correction that stops at text.json is a correction she never hears — and
+// `exportedAt` is the reader's cache-bust (public/reader/reader.js), so without
+// a fresh publish she keeps yesterday's audio for a whole day.
+//
+// A book that has NOT published yet is deliberately left alone: freezing a
+// half-built book into a package she could open is worse than making her wait
+// for the walk to reach publish in its own time.
+async function republish(steps) {
+  const pub = STEPS.find(s => s.owes === "narrating");
+  if (!pub || ONLY === pub.name) return;                 // publish just ran
+  if (!fs.existsSync(path.join(DIR, "manifest.json"))) return;
+  post({ step: pub.name, state: (store.readJob(DIR) || {}).state || null, slug: SLUG });
+  const r = await pub.run({ dir: DIR, dataDir: DATA, job: store.readJob(DIR), slug: SLUG, name: NAME });
+  steps.push(summary(pub.name, r));
+}
+
 async function walk() {
   const steps = [];
   // One pass per step at most: every step either moves the job forward or ends
@@ -167,7 +201,7 @@ async function walk() {
     if (!step.run) return { slug: SLUG, state: job.state, steps, pending: step.name };
 
     post({ step: step.name, state: job.state, slug: SLUG });
-    const result = await step.run({ dir: DIR, dataDir: DATA, job, slug: SLUG, name: NAME });
+    const result = await step.run({ dir: DIR, dataDir: DATA, job, slug: SLUG, name: NAME, page: PAGE });
 
     // Re-read: the step just wrote to .build/ itself, and the heartbeat may
     // have moved under us while it worked.
@@ -206,8 +240,17 @@ async function walk() {
     // never walk the job backwards — it only advances the state it owed.
     // A step that finished also clears any pause it was under: the allowance
     // came back, so nothing must keep telling the family it has not.
-    if (owedState(now) === step.owes) store.writeJob(DIR, unpause(store.transition(now, step.then)));
-    if (ONLY) return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
+    //
+    // ONE PAGE IS NOT THE STEP. A run for a single page did what was asked of
+    // it and no more, so it must not tick the book's step off: a book waiting
+    // for its narration whose parent re-recorded page one would otherwise walk
+    // straight on to publish with every other page silent, for ever.
+    if (PAGE == null && owedState(now) === step.owes)
+      store.writeJob(DIR, unpause(store.transition(now, step.then)));
+    if (ONLY) {
+      await republish(steps);
+      return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
+    }
   }
   return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
 }

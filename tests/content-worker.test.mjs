@@ -178,6 +178,7 @@ test("a permanent failure is left alone — retrying it would only spend more", 
 // ERA_ELEVEN_URL points at a stand-in that answers 500 or 401 to order. The
 // stand-in's tally is asserted, so a request that escaped the seam shows up.
 let voiceCalls = 0, voiceMode = "500", voice;
+let voiceSaid = [];          // the text of every page the stand-in was asked to say
 const VOICE_DATA = path.join(TMP, "voice-data");
 
 // A book that has already been read: pages, text and a job that owes narration.
@@ -205,7 +206,25 @@ before(async () => {
       res.end('{"detail":{"status":"invalid_api_key"}}');
       return;
     }
-    res.writeHead(500).end("upstream boom");
+    if (voiceMode !== "ok") { res.writeHead(500).end("upstream boom"); return; }
+    // The one good reply this suite needs (the re-narrate test below): "ID3"
+    // and junk for the mp3, and 0.1 s per character so a word's timings can be
+    // worked out by hand.
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      let text = "";
+      try { text = JSON.parse(body).text || ""; } catch {}
+      const chars = [...text];
+      voiceSaid.push(text);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        audio_base64: Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00]).toString("base64"),
+        alignment: { characters: chars,
+                     character_start_times_seconds: chars.map((_, i) => i * 0.1),
+                     character_end_times_seconds: chars.map((_, i) => i * 0.1 + 0.1) },
+      }));
+    });
   });
   await new Promise(r => voice.listen(0, "127.0.0.1", r));
   // Read fresh per call by content-narrate.js, and copied into every worker
@@ -243,6 +262,97 @@ test("a voice key the provider refused stops the book and says so", async () => 
   // the refusal is not retried by the next scan — that only buys the same answer
   const again = await content.run({ kind: "books", slug: "the-smartest-giant", dir, dataDir: VOICE_DATA });
   assert.equal(again.failed, true);
+});
+
+// ------------------------------------------ one page again (T3.3, spec §5)
+//
+// The review page's "Re-narrate this page". A parent has just retyped a word
+// the model misread, and wants THAT page read again — not the book. Two laws
+// meet here: the run may only ever cost one page, and a book that is already on
+// Ellie's shelf must come away with the new audio on it, cache-bust and all,
+// because the reader keeps a manifest for twenty-four hours (reader.js).
+
+// A book that has already been through the whole walk and is on the shelf.
+async function shelvedBook(name, texts) {
+  const dir = book(FOLDER, name, {});
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  texts.forEach((t, i) => fs.writeFileSync(
+    path.join(dir, "pages", String(i + 1).padStart(3, "0") + ".jpg"), Buffer.alloc(24, 7)));
+  store.writeText(dir, { pages: texts.map((t, i) =>
+    ({ index: i + 1, source: "sources/IMG_" + (i + 1) + ".jpg", text: t, flags: [], cover: i === 0 })) });
+  store.writeJob(dir, store.newJob({ claimedBy: "test", state: "narrating", now: T0 }));
+  await content.run({ kind: "books", slug: name.toLowerCase().replace(/\W+/g, "-"), dir, dataDir: DATA });
+  return dir;
+}
+const manifestIn = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
+
+test("re-narrating one page buys that page only, and the shelf gets the new audio", async () => {
+  voiceMode = "ok"; voiceCalls = 0; voiceSaid = [];
+  const dir = await shelvedBook("Superworm", ["Superworm is super long.", "Superworm is super strong."]);
+  const before = manifestIn(dir);
+  assert.ok(!before.pages.some(p => p.audio), "the book starts on the shelf silent");
+  const r = await content.run({ kind: "books", slug: "superworm", dir,
+                                dataDir: VOICE_DATA, step: "narrate", page: 2 });
+  assert.equal(r.error, undefined);
+  // ONE call, for the page that was asked for and no other.
+  assert.equal(voiceCalls, 1, "one page re-narrated is one call, never the book");
+  assert.deepEqual(voiceSaid, ["Superworm is super strong."]);
+  assert.deepEqual(fs.readdirSync(path.join(dir, "audio")), ["002.mp3"]);
+  // The manifest followed, on that page and no other.
+  const after = manifestIn(dir);
+  assert.equal(after.pages[1].audio, "audio/002.mp3");
+  assert.deepEqual(after.pages[1].words.map(w => w.word),
+                   ["Superworm", "is", "super", "strong."]);
+  assert.ok(!after.pages[0].audio, "the page nobody asked for is still silent");
+  // The reader cache-busts on exportedAt: without a bump the family hears the
+  // old page for a day (plan §A3, reader.js).
+  assert.ok(after.exportedAt > before.exportedAt, "a re-narrate must re-publish with a fresh exportedAt");
+  assert.equal(after.id, before.id, "and it is the same book, not a new one");
+  // A named step never walks the job backwards.
+  assert.equal(store.readJob(dir).state, "done");
+});
+
+test("re-narrating a book that is NOT on the shelf yet does not publish one", async () => {
+  voiceMode = "ok"; voiceCalls = 0; voiceSaid = [];
+  const dir = readBook("Tiddler");                 // pages + text, state "reviewing"
+  const r = await content.run({ kind: "books", slug: "tiddler", dir,
+                                dataDir: VOICE_DATA, step: "narrate", page: 1 });
+  assert.equal(r.error, undefined);
+  assert.equal(voiceCalls, 1);
+  assert.deepEqual(voiceSaid, ["Page 1."]);
+  // A half-built book must never be frozen into a package Ellie could open: the
+  // walk publishes it in its own time, when it owes publish.
+  assert.ok(!fs.existsSync(path.join(dir, "manifest.json")));
+  assert.equal(store.readJob(dir).state, "reviewing");
+  voiceMode = "500";
+});
+
+// The button's own door: POST /content/run {step:"narrate", page:N}. Every
+// refusal below has to happen BEFORE a worker is spawned — a run that gets as
+// far as the provider has already cost the family money.
+test("a re-narrate names a whole page of this book, or it is refused", async () => {
+  const dir = await shelvedBook("Zog and the Flying Doctors", ["One page."]);
+  assert.ok(dir);
+  for (const bad of [{ page: "1" }, { page: 1.5 }, { page: -1 }, { page: 99 },
+                     // a page handed to a step that reads the whole folder
+                     { step: "publish", page: 1 }]) {
+    const out = content.runStep({ kind: "books", slug: "zog-and-the-flying-doctors",
+                                  step: "narrate", ...bad });
+    assert.ok(out.error, JSON.stringify(bad) + " should be refused");
+    assert.ok(!out.started);
+  }
+  await content.idle();
+});
+
+test("a re-narrate with no voice set up is a sentence, not a spawned worker", async () => {
+  // content.start(DATA) at the head of this suite: DATA holds no tts-config.json,
+  // so this hub has no voice at all.
+  const out = content.runStep({ kind: "books", slug: "zog-and-the-flying-doctors",
+                                step: "narrate", page: 1 });
+  assert.ok(out.error, "a parent who has not bought a voice must be told, not 500'd");
+  assert.match(out.error, /voice/i);
+  assert.ok(!/\d{3}/.test(out.error), "in words, not a status code: " + out.error);
+  assert.equal(content.status().building, false, "and no worker was spawned to find that out");
 });
 
 // ---------------------------------------------------------- the walk finishes

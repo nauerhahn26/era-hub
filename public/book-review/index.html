@@ -27,12 +27,14 @@
      its own — the static handler serves it, and the trailing-slash
      301 keeps ?slug= (tests/routes.test.mjs).
 
-     Four doors, all in content.js: GET /content/status (which
+     Five doors, all in content.js: GET /content/status (which
      books there are), GET /content/text?slug= (this book's pages),
      GET /content/page?slug=&index= (one page's photo, straight out
      of the build folder — the Drive mirror is ten minutes behind a
-     book being reviewed), and POST /content/text (the new order and
-     the cover), followed by POST /content/run to re-publish.
+     book being reviewed), POST /content/text (the new order and the
+     cover, or ONE page's words and flags), and POST /content/run,
+     which re-publishes the book and is the one door on this page
+     that spends the family's money (a single page's narration).
 
      Core, not a pack: shipped by tools/build-payload.sh and laid
      down by the installer's core File /r (no /x — every /x belongs
@@ -88,6 +90,25 @@
   .no{font-size:16px; font-weight:700; color:var(--teal-deep)}
   .txt{font-size:18px; margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere}
   .txt.none{color:var(--muted); font-style:italic}
+  /* A word the model was not sure of. Underlined as well as coloured: this is
+     the one thing on the page a parent is hunting for, and a mark that is only
+     a colour is a mark half the family cannot see. */
+  .txt mark{background:#FBE6C8; color:var(--ink); border-radius:4px; padding:0 2px;
+            box-shadow:inset 0 -2px 0 var(--coral)}
+  /* The per-page buttons. Mouse and touch only — 46px tall because a parent
+     does this standing up with a mug in the other hand, not because anything
+     here is ever a gaze target. */
+  .tools{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px}
+  .tools button{font:inherit; font-size:16px; font-weight:650; min-height:46px;
+                padding:8px 14px; border:2px solid var(--line); border-radius:12px;
+                background:#fff; color:var(--teal-deep); cursor:pointer}
+  .tools button:hover{border-color:var(--teal); background:var(--teal-wash)}
+  .tools button[disabled]{opacity:.55; cursor:default; background:#fff; border-color:var(--line)}
+  .tools .save{border-color:var(--teal); background:var(--teal-wash)}
+  .tools .cancel{color:var(--muted)}
+  .page textarea{width:100%; font:inherit; font-size:18px; line-height:1.45; margin-top:3px;
+                 padding:10px 12px; border:2px solid var(--teal); border-radius:12px;
+                 background:#fff; color:var(--ink); resize:vertical}
   .cover{flex:none; font:inherit; font-size:16px; font-weight:650; min-height:46px;
          padding:8px 14px; border:2px solid var(--line); border-radius:12px;
          background:#fff; color:var(--muted); cursor:pointer}
@@ -265,17 +286,111 @@ function cardFor(p) {
   body.className = "body";
   const no = document.createElement("div");
   no.className = "no";
-  const txt = document.createElement("div");
-  txt.className = "txt" + (p.text.trim() ? "" : " none");
-  txt.textContent = p.text.trim() ? p.text : "No words read off this page yet.";
-  body.appendChild(no); body.appendChild(txt);
+  body.appendChild(no);
   li.appendChild(body);
   const cov = document.createElement("button");
   cov.className = "cover";
   cov.type = "button";
   li.appendChild(cov);
   paintCover(cov, p.cover);
+  paintBody(li, p);
   return li;
+}
+
+// ------------------------------------------------- one page's words (spec §5)
+//
+// What a parent actually came here for: the words the model was not sure of,
+// picked out of the line they sit in, and three buttons under them.
+
+function btn(cls, label) {
+  const b = document.createElement("button");
+  b.className = cls;
+  b.type = "button";
+  b.textContent = label;
+  return b;
+}
+
+// Everything the page below rebuilds sits after .no, so this clears back to it
+// rather than to an empty body — the position label is not redrawn on a save.
+function clearBody(li) {
+  const body = li.querySelector(".body");
+  for (const el of Array.from(body.children)) if (!el.classList.contains("no")) el.remove();
+  return body;
+}
+
+const reEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// The page's own words with the flagged ones wrapped in <mark>. Built as NODES,
+// never by assembling HTML: this is the family's text, off their own photos,
+// and a book about "<b>bears</b>" must read as a book about "<b>bears</b>".
+//
+// A flag is matched on a WORD boundary of its own (letters and digits either
+// side, not \b, which counts an apostrophe as a boundary and would mark the
+// "cat" inside "cat's"). A flag whose word a parent has already fixed by hand
+// simply marks nothing — it is not an error and it must not blank the page.
+function marked(text, flags) {
+  const out = document.createDocumentFragment();
+  const list = (flags || []).filter(f => f && f.word);
+  if (!text || !list.length) { out.appendChild(document.createTextNode(text || "")); return out; }
+  const why = new Map(list.map(f => [f.word.toLowerCase(), f.reason || ""]));
+  // Longest first, so a flag for "mat" cannot eat the start of a flagged
+  // "mattress" that was going to be marked whole.
+  const words = [...new Set(list.map(f => f.word))].sort((a, b) => b.length - a.length);
+  let re;
+  try {
+    re = new RegExp("(?<![\\p{L}\\p{N}])(" + words.map(reEsc).join("|") + ")(?![\\p{L}\\p{N}])", "giu");
+  } catch (e) { out.appendChild(document.createTextNode(text)); return out; }
+  let at = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > at) out.appendChild(document.createTextNode(text.slice(at, m.index)));
+    const mk = document.createElement("mark");
+    mk.textContent = m[0];
+    const reason = why.get(m[0].toLowerCase());
+    if (reason) mk.title = reason;
+    out.appendChild(mk);
+    at = m.index + m[0].length;
+    if (!m[0].length) re.lastIndex++;              // never spin on an empty match
+  }
+  if (at < text.length) out.appendChild(document.createTextNode(text.slice(at)));
+  return out;
+}
+
+// The reading half of a card: the words, then the buttons. "Clear flag" is only
+// offered on a page that HAS one — a row of buttons that do nothing is a row a
+// parent has to read before they can ignore it.
+function paintBody(li, p) {
+  const body = clearBody(li);
+  const txt = document.createElement("div");
+  const has = p.text && p.text.trim();
+  txt.className = "txt" + (has ? "" : " none");
+  if (has) txt.appendChild(marked(p.text, p.flags));
+  else txt.textContent = "No words read off this page yet.";
+  body.appendChild(txt);
+  const tools = document.createElement("div");
+  tools.className = "tools";
+  tools.appendChild(btn("edit", "✎ Fix the words"));
+  tools.appendChild(btn("narrate", "🔊 Re-narrate this page"));
+  if ((p.flags || []).length) tools.appendChild(btn("clear", "✓ These words are right"));
+  body.appendChild(tools);
+}
+
+// The writing half. A plain textarea, because the words are the thing being
+// fixed and a rich editor would only put formatting between a parent and the
+// one job they came here for.
+function editBody(li, p) {
+  const body = clearBody(li);
+  const field = document.createElement("textarea");
+  field.value = p.text || "";
+  field.rows = Math.min(8, Math.max(2, (p.text || "").split("\n").length + 1));
+  field.setAttribute("aria-label", "The words on this page");
+  body.appendChild(field);
+  const tools = document.createElement("div");
+  tools.className = "tools";
+  tools.appendChild(btn("save", "Save these words"));
+  tools.appendChild(btn("cancel", "Cancel"));
+  body.appendChild(tools);
+  field.focus();
+  field.setSelectionRange(field.value.length, field.value.length);
 }
 
 function paintCover(btn, on) {
@@ -290,36 +405,105 @@ function paintStrip(book) {
   for (const p of PAGES) strip.appendChild(cardFor(p));
   renumber();
   $("stripHint").textContent = PAGES.length
-    ? "Drag a page by its ⠿ handle to put the book in the right order. Tap ☆ to choose the cover."
+    ? "Drag a page by its ⠿ handle to put the book in the right order, and tap ☆ to choose the cover. "
+      + "Words New ERA was not sure of are marked — fix them, or say they are right."
     : "No pages yet — New ERA makes them from the photos in this book's folder.";
+}
+
+const JSONPOST = (path, body) => fetch(path, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+// Spec §5: a write lands in text.json, then the book is re-published so the
+// shelf follows. Only a book that is ALREADY on the shelf — kicking a publish
+// at a book still being read would freeze a half-built book into a package
+// Ellie could open.
+function republish(published) {
+  if (!published) return;
+  PUBLISHED = true;
+  JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "publish" }).catch(() => {});
+}
+
+// Every write this page makes goes through here, so there is exactly one place
+// that says "Saved ✓", one that says the hub is not answering, and one that
+// counts the saves the tests watch.
+async function write(body) {
+  note("Saving…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/text", body);
+    out = await r.json();
+  } catch (e) { note("New ERA is not answering — nothing was saved.", true); return null; }
+  if (!r.ok) {
+    note("That change was not saved: " + ((out && out.error) || "New ERA said no."), true);
+    return null;
+  }
+  note("Saved ✓", false);
+  strip.dataset.saved = String(++SAVES);
+  republish(out.published);
+  return out;
 }
 
 // One write, for a drag and for a cover tap alike: the whole order plus the one
 // cover, so a half-applied change is not a shape the server ever sees.
-async function saveStrip() {
-  note("Saving…", false);
+const saveStrip = () => write({ slug: SLUG, order: order(), cover: coverIndex() });
+
+// ---- one page's words. The page is named, so the server writes THAT page and
+// touches neither the order nor the cover: a parent fixing a word cannot lose
+// their page order to a race with their own drag.
+async function savePage(li, p, body) {
+  const out = await write({ slug: SLUG, page: p.index, ...body });
+  if (!out) return false;       // the typed words stay on the screen to try again
+  p.text = out.text;
+  p.flags = out.flags;
+  paintBody(li, p);
+  return true;
+}
+
+// ---- "Re-narrate this page". THE ONE BUTTON ON THIS PAGE THAT SPENDS MONEY,
+// and it spends exactly one page of it: content.js checks the page is real and
+// that there is a voice at all BEFORE a worker is spawned, and the worker's
+// narrate step is handed only:[this page], so every other page keeps the audio
+// already bought for it (content-narrate.js rule 2).
+async function renarrate(li, p, button) {
+  button.disabled = true;
+  note("Recording this page…", false);
   let r, out;
   try {
-    r = await fetch("/content/text", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug: SLUG, order: order(), cover: coverIndex() }),
-    });
-    out = await r.json();
-  } catch (e) { note("New ERA is not answering — nothing was saved.", true); return; }
-  if (!r.ok) { note("That change was not saved: " + ((out && out.error) || "New ERA said no."), true); return; }
-  note("Saved ✓", false);
-  strip.dataset.saved = String(++SAVES);
-  // Spec §5: the write lands in text.json, then the book is re-published so the
-  // shelf follows. Only a book that is ALREADY on the shelf — kicking a publish
-  // at a book still being read would freeze a half-built book into a package
-  // Ellie could open.
-  if (out.published) {
-    PUBLISHED = true;
-    fetch("/content/run", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "books", slug: SLUG, step: "publish" }),
-    }).catch(() => {});
+    r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "narrate", page: p.index });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    note("New ERA is not answering — nothing was recorded.", true);
+    button.disabled = false; return;
   }
+  // A refusal is already a sentence a parent can act on (no voice set up yet,
+  // a page that is not there any more) — it is shown as it came, not decorated.
+  if (!r.ok) {
+    note((out && out.error) || "New ERA could not record that page.", true);
+    button.disabled = false; return;
+  }
+  // 202: the recording runs behind the answer. The worker is spawned before the
+  // 202 is written, so the first status we read already knows about it.
+  const s = await settled();
+  button.disabled = false;
+  const job = s && (s.jobs || []).find(b => b.slug === SLUG);
+  if (job && job.error) { note("That page was not recorded: " + job.error, true); return; }
+  note("Recorded ✓ — Ellie hears the new words next time she opens this book.", false);
+}
+
+// Wait for the hub to go quiet. Five minutes is far longer than one page of a
+// picture book takes and still finite, so a wedged provider leaves a parent
+// with a page they can use rather than a spinner for ever.
+async function settled() {
+  for (let i = 0; i < 1200; i++) {
+    let s;
+    try { s = await (await fetch("/content/status", { cache: "no-store" })).json(); }
+    catch (e) { return null; }
+    if (!s.building) return s;
+    await new Promise(done => setTimeout(done, 250));
+  }
+  return null;
 }
 
 // ---- the drag itself. Capture on the STRIP, never on the row: a captured row
@@ -361,15 +545,38 @@ function endDrag(e) {
 strip.addEventListener("pointerup", endDrag);
 strip.addEventListener("pointercancel", endDrag);
 
-// ---- the cover. Exactly one, always: the tap moves the star rather than
-// adding a second one, and content.js refuses anything else.
+// ---- every button on a card, in one place. Delegated, because a card is
+// redrawn on every accepted write and a listener bound to a button would go
+// with it. Mouse and touch only: `click` is what a finger and a mouse agree on
+// and there is no gaze path to any of it.
 strip.addEventListener("click", (e) => {
-  const btn = e.target.closest(".cover");
-  if (!btn) return;
-  const li = btn.closest(".page");
-  for (const other of Array.from(strip.children))
-    paintCover(other.querySelector(".cover"), other === li);
-  saveStrip();
+  const li = e.target.closest(".page");
+  if (!li) return;
+  // The cover. Exactly one, always: the tap moves the star rather than adding a
+  // second one, and content.js refuses anything else.
+  if (e.target.closest(".cover")) {
+    for (const other of Array.from(strip.children))
+      paintCover(other.querySelector(".cover"), other === li);
+    saveStrip();
+    return;
+  }
+  const p = PAGES.find(x => x.index === Number(li.dataset.index));
+  if (!p) return;
+  if (e.target.closest(".edit")) { editBody(li, p); return; }
+  // Thought better of it: the page goes back to what is on disk, and nothing
+  // was written — not even a "Saved ✓".
+  if (e.target.closest(".cancel")) { paintBody(li, p); return; }
+  if (e.target.closest(".save")) {
+    const field = li.querySelector("textarea");
+    if (field) savePage(li, p, { text: field.value });
+    return;
+  }
+  // "These words are right": the flag was a question and this answers it. The
+  // words themselves are not touched — content.js takes an empty flag list and
+  // nothing else.
+  if (e.target.closest(".clear")) { savePage(li, p, { flags: [] }); return; }
+  const nar = e.target.closest(".narrate");
+  if (nar) renarrate(li, p, nar);
 });
 
 async function loadStrip() {

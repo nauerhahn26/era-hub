@@ -40,6 +40,9 @@ const booksIndex = require("./books-index.js");
 const { EXT: PHOTO_EXT } = require("./clothing-photos.js");
 const { narrationPath } = require("./content-narrate.js");
 const { pagesOf } = require("./content-providers.js");
+// Booleans only — which roles the family has set up. No key is read in this
+// file and none ever will be (see the header).
+const { haveRoles } = require("./ai-config.js");
 
 // A folder must look identical across two observations at least this far apart
 // before it is claimed (spec §2 "Quiet period"; the local mirror syncs every
@@ -196,7 +199,10 @@ function runJob(job) {
     let result = null;
     const w = new Worker(path.join(__dirname, "content-worker.js"), {
       workerData: { dataDir: job.dataDir || DATA, dir: job.dir, kind: job.kind,
-                    slug: job.slug, name: job.name || null, step: job.step || null },
+                    slug: job.slug, name: job.name || null, step: job.step || null,
+                    // One page, for the review page's "Re-narrate this page".
+                    // Null (the normal case) means the whole book.
+                    page: Number.isInteger(job.page) ? job.page : null },
     });
     w.on("message", (m) => {
       if (m && m.step) progress = { step: m.step, state: m.state || null };
@@ -213,7 +219,12 @@ function runJob(job) {
   });
 }
 
-const keyOf = (job) => job.dir + "|" + (job.step || "");
+// Two runs are the same run when they are the same step of the same book — and
+// the page counts: re-narrating page four is not the run that re-narrates page
+// seven, and joining one to the other would leave a parent's second press
+// silently unanswered.
+const keyOf = (job) => job.dir + "|" + (job.step || "") + "|" +
+                       (Number.isInteger(job.page) ? job.page : "");
 
 // One job at a time, and a caller that arrives mid-build gets the result of the
 // run it asked for rather than a bare {busy} it would have to poll for — the
@@ -369,10 +380,16 @@ function jobs() {
   return out;
 }
 
+// The sentence a parent meets when they press "Re-narrate this page" on a hub
+// that has never been given a voice. Words, not a status code and not a step
+// name: the Voice card is where the fix is, so the message points at it.
+const NO_VOICE = "New ERA has no voice yet — add an ElevenLabs key to the Voice card in Settings, then ask for this page again.";
+
 // POST /content/run's whole decision, kept here so the route stays four lines
 // and so the same validation is available to anything else that kicks a build.
 // Returns {started:true}, {skipped:"needs-local-drive"} (409) or {error} (400).
-// An omitted step means "carry on from wherever this book is".
+// An omitted step means "carry on from wherever this book is"; `page` names one
+// page for a step that can do one (narrate — the review page's button, spec §5).
 function runStep(o) {
   const req = o || {};
   const step = req.step == null || req.step === "" ? null : req.step;
@@ -383,6 +400,31 @@ function runStep(o) {
   if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
   const found = bookFor(req.slug, st);
   if (!found) return { error: "unknown book" };
+
+  // ONE PAGE. Checked here rather than inside the worker for one reason: every
+  // refusal has to happen before a thread is spawned and a provider is called,
+  // because by then the family has already been billed for whatever it did.
+  const page = req.page == null ? null : req.page;
+  if (page !== null) {
+    // Narration is the only step that can be done to one page: ingest,
+    // transcribe and publish all read the whole folder. A page handed to one of
+    // those would be silently ignored, and a parent would be left watching a
+    // button that did nothing.
+    if (step !== store.STEP_OWED.reviewing)
+      return { error: "that step works on the whole book, not one page" };
+    let text;
+    try { text = store.readText(found.dir); }
+    catch { return { error: "this book's text.json needs fixing by hand" }; }
+    const pages = (text && text.pages) || [];
+    if (!Number.isInteger(page) || !pages.some(p => p.index === page))
+      return { error: "that is not a page of this book" };
+  }
+  // Nothing to record with. A step the WALK reaches with no key is a deliberate
+  // empty outcome (the book publishes with text and no audio, spec §4), but a
+  // parent who has just pressed a button is owed an answer instead of a book
+  // that quietly does not change.
+  if (step === store.STEP_OWED.reviewing && !(DATA && haveRoles(DATA).elevenlabs))
+    return { error: NO_VOICE };
   // A parent pressing "start this book" must not have to wait for the quiet
   // period they have just decided is over: an unclaimed folder is claimed here
   // and then built, exactly as scan() would have done in its own time.
@@ -396,7 +438,7 @@ function runStep(o) {
   else if (job.state === "failed" && store.owedState(job) === null)
     store.writeJob(found.dir, store.transition(job, job.failedFrom || "inbox"));
   run({ kind: req.kind, slug: req.slug, name: found.name, dir: found.dir,
-        dataDir: DATA, step }).catch(() => {});
+        dataDir: DATA, step, page }).catch(() => {});
   return { started: true };
 }
 
@@ -506,6 +548,73 @@ function saveOrder(o) {
            published: fs.existsSync(path.join(found.dir, "manifest.json")) };
 }
 
+// A page of a picture book is a sentence or two. This is a sanity bound on what
+// arrives over HTTP, not a rule about writing — the route's own body cap is the
+// other half of it.
+const MAX_PAGE_TEXT = 4000;
+
+// POST /content/text's other half (T3.3, spec §5): ONE page's own words, and
+// the flags on it. The order and the cover are saveOrder's; this touches
+// neither, so a parent fixing a word cannot lose their page order to a race
+// with their own drag.
+//
+// FLAGS ARE ANSWERED HERE, NEVER AUTHORED. A flag says "the model was not sure
+// of this word", and only the transcriber may say that — a door that could
+// invent one could put a mark under any word in the family's own book. So the
+// only list this takes is the empty one.
+//
+// Returns {saved}, {skipped:"needs-local-drive"} (409) or {error} (400).
+function savePage(o) {
+  const req = o || {};
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
+  if (typeof req.slug !== "string" || !req.slug) return { error: "unknown book" };
+  const found = bookFor(req.slug, st);
+  if (!found) return { error: "unknown book" };
+  if (!Number.isInteger(req.page)) return { error: "the page must be a whole number" };
+  let text;
+  try { text = store.readText(found.dir); }
+  catch { return { error: "this book's text.json needs fixing by hand" }; }
+  const pages = (text && text.pages) || [];
+  const at = pages.findIndex(p => p.index === req.page);
+  if (at < 0) return { error: "that is not a page of this book" };
+
+  const words = req.text !== undefined, flags = req.flags !== undefined;
+  if (!words && !flags) return { error: "nothing to change on that page" };
+  if (words && typeof req.text !== "string") return { error: "a page's words must be text" };
+  if (words && req.text.length > MAX_PAGE_TEXT)
+    return { error: "that is more words than a page of a picture book holds" };
+  if (flags && !(Array.isArray(req.flags) && req.flags.length === 0))
+    return { error: "flags can only be cleared here" };
+
+  const next = pages.slice();
+  const p = { ...next[at] };
+  if (words) {
+    p.text = req.text;
+    // A flag is a question ("did I read this word right?") and a parent who has
+    // just retyped the line has answered it. Left behind, the Settings card
+    // would go on counting words the model was unsure of under words the model
+    // never wrote.
+    p.flags = [];
+  }
+  if (flags) p.flags = [];
+  next[at] = p;
+  store.writeText(found.dir, { pages: next });
+  store.appendLog(found.dir, "review", words
+    ? "a grown-up rewrote page " + req.page + " (" + p.text.length + " character(s))"
+    : "a grown-up cleared the flags on page " + req.page);
+  return { saved: true, page: req.page, text: p.text, flags: p.flags,
+           published: fs.existsSync(path.join(found.dir, "manifest.json")) };
+}
+
+// The one door the review page writes through. Which half of it a request means
+// is decided by whether it names a page — a whole-book write (the drag, the
+// cover) never names one, and a per-page write always does.
+function saveText(o) {
+  const req = o || {};
+  return req.page == null ? saveOrder(req) : savePage(req);
+}
+
 // ------------------------------------------------------------------- status
 
 // Deliberately thin, and deliberately free of the claim's device name and of
@@ -546,7 +655,8 @@ function start(dataDir) {
 
 module.exports = {
   start, scan, tick, run, runJob, runStep, isBuilding, idle, status, beat, claim,
-  jobs, jobFor, bookFor, pagesFor, pageFile, saveOrder, KINDS, QUIET_MS, STALE_MS,
+  jobs, jobFor, bookFor, pagesFor, pageFile, saveOrder, savePage, saveText,
+  KINDS, QUIET_MS, STALE_MS, MAX_PAGE_TEXT, NO_VOICE,
   _testReset: () => {
     running = null; inflight = null; queue = []; seen = new Map();
     progress = null; lastScan = null;
