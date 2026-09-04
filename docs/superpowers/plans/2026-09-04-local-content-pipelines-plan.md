@@ -1093,6 +1093,66 @@ not an edge case. Ambiguity 2/5.
 
 ---
 
+### Phase L: follow-ups from the 16-page live run (9/4, commit 0822ebd, port 8453)
+**Posture hint:** implementing.
+**Rationale:** the one full live build (16 pages, two models a page, 17
+narrations, publish, shelf mirror: 111 s; 15/16 pages loose-perfect, the one
+page with real errors flagged, zero silent errors) worked end to end; what it
+surfaced is status/log truthfulness, not pipeline correctness. Each item is
+small and has a reproducer in the run's artefacts. Ambiguity 1/5.
+**Spec section:** §4, §7 risks ("the parent must be able to trust the card").
+
+**L1 — `skipped` is a count AND a reason** — `server.js` ~`:2001-2005` reads
+`mirrorBook`'s numeric `skipped` (files already on the shelf, `drive.js` ~`:506/516`)
+as the string reason `drive.js` ~`:497` returns (`"needs-local-drive"`). Every
+re-publish logs "built but not shelved: 19" although the copy succeeded, and
+the success line never prints. Fix: separate fields (`reason` string vs
+`skipped` number) or `typeof === "string"`; test both branches in
+`tests/content-publish.test.mjs` (or the drive suite that owns `mirrorBook`).
+
+**L2 — the page count shrinks and grows back during ingest** — `content.js`
+~`:360-362` `jobFor` takes `max(built, text.pages, listing(dir).count)` and
+`listing()` counts LOOSE photos, which `content-ingest.js` ~`:139-147` moves into
+`sources/` one by one. Live: `/content/status` said 16 → 3 → 6 → 11 → 15 → 16.
+Fix: count `sources/` + loose together (a photo is one page wherever it sits);
+test with a half-ingested folder in `tests/content-routes.test.mjs` or
+`tests/content-worker.test.mjs`.
+
+**L3 — transcribe progress is invisible and a killed worker loses the pass** —
+`content-providers.js` ~`:856` writes `text.json` once after the whole loop;
+`progress.transcribed` stayed 0 for the whole step (on a throttled free key,
+for hours). The comment at ~`:846` promises "half a book of text is progress a
+free key paid for" — make it true: write `text.json` (tmp + rename) after each
+page, so `progress.transcribed` climbs and a restart resumes from the pages
+already read (the existing per-page skip must honour them). Test: fake AI
+answers 3 pages then the worker is stopped → `text.json` has 3; the re-run asks
+only for the rest (fake call count).
+
+**L4 — the thinking-shape retune is silent** — `content-providers.js`
+~`:439-440` re-sends after a 400 with no log line, so the request ledger cannot
+be reconciled (32 accounted, possibly 33 sent). One `log.jsonl` line per
+retune (model, from → to). Test: fake 400 on `thinkingBudget` → exactly one
+log line, one extra call.
+
+**L5 — `cost.narrated` counts pages, not purchases** — `content.js` ~`:363-370`
+sums CURRENT text lengths, so a re-narrated page is counted once (card said
+4614, ElevenLabs saw 4986). Keep a small `spent` ledger on the job (chars sent
+per narrate call, appended by the narrate step) and sum it. Test: narrate, edit,
+re-narrate one page → ledger = book + that page.
+
+**L6 — an edited page reads as "nobody checked it"** — `content.js` ~`:791`
+drops `read` on a parent edit (right), so `checkedBy` is null afterwards, and
+the Phase 3 follow-up "`edited` is per page, never surfaced" compounds it. The
+review page and `/content/status` say **"edited by you"** for such a page (and
+never "unchecked"); the rebuild-with-edits path keeps the badge. Test in
+`tests/book-review-ui.test.mjs` with a fake status carrying `edited:true`.
+
+- **Gate (Phase L):** the four content suites + the review-page suite green;
+  full gate at the phase boundary.
+- **Phase L retrospective.**
+
+---
+
 ### Phase 7 (FINAL, MANDATORY): Behavioral verification, including Windows VM QA
 **Posture hint:** implementing.
 **Rationale:** every step is a concrete command with a concrete expected output.
