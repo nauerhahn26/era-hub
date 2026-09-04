@@ -153,9 +153,21 @@ function pruneTree(dest, keep, stats, rel = "") {
   }
 }
 
+// A manifest is a package's "I am ready" signal: the reader opens the book the
+// moment manifest.json lands. Listed in readdir/Drive order it can arrive
+// before the pages it names, and the device shows a half-mirrored book. So in
+// every directory the manifests go LAST — after that directory's files AND its
+// subfolders. One rule, used by both mirrors, so they cannot drift apart.
+const MANIFEST_NAMES = ["manifest.json", "catalog.json"];
+function manifestsLast(entries) {
+  const rest = [], last = [];
+  for (const e of entries) (MANIFEST_NAMES.includes(String(e.name).toLowerCase()) ? last : rest).push(e);
+  return rest.concat(last);
+}
+
 async function mirrorDir(tok, folderId, destDir, stats) {
   fs.mkdirSync(destDir, { recursive: true });
-  for (const f of await listChildren(tok, folderId)) {
+  for (const f of manifestsLast(await listChildren(tok, folderId))) {
     const safe = f.name.replace(/[\\/:*?"<>|]/g, "_");
     const dest = path.join(destDir, safe);
     if (f.mimeType === "application/vnd.google-apps.folder") {
@@ -293,7 +305,7 @@ function setLocalFolder(p) {
 
 function copyTreeLocal(src, dest, stats) {
   fs.mkdirSync(dest, { recursive: true });
-  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+  for (const e of manifestsLast(fs.readdirSync(src, { withFileTypes: true }))) {
     const s = path.join(src, e.name), d = path.join(dest, e.name);
     try {
       if (e.isDirectory()) { copyTreeLocal(s, d, stats); continue; }
@@ -369,4 +381,4 @@ function start(dataDir) {
   }
 }
 
-module.exports = { start, status, connect, sync, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder };
+module.exports = { start, status, connect, sync, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast };
