@@ -13,6 +13,7 @@ const updater = require("./update");
 const drive = require("./drive");
 const clothing = require("./clothing");
 const content = require("./content.js");
+const musicAdd = require("./music-add.js");
 const booksIndex_ = require("./books-index.js");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
@@ -1490,6 +1491,48 @@ const server = http.createServer((req, res) => {
   }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/movies.json") {
     serveMoviesRecipe(req, res); return;
+  }
+  // ---- Music: "+ Add a song from the web" (spec §6; music-add.js) ----
+  // Both doors sit ABOVE the /music/ media jail, which would otherwise 404
+  // them as a song with a disallowed extension.
+  //
+  // 202 and the download runs behind it, exactly like /clothing/regenerate: a
+  // song takes a minute and no sheet should hold a socket open for it. Every
+  // refusal is JSON with words a parent can read — a 500 here would leave them
+  // staring at a spinner with nothing to do about it. ownDoor because this
+  // downloads from the internet onto the family's PC: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/music/add") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = musicAdd.add(JSON.parse(body)); }
+      catch {
+        res.writeHead(400, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "bad-request", message: "New ERA could not read that request." }));
+        return;
+      }
+      if (out.error) {
+        // 400 = the sheet sent something wrong; 409 = the hub cannot do it yet
+        // (no pack, no Drive folder, a song already downloading) and the sheet
+        // shows out.message and, for a missing pack, offers to install it.
+        const mine = ["bad-url", "need-url-or-query", "bad-slug"].includes(out.error);
+        res.writeHead(mine ? 400 : 409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+        return;
+      }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ started: true }));
+    });
+    return;
+  }
+  // The same deal /clothing/status makes: no-store, because a sheet polling
+  // this while a song downloads must never be told a cached answer.
+  if (req.method === "GET" && urlPath === "/music/add/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(musicAdd.status()));
+    return;
   }
   if (req.method === "GET" && urlPath.startsWith("/music/")) {
     serveMediaJail(req, res, MUSIC_DIR, urlPath.slice("/music/".length), MUSIC_EXTS, MUSIC_AV_EXTS);
