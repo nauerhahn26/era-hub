@@ -1,0 +1,275 @@
+// content-store.js — the three files a content job owns inside a book folder,
+// and the atomic write every catalogue in the suite goes through.
+//
+//   books/<Title>/.build/job.json    the claim + the state machine
+//   books/<Title>/.build/text.json   page order + transcribed text + flags
+//   books/<Title>/.build/log.jsonl   one {t, step, msg} line per step
+//
+// Why one module: a book is built IN PLACE inside the family's Drive folder,
+// so the same three files are read and written by the hub worker, by a second
+// device's hub, and by Claude Code in power mode (spec §2, "text.json is the
+// interop point"). If any two of those wrote a slightly different shape the
+// book would build half-way and stop. Everything here is pure + synchronous;
+// there is no network and no key anywhere in this file.
+//
+// Two laws it enforces for everyone else:
+//   1. NOTHING is written in place. writeAtomic() writes <name>.tmp and
+//      renames, so Google Drive for Windows never mirrors a half-written
+//      manifest to the other device (spec §2 "written LAST (tmp + rename)").
+//   2. NO KEY EVER REACHES DISK. Every string that goes into job.json's error
+//      list or into log.jsonl runs through redact() first — a provider error
+//      body loves to echo the request URL back at you, key query param and all.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+
+const BUILD_DIR = ".build";
+
+// inbox → transcribing → reviewing → narrating → published → animating → done,
+// with `failed` reachable from anywhere (spec §2 "Claim"). Two amendments the
+// spec's prose implies but its arrow diagram does not spell out:
+//   published → done   animation is optional; with no fal key the job is over
+//                      the moment the manifest lands.
+//   failed → <any>     a failed job is re-runnable: it resumes at the step it
+//                      fell over on, and its errors are kept.
+const STATES = ["inbox", "transcribing", "reviewing", "narrating", "published", "animating", "done", "failed"];
+const LEGAL = {
+  inbox:        ["transcribing", "failed"],
+  transcribing: ["reviewing", "failed"],
+  reviewing:    ["narrating", "failed"],
+  narrating:    ["published", "failed"],
+  published:    ["animating", "done", "failed"],
+  animating:    ["done", "failed"],
+  done:         ["failed"],
+  failed:       STATES.filter(s => s !== "failed"),
+};
+
+function buildDir(dir) { return path.join(dir, BUILD_DIR); }
+function jobPath(dir)  { return path.join(buildDir(dir), "job.json"); }
+function textPath(dir) { return path.join(buildDir(dir), "text.json"); }
+function logPath(dir)  { return path.join(buildDir(dir), "log.jsonl"); }
+
+function iso(now) {
+  if (typeof now === "string") return now;                    // tests pin the clock
+  return new Date(now == null ? Date.now() : now).toISOString();
+}
+
+// ---------------------------------------------------------------- redaction
+
+// Ordered: the name=value forms run first so the log keeps the parameter name
+// (a "?key=[redacted]" is far more useful to a parent-facing error than a bare
+// [redacted]), then the provider prefixes, then the bare-hex catch-all.
+const REDACTIONS = [
+  // key=…, api_key: …, token=…, xi-api-key: … — in a URL, a header or prose
+  [/((?:api[-_]?key|access[-_]?token|auth[-_]?token|xi-api-key|apikey|key|token|secret|password)\s*[:=]\s*)["']?[A-Za-z0-9._~+/=-]{8,}["']?/gi, "$1[redacted]"],
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]"],
+  [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, "[redacted]"],              // anthropic
+  [/\bsk[-_][A-Za-z0-9]{16,}/g, "[redacted]"],                // openai, elevenlabs
+  [/\bAIza[A-Za-z0-9_-]{10,}/g, "[redacted]"],                // google
+  [/\bfal[-_][A-Za-z0-9_-]{8,}/g, "[redacted]"],              // fal
+  // fal's "<uuid>:<secret>" pair
+  [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[A-Za-z0-9]{8,}/g, "[redacted]"],
+  // a bare 32+ hex run is what an older ElevenLabs key looks like. Yes, this
+  // also eats a sha256 someone logs — a hash in a build log is worth less than
+  // a leaked key is expensive.
+  [/\b[0-9a-f]{32,}\b/g, "[redacted]"],
+];
+
+function redact(s) {
+  let out = String(s == null ? "" : s);
+  for (const [re, to] of REDACTIONS) out = out.replace(re, to);
+  return out;
+}
+
+// --------------------------------------------------------------- atomic write
+
+// "manifest.json" -> "manifest.tmp" (spec §2 names it that way). One writer per
+// book folder at a time — the claim in job.json is what guarantees that.
+function tmpPathFor(file) {
+  const ext = path.extname(file);
+  return path.join(path.dirname(file), path.basename(file, ext) + ".tmp");
+}
+
+// Objects are stringified (2-space, trailing newline) so a parent who opens
+// text.json on their phone sees something readable; strings and Buffers go
+// through untouched. Returns the target path.
+function writeAtomic(file, data) {
+  const buf = Buffer.isBuffer(data) ? data
+    : Buffer.from(typeof data === "string" ? data : JSON.stringify(data, null, 2) + "\n", "utf8");
+  const tmp = tmpPathFor(file);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  try {
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    // The target keeps whatever it had: we never opened it. Sweep the tmp so a
+    // failed run does not leave litter for Drive to mirror.
+    try { fs.unlinkSync(tmp); } catch {}
+    throw e;
+  }
+  return file;
+}
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+}
+
+// ------------------------------------------------------------------ text.json
+
+// {pages:[{index, source, text, flags:[{word, reason}], cover}]}. Strict about
+// the four fields the rest of the pipeline reads, forgiving about the two it
+// can default — a hand-written text.json from power mode usually omits both.
+function normalizeText(obj) {
+  const src = obj && typeof obj === "object" ? obj : {};
+  const pages = src.pages == null ? [] : src.pages;
+  if (!Array.isArray(pages)) throw new Error("text.json: pages must be an array");
+  return {
+    pages: pages.map((p, i) => {
+      const at = "text.json: page " + i;
+      if (!p || typeof p !== "object") throw new Error(at + " must be an object");
+      if (!Number.isInteger(p.index) || p.index < 0) throw new Error(at + ": index must be a non-negative integer");
+      if (typeof p.source !== "string" || !p.source) throw new Error(at + ": source must be a non-empty string");
+      if (typeof p.text !== "string") throw new Error(at + ": text must be a string");
+      const flags = p.flags == null ? [] : p.flags;
+      if (!Array.isArray(flags)) throw new Error(at + ": flags must be an array");
+      return {
+        index: p.index,
+        source: p.source,
+        text: p.text,
+        flags: flags.map((f) => {
+          if (!f || typeof f.word !== "string" || !f.word) throw new Error(at + ": every flag needs a word");
+          return { word: f.word, reason: typeof f.reason === "string" ? f.reason : "" };
+        }),
+        cover: !!p.cover,
+      };
+    }),
+  };
+}
+
+function readText(dir) {
+  const raw = readJson(textPath(dir));
+  return raw == null ? null : normalizeText(raw);
+}
+
+function writeText(dir, obj) {
+  const norm = normalizeText(obj);
+  writeAtomic(textPath(dir), norm);
+  return norm;
+}
+
+// ------------------------------------------------------------------- job.json
+
+// {state, claimedBy, startedAt, heartbeat, steps{}, errors[]} — the claim shape
+// content.js writes and every hub instance reads (spec §2 "Claim").
+function newJob(opts) {
+  const o = opts || {};
+  const t = iso(o.now);
+  const state = o.state == null ? "inbox" : o.state;
+  if (!STATES.includes(state)) throw new Error("job.json: unknown state " + state);
+  return {
+    state,
+    claimedBy: o.claimedBy == null ? null : String(o.claimedBy),
+    startedAt: t,
+    heartbeat: t,
+    // The state a job is born in is a step it has entered, so `steps` is a
+    // complete record of the walk without the caller having to seed it.
+    steps: { [state]: { at: t } },
+    errors: [],
+  };
+}
+
+function canTransition(from, to) {
+  return !!(LEGAL[from] && LEGAL[from].includes(to));
+}
+
+// Returns a NEW job — callers hold the old one while they decide whether the
+// step really finished, so mutating in place would lie to them.
+// Re-entering the SAME state is not a transition and not an error: it is the
+// heartbeat refresh a resumed step does (a takeover after a stale claim re-runs
+// the step it is already in).
+function transition(job, next, opts) {
+  const o = opts || {};
+  const t = iso(o.now);
+  const from = job && job.state;
+  if (!STATES.includes(next)) throw new Error("job.json: unknown state " + next);
+  if (!STATES.includes(from)) throw new Error("job.json: unknown state " + from);
+  if (from === next) return { ...job, heartbeat: t };
+  if (!canTransition(from, next)) throw new Error("job.json: illegal transition " + from + " -> " + next);
+  const out = {
+    ...job,
+    state: next,
+    heartbeat: t,
+    steps: { ...(job.steps || {}), [next]: { at: t } },
+    errors: (job.errors || []).slice(),
+  };
+  if (o.claimedBy != null) out.claimedBy = String(o.claimedBy);
+  return out;
+}
+
+// Fall over, keeping every earlier error (a book that failed twice for two
+// different reasons is the one a parent needs to see the history of) and
+// remembering the step to resume at.
+function fail(job, msg, opts) {
+  const o = opts || {};
+  const t = iso(o.now);
+  const from = job && job.state;
+  const out = transition({ ...job, state: from === "failed" ? (job.failedFrom || "inbox") : from }, "failed", { now: t });
+  out.failedFrom = from === "failed" ? (job.failedFrom || "inbox") : from;
+  out.errors = (job.errors || []).concat([{ t, state: out.failedFrom, msg: redact(msg) }]);
+  return out;
+}
+
+function readJob(dir) {
+  const raw = readJson(jobPath(dir));
+  if (!raw || typeof raw !== "object") return null;
+  return raw;
+}
+
+function writeJob(dir, job) {
+  if (!job || !STATES.includes(job.state)) throw new Error("job.json: unknown state " + (job && job.state));
+  // Belt and braces: the errors list is the one field a provider message can
+  // reach, and it is written by half a dozen call sites.
+  const safe = { ...job, errors: (job.errors || []).map(e => ({ ...e, msg: redact(e && e.msg) })) };
+  writeAtomic(jobPath(dir), safe);
+  return safe;
+}
+
+// ------------------------------------------------------------------ log.jsonl
+
+// Exactly {t, step, msg}, one JSON object per line, both strings redacted.
+// Never throws: a build that cannot write its log must still finish the book
+// (same law as pool.js's append — history is nice-to-have, the artefact is not).
+// Returns the line written, or null if the log was unwritable.
+function appendLog(dir, step, msg, opts) {
+  const o = opts || {};
+  const line = { t: iso(o.now), step: redact(step), msg: redact(msg) };
+  try {
+    fs.mkdirSync(buildDir(dir), { recursive: true });
+    fs.appendFileSync(logPath(dir), JSON.stringify(line) + "\n");
+  } catch (e) {
+    console.error("[content-store] log append failed: " + e.message);
+    return null;
+  }
+  return line;
+}
+
+// Torn last line tolerated: Drive can mirror a log mid-append.
+function readLog(dir) {
+  let raw;
+  try { raw = fs.readFileSync(logPath(dir), "utf8"); } catch { return []; }
+  const out = [];
+  for (const l of raw.split("\n")) {
+    if (!l.trim()) continue;
+    try { out.push(JSON.parse(l)); } catch {}
+  }
+  return out;
+}
+
+module.exports = {
+  BUILD_DIR, STATES, LEGAL,
+  buildDir, jobPath, textPath, logPath, tmpPathFor,
+  writeAtomic, readJson, redact,
+  normalizeText, readText, writeText,
+  newJob, canTransition, transition, fail, readJob, writeJob,
+  appendLog, readLog,
+};
