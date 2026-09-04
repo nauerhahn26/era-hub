@@ -188,6 +188,14 @@ spec's provenance fields alongside (`tmdbId?`, `addedBy`, `year?`), defaulting
    phase implements. Loop until APPROVED before starting the next phase.
 8. **Phase retrospective** after every phase: decisions made, observations,
    adaptations, follow-ups, confidence + risks.
+9. **Design for the FREE Google tier** (spec §4 "Design target", dad 9/4). The
+   family never adds a card to Google: 500 requests a day per model, pauses
+   that end when the quota does, books that may span days. Nothing may depend
+   on the paid tier; every Google-touching change is tested against a fake
+   429 with `RetryInfo`. The Google credit on the family's *test* key (9/4)
+   exists so the E2E runs finish the same day — a testing convenience, never a
+   product assumption. A live run on the paid tier is not evidence for the
+   free-tier path.
 
 ### Standing verification commands
 
@@ -240,6 +248,8 @@ it in the suite header comment):
 | `tests/movies-add.test.mjs` | 8437 |
 | `tests/movies-lookup.test.mjs` | 8438 (fake provider) |
 | `tests/fal-key.test.mjs`, `tests/content-animate.test.mjs` | 8439 (hub) + 8441 (fake fal) |
+| `tests/drive-localfolder.test.mjs` (Phase E) | 8442 |
+| `tests/content-allowance.test.mjs` (Phase 6b) | 8443 (hub) + 8444 (fake ElevenLabs) + 8445 (fake AI) |
 
 ---
 
@@ -1002,6 +1012,84 @@ Settings card cloned from `#voice`. Ambiguity 2/5.
   Pass criteria: cost gate enforced; no auto-spend path exists; keys never
   logged; full gate green.
 - **Phase 6 retrospective.**
+
+---
+
+### Phase 6b: Out of allowance (dad 9/4 — "notify the user they are out of credits")
+**Posture hint:** implementing.
+**Rationale:** the pause already exists for Google (E4: `job.pausedUntil` from
+the 429's `RetryInfo`, `content-worker.js` `holdHere` `{hold:"quota"}`); what is
+missing is the same shape for ElevenLabs, a status field that names the
+provider, and the UI telling the family in the places they look. Guardrail 9:
+the family never pays Google, so this path is the NORMAL path for a slow book,
+not an edge case. Ambiguity 2/5.
+**Spec section:** §4 "Design target", §7 risks.
+
+**T6b.1 — ElevenLabs runs out too: a pause, not a dead key**
+- **Acceptance:** `content-narrate.js:102` today turns EVERY 401 into
+  `permanent: ElevenLabs did not accept that key`. ElevenLabs answers a spent
+  monthly allowance with 401 and a body `{detail:{status:"quota_exceeded",
+  message:…}}` — that must become a **pause**, the way transcribe's spent
+  ladder is (`content-providers.js` `.quota = true`): the narrate step returns
+  `{hold:"quota", pausedUntil, note}` where `pausedUntil` is the subscription's
+  `next_character_count_reset_unix` (one `GET /v1/user/subscription` through
+  `ERA_ELEVEN_URL`; unreachable → now + 24 h) and the pages already narrated
+  are kept. A 401 **without** the quota status stays permanent. `/content/status`
+  jobs gain `paused: {provider:"google"|"elevenlabs", reason, until, addUrl}`
+  (derived; `pausedUntil` stays for the existing readers), with `addUrl` =
+  `https://aistudio.google.com/apikey` / `https://elevenlabs.io/app/subscription`.
+  `/content/status` also carries `narration: {charactersLeft, resetsAt}` when a
+  voice key exists (subscription endpoint, cached 10 min, null on any error,
+  never the key). `POST /content/run {kind, slug, retry:true}` on a paused job
+  runs it NOW (already true for permanent failures — pin it for pauses).
+- **Files:** `content-narrate.js`; `content-worker.js`; `content.js`;
+  `server.js`; new `tests/content-allowance.test.mjs` (**8443 hub + 8444 fake
+  ElevenLabs + 8445 fake AI**).
+- **TDD:** required, against fakes. Cases: fake ElevenLabs 401 `quota_exceeded`
+  → state stays `narrating`, `paused.provider === "elevenlabs"`, `until` equals
+  the fake's reset, narrated pages survive; 401 plain → permanent with the old
+  message; fake AI 429 with `RetryInfo` → `paused.provider === "google"`;
+  `retry:true` re-runs at once and the fake sees the call; the fake recorded
+  every call it should have (zero recorded = a real key was spent).
+- **Verification:** `node --test tests/content-allowance.test.mjs tests/content-narrate.test.mjs tests/content-worker.test.mjs` → `# fail 0`.
+
+**T6b.2 — the two honest choices, where the family looks**
+- **Acceptance:** the Settings books card (`public/settings/index.html` ~`:760`)
+  and the review page (`public/book-review/`) show, for a paused book, one
+  plain sentence naming the provider and the local resume time, and the two
+  choices: *wait — it carries on by itself* or *add credit at <addUrl> and press*
+  **Try again now** (posts `retry:true`). The voice card shows "≈ N characters
+  left this month, about K pages (resets <date>)" when `narration` is known.
+  Nothing new is dwell-able (review page and Settings are pointer-only already).
+- **Files:** `public/settings/index.html`; `public/book-review/index.html`;
+  `tests/settings-ui.test.mjs`; `tests/book-review-ui.test.mjs`.
+- **TDD:** required, browser suites against a fake `/content/status`. Cases:
+  paused google → sentence + AI Studio link + button; paused elevenlabs →
+  ElevenLabs link; not paused → nothing; the button posts `retry:true` once.
+- **Verification:** `node --test tests/settings-ui.test.mjs tests/book-review-ui.test.mjs` → `# fail 0`.
+
+**T6b.3 — one Windows toast per pause**
+- **Acceptance:** when a job ENTERS a pause (a new `pausedUntil` for that slug)
+  the hub raises one Windows toast — "<Book> is waiting: out of <provider>
+  allowance until <time>. Open Settings to add credit or let it wait." — via the
+  proven powershell spawn shape (`server.js:275-290`); never twice for the same
+  `(slug, pausedUntil)`; nothing on `retry`; no-op off `win32`. The spawn goes
+  through a seam (`ERA_TOAST_CMD` or an injected function) so the test can see
+  it without PowerShell.
+- **Files:** `content.js` (or a small `notify.js` added to `tools/build-payload.sh`);
+  `tests/content-allowance.test.mjs`.
+- **TDD:** required. Cases: entering a pause → exactly one toast with the
+  provider named; the same pause seen again on the next scan → none; a
+  different `pausedUntil` → one more; Linux → none.
+- **Verification:** `node --test tests/content-allowance.test.mjs` → `# fail 0`.
+- **Adaptation:** toasts from a scheduled-task session need an AppId — use
+  PowerShell's own; if the VM shows no toast in Phase 7, log it as a follow-up,
+  do not block the phase.
+
+- **Gate (Phase 6b):** review against spec §4 "Design target". Pass criteria:
+  no allowance answer from any provider is a dead end; the key never appears in
+  status, log or toast; full gate green.
+- **Phase 6b retrospective.**
 
 ---
 

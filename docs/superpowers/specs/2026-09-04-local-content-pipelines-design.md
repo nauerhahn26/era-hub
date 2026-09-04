@@ -199,6 +199,18 @@ Only the device that claimed the job spends.
 required for narration because it is the only step with no free equivalent that
 meets the word-timing bar.
 
+**Design target (dad, 9/4): the family never adds a card to Google.** We design
+for row 2 — a *free* Google AI Studio key plus ElevenLabs. Every step that
+touches Google must be right on the free tier's shape: 500 requests a day per
+model, a pause that ends when the quota does (never a failure), a book that may
+take more than one day, and nothing that only works on a paid tier. The Google
+credit on the family's test key (9/4, for the same-day E2E runs) is a **testing
+convenience, not a product assumption**; a live run that happens to be on the
+paid tier proves nothing about the free-tier path, which the tests cover with a
+fake 429. When a family is out of allowance the hub says so, in the places they
+look, with the two honest choices — wait (it resumes by itself) or add credit
+and press *Try again now* — never a quiet stall.
+
 ## 5. Review-and-reorder page
 
 The only builder UI. Served by the hub at `/book-review/?slug=…` (a free prefix; `/books/` is the media jail), linked from
