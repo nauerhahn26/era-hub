@@ -35,6 +35,19 @@
 // its decision is adopted into DEFAULTS by T2.6a — models and prices drift,
 // and a default that lives in one object is one edit rather than a rewrite.
 //
+// THE DECISION, dated 2026-09-04 (the memo itself is private — it quotes the
+// pages — and lives in era-family, never in this repo): read a page with
+// `gemini-3.1-flash-lite`, ask `gemini-3.5-flash-lite` the same question, and
+// publish the page when the two agree; show the parent the ones they read
+// differently. Both are free-tier AI Studio models, so the whole policy costs
+// a family nothing. It is the only configuration the bake-off measured that
+// met the accuracy bar, and the reason is decorrelation: the chosen
+// transcriber never flags a word as doubtful — not once, on any page it got
+// wrong — so a SECOND, DIFFERENT model is the entire safety net. Two runs of
+// the same model agree with each other and are wrong together, so do not
+// "simplify" the pair into one model asked twice. Re-run the bake-off (its
+// README) before changing any of this; the next re-validation is due 2027-03.
+//
 // No key is ever logged, written to job.json, or put in a returned message:
 // every string that leaves here goes through content-store's redact() first.
 "use strict";
@@ -50,6 +63,16 @@ const { aiRoles } = require("./ai-config.js");
 // order; a character's hand-lettered sign IS story text) are in that file's
 // changelog, which is the evidence trail for why the words are these words.
 const PROMPT_VERSION = "v3";
+
+// KNOWN GAP, left open by T2.6a on purpose (it is code, not config, and this
+// task changed only defaults): the bake-off's pairing asks the transcriber and
+// its partner the question in TWO DIFFERENT WORDINGS — the partner's v3 and
+// the transcriber's older v2 — because a shared wording correlates their
+// mistakes as surely as a shared model does. Both passes here send v3. The
+// pair still catches more than one pass alone, which is why it is on; it is
+// not yet the pairing that was measured at its best. Closing this means two
+// NAMED, PINNED prompts (`transcribe` = v2, `second-opinion` = v3) and a
+// config field naming which each pass sends — and then never "upgrading both".
 
 const POLICY = `You are transcribing one photographed page of a printed children's picture book so it can be read aloud by a speech synthesiser. A single wrong word is a failure. Follow these rules exactly.
 
@@ -76,16 +99,24 @@ const TRANSCRIBE_PROMPT = POLICY + "\n\n" + OUTPUT_CONTRACT;
 // to answer for accounts created now (a hardcoded id 404s for new accounts; a
 // -latest alias can be rate-limited for hours while a sibling answers
 // instantly — both seen live on the family's own free key, QA 9/1-9/2). Keep
-// the two lists in step; T2.6a may re-order this one from the bake-off, which
-// measures reading accuracy rather than the "cheapest that can see" the
-// Clothing Picker needs.
+// the two lists in step, EXCEPT for google's order: T2.6a re-ordered it from
+// the bake-off, which measures reading accuracy rather than the "cheapest that
+// can see" the Clothing Picker needs.
+//
+// google's first two rungs are the bake-off's pick and its partner, in that
+// order, because the agreement pass takes rung one and rung two. The rest are
+// fallbacks for the day one of them is retired — they are the ids verified to
+// answer, not ids the bake-off ranked. Anything bigger Google offers is capped
+// on a free key at a book or so a day, or (the Pro tier) refused outright, so a
+// family cannot fall back to a stronger model: the two lites are the free field.
 const PROVIDERS = {
   anthropic: { base: "https://api.anthropic.com",
     models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"] },
   openai: { base: "https://api.openai.com",
     models: ["gpt-5-mini", "gpt-4o-mini"] },
   google: { base: "https://generativelanguage.googleapis.com",
-    models: ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite"] },
+    models: ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite",
+             "gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview"] },
 };
 
 // A page is a sentence or two of print. Two minutes is generous for that and
@@ -103,24 +134,37 @@ function baseFor(provider) { return aiBase() || (PROVIDERS[provider] || PROVIDER
 // <DATA>/content-config.json. Every field here is a value the bake-off can
 // change without touching a line of code (spec §7 "Provider drift").
 //
-//   provider      null = whichever provider the family's vision card holds.
-//                 A named provider only wins if the key is for that provider —
-//                 there is exactly one vision key, and a config file must not
-//                 be able to point it at a host it cannot authenticate to.
-//   model         null = the provider's ladder in order; a name leads it.
-//   agreementPass false = one cheap call per page (the spec's default until
-//                 the bake-off shows a second pass paying for itself).
-//   escalateTo    the strong model a disagreement goes to. null = the next
-//                 unused rung of the ladder decides; if there is none the
-//                 first reading is kept and the page is flagged either way —
-//                 a flagged page still publishes (ruling 9/4).
+//   provider      the provider the bake-off chose, and the one `model` belongs
+//                 to. It never overrides the family's vision card — there is
+//                 exactly one vision key and a config file must not be able to
+//                 point it at a host it cannot authenticate to — it GUARDS it:
+//                 a card holding an OpenAI key reads books on OpenAI's own
+//                 ladder and is never asked for a model by that name.
+//   model         the transcriber. It leads the ladder, and the rest of the
+//                 provider's rungs follow, so a model that has since been
+//                 retired still falls through to one that answers.
+//   agreementPass true = the page is read twice, by the transcriber and by the
+//                 next rung (the partner), and only published unflagged when
+//                 the two readings agree. Costs one extra free call per page.
+//   escalateTo    the model a disagreement is handed to, which then pre-fills
+//                 the parent's answer. null = ask NOBODY: keep the
+//                 transcriber's reading and flag the page for the parent. That
+//                 is the free default, because the only adjudicator the
+//                 bake-off measured needs a paid key; a family that adds one
+//                 names it here. A flagged page publishes either way (ruling
+//                 9/4) — the flag is a "come and look", never a hold.
 //
-// T2.6a: set from era-family/data/ocr-bakeoff/results/<date>/DECISION.md
-// (private — the names of the chosen provider and model only, never a
-// measurement, never a page). Re-run instructions: tools/ocr-bakeoff/README.md.
+// T2.6a: set 2026-09-04 from the OCR bake-off's decision memo (private, in
+// era-family — the chosen names only, never a measurement, never a page).
+// Re-run instructions and the six-month re-validation: tools/ocr-bakeoff/README.md.
 const CONFIG_FILE = "content-config.json";
 const DEFAULTS = {
-  transcribe: { provider: null, model: null, agreementPass: false, escalateTo: null },
+  transcribe: {
+    provider: "google",
+    model: "gemini-3.1-flash-lite",
+    agreementPass: true,
+    escalateTo: null,
+  },
 };
 
 function loadConfig(dataDir) {
@@ -135,9 +179,17 @@ function loadConfig(dataDir) {
 // The rungs to try, in order, for this key. A configured model leads; the rest
 // of the provider's list follows, so a model the bake-off picked that has since
 // been retired still falls through to something that answers.
+//
+// A model id only means anything on the provider it belongs to, so the named
+// model leads only when the config's provider IS the key's provider. Without
+// that check, a family whose card holds an OpenAI key would ask OpenAI for a
+// Gemini once per page, every page, and be refused every time before the
+// ladder saved them.
 function ladderFor(cfg, config) {
-  const p = PROVIDERS[(cfg && cfg.provider)] || PROVIDERS.google;
-  const want = config && config.transcribe && config.transcribe.model;
+  const name = cfg && PROVIDERS[cfg.provider] ? cfg.provider : "google";
+  const p = PROVIDERS[name];
+  const t = (config && config.transcribe) || {};
+  const want = (!t.provider || t.provider === name) ? t.model : null;
   if (!want) return p.models.slice();
   return [want, ...p.models.filter(m => m !== want)];
 }
@@ -428,10 +480,16 @@ async function transcribeBook(dir, opts) {
           }
           if (b && normalizeLoose(b.text) !== normalizeLoose(text)) {
             const word = firstDivergence(text, b.text);
+            // Only a CONFIGURED adjudicator decides (spec §4.2: "the strongest
+            // configured model"). With none — the free default — the
+            // transcriber's reading stands and the page goes to the parent.
+            // The bake-off measured a paid adjudicator, and a parent; it never
+            // measured a third model of the same free family, and two models
+            // from one family are wrong together often enough that a guess
+            // overwriting a good reading is worse than no guess. The page is
+            // flagged for a human either way.
             const strongId = config.transcribe.escalateTo;
-            const strong = strongId && !spent.has(strongId)
-              ? [strongId]
-              : ladderFor(cfg, config).filter(m => !spent.has(m) && m !== first.model && m !== b.model);
+            const strong = strongId && !spent.has(strongId) ? [strongId] : [];
             let c = null;
             if (strong.length) {
               try { c = await transcribePage({ imagePath, cfg, config, spent, models: [strong[0]] }); calls++; }

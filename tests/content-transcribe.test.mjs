@@ -140,6 +140,11 @@ function book(name, pages = 1) {
   return dir;
 }
 
+// The single pass is no longer the default (T2.6a adopted the bake-off's
+// second-opinion policy), so every test that is about the LADDER rather than
+// the policy pins it off and counts calls against that.
+const SINGLE = { transcribe: { agreementPass: false } };
+
 function reset(opts = {}) {
   calls = [];
   answers = opts.answers || [{ text: "The cat sat on the mat.", uncertain: [] }];
@@ -152,7 +157,7 @@ function reset(opts = {}) {
 // ---------------------------------------------------------------- the step
 
 test("one page, one call: the printed words and the model's doubts land in text.json", async () => {
-  reset({ answers: [{ text: "Once upon a time...", uncertain: ["Snufflewump"] }] });
+  reset({ config: SINGLE, answers: [{ text: "Once upon a time...", uncertain: ["Snufflewump"] }] });
   const dir = book("The Cat");
   const r = await providers.transcribeBook(dir, { dataDir: DATA });
 
@@ -186,7 +191,7 @@ test("the policy the bake-off measured is the policy the family gets", async () 
 });
 
 test("a page already in text.json is never paid for twice", async () => {
-  reset();
+  reset({ config: SINGLE });
   const dir = book("Twice", 2);
   await providers.transcribeBook(dir, { dataDir: DATA });
   assert.equal(calls.length, 2);
@@ -214,7 +219,7 @@ test("no key is a hold, not a failure: the book waits for one", async () => {
 test("a 429 retires THAT model, not the day — the next one on the ladder answers", async () => {
   const ladder = providers.ladderFor({ provider: "google" });
   assert.ok(ladder.length >= 2, "the ladder needs a second rung to fall to");
-  reset({ throttle: [ladder[0]] });
+  reset({ config: SINGLE, throttle: [ladder[0]] });
   const dir = book("Ladder");
   const r = await providers.transcribeBook(dir, { dataDir: DATA });
   assert.equal(calls.length, 2, "one refusal, one answer");
@@ -226,7 +231,7 @@ test("a 429 retires THAT model, not the day — the next one on the ladder answe
 
 test("a model that is spent is not asked again for the rest of the book", async () => {
   const ladder = providers.ladderFor({ provider: "google" });
-  reset({ throttle: [ladder[0]] });
+  reset({ config: SINGLE, throttle: [ladder[0]] });
   const dir = book("Spent Once", 3);
   await providers.transcribeBook(dir, { dataDir: DATA });
   // 1 refusal + 3 answers, NOT 3 refusals: page two and three skip the retired
@@ -301,7 +306,7 @@ test("a chatty model that fences its JSON in prose is still understood", async (
 // ------------------------------------------------------- config, not code
 
 test("the defaults are one object, and <DATA>/content-config.json overrides them", () => {
-  assert.equal(providers.DEFAULTS.transcribe.agreementPass, false, "one cheap pass by default (spec §4.2)");
+  assert.ok("agreementPass" in providers.DEFAULTS.transcribe);
   assert.ok("provider" in providers.DEFAULTS.transcribe);
   assert.ok("model" in providers.DEFAULTS.transcribe);
   assert.ok("escalateTo" in providers.DEFAULTS.transcribe);
@@ -319,8 +324,8 @@ test("the defaults are one object, and <DATA>/content-config.json overrides them
   contentCfg(null);
 });
 
-test("agreement pass OFF (the default): exactly one call per page", async () => {
-  reset();
+test("agreement pass OFF: exactly one call per page", async () => {
+  reset({ config: SINGLE });
   const dir = book("Single Pass", 3);
   await providers.transcribeBook(dir, { dataDir: DATA });
   assert.equal(calls.length, 3);
@@ -375,6 +380,68 @@ test("agreement pass ON with nothing to escalate to: the page is still flagged, 
   const page = store.readText(dir).pages[0];
   assert.equal(page.text, "Nine mice on the ice.", "the first reading is kept");
   assert.equal(page.flags.length, 1);
+});
+
+// ------------------------------------------------- the bake-off's decision
+
+// T2.6a. The 2026-09-04 bake-off picked the transcriber, its partner and the
+// policy; these tests are the guard that the pick is what the family actually
+// gets. They name the two model ids on purpose — a rename that quietly drops
+// the decorrelating partner is the failure worth catching (see the module
+// header in content-providers.js for why the pair must not become a pair of
+// the same model).
+test("the defaults are the pick of the 2026-09-04 OCR bake-off", () => {
+  contentCfg(null);
+  const d = providers.DEFAULTS.transcribe;
+  assert.equal(d.provider, "google", "a free AI Studio key, no card, two minutes");
+  assert.equal(d.model, "gemini-3.1-flash-lite", "the transcriber the bake-off chose");
+  assert.equal(d.agreementPass, true, "the second opinion is the safety net (it never flags itself)");
+  assert.equal(d.escalateTo, null, "no third model by default - a disagreement is the parent's to settle");
+
+  // the partner is the SECOND rung, and it is a different model
+  const ladder = providers.ladderFor({ provider: "google" }, providers.loadConfig(DATA));
+  assert.equal(ladder[0], "gemini-3.1-flash-lite");
+  assert.equal(ladder[1], "gemini-3.5-flash-lite", "the partner that decorrelates, not the same model twice");
+  assert.notEqual(ladder[0], ladder[1]);
+});
+
+test("the defaults end to end: two named models read the page, agree, and it publishes clean", async () => {
+  reset();                                     // no config file at all
+  const dir = book("Bake Off Defaults");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.deepEqual(calls.map(c => c.model), ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]);
+  assert.equal(r.transcribed, 1);
+  assert.equal(r.escalated, 0);
+  assert.equal(store.readText(dir).pages[0].flags.length, 0, "an agreed page is not flagged");
+});
+
+test("by default a disagreement asks no third model - it goes to the parent", async () => {
+  reset({ answers: [
+    ({ model }) => model === "gemini-3.1-flash-lite"
+      ? { text: "Nine mice on the ice.", uncertain: [] }
+      : { text: "Nine mice on the rice.", uncertain: [] },
+  ] });
+  const dir = book("Parent Settles It");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.equal(calls.length, 2, "two readings and no more: nothing unmeasured pre-fills the answer");
+  assert.equal(r.escalated, 0);
+  const page = store.readText(dir).pages[0];
+  assert.equal(page.text, "Nine mice on the ice.", "the transcriber's reading is kept");
+  assert.equal(page.flags.length, 1);
+  assert.match(page.flags[0].reason, /differently/);
+});
+
+test("the pick is a google model, so a key for another provider gets its OWN ladder", async () => {
+  reset({ provider: "openai" });               // defaults, but the card holds an OpenAI key
+  assert.deepEqual(providers.ladderFor({ provider: "openai" }, providers.loadConfig(DATA)),
+                   providers.PROVIDERS.openai.models,
+                   "a Gemini id must never lead OpenAI's ladder");
+  const dir = book("Other Key");
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.equal(r.transcribed, 1);
+  assert.ok(calls.every(c => c.provider === "openai"), "every call went to the key's own provider");
+  assert.deepEqual(calls.map(c => c.model), providers.PROVIDERS.openai.models.slice(0, 2),
+                   "no page pays for a call that cannot succeed");
 });
 
 // --------------------------------------------------------------- the tally
