@@ -1527,6 +1527,46 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // ⇅ Arrange: the whole running order in one POST (spec §6 "Arrange").
+  // Answers when the manifest is written and mirrored — it is one small file,
+  // so the strip can wait and know the tiles moved. A partial or unknown id is
+  // a 400 that changed nothing (music-add.js order()).
+  if (req.method === "POST" && req.url === "/music/order") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    // A whole library of ids: a slug is at most 64 characters, so 64 KB is
+    // hundreds of songs and still nothing a sheet could use to fill memory.
+    req.on("data", c => { body += c; if (body.length > 65536) req.destroy(); });
+    req.on("end", () => {
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        res.writeHead(400, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "bad-request", message: "New ERA could not read that request." }));
+        return;
+      }
+      musicAdd.order(parsed).then(out => {
+        if (out.error) {
+          // 400 = the strip sent an order that cannot be applied to what is on
+          // the shelf; 409 = the hub cannot do it yet (no Drive folder, no
+          // songs, a song still downloading).
+          const mine = ["bad-ids", "unknown-song", "incomplete"].includes(out.error);
+          res.writeHead(mine ? 400 : 409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(out));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      }).catch(() => {
+        // A failed write left the old order in place (writeAtomic never opens
+        // the target), so say so rather than leaving a spinner turning.
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed",
+                                 message: "New ERA could not save the new order. Try again." }));
+      });
+    });
+    return;
+  }
   // The same deal /clothing/status makes: no-store, because a sheet polling
   // this while a song downloads must never be told a cached answer.
   if (req.method === "GET" && urlPath === "/music/add/status") {

@@ -297,3 +297,78 @@ test("yt-dlp stopping non-zero surfaces a human message and leaves the manifest 
   const none = await settled();
   assert.equal(none.ok, false, "a search with no hits is a failure, not a blank song");
 });
+
+// --------------------------------------------------- ⇅ Arrange (plan T4.3)
+// POST /music/order is the whole running order in one shot: the strip hands
+// back every id, the hub renumbers `rank` from 1 and touches nothing else.
+// A song's tile is where Ellie learned it is, so a half-written order (one id
+// missing, one id it does not have) must change nothing at all.
+
+test("⇅ Arrange rewrites every rank and nothing else, and the board sees the new order", async () => {
+  ctl({ mode: "ok", id: "sea7", title: "Under the Sea", duration: 187 });
+  assert.equal((await post("/music/add", { url: "https://www.youtube.com/watch?v=sea7" })).status, 202);
+  assert.equal((await settled()).ok, true);
+
+  const before = manifest();
+  assert.deepEqual(before.songs.map(s => [s.id, s.rank]),
+                   [["let-it-go", 1], ["how-far-ill-go", 2], ["under-the-sea", 3]],
+                   "three songs in the order they were added");
+  const etagBefore = (await fetch(`${BASE}/recipes/songs.json`)).headers.get("etag");
+  assert.ok(etagBefore, "the shelf is serving a songs recipe");
+
+  const r = await post("/music/order", { ids: ["under-the-sea", "let-it-go", "how-far-ill-go"] });
+  assert.equal(r.status, 200, "the order is written while the sheet waits: it is one small file");
+  assert.deepEqual(await r.json(), { ok: true, songs: 3 });
+
+  const after = manifest();
+  assert.deepEqual(after.songs.map(s => [s.id, s.rank]),
+                   [["under-the-sea", 1], ["let-it-go", 2], ["how-far-ill-go", 3]],
+                   "rank 1..n in exactly the order the strip sent");
+  assert.equal(after.schemaVersion, 1);
+  const strip = (m) => Object.fromEntries(m.songs.map(({ rank, ...rest }) => [rest.id, rest]));
+  assert.deepEqual(strip(after), strip(before),
+                   "titles, audio, covers, durations and sources are untouched");
+  assert.equal(fs.existsSync(path.join(MUSIC, "manifest.tmp")), false, "written atomically, no litter");
+
+  const recipe = await fetch(`${BASE}/recipes/songs.json`);
+  assert.notEqual(recipe.headers.get("etag"), etagBefore,
+                  "the ETag moved, so a board holding a 304 cache refetches");
+  const grid = (await recipe.json()).boards[0];
+  assert.deepEqual(grid.buttons.filter(b => b.type === "song").map(b => b.song_id),
+                   ["under-the-sea", "let-it-go", "how-far-ill-go"],
+                   "the shelf's tiles are in the new order, so the write reached the Drive folder");
+});
+
+test("an order that does not name every song is refused, and the manifest never moves", async () => {
+  const before = fs.readFileSync(path.join(MUSIC, "manifest.json"));
+  const cases = [
+    [{ ids: ["under-the-sea"] }, "incomplete"],
+    [{ ids: ["under-the-sea", "let-it-go"] }, "incomplete"],
+    [{ ids: ["under-the-sea", "let-it-go", "how-far-ill-go", "nope"] }, "unknown-song"],
+    [{ ids: ["under-the-sea", "let-it-go", "under-the-sea"] }, "bad-ids"],
+    [{ ids: ["../evil", "let-it-go", "how-far-ill-go"] }, "bad-ids"],
+    [{ ids: [] }, "incomplete"],
+    [{}, "bad-ids"],
+    [{ ids: "let-it-go" }, "bad-ids"],
+    [{ ids: [1, 2, 3] }, "bad-ids"],
+  ];
+  for (const [body, error] of cases) {
+    const r = await post("/music/order", body);
+    assert.equal(r.status, 400, `refused: ${JSON.stringify(body)}`);
+    const j = await r.json();
+    assert.equal(j.error, error, `refused: ${JSON.stringify(body)}`);
+    assert.ok(typeof j.message === "string" && j.message.length > 10,
+              "with something the sheet can show a parent");
+  }
+  assert.deepEqual(fs.readFileSync(path.join(MUSIC, "manifest.json")), before,
+                   "not one byte of the manifest changed");
+});
+
+test("with no Drive folder chosen there is nothing to arrange, and it says so", async () => {
+  await stopHub();
+  await startHub({ ERA_YTDLP: BIN });   // fresh <DATA>, no folder picked yet
+
+  const r = await post("/music/order", { ids: ["let-it-go"] });
+  assert.equal(r.status, 409, "a refusal the sheet can render, not a crash");
+  assert.equal((await r.json()).error, "needs-local-drive");
+});

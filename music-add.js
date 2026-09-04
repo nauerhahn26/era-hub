@@ -157,16 +157,24 @@ function nextRank(songs) {
   return max + 1;
 }
 
+// The manifest as it stands, and never a throw: a folder with no manifest yet
+// (a family's first song) and a manifest a text editor mangled both read as an
+// empty library, which is what the next write then repairs.
+function readManifest(dir) {
+  let m = null;
+  try { m = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")); } catch {}
+  if (!m || typeof m !== "object" || Array.isArray(m)) m = {};
+  const songs = Array.isArray(m.songs) ? m.songs.filter(s => s && typeof s === "object") : [];
+  return { m, songs };
+}
+
 // Upsert by id, atomically (content-store's tmp + rename, so a device never
 // mirrors half a manifest). A song added twice KEEPS the rank it has: its tile
 // is where Ellie learned it is, and re-adding a song to fix its audio must not
 // move it to the end of the board.
 function upsert(dir, fields) {
   const file = path.join(dir, "manifest.json");
-  let m = null;
-  try { m = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
-  if (!m || typeof m !== "object" || Array.isArray(m)) m = {};
-  const songs = Array.isArray(m.songs) ? m.songs.filter(s => s && typeof s === "object") : [];
+  const { m, songs } = readManifest(dir);
   const at = songs.findIndex(s => s.id === fields.id);
   const rank = at >= 0 && Number.isFinite(songs[at].rank) ? songs[at].rank : nextRank(songs);
   const entry = { ...(at >= 0 ? songs[at] : {}), ...fields, rank };
@@ -257,6 +265,71 @@ function add(body) {
   return { started: true };
 }
 
+// --------------------------------------------------------------- ⇅ Arrange
+
+// order({ids}) -> {ok, songs} | {error, message}. The strip's "⇅ Arrange" hands
+// back the WHOLE running order, not a move, because that is the only shape that
+// cannot half-apply: rank becomes 1..n in the order given and no other field is
+// touched.
+//
+// A partial list is a refusal, never a best effort. Ellie navigates the songs
+// board from memory, so an order that quietly dropped the songs it forgot to
+// name — or renumbered around a song added on another device thirty seconds ago
+// — would move tiles nobody asked to move. If the strip is out of date it must
+// reload and send again.
+//
+// Unlike add(), this answers when it is done: it is one small file and a mirror
+// of a folder the family already has locally, so the sheet can wait for it and
+// know the board is right the moment the spinner stops.
+async function order(body) {
+  const b = body && typeof body === "object" ? body : {};
+  const ids = Array.isArray(b.ids) ? b.ids : null;
+  // Law 3 again: every id is checked as a name, not repaired. Nothing here is
+  // ever spelled into a path, but an id that could not be a slug cannot be one
+  // of ours either, so it is refused before the manifest is even read.
+  if (!ids || !ids.every(id => typeof id === "string" && SLUG_RE.test(id)))
+    return { error: "bad-ids", message: "New ERA could not read that new order. Reload the board and try again." };
+  const dir = musicDir();
+  if (!dir)
+    return { error: "needs-local-drive",
+             message: "New ERA keeps the songs in the family's Drive folder, so every device gets the same order. Choose that folder in Settings first." };
+  // An add in flight is about to rewrite this same file: let it land first
+  // rather than race it and lose one of the two writes.
+  if (running)
+    return { error: "busy", message: "A song is still downloading - arrange the board when it lands." };
+
+  const { m, songs } = readManifest(dir);
+  if (!songs.length)
+    return { error: "no-songs", message: "There are no songs on the board to arrange yet." };
+
+  const byId = new Map(songs.map(s => [s.id, s]));
+  const seen = new Set();
+  const ordered = [];
+  for (const id of ids) {
+    const s = byId.get(id);
+    // The id is family content, so the message names no song: the sheet knows
+    // which tile it dragged, and a reload is the whole fix.
+    if (!s)
+      return { error: "unknown-song",
+               message: "That order names a song New ERA does not have. Reload the board and try again." };
+    if (seen.has(id))
+      return { error: "bad-ids", message: "That order names the same song twice. Reload the board and try again." };
+    seen.add(id);
+    ordered.push(s);
+  }
+  if (ordered.length !== songs.length)
+    return { error: "incomplete",
+             message: "That order left songs out, so New ERA changed nothing. Reload the board and try again." };
+
+  const next = ordered.map((s, i) => ({ ...s, rank: i + 1 }));
+  writeAtomic(path.join(dir, "manifest.json"), { ...m, schemaVersion: 1, songs: next });
+  // The board reads this device's shelf, and the recipe's ETag is the shelf
+  // manifest's mtime (server.js songsRecipe) — without the mirror the tiles
+  // would keep their old places until the next ten-minute sync.
+  try { await drive.sync(); } catch {}
+  return { ok: true, songs: next.length };
+}
+
 // What the sheet polls. No folder path, no key, no yt-dlp command line — the
 // song's own title is the only family thing in here, and it is the one thing a
 // parent needs to see.
@@ -269,4 +342,4 @@ function status() {
   };
 }
 
-module.exports = { add, status, SLUG_RE };
+module.exports = { add, order, status, SLUG_RE };
