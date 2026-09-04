@@ -756,7 +756,46 @@ async function transcribeBook(dir, opts) {
   let transcribed = 0, reused = 0, escalated = 0, calls = 0, quota = false, permanent = null;
   let retry = null;                                 // when the spent ladder asked us back, and whether the DAY is what ran out
 
+  // THE ORDER text.json ALREADY HAS IS THE BOOK'S ORDER, because a grown-up may
+  // have dragged the pages about on the review page (spec §5) and a re-read must
+  // not shuffle the book back to the order the camera happened to number the
+  // photos in. Pages this pass already knew about keep their places; anything
+  // new lands after them, by index — which for a first pass (nothing known) is
+  // exactly the plain index sort this used to do.
+  const was = new Map([...had.keys()].map((index, at) => [index, at]));
+  const place = (p) => (was.has(p.index) ? was.get(p.index) : was.size + p.index);
+  const inOrder = (list) => list.slice().sort((a, b) => place(a) - place(b) || a.index - b.index);
+
+  // AFTER EVERY PAGE, not once at the end (L3, e2e 9/4). A book on a throttled
+  // free key is hours long, and until this the whole pass lived in memory: the
+  // parent's card said "0 read" the entire time, and a worker that died in the
+  // middle — a reboot, a hub restart, the allowance running out — took every
+  // page it had already bought with it. tmp + rename (store.writeText), so a
+  // reader only ever sees a whole file; and the pages this walk has not
+  // REACHED yet are written alongside the ones it has decided, because a
+  // re-read of one page (`only`) walks past text somebody already paid for and
+  // must never be the reason it is gone.
+  const save = () => {
+    const seen = new Set(out.map(p => p.index));
+    const rest = [...had.values()].filter(p => !seen.has(p.index));
+    store.writeText(dir, { pages: inOrder(out.concat(rest)) });
+  };
+  // One line per thinking re-shape (L4). The memo itself is a measurement — it
+  // is only ever set when the re-shaped call was ACCEPTED (see callModel) — so
+  // a new name in this map is a model that has just told us, for the life of
+  // this process, which shape it takes. Said out loud once, on the page it
+  // happened on, so the ledger can be read without the request bodies.
+  const shaped = new Set(thinkingShape.keys());
+  const sayRetunes = () => {
+    for (const model of thinkingShape.keys()) {
+      if (shaped.has(model)) continue;
+      shaped.add(model);
+      log(model + ": re-shaped the thinking knob to " + Object.keys(THINKING_MINIMAL)[0]);
+    }
+  };
+
   for (const page of pages) {
+    const before = transcribed;
     // A page that already has text is DONE — including a page a parent typed
     // themselves in power mode, and including a page the model correctly read
     // as wordless. text.json is the interop point; we do not overwrite it.
@@ -924,19 +963,14 @@ async function transcribeBook(dir, opts) {
       if (isPermanent(msg)) { permanent = msg; break; }
       if (done) { out.push(done); reused++; }
     }
+    sayRetunes();
+    // The page is on disk before the next one is asked for.
+    if (transcribed > before) save();
   }
 
-  // Written before we throw or pause: half a book of text is progress a free
-  // key paid for, and tomorrow's run must not buy it again.
-  //
-  // THE ORDER text.json ALREADY HAS IS THE BOOK'S ORDER, because a grown-up may
-  // have dragged the pages about on the review page (spec §5) and a re-read must
-  // not shuffle the book back to the order the camera happened to number the
-  // photos in. Pages this pass already knew about keep their places; anything
-  // new lands after them, by index — which for a first pass (nothing known) is
-  // exactly the plain index sort this used to do.
-  const was = new Map([...had.keys()].map((index, at) => [index, at]));
-  const place = (p) => (was.has(p.index) ? was.get(p.index) : was.size + p.index);
+  // The last word, and the only one that PRUNES: a page whose photo has gone is
+  // dropped here, where the walk has seen the whole book, and never by a
+  // half-way write (which keeps everything it has not reached).
   out.sort((a, b) => place(a) - place(b) || a.index - b.index);
   if (out.length) store.writeText(dir, { pages: out });
 

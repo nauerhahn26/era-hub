@@ -73,6 +73,10 @@ let broken = new Set();    // model ids that answer 500 (a rung that is simply d
 // the stand-in is that model: it refuses the budget shape and answers the level.
 let budget400 = false;
 let mode = "ok";           // ok | 401 | chatty
+// The kill switch (L3): the Nth call and everything after it is taken and never
+// answered. `parked` holds those responses so they can be let go at the end.
+let gateAt = 0;
+let parked = [];
 
 // ------------------------------------------------------------- the stand-in
 
@@ -114,6 +118,13 @@ before(async () => {
       total++;
       calls.push({ url: req.url, provider, model, prompt, image, body: parsed,
                    key: req.headers["x-goog-api-key"] || req.headers["x-api-key"] || req.headers["authorization"] });
+
+      // THE CALL THE PASS IS INSIDE WHEN IT DIES (L3). From `gateAt` on, the
+      // stand-in takes the request and never answers it: the step is left
+      // half way through a book, exactly as a throttled free key leaves it for
+      // hours, and whatever is on disk at that moment is what a killed worker
+      // would have kept. Released by reset()/after(), which destroy the socket.
+      if (gateAt && calls.length >= gateAt) { parked.push(res); return; }
 
       if (mode === "401") {
         res.writeHead(401, { "content-type": "application/json" });
@@ -181,6 +192,7 @@ before(async () => {
 });
 
 after(() => {
+  release();
   if (server) server.close();
   delete process.env.ERA_AI_URL;
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
@@ -236,6 +248,27 @@ function laParts(d) {
 // the policy pins it off and counts calls against that.
 const SINGLE = { transcribe: { agreementPass: false } };
 
+// Let every held request go (the caller's fetch sees a dropped socket) and stop
+// holding new ones. A parked response left behind would keep a later test — or
+// the suite's own exit — waiting on an answer that never comes.
+function release() {
+  gateAt = 0;
+  for (const res of parked) { try { res.destroy(); } catch {} }
+  parked = [];
+}
+
+// Poll until the pass has written what it should have written. The failure
+// message IS the finding: with the one-write-at-the-end step, text.json is
+// still absent when the book is three pages in.
+async function until(fn, what, ms = 8000) {
+  const stop = Date.now() + ms;
+  while (Date.now() < stop) {
+    if (fn()) return;
+    await new Promise(r => setTimeout(r, 25));
+  }
+  throw new Error("waited " + ms + "ms: " + what);
+}
+
 function reset(opts = {}) {
   calls = [];
   answers = opts.answers || [{ text: "The cat sat on the mat.", uncertain: [] }];
@@ -247,6 +280,8 @@ function reset(opts = {}) {
   bad400 = opts.bad400 || 0;
   wordy400 = !!opts.wordy400;
   mode = opts.mode || "ok";
+  release();
+  gateAt = opts.gateAt || 0;
   visionKey(opts.provider || "google");
   contentCfg(opts.config === undefined ? null : opts.config);
 }
@@ -844,6 +879,13 @@ test("a WORDY invalid-argument refusal is still recognised: the raw body is what
   // and the log still keeps only its 160 characters of it
   const log = store.readLog(dir).map(l => l.msg).join("\n");
   assert.ok(!log.includes("ai.google.dev"), "the log line is short, and stays short");
+  // L4: a re-shape is a thing that HAPPENED to the request the transcriber's
+  // accuracy was measured under, and the ledger now says so — once, on the page
+  // it happened on, because the shape is remembered for the rest of the process.
+  const retunes = store.readLog(dir).filter(l => l.msg.includes("re-shaped the thinking knob"));
+  assert.equal(retunes.length, 1, "one line per re-shape, not one per page");
+  assert.ok(retunes[0].msg.startsWith("gemini-3.5-flash:"), "and it names the model that asked for it");
+  assert.ok(retunes[0].msg.includes("thinkingLevel"), "and the shape it took");
 });
 
 test("the thinking knob is a google field: the other two providers' requests are untouched", async () => {
@@ -1068,6 +1110,82 @@ test("a page with no furniture on it is never logged as having had some", async 
   assert.equal(store.readText(dir).pages[0].text, "The bus published a great grey cloud of steam.");
   assert.ok(!store.readLog(dir).some(l => l.msg.includes("imprint lines removed")),
     "a sentence containing 'published' is a sentence");
+});
+
+// ------------------------------------- progress a free key already paid for
+
+// e2e 9/4: text.json was written ONCE, after the whole loop, so
+// /content/status said "0 of 16 read" for the entire step — and on a throttled
+// free key that step is hours long. A worker killed in the middle of it (a
+// reboot, a hub restart, the daily allowance running out on the next page) took
+// every page it had already bought with it, and the next run bought them again.
+// L3: one atomic write per page.
+
+test("a killed worker keeps every page it already paid for, and the re-run buys only the rest", async () => {
+  // The default config, i.e. the one the live run used: two models a page, so
+  // page four's FIRST reading is the seventh call — the one the stand-in takes
+  // and never answers.
+  reset({ gateAt: 7, answers: [{ text: "The mole put on his hat and went out.", uncertain: [] }] });
+  const dir = book("Killed Mid-Book", 6);
+  store.writeJob(dir, store.transition(store.newJob({ claimedBy: "test" }), "transcribing"));
+
+  const w = new Worker(path.join(HUB, "content-worker.js"),
+    { workerData: { dataDir: DATA, dir, kind: "books", slug: "killed-mid-book" } });
+  w.on("error", () => {});                 // a terminated worker is not a failure here
+  try {
+    await until(() => (store.readText(dir) || { pages: [] }).pages.length >= 3,
+      "three pages read, and text.json still does not have them: a free key's work is only on disk when the whole book is");
+  } finally { await w.terminate(); }
+
+  const half = store.readText(dir);
+  assert.deepEqual(half.pages.map(p => p.index), [1, 2, 3],
+    "what was read is what is written - and nothing the pass never reached");
+  for (const p of half.pages) {
+    assert.equal(p.text, "The mole put on his hat and went out.");
+    // THE SECOND OPINION SURVIVES THE PARTIAL FILE (E2/E4). A half-written
+    // book whose pages forgot who checked them would come back from the kill
+    // looking like a book nobody checked, and every page would carry the mark.
+    assert.equal(p.read.model, "gemini-3.1-flash-lite");
+    assert.equal(p.read.checkedBy, "gemini-3.5-flash-lite", "the partner that read it is remembered");
+    assert.equal(p.read.agreed, true);
+    assert.equal(p.flags.length, 0, "a checked page is not marked");
+  }
+
+  release();
+  calls = [];
+  const r = await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.equal(r.reused, 3, "the pages the killed pass paid for are never bought again");
+  assert.equal(r.transcribed, 3, "and the three it never reached are read now");
+  assert.equal(calls.length, 6, "three pages, two models each - not one request for a page already read");
+  const done = store.readText(dir);
+  assert.deepEqual(done.pages.map(p => p.index), [1, 2, 3, 4, 5, 6]);
+  assert.equal(done.pages[0].read.checkedBy, "gemini-3.5-flash-lite", "and page one still knows who checked it");
+});
+
+test("a partial write never drops a page the pass has not reached yet", async () => {
+  // The re-read of one page (the review page's "read the photos again") walks
+  // the whole book but only pays for the pages it was asked for. Writing just
+  // the pages the walk has DECIDED so far would, halfway down, hand a killed
+  // worker a text.json missing every page below it - text somebody paid for.
+  reset({ config: SINGLE, answers: [{ text: "Nine mice on the ice.", uncertain: [] }] });
+  const dir = book("Half Read", 3);
+  await providers.transcribeBook(dir, { dataDir: DATA, only: [3] });
+  assert.deepEqual(store.readText(dir).pages.map(p => p.index), [3], "only page three is read so far");
+
+  gateAt = 2;                              // page one answers; page two never comes back
+  calls = [];
+  const run = providers.transcribeBook(dir, { dataDir: DATA }).catch(() => {});
+  await until(() => (store.readText(dir) || { pages: [] }).pages.length >= 2,
+    "page one was read and never written down");
+  // The book's own order, kept: pages text.json already had keep their places
+  // (a grown-up may have dragged them) and a new page lands after them.
+  assert.deepEqual(store.readText(dir).pages.map(p => p.index), [3, 1],
+    "page three is still there, and page one landed after it");
+  assert.equal(store.readText(dir).pages.find(p => p.index === 3).text, "Nine mice on the ice.");
+
+  release();                               // page two's retry gets its answer
+  await run;
+  assert.deepEqual(store.readText(dir).pages.map(p => p.index), [3, 1, 2]);
 });
 
 // --------------------------------------------------------------- the tally
