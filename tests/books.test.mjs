@@ -229,6 +229,33 @@ test("Range bytes=a- (open end): 206 to EOF", async () => {
   assert.ok(body.equals(WAV.subarray(start)), "tail bytes intact");
 });
 
+test("HEAD: GET's headers and no body — media, a range, the manifest, a denied dir", async () => {
+  // A probe (`curl -I`, a player's preflight) used to get 404 from a GET-only
+  // route, which reads as "the audio is missing". Same headers, nothing streamed.
+  let r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`, { method: "HEAD" });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "audio/wav");
+  assert.equal(r.headers.get("accept-ranges"), "bytes");
+  assert.equal(parseInt(r.headers.get("content-length"), 10), WAV.length);
+  assert.equal((await r.arrayBuffer()).byteLength, 0);
+  r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`, { method: "HEAD", headers: { Range: "bytes=10-19" } });
+  assert.equal(r.status, 206);
+  assert.equal(r.headers.get("content-range"), `bytes 10-19/${WAV.length}`);
+  assert.equal((await r.arrayBuffer()).byteLength, 0);
+  r = await fetch(`${BASE}/books/luna-the-fox/cover.jpg`, { method: "HEAD" });
+  assert.equal(r.status, 200);
+  assert.equal(parseInt(r.headers.get("content-length"), 10), JPEG.length);
+  assert.equal((await r.arrayBuffer()).byteLength, 0);
+  r = await fetch(`${BASE}/books/luna-the-fox/manifest.json`, { method: "HEAD" });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("cache-control"), "no-cache");
+  // the deny list and the slug map answer HEAD exactly as they answer GET
+  r = await fetch(`${BASE}/books/luna-the-fox/sources/IMG_0001.jpg`, { method: "HEAD" });
+  assert.equal(r.status, 404);
+  r = await fetch(`${BASE}/books/no-such-book/cover.jpg`, { method: "HEAD" });
+  assert.equal(r.status, 404);
+});
+
 test("Range bytes=-N (suffix): 206 with the last N bytes", async () => {
   const r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`,
     { headers: { Range: "bytes=-5" } });

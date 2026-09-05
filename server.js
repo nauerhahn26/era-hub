@@ -457,7 +457,9 @@ function booksIndex() {
 // GET /books/<slug>/... and /music/... — path-jailed static with an allowlist.
 // Content is immutable, so media gets a long immutable Cache-Control; JSON
 // manifests no-cache. A/V files get single-range HTTP Range support and are
-// ALWAYS streamed (createReadStream), never buffered whole.
+// ALWAYS streamed (createReadStream), never buffered whole. HEAD answers with
+// GET's headers and no body (9/5: a probe like `curl -I` got 404 from a route
+// that only knew GET, which read as "the audio is missing").
 const BOOK_AV_EXTS = [".mp3", ".mp4", ".wav"];
 const BOOK_EXTS = [".json", ".jpg", ".jpeg", ".png", ...BOOK_AV_EXTS];
 const MUSIC_AV_EXTS = [".m4a", ".mp3", ".wav", ".webm", ".opus"];
@@ -480,6 +482,7 @@ function serveBook(req, res, rest) {
     (s) => booksIndex_.dirFor(BOOKS_DIR, s));
 }
 function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, resolveDir) {
+  const head = req.method === "HEAD";           // same headers, no body, no stream
   if (rest.includes("\0")) { res.writeHead(400).end(); return; }
   if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(403).end(); return; }
   // after the escape guards (an escape stays 403), before the join
@@ -508,6 +511,7 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
     if (err || !st.isFile()) { res.writeHead(404).end("not found"); return; }
     const type = MIME[ext] || "application/octet-stream";
     if (ext === ".json") {                       // manifest.json: small, mutable view
+      if (head) { res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" }).end(); return; }
       fs.readFile(file, (e, data) => {
         if (e) { res.writeHead(404).end("not found"); return; }
         res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" });
@@ -519,6 +523,7 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
     if (!avExts.includes(ext)) {                 // images: full streamed 200
       headers["Content-Length"] = st.size;
       res.writeHead(200, headers);
+      if (head) { res.end(); return; }
       fs.createReadStream(file).pipe(res);
       return;
     }
@@ -542,11 +547,13 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
       headers["Content-Range"] = "bytes " + start + "-" + end + "/" + st.size;
       headers["Content-Length"] = end - start + 1;
       res.writeHead(206, headers);
+      if (head) { res.end(); return; }
       fs.createReadStream(file, { start, end }).pipe(res);
       return;
     }
     headers["Content-Length"] = st.size;
     res.writeHead(200, headers);
+    if (head) { res.end(); return; }
     fs.createReadStream(file).pipe(res);
   });
 }
@@ -1641,7 +1648,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(musicAdd.status()));
     return;
   }
-  if (req.method === "GET" && urlPath.startsWith("/music/")) {
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/music/")) {
     serveMediaJail(req, res, MUSIC_DIR, urlPath.slice("/music/".length), MUSIC_EXTS, MUSIC_AV_EXTS);
     return;
   }
@@ -1819,7 +1826,7 @@ const server = http.createServer((req, res) => {
   }
   // movies static jail: posters + catalog only (no AV extensions — the hub
   // never serves video; av list empty so nothing gets Range handling)
-  if (req.method === "GET" && urlPath.startsWith("/movies/")) {
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/movies/")) {
     serveMediaJail(req, res, MOVIES_DIR, urlPath.slice("/movies/".length), MOVIE_EXTS, []);
     return;
   }
@@ -1850,7 +1857,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(booksIndex()));
     return;
   }
-  if (req.method === "GET" && urlPath.startsWith("/books/")) {
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/books/")) {
     serveBook(req, res, urlPath.slice("/books/".length));
     return;
   }
