@@ -593,6 +593,36 @@ describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", 
     const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: { days: {}, events }, perPage: 7 });
     assert.deepEqual(new Set(keysOf(out).slice(0, 2)), new Set(["item_t1+item_b1", "item_t2+item_b3"]));
   });
+  test("the staple pool is ordered by pick weight BEFORE the garment-distinct top-5 (outfit_set.py:460): a heavier look later in pool order beats a lighter one sharing its garment", () => {
+    // Pool (id order) puts t1+b1 before t2+b1. Weights: t2+b1 3.0 (three
+    // Yes days), t1+b1 1.0. The weight sort seats t2+b1 first and the
+    // garment-distinct pass drops t1+b1 (b1 taken). Without the sort the
+    // greedy pass walks pool order, seats t1+b1 and drops her favourite.
+    const items = [top("item_t1"), top("item_t2"), bottom("item_b1"), bottom("item_b2")];
+    const yes = combo => ({ kind: "yes", combo });
+    const events = {
+      "2026-09-01": [yes(["item_t2", "item_b1"]), yes(["item_t1", "item_b1"])],
+      "2026-09-02": [yes(["item_t2", "item_b1"])],
+      "2026-09-03": [yes(["item_t2", "item_b1"])],
+    };
+    const picks = R.derivePicks(events, SEED);
+    assert.equal(picks["item_t2+item_b1"], 3.0);
+    assert.equal(picks["item_t1+item_b1"], 1.0);
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: { days: {}, events }, perPage: 7 });
+    assert.equal(out[0].key, "item_t2+item_b1", "her most-picked look is the staple");
+  });
+  test("the curated-great fallback pool is ordered by style BEFORE the garment-distinct top-5 (outfit_set.py:464-467)", () => {
+    // No picks → staples come from `great`. Both great looks share b1; the
+    // higher-style one (t2+b1: same vibe, 50+30+5+5 = 90) sits AFTER the
+    // lower one (t1+b1: 85) in pool order. The style sort seats t2+b1; a
+    // port that skipped it would seat t1+b1 and drop t2+b1 (b1 taken).
+    const items = [top("item_t1"), top("item_t2", { vibe: "sporty" }), bottom("item_b1", { vibe: "sporty" }), bottom("item_b2")];
+    const pairing = { great: [["item_t1", "item_b1"], ["item_t2", "item_b1"]], avoid: [] };
+    assert.equal(R.styleScore(items[0], items[2], R.normalizePairing(pairing)), 85);
+    assert.equal(R.styleScore(items[1], items[2], R.normalizePairing(pairing)), 90);
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, pairing, history: {}, perPage: 7 });
+    assert.equal(out[0].key, "item_t2+item_b1", "the best-styled great look is the staple");
+  });
   test("yesterday's page-1 looks are barred from page 1 and lead page 2 in ranked order; deep pages are garment-once", () => {
     const items = [];
     for (let i = 1; i <= 5; i++) items.push(top("item_t" + i));
