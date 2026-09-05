@@ -167,11 +167,17 @@ describe("isNeutral / harmonizes — parity (outfit_set.py:242-252)", () => {
 });
 
 describe("normalizePairing — the pairing.json shape → unordered-key Sets", () => {
-  test("lists become pairKey Sets; a malformed entry is dropped; ids are stringified", () => {
-    const p = R.normalizePairing({ great: [["item_b", "item_a"], ["item_x"], "junk", [1, 2]], avoid: [["item_c", "item_d"]] });
-    assert.deepEqual([...p.great].sort(), ["1+2", "item_a+item_b"]);
+  test("lists become pairKey Sets; a malformed entry is dropped; ids are stringified; a single-id entry keys as id+id (the original's frozenset({id}), outfit_set.py:462-463)", () => {
+    const p = R.normalizePairing({ great: [["item_b", "item_a"], ["item_x"], "junk", [1, 2], [], ["a", "b", "c"]], avoid: [["item_c", "item_d"]] });
+    assert.deepEqual([...p.great].sort(), ["1+2", "item_a+item_b", "item_x+item_x"]);
     assert.deepEqual([...p.avoid], ["item_c+item_d"]);
     assert.deepEqual(R.normalizePairing(undefined), { great: new Set(), avoid: new Set() });
+  });
+  test("a Set of pair ARRAYS (the natural slip in a log reader) is normalised to pair keys, not passed through", () => {
+    const p = R.normalizePairing({ great: new Set([["item_b", "item_a"], "item_c+item_d"]), avoid: new Set([["item_e", "item_f"]]) });
+    assert.deepEqual([...p.great].sort(), ["item_a+item_b", "item_c+item_d"]);
+    assert.deepEqual([...p.avoid], ["item_e+item_f"]);
+    assert.equal(R.styleScore(g("item_a"), g("item_b"), p), 85);
   });
   test("an already-normalized pairing passes through by identity; a half-normalized one (one Set, one list) keeps the Set and converts the list", () => {
     const done = R.normalizePairing({ great: [["item_a", "item_b"]], avoid: [] });
@@ -340,6 +346,20 @@ describe("recordOffer — parity (outfit_set.py:364-373) + the events prune (spe
     R.recordOffer(hist, "2026-09-05", [combo("a", "b")], 7, "warm");
     assert.deepEqual(Object.keys(hist.events).sort(), ["2026-08-01", "2026-09-01", "garbage"]);
   });
+  test("exactly 60 day keys (gapped) is where the oldest-kept-day cutoff takes over from the 60-latest-event-dates rule (A4-10, >= not >)", () => {
+    // days: 60 keys, every other day from 2026-01-01; events: 70 daily
+    // dates from 2025-12-01. At >= 60 days the cutoff is the oldest kept
+    // day (2026-01-01): the 31 December dates go. A `> 60` reading would
+    // keep the 60 latest event dates instead (cutoff 2025-12-11).
+    const hist = { days: {}, events: {} };
+    for (let i = 0; i < 60; i++) hist.days[plus("2026-01-01", 2 * i)] = { band: null, page1: [] };
+    for (let i = 0; i < 70; i++) hist.events[plus("2025-12-01", i)] = [{ kind: "yes", combo: ["a"] }];
+    R.pruneEvents(hist);
+    const keys = Object.keys(hist.events).sort();
+    assert.equal(keys.length, 39);
+    assert.equal(keys[0], "2026-01-01");
+    assert.ok(!("2025-12-31" in hist.events));
+  });
   test("with no days, events keep their 60 most recent dates", () => {
     const hist = { days: {}, events: {} };
     for (let i = 0; i < 70; i++) hist.events[plus("2026-05-01", i)] = [{ kind: "yes", combo: ["a"] }];
@@ -450,6 +470,17 @@ describe("eligible — the band gate (spec §3.4, W3): tops never, bottoms/singl
     assert.deepEqual(R.WARMTH_LEVELS("nope"), new Set([1, 2, 3]));
     assert.deepEqual(R.WARMTH_LEVELS(undefined), new Set([1, 2, 3]));
   });
+  test("a prototype-key word (constructor / toString / __proto__) as band, warmth or category behaves like any unknown word — never a throw (review r2)", () => {
+    const items = [bottom("item_c1", { warmth: "cold" }), bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_p1", { warmth: "constructor" })];
+    for (const w of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      assert.deepEqual(R.WARMTH_LEVELS(w), new Set([1, 2, 3]), w);
+      assert.deepEqual(R.eligible(items, "bottom", w).map(i => i.id), ["item_c1", "item_h1", "item_h2", "item_p1"], "band " + w);
+      assert.equal(R.categoryOf({ category: w }), null, "category " + w);
+    }
+    // the untagged (prototype-word) bottom is never gated, like D1
+    assert.deepEqual(R.eligible(items, "bottom", "cold").map(i => i.id), ["item_c1", "item_p1"]);
+    assert.deepEqual(R.eligible([...items, g("item_x", { category: "constructor" })], "top", null), []);
+  });
   test("tops are never gated: eligible('top', 'cold') returns every top incl. warmth hot", () => {
     const items = [top("item_t1", { warmth: "hot" }), top("item_t2", { warmth: "hot" }), top("item_t3", { warmth: "cold" }), bottom("item_b1", { warmth: "cold" })];
     assert.deepEqual(R.eligible(items, "top", "cold").map(i => i.id), ["item_t1", "item_t2", "item_t3"]);
@@ -500,6 +531,14 @@ describe("buildCandidates — the seed is the family's day key (spec §3.2)", ()
     }
     assert.equal(R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 }).length, 1);
   });
+  test("an empty or absent wardrobe, or one with no known category, deals [] without throwing (day one of a migration); a null or garbage history is an empty one", () => {
+    assert.deepEqual(R.buildCandidates({ items: [], band: null, cap: 21, seed: SEED, history: {}, perPage: 7 }), []);
+    assert.deepEqual(R.buildCandidates({ band: null, cap: 21, seed: SEED, history: {}, perPage: 7 }), []);
+    assert.deepEqual(R.buildCandidates({ items: [g("item_x", { category: "hat" }), g("item_y", { category: "" })], band: "hot", cap: 21, seed: SEED, history: {}, perPage: 7 }), []);
+    const items = [top("item_t1"), bottom("item_b1")];
+    for (const history of [null, undefined, { days: "x", events: 5 }, { days: null }, "garbage"])
+      assert.equal(R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history, perPage: 7 }).length, 1, String(history));
+  });
 });
 
 describe("buildCandidates — the pool (outfit_set.py:393-410)", () => {
@@ -538,7 +577,8 @@ describe("buildCandidates — the pool (outfit_set.py:393-410)", () => {
     const fav = last.pieces[0].id;
     const withFav = R.buildCandidates({ ...base, favorites: new Set([fav]) });
     assert.notDeepEqual(keysOf(withFav), keysOf(plain), "the favourite changed the deal");
-    assert.ok(keysOf(withFav).indexOf(last.key) < plain.length - 1, "the favourite's look moved forward");
+    const at = keysOf(withFav).indexOf(last.key);
+    assert.ok(at >= 0 && at < plain.length - 1, `the favourite's look moved forward (index ${at})`);
     // the documented array-accepting form (clothing-rank.js: `new Set(opts.favorites || [])`)
     assert.deepEqual(keysOf(R.buildCandidates({ ...base, favorites: [fav] })), keysOf(withFav));
   });
@@ -678,6 +718,18 @@ describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", 
     assert.equal(R.styleScore(items[1], items[2], R.normalizePairing(pairing)), 90);
     const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, pairing, history: {}, perPage: 7 });
     assert.equal(out[0].key, "item_t2+item_b1", "the best-styled great look is the staple");
+  });
+  test("a single-id curated great entry seats the dress as a staple, as the original's frozenset({id}) membership does (outfit_set.py:462-463)", () => {
+    // Without the entry page 1 opens with the coverage slot: b4 wins the aged
+    // hash under this seed (precondition asserted), so t2+b4 leads and the
+    // dress follows. With it, d1 is the staple and leads. Both lists verified
+    // against the original (review r2).
+    const agedFirst = ["item_t2", "item_b4", "item_d1"].map(i => [i, R.h(SEED, "aged", i)]).sort((a, b) => (a[1] < b[1] ? -1 : 1))[0][0];
+    assert.equal(agedFirst, "item_b4", "precondition: b4 wins the aged tie-break under this seed");
+    const items = [top("item_t2"), bottom("item_b4"), g("item_d1", { category: "dress" })];
+    const base = { items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 };
+    assert.deepEqual(keysOf(R.buildCandidates(base)), ["item_t2+item_b4", "item_d1"]);
+    assert.deepEqual(keysOf(R.buildCandidates({ ...base, pairing: { great: [["item_d1"]], avoid: [] } })), ["item_d1", "item_t2+item_b4"]);
   });
   test("the coverage slot honours yesterday's bar (outfit_set.py:509): the longest-unseen garment comes in its best look that was NOT on yesterday's page 1", () => {
     // Four garments, all on yesterday's page 1 (age 1 each → the aged tie

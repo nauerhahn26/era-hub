@@ -67,9 +67,13 @@ const BAND_WARMTH = {
 const WORD_LEVELS = {
   hot: [1], warm: [1], cool: [2], cold: [3], any: [1, 2, 3],
 };
+// Word tables are indexed by caller strings (a band, a warmth word, a
+// category — after T3 also a mirror line from another device): only the
+// table's own keys count, never Object.prototype's ("constructor").
+const lookup = (table, k) => (Object.hasOwn(table, k) ? table[k] : undefined);
 function WARMTH_LEVELS(w) {
   if (w === 1 || w === 2 || w === 3) return new Set([w]);
-  const lv = WORD_LEVELS[String(w || "").toLowerCase()];
+  const lv = lookup(WORD_LEVELS, String(w || "").toLowerCase());
   return new Set(lv || [1, 2, 3]);   // (D1) untagged = never gated out
 }
 
@@ -149,11 +153,21 @@ function harmonizes(top, bottom) {
 function pairKey(a, b) { return a < b ? a + "+" + b : b + "+" + a; }
 // {"great": [[id,id],..], "avoid": [..]} (the pairing.json shape, or the
 // pairs/ log after T4.2) → {great:Set<pairKey>, avoid:Set<pairKey>}.
-// A side that is already a Set of pair keys passes through as-is.
+// A one-id entry keys as id+id — the original's frozenset({id}) membership
+// (outfit_set.py:462-463) lets a curated single seat a dress as a staple;
+// longer or empty entries never match anything there either and are dropped.
+// A side that is already a Set of pair keys passes through as-is; a Set of
+// pair arrays is normalised like a list (never let a reader's slip pass).
+const isKeySet = v => v instanceof Set && [...v].every(x => typeof x === "string");
 function normalizePairing(p) {
-  const toSet = list => list instanceof Set ? list : new Set((Array.isArray(list) ? list : [])
-    .filter(pr => Array.isArray(pr) && pr.length === 2).map(pr => pairKey(String(pr[0]), String(pr[1]))));
-  if (p && p.great instanceof Set && p.avoid instanceof Set) return p;
+  const entryKey = pr => (Array.isArray(pr) && pr.length === 2) ? pairKey(String(pr[0]), String(pr[1]))
+    : (Array.isArray(pr) && pr.length === 1) ? pairKey(String(pr[0]), String(pr[0])) : null;
+  const toSet = list => {
+    if (isKeySet(list)) return list;
+    if (list instanceof Set) return new Set([...list].map(x => typeof x === "string" ? x : entryKey(x)).filter(Boolean));
+    return new Set((Array.isArray(list) ? list : []).map(entryKey).filter(Boolean));
+  };
+  if (p && isKeySet(p.great) && isKeySet(p.avoid)) return p;
   return { great: toSet(p && p.great), avoid: toSet(p && p.avoid) };
 }
 const EMPTY_PAIRING = { great: new Set(), avoid: new Set() };
@@ -290,7 +304,7 @@ const BANDS = ["hot", "warm", "cool", "cold"];
 const CATEGORY = { top: "top", pants: "bottom", shorts: "bottom", dress: "single", set: "single" };
 
 function categoryOf(item) {
-  return CATEGORY[String(item.category || "").toLowerCase()] || null;
+  return lookup(CATEGORY, String(item.category || "").toLowerCase()) || null;
 }
 
 function byId(a, b) {
@@ -307,11 +321,12 @@ function levelsMeet(item, allowed) {
 // (weather offline) or an unknown band word (D2) gates nothing.
 function eligible(items, cat, band) {
   const ofCat = items.filter(i => categoryOf(i) === cat);
-  if (cat === "top" || band == null || !BAND_WARMTH[band]) return ofCat;
-  const exact = ofCat.filter(i => levelsMeet(i, BAND_WARMTH[band]));
+  const levels = band == null ? undefined : lookup(BAND_WARMTH, band);
+  if (cat === "top" || !levels) return ofCat;
+  const exact = ofCat.filter(i => levelsMeet(i, levels));
   if (exact.length >= 2) return exact;
   const idx = BANDS.indexOf(band);
-  const wide = new Set(BAND_WARMTH[band]);
+  const wide = new Set(levels);
   for (const nb of [BANDS[idx - 1], BANDS[idx + 1]]) if (nb) for (const l of BAND_WARMTH[nb]) wide.add(l);
   const near = ofCat.filter(i => levelsMeet(i, wide));
   return near.length ? near : ofCat;
