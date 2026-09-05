@@ -466,6 +466,26 @@ describe("buildCandidates — the pool (outfit_set.py:393-410)", () => {
     assert.deepEqual(R.toWorkerShape(pair), { key: "item_t1+item_b1", top: pair.pieces[0], bottom: pair.pieces[1] });
     assert.deepEqual(R.toWorkerShape(one), { key: "item_d1", one: one.pieces[0] });
   });
+  test("a curated favourite garment reaches the rank through buildCandidates (+10, spec §4 / W2): its look moves forward; the array form works too", () => {
+    // Six tops × six bottoms, no history: every look is 55 + 48 + jitter,
+    // so the +10 for a favourite garment decides the order. Take the LAST
+    // look of a favourite-free build and mark one of its garments a
+    // favourite: the key list changes and that look moves forward. A
+    // buildCandidates that drops `favorites` on the floor deals the same
+    // 21 both times.
+    const items = [];
+    for (let i = 1; i <= 6; i++) items.push(top("item_t" + i));
+    for (let i = 1; i <= 6; i++) items.push(bottom("item_b" + i));
+    const base = { items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 };
+    const plain = R.buildCandidates(base);
+    const last = plain[plain.length - 1];
+    const fav = last.pieces[0].id;
+    const withFav = R.buildCandidates({ ...base, favorites: new Set([fav]) });
+    assert.notDeepEqual(keysOf(withFav), keysOf(plain), "the favourite changed the deal");
+    assert.ok(keysOf(withFav).indexOf(last.key) < plain.length - 1, "the favourite's look moved forward");
+    // the documented array-accepting form (clothing-rank.js: `new Set(opts.favorites || [])`)
+    assert.deepEqual(keysOf(R.buildCandidates({ ...base, favorites: [fav] })), keysOf(withFav));
+  });
   test("cap bounds the list; the list is at most the pool", () => {
     const items = [top("item_t1"), top("item_t2"), top("item_t3"), bottom("item_b1"), bottom("item_b2"), bottom("item_b3")];
     assert.equal(R.buildCandidates({ items, band: null, cap: 4, seed: SEED, history: {}, perPage: 2 }).length, 4);
