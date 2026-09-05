@@ -118,9 +118,12 @@ title New ERA
 echo Starting New ERA...
 cd /d %~dp0
 if "%1"=="" (set PORT=8377) else (set PORT=%1)
-rem %~2, not %2: the shortcut quotes the page ("/board/?recipe=songs"); re-quoting
-rem the quoted form puts its = outside the quotes, where cmd reads a delimiter
-rem and the Music/Movies icons did nothing at all (VM QA 9/5)
+rem The page arrives quoted from the shortcut ("/board/?recipe=songs"), so the
+rem tilde form below strips those quotes before adding one clean pair; the plain
+rem form re-quoted it and its = fell outside the quotes, where cmd reads a
+rem delimiter, and the Music/Movies icons did nothing at all (VM QA 9/5).
+rem NO percent signs in a rem line, ever: cmd expands them there too, and a
+rem bare argument holding = aborts the whole file at the comment (T7.6b).
 if "%~2"=="" (set OPEN=/home/) else (set OPEN=%~2)
 if not defined ERA_DATA_DIR set ERA_DATA_DIR=%~dp0data
 rem already running? just open the page (dad's 8/29 double-click pile-up)
@@ -135,7 +138,7 @@ rem full-screen, chrome-less app experience (dad 8/29): kiosk mode in Chrome
 rem or Edge with its own profile; a plain browser tab only as a last resort.
 rem Leave an app via its door (back to the hub home); leave the window with
 rem Alt+F4 or the gaze engine's exit.
-rem (explicit paths: under a 32-bit parent, %ProgramFiles% lies — dad's first
+rem (explicit paths: under a 32-bit parent, the ProgramFiles variable lies — dad's first
 rem launch fell back to Edge because the installer is a 32-bit process)
 set B=
 if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" set B=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe

@@ -43,3 +43,16 @@ test("an app path with ?recipe= survives the launcher (Music/Movies shortcuts, V
     "the page argument is compared as \"%~2\" (quotes stripped, then one pair)");
   assert.ok(!/"%2"/.test(bat), "never re-quote the raw %2");
 });
+
+test("no comment in a generated launcher carries a percent sign (T7.6b: the fix's own rem killed the icons)", () => {
+  // cmd expands %-variables inside `rem` lines too. The 9/5 fix above was
+  // right and DEAD: its explanatory comment said "%~2, not %2", a bare
+  // expansion of "/board/?recipe=songs" put an = on the rem line, and cmd
+  // aborted the file — "songs was unexpected at this time" — before the if
+  // ever ran. Music and Movies still did nothing on a clean install, and the
+  // text-only assertions above stayed green. A comment never expands anything.
+  const launchers = SH.slice(SH.indexOf("cat > \"$OUT/start-hub.bat\""));
+  const rems = launchers.split("\n").filter((l) => /^\s*rem(\s|$)/i.test(l));
+  assert.ok(rems.length > 5, "the launcher is commented");
+  for (const l of rems) assert.ok(!l.includes("%"), "no % in a rem line: " + l);
+});
