@@ -9,7 +9,12 @@
 #   candidate dist dir = tools/release.sh's $DIST: New-ERA-Setup.exe,
 #                        latest.json, new-era-suite.tar.gz
 #   previous installer = the release the family already has (leg B's start);
-#                        default: newest dist/release-*/ that is not the candidate
+#                        default: the newest dist/release-*/ whose version is
+#                        TAGGED here (release.sh tags only when it publishes,
+#                        so a dry-run artefact is never "what the family has" —
+#                        9/5: v0.32.1's leg B picked the unpublished v0.32.0
+#                        cut over the v0.31.7 in the field); newest of all
+#                        when none is tagged
 # Needs era-family/data/vm.env (QA host + guest credentials) and the driver
 # scripts in era-family/tools/vm. Output: gate/vm-e2e/ (screenshots, logs).
 set -uo pipefail
@@ -30,7 +35,11 @@ for f in New-ERA-Setup.exe latest.json new-era-suite.tar.gz; do
   [ -f "$DIST/$f" ] || { echo "vm-e2e: $DIST/$f missing"; exit 2; }
 done
 if [ -z "$PREV" ]; then
-  PREV="$(ls -dt "$ROOT"/dist/release-*/New-ERA-Setup.exe 2>/dev/null | grep -v "^$DIST/" | head -1)"
+  for p in $(ls -dt "$ROOT"/dist/release-*/New-ERA-Setup.exe 2>/dev/null | grep -v "^$DIST/"); do
+    v="$(basename "$(dirname "$p")")"; v="${v#release-}"
+    if git -C "$HUB" tag -l "$v" | grep -qx "$v"; then PREV="$p"; break; fi
+  done
+  [ -n "$PREV" ] || PREV="$(ls -dt "$ROOT"/dist/release-*/New-ERA-Setup.exe 2>/dev/null | grep -v "^$DIST/" | head -1)"
   [ -n "$PREV" ] || { echo "vm-e2e: no previous installer found under $ROOT/dist"; exit 2; }
 fi
 [ -f "$PREV" ] || { echo "vm-e2e: previous installer $PREV missing"; exit 2; }
