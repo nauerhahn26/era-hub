@@ -2592,6 +2592,46 @@ coordinates moved with the 8-icon layout (New ERA 38,238 · Book Reader 38,337
 · Music 117,40 · Movies 38,633); the first VNC click after a page settles
 sometimes does not register — screenshot before calling a control broken.
 
+### T7.6b — the six fixes re-verified on the VM (Opus driver, 16:43–17:45 UTC)
+Pristine snapshot; candidate = the 20260905.1604 (unsigned) v0.32.1 cut,
+served to the guest from the QA host; GUI install with every component but
+ERAgaze (yt-dlp ticked); hub started by the installer's own "Open New ERA
+now"; 36 screenshots in `<scratch>/t76b/shots/`. Nothing patched, no key.
+- **Defender FastPath (step 1): PASS** — Edge download, "Keep anyway" for an
+  unsigned exe, `MpCmdRun` full scan "found no threats", no detections before
+  or after a signature update (1.459.28 → .64). The Wacatac flag of 9/2 does
+  not recur on this cut; the signed cut is the durable answer.
+- **Confirmed: fixes 1, 3, 4, 5, 6** (home tiles + "No songs yet" board with
+  the strip; "Moana is on the board" + reload on Close; tile dim + amber
+  ERAgaze banner, never `.dwell`; the single family sentence for a YouTube
+  refusal with the raw line in the hub log only; the wrong AI key proved on
+  the card and in the toast, key kept).
+- **NOT confirmed: fix 2.** Music and Movies desktop icons still did nothing
+  (New ERA and Book Reader icons fine). Root cause, isolated with one-line
+  probe bats on the guest: **the fix's own comment.** `cmd` expands
+  `%`-variables inside `rem` too; `rem %~2, not %2: …` expanded the quoted
+  page, put `= ` on the comment line, and cmd aborted the file — `songs was
+  unexpected at this time` — before the corrected `if "%~2"` ever ran. Only
+  pages holding `=` (`?recipe=songs|movies`) die, which is exactly the two
+  icons. The unit test asserted the `if` line's text and stayed green.
+  **Fixed: 876a0f2** — no `%` in any launcher comment (the ProgramFiles
+  aside reworded too), and `start-hub-bat.test` now bans `%` in every `rem`
+  line of the generated launchers.
+- **New: the empty Movies board said nothing** — twelve black squares where
+  songs says "No songs yet" + the strip, because the movies hub answers an
+  empty shelf with a VALID empty recipe (its law: boot on an all-null
+  catalog) and the board only splashed on 404. **Fixed: era-board 6d29363**
+  — `loadRecipe` treats a movies recipe with no pickable tile as no-content;
+  the splash says "Nothing to watch yet." with "+ Add"; the first tile ends
+  it through the existing retry (`board-partner-strip.test` 13/13).
+- Queued, not fixed (design calls): the Drive-folder precondition for "+ Add"
+  surfaces only after "Add it" (say it on the empty splash / tile?); Settings
+  shows the "Pause eye-gaze (testing)" card on a PC without ERAgaze.
+- **Publish (17:47 UTC →)**: `release.sh v0.32.1` from 876a0f2 (+ era-board
+  6d29363), SIGNED: gate → build → VM legs A+B → tag + GitHub release. Log
+  `<scratch>/release-v0.32.1.log`. The 20260905.1604 dir was cleared so the
+  cut is fresh.
+
 ### T7.7 — device restore note
 Nothing to restore: Phase 7 ran on the QEMU guest only. The i13 is still at
 cold-test zero (since 9/3 pm) with `ellie-data-keep`, `raegaze-keep` and
