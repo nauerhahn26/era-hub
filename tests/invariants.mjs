@@ -41,7 +41,8 @@ const S = CONTRACT.sizes;
 // ONE floor-height text line without clipping. A fontFloor (74px) glyph line at
 // its natural ~1.16em box is ~86px tall; round up to a stable 5px grid => 90px.
 // This equals the brief's "min(w,h) >= 90px at 1920". It sits far below the
-// ~127px natural tile of a 12-wide 1920 row ((1920 - 2*40 sidePad - 11*28 gap)/12),
+// ~142px natural tile of a 12-wide 1920 row ((1920 - 2*28 sidePad - 11*14 gap)/12
+// — the pads and gap dropped to Ellie's own tablet's on 9/5, so the tiles grew),
 // so it flags only genuinely undersized targets, not normal layout variance.
 // At narrower gate viewports tiles legitimately shrink, so the floor scales
 // linearly with viewport width relative to the 1920 reference (=> 60px @1280).
@@ -66,8 +67,10 @@ function measureConfig(vp) {
     fontMin: S.fontMin,        // 44 absolute floor
     fontFloor: S.fontFloor,    // 74 text-tile floor (@1920)
     photoFontMin: S.photoFontMin, // 24 photo-plate floor (exempt from text floors)
-    gapFloor: S.gapFloor,      // 28 sliver boundary
-    gapWarn: S.gapWarn,        // 34 warn boundary
+    gapFloor: S.gapFloor,      // sliver boundary (14 since dad's 9/5 tablet spacing)
+    gapWarn: S.gapWarn,        // warn boundary — retired 9/5 by pinning it to the
+                               // floor, so the W("GAP") band below is empty by
+                               // construction (the board draws exactly the floor)
     park: CONTRACT.parkCorner, // {x01, y01}
     ladder: HOLD_LADDER,
     holdBandLo: H.floor,       // 800

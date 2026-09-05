@@ -4,7 +4,9 @@
 // POST-MIGRATION LAW (8/1): all apps import lib/contract.js, so every declared
 // state — front doors AND in-lesson screens (MW spelling/sort, the Pencil Ring
 // groups/letters, the board home) — must pass with ZERO violations at both gate
-// viewports. Warns are reported, not failed (GAP=28.0 exact-floor listings etc.).
+// viewports. Warns are reported, not failed. (The GAP warn band is retired as of
+// 9/5 — gapWarn == gapFloor in the contract — so exact-floor pairs no longer
+// list; the other warn kinds still do.)
 //
 // Run: node --test tests/invariants.test.mjs   (studio server must be running)
 import { test } from "node:test";
