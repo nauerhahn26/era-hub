@@ -2321,3 +2321,72 @@ test. Confidence **medium** on the provider details, which are all a stand-in's,
 and on the toast, which no Windows machine has yet raised. Chief residual risk is
 Phase 7's unchanged one: none of this has run on the kiosk, on real keys, with
 Drive syncing underneath.
+
+## Workpad: Phase 7 (behavioral verification) — in progress 2026-09-05
+
+Evidence lines are pasted as the steps ran; the retrospective follows once T7.6
+is driven. Ports: 8450 for the payload boot (a "manual hub" port, never a test
+port), the VM legs through `tools/vm-e2e.sh`.
+
+### T7.1 — full workspace gate
+`== era-gate: 76 passed, 0 failed ==` (the queue workflow's final gate on
+5585b21, which is the commit being cut). No ssh tunnel on 8377–8416 before it
+ran. Rerun by `release.sh` as its step 1/4 (T7.5 below).
+
+### T7.2 — board gates
+`gate/board-input.test.out`, `board-pixel.test.out`, `board-wardrobe-note.test.out`,
+`board-splash-door.test.out`: `# fail 0` in each; `board-pixel` reports 0
+`BAR_EXTRAS` beyond `#partnerStrip` and 0 `BAR_TOO_TALL`, min gap 14 px at
+both viewports (the amended floor), centre cells black, door the only dwell
+target in the bar.
+
+### T7.3 — the payload ships every new file, and boots
+- `bash tools/build-payload.sh <scratch>/t73/payload` → exit 0, build
+  20260905.1244; every file in the acceptance list present, plus
+  `public/book-review/index.html`; the shipped `contract.json` carries
+  `gapFloor: 14`; the shipped Settings page has the weather window control.
+- Booted in the foreground: `era-hub on http://127.0.0.1:8450`, then
+  `GET /content/status` → valid JSON (`{"mode":"local","local":true,…,"jobs":[…]}`)
+  with the test book already listed in `inbox` from the first scan.
+
+### T7.4 — a real book, end to end (synthetic pages, real keys, by hand)
+Throwaway 4-page book "Sunny Pond" rendered with headless Chromium (cover +
+three one-line pages, 1200×1600), dropped in `<folder>/books/Sunny Pond/`;
+`drive.json` `{"mode":"local","folderPath":<folder>}`; `ERA_DRIVE_LOCAL_ROOTS`
+pointed at it (off Windows). Real Google + ElevenLabs keys copied by `cp` from
+the 16-page run's data dir — never printed, nothing committed.
+- 12:47:29 `POST /integrations/drive/sync` → `{files:0,skipped:5}`; the inbox
+  sat on the quiet clock (`QUIET_MS` 10 min from that first scan — by design,
+  a parent is still dropping photos). 12:58:26 a second sync forced the tick →
+  `[content] claimed sunny-pond (drive sync)`.
+- 12:58:34 `transcribing`, 2/4 pages, 52 chars → 12:58:39 `state: done`,
+  transcribed 4, narrated 4, 111 characters, 0 flags, 0 page flags;
+  `[content] shelved sunny-pond (19 file(s) copied)`. **~10 s wall clock.**
+- `/books/index.json` → `[{slug:"sunny-pond",title:"Sunny Pond",pages:4,hasVideo:false,authored:false}]`.
+- `manifest.json`: 4 pages, every page has `text`, `audio` and a non-empty
+  `words[]` with timings; the text is a verbatim read of the synthetic pages
+  (Gemini); `narration.provider` elevenlabs / `eleven_flash_v2_5`.
+- `GET audio/001.mp3` with `Range: bytes=0-99` → **206**, 100 bytes;
+  `audio/004.mp3` → 200 `audio/mpeg`; `cover.jpg`, `pages/001.jpg`,
+  `pages/004.jpg` → 200 `image/jpeg`.
+- `.build/job.json`, `.build/text.json`, `sources/IMG_0001.jpg` → **404**
+  (`BOOK_DENY_DIRS`).
+- Reader: `/reader/` shelf shows the cover; opening the book shows page 1's
+  image, its text, and the narration `<audio>` at `readyState 4`, duration
+  1.72 s (screenshots `reader-shelf.png`, `reader-page1.png` in the scratch dir).
+
+Deviations from the step text, none of them product bugs:
+- The terminal state is `done`, not `published` — the publish is the
+  "shelved" log line and the index entry.
+- Step 6's `curl -sI` (HEAD) answers **404**: `/books/` is GET-only by design
+  (`server.js:1853`) and the Reader only ever GETs. Follow-up: answer HEAD on
+  the immutable media route so the plan's probe works as written.
+- Three `POST /log` "request failed" lines in the headless run are
+  page-teardown aborts (`curl -X POST /log` → 204).
+
+### T7.5 — release dry-run + VM legs
+`bash tools/release.sh v0.32.0 --dry-run` launched 13:12 UTC, detached
+(`setsid nohup`, log `<scratch>/t75/release-dry-run.log`): gate → build-dist
+into `dist/release-v0.32.0` (11 GB free after pruning v0.31.3–.6) → `vm-e2e.sh`
+legs A (fresh install) and B (v0.31.7 self-updating to it). Result below when
+it lands.
