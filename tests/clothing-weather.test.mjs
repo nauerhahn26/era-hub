@@ -1,9 +1,9 @@
-// clothing-weather.test.mjs — "Dress for 10 AM-1 PM" (dad 9/5: "she's often
-// choosing clothing for when she'll be at school between ten and one, and we
-// give her weather we don't hit until four PM — so it's not perfectly
-// useful"). The outfits are sorted for the hours she is OUT, not for the
-// afternoon peak: app-settings.json's weatherWindow {from,to} (inclusive
-// local hours) picks the hours read out of the hourly forecast.
+// clothing-weather.test.mjs — the outfits are sorted for the hours she is
+// OUT, not for the afternoon peak (dad 9/5: she dresses for a morning at
+// school and the day's high comes hours later, so the daily high was "not
+// perfectly useful"). app-settings.json's weatherWindow {from,to} (inclusive
+// local hours) picks the hours read out of the hourly forecast. The hours in
+// this file are invented — the family's own window is config, never a fixture.
 //
 // Port 8446: ONE fake server standing in for both the geo lookup
 // (ERA_GEO_URL) and Open-Meteo (ERA_WEATHER_URL). No key, no network.
