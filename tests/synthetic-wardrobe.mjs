@@ -32,7 +32,10 @@ const ADJ = ["Sunny", "Pond", "Maple", "Comet", "Pebble", "Breezy", "Marble", "T
 const NOUN = { top: ["tee", "blouse", "polo", "sweater", "shirt"], pants: ["pants", "leggings"], shorts: ["shorts"], dress: ["dress"], set: ["set"] };
 const LOUD_COLORS = ["pink", "orange", "red", "purple", "yellow", "teal", "green", "coral", "lime", "magenta"];
 const QUIET_COLORS = ["navy", "black", "white", "gray", "blue", "cream", "beige", "tan", "light blue"];
-const LOUD_PATTERNS = ["floral", "graphic", "polka dots", "plaid", "animal print"];
+// Patterns are the hub's whitelist words only (clothing-rank.js PATTERNS), so
+// every garment here is one wardrobe.json can hold; `pick` spends one rnd()
+// per call whatever the list length, so the ids stay the same.
+const LOUD_PATTERNS = ["floral", "graphic", "print"];
 const QUIET_PATTERNS = ["solid", "stripes"];
 const PALETTES = ["warm", "cool", "neutral", "pastel"];
 const VIBES = ["sweet", "sporty", "graphic", "basic"];

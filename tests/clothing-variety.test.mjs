@@ -79,6 +79,12 @@ describe("the synthetic wardrobe has the original's shape", () => {
     assert.equal(PAIRING.great.length, 14);
     assert.equal(PAIRING.avoid.length, 1);
   });
+  test("every garment's attributes survive the hub's whitelist (spec §3.1 item 2): the wardrobe only wears what wardrobe.json can hold", () => {
+    for (const g of ITEMS) {
+      const { colors, pattern, statement, palette, vibe } = g;
+      assert.deepEqual(R.attributes(g), { colors, pattern, statement, palette, vibe }, `${g.id} ${g.pattern}`);
+    }
+  });
   test("makeItems is deterministic per seed and differs across seeds", () => {
     assert.deepEqual(makeItems({ n: 35, seed: 1 }), ITEMS);
     assert.notDeepEqual(makeItems({ n: 35, seed: 2 }).map(g => g.id), ITEMS.map(g => g.id));
