@@ -43,17 +43,28 @@ done
 # re-point the live-server port in the gate copies only
 grep -rlZ "8377" "$GATE" 2>/dev/null | xargs -0 -r sed -i "s/8377/$PORT/g"
 
+# Every provider seam points at a closed port, gate-wide: the gate's data dir
+# holds a REAL ElevenLabs credential, and a hub reaches out on its own — the
+# /content/status poll asks ElevenLabs for the month's voice left (T6b.1), the
+# 20 s clothing tick asks ipapi/Open-Meteo for the weather, a Resend send is a
+# real email, fal spends per press. Since 9/5 (Phase 7 review) that is true for
+# every hub a suite spawns with `...process.env`, not just the shared one —
+# the "no test spends a key" guarantee used to rest on the data dir happening
+# to hold no vision/fal/TMDB key. Answered by the kernel (connection refused);
+# the hub logs it and serves `narration: null`. Every suite that needs a seam
+# to WORK stands up its own stand-in, which overrides these. ERA_AI_URL stays
+# unset gate-wide (unset means "the provider's real base" in
+# content-providers.js and suites test that shape); the shared hub plugs it.
+export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
+  ERA_GEO_URL="http://127.0.0.1:1/geo" ERA_WEATHER_URL="http://127.0.0.1:1" \
+  ERA_RESEND_URL="http://127.0.0.1:1" ERA_TMDB_URL="http://127.0.0.1:1" \
+  ERA_STREAMING_URL="http://127.0.0.1:1"
+
 # start the hub test instance (killing any stale holder of the TEST port first —
 # a survivor from a killed session otherwise fails every live-server suite with
 # EADDRINUSE; bracket trick so pkill never matches this script's own cmdline)
 pkill -f "[n]ode .*server.js $PORT" 2>/dev/null; sleep 0.5
-# ERA_ELEVEN_URL points at a closed port on purpose: the gate's data dir holds a
-# REAL ElevenLabs credential, and since T6b.1 a /content/status poll (the board
-# polls it on every load) asks that provider how much of the month's voice is
-# left. The gate must not talk to a provider on the family's key, so the question
-# is answered by the kernel instead — the hub logs it and serves `narration:
-# null`. Every suite that needs the seam to WORK stands up its own stand-in.
-ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_ELEVEN_URL="http://127.0.0.1:1" \
+ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" \
   node "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT

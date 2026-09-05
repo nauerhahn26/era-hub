@@ -4,6 +4,11 @@
 name: build-installer
 on:
   workflow_dispatch:
+    inputs:
+      siblings_ref:
+        description: "branch/tag to take the sibling repos at (blank: this ref's name, then their default branch)"
+        required: false
+        default: ""
   push:
     tags: ["v*"]
 
@@ -15,9 +20,17 @@ jobs:
         uses: actions/checkout@v4
         with: { path: era-hub }
       - name: Check out sibling app repos
+        # a sibling ref named `siblings_ref`, else one named like this ref, else
+        # the sibling's default branch — so a tag build takes the siblings'
+        # masters, which must therefore already carry what the tag needs (9/5:
+        # era-board's partner strip lived on an unmerged branch while the
+        # locally cut installer had it from the working tree)
+        env: { WANT: "${{ github.event.inputs.siblings_ref || github.ref_name }}" }
         run: |
           for r in era-core era-making-words era-pencil era-board; do
-            git clone --depth 1 "https://github.com/nauerhahn26/$r" "$r"
+            git clone -q --depth 1 --branch "$WANT" "https://github.com/nauerhahn26/$r" "$r" 2>/dev/null \
+              || git clone -q --depth 1 "https://github.com/nauerhahn26/$r" "$r"
+            echo "$r: $(git -C "$r" rev-parse --abbrev-ref HEAD) $(git -C "$r" rev-parse --short HEAD)"
           done
       - name: Fetch portable Node runtime (official, checksum-verified)
         run: |

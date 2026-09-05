@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -120,4 +121,36 @@ test("round trip: the alignment envelope lands in the manifest's page shape", ()
   assert.equal(out[out.length - 1].end, ALIGN.character_end_times_seconds[14]);
   // and it survives JSON, which is how it actually reaches the reader
   assert.deepEqual(JSON.parse(JSON.stringify(out)), out);
+});
+
+// ------------------------------------------------- a recorded provider output
+
+// tests/fixtures/recorded/sunny-pond-words.json is what the pipeline actually
+// wrote for a synthetic four-page book on 2026-09-05 (T7.4): real ElevenLabs
+// `with-timestamps` timings, no family text. The synthetic envelopes above are
+// contiguous; a real read has silence BETWEEN words (0.104 → 0.151 s here) and
+// a closing word that runs long on its punctuation. The reader's binary search
+// ("the last word started by t") has to hold on that shape, so the manifest
+// contract is pinned against it — every page, every word.
+const RECORDED = JSON.parse(readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "recorded", "sunny-pond-words.json"), "utf8"));
+
+test("recorded ElevenLabs timings keep the manifest contract on every page", () => {
+  assert.equal(RECORDED.pages.length, 4);
+  for (const page of RECORDED.pages) {
+    assert.ok(page.words.length >= 5, `page ${page.index} has ${page.words.length} words`);
+    let prevEnd = 0;
+    for (const w of page.words) {
+      assert.deepEqual(Object.keys(w), ["word", "start", "end"]);
+      assert.ok(/\S/.test(w.word) && !/\s/.test(w.word), JSON.stringify(w));   // one token, no whitespace
+      assert.ok(Number.isFinite(w.start) && Number.isFinite(w.end), JSON.stringify(w));
+      assert.ok(w.end > w.start, JSON.stringify(w));
+      assert.ok(w.start >= prevEnd, `page ${page.index}: "${w.word}" starts before the previous word ends`);
+      prevEnd = w.end;
+    }
+  }
+  // the gap the synthetic cases never show: silence between spoken words
+  const p2 = RECORDED.pages[1].words;
+  assert.ok(p2.some((w, i) => i > 0 && w.start > p2[i - 1].end), "no inter-word gap in the recorded page");
+  assert.equal(p2.map(w => w.word).join(" "), "The duck swims in the pond.");
 });

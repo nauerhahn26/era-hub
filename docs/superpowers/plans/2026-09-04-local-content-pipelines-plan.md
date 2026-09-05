@@ -2433,3 +2433,49 @@ v0.32.0 install + keep restore per `aac-board-builder/docs/i13-qa-cycle.md`,
 on dad's go, over a **8425+** tunnel (never 8377–8416), with a hand wake if
 the reboot stalls and the `schtasks` battery flag cleared (`Set-ScheduledTask`,
 runbook step 6).
+
+### Review prep — spec §7 → evidence map (14:05 UTC, read-only Opus pass)
+`<scratch>/t7-review/evidence-map.md`: §7 "Testing" 11 rows → 6 COVERED,
+3 WEAK, 1 PENDING-T7.6 (the VM walkthrough), 1 MISSING (the Defender re-verify,
+now T7.6 step 1); the 24 other acceptance rows → 17 COVERED, 5 WEAK, 2 MISSING.
+No secret value anywhere in the tree (the only key-pattern hits are the
+narrate suite's own fake inside anti-leak assertions). Acted on the same hour,
+none of it in the payload, so the v0.32.0 cut stands:
+- **"No test spends a key" was an accident of the data dir's contents.**
+  `era-gate.sh` plugged one seam (ElevenLabs) on the shared hub while
+  fal (`api.fal.ai`, per press), Google, TMDB/Watchmode, Resend (a real send)
+  and ipapi/Open-Meteo (the 20 s clothing tick, in every spawned hub) stayed
+  at their real defaults, reachable by any suite that spawns with
+  `...process.env`. Now every seam is exported gate-wide to a closed port
+  (`ERA_AI_URL` on the shared hub only — unset means "the real base" and
+  suites test that shape); suites that need a seam to work override it.
+  Gate rerun with the seams: `== era-gate: 76 passed, 0 failed ==` (14:08–14:26 UTC).
+- **The public-repo scanner could not see any key this feature added.**
+  `.github/era-scan.sh` now also fails on `AIza…`, `AQ.…` and fal's
+  `<uuid>:<hex>` (a bare 32-hex TMDB/Watchmode key is an md5 look-alike and
+  stays unlisted).
+- **CI would have cut a board with no partner strip**: `build-installer.yml`
+  cloned each sibling at its default branch while era-board's strip is on
+  `feat/content-strip`. The workflow now takes a `siblings_ref` input, else a
+  sibling branch named like the ref, else the default — and prints what it
+  took. Release rule that follows: **before tagging, era-board's
+  `feat/content-strip` merges to its master** (era-core is already on master).
+- **Recorded fixture** (§7 1g "word grouping against a recorded fixture"):
+  `tests/fixtures/recorded/sunny-pond-words.json` is the real ElevenLabs
+  `with-timestamps` output for the synthetic book (no family text), pinned by
+  a new `words.test` case — the raw envelope is not persisted by the build, so
+  this is recorded output, and the test says so.
+
+Queued for the **next cut** (product code — would break the "the tag is the
+commit the installer came from" rule if landed now):
+- The family's real school-hours window is in shipped copy and comments
+  (`public/settings/index.html:169,177`, `clothing-worker.js:645`,
+  `server.js:1272` — "between ten and one"); the fixtures were genericized on
+  9/5, the prose was not. Reword to an invented example.
+- `POST /movies-key` stores TMDB/Watchmode keys with no proving call
+  (spec:128–129 wants one, as the AI and voice cards have).
+- The weekly availability re-check: `availabilityCheckedAt` is stamped at
+  `movies-add.js:715` and never read (spec:286–288).
+- Arrange for movies (spec:259–261; `POST /movies/order {swap:[a,b]}`,
+  consciously deferred in Phase 6b).
+- Answer HEAD on the immutable `/books/` media route.

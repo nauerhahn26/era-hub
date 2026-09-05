@@ -1,0 +1,147 @@
+{
+  "recorded": "2026-09-05 T7.4, synthetic 4-page book (cover + three one-line pages), ElevenLabs eleven_flash_v2_5 with-timestamps, the words[] the pipeline wrote to .build/narration.json — real provider timings, no family text",
+  "model": "eleven_flash_v2_5",
+  "provider": "elevenlabs",
+  "pages": [
+    {
+      "index": 1,
+      "words": [
+        {
+          "word": "SUNNY",
+          "start": 0,
+          "end": 0.302
+        },
+        {
+          "word": "POND",
+          "start": 0.348,
+          "end": 0.801
+        },
+        {
+          "word": "a",
+          "start": 0.917,
+          "end": 1.033
+        },
+        {
+          "word": "little",
+          "start": 1.103,
+          "end": 1.312
+        },
+        {
+          "word": "book",
+          "start": 1.347,
+          "end": 1.718
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "words": [
+        {
+          "word": "The",
+          "start": 0,
+          "end": 0.104
+        },
+        {
+          "word": "duck",
+          "start": 0.151,
+          "end": 0.348
+        },
+        {
+          "word": "swims",
+          "start": 0.395,
+          "end": 0.662
+        },
+        {
+          "word": "in",
+          "start": 0.697,
+          "end": 0.755
+        },
+        {
+          "word": "the",
+          "start": 0.789,
+          "end": 0.859
+        },
+        {
+          "word": "pond.",
+          "start": 0.882,
+          "end": 1.486
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "words": [
+        {
+          "word": "The",
+          "start": 0,
+          "end": 0.116
+        },
+        {
+          "word": "frog",
+          "start": 0.163,
+          "end": 0.406
+        },
+        {
+          "word": "sits",
+          "start": 0.464,
+          "end": 0.65
+        },
+        {
+          "word": "on",
+          "start": 0.685,
+          "end": 0.755
+        },
+        {
+          "word": "a",
+          "start": 0.801,
+          "end": 0.824
+        },
+        {
+          "word": "log.",
+          "start": 0.871,
+          "end": 1.393
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "words": [
+        {
+          "word": "The",
+          "start": 0,
+          "end": 0.116
+        },
+        {
+          "word": "sun",
+          "start": 0.151,
+          "end": 0.325
+        },
+        {
+          "word": "goes",
+          "start": 0.372,
+          "end": 0.534
+        },
+        {
+          "word": "down.",
+          "start": 0.58,
+          "end": 0.952
+        },
+        {
+          "word": "Good",
+          "start": 1.196,
+          "end": 1.347
+        },
+        {
+          "word": "night,",
+          "start": 1.37,
+          "end": 1.521
+        },
+        {
+          "word": "pond!",
+          "start": 1.544,
+          "end": 2.09
+        }
+      ]
+    }
+  ]
+}

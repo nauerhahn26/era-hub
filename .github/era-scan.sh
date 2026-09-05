@@ -19,7 +19,10 @@ fail=0
 echo "== era-scan: $DIR =="
 
 # (a) generic secret patterns — always fatal
-PATTERNS='-----BEGIN[ A-Z]*PRIVATE KEY|sk-proj-[A-Za-z0-9]|sk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|gh[ops]_[A-Za-z0-9]{30,}|eyJ[A-Za-z0-9_-]{30,}\.eyJ|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|key_[a-f0-9]{24,}'
+# (the last three, 9/5: Google AI Studio's AIza… and newer AQ.… forms, and
+# fal's <uuid>:<32 hex> — the keys the content pipelines introduced; a bare
+# 32-hex TMDB/Watchmode key is indistinguishable from an md5 and is not listed)
+PATTERNS='-----BEGIN[ A-Z]*PRIVATE KEY|sk-proj-[A-Za-z0-9]|sk_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|gh[ops]_[A-Za-z0-9]{30,}|eyJ[A-Za-z0-9_-]{30,}\.eyJ|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|key_[a-f0-9]{24,}|AIza[0-9A-Za-z_-]{35}|AQ\.[A-Za-z0-9_-]{30,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{32}'
 hits=$($G "$PATTERNS" "$DIR" 2>/dev/null)
 if [ -n "$hits" ]; then echo "FATAL secret-pattern hits:"; echo "$hits" | head -40; fail=1; fi
 
