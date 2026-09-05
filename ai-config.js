@@ -41,6 +41,16 @@ const DEFAULT_VOICE_ID = "cgSgspJ2msm6clMCkdW9";
 // whose card says flash. Two defaults is one too many. The card is the family's
 // answer to "which voice reads to my child", and this is where it is read.
 const DEFAULT_MODEL_ID = "eleven_flash_v2_5";
+// What ONE page of animation costs, in dollars. fal publishes no price API, so
+// this is fal's own listed price for the model the animate step uses (Kling
+// v2.5 turbo pro, the documented 5-second clip: $0.35, checked 9/5) and the fal
+// card's probe hands it straight back. It lives here, beside the role, because
+// the cost gate is mandatory (spec §4 step 5): the animate button stays
+// disabled unless a book can be quoted, so the number a book is quoted in and
+// the key it is spent on must never drift apart. A price the card recorded when
+// the key was saved wins, so a family already quoted a different number keeps
+// theirs until they save the key again.
+const DEFAULT_CLIP_PRICE = 0.35;
 
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
@@ -64,7 +74,14 @@ function visionRole(cfg) {
 function falRole(cfg) {
   if (!cfg || typeof cfg !== "object" || !cfg.fal || typeof cfg.fal !== "object") return null;
   const apiKey = key(cfg.fal.apiKey);
-  return apiKey ? { apiKey } : null;
+  // keyOk === false means fal already refused this key when the card saved it
+  // (POST /fal-key probes before it says "working"), exactly as the Voice card
+  // records for ElevenLabs. Quoting a family $5 for a book on a key that cannot
+  // buy one clip is worse here than anywhere else in the product, so a refused
+  // key is no key. keyOk undefined (an operator's file, never probed) counts.
+  if (!apiKey || cfg.fal.keyOk === false) return null;
+  const p = Number(cfg.fal.perClipPrice);
+  return { apiKey, perClipPrice: Number.isFinite(p) && p > 0 ? p : DEFAULT_CLIP_PRICE };
 }
 
 function elevenRole(dir) {
@@ -97,4 +114,5 @@ function haveRoles(dir) {
   return { vision: !!r.vision, elevenlabs: !!r.elevenlabs, fal: !!r.fal };
 }
 
-module.exports = { aiRoles, haveRoles, VISION_PROVIDERS, DEFAULT_MODEL_ID };
+module.exports = { aiRoles, haveRoles, VISION_PROVIDERS, DEFAULT_MODEL_ID,
+                   DEFAULT_CLIP_PRICE };

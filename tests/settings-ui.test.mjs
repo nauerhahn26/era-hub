@@ -33,6 +33,10 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-settings-ui-"));
 let child, fake, browser;
 const GOOD_KEY = "sk_good_1234567890";   // the only key the stand-in accepts
+// The fal card (T6.1) proves its key the same way the Voice card does, so the
+// same stand-in answers for api.fal.ai as well. Stand-in material only.
+const FAL_GOOD = "fal-good-1234567890";
+let falCalls = 0;
 
 before(async () => {
   fake = http.createServer((req, res) => {
@@ -42,13 +46,22 @@ before(async () => {
       return res.writeHead(401, { "Content-Type": "application/json" })
         .end('{"detail":{"status":"invalid_api_key"}}');
     }
+    if (req.url.startsWith("/v1/account/billing")) {
+      falCalls++;      // guardrail §B.2(c): zero calls means it went to fal itself
+      if (req.headers.authorization === "Key " + FAL_GOOD)
+        return res.writeHead(200, { "Content-Type": "application/json" })
+          .end('{"username":"a-family","credits":{"current_balance":4.2,"currency":"USD"}}');
+      return res.writeHead(401, { "Content-Type": "application/json" })
+        .end('{"error":{"type":"unauthorized","message":"invalid credentials"}}');
+    }
     res.writeHead(404).end();
   });
   await new Promise(r => fake.listen(FAKE, "127.0.0.1", r));
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
     env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1",
-           ERA_ELEVEN_URL: `http://127.0.0.1:${FAKE}` },
+           ERA_ELEVEN_URL: `http://127.0.0.1:${FAKE}`,
+           ERA_FAL_URL: `http://127.0.0.1:${FAKE}` },
   });
   let up = false;
   for (let i = 0; i < 100; i++) {
@@ -196,6 +209,48 @@ test("the films card takes both keys and never hands either one back (T5.3)", as
   assert.ok(!JSON.stringify(st).includes("watchmode-typed-by-a-parent"));
   assert.equal(await page.$eval("#wmKey", i => i.value), "",
                "and the box is cleared, so the key is not left on screen");
+  await ctx.close();
+});
+
+// ---- "Moving pages" fal card (T6.1) ----
+//
+// The one key in the product that spends real money per press. The card is a
+// clone of the Voice card's key row because that is the one a parent has
+// already used, and — like the Voice card and unlike the film keys — it proves
+// the key with one real call before saying it works: a wrong key here would
+// otherwise be discovered halfway through a book they have already agreed to
+// pay for. It says the price of a clip, because the button that spends is
+// quoted in the same money (T6.2's cost gate).
+test("the fal card checks the key and quotes what a clip costs (T6.1)", async () => {
+  const { ctx, page } = await settingsPage();
+  assert.equal(await page.$eval("#fal h2", h => /pages|video|moving/i.test(h.textContent)), true,
+               "the card is about turning pages into moving pictures");
+  const hint = await page.$eval("#fal .hint", p => p.textContent);
+  assert.match(hint, /money/i, "the only card that spends says so");
+  assert.equal(await page.$eval("#falKey", i => i.type), "password",
+               "a key is not shoulder-surfable on a family PC");
+
+  // a key fal refuses never shows as working (the Voice card's bug 14, here)
+  await page.fill("#falKey", "fal-typo-missing-char");
+  await page.click("#falKeySave");
+  await page.waitForFunction(() => /\S/.test(document.getElementById("falKeyStatus").textContent));
+  let s = await page.$eval("#falKeyStatus", e => e.textContent);
+  assert.match(s, /missing character/i, s);
+  assert.doesNotMatch(s, /working/i, "a refused key is never 'working'");
+
+  await page.fill("#falKey", FAL_GOOD);
+  await page.click("#falKeySave");
+  await page.waitForFunction(() => /working/i.test(
+    document.getElementById("falKeyStatus").textContent));
+  s = await page.$eval("#falKeyStatus", e => e.textContent);
+  assert.match(s, /\$0?\.\d/, "the card quotes the price of one clip: " + s);
+  assert.equal(await page.$eval("#falKey", i => i.value), "",
+               "and the box is cleared, so the key is not left on screen");
+  assert.equal(falCalls, 2, "both saves were proved against the stand-in, not fal itself");
+  const st = await (await fetch(`${BASE}/fal-key`)).json();
+  assert.equal(st.saved, true);
+  assert.equal(st.keyOk, true);
+  assert.ok(!JSON.stringify(st).includes(FAL_GOOD), "the key never comes back out of the hub");
   await ctx.close();
 });
 

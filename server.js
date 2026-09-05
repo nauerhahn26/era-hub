@@ -17,6 +17,7 @@ const musicAdd = require("./music-add.js");
 const moviesAdd = require("./movies-add.js");
 const moviesLookup = require("./movies-lookup.js");
 const booksIndex_ = require("./books-index.js");
+const aiConfig = require("./ai-config.js");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
@@ -936,6 +937,46 @@ async function verifyTtsKey(key) {
     if (r.status === 401) return { ok: false, error: "ElevenLabs did not recognise that key - check for a missing character" };
     return { ok: false, error: "ElevenLabs replied " + r.status };
   } catch (e) { return { ok: false, error: "could not reach ElevenLabs (offline?)" }; }
+}
+
+// ---- fal: the only key in the product that spends money per press (T6.1) ----
+// ERA_FAL_URL is the same kind of stand-in seam ERA_ELEVEN_URL is: no test may
+// ever spend a key or leave the machine.
+const FAL_URL = process.env.ERA_FAL_URL || "https://api.fal.ai";
+// Is this fal key real? One cheap real call, exactly as verifyTtsKey does it:
+// the account's billing row READS a balance and generates nothing, so proving
+// the key costs nothing and a wrong key is caught here rather than halfway
+// through a book a parent has already agreed to pay for.
+//
+// perClipPrice comes back with it because the animate step's cost gate is
+// mandatory (spec §4 step 5) and fal publishes no price API — one number, from
+// ai-config.js, quoted on the card and spent by the worker.
+async function verifyFalKey(key) {
+  try {
+    const r = await fetch(FAL_URL + "/v1/account/billing?expand=credits",
+      { headers: { Authorization: "Key " + key }, signal: AbortSignal.timeout(15000) });
+    if (r.ok) return { ok: true, perClipPrice: aiConfig.DEFAULT_CLIP_PRICE };
+    if (r.status === 401 || r.status === 403)
+      return { ok: false, error: "fal did not recognise that key - check for a missing character" };
+    return { ok: false, error: "fal replied " + r.status };
+  } catch (e) { return { ok: false, error: "could not reach fal (offline?)" }; }
+}
+
+// <DATA>/ai-config.json is shared by three cards now (the AI helper's vision
+// key, the two film keys, the fal key), so every writer MERGES and a file that
+// exists but cannot be READ is a refusal — never something to start fresh over,
+// which would delete the keys the other cards saved (the movies catalog's Law
+// 3, one directory up). null means "do not touch this file".
+const AI_CFG_PATH = path.join(DATA, "ai-config.json");
+function readAiCfg() {
+  try {
+    const c = JSON.parse(fs.readFileSync(AI_CFG_PATH, "utf8"));
+    return c && typeof c === "object" && !Array.isArray(c) ? c : null;
+  } catch (e) { return e && e.code === "ENOENT" ? {} : null; }
+}
+function writeAiCfg(cfg) {
+  try { fs.writeFileSync(AI_CFG_PATH, JSON.stringify(cfg, null, 1)); return true; }
+  catch { return false; }
 }
 
 function loadTtsCfg() {
@@ -1971,6 +2012,83 @@ const server = http.createServer((req, res) => {
         }).catch(() => { res.writeHead(200, { "Content-Type": "application/json" })
           .end('{"ok":false,"error":"could not reach ElevenLabs"}'); });
       } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+
+  // ---- Settings > Moving pages: the fal key (never echoed back) ----
+  // What is SAVED and whether fal recognised it, never the key — the same deal
+  // /movies/keys makes. perClipPrice rides along because the card and the review
+  // page's "Animate this book (≈ $x)" button have to quote the same money.
+  if (req.method === "GET" && req.url === "/fal-key") {
+    const cfg = readAiCfg();
+    const fal = cfg && cfg.fal && typeof cfg.fal === "object" && !Array.isArray(cfg.fal)
+              ? cfg.fal : null;
+    const saved = !!(fal && typeof fal.apiKey === "string" && fal.apiKey.trim());
+    const p = Number(fal && fal.perClipPrice);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true, saved,
+      keyOk: saved && typeof fal.keyOk === "boolean" ? fal.keyOk : null,
+      error: saved && typeof fal.keyError === "string" ? fal.keyError : "",
+      perClipPrice: Number.isFinite(p) && p > 0 ? p : aiConfig.DEFAULT_CLIP_PRICE }));
+    return;
+  }
+  // Saving PROVES the key first, the way /tts-key does and unlike the film keys:
+  // a wrong voice key buys silence for months, a wrong fal key is found halfway
+  // through a book a parent has already agreed to pay for. ownDoor because it
+  // writes the family's key: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/fal-key") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let b;
+      try { b = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
+      if (!b || typeof b !== "object" || Array.isArray(b) ||
+          typeof b.apiKey !== "string" || b.apiKey.length > 300) { res.writeHead(400).end(); return; }
+      const apiKey = b.apiKey.trim();
+      const cfg = readAiCfg();
+      if (!cfg) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "config-unreadable",
+          message: "New ERA could not read the saved keys just now. Try again in a minute." }));
+        return;
+      }
+      const price = aiConfig.DEFAULT_CLIP_PRICE;
+      const answer = (v) => {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(v));
+      };
+      const failedWrite = () => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "write-failed",
+                                 message: "New ERA could not save that key. Try again." }));
+      };
+      // An empty box is a parent taking the key back out: the role goes away
+      // whole, so nothing downstream can read a blank key as half a key.
+      if (!apiKey) {
+        delete cfg.fal;
+        if (!writeAiCfg(cfg)) { failedWrite(); return; }
+        answer({ ok: true, saved: false, keyOk: null, perClipPrice: price });
+        return;
+      }
+      cfg.fal = { apiKey, keyOk: null, keyError: "", perClipPrice: price };
+      if (!writeAiCfg(cfg)) { failedWrite(); return; }
+      verifyFalKey(apiKey).then((v) => {
+        // Re-read: the probe took a network round trip, and another card may
+        // have written this file while it was out. Only OUR key's verdict is
+        // recorded, and only if it is still the key on disk.
+        const c = readAiCfg();
+        if (c && c.fal && typeof c.fal === "object" && c.fal.apiKey === apiKey) {
+          c.fal.keyOk = v.ok; c.fal.keyError = v.error || "";
+          if (v.perClipPrice) c.fal.perClipPrice = v.perClipPrice;
+          writeAiCfg(c);
+        }
+        answer({ ok: v.ok, saved: true, keyOk: v.ok, ...(v.error ? { error: v.error } : {}),
+                 perClipPrice: v.perClipPrice || price });
+      }).catch(() => answer({ ok: false, saved: true, keyOk: null,
+                              error: "could not reach fal", perClipPrice: price }));
     });
     return;
   }

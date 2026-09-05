@@ -61,7 +61,24 @@ test("the role-keyed file is read as roles", () => {
     vision: { provider: "openai", apiKey: VKEY }, fal: { apiKey: FKEY } } });
   const r = aiRoles(dir);
   assert.deepEqual(r.vision, { provider: "openai", apiKey: VKEY });
-  assert.deepEqual(r.fal, { apiKey: FKEY });
+  // The fal role carries the price of one clip as well as the key: the animate
+  // step's cost gate is mandatory (spec §4 step 5), so a spender must never be
+  // able to hold the key without holding the number the book is quoted in.
+  assert.deepEqual(r.fal, { apiKey: FKEY, perClipPrice: 0.35 });
+});
+
+test("a fal key already refused (keyOk false) is no key, and a quoted price is kept", () => {
+  const dir = dataDir({ "ai-config.json": { fal: {
+    apiKey: FKEY, keyOk: false,
+    keyError: "fal did not recognise that key - check for a missing character" } } });
+  assert.equal(aiRoles(dir).fal, null);
+  // A family quoted a different price when they saved the key keeps that price
+  // rather than being re-quoted by a hub update behind their back.
+  const dir2 = dataDir({ "ai-config.json": { fal: { apiKey: FKEY, keyOk: true, perClipPrice: 0.2 } } });
+  assert.deepEqual(aiRoles(dir2).fal, { apiKey: FKEY, perClipPrice: 0.2 });
+  // …and a price that is not a price falls back to the published one.
+  const dir3 = dataDir({ "ai-config.json": { fal: { apiKey: FKEY, perClipPrice: "free" } } });
+  assert.equal(aiRoles(dir3).fal.perClipPrice, 0.35);
 });
 
 test("a role key wins over a legacy field left beside it", () => {

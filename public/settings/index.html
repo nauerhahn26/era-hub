@@ -198,6 +198,29 @@
     </div>
   </div>
 
+  <!-- Moving pages (T6.1). The fal key: the ONE thing in New ERA that spends
+       real money per press, so the card is a clone of the Voice card's key row
+       (the one a parent has already used) and, like it, proves the key with one
+       real call before it says "working" — a wrong key here is otherwise found
+       halfway through a book they have already agreed to pay for. It quotes the
+       price of a single clip because the review page's "Animate this book"
+       button is quoted in the same money. Nothing animates on its own: the
+       animate step is off until a parent presses that button. -->
+  <div class="card" id="fal">
+    <h2>🎞 Moving pages</h2>
+    <p class="hint">Optional, and the only thing in New ERA that costs real <b>money</b>. With a <b>fal</b> key, the pages of a finished book can become a few seconds of moving picture each. Nothing is animated on its own &mdash; you open a book&rsquo;s review page, see what that whole book will cost, and press the button yourself.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button id="falOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my fal API keys page</button>
+    </div>
+    <div class="row">
+      <input id="falKey" type="password" placeholder="fal API key"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="falKeyPaste">📋 Paste</button>
+      <button id="falKeySave">Save key</button>
+    </div>
+    <div class="status" id="falKeyStatus"></div>
+  </div>
+
   <!-- Films and shows (T5.3). The search behind the board's "+ Add" sheet says
        "add a TMDB key in Settings" when a family has none; for one review cycle
        that sentence named nothing that existed, and the only way in was editing
@@ -660,6 +683,41 @@ $("ttsKeySave").onclick=async()=>{
   loadVoices();
 };
 
+// ---- Moving pages: the fal key (T6.1). The card paints itself from what is
+// SAVED and what fal said about it — the key never comes back out of the hub.
+// The price of one clip comes back with it so the card and the review page's
+// "Animate this book" button quote the same money.
+function money(p){ return "$"+(Math.round(p*100)/100).toFixed(2); }
+function falPaint(st){
+  if(!st){ $("falKeyStatus").textContent="Could not reach the app server."; return; }
+  const each=" One moving page costs about "+money(st.perClipPrice)+", and a whole book is priced for you before anything is made.";
+  if(st.saved && st.keyOk===true)
+    $("falKeyStatus").innerHTML='<b>Key checked and working ✓</b>'+each;
+  else if(st.saved && st.keyOk===false)
+    $("falKeyStatus").innerHTML='<span class="bad">'+(st.error||"fal did not recognise that key")+'</span>';
+  else if(st.saved)
+    $("falKeyStatus").innerHTML='Key saved. New ERA has not been able to check it with fal yet.';
+  else
+    $("falKeyStatus").innerHTML='No key yet &mdash; her books stay still pictures, which costs nothing.'+each;
+}
+async function loadFalKey(){
+  try{ falPaint(await (await fetch("/fal-key",{cache:"no-store"})).json()); }
+  catch(e){ falPaint(null); }
+}
+$("falOpen").onclick=()=>openSite("https://fal.ai/dashboard/keys");
+$("falKeyPaste").onclick=()=>pasteInto("falKey");
+$("falKeySave").onclick=async()=>{
+  const k=$("falKey").value.trim();
+  if(!k){ toast("Paste a key first",false); return; }
+  $("falKeyStatus").innerHTML="Checking the key with fal…";
+  const r=await fetch("/fal-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})});
+  if(!r.ok){ toast("Could not save the key",false); loadFalKey(); return; }
+  let v={}; try{ v=await r.json(); }catch(e){}
+  $("falKey").value="";
+  if(v.ok) toast("fal key saved and working"); else toast(v.error||"That key did not work",false);
+  falPaint(v.saved===undefined?null:v);
+};
+
 // ---- Her writing: family email for The Pencil (audit 9/2 — nothing wrote
 // these values before, so "Sent!" was never true on a public install) ----
 async function loadMail(){
@@ -1045,6 +1103,7 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
   await loadVoices();
   await loadMail();
   await loadMoviesKeys();
+  await loadFalKey();
   await drivePaint();
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
        if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));
