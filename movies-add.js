@@ -38,12 +38,16 @@
 //   5. THE HUB NEVER SERVES VIDEO (D57). Nothing here downloads anything —
 //      a movie is a link the ERAgaze kiosk opens, and that is all it ever is.
 //
-// NOT IN THIS FILE, deliberately: the poster fetch (plan T5.2) and the
-// streaming-availability lookup that turns a typed name into a real link
-// (T5.3). Until those land a typed name is written PENDING — `launch.url` null,
-// which moviesRecipe counts into meta.pendingCount and draws nowhere — so a
-// parent's list is kept without ever putting an unlaunchable tile in front of
-// Ellie. No key is read in this file and it reaches no network.
+// NOT IN THIS FILE, deliberately: the streaming-availability lookup that turns
+// a typed name into a real link (T5.3). Until it lands a typed name is written
+// PENDING — `launch.url` null, which moviesRecipe counts into meta.pendingCount
+// and draws nowhere — so a parent's list is kept without ever putting an
+// unlaunchable tile in front of Ellie.
+//
+// The poster fetch (T5.2) IS here, under "the poster" below, with the two rules
+// that make a network call safe in a door a parent is standing in front of: it
+// is BOUNDED (one budget for the whole hunt, a byte cap on every body) and it
+// FAILS SILENTLY (no art is not an error — the tile goes up with its name).
 "use strict";
 const path = require("path");
 const drive = require("./drive.js");
@@ -127,6 +131,190 @@ function titleFromUrl(u) {
   return null;
 }
 
+// ---------------------------------------------------------------- the poster
+//
+// A film tile Ellie can read is a PICTURE. The words under it are for the
+// grown-up, so a catalog of bare labels is a movies board she cannot use — and
+// the family's own posters have always come from two places, so this door uses
+// the same two: the `og:image` of the page the parent pasted (every streaming
+// site serves one, no key, no terms to honour), and TMDB when the family has
+// configured a key (era-family/tools/fetch-posters.mjs, which this replaces for
+// anything added from the board).
+//
+// THREE RULES, because this is the first thing in this file that leaves the
+// box, and a parent is standing in front of the sheet waiting for it:
+//
+//   1. ONE BUDGET FOR THE WHOLE HUNT. A page, its image, a TMDB search and its
+//      image are four requests; a wedged host on any of them must not hold the
+//      add. They share POSTER_BUDGET_MS between them and whatever is left when
+//      one finishes is all the next one gets.
+//   2. FAILING IS NORMAL. Every path here returns null rather than throwing:
+//      no art is not a failed add (spec §6 — "failure is silent: the title is
+//      added with poster:null and still renders"). Nothing is logged either;
+//      an add that quietly worked must not leave a scary line in the console.
+//   3. WHAT COMES BACK IS CHECKED BEFORE IT IS SAVED. A cap on every body, and
+//      a picture must LOOK like one (magic bytes) as well as claim to be one:
+//      a login wall answering 200 text/html is the common case, not the odd
+//      one, and "posters/x.jpg" holding an error page is a broken tile.
+//
+// Poster files keep the family's own convention — `posters/<slug>.jpg`, the
+// name fetch-posters.mjs writes and the recipe joins as "movies/" + poster.
+// The extension is that convention, not a claim about the bytes: this hub has
+// no image library (stdlib only) and re-encodes nothing, so a PNG or WebP
+// og:image is stored as it arrived. The board is Chrome, which draws an <img>
+// by what the bytes are.
+const POSTER_BUDGET_MS = 12000;
+const POSTER_MAX_BYTES = 5 * 1024 * 1024;
+const PAGE_MAX_BYTES = 2 * 1024 * 1024;          // only <head> is ever read
+const JSON_MAX_BYTES = 1 * 1024 * 1024;
+const TMDB_API = "https://api.themoviedb.org/3";
+const TMDB_IMG = "https://image.tmdb.org/t/p/w500";   // the width fetch-posters uses
+
+// TMDB's terms are personal/family use WITH ATTRIBUTION, in these words
+// (era-family/tools/fetch-posters.mjs, header). An attribution nobody ever
+// reads is not one, so this is a VALUE: it comes back with the add for the
+// sheet to print and it is written beside the catalog it belongs to — never
+// into a log file.
+const TMDB_ATTRIBUTION = "Poster art from TMDB. This product uses the TMDB API " +
+  "but is not endorsed or certified by TMDB.";
+
+// The key, read fresh (a key typed a minute ago must work without a restart)
+// and never returned to a caller, never logged. Two homes, in the order the
+// Voice card's key uses: the file a Settings card writes, then the operator's
+// environment. <DATA> is this device's shelf — the one thing in this file that
+// is not the family's Drive folder, because a key belongs to a machine.
+const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
+function tmdbKey() {
+  let cfg = null;
+  try { cfg = JSON.parse(fs.readFileSync(path.join(DATA, "ai-config.json"), "utf8")); } catch {}
+  const fromCard = cfg && cfg.tmdb && typeof cfg.tmdb.apiKey === "string" ? cfg.tmdb.apiKey.trim() : "";
+  const fromEnv = typeof process.env.TMDB_API_KEY === "string" ? process.env.TMDB_API_KEY.trim() : "";
+  return fromCard || fromEnv;
+}
+
+// The seam every request in this section goes through. ERA_POSTER_PAGE_URL is
+// set by tests ONLY: it keeps the path and swaps the ORIGIN, so a fixture that
+// pastes a netflix.com link is answered by a fake web on loopback and no test
+// can reach a real site whatever a page's `og:image` points at. Unset — every
+// hub a family ever runs — the address is used exactly as it came.
+function viaSeam(href) {
+  const seam = process.env.ERA_POSTER_PAGE_URL;
+  if (!seam) return href;
+  try {
+    const t = new URL(href), s = new URL(seam);
+    const prefix = s.pathname === "/" ? "" : s.pathname.replace(/\/+$/, "");
+    return new URL(prefix + t.pathname + t.search, s.origin).href;
+  } catch { return null; }
+}
+
+// One GET, bounded by what is left of the budget and by maxBytes, and null for
+// every unhappy answer there is (Rule 2). Content-Length is trusted to refuse
+// early and re-checked against the bytes that actually arrived, because a
+// header is a claim.
+async function getCapped(href, maxBytes, deadline) {
+  const left = deadline - Date.now();
+  if (!href || left <= 0) return null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), left);
+  try {
+    const r = await fetch(href, { signal: ctl.signal, redirect: "follow",
+                                  headers: { "User-Agent": "New ERA hub (family use)" } });
+    if (!r.ok) return null;
+    const claimed = Number(r.headers.get("content-length"));
+    if (Number.isFinite(claimed) && claimed > maxBytes) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length > maxBytes) return null;
+    return { type: (r.headers.get("content-type") || "").toLowerCase(), buf };
+  } catch { return null; }
+  finally { clearTimeout(timer); }
+}
+
+// Rule 3. Both halves must agree: the server says image/*, and the first bytes
+// are one of the three formats a browser draws from a file called .jpg.
+function isPicture(got) {
+  if (!got || got.buf.length < 64 || !/^image\//.test(got.type)) return false;
+  const b = got.buf;
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return true;              // jpeg
+  if (b.toString("latin1", 0, 8) === "\x89PNG\r\n\x1a\n") return true;            // png
+  if (b.toString("latin1", 0, 4) === "RIFF" && b.toString("latin1", 8, 12) === "WEBP") return true;
+  return false;
+}
+
+// The `og:image` a page advertises, as an absolute address, or null. Written
+// against what streaming sites actually serve: `property=` or `name=`, quotes
+// of either kind or none, a relative path, and `&amp;` in the query (an HTML
+// attribute is entity-encoded, and a poster URL is mostly query string).
+function ogImage(html, pageHref) {
+  for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
+    const prop = /\b(?:property|name)\s*=\s*["']?\s*([^"'\s>]+)/i.exec(tag);
+    if (!prop || !/^og:image(:url|:secure_url)?$/i.test(prop[1])) continue;
+    const c = /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
+    const raw = c && (c[1] != null ? c[1] : c[2] != null ? c[2] : c[3]);
+    if (!raw || !raw.trim()) continue;
+    const src = raw.trim().replace(/&(amp|#38|#x26);/gi, "&")
+                          .replace(/&(quot|#34);/gi, '"').replace(/&(#39|apos);/gi, "'");
+    try {
+      const abs = new URL(src, pageHref);
+      if (abs.protocol !== "http:" && abs.protocol !== "https:") return null;
+      return abs.href;
+    } catch { return null; }
+  }
+  return null;
+}
+
+// The pasted page's own art. Two hops: the page, then the picture it names.
+async function posterFromPage(u, deadline) {
+  const page = await getCapped(viaSeam(u.href), PAGE_MAX_BYTES, deadline);
+  if (!page || !/^(text\/html|application\/xhtml)/.test(page.type)) return null;
+  const src = ogImage(page.buf.toString("utf8"), viaSeam(u.href));
+  if (!src) return null;
+  const img = await getCapped(viaSeam(src), POSTER_MAX_BYTES, deadline);
+  return isPicture(img) ? img.buf : null;
+}
+
+// TMDB, and only when the family has configured a key — no key is not an error,
+// it is a family that has not set TMDB up (spec §7: URL paste works without a
+// key). Search then image, the same two calls fetch-posters.mjs makes, and the
+// first result WITH art wins: TMDB happily returns matches that have none.
+async function posterFromTmdb(entry, deadline) {
+  const key = tmdbKey();
+  if (!key) return null;
+  const api = (process.env.ERA_TMDB_URL || TMDB_API).replace(/\/+$/, "");
+  const img = (process.env.ERA_TMDB_IMG_URL || TMDB_IMG).replace(/\/+$/, "");
+  const type = entry.kind === "show" ? "tv" : "movie";
+  let u;
+  try { u = new URL(api + "/search/" + type); } catch { return null; }
+  u.searchParams.set("api_key", key);
+  u.searchParams.set("query", entry.title);
+  if (Number.isFinite(entry.year))
+    u.searchParams.set(type === "movie" ? "primary_release_year" : "first_air_date_year",
+                       String(entry.year));
+  const res = await getCapped(u.href, JSON_MAX_BYTES, deadline);
+  if (!res || !/^application\/json/.test(res.type)) return null;
+  let body;
+  try { body = JSON.parse(res.buf.toString("utf8")); } catch { return null; }
+  const hit = (Array.isArray(body && body.results) ? body.results : [])
+    .find(x => x && typeof x.poster_path === "string" && x.poster_path);
+  if (!hit) return null;
+  const art = await getCapped(img + hit.poster_path, POSTER_MAX_BYTES, deadline);
+  return isPicture(art) ? art.buf : null;
+}
+
+// poster(dir, entry, u) -> {rel, from} | null. The page first (it is the art
+// for THIS link, and it costs nobody a key), TMDB second. Written atomically
+// like everything else in the family's folder, so Drive never mirrors half a
+// picture.
+async function poster(dir, entry, u) {
+  const deadline = Date.now() + POSTER_BUDGET_MS;
+  let buf = null, from = null;
+  if (u) { buf = await posterFromPage(u, deadline); if (buf) from = "og"; }
+  if (!buf) { buf = await posterFromTmdb(entry, deadline); if (buf) from = "tmdb"; }
+  if (!buf) return null;
+  const rel = "posters/" + entry.id + ".jpg";
+  try { writeAtomic(path.join(dir, rel), buf); } catch { return null; }
+  return { rel, from };
+}
+
 // ---------------------------------------------------------------- the folder
 
 // Law 1: the family's Drive folder, or null when there is no local one. Read
@@ -175,19 +363,26 @@ function nextRank(titles) {
 // Law 4: upsert by id, atomically (content-store's tmp + rename, so a device
 // never mirrors half a catalog). New titles are appended — the file keeps the
 // order the family added things in, and the recipe does the sorting.
-function upsert(dir, fields) {
+function upsert(dir, fields, credit) {
   const { c, titles, unreadable } = readCatalog(dir);
   if (unreadable) throw new Error(UNREADABLE.message);
   const at = titles.findIndex(t => t.id === fields.id);
   const old = at >= 0 ? titles[at] : null;
   const rank = old && Number.isFinite(old.rank) ? old.rank : nextRank(titles);
-  // A re-add carries no poster yet (T5.2 fetches one) and a show carries its
-  // harvested seasons: neither may be dropped by writing the new fields over.
+  // A re-add whose poster hunt came back empty keeps the art it already had,
+  // and a show carries its harvested seasons: neither may be dropped by writing
+  // the new fields over.
   const entry = { ...(old || {}), ...fields, rank,
                   poster: fields.poster || (old && old.poster) || null };
+  if (!entry.poster) delete entry.posterFrom;
   if (entry.kind === "show" && !Array.isArray(entry.seasons)) entry.seasons = [];
   if (at >= 0) titles[at] = entry; else titles.push(entry);
-  writeAtomic(path.join(dir, "catalog.json"), { ...c, schemaVersion: 1, titles });
+  // The credit line lives WITH the catalog it belongs to, so anything that
+  // shows the family's films — the sheet today, a future export — has it to
+  // hand. Once earned it stays: the posters are still TMDB's.
+  const out = { ...c, schemaVersion: 1, titles };
+  if (credit) out.attribution = TMDB_ATTRIBUTION;
+  writeAtomic(path.join(dir, "catalog.json"), out);
   return entry;
 }
 
@@ -260,7 +455,7 @@ async function add(body) {
     id, kind, title, say: title,
     service: u ? serviceOf(u) : null,
     tier: "core",                                  // the exploration slot is a curation choice, never an add
-    poster: null,                                  // T5.2 fetches one; a title without art still renders
+    poster: null,                                  // filled in below when there is art to be had
     launch: { url: u ? u.href : null },            // null = pending, counted and drawn nowhere
     // provenance the design asked for (spec §6). addedBy is how the title got
     // here: a pasted link, or a name a grown-up typed for the search to resolve.
@@ -270,10 +465,20 @@ async function add(body) {
   if (b.tmdbId != null && (typeof b.tmdbId === "string" || Number.isFinite(b.tmdbId)))
     entry.tmdbId = b.tmdbId;
 
-  const written = upsert(dir, entry);
+  // The art, before the catalog is written, so the tile and its picture arrive
+  // on Ellie's board in the same mirror. Nothing here can fail the add.
+  const art = await poster(dir, entry, u);
+  if (art) { entry.poster = art.rel; entry.posterFrom = art.from; }
+
+  const written = upsert(dir, entry, !!(art && art.from === "tmdb"));
   return { ok: true, id: written.id, title: written.title, kind: written.kind,
            rank: written.rank, pending: !(written.launch && written.launch.url),
-           mirrored: await mirror() };
+           mirrored: await mirror(),
+           // What the sheet needs to draw the result: the art it just got, and
+           // TMDB's credit when the art is TMDB's (a re-add whose old poster
+           // came from TMDB still owes it).
+           poster: written.poster || null,
+           attribution: written.posterFrom === "tmdb" ? TMDB_ATTRIBUTION : null };
 }
 
-module.exports = { add, SLUG_RE };
+module.exports = { add, SLUG_RE, TMDB_ATTRIBUTION };

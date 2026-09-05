@@ -10,19 +10,28 @@
 // added — the add "works", and nothing appears. Every case below therefore ends
 // at /recipes/movies.json, not at catalog.json.
 //
-// NO KEY, NO NETWORK. This task is the URL-paste path only: nothing here looks
-// a title up (T5.3) or fetches a poster (T5.2), so the hub is spawned with the
-// provider seams pointed at a dead loopback port and no request leaves the box.
+// NO KEY, NO NETWORK. Nothing here looks a title up (T5.3), and the poster
+// fetch this file also covers (T5.2) reaches only the fake web served below:
+// every seam the hub owns — ERA_POSTER_PAGE_URL, ERA_TMDB_URL,
+// ERA_TMDB_IMG_URL, ERA_AI_URL, ERA_ELEVEN_URL — is pointed at loopback before
+// the hub starts, and TMDB_API_KEY is set EXPLICITLY on every spawn so a real
+// key sitting in the developer's shell can never ride along.
 //
 // Where the bytes land matters (Gap 1): the add writes into the family's DRIVE
 // content folder, never <DATA>, and the mirror carries it to this device's
-// shelf, which is what the recipe is generated from.
+// shelf, which is what the recipe is generated from. That is why every poster
+// case below ends at GET /movies/posters/<slug>.jpg — the path
+// moviesRecipe() joins as "movies/" + t.poster (server.js), not the path the
+// writer happened to spell.
 //
 // Port 8437 (this suite's own; 8377-8436 are held by siblings and live hubs).
+// The fake web takes an ephemeral port: it stands in for the whole internet,
+// so it is never something another suite could be holding.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +46,65 @@ const MOVIES = path.join(INSIDE, "movies");             // where the add must wr
 let child = null;
 let DATA = null;
 
+// ------------------------------------------------------------- the fake web
+//
+// One server standing in for every site at once: the hub's page seam swaps the
+// ORIGIN of whatever deep link a test pastes, so "netflix.com/gb/title/…" is
+// fetched from here and a fixture can never escape to the real Netflix. A path
+// this server does not know is a 404 — which is exactly the "no poster to be
+// had" case every URL-paste test above depends on.
+let web = null, WEB = "";
+let tmdbCalls = [];
+// A real JPEG's first bytes and last two, with padding in between: enough for
+// the hub's "is this actually a picture" check and for an <img> to be handed
+// something that is not an HTML error page.
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+                            Buffer.alloc(600, 0x42), Buffer.from([0xff, 0xd9])]);
+const html = (res, body) => {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(body);
+};
+function fakeWeb(req, res) {
+  const u = new URL(req.url, "http://127.0.0.1");
+  const p = u.pathname;
+  // a page with art: a RELATIVE og:image carrying an &amp; entity, which is
+  // what streaming sites actually serve
+  if (p === "/gb/title/paddington")
+    return html(res, '<html><head><meta charset="utf-8">' +
+      '<meta property="og:image" content="/art/paddington.jpg?w=500&amp;h=750">' +
+      "<title>Paddington</title></head><body></body></html>");
+  // a page with no og:image at all
+  if (p === "/gb/title/stick-man")
+    return html(res, "<html><head><title>Stick Man</title></head><body></body></html>");
+  // a page whose og:image is not a picture
+  if (p === "/gb/title/the-tiger-who-came-to-tea")
+    return html(res, '<html><head><meta property="og:image" content="/art/oops.html">' +
+      "</head><body></body></html>");
+  if (p === "/art/paddington.jpg") {
+    res.writeHead(200, { "Content-Type": "image/jpeg" });
+    return res.end(JPEG);
+  }
+  if (p === "/art/oops.html") return html(res, "<html>not a poster</html>");
+  if (p === "/tmdb/search/movie" || p === "/tmdb/search/tv") {
+    tmdbCalls.push({ path: p, key: u.searchParams.get("api_key"),
+                     query: u.searchParams.get("query"),
+                     year: u.searchParams.get("primary_release_year") });
+    const q = u.searchParams.get("query") || "";
+    const results = /stick man/i.test(q)
+      ? [{ id: 1, title: "Stick Man", release_date: "2015-12-25", poster_path: null },
+         { id: 2, title: "Stick Man", release_date: "2015-12-25", poster_path: "/stick.jpg" }]
+      : [];
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ results }));
+  }
+  if (p === "/tmdb-img/stick.jpg") {
+    res.writeHead(200, { "Content-Type": "image/jpeg" });
+    return res.end(JPEG);
+  }
+  res.writeHead(404, { "Content-Type": "text/plain" });
+  res.end("no such page");
+}
+
 async function startHub(extraEnv = {}) {
   DATA = fs.mkdtempSync(path.join(TMP, "data-"));
   child = spawn("node", ["server.js", String(PORT)], {
@@ -46,7 +114,13 @@ async function startHub(extraEnv = {}) {
            // belt and braces: a sync fans out to the clothing build, and that
            // build must never be able to reach a provider from a test box.
            ERA_AI_URL: "http://127.0.0.1:9/never",
-           ERA_ELEVEN_URL: "http://127.0.0.1:9/never", ...extraEnv },
+           ERA_ELEVEN_URL: "http://127.0.0.1:9/never",
+           // the poster seams: the whole internet is the fake server above, and
+           // TMDB is off unless a case turns it on with a key of its own.
+           ERA_POSTER_PAGE_URL: WEB,
+           ERA_TMDB_URL: WEB + "/tmdb",
+           ERA_TMDB_IMG_URL: WEB + "/tmdb-img",
+           TMDB_API_KEY: "", ...extraEnv },
   });
   for (let i = 0; i < 100; i++) {
     try { await fetch(`${BASE}/settings`); return; } catch {}
@@ -80,10 +154,14 @@ function btnAt(board, row, col) {
 
 before(async () => {
   fs.mkdirSync(INSIDE, { recursive: true });
+  web = http.createServer(fakeWeb);
+  await new Promise(r => web.listen(0, "127.0.0.1", r));
+  WEB = `http://127.0.0.1:${web.address().port}`;
   await startHub();
 });
 after(async () => {
   await stopHub();
+  if (web) await new Promise(r => web.close(r));
   fs.rmSync(TMP, { recursive: true, force: true });
 });
 
@@ -143,7 +221,10 @@ test("a pasted link becomes a tile the board really draws (Gap 3)", async () => 
   assert.equal(r.status, 200, "one small file and a mirror: the sheet waits for it");
   const j = await r.json();
   assert.deepEqual(j, { ok: true, id: "the-gruffalo", title: "The Gruffalo",
-                        kind: "movie", rank: 1, pending: false, mirrored: true });
+                        kind: "movie", rank: 1, pending: false, mirrored: true,
+                        // this link's page is not one the fake web knows, so
+                        // there was no art to be had and the tile goes up bare
+                        poster: null, attribution: null });
 
   // the entry, in the shape moviesRecipe() reads — not the shape the spec drew
   const c = catalog();
@@ -179,7 +260,8 @@ test("a second title takes the next free rank and the next free cell", async () 
   });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true, id: "encanto", title: "Encanto",
-                                     kind: "movie", rank: 2, pending: false, mirrored: true });
+                                     kind: "movie", rank: 2, pending: false, mirrored: true,
+                                     poster: null, attribution: null });
   const t = catalog().titles.find(x => x.id === "encanto");
   assert.equal(t.rank, 2, "appended after the title already there");
   assert.equal(t.service, "disney", "the service comes from the link's own host");
@@ -200,7 +282,8 @@ test("adding the same title again rewrites it in place and keeps its tile", asyn
   });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true, id: "the-gruffalo", title: "The Gruffalo",
-                                     kind: "movie", rank: 1, pending: false, mirrored: true });
+                                     kind: "movie", rank: 1, pending: false, mirrored: true,
+                                     poster: null, attribution: null });
   const c = catalog();
   assert.equal(c.titles.length, 2, "replaced, not doubled");
   const t = c.titles.find(x => x.id === "the-gruffalo");
@@ -221,7 +304,8 @@ test("a name with no link is written pending: counted for a grown-up, drawn nowh
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true, id: "ada-twist-scientist",
                                      title: "Ada Twist, Scientist", kind: "movie",
-                                     rank: 3, pending: true, mirrored: true });
+                                     rank: 3, pending: true, mirrored: true,
+                                     poster: null, attribution: null });
   const t = catalog().titles.find(x => x.id === "ada-twist-scientist");
   assert.deepEqual(t.launch, { url: null }, "nothing to launch yet");
   assert.equal(t.service, null, "and no service to claim it");
@@ -266,4 +350,122 @@ test("a title the shelf did not take says so instead of claiming the board moved
     fs.rmSync(shelf, { recursive: true, force: true });
     await post("/integrations/drive/sync", {});
   }
+});
+
+// ---------------------------------------------------------------- the poster
+//
+// T5.2. A film tile Ellie can read is a picture; the words under it are for the
+// grown-up. The art comes from the page the parent pasted (`og:image`) or, when
+// the family has typed a TMDB key, from TMDB — and when it comes from NEITHER
+// the add still succeeds and the tile still draws. Every case ends at
+// GET /movies/posters/<slug>.jpg, because "movies/" + t.poster is the join the
+// recipe makes and a poster the jail will not serve is a broken tile.
+
+test("a poster on the pasted page becomes the tile's art, on the shelf and in the recipe", async () => {
+  const r = await post("/movies/add", { url: "https://www.netflix.com/gb/title/paddington" });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.poster, "posters/paddington.jpg", "the path the recipe joins, not a file name");
+  assert.equal(j.attribution, null, "the page's own art owes TMDB nothing");
+
+  const t = catalog().titles.find(x => x.id === "paddington");
+  assert.equal(t.poster, "posters/paddington.jpg");
+  assert.equal(t.posterFrom, "og", "where the art came from rides with the entry");
+  const file = path.join(MOVIES, "posters", "paddington.jpg");
+  assert.ok(fs.readFileSync(file).equals(JPEG), "the bytes the page served, unchanged");
+  assert.deepEqual(fs.readdirSync(path.join(MOVIES, "posters")).filter(n => n.endsWith(".tmp")), [],
+                   "written atomically, no litter for Drive to mirror");
+  assert.equal(catalog().attribution, undefined, "and no credit claimed that was not earned");
+
+  // the shelf the board is generated from, and the door that serves it
+  assert.ok(fs.existsSync(path.join(DATA, "movies", "posters", "paddington.jpg")),
+            "the mirror carried the poster, not just the catalog");
+  const img = await fetch(`${BASE}/movies/posters/paddington.jpg`);
+  assert.equal(img.status, 200, "the /movies/ jail really serves it");
+  assert.equal(img.headers.get("content-type"), "image/jpeg");
+  assert.ok(Buffer.from(await img.arrayBuffer()).equals(JPEG));
+
+  const { rec } = await recipe();
+  const cell = rec.boards[0].buttons.find(b => b.titleId === "paddington");
+  assert.equal(cell.image, "movies/posters/paddington.jpg",
+               "exactly the URL the jail answered above");
+});
+
+test("a page with no og:image and no key leaves the tile bare, and it still draws", async () => {
+  const r = await post("/movies/add", { url: "https://www.netflix.com/gb/title/stick-man" });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.poster, null, "no art to be had, and that is not a failure");
+  assert.equal(j.attribution, null);
+  assert.equal(catalog().titles.find(x => x.id === "stick-man").poster, null);
+  assert.equal(fs.existsSync(path.join(MOVIES, "posters", "stick-man.jpg")), false);
+
+  const { rec } = await recipe();
+  const cell = rec.boards.flatMap(b => b.buttons).find(b => b.titleId === "stick-man");
+  assert.ok(cell, "the title is on the board");
+  assert.equal(cell.image, undefined, "with a label and no picture");
+});
+
+test("an og:image that is not a picture is refused, and nothing is saved", async () => {
+  const r = await post("/movies/add", {
+    url: "https://www.netflix.com/gb/title/the-tiger-who-came-to-tea",
+  });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).poster, null, "an HTML error page is not a poster");
+  assert.equal(catalog().titles.find(x => x.id === "the-tiger-who-came-to-tea").poster, null);
+  assert.equal(fs.existsSync(path.join(MOVIES, "posters", "the-tiger-who-came-to-tea.jpg")), false,
+               "and no half-picture was left where a poster goes");
+});
+
+test("with a TMDB key the fallback finds the art, and the add carries TMDB's credit", async () => {
+  await stopHub();
+  await startHub({ TMDB_API_KEY: "not-a-real-key" });
+  assert.equal((await post("/integrations/drive/localfolder", { folderPath: INSIDE })).status, 204);
+  tmdbCalls = [];
+
+  // the same link as before: its page still has no og:image, so only the key is
+  // new — and the title keeps the tile Ellie already knows
+  const r = await post("/movies/add", { url: "https://www.netflix.com/gb/title/stick-man" });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.rank, 6, "a re-add stays where it was");
+  assert.equal(j.poster, "posters/stick-man.jpg");
+  assert.match(j.attribution, /TMDB/,
+               "the credit comes back with the add, for the sheet to print");
+  assert.match(j.attribution, /not endorsed or certified by TMDB/,
+               "in TMDB's own required words (era-family/tools/fetch-posters.mjs)");
+
+  assert.equal(tmdbCalls.length, 1, "one search, no shotgun");
+  assert.deepEqual(tmdbCalls[0], { path: "/tmdb/search/movie", key: "not-a-real-key",
+                                   query: "Stick Man", year: null },
+                   "a film is searched as a film, with the key the family configured");
+
+  const c = catalog();
+  assert.equal(c.attribution, j.attribution,
+               "and it is written beside the catalog it belongs to, not into a log");
+  const t = c.titles.find(x => x.id === "stick-man");
+  assert.equal(t.poster, "posters/stick-man.jpg");
+  assert.equal(t.posterFrom, "tmdb");
+  assert.ok(fs.readFileSync(path.join(MOVIES, "posters", "stick-man.jpg")).equals(JPEG),
+            "the second result's art: a hit with no poster_path is passed over, not saved empty");
+
+  const img = await fetch(`${BASE}/movies/posters/stick-man.jpg`);
+  assert.equal(img.status, 200);
+  const { rec } = await recipe();
+  assert.equal(rec.boards.flatMap(b => b.buttons).find(b => b.titleId === "stick-man").image,
+               "movies/posters/stick-man.jpg");
+});
+
+test("a title TMDB has never heard of is added anyway, bare", async () => {
+  tmdbCalls = [];
+  const r = await post("/movies/add", { url: "https://www.netflix.com/gb/title/room-on-the-broom" });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.poster, null);
+  assert.equal(j.attribution, null, "nothing of TMDB's was used, so nothing is credited");
+  assert.equal(tmdbCalls.length, 1, "it did ask");
+  assert.equal(tmdbCalls[0].query, "Room On The Broom");
+  const { rec } = await recipe();
+  assert.ok(rec.boards.flatMap(b => b.buttons).some(b => b.titleId === "room-on-the-broom"),
+            "and the tile is on the board regardless");
 });
