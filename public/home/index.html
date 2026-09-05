@@ -80,10 +80,13 @@
   const setup = document.getElementById("setup"), launcher = document.getElementById("launcher");
   if (s.hasProfile) {
     launcher.classList.remove("hidden");
-    // Tiles come from the install's app picker (/apps). Music/Movies stay
-    // content-conditional on top of being enabled: Music needs a songs
-    // library; Movies needs something watchable (its recipe is 200 even
-    // when empty by design).
+    // Tiles come from the install's app picker (/apps). An empty Music or
+    // Movies still gets its tile: the board's "+ Add" strip is how a grown-up
+    // adds the first song or show (spec §6), and the tile is the only door to
+    // it — the tiles used to hide until the library had something in it, and
+    // a fresh install that ticked both then showed neither (VM QA 9/5). The
+    // empty tile says so instead. (Songs: a missing library is an honest 404;
+    // movies: the recipe is 200 even when empty, by design.)
     try {
       const { apps } = await (await fetch("/apps", { cache: "no-store" })).json();
       let hasSongs = false, hasMovies = false;
@@ -92,16 +95,19 @@
         const mv = await fetch("/recipes/movies.json", { cache: "no-store" });
         if (mv.ok) hasMovies = ((await mv.json()).boards || []).some(b => (b.buttons || []).length > 0);
       } catch {}
+      const EMPTY = {
+        music: "no songs yet — grown-ups: + Add on the board, by mouse or touch",
+        movies: "nothing to watch yet — grown-ups: + Add on the board, by mouse or touch",
+      };
       const grid = document.getElementById("appGrid");
       for (const a of apps) {
         if (a.engine || !a.enabled) continue;   // the gaze engine has no page
-        if (a.id === "music" && !hasSongs) continue;
-        if (a.id === "movies" && !hasMovies) continue;
+        const empty = (a.id === "music" && !hasSongs) || (a.id === "movies" && !hasMovies);
         const el = document.createElement("a");
         el.className = "app"; el.href = a.path;
         if (a.icon) { const im = document.createElement("img"); im.src = a.icon; im.alt = ""; el.appendChild(im); }
         el.appendChild(document.createTextNode(a.title));
-        const sm = document.createElement("small"); sm.textContent = a.sub;
+        const sm = document.createElement("small"); sm.textContent = empty ? EMPTY[a.id] : a.sub;
         el.appendChild(sm);
         grid.insertBefore(el, grid.lastElementChild);   // Settings stays last
       }
