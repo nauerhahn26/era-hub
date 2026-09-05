@@ -2474,9 +2474,15 @@ commit the installer came from" rule if landed now):
   not.~~ Reworded the same hour to "the hours she is out — a morning at
   school"; the branch is not pushed until this rides a cut.
 - `POST /movies-key` stores TMDB/Watchmode keys with no proving call
-  (spec:128–129 wants one, as the AI and voice cards have).
+  (spec:128–129 wants one, as the AI and voice cards have). `server.js:1707`
+  records why not (a probe spends a request from a free monthly allowance to
+  learn what the next search learns). A TMDB-only probe is free (no monthly
+  cap) and would turn a typo into "key not accepted" on the card instead of
+  an empty search later — a design call for dad, with the Settings card and
+  `movies-lookup.test` following it.
 - The weekly availability re-check: `availabilityCheckedAt` is stamped at
   `movies-add.js:715` and never read (spec:286–288).
 - Arrange for movies (spec:259–261; `POST /movies/order {swap:[a,b]}`,
   consciously deferred in Phase 6b).
-- Answer HEAD on the immutable `/books/` media route.
+- ~~Answer HEAD on the immutable `/books/` media route.~~ Landed 9/5
+  (959e18b) on all three media jails, `books.test` 27/27.
