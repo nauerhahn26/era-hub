@@ -88,9 +88,90 @@ function yesterdayOf(key) {
   return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
 }
 
+// ---- garment attributes (spec §3.1 item 2, I14) ----------------------------
+// The whitelist the model's answer (or a shared tag line) passes through
+// before it reaches wardrobe.json. Unknown values are absent, never kept.
+const PATTERNS = new Set(["solid", "denim", "stripes", "floral", "graphic", "print"]);
+const PALETTES = new Set(["warm", "cool", "neutral", "pastel"]);
+const VIBES = new Set(["sweet", "sporty", "graphic", "basic"]);
+const word = (v, allowed) => {
+  const w = String(v == null ? "" : v).trim().toLowerCase();
+  return allowed.has(w) ? w : undefined;
+};
+function colorList(v) {
+  const parts = Array.isArray(v) ? v.flatMap(c => String(c).split(/\s*(?:,|\/|&)\s*|\s+and\s+/i))
+    : typeof v === "string" ? v.split(/\s*(?:,|\/|&)\s*|\s+and\s+/i) : [];
+  const out = [];
+  for (const p of parts) {
+    const c = p.trim().toLowerCase().replace(/\s+/g, " ");   // "light blue" stays one entry
+    if (c && !out.includes(c)) out.push(c);
+    if (out.length === 3) break;
+  }
+  return out;
+}
+function attributes(meta) {
+  const m = meta && typeof meta === "object" ? meta : {};
+  const out = { colors: colorList(m.colors), statement: m.statement === true };
+  const pattern = word(m.pattern, PATTERNS); if (pattern) out.pattern = pattern;
+  const palette = word(m.palette, PALETTES); if (palette) out.palette = palette;
+  const vibe = word(m.vibe, VIBES); if (vibe) out.vibe = vibe;
+  return out;
+}
+
+// ---- taste rules (outfit_set.py:242-252, :263-285) -------------------------
+const colorsOf = g => Array.isArray(g.colors) ? g.colors : [];
+function isNeutral(g) {
+  // outfit_set.py:243
+  if (g.pattern === "solid" || g.pattern === "denim") return true;
+  if (colorsOf(g).some(c => NEUTRALS.has(c))) return true;
+  // HUB DEVIATION (I5, spec §3.1 item 4): the original is false here. A
+  // garment the model has not described yet (no colours, no pattern) counts
+  // as neutral unless it is a statement piece — attributes degrade, they
+  // never keep a garment off the board.
+  return colorsOf(g).length === 0 && !g.pattern && g.statement !== true;
+}
+// Hard rule: never two statement/loud pieces together (outfit_set.py:246-252).
+function harmonizes(top, bottom) {
+  if (top.statement === true && bottom.statement === true) return false;
+  return isNeutral(top) || isNeutral(bottom) || !(top.statement === true || bottom.statement === true);
+}
+// Curated pairs are keyed by the UNORDERED pair — the original compares
+// set(pair) == {top.id, bottom.id} (outfit_set.py:266-269).
+function pairKey(a, b) { return a < b ? a + "+" + b : b + "+" + a; }
+// {"great": [[id,id],..], "avoid": [..]} (the pairing.json shape, or the
+// pairs/ log after T4.2) → {great:Set<pairKey>, avoid:Set<pairKey>}.
+function normalizePairing(p) {
+  const toSet = list => new Set((Array.isArray(list) ? list : [])
+    .filter(pr => Array.isArray(pr) && pr.length === 2).map(pr => pairKey(String(pr[0]), String(pr[1]))));
+  if (p && p.great instanceof Set && p.avoid instanceof Set) return p;
+  return { great: toSet(p && p.great), avoid: toSet(p && p.avoid) };
+}
+const EMPTY_PAIRING = { great: new Set(), avoid: new Set() };
+// How well two pieces go together, 0-100-ish (outfit_set.py:263-285). The
+// favourite lift (+10) is rank()'s, not this function's (outfit_set.py:436).
+function styleScore(top, bottom, pairing) {
+  const p = pairing || EMPTY_PAIRING;
+  let s = 50.0;
+  const key = pairKey(top.id, bottom.id);
+  if (p.avoid.has(key)) return -1000;          // curated: never offer
+  if (p.great.has(key)) s += 30;               // curated: a known-great look
+  const ts = top.statement === true, bs = bottom.statement === true;
+  if (ts !== bs) s += 15;                      // statement piece over a basic = the classic combo
+  else if (!ts && !bs) s += 5;                 // two basics: fine, a bit plain
+  // palette harmony (neutral goes with everything)
+  if (top.palette && bottom.palette) {
+    if (top.palette === "neutral" || bottom.palette === "neutral" || top.palette === bottom.palette) s += 10;
+    else if ((top.palette === "warm" && bottom.palette === "cool") || (top.palette === "cool" && bottom.palette === "warm")) s -= 10;
+  }
+  // matching vibes get a nudge (sporty+sporty, sweet+sweet)
+  if (top.vibe && top.vibe === bottom.vibe) s += 5;
+  return s;
+}
+
 module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
   BAND_WARMTH, WARMTH_LEVELS,
   h, hmod, dayKey, yesterdayOf,
+  attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
 };
