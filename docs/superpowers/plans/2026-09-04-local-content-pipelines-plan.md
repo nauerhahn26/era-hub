@@ -2112,3 +2112,108 @@ scheme and the pinning only converts a silent breakage into a red test *here*,
 not on a family's machine. Chief residual risk is the same as Phase 4's and
 belongs to **Phase 7**: none of this has run on Windows, against a real TMDB or
 Watchmode key, on a kiosk screen, with a Drive folder mid-sync.
+
+## Retrospective: Phase 6
+
+Four commits, hub only — the board did not move this phase (`era-board` is still
+at `5e45729`, T5.4). `123c977` (fal key card + `POST /fal-key`), `6eb040e` (the
+gate fix that followed it), `2f7dd35` (T6.2: the animate step), `e32dac0` (the
+in-phase review fixes).
+
+### Decisions
+- **fal is proved on save, like `/tts-key` and unlike the film keys.** It is the
+  only key in New ERA that spends money per press, so a wrong key must be caught
+  before a family is quoted a price for a book, not halfway through one they
+  already agreed to pay for. The probe is one cheap read of the account billing
+  row through the new `ERA_FAL_URL` seam; it generates nothing.
+- **`perClipPrice` lives on the fal role.** fal publishes no price API and the
+  cost gate is mandatory (spec §4 step 5), so the number recorded when the key
+  was saved is the number the card quotes and the worker spends. A price a
+  family was already quoted survives a re-save; a key fal refused (`keyOk:false`)
+  is no key, exactly as the Voice card's rule.
+- **The button may not be pressed until the hub can say how many dollars.**
+  `/content/status` quotes every published book (pages × `perClipPrice`) and the
+  review page puts that number *on* the button, disabled without it — no key, a
+  refused key, or a book still being built.
+- **Off by default, and it cannot be otherwise.** No state owes `animate`, so
+  neither the walk nor the half-hourly scan can reach it; `content.js` refuses
+  the press without a key or before the book has published and a thread exists.
+- **Nothing is bought twice, and every accepted submission is billed onto the
+  job the moment fal takes it** — fal charges on acceptance, so a clip that then
+  failed to render is money that must still appear somewhere.
+- **The manifest is re-published after every clip**, so a sixteen-page book gains
+  its moving pictures as they arrive rather than in one lump at the end.
+
+### Observations
+- The one gate red line of the phase was not the money path at all: the "Open my
+  fal API keys page" button was missing from `/open-url`'s allowlist, so the one
+  card in the product that spends money would have opened *inside* the kiosk —
+  the exact trap dad hit on Resend 9/3. `tests/setup.test.mjs` scrapes every
+  "open site" URL out of Settings for this reason and caught it (`6eb040e`).
+- The review's six confirmed findings were again bugs where two honest pieces
+  disagreed, not code wrong in isolation:
+  - the review page waited on the animate press with `settled()`, which gives up
+    after five minutes. Sixteen clips at a couple of minutes each is an ordinary
+    half-hour run, so the give-up path printed *"nothing was made… try again"*
+    over a run fal was still rendering and still billing. The press now has its
+    own uncapped wait that repaints every second.
+  - the walk's safety re-publish fired only when **zero** clips published, so a
+    clip whose own publish threw (Drive holding `manifest.json` open on Windows)
+    was on disk, billed, and absent from the only file the reader reads —
+    permanently, since a finished book owes no further step. Counts, not
+    truthiness.
+  - what fal actually charged was nowhere in the product; it is now on
+    `/content/status` and on the review page whenever it leads what arrived.
+  - fal's `status_url`/`response_url` are still followed verbatim (this model's
+    name has subpaths), but only when they name fal's own origin — that key
+    travels in an `Authorization` header.
+  - `ai-config.json` now holds four cards' keys, so every writer goes through
+    `content-store.writeAtomic` rather than rewriting in place (9/3: a full disk).
+  - the 422 duration-suffix retry — the one path that submits a page twice — had
+    no test; two submits, one charge, both now pinned.
+
+### Adaptations
+- The motion script per page is classified **on this computer** from the page's
+  own words (ambient / story-beat / hero / the action-cam duel template for a
+  confrontation). Nothing about the story is sent anywhere to decide it.
+- The photo travels to fal as a data URI: a hub on a home network has no signed
+  URL to hand out.
+- A clip that fails is one page's loss — logged, book carries on — and a refused
+  key can never mark a finished book failed.
+- No test spends a key or touches the network: `ERA_FAL_URL` points at a local
+  stand-in on 8441 (hub on 8439), stdout is piped so "no key ever reached a log
+  line" is *checked* rather than hoped for, and both suites count the stand-in's
+  calls so a probe that escaped to fal itself fails the suite.
+
+### Verification
+`node --test tests/fal-key.test.mjs tests/content-animate.test.mjs
+tests/book-review-ui.test.mjs tests/settings-ui.test.mjs` → **75 pass, 0 fail**.
+`node --check` clean on every changed file; `tools/build-payload.sh` carries the
+new `content-animate.js`.
+
+### Follow-ups
+- **Nothing has ever been animated with a real fal key.** The price, the model
+  id, the 422 duration-suffix retry and the poll shape are all pinned against a
+  stand-in built from the documented behaviour; the first real run belongs to
+  Phase 7 and may move any of them.
+- No cap and no confirmation beyond the quote: a parent who presses twice on two
+  devices pays twice. The "already has a clip" skip narrows but does not close it.
+- The ledger is per-job; there is no running monthly total anywhere, so a family
+  learns what they have spent only by adding books up themselves.
+- Phase 4/5 follow-ups all remain open (Gap 14 checksum-less `installPack`,
+  unverified pinned yt-dlp hash on-device, `mirrored:false` never retried,
+  `board-arrange.test.mjs` hard-coded to 8377, last-writer-wins rank collisions,
+  ⇅ Arrange for movies needing a product decision, unrechecked deep links,
+  Watchmode's uncounted 2,500/month, unauthenticated LAN doors).
+
+### Confidence and risks
+Confidence **high** on the refusals and the accounting: the step cannot be
+reached by any automatic path, every accepted submission is billed at
+acceptance, and the review's worst two findings (a still-spending run called a
+failure, a paid-for clip missing from the manifest for ever) were both found and
+fixed in-phase with tests. Confidence **medium** on fal itself — every byte of
+its behaviour here is a stand-in's, and the model id, the per-clip price and the
+duration retry are the three places a live run is most likely to disagree.
+Chief residual risk is unchanged and belongs to **Phase 7**: none of this has
+run on Windows, against a real key, on a kiosk screen, with a Drive folder
+mid-sync — and here that risk has a dollar figure attached to it.
