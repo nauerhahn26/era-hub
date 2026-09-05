@@ -835,7 +835,15 @@ $("aiKeySave").onclick=async()=>{
   const k=$("aiKey").value.trim();
   if(!k){ toast("Paste a key first",false); return; }
   const r=await fetch("/ai-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvSel,apiKey:k})});
-  if(r.ok){ $("aiKey").value=""; aiProvTouched=false; toast("AI key saved — preparing your photos"); aiPaint(); }
+  // the door asks the provider before answering (a free question — it lists
+  // models), so "saved" and "working" are two different sentences here too
+  if(r.ok){
+    let v={}; try{ v=await r.json(); }catch(e){}
+    $("aiKey").value=""; aiProvTouched=false;
+    if(v.ok) toast("Key checked and working ✓ — preparing your photos");
+    else toast(v.error||"Key saved, but it could not be checked",false);
+    aiPaint();
+  }
   else toast("Could not save the key",false);
 };
 async function aiPaint(){
@@ -845,8 +853,13 @@ async function aiPaint(){
     // no library-wide count here either: the batch total shifts as Drive keeps
     // materialising files (dad 9/1)
     if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos…</b> "+s.ingesting.done+" done so far.";
+    else if(s.aiConfigured && s.aiKeyOk===false){
+      // refused when it was saved: a paste-again, not a "saved ✓" that lies (VM QA 9/5)
+      $("aiStatus").innerHTML='<span class="bad"><b>'+(s.aiKeyError||"That key was not recognised")+'.</b> Copy it again from the keys page and paste it here.</span>';
+    }
     else if(s.aiConfigured){
-      let m="<b>"+(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.google).name+" key saved ✓</b>"+(s.cataloged?" "+s.cataloged+" clothing item"+(s.cataloged===1?"":"s")+" catalogued; the board builds itself.":"");
+      const name=(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.google).name;
+      let m="<b>"+name+(s.aiKeyOk?" key checked and working ✓":" key saved ✓")+"</b>"+(s.cataloged?" "+s.cataloged+" clothing item"+(s.cataloged===1?"":"s")+" catalogued; the board builds itself.":"");
       // a free key names about 20 photos a day per model (Google); say where the rest are
       if(s.waiting) m+=" <b>"+s.waiting+" photo"+(s.waiting===1?"":"s")+" waiting</b> — "+(s.heldToday?"today's free allowance is used up; they will be named tomorrow morning by themselves.":"the next try is within the hour.");
       $("aiStatus").innerHTML=m;

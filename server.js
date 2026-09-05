@@ -18,6 +18,8 @@ const moviesAdd = require("./movies-add.js");
 const moviesLookup = require("./movies-lookup.js");
 const booksIndex_ = require("./books-index.js");
 const aiConfig = require("./ai-config.js");
+// For baseFor alone: the provider's real base, or the ERA_AI_URL stand-in.
+const contentProviders = require("./content-providers.js");
 // For writeAtomic alone: a key file is written tmp-then-rename, never in place.
 const contentStore = require("./content-store.js");
 
@@ -946,6 +948,33 @@ async function verifyTtsKey(key) {
     if (r.status === 401) return { ok: false, error: "ElevenLabs did not recognise that key - check for a missing character" };
     return { ok: false, error: "ElevenLabs replied " + r.status };
   } catch (e) { return { ok: false, error: "could not reach ElevenLabs (offline?)" }; }
+}
+
+// Is this vision key real? The cheapest question each provider has — list
+// your models — spends no tokens on any of the three. The key travels in the
+// provider's own header, never in the URL (Google also takes ?key=, and a URL
+// is what ends up in logs). The base comes from content-providers so the
+// ERA_AI_URL stand-in covers this door too: no test asks a real provider.
+const AI_PROBE = {
+  anthropic: { name: "Claude", path: "/v1/models?limit=1",
+    headers: (k) => ({ "x-api-key": k, "anthropic-version": "2023-06-01" }) },
+  openai: { name: "OpenAI", path: "/v1/models",
+    headers: (k) => ({ "Authorization": "Bearer " + k }) },
+  google: { name: "Google AI Studio", path: "/v1beta/models?pageSize=1",
+    headers: (k) => ({ "x-goog-api-key": k }) },
+};
+async function verifyAiKey(provider, key) {
+  const p = AI_PROBE[provider] || AI_PROBE.google;
+  try {
+    const r = await fetch(contentProviders.baseFor(provider) + p.path,
+      { headers: p.headers(key), signal: AbortSignal.timeout(15000) });
+    if (r.ok) return { ok: true };
+    // Google says API_KEY_INVALID with a 400; the other two 401/403
+    const refused = r.status === 401 || r.status === 403 || (r.status === 400 && provider === "google");
+    if (refused) return { ok: false, refused: true,
+      error: p.name + " did not recognise that key - check for a missing character" };
+    return { ok: false, error: p.name + " replied " + r.status };
+  } catch (e) { return { ok: false, error: "could not reach " + p.name + " (offline?)" }; }
 }
 
 // ---- fal: the only key in the product that spends money per press (T6.1) ----
@@ -2165,6 +2194,13 @@ const server = http.createServer((req, res) => {
 
   // ---- Settings > AI helper: family's own model key (never echoed back).
   // Used by the Clothing Picker's photo ingest today; book-reader QA later.
+  // Saving PROVES the key, the way /tts-key does (VM QA 9/5: the Voice card
+  // said "checked and working" and this one only "saved", so a Google key with
+  // a character missing looked accepted until the Clothing Picker quietly held
+  // every photo). Unlike the fal role a refused key is still saved and still
+  // counts as a key — the probe can be wrong (a project key without the
+  // models.list permission) and a wrong "no" would lock the wardrobe on a key
+  // that works; the card shows the refusal and asks for a paste-again instead.
   if (req.method === "POST" && req.url === "/ai-key") {
     let body = "";
     req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
@@ -2179,13 +2215,21 @@ const server = http.createServer((req, res) => {
         // AI key must not delete them. The vision key keeps the flat shape it
         // has always had, which ai-config.js still reads first.
         const file = path.join(DATA, "ai-config.json");
-        let cfg = {};
-        try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
-        if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) cfg = {};
-        // Atomic, like writeAiCfg: never a half-written file full of keys.
-        contentStore.writeAtomic(file,
-          JSON.stringify({ ...cfg, provider: prov, apiKey: apiKey.trim() }, null, 1));
-        res.writeHead(204).end();
+        const merge = (fields) => {
+          let cfg = {};
+          try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+          if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) cfg = {};
+          // Atomic, like writeAiCfg: never a half-written file full of keys.
+          contentStore.writeAtomic(file, JSON.stringify({ ...cfg, ...fields }, null, 1));
+        };
+        const key = apiKey.trim();
+        merge({ provider: prov, apiKey: key, keyOk: undefined, keyError: "" });
+        verifyAiKey(prov, key).then((v) => {
+          merge({ keyOk: v.refused ? false : (v.ok ? true : undefined), keyError: v.error || "" });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: v.ok, error: v.error || "" }));
+        }).catch(() => { res.writeHead(200, { "Content-Type": "application/json" })
+          .end('{"ok":false,"error":"could not check the key"}'); });
         // a key arriving is the cue to catalog waiting photos right away
         setTimeout(() => clothing.regenerate(true).catch(() => {}), 500);
       } catch { res.writeHead(400).end(); }

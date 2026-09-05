@@ -125,5 +125,20 @@ function haveRoles(dir) {
   return { vision: !!r.vision, elevenlabs: !!r.elevenlabs, fal: !!r.fal };
 }
 
-module.exports = { aiRoles, haveRoles, falPrice, VISION_PROVIDERS, DEFAULT_MODEL_ID,
+// Whether the provider RECOGNISED the vision key when the card saved it, and
+// nothing about the key. keyOk is what POST /ai-key recorded: true, false
+// (refused), or null (never probed, or the provider was unreachable at the
+// time). A refused vision key is NOT dropped the way a refused fal or voice
+// key is — the probe can be wrong (a project key without models.list) and a
+// wrong "no" would lock the wardrobe on a key that works — so this is a
+// sentence for the card (/clothing/status), never a gate.
+function visionCheck(dir) {
+  const cfg = readJson(path.join(dir, "ai-config.json"));
+  const role = cfg && typeof cfg === "object"
+    ? (cfg.vision && typeof cfg.vision === "object" ? cfg.vision : cfg) : {};
+  return { keyOk: typeof role.keyOk === "boolean" ? role.keyOk : null,
+           keyError: typeof role.keyError === "string" ? role.keyError : "" };
+}
+
+module.exports = { aiRoles, haveRoles, visionCheck, falPrice, VISION_PROVIDERS, DEFAULT_MODEL_ID,
                    DEFAULT_CLIP_PRICE };

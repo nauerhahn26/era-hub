@@ -9,7 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const { Worker } = require("worker_threads");
 const { listPhotos } = require("./clothing-photos");
-const { aiRoles } = require("./ai-config.js");
+const { aiRoles, visionCheck } = require("./ai-config.js");
 
 let DATA = null;
 let worker = null;
@@ -24,7 +24,7 @@ let waiters = [];       // callers that arrived mid-build, awaiting the queued r
 // role for the calls it makes.
 function aiCfg() {
   const v = aiRoles(DATA).vision;
-  return v ? { provider: v.provider } : null;
+  return v ? { provider: v.provider, ...visionCheck(DATA) } : null;
 }
 
 function isBuilding() { return !!worker; }
@@ -39,6 +39,8 @@ function status() {
   photos = listPhotos(path.join(DATA, "clothing")).length;
   return { building: !!worker, ingesting, cataloged, photos,
     aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null,
+    // whether the provider recognised the key when it was saved (null = unchecked)
+    aiKeyOk: cfg ? cfg.keyOk : null, aiKeyError: cfg ? cfg.keyError : "",
     // photos not named yet, and whether today's free allowance is what stops them
     waiting: cfg ? pendingPhotos(DATA) : 0, heldToday: holdDay === new Date().toDateString(),
     guidance: lastResult && lastResult.guidance ? lastResult.guidance : null };
