@@ -456,6 +456,74 @@ test("with a TMDB key the fallback finds the art, and the add carries TMDB's cre
                "movies/posters/stick-man.jpg");
 });
 
+// ------------------------------------------------- a row picked from the grid
+//
+// T5.3 gave the sheet a search (POST /movies/lookup). What comes back per row
+// is a deep link plus provenance the design asked the catalog to keep
+// (spec §6: providerRef, ageRating, availabilityCheckedAt), and the pick is
+// posted straight here. None of it may reach the board's launch path — a tile
+// is still an id, a name and a URL — but a weekly re-check needs the handle,
+// and "checked on the 5th" is what makes "moved - ask a grown-up" possible.
+
+test("a row picked from the search grid keeps what the lookup found", async () => {
+  tmdbCalls = [];
+  const r = await post("/movies/add", {
+    url: "https://www.primevideo.com/detail/B0FSKQBQ5T",
+    title: "Paddington", kind: "movie", year: 2014, tmdbId: 278,
+    addedBy: "search", ageRating: "PG", providerRef: { watchmode: 3173903 },
+  });
+  assert.equal(r.status, 200);
+  const t = catalog().titles.find(x => x.id === "paddington");
+  assert.equal(t.launch.url, "https://www.primevideo.com/detail/B0FSKQBQ5T");
+  assert.equal(t.service, "prime");
+  assert.equal(t.addedBy, "search", "a name typed and a row picked, not a link pasted");
+  assert.equal(t.ageRating, "PG");
+  assert.deepEqual(t.providerRef, { watchmode: 3173903 });
+  assert.match(t.availabilityCheckedAt, /^\d{4}-\d{2}-\d{2}$/,
+               "the day the availability was true, so a re-check knows how stale it is");
+  const { rec } = await recipe();
+  assert.ok(rec.boards.flatMap(b => b.buttons).some(b => b.titleId === "paddington"),
+            "and the picked row is a tile, not just a row in a file");
+});
+
+// A SHOW picked from the grid is a different animal, and this pins what it
+// does today rather than pretending otherwise: moviesRecipe draws a show from
+// its EPISODES (seasons:[] = the whole show is pending), and nothing in the
+// search harvests episodes yet. So the title is kept, counted for a grown-up,
+// and drawn nowhere — the same honest state a typed name has always had.
+test("a show picked from the grid is kept and counted, not drawn half-made", async () => {
+  const r = await post("/movies/add", {
+    url: "https://www.netflix.com/watch/80198673",
+    title: "Ada Twist, Scientist", kind: "show", year: 2021, tmdbId: 129604,
+    addedBy: "search", ageRating: "TV-Y", providerRef: { watchmode: 3173903 },
+  });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.pending, false, "the SHOW has a link; its episodes are what is missing");
+  const t = catalog().titles.find(x => x.id === "ada-twist-scientist");
+  assert.equal(t.ageRating, "TV-Y");
+  assert.deepEqual(t.seasons, [], "a show still carries its seasons");
+  const { rec } = await recipe();
+  assert.ok(rec.meta.pendingCount >= 1, "counted for a grown-up to finish");
+  assert.ok(!rec.boards.flatMap(b => b.buttons).some(b => b.titleId === "ada-twist-scientist"),
+            "and never a tile that presses to nothing");
+  assert.ok(!rec.boards.some(b => b.id === "ada-twist-scientist"),
+            "and no door to an empty episode page either");
+});
+
+test("provenance the sheet got wrong is dropped, and the tile still goes up", async () => {
+  const r = await post("/movies/add", {
+    url: "https://www.netflix.com/gb/title/the-snail-and-the-whale",
+    ageRating: "<script>alert(1)</script>", providerRef: "not an object",
+  });
+  assert.equal(r.status, 200, "provenance is never worth refusing an add over");
+  const t = catalog().titles.find(x => x.id === "the-snail-and-the-whale");
+  assert.equal(t.ageRating, undefined);
+  assert.equal(t.providerRef, undefined);
+  assert.equal(t.availabilityCheckedAt, undefined,
+               "nothing checked it, so no date claims it was checked");
+});
+
 test("a title TMDB has never heard of is added anyway, bare", async () => {
   tmdbCalls = [];
   const r = await post("/movies/add", { url: "https://www.netflix.com/gb/title/room-on-the-broom" });

@@ -38,11 +38,18 @@
 //   5. THE HUB NEVER SERVES VIDEO (D57). Nothing here downloads anything —
 //      a movie is a link the ERAgaze kiosk opens, and that is all it ever is.
 //
-// NOT IN THIS FILE, deliberately: the streaming-availability lookup that turns
-// a typed name into a real link (T5.3). Until it lands a typed name is written
-// PENDING — `launch.url` null, which moviesRecipe counts into meta.pendingCount
-// and draws nowhere — so a parent's list is kept without ever putting an
-// unlaunchable tile in front of Ellie.
+// NOT IN THIS FILE, deliberately: the streaming-availability lookup itself
+// (movies-lookup.js, T5.3). A typed name is SEARCHED by the sheet through
+// POST /movies/lookup and a grown-up picks a row; the pick arrives here as an
+// ordinary add carrying the link the lookup found and the provenance it came
+// with (`providerRef`, `ageRating` — "the picked row", below). This file never
+// picks and never searches: the first hit for "peter rabbit" is not the one a
+// family means often enough to put on a child's board unasked.
+//
+// A name with NO link is still written PENDING — `launch.url` null, which
+// moviesRecipe counts into meta.pendingCount and draws nowhere — so a parent's
+// list is kept (a family with no key, or a title nobody streams) without ever
+// putting an unlaunchable tile in front of Ellie.
 //
 // The poster fetch (T5.2) IS here, under "the poster" below, with the two rules
 // that make a network call safe in a door a parent is standing in front of: it
@@ -53,6 +60,7 @@ const path = require("path");
 const drive = require("./drive.js");
 const { slugify } = require("./slug.js");
 const { writeAtomic } = require("./content-store.js");
+const { tmdbKey } = require("./movies-lookup.js");
 const fs = require("fs");
 
 // Law 2. The id rule is moviesRecipe()'s own filter, spelled once more here so
@@ -179,18 +187,10 @@ const TMDB_ATTRIBUTION = "Poster art from TMDB. This product uses the TMDB API "
   "but is not endorsed or certified by TMDB.";
 
 // The key, read fresh (a key typed a minute ago must work without a restart)
-// and never returned to a caller, never logged. Two homes, in the order the
-// Voice card's key uses: the file a Settings card writes, then the operator's
-// environment. <DATA> is this device's shelf — the one thing in this file that
-// is not the family's Drive folder, because a key belongs to a machine.
-const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
-function tmdbKey() {
-  let cfg = null;
-  try { cfg = JSON.parse(fs.readFileSync(path.join(DATA, "ai-config.json"), "utf8")); } catch {}
-  const fromCard = cfg && cfg.tmdb && typeof cfg.tmdb.apiKey === "string" ? cfg.tmdb.apiKey.trim() : "";
-  const fromEnv = typeof process.env.TMDB_API_KEY === "string" ? process.env.TMDB_API_KEY.trim() : "";
-  return fromCard || fromEnv;
-}
+// and never returned to a caller, never logged. ONE reader for the whole
+// feature, in movies-lookup.js: the poster hunt here and the search there use
+// the same key from the same two homes, and a second copy of that rule is a
+// second place for it to drift.
 
 // The seam every request in this section goes through. ERA_POSTER_PAGE_URL is
 // set by tests ONLY: it keeps the path and swaps the ORIGIN, so a fixture that
@@ -399,6 +399,21 @@ async function mirror() {
   } catch { return false; }
 }
 
+// A provider's own handle for this title, or null. Small on purpose: a
+// provider name and a short id, nothing nested, nothing long — this is a
+// refresh handle, not a place to park a payload in the family's catalog.
+function cleanRef(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out = {};
+  for (const k of Object.keys(v).slice(0, 4)) {
+    if (!/^[a-z][a-z0-9]{0,15}$/.test(k)) continue;
+    const val = v[k];
+    if (Number.isFinite(val)) out[k] = val;
+    else if (typeof val === "string" && val.trim() && val.length <= 64) out[k] = val.trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 // ------------------------------------------------------------------- the add
 
 // add(body) -> {ok, id, title, kind, rank, pending, mirrored} | {error, message}
@@ -464,6 +479,29 @@ async function add(body) {
   if (Number.isFinite(b.year)) entry.year = b.year;
   if (b.tmdbId != null && (typeof b.tmdbId === "string" || Number.isFinite(b.tmdbId)))
     entry.tmdbId = b.tmdbId;
+
+  // THE PICKED ROW (spec §6). A row chosen from the search grid carries three
+  // more things worth keeping, and each is CHECKED, never trusted: this is a
+  // JSON door, and the sheet is only the usual caller.
+  //   ageRating          "TV-Y", "PG" — the one field that says whether a
+  //                      title belongs in front of a six-year-old at all.
+  //   providerRef        the availability provider's own handle, so the weekly
+  //                      re-check (spec §6 "marks moved titles 'ask a
+  //                      grown-up'") costs one cheap call instead of a search.
+  //   availabilityCheckedAt  stamped HERE, never taken from the caller: it is
+  //                      a claim about when the hub last knew this was true,
+  //                      and only the hub can make it. A date without a
+  //                      providerRef would be a claim nobody checked, so the
+  //                      two arrive together or not at all.
+  // Bad provenance is DROPPED, never a refusal: none of it is the tile, and a
+  // parent must not lose an add over a field they never saw.
+  const rating = typeof b.ageRating === "string" ? b.ageRating.trim() : "";
+  if (rating && /^[A-Za-z0-9+\-/ ]{1,16}$/.test(rating)) entry.ageRating = rating;
+  const ref = cleanRef(b.providerRef);
+  if (ref) {
+    entry.providerRef = ref;
+    entry.availabilityCheckedAt = new Date().toISOString().slice(0, 10);
+  }
 
   // The art, before the catalog is written, so the tile and its picture arrive
   // on Ellie's board in the same mirror. Nothing here can fail the add.

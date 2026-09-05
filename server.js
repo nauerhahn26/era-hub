@@ -15,6 +15,7 @@ const clothing = require("./clothing");
 const content = require("./content.js");
 const musicAdd = require("./music-add.js");
 const moviesAdd = require("./movies-add.js");
+const moviesLookup = require("./movies-lookup.js");
 const booksIndex_ = require("./books-index.js");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
@@ -1616,6 +1617,51 @@ const server = http.createServer((req, res) => {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "write-failed",
                                  message: "New ERA could not save that film. Try again." }));
+      });
+    });
+    return;
+  }
+  // "type a name" — the search behind the sheet's selection grid (spec §6
+  // "Streaming availability"; movies-lookup.js). It WRITES NOTHING: a grown-up
+  // picks a row and the pick goes to /movies/add, which is still the catalog's
+  // only writer.
+  //
+  // 200 even when the answer is an empty grid. A family with no key is not an
+  // error — they get `hint`, which names Settings and names the paste box that
+  // already works — and neither is a provider having a bad day. The only 400s
+  // are a request the sheet got wrong. ownDoor because this leaves the house on
+  // the family's key: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/movies/lookup") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        res.writeHead(400, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "bad-request", message: "New ERA could not read that request." }));
+        return;
+      }
+      const b = parsed && typeof parsed === "object" ? parsed : {};
+      const query = typeof b.query === "string" ? b.query.trim()
+                  : typeof b.q === "string" ? b.q.trim() : "";
+      if (!query) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "need-query", message: "Type the name of a film or show to look for." }));
+        return;
+      }
+      const st = moviesLookup.status(b.region);
+      moviesLookup.lookupTitle(query, b.region).then(results => {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ ok: true, provider: st.provider, region: st.region,
+                                 results, hint: st.hint }));
+      }).catch(() => {
+        // lookupTitle never throws by design; if it ever does, the sheet still
+        // gets the paste box rather than a spinner.
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ ok: true, provider: st.provider, region: st.region,
+                                 results: [], hint: st.hint }));
       });
     });
     return;
