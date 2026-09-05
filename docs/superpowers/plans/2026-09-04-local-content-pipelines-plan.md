@@ -2467,6 +2467,12 @@ log `<scratch>/t75/release-v0.32.1.log`):
   `feat/content-strip` (92609db, fast-forward). The signed publish runs as
   `release.sh v0.32.1` (gate → signed build → VM legs A+B → tag + release) as
   soon as the T7.6b driver releases the VM.
+- **PUBLISHED v0.32.1 (9/5 ~18:10 UTC)** — `release.sh v0.32.1` from era-hub
+  49dec60 (= tag) + era-board 6d29363, log `<scratch>/release-v0.32.1.log`:
+  gate green → signed build **20260905.1807**, `Signature verification: ok`,
+  `New-ERA-Setup.exe` sha256 `f754e6899d1edb55fee6fa08c09993adda1b4c146a1e0d11e327cfb7886b21ca`
+  → `vm-e2e: 14 passed, 0 failed` (legs A+B) → tag + GitHub release. The
+  first SIGNED family build. `feat/audit-fixes` and `master` pushed at 49dec60.
 
 ### T7.6 — Windows VM QA by hand (Opus driver, 13:55–15:25 UTC)
 Guest `era-qa-w10` (Win10 19045), reverted to the pristine snapshot; build
