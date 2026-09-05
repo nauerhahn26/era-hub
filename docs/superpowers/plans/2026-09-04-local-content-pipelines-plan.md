@@ -250,6 +250,7 @@ it in the suite header comment):
 | `tests/fal-key.test.mjs`, `tests/content-animate.test.mjs` | 8439 (hub) + 8441 (fake fal) |
 | `tests/drive-localfolder.test.mjs` (Phase E) | 8442 |
 | `tests/content-allowance.test.mjs` (Phase 6b) | 8443 (hub) + 8444 (fake ElevenLabs) + 8445 (fake AI) |
+| `tests/clothing-weather.test.mjs` (weather window, 9/5) | 8446 (fake geo + Open-Meteo) + 8447 (fake AI that must stay silent; no hub needed — the suite is in-process) |
 
 ---
 

@@ -24,7 +24,11 @@ let child;
 before(async () => {
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1" },
+    // The hub builds today's outfits on its own timers, and that build reads
+    // the weather: point both lookups at a dead loopback port so nothing in
+    // this suite can ever reach the internet.
+    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1",
+           ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1" },
   });
   for (let i = 0; i < 100; i++) {
     try { await fetch(`${BASE}/settings`); return; } catch {}
@@ -152,4 +156,38 @@ test("POST /kiosk/exit → closed when the engine takes the screen; → home whe
     await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ exitTo: "tdsnap" }) });
   }
+});
+
+// "Dress for 10 AM-1 PM" (dad 9/5): the hours the outfits are sorted for live
+// in app-settings.json beside the other knobs, and changing them throws away
+// the cached weather so today's board is re-sorted for the new hours. The
+// re-sort is the CHEAP door (clothing.rebuildToday) — no photo ingest, no AI.
+test("Settings weatherWindow round-trips, rejects junk, and re-sorts today's outfits", async () => {
+  const post = (weatherWindow) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weatherWindow }) });
+  const cache = path.join(TMP, ".weather-cache.json");
+  const stamp = () => fs.writeFileSync(cache, JSON.stringify({ at: Date.now(), window: "all", w: { t: 72, band: "warm", symbol: "sun" } }));
+  const get = async () => (await (await fetch(`${BASE}/settings`)).json()).weatherWindow;
+
+  assert.equal(await get(), undefined, "no window by default: the whole day, as before");
+
+  stamp();
+  await post({ from: 10, to: 13 });
+  assert.deepEqual(await get(), { from: 10, to: 13 });
+  assert.ok(!fs.existsSync(cache), "a change throws the cached weather away and rebuilds");
+
+  stamp();
+  await post({ from: 10, to: 13 });
+  assert.ok(fs.existsSync(cache), "the same window again is not a change: nothing is rebuilt");
+
+  for (const junk of [{ from: 13, to: 10 }, { from: "x", to: 3 }, { from: -1, to: 5 },
+                      { from: 2, to: 24 }, { from: 2 }, { from: 1.5, to: 4 }, "10-1", 7]) {
+    await post(junk);
+    assert.deepEqual(await get(), { from: 10, to: 13 }, "ignored: " + JSON.stringify(junk));
+  }
+  assert.ok(fs.existsSync(cache), "junk changes nothing, so nothing is rebuilt");
+
+  await post(null);
+  assert.equal(await get(), undefined, "null clears it back to the whole day");
+  assert.ok(!fs.existsSync(cache), "clearing it is a change too");
 });

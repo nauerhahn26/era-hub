@@ -43,17 +43,18 @@ function status() {
     guidance: lastResult && lastResult.guidance ? lastResult.guidance : null };
 }
 
-function regenerate(force) {
+function regenerate(force, opts = {}) {
   // One build at a time. A caller that arrives mid-build gets the QUEUED run's
   // result, not a bare {busy} it would have to poll for (9/1: a sync landing
   // during a build silently did nothing from the caller's point of view).
+  // (A run queued behind one becomes a FULL build — the superset of a re-sort.)
   if (worker) {
     queued = true;
     return new Promise((resolve) => { waiters.push(resolve); });
   }
   return new Promise((resolve) => {
     worker = new Worker(path.join(__dirname, "clothing-worker.js"),
-      { workerData: { dataDir: DATA, force: !!force } });
+      { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
       if (m.done) {
@@ -155,5 +156,11 @@ function start(dataDir) {
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
 }
 
-module.exports = { start, regenerate, isBuilding, status, boardIsFresh, tick,
+// Re-sort TODAY'S board for a wardrobe that has not changed: the weather
+// window moved (dad 9/5), so the board must follow within the second. Same
+// build as the morning one minus photo ingest, so it costs no AI request and
+// cannot be slowed down by a folder full of new photos.
+function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
+
+module.exports = { start, regenerate, rebuildToday, isBuilding, status, boardIsFresh, tick,
   _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false; } };

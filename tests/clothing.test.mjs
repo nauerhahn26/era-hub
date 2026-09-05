@@ -65,6 +65,12 @@ let lastProbe = ""; // base64 of the last picture a Google call was shown
 
 before(async () => {
   process.env.ERA_AI_URL = `http://127.0.0.1:${AI_PORT}`;
+  // Every build reads the weather. Until the 9/5 window work there was no seam
+  // for it, so this suite really did reach for the two public IP lookups on
+  // each run; a dead loopback port keeps it local (and fast). The weather tile
+  // itself is covered by tests/clothing-weather.test.mjs.
+  process.env.ERA_GEO_URL = "http://127.0.0.1:1/geo";
+  process.env.ERA_WEATHER_URL = "http://127.0.0.1:1";
   ai = http.createServer((req, res) => {
     let body = "";
     req.on("data", c => body += c);
@@ -118,7 +124,8 @@ before(async () => {
   clothing = require("./clothing.js");
   clothing.start(TMP);   // timers are unref'd; we drive regenerate() directly
 });
-after(() => { if (ai) ai.close(); delete process.env.ERA_AI_URL; });
+after(() => { if (ai) ai.close(); delete process.env.ERA_AI_URL;
+  delete process.env.ERA_GEO_URL; delete process.env.ERA_WEATHER_URL; });
 
 test("photos but no AI key: no board, a no-key guidance state (dad 8/31: coach, don't dump raw tiles)", async () => {
   const r = await clothing.regenerate(true);

@@ -50,7 +50,10 @@ before(async () => {
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "ignore", "inherit"],
     env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1", ERA_NO_UPDATE: "1",
-           ERA_AI_URL: `http://127.0.0.1:${AI_PORT}` },
+           ERA_AI_URL: `http://127.0.0.1:${AI_PORT}`,
+           // the build reads the weather too: a dead loopback port keeps this
+           // suite off the internet (seam added with the 9/5 weather window)
+           ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1" },
   });
   for (let i = 0; i < 100; i++) {
     try { await fetch(`${BASE}/settings`); return; } catch {}

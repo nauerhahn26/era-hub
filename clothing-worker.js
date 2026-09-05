@@ -641,32 +641,71 @@ async function ingest() {
 }
 
 // ---- weather (keyless; cached 3h; null offline = board just has no tile) ----
+// The HOURS she is out, not the day's peak (dad 9/5: "she's often choosing
+// clothing for when she'll be at school between ten and one, and we give her
+// weather we don't hit until four PM — so it's not perfectly useful"). One
+// window applies every day; unset = the whole day, which is what the daily
+// maximum used to give. Settings writes it, the worker reads it from the same
+// app-settings.json every other knob lives in.
 const WCACHE = () => path.join(DATA, ".weather-cache.json");
+function weatherWindow() {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
+    const w = s && s.weatherWindow;
+    if (w && Number.isInteger(w.from) && Number.isInteger(w.to) &&
+        w.from >= 0 && w.to <= 23 && w.from < w.to) return { from: w.from, to: w.to };
+  } catch {}
+  return null;
+}
+// Both ends INCLUSIVE: "10 AM-1 PM" is the hours 10, 11, 12 and 13.
+function inWindow(hour, win) { return !win || (hour >= win.from && hour <= win.to); }
 async function weather() {
+  const win = weatherWindow();
+  const key = win ? win.from + "-" + win.to : "all";
   try {
     const c = JSON.parse(fs.readFileSync(WCACHE(), "utf8"));
-    if (Date.now() - c.at < 3 * 3600e3) return c.w;
+    // a record computed for OTHER hours answers a different question
+    if (Date.now() - c.at < 3 * 3600e3 && (c.window || "all") === key) return c.w;
   } catch {}
   try {
     let geo = null;
-    for (const u of ["https://ipapi.co/json/", "https://ipwho.is/"]) {
+    const lookups = process.env.ERA_GEO_URL
+      ? [process.env.ERA_GEO_URL] : ["https://ipapi.co/json/", "https://ipwho.is/"];
+    for (const u of lookups) {
       try {
         const g = await (await fetch(u, { signal: AbortSignal.timeout(6000) })).json();
         if (g && typeof g.latitude === "number") { geo = g; break; }
       } catch {}
     }
     if (!geo) return null;
+    // hourly, not daily: timezone=auto makes the hourly stamps local to those
+    // coordinates, so hour 10 in the answer is 10 AM where the family lives.
     const q = `latitude=${geo.latitude}&longitude=${geo.longitude}` +
-      "&daily=temperature_2m_max,weather_code&temperature_unit=fahrenheit&forecast_days=1&timezone=auto";
-    const wr = await (await fetch("https://api.open-meteo.com/v1/forecast?" + q,
+      "&hourly=temperature_2m,weather_code&temperature_unit=fahrenheit&forecast_days=1&timezone=auto";
+    const base = process.env.ERA_WEATHER_URL || "https://api.open-meteo.com";
+    const wr = await (await fetch(base + "/v1/forecast?" + q,
       { signal: AbortSignal.timeout(6000) })).json();
-    const t = Math.round(wr.daily.temperature_2m_max[0]);
-    const code = wr.daily.weather_code[0];
+    const h = wr.hourly;
+    let t = null, code = 0;
+    for (let i = 0; i < h.time.length; i++) {
+      const hour = Number(String(h.time[i]).slice(11, 13));
+      if (!inWindow(hour, win)) continue;
+      const temp = h.temperature_2m[i];
+      if (typeof temp === "number" && (t === null || temp > t)) t = temp;   // the warmest hour she is out
+      const c = h.weather_code[i];
+      if (typeof c === "number" && c > code) code = c;                      // ...dressed for the worst of them
+    }
+    if (t === null) return null;
+    t = Math.round(t);
     const band = t >= 78 ? "hot" : t >= 66 ? "warm" : t >= 54 ? "cool" : "cold";
-    const w = { t, band, symbol: code <= 1 ? "sun" : code <= 67 ? "cloud" : "cold" };
-    try { fs.writeFileSync(WCACHE(), JSON.stringify({ at: Date.now(), w })); } catch {}
+    const w = { t, band, symbol: code <= 1 ? "sun" : code <= 67 ? "cloud" : "cold", window: win };
+    try { fs.writeFileSync(WCACHE(), JSON.stringify({ at: Date.now(), window: key, w })); } catch {}
     return w;
   } catch { return null; }
+}
+// 0 -> "12 AM", 12 -> "12 PM", 13 -> "1 PM" — how a parent says an hour.
+function hourLabel(h) {
+  return (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? " AM" : " PM");
 }
 
 // ---- the daily board: her exact graph ----
@@ -818,11 +857,20 @@ async function buildCataloged(cat) {
     const pid = pg === 0 ? "today" : "today_" + (pg + 1);
     const buttons = [];
     if (pg === 0) {
-      if (w) buttons.push({ label: w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
-        say: "Today it is " + w.band + ", about " + w.t + " degrees.",
-        footnote: "updated " + new Date().toLocaleString("en-US",
-          { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
-        row: 1, col: 1 });
+      if (w) {
+        // With a window the tile has to say WHICH hours it is talking about,
+        // or a parent reads "72\u00b0" as the whole day again (dad 9/5).
+        const span = w.window ? hourLabel(w.window.from) + "-" + hourLabel(w.window.to) : null;
+        buttons.push({ label: w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
+          say: span
+            ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to) +
+              " it is " + w.band + ", about " + w.t + " degrees."
+            : "Today it is " + w.band + ", about " + w.t + " degrees.",
+          footnote: (span ? "for " + span + " \u00b7 " : "") + "updated " +
+            new Date().toLocaleString("en-US",
+              { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+          row: 1, col: 1 });
+      }
     } else {
       buttons.push({ label: "Back", type: "back", glyph: "\u2190",
         load: pg === 1 ? "today" : "today_" + pg, row: 1, col: 1 });
@@ -905,7 +953,10 @@ async function regenerate(force) {
   let prevSig = ""; try { prevSig = fs.readFileSync(SIG(), "utf8"); } catch {}
   if (!force && sig === prevSig) return { unchanged: true };
 
-  const ing = await ingest(); // no-op without a key or when everything is already cataloged
+  // rebuildOnly = re-sort what is already catalogued (the weather changed, not
+  // the wardrobe): never look at a new photo, never spend an AI request.
+  const ing = workerData.rebuildOnly ? null
+            : await ingest(); // no-op without a key or when everything is already cataloged
   const busy = !!(ing && ing.busy);
   const quota = !!(ing && ing.quota);
   // What the shell needs to decide on a same-day retry: how many photos are

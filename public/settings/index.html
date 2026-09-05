@@ -50,6 +50,9 @@
   .status{font-size:15px; color:#7A8A90; margin-top:4px}
   .status b{color:var(--good)}
   .status.bad b{color:var(--coral)}
+  select{font-family:var(--font); font-size:19px; border-radius:12px; border:2px solid var(--line);
+         background:#fff; color:var(--ink); padding:12px 14px; cursor:pointer}
+  select:disabled{color:#9AA8AD; background:#F4F7F6; cursor:default}
   .seg{display:flex; gap:0; border:2px solid var(--line); border-radius:12px; overflow:hidden}
   .seg button{border:0; border-right:2px solid var(--line); border-radius:0; margin:0}
   .seg button:last-child{border-right:0}
@@ -162,6 +165,16 @@
       <button id="dlOpenFolder">📂 Open the folder</button>
     </div>
     <div class="status" id="driveStatus"></div>
+    <!-- Which hours the outfits are sorted for (dad 9/5: "she's often choosing
+         clothing for when she'll be at school between ten and one, and we give
+         her weather we don't hit until four PM"). Mouse/touch, for a grown-up. -->
+    <div class="row" id="wxWindow" style="margin-top:16px; border-top:2px dashed var(--line); padding-top:16px">
+      <span>Dress for the weather between</span>
+      <select id="wxFrom" aria-label="First hour to dress for"></select>
+      <span id="wxAnd">and</span>
+      <select id="wxTo" aria-label="Last hour to dress for"></select>
+    </div>
+    <p class="desc" id="wxHint">Her school hours, for example &mdash; the outfits get sorted for the weather then, not for the afternoon high.</p>
   </div>
 
   <div class="card" id="ai">
@@ -1140,6 +1153,48 @@ $("dlSyncNow").onclick=async()=>{ toast("Sync started"); await fetch("/integrati
 // ~10 minutes of a sync; the Clothing Picker's footer shows the progress)
 $("dlOutfitsNow").onclick=async()=>{ toast("Looking for new clothing photos — the Clothing Picker shows the progress"); await fetch("/clothing/regenerate",{method:"POST"}); };
 
+// ---- The hours the outfits are dressed for (dad 9/5) ----
+// One window, every day. "All day" (unset) is what a family starts with and is
+// exactly the old behaviour: the day's high. Saving re-sorts TODAY's board on
+// the hub — no photos are read and no AI request is spent, so this is safe to
+// tap as often as a parent likes.
+function wxLabel(h){ return (h%12===0?12:h%12)+(h<12?" AM":" PM"); }
+function wxFill(){
+  const f=$("wxFrom"), t=$("wxTo");
+  const all=document.createElement("option"); all.value=""; all.textContent="All day"; f.appendChild(all);
+  // a window always runs forwards, so the first hour stops at 11 PM's neighbour
+  // and the last hour starts at 1 AM — no pair a parent can pick is impossible
+  for(let h=0;h<24;h++){
+    if(h<23){ const a=document.createElement("option"); a.value=String(h); a.textContent=wxLabel(h); f.appendChild(a); }
+    if(h>0){ const b=document.createElement("option"); b.value=String(h); b.textContent=wxLabel(h); t.appendChild(b); }
+  }
+}
+function wxPaint(w){
+  const f=$("wxFrom"), t=$("wxTo");
+  f.value = w ? String(w.from) : "";
+  if(w) t.value = String(w.to);
+  // "All day" has no second hour to pick, so the rest of the row steps aside
+  t.disabled = !w; t.style.display = w ? "" : "none"; $("wxAnd").style.display = w ? "" : "none";
+}
+async function wxSave(w){
+  wxPaint(w);
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({weatherWindow:w})});
+  if(!r.ok){ toast("Could not save",false); return; }
+  toast(w ? "Outfits re-sorted for "+wxLabel(w.from)+"-"+wxLabel(w.to)
+          : "Outfits re-sorted for the whole day");
+}
+function wxRead(){
+  const f=$("wxFrom").value;
+  if(f==="") return null;
+  let to=+$("wxTo").value;
+  if(!(to>+f)) to=Math.min(23,+f+1);        // the window always runs forwards
+  return {from:+f, to:to};
+}
+wxFill();
+$("wxFrom").onchange=()=>wxSave(wxRead());
+$("wxTo").onchange=()=>wxSave(wxRead());
+
 // ---- Updates: what is running, and a "look now" that shows the outcome ----
 // (dad 9/3: the boot check only runs 90 s after the hub STARTS, so a hub that
 // has been up since morning never sees an afternoon release until its 6-hour
@@ -1195,7 +1250,8 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
        if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));
        if(typeof s.musicVolCap==="number") mvol=Math.max(1,Math.min(100,Math.round(s.musicVolCap)));
-       exitPaint(s.exitTo==="home"?"home":"tdsnap"); }catch(e){ exitPaint("tdsnap"); }
+       exitPaint(s.exitTo==="home"?"home":"tdsnap");
+       wxPaint(s.weatherWindow||null); }catch(e){ exitPaint("tdsnap"); wxPaint(null); }
   dwellDesc(); settleDesc(); mvolDesc();
   try{
     const c=await (await fetch(ENGINE+"/config")).json();

@@ -61,7 +61,10 @@ before(async () => {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
     env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1",
            ERA_ELEVEN_URL: `http://127.0.0.1:${FAKE}`,
-           ERA_FAL_URL: `http://127.0.0.1:${FAKE}` },
+           ERA_FAL_URL: `http://127.0.0.1:${FAKE}`,
+           // today's outfits are built on the hub's own timers and read the
+           // weather: a dead loopback port keeps this suite off the internet
+           ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1" },
   });
   let up = false;
   for (let i = 0; i < 100; i++) {
@@ -570,4 +573,35 @@ test("no allowance answer, no made-up number (T6b.2)", async () => {
   assert.equal(await page.isVisible("#voiceAllowance"), false,
     "an allowance nobody could read is not an allowance of zero");
   await ctx.close();
+});
+
+// "Dress for the weather between ..." (dad 9/5): the outfits are sorted for
+// the hours she is actually out, not for the afternoon high she never feels.
+// Pointer UI (a grown-up's row), loaded from GET /settings like every other
+// knob and saved the moment a choice changes.
+test("the weather-window row loads the saved hours and saves a change", async () => {
+  const post = (weatherWindow) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weatherWindow }) });
+  const saved = async () => (await (await fetch(`${BASE}/settings`)).json()).weatherWindow;
+  await post({ from: 10, to: 13 });
+  const { ctx, page } = await settingsPage();
+  try {
+    await page.waitForFunction(() => document.getElementById("wxFrom").value === "10");
+    assert.equal(await page.$eval("#wxTo", s => s.value), "13");
+    assert.equal(await page.$eval("#wxFrom option", o => o.textContent), "All day",
+      "the first choice is the whole day, which is what a family starts with");
+    const hint = await page.$eval("#wxHint", e => e.textContent);
+    assert.match(hint, /afternoon/i, hint);
+
+    await page.selectOption("#wxFrom", "9");
+    await page.selectOption("#wxTo", "12");
+    await page.waitForFunction(() => /Outfits re-sorted for 9 AM-12 PM/.test(document.getElementById("toast").textContent));
+    assert.deepEqual(await saved(), { from: 9, to: 12 });
+
+    // back to the whole day: the second select has nothing left to say
+    await page.selectOption("#wxFrom", "");
+    await page.waitForFunction(() => /whole day/.test(document.getElementById("toast").textContent));
+    assert.equal(await saved(), undefined);
+    assert.equal(await page.$eval("#wxTo", s => s.disabled), true);
+  } finally { await ctx.close(); await post(null); }
 });

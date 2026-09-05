@@ -1268,7 +1268,24 @@ const server = http.createServer((req, res) => {
           s.musicVolCap = Math.max(1, Math.min(100, Math.round(inc.musicVolCap)));
         // where every app's door goes (dad 9/3): her talker, or New ERA's home
         if (inc.exitTo === "tdsnap" || inc.exitTo === "home") s.exitTo = inc.exitTo;
+        // the hours the outfits are sorted for (dad 9/5): she dresses for
+        // school between ten and one, not for the four-o'clock high. Both ends
+        // inclusive; null clears it back to the whole day. Anything else is
+        // ignored, like every other knob here.
+        const wasWindow = JSON.stringify(s.weatherWindow || null);
+        const iw = inc.weatherWindow;
+        if (iw === null) delete s.weatherWindow;
+        else if (iw && typeof iw === "object" && Number.isInteger(iw.from) && Number.isInteger(iw.to) &&
+                 iw.from >= 0 && iw.to <= 23 && iw.from < iw.to) s.weatherWindow = { from: iw.from, to: iw.to };
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
+        // A new window makes the cached weather an answer to the old question,
+        // and today's board a board for the wrong hours: throw the cache away
+        // and re-sort the wardrobe she already has. Never an ingest, never an
+        // AI request — that is what "New outfits from new photos" is for.
+        if (JSON.stringify(s.weatherWindow || null) !== wasWindow) {
+          try { fs.rmSync(path.join(DATA, ".weather-cache.json"), { force: true }); } catch {}
+          clothing.rebuildToday().catch(() => {});
+        }
         // one knob: mirror a dwell change into Book Reader's profile store
         if (typeof inc.dwellMs === "number") pushReaderDwell(s.dwellMs);
         if (inc.voiceId && CURATED_VOICES.some(v => v.id === inc.voiceId)) {
