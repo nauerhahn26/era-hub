@@ -2599,5 +2599,13 @@ commit the installer came from" rule if landed now):
   `movies-add.js:715` and never read (spec:286–288).
 - Arrange for movies (spec:259–261; `POST /movies/order {swap:[a,b]}`,
   consciously deferred in Phase 6b).
+- **Design call for dad (T7.6 bug 4):** a Movies app for a family WITHOUT
+  ERAgaze. The board hands every launch to the gaze bus (spec 8/29: "the
+  board never plays video") and a touch-only family that unticked the engine
+  gets tiles that cannot play. Options: (a) the hub launches the deep link in
+  the default browser when the bus is away (`start <url>`, no watch mode, no
+  what-next); (b) the installer refuses Movies without ERAgaze; (c) keep the
+  hand-off and let the banner explain. The banner ships in v0.32.1; the rest
+  is dad's.
 - ~~Answer HEAD on the immutable `/books/` media route.~~ Landed 9/5
   (959e18b) on all three media jails, `books.test` 27/27.
