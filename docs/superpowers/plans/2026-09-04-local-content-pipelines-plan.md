@@ -2425,6 +2425,121 @@ legs A (fresh install) and B (v0.31.7 self-updating to it).
   Edge on the VM) is folded into the T7.6 drive as its step 1.**
 - 4/4 not run (dry-run): no tag, no `gh release` — dad confirms first.
 
+### T7.6 — Windows VM QA by hand (Opus driver, 13:55–15:25 UTC)
+Guest `era-qa-w10` (Win10 19045), reverted to the pristine snapshot; build
+**20260905.1327** (the v0.32.0 dry-run cut); dwell 1.0 s; 80 screenshots in
+`<scratch>/t76/shots/`, named by step. The driver never touched the repo, a
+gate, or a local port under 8425; no key value printed; the only book was the
+synthetic *Sunny Pond*.
+
+| # | Step | Verdict |
+|---|---|---|
+| 1 | Defender FastPath via Edge | PASS — no re-cut needed |
+| 2 | GUI install, all 9 components | PASS |
+| 3 | Hub launch + welcome wizard | PASS (deviation: the installer's own "Open New ERA now" started the hub — the real family gesture) |
+| 4 | AI + voice keys | PASS (deviation: the pristine snapshot has no `setclip` task; created, battery gate cleared) |
+| 5 | Drive folder + book drop | PASS |
+| 6 | Watch it publish | PASS |
+| 7 | Book Reader + narration | PASS |
+| 8 | Songs `+ Add` by mouse | PASS after bug 1 was worked around |
+| 9 | Movies `+ Add`, click the tile | PASS with findings (bugs 3, 4) |
+| 10 | Gaze cannot reach the strip | PASS — the headline behaviour holds |
+| 11 | Screenshots named by step | PASS |
+
+- **Defender (step 1):** baseline RTP on, tamper-protected, zero exclusions,
+  MAPS on. Downloaded through Edge from the QA host (`ZoneId=3`, a real
+  internet download); Edge gave only the reputation warnings ("isn't commonly
+  downloaded", "Publisher: Unknown") — never a malware verdict. SHA-256
+  `f11f4425…54ab3` matches `checksums.txt`; `MpCmdRun -Scan -ScanType 3`:
+  *found no threats*. After the whole session still `NO_THREAT_DETECTIONS`,
+  with the signature advancing 1.459.28.0 → 1.459.63.0 (Defender was live).
+- **Keys (step 4):** both pasted by clipboard, both fields mask input.
+  ElevenLabs: "Key checked and working ✓ … ≈ 62,742 characters left". Google:
+  "key saved ✓" — saved only, never verified (bug 6).
+- **Drive + book (steps 5–6):** the hub auto-detected `C:\Users\family\Google
+  Drive`; one tap on "Create it for me" wrote `drive.json`
+  `{"mode":"local","folderPath":"…\New ERA Content"}` with books/clothing/
+  content/movies/music. The book held on the quiet clock (first scan → held
+  ~10 min) — `POST /integrations/drive/sync` forced the claim. Transitions:
+  `14:45:16 inbox/ingest 4·0·0` → `14:47:42 reviewing/narrate 4·4·0` →
+  `14:47:58 done 4·4·4 published`; hub log `[content] claimed sunny-pond
+  (scan)` and `[content] shelved sunny-pond (19 file(s) copied)`. OCR exact
+  on both pages; manifest carries per-word timings (`eleven_flash_v2_5`);
+  `audio/001.mp3` is a real MP3.
+- **Reader (step 7):** desktop icon → "Test's Bookshelf" with the real cover
+  → Read → `51-narration-highlight-page1.png` ("Reading aloud", the word
+  SUNNY highlighted, button flipped to Pause); page turn and page-2 highlight
+  fine.
+- **Songs (step 8):** YouTube refuses this QA host's address (yt-dlp: "Sign in
+  to confirm you're not a bot" — a datacenter-IP wall, not the product); one
+  song seeded from an MP3 on the QA host, then the real step: `+ Add` by
+  mouse, URL pasted, "abcsong is on the board." Tile appeared after a reload
+  (bug 3); clicking a song tile plays it (now-playing view, Back / Stop /
+  Full song).
+- **Movies (step 9):** `+ Add` → Disney+ Moana deep link → "Moana is on the
+  board."; `movies.json` gained `{type:"movie",label:"Moana",service:"disney",
+  row:1,col:2}` (title from the URL slug — no TMDB key, so a white text tile).
+  Clicking it POSTs to the gaze bus (`127.0.0.1:49155/app/launch`); nothing
+  listens (ERAgaze unticked), the tile flashes `.launch-failed` for 2 s and
+  nothing else happens (bug 4).
+- **Gaze vs strip (step 10):** on the movies board the pointer parked on the
+  strip's `+ Add` for ≥ 10× dwell fired nothing (hover highlight only);
+  parked on the door, the dwell fill ran and it fired in ~3–4 s, back to the
+  launcher. `71-gaze-strip-vs-door.gif` (18 frames). The strip is mounted
+  without `.dwell`; the door stays the bar's one dwell target (design rule).
+
+**Product bugs** (all found on the v0.32.0 cut → it is a dry-run artefact;
+**v0.32.1** is the candidate):
+1. *A new family could never add their first song.* Home hid the Music tile
+   until a songs library existed and Movies until a button did, while the
+   songs board's empty splash returned before `mountPartnerStrip()` — no
+   `+ Add` anywhere. **Fixed**: era-hub a933974 (tiles from the app picker,
+   the empty tile says "no songs yet — grown-ups: + Add on the board"),
+   era-board d8b61df (the splash wears the strip, "No songs yet").
+2. *Music and Movies desktop icons did nothing* — `start-hub.bat`'s
+   `if "%2"==""` re-quoted the quoted `"/board/?recipe=songs"`, the `=` fell
+   outside the quotes and cmd died with `songs""=="" was unexpected at this
+   time` (reproduced from a clean state; Book Reader/Board/Home unaffected —
+   no `=`). **Fixed**: 0681259 (`"%~2"`, `start-hub-bat.test` pins it). The
+   driver patched the installed copy (backup `start-hub.bat.qa-backup`) to
+   finish steps 8–10.
+3. *Boards do not live-update after an add* — the sheet says "X is on the
+   board" over a grid of black cells; the watcher reloads only on the next
+   5-minute poll AND 60 s of idle. **Fix in flight** (era-board): reload when
+   the sheet closes after an add that landed on this device.
+4. *Movie tiles fail silently without ERAgaze* — by design the board never
+   plays video (spec 8/29: a calm flag, no crash), but a touch-only family
+   that unticked ERAgaze gets a Movies app that cannot play anything and never
+   says why. **Mitigation in flight**: the failure says so in the message bar
+   ("Movies play through ERAgaze — turn it on in Settings"). **Design call for
+   dad**: a hub-side launch fallback (`start <url>` in the default browser)
+   for families without the gaze engine.
+5. *Raw yt-dlp errors reach the family* — the sheet rendered `ERROR: [youtube]
+   …: Sign in to confirm you're not a bot. Use --cookies-from-browser …`,
+   truncated mid-word. **Fix in flight** (era-hub + era-board): a family
+   sentence per known shape (`last.message`), the raw text stays in the log.
+6. *The AI key was saved unverified* while the voice key was checked. **Fixed**:
+   b0c2696 (`POST /ai-key` asks the provider to list its models — free on all
+   three; the card says "checked and working ✓" or asks for a paste-again; a
+   refused key stays saved and stays a key, because the probe can be wrong).
+
+**What a family would find confusing** (the driver's list): ticking Music and
+Movies in the wizard and finding no tiles while "Add or remove apps" shows
+both ticked (bug 1); double-clicking Music on the desktop and getting nothing
+(bug 2); "Moana is on the board" over black squares (bug 3); pressing the
+movie tile they just added and nothing happening (bug 4); the yt-dlp wall of
+text (bug 5); the yt-dlp component being off by default while Music is on —
+recoverable (the installer says so; Settings can add it later) but it
+compounds bug 1. Environment, not product: YouTube is unreachable from the
+QA host's address, so yt-dlp-over-YouTube QA on this host needs cookies or
+another source.
+
+**Driving notes** (folded into the VM memory): the pristine snapshot has no
+`setclip` task, so `clip.sh` silently no-ops until it is created; icon
+coordinates moved with the 8-icon layout (New ERA 38,238 · Book Reader 38,337
+· Music 117,40 · Movies 38,633); the first VNC click after a page settles
+sometimes does not register — screenshot before calling a control broken.
+
 ### T7.7 — device restore note
 Nothing to restore: Phase 7 ran on the QEMU guest only. The i13 is still at
 cold-test zero (since 9/3 pm) with `ellie-data-keep`, `raegaze-keep` and
