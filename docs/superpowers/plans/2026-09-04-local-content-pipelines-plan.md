@@ -2217,3 +2217,106 @@ duration retry are the three places a live run is most likely to disagree.
 Chief residual risk is unchanged and belongs to **Phase 7**: none of this has
 run on Windows, against a real key, on a kiosk screen, with a Drive folder
 mid-sync — and here that risk has a dollar figure attached to it.
+
+## Retrospective: Phase 6b
+
+Four commits, hub only — the board did not move this phase either (`era-board`
+is still at `5e45729`, T5.4). `0d80dd5` (T6b.1: a spent ElevenLabs month becomes
+a pause with a provider's name on it), `571ce5d` (T6b.2: that pause reaching
+Settings and the review page), `cbb01a2` (T6b.3: one Windows toast per pause),
+`8469b50` (the in-phase review fixes).
+
+### Decisions
+- **Running out is the normal path, not a fault.** The family never adds a card
+  to Google and buys ElevenLabs by the month (spec §4 "Design target"), so the
+  transcriber's E4 hold shape — `{hold, pausedUntil, note}` — now covers the
+  voice too. Only a 401 whose *body* says `quota_exceeded` is a hold; any other
+  401 still stops the book, because a genuinely wrong key must not be nursed for
+  a month.
+- **The hold carries WHICH allowance ran out.** Google's day returns by itself;
+  ElevenLabs' month has to be topped up, and the two are mended in different
+  places. `pausedProvider` is written onto the job (never cleared by a re-hold)
+  and `/content/status` derives `paused:{provider, reason, until, addUrl}`
+  beside the `pausedUntil` its existing readers already use.
+- **The moment is the clock on the wall, never the ISO stamp.** "today at
+  5:12 pm" / "tomorrow at 1:00 am" / "Saturday, 3 October at 9:00 am", worded
+  identically in Settings, on the review card and in the toast — a parent told
+  "ElevenLabs" by one and "the voice service" by another has been told about two
+  different problems.
+- **Both choices are pressable, and waiting is named out loud.** A card that
+  offers only a button reads as "broken until you act". "Open my <provider>
+  page" follows the `addUrl` that travels with the status and goes through
+  `/open-url`, so a login lands in a real browser rather than trapping a novice
+  in the kiosk (dad 8/29; the fal card's 9/5 gate finding).
+- **"Try again now" is the only thing that lifts a pause.** The steps refuse to
+  knock while one is recorded — that is what saves a free key's requests — so
+  `runStep` lifts it where the press is, and a scan never does.
+- **The toast is said once per (slug, pausedUntil), from the hub process.** A
+  notification that repeats itself is one a family turns off, after which the
+  next one — which mattered — is gone too. The dedup record is in memory on
+  purpose: a flag inside `job.json` would buy every other device a fresh Drive
+  mirror for the sake of a notification nobody can see twice.
+
+### Observations
+- The review's six confirmed findings were, again, two honest pieces disagreeing:
+  a **re-read** that ran out of voice threw the hold away and published those
+  pages SILENT into a book that owes no further step — permanently unnarratable;
+  an ElevenLabs pause blocked the **reader**, which spends nobody's characters,
+  so "Read the photos again" read nothing for a month and said "Read again ✓";
+  "Try again now" on a book both paused *and* permanently failed took the failure
+  branch alone and re-held at once; the toast dedup forgot a wait the instant a
+  scan saw the book un-paused — which is exactly what the retry press writes — so
+  the same moment was announced twice; a per-**minute** 429 parks a book for
+  seconds and every five-minute scan toasted it; and the Settings fallback for a
+  provider-less pause claimed Google, and only for a pause already elapsed.
+- The Voice card now says what is left of the month in two units — characters and
+  *about* how many picture-book pages — because a parent thinks in books and
+  ElevenLabs bills in characters. The line is hidden whenever the hub cannot say:
+  no key, no answer yet, provider refused. Nought would be a lie.
+- The allowance cache is keyed to the key it was fetched with, so a parent who
+  replaces the ElevenLabs key stops reading the previous account's counters.
+
+### Adaptations
+- `content-store` gained `unpause()` because there are now two lifters.
+- `content-routes` and `era-gate.sh`'s shared hub (whose data dir holds a real
+  credential) point `ERA_ELEVEN_URL` at a **closed port**, so no gate run can ask
+  a provider anything on the family's key. `book-review-ui`'s stand-in answers
+  the subscription poll and counts it apart from the calls that spend.
+- `notify.js` uses the one PowerShell shape proven from the production
+  console-less hub (`-Command`, `windowsHide`, no double quote anywhere) and
+  borrows PowerShell's own AppId, because Windows silently drops a toast from an
+  application it does not know. Off Windows it does nothing and says so;
+  `ERA_TOAST_CMD` is the seam the suite watches, so a Linux box sees exactly the
+  two lines a parent would have been shown. `notify.js` is in
+  `tools/build-payload.sh`'s cp list.
+- The suite's closing money guardrail now asserts the **key** on every recorded
+  call, not merely that some call arrived.
+
+### Verification
+`node --test tests/content-allowance.test.mjs tests/book-review-ui.test.mjs
+tests/settings-ui.test.mjs tests/content-worker.test.mjs
+tests/content-routes.test.mjs` → **121 pass, 0 fail**. `node --check` clean on
+every changed file. No test spent a key or touched the network.
+
+### Follow-ups
+- **No pause has ever been produced by a real provider.** Every 401 body, the
+  `next_character_count_reset_unix` field and the subscription counters are a
+  stand-in's, built from documented behaviour; the first real spent month may
+  move any of them.
+- The toast dedup is per-process: a hub restart re-announces a wait that is still
+  in force. Judged the right trade against a Drive-mirrored flag, but it is real.
+- Nothing tells a parent when a pause has **ended** — the book simply carries on.
+  A "back to work" toast was considered and left out as noise; revisit if dad
+  asks where the book went.
+- Windows toasts remain untested on Windows (Phase 7, with the kiosk, the real
+  keys and a Drive folder mid-sync). All Phase 4/5/6 follow-ups stay open.
+
+### Confidence and risks
+Confidence **high** on the refusals and the wording: a spent allowance can no
+longer be mistaken for a dead key, the two suites pin the sentence each surface
+says, and the review's worst finding — a re-read publishing silent pages into a
+book that would never narrate them again — was found and fixed in-phase with a
+test. Confidence **medium** on the provider details, which are all a stand-in's,
+and on the toast, which no Windows machine has yet raised. Chief residual risk is
+Phase 7's unchanged one: none of this has run on the kiosk, on real keys, with
+Drive syncing underneath.
