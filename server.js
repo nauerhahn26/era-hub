@@ -14,6 +14,7 @@ const drive = require("./drive");
 const clothing = require("./clothing");
 const content = require("./content.js");
 const musicAdd = require("./music-add.js");
+const moviesAdd = require("./movies-add.js");
 const booksIndex_ = require("./books-index.js");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
@@ -1576,6 +1577,47 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "GET" && urlPath.startsWith("/music/")) {
     serveMediaJail(req, res, MUSIC_DIR, urlPath.slice("/music/".length), MUSIC_EXTS, MUSIC_AV_EXTS);
+    return;
+  }
+  // ---- Movies: "+ Add" from the board's partner strip (spec §6; movies-add.js)
+  // Above the /movies/ jail below, which only answers GET but is easier to read
+  // with the doors kept together. Nothing is downloaded (D57: the hub never
+  // serves video), so unlike /music/add this answers when it is DONE — one
+  // small file and a mirror of a folder the family already has locally.
+  // ownDoor because it writes into the family's Drive folder: this hub's own
+  // pages only.
+  if (req.method === "POST" && req.url === "/movies/add") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        res.writeHead(400, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "bad-request", message: "New ERA could not read that request." }));
+        return;
+      }
+      moviesAdd.add(parsed).then(out => {
+        if (out.error) {
+          // 400 = the sheet sent something wrong; 409 = the hub cannot do it
+          // yet (no Drive folder, a catalog it could not read) and the sheet
+          // shows out.message.
+          const mine = ["bad-url", "need-url-or-title", "bad-id", "bad-kind",
+                        "need-title"].includes(out.error);
+          res.writeHead(mine ? 400 : 409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(out));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      }).catch(() => {
+        // The catalog keeps whatever it had: writeAtomic never opens the target.
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed",
+                                 message: "New ERA could not save that film. Try again." }));
+      });
+    });
     return;
   }
   // movies static jail: posters + catalog only (no AV extensions — the hub
