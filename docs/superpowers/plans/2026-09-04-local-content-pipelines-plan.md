@@ -2425,6 +2425,31 @@ legs A (fresh install) and B (v0.31.7 self-updating to it).
   Edge on the VM) is folded into the T7.6 drive as its step 1.**
 - 4/4 not run (dry-run): no tag, no `gh release` — dad confirms first.
 
+**v0.32.1 re-cut (dry-run, 9/5 15:46–16:27 UTC)** — the six T7.6 bugs
+landed, so v0.32.0 became a dry-run artefact and the candidate was cut again
+from era-hub c57d8e4 + era-board 92609db (`release.sh v0.32.1 --dry-run`,
+log `<scratch>/t75/release-v0.32.1.log`):
+- 1/4 gate: **78 passed, 0 failed** (v0.32.0 had 76: `ai-key` and the
+  launcher's `%~2` test are new).
+- 2/4 build **20260905.1604**, UNSIGNED (no `signing.env` — the Certum key
+  pair is dad's step); `New-ERA-Setup.exe` sha256 `ad3dd2c5…4d4ae`,
+  tarball `e5d12d76…2dec`, `latest.json` `{v0.32.1, 20260905.1604}`.
+- 3/4 VM e2e: **leg A 9/9, leg B 5/5, 14 passed 0 failed** — first fully
+  green release run in one pass (leg B's harness fix from T7.5 held).
+- 4/4 not run (dry-run): no tag, no `gh release` — dad confirms first.
+- Caveat found and fixed: leg B's default "previous" was the newest
+  `dist/release-*` = the unpublished v0.32.0 cut, not the v0.31.7 families
+  actually run. `tools/vm-e2e.sh` (7a80104) now prefers the newest release
+  whose version is TAGGED here (release.sh tags only on publish), and leg B
+  was re-run v0.31.7 → v0.32.1 (`vm-e2e.sh … release-v0.31.7/New-ERA-Setup.exe
+  --only b`, 16:28–16:38 UTC, log `<scratch>/t75/legb-v0.31.7-to-v0.32.1.log`):
+  **leg B 5/5, rc=0** — the shipped v0.31.7 family self-updates to this cut.
+  Tooling only — nothing in the payload changed, so the cut stands.
+- Certum (16:33 UTC): "Certificate has been created" — the cloud cert is
+  ISSUED (RSA 3072, valid to 2027-09-05). Dad's step is the SimplySign phone
+  activation (24 h window from the e-mail); then the live code exchange and a
+  SIGNED re-cut of this payload. Publish is held for that.
+
 ### T7.6 — Windows VM QA by hand (Opus driver, 13:55–15:25 UTC)
 Guest `era-qa-w10` (Win10 19045), reverted to the pristine snapshot; build
 **20260905.1327** (the v0.32.0 dry-run cut); dwell 1.0 s; 80 screenshots in
