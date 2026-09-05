@@ -144,6 +144,10 @@ const STEPS = [
 ];
 
 const byName = (n) => STEPS.find(s => s.name === n);
+// The narration step, by the state that owes it. Named once because two callers
+// need the same step object: the walk, and the re-read repair below that runs it
+// out of turn (and has to be able to hold in it, like any other step).
+const NARRATE = STEPS.find(s => s.owes === "reviewing");
 const post = (m) => { if (parentPort) parentPort.postMessage(m); };
 
 // A book that fell over transiently resumes at the step it fell over on, and a
@@ -258,14 +262,24 @@ function wordsNow() {
 // book: this is a repair to a package that is already on the shelf, and the
 // pages it could not buy publish silent (content-publish.js), which is the
 // honest shape and the one the next walk mends.
+//
+// AND IT CAN RUN OUT OF MONEY LIKE ANY OTHER NARRATION (review 9/5). The pages
+// this buys are bought on the family's ElevenLabs allowance, so the month can
+// end half way through the repair — and that is a PAUSE, exactly as it is in the
+// walk. Returned rather than swallowed, because the walk's own answer to a hold
+// is the only right one here too: write the pause down (so the card and the
+// toast can say whose allowance it was, and "Try again now" is offered), and do
+// NOT publish over it. Publishing would freeze those pages into the manifest
+// silent, on a book that owes no step and would therefore never be narrated
+// again by anything at all.
 async function renarrate(before, steps) {
-  const nar = STEPS.find(s => s.owes === "reviewing");
-  if (!before || !nar || !nar.run || ONLY === nar.name) return;
+  const nar = NARRATE;
+  if (!before || !nar || !nar.run || ONLY === nar.name) return null;
   const after = wordsNow();
   const changed = [];
   for (const [index, fingerprint] of after)
     if (before.has(index) && before.get(index) !== fingerprint) changed.push(index);
-  if (!changed.length) return;
+  if (!changed.length) return null;
   post({ step: nar.name, state: (store.readJob(DIR) || {}).state || null, slug: SLUG });
   const r = await nar.run({ dir: DIR, dataDir: DATA, job: store.readJob(DIR),
                             slug: SLUG, name: NAME, only: changed });
@@ -273,6 +287,7 @@ async function renarrate(before, steps) {
   const errors = r && Array.isArray(r.errors) ? r.errors.filter(Boolean) : [];
   const job = store.readJob(DIR);
   if (errors.length && job) store.writeJob(DIR, store.noteErrors(job, errors));
+  return r && typeof r === "object" && r.hold ? r : null;
 }
 
 async function republish(steps) {
@@ -389,7 +404,8 @@ async function walk() {
     if (PAGE == null && owedState(now) === step.owes)
       store.writeJob(DIR, unpause(store.transition(now, step.then)));
     if (ONLY) {
-      await renarrate(wordsBefore, steps);
+      const held = await renarrate(wordsBefore, steps);
+      if (held) return holdHere(store.readJob(DIR), NARRATE, held, steps);
       await republish(steps);
       return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
     }

@@ -693,6 +693,97 @@ test("a re-read buys the voice back for the page that changed, and no other", as
   }
 });
 
+// ...AND THE MONTH CAN RUN OUT HALF WAY THROUGH THE REPAIR (review 9/5). The
+// re-read's narration is bought on the family's ElevenLabs allowance like any
+// other, so it can hit the same spent month the walk itself honours. A hold
+// there is a PAUSE — the book waits, the family is told whose allowance ran out
+// — and it must never be walked past into a publish: the pages whose words moved
+// would be frozen into the manifest silent, on a book that owes no step and so
+// would never be narrated by anything, ever again.
+test("a re-read that runs out of voice allowance pauses the book instead of publishing it silent", async () => {
+  const RQ = path.join(TMP, "rebuild-quota-data");
+  fs.mkdirSync(RQ, { recursive: true });
+  fs.writeFileSync(path.join(RQ, "tts-config.json"), JSON.stringify(
+    { apiKey: ["test", "-", "voice", "-", "key"].join(""), voiceId: "cgSgspJ2msm6clMCkdW9" }));
+  fs.writeFileSync(path.join(RQ, "ai-config.json"), JSON.stringify(
+    { vision: { provider: "google", apiKey: ["AIza", "S", "y", "0".repeat(30)].join("") } }));
+  fs.writeFileSync(path.join(RQ, "content-config.json"),
+    JSON.stringify({ transcribe: { agreementPass: false } }));
+
+  let said = [], answers = [], spent = false;
+  const eleven = http.createServer((req, res) => {
+    let body = ""; req.on("data", c => { body += c; });
+    req.on("end", () => {
+      // The month, as ElevenLabs actually reports it: a 401 whose body names the
+      // status. Anything less is a dead key, which is a different sentence.
+      if (spent) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ detail: { status: "quota_exceeded",
+          message: "This request exceeds your quota of 10000 characters." } }));
+        return;
+      }
+      let text = ""; try { text = JSON.parse(body).text || ""; } catch {}
+      said.push(text);
+      const chars = [...text];
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ audio_base64: Buffer.from("ID3" + text).toString("base64"),
+        alignment: { characters: chars,
+                     character_start_times_seconds: chars.map((_, i) => i * 0.1),
+                     character_end_times_seconds: chars.map((_, i) => i * 0.1 + 0.1) } }));
+    });
+  });
+  const ai = http.createServer((req, res) => {
+    let body = ""; req.on("data", c => { body += c; });
+    req.on("end", () => {
+      const text = answers.shift();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ candidates: [{ content: { parts: [
+        { text: JSON.stringify({ text, uncertain: [] }) }] } }] }));
+    });
+  });
+  await new Promise(r => eleven.listen(0, "127.0.0.1", r));
+  await new Promise(r => ai.listen(0, "127.0.0.1", r));
+  const wasEleven = process.env.ERA_ELEVEN_URL, wasAi = process.env.ERA_AI_URL;
+  process.env.ERA_ELEVEN_URL = `http://127.0.0.1:${eleven.address().port}`;
+  process.env.ERA_AI_URL = `http://127.0.0.1:${ai.address().port}`;
+
+  try {
+    const dir = reviewedBook(FOLDER, "The Snail and the Whale", ["The snail sat.", "The whale swam."]);
+    await content.run({ kind: "books", slug: "the-snail-and-the-whale", dir, dataDir: RQ });
+    const before = manifestIn(dir);
+    assert.equal(said.length, 2, "the book starts fully narrated");
+
+    // The button, on a month that has just run out: page two's words move, and
+    // the recording that would have spoken them cannot be bought.
+    const pages = content.rebuildPages(dir, true);
+    said = []; spent = true;
+    answers = ["The snail sat.", "The whale swam away."];
+    const r = await content.run({ kind: "books", slug: "the-snail-and-the-whale", dir, dataDir: RQ,
+                                  step: "transcribe", pages });
+    assert.equal(r.held, "quota", "an allowance that ran out is a wait, not a finished repair");
+    assert.equal(r.provider, "elevenlabs", "and the card has to be able to say whose");
+    assert.deepEqual(r.steps.map(s => s.step), ["transcribe", "narrate"],
+                     "the repair stops where the money ran out; it does not publish over it");
+
+    const j = store.readJob(dir);
+    assert.equal(j.held, "quota");
+    assert.equal(j.pausedProvider, "elevenlabs", "whose allowance the family is waiting on");
+    assert.ok(Date.parse(j.pausedUntil) > Date.now(), "and a moment to wake at");
+    assert.equal((j.errors || []).length, 0, "a book waiting for its allowance has not failed");
+
+    // The shelf keeps the book it had: old words, old voice, the two agreeing.
+    const after = manifestIn(dir);
+    assert.equal(after.exportedAt, before.exportedAt,
+                 "no page may be frozen into the manifest speaking a sentence it no longer says");
+    assert.ok(after.pages.every(p => p.audio), "and none of them left silent for ever");
+  } finally {
+    eleven.close(); ai.close();
+    for (const [k, v] of [["ERA_ELEVEN_URL", wasEleven], ["ERA_AI_URL", wasAi]]) {
+      if (v == null) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
 after(() => {
   if (voice) voice.close();
   delete process.env.ERA_ELEVEN_URL;

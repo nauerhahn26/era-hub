@@ -343,17 +343,26 @@ test("a book being built shows its title and how far it has got", async () => {
   await ctx.close();
 });
 
-test("a quota pause says tomorrow, and a flagged book links to its review page", async () => {
+// A job.json written before T6b carries a pausedUntil and nothing else. The card
+// can still say the one thing that is true of it — this book is waiting, and it
+// carries on by itself — but it must not GUESS the rest: naming Google, or
+// tomorrow morning, under a book that is waiting on ElevenLabs' month tells the
+// family to go and look in the wrong place (review 9/5).
+test("a pause with no provider says only what it knows, and a flagged book links to its review page", async () => {
+  const soon = new Date(Date.now() + 3 * 3600 * 1000).toISOString();
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [
-    bookJob({ pausedUntil: "2026-09-05" }),
+    bookJob({ pausedUntil: soon }),
     bookJob({ slug: "the-gruffalo", title: "The Gruffalo", state: "published",
               step: null, flags: 2, pageFlags: 3, published: true,
               progress: { pages: 8, transcribed: 8, narrated: 8 } }),
   ] }));
   await page.waitForSelector('#contentBooks [data-slug="the-gruffalo"]');
   const paused = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
-  assert.match(paused, /tomorrow/i);
-  assert.doesNotMatch(paused, /2026-09-05/, "a date stamp is not a sentence");
+  assert.match(paused, /waiting for more AI allowance/i);
+  assert.match(paused, /carries on by itself/i, "and the honest half of the two choices");
+  assert.doesNotMatch(paused, /Google|ElevenLabs/, "an unnamed allowance is not named");
+  assert.doesNotMatch(paused, /tomorrow/i, "nor is a day nobody wrote down");
+  assert.doesNotMatch(paused, new RegExp(soon.slice(0, 10)), "a date stamp is not a sentence");
   const link = await page.$eval('#contentBooks [data-slug="the-gruffalo"] a', a =>
     ({ href: a.getAttribute("href"), text: a.textContent }));
   assert.equal(link.href, "/book-review/?slug=the-gruffalo");
@@ -367,6 +376,20 @@ test("a quota pause says tomorrow, and a flagged book links to its review page",
   // E8: what a parent DOES about a flag — glance at those pages on the review
   // page — rather than only how many the AI was unsure of.
   assert.match(flagged, /pages to glance at/i, flagged);
+  await ctx.close();
+});
+
+// The other half of it: a moment that has PASSED is not a wait. The book is
+// simply queued for the next look, and a card still telling the family to wait
+// for something that already happened is a card nobody believes.
+test("a pause whose moment has passed says nothing at all (T6b.2)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [
+    bookJob({ pausedUntil: new Date(Date.now() - 60 * 1000).toISOString() }),
+  ] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.doesNotMatch(row, /allowance/i, row);
+  assert.doesNotMatch(row, /waiting/i, row);
   await ctx.close();
 });
 

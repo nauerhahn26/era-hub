@@ -70,7 +70,13 @@ const TOAST_SEAM = path.join(TMP, "toast-seam.js");
 // run in a tracked file as a fatal hit, and a fixture that looks like a key is
 // indistinguishable from one that is.
 const FAKE_VOICE_KEY = ["sk", "_", "elevenlabs", "0".repeat(24)].join("");
+// The key a parent types in over the top of the first one, for the cache that
+// must not serve the previous account's number under it.
+const FAKE_VOICE_KEY_2 = ["sk", "_", "elevenlabs", "1".repeat(24)].join("");
 const FAKE_VISION_KEY = ["AIza", "S", "y", "0".repeat(30)].join("");
+// Every placeholder this suite may legitimately be seen with. Anything else on
+// a recorded call is a real credential that leaked in from the environment.
+const VOICE_KEYS = new Set([FAKE_VOICE_KEY, FAKE_VOICE_KEY_2]);
 const VOICE = "cgSgspJ2msm6clMCkdW9";
 
 // The month turns over at a fixed, obviously-not-now moment, so an assertion
@@ -85,6 +91,11 @@ let eleven, ai, child, narrate, providers, content, drive, notify;
 // money guardrail asserts on.
 let elevenCalls = [], aiCalls = [];
 let elevenTotal = 0, aiTotal = 0;
+// The same, but for the CREDENTIAL each call carried, and never cleared: the
+// closing guardrail reads these. A tally on its own only proves that some call
+// arrived at a stand-in; what has to be proved is that every call the suite made
+// carried a placeholder — a real key reaching here is the failure worth catching.
+let elevenSeen = [], aiSeen = [];
 // ok | quota (401 quota_exceeded, a spent MONTH) | badkey (a plain 401)
 let voiceMode = "ok";
 // ok | down (the subscription endpoint answers 500) | off (no such endpoint)
@@ -113,8 +124,10 @@ before(async () => {
       let parsed = null;
       try { parsed = JSON.parse(body); } catch {}
       elevenTotal++;
-      elevenCalls.push({ method: req.method, url: req.url,
-                         key: req.headers["xi-api-key"], body: parsed });
+      const seen = { method: req.method, url: req.url,
+                     key: req.headers["xi-api-key"], body: parsed };
+      elevenCalls.push(seen);
+      elevenSeen.push(seen);
       if (req.method === "GET" && req.url === "/v1/user/subscription") {
         if (subMode === "off") { res.writeHead(404).end(); return; }
         if (subMode === "down") { res.writeHead(500).end("nope"); return; }
@@ -158,7 +171,9 @@ before(async () => {
     req.on("data", c => body += c);
     req.on("end", () => {
       aiTotal++;
-      aiCalls.push({ url: req.url });
+      const seen = { url: req.url, key: req.headers["x-goog-api-key"] };
+      aiCalls.push(seen);
+      aiSeen.push(seen);
       res.writeHead(429, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED",
         message: "You exceeded your current quota, please check your plan and billing details.",
@@ -369,6 +384,31 @@ test("the voice allowance is read once and cached, and never carries the key", a
                "one subscription call per ten minutes, not one per poll");
 });
 
+test("a new voice key is a new allowance, not the last account's number", async () => {
+  const tts = path.join(DATA, "tts-config.json");
+  const subs = () => elevenCalls.filter(c => c.url === "/v1/user/subscription");
+  narrate._resetAllowance();
+  elevenCalls = [];
+  await until(() => narrate.allowance(DATA, { now: NOW }), "the first account's allowance");
+  const before = subs().length;
+
+  // The parent replaces the key in Settings. The ten minutes are not up, but the
+  // number under the card belongs to an account this family no longer uses.
+  fs.writeFileSync(tts, JSON.stringify({ apiKey: FAKE_VOICE_KEY_2, voiceId: VOICE, keyOk: true }));
+  try {
+    assert.equal(narrate.allowance(DATA, { now: NOW + 60 * 1000 }), null,
+                 "nothing is known about the new key yet, and a card that says nothing is honest");
+    await until(() => subs().some(c => c.key === FAKE_VOICE_KEY_2),
+                "the allowance to be read again, with the key the family has now");
+    assert.ok(subs().length > before, "a changed key is a cache miss, ten minutes or not");
+    const v = await until(() => narrate.allowance(DATA, { now: NOW + 60 * 1000 }),
+                          "the new account's own number");
+    assert.ok(Number.isFinite(v.charactersLeft));
+  } finally {
+    fs.writeFileSync(tts, JSON.stringify({ apiKey: FAKE_VOICE_KEY, voiceId: VOICE, keyOk: true }));
+  }
+});
+
 // ------------------------------------------------------ the Google side too
 
 test("a free Google key that has spent its day names its provider too", async () => {
@@ -380,6 +420,22 @@ test("a free Google key that has spent its day names its provider too", async ()
   assert.equal(r.provider, "google", "the card's own provider, named for the family");
   assert.ok(Date.parse(r.pausedUntil) > NOW, "and a moment to wake at");
   assert.ok(aiCalls.length > 0, "the stand-in saw the call");
+});
+
+// A PAUSE BELONGS TO ONE ALLOWANCE, not to the book. ElevenLabs' month can park
+// a book for four weeks, and the reading step spends nobody's characters — so a
+// voice pause that silenced the vision provider would make "Read the photos
+// again" a button that reads nothing and says it worked.
+test("a voice pause does not stop the reader — the pause it honours is its own", async () => {
+  const dir = unread(LOOSE, "Paused On Voice, Read With Google");
+  aiCalls = [];
+  const r = await providers.transcribeBook(dir, {
+    dataDir: DATA, now: NOW, config: { transcribe: { agreementPass: false } },
+    job: { pausedUntil: new Date(NOW + 30 * DAY_MS).toISOString(),
+           pausedProvider: "elevenlabs", pausedNote: "waiting for this month's voice allowance" },
+  });
+  assert.ok(aiCalls.length > 0, "the photos really were taken to the vision provider");
+  assert.equal(r.provider, "google", "and the pause it ends on is Google's own day");
 });
 
 // -------------------------------------------------- the worker writes it down
@@ -492,6 +548,35 @@ test("try again now lifts a GOOGLE pause too, rather than holding on it again", 
   await until(() => aiCalls.length > 0, "the vision provider to be asked again now");
 });
 
+// A book can be BOTH: parked on a spent allowance and then refused outright by
+// a key that was rotated under it. The press has to lift both — a retry that
+// resumes the step but leaves the pause on the job buys the family nothing at
+// all, because the reading step honours the pause the instant it starts.
+test("try again now on a FAILED book lifts its pause too, or the press buys nothing", async () => {
+  const dir = unread(BOOKS, "Failed And Paused Book");
+  const stale = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+  const base = store.newJob({ claimedBy: "test:1" });
+  const failed = store.fail({ ...base, state: "transcribing" },
+                            "permanent: the provider did not accept that key");
+  store.writeJob(dir, { ...failed, held: "quota", pausedProvider: "google",
+                        pausedNote: "waiting for tomorrow's quota", pausedUntil: stale });
+  const { body } = await statusOf();
+  const slug = jobNamed(body, "Failed And Paused Book").slug;
+
+  const r = await fetch(`${BASE}/content/run`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "books", slug, retry: true }),
+  });
+  assert.equal(r.status, 202);
+  // The stand-in answers every reading with a spent DAY, so the book parks again
+  // — on the day's own moment. A pause that is still the fixture's is a pause the
+  // press never lifted: the step held on it and no photo was ever sent.
+  await until(() => {
+    const j = store.readJob(dir);
+    return j && j.pausedUntil && j.pausedUntil !== stale;
+  }, "the reading step to have actually run and parked on a moment of its own");
+});
+
 // ------------------------------------------------------- one toast per pause
 
 // Every toast the seam has been handed, oldest first, as [title, body].
@@ -532,6 +617,55 @@ test("a NEW pause on the same book IS told", async () => {
     pausedUntil: new Date(Date.parse(RESET_ISO) + 60 * 60 * 1000).toISOString() });
   content.scan({ now: NOW });
   await until(() => toasts().length === 2, "the second toast");
+});
+
+// "TRY AGAIN NOW" IS NOT A NEW WAIT. The press lifts the pause on the job, the
+// run takes minutes, and a five-minute scan lands inside that window and sees a
+// book with no pause on it at all. If that erased what the family had been told,
+// the very same moment coming back would be announced all over again.
+test("the same wait after a Try again now is still the same wait", async () => {
+  const dir = book(BOOKS2, "Retry Toast");
+  job(dir, { state: "reviewing", held: "quota", pausedProvider: "elevenlabs",
+             pausedNote: "waiting for this month's voice allowance",
+             pausedUntil: RESET_ISO });
+  const mine = () => toasts().filter(x => /Retry Toast/.test(x[0]));
+  content.scan({ now: NOW });
+  await until(() => (mine().length ? mine() : null), "the first toast");
+
+  // The press: the pause comes off the job, and a scan sees the book mid-run.
+  store.writeJob(dir, store.unpause(store.readJob(dir)));
+  content.scan({ now: NOW + 60 * 1000 });
+  await settle();
+  // The allowance is still spent, so the run holds on the very same moment.
+  store.writeJob(dir, { ...store.readJob(dir), held: "quota", pausedProvider: "elevenlabs",
+                        pausedNote: "waiting for this month's voice allowance",
+                        pausedUntil: RESET_ISO });
+  content.scan({ now: NOW + 2 * 60 * 1000 });
+  await settle();
+  assert.equal(mine().length, 1, "one wait, one toast, however the book got back into it");
+});
+
+// A 429 IS NOT ALWAYS THE DAY BEING OVER. A free Google key also limits requests
+// per MINUTE, and that pause lasts seconds — the scan five minutes later finds
+// the book ready, runs it, and it parks again on a brand new moment. Told, that
+// would be a notification every five minutes for as long as the throttle lasts,
+// which is the thing this task exists to prevent.
+test("a wait shorter than the next look is not worth telling anybody about", async () => {
+  const dir = book(BOOKS2, "Blink Book");
+  job(dir, { state: "transcribing", held: "quota", pausedProvider: "google",
+             pausedNote: "waiting for tomorrow's quota",
+             pausedUntil: new Date(NOW + 47 * 1000).toISOString() });
+  const before = toasts().length;
+  content.scan({ now: NOW });
+  await settle();
+  assert.equal(toasts().length, before, "47 seconds is over before a parent could read it");
+
+  // And the next one, on a fresh moment, is not news either.
+  store.writeJob(dir, { ...store.readJob(dir),
+                        pausedUntil: new Date(NOW + 94 * 1000).toISOString() });
+  content.scan({ now: NOW + 47 * 1000 });
+  await settle();
+  assert.equal(toasts().length, before, "nor is the next one, nor the one after that");
 });
 
 test("a Google pause names Google — the two are mended in different places", async () => {
@@ -578,7 +712,22 @@ test("nothing is raised off Windows, and no toast ever carries a key", () => {
 
 // ------------------------------------------------------------ money guardrail
 
-test("every call this suite made went to the stand-ins", () => {
+test("every call this suite made went to the stand-ins, on a placeholder key", () => {
   assert.ok(elevenTotal > 0, "zero recorded ElevenLabs calls means one escaped the seam");
   assert.ok(aiTotal > 0, "zero recorded vision calls means one escaped the seam");
+  assert.equal(elevenSeen.length, elevenTotal, "every call is accounted for");
+  assert.equal(aiSeen.length, aiTotal);
+  // A count on its own only says that SOMETHING arrived. What has to be true is
+  // that nothing this suite sent was billable: every call carried one of the
+  // placeholders assembled at the top of this file, and carried it in the header
+  // where a key belongs rather than in a URL that ends up in logs.
+  for (const c of elevenSeen) {
+    assert.ok(VOICE_KEYS.has(c.key), "an ElevenLabs call on a key this suite never wrote");
+    assert.ok(!c.url.includes(FAKE_VOICE_KEY) && !c.url.includes(FAKE_VOICE_KEY_2),
+              "a key is a header, never a query parameter");
+  }
+  for (const c of aiSeen) {
+    assert.equal(c.key, FAKE_VISION_KEY, "a vision call on a key this suite never wrote");
+    assert.ok(!c.url.includes(FAKE_VISION_KEY), "a key is a header, never a query parameter");
+  }
 });

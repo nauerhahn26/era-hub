@@ -939,8 +939,14 @@ function ctRow(j){
   // has not been updated yet — or a job.json written before the pause carried a
   // provider — sends `pausedUntil` and no `paused`; that is still worth the one
   // sentence that was always true of it.
+  // The fallback says ONLY what an unnamed pause knows (review 9/5): naming
+  // Google, or tomorrow morning, under a book that is waiting on ElevenLabs'
+  // month sends the family to the wrong page for a month. And a moment that has
+  // already passed is not a wait at all — the book is queued for the next look,
+  // and a card still telling them to wait is a card nobody believes.
   if(j.paused) h+=ctPaused(j);
-  else if(j.pausedUntil) h+='<div class="status">Today&rsquo;s free AI allowance is used up — the rest of this book carries on <b>tomorrow morning</b> by itself.</div>';
+  else if(j.pausedUntil && Date.parse(j.pausedUntil)>Date.now())
+    h+='<div class="status">This book is waiting for more AI allowance — it carries on by itself.</div>';
   // "Look for new books now" cannot restart THIS book: it asks Drive to sync,
   // and the scan behind it leaves a claim alone until its heartbeat is half an
   // hour cold. So a stopped book gets its own button, which asks the hub to run

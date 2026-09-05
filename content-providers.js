@@ -759,8 +759,16 @@ async function transcribeBook(dir, opts) {
   // thing, and on a free key that request is a page we could have read once the
   // allowance is back. The recorded moment is echoed back exactly as it was
   // written — including the plain day a hub older than F6 wrote there.
+  //
+  // A PAUSE BELONGS TO ONE ALLOWANCE, AND THIS STEP SPENDS ONLY ONE OF THEM
+  // (review 9/5). Since T6b the voice can park a book too, and ElevenLabs' month
+  // is four weeks long — so a pause taken at face value here would stop the
+  // reader dead for a month over characters it never sends, and "Read the photos
+  // again" would read nothing and tell the family it worked. A pause with no
+  // name on it is older than T6b and could only ever have been this step's own.
   const paused = o.job && o.job.pausedUntil;
-  if (pauseHolds(paused, o.now))
+  const mine = !o.job || !o.job.pausedProvider || o.job.pausedProvider === providerOf(cfg);
+  if (mine && pauseHolds(paused, o.now))
     return { hold: "quota", pausedUntil: paused, note: o.job.pausedNote || QUOTA_NOTE,
              // Whoever wrote this pause said whose it was; re-holding on it must
              // not rename it (a book paused on the VOICE that is asked to

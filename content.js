@@ -508,13 +508,31 @@ let told = new Map();
 //   • a NEW moment (tomorrow's quota, next month's characters) is news again;
 //   • a pause that has ended is forgotten, so a book that stops a second time
 //     for a genuinely new reason is not silently swallowed.
+//
+// THE MEMORY OUTLIVES THE PAUSE ITSELF (review 9/5), because "Try again now"
+// deletes the pause from job.json and the run that follows takes minutes: a scan
+// landing in that window sees a book with no pause on it at all, and forgetting
+// there gave the identical moment coming straight back a second toast. So an
+// entry is dropped when the MOMENT it names has passed, not when a scan happens
+// to look between the two halves of a retry.
 function notePause(slug, title, job, now) {
-  const p = pausedOf(job, now);
-  if (!p) { told.delete(slug); return null; }
+  const t = now == null ? Date.now() : now;
+  const p = pausedOf(job, t);
+  const had = told.get(slug);
+  if (had && Date.parse(had) <= t) told.delete(slug);
+  if (!p) return null;
   if (told.get(slug) === p.until) return null;
+  // A WAIT NOBODY WOULD OTHERWISE NOTICE IS NOT WORTH A NOTIFICATION. A 429 is
+  // not always the day being over: a free Google key limits requests per MINUTE
+  // too, and that pause is over in seconds (content-providers pausedUntilFor).
+  // The book is picked up by the next scan and parks again on a fresh moment, so
+  // telling the family about a pause shorter than the gap between two looks
+  // would be a toast every five minutes for as long as the throttle lasted —
+  // which is the repeat notification this whole thing exists to prevent.
+  if (Date.parse(p.until) - t < SCAN_EVERY) return null;
   told.set(slug, p.until);
   const who = PROVIDER_NAME[p.provider] || "the AI service";
-  const when = whenWords(p.until, now);
+  const when = whenWords(p.until, t);
   notify.toast(
     (title || slug) + " is waiting",
     "Out of " + who + " allowance" + (when ? " until " + when : "") +
@@ -782,32 +800,36 @@ function runStep(o) {
   // A parent pressing "start this book" must not have to wait for the quiet
   // period they have just decided is over: an unclaimed folder is claimed here
   // and then built, exactly as scan() would have done in its own time.
-  const job = store.readJob(found.dir);
+  let job = store.readJob(found.dir);
   if (!job) claim(found.dir, null, Date.now());
-  // A parent pressing "try this book again" is a deliberate decision, and it is
-  // the ONLY thing that lifts a permanent failure. A scan never retries one —
-  // asking a key the provider refused only buys the same refusal — but by the
-  // time a parent presses this they have usually just fixed the key the card
-  // told them about, so the job goes back on the step it fell over on.
-  //
-  // `retry` IS THE PRESS, and nothing else is. Every accepted write on the
-  // review page re-publishes the book through this same door, so without the
+  // "TRY AGAIN NOW" IS THE PRESS, and nothing else is. Every accepted write on
+  // the review page re-publishes the book through this same door, so without the
   // flag a parent fixing one typo would put a refused book back on the
-  // half-hourly walk against the key the provider had already turned down —
-  // for ever, and started by somebody who never asked for it.
-  else if (req.retry === true && job.state === "failed" && store.owedState(job) === null)
-    store.writeJob(found.dir, store.transition(job, job.failedFrom || "inbox"));
-  // A BOOK THAT IS MERELY WAITING, AND A PARENT WHO WILL NOT (T6b.1). Out of
-  // allowance is a pause, not a failure, so the book above is not failed — but
-  // the pause is real and the steps honour it: the transcriber refuses to knock
-  // while one is recorded (that is what saves a free key's requests) and would
-  // hold again the instant this run started, so the press would buy nothing.
-  // "Try again now" is the family saying they have added credit — or simply
-  // that they would rather find out — so the pause is lifted here, where the
-  // press is, and nowhere else. A scan never does this: it would spend the day's
-  // last requests on the same refusal, every half hour.
-  else if (req.retry === true && job.pausedUntil)
-    store.writeJob(found.dir, store.unpause(job));
+  // half-hourly walk against the key the provider had already turned down — for
+  // ever, and started by somebody who never asked for it. A scan never does
+  // either of the two things below.
+  //
+  // BOTH of them, on the same press, and not one else-if apart (review 9/5): a
+  // book can be parked on a spent allowance AND then refused outright by a key
+  // rotated under it, and a chain that took the failure alone left the pause
+  // sitting on the job — the card went on telling the family to wait, and the
+  // resumed step held on it again the instant it started.
+  else if (req.retry === true) {
+    // A BOOK THAT IS MERELY WAITING, AND A PARENT WHO WILL NOT (T6b.1). Out of
+    // allowance is a pause, not a failure, and the steps honour it: the reading
+    // step refuses to knock while one of its own pauses is recorded (that is
+    // what saves a free key's requests) and would hold again the instant this
+    // run started, so the press would buy nothing. This is the family saying
+    // they have added credit — or simply that they would rather find out — so
+    // the pause is lifted here, where the press is, and nowhere else.
+    if (job.pausedUntil) job = store.writeJob(found.dir, store.unpause(job));
+    // And the ONLY thing that lifts a permanent failure. A scan never retries
+    // one — asking a key the provider refused only buys the same refusal — but
+    // by the time a parent presses this they have usually just fixed the key the
+    // card told them about, so the job goes back on the step it fell over on.
+    if (job.state === "failed" && store.owedState(job) === null)
+      store.writeJob(found.dir, store.transition(job, job.failedFrom || "inbox"));
+  }
   run({ kind: req.kind, slug: req.slug, name: found.name, dir: found.dir,
         dataDir: DATA, step, page, pages }).catch(() => {});
   return { started: true };

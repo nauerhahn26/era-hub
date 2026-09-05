@@ -316,8 +316,15 @@ async function allowanceResetsAt(cfg, now) {
 //
 // Deliberately synchronous — content.js's status() is, and the alternative is
 // making every reader of it async for a number that is a nicety.
+//
+// AND IT IS THE ALLOWANCE OF ONE KEY, never of "the voice card" (review 9/5).
+// `for` is the key the cached number was fetched with — held in memory only,
+// never logged, never written, never returned — and a different one is a cache
+// miss however fresh the ten minutes are: a parent who has just typed in a new
+// key must not read the previous account's characters under it for the next ten
+// minutes, for the same reason a cleared card must not (below).
 const ALLOWANCE_TTL_MS = 10 * 60 * 1000;
-let allowanceCache = { at: 0, value: null, pending: false };
+let allowanceCache = { at: 0, value: null, pending: false, for: null };
 
 function allowance(dataDir, opts) {
   const o = opts || {};
@@ -326,13 +333,20 @@ function allowance(dataDir, opts) {
   // No voice card is not an empty allowance, it is no allowance at all — and a
   // family who has just cleared their key must not keep seeing last month's
   // number under it.
-  if (!cfg || !cfg.apiKey) { allowanceCache = { at: 0, value: null, pending: false }; return null; }
+  if (!cfg || !cfg.apiKey) { allowanceCache = { at: 0, value: null, pending: false, for: null }; return null; }
   // Stamped with the CALLER'S clock and at the moment the call goes out, not
   // the moment it lands: a provider that hangs for its whole timeout must not
   // be asked again by every poll in the meantime.
-  if (!allowanceCache.pending && (allowanceCache.at === 0 || t - allowanceCache.at >= ALLOWANCE_TTL_MS)) {
+  const changed = allowanceCache.for !== cfg.apiKey;
+  if (!allowanceCache.pending &&
+      (allowanceCache.at === 0 || changed || t - allowanceCache.at >= ALLOWANCE_TTL_MS)) {
     allowanceCache.pending = true;
     allowanceCache.at = t;
+    // The number we are holding belongs to the key that has just been replaced,
+    // so it is dropped rather than shown for the length of one more call: null
+    // is a card that says nothing, which is the honest thing to say until this
+    // account's own answer lands.
+    if (changed) { allowanceCache.for = cfg.apiKey; allowanceCache.value = null; }
     subscription(cfg)
       .then((v) => { allowanceCache.value = v; })
       .catch(() => { allowanceCache.value = null; })
@@ -516,5 +530,5 @@ module.exports = {
   narratePage, narrateBook,
   // The cache is process-wide by design (one hub, one voice card); a suite that
   // wants to watch it fill has to be able to empty it first.
-  _resetAllowance: () => { allowanceCache = { at: 0, value: null, pending: false }; },
+  _resetAllowance: () => { allowanceCache = { at: 0, value: null, pending: false, for: null }; },
 };
