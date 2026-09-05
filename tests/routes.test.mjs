@@ -158,10 +158,12 @@ test("POST /kiosk/exit → closed when the engine takes the screen; → home whe
   }
 });
 
-// "Dress for 10 AM-1 PM" (dad 9/5): the hours the outfits are sorted for live
-// in app-settings.json beside the other knobs, and changing them throws away
-// the cached weather so today's board is re-sorted for the new hours. The
+// "Dress for the hours she is out" (dad 9/5): the hours the outfits are sorted
+// for live in app-settings.json beside the other knobs, and changing them throws
+// away the cached weather so today's board is re-sorted for the new hours. The
 // re-sort is the CHEAP door (clothing.rebuildToday) — no photo ingest, no AI.
+// 9-12 here is an INVENTED window, like every fixture: the family's real daily
+// schedule is their config, never a test's data.
 test("Settings weatherWindow round-trips, rejects junk, and re-sorts today's outfits", async () => {
   const post = (weatherWindow) => fetch(`${BASE}/settings`, { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weatherWindow }) });
@@ -172,18 +174,18 @@ test("Settings weatherWindow round-trips, rejects junk, and re-sorts today's out
   assert.equal(await get(), undefined, "no window by default: the whole day, as before");
 
   stamp();
-  await post({ from: 10, to: 13 });
-  assert.deepEqual(await get(), { from: 10, to: 13 });
+  await post({ from: 9, to: 12 });
+  assert.deepEqual(await get(), { from: 9, to: 12 });
   assert.ok(!fs.existsSync(cache), "a change throws the cached weather away and rebuilds");
 
   stamp();
-  await post({ from: 10, to: 13 });
+  await post({ from: 9, to: 12 });
   assert.ok(fs.existsSync(cache), "the same window again is not a change: nothing is rebuilt");
 
   for (const junk of [{ from: 13, to: 10 }, { from: "x", to: 3 }, { from: -1, to: 5 },
                       { from: 2, to: 24 }, { from: 2 }, { from: 1.5, to: 4 }, "10-1", 7]) {
     await post(junk);
-    assert.deepEqual(await get(), { from: 10, to: 13 }, "ignored: " + JSON.stringify(junk));
+    assert.deepEqual(await get(), { from: 9, to: 12 }, "ignored: " + JSON.stringify(junk));
   }
   assert.ok(fs.existsSync(cache), "junk changes nothing, so nothing is rebuilt");
 

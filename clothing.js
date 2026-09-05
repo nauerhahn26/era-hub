@@ -16,6 +16,7 @@ let worker = null;
 let ingesting = null;   // {done, total} live from the worker
 let lastResult = null;
 let queued = false;     // a regenerate asked for while one was running
+let queuedFull = false; // ...and at least one of those callers wanted a FULL build
 let waiters = [];       // callers that arrived mid-build, awaiting the queued run
 
 // The shell only ever needs to SAY which provider is configured (/clothing/status
@@ -47,18 +48,29 @@ function regenerate(force, opts = {}) {
   // One build at a time. A caller that arrives mid-build gets the QUEUED run's
   // result, not a bare {busy} it would have to poll for (9/1: a sync landing
   // during a build silently did nothing from the caller's point of view).
-  // (A run queued behind one becomes a FULL build — the superset of a re-sort.)
+  // The queued run is the widest thing anyone asked for: a full build if ANY
+  // waiter wanted one, a re-sort if they all only wanted a re-sort. It used to
+  // be a full build unconditionally, which turned the second half of setting a
+  // weather window (two POSTs, seconds apart) into photo ingest and spent AI
+  // requests — the one thing the re-sort door promises never to do (9/5).
   if (worker) {
     queued = true;
+    if (!opts.rebuildOnly) queuedFull = true;
     return new Promise((resolve) => { waiters.push(resolve); });
   }
   return new Promise((resolve) => {
+    let done = null;
     worker = new Worker(path.join(__dirname, "clothing-worker.js"),
       { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
       if (m.done) {
-        lastResult = m.done;
+        done = m.done;
+        // A re-sort that found nothing catalogued has no ingest behind it, so
+        // it knows nothing about the allowance or a busy provider: keeping the
+        // old verdict leaves the board's "allowance used up" coaching standing
+        // instead of dropping it to the generic Drive message (9/5).
+        if (!m.done.rebuildOnly) lastResult = m.done;
         // Photos left behind by the day's allowance wait for tomorrow, and so
         // does a photo that failed twice (a retry that landed nothing): an
         // hourly loop into the same wall would only spend the free requests.
@@ -69,12 +81,13 @@ function regenerate(force, opts = {}) {
     worker.on("error", (e) => console.error("[clothing] worker: " + e.message));
     worker.on("exit", () => {
       worker = null; ingesting = null;
-      const result = lastResult || {};
+      const result = done || lastResult || {};
       resolve(result);
       if (queued) {
-        queued = false;
+        const full = queuedFull;
+        queued = false; queuedFull = false;
         const pending = waiters; waiters = [];
-        regenerate(true).then(r => pending.forEach(w => w(r)),
+        regenerate(true, { rebuildOnly: !full }).then(r => pending.forEach(w => w(r)),
                               () => pending.forEach(w => w({})));
       } else if (waiters.length) {
         const pending = waiters; waiters = [];
@@ -150,8 +163,13 @@ function tick(reason) {
   return regenerate(true).catch(e => console.error("[clothing] " + e.message));
 }
 
-function start(dataDir) {
+// noTimers: point the module at a data dir WITHOUT arming the schedule — for a
+// suite that drives the doors itself. The timers are unref'd, but a suite that
+// outlives the 20 s startup tick (a slow parallel gate on this two-CPU box)
+// would otherwise get a surprise full build, AI requests and all (9/5).
+function start(dataDir, opts = {}) {
   DATA = dataDir;
+  if (opts.noTimers) return;
   setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
 }

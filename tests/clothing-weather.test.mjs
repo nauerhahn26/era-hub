@@ -31,16 +31,23 @@ const LAT = 41.5, LON = -81.7;
 const asks = [];        // every /v1/forecast query the fake was shown
 let aiCalls = 0;
 
-// A synthetic day: a cool, rainy late morning (9-12, up to 66°F, code 61) and
+// A synthetic day: a cool, rainy late morning (9-12, up to 67°F, rain at 9) and
 // a hot, clear afternoon (16:00, 80°F, code 0). Hours 9-12 are invented test
 // hours, not anybody's school day.
+//
+// BOTH ENDS of the window are decisive on purpose — the spec is inclusive, and
+// an interior peak would let an off-by-one at either end pass unnoticed:
+//   * hour 12 (the LAST hour of the 9-12 window) is the window's warmest, 67°F,
+//     so an exclusive end would report 66° instead;
+//   * hour 9 (the FIRST) carries the only bad weather code of the day, so an
+//     exclusive start would report sun instead of cloud.
 function hourly() {
   const time = [], temperature_2m = [], weather_code = [];
   for (let h = 0; h < 24; h++) {
     time.push("2026-09-05T" + String(h).padStart(2, "0") + ":00");
-    temperature_2m.push(h === 9 ? 64 : h === 10 ? 66 : h === 11 ? 65 : h === 12 ? 63
+    temperature_2m.push(h === 9 ? 64 : h === 10 ? 66 : h === 11 ? 65 : h === 12 ? 67
                       : h === 16 ? 80 : h >= 13 ? 70 : 55);
-    weather_code.push(h >= 9 && h <= 12 ? 61 : 0);
+    weather_code.push(h === 9 ? 61 : 0);
   }
   return { time, temperature_2m, weather_code };
 }
@@ -82,7 +89,9 @@ before(async () => {
     res.writeHead(404).end();
   });
   await new Promise(r => wx.listen(WX_PORT, "127.0.0.1", r));
-  ai = http.createServer((req, res) => { aiCalls++; res.writeHead(500).end("{}"); });
+  // 400, not 500: a refusal the ingest does not retry, so the one test below
+  // that deliberately DOES call it costs a second instead of a retry storm.
+  ai = http.createServer((req, res) => { aiCalls++; res.writeHead(400).end("{}"); });
   await new Promise(r => ai.listen(AI_PORT, "127.0.0.1", r));
 
   // A wardrobe that is already catalogued, plus one photo the AI has never
@@ -102,7 +111,10 @@ before(async () => {
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
     JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
   clothing = require("./clothing.js");
-  clothing.start(TMP);   // timers are unref'd; we drive the rebuild directly
+  // No schedule: this suite drives the rebuild door itself, and the scheduler's
+  // 20 s startup tick would fire a FULL build (ingest + AI) if the suite ever
+  // ran that long — the very thing the last test here proves cannot happen.
+  clothing.start(TMP, { noTimers: true });
 });
 after(() => {
   if (wx) wx.close();
@@ -120,9 +132,19 @@ async function rebuild() {
 test("a window reads the hours she is out, not the day's high", async () => {
   setWindow({ from: 9, to: 12 });
   const t = await rebuild();
-  assert.match(t.label, /^66°/, "66°F is the peak of 9-12, not the 80° at 4 PM");
+  assert.match(t.label, /^67°/, "67°F is the peak of 9-12, not the 80° at 4 PM");
   assert.match(t.label, /warm/);
   assert.equal(t.symbol, "cloud", "the worst code over those hours (61 = rain) picks the symbol");
+});
+
+// The two ends of the window, pinned separately: 67° lives at hour 12 (the last
+// hour) and the rain at hour 9 (the first), so dropping either end changes what
+// the tile says. Without this the suite would pass with an exclusive end.
+test("both ends of the window are inclusive", async () => {
+  const t = tile();
+  assert.match(t.label, /^67°/, "hour 12 is INSIDE 9-12: its 67° is the peak read");
+  assert.equal(t.symbol, "cloud", "hour 9 is INSIDE 9-12: its rain code picks the symbol");
+  assert.match(t.say, /about 67 degrees/);
 });
 
 test("the query is the hourly forecast at the family's coordinates", async () => {
@@ -137,7 +159,7 @@ test("the query is the hourly forecast at the family's coordinates", async () =>
 
 test("the tile says the hours out loud, and the footnote names them", async () => {
   const t = tile();
-  assert.match(t.say, /Between 9 AM and 12 PM it is warm, about 66 degrees\./);
+  assert.match(t.say, /Between 9 AM and 12 PM it is warm, about 67 degrees\./);
   assert.match(t.footnote, /^for 9 AM-12 PM · updated /);
 });
 
@@ -174,7 +196,7 @@ test("a cache stamped for another window is stale — the forecast is re-read", 
   const r = await clothing.rebuildToday();
   assert.equal(r.mode, "cataloged");
   assert.equal(asks.length, before + 1, "the stale record was thrown away and Open-Meteo asked again");
-  assert.match(tile().label, /^66°/);
+  assert.match(tile().label, /^67°/);
   // ...and the record now carries the window it was computed for
   const c = JSON.parse(fs.readFileSync(path.join(TMP, ".weather-cache.json"), "utf8"));
   assert.equal(c.window, "9-12");
@@ -186,8 +208,52 @@ test("the same window inside 3 hours is answered from the cache", async () => {
   assert.equal(asks.length, before, "no second lookup for the same window");
 });
 
+// Setting a window necessarily POSTs twice (pick the first hour, then the
+// second), so the second re-sort lands while the first is still running and
+// goes through the QUEUE. A queued run used to be re-dispatched as a full
+// build — photo ingest, AI requests — which is exactly what this door promises
+// never to do.
+test("a re-sort queued behind a running re-sort is still only a re-sort", async () => {
+  setWindow({ from: 14, to: 17 });
+  const first = clothing.rebuildToday();
+  const second = clothing.rebuildToday();   // arrives mid-build: queued
+  await Promise.all([first, second]);
+  assert.equal(aiCalls, 0, "the queued run did not turn into a full ingest");
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(!cat.items["waiting.jpg"], "the uncatalogued photo was left alone by both runs");
+  assert.match(tile().label, /^80°/, "and the board really was re-sorted for 2-5 PM");
+});
+
 test("the rebuild door never wakes the AI (photos wait for a real run)", async () => {
   assert.equal(aiCalls, 0, "waiting.jpg was NOT ingested: rebuildToday() re-sorts only");
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.ok(!cat.items["waiting.jpg"], "the uncatalogued photo is still waiting");
+});
+
+// LAST — it repoints the module at a second data dir and lets the fake AI be
+// called, so it must run after the aiCalls assertions above.
+//
+// A hub with photos but nothing catalogued yet is being COACHED ("Today's free
+// AI allowance is used up", "the AI helper is busy"). A window change re-sorts
+// through a door that never ran ingest, so it knows nothing about the
+// allowance — it must not answer that question and drop the family to the
+// generic message for the rest of the day (holdDay suppresses the retry that
+// would restore it).
+test("a re-sort with nothing catalogued leaves the board's coaching alone", async () => {
+  const T2 = fs.mkdtempSync(path.join(os.tmpdir(), "era-clo-wx2-"));
+  fs.mkdirSync(path.join(T2, "clothing"), { recursive: true });
+  makeJpg(path.join(T2, "clothing", "unnamed.jpg"), 90, 200, 120);
+  fs.writeFileSync(path.join(T2, "ai-config.json"),
+    JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
+  clothing.start(T2, { noTimers: true });
+
+  const full = await clothing.regenerate(true);          // a REAL run: the fake AI refuses
+  assert.ok(full.guidance, "the real run has a verdict: " + JSON.stringify(full));
+  const coaching = clothing.status().guidance;
+  assert.equal(coaching, full.guidance);
+
+  const r = await clothing.rebuildToday();
+  assert.equal(r.rebuildOnly, true, "a re-sort with no catalogue says only that");
+  assert.ok(!r.guidance, "...and passes no verdict of its own: " + JSON.stringify(r));
+  assert.equal(clothing.status().guidance, coaching, "the coaching the board shows is untouched");
 });

@@ -966,6 +966,11 @@ async function regenerate(force) {
   const haveCatalog = Object.values(cat.items).some(i => i.ok);
   if (!haveCatalog) {
     clearPlainRecipe();
+    // A re-sort skipped ingest, so it has no evidence about the day's allowance
+    // or a busy provider — it must NOT answer the "why is there no board?"
+    // question. Saying "ingest-failed" here would wipe the board's "Today's
+    // free AI allowance is used up" coaching for the rest of the day (9/5).
+    if (workerData.rebuildOnly) return { rebuildOnly: true, photos: photos.length };
     const guidance = !photos.length ? (aiCfg() ? "no-photos" : "nothing")
                    : (aiCfg() ? (quota ? "ai-quota" : busy ? "ai-busy" : "ingest-failed") : "no-key");
     try { fs.writeFileSync(SIG(), sig); } catch {}
