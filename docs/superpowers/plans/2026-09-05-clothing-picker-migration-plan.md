@@ -198,6 +198,18 @@ history, sub-second); the end-to-end check is small (pre-tiled 5-7 garments, no 
    appends there (a hub append would race the mirror's `.part`+rename,
    `drive.js:435-450` — the B2 class of bug). Own-id dirs in the mirror are
    skipped on read, as §5 says.
+10. §3.2 events prune (I7) gains a **young-history guard**: the "delete event dates
+    below the oldest kept day key" cutoff applies only once `days` holds its 60;
+    while `days` is younger (a fresh install, the migration's first weeks) the
+    events keep their 60 most recent dates instead. Without it the first recorded
+    offer would wipe every pick migrated from before it (`clothing-rank.js`
+    `pruneEvents`, tested in `clothing-rank.test.mjs` "a young days map").
+11. §1 V3 "deeper pages garment-once-per-page" means once per **algorithmic**
+    page — the `perPage` slots `buildCandidates` fills in one pass of
+    `outfit_set.py:543-556`. On a tiny pool a page may run short (fewer than
+    `perPage` looks fit garment-distinct), so a flat `slice(7,14)` of the returned
+    list is only a page on wardrobes where every page fills; the variety gate's
+    per-page assertions run on the 35-garment wardrobe where they do.
 
 ---
 
@@ -276,7 +288,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
      `isNeutral(g)`: original rule (`pattern ∈ {solid, denim}` OR any colour exactly
      in `NEUTRALS`) **plus** the hub degradation rule (no colours and no pattern and
      `!statement` → neutral), labelled; `harmonizes(top,bottom)` per
-     `outfit_set.py:246-252`; `styleScore(top, bottom, pairing, favorites)`: base 50;
+     `outfit_set.py:246-252`; `styleScore(top, bottom, pairing)` (the favourite lift is `rankOf`'s, `outfit_set.py:436`): base 50;
      `avoid` → −1000 immediately; `great` +30; statement≠statement +15, both basics
      +5; palettes both set: neutral-or-same +10, `{warm,cool}` −10; same non-empty
      vibe +5. `pairing` is `{great:Set<key>, avoid:Set<key>}` keyed by the
@@ -293,7 +305,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
    - **Gate:** with T1.5.
 
 4. [ ] **T1.4 `buildCandidates()` — pool, rank, staples, coverage, fill, relaxation, deep pages**
-   - **Acceptance:** `buildCandidates({items, band, cap, seed, pairing, favorites, history, perPage})` returns a flat ordered list of `{key, pieces}` (pieces `[top, bottom]` or `[one]`) per `outfit_set.py:381-557` with: items sorted by `id` first (W1); category map `top→top`, `pants|shorts→bottom`, `dress|set→single`; `eligible(cat, band)` per W3 (tops never gated; `band == null` → no gating); pool = singles (in id order) then pairs in tops×bottoms nested order kept iff `harmonizes && styleScore > 0`; `rank` = style (`SINGLE_STYLE` for singles) + fav 10 + fresh + loved + jitter (no dressy); stable sort desc; staples per `:459-492` (BigInt/hex comparison, I4); coverage slot per `:497-518` with age `1e6` for never-seen and **no fallback** past `aged[0]`; page-1 fill with the yesterday bar, tiny-pool relaxation; deep pages `demoted` first, garment-once-per-page, bound `min(cap, pool.length)`, break when a page adds nothing; `slice(0, cap)`. Also exports `eligible` and `toWorkerShape(combo)` (`pieces.length === 1 ? {key, one} : {key, top, bottom}`).
+   - **Acceptance:** `buildCandidates({items, band, cap, seed, pairing, favorites, history, perPage})` returns a flat ordered list of `{key, pieces}` (pieces `[top, bottom]` or `[one]`) per `outfit_set.py:381-557` with: items sorted by `id` first (W1); category map `top→top`, `pants|shorts→bottom`, `dress|set→single`; `eligible(items, cat, band)` per W3 (tops never gated; `band == null` → no gating); pool = singles (in id order) then pairs in tops×bottoms nested order kept iff `harmonizes && styleScore > 0`; `rank` = style (`SINGLE_STYLE` for singles) + fav 10 + fresh + loved + jitter (no dressy); stable sort desc; staples per `:459-492` (BigInt/hex comparison, I4); coverage slot per `:497-518` with age `1e6` for never-seen and **no fallback** past `aged[0]`; page-1 fill with the yesterday bar, tiny-pool relaxation; deep pages `demoted` first, garment-once-per-page, bound `min(cap, pool.length)`, break when a page adds nothing; `slice(0, cap)`. Also exports `eligible` and `toWorkerShape(combo)` (`pieces.length === 1 ? {key, one} : {key, top, bottom}`).
    - **Verification:** `node --test tests/clothing-rank.test.mjs` — unit cases: an `avoid` pair is absent from the pool; a single never passes through `harmonizes`; a never-seen garment has `fresh 48`, an 8-day-old one `48`, a 3-day-old one `18`; `loved` applies at 2.0 not 1.5; the coverage case of I3 (oldest garment's only looks were on yesterday's page 1 → the slot goes to the fill, `aged[1]` is not tried); **gating, positive and negative (spec §3.4):** hot band, 3 `hot` + 1 `cold` bottoms → the cold bottom is **absent** from `eligible("bottom", "hot")` and from every combo of the 21; hot band, 1 `hot` + 2 `warm` bottoms → the warm bottoms are present (neighbour union, W3) and a `cold` one still absent; a `warmth: "any"` bottom is eligible in all four bands; a bottom with int warmth `3` behaves as `cold`; hot band with a wardrobe of two `cold` bottoms → both bottoms still eligible (widen → all); `band: null` → nothing gated; `eligible("top", "cold")` returns every top including `warmth: "hot"`.
    - **Guardrails:** TDD. Port line-for-line; keep the original's comments' intent as JS comments citing `outfit_set.py:NNN`. Precompute rank into a `Map` by key. Never `Infinity` in a comparator. §C.
    - **Gate:** with T1.5.
