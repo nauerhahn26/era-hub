@@ -1243,15 +1243,18 @@ directive"*.
   2. `printf '%s' '{"mode":"local","folderPath":"/tmp/era-content"}' > /tmp/era-data/drive.json`
   3. start the hub on **8450** with `ERA_DATA_DIR=/tmp/era-data`
   4. `curl -sX POST localhost:8450/integrations/drive/sync` then poll
-     `curl -s localhost:8450/content/status` until `state` reaches `published`
+     `curl -s localhost:8450/content/status` until `state` reaches `done`
+     (`published` is a passing state; the inbox sits on a 10-minute quiet clock
+     from its first scan, so a second sync after that window forces the claim)
   5. `curl -s localhost:8450/books/index.json` → the book appears with the right
      slug and page count
-  6. `curl -sI "localhost:8450/books/test-book/audio/001.mp3"` → `200` with
-     `Accept-Ranges: bytes`
+  6. `curl -s -o /dev/null -D - -r 0-99 "localhost:8450/books/test-book/audio/001.mp3"`
+     → `206` with `Accept-Ranges: bytes` (the route is GET-only, so `-I`/HEAD
+     answers 404 — follow-up: answer HEAD on the immutable media route)
   7. `curl -s localhost:8450/books/test-book/manifest.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.pages.every(p=>Array.isArray(p.words)&&p.words.length))})'`
      → `true`
-  8. `curl -sI "localhost:8450/books/test-book/.build/job.json"` → `404`;
-     `curl -sI "localhost:8450/books/test-book/sources/IMG_0001.jpg"` → `404`
+  8. `curl -s -o /dev/null -w '%{http_code}' "localhost:8450/books/test-book/.build/job.json"` → `404`;
+     the same for `…/sources/IMG_0001.jpg` → `404`
 - **Evidence:** the status transitions, the index entry, and the two 404s.
 - **Guardrails:** use throwaway images, never real family book photos, and
   never commit any of it.
@@ -2388,5 +2391,45 @@ Deviations from the step text, none of them product bugs:
 `bash tools/release.sh v0.32.0 --dry-run` launched 13:12 UTC, detached
 (`setsid nohup`, log `<scratch>/t75/release-dry-run.log`): gate → build-dist
 into `dist/release-v0.32.0` (11 GB free after pruning v0.31.3–.6) → `vm-e2e.sh`
-legs A (fresh install) and B (v0.31.7 self-updating to it). Result below when
-it lands.
+legs A (fresh install) and B (v0.31.7 self-updating to it).
+- 1/4 gate: `== era-gate: 76 passed, 0 failed ==`.
+- 2/4 build-dist: build **20260905.1327**, `New-ERA-Setup.exe` 47,507,780 B,
+  `makensis.log` clean, `latest.json` + `checksums.txt` written; the suite
+  tarball 60,102,113 B.
+- 3/4 vm-e2e, first run (13:28–13:47): **leg A 9/9 ok** (pristine snapshot →
+  silent install → wizard → four apps → Book Reader added later; screenshots
+  `gate/vm-e2e/01-installed-desktop.png` … `09-reader-added-later.png`).
+  **Leg B 2/5** — one harness cascade, not a product fault: test 1 waited on
+  the *previous* (v0.31.7) silent installer's process to exit and
+  `installSilently` gave that only 60 s after `start-hub.bat` landed; the cold
+  guest (Edge warm 113 s vs 43 s in leg A) was still extracting the board
+  pack, so `prevBuild` was never read and tests 2–3 compared against
+  `undefined` (`'20260904.0051' !== undefined`). Tests 4–5 passed: after
+  `POST /update/check` the guest's `VERSION` == 20260905.1327, profile and
+  packs intact, doors and apps fine, kiosk still open — the self-update itself
+  worked. Feed hits: `latest.json` polled on hold, `new-era-suite.tar.gz`
+  fetched once on release.
+- Harness fix: `tests-vm/lib/vm.mjs` `installSilently` now budgets the
+  process-exit wait at 180 s like the `start-hub.bat` wait. Leg B rerun alone
+  (`vm-e2e.sh … --only b`, 13:49 UTC, log `<scratch>/t75/leg-b-rerun.log`):
+  **`== vm-e2e: 5 passed, 0 failed ==`** in 533 s — test 1 took 222 s (past
+  the old 60 s exit-wait, inside the new one, which is the diagnosis
+  confirmed), the self-update test 40 s; feed hits `hold` → `release` →
+  `latest.json` → `new-era-suite.tar.gz` once. `02-updated-home.png` shows
+  the launcher on "Build 20260905.1327. Updated just now ✓" with the
+  profile's four apps. Screenshots + `leg-b.log` archived under
+  `<scratch>/t75/leg-b-rerun/` (the rerun resets `gate/vm-e2e/`, so leg A's
+  PNGs from the first run are gone; its `PASS leg a (9 tests)` line is in the
+  dry-run log).
+- **Net: T7.5 steps 1–2 pass; step 3 (Defender FastPath re-verify through
+  Edge on the VM) is folded into the T7.6 drive as its step 1.**
+- 4/4 not run (dry-run): no tag, no `gh release` — dad confirms first.
+
+### T7.7 — device restore note
+Nothing to restore: Phase 7 ran on the QEMU guest only. The i13 is still at
+cold-test zero (since 9/3 pm) with `ellie-data-keep`, `raegaze-keep` and
+`gdrive-clothing-keep` parked; the first thing that touches it again is the
+v0.32.0 install + keep restore per `aac-board-builder/docs/i13-qa-cycle.md`,
+on dad's go, over a **8425+** tunnel (never 8377–8416), with a hand wake if
+the reboot stalls and the `schtasks` battery flag cleared (`Set-ScheduledTask`,
+runbook step 6).

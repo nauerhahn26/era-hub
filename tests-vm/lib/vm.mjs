@@ -90,8 +90,10 @@ export async function installSilently(exe) {
   const out = bat("install", [`start /wait "" ${GUEST_HOME}\\${exe} /S`, `echo INSTALL_EXIT=%ERRORLEVEL%`]);
   await waitFor(() => exists(INSTDIR + "\\start-hub.bat") && { ok: 1 },
     { timeout: 180000, every: 5000, what: "start-hub.bat after silent install" });
+  // the shared board pack extracts AFTER start-hub.bat lands: on a cold guest that
+  // took >60 s (9/5 leg B, previous installer) — budget it like the first wait
   await waitFor(() => !new RegExp(exe, "i").test(guest("tasklist | findstr /i " + exe, { soft: true })) && { ok: 1 },
-    { timeout: 60000, every: 3000, what: "installer process to exit" });
+    { timeout: 180000, every: 3000, what: "installer process to exit" });
   return out;
 }
 /** does a path exist in the guest? (quotes survive only inside a shipped .bat) */
