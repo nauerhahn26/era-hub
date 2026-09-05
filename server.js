@@ -1939,7 +1939,11 @@ const server = http.createServer((req, res) => {
                        "https://resend.com/", "https://console.anthropic.com/",
                        "https://platform.openai.com/", "https://aistudio.google.com/",
                        // the Films card's two key pages (T5.3)
-                       "https://www.themoviedb.org/", "https://api.watchmode.com/"];
+                       "https://www.themoviedb.org/", "https://api.watchmode.com/",
+                       // and the Moving pages card's (T6.1). Missing here, the
+                       // one card that spends money opened INSIDE the kiosk —
+                       // exactly the trap this list exists to close (gate 9/5).
+                       "https://fal.ai/"];
         if (typeof url !== "string" || !ALLOW.some(a => url.startsWith(a))) { res.writeHead(400).end(); return; }
         if (process.platform === "win32") {
           const { spawn } = require("child_process");
