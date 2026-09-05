@@ -362,9 +362,28 @@ describe("eligible — the band gate (spec §3.4, W3): tops never, bottoms/singl
     const items = [bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_h3", { warmth: "hot" }), cold];
     assert.deepEqual(R.eligible(items, "bottom", "hot").map(i => i.id), ["item_h1", "item_h2", "item_h3"]);
   });
-  test("hot band, 1 hot + 2 warm bottoms: the warm ones join (neighbour union); a cold one still absent", () => {
+  test("hot band, 1 hot + 2 warm bottoms: all three are EXACT matches (warm = level 1 too, spec §3.4); a cold one absent", () => {
+    // Not the widen rule: hot and warm both map to level 1, so the exact
+    // gate admits the warm bottoms on its own (review r1).
     const items = [bottom("item_h1", { warmth: "hot" }), bottom("item_w1", { warmth: "warm" }), bottom("item_w2", { warmth: "warm" }), cold];
     assert.deepEqual(R.eligible(items, "bottom", "hot").map(i => i.id), ["item_h1", "item_w1", "item_w2"]);
+  });
+  test("widen to the neighbour band (spec §3.4, W3): hot band, 1 hot + 2 cool + 1 cold bottoms → the cool ones join, the cold one stays out", () => {
+    // exact = [h1] (< 2) → hot{1} ∪ neighbour warm{1,2} = {1,2}: the cool
+    // (level 2) bottoms join; cold (level 3) is still out. A port that skips
+    // the union step and falls straight through to all-of-category deals
+    // the cold one too.
+    const items = [bottom("item_h1", { warmth: "hot" }), bottom("item_o1", { warmth: "cool" }), bottom("item_o2", { warmth: "cool" }), bottom("item_c1", { warmth: "cold" })];
+    assert.deepEqual(R.eligible(items, "bottom", "hot").map(i => i.id), ["item_h1", "item_o1", "item_o2"]);
+    // and from the other end: cold band, 1 cold + 1 cool + 2 warm →
+    // cold{3} ∪ neighbour cool{2,3} = {2,3}: the cool bottom joins; the warm
+    // ones (level 1) stay out.
+    const items2 = [bottom("item_c1", { warmth: "cold" }), bottom("item_o1", { warmth: "cool" }), bottom("item_w1", { warmth: "warm" }), bottom("item_w2", { warmth: "warm" })];
+    assert.deepEqual(R.eligible(items2, "bottom", "cold").map(i => i.id), ["item_c1", "item_o1"]);
+  });
+  test("widen applies to singles the same way: hot band, 1 hot + 1 cool dress → both dealt, a cold one not", () => {
+    const items = [g("item_d1", { category: "dress", warmth: "hot" }), g("item_d2", { category: "dress", warmth: "cool" }), g("item_d3", { category: "dress", warmth: "cold" })];
+    assert.deepEqual(R.eligible(items, "single", "hot").map(i => i.id), ["item_d1", "item_d2"]);
   });
   test("a warmth 'any' bottom is eligible in all four bands", () => {
     const items = [bottom("item_any", { warmth: "any" }), bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_c1", { warmth: "cold" }), bottom("item_c2", { warmth: "cold" })];
@@ -462,12 +481,21 @@ describe("buildCandidates — gating end to end (spec §3.4)", () => {
     assert.equal(out.length, 18);   // 6 tops × 3 hot bottoms — the cold bottom's 6 looks are gone
     assert.ok(!idsIn(out).has("item_cold"));
   });
-  test("hot band: 1 hot + 2 warm bottoms are all dealt; a cold one is not (neighbour union)", () => {
+  test("hot band: 1 hot + 2 warm bottoms are all dealt (exact gate — warm is level 1 too); a cold one is not", () => {
     const items = [top("item_t1"), top("item_t2"),
       bottom("item_h1", { warmth: "hot" }), bottom("item_w1", { warmth: "warm" }), bottom("item_w2", { warmth: "warm" }), bottom("item_cold", { warmth: "cold" })];
     const out = R.buildCandidates({ items, band: "hot", cap: 21, seed: SEED, history: {}, perPage: 7 });
     const ids = idsIn(out);
     assert.ok(ids.has("item_w1") && ids.has("item_w2") && ids.has("item_h1"));
+    assert.ok(!ids.has("item_cold"));
+  });
+  test("hot band: 1 hot + 2 cool bottoms → the cool ones are dealt (widen to the neighbour band, W3); the cold one is in no combo", () => {
+    const items = [top("item_t1"), top("item_t2"),
+      bottom("item_h1", { warmth: "hot" }), bottom("item_o1", { warmth: "cool" }), bottom("item_o2", { warmth: "cool" }), bottom("item_cold", { warmth: "cold" })];
+    const out = R.buildCandidates({ items, band: "hot", cap: 21, seed: SEED, history: {}, perPage: 7 });
+    assert.equal(out.length, 6, "2 tops × 3 admitted bottoms");
+    const ids = idsIn(out);
+    assert.ok(ids.has("item_o1") && ids.has("item_o2") && ids.has("item_h1"));
     assert.ok(!ids.has("item_cold"));
   });
   test("a cold single is gated the same way; band null deals everything", () => {
