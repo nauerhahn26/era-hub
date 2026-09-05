@@ -118,7 +118,10 @@ title New ERA
 echo Starting New ERA...
 cd /d %~dp0
 if "%1"=="" (set PORT=8377) else (set PORT=%1)
-if "%2"=="" (set OPEN=/home/) else (set OPEN=%~2)
+rem %~2, not %2: the shortcut quotes the page ("/board/?recipe=songs"); re-quoting
+rem the quoted form puts its = outside the quotes, where cmd reads a delimiter
+rem and the Music/Movies icons did nothing at all (VM QA 9/5)
+if "%~2"=="" (set OPEN=/home/) else (set OPEN=%~2)
 if not defined ERA_DATA_DIR set ERA_DATA_DIR=%~dp0data
 rem already running? just open the page (dad's 8/29 double-click pile-up)
 curl.exe -s -o NUL --max-time 2 http://127.0.0.1:%PORT%/settings

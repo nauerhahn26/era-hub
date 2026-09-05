@@ -31,3 +31,15 @@ test("no PowerShell anywhere in the generated launchers (Defender 8/29)", () => 
   const launchers = SH.slice(SH.indexOf("cat > \"$OUT/start-hub.bat\"")).split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
   assert.ok(!/powershell/i.test(launchers));
 });
+
+test("an app path with ?recipe= survives the launcher (Music/Movies shortcuts, VM QA 9/5)", () => {
+  // The shortcut passes the page quoted: 8377 "/board/?recipe=songs". cmd
+  // strips nothing, so `if "%2"==""` re-quotes an already-quoted argument —
+  // `""/board/?recipe=songs""` — and the `=` now sits OUTSIDE quotes, where
+  // cmd reads it as a delimiter: "songs""=="" was unexpected at this time",
+  // and the Music/Movies desktop icons did nothing at all. `%~2` strips the
+  // shortcut's quotes first, so the re-quote is a single clean pair.
+  assert.ok(/^if "%~2"=="" \(set OPEN=\/home\/\) else \(set OPEN=%~2\)$/m.test(bat),
+    "the page argument is compared as \"%~2\" (quotes stripped, then one pair)");
+  assert.ok(!/"%2"/.test(bat), "never re-quote the raw %2");
+});
