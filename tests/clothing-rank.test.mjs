@@ -730,11 +730,75 @@ describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", 
     }
     assert.equal(new Set(keys).size, 21, "no look is dealt twice");
   });
-  test("tiny pool: yesterday's looks come back rather than a short page 1", () => {
+  test("a one-look pool is dealt whichever loop takes it: yesterday's only look still comes back (relaxation or deep page — this case cannot tell them apart)", () => {
     const items = [top("item_t1"), bottom("item_b1")];
     const y = R.yesterdayOf(SEED);
     const history = { days: { [y]: { band: null, page1: [["item_t1", "item_b1"]] } } };
     assert.deepEqual(keysOf(R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history, perPage: 7 })), ["item_t1+item_b1"]);
+  });
+  test("tiny-pool relaxation (outfit_set.py:531-536): page 1 would be one look long, so a barred look comes back ON PAGE 1, garment-distinct — not on page 2", () => {
+    // 2 × 2, yesterday's page 1 = both t1 looks. The bar leaves t2+b1 / t2+b2
+    // for page 1 and they share t2, so the fill seats one (t2+b2). The
+    // relaxation walks `ranked` again WITHOUT the bar and seats the barred
+    // look that is garment-distinct with it: t1+b1. The deep pass then leads
+    // with the rest of yesterday (t1+b2) before t2+b1. Verified against the
+    // original (review r2). A port without the relaxation deals
+    // [t2+b2, t1+b2, t2+b1, t1+b1]: the deep loop resets pageUsed and walks
+    // `demoted` first, so a different look lands second and page 1 stays one
+    // look long.
+    const items = [top("item_t1"), top("item_t2"), bottom("item_b1"), bottom("item_b2")];
+    const y = R.yesterdayOf(SEED);
+    const history = { days: { [y]: { band: null, page1: [["item_t1", "item_b1"], ["item_t1", "item_b2"]] } }, events: {} };
+    assert.deepEqual(keysOf(R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history, perPage: 7 })),
+      ["item_t2+item_b2", "item_t1+item_b1", "item_t1+item_b2", "item_t2+item_b1"]);
+  });
+  test("tiny-pool relaxation seats a disjoint barred look (a dress) into page 1 BEFORE the deep loop appends the one that shares a garment", () => {
+    // t1+b1 (three Yes days → the staple, but it was on yesterday's page 1 →
+    // skipped) and the dress d1 were both on yesterday's page 1. The bar leaves
+    // t2+b1 for page 1; the relaxation adds d1 (disjoint) — so d1 is on page
+    // 1, index 1, and t1+b1 is the deep loop's first. Without the relaxation
+    // the deep loop walks `demoted` in ranked order and t1+b1 (loved) comes
+    // before d1: [t2+b1, t1+b1, d1]. Verified against the original (review r2).
+    const seed = "2026-06-10";
+    const items = [top("item_t1"), bottom("item_b1"), top("item_t2"), g("item_d1", { category: "dress" })];
+    const y = R.yesterdayOf(seed);
+    const events = {};
+    for (const n of [-5, -4, -3]) events[plus(seed, n)] = [{ kind: "yes", combo: ["item_t1", "item_b1"] }];
+    const history = { days: { [y]: { band: null, page1: [["item_t1", "item_b1"], ["item_d1"]] } }, events };
+    assert.deepEqual(keysOf(R.buildCandidates({ items, band: null, cap: 21, seed, history, perPage: 7 })),
+      ["item_t2+item_b1", "item_d1", "item_t1+item_b1"]);
+  });
+  test("staples are the garment-distinct top-5 BY WEIGHT, rotated by h(seed,'staple',key), two slots (outfit_set.py:468-492): the 8 × 8 diagonal", () => {
+    // Eight tops × eight bottoms, all navy solid (style 55 everywhere). The
+    // diagonal looks tk+bk carry 8−k Yes days (t0+b0 8 … t7+b7 1), so the
+    // weight order is t0, t1, … t7 and the garment-distinct top-5 is t0..t4.
+    // Under this seed the staple hash rotates them t1, t3, t4, t2, t0 (t6+b6
+    // would come SECOND if the top-5 cap were gone): the two slots are t1+b1
+    // and t3+b3. The coverage slot goes to b5 (first unused garment by the
+    // aged hash) in its best look t5+b5, then the fill runs down the loved
+    // diagonal by jitter. Page 1 verified key-for-key against the original
+    // (review r2). What each slip would deal instead: weight order or a
+    // reversed hash → t0+b0 first; no top-5 cap → t6+b6 second; three staple
+    // slots → t4+b4 third.
+    const seed = "2026-06-10";
+    const items = [];
+    for (let i = 0; i < 8; i++) items.push(top("item_t" + i, { warmth: "warm", colors: ["navy"], pattern: "solid" }));
+    for (let i = 0; i < 8; i++) items.push(bottom("item_b" + i, { warmth: "warm", colors: ["navy"], pattern: "solid" }));
+    const events = {};
+    for (let d = 0; d < 8; d++) {
+      const day = plus("2026-05-10", d);
+      events[day] = [];
+      for (let k = 0; k < 8; k++) if (8 - k > d) events[day].push({ kind: "yes", combo: ["item_t" + k, "item_b" + k] });
+    }
+    const picks = R.derivePicks(events, seed);
+    for (let k = 0; k < 8; k++) assert.equal(picks[`item_t${k}+item_b${k}`], 8 - k);
+    const diag = k => `item_t${k}+item_b${k}`;
+    const stapleOrder = [0, 1, 2, 3, 4, 5, 6, 7].map(k => [diag(k), R.h(seed, "staple", diag(k))]).sort((a, b) => (a[1] < b[1] ? -1 : 1)).map(x => x[0]);
+    assert.deepEqual(stapleOrder, [diag(1), diag(6), diag(3), diag(7), diag(4), diag(2), diag(0), diag(5)], "precondition: staple hash order under this seed");
+    const out = R.buildCandidates({ items, band: "warm", cap: 21, seed, history: { days: {}, events }, perPage: 7 });
+    assert.deepEqual(keysOf(out).slice(0, 7),
+      ["item_t1+item_b1", "item_t3+item_b3", "item_t5+item_b5", "item_t2+item_b2", "item_t0+item_b0", "item_t4+item_b4", "item_t6+item_b6"]);
+    assert.equal(out.length, 21);
   });
 });
 
