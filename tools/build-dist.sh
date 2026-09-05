@@ -57,8 +57,11 @@ else
 fi
 [ -s "$DIST/New-ERA-Setup.exe" ] || { echo "New-ERA-Setup.exe missing or empty — no release."; exit 1; }
 if [ -f "$ROOT/era-family/data/signing.env" ]; then
-  "$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode" verify -in "$DIST/New-ERA-Setup.exe" | grep -q "Signature verification: ok" \
-    || { echo "SIGNING CONFIGURED BUT Setup.exe NOT VERIFIED — no release."; exit 1; }
+  # captured, not `| grep -q`: the early pipe close + pipefail would fail a good signature
+  VERIFY="$("$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode" verify -in "$DIST/New-ERA-Setup.exe" 2>&1)" \
+    && grep -q "^Signature verification: ok" <<<"$VERIFY" \
+    || { echo "$VERIFY" | tail -20; echo "SIGNING CONFIGURED BUT Setup.exe NOT VERIFIED — no release."; exit 1; }
+  grep -E "^Signature verification|Timestamp time" <<<"$VERIFY"
 fi
 
 echo "== checksums =="

@@ -21,9 +21,16 @@
 #                       (default; the CLOUD module — libcryptoCertum3PKCS.so is the smart-card one)
 #   SIGN_PKCS11_ENGINE=…/cache/simplysign/syslibs/usr/lib/x86_64-linux-gnu/engines-3/pkcs11.so
 #                       (default; osslsigncode 2.8 needs the libp11 engine, extracted deb)
-#   SIGN_PKCS11_CERT='pkcs11:model=SimplySign%20C'   (default; cert read from the token)
-#   SIGN_KEY_URI='pkcs11:…'         optional — same object as the cert if unset
-#   SIGN_CERT_PEM=…/certum-oss.pem  optional — use this chain instead of the token's
+#   SIGN_PKCS11_CERT='pkcs11:model=SimplySign%20C;type=cert'      (default; read from the token)
+#   SIGN_KEY_URI='pkcs11:model=SimplySign%20C;type=private'       (default; the token's one key)
+#   SIGN_CHAIN_PEM=…/era-family/data/certum-chain.pem  (default if present; the issuing
+#                       "Certum Code Signing 2021 CA", embedded with -ac so verifiers chain
+#                       to Certum Trusted Network CA 2 without an AIA fetch — simplysign.sh cert)
+#   SIGN_PRELOAD=…/cache/simplysign/simplysign-deepbind.so  (default; REQUIRED with the cloud
+#                       module: it statically links OpenSSL 1.0 and exports those symbols, so
+#                       inside osslsigncode they bind to libcrypto.so.3 and it segfaults on the
+#                       first certificate read — the shim dlopen()s it RTLD_DEEPBIND)
+#   SIGN_CERT_PEM=…/certum-oss.pem  optional — use this leaf instead of the token's
 #   SIGN_PKCS11_PIN=…               optional — only if the token asks for a PIN
 #   SIGN_TSA=http://time.certum.pl  optional
 # Alternative (PFX exported from a card/cloud tool — same env file):
@@ -51,24 +58,31 @@ if [ -n "${SIGN_PFX:-}" ]; then
 else
   MODULE="${SIGN_PKCS11_MODULE:-$SS/dists/SSD-2.9.14-dist/SimplySignPKCS_64-MS-1.0.20.so}"
   ENGINE="${SIGN_PKCS11_ENGINE:-$SS/syslibs/usr/lib/x86_64-linux-gnu/engines-3/pkcs11.so}"
-  CERT_URI="${SIGN_PKCS11_CERT:-pkcs11:model=SimplySign%20C}"
+  SHIM="${SIGN_PRELOAD:-$SS/simplysign-deepbind.so}"
+  CERT_URI="${SIGN_PKCS11_CERT:-pkcs11:model=SimplySign%20C;type=cert}"
+  KEY_URI="${SIGN_KEY_URI:-pkcs11:model=SimplySign%20C;type=private}"
+  CHAIN="${SIGN_CHAIN_PEM:-$ROOT/era-family/data/certum-chain.pem}"
   [ -f "$MODULE" ] || { echo "sign: PKCS#11 module missing at $MODULE"; exit 1; }
   [ -f "$ENGINE" ] || { echo "sign: pkcs11 engine missing at $ENGINE"; exit 1; }
-  # the module's own libs (bundled OpenSSL 1.0) and the extracted debs
+  [ -f "$SHIM" ] || { echo "sign: DEEPBIND shim missing at $SHIM — era-family/tools/simplysign.sh up builds it"; exit 1; }
+  # the module's own libs and the extracted debs
   export LD_LIBRARY_PATH="$(dirname "$MODULE"):$SS/syslibs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   P11="$SS/syslibs/usr/bin/pkcs11-tool"
-  if [ -x "$P11" ] && { "$P11" --module "$MODULE" -L 2>&1 || true; } | grep -q "No slots"; then   # (exits 1 with no slots)
+  if [ -x "$P11" ] && { LD_PRELOAD="$SHIM" "$P11" --module "$MODULE" -L 2>&1 || true; } | grep -q "No slots"; then   # (exits 1 with no slots)
     echo "sign: SimplySign Desktop is not logged in (no token) — era-family/tools/simplysign.sh login/token, then re-cut"
     exit 1
   fi
-  if [ -n "${SIGN_CERT_PEM:-}" ]; then CERTARGS=(-certs "$SIGN_CERT_PEM" -key "${SIGN_KEY_URI:-$CERT_URI}")
-  else CERTARGS=(-pkcs11cert "$CERT_URI" ${SIGN_KEY_URI:+-key "$SIGN_KEY_URI"}); fi
-  "$OSSL" sign -pkcs11engine "$ENGINE" -pkcs11module "$MODULE" "${CERTARGS[@]}" \
+  if [ -n "${SIGN_CERT_PEM:-}" ]; then CERTARGS=(-certs "$SIGN_CERT_PEM" -key "$KEY_URI")
+  else CERTARGS=(-pkcs11cert "$CERT_URI" -key "$KEY_URI"); fi
+  [ -f "$CHAIN" ] && CERTARGS+=(-ac "$CHAIN")
+  LD_PRELOAD="$SHIM" "$OSSL" sign -pkcs11engine "$ENGINE" -pkcs11module "$MODULE" "${CERTARGS[@]}" \
     ${SIGN_PKCS11_PIN:+-pass "$SIGN_PKCS11_PIN"} \
     "${COMMON[@]}" -in "$EXE" -out "$TMP"
 fi
 mv -f "$TMP" "$EXE"
-# verify chains to the system CA bundle (Certum Trusted Network CA is in it)
-"$OSSL" verify -in "$EXE" | grep -q "Signature verification: ok" \
-  || { echo "sign: verification FAILED for $EXE"; exit 1; }
+# verify chains to the system CA bundle (Certum Trusted Network CA 2 is in it).
+# Captured, not piped: `| grep -q` closes the pipe early and pipefail turns
+# osslsigncode's SIGPIPE into a false FAILED.
+VERIFY="$("$OSSL" verify -in "$EXE" 2>&1)" && grep -q "^Signature verification: ok" <<<"$VERIFY" \
+  || { echo "$VERIFY" | tail -20; echo "sign: verification FAILED for $EXE"; exit 1; }
 echo "sign: SIGNED $(basename "$EXE") (timestamped at $TSA)"
