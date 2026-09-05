@@ -529,6 +529,22 @@ describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", 
     assert.ok(!p1.includes("item_t2+item_b2"), "most-picked but on yesterday's page 1 → not on page 1");
     assert.equal(keysOf(out)[2], "item_t2+item_b2", "…it leads page 2 instead");
   });
+  test("the staple pool is garment-distinct BEFORE the date rotation (outfit_set.py:483-489): a lesser-picked look sharing a garment never displaces the favourite", () => {
+    // t1+b1 picked 3×, t1+b2 2×, t2+b3 1×. The pool keeps t1+b1 and t2+b3
+    // (t1 already used), THEN rotates by hash. The hash puts t1+b2 ahead of
+    // t1+b1 — so a port that rotated first and de-duplicated later would seat
+    // t1+b2 instead of her favourite.
+    assert.ok(R.h(SEED, "staple", "item_t1+item_b2") < R.h(SEED, "staple", "item_t1+item_b1"), "precondition: hash order");
+    const items = [top("item_t1"), top("item_t2"), top("item_t3"), bottom("item_b1"), bottom("item_b2"), bottom("item_b3")];
+    const yes = combo => ({ kind: "yes", combo });
+    const events = {
+      "2026-09-01": [yes(["item_t1", "item_b1"]), yes(["item_t1", "item_b2"]), yes(["item_t2", "item_b3"])],
+      "2026-09-02": [yes(["item_t1", "item_b1"]), yes(["item_t1", "item_b2"])],
+      "2026-09-03": [yes(["item_t1", "item_b1"])],
+    };
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: { days: {}, events }, perPage: 7 });
+    assert.deepEqual(new Set(keysOf(out).slice(0, 2)), new Set(["item_t1+item_b1", "item_t2+item_b3"]));
+  });
   test("yesterday's page-1 looks are barred from page 1 and lead page 2 in ranked order; deep pages are garment-once", () => {
     const items = [];
     for (let i = 1; i <= 5; i++) items.push(top("item_t" + i));
