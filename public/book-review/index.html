@@ -320,19 +320,41 @@ function paintBook(j) {
 // button nobody should be able to lean on, so the number goes ON the button and
 // the button is disabled without it.
 let QUOTE = null;
+// Is New ERA working on THIS book right now? /content/status names the job in
+// flight and the ones queued behind it. The money button is dead while it is
+// true, so a page opened in the middle of a half-hour run cannot start a second
+// run on top of the first (review 9/5).
+let RUNNING = false;
+const busyWith = (s) => !!s && (!!(s.building && s.job && s.job.slug === SLUG)
+                                || (s.queued || []).indexOf(SLUG) >= 0);
+
 function paintAnimate(j) {
   const a = j.animate || { ready: false, pages: 0, perClip: null, total: null, done: 0 };
   QUOTE = a;
   const money = a.total == null ? null : "$" + a.total.toFixed(2);
   const btn = $("animate");
-  btn.disabled = !a.ready;
+  btn.disabled = !a.ready || RUNNING;
   btn.textContent = "🎬 Animate this book" + (money ? " (≈ " + money + ")" : "");
   // What is already made, so a second press reads as "finish it" rather than
   // "buy it all again" — and so a run that only managed half says so.
   const made = a.done ? a.done + " of " + a.pages + " pages already have one. " : "";
+  // AND WHAT WAS PAID FOR AND NEVER CAME. fal bills the moment it accepts a
+  // clip, so a render that failed or a queue that never finished is money gone
+  // with nothing on disk to show for it. The job's ledger is the only place
+  // that number exists — a page that counted the files alone would keep the
+  // family's losses quiet (review 9/5).
+  const clips = a.clips || 0, lost = clips - (a.done || 0);
+  const paid = lost > 0
+    ? "New ERA has paid fal for " + clips + " clip" + (clips === 1 ? "" : "s")
+      + (a.spent == null ? "" : " (≈ $" + a.spent.toFixed(2) + ")")
+      + ", and " + lost + " of them never arrived. "
+    : "";
   $("animateHint").textContent = a.ready
-    ? made + "Every page gets a five-second moving picture. New ERA only pays for the ones it "
-           + "still has to make, and Ellie sees them at the next sync."
+    ? (RUNNING
+        ? made + paid + "New ERA is working on this book right now — each clip lands in it as "
+               + "it is finished, and this page follows along."
+        : made + paid + "Every page gets a five-second moving picture. New ERA only pays for the "
+               + "ones it still has to make, and Ellie sees them at the next sync.")
     : (j.published
         ? "Moving pictures need a fal key — add one to the “Moving pages” card in Settings. "
           + "This button will say what a book costs before it spends anything."
@@ -811,16 +833,50 @@ async function animateBook() {
     bookNote((out && out.error) || "New ERA could not make the moving pictures.", true);
     button.disabled = false; return;
   }
-  const s = await settled();
-  const j = s && (s.jobs || []).find(b => b.slug === SLUG);
-  if (j) paintBook(j); else button.disabled = false;
-  const now = (j && j.animate && j.animate.done) || 0;
+  const j = await followRun();
+  // The hub went away mid-run. What is NOT said here is "nothing was made and
+  // nothing was spent": fal may well be rendering (and billing) this book still,
+  // and this page has no way of knowing from here.
+  if (!j) {
+    bookNote("New ERA stopped answering. The moving pictures may still be being made — "
+           + "open this page again in a few minutes to see how many landed.", true);
+    return;
+  }
+  const now = (j.animate && j.animate.done) || 0;
   if (now > had)
-    bookNote("Made ✓ — " + now + " of " + ((j && j.animate.pages) || now)
+    bookNote("Made ✓ — " + now + " of " + (j.animate.pages || now)
            + " pages have a moving picture now. Ellie sees them at the next sync.", false);
   else
     bookNote("No moving pictures were made this time, and the book is exactly as it was. "
            + "Check the fal key in Settings, then try again.", true);
+}
+
+// A BOOK IS NOT A PAGE. settled() above is calibrated to one page of work and
+// gives up after five minutes; this book is one clip per page, made one after
+// another at a couple of minutes each, so half an hour is an ORDINARY run. A
+// capped wait would print "nothing was made, try again" over a run that was
+// still going and still spending — and a parent who took that advice would press
+// the money button again. So this wait has no cap at all: it follows
+// /content/status until the hub stops working on this book, repainting the card
+// every time round so the "N of M pages already have one" count climbs as the
+// clips land. Returns the book's last job, or null if the hub stopped answering.
+const RUN_POLL_MS = 1000;
+async function followRun() {
+  let j = null;
+  for (;;) {
+    let s;
+    try { s = await (await fetch("/content/status", { cache: "no-store" })).json(); }
+    catch (e) { return null; }
+    RUNNING = busyWith(s);
+    const found = (s.jobs || []).find(b => b.slug === SLUG);
+    if (found) { j = found; paintBook(found); }
+    if (!RUNNING) return j;
+    const a = (j && j.animate) || {};
+    bookNote("Still making them — " + (a.done || 0) + " of " + (a.pages || 0)
+           + " pages have a moving picture so far. Each one lands in the book as it is finished.",
+           false);
+    await new Promise(done => setTimeout(done, RUN_POLL_MS));
+  }
 }
 $("animate").addEventListener("click", animateBook);
 
@@ -873,6 +929,9 @@ async function paint() {
   catch (e) { $("sub").textContent = "New ERA is not answering."; return; }
   $("sub").textContent = "";
   if (!s.local) { show("notLocal", true); return; }
+  // Before anything is painted: a book being worked on RIGHT NOW must not be
+  // handed an enabled money button just because this page was reloaded.
+  RUNNING = busyWith(s);
   const jobs = s.jobs || [];
   const j = SLUG ? jobs.find(b => b.slug === SLUG) : null;
   if (j) { paintBook(j); await loadStrip(); }

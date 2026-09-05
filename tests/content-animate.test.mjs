@@ -44,7 +44,14 @@ let fake, animate, content, store, publish, encodeJpg;
 // One entry per request the stand-in actually saw. Nothing resets it — the
 // money guardrails read the whole suite's history off it.
 let calls = [];
-let mode = "ok";           // ok | queue | fail-one | 422-first | 401
+let mode = "ok";           // ok | queue | fail-one | 422-first | 401 | evil-url
+// Called with the request id the instant the stand-in accepts a submit — the
+// only moment a test can reach in and break something BETWEEN two clips.
+let onSubmit = null;
+// Nothing listens here, and nothing may ever ask it anything: it is the origin
+// a malicious (or merely wrong) fal answer would name. Port 9 is discard, and
+// is not in any range the plan hands out.
+const ELSEWHERE = "http://127.0.0.1:9";
 // The stand-in numbers the jobs it is given; a test that wants the Nth clip of
 // its OWN run to fail resets the counter first.
 let reqNo = 0;
@@ -135,14 +142,26 @@ before(async () => {
         }
         const id = "req-" + (++reqNo);
         seen.set(id, 0);
+        if (onSubmit) onSubmit(id);
         const base = `http://127.0.0.1:${FAKE}`;
+        // A body that names somewhere else entirely. fal's own answer is used
+        // verbatim (a model with subpaths in its name cannot have its queue URL
+        // hand-built), so "verbatim" must stop at fal's own origin — this key is
+        // billable and travels in the Authorization header.
+        if (mode === "evil-url") {
+          json(200, { request_id: id, status_url: `${ELSEWHERE}/steal/${id}/status`,
+                      response_url: `${ELSEWHERE}/steal/${id}` });
+          return;
+        }
         // Deliberately NOT the path a caller could build from the model name:
         // a module that guessed the URL instead of reading it would 404 here.
         json(200, { request_id: id, status_url: `${base}/q/${id}/status`,
                     response_url: `${base}/q/${id}` });
         return;
       }
-      const id = (req.url.match(/\/q\/([^/]+)/) || [])[1] || "";
+      // …except when the caller fell back to the path it can build itself,
+      // which is fal's own documented queue path and lands here too.
+      const id = (req.url.match(/\/q\/([^/]+)/) || req.url.match(/\/requests\/([^/?]+)/) || [])[1] || "";
       const wanted = Number((seen.has(id) ? id : "").replace("req-", "")) || 0;
       if (kind === "status") {
         const polls = (seen.get(id) || 0) + 1;
@@ -273,6 +292,50 @@ test("the request is the documented one: the model, five seconds, the standing n
   assert.ok(!sub.body.prompt.includes("a quiet page"), "the book's words are not sent to fal");
 });
 
+// THE ONE PLACE ONE PAGE IS SUBMITTED TWICE (review 9/5). Some fal models want
+// "5s" where others want "5", and this module retries once with the suffix
+// rather than losing the page. It is the sharpest money path in the file — a
+// retry that slipped below the ledger, or looped, would bill a family twice for
+// one page — so both halves are pinned: two submits, one charge.
+test("a model that wants '5s' is asked again — and the retry is not a second charge", async () => {
+  const at = calls.length;
+  falCard(true);
+  mode = "422-first";
+  book("Fussy Duration", ["one"]);
+  const r = await animate.animateBook(bookDir("Fussy Duration"),
+    { dataDir: DATA, slug: "fussy-duration", name: "Fussy Duration", pollMs: 5 });
+  mode = "ok";
+  assert.equal(r.animated, 1, "the page survived the 422");
+  assert.equal(spent(at), 2, "asked twice, and twice only");
+  assert.deepEqual(calls.slice(at).filter(c => c.kind === "submit").map(c => c.body.duration),
+                   ["5", "5s"], "the plain seconds first, the suffix as the retry");
+  assert.equal(fs.readdirSync(path.join(bookDir("Fussy Duration"), "video")).length, 1,
+               "one page, one clip");
+  // A 422 is a REFUSAL: fal never took the job, so it never billed for it. The
+  // ledger must count what was accepted, not what was asked.
+  assert.equal(store.readJob(bookDir("Fussy Duration")).spent.animate.calls, 1);
+});
+
+// The key travels as a header, and a header goes wherever the URL says. fal's
+// own answer names the next two URLs, so an answer that named somewhere else
+// would hand the family's billable key to it. The guard is an origin check, and
+// the fallback is the path this module can build for itself.
+test("a queue URL that is not fal's own is never asked, and the clip still lands", async () => {
+  const at = calls.length;
+  falCard(true);
+  mode = "evil-url";
+  book("Somewhere Else", ["one"]);
+  const r = await animate.animateBook(bookDir("Somewhere Else"),
+    { dataDir: DATA, slug: "somewhere-else", name: "Somewhere Else", pollMs: 5 });
+  mode = "ok";
+  assert.equal(r.animated, 1, "the page was not lost to the guard");
+  assert.ok(fs.statSync(videoOf("Somewhere Else", 1)).size > 0);
+  const urls = calls.slice(at).map(c => c.url);
+  assert.equal(urls.some(u => /steal/.test(u)), false, "the named URL was not followed");
+  assert.ok(urls.some(u => /\/requests\/[^/]+\/status$/.test(u)),
+            "fal's own documented queue path was used instead: " + urls.join(" "));
+});
+
 test("a confrontation page gets the duel template, a quiet one does not", () => {
   const duel = animate.scriptFor({ text: "the crab chased the fish and they fought" });
   const calm = animate.scriptFor({ text: "the moon came up over the sleeping town" });
@@ -360,6 +423,58 @@ test("POST /content/run {step:'animate'} is the only thing that starts a clip", 
   // A book that was already on the shelf stays on it — animation moves nothing
   // backwards.
   assert.ok(["published", "done"].includes(job.state));
+});
+
+// THE SAFETY NET (content-worker.js, the optional step). A clip re-publishes
+// the manifest the moment it lands, so a book gains its moving pictures page by
+// page — but a publish can fail on its own (Google Drive holding manifest.json
+// open on Windows is the whole reason content-publish writes tmp+rename), and a
+// clip that is on disk and paid for but absent from the manifest is invisible:
+// nothing re-publishes a finished book, and "N of M pages have one" counts the
+// disk, not the manifest. So the walk re-publishes whenever fewer clips reached
+// the manifest than were made.
+test("a clip whose own publish failed is put on the shelf by the walk, not left paid for and hidden", async () => {
+  const at = calls.length;
+  falCard(true);
+  book("Half Published", ["one", "two"]);
+  const dir = bookDir("Half Published");
+  // Page 2's publish, and only page 2's: a dangling symlink where
+  // content-store writes its .tmp makes that one write throw, and writeAtomic's
+  // own sweep clears the symlink again — so the next publish works. Set as the
+  // stand-in accepts the SECOND submit, which is after page 1 published and
+  // before page 2 does.
+  let n = 0;
+  onSubmit = () => { if (++n === 2)
+    fs.symlinkSync(path.join(TMP, "nowhere", "x"), path.join(dir, "manifest.tmp")); };
+  const out = content.runStep({ kind: "books", slug: "half-published", step: "animate" });
+  assert.equal(out.started, true);
+  await content.idle();
+  onSubmit = null;
+  assert.equal(spent(at), 2, "both pages were bought");
+  for (const i of [1, 2]) assert.ok(fs.statSync(videoOf("Half Published", i)).size > 0);
+  assert.match(logOf("Half Published"), /manifest was not rewritten/,
+               "page 2's own publish really did fail");
+  assert.deepEqual(manifestOf("Half Published").pages.map(p => p.video),
+                   ["video/001.mp4", "video/002.mp4"],
+                   "the walk re-published what the clip could not");
+});
+
+// WHAT WAS ACTUALLY SPENT, not what arrived. fal bills the moment it accepts a
+// clip, so every path that loses the page afterwards (a render that failed, a
+// queue that never finished, a CDN that would not hand the bytes over) is money
+// the family spent with nothing to show for it. Before this, the only fal number
+// on the payload was `done` — a count of the files on disk — so a charged clip
+// that never arrived was invisible everywhere in the product.
+test("the clips fal was paid for are on the status payload, arrived or not", () => {
+  falCard(true);
+  const j = content.status().jobs.find(b => b.slug === "half-lucky");
+  assert.equal(j.animate.done, 1, "one clip landed");
+  assert.equal(j.animate.clips, 2, "two were charged for — the failed one billed too");
+  assert.equal(j.animate.spent, 0.7, "two clips at 35 cents");
+  // A book nobody has animated says zero rather than nothing at all.
+  const q = content.status().jobs.find(b => b.slug === "quote-me");
+  assert.equal(q.animate.clips, 0);
+  assert.equal(q.animate.spent, 0);
 });
 
 test("a book that is still being built is not animated", async () => {

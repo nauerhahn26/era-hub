@@ -193,6 +193,22 @@ function dataUri(file) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// A URL out of fal's own answer, but only if it really is fal's: the same
+// origin the submit went to, or one of fal's own https hosts (the queue and the
+// API are siblings). Anything else — another host, another scheme, a string
+// that is not a URL at all — is not followed, and `fallback` (the path this
+// module builds itself) is used instead. Nothing is thrown: a strange URL costs
+// a hand-built one, never the clip.
+function falOwn(url, fallback) {
+  if (!url) return fallback;
+  try {
+    const got = new URL(String(url));
+    if (got.origin === new URL(falBase()).origin) return got.href;
+    if (got.protocol === "https:" && /(^|\.)fal\.(run|ai)$/.test(got.hostname)) return got.href;
+  } catch {}
+  return fallback;
+}
+
 async function ask(url, cfg, opts) {
   return fetch(url, {
     // The key travels as a header and only as a header: a URL ends up in logs,
@@ -245,8 +261,14 @@ async function animateClip(imageFile, script, cfg, opts) {
   if (o.onCharged) o.onCharged();
   // fal's OWN queue URLs, used verbatim. A hand-built path breaks for every
   // model with subpaths in its name — which this one has (…/pro/image-to-video).
-  const statusUrl = sub.status_url || falBase() + "/" + MODEL + "/requests/" + sub.request_id + "/status";
-  const responseUrl = sub.response_url || falBase() + "/" + MODEL + "/requests/" + sub.request_id;
+  // Verbatim stops at fal's own origin, though: the two lines below are followed
+  // with the family's BILLABLE key in an Authorization header, and a submit body
+  // that named another host would have it posted there. Anything else falls back
+  // to the path this module can build for itself (review 9/5).
+  const statusUrl = falOwn(sub.status_url,
+    falBase() + "/" + MODEL + "/requests/" + sub.request_id + "/status");
+  const responseUrl = falOwn(sub.response_url,
+    falBase() + "/" + MODEL + "/requests/" + sub.request_id);
 
   const pollMs = o.pollMs == null ? POLL_MS : o.pollMs;
   const deadline = Date.now() + (o.timeoutMs || TIMEOUT_MS);

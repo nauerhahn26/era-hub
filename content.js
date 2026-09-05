@@ -482,6 +482,7 @@ function jobFor(name, dir, slug, perClip) {
   // parent can see that a run did anything (an optional step never marks a
   // finished book failed — content-worker.js).
   const price = perClip === undefined ? (DATA ? falPrice(DATA) : null) : perClip;
+  const clips = Number(job && job.spent && job.spent.animate && job.spent.animate.calls) || 0;
   const published = fs.existsSync(path.join(dir, "manifest.json"));
   const q = published ? quote(count, price) : null;
   return {
@@ -493,14 +494,23 @@ function jobFor(name, dir, slug, perClip) {
     state: job ? job.state : "inbox",
     step: store.stepOwed(owed),
     progress: { pages: count, transcribed, narrated: narrated.size },
-    // The only unit a book's spend can be counted in until the fal card lands
-    // (Phase 6): ElevenLabs characters owed, and the ones already paid for.
+    // The narration side of the bill: ElevenLabs characters owed, and the ones
+    // already paid for. What the moving pictures cost is its own count below,
+    // in its own unit (clips), because the two are bought from different
+    // providers in different units and adding them would be a made-up number.
     cost: { characters, narrated: Math.max(spent, ledger) },
     flags,
     pageFlags,
     edited,
+    // `done` is the clips that ARRIVED (a readdir of video/); `clips` is the
+    // clips fal was PAID for. They differ whenever a page was charged and then
+    // lost — fal bills the moment it accepts a job, so a render that failed, a
+    // queue that timed out or a CDN that would not hand the bytes over is money
+    // spent with nothing on disk to show for it. Only the ledger knows, so it
+    // is said out loud rather than left in job.json (review 9/5).
     animate: { ready: !!q, pages: count, perClip: q ? q.perClip : null,
-               total: q ? q.total : null, done: animatedCount(dir) },
+               total: q ? q.total : null, done: animatedCount(dir),
+               clips, spent: price ? Math.round(clips * price * 100) / 100 : null },
     pausedUntil: (job && job.pausedUntil) || null,
     note: (job && job.pausedNote) || null,
     published,

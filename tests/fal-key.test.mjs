@@ -116,6 +116,11 @@ test("saving a fal key does not eat the keys beside it in the same file", async 
   assert.equal(after.apiKey, "test-vision-key");
   assert.deepEqual(after.tmdb, { apiKey: "test-tmdb-key" });
   assert.equal(after.fal.apiKey, GOOD);
+  // …and it is written tmp-then-rename rather than in place (review 9/5): with
+  // four cards' keys in one file, a save that died half way through — a crash,
+  // a full disk (9/3) — would take every one of them with it. The rename is
+  // what makes that impossible, and it leaves nothing behind.
+  assert.equal(fs.existsSync(path.join(TMP, "ai-config.tmp")), false, "no litter beside the keys");
 });
 
 test("a key fal refuses is said in words, and is no key at all afterwards", async () => {

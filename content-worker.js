@@ -334,7 +334,26 @@ async function walk() {
       // walk only steps in when that could not happen: a run that changed
       // nothing must not hand Google Drive a fresh manifest to re-upload to
       // every device in the family for nothing.
-      if (result && result.animated && !result.publishes) await republish(steps);
+      //
+      // COUNTS, NOT TRUTHINESS (review 9/5). A publish can fail on its own page
+      // (Drive holding manifest.json open on Windows is the hazard
+      // content-publish writes tmp+rename for), and a "did ANY publish happen?"
+      // guard would walk past a book where three clips landed and the last one's
+      // publish threw: that clip is on disk, billed, and absent from the only
+      // file the reader ever reads — and nothing else would ever re-publish it,
+      // because a finished book owes no step and "N of M pages have one" counts
+      // the disk rather than the manifest.
+      const made = (result && result.animated) || 0;
+      if (made && ((result.publishes || 0) < made)) {
+        // And never the book's problem either (see above): a manifest that
+        // could not be rewritten twice is a page that will be picked up by the
+        // next press, not a reason to mark a book on the shelf failed.
+        try { await republish(steps); }
+        catch (e) {
+          const msg = store.redact(e && e.message ? e.message : String(e));
+          try { store.appendLog(DIR, step.name, "the manifest could not be rewritten: " + msg); } catch {}
+        }
+      }
       return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
     }
 

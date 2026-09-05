@@ -18,6 +18,8 @@ const moviesAdd = require("./movies-add.js");
 const moviesLookup = require("./movies-lookup.js");
 const booksIndex_ = require("./books-index.js");
 const aiConfig = require("./ai-config.js");
+// For writeAtomic alone: a key file is written tmp-then-rename, never in place.
+const contentStore = require("./content-store.js");
 
 const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
@@ -974,8 +976,13 @@ function readAiCfg() {
     return c && typeof c === "object" && !Array.isArray(c) ? c : null;
   } catch (e) { return e && e.code === "ENOENT" ? {} : null; }
 }
+// TMP-THEN-RENAME, never in place (review 9/5). The read side above refuses to
+// start fresh over an unreadable file because four cards' keys live in it now;
+// a rewrite in place takes exactly that risk from the other end — a crash or a
+// full disk (9/3: makensis died of one) half way through would leave every key
+// in the family's hub truncated. content-store already owns the primitive.
 function writeAiCfg(cfg) {
-  try { fs.writeFileSync(AI_CFG_PATH, JSON.stringify(cfg, null, 1)); return true; }
+  try { contentStore.writeAtomic(AI_CFG_PATH, JSON.stringify(cfg, null, 1)); return true; }
   catch { return false; }
 }
 
@@ -1714,7 +1721,9 @@ const server = http.createServer((req, res) => {
       try {
         if (tmdb !== undefined) { if (tmdb) cfg.tmdb = { apiKey: tmdb }; else delete cfg.tmdb; }
         if (wm !== undefined) { if (wm) cfg.watchmode = { apiKey: wm }; else delete cfg.watchmode; }
-        fs.writeFileSync(file, JSON.stringify(cfg, null, 1));
+        // Atomic, like writeAiCfg above: this file holds every card's key now,
+        // so it is never left half written.
+        contentStore.writeAtomic(file, JSON.stringify(cfg, null, 1));
         // The region is not a key: it is the same content choice the provider
         // name lives beside (movies-lookup.js Law 1), so it goes in the same
         // file that one is read from, merged the same careful way.
@@ -2149,7 +2158,8 @@ const server = http.createServer((req, res) => {
         let cfg = {};
         try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
         if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) cfg = {};
-        fs.writeFileSync(file,
+        // Atomic, like writeAiCfg: never a half-written file full of keys.
+        contentStore.writeAtomic(file,
           JSON.stringify({ ...cfg, provider: prov, apiKey: apiKey.trim() }, null, 1));
         res.writeHead(204).end();
         // a key arriving is the cue to catalog waiting photos right away

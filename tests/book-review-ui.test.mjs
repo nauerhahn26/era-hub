@@ -220,6 +220,9 @@ async function review(slug, opts) {
   await ctx.route("http://127.0.0.1:49155/**", r => r.abort());
   // Gap 20, belt and braces: no browser on this page may reach a voice.
   await ctx.route("**/tts*", r => r.abort());
+  // A test that needs the hub to LOOK a particular way (mid-run, say) scripts
+  // it here, before the page has asked anything.
+  if (o.hook) await o.hook(ctx);
   const page = await ctx.newPage();
   await page.goto(`${BASE}/book-review/?slug=${slug}`, { waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll("#strip .page").length > 0);
@@ -761,6 +764,107 @@ test("Animate this book cannot be pressed until the book can be quoted", async (
   await ctx.close();
   fs.writeFileSync(cfg, JSON.stringify({}));
   assert.equal(calls.length, at, "quoting a book asks no provider anything");
+});
+
+// The hub made to LOOK a particular way — mid-run, or a run just finished —
+// without a worker, without a provider and without a cent: the real
+// /content/status answer is fetched and then edited, so the job under test keeps
+// every field the page really reads, and POST /content/run is answered here
+// rather than by the hub. `state` is read at request time, so a test moves the
+// run on by assigning to it.
+function midRun(slug, state) {
+  return async (ctx) => {
+    await ctx.route("**/content/status*", async (route) => {
+      const s = await (await route.fetch()).json();
+      const j = (s.jobs || []).find(b => b.slug === slug);
+      if (j) j.animate.done = state.done;
+      s.building = state.building;
+      s.job = state.building ? { kind: "books", slug, step: "animate" } : null;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(s) });
+    });
+    // The press is what starts the run, here as in the hub: the 202 is written
+    // after the work is under way, so the first status the page reads already
+    // knows about it.
+    await ctx.route("**/content/run", (route) => {
+      state.building = true;
+      route.fulfill({ status: 202, contentType: "application/json",
+                      body: JSON.stringify({ started: true }) });
+    });
+  };
+}
+
+// A BOOK IS NOT A PAGE (review 9/5). The other two buttons on this page do one
+// page of work and are done inside a minute; animation makes one clip at a time
+// at a couple of minutes each, so a sixteen-page book is half an hour of
+// spending. A wait that gave up at five minutes would tell a parent "nothing was
+// made and the book is exactly as it was" while fal was still rendering, and
+// still billing — and the advice under that line is "try again".
+test("a run is followed to the end, not given up on and called a failure half way", async () => {
+  const at = calls.length;
+  const cfg = path.join(DATA, "ai-config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ fal: { apiKey: FAKE_FAL_KEY, keyOk: true } }));
+  book("Long Run", ["one", "two"]);
+  const state = { building: false, done: 0 };   // …until the press below starts it
+  const { ctx, page } = await review("long-run", { hook: midRun("long-run", state) });
+  await page.waitForFunction(() => !document.getElementById("animate").disabled);
+  await page.locator("#animate").click();
+  // A clip lands while the run goes on, and the page says so: the count climbs
+  // as the pages arrive, which is the only honest thing to show for a run that
+  // is still spending.
+  state.done = 1;
+  await page.waitForFunction(() =>
+    /1 of 2 pages already have one/.test(document.getElementById("animateHint").textContent));
+  const mid = await page.locator("#bookNote").textContent();
+  assert.match(mid, /still making/i, "what is happening, in words: " + mid);
+  assert.doesNotMatch(mid, /nothing was made|No moving pictures were made/i,
+                      "a run in flight is never reported as a failure: " + mid);
+  assert.equal(await page.locator("#animate").isDisabled(), true,
+               "and the money button cannot be pressed a second time under it");
+  // Only when the hub says the run is over does the page say what it got.
+  state.done = 2; state.building = false;
+  await page.waitForFunction(() => /Made ✓/.test(document.getElementById("bookNote").textContent));
+  assert.match(await page.locator("#bookNote").textContent(), /2 of 2/);
+  await ctx.close();
+  fs.writeFileSync(cfg, JSON.stringify({}));
+  assert.equal(calls.length, at, "no provider was asked anything by any of that");
+});
+
+test("a page opened while the run is going does not hand back the money button", async () => {
+  const cfg = path.join(DATA, "ai-config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ fal: { apiKey: FAKE_FAL_KEY, keyOk: true } }));
+  book("Mid Run", ["one", "two"]);
+  const { ctx, page } = await review("mid-run", { hook: midRun("mid-run", { building: true, done: 1 }) });
+  // The book is quotable and the price is on the button — and it is still dead,
+  // because New ERA is spending on this very book right now. A reload is the
+  // one way back to an enabled button, and it must not be a way to pay twice.
+  await page.waitForFunction(() => /\$/.test(document.getElementById("animate").textContent));
+  assert.equal(await page.locator("#animate").isDisabled(), true);
+  assert.match(await page.locator("#animateHint").textContent(), /working on this book/i);
+  await ctx.close();
+  fs.writeFileSync(cfg, JSON.stringify({}));
+});
+
+// CHARGED, NOT ARRIVED (review 9/5). fal bills the moment it accepts a clip, so
+// a render that failed or a queue that timed out is money spent with nothing on
+// disk. The ledger on the job is the only place that number exists; before this
+// the page showed only the files, so lost money was invisible.
+test("clips that were paid for and never arrived are said out loud", async () => {
+  const at = calls.length;
+  const cfg = path.join(DATA, "ai-config.json");
+  fs.writeFileSync(cfg, JSON.stringify({ fal: { apiKey: FAKE_FAL_KEY, keyOk: true } }));
+  const dir = book("Paid For", ["one", "two"]);
+  let job = store.readJob(dir);
+  for (const _ of [1, 2]) job = store.addSpend(job, "animate", 1);   // two clips fal took
+  store.writeJob(dir, job);                                          // …and neither arrived
+  const { ctx, page } = await review("paid-for");
+  await page.waitForFunction(() => !document.getElementById("animate").disabled);
+  const hint = await page.locator("#animateHint").textContent();
+  assert.match(hint, /2 clips/, "how many were bought: " + hint);
+  assert.match(hint, /\$\s?0\.70/, "and what they cost: " + hint);
+  assert.match(hint, /never arrived/i, hint);
+  await ctx.close();
+  fs.writeFileSync(cfg, JSON.stringify({}));
+  assert.equal(calls.length, at, "reading a ledger asks no provider anything");
 });
 
 test("Read the photos again with no AI key is a sentence, not a 500 — and buys nothing", async () => {
