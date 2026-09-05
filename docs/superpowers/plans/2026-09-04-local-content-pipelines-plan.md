@@ -1870,3 +1870,119 @@ E or L has run on Windows, and the VM walkthrough is still the first real test
 of the local-roots seam, the shelf hook and the imprint stripper on a family's
 own box. Second risk: the per-page `text.json` write multiplies small writes on
 a Drive-synced folder; the 16-page run predates it, so its cost is unmeasured.
+
+## Retrospective: Phase 4
+
+Music, end to end: a grown-up can now put a song on Ellie's board from the
+board itself. Five tasks (T4.1–T4.5) plus a review pass in each repo — four hub
+commits (`1a423f9..1f8540a`) and three board commits (`bb5cfbe..8c2f7ef`, branch
+`feat/content-strip`).
+
+### What landed
+- `bb892b8` **T4.1 — `media-tools` is its own pack.** yt-dlp is one ~18 MB
+  standalone Windows binary and it is *not* in the repo: `tools/yt-dlp.pin` names
+  a release and its sha256, `build-payload.sh` downloads exactly that, verifies,
+  and only then lays it in the payload; a wrong hash stops the build. Unticked in
+  the installer with its own MB in the hover text, measured by `build-dist.sh` —
+  and a new `packs.test.mjs` assertion pins that every `PACKS` path is measured
+  there, closing Gap 15's hand-kept second copy. `packs.ytDlp()` settles the
+  runtime too: `node:<process.execPath>`, unquoted (yt-dlp splits on the first
+  colon), safe with the space in "New ERA" because we spawn argv, never a shell.
+- `7a982cc` **T4.2 — `POST /music/add`.** Paste a link or type a name. Four laws
+  and `music-add.js` is nothing but them: the song is written to the family's
+  **Drive** folder (`drive.status().folderPath + "/music"`), never `<DATA>`;
+  **no ffmpeg** (`-f "ba[ext=m4a]/ba" --write-thumbnail`, never `-x` /
+  `--audio-format` / `--convert-thumbnails`); a slug is a name, not a path; and a
+  missing pack answers `{error:"pack-missing"}` the sheet can act on, never a 500.
+  202 + `GET /music/add/status`, the `/clothing/regenerate` shape. Both doors sit
+  **above** the `/music/` media jail.
+- `8bce888` **T4.3 — `POST /music/order`.** The whole running order in one shot,
+  `rank` only. A partial list, an unknown id or a duplicate is a 400 that changed
+  nothing; an add in flight takes a 409. Atomic write to Drive, then a sync so the
+  songs recipe's ETag moves and every board drops its 304.
+- `a7dbc79` **T4.4 — the partner strip** (board). `#partnerStrip` at the far end
+  of `.msgbar`, opposite the door, on `?recipe=songs` and `?recipe=movies` only —
+  her outfit board untouched. Nothing in it carries `.dwell` or `data-dwell-*`;
+  it tracks `--bar-inner` so it cannot make the ≤9 % slab taller. The four gates
+  were **amended, not weakened**: each now tolerates exactly one `#partnerStrip`
+  child *and* asserts positively that the door is the bar's only dwell target — a
+  stronger claim than the child count it replaced.
+- `3672aa4` **T4.5 — arrange mode.** Drag one song onto another, post the whole
+  order. Gap 12's landmine handled with two guards for two paths: `.dwell` comes
+  **off** every tile (what the 150 ms tap-rescue reads) *and*
+  `data-dwell-disabled` goes on (what the gaze path reads), so shared
+  `era-core/dwell.js` is not touched; a probe run confirmed the rescue really does
+  fire without the fix.
+- `1f8540a` + `8c2f7ef` **review fixes**, ten confirmed findings — the ones worth
+  naming: a re-add deleted the old audio *before* the download, so a failed re-add
+  destroyed a song for good (it now stages and replaces); `readManifest` swallowed
+  every read error, so one locked or half-synced `manifest.json` read as "no songs
+  yet" and was written back with a single song in it; the sheet's full-screen
+  backdrop stopped **nothing**, because `targetAt()` walks the whole
+  `elementsFromPoint` stack past an overlay with no `.dwell` — the board is now
+  put to sleep the way arrange mode does it; arrange mode swallowed the page
+  doors, so a song added today (last page) was unreachable from page one; and
+  `build-payload.sh`'s blanket vendor copy ran *before* the pinned fetch, so an
+  unverified local `vendor/yt-dlp` could ship as the pack.
+
+### Decisions
+- **Truth about the mirror travels with the answer.** `drive.sync()` reports
+  failure by answering, not throwing, so `add()`/`order()` now return `mirrored`
+  and the strip says "the board will catch up" instead of "the songs are in their
+  new order" over a board that has not moved.
+- **Only ENOENT is an empty library.** Any other read error refuses the write in
+  words a parent can act on. (Same shape as Phase L's "a write may only delete
+  what the writer has seen".)
+- **A dead end is a bug.** "Install it and try again" got a button:
+  `media-tools` belongs to no app, so `POST /packs/install` is keyed off
+  `packs.PACKS`, not the app list — the next pack cannot fall down the same hole.
+- **A pack is opt-in and honestly measured**; the binary never enters the repo,
+  only a pin and a hash.
+- **Gates get stronger when amended.** The 9/4 amendment cost the child-count
+  assertion and bought a positive "the door is the only dwell target" one.
+
+### Adaptations
+- T4.4's escape hatch (mount as a sibling of `.msgbar`) was **not** needed —
+  `--bar-inner` kept the strip inside the 9 % slab.
+- Both review passes were run and fixed **in-phase** rather than deferred: six of
+  the ten were data-loss, gaze-safety or supply-chain bugs in code written this
+  same phase.
+- Gap 13 honoured: nothing asserts `.m4a` playback; a song is proven by its
+  manifest entry, the generated recipe, and a 200 + `Accept-Ranges`.
+- Gap 22 honoured: no new coverage went into `board-routes.test.mjs`.
+
+### Verification
+Hub, re-run at the phase boundary: `music-add` + `music` + `packs` —
+**38 pass, 0 fail**. Board: `board-partner-strip.test.mjs` — **8 pass, 0 fail**.
+`board-arrange.test.mjs` must be run **under `era-gate.sh`** (it borrows the
+gate's hub on 8377 and its 12 fixture songs); run bare on this box it times out
+on `.tile[data-arrange-id="test-song-1"]` — the same 8377 hazard the Phase L
+retrospective notes for `icons.test.mjs`. Its green run is the one recorded in
+`3672aa4` (era-gate 70 passed, 0 failed; browser video recorded).
+
+### Follow-ups
+- Gap 14 still open: `installPack` (`server.js`) downloads the whole suite
+  tarball with **no checksum**, unlike `update.js` — reuse `latest.json`'s sha256.
+- Movies still say "the add is not built yet" — honest, and T5.4's job.
+- `board-arrange.test.mjs` hard-codes `http://localhost:8377`; it cannot be run
+  outside the gate and gives a bare timeout rather than a diagnosis when it is.
+- Nothing re-verifies the pinned yt-dlp hash **after** install on the device; the
+  guarantee ends at the payload.
+- `mirrored:false` is reported but nothing retries the mirror; the family waits
+  for the ten-minute pass.
+- A rank collision between two devices adding at once is still last-writer-wins.
+
+### Confidence and risks
+Confidence **high** on the hub half: the write path is small, every law has a
+test, the seams (`ERA_YTDLP`, `ERA_PACK_ROOT`) are proven by construction rather
+than by the accident of an empty worktree, and no test spends a key or touches
+YouTube. Confidence **medium-high** on the board half — the gaze-safety claims are
+asserted from the capture phase with a real touch drag and a probe that showed
+the rescue firing without the fix, but the pixel budget and the drag ergonomics
+have only been seen at 1280×720 headless, not on the kiosk. Chief residual risk
+is unchanged and belongs to **Phase 7**: yt-dlp has never been run on Windows
+here — the pack, the `node:` runtime hand-off and the Drive-folder write are all
+proven against a stand-in script, and a family's own PC (antivirus on the fresh
+binary, a Drive folder mid-sync, YouTube answering 403) is the first real test.
+Second risk: `POST /music/add` is a door a browser on the home LAN can reach; it
+refuses a slug that is a path, but nothing rate-limits it.
