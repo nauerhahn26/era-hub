@@ -94,7 +94,13 @@ describe("the synthetic wardrobe has the original's shape", () => {
 for (const band of BANDS) {
   describe(`variety gate — band ${band} (variety_test.py:89-132)`, () => {
     const { lineups } = SIM[band];
-    const eligibleIds = new Set(["top", "bottom", "single"].flatMap(cat => R.eligible(ITEMS, cat, band).map(g => g.id)));
+    // The set to cover comes from the FIXTURE, not from the module under
+    // test (review r2): spec §3.4 — tops are never gated; hot admits level 1
+    // (the hot/warm words), warm admits levels 1-2 (every word here). With
+    // 8 level-1 bottoms and 4 level-1 singles the widen rule is inert, so
+    // this is exactly the original's gate: 29 garments under hot, 35 under warm.
+    const ADMITS = { hot: new Set(["hot", "warm"]), warm: new Set(["hot", "warm", "cool"]) };
+    const eligibleIds = new Set(ITEMS.filter(g => g.category === "top" || ADMITS[band].has(g.warmth)).map(g => g.id));
 
     test("deterministic for a fixed date + history (day 1, two calls deep-equal)", () => {
       const a = build(ITEMS, band, DATES[0], { days: {}, events: {} });
@@ -107,7 +113,9 @@ for (const band of BANDS) {
       for (const day of lineups.slice(0, COVERAGE_DAYS)) for (const id of idsOf(day.slice(0, PER_PAGE))) onP1.add(id);
       const missing = [...eligibleIds].filter(id => !onP1.has(id)).sort();
       assert.deepEqual(missing, [], `${eligibleIds.size} eligible; missing ${missing.join(",")}`);
-      assert.ok(eligibleIds.size >= 25, "the band admits most of the wardrobe");
+      assert.equal(eligibleIds.size, band === "hot" ? 29 : 35, "the fixture's per-band count (17 tops + 8/12 bottoms + 4/6 singles)");
+      // and the module's gate agrees with the fixture's reading of spec §3.4
+      assert.deepEqual(new Set(["top", "bottom", "single"].flatMap(cat => R.eligible(ITEMS, cat, band).map(g => g.id))), eligibleIds);
     });
     test("no combo on page 1 two consecutive days (zero overlap)", () => {
       const p1 = lineups.map(day => new Set(keysOf(day.slice(0, PER_PAGE))));
