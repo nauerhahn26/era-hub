@@ -219,3 +219,131 @@ describe("hub deviation (I5, spec §3.1 item 4): missing attributes degrade, nev
     assert.equal(R.styleScore({ id: "t" }, { id: "b" }), 55);
   });
 });
+
+// ---- T1.3 derivePicks(), recordOffer(), lastPage1(), yesterdayPage1() ------
+
+// A combo the way buildCandidates returns it: {key, pieces}.
+const combo = (...ids) => ({ key: ids.join("+"), pieces: ids.map(id => ({ id })) });
+// N calendar days after a day key.
+const plus = (key, n) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+};
+
+describe("derivePicks — parity with variety_test.py:135-189 (outfit_set.py:320-357)", () => {
+  const x = ["item_x1", "item_x2"], y = ["item_y1", "item_y2"];
+  const events = {
+    // two Yes days for X (a confirmed favourite, weight 2.0)...
+    "2026-08-01": [{ kind: "select", combo: x }, { kind: "yes", combo: x }],
+    // ...a day she said Yes to X three times AND Yes to Y (repeat Yes = ONE
+    // credit for that day; Yes on two outfits = both credited)
+    "2026-08-02": [
+      { kind: "yes", combo: x }, { kind: "yes", combo: x }, { kind: "yes", combo: x },
+      { kind: "yes", combo: y },
+    ],
+    // ...one no-Yes day: last select = Y, inferred at half weight
+    "2026-08-03": [{ kind: "select", combo: x }, { kind: "select", combo: y }],
+    // today's own events must NOT count (same-date rerun stability)
+    "2026-08-05": [{ kind: "yes", combo: y }],
+  };
+  test("repeat Yes collapses: 2 Yes days -> 2.0, not 4.0", () => {
+    assert.equal(R.derivePicks(events, "2026-08-05")[x.join("+")], 2.0);
+  });
+  test("second Yes outfit that day counts too, no-Yes day infers at 0.5: 1.5", () => {
+    assert.equal(R.derivePicks(events, "2026-08-05")[y.join("+")], 1.5);
+  });
+  test("today's own events are excluded from scoring", () => {
+    assert.equal(Object.keys(R.derivePicks(events, "2026-08-05")).length, 2);
+    assert.equal(Object.keys(R.derivePicks(events, "2026-08-06")).length, 2);
+    assert.equal(R.derivePicks(events, "2026-08-06")[y.join("+")], 2.5);
+  });
+  test("combo key keeps the ids in the order given (never re-sorted)", () => {
+    const p = R.derivePicks({ "2026-08-01": [{ kind: "yes", combo: ["item_b", "item_a"] }] }, "2026-08-05");
+    assert.deepEqual(p, { "item_b+item_a": 1.0 });
+  });
+  test("garbage keys, non-list days, empty combos and a missing map are skipped", () => {
+    assert.deepEqual(R.derivePicks({ garbage: [{ kind: "yes", combo: ["a"] }], "2026-09-01": "x" }, "2026-09-05"), {});
+    assert.deepEqual(R.derivePicks({ "2026-09-01": [{ kind: "yes", combo: [] }, null, { kind: "yes" }, "yes"] }, "2026-09-05"), {});
+    assert.deepEqual(R.derivePicks(undefined, "2026-09-05"), {});
+    assert.deepEqual(R.derivePicks({ "2026-09-1": [{ kind: "yes", combo: ["a"] }] }, "2026-09-05"), {});
+  });
+  test("a select-only day credits only the LAST select", () => {
+    const p = R.derivePicks({ "2026-09-01": [{ kind: "select", combo: ["a"] }, { kind: "select", combo: ["b"] }, { kind: "select", combo: ["a"] }] }, "2026-09-05");
+    assert.deepEqual(p, { a: 0.5 });
+  });
+});
+
+describe("recordOffer — parity (outfit_set.py:364-373) + the events prune (spec §3.2, I7)", () => {
+  test("writes days[date] = {band, page1: first perPage combos as id lists} and returns the history", () => {
+    const combos = [combo("a", "b"), combo("c"), combo("d", "e"), combo("f", "g")];
+    const hist = { days: {}, events: {} };
+    const out = R.recordOffer(hist, "2026-09-05", combos, 3, "warm");
+    assert.equal(out, hist);
+    assert.deepEqual(hist.days["2026-09-05"], { band: "warm", page1: [["a", "b"], ["c"], ["d", "e"]] });
+  });
+  test("a bare {} history works: days and events are created", () => {
+    const hist = R.recordOffer({}, "2026-09-05", [combo("a", "b")], 7, null);
+    assert.deepEqual(hist, { days: { "2026-09-05": { band: null, page1: [["a", "b"]] } }, events: {} });
+  });
+  test("same-date reruns overwrite: idempotent", () => {
+    const hist = R.recordOffer({}, "2026-09-05", [combo("a", "b")], 7, "warm");
+    R.recordOffer(hist, "2026-09-05", [combo("c", "d")], 7, "hot");
+    assert.deepEqual(hist.days["2026-09-05"], { band: "hot", page1: [["c", "d"]] });
+  });
+  test("61 days keeps the 60 latest and drops events older than the oldest kept day", () => {
+    const hist = { days: {}, events: {} };
+    const d0 = "2026-07-01";
+    for (let i = 0; i < 61; i++) {
+      const d = plus(d0, i);
+      hist.events[d] = [{ kind: "yes", combo: ["a", "b"] }];
+      R.recordOffer(hist, d, [combo("a", "b")], 7, "warm");
+    }
+    const kept = Object.keys(hist.days).sort();
+    assert.equal(kept.length, 60);
+    assert.equal(kept[0], plus(d0, 1));
+    assert.equal(kept[59], plus(d0, 60));
+    assert.ok(!(d0 in hist.days));
+    assert.ok(!(d0 in hist.events), "the event before the oldest kept day is gone");
+    assert.equal(Object.keys(hist.events).length, 60);
+    assert.ok(plus(d0, 1) in hist.events);
+  });
+  test("a young days map (fewer than 60) never prunes recent events; garbage event keys are left alone", () => {
+    const hist = { days: {}, events: { "2026-08-01": [{ kind: "yes", combo: ["a"] }], "2026-09-01": [{ kind: "yes", combo: ["a"] }], garbage: [] } };
+    R.recordOffer(hist, "2026-09-05", [combo("a", "b")], 7, "warm");
+    assert.deepEqual(Object.keys(hist.events).sort(), ["2026-08-01", "2026-09-01", "garbage"]);
+  });
+  test("with no days, events keep their 60 most recent dates", () => {
+    const hist = { days: {}, events: {} };
+    for (let i = 0; i < 70; i++) hist.events[plus("2026-05-01", i)] = [{ kind: "yes", combo: ["a"] }];
+    R.pruneEvents(hist);
+    const keys = Object.keys(hist.events).sort();
+    assert.equal(keys.length, 60);
+    assert.equal(keys[0], plus("2026-05-01", 10));
+  });
+});
+
+describe("lastPage1 / yesterdayPage1 — the page-1 memory (outfit_set.py:415-428)", () => {
+  const hist = {
+    days: {
+      "2026-09-01": { band: "warm", page1: [["a", "b"], ["c"]] },
+      "2026-09-03": { band: "warm", page1: [["a", "d"]] },
+      "2026-09-04": { band: "hot", page1: [["e", "f"], ["g"]] },
+      "2026-09-05": { band: "hot", page1: [["z", "y"]] },   // today: ignored
+    },
+  };
+  test("lastPage1 gives each garment its latest page-1 day strictly before `before`", () => {
+    assert.deepEqual(R.lastPage1(hist, "2026-09-05"), { a: "2026-09-03", b: "2026-09-01", c: "2026-09-01", d: "2026-09-03", e: "2026-09-04", f: "2026-09-04", g: "2026-09-04" });
+    assert.deepEqual(R.lastPage1({}, "2026-09-05"), {});
+    assert.deepEqual(R.lastPage1({ days: { "2026-09-04": {} } }, "2026-09-05"), {});
+  });
+  test("yesterdayPage1 is the Set of yesterday's combo keys (ids joined +)", () => {
+    assert.deepEqual([...R.yesterdayPage1(hist, "2026-09-05")].sort(), ["e+f", "g"]);
+    assert.deepEqual([...R.yesterdayPage1(hist, "2026-09-03")], []);
+    assert.deepEqual([...R.yesterdayPage1({}, "2026-09-03")], []);
+  });
+  test("daysBetween is calendar days between two day keys", () => {
+    assert.equal(R.daysBetween("2026-09-01", "2026-09-05"), 4);
+    assert.equal(R.daysBetween("2026-03-07", "2026-03-09"), 2);   // across spring-forward
+    assert.equal(R.daysBetween("2025-12-31", "2026-01-01"), 1);
+  });
+});

@@ -168,10 +168,108 @@ function styleScore(top, bottom, pairing) {
   return s;
 }
 
+// ---- memory: wardrobe/history.json {days, events} (outfit_set.py:302-373) --
+// days:   {date: {band, page1: [[ids]…]}} — page-1 lineups, written at build
+//         time by recordOffer.
+// events: {date: [{kind: select|yes, combo: [ids]}]} — raw board events
+//         appended by POST /outfit-event; derivePicks turns them into wear
+//         weights.
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const daysOf = hist => (hist && hist.days && typeof hist.days === "object") ? hist.days : {};
+const eventsOf = hist => (hist && hist.events && typeof hist.events === "object") ? hist.events : {};
+// Calendar days from day key a to day key b (b − a).
+function daysBetween(a, b) {
+  const utc = k => { const [y, m, d] = String(k).split("-").map(Number); return Date.UTC(y, m - 1, d); };
+  return Math.round((utc(b) - utc(a)) / 86400000);
+}
+function comboKey(pieces) { return pieces.map(p => p.id).join("+"); }
+
+// Wear signal from board events, one credit per day per combo
+// (outfit_set.py:320-357). Dad (8/5): this is a TREND LINE of her go-to
+// outfits, not a perfect wear record. She confirms with Yes maybe 2 of 3
+// days; on the others the last outfit she selected (opened the confirm page
+// for) is the best guess, at reduced weight. She may gaze Yes repeatedly —
+// the per-day set collapses that to one credit — and a Yes on two different
+// outfits credits both. Only days strictly before `before` count, so a
+// same-date regeneration never scores this morning's own events.
+// Ids are not validated here (I10): only /outfit-event validates the shape.
+function derivePicks(events, before) {
+  const picks = {};
+  const key = e => (e && typeof e === "object" && Array.isArray(e.combo) && e.combo.length) ? e.combo.join("+") : "";
+  for (const [dstr, evs] of Object.entries(events && typeof events === "object" ? events : {})) {
+    if (!DATE_KEY.test(dstr) || dstr >= before) continue;
+    if (!Array.isArray(evs)) continue;
+    const yes = new Set(evs.filter(e => e && e.kind === "yes" && key(e)).map(key));
+    if (yes.size) {
+      for (const k of yes) picks[k] = (picks[k] || 0) + YES_WEIGHT;
+    } else {
+      const sel = evs.filter(e => e && e.kind === "select" && key(e));
+      if (sel.length) { const k = key(sel[sel.length - 1]); picks[k] = (picks[k] || 0) + INFERRED_WEIGHT; }
+    }
+  }
+  return picks;
+}
+
+// Bounded growth for events (spec §3.2, I7 — the original never pruned
+// them): once `days` holds its 60, events older than the oldest kept day
+// go too. While `days` is younger than that (a fresh install, the
+// migration's first weeks) the events keep their 60 most recent dates
+// instead — the oldest-kept-day cutoff would otherwise wipe every pick
+// made before the first recorded offer. Keys that are not dates are left
+// alone (skipped, as derivePicks skips them).
+function pruneEvents(hist) {
+  const days = daysOf(hist), events = eventsOf(hist);
+  const dayKeys = Object.keys(days).filter(k => DATE_KEY.test(k)).sort();
+  const eventKeys = Object.keys(events).filter(k => DATE_KEY.test(k)).sort();
+  let cutoff;
+  if (dayKeys.length >= HISTORY_DAYS_KEPT) cutoff = dayKeys[0];
+  else if (eventKeys.length > HISTORY_DAYS_KEPT) cutoff = eventKeys[eventKeys.length - HISTORY_DAYS_KEPT];
+  if (cutoff) for (const k of eventKeys) if (k < cutoff) delete events[k];
+  return hist;
+}
+
+// Record the page-1 lineup. Same-date reruns overwrite: idempotent
+// (outfit_set.py:364-373). Mutates and returns `history`.
+function recordOffer(history, date, combos, perPage, band) {
+  const hist = history && typeof history === "object" ? history : {};
+  if (!hist.days || typeof hist.days !== "object") hist.days = {};
+  if (!hist.events || typeof hist.events !== "object") hist.events = {};
+  hist.days[date] = {
+    band: band == null ? null : band,
+    page1: combos.slice(0, perPage).map(c => c.pieces.map(p => p.id)),
+  };
+  const keys = Object.keys(hist.days).sort();
+  for (const old of keys.slice(0, Math.max(0, keys.length - HISTORY_DAYS_KEPT))) delete hist.days[old];
+  return pruneEvents(hist);
+}
+
+// garment id -> the last day (strictly before `before`) it was on page 1
+// (outfit_set.py:415-423). Today/future entries are ignored so a same-date
+// rerun stays stable.
+function lastPage1(history, before) {
+  const last = {};
+  for (const [dstr, entry] of Object.entries(daysOf(history))) {
+    if (!DATE_KEY.test(dstr) || dstr >= before) continue;
+    const page1 = entry && Array.isArray(entry.page1) ? entry.page1 : [];
+    for (const ids of page1) {
+      if (!Array.isArray(ids)) continue;
+      for (const gid of ids) if (!(gid in last) || dstr > last[gid]) last[gid] = dstr;
+    }
+  }
+  return last;
+}
+// The Set of combo keys that sat on page 1 yesterday (outfit_set.py:424-428).
+function yesterdayPage1(history, day) {
+  const entry = daysOf(history)[yesterdayOf(day)];
+  const page1 = entry && Array.isArray(entry.page1) ? entry.page1 : [];
+  return new Set(page1.filter(Array.isArray).map(ids => ids.join("+")));
+}
+
 module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
   BAND_WARMTH, WARMTH_LEVELS,
-  h, hmod, dayKey, yesterdayOf,
+  h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
+  derivePicks, recordOffer, pruneEvents, lastPage1, yesterdayPage1,
 };
