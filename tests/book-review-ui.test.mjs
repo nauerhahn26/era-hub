@@ -1085,6 +1085,89 @@ test("with Drive not in local mode a book cannot be removed at all", async () =>
   assert.ok(fs.existsSync(path.join(BOOKS, "Still Here")));
 });
 
+// ------------------------------------- out of allowance (T6b.2, spec §4)
+//
+// The review page is the other place a parent looks at one book, and a book
+// that has stopped for the day must say the same thing here as in Settings:
+// whose allowance ran out, when it comes back in their own clock, and the two
+// honest choices — wait, or add credit and press Try again now. A pause is not
+// a failure and must never be painted as one.
+//
+// The pause is scripted onto the real /content/status answer (the job keeps
+// every other field the page reads) and POST /content/run is answered here, so
+// nothing in this section spawns a worker or reaches a provider.
+function pausedHook(slug, paused, posts) {
+  return async (ctx) => {
+    await ctx.route("**/content/status*", async (route) => {
+      const s = await (await route.fetch()).json();
+      const j = (s.jobs || []).find(b => b.slug === slug);
+      if (j) { j.paused = paused; j.pausedUntil = paused && paused.until; }
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(s) });
+    });
+    await ctx.route("**/content/run", (route) => {
+      if (posts) posts.push(JSON.parse(route.request().postData()));
+      route.fulfill({ status: 202, contentType: "application/json",
+                      body: JSON.stringify({ started: true }) });
+    });
+  };
+}
+const pausedIn = (hours, provider) => ({
+  provider,
+  reason: provider === "elevenlabs" ? "waiting for this month's voice allowance"
+                                    : "waiting for today's free allowance",
+  until: new Date(Date.now() + hours * 3600 * 1000).toISOString(),
+  addUrl: provider === "elevenlabs" ? "https://elevenlabs.io/app/subscription"
+                                    : "https://aistudio.google.com/apikey",
+});
+
+test("a book waiting on Google's day says so, in their clock, with both choices (T6b.2)", async () => {
+  const at = calls.length;
+  book("Waiting Google", ["one", "two"]);
+  const { ctx, page } = await review("waiting-google",
+    { hook: pausedHook("waiting-google", pausedIn(4, "google")) });
+  await page.waitForSelector("#bookPaused:not([hidden])");
+  const s = await page.locator("#bookPaused").textContent();
+  assert.match(s, /Google/, s);
+  assert.doesNotMatch(s, /ElevenLabs/);
+  assert.match(s, /(today|tomorrow) at \d/i, "the local moment it comes back: " + s);
+  assert.doesNotMatch(s, /\d{4}-\d{2}-\d{2}|T\d\d:\d\d|Z\b/, "a date stamp is not a sentence: " + s);
+  assert.match(s, /by itself/i, "waiting is a real choice and is named: " + s);
+  assert.doesNotMatch(s, /stopped|failed|error/i, "a pause is not a failure: " + s);
+  assert.equal(await page.locator("#pausedAdd").getAttribute("data-add"),
+               "https://aistudio.google.com/apikey");
+  await ctx.close();
+  assert.equal(calls.length, at, "saying a book is waiting asks no provider anything");
+});
+
+test("a book waiting on this month's voice points at ElevenLabs, and Try again now posts retry (T6b.2)",
+     async () => {
+  const at = calls.length;
+  book("Waiting Voice", ["one", "two"]);
+  const posts = [];
+  const { ctx, page } = await review("waiting-voice",
+    { hook: pausedHook("waiting-voice", pausedIn(40, "elevenlabs"), posts) });
+  await page.waitForSelector("#bookPaused:not([hidden])");
+  const s = await page.locator("#bookPaused").textContent();
+  assert.match(s, /ElevenLabs/, s);
+  assert.doesNotMatch(s, /Google/, "the wrong page to send a parent to");
+  assert.equal(await page.locator("#pausedAdd").getAttribute("data-add"),
+               "https://elevenlabs.io/app/subscription");
+  await page.locator("#pausedRetry").click();
+  await page.waitForTimeout(600);
+  assert.deepEqual(posts, [{ kind: "books", slug: "waiting-voice", step: null, retry: true }]);
+  await ctx.close();
+  assert.equal(calls.length, at, "and the press went to the hub, not to a provider");
+});
+
+test("a book that is not paused says nothing about allowances (T6b.2)", async () => {
+  book("No Pause", ["one", "two"]);
+  const { ctx, page } = await review("no-pause");
+  assert.equal(await page.locator("#bookPaused").isVisible(), false);
+  const card = await page.locator("#book").textContent();
+  assert.doesNotMatch(card, /allowance/i, card);
+  await ctx.close();
+});
+
 // ------------------------------------------------------------- the money, part 2
 
 test("every provider call the whole suite made went to the stand-in, and to nothing else", () => {

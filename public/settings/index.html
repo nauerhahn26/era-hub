@@ -115,6 +115,12 @@
         <button id="ttsKeySave">Save key</button>
       </div>
       <div class="status" id="ttsKeyStatus"></div>
+      <!-- HOW MUCH MONTH IS LEFT (T6b.2). ElevenLabs sells characters by the
+           month and a book is the only thing here that eats them in bulk, so
+           the card that holds the key is where a parent decides whether this
+           month can afford another book. Hidden until the hub actually knows:
+           a made-up allowance is worse than none. -->
+      <div class="status" id="voiceAllowance" style="display:none"></div>
     </div>
   </div>
 
@@ -873,6 +879,49 @@ function ctSorry(msg){
     return "Some of this book’s files could not be read. Check the folder still has its photos.";
   return "This book stopped part-way through.";
 }
+// ---- Out of allowance (T6b.2, spec §4 "Design target"). The family never adds
+// a card to Google and buys ElevenLabs by the month, so a book that stops for
+// the day is the NORMAL path and not a fault. Three things are owed here, and
+// they are the three the design target names: WHOSE allowance ran out (the two
+// are mended in different places), WHEN it comes back — in the clock on the
+// wall in front of them, never the ISO moment the payload carries — and the two
+// honest choices: wait, and it carries on by itself, or add credit and press
+// Try again now.
+const CT_PROVIDER={ google:"Google AI Studio", elevenlabs:"ElevenLabs" };
+// What pressing "add credit" actually gets a family, which is not the same
+// thing for the two: Google's free day comes back either way and the paid tier
+// buys SPEED; ElevenLabs' month is a top-up and buys the narration itself.
+const CT_ADD={
+  google:"open Google AI Studio and put that key on the paid tier — that buys a whole book the same day",
+  elevenlabs:"top up your ElevenLabs plan — that buys the rest of the narration",
+};
+// A moment in the family's own clock. Never the stamp: "2026-09-05T17:04:00Z"
+// is a machine talking to itself, and a parent reading it cannot tell whether
+// that is tonight or next week.
+function ctWhen(iso){
+  const t=Date.parse(iso); if(!Number.isFinite(t)) return null;
+  const d=new Date(t), now=new Date();
+  const sameDay=(a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();
+  const tom=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1);
+  const clock=d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+  if(sameDay(d,now)) return "today at "+clock;
+  if(sameDay(d,tom)) return "tomorrow at "+clock;
+  return d.toLocaleDateString([],{weekday:"long",day:"numeric",month:"long"})+" at "+clock;
+}
+// The pause, said in full. Returns "" when there is nothing to say, so a book
+// that is simply working gains no sentence at all.
+function ctPaused(j){
+  const p=j.paused; if(!p) return "";
+  const who=CT_PROVIDER[p.provider]||"the AI service";
+  const when=ctWhen(p.until);
+  return '<div class="status" data-paused="'+CT_ESC(p.provider)+'">'
+    +'This book is waiting for more <b>'+CT_ESC(who)+'</b> allowance'
+    +(when?' — it carries on <b>by itself</b> '+CT_ESC(when)+'.':' — it carries on <b>by itself</b> when the allowance comes back.')
+    +' Nothing is broken and nothing already made is lost.'
+    +' You can leave it, or '+CT_ESC(CT_ADD[p.provider]||"add more allowance")+', then press <b>Try again now</b>.'
+    +'</div>';
+}
+
 function ctRow(j){
   const d=document.createElement("div");
   d.dataset.slug=j.slug;
@@ -886,9 +935,12 @@ function ctRow(j){
   if(p.pages) h+=' <span style="color:#5A6A70">'+p.transcribed+' of '+p.pages+' pages read'
     +(p.narrated?', '+p.narrated+' of '+p.pages+' narrated':'')+'.</span>';
   h+='</div>';
-  // A free key's daily allowance: the job is not stuck and there is nothing to
-  // press, so say the one thing that is true — it carries on by itself.
-  if(j.pausedUntil) h+='<div class="status">Today&rsquo;s free AI allowance is used up — the rest of this book carries on <b>tomorrow morning</b> by itself.</div>';
+  // Out of allowance, with a name on it and both choices (T6b.2). A hub that
+  // has not been updated yet — or a job.json written before the pause carried a
+  // provider — sends `pausedUntil` and no `paused`; that is still worth the one
+  // sentence that was always true of it.
+  if(j.paused) h+=ctPaused(j);
+  else if(j.pausedUntil) h+='<div class="status">Today&rsquo;s free AI allowance is used up — the rest of this book carries on <b>tomorrow morning</b> by itself.</div>';
   // "Look for new books now" cannot restart THIS book: it asks Drive to sync,
   // and the scan behind it leaves a claim alone until its heartbeat is half an
   // hour cold. So a stopped book gets its own button, which asks the hub to run
@@ -917,9 +969,18 @@ function ctRow(j){
   h+='<div class="row" style="margin-top:8px"><a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'
    +' style="font-size:17px;color:var(--teal-deep);text-decoration:none;font-weight:650;'
    +'border:2px solid var(--teal);border-radius:12px;padding:10px 16px;background:#fff">📖 Review this book</a>'
-   +(j.error?'<button data-run="'+CT_ESC(j.slug)+'">🔄 Try this book again</button>':'')
+   // Choice two, made pressable: the page where allowance is added (the address
+   // travels with the status, so this card never guesses it), and the press
+   // that lifts the pause. A stopped book gets the same button under its own
+   // sentence — it has always been the one thing that restarts THIS book.
+   +(j.paused&&j.paused.addUrl?'<button data-add="'+CT_ESC(j.paused.addUrl)+'">💳 Open my '
+      +CT_ESC(CT_PROVIDER[j.paused.provider]||"AI")+' page</button>':'')
+   +(j.error||j.paused?'<button data-run="'+CT_ESC(j.slug)+'">🔄 '
+      +(j.paused?'Try again now':'Try this book again')+'</button>':'')
    +'</div>';
   d.innerHTML=h;
+  const add=d.querySelector("button[data-add]");
+  if(add) add.onclick=()=>openSite(add.dataset.add);
   const again=d.querySelector("button[data-run]");
   if(again) again.onclick=async()=>{
     again.disabled=true;
@@ -934,8 +995,28 @@ function ctRow(j){
   };
   return d;
 }
+// Roughly how much of a picture book one page's narration eats. A page of the
+// books this family photographs is a line or two, not a paragraph — and the
+// number is only ever used for the word "about", so a card that is out by a
+// dozen pages is still telling a parent the true thing: whether this month has
+// a book left in it.
+const CT_CHARS_PER_PAGE=120;
 async function contentPaint(){
   let s; try{ s=await (await fetch("/content/status",{cache:"no-store"})).json(); }catch(e){ return; }
+  // WHAT IS LEFT OF THIS MONTH'S VOICE (T6b.2), painted on the Voice card
+  // above. Two units, because a parent thinks in books and ElevenLabs bills in
+  // characters. `narration` is null whenever the hub cannot say — no voice key,
+  // an answer that has not landed yet, a provider that would not answer — and
+  // then the line is simply not there: none is honest, nought is a lie.
+  const va=$("voiceAllowance"), n=s.narration;
+  if(n&&typeof n.charactersLeft==="number"){
+    const pages=Math.max(0,Math.round(n.charactersLeft/CT_CHARS_PER_PAGE));
+    const when=n.resetsAt?ctWhen(n.resetsAt):null;
+    va.innerHTML="≈ <b>"+n.charactersLeft.toLocaleString()+" characters</b> left this month — "
+      +"about <b>"+pages+" page"+(pages===1?"":"s")+"</b> of a picture book"
+      +(when?" (resets "+CT_ESC(when)+")":"")+".";
+    va.style.display="";
+  } else { va.textContent=""; va.style.display="none"; }
   const list=$("contentBooks"), st=$("contentStatus");
   // Gap 1: the hub's Drive scope is read-only, so a book built without the
   // Drive app on this computer could never reach the family's Drive. Say which

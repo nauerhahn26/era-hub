@@ -102,7 +102,19 @@ function bookJob(over) {
   return { kind: "books", slug: "tabby-mctat", title: "Tabby McTat", state: "transcribing",
            step: "transcribe", progress: { pages: 12, transcribed: 3, narrated: 0 },
            cost: { characters: 0, narrated: 0 }, flags: 0, pageFlags: 0, edited: 0,
-           pausedUntil: null, note: null, published: false, error: null, ...over };
+           pausedUntil: null, note: null, paused: null, published: false, error: null, ...over };
+}
+// The pause as content.js derives it (T6b.1): whose allowance ran out, when it
+// comes back, and where more is added. `hours` from now, so the sentence the
+// card writes is a real local time rather than a fixture's frozen stamp.
+function pausedIn(hours, provider) {
+  const until = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+  return { provider, reason: provider === "elevenlabs"
+             ? "waiting for this month's voice allowance"
+             : "waiting for today's free allowance",
+           until,
+           addUrl: provider === "elevenlabs" ? "https://elevenlabs.io/app/subscription"
+                                             : "https://aistudio.google.com/apikey" };
 }
 
 test("the AI helper defaults to Google — free services first (bug 16)", async () => {
@@ -415,5 +427,124 @@ test("a stopped book says so in plain words and offers its own try-again button"
   // the same door) cannot restart a refused key by accident.
   assert.deepEqual(JSON.parse(req.postData()),
                    { kind: "books", slug: "tabby-mctat", step: null, retry: true });
+  await ctx.close();
+});
+
+// ---- Out of allowance: the two honest choices (T6b.2, spec §4 "Design target")
+//
+// The family never adds a card to Google, so a book that stops for the day is
+// the NORMAL path, not a fault. What the card owes them is: whose allowance ran
+// out (the two are mended in different places), when it comes back in THEIR
+// clock, and the two things they may do about it — wait, or add credit and
+// press Try again now. Never a date stamp, never a provider's error string, and
+// never the impression that something is broken.
+
+test("a paused book names the provider, the local time it comes back, and both choices (T6b.2)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [
+    bookJob({ paused: pausedIn(3, "google"), pausedUntil: pausedIn(3, "google").until }),
+  ] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] [data-paused]');
+  const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"] [data-paused]',
+                               e => e.textContent);
+  assert.match(row, /Google/, "whose allowance ran out: " + row);
+  assert.doesNotMatch(row, /ElevenLabs/, "and not the one that did not");
+  // A local clock time, not the ISO moment the payload carries.
+  assert.match(row, /(today|tomorrow) at \d/i, "when it comes back, in their clock: " + row);
+  assert.doesNotMatch(row, /\d{4}-\d{2}-\d{2}|T\d\d:\d\d|Z\b/, "a date stamp is not a sentence");
+  // Choice one: nothing. Said out loud, because a card that only offers a
+  // button reads as "this is broken until you act".
+  assert.match(row, /by itself/i, "waiting is a real choice and is named: " + row);
+  // Choice two: where credit is added — the address travels with the status.
+  const add = await page.$eval('#contentBooks [data-slug="tabby-mctat"] button[data-add]',
+                               b => ({ url: b.dataset.add, text: b.textContent }));
+  assert.equal(add.url, "https://aistudio.google.com/apikey");
+  assert.match(add.text, /Google/i, add.text);
+  // …and the press that uses it. Nothing here reads as a failure.
+  assert.match(await page.$eval('#contentBooks [data-slug="tabby-mctat"] button[data-run]',
+                                b => b.textContent), /again/i);
+  const whole = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.doesNotMatch(whole, /stopped|failed|error/i, "a pause is not a failure: " + whole);
+  await ctx.close();
+});
+
+test("a book waiting on the voice allowance points at ElevenLabs, not at Google (T6b.2)", async () => {
+  const p = pausedIn(30, "elevenlabs");
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [
+    bookJob({ state: "narrating", step: "narrate", paused: p, pausedUntil: p.until }),
+  ] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] [data-paused]');
+  const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"] [data-paused]',
+                               e => e.textContent);
+  assert.match(row, /ElevenLabs/, row);
+  assert.doesNotMatch(row, /Google/, "the wrong page to send a parent to");
+  assert.doesNotMatch(row, /\d{4}-\d{2}-\d{2}|T\d\d:\d\d/, "a date stamp is not a sentence");
+  const add = await page.$eval('#contentBooks [data-slug="tabby-mctat"] button[data-add]',
+                               b => b.dataset.add);
+  assert.equal(add, "https://elevenlabs.io/app/subscription");
+  // The address is opened through the hub's own door, so the page lands in a
+  // REAL browser window rather than inside the kiosk (the 9/5 gate finding).
+  const opened = [];
+  await page.route("**/open-url", r => {
+    opened.push(JSON.parse(r.request().postData()));
+    r.fulfill({ status: 200, contentType: "application/json", body: '{"opened":true}' });
+  });
+  await page.click('#contentBooks [data-slug="tabby-mctat"] button[data-add]');
+  await page.waitForTimeout(300);
+  assert.deepEqual(opened, [{ url: "https://elevenlabs.io/app/subscription" }]);
+  await ctx.close();
+});
+
+test("Try again now posts retry:true, once (T6b.2)", async () => {
+  const p = pausedIn(5, "elevenlabs");
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [
+    bookJob({ state: "narrating", step: "narrate", paused: p, pausedUntil: p.until }),
+  ] }));
+  const posts = [];
+  await page.route("**/content/run", r => {
+    posts.push(JSON.parse(r.request().postData()));
+    r.fulfill({ status: 202, contentType: "application/json", body: '{"started":true}' });
+  });
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] button[data-run]');
+  await page.click('#contentBooks [data-slug="tabby-mctat"] button[data-run]');
+  await page.waitForTimeout(600);
+  // retry:true is the only thing that lifts the pause the steps honour, so the
+  // press has to carry it — and the button goes dead behind the press, so a
+  // parent leaning on it cannot queue five runs of the same book.
+  assert.deepEqual(posts, [{ kind: "books", slug: "tabby-mctat", step: null, retry: true }]);
+  await ctx.close();
+});
+
+test("a book that is not paused says nothing about allowances (T6b.2)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob()] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  assert.equal(await page.$('#contentBooks [data-slug="tabby-mctat"] [data-paused]'), null);
+  assert.equal(await page.$('#contentBooks [data-slug="tabby-mctat"] button[data-add]'), null);
+  const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.doesNotMatch(row, /allowance/i, row);
+  await ctx.close();
+});
+
+// The Voice card is where a parent decides whether this month can afford a
+// book. /content/status carries ElevenLabs' own counters (T6b.1), so the card
+// can say it in the two units that matter: characters, and roughly how many
+// pages of a picture book those buy.
+test("the Voice card says how much of this month's voice is left (T6b.2)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    narration: { charactersLeft: 8000, resetsAt: "2026-10-03T09:00:00.000Z" } }));
+  await page.waitForFunction(() => /\S/.test(document.getElementById("voiceAllowance").textContent));
+  const s = await page.$eval("#voiceAllowance", e => e.textContent);
+  assert.match(s, /8,000 characters/, s);
+  assert.match(s, /about \d+ pages/i, "and what that buys, in books: " + s);
+  assert.match(s, /resets/i, s);
+  assert.doesNotMatch(s, /2026-10-03|T09:00/, "a date stamp is not a sentence: " + s);
+  assert.equal(await page.isVisible("#voiceAllowance"), true);
+  await ctx.close();
+});
+
+test("no allowance answer, no made-up number (T6b.2)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ narration: null }));
+  await page.waitForFunction(() => /\S/.test(document.getElementById("contentStatus").textContent));
+  assert.equal(await page.isVisible("#voiceAllowance"), false,
+    "an allowance nobody could read is not an allowance of zero");
   await ctx.close();
 });

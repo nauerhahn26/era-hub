@@ -176,6 +176,18 @@
       <h2 id="bookTitle"></h2>
       <div class="status" id="bookState"></div>
       <div class="status" id="bookFlags" hidden></div>
+      <!-- OUT OF ALLOWANCE (T6b.2, spec §4 "Design target"). The family never
+           adds a card to Google and buys ElevenLabs by the month, so a book
+           that stops for the day is the NORMAL path. The sentence names whose
+           allowance ran out and when it comes back in the clock in front of
+           them; the two buttons are the two honest choices made pressable. -->
+      <div class="status" id="bookPaused" hidden>
+        <span id="bookPausedWords"></span>
+        <div class="actions" style="margin-top:8px">
+          <button id="pausedAdd" type="button" hidden></button>
+          <button id="pausedRetry" type="button">🔄 Try again now</button>
+        </div>
+      </div>
     </div>
     <!-- The page strip, with the per-page controls (inline edit, re-narrate,
          clear flag) inside its rows; the book-level buttons below. -->
@@ -308,9 +320,110 @@ function paintBook(j) {
     $("bookFlags").textContent = bits.join(", ") + ".";
     show("bookFlags", true);
   }
+  paintPaused(j);
   paintAnimate(j);
   show("book", true);
 }
+
+// ---- OUT OF ALLOWANCE (T6b.2, spec §4 "Design target").
+//
+// The same three things the Settings card owes, in the same words, because a
+// parent who read it there must not meet a different story here: WHOSE
+// allowance ran out (Google's day and ElevenLabs' month are mended in different
+// places), WHEN it comes back — in their own clock, never the ISO moment the
+// payload carries — and the two honest choices: wait, and the book carries on
+// by itself, or add allowance and press Try again now.
+const PROVIDER = { google: "Google AI Studio", elevenlabs: "ElevenLabs" };
+// What "add allowance" actually buys, which is not the same for the two:
+// Google's free day returns either way and the paid tier buys SPEED;
+// ElevenLabs' month is a top-up and buys the narration itself.
+const ADD_WORDS = {
+  google: "open Google AI Studio and put that key on the paid tier — that buys a whole book the same day",
+  elevenlabs: "top up your ElevenLabs plan — that buys the rest of the narration",
+};
+// A moment in the family's own clock. "2026-09-05T17:04:00Z" is a machine
+// talking to itself; a parent reading it cannot tell tonight from next week.
+function when(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t), now = new Date();
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const tom = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const clock = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (sameDay(d, now)) return "today at " + clock;
+  if (sameDay(d, tom)) return "tomorrow at " + clock;
+  return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })
+       + " at " + clock;
+}
+
+function paintPaused(j) {
+  const p = j.paused;
+  if (!p) { show("bookPaused", false); return; }
+  const who = PROVIDER[p.provider] || "the AI service";
+  const at = when(p.until);
+  $("bookPausedWords").innerHTML =
+    "This book is waiting for more <b>" + ESC(who) + "</b> allowance"
+    + (at ? " — it carries on <b>by itself</b> " + ESC(at) + "."
+          : " — it carries on <b>by itself</b> when the allowance comes back.")
+    + " Nothing is broken and nothing already made is lost."
+    + " You can leave it, or " + ESC(ADD_WORDS[p.provider] || "add more allowance")
+    + ", then press <b>Try again now</b>.";
+  const add = $("pausedAdd");
+  if (p.addUrl) {
+    add.dataset.add = p.addUrl;
+    add.textContent = "💳 Open my " + who + " page";
+  }
+  add.hidden = !p.addUrl;
+  $("pausedRetry").disabled = false;
+  show("bookPaused", true);
+}
+
+// The address a family adds allowance at is opened through the hub's own door,
+// so it lands in a REAL browser window: a login page inside the kiosk traps a
+// novice with no URL bar and no way back (dad 8/29, and the fal card's 9/5
+// gate finding). window.open is the fallback when the hub will not do it.
+async function openSite(url) {
+  try {
+    const r = await (await fetch("/open-url", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })).json();
+    if (r.opened) return;
+  } catch (e) {}
+  window.open(url, "_blank", "noopener");
+}
+$("pausedAdd").addEventListener("click", () => {
+  const url = $("pausedAdd").dataset.add;
+  if (url) openSite(url);
+});
+
+// "Try again now": the family saying they have added allowance — or simply that
+// they would rather find out. retry:true is the only thing that lifts the pause
+// the steps honour (content.js runStep, T6b.1), so the press carries it, and
+// the button goes dead behind the press so a parent leaning on it cannot queue
+// the same book five times.
+$("pausedRetry").addEventListener("click", async () => {
+  $("pausedRetry").disabled = true;
+  bookNote("Starting this book again…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: null, retry: true });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    bookNote("New ERA is not answering — nothing was started.", true);
+    $("pausedRetry").disabled = false; return;
+  }
+  if (!r.ok) {
+    bookNote((out && out.error) || "New ERA could not start this book again.", true);
+    $("pausedRetry").disabled = false; return;
+  }
+  // The pause is lifted and the book is on the walk; the card follows the run
+  // from here, exactly as the other buttons on this page do.
+  show("bookPaused", false);
+  bookNote("Started again ✓ — this page follows along.", false);
+  const s = await settled();
+  const job = s && (s.jobs || []).find(b => b.slug === SLUG);
+  if (job) paintBook(job);
+});
 
 // THE COST GATE, PAINTED (spec §4 step 5, T6.2). /content/status carries the
 // book's quote — how many pages, what one clip costs this family, what the two
