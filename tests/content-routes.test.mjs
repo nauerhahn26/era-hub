@@ -98,7 +98,13 @@ before(async () => {
   driveCfg({ mode: "local", folderPath: FOLDER });
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, ERA_DATA_DIR: DATA, ERA_BIND: "127.0.0.1" },
+    // NOWHERE TO GO (plan §B.2). The status poll asks ElevenLabs how much of
+    // the month's voice is left whenever a voice card exists, and this suite
+    // writes one (a placeholder, below) to prove status never echoes a key
+    // back. Pointed at a closed port, that question is answered by the kernel
+    // in a millisecond and never leaves this box.
+    env: { ...process.env, ERA_DATA_DIR: DATA, ERA_BIND: "127.0.0.1",
+           ERA_ELEVEN_URL: "http://127.0.0.1:1" },
   });
   let up = false;
   for (let i = 0; i < 100; i++) {

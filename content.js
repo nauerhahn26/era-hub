@@ -38,7 +38,11 @@ const drive = require("./drive.js");
 const store = require("./content-store.js");
 const booksIndex = require("./books-index.js");
 const { EXT: PHOTO_EXT } = require("./clothing-photos.js");
-const { narrationPath, forgetPage } = require("./content-narrate.js");
+// `voiceAllowance` is two numbers and a date off ElevenLabs' subscription
+// endpoint — how many characters are left this month and when the counter turns
+// over. content-narrate reads the key; nothing key-shaped comes back here, and
+// the header's law holds.
+const { narrationPath, forgetPage, allowance: voiceAllowance } = require("./content-narrate.js");
 const { pagesOf, pauseHolds } = require("./content-providers.js");
 // The book's quote, and how much of it is already made. Pure arithmetic and one
 // readdir — no key, no network (content-animate.js keeps both).
@@ -403,6 +407,38 @@ function bookFor(slug, st) {
   return name ? { name, dir: path.join(root, name) } : null;
 }
 
+// WHERE A FAMILY ADDS MORE ALLOWANCE, per provider (T6b.1, spec §4 "Design
+// target"). The pause is the normal path for a slow book on a free key, and the
+// two honest choices are "wait — it carries on by itself" and "add credit and
+// press Try again now". The second one is only honest if the card can say
+// WHERE, so the address travels with the status rather than being written into
+// three different pages. A provider we have no page for gets null, and the card
+// simply offers the waiting half.
+const ADD_URL = {
+  google: "https://aistudio.google.com/apikey",
+  elevenlabs: "https://elevenlabs.io/app/subscription",
+};
+
+// The pause a book is under RIGHT NOW, or null. Derived — job.json keeps the
+// pause itself (pausedUntil/pausedNote/pausedProvider, written by
+// content-worker's holdHere) and the raw `pausedUntil` stays on the payload for
+// the readers that already have it.
+//
+// A pause whose moment has passed is not a pause: the book is simply waiting
+// for the next scan to pick it up, and a card still saying "out of allowance
+// until 3 o'clock" at half past three is a card nobody believes.
+//
+// A job.json written before this task carries a pause and no provider. Those
+// can only be Google's — nothing else could pause a book until now — so that is
+// what an unnamed pause reads as, rather than a book that says nothing.
+function pausedOf(job, now) {
+  if (!job || !pauseHolds(job.pausedUntil, now)) return null;
+  const provider = typeof job.pausedProvider === "string" && job.pausedProvider
+    ? job.pausedProvider : "google";
+  return { provider, reason: job.pausedNote || null, until: job.pausedUntil,
+           addUrl: ADD_URL[provider] || null };
+}
+
 // What one book folder looks like from outside, and NOTHING else: no absolute
 // path (a status page is not a map of the family's disk), no claimedBy device
 // name, no key — content.js never reads one and this payload is public.
@@ -513,6 +549,10 @@ function jobFor(name, dir, slug, perClip) {
                clips, spent: price ? Math.round(clips * price * 100) / 100 : null },
     pausedUntil: (job && job.pausedUntil) || null,
     note: (job && job.pausedNote) || null,
+    // The same pause, said in full: which allowance ran out, when it comes
+    // back, and where more is added. The two fields above are what older
+    // readers of this payload use and they do not move.
+    paused: pausedOf(job),
     published,
     // job.errors is a history kept on purpose (a book that fell over twice for
     // two reasons is the one a parent needs the whole story of); `error` is only
@@ -674,6 +714,17 @@ function runStep(o) {
   // for ever, and started by somebody who never asked for it.
   else if (req.retry === true && job.state === "failed" && store.owedState(job) === null)
     store.writeJob(found.dir, store.transition(job, job.failedFrom || "inbox"));
+  // A BOOK THAT IS MERELY WAITING, AND A PARENT WHO WILL NOT (T6b.1). Out of
+  // allowance is a pause, not a failure, so the book above is not failed — but
+  // the pause is real and the steps honour it: the transcriber refuses to knock
+  // while one is recorded (that is what saves a free key's requests) and would
+  // hold again the instant this run started, so the press would buy nothing.
+  // "Try again now" is the family saying they have added credit — or simply
+  // that they would rather find out — so the pause is lifted here, where the
+  // press is, and nowhere else. A scan never does this: it would spend the day's
+  // last requests on the same refusal, every half hour.
+  else if (req.retry === true && job.pausedUntil)
+    store.writeJob(found.dir, store.unpause(job));
   run({ kind: req.kind, slug: req.slug, name: found.name, dir: found.dir,
         dataDir: DATA, step, page, pages }).catch(() => {});
   return { started: true };
@@ -987,6 +1038,13 @@ function status() {
                      step: (progress && progress.step) || running.step || null } : null,
     queued: queue.map(q => q.job.slug),
     jobs: jobs(),
+    // HOW MUCH MONTH IS LEFT (T6b.1). Characters, not money: it is what
+    // ElevenLabs counts and what the Voice card can turn into "about K pages".
+    // null whenever we cannot say — no voice card, an answer that has not come
+    // back yet, a provider that would not answer — because a made-up allowance
+    // is worse than none. Cached for ten minutes inside content-narrate, so
+    // this poll never becomes a call.
+    narration: DATA ? voiceAllowance(DATA) : null,
     lastScan,
   };
 }

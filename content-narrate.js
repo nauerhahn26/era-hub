@@ -54,6 +54,49 @@ const TIMEOUT_MS = 120000;
 
 function elevenBase() { return process.env.ERA_ELEVEN_URL || "https://api.elevenlabs.io"; }
 
+// OUT OF ALLOWANCE IS NOT A DEAD KEY (T6b.1, spec §4 "Design target"). This
+// family never adds a card to Google and buys ElevenLabs by the month, so
+// running out is the NORMAL end of a busy week, not a fault — and until now
+// every 401 from this provider was turned into "ElevenLabs did not accept that
+// key", which is the one sentence that makes a parent go and change a key that
+// was never wrong.
+//
+// A spent monthly allowance is a 401 whose body says so:
+//   {"detail":{"status":"quota_exceeded","message":"…"}}
+// That, and only that, is a pause. A 401 with any other status — or none — is
+// still a key the provider will not take, and still stops the book.
+const QUOTA_STATUS = "quota_exceeded";
+// What Settings and the review page say while the month is out. The transcriber
+// has its own sentence for Google's day (content-providers.QUOTA_NOTE); this is
+// the voice's, and it names the month because that is the wait.
+const QUOTA_NOTE = "waiting for this month's voice allowance";
+// The subscription endpoint: how many characters this month held, how many are
+// spent, and the instant the counter goes back to zero.
+const SUBSCRIPTION_PATH = "/v1/user/subscription";
+// A number nobody is waiting on. Short: /content/status is polled, and the
+// answer is cached for ten minutes either way.
+const SUBSCRIPTION_TIMEOUT_MS = 15000;
+// The pause when the provider will not say when the month turns over. A day is
+// wrong by a fortnight at worst and right in the shape that matters: the book
+// wakes by itself, and the family is never told to add credit they have.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Read WHOLE and before any truncation, the way content-providers reads a 429's
+// RetryInfo: what a body says about itself must not depend on how much of it we
+// happen to keep for the log. JSON first, then the words themselves — a
+// provider's exact envelope is not something to bet a family's book on.
+function spentAllowance(raw) {
+  if (raw == null) return false;
+  const s = String(raw);
+  try {
+    const j = JSON.parse(s);
+    const d = j && j.detail;
+    if (d && typeof d === "object" && String(d.status) === QUOTA_STATUS) return true;
+    if (d && typeof d === "object") return false;
+  } catch {}
+  return new RegExp('"status"\\s*:\\s*"' + QUOTA_STATUS + '"').test(s);
+}
+
 // Media paths in the manifest are zero-padded three digits (spec §2:
 // pages/001.jpg, audio/001.mp3, video/001.mp4).
 function pad3(n) { return String(n).padStart(3, "0"); }
@@ -128,7 +171,18 @@ async function narratePage(text, cfg, onCharged) {
     signal: AbortSignal.timeout(c.timeoutMs || TIMEOUT_MS),
   });
   if (!r.ok) {
-    const body = store.redact((await r.text().catch(() => "")).slice(0, 200));
+    // The WHOLE body first — the question "was that the allowance?" is asked of
+    // all of it — and only then the short, redacted line we may write down.
+    const raw = await r.text().catch(() => "");
+    const body = store.redact(raw.slice(0, 200));
+    if ((r.status === 401 || r.status === 403) && spentAllowance(raw)) {
+      // A PAUSE, and it carries the same flag the transcriber's spent ladder
+      // does (content-providers `.quota`), so both sides of the pipeline mean
+      // the same thing by "out of allowance".
+      const e = new Error("elevenlabs: this month's character allowance is spent");
+      e.quota = true;
+      throw e;
+    }
     if (r.status === 401 || r.status === 403)
       throw new Error("permanent: ElevenLabs did not accept that key (" + r.status + ") " + body);
     throw new Error("elevenlabs " + r.status + " " + body);
@@ -199,6 +253,94 @@ function forgetPage(dir, index) {
   return true;
 }
 
+// ------------------------------------------------- how much month is left
+
+// subscription(cfg) -> {charactersLeft, resetsAt} | null
+//
+// ElevenLabs' own count: `character_limit` is what the plan holds,
+// `character_count` what has been spent, `next_character_count_reset_unix` the
+// second the counter goes back to zero. Two numbers and a moment, which is
+// everything the family is owed and nothing else — no plan name, no key, no
+// account id.
+//
+// NEVER THROWS. Every caller is either a status poll (a card that says nothing
+// is better than a card that 500s) or a book deciding how long to sleep, and
+// neither is a reason to lose anything. null means "we do not know".
+async function subscription(cfg, opts) {
+  const c = cfg || {};
+  const o = opts || {};
+  if (!c.apiKey) return null;
+  try {
+    const r = await fetch(elevenBase() + SUBSCRIPTION_PATH, {
+      headers: { "xi-api-key": c.apiKey },
+      signal: AbortSignal.timeout(o.timeoutMs || SUBSCRIPTION_TIMEOUT_MS),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const used = Number(j && j.character_count);
+    const limit = Number(j && j.character_limit);
+    const reset = Number(j && j.next_character_count_reset_unix);
+    return {
+      charactersLeft: Number.isFinite(used) && Number.isFinite(limit)
+        ? Math.max(0, limit - used) : null,
+      resetsAt: Number.isFinite(reset) && reset > 0
+        ? new Date(reset * 1000).toISOString() : null,
+    };
+  } catch (e) {
+    // Said to the hub's own console and nowhere else: a family whose network
+    // hiccuped does not need it in their book's log.
+    console.error("[content-narrate] subscription: " + store.redact(e.message));
+    return null;
+  }
+}
+
+// WHEN MAY THIS BOOK ASK AGAIN? The provider's own answer where there is one,
+// and a day where there is not. A reset that is already in the past is not an
+// answer either (a stale plan, a clock that disagrees) — a day, again, because
+// a book that wakes too early costs one refused call and a book that never
+// wakes costs the family the book.
+async function allowanceResetsAt(cfg, now) {
+  const t = now == null ? Date.now() : now;
+  const sub = await subscription(cfg);
+  const at = sub && sub.resetsAt ? Date.parse(sub.resetsAt) : NaN;
+  return Number.isFinite(at) && at > t ? new Date(at).toISOString()
+                                       : new Date(t + DAY_MS).toISOString();
+}
+
+// THE CARD'S COPY OF IT (T6b.1). /content/status is polled every few seconds by
+// the Settings card and the board note, and one subscription call per poll
+// would spend the family's rate limit on a number that changes when a book is
+// narrated. So it is fetched at most every ten minutes, in the background, and
+// the poll gets whatever is known: null until the first answer lands, which is
+// exactly what a card that says nothing needs.
+//
+// Deliberately synchronous — content.js's status() is, and the alternative is
+// making every reader of it async for a number that is a nicety.
+const ALLOWANCE_TTL_MS = 10 * 60 * 1000;
+let allowanceCache = { at: 0, value: null, pending: false };
+
+function allowance(dataDir, opts) {
+  const o = opts || {};
+  const t = o.now == null ? Date.now() : o.now;
+  const cfg = o.cfg || (dataDir ? aiRoles(dataDir).elevenlabs : null);
+  // No voice card is not an empty allowance, it is no allowance at all — and a
+  // family who has just cleared their key must not keep seeing last month's
+  // number under it.
+  if (!cfg || !cfg.apiKey) { allowanceCache = { at: 0, value: null, pending: false }; return null; }
+  // Stamped with the CALLER'S clock and at the moment the call goes out, not
+  // the moment it lands: a provider that hangs for its whole timeout must not
+  // be asked again by every poll in the meantime.
+  if (!allowanceCache.pending && (allowanceCache.at === 0 || t - allowanceCache.at >= ALLOWANCE_TTL_MS)) {
+    allowanceCache.pending = true;
+    allowanceCache.at = t;
+    subscription(cfg)
+      .then((v) => { allowanceCache.value = v; })
+      .catch(() => { allowanceCache.value = null; })
+      .finally(() => { allowanceCache.pending = false; });
+  }
+  return allowanceCache.value;
+}
+
 // narrateBook(dir, opts) — narrate every page of `dir` that has text.
 //
 //   opts.cfg      {apiKey, voiceId, modelId} — for a caller that already has it
@@ -240,7 +382,7 @@ async function narrateBook(dir, opts) {
   const errors = [];
   // The characters THIS run sent, for the caller's summary; the book's running
   // total lives on the job (bill() above) because a run is not a book.
-  let narrated = 0, reused = 0, spent = 0, permanent = false;
+  let narrated = 0, reused = 0, spent = 0, permanent = false, quota = false;
 
   // The entry AND the file have to be there for a page to count as narrated: an
   // mp3 someone deleted (or a Drive mirror that never landed) must be re-done,
@@ -299,6 +441,22 @@ async function narrateBook(dir, opts) {
       store.appendLog(dir, "narrate", "page " + page.index + ": " + r.words.length + " words", { now: o.now });
     } catch (e) {
       const msg = store.redact(e && e.message ? e.message : String(e));
+      // THE MONTH RAN OUT, WHICH IS NOT A FAILURE (T6b.1, spec §4 "Design
+      // target"). Every page after this one would buy the same refusal, so the
+      // walk stops here — but nothing is lost and nothing is marked wrong: the
+      // pages already bought keep their audio and their timings, the book stays
+      // on the step it owes, and it wakes by itself when the counter does. Not
+      // in `errors[]` for the same reason the transcriber's spent ladder is not:
+      // an allowance that ran out is the free-tier path working, and a book that
+      // showed the family a red line for it would be lying to them.
+      if (e && e.quota) {
+        quota = true;
+        stoppedAt = i;
+        store.appendLog(dir, "narrate", "this month's character allowance is spent - " + QUOTA_NOTE, { now: o.now });
+        const k = kept(page.index);
+        if (k) { out.push(k); reused++; }
+        break;
+      }
       errors.push(msg);
       store.appendLog(dir, "narrate", "page " + page.index + " failed: " + msg, { now: o.now });
       // A failed attempt leaves the page exactly as it was. If it already had
@@ -337,11 +495,26 @@ async function narrateBook(dir, opts) {
   });
   const res = { narrated, reused, chars: spent, pages: out, errors };
   if (permanent) res.permanent = true;
+  // The hold the worker already understands (content-worker.js holdHere, E4),
+  // with one field more than the transcriber's: WHICH allowance ran out, so
+  // /content/status can name the provider and point at the right page for
+  // adding credit rather than making a parent guess.
+  if (quota) {
+    res.hold = "quota";
+    res.provider = "elevenlabs";
+    res.pausedUntil = await allowanceResetsAt(cfg, o.now);
+    res.note = QUOTA_NOTE;
+  }
   return res;
 }
 
 module.exports = {
   DEFAULT_MODEL_ID, OUTPUT_FORMAT, TIMEOUT_MS,
+  QUOTA_STATUS, QUOTA_NOTE, SUBSCRIPTION_PATH, ALLOWANCE_TTL_MS,
   elevenBase, pad3, audioRel, narrationPath, readNarration, forgetPage, said,
+  spentAllowance, subscription, allowanceResetsAt, allowance,
   narratePage, narrateBook,
+  // The cache is process-wide by design (one hub, one voice card); a suite that
+  // wants to watch it fill has to be able to empty it first.
+  _resetAllowance: () => { allowanceCache = { at: 0, value: null, pending: false }; },
 };

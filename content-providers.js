@@ -690,6 +690,13 @@ function perDayQuota(raw) {
 // Everything a 429's body has to say about when to come back: {ms, perDay}.
 const quotaHint = (raw) => ({ ms: retryAfterMs(raw), perDay: perDayQuota(raw) });
 
+// WHOSE ALLOWANCE THIS BOOK IS WAITING ON (T6b.1). The pause has to name a
+// provider now, because ElevenLabs can pause a book too and the two are mended
+// in different places. The vision card's own answer, defaulted the way
+// callModel defaults it — a card holding something this hub does not know reads
+// as the free Google tier everywhere else, and must here too.
+const providerOf = (cfg) => (cfg && PROVIDERS[cfg.provider] ? cfg.provider : "google");
+
 // The EARLIEST of the hints a run collected: when the ladder is spent, the
 // first rung to come back is the one that decides when the book wakes — and it
 // brings its own answer to "was that the whole day?" with it.
@@ -730,8 +737,10 @@ function pagesOf(dir) {
 //
 // Returns {transcribed, reused, escalated, pages, calls, errors} on a normal
 // run, {hold:"no-ai-key"} when there is no key to spend, and
-// {hold:"quota", pausedUntil, note} when the ladder is spent — pausedUntil is
-// the ISO moment the allowance is expected back (see "the pause" above).
+// {hold:"quota", provider, pausedUntil, note} when the ladder is spent —
+// pausedUntil is the ISO moment the allowance is expected back (see "the pause"
+// above) and `provider` is whose allowance it was, for the card that has to
+// tell the family where credit is added (T6b.1).
 // Throws only for a permanent refusal — content-worker.js turns that into a
 // failed job with the provider's own words, and never retries it.
 async function transcribeBook(dir, opts) {
@@ -752,7 +761,11 @@ async function transcribeBook(dir, opts) {
   // written — including the plain day a hub older than F6 wrote there.
   const paused = o.job && o.job.pausedUntil;
   if (pauseHolds(paused, o.now))
-    return { hold: "quota", pausedUntil: paused, note: QUOTA_NOTE,
+    return { hold: "quota", pausedUntil: paused, note: o.job.pausedNote || QUOTA_NOTE,
+             // Whoever wrote this pause said whose it was; re-holding on it must
+             // not rename it (a book paused on the VOICE that is asked to
+             // transcribe would otherwise start blaming Google).
+             provider: o.job.pausedProvider || providerOf(cfg),
              transcribed: 0, reused: 0, escalated: 0, pages: [], calls: 0, errors: [] };
 
   const pages = pagesOf(dir);
@@ -1007,7 +1020,12 @@ async function transcribeBook(dir, opts) {
 
   if (permanent) throw new Error(permanent);
   const res = { transcribed, reused, escalated, pages: all, calls, errors };
-  if (quota) { res.hold = "quota"; res.pausedUntil = pausedUntilFor(o.now, retry); res.note = QUOTA_NOTE; }
+  if (quota) {
+    res.hold = "quota";
+    res.provider = providerOf(cfg);
+    res.pausedUntil = pausedUntilFor(o.now, retry);
+    res.note = QUOTA_NOTE;
+  }
   return res;
 }
 

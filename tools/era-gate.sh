@@ -47,7 +47,14 @@ grep -rlZ "8377" "$GATE" 2>/dev/null | xargs -0 -r sed -i "s/8377/$PORT/g"
 # a survivor from a killed session otherwise fails every live-server suite with
 # EADDRINUSE; bracket trick so pkill never matches this script's own cmdline)
 pkill -f "[n]ode .*server.js $PORT" 2>/dev/null; sleep 0.5
-ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 node "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
+# ERA_ELEVEN_URL points at a closed port on purpose: the gate's data dir holds a
+# REAL ElevenLabs credential, and since T6b.1 a /content/status poll (the board
+# polls it on every load) asks that provider how much of the month's voice is
+# left. The gate must not talk to a provider on the family's key, so the question
+# is answered by the kernel instead — the hub logs it and serves `narration:
+# null`. Every suite that needs the seam to WORK stands up its own stand-in.
+ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_ELEVEN_URL="http://127.0.0.1:1" \
+  node "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for i in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/settings" >/dev/null && break; sleep 0.3; done

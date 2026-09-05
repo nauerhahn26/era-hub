@@ -172,12 +172,9 @@ function summary(step, result) {
 
 // A finished step drops the pause — and the hold — it was waiting under: the
 // allowance came back, or the page it lost was read this time, so nothing must
-// keep telling the family otherwise.
-function unpause(job) {
-  const out = { ...job };
-  delete out.pausedUntil; delete out.pausedNote; delete out.held;
-  return out;
-}
+// keep telling the family otherwise. content-store owns the shape (the other
+// lifter is a parent pressing "Try again now").
+const unpause = store.unpause;
 
 // The job stays exactly where it is: same state, same claim, fresh heartbeat
 // (so no other device mistakes a waiting book for an abandoned one), plus the
@@ -190,10 +187,18 @@ function holdHere(job, step, hold, steps) {
     // (content.js reads this to decide whether to show the last error).
     held.held = hold.hold;
     if (hold.pausedUntil) { held.pausedUntil = hold.pausedUntil; held.pausedNote = hold.note || null; }
+    // WHOSE ALLOWANCE (T6b.1). Two providers can pause a book now and they are
+    // not fixed in the same place — Google's day comes back by itself,
+    // ElevenLabs' month can be topped up — so /content/status has to be able to
+    // say which one this book is waiting on. Only ever written, never cleared
+    // here: a step that re-holds without naming a provider (the transcriber
+    // seeing a pause it wrote yesterday) must not erase what it said then.
+    if (hold.provider) held.pausedProvider = hold.provider;
     store.writeJob(DIR, held);
   }
   const out = { slug: SLUG, state: job ? job.state : null, steps, held: hold.hold, step: step.name };
   if (hold.pausedUntil) { out.pausedUntil = hold.pausedUntil; out.note = hold.note || null; }
+  if (hold.provider) out.provider = hold.provider;
   return out;
 }
 

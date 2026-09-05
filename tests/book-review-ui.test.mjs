@@ -158,10 +158,21 @@ before(async () => {
       let parsed = null;
       try { parsed = JSON.parse(body); } catch {}
       const kind = /\/with-timestamps/.test(req.url) ? "narrate"
-                 : /:generateContent/.test(req.url) ? "read" : "?";
-      calls.push({ kind, url: req.url,
+                 : /:generateContent/.test(req.url) ? "read"
+                 // A READ of the family's own counters, not a purchase (T6b.1):
+                 // the hub asks how much of this month's voice is left whenever
+                 // /content/status is polled, so it lands here — counted, and
+                 // counted APART from the calls that spend.
+                 : req.url === "/v1/user/subscription" ? "allowance" : "?";
+      calls.push({ kind, url: req.url, method: req.method,
                    key: req.headers["xi-api-key"] || req.headers["x-goog-api-key"] || null,
                    text: (parsed && parsed.text) || null });
+      if (kind === "allowance") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ character_count: 1000, character_limit: 10000,
+                                 next_character_count_reset_unix: 1790000000 }));
+        return;
+      }
       // The transcriber (content-providers.js, google adapter): one page's photo
       // in, one JSON object of words out. Always the same words — this stand-in
       // cannot read, and the test only needs to know a page WAS re-read.
@@ -684,11 +695,14 @@ test("Re-narrate this page buys that page and nothing else, and the shelf follow
                              null, { timeout: 30000 });
   // ONE page, ONE call, on the seam, with the Voice card's key in the header
   // where it belongs (never in the URL — a URL ends up in logs).
-  assert.equal(calls.length, 1, "one page re-narrated is one call, never the book");
-  assert.equal(calls[0].text, "on the mat");
-  assert.equal(calls[0].key, FAKE_KEY);
-  assert.ok(calls[0].url.startsWith("/v1/text-to-speech/" + VOICE + "/with-timestamps"), calls[0].url);
-  assert.ok(!calls[0].url.includes(FAKE_KEY), "the key must never travel in a URL");
+  // Everything the family is BILLED for; the allowance read that the status
+  // poll makes buys nothing and is counted on its own at the end of the suite.
+  const bought = calls.filter(c => c.kind !== "allowance");
+  assert.equal(bought.length, 1, "one page re-narrated is one call, never the book");
+  assert.equal(bought[0].text, "on the mat");
+  assert.equal(bought[0].key, FAKE_KEY);
+  assert.ok(bought[0].url.startsWith("/v1/text-to-speech/" + VOICE + "/with-timestamps"), bought[0].url);
+  assert.ok(!bought[0].url.includes(FAKE_KEY), "the key must never travel in a URL");
   // The audio and the word timings reach the shelf, on that page only.
   let m;
   for (let i = 0; i < 150; i++) {
@@ -1084,7 +1098,14 @@ test("every provider call the whole suite made went to the stand-in, and to noth
     "one page re-narrated by hand and three read again; the stand-in saw " + spent("narrate", 0));
   assert.equal(spent("read", 0), 3,
     "three pages were ever asked to be read again; the stand-in saw " + spent("read", 0));
-  assert.equal(calls.length, 7, "and nothing else reached a provider at all");
-  assert.ok(calls.every(c => c.kind === "narrate" || c.kind === "read"),
+  // The allowance reads are not spending and are not counted as such — but
+  // they are still held to the seam: every one of them is a GET of the
+  // subscription counters with the key in the header where it belongs.
+  const bought = calls.filter(c => c.kind !== "allowance");
+  assert.equal(bought.length, 7, "and nothing else reached a provider at all");
+  assert.ok(bought.every(c => c.kind === "narrate" || c.kind === "read"),
     "the only provider shapes this page may reach are one page of narration and one page read");
+  assert.ok(calls.filter(c => c.kind === "allowance")
+    .every(c => c.method === "GET" && c.key === FAKE_KEY && !c.url.includes(FAKE_KEY)),
+    "an allowance read is a GET, on the stand-in, with the key in the header and never in the URL");
 });

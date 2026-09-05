@@ -359,6 +359,22 @@ function addSpend(job, step, chars) {
   };
 }
 
+// THE PAUSE, LIFTED. Written here rather than in the two files that do it
+// because the fields are this file's shape and there are now two lifters: a
+// step that finished (the allowance came back on its own) and a parent pressing
+// "Try again now" after adding credit (content.js runStep, T6b.1). A job with
+// half a pause left on it — a `held` with no `pausedUntil`, a provider naming an
+// allowance that is no longer out — is a card that keeps telling the family to
+// wait for something that already happened.
+//
+// Returns a NEW job, like transition() and addSpend(): a caller still holding
+// the old one must not see it move under them.
+function unpause(job) {
+  const out = { ...job };
+  delete out.pausedUntil; delete out.pausedNote; delete out.pausedProvider; delete out.held;
+  return out;
+}
+
 function readJob(dir) {
   const raw = readJson(jobPath(dir));
   if (!raw || typeof raw !== "object") return null;
@@ -411,6 +427,6 @@ module.exports = {
   buildDir, jobPath, textPath, logPath, tmpPathFor,
   writeAtomic, readJson, redact,
   normalizeText, readText, writeText,
-  newJob, canTransition, transition, fail, noteErrors, addSpend, readJob, writeJob,
+  newJob, canTransition, transition, fail, noteErrors, addSpend, unpause, readJob, writeJob,
   appendLog, readLog,
 };
