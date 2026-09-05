@@ -12,6 +12,9 @@
 //      month's characters.
 //   3. "Try again now" (POST /content/run {retry:true}) lifts a pause and the
 //      provider really is called again.
+//   4. A book ENTERING a pause raises exactly one Windows toast that names the
+//      provider (T6b.3) — a parent who is not looking at Settings is told once,
+//      and never told the same thing twice.
 //
 // PORTS: 8443 (the real server.js), 8444 (the stand-in ElevenLabs), 8445 (the
 // stand-in vision provider).
@@ -49,6 +52,19 @@ const FOLDER = path.join(TMP, "My Drive", "New ERA Content");
 const BOOKS = path.join(FOLDER, "books");
 // A second shelf, for the steps this suite drives in-process (no hub, no scan).
 const LOOSE = path.join(TMP, "loose");
+// A THIRD shelf with a data dir of its own, for the toast tests (T6b.3): those
+// drive content.js's own scan() in this process, and a scan claims and builds.
+// Pointed at the hub child's folder it would race the child for the very books
+// the tests above are asserting on.
+const DATA2 = path.join(TMP, "data-toast");
+const FOLDER2 = path.join(TMP, "My Drive", "Toast Content");
+const BOOKS2 = path.join(FOLDER2, "books");
+// Where a toast goes instead of the Windows shell. ERA_TOAST_CMD is notify.js's
+// seam: the command is spawned with the toast's two lines as its arguments, so
+// the test sees exactly what a parent would have been shown without PowerShell
+// existing. Split on spaces by notify.js, hence a tmp path with none in it.
+const TOAST_LOG = path.join(TMP, "toasts.jsonl");
+const TOAST_SEAM = path.join(TMP, "toast-seam.js");
 
 // Assembled at runtime, never written as a literal: era-scan treats a key-shaped
 // run in a tracked file as a fatal hit, and a fixture that looks like a key is
@@ -63,7 +79,7 @@ const RESET_UNIX = Math.floor(Date.parse("2026-10-01T00:00:00.000Z") / 1000);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-09-05T18:20:00.000Z");
 
-let eleven, ai, child, narrate, providers;
+let eleven, ai, child, narrate, providers, content, drive, notify;
 // One entry per request each stand-in actually saw. Cleared per test; `total`
 // is the suite's running count and nothing resets it — that is what the closing
 // money guardrail asserts on.
@@ -184,6 +200,31 @@ before(async () => {
     await new Promise(r => setTimeout(r, 100));
   }
   if (!up) throw new Error("server never came up");
+
+  // ------------------------------------------------ the toast seam (T6b.3)
+  // Set AFTER the hub child is spawned, on purpose: the child inherited an
+  // environment without it, so the only toasts that reach the log below are the
+  // ones this process raised, and a stray one from the child's own startup scan
+  // cannot be miscounted as ours.
+  fs.writeFileSync(TOAST_SEAM,
+    'require("fs").appendFileSync(process.env.ERA_TOAST_FILE,\n' +
+    '  JSON.stringify(process.argv.slice(2)) + "\\n");\n');
+  process.env.ERA_TOAST_FILE = TOAST_LOG;
+  process.env.ERA_TOAST_CMD = "node " + TOAST_SEAM;
+
+  fs.mkdirSync(BOOKS2, { recursive: true });
+  fs.mkdirSync(DATA2, { recursive: true });
+  fs.writeFileSync(path.join(DATA2, "drive.json"),
+    JSON.stringify({ mode: "local", folderPath: FOLDER2 }));
+  notify = require(path.join(HUB, "notify.js"));
+  drive = require(path.join(HUB, "drive.js"));
+  drive.start(DATA2);
+  content = require(path.join(HUB, "content.js"));
+  content.start(DATA2);
+  // No scan in this suite may spawn a real build: the toast tests are about
+  // what the family is TOLD, and a real worker thread would spend the stand-ins'
+  // time writing into folders the next test rewrites.
+  content.runJob = () => Promise.resolve({ ok: true });
 });
 
 after(() => {
@@ -192,6 +233,8 @@ after(() => {
   if (ai) ai.close();
   delete process.env.ERA_ELEVEN_URL;
   delete process.env.ERA_AI_URL;
+  delete process.env.ERA_TOAST_CMD;
+  delete process.env.ERA_TOAST_FILE;
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 });
 
@@ -447,6 +490,90 @@ test("try again now lifts a GOOGLE pause too, rather than holding on it again", 
   // saves a free key's requests), so a press that does not LIFT the pause buys
   // the family nothing at all.
   await until(() => aiCalls.length > 0, "the vision provider to be asked again now");
+});
+
+// ------------------------------------------------------- one toast per pause
+
+// Every toast the seam has been handed, oldest first, as [title, body].
+function toasts() {
+  try {
+    return fs.readFileSync(TOAST_LOG, "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
+  } catch { return []; }
+}
+const RESET_ISO = new Date(RESET_UNIX * 1000).toISOString();
+// Long enough for a spawned seam to have written, when the point of the
+// assertion is that NOTHING was written.
+const settle = () => new Promise(r => setTimeout(r, 400));
+
+test("a book entering a pause is one toast, and it says whose allowance ran out", async () => {
+  const dir = book(BOOKS2, "Toast Book");
+  job(dir, { state: "reviewing", held: "quota", pausedProvider: "elevenlabs",
+             pausedNote: "waiting for this month's voice allowance",
+             pausedUntil: RESET_ISO });
+  content.scan({ now: NOW });
+  const seen = await until(() => { const l = toasts(); return l.length ? l : null; }, "the toast");
+  assert.equal(seen.length, 1, "one pause, one toast");
+  const [title, body] = seen[0];
+  assert.match(title, /Toast Book/, "a parent recognises their own book");
+  assert.match(body, /ElevenLabs/, "and where the allowance ran out");
+  assert.ok(!body.includes(RESET_ISO), "the clock on the wall, never the stamp");
+  assert.match(body, /Settings/, "and the place the two choices live");
+});
+
+test("the same pause on the next scan is not a second toast", async () => {
+  content.scan({ now: NOW + 5 * 60 * 1000 });
+  await settle();
+  assert.equal(toasts().length, 1, "a book still waiting is not news");
+});
+
+test("a NEW pause on the same book IS told", async () => {
+  const dir = path.join(BOOKS2, "Toast Book");
+  store.writeJob(dir, { ...store.readJob(dir),
+    pausedUntil: new Date(Date.parse(RESET_ISO) + 60 * 60 * 1000).toISOString() });
+  content.scan({ now: NOW });
+  await until(() => toasts().length === 2, "the second toast");
+});
+
+test("a Google pause names Google — the two are mended in different places", async () => {
+  const dir = book(BOOKS2, "Google Toast");
+  job(dir, { state: "transcribing", held: "quota", pausedProvider: "google",
+             pausedNote: "waiting for tomorrow's quota",
+             pausedUntil: new Date(NOW + 3 * 60 * 60 * 1000).toISOString() });
+  content.scan({ now: NOW });
+  const t = await until(() => toasts().find(x => /Google Toast/.test(x[0])), "the Google toast");
+  assert.match(t[1], /Google/);
+});
+
+test("a run that ends in a hold tells the family without waiting for a scan", async () => {
+  const dir = book(BOOKS2, "Held Book");
+  const held = { slug: "held-book", held: "quota", provider: "elevenlabs",
+                 pausedUntil: RESET_ISO, note: "waiting for this month's voice allowance" };
+  content.runJob = () => Promise.resolve(held);
+  const before = toasts().length;
+  await content.run({ kind: "books", slug: "held-book", name: "Held Book", dir });
+  await content.idle();
+  const t = await until(() => toasts().find(x => /Held Book/.test(x[0])), "the worker's own toast");
+  assert.match(t[1], /ElevenLabs/);
+  assert.equal(toasts().length, before + 1);
+
+  // The same wait, hit again — a retry that holds on the same moment, a second
+  // scan, the hub's own re-run — says nothing new.
+  await content.run({ kind: "books", slug: "held-book", name: "Held Book", dir });
+  await content.idle();
+  await settle();
+  assert.equal(toasts().length, before + 1, "the same pause is told once, not once a run");
+  content.runJob = () => Promise.resolve({ ok: true });
+});
+
+test("nothing is raised off Windows, and no toast ever carries a key", () => {
+  const before = toasts().length;
+  assert.equal(notify.toast("Toast Book is waiting", "out of allowance",
+                            { cmd: "", platform: "linux" }), false,
+               "no toast shell on Ellie's Linux hub — and nothing spawned to find out");
+  assert.equal(toasts().length, before, "and the seam saw nothing either");
+  const all = JSON.stringify(toasts());
+  assert.ok(!all.includes(FAKE_VOICE_KEY) && !all.includes(FAKE_VISION_KEY),
+            "a toast is a sentence for a parent, never a credential");
 });
 
 // ------------------------------------------------------------ money guardrail

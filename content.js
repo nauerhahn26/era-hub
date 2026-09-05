@@ -51,6 +51,10 @@ const { quote, animatedCount } = require("./content-animate.js");
 // cost gate needs (what a clip costs this family). No key is read in this file
 // and none ever will be (see the header).
 const { haveRoles, falPrice } = require("./ai-config.js");
+// One Windows toast, for the one thing a parent cannot see by not looking:
+// a book that stopped to wait for more allowance (T6b.3). Takes a title and a
+// sentence, both written here; it is a no-op off Windows.
+const notify = require("./notify.js");
 
 // A folder must look identical across two observations at least this far apart
 // before it is claimed (spec §2 "Quiet period"; the local mirror syncs every
@@ -236,6 +240,11 @@ function scan(opts) {
     const list = listing(dir);
     if (!list) continue;                      // vanished between readdir and stat
     const job = store.readJob(dir);
+    // A book that is waiting for more allowance is told to the family here as
+    // well as at the end of a run: this is how a pause another device wrote into
+    // the shared folder — or one this hub wrote before it was restarted — gets
+    // said out loud. Deduped inside, so a shelf of parked books is silent.
+    notePause(slug, name, job, now);
     const inbox = !job && list.count > 0;
     // Only an inbox is on the quiet clock; anything else forgets its listing so
     // a shelf of a hundred published books costs us nothing to remember.
@@ -341,6 +350,16 @@ function begin(job) {
       // Before the next book in the queue starts (a transcription is minutes
       // long, and this book is finished now).
       announce(job, result);
+      // A run that ended in a pause says so NOW, rather than at whichever scan
+      // in the next five minutes happens to notice. The worker thread does not
+      // raise this itself: a toast is a spawn, and the hub process is where
+      // every other one in this suite of programs lives (server.js). The hold's
+      // own shape (content-worker.js holdHere) is enough to say it — no second
+      // read of a job.json the worker has just written.
+      if (result && result.held && result.pausedUntil)
+        notePause(job.slug, job.name || path.basename(job.dir),
+                  { pausedUntil: result.pausedUntil, pausedProvider: result.provider || null,
+                    pausedNote: result.note || null });
       const next = queue.shift();
       if (next) begin(next.job).then(r => next.waiters.forEach(w => w(r)));
       return result;
@@ -437,6 +456,70 @@ function pausedOf(job, now) {
     ? job.pausedProvider : "google";
   return { provider, reason: job.pausedNote || null, until: job.pausedUntil,
            addUrl: ADD_URL[provider] || null };
+}
+
+// ------------------------------------------------ telling the family, once
+
+// What each provider is called on the cards (public/settings/index.html
+// CT_PROVIDER, public/book-review/index.html). The toast is the same sentence
+// arriving somewhere else, so it must use the same words: a parent told
+// "ElevenLabs" by a toast and "the voice service" by Settings has been told
+// about two different problems.
+const PROVIDER_NAME = { google: "Google AI Studio", elevenlabs: "ElevenLabs" };
+
+// The moment, in the clock on the wall in front of the parent. Never the ISO
+// stamp the payload carries: "2026-10-01T00:00:00Z" is a machine talking to
+// itself, and a parent reading it cannot tell whether that is tonight or next
+// week. Mirrors ctWhen() in the two pages, for the same reason as above.
+function whenWords(until, now) {
+  const at = Date.parse(until);
+  if (!Number.isFinite(at)) return null;
+  const d = new Date(at), n = new Date(now == null ? Date.now() : now);
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() &&
+                            a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const tom = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1);
+  const clock = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (sameDay(d, n)) return "today at " + clock;
+  if (sameDay(d, tom)) return "tomorrow at " + clock;
+  return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }) + " at " + clock;
+}
+
+// The pause we have already told the family about, per slug. In memory on
+// purpose: the alternative is a flag written into job.json, which lives inside
+// the family's Drive folder and would hand Drive a fresh upload and every other
+// device a fresh mirror for the sake of a notification nobody can see twice
+// anyway. A hub that restarts mid-pause therefore says it once more, which is
+// the right way round — a machine that has just come back up telling a parent
+// what it is still waiting on is useful; one that has silently forgotten is not.
+let told = new Map();
+
+// ONE TOAST WHEN A BOOK ENTERS A PAUSE, and nothing at all otherwise (T6b.3).
+//
+// Called from the two places the hub itself learns of a pause: the result of a
+// run it just finished (content-worker's holdHere shape, which is the same
+// moment the pause is written to disk) and the scan, which is how a pause
+// another device wrote — or one this hub wrote before it restarted — is noticed.
+// Both go through here so the two can never double up on the same wait.
+//
+// Deduped on (slug, pausedUntil), so:
+//   • the same book still waiting on the same moment is told once, however many
+//     scans and re-runs pass over it — "Try again now" included, which lifts the
+//     pause and, if the allowance is still spent, lands on the same moment;
+//   • a NEW moment (tomorrow's quota, next month's characters) is news again;
+//   • a pause that has ended is forgotten, so a book that stops a second time
+//     for a genuinely new reason is not silently swallowed.
+function notePause(slug, title, job, now) {
+  const p = pausedOf(job, now);
+  if (!p) { told.delete(slug); return null; }
+  if (told.get(slug) === p.until) return null;
+  told.set(slug, p.until);
+  const who = PROVIDER_NAME[p.provider] || "the AI service";
+  const when = whenWords(p.until, now);
+  notify.toast(
+    (title || slug) + " is waiting",
+    "Out of " + who + " allowance" + (when ? " until " + when : "") +
+    ". Nothing is broken. Open Settings to add credit, or leave it — it carries on by itself.");
+  return p;
 }
 
 // What one book folder looks like from outside, and NOTHING else: no absolute
@@ -1076,7 +1159,7 @@ module.exports = {
   NO_FAL, NOT_FINISHED,
   _testReset: () => {
     running = null; inflight = null; queue = []; seen = new Map();
-    progress = null; lastScan = null;
+    progress = null; lastScan = null; told = new Map();
     module.exports.runJob = runJob;
     module.exports.onPublished = null;
   },
