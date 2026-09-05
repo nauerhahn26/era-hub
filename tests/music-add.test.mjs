@@ -35,6 +35,12 @@ const MUSIC = path.join(INSIDE, "music");               // where the add must wr
 const BIN = path.join(TMP, "bin", "yt-dlp");            // the stand-in
 const CTL = path.join(TMP, "bin", "ctl.json");          // what it should do next
 const CALLS = path.join(TMP, "bin", "calls.jsonl");     // every argv it saw
+// A suite root with no packs in it. "the pack is missing" used to be proven
+// only by the accident that vendor/yt-dlp happens not to exist in a worktree —
+// and .gitignore expressly anticipates a developer dropping one there for local
+// testing, which would have turned the pack-missing test green on the wrong
+// answer. ERA_PACK_ROOT makes the absence a fact of the test, not of the box.
+const NOPACKS = path.join(TMP, "no-packs");
 let child = null;
 let DATA = null;
 
@@ -90,7 +96,11 @@ async function startHub(extraEnv) {
            ERA_DRIVE_LOCAL_ROOTS: ROOT, FAKE_YTDLP_CTL: CTL,
            // belt and braces: a sync fans out to the clothing build, and that
            // build must never be able to reach a provider from a test box.
-           ERA_AI_URL: "http://127.0.0.1:9/never", ...extraEnv },
+           ERA_AI_URL: "http://127.0.0.1:9/never",
+           // POST /packs/install pulls the release tarball: point the feed at a
+           // dead loopback port so the door can be exercised without a byte
+           // leaving this machine.
+           ERA_UPDATE_URL: "http://127.0.0.1:9/never", ...extraEnv },
   });
   for (let i = 0; i < 100; i++) {
     try { await fetch(`${BASE}/settings`); return; } catch {}
@@ -125,6 +135,7 @@ async function settled() {
 
 before(() => {
   fs.mkdirSync(INSIDE, { recursive: true });
+  fs.mkdirSync(NOPACKS, { recursive: true });
   fs.mkdirSync(path.dirname(BIN), { recursive: true });
   fs.writeFileSync(BIN, FAKE, { mode: 0o755 });
   ctl({ mode: "ok", title: "Let It Go!", duration: 232 });
@@ -137,7 +148,7 @@ after(async () => {
 // ---------------------------------------------------------- without the pack
 
 test("without the media-tools pack the sheet gets an answer it can read, never a 500", async () => {
-  await startHub({});   // no ERA_YTDLP, and no vendor/yt-dlp in a worktree
+  await startHub({ ERA_PACK_ROOT: NOPACKS });   // no ERA_YTDLP, and a root with no packs in it
 
   const r = await post("/music/add", { url: "https://www.youtube.com/watch?v=abc" });
   assert.equal(r.status, 409, "a refusal, not a crash");
@@ -149,6 +160,7 @@ test("without the media-tools pack the sheet gets an answer it can read, never a
   const s = await addStatus();
   assert.deepEqual(s.pack, { id: "media-tools", installed: false });
   assert.equal(s.running, null);
+  assert.equal(calls().length, 0, "and nothing was spawned - a refusal never runs a downloader");
 });
 
 test("a body with neither a link nor a name is refused before anything is spawned", async () => {
@@ -159,6 +171,23 @@ test("a body with neither a link nor a name is refused before anything is spawne
     const j = await r.json();
     assert.ok(j.error && j.message, "with something the sheet can show");
   }
+  assert.equal(calls().length, 0, "and still nothing spawned");
+});
+
+// The sheet's "Install it and try again" has to lead somewhere: media-tools
+// belongs to no app, so POST /apps could never lay it down (review 9/5).
+test("the pack the sheet names can really be installed - POST /packs/install", async () => {
+  const bad = await post("/packs/install", { pack: "../evil" });
+  assert.equal(bad.status, 400, "a pack nobody has heard of is a refusal");
+  assert.equal((await bad.json()).error, "unknown-pack");
+
+  const there = await post("/packs/install", { pack: "reader" });
+  assert.equal(there.status, 200, "a pack already on disk is never downloaded again");
+  assert.deepEqual(await there.json(), { installed: true });
+
+  const go = await post("/packs/install", { pack: "media-tools" });
+  assert.equal(go.status, 202, "and the one the sheet offers really starts");
+  assert.deepEqual(await go.json(), { installing: true });
 });
 
 // ------------------------------------------------------------- with the pack
@@ -171,6 +200,7 @@ test("with the tool but no Drive folder chosen, the add says so instead of writi
   assert.equal(r.status, 409);
   assert.equal((await r.json()).error, "needs-local-drive");
   assert.equal(fs.existsSync(path.join(DATA, "music")), false, "and nothing was written to the shelf");
+  assert.equal(calls().length, 0, "and yt-dlp was never spawned to find out");
 });
 
 test("a pasted link: audio + thumbnail into the DRIVE folder, one manifest entry, rank 1", async () => {
@@ -198,6 +228,8 @@ test("a pasted link: audio + thumbnail into the DRIVE folder, one manifest entry
   assert.equal(s.source, "https://www.youtube.com/watch?v=letitgo1");
   assert.equal(s.rank, 1, "first song takes the first tile");
   assert.equal(fs.existsSync(path.join(MUSIC, "manifest.tmp")), false, "written atomically, no litter");
+  assert.deepEqual(fs.readdirSync(MUSIC).filter(n => n.startsWith(".")), [],
+                   "and the staged download swept up after itself");
 });
 
 test("ffmpeg is never required: audio-only format, thumbnail written raw, no -x and no conversion", async () => {
@@ -298,6 +330,53 @@ test("yt-dlp stopping non-zero surfaces a human message and leaves the manifest 
   assert.equal(none.ok, false, "a search with no hits is a failure, not a blank song");
 });
 
+// The re-add is the dangerous one: it used to delete the old audio and cover
+// BEFORE the download ran, so a re-add that failed destroyed a song the family
+// already had — the tile vanished (songsRecipe skips a song whose audio file is
+// gone) and nothing put it back. The download now lands under a staging name
+// and only replaces the song once there is really something to replace it with.
+test("a re-add whose download fails leaves the song the family already had", async () => {
+  const audio = path.join(MUSIC, "let-it-go.m4a");
+  const before = fs.readFileSync(audio);
+  ctl({ mode: "fail-download", id: "letitgo1", title: "Let It Go!", duration: 232 });
+  assert.equal((await post("/music/add", { url: "https://www.youtube.com/watch?v=letitgo1" })).status, 202);
+  const last = await settled();
+  assert.equal(last.ok, false, "the download failed, and says so");
+
+  assert.ok(fs.existsSync(audio), "yesterday's audio is still on the family's shelf");
+  assert.deepEqual(fs.readFileSync(audio), before, "byte for byte, untouched");
+  assert.ok(fs.existsSync(path.join(MUSIC, "let-it-go.webp")), "and so is its cover");
+  const s = manifest().songs.find(x => x.id === "let-it-go");
+  assert.equal(s.audio, "let-it-go.m4a", "the manifest still points at a file that exists");
+  assert.deepEqual(fs.readdirSync(MUSIC).filter(n => n.startsWith(".")), [],
+                   "and the failed download left no half-song behind in the family's Drive folder");
+});
+
+// One unreadable manifest used to erase the whole library: every read error was
+// swallowed as "no songs yet", and the next add wrote the file back with one
+// song in it. A half-synced file (Google Drive for Desktop) or a Windows
+// EBUSY/EPERM is exactly that shape.
+test("a song list New ERA cannot read is refused, never rewritten", async () => {
+  const file = path.join(MUSIC, "manifest.json");
+  const good = fs.readFileSync(file);
+  const half = '{"schemaVersion":1,"songs":[{"id":"let-it-go"';
+  fs.writeFileSync(file, half);
+  ctl({ mode: "ok", id: "new1", title: "A New Song", duration: 10 });
+
+  const r = await post("/music/add", { url: "https://www.youtube.com/watch?v=new1" });
+  assert.equal(r.status, 409, "a refusal, not a 202 that eats the library");
+  const j = await r.json();
+  assert.equal(j.error, "manifest-unreadable");
+  assert.ok(typeof j.message === "string" && j.message.length > 10, "in words a parent can act on");
+
+  const o = await post("/music/order", { ids: ["let-it-go", "how-far-ill-go"] });
+  assert.equal(o.status, 409, "and arranging is refused the same way");
+  assert.equal((await o.json()).error, "manifest-unreadable");
+
+  assert.equal(fs.readFileSync(file, "utf8"), half, "the half-written file is left exactly as it was");
+  fs.writeFileSync(file, good);
+});
+
 // --------------------------------------------------- ⇅ Arrange (plan T4.3)
 // POST /music/order is the whole running order in one shot: the strip hands
 // back every id, the hub renumbers `rank` from 1 and touches nothing else.
@@ -318,7 +397,8 @@ test("⇅ Arrange rewrites every rank and nothing else, and the board sees the n
 
   const r = await post("/music/order", { ids: ["under-the-sea", "let-it-go", "how-far-ill-go"] });
   assert.equal(r.status, 200, "the order is written while the sheet waits: it is one small file");
-  assert.deepEqual(await r.json(), { ok: true, songs: 3 });
+  assert.deepEqual(await r.json(), { ok: true, songs: 3, mirrored: true },
+                   "and the shelf took the new order, so the tiles really have moved");
 
   const after = manifest();
   assert.deepEqual(after.songs.map(s => [s.id, s.rank]),
@@ -337,6 +417,22 @@ test("⇅ Arrange rewrites every rank and nothing else, and the board sees the n
   assert.deepEqual(grid.buttons.filter(b => b.type === "song").map(b => b.song_id),
                    ["under-the-sea", "let-it-go", "how-far-ill-go"],
                    "the shelf's tiles are in the new order, so the write reached the Drive folder");
+});
+
+// The mirror is what carries a new order from the family's Drive folder to
+// this device's shelf, which is the board the tiles are drawn from. A mirror
+// that failed used to be swallowed, so the strip said "The songs are in their
+// new order" over a board that had not moved at all.
+test("an order the shelf did not take says so instead of claiming the tiles moved", async () => {
+  const shelf = path.join(DATA, "music", "manifest.json");
+  fs.rmSync(shelf, { force: true });
+  fs.mkdirSync(shelf, { recursive: true });   // a landing spot the copy cannot use
+  try {
+    const r = await post("/music/order", { ids: ["let-it-go", "how-far-ill-go", "under-the-sea"] });
+    assert.equal(r.status, 200, "the manifest in the family's folder really was rewritten");
+    assert.deepEqual(await r.json(), { ok: true, songs: 3, mirrored: false },
+                     "but the shelf did not take it, and the strip is told so it can say so");
+  } finally { fs.rmSync(shelf, { recursive: true, force: true }); }
 });
 
 test("an order that does not name every song is refused, and the manifest never moves", async () => {

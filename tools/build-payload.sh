@@ -33,6 +33,11 @@ for m in $(grep -ho 'require("\./[a-z-]*\(\.js\)\?")' "$OUT"/*.js | sed 's/requi
   [ -f "$OUT/$m.js" ] || { echo "build-payload: $m.js is required by the hub but not in the payload"; exit 1; }
 done
 cp -r "$HUB/vendor" "$OUT/vendor"   # HEIC decode (libheif, LGPL - see NOTICE) + jpeg-js
+# ...but NOT the media-tools binary. .gitignore expects a developer to drop a
+# local vendor/yt-dlp in for testing, and the blanket copy above would ship it
+# as the pack without ever checking its hash. The only copy allowed in a
+# payload is the pinned one laid down below. "Wrong hash = no build, ever."
+rm -rf "$OUT/vendor/yt-dlp"
 # Garment cut-out (dad 9/1: "add the 50mb so trim is nice looking") — U^2-Net
 # u2netp, the same model her Python pipeline uses, run through ONNX Runtime's
 # WEBASSEMBLY build. Deliberately not the native binding: a clean Windows 10

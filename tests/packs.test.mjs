@@ -17,6 +17,7 @@ const NSI = fs.readFileSync(new URL("../tools/installer.nsi", import.meta.url), 
 const DIST = fs.readFileSync(new URL("../tools/build-dist.sh", import.meta.url), "utf8");
 const PAYLOAD = fs.readFileSync(new URL("../tools/build-payload.sh", import.meta.url), "utf8");
 const PIN = fs.readFileSync(new URL("../tools/yt-dlp.pin", import.meta.url), "utf8");
+const SERVER = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
 
 test("every pack path is excluded from the core section and shipped by a pack section", () => {
   const core = NSI.match(/File \/r ((?:\/x \S+ )+)"\$\{PAYLOAD\}\/\*"/);
@@ -89,6 +90,36 @@ test("the media-tools pack is yt-dlp, and it is nobody else's pack", () => {
     fs.mkdirSync(path.join(root, "vendor", "yt-dlp"), { recursive: true });
     assert.equal(packInstalled(root, "media-tools"), true);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// A pack nobody ticked has to have a way in AFTER setup, or a sheet that says
+// "install it and try again" is a dead end (review 9/5). media-tools is the
+// case that proved it: it is unticked by default in the installer AND belongs
+// to no APPS entry, so POST /apps — which resolves the id against that list —
+// could never lay it down, and there is no Settings row for it either.
+test("every pack can still be installed after setup, so no sheet offers a dead end", () => {
+  assert.match(SERVER, /req\.url === "\/packs\/install"/, "the hub has a pack door of last resort");
+  assert.ok(SERVER.includes("packs.PACKS"),
+            "and its allowlist IS the pack map, so a future pack cannot fall down the same hole");
+  const byApp = new Set([...SERVER.matchAll(/pack: "([a-z-]+)"/g)].map(m => m[1]));
+  assert.equal(byApp.has("media-tools"), false,
+               "media-tools is nobody's app - /packs/install is its only way in");
+  assert.match(NSI, /Section \/o "Add songs from the web"/,
+               "and it is off by default, so that way in is the one a family will use");
+});
+
+// The blanket vendor copy runs BEFORE the pinned fetch, so an unverified local
+// vendor/yt-dlp (which .gitignore expressly anticipates a developer dropping in
+// for testing) would ride into the payload and ship as the media-tools pack.
+// "Wrong hash = no build, ever" only holds if the payload's copy can ONLY ever
+// come from the hash-checked one.
+test("build-payload clears vendor/yt-dlp before the pinned, hash-checked copy lands", () => {
+  const blanket = PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"');
+  const clear = PAYLOAD.indexOf('rm -rf "$OUT/vendor/yt-dlp"');
+  const copy = PAYLOAD.indexOf('cp "$YTDLP" "$OUT/vendor/yt-dlp/yt-dlp.exe"');
+  assert.ok(blanket > 0, "the blanket vendor copy is still there");
+  assert.ok(clear > blanket, "an unchecked local copy is removed right after it");
+  assert.ok(copy > clear, "and only the pinned, hash-checked binary is laid down afterwards");
 });
 
 // The binary is pinned by version AND hash in one committed file; the build

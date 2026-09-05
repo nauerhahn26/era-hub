@@ -1665,6 +1665,51 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- install a pack no app owns (review 9/5) ----
+  // media-tools (yt-dlp, ~18 MB) is unticked in the installer by default and
+  // hangs off no APPS entry, so POST /apps — which resolves the id against that
+  // list — could never lay it down. The "+ Add a song" sheet said "Install it
+  // and try again" over a button that did not exist anywhere. This is that
+  // button. Keyed off packs.PACKS rather than APPS, so a pack added later
+  // cannot fall down the same hole. ownDoor because it downloads onto the
+  // family's PC: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/packs/install") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 1024) req.destroy(); });
+    req.on("end", () => {
+      let pack = null;
+      try { pack = JSON.parse(body).pack; } catch {}
+      if (typeof pack !== "string" || !Object.prototype.hasOwnProperty.call(packs.PACKS, pack)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "unknown-pack",
+                                 message: "New ERA does not know that add-on." }));
+        return;
+      }
+      if (packs.packInstalled(__dirname, pack)) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ installed: true }));
+        return;
+      }
+      // one pack download at a time, and never a second one on top of the app
+      // toggle that is already pulling the same pack
+      const key = "pack:" + pack;
+      const byApp = APPS.some(a => a.pack === pack && appInstalling[a.id]);
+      if (!appInstalling[key] && !byApp) {
+        appInstalling[key] = true;
+        installPack({ pack })
+          .then(() => console.log("[packs] installed " + pack))
+          .catch(e => console.error("[packs] install " + pack + " failed: " + e.message))
+          .finally(() => { delete appInstalling[key]; });
+      }
+      // 202: the sheet polls the status door it already polls (the pack shows
+      // up as installed there) rather than holding a socket for 18 MB.
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ installing: true }));
+    });
+    return;
+  }
+
   // ---- open an external site in a NORMAL browser window (URL bar and all)
   // — kiosk windows trap novices on web logins (dad 8/29) ----
   if (req.method === "POST" && req.url === "/open-url") {

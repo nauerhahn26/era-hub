@@ -3,7 +3,7 @@
 // era-family/tools/add-song.sh: a parent adds a song from the board's partner
 // strip, on their own PC, and nobody has to open a terminal on a Linux box.
 //
-// Four laws, and everything here is one of them:
+// Five laws, and everything here is one of them:
 //
 //   1. WHERE. Songs are written into the family's Drive content folder
 //      (drive.status().folderPath + "/music"), never into <DATA>. <DATA> is
@@ -25,7 +25,13 @@
 //   4. THE PACK MAY BE ABSENT. yt-dlp is the optional media-tools pack
 //      (packs.js, ~18 MB). Without it this answers "pack-missing" with words
 //      the sheet can show and a pack id it can offer to install — never a 500,
-//      never a spinner that goes nowhere.
+//      never a spinner that goes nowhere. The sheet's offer is real: the pack
+//      belongs to no app, so POST /packs/install is its only way in.
+//   5. NOTHING THE FAMILY ALREADY HAS IS DESTROYED BY A TRY. A download lands
+//      under a staging name and replaces a song only once it is really here,
+//      and a song list that cannot be READ is never WRITTEN over. Both were
+//      real: a failed re-add used to delete a song for good, and one
+//      half-synced manifest.json used to erase the whole library (review 9/5).
 //
 // One add at a time, and the door answers 202 while the download runs behind
 // it (the /clothing/regenerate pattern): a song can take a minute and no sheet
@@ -62,10 +68,15 @@ let last = null;      // how the previous one went, for the sheet
 // The tool, or null when the family has not installed the pack. ERA_YTDLP is a
 // test seam in the shape ERA_AI_URL / ERA_DRIVE_API already have: it names a
 // stand-in binary so no test ever runs the real yt-dlp or reaches YouTube.
+// ERA_PACK_ROOT is its other half: without it "the pack is missing" could only
+// ever be proven by the accident that a checkout has no vendor/yt-dlp in it,
+// and .gitignore expressly anticipates a developer dropping one there.
+function packRoot() { return process.env.ERA_PACK_ROOT || __dirname; }
 function tool() {
-  const t = packs.ytDlp(__dirname);
+  const root = packRoot();
+  const t = packs.ytDlp(root);
   if (process.env.ERA_YTDLP) return { bin: process.env.ERA_YTDLP, args: t.args };
-  if (!packs.packInstalled(__dirname, PACK)) return null;
+  if (!packs.packInstalled(root, PACK)) return null;
   return t;
 }
 
@@ -122,31 +133,51 @@ async function lookUp(t, target) {
   return j;
 }
 
-async function download(t, dir, slug, source) {
+async function download(t, dir, base, source) {
   const r = await run(t.bin, [...t.args, "--no-playlist", "--no-warnings", "--no-progress",
     "--retries", "3",
     // Law 2. Do not add -x / --audio-format / --convert-thumbnails here.
     "-f", "ba[ext=m4a]/ba", "--write-thumbnail",
-    "-o", path.join(dir, slug + ".%(ext)s"), source]);
+    "-o", path.join(dir, base + ".%(ext)s"), source]);
   if (r.code !== 0) throw new Error(why("could not download that song", r));
 }
 
 // ---------------------------------------------------------------- the files
 
-// `<slug>.<ext>` in dir, first extension that exists, or null. Exact names
-// only: the slug is already known to be [a-z0-9-], so this can never glob its
-// way out of the folder.
-function pickFile(dir, slug, exts) {
-  for (const e of exts) if (fs.existsSync(path.join(dir, slug + e))) return slug + e;
+// Law 5, learned the hard way (review 9/5): A SONG THE FAMILY ALREADY HAS IS
+// NEVER TOUCHED UNTIL THERE IS SOMETHING TO REPLACE IT WITH. A download lands
+// under this staging name and is renamed into place only once yt-dlp has
+// really left an audio file; before, the old take was deleted first, so a
+// re-add whose download failed destroyed a song for good (songsRecipe drops a
+// song whose audio file is missing, so the tile simply vanished).
+// The slug is [a-z0-9-], so this name is ours alone and cannot collide with a
+// song's own file.
+function staging(slug) { return "." + slug + ".add"; }
+
+// The first of `exts` that exists as `<base><ext>` in dir, or null. Exact names
+// only: the base is built from a checked slug, so this can never glob its way
+// out of the folder.
+function pickExt(dir, base, exts) {
+  for (const e of exts) if (fs.existsSync(path.join(dir, base + e))) return e;
   return null;
 }
-
-// An older take of the same song, gone before the new one lands: a re-add whose
+// An older take of the same song, gone as the new one lands: a re-add whose
 // audio comes back .webm this time must not leave yesterday's .m4a behind for
 // the manifest to point at.
 function forget(dir, slug) {
   for (const e of [...AUDIO_EXT, ...COVER_EXT])
     try { fs.unlinkSync(path.join(dir, slug + e)); } catch {}
+}
+
+// Everything a staged download left, whatever extension yt-dlp chose — a
+// .part, a .ytdl, a second thumbnail. A prefix match is safe here and only
+// here: the staging name is ours, and no song's file can start with it.
+function sweep(dir, base) {
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const n of names)
+    if (n === base || n.startsWith(base + "."))
+      try { fs.unlinkSync(path.join(dir, n)); } catch {}
 }
 
 // ------------------------------------------------------------- the manifest
@@ -157,16 +188,34 @@ function nextRank(songs) {
   return max + 1;
 }
 
-// The manifest as it stands, and never a throw: a folder with no manifest yet
-// (a family's first song) and a manifest a text editor mangled both read as an
-// empty library, which is what the next write then repairs.
+// The manifest as it stands, and never a throw — but "there is no library yet"
+// and "I could not read the library" are DIFFERENT ANSWERS (review 9/5). They
+// used to share one catch, so a half-synced file (Google Drive for Desktop
+// writes one), a Windows EBUSY/EPERM (Drive or an antivirus holding the file
+// open) or a truncated write read as "no songs yet" — and the next add wrote
+// the file back with a single song in it. Twenty songs, gone.
+//
+// Only ENOENT is an empty library. Everything else says `unreadable`, and every
+// caller refuses rather than writing over what it could not read.
 function readManifest(dir) {
-  let m = null;
-  try { m = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")); } catch {}
-  if (!m || typeof m !== "object" || Array.isArray(m)) m = {};
+  let raw;
+  try { raw = fs.readFileSync(path.join(dir, "manifest.json"), "utf8"); }
+  catch (e) {
+    if (e && e.code === "ENOENT") return { m: {}, songs: [] };   // the family's first song
+    return { m: {}, songs: [], unreadable: true };
+  }
+  let m;
+  try { m = JSON.parse(raw); } catch { return { m: {}, songs: [], unreadable: true }; }
+  // an empty file, a `null`, a bare array: not a manifest, and not an excuse
+  // to start a new one over the top of whatever was there.
+  if (!m || typeof m !== "object" || Array.isArray(m)) return { m: {}, songs: [], unreadable: true };
   const songs = Array.isArray(m.songs) ? m.songs.filter(s => s && typeof s === "object") : [];
   return { m, songs };
 }
+
+// The one refusal both doors give for it, in a parent's words.
+const UNREADABLE = { error: "manifest-unreadable",
+  message: "New ERA could not read the list of songs just now. Try again in a minute." };
 
 // Upsert by id, atomically (content-store's tmp + rename, so a device never
 // mirrors half a manifest). A song added twice KEEPS the rank it has: its tile
@@ -174,7 +223,11 @@ function readManifest(dir) {
 // move it to the end of the board.
 function upsert(dir, fields) {
   const file = path.join(dir, "manifest.json");
-  const { m, songs } = readManifest(dir);
+  const { m, songs, unreadable } = readManifest(dir);
+  // add() checked this before the download started; a minute has passed since,
+  // and the file is in a folder Google Drive is syncing. Check again rather
+  // than write a one-song library over a library we cannot see.
+  if (unreadable) throw new Error(UNREADABLE.message);
   const at = songs.findIndex(s => s.id === fields.id);
   const rank = at >= 0 && Number.isFinite(songs[at].rank) ? songs[at].rank : nextRank(songs);
   const entry = { ...(at >= 0 ? songs[at] : {}), ...fields, rank };
@@ -203,22 +256,52 @@ async function runAdd(job, t, dir) {
   const source = String(info.webpage_url || info.original_url || job.url || target);
 
   fs.mkdirSync(dir, { recursive: true });
-  forget(dir, slug);
-  await download(t, dir, slug, source);
-  const audio = pickFile(dir, slug, AUDIO_EXT);
-  if (!audio) throw new Error("the download finished but left no audio file");
+  // Law 5: everything lands under the staging name first. The old take is not
+  // touched until the new one is really here, and whatever the download left
+  // half-finished is swept whether it worked or not.
+  const stage = staging(slug);
+  let audio = null, cover = null;
+  sweep(dir, stage);
+  try {
+    await download(t, dir, stage, source);
+    const ae = pickExt(dir, stage, AUDIO_EXT);
+    if (!ae) throw new Error("the download finished but left no audio file");
+    const ce = pickExt(dir, stage, COVER_EXT);
+    // Last look before anything the family has is touched: upsert() would
+    // refuse to write an unreadable manifest, and refusing AFTER the swap
+    // would leave the old audio deleted and the manifest still naming it.
+    if (readManifest(dir).unreadable) throw new Error(UNREADABLE.message);
+    forget(dir, slug);                       // NOW yesterday's take may go
+    audio = slug + ae;
+    fs.renameSync(path.join(dir, stage + ae), path.join(dir, audio));
+    if (ce) {
+      cover = slug + ce;
+      fs.renameSync(path.join(dir, stage + ce), path.join(dir, cover));
+    }
+  } finally { sweep(dir, stage); }
 
   job.phase = "putting it on the board";
   const entry = upsert(dir, {
-    id: slug, title, audio, cover: pickFile(dir, slug, COVER_EXT),
+    id: slug, title, audio, cover,
     duration: Math.max(0, Math.round(Number(info.duration) || 0)),
     source, sourceTitle,
   });
   // The board plays from this device's shelf (<DATA>/music), which the mirror
   // fills from the folder we just wrote. Without this the song would appear at
   // the next ten-minute sync, long after the parent walked away.
-  try { await drive.sync(); } catch {}
-  return { id: entry.id, title: entry.title, rank: entry.rank };
+  return { id: entry.id, title: entry.title, rank: entry.rank, mirrored: await mirror() };
+}
+
+// Carry what we just wrote from the family's Drive folder to this device's
+// shelf, and SAY whether it arrived. drive.sync() reports a failure by
+// answering rather than throwing (and syncLocal collects per-file errors), so
+// a plain try/catch here saw nothing — which is how "The songs are in their new
+// order" came to be said over a board that had not moved (review 9/5).
+async function mirror() {
+  try {
+    const r = await drive.sync();
+    return !(r && (r.error || (Array.isArray(r.errors) && r.errors.length)));
+  } catch { return false; }
 }
 
 // add(body) -> {started:true} | {error, message, ...}. Everything that can be
@@ -249,6 +332,9 @@ function add(body) {
   if (!dir)
     return { error: "needs-local-drive",
              message: "New ERA saves new songs into the family's Drive folder, so every device gets them. Choose that folder in Settings first." };
+  // Refuse BEFORE the 202: a library we cannot read is not a library we may
+  // write a single song over (see readManifest).
+  if (readManifest(dir).unreadable) return UNREADABLE;
   if (running)
     return { error: "busy", message: "One song at a time - the last one is still downloading." };
 
@@ -257,7 +343,7 @@ function add(body) {
   running = job;
   runAdd(job, t, dir)
     .then(r => { last = { ok: true, id: r.id, title: r.title, rank: r.rank, error: "",
-                          when: new Date().toISOString() }; })
+                          mirrored: r.mirrored, when: new Date().toISOString() }; })
     .catch(e => { last = { ok: false, id: job.slug || null, title: job.title || query,
                            error: redact(String(e && e.message || e)).replace(/\s+/g, " "),
                            when: new Date().toISOString() }; })
@@ -298,7 +384,8 @@ async function order(body) {
   if (running)
     return { error: "busy", message: "A song is still downloading - arrange the board when it lands." };
 
-  const { m, songs } = readManifest(dir);
+  const { m, songs, unreadable } = readManifest(dir);
+  if (unreadable) return UNREADABLE;
   if (!songs.length)
     return { error: "no-songs", message: "There are no songs on the board to arrange yet." };
 
@@ -325,9 +412,10 @@ async function order(body) {
   writeAtomic(path.join(dir, "manifest.json"), { ...m, schemaVersion: 1, songs: next });
   // The board reads this device's shelf, and the recipe's ETag is the shelf
   // manifest's mtime (server.js songsRecipe) — without the mirror the tiles
-  // would keep their old places until the next ten-minute sync.
-  try { await drive.sync(); } catch {}
-  return { ok: true, songs: next.length };
+  // would keep their old places until the next ten-minute sync. `mirrored`
+  // is that outcome, so the strip can say "saved, the board will catch up"
+  // instead of "the songs are in their new order" over an unmoved board.
+  return { ok: true, songs: next.length, mirrored: await mirror() };
 }
 
 // What the sheet polls. No folder path, no key, no yt-dlp command line — the
