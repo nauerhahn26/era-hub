@@ -347,3 +347,231 @@ describe("lastPage1 / yesterdayPage1 — the page-1 memory (outfit_set.py:415-42
     assert.equal(R.daysBetween("2025-12-31", "2026-01-01"), 1);
   });
 });
+
+// ---- T1.4 eligible(), buildCandidates(), toWorkerShape() -------------------
+
+const SEED = "2026-09-05";
+const top = (id, over = {}) => g(id, { category: "top", colors: ["red"], pattern: "stripes", ...over });
+const bottom = (id, over = {}) => g(id, { category: "pants", colors: ["navy"], pattern: "solid", ...over });
+const keysOf = list => list.map(c => c.key);
+const idsIn = list => new Set(list.flatMap(c => c.pieces.map(p => p.id)));
+
+describe("eligible — the band gate (spec §3.4, W3): tops never, bottoms/singles by level with widening", () => {
+  const cold = bottom("item_cold", { warmth: "cold" });
+  test("hot band, 3 hot + 1 cold bottoms: the cold bottom is absent", () => {
+    const items = [bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_h3", { warmth: "hot" }), cold];
+    assert.deepEqual(R.eligible(items, "bottom", "hot").map(i => i.id), ["item_h1", "item_h2", "item_h3"]);
+  });
+  test("hot band, 1 hot + 2 warm bottoms: the warm ones join (neighbour union); a cold one still absent", () => {
+    const items = [bottom("item_h1", { warmth: "hot" }), bottom("item_w1", { warmth: "warm" }), bottom("item_w2", { warmth: "warm" }), cold];
+    assert.deepEqual(R.eligible(items, "bottom", "hot").map(i => i.id), ["item_h1", "item_w1", "item_w2"]);
+  });
+  test("a warmth 'any' bottom is eligible in all four bands", () => {
+    const items = [bottom("item_any", { warmth: "any" }), bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_c1", { warmth: "cold" }), bottom("item_c2", { warmth: "cold" })];
+    for (const b of ["hot", "warm", "cool", "cold"])
+      assert.ok(R.eligible(items, "bottom", b).some(i => i.id === "item_any"), b);
+  });
+  test("an int warmth 3 behaves as cold (migrated tag)", () => {
+    const items = [bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_h3", { warmth: "hot" }), bottom("item_i3", { warmth: 3 })];
+    assert.ok(!R.eligible(items, "bottom", "hot").some(i => i.id === "item_i3"));
+    assert.ok(R.eligible(items, "bottom", "cold").some(i => i.id === "item_i3"));
+  });
+  test("hot band with only two cold bottoms: widen → all, both eligible", () => {
+    const items = [bottom("item_c1", { warmth: "cold" }), bottom("item_c2", { warmth: "cold" })];
+    assert.deepEqual(R.eligible(items, "bottom", "hot").map(i => i.id), ["item_c1", "item_c2"]);
+  });
+  test("band null (weather offline) gates nothing", () => {
+    const items = [bottom("item_c1", { warmth: "cold" }), bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_h3", { warmth: "hot" })];
+    assert.equal(R.eligible(items, "bottom", null).length, 4);
+    assert.equal(R.eligible(items, "bottom", undefined).length, 4);
+  });
+  test("tops are never gated: eligible('top', 'cold') returns every top incl. warmth hot", () => {
+    const items = [top("item_t1", { warmth: "hot" }), top("item_t2", { warmth: "hot" }), top("item_t3", { warmth: "cold" }), bottom("item_b1", { warmth: "cold" })];
+    assert.deepEqual(R.eligible(items, "top", "cold").map(i => i.id), ["item_t1", "item_t2", "item_t3"]);
+    assert.deepEqual(R.eligible(items, "top", "hot").map(i => i.id), ["item_t1", "item_t2", "item_t3"]);
+  });
+  test("categories: pants|shorts → bottom, dress|set → single, top → top", () => {
+    const items = [top("item_t1"), bottom("item_p1"), bottom("item_s1", { category: "shorts" }), g("item_d1", { category: "dress" }), g("item_e1", { category: "set" })];
+    assert.deepEqual(R.eligible(items, "bottom", null).map(i => i.id), ["item_p1", "item_s1"]);
+    assert.deepEqual(R.eligible(items, "single", null).map(i => i.id), ["item_d1", "item_e1"]);
+    assert.deepEqual(R.eligible(items, "top", null).map(i => i.id), ["item_t1"]);
+  });
+  test("shorts count as bottoms for the widen rule (bottoms counted as one category)", () => {
+    const items = [bottom("item_p1", { warmth: "hot" }), bottom("item_s1", { category: "shorts", warmth: "hot" }), bottom("item_c1", { warmth: "cold" })];
+    assert.deepEqual(R.eligible(items, "bottom", "hot").map(i => i.id), ["item_p1", "item_s1"]);
+  });
+});
+
+describe("rankOf — style + fav + fresh + loved + jitter (outfit_set.py:434-451)", () => {
+  const ctx = over => ({ seed: SEED, pairing: pairing(), favorites: new Set(), picks: {}, lastP1: {}, ...over });
+  const jit = key => R.hmod(SEED, R.JITTER_PTS, key);
+  const t = top("item_t"), b = bottom("item_b");
+  test("a never-seen garment: fresh 48 (9 days → capped at 8 × 6)", () => {
+    assert.equal(R.rankOf([t, b], ctx()), 55 + 48 + jit("item_t+item_b"));
+  });
+  test("an 8-day-old garment: fresh 48; a 3-day-old one: 18 (min over the pieces)", () => {
+    assert.equal(R.rankOf([t, b], ctx({ lastP1: { item_t: "2026-08-28", item_b: "2026-08-28" } })), 55 + 48 + jit("item_t+item_b"));
+    assert.equal(R.rankOf([t, b], ctx({ lastP1: { item_t: "2026-09-02" } })), 55 + 18 + jit("item_t+item_b"));
+    assert.equal(R.rankOf([t, b], ctx({ lastP1: { item_t: "2026-09-04", item_b: "2026-08-01" } })), 55 + 6 + jit("item_t+item_b"));
+  });
+  test("loved applies at 2.0 picks, not at 1.5", () => {
+    assert.equal(R.rankOf([t, b], ctx({ picks: { "item_t+item_b": 1.5 } })), 55 + 48 + jit("item_t+item_b"));
+    assert.equal(R.rankOf([t, b], ctx({ picks: { "item_t+item_b": 2.0 } })), 55 + 48 + 12 + jit("item_t+item_b"));
+  });
+  test("a favourite garment lifts the look by 10 (favorites Set, W2)", () => {
+    assert.equal(R.rankOf([t, b], ctx({ favorites: new Set(["item_b"]) })), 55 + 10 + 48 + jit("item_t+item_b"));
+  });
+  test("a single scores SINGLE_STYLE 55 and never goes through styleScore", () => {
+    const d = g("item_d", { category: "dress", statement: true, colors: ["pink"], pattern: "floral" });
+    assert.equal(R.rankOf([d], ctx()), 55 + 48 + jit("item_d"));
+  });
+});
+
+describe("buildCandidates — the pool (outfit_set.py:393-410)", () => {
+  test("an avoid pair is absent from the pool; every other harmonizing pair is present", () => {
+    const items = [top("item_t1"), top("item_t2"), bottom("item_b1"), bottom("item_b2")];
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, pairing: { great: [], avoid: [["item_b2", "item_t1"]] }, history: {}, perPage: 7 });
+    assert.deepEqual(keysOf(out).sort(), ["item_t1+item_b1", "item_t2+item_b1", "item_t2+item_b2"]);
+  });
+  test("two statement pieces never pool together; a statement single is in the pool anyway (singles bypass harmonizes)", () => {
+    const loud = { statement: true, colors: ["pink"], pattern: "floral" };
+    const items = [top("item_t1", loud), bottom("item_b1", { ...loud, colors: ["orange"] }), g("item_d1", { category: "dress", ...loud })];
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
+    assert.deepEqual(keysOf(out), ["item_d1"]);
+  });
+  test("every combo is {key, pieces:[garment…]} with the ids joined by +; toWorkerShape maps it", () => {
+    const items = [top("item_t1"), bottom("item_b1"), g("item_d1", { category: "dress" })];
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
+    for (const c of out) assert.equal(c.key, c.pieces.map(p => p.id).join("+"));
+    const pair = out.find(c => c.pieces.length === 2), one = out.find(c => c.pieces.length === 1);
+    assert.deepEqual(R.toWorkerShape(pair), { key: "item_t1+item_b1", top: pair.pieces[0], bottom: pair.pieces[1] });
+    assert.deepEqual(R.toWorkerShape(one), { key: "item_d1", one: one.pieces[0] });
+  });
+  test("cap bounds the list; the list is at most the pool", () => {
+    const items = [top("item_t1"), top("item_t2"), top("item_t3"), bottom("item_b1"), bottom("item_b2"), bottom("item_b3")];
+    assert.equal(R.buildCandidates({ items, band: null, cap: 4, seed: SEED, history: {}, perPage: 2 }).length, 4);
+    assert.equal(R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 }).length, 9);
+  });
+});
+
+describe("buildCandidates — gating end to end (spec §3.4)", () => {
+  test("hot band: the cold bottom is absent from every combo of the 21 (3 hot + 1 cold)", () => {
+    const items = [top("item_t1"), top("item_t2"), top("item_t3"), top("item_t4"), top("item_t5"), top("item_t6"),
+      bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_h3", { warmth: "hot" }), bottom("item_cold", { warmth: "cold" })];
+    const out = R.buildCandidates({ items, band: "hot", cap: 21, seed: SEED, history: {}, perPage: 7 });
+    assert.equal(out.length, 18);   // 6 tops × 3 hot bottoms — the cold bottom's 6 looks are gone
+    assert.ok(!idsIn(out).has("item_cold"));
+  });
+  test("hot band: 1 hot + 2 warm bottoms are all dealt; a cold one is not (neighbour union)", () => {
+    const items = [top("item_t1"), top("item_t2"),
+      bottom("item_h1", { warmth: "hot" }), bottom("item_w1", { warmth: "warm" }), bottom("item_w2", { warmth: "warm" }), bottom("item_cold", { warmth: "cold" })];
+    const out = R.buildCandidates({ items, band: "hot", cap: 21, seed: SEED, history: {}, perPage: 7 });
+    const ids = idsIn(out);
+    assert.ok(ids.has("item_w1") && ids.has("item_w2") && ids.has("item_h1"));
+    assert.ok(!ids.has("item_cold"));
+  });
+  test("a cold single is gated the same way; band null deals everything", () => {
+    const items = [top("item_t1"), bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }),
+      g("item_d1", { category: "dress", warmth: "hot" }), g("item_d2", { category: "dress", warmth: "hot" }), g("item_dc", { category: "dress", warmth: "cold" })];
+    assert.ok(!idsIn(R.buildCandidates({ items, band: "hot", cap: 21, seed: SEED, history: {}, perPage: 7 })).has("item_dc"));
+    assert.ok(idsIn(R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 })).has("item_dc"));
+  });
+});
+
+describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", () => {
+  test("the coverage slot tries only the single oldest garment: when its only look is blocked, the slot goes to the fill (I3)", () => {
+    // T0+B is her staple (two Yes days). Q is the oldest garment (never on
+    // page 1) and its only harmonizing look is with B — which the staple
+    // already used. R is next-oldest (20 days) with a low-ranked look R+B2.
+    // The original tries aged[0] only: page 1 = [T0+B, T3+B2]; a port that
+    // fell back to aged[1] would seat R+B2 instead of T3+B2.
+    const items = [
+      top("item_t0"),
+      top("item_q", { statement: true, colors: ["pink"], pattern: "floral" }),
+      top("item_r", { palette: "warm" }),
+      top("item_t3", { vibe: "sporty" }),
+      bottom("item_b"),                                                   // neutral (solid)
+      bottom("item_b2", { colors: ["orange"], pattern: "stripes", palette: "cool", vibe: "sporty" }),
+    ];
+    const history = {
+      days: {
+        "2026-08-16": { band: "warm", page1: [["item_r", "item_b"]] },
+        "2026-09-02": { band: "warm", page1: [["item_t3", "item_b2"]] },
+      },
+      events: {
+        "2026-09-01": [{ kind: "yes", combo: ["item_t0", "item_b"] }],
+        "2026-09-03": [{ kind: "yes", combo: ["item_t0", "item_b"] }],
+      },
+    };
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, pairing: { great: [["item_t3", "item_b2"]], avoid: [] }, history, perPage: 3 });
+    assert.deepEqual(keysOf(out).slice(0, 2), ["item_t0+item_b", "item_t3+item_b2"]);
+    assert.equal(out.length, 7, "the pool (7 looks) is all dealt across the pages");
+    assert.ok(keysOf(out).includes("item_q+item_b"), "Q's look is still offered on a deeper page");
+  });
+  test("staples: the most-picked combos take the first slots, garment-distinct, skipped when on yesterday's page 1", () => {
+    const items = [top("item_t1"), top("item_t2"), top("item_t3"), bottom("item_b1"), bottom("item_b2"), bottom("item_b3")];
+    const yes = combo => ({ kind: "yes", combo });
+    const history = {
+      days: { "2026-09-04": { band: "warm", page1: [["item_t2", "item_b2"]] } },
+      events: {
+        "2026-09-01": [yes(["item_t1", "item_b1"]), yes(["item_t2", "item_b2"]), yes(["item_t3", "item_b3"])],
+        "2026-09-02": [yes(["item_t1", "item_b1"]), yes(["item_t2", "item_b2"])],
+        "2026-09-03": [yes(["item_t2", "item_b2"])],
+      },
+    };
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history, perPage: 7 });
+    // Three bottoms, page 1 garment-distinct, t2's looks all blocked (b1/b3
+    // used, t2+b2 barred) → page 1 is exactly the two staples; page 2 opens
+    // with yesterday's most-picked look.
+    const p1 = keysOf(out).slice(0, 2);
+    assert.ok(p1.includes("item_t1+item_b1"), "picked twice → staple");
+    assert.ok(p1.includes("item_t3+item_b3"), "picked once → staple");
+    assert.ok(!p1.includes("item_t2+item_b2"), "most-picked but on yesterday's page 1 → not on page 1");
+    assert.equal(keysOf(out)[2], "item_t2+item_b2", "…it leads page 2 instead");
+  });
+  test("yesterday's page-1 looks are barred from page 1 and lead page 2 in ranked order; deep pages are garment-once", () => {
+    const items = [];
+    for (let i = 1; i <= 5; i++) items.push(top("item_t" + i));
+    for (let i = 1; i <= 5; i++) items.push(bottom("item_b" + i));
+    const y = R.yesterdayOf(SEED);
+    const first = R.buildCandidates({ items, band: null, cap: 21, seed: y, history: {}, perPage: 5 });
+    const history = R.recordOffer({}, y, first, 5, null);
+    const yKeys = new Set(keysOf(first).slice(0, 5));
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history, perPage: 5 });
+    const keys = keysOf(out);
+    assert.equal(keys.length, 21);
+    assert.ok(keys.slice(0, 5).every(k => !yKeys.has(k)), "nothing from yesterday's page 1 on page 1");
+    assert.deepEqual(new Set(keys.slice(5, 10)), yKeys, "page 2 IS yesterday's page 1");
+    // Parity note (outfit_set.py:538-556): a deep page runs SHORT when the
+    // leftover pool cannot fill it garment-distinct (only `page_count >=
+    // per_page` ends a page early), so with 25 looks the fourth page is 4
+    // long and slice 15-20 straddles two pages. The first three pages of 5
+    // are exact.
+    for (const [a, b] of [[0, 5], [5, 10], [10, 15]]) {
+      const ids = out.slice(a, b).flatMap(c => c.pieces.map(p => p.id));
+      assert.equal(new Set(ids).size, ids.length, `page ${a / 5 + 1} is garment-distinct`);
+    }
+    assert.equal(new Set(keys).size, 21, "no look is dealt twice");
+  });
+  test("tiny pool: yesterday's looks come back rather than a short page 1", () => {
+    const items = [top("item_t1"), bottom("item_b1")];
+    const y = R.yesterdayOf(SEED);
+    const history = { days: { [y]: { band: null, page1: [["item_t1", "item_b1"]] } } };
+    assert.deepEqual(keysOf(R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history, perPage: 7 })), ["item_t1+item_b1"]);
+  });
+});
+
+describe("hub deviation (W1, A4-4): items are sorted by id before pooling", () => {
+  test("a shuffled item list deals the identical key list", () => {
+    const items = [];
+    for (let i = 1; i <= 6; i++) items.push(top("item_t" + i, i % 2 ? { vibe: "sporty" } : {}));
+    for (let i = 1; i <= 6; i++) items.push(bottom("item_b" + i, i % 3 ? { palette: "warm" } : {}));
+    const a = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
+    const rev = [...items].reverse();
+    const b = R.buildCandidates({ items: rev, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
+    const rot = items.slice(4).concat(items.slice(0, 4));
+    const c = R.buildCandidates({ items: rot, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
+    assert.deepEqual(keysOf(a), keysOf(b));
+    assert.deepEqual(keysOf(a), keysOf(c));
+  });
+});

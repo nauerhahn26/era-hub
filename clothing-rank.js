@@ -265,6 +265,191 @@ function yesterdayPage1(history, day) {
   return new Set(page1.filter(Array.isArray).map(ids => ids.join("+")));
 }
 
+// ---- the band gate (spec §3.4, plan W3) ------------------------------------
+//
+// outfit_set.py:397-402 gates bottoms and singles by BAND_WARMTH and never
+// gates tops. The hub composes that with its own "widen when < 2" rule
+// (clothing-worker.js forBand): a gated category with fewer than two exact
+// matches takes the neighbour band's levels too, and if that is still empty
+// the whole category is dealt — the board is never emptied by the weather.
+
+const BANDS = ["hot", "warm", "cool", "cold"];
+const CATEGORY = { top: "top", pants: "bottom", shorts: "bottom", dress: "single", set: "single" };
+
+function categoryOf(item) {
+  return CATEGORY[String(item.category || "").toLowerCase()] || null;
+}
+
+function byId(a, b) {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+function levelsMeet(item, allowed) {
+  for (const l of WARMTH_LEVELS(item.warmth)) if (allowed.has(l)) return true;
+  return false;
+}
+
+// eligible(items, cat, band): the items of `cat` ("top" | "bottom" | "single")
+// that the band admits, in the order given. Tops are never gated; band null
+// (weather offline) or unknown gates nothing.
+function eligible(items, cat, band) {
+  const ofCat = items.filter(i => categoryOf(i) === cat);
+  if (cat === "top" || band == null || !BAND_WARMTH[band]) return ofCat;
+  const exact = ofCat.filter(i => levelsMeet(i, BAND_WARMTH[band]));
+  if (exact.length >= 2) return exact;
+  const idx = BANDS.indexOf(band);
+  const wide = new Set(BAND_WARMTH[band]);
+  for (const nb of [BANDS[idx - 1], BANDS[idx + 1]]) if (nb) for (const l of BAND_WARMTH[nb]) wide.add(l);
+  const near = ofCat.filter(i => levelsMeet(i, wide));
+  return near.length ? near : ofCat;
+}
+
+// ---- the rank (outfit_set.py:434-451, minus dress_bonus — no "dressy" here) --
+//
+// ctx = {seed, pairing (normalised), favorites (Set of ids), picks, lastP1}.
+// fresh: the look is as fresh as its LEAST fresh piece; a piece never on page
+// 1 counts as FRESH_CAP_DAYS + 1 days old. Every term is an integer, so the
+// sort below is exact.
+function rankOf(pieces, ctx) {
+  const style = pieces.length === 2 ? styleScore(pieces[0], pieces[1], ctx.pairing) : SINGLE_STYLE;
+  const fav = pieces.some(p => ctx.favorites.has(p.id)) ? 10 : 0;   // W2: favourites Set
+  let gap = null;
+  for (const p of pieces) {
+    const d = p.id in ctx.lastP1 ? daysBetween(ctx.lastP1[p.id], ctx.seed) : FRESH_CAP_DAYS + 1;
+    if (gap === null || d < gap) gap = d;
+  }
+  const fresh = Math.min(gap, FRESH_CAP_DAYS) * FRESH_PTS_PER_DAY;
+  const key = comboKey(pieces);
+  const loved = (ctx.picks[key] || 0) >= 2 ? LOVED_PTS : 0;
+  return style + fav + fresh + loved + hmod(ctx.seed, JITTER_PTS, key);
+}
+
+function cmpHash(a, b) {   // I4: BigInt comparison, never subtraction
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// ---- buildCandidates (outfit_set.py:376-557) --------------------------------
+//
+// Returns the flat ordered list of {key, pieces} for the day: page 1 first
+// (staples, the coverage slot, the freshest fill — garment-distinct), then
+// the deeper pages. Pure: same inputs → same list.
+function buildCandidates(opts) {
+  const seed = opts.seed;
+  const band = opts.band == null ? null : opts.band;
+  const cap = opts.cap == null ? 21 : opts.cap;
+  const perPage = opts.perPage == null ? 7 : opts.perPage;
+  const pairing = normalizePairing(opts.pairing || { great: [], avoid: [] });
+  const favorites = opts.favorites instanceof Set ? opts.favorites : new Set(opts.favorites || []);
+  const history = opts.history || {};
+  const items = [...(opts.items || [])].sort(byId);              // W1: catalogue order = id order
+  const pageCap = Math.min(perPage, cap);
+
+  // :397-410 — the pool: singles (standalone) then tops × bottoms.
+  const tops = eligible(items, "top", band);
+  const bottoms = eligible(items, "bottom", band);
+  const singles = eligible(items, "single", band).map(g => [g]);
+  const pairs = [];
+  for (const t of tops)
+    for (const b of bottoms)
+      if (harmonizes(t, b) && styleScore(t, b, pairing) > 0) pairs.push([t, b]);
+  const pool = singles.concat(pairs);
+
+  // :412-427 — memory as of today (today's own entries ignored: same-date reruns stay stable).
+  const picks = derivePicks(eventsOf(history), seed);
+  const lastP1 = lastPage1(history, seed);
+  const yP1 = yesterdayPage1(history, seed);
+  const ctx = { seed, pairing, favorites, picks, lastP1 };
+
+  // :434-453 — rank every look once; stable sort, descending.
+  const key = comboKey;
+  const score = new Map();
+  for (const o of pool) score.set(key(o), rankOf(o, ctx));
+  const ranked = [...pool].sort((a, b) => score.get(key(b)) - score.get(key(a)));
+
+  // :459-482 — staples: most-picked combos, else the curated great looks.
+  let staplePool = pool.filter(o => (picks[key(o)] || 0) > 0);
+  staplePool.sort((a, b) => picks[key(b)] - picks[key(a)]);
+  if (!staplePool.length) {
+    staplePool = pool.filter(o => pairing.great.has(o.length === 2 ? pairKey(o[0].id, o[1].id) : pairKey(o[0].id, o[0].id)));
+    const styleOf = o => (o.length === 2 ? styleScore(o[0], o[1], pairing) : SINGLE_STYLE);
+    staplePool.sort((a, b) => styleOf(b) - styleOf(a));
+  }
+  const top = [];
+  const topUsed = new Set();
+  for (const o of staplePool) {
+    if (top.length >= STAPLE_POOL) break;
+    if (!o.some(p => topUsed.has(p.id))) {
+      top.push(o);
+      for (const p of o) topUsed.add(p.id);
+    }
+  }
+  const stapleHash = new Map(top.map(o => [key(o), h(seed, "staple", key(o))]));
+  top.sort((a, b) => cmpHash(stapleHash.get(key(a)), stapleHash.get(key(b))));
+
+  const chosen = [];
+  const chosenKeys = new Set();
+  const used = new Set();
+  const take = o => {
+    chosen.push(o);
+    chosenKeys.add(key(o));
+    for (const p of o) used.add(p.id);
+  };
+  for (const o of top) {                                   // :483-492
+    if (chosen.length >= STAPLE_SLOTS) break;
+    if (yP1.has(key(o))) continue;
+    if (!o.some(p => used.has(p.id))) take(o);
+  }
+
+  // :497-518 — coverage: the single longest-unseen garment, in its best look.
+  const age = g => (g.id in lastP1 ? daysBetween(lastP1[g.id], seed) : 1e6);
+  const bandIds = new Set();
+  for (const o of pool) for (const p of o) bandIds.add(p.id);
+  const agedHash = new Map();
+  const aged = items.filter(g => bandIds.has(g.id) && !used.has(g.id));
+  for (const g of aged) agedHash.set(g.id, h(seed, "aged", g.id));
+  aged.sort((a, b) => age(b) - age(a) || cmpHash(agedHash.get(a.id), agedHash.get(b.id)));
+  if (aged.length && chosen.length < pageCap) {
+    const want = aged[0].id;
+    const best = ranked.find(o => o.some(p => p.id === want) && !chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id)));
+    if (best) take(best);
+  }
+
+  // :522-533 — fill page 1 (yesterday's looks sit out), then tiny-pool relaxation.
+  for (const o of ranked) {
+    if (chosen.length >= pageCap) break;
+    if (!chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id))) take(o);
+  }
+  for (const o of ranked) {
+    if (chosen.length >= pageCap) break;
+    if (!chosenKeys.has(key(o)) && !o.some(p => used.has(p.id))) take(o);
+  }
+
+  // :538-556 — deeper pages: yesterday's page 1 leads page 2; a garment once per page.
+  const demoted = ranked.filter(o => yP1.has(key(o)));
+  const deepOrder = demoted.concat(ranked.filter(o => !yP1.has(key(o))));
+  while (chosen.length < Math.min(cap, pool.length)) {
+    const pageUsed = new Set();
+    let pageCount = 0;
+    for (const o of deepOrder) {
+      if (pageCount >= perPage || chosen.length >= cap) break;
+      if (chosenKeys.has(key(o)) || o.some(p => pageUsed.has(p.id))) continue;
+      chosen.push(o);
+      chosenKeys.add(key(o));
+      for (const p of o) pageUsed.add(p.id);
+      pageCount += 1;
+    }
+    if (pageCount === 0) break;
+  }
+  return chosen.slice(0, cap).map(pieces => ({ key: key(pieces), pieces }));
+}
+
+// The worker's combo shape: a single is {key, one}; a pair is {key, top, bottom}.
+function toWorkerShape(combo) {
+  return combo.pieces.length === 1
+    ? { key: combo.key, one: combo.pieces[0] }
+    : { key: combo.key, top: combo.pieces[0], bottom: combo.pieces[1] };
+}
+
 module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
@@ -272,4 +457,5 @@ module.exports = {
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
   derivePicks, recordOffer, pruneEvents, lastPage1, yesterdayPage1,
+  categoryOf, eligible, rankOf, buildCandidates, toWorkerShape,
 };
