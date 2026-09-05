@@ -96,26 +96,74 @@ function run(bin, args) {
     try {
       child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     } catch (e) { resolve({ code: -1, stdout: "", stderr: String(e.message) }); return; }
-    let stdout = "", stderr = "", timer = null;
+    let stdout = "", stderr = "", timer = null, killed = false;
     // Caps: a broken tool can print for ever, and this is all held in memory.
     child.stdout.on("data", d => { if (stdout.length < 2e6) stdout += d; });
     child.stderr.on("data", d => { if (stderr.length < 2e5) stderr += d; });
     child.on("error", e => { stderr += e.message; });
-    timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, KILL_MS);
+    // `killed` is remembered because a SIGKILLed child prints nothing useful and
+    // closes with a null code: "yt-dlp stopped with null" is not a fact anyone
+    // can act on, and "it took too long" is.
+    timer = setTimeout(() => { killed = true; try { child.kill("SIGKILL"); } catch {} }, KILL_MS);
     timer.unref();
-    child.on("close", (code) => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
+    child.on("close", (code) => { clearTimeout(timer); resolve({ code, stdout, stderr, killed }); });
   });
 }
 
-// What went wrong, in one line, for a parent. yt-dlp's last stderr line is
+// What went wrong, in one line, FOR AN OPERATOR. yt-dlp's last stderr line is
 // usually the only useful one ("Video unavailable", "Sign in to confirm..."),
-// and it goes through redact() because anything this returns is shown in
-// Settings and could be echoed into a log.
+// and it goes through redact() because anything this returns is kept in
+// `last.error` and echoed into a log. It is not what a family reads — see
+// plainly() below, and bug 5.
 function why(what, r) {
+  // KILL_MS fired: there is no last line worth having, and the close code is
+  // null. Say the thing that actually happened.
+  if (r.killed) return what + ": it took too long, so New ERA stopped it";
   const line = String(r.stderr || "").split("\n").map(s => s.trim())
     .filter(Boolean).pop() || "";
   const tail = redact(line).replace(/\s+/g, " ").slice(0, 200);
   return what + (tail ? ": " + tail : " (yt-dlp stopped with " + r.code + ")");
+}
+
+// The same failure said again, for the FAMILY. VM QA 9/5 added a YouTube link
+// from a datacenter IP and the board sheet showed the lot: "New ERA could not
+// add that song. ERROR: [youtube] XqZsoesa55w: Sign in to confirm you're not a
+// bot. Use --cookies-from-browser or --cookies for the authentication. See
+// https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-t" — cut off
+// mid-word, in a house where nobody is going to pass cookies from a browser.
+// So `last.error` keeps yt-dlp's own words (the hub's console and whoever is
+// fixing it need them) and `last.message` says the one sentence a parent can
+// act on: no URL, no flag, no "ERROR:".
+//
+// Read most specific first: the bot-check line also talks about a download,
+// and a country block also says "not available". Anything unrecognised gets
+// the last sentence rather than the raw text — an unfamiliar shape is exactly
+// the one that would put a command line on a six-year-old's board.
+//
+// (Everything refused BEFORE the 202 — no pack, no folder, a bad link, a song
+// list we cannot read — already reaches the sheet in this file's own words
+// through the door's `message`. Only what goes wrong mid-download comes here.)
+const PLAIN = [
+  [/Sign in to confirm you.re not a bot|confirm your age|login required/i,
+   "YouTube would not let New ERA fetch that one from here. Try another link, or add the song from an MP3 in the family's music folder."],
+  [/Video unavailable|Private video|This video is not available|removed/i,
+   "That video is not available any more. Try another link."],
+  // "…has blocked it in your country on copyright grounds" and "The uploader
+  // has not made this video available in your country" are both real lines.
+  [/copyright|blocked it in your country|available in your country/i,
+   "That video cannot be played in your country. Try another link."],
+  [/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|Unable to download|network|offline/i,
+   "New ERA could not reach the internet to fetch it. Check the connection and try again."],
+  [/Unsupported URL|is not a valid URL|No video formats/i,
+   "New ERA does not know how to fetch a song from that link. Paste the video's own address."],
+  [/timed out|took too long/i,
+   "That took too long to download. Try again, or try a shorter video."],
+];
+const PLAIN_LAST = "New ERA could not add that song. Try again, or try another link.";
+function plainly(raw) {
+  const s = String(raw == null ? "" : raw);
+  for (const [re, sentence] of PLAIN) if (re.test(s)) return sentence;
+  return PLAIN_LAST;
 }
 
 // Ask yt-dlp what a link (or a search) actually is, WITHOUT downloading: the
@@ -344,9 +392,16 @@ function add(body) {
   runAdd(job, t, dir)
     .then(r => { last = { ok: true, id: r.id, title: r.title, rank: r.rank, error: "",
                           mirrored: r.mirrored, when: new Date().toISOString() }; })
-    .catch(e => { last = { ok: false, id: job.slug || null, title: job.title || query,
-                           error: redact(String(e && e.message || e)).replace(/\s+/g, " "),
-                           when: new Date().toISOString() }; })
+    .catch(e => {
+      const raw = redact(String(e && e.message || e)).replace(/\s+/g, " ");
+      // Two readers, two sentences: `error` is yt-dlp's line, kept for the
+      // console and for whoever is fixing the hub, and `message` is the only
+      // one the board sheet ever shows (bug 5).
+      console.error("[music-add] " + raw);
+      last = { ok: false, id: job.slug || null, title: job.title || query,
+               error: raw, message: plainly(raw),
+               when: new Date().toISOString() };
+    })
     .finally(() => { running = null; });
   return { started: true };
 }

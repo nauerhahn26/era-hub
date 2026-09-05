@@ -56,7 +56,10 @@ fs.appendFileSync(path.join(path.dirname(ctl), "calls.jsonl"), JSON.stringify(ar
 const target = argv[argv.length - 1];
 if (argv.includes("--dump-single-json")) {
   if (st.mode === "fail-resolve") {
-    process.stderr.write("ERROR: [youtube] dQw: Video unavailable\\n");
+    // st.stderr lets a case pick the shape yt-dlp fails in — the bot check
+    // reads nothing like "Video unavailable" and the family is told a
+    // different thing about each.
+    process.stderr.write((st.stderr || "ERROR: [youtube] dQw: Video unavailable") + "\\n");
     process.exit(1);
   }
   if (st.mode === "no-hits") { process.stdout.write(JSON.stringify({ _type: "playlist", entries: [] })); process.exit(0); }
@@ -320,14 +323,67 @@ test("yt-dlp stopping non-zero surfaces a human message and leaves the manifest 
     const last = await settled();
     assert.equal(last.ok, false, mode + " is reported as a failure");
     assert.ok(typeof last.error === "string" && last.error.length > 10,
-              mode + " says something a parent can read: " + last.error);
+              mode + " says something an operator can read: " + last.error);
     assert.ok(!/\n/.test(last.error), "one line, not a stack trace");
+    assert.ok(last.message && !/ERROR:|http|--/.test(last.message),
+              mode + " keeps yt-dlp's own words off the board: " + last.message);
     assert.equal(manifest().songs.length, 2, mode + " left the shelf as it was");
   }
   ctl({ mode: "no-hits" });
   assert.equal((await post("/music/add", { query: "asdfqwerzxcv" })).status, 202);
   const none = await settled();
   assert.equal(none.ok, false, "a search with no hits is a failure, not a blank song");
+});
+
+// Bug 5 (VM QA 9/5). From a datacenter IP YouTube answers with its bot check,
+// and the board sheet showed the whole of it — "New ERA could not add that
+// song. ERROR: [youtube] XqZsoesa55w: Sign in to confirm you're not a bot. Use
+// --cookies-from-browser or --cookies for the authentication. See https://…" —
+// truncated mid-word, at a family. The hub still keeps that line, because
+// whoever is fixing it needs to know WHICH failure this was; what a parent
+// reads is one sentence with somewhere to go.
+test("yt-dlp's bot check reaches the family as one sentence, and the raw line stays for the hub", async () => {
+  ctl({ mode: "fail-resolve", id: "botcheck", title: "Nope", duration: 1,
+        stderr: "ERROR: [youtube] XqZsoesa55w: Sign in to confirm you're not a bot. " +
+                "Use --cookies-from-browser or --cookies for the authentication. " +
+                "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp" });
+  assert.equal((await post("/music/add", { url: "https://www.youtube.com/watch?v=XqZsoesa55w" })).status, 202);
+  const last = await settled();
+  assert.equal(last.ok, false, "the add failed");
+
+  assert.match(last.error, /Sign in to confirm/, "the operator's copy keeps yt-dlp's own words");
+  assert.equal(last.message,
+    "YouTube would not let New ERA fetch that one from here. Try another link, or add the song from an MP3 in the family's music folder.",
+    "and the family gets the sentence for THIS failure, not the generic one");
+  assert.ok(!/http/i.test(last.message), "no address in what a family reads");
+  assert.ok(!last.message.includes("--"), "no command-line flag either");
+  assert.ok(!/ERROR:/.test(last.message), "and no ERROR: prefix");
+  assert.equal(manifest().songs.length, 2, "and the shelf is as it was");
+});
+
+// Everything else yt-dlp can say. The map is the point: a shape nobody has
+// seen before must still come out as a sentence, never as the raw text.
+test("every yt-dlp failure has a family sentence, and an unknown one still says something plain", async () => {
+  const cases = [
+    ["ERROR: [youtube] abc: Video unavailable. This video has been removed by the uploader",
+     "That video is not available any more. Try another link."],
+    ["ERROR: [youtube] abc: The uploader has not made this video available in your country",
+     "That video cannot be played in your country. Try another link."],
+    ["ERROR: unable to download webpage: <urlopen error [Errno -2] Name or service not known (getaddrinfo failed)>",
+     "New ERA could not reach the internet to fetch it. Check the connection and try again."],
+    ["ERROR: Unsupported URL: https://example.com/not/a/video",
+     "New ERA does not know how to fetch a song from that link. Paste the video's own address."],
+    ["ERROR: [youtube] abc: something nobody has ever seen before",
+     "New ERA could not add that song. Try again, or try another link."],
+  ];
+  for (const [stderr, want] of cases) {
+    ctl({ mode: "fail-resolve", id: "nope", title: "Nope", duration: 1, stderr });
+    assert.equal((await post("/music/add", { url: "https://www.youtube.com/watch?v=nope" })).status, 202);
+    const last = await settled();
+    assert.equal(last.message, want, "for: " + stderr);
+    assert.match(last.error, /ERROR:/, "the raw line is still there for the hub");
+  }
+  assert.equal(manifest().songs.length, 2, "and none of it wrote anything");
 });
 
 // The re-add is the dangerous one: it used to delete the old audio and cover
