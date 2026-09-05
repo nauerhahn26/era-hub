@@ -149,8 +149,9 @@ function harmonizes(top, bottom) {
 function pairKey(a, b) { return a < b ? a + "+" + b : b + "+" + a; }
 // {"great": [[id,id],..], "avoid": [..]} (the pairing.json shape, or the
 // pairs/ log after T4.2) → {great:Set<pairKey>, avoid:Set<pairKey>}.
+// A side that is already a Set of pair keys passes through as-is.
 function normalizePairing(p) {
-  const toSet = list => new Set((Array.isArray(list) ? list : [])
+  const toSet = list => list instanceof Set ? list : new Set((Array.isArray(list) ? list : [])
     .filter(pr => Array.isArray(pr) && pr.length === 2).map(pr => pairKey(String(pr[0]), String(pr[1]))));
   if (p && p.great instanceof Set && p.avoid instanceof Set) return p;
   return { great: toSet(p && p.great), avoid: toSet(p && p.avoid) };
@@ -238,14 +239,17 @@ function pruneEvents(hist) {
 }
 
 // Record the page-1 lineup. Same-date reruns overwrite: idempotent
-// (outfit_set.py:364-373). Mutates and returns `history`.
+// (outfit_set.py:364-373). Mutates and returns `history`. Combos come in
+// either shape — buildCandidates' {pieces} or the worker's {top,bottom}/{one}
+// (toWorkerShape) — so the board route can record what it dealt.
+const piecesOf = c => Array.isArray(c.pieces) ? c.pieces : [c.one || c.top, c.bottom].filter(Boolean);
 function recordOffer(history, date, combos, perPage, band) {
   const hist = history && typeof history === "object" ? history : {};
   if (!hist.days || typeof hist.days !== "object") hist.days = {};
   if (!hist.events || typeof hist.events !== "object") hist.events = {};
   hist.days[date] = {
     band: band == null ? null : band,
-    page1: combos.slice(0, perPage).map(c => c.pieces.map(p => p.id)),
+    page1: combos.slice(0, perPage).map(c => piecesOf(c).map(p => p.id)),
   };
   const keys = Object.keys(hist.days).sort();
   for (const old of keys.slice(0, Math.max(0, keys.length - HISTORY_DAYS_KEPT))) delete hist.days[old];
@@ -344,6 +348,9 @@ function cmpHash(a, b) {   // I4: BigInt comparison, never subtraction
 // the deeper pages. Pure: same inputs → same list.
 function buildCandidates(opts) {
   const seed = opts.seed;
+  // The seed is the family's day key and nothing else: a Date, a timestamp or
+  // a number would hash to a different deal than the day's on another device.
+  if (typeof seed !== "string" || !DATE_KEY.test(seed)) throw new TypeError("buildCandidates: seed must be a YYYY-MM-DD day key");
   const band = opts.band == null ? null : opts.band;
   const cap = opts.cap == null ? 21 : opts.cap;
   const perPage = opts.perPage == null ? 7 : opts.perPage;

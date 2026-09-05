@@ -166,6 +166,25 @@ describe("isNeutral / harmonizes — parity (outfit_set.py:242-252)", () => {
   });
 });
 
+describe("normalizePairing — the pairing.json shape → unordered-key Sets", () => {
+  test("lists become pairKey Sets; a malformed entry is dropped; ids are stringified", () => {
+    const p = R.normalizePairing({ great: [["item_b", "item_a"], ["item_x"], "junk", [1, 2]], avoid: [["item_c", "item_d"]] });
+    assert.deepEqual([...p.great].sort(), ["1+2", "item_a+item_b"]);
+    assert.deepEqual([...p.avoid], ["item_c+item_d"]);
+    assert.deepEqual(R.normalizePairing(undefined), { great: new Set(), avoid: new Set() });
+  });
+  test("an already-normalized pairing passes through by identity; a half-normalized one (one Set, one list) keeps the Set and converts the list", () => {
+    const done = R.normalizePairing({ great: [["item_a", "item_b"]], avoid: [] });
+    assert.equal(R.normalizePairing(done), done);
+    const half = R.normalizePairing({ great: new Set(["item_a+item_b"]), avoid: [["item_d", "item_c"]] });
+    assert.deepEqual([...half.great], ["item_a+item_b"]);
+    assert.deepEqual([...half.avoid], ["item_c+item_d"]);
+    const half2 = R.normalizePairing({ great: [["item_a", "item_b"]], avoid: new Set(["item_c+item_d"]) });
+    assert.deepEqual([...half2.great], ["item_a+item_b"]);
+    assert.deepEqual([...half2.avoid], ["item_c+item_d"]);
+  });
+});
+
 describe("styleScore — parity (outfit_set.py:263-285)", () => {
   const basic = (id, over = {}) => g(id, { colors: ["red"], pattern: "stripes", ...over });
   test("two basics, nothing else: 50 + 5 = 55", () => {
@@ -280,6 +299,15 @@ describe("recordOffer — parity (outfit_set.py:364-373) + the events prune (spe
     const out = R.recordOffer(hist, "2026-09-05", combos, 3, "warm");
     assert.equal(out, hist);
     assert.deepEqual(hist.days["2026-09-05"], { band: "warm", page1: [["a", "b"], ["c"], ["d", "e"]] });
+  });
+  test("the worker shape ({top,bottom} / {one}, what /clothing/board hands back) records the same page1 as the pieces shape", () => {
+    const pieces = [combo("a", "b"), combo("c"), combo("d", "e")];
+    const worker = pieces.map(R.toWorkerShape);
+    assert.deepEqual(worker[1], { key: "c", one: { id: "c" } });
+    const h1 = R.recordOffer({}, "2026-09-05", pieces, 7, "warm");
+    const h2 = R.recordOffer({}, "2026-09-05", worker, 7, "warm");
+    assert.deepEqual(h2, h1);
+    assert.deepEqual(h2.days["2026-09-05"].page1, [["a", "b"], ["c"], ["d", "e"]]);
   });
   test("a bare {} history works: days and events are created", () => {
     const hist = R.recordOffer({}, "2026-09-05", [combo("a", "b")], 7, null);
@@ -461,6 +489,16 @@ describe("rankOf — style + fav + fresh + loved + jitter (outfit_set.py:434-451
   test("a single scores SINGLE_STYLE 55 and never goes through styleScore", () => {
     const d = g("item_d", { category: "dress", statement: true, colors: ["pink"], pattern: "floral" });
     assert.equal(R.rankOf([d], ctx()), 55 + 48 + jit("item_d"));
+  });
+});
+
+describe("buildCandidates — the seed is the family's day key (spec §3.2)", () => {
+  test("a seed that is not YYYY-MM-DD throws a TypeError (a Date, a number, an ISO timestamp — each would hash to a different deal than the day's)", () => {
+    const items = [top("item_t1"), bottom("item_b1")];
+    for (const seed of [undefined, null, 20260905, new Date(Date.UTC(2026, 8, 5)), "2026-09-05T07:30:00Z", "2026-9-5", ""]) {
+      assert.throws(() => R.buildCandidates({ items, band: null, cap: 21, seed, history: {}, perPage: 7 }), TypeError, String(seed));
+    }
+    assert.equal(R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 }).length, 1);
   });
 });
 
