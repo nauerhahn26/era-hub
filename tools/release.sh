@@ -34,7 +34,7 @@ git -C "$HUB" tag -f "$V"
 git -C "$HUB" push -q origin "refs/tags/$V" --force
 # the app list is server.js APPS — keep the two in step
 NOTES="New ERA suite $V — free eye-gaze apps for a child on a Tobii device, all running on the family's own PC: Making Words, The Pencil, Clothing Picker, Music, Movies, Book Reader, plus the ERAgaze engine for PCs without one. Bundled Node runtime; nothing about your child leaves the machine.
-Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. (Windows may ask once: choose More info, then Run anyway.) The portable .zip works too. Installed copies update themselves; Uninstall never touches your data.
+Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. The installer is code-signed (Certum; right-click › Properties › Digital Signatures shows the publisher) — Windows may still ask once while the new signature earns its reputation: choose More info, then Run anyway. The portable .zip works too. Installed copies update themselves; Uninstall never touches your data.
 Every release is installed and driven end to end on a clean Windows 10 before it is published. sha256 in checksums.txt."
 gh release create "$V" --repo nauerhahn26/new-era-releases --title "New ERA suite $V" \
   --notes "$NOTES" ${PRE:+--prerelease} \

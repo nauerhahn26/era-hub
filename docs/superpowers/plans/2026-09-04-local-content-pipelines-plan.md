@@ -2449,6 +2449,24 @@ log `<scratch>/t75/release-v0.32.1.log`):
   ISSUED (RSA 3072, valid to 2027-09-05). Dad's step is the SimplySign phone
   activation (24 h window from the e-mail); then the live code exchange and a
   SIGNED re-cut of this payload. Publish is held for that.
+- Signing LIVE (16:40–16:58 UTC). Dad activated the app and read the code;
+  the cloud login succeeded (the Certum account address, not the family one).
+  Then `pkcs11-tool -O` segfaulted in every variant while `-I`/`-M` worked:
+  the module statically links OpenSSL 1.0 and exports it, so inside an
+  OpenSSL-3 host its own calls bound to libcrypto.so.3. Fixed by an
+  RTLD_DEEPBIND `dlopen` shim (era-family `tools/simplysign-deepbind.c`,
+  preloaded by `sign-installer.sh`), the key named by URI (`type=private`),
+  the issuing "Certum Code Signing 2021 CA" embedded (`-ac`), and the two
+  `verify | grep -q` checks captured instead (pipefail made SIGPIPE a false
+  FAILED) — 00612fc. `signing.env` written. Proof: a signed validation cut
+  (build 20260905.1655, `dist/release-v0.32.1-signed-check`): uninstaller stub
+  + Setup.exe both "SIGNED … timestamped at http://time.certum.pl",
+  `Signature verification: ok`, chain to Certum Trusted Network CA 2.
+- Dad (16:45 UTC): "lets push whatever build you have now." Pushed era-hub
+  `feat/audit-fixes` + `master` (00612fc) and era-board `master` ⇐
+  `feat/content-strip` (92609db, fast-forward). The signed publish runs as
+  `release.sh v0.32.1` (gate → signed build → VM legs A+B → tag + release) as
+  soon as the T7.6b driver releases the VM.
 
 ### T7.6 — Windows VM QA by hand (Opus driver, 13:55–15:25 UTC)
 Guest `era-qa-w10` (Win10 19045), reverted to the pristine snapshot; build
