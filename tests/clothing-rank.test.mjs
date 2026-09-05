@@ -404,6 +404,24 @@ describe("eligible — the band gate (spec §3.4, W3): tops never, bottoms/singl
     assert.equal(R.eligible(items, "bottom", null).length, 4);
     assert.equal(R.eligible(items, "bottom", undefined).length, 4);
   });
+  test("hub choice (D2): an unknown band word gates nothing (the original's :394 defaults it to {1,2} — unreachable here, the hub only emits the four bands)", () => {
+    const items = [bottom("item_c1", { warmth: "cold" }), bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" }), bottom("item_h3", { warmth: "hot" })];
+    assert.deepEqual(R.eligible(items, "bottom", "nope").map(i => i.id), ["item_c1", "item_h1", "item_h2", "item_h3"]);
+    assert.deepEqual(R.eligible(items, "bottom", "").map(i => i.id), ["item_c1", "item_h1", "item_h2", "item_h3"]);
+    assert.deepEqual(R.eligible(items, "bottom", "HOT").map(i => i.id), ["item_c1", "item_h1", "item_h2", "item_h3"]);   // bands are lowercase words
+  });
+  test("hub choice (D1): an unknown or missing warmth word is never gated (level {1,2,3}; the original's :397/:402 tag untagged bottoms level 2, singles level 1)", () => {
+    // cold band: the untagged bottom joins the one cold bottom as an EXACT match (2 → the hot ones stay out)
+    const items = [bottom("item_u1", { warmth: "nope" }), bottom("item_c1", { warmth: "cold" }), bottom("item_h1", { warmth: "hot" }), bottom("item_h2", { warmth: "hot" })];
+    assert.deepEqual(R.eligible(items, "bottom", "cold").map(i => i.id), ["item_u1", "item_c1"]);
+    // hot band: same wardrobe, the untagged bottom is an exact match with the hot ones; the cold one is out
+    assert.deepEqual(R.eligible(items, "bottom", "hot").map(i => i.id), ["item_u1", "item_h1", "item_h2"]);
+    // a missing field and an empty string are the same untagged garment
+    const items2 = [g("item_d1", { category: "dress", warmth: undefined }), g("item_d2", { category: "dress", warmth: "" }), g("item_d3", { category: "dress", warmth: "hot" })];
+    assert.deepEqual(R.eligible(items2, "single", "cold").map(i => i.id), ["item_d1", "item_d2"]);
+    assert.deepEqual(R.WARMTH_LEVELS("nope"), new Set([1, 2, 3]));
+    assert.deepEqual(R.WARMTH_LEVELS(undefined), new Set([1, 2, 3]));
+  });
   test("tops are never gated: eligible('top', 'cold') returns every top incl. warmth hot", () => {
     const items = [top("item_t1", { warmth: "hot" }), top("item_t2", { warmth: "hot" }), top("item_t3", { warmth: "cold" }), bottom("item_b1", { warmth: "cold" })];
     assert.deepEqual(R.eligible(items, "top", "cold").map(i => i.id), ["item_t1", "item_t2", "item_t3"]);
@@ -622,6 +640,33 @@ describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", 
     assert.equal(R.styleScore(items[1], items[2], R.normalizePairing(pairing)), 90);
     const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, pairing, history: {}, perPage: 7 });
     assert.equal(out[0].key, "item_t2+item_b1", "the best-styled great look is the staple");
+  });
+  test("the coverage slot honours yesterday's bar (outfit_set.py:509): the longest-unseen garment comes in its best look that was NOT on yesterday's page 1", () => {
+    // Four garments, all on yesterday's page 1 (age 1 each → the aged tie
+    // breaks on h(seed,"aged",id); precondition: item_q8 sorts first). The
+    // one staple (great q8+b1) is yesterday's, so page 1 opens with coverage.
+    // q8's best look is q8+b1 (85+jitter) — barred — so q8+b2 is the slot.
+    const items = [top("item_q8"), top("item_t1"), bottom("item_b1"), bottom("item_b2")];
+    const y = R.yesterdayOf(SEED);
+    const agedFirst = items.map(i => [i.id, R.h(SEED, "aged", i.id)]).sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0))[0][0];
+    assert.equal(agedFirst, "item_q8", "precondition: q8 wins the aged tie-break under this seed");
+    const history = { days: { [y]: { page1: [["item_q8", "item_b1"], ["item_t1", "item_b2"]] } }, events: {} };
+    const pairing = { great: [["item_q8", "item_b1"]], avoid: [] };
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, pairing, history, perPage: 7 });
+    assert.equal(out[0].key, "item_q8+item_b2");
+    assert.ok(!keysOf(out.slice(0, 2)).includes("item_q8+item_b1"), "yesterday's look is not on page 1");
+  });
+  test("pool order is singles then pairs (outfit_set.py:405-410): a dress that ties a pair on score ranks first (stable sort)", () => {
+    // t1+b1 is the staple (one Yes). The dress item_d0 and the pair t2+b2 both
+    // score 55 + 48 + 14 (same style, never seen, same jitter under this seed);
+    // the stable sort keeps pool order, and singles come before pairs.
+    const items = [top("item_t1"), top("item_t2"), bottom("item_b1"), bottom("item_b2"), g("item_d0", { category: "dress" })];
+    assert.equal(R.hmod(SEED, 16, "item_d0"), R.hmod(SEED, 16, "item_t2+item_b2"), "precondition: equal jitter");
+    const events = { "2026-09-01": [{ kind: "yes", combo: ["item_t1", "item_b1"] }] };
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: { days: {}, events }, perPage: 1 });
+    assert.equal(out[0].key, "item_t1+item_b1");
+    assert.equal(out[1].key, "item_d0");
+    assert.equal(out[2].key, "item_t2+item_b2");
   });
   test("yesterday's page-1 looks are barred from page 1 and lead page 2 in ranked order; deep pages are garment-once", () => {
     const items = [];

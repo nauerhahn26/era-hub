@@ -27,6 +27,15 @@
 //   (W1)  buildCandidates sorts items by id before pooling, so rank ties break
 //         the same way on every device (the original's ties break by catalogue
 //         order, which the hub does not share between devices).
+//
+// Two more places take a hub-side default where the original's input cannot
+// occur here (the hub tags warmth with a word and only emits the four bands);
+// unreachable on hub data today, but a parity audit should know them:
+//   (D1)  WARMTH_LEVELS: an unknown or missing warmth word is level {1,2,3} —
+//         never gated out (spec §3.1 item 4). The original (:397, :402) tags
+//         an untagged bottom level 2 and an untagged dress/set level 1.
+//   (D2)  eligible: an unknown band word gates nothing, like band null. The
+//         original (:394) defaults an unknown band to levels {1,2}.
 "use strict";
 const crypto = require("crypto");
 
@@ -61,7 +70,7 @@ const WORD_LEVELS = {
 function WARMTH_LEVELS(w) {
   if (w === 1 || w === 2 || w === 3) return new Set([w]);
   const lv = WORD_LEVELS[String(w || "").toLowerCase()];
-  return new Set(lv || [1, 2, 3]);   // untagged = never gated out
+  return new Set(lv || [1, 2, 3]);   // (D1) untagged = never gated out
 }
 
 // ---- hashing (outfit_set.py:430-432) --------------------------------------
@@ -291,7 +300,7 @@ function levelsMeet(item, allowed) {
 
 // eligible(items, cat, band): the items of `cat` ("top" | "bottom" | "single")
 // that the band admits, in the order given. Tops are never gated; band null
-// (weather offline) or unknown gates nothing.
+// (weather offline) or an unknown band word (D2) gates nothing.
 function eligible(items, cat, band) {
   const ofCat = items.filter(i => categoryOf(i) === cat);
   if (cat === "top" || band == null || !BAND_WARMTH[band]) return ofCat;
