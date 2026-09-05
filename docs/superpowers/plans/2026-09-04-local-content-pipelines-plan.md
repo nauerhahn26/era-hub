@@ -2489,7 +2489,8 @@ synthetic *Sunny Pond*.
   without `.dwell`; the door stays the bar's one dwell target (design rule).
 
 **Product bugs** (all found on the v0.32.0 cut → it is a dry-run artefact;
-**v0.32.1** is the candidate):
+**v0.32.1** is the candidate; all six landed by 15:50 UTC — era-hub a933974
+0681259 b0c2696 c57d8e4, era-board d8b61df 765ac2c 92609db):
 1. *A new family could never add their first song.* Home hid the Music tile
    until a songs library existed and Movies until a button did, while the
    songs board's empty splash returned before `mountPartnerStrip()` — no
@@ -2505,19 +2506,27 @@ synthetic *Sunny Pond*.
    finish steps 8–10.
 3. *Boards do not live-update after an add* — the sheet says "X is on the
    board" over a grid of black cells; the watcher reloads only on the next
-   5-minute poll AND 60 s of idle. **Fix in flight** (era-board): reload when
-   the sheet closes after an add that landed on this device.
+   5-minute poll AND 60 s of idle. **Fixed**: era-board 765ac2c — an add that
+   landed on this device (`mirrored !== false`) reloads the board as the
+   sheet closes, never under it; "Close this and it is there."
+   (`board-partner-strip.test` 12/12, 3 new).
 4. *Movie tiles fail silently without ERAgaze* — by design the board never
    plays video (spec 8/29: a calm flag, no crash), but a touch-only family
    that unticked ERAgaze gets a Movies app that cannot play anything and never
-   says why. **Mitigation in flight**: the failure says so in the message bar
-   ("Movies play through ERAgaze — turn it on in Settings"). **Design call for
-   dad**: a hub-side launch fallback (`start <url>` in the default browser)
-   for families without the gaze engine.
+   says why. **Mitigated**: era-board 92609db — a `#launchWarn` partner banner
+   ("🎬 Movies play through ERAgaze, which is not running — a grown-up can
+   tick it under Settings › 🧩 Apps…"), same amber strip as `#netWarn`, touch
+   only, `pointer-events:none`, gone on the next real launch or after 12 s;
+   pinned in `board-movies.test` (10/10). **Design call for dad** (queued
+   below): a hub-side launch fallback for families without the gaze engine.
 5. *Raw yt-dlp errors reach the family* — the sheet rendered `ERROR: [youtube]
    …: Sign in to confirm you're not a bot. Use --cookies-from-browser …`,
-   truncated mid-word. **Fix in flight** (era-hub + era-board): a family
-   sentence per known shape (`last.message`), the raw text stays in the log.
+   truncated mid-word. **Fixed**: era-hub c57d8e4 (`music-add.js plainly()`
+   → `last.message`: bot check, gone, country, offline, bad link, too long,
+   plain fallback; `last.error` keeps yt-dlp's line for the console; the hub's
+   own 10-min kill says "took too long" not "stopped with null";
+   `music-add.test` 19/19) + era-board 765ac2c (the sheet shows
+   `last.message`, never `last.error`).
 6. *The AI key was saved unverified* while the voice key was checked. **Fixed**:
    b0c2696 (`POST /ai-key` asks the provider to list its models — free on all
    three; the card says "checked and working ✓" or asks for a paste-again; a
