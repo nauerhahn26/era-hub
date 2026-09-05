@@ -198,6 +198,38 @@
     </div>
   </div>
 
+  <!-- Films and shows (T5.3). The search behind the board's "+ Add" sheet says
+       "add a TMDB key in Settings" when a family has none; for one review cycle
+       that sentence named nothing that existed, and the only way in was editing
+       a JSON file by hand (review 9/5). This is that card. Neither key is
+       checked against its provider on save — a check costs a request out of a
+       free monthly allowance, and the sheet tells the parent within a second
+       anyway. -->
+  <div class="card" id="movies">
+    <h2>🎬 Films and shows</h2>
+    <p class="hint">Films and shows go on her board as pictures she can press. <b>Paste a link</b> from Netflix, Disney+, Prime or YouTube and the tile goes up &mdash; that works with no key at all. Two free keys make it easier: <b>TMDB</b> lets you find a film by typing its name (and brings the poster), and the optional <b>Watchmode</b> key turns &ldquo;on Netflix&rdquo; into a tile that opens the film itself.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button id="tmdbOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my TMDB key page</button>
+      <button id="wmOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Watchmode key page</button>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <input id="tmdbKey" type="password" placeholder="TMDB API key"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="tmdbKeyPaste">📋 Paste</button>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <input id="wmKey" type="password" placeholder="Watchmode API key (optional)"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="wmKeyPaste">📋 Paste</button>
+    </div>
+    <div class="row">
+      <input id="moviesRegion" placeholder="Country (US, GB)" maxlength="2"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;width:150px">
+      <button id="moviesKeySave">Save</button>
+    </div>
+    <div class="status" id="moviesKeyStatus"></div>
+  </div>
+
   <div class="card" id="exit">
     <h2>🚪 Where the door goes</h2>
     <p class="hint">Every app has a door in its corner. Choose what she lands on when she looks at it.</p>
@@ -662,6 +694,47 @@ $("mailSave").onclick=async()=>{
   loadMail();
 };
 
+// ---- Films and shows: the two keys the "+ Add" sheet's search runs on
+// (T5.3). What comes back from the hub is what is SAVED and what that buys —
+// never a key. The card says the same three states movies-lookup.js chooses
+// between, in the words a parent reads: no key (paste still works), TMDB (found
+// by name, but the tile waits for a link), TMDB + Watchmode (a tile that
+// plays).
+$("tmdbOpen").onclick=()=>openSite("https://www.themoviedb.org/settings/api");
+$("wmOpen").onclick=()=>openSite("https://api.watchmode.com/requestApiKey/");
+$("tmdbKeyPaste").onclick=()=>pasteInto("tmdbKey");
+$("wmKeyPaste").onclick=()=>pasteInto("wmKey");
+function moviesPaint(st){
+  if(!st){ $("moviesKeyStatus").textContent="Could not reach the app server."; return; }
+  if(st.region && !$("moviesRegion").value) $("moviesRegion").value=st.region;
+  if(st.provider==="watchmode")
+    $("moviesKeyStatus").innerHTML='<b>Both keys saved ✓</b> Type a name in the &ldquo;+ Add&rdquo; sheet and pick from the pictures &mdash; each one becomes a tile that plays.';
+  else if(st.provider==="tmdb")
+    $("moviesKeyStatus").innerHTML='<b>TMDB key saved ✓</b> You can find films by name and they come with their poster. Add the optional Watchmode key for links that open the film, or paste the link yourself.';
+  else
+    $("moviesKeyStatus").innerHTML='No key yet &mdash; pasting a film&rsquo;s link still puts it on her board.';
+}
+async function loadMoviesKeys(){
+  try{ moviesPaint(await (await fetch("/movies/keys",{cache:"no-store"})).json()); }
+  catch(e){ moviesPaint(null); }
+}
+$("moviesKeySave").onclick=async()=>{
+  const body={};
+  const t=$("tmdbKey").value.trim(), w=$("wmKey").value.trim(), r=$("moviesRegion").value.trim();
+  if(t) body.tmdb=t;
+  if(w) body.watchmode=w;
+  if(r) body.region=r;
+  if(!Object.keys(body).length){ toast("Paste a key first",false); return; }
+  const res=await fetch("/movies-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!res.ok){ toast(res.status===409?"Could not read the saved keys - try again in a minute":"Could not save the key",false); return; }
+  // the boxes are emptied whatever the answer says: a key left on screen on a
+  // family PC is the one thing this card must not do
+  $("tmdbKey").value=""; $("wmKey").value="";
+  let st=null; try{ st=await res.json(); }catch(e){}
+  toast("Saved");
+  moviesPaint(st);
+};
+
 // ---- AI helper key (clothing ingest today; more helpers later). Three
 // providers, bring-your-own key; account login is not a thing the providers
 // permit for third-party apps, so the card explains that instead of faking it.
@@ -971,6 +1044,7 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
   await loadApps();
   await loadVoices();
   await loadMail();
+  await loadMoviesKeys();
   await drivePaint();
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
        if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));

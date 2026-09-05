@@ -85,6 +85,16 @@ function fakeWeb(req, res) {
     return res.end(JPEG);
   }
   if (p === "/art/oops.html") return html(res, "<html>not a poster</html>");
+  // a page whose og:image is an ABSOLUTE address on this machine. A page can
+  // name any host it likes, and the hub fetches it server-side: a link that
+  // advertises art on loopback (or on the family's router) would pull that
+  // image into the family's Drive folder and serve it as a tile (review 9/5).
+  // The address below is this very stand-in, so a hub that fetched it would
+  // get a REAL jpeg and pass the "is it a picture" check — the only thing that
+  // can make this case go the right way is refusing the address.
+  if (p === "/gb/title/the-highway-rat")
+    return html(res, '<html><head><meta property="og:image" content="' +
+      WEB + '/art/paddington.jpg"></head><body></body></html>');
   if (p === "/tmdb/search/movie" || p === "/tmdb/search/tv") {
     tmdbCalls.push({ path: p, key: u.searchParams.get("api_key"),
                      query: u.searchParams.get("query"),
@@ -297,6 +307,35 @@ test("adding the same title again rewrites it in place and keeps its tile", asyn
                "the tile is where it was, pointing at the new link");
 });
 
+// A RE-ADD MAY NOT DESTROY THE TILE (Law 3, review 9/5). The board's own sheet
+// reaches this in one tap: with a TMDB-only adapter every search row comes back
+// WITHOUT a deep link, so picking one posts a name, a year and a tmdbId and no
+// url at all. Writing that over the entry would blank launch.url and service —
+// and moviesRecipe draws only titles that HAVE a url, so a film the family was
+// watching would simply vanish from Ellie's board. Same loss music-add.js was
+// fixed for in Phase 4, same rule.
+test("a re-add with no link of its own keeps the link the family already had", async () => {
+  const r = await post("/movies/add", {
+    title: "The Gruffalo", year: 2009, tmdbId: 42, addedBy: "search",
+  });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.pending, false, "nothing became pending: the link is still there");
+  const t = catalog().titles.find(x => x.id === "the-gruffalo");
+  assert.equal(t.launch.url, "https://www.netflix.com/gb/title/the-gruffalo-2009",
+               "the working link survived a body that carried none");
+  assert.equal(t.service, "netflix", "and the service that goes with it");
+  assert.equal(t.tier, "core", "and the tier a grown-up curated");
+  assert.equal(t.year, 2009, "while the new provenance really did land");
+  assert.equal(t.tmdbId, 42);
+
+  const { rec } = await recipe();
+  assert.equal(btnAt(rec.boards[0], 1, 2).url,
+               "https://www.netflix.com/gb/title/the-gruffalo-2009",
+               "the tile is still on the board, at the cell Ellie knows");
+  assert.equal(rec.meta.pendingCount, 0, "and nothing is waiting for a grown-up");
+});
+
 // --------------------------------------------------------- pending curation
 
 test("a name with no link is written pending: counted for a grown-up, drawn nowhere", async () => {
@@ -486,12 +525,14 @@ test("a row picked from the search grid keeps what the lookup found", async () =
             "and the picked row is a tile, not just a row in a file");
 });
 
-// A SHOW picked from the grid is a different animal, and this pins what it
-// does today rather than pretending otherwise: moviesRecipe draws a show from
-// its EPISODES (seasons:[] = the whole show is pending), and nothing in the
-// search harvests episodes yet. So the title is kept, counted for a grown-up,
-// and drawn nowhere — the same honest state a typed name has always had.
-test("a show picked from the grid is kept and counted, not drawn half-made", async () => {
+// A SHOW picked from the grid is a different animal: moviesRecipe draws a show
+// from its EPISODES, so a show written with seasons:[] is a title the hub says
+// it added and the board never draws — and the sheet said "<Title> is on the
+// board" over it (review 9/5). Most of what a six-year-old watches is a series,
+// so that was the normal path, not the odd one. A show that arrives with one
+// deep link and no harvested episodes is written with that link as its first
+// episode: the door the add promised really opens.
+test("a show picked from the grid becomes a door that really opens", async () => {
   const r = await post("/movies/add", {
     url: "https://www.netflix.com/watch/80198673",
     title: "Ada Twist, Scientist", kind: "show", year: 2021, tmdbId: 129604,
@@ -499,16 +540,23 @@ test("a show picked from the grid is kept and counted, not drawn half-made", asy
   });
   assert.equal(r.status, 200);
   const j = await r.json();
-  assert.equal(j.pending, false, "the SHOW has a link; its episodes are what is missing");
+  assert.equal(j.pending, false, "and pending:false means the board really drew it");
   const t = catalog().titles.find(x => x.id === "ada-twist-scientist");
   assert.equal(t.ageRating, "TV-Y");
-  assert.deepEqual(t.seasons, [], "a show still carries its seasons");
+  assert.deepEqual(t.seasons, [{ n: 1, episodes: [{ n: 1, title: "Ada Twist, Scientist",
+    launch: { url: "https://www.netflix.com/watch/80198673" } }] }],
+    "the show's own link is its first episode, because that is what draws");
+
   const { rec } = await recipe();
-  assert.ok(rec.meta.pendingCount >= 1, "counted for a grown-up to finish");
-  assert.ok(!rec.boards.flatMap(b => b.buttons).some(b => b.titleId === "ada-twist-scientist"),
-            "and never a tile that presses to nothing");
-  assert.ok(!rec.boards.some(b => b.id === "ada-twist-scientist"),
-            "and no door to an empty episode page either");
+  assert.equal(rec.meta.pendingCount, 0, "nothing is left half-made for a grown-up");
+  const door = rec.boards.flatMap(b => b.buttons)
+    .find(b => b.type === "show" && b.board === "ada-twist-scientist");
+  assert.ok(door, "a show door on the movies board");
+  const page = rec.boards.find(b => b.id === "ada-twist-scientist");
+  assert.ok(page, "and the episode page behind it exists");
+  assert.ok(page.buttons.some(b => b.type === "episode" &&
+              b.url === "https://www.netflix.com/watch/80198673"),
+            "with the episode the link named, so the press plays something");
 });
 
 test("provenance the sheet got wrong is dropped, and the tile still goes up", async () => {
@@ -536,4 +584,90 @@ test("a title TMDB has never heard of is added anyway, bare", async () => {
   const { rec } = await recipe();
   assert.ok(rec.boards.flatMap(b => b.buttons).some(b => b.titleId === "room-on-the-broom"),
             "and the tile is on the board regardless");
+});
+
+// --------------------------------------------------- links that are not names
+//
+// The three big services all spell an opaque id into the path, and the label a
+// link gives us is the label a six-year-old is asked to read. Netflix
+// (/watch/81002370) and Prime (/detail/B08XYZ1234) were already refused; Disney
+// slipped through, because its id is PREFIXED with a route word and hyphenated,
+// so "entity-4e2c9f1a-8b2c-…" looked exactly like a hyphenated name and put
+// "Entity 4e2c9f1a 8b2c 4d5e 9f01 1234567890ab" on the board (review 9/5). The
+// canonical Disney+ link is the one shape the plan pins as the form to store,
+// so this is the shape a parent pastes most.
+test("a Disney link that is only an id asks for the name instead of using it", async () => {
+  const link = "https://www.disneyplus.com/browse/entity-4e2c9f1a-8b2c-4d5e-9f01-1234567890ab";
+  const r = await post("/movies/add", { url: link });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, "need-title",
+               "an id is not a name, and the sheet already knows how to ask");
+  assert.equal(catalog().titles.some(t => /^entity-/.test(t.id)), false,
+               "and nothing of it reached the family's catalog");
+
+  // the same link WITH a name typed beside it is an ordinary add
+  const ok = await post("/movies/add", { url: link, title: "Bluey", kind: "show" });
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).id, "bluey");
+});
+
+test("a name with a number in it is still a name", async () => {
+  const r = await post("/movies/add", { url: "https://www.netflix.com/gb/title/paddington-2" });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).title, "Paddington 2",
+               "'paddington-2' is a sequel, not an opaque id");
+});
+
+// ------------------------------------------------- where the poster may come from
+//
+// The poster hunt fetches an address a stranger's page chose, server-side, and
+// writes the bytes into the family's Drive folder where the hub serves them.
+// A page that advertises its art on loopback or on the family's own network
+// would pull that picture onto Ellie's board (review 9/5). The stand-in below
+// really would answer with a real JPEG, so nothing but refusing the address can
+// make this case come out right.
+test("an og:image pointing back at this machine is refused, and no file is written", async () => {
+  const r = await post("/movies/add", { url: "https://www.netflix.com/gb/title/the-highway-rat" });
+  assert.equal(r.status, 200, "a refused poster is still a successful add");
+  assert.equal((await r.json()).poster, null);
+  assert.equal(catalog().titles.find(x => x.id === "the-highway-rat").poster, null);
+  assert.equal(fs.existsSync(path.join(MOVIES, "posters", "the-highway-rat.jpg")), false,
+               "nothing off this machine's own network reached the family's folder");
+});
+
+// ------------------------------------------------------- two films, one slug
+//
+// "A duplicate id updates in place" was written for the SAME title being fixed
+// a week later (Law 4). Two different films whose names slugify the same are
+// not that: replacing one with the other loses a tile the family had, and the
+// survivor would wear the loser's poster — the right name under the wrong
+// picture (review 9/5).
+test("two films whose names slugify the same both keep their tile", async () => {
+  const first = await post("/movies/add", {
+    url: "https://www.netflix.com/gb/title/cinderella",
+    title: "Cinderella", year: 1950, tmdbId: 11224,
+  });
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).id, "cinderella");
+
+  const second = await post("/movies/add", {
+    url: "https://www.disneyplus.com/en-gb/movies/cinderella/1cIsFPCLvOnJ",
+    title: "Cinderella", year: 2015, tmdbId: 150540, addedBy: "search",
+  });
+  assert.equal(second.status, 200);
+  assert.equal((await second.json()).id, "cinderella-2015",
+               "the year tells them apart, the way a parent would");
+
+  const c = catalog();
+  const a = c.titles.find(x => x.id === "cinderella");
+  const b = c.titles.find(x => x.id === "cinderella-2015");
+  assert.equal(a.year, 1950, "the film the family already had is untouched");
+  assert.equal(a.launch.url, "https://www.netflix.com/gb/title/cinderella");
+  assert.equal(b.year, 2015);
+  assert.equal(b.launch.url, "https://www.disneyplus.com/en-gb/movies/cinderella/1cIsFPCLvOnJ");
+
+  const { rec } = await recipe();
+  const drawn = rec.boards.flatMap(x => x.buttons).map(x => x.titleId);
+  assert.ok(drawn.includes("cinderella") && drawn.includes("cinderella-2015"),
+            "both are on the board, because the family owns both");
 });

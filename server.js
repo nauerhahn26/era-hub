@@ -1621,6 +1621,85 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // ---- Settings > Films and shows: the two keys the search runs on (T5.3).
+  // What is SAVED and what that buys, never a key: movies-lookup.js's held()
+  // answers in booleans on purpose (review 9/5 — the hint said "add a TMDB key
+  // in Settings" while no card existed anywhere in the product, the same dead
+  // end "Install it and try again" was fixed for in Phase 4).
+  if (req.method === "GET" && req.url === "/movies/keys") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, ...moviesLookup.status(), ...moviesLookup.held() }));
+    return;
+  }
+  // Neither key is verified here. /tts-key proves a voice key with a real call
+  // because a bad one buys silence for months; these two are spent by the sheet
+  // within a second of being typed, and a probe would cost a request out of a
+  // free monthly allowance to learn what the next search learns anyway.
+  // ownDoor because it writes the family's keys: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/movies-key") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let b;
+      try { b = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
+      if (!b || typeof b !== "object" || Array.isArray(b)) { res.writeHead(400).end(); return; }
+      const one = (v) => v === undefined ? undefined
+                       : (typeof v === "string" && v.trim().length <= 300 ? v.trim() : null);
+      const tmdb = one(b.tmdb), wm = one(b.watchmode);
+      if (tmdb === null || wm === null) { res.writeHead(400).end(); return; }
+      const file = path.join(DATA, "ai-config.json");
+      // NEVER A REWRITE of this file. The AI helper's key and the fal role live
+      // in it too, and a card that saved over them would take the clothing
+      // build down with it — so a file that exists and cannot be READ is a
+      // refusal, not something to start fresh over (the movies catalog's Law 3,
+      // one directory up).
+      let cfg = {};
+      try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); }
+      catch (e) {
+        if (!e || e.code !== "ENOENT") {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "config-unreadable",
+            message: "New ERA could not read the saved keys just now. Try again in a minute." }));
+          return;
+        }
+      }
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "config-unreadable",
+          message: "New ERA could not read the saved keys just now. Try again in a minute." }));
+        return;
+      }
+      try {
+        if (tmdb !== undefined) { if (tmdb) cfg.tmdb = { apiKey: tmdb }; else delete cfg.tmdb; }
+        if (wm !== undefined) { if (wm) cfg.watchmode = { apiKey: wm }; else delete cfg.watchmode; }
+        fs.writeFileSync(file, JSON.stringify(cfg, null, 1));
+        // The region is not a key: it is the same content choice the provider
+        // name lives beside (movies-lookup.js Law 1), so it goes in the same
+        // file that one is read from, merged the same careful way.
+        const reg = typeof b.region === "string" && /^[a-z]{2}$/i.test(b.region.trim())
+                  ? b.region.trim().toUpperCase() : null;
+        if (reg) {
+          const cf = path.join(DATA, "content-config.json");
+          let cc = {};
+          try { cc = JSON.parse(fs.readFileSync(cf, "utf8")); } catch {}
+          if (!cc || typeof cc !== "object" || Array.isArray(cc)) cc = {};
+          const movies = cc.movies && typeof cc.movies === "object" && !Array.isArray(cc.movies)
+                       ? cc.movies : {};
+          cc.movies = { ...movies, region: reg };
+          fs.writeFileSync(cf, JSON.stringify(cc, null, 1));
+        }
+      } catch {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed",
+                                 message: "New ERA could not save that key. Try again." }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: true, ...moviesLookup.status(), ...moviesLookup.held() }));
+    });
+    return;
+  }
   // "type a name" — the search behind the sheet's selection grid (spec §6
   // "Streaming availability"; movies-lookup.js). It WRITES NOTHING: a grown-up
   // picks a row and the pick goes to /movies/add, which is still the catalog's
@@ -1817,7 +1896,9 @@ const server = http.createServer((req, res) => {
         // work, they come to the front")
         const ALLOW = ["https://www.google.com/drive/", "https://elevenlabs.io/",
                        "https://resend.com/", "https://console.anthropic.com/",
-                       "https://platform.openai.com/", "https://aistudio.google.com/"];
+                       "https://platform.openai.com/", "https://aistudio.google.com/",
+                       // the Films card's two key pages (T5.3)
+                       "https://www.themoviedb.org/", "https://api.watchmode.com/"];
         if (typeof url !== "string" || !ALLOW.some(a => url.startsWith(a))) { res.writeHead(400).end(); return; }
         if (process.platform === "win32") {
           const { spawn } = require("child_process");
@@ -1937,8 +2018,17 @@ const server = http.createServer((req, res) => {
         const { apiKey, provider } = JSON.parse(body);
         if (typeof apiKey !== "string" || apiKey.length > 300) { res.writeHead(400).end(); return; }
         const prov = ["anthropic", "openai", "google"].includes(provider) ? provider : "google";
-        fs.writeFileSync(path.join(DATA, "ai-config.json"),
-          JSON.stringify({ provider: prov, apiKey: apiKey.trim() }, null, 1));
+        // MERGED, not rewritten (review 9/5): this file grew roles after this
+        // door was written — the movies keys the Films card saves and the fal
+        // role ai-config.js reads live beside the vision key now, and saving an
+        // AI key must not delete them. The vision key keeps the flat shape it
+        // has always had, which ai-config.js still reads first.
+        const file = path.join(DATA, "ai-config.json");
+        let cfg = {};
+        try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+        if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) cfg = {};
+        fs.writeFileSync(file,
+          JSON.stringify({ ...cfg, provider: prov, apiKey: apiKey.trim() }, null, 1));
         res.writeHead(204).end();
         // a key arriving is the cue to catalog waiting photos right away
         setTimeout(() => clothing.regenerate(true).catch(() => {}), 500);

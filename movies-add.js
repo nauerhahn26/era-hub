@@ -34,7 +34,13 @@
 //      learned there the hard way (review 9/5).
 //   4. A RE-ADD KEEPS ITS TILE. An id already in the catalog is updated in
 //      place at the rank it has: a title fixed a week later must not jump to
-//      the end of a board Ellie has learned.
+//      the end of a board Ellie has learned. Two halves of that, both learned
+//      the hard way (review 9/5): it keeps what the new add could not supply
+//      (a body with no url must never blank a working launch.url — the search
+//      grid sends exactly that body whenever a family has only a TMDB key),
+//      and it only applies to THE SAME FILM: "Cinderella" 1950 and 2015
+//      slugify alike, and the second takes the year as its surname rather than
+//      deleting the first.
 //   5. THE HUB NEVER SERVES VIDEO (D57). Nothing here downloads anything —
 //      a movie is a link the ERAgaze kiosk opens, and that is all it ever is.
 //
@@ -51,10 +57,14 @@
 // list is kept (a family with no key, or a title nobody streams) without ever
 // putting an unlaunchable tile in front of Ellie.
 //
-// The poster fetch (T5.2) IS here, under "the poster" below, with the two rules
+// The poster fetch (T5.2) IS here, under "the poster" below, with the rules
 // that make a network call safe in a door a parent is standing in front of: it
-// is BOUNDED (one budget for the whole hunt, a byte cap on every body) and it
-// FAILS SILENTLY (no art is not an error — the tile goes up with its name).
+// is BOUNDED (one budget for the whole hunt, a byte cap on every body), it
+// FAILS SILENTLY (no art is not an error — the tile goes up with its name),
+// what comes back is CHECKED before it is saved, and — Rule 4, the one this
+// file learned last — the ADDRESS ITSELF is judged before every hop, because
+// the `og:image` a stranger's page names is fetched by this server and served
+// to the family afterwards.
 "use strict";
 const path = require("path");
 const drive = require("./drive.js");
@@ -62,6 +72,7 @@ const { slugify } = require("./slug.js");
 const { writeAtomic } = require("./content-store.js");
 const { tmdbKey } = require("./movies-lookup.js");
 const fs = require("fs");
+const dns = require("dns").promises;
 
 // Law 2. The id rule is moviesRecipe()'s own filter, spelled once more here so
 // a refusal happens at the door instead of a silent drop at render time.
@@ -125,6 +136,17 @@ function serviceOf(u) {
 // show is refused (need-title) rather than labelling Ellie's board
 // "Watch 81002370". Anything with an upper-case letter or a dot is an id
 // (Disney's "4uKGzAJi3ROz", Prime's ASIN, Apple's "umc.cmc.…"), never a name.
+//
+// THE SEGMENT IS NOT THE UNIT — the dash-words inside it are (review 9/5).
+// Disney's canonical link, the one shape the plan pins as the form to store, is
+// /browse/entity-4e2c9f1a-8b2c-4d5e-9f01-1234567890ab: a route word this file
+// already knows, glued to a uuid, and as a whole segment it looks exactly like
+// a hyphenated name. It put "Entity 4e2c9f1a 8b2c 4d5e 9f01 1234567890ab" on a
+// six-year-old's board, spoken aloud. So each word is judged: a word that mixes
+// letters and digits is an id, and a route word in front of anything that is
+// not word-like is a route word with an id behind it.
+const WORDY = /^([a-z]{2,}|\d{1,4})$/;               // "snail", "broom", "2"
+
 function titleFromUrl(u) {
   const segs = u.pathname.split("/").filter(Boolean);
   for (let i = segs.length - 1; i >= 0; i--) {
@@ -133,8 +155,14 @@ function titleFromUrl(u) {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(s)) continue;      // an id, or not a slug at all
     if ((s.match(/[a-z]/g) || []).length < 3) continue;  // "81002370", "s2"
     if (NOT_A_NAME.has(s)) continue;
-    return s.split("-").filter(Boolean)
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    const words = s.split("-").filter(Boolean);
+    // "4e2c9f1a", "b08xyz1234": letters AND digits in one word is a handle a
+    // machine made, never a word a person would read out.
+    if (words.some(w => /[a-z]/.test(w) && /[0-9]/.test(w))) continue;
+    // "entity-…", "title-…": the route word is not the name, so whatever
+    // follows it has to look like words before this counts as one.
+    if (NOT_A_NAME.has(words[0]) && !words.slice(1).every(w => WORDY.test(w))) continue;
+    return words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
   }
   return null;
 }
@@ -207,26 +235,127 @@ function viaSeam(href) {
   } catch { return null; }
 }
 
+// ---------------------------------------------- RULE 4: WHERE A FETCH MAY GO
+//
+// This is the only place in the hub where an address a STRANGER chose is
+// fetched by the server and the bytes are kept: the pasted page names its own
+// `og:image`, and what comes back is written into the family's Drive folder,
+// mirrored to this device, and served at /movies/posters/<slug>.jpg. So a page
+// that advertises its art on loopback, on the family's router, or on a .local
+// name would pull THAT picture onto Ellie's board (review 9/5) — and every
+// redirect is one more chance to name one.
+//
+//   1. The address is judged BEFORE it is fetched, and again at every hop.
+//   2. Redirects are followed BY HAND, three at most: `redirect: "follow"`
+//      hides the hop that mattered.
+//
+// The seam origins are the one exception, and they are only ever set by tests:
+// ERA_POSTER_PAGE_URL and the two TMDB seams ARE loopback on purpose, and a
+// request to them never leaves the box.
+const MAX_HOPS = 3;
+
+function seamOrigins() {
+  const out = [];
+  for (const v of [process.env.ERA_POSTER_PAGE_URL, process.env.ERA_TMDB_URL,
+                   process.env.ERA_TMDB_IMG_URL]) {
+    if (!v) continue;
+    try { out.push(new URL(v).origin); } catch {}
+  }
+  return out;
+}
+
+// The literal address in a host, or null when the host is a name to be looked
+// up. Bracketed IPv6 loses its brackets.
+function ipLiteral(host) {
+  const h = String(host || "").replace(/^\[|\]$/g, "");
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return h;
+  return h.includes(":") ? h : null;
+}
+
+// Everything a family's own network can be reached at, plus the ranges nobody
+// on the internet answers from. Anything unparseable is private: this decides
+// whether to fetch, so the safe answer is no.
+function privateAddr(ip) {
+  const v = String(ip || "").toLowerCase();
+  if (v.includes(":")) {
+    if (v === "::1" || v === "::") return true;
+    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(v);
+    if (mapped) return privateAddr(mapped[1]);
+    return /^f[cd]/.test(v) || /^fe[89ab]/.test(v);   // unique-local, link-local
+  }
+  const p = v.split(".").map(Number);
+  if (p.length !== 4 || p.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = p;
+  return a === 0 || a === 10 || a === 127 || a >= 224 ||
+         (a === 100 && b >= 64 && b < 128) ||          // carrier NAT
+         (a === 169 && b === 254) ||                   // link-local
+         (a === 172 && b >= 16 && b < 32) ||
+         (a === 192 && (b === 168 || b === 0)) ||
+         (a === 198 && (b === 18 || b === 19));
+}
+
+// The half of the judgement that costs nothing and needs no resolver: the
+// protocol, a literal address, and the host names that mean "this house".
+// Used on the address a PAGE named, before the seam rewrites it — that is the
+// address the family's hub would really have fetched.
+function literalOk(href) {
+  let u;
+  try { u = new URL(href); } catch { return false; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  const host = u.hostname.toLowerCase();
+  if (/(^|\.)(localhost|local|internal|lan|home\.arpa)$/.test(host)) return false;
+  const ip = ipLiteral(host);
+  return ip ? !privateAddr(ip) : true;
+}
+
+// The whole judgement, including the name lookup a literal cannot need. A name
+// that will not resolve is not fetched: no art is never an error here (Rule 2).
+async function reachable(href) {
+  let u;
+  try { u = new URL(href); } catch { return false; }
+  // The seam first: it IS loopback, so every check below would refuse it.
+  if (seamOrigins().includes(u.origin)) return true;
+  if (!literalOk(href)) return false;
+  const host = u.hostname.toLowerCase();
+  if (ipLiteral(host)) return true;                    // literalOk already ruled on it
+  try {
+    const addrs = await dns.lookup(host, { all: true });
+    return addrs.length > 0 && addrs.every(a => !privateAddr(a.address));
+  } catch { return false; }
+}
+
 // One GET, bounded by what is left of the budget and by maxBytes, and null for
 // every unhappy answer there is (Rule 2). Content-Length is trusted to refuse
 // early and re-checked against the bytes that actually arrived, because a
-// header is a claim.
+// header is a claim. Redirects are walked by hand so Rule 4 can judge each one.
 async function getCapped(href, maxBytes, deadline) {
-  const left = deadline - Date.now();
-  if (!href || left <= 0) return null;
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), left);
-  try {
-    const r = await fetch(href, { signal: ctl.signal, redirect: "follow",
-                                  headers: { "User-Agent": "New ERA hub (family use)" } });
-    if (!r.ok) return null;
-    const claimed = Number(r.headers.get("content-length"));
-    if (Number.isFinite(claimed) && claimed > maxBytes) return null;
-    const buf = Buffer.from(await r.arrayBuffer());
-    if (buf.length > maxBytes) return null;
-    return { type: (r.headers.get("content-type") || "").toLowerCase(), buf };
-  } catch { return null; }
-  finally { clearTimeout(timer); }
+  let target = href;
+  for (let hop = 0; hop <= MAX_HOPS; hop++) {
+    const left = deadline - Date.now();
+    if (!target || left <= 0) return null;
+    if (!(await reachable(target))) return null;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), Math.max(1, deadline - Date.now()));
+    try {
+      const r = await fetch(target, { signal: ctl.signal, redirect: "manual",
+                                      headers: { "User-Agent": "New ERA hub (family use)" } });
+      if (r.status >= 300 && r.status < 400) {
+        const loc = r.headers.get("location");
+        if (r.body) r.body.cancel().catch(() => {});
+        if (!loc) return null;
+        try { target = new URL(loc, target).href; } catch { return null; }
+        continue;
+      }
+      if (!r.ok) return null;
+      const claimed = Number(r.headers.get("content-length"));
+      if (Number.isFinite(claimed) && claimed > maxBytes) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > maxBytes) return null;
+      return { type: (r.headers.get("content-type") || "").toLowerCase(), buf };
+    } catch { return null; }
+    finally { clearTimeout(timer); }
+  }
+  return null;                                         // a redirect loop is not art
 }
 
 // Rule 3. Both halves must agree: the server says image/*, and the first bytes
@@ -263,11 +392,18 @@ function ogImage(html, pageHref) {
 }
 
 // The pasted page's own art. Two hops: the page, then the picture it names.
+//
+// Both addresses are judged as the FAMILY'S hub would see them — the pasted
+// link itself, and the og:image resolved against it — and only then rewritten
+// through the test seam. Judging the rewritten address instead would ask the
+// wrong question twice: under test everything is loopback, and in a family's
+// house the seam does not exist.
 async function posterFromPage(u, deadline) {
+  if (!literalOk(u.href)) return null;
   const page = await getCapped(viaSeam(u.href), PAGE_MAX_BYTES, deadline);
   if (!page || !/^(text\/html|application\/xhtml)/.test(page.type)) return null;
-  const src = ogImage(page.buf.toString("utf8"), viaSeam(u.href));
-  if (!src) return null;
+  const src = ogImage(page.buf.toString("utf8"), u.href);
+  if (!src || !literalOk(src)) return null;      // a page may name any host it likes
   const img = await getCapped(viaSeam(src), POSTER_MAX_BYTES, deadline);
   return isPicture(img) ? img.buf : null;
 }
@@ -360,6 +496,34 @@ function nextRank(titles) {
   return max + 1;
 }
 
+// Every episode a show carries, in one flat list. The recipe draws a show from
+// these and from nothing else (server.js moviesRecipe), so this is also how
+// "will the board draw it" is answered below.
+function episodesOf(entry) {
+  const out = [];
+  for (const s of Array.isArray(entry && entry.seasons) ? entry.seasons : []) {
+    if (!s) continue;
+    for (const e of Array.isArray(s.episodes) ? s.episodes : []) if (e) out.push(e);
+  }
+  return out;
+}
+
+// Are these two entries the same film? Law 4 ("a re-add keeps its tile") was
+// written for the SAME title being fixed a week later. Two different films
+// whose names slugify the same are not that — "Cinderella" (1950) and
+// "Cinderella" (2015) — and letting one replace the other loses a tile the
+// family had, under a poster that belongs to the other film (review 9/5).
+// Only what BOTH carry can disagree: a title with no year and no tmdbId is
+// simply the same title, being filled in.
+function sameFilm(old, fields) {
+  if (!old || !fields) return true;
+  if (old.tmdbId != null && fields.tmdbId != null &&
+      String(old.tmdbId) !== String(fields.tmdbId)) return false;
+  if (Number.isFinite(old.year) && Number.isFinite(fields.year) &&
+      old.year !== fields.year) return false;
+  return true;
+}
+
 // Law 4: upsert by id, atomically (content-store's tmp + rename, so a device
 // never mirrors half a catalog). New titles are appended — the file keeps the
 // order the family added things in, and the recipe does the sorting.
@@ -369,13 +533,38 @@ function upsert(dir, fields, credit) {
   const at = titles.findIndex(t => t.id === fields.id);
   const old = at >= 0 ? titles[at] : null;
   const rank = old && Number.isFinite(old.rank) ? old.rank : nextRank(titles);
-  // A re-add whose poster hunt came back empty keeps the art it already had,
-  // and a show carries its harvested seasons: neither may be dropped by writing
-  // the new fields over.
-  const entry = { ...(old || {}), ...fields, rank,
-                  poster: fields.poster || (old && old.poster) || null };
+  const same = sameFilm(old, fields);
+  const entry = { ...(old || {}), ...fields, rank };
+  // WHAT A RE-ADD MAY NOT DESTROY (Law 3 again, review 9/5). An add cannot
+  // always supply everything, and the sheet's own search is the proof: with
+  // only a TMDB key every row comes back WITHOUT a deep link, so picking one
+  // posts a name, a year and a tmdbId and no url at all. The recipe draws only
+  // titles that HAVE a url — so spreading that body over the entry would take a
+  // film the family was watching off Ellie's board, silently. Each field below
+  // keeps what it had unless the new add really brought a better one.
+  entry.launch = fields.launch && fields.launch.url ? fields.launch
+               : (old && old.launch && old.launch.url) ? old.launch
+               : (fields.launch || { url: null });
+  entry.service = fields.service || (old && old.service) || null;
+  entry.tier = (old && old.tier) || fields.tier;      // curation is never undone by an add
+  // A re-add whose poster hunt came back empty keeps the art it already had —
+  // but never across a change of film (the right name over the wrong picture).
+  entry.poster = fields.poster || (same && old && old.poster) || null;
   if (!entry.poster) delete entry.posterFrom;
-  if (entry.kind === "show" && !Array.isArray(entry.seasons)) entry.seasons = [];
+  if (entry.kind === "show") {
+    if (!Array.isArray(entry.seasons)) entry.seasons = [];
+    // A show is drawn from its EPISODES. A show written with none — which is
+    // every show the search grid produces, because nothing harvests episodes
+    // yet — was a title the hub said it had added, counted as pending, and the
+    // board never drew, while the sheet told the parent it was on the board
+    // (review 9/5). Most of what a six-year-old watches is a series, so that
+    // was the normal path. Its own deep link IS its first episode until an
+    // episode harvest knows better; a show that already has episodes keeps
+    // exactly the ones it had.
+    const url = entry.launch && entry.launch.url;
+    if (url && !episodesOf(entry).length)
+      entry.seasons = [{ n: 1, episodes: [{ n: 1, title: entry.title, launch: { url } }] }];
+  }
   if (at >= 0) titles[at] = entry; else titles.push(entry);
   // The credit line lives WITH the catalog it belongs to, so anything that
   // shows the family's films — the sheet today, a future export — has it to
@@ -433,8 +622,10 @@ async function add(body) {
   if (!url && !asked)
     return { error: "need-url-or-title", message: "Paste a link to the film, or type its name." };
 
-  const kind = b.kind == null ? "movie" : b.kind;
-  if (!KINDS.includes(kind))
+  // The kind a caller SENT is checked here; the kind a caller left out is
+  // decided further down, where the catalog is open — a re-add that says
+  // nothing about it must not turn the family's show back into a film.
+  if (b.kind != null && !KINDS.includes(b.kind))
     return { error: "bad-kind", message: "New ERA can add a film or a show, and that was neither." };
 
   const title = asked || (u ? titleFromUrl(u) : "");
@@ -464,7 +655,24 @@ async function add(body) {
              message: "New ERA saves new films into the family's Drive folder, so every device gets them. Choose that folder in Settings first." };
   // Refuse BEFORE anything is written: a catalog we cannot read is not a
   // catalog we may write a single title over (Law 3).
-  if (readCatalog(dir).unreadable) return UNREADABLE;
+  const shelf = readCatalog(dir);
+  if (shelf.unreadable) return UNREADABLE;
+
+  // What this id already means to the family, if anything. Two things are
+  // decided from it, and both are Law 4 read properly: an id the caller did not
+  // choose that lands on a DIFFERENT film takes the year as its surname rather
+  // than replacing what is there, and a kind the caller did not send is the
+  // kind the family's entry already has.
+  let had = shelf.titles.find(t => t.id === id) || null;
+  if (had && b.id == null && !sameFilm(had, { tmdbId: b.tmdbId, year: b.year })) {
+    const alt = Number.isFinite(b.year) ? id + "-" + b.year : null;
+    if (alt && SLUG_RE.test(alt)) {
+      id = alt;
+      had = shelf.titles.find(t => t.id === id) || null;
+    }
+  }
+  const kind = b.kind != null ? b.kind
+             : (had && KINDS.includes(had.kind) ? had.kind : "movie");
 
   const entry = {
     id, kind, title, say: title,
@@ -473,8 +681,12 @@ async function add(body) {
     poster: null,                                  // filled in below when there is art to be had
     launch: { url: u ? u.href : null },            // null = pending, counted and drawn nowhere
     // provenance the design asked for (spec §6). addedBy is how the title got
-    // here: a pasted link, or a name a grown-up typed for the search to resolve.
-    addedBy: b.addedBy === "search" || !u ? "search" : "url",
+    // here: a pasted link, or a name a grown-up typed for the search to
+    // resolve. A caller that SAYS which is believed; otherwise a title already
+    // in the catalog keeps the answer it has, because a body with no url is not
+    // evidence that nobody ever pasted one (review 9/5).
+    addedBy: b.addedBy === "search" || b.addedBy === "url" ? b.addedBy
+           : (had && had.addedBy) || (u ? "url" : "search"),
   };
   if (Number.isFinite(b.year)) entry.year = b.year;
   if (b.tmdbId != null && (typeof b.tmdbId === "string" || Number.isFinite(b.tmdbId)))
@@ -509,8 +721,15 @@ async function add(body) {
   if (art) { entry.poster = art.rel; entry.posterFrom = art.from; }
 
   const written = upsert(dir, entry, !!(art && art.from === "tmdb"));
+  // `pending` means THE BOARD WILL NOT DRAW THIS, which is not the same
+  // question as "is there a launch.url": a show is drawn from its episodes.
+  // Answering the easy question instead is what let the sheet tell a parent
+  // "<Title> is on the board" over a show that was nowhere (review 9/5).
+  const drawn = written.kind === "show"
+    ? episodesOf(written).some(e => e.launch && e.launch.url)
+    : !!(written.launch && written.launch.url);
   return { ok: true, id: written.id, title: written.title, kind: written.kind,
-           rank: written.rank, pending: !(written.launch && written.launch.url),
+           rank: written.rank, pending: !drawn,
            mirrored: await mirror(),
            // What the sheet needs to draw the result: the art it just got, and
            // TMDB's credit when the art is TMDB's (a re-add whose old poster

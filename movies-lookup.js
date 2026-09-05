@@ -109,6 +109,10 @@ function keys() {
 }
 function tmdbKey() { return keys().tmdb; }
 function watchmodeKey() { return keys().watchmode; }
+// WHETHER a key is saved, never which one (Law 4). The Settings card needs to
+// say "saved ✓" beside a box a parent just typed into, and that is the whole
+// of what it may be told.
+function held() { const k = keys(); return { tmdb: !!k.tmdb, watchmode: !!k.watchmode }; }
 
 // ---------------------------------------------------------------- the config
 
@@ -263,16 +267,23 @@ function deepLink(slug, source) {
 // One GET, bounded by what is left of the shared budget and by a byte cap, and
 // null for every unhappy answer there is (Law 2). Nothing is logged: a search
 // that came back thin is not an incident.
+// A KEY IN A HEADER NEVER FOLLOWS A REDIRECT (Law 4, review 9/5). undici
+// strips only authorization, cookie, proxy-authorization and host when a
+// redirect crosses origins — a custom header like Watchmode's X-API-Key is
+// re-sent to whatever answers, so following one hands the family's key to
+// another host. TMDB's key is a query parameter and would travel the same way.
+// A 3xx is simply not `ok`, so the whole thing degrades into the shorter answer
+// Law 2 already promises.
 async function getJson(href, headers, deadline) {
   const left = deadline - Date.now();
   if (!href || left <= 0) return null;
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), left);
   try {
-    const r = await fetch(href, { signal: ctl.signal, redirect: "follow",
+    const r = await fetch(href, { signal: ctl.signal, redirect: "manual",
                                   headers: { "User-Agent": "New ERA hub (family use)",
                                              Accept: "application/json", ...(headers || {}) } });
-    if (!r.ok) return null;
+    if (!r.ok) { if (r.body) r.body.cancel().catch(() => {}); return null; }
     const claimed = Number(r.headers.get("content-length"));
     if (Number.isFinite(claimed) && claimed > JSON_MAX_BYTES) return null;
     const buf = Buffer.from(await r.arrayBuffer());
@@ -425,4 +436,4 @@ async function lookupTitle(query, reg) {
   return hits;
 }
 
-module.exports = { lookupTitle, status, tmdbKey, watchmodeKey, SERVICES };
+module.exports = { lookupTitle, status, tmdbKey, watchmodeKey, held, SERVICES };

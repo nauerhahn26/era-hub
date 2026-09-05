@@ -157,6 +157,48 @@ test("a voice key ElevenLabs rejects never shows 'Premium voices active' (bug 14
   await ctx.close();
 });
 
+// ---- "Films and shows" keys card (T5.3) ----
+//
+// /movies/lookup's hint tells a parent to "add a TMDB key in Settings", and for
+// one review cycle there was no such card anywhere in the product — the only
+// way in was hand-editing a JSON file (review 9/5, the same dead end "Install
+// it and try again" was fixed for in Phase 4). This is the card that sentence
+// names. Neither key is ever verified against a provider here (that would spend
+// one), and neither may ever come back out of the hub.
+test("the films card takes both keys and never hands either one back (T5.3)", async () => {
+  const { ctx, page } = await settingsPage();
+  assert.match(await page.$eval("#movies h2", h => h.textContent), /Films/);
+  assert.equal(await page.$eval("#tmdbKey", i => i.type), "password",
+               "a key is not shoulder-surfable on a family PC");
+  assert.equal(await page.$eval("#wmKey", i => i.type), "password");
+
+  await page.fill("#tmdbKey", "tmdb-typed-by-a-parent");
+  await page.click("#moviesKeySave");
+  await page.waitForFunction(() => /saved|working|✓/i.test(
+    document.getElementById("moviesKeyStatus").textContent));
+  // the search is on now, and it says what this key does and does not buy
+  let st = await (await fetch(`${BASE}/movies/keys`)).json();
+  assert.equal(st.provider, "tmdb");
+  assert.equal(st.deepLinks, false);
+  assert.equal(st.tmdb, true, "the card is told a key is saved, never which key");
+  assert.equal(st.watchmode, false);
+  assert.ok(!JSON.stringify(st).includes("tmdb-typed-by-a-parent"),
+            "the key never comes back out of the hub");
+
+  await page.fill("#wmKey", "watchmode-typed-by-a-parent");
+  await page.click("#moviesKeySave");
+  await page.waitForFunction(() => /tile that plays|links|✓/i.test(
+    document.getElementById("moviesKeyStatus").textContent));
+  st = await (await fetch(`${BASE}/movies/keys`)).json();
+  assert.equal(st.provider, "watchmode");
+  assert.equal(st.deepLinks, true, "the optional key is what buys a tile that plays");
+  assert.equal(st.watchmode, true);
+  assert.ok(!JSON.stringify(st).includes("watchmode-typed-by-a-parent"));
+  assert.equal(await page.$eval("#wmKey", i => i.value), "",
+               "and the box is cleared, so the key is not left on screen");
+  await ctx.close();
+});
+
 // ---- "Your books" content card (T2.10) ----
 
 test("the books card is #content and names the recommended setup (spec §4)", async () => {

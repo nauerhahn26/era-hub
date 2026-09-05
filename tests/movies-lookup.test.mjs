@@ -47,7 +47,14 @@ const WM_KEY = ["fake", "-watchmode-", "0".repeat(20)].join("");
 let web = null, WEB = "";
 let calls = [];
 let total = 0;
+// `calls` is cleared per test; `seen` never is. The guardrail at the bottom of
+// this file is an invariant over the WHOLE suite, so it needs the whole suite's
+// traffic — and it needs `total` (bumped by every request, known path or not)
+// to compare against, because a request the stand-in does not recognise is the
+// shape a leak takes.
+let seen = [];
 let brokenWatchmode = false;
+let redirectWatchmode = false;
 
 // TMDB /search/multi, verbatim in shape: a show, a film, and a PERSON (which
 // the adapter must drop — a search for a name matches actors too).
@@ -95,20 +102,22 @@ const json = (res, body, code = 200) => {
   res.end(JSON.stringify(body));
 };
 
+const record = (c) => { calls.push(c); seen.push(c); };
+
 function standIn(req, res) {
   const u = new URL(req.url, "http://127.0.0.1");
   const p = u.pathname;
   total++;
   if (p === "/tmdb/search/multi") {
-    calls.push({ api: "tmdb", path: p, key: u.searchParams.get("api_key"),
-                 query: u.searchParams.get("query") });
+    record({ api: "tmdb", path: p, key: u.searchParams.get("api_key"),
+             query: u.searchParams.get("query") });
     const q = (u.searchParams.get("query") || "").toLowerCase();
     return json(res, q.includes("ada") ? SEARCH : { results: [] });
   }
   let m = /^\/tmdb\/(movie|tv)\/(\d+)\/watch\/providers$/.exec(p);
   if (m) {
-    calls.push({ api: "tmdb", path: p, key: u.searchParams.get("api_key"),
-                 type: m[1], id: Number(m[2]) });
+    record({ api: "tmdb", path: p, key: u.searchParams.get("api_key"),
+             type: m[1], id: Number(m[2]) });
     // every country on Earth comes back; the adapter slices its own
     return json(res, { id: Number(m[2]), results: {
       US: { link: "https://www.themoviedb.org/tv/129604/watch?locale=US",
@@ -119,11 +128,21 @@ function standIn(req, res) {
   }
   m = /^\/watchmode\/title\/([^/]+)\/details$/.exec(p);
   if (m) {
-    calls.push({ api: "watchmode", path: p, id: m[1],
-                 key: req.headers["x-api-key"] || null,
-                 append: u.searchParams.get("append_to_response"),
-                 regions: u.searchParams.get("regions") });
+    record({ api: "watchmode", path: p, id: m[1],
+             key: req.headers["x-api-key"] || null,
+             append: u.searchParams.get("append_to_response"),
+             regions: u.searchParams.get("regions") });
     if (brokenWatchmode) return json(res, { success: false }, 500);
+    // A provider that moves house sends a 302. The Watchmode key rides in a
+    // HEADER, and undici re-sends a custom header to whatever answers the
+    // redirect — so following one hands the family's key to another host.
+    if (redirectWatchmode)
+      return res.writeHead(302, { Location: "/moved-elsewhere" }).end();
+    return json(res, WM_DETAILS);
+  }
+  // where a followed redirect would land, key and all
+  if (p === "/moved-elsewhere") {
+    record({ api: "watchmode", path: p, key: req.headers["x-api-key"] || null });
     return json(res, WM_DETAILS);
   }
   res.writeHead(404, { "Content-Type": "text/plain" });
@@ -284,6 +303,22 @@ test("a provider having a bad day is a shorter answer, never an error", async ()
   } finally { brokenWatchmode = false; }
 });
 
+// The Watchmode key is the ONE key this feature carries in a header rather than
+// a query parameter, and undici strips only authorization/cookie/host on a
+// cross-origin redirect — a custom header is re-sent to whatever answers
+// (review 9/5). So the keyed call does not follow redirects at all.
+test("a redirect off Watchmode is not followed, so the key never travels to it", async () => {
+  freshData(null, withBoth);
+  redirectWatchmode = true;
+  try {
+    const out = await lookup.lookupTitle("ada twist", "US");
+    assert.equal(out.length, 2, "a moved provider is a shorter answer, never an error");
+    assert.deepEqual(out[0].providers, []);
+    assert.equal(calls.filter(c => c.path === "/moved-elsewhere").length, 0,
+                 "and the hub never went where it was sent");
+  } finally { redirectWatchmode = false; }
+});
+
 test("a search that matches nothing is an empty grid, not a failure", async () => {
   freshData(null, withBoth);
   assert.deepEqual(await lookup.lookupTitle("no such film anywhere", "US"), []);
@@ -376,6 +411,17 @@ test("the door refuses an empty search and anything from another page", async ()
 
 // ------------------------------------------------------------ money guardrail
 
-test("the stand-in saw every call this suite made, and no key was spent", () => {
-  assert.ok(total > 0, "zero recorded calls means a request escaped the seam");
+// An invariant over the whole suite, not a restatement of the per-test counts:
+// EVERY request the stand-in was asked for is one it recognises (an unknown
+// path is what a leak or a drifted endpoint looks like from here), and every
+// one of them carried one of the two keys assembled at the top of this file.
+// A request that reached api.themoviedb.org or api.watchmode.com on a real key
+// would fail both halves.
+test("every request this suite made went through the seam, on a fake key", () => {
+  assert.ok(seen.length > 0, "zero recorded calls means the suite proved nothing");
+  assert.equal(total, seen.length,
+               "the stand-in was asked for a path it does not serve: a request escaped");
+  for (const c of seen)
+    assert.ok(c.key === TMDB_KEY || c.key === WM_KEY,
+              `a request went out with a key this suite did not make: ${c.path}`);
 });
