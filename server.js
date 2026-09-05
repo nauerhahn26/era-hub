@@ -1652,16 +1652,21 @@ const server = http.createServer((req, res) => {
         return;
       }
       const st = moviesLookup.status(b.region);
+      // TMDB's terms want the credit wherever their art is shown, and the
+      // grid the board draws from these rows shows their posters. Sent from
+      // here so the sentence has ONE owner (moviesAdd.TMDB_ATTRIBUTION) and
+      // the board never keeps a second copy of it to drift.
+      const credit = st.provider === "none" ? null : moviesAdd.TMDB_ATTRIBUTION;
       moviesLookup.lookupTitle(query, b.region).then(results => {
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify({ ok: true, provider: st.provider, region: st.region,
-                                 results, hint: st.hint }));
+                                 results, hint: st.hint, attribution: credit }));
       }).catch(() => {
         // lookupTitle never throws by design; if it ever does, the sheet still
         // gets the paste box rather than a spinner.
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify({ ok: true, provider: st.provider, region: st.region,
-                                 results: [], hint: st.hint }));
+                                 results: [], hint: st.hint, attribution: credit }));
       });
     });
     return;

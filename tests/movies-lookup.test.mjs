@@ -335,6 +335,12 @@ test("POST /movies/lookup hands the sheet a grid it can draw", async () => {
   assert.equal(body.results.length, 2);
   assert.equal(body.results[0].providers[0].deepLink,
                "https://www.netflix.com/watch/80198673");
+  // TMDB's terms want their credit wherever their art is shown, and the grid
+  // the board draws from these rows shows their posters. It is sent from the
+  // door so the board never keeps a second copy of the sentence to drift
+  // (T5.4).
+  assert.match(body.attribution, /TMDB/,
+               "the poster credit rides with the rows the posters belong to");
   // no key ever leaves the hub
   const wire = JSON.stringify(body);
   assert.ok(!wire.includes(TMDB_KEY) && !wire.includes(WM_KEY));
@@ -350,6 +356,8 @@ test("no key: the door still answers, with the hint and an empty grid", async ()
   assert.deepEqual(body.results, []);
   assert.equal(body.provider, "none");
   assert.match(body.hint, /Settings/);
+  assert.equal(body.attribution, null,
+               "nothing of TMDB's was fetched, so nothing is credited");
   assert.equal(calls.length, 0);
   await stopHub();
 });
