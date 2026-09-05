@@ -641,9 +641,9 @@ async function ingest() {
 }
 
 // ---- weather (keyless; cached 3h; null offline = board just has no tile) ----
-// The HOURS she is out, not the day's peak (dad 9/5: "she's often choosing
-// clothing for when she'll be at school between ten and one, and we give her
-// weather we don't hit until four PM — so it's not perfectly useful"). One
+// The HOURS she is out, not the day's peak (dad 9/5: she dresses for a
+// morning at school, and the afternoon high we used to show is hours away —
+// "so it's not perfectly useful"). One
 // window applies every day; unset = the whole day, which is what the daily
 // maximum used to give. Settings writes it, the worker reads it from the same
 // app-settings.json every other knob lives in.

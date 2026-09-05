@@ -2468,10 +2468,11 @@ none of it in the payload, so the v0.32.0 cut stands:
 
 Queued for the **next cut** (product code — would break the "the tag is the
 commit the installer came from" rule if landed now):
-- The family's real school-hours window is in shipped copy and comments
-  (`public/settings/index.html:169,177`, `clothing-worker.js:645`,
-  `server.js:1272` — "between ten and one"); the fixtures were genericized on
-  9/5, the prose was not. Reword to an invented example.
+- ~~The family's real school-hours window was in shipped copy and comments
+  (`public/settings/index.html:169`, `clothing-worker.js:645`,
+  `server.js:1272`); the fixtures were genericized on 9/5, the prose was
+  not.~~ Reworded the same hour to "the hours she is out — a morning at
+  school"; the branch is not pushed until this rides a cut.
 - `POST /movies-key` stores TMDB/Watchmode keys with no proving call
   (spec:128–129 wants one, as the AI and voice cards have).
 - The weekly availability re-check: `availabilityCheckedAt` is stamped at

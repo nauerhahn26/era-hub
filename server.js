@@ -1269,7 +1269,7 @@ const server = http.createServer((req, res) => {
         // where every app's door goes (dad 9/3): her talker, or New ERA's home
         if (inc.exitTo === "tdsnap" || inc.exitTo === "home") s.exitTo = inc.exitTo;
         // the hours the outfits are sorted for (dad 9/5): she dresses for
-        // school between ten and one, not for the four-o'clock high. Both ends
+        // the hours she is out, not for the afternoon high. Both ends
         // inclusive; null clears it back to the whole day. Anything else is
         // ignored, like every other knob here.
         const wasWindow = JSON.stringify(s.weatherWindow || null);
