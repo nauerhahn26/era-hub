@@ -34,8 +34,9 @@
      book being reviewed), POST /content/text (the new order and the
      cover, or ONE page's words and flags), POST /content/run, which
      re-publishes the book and is the only door here that spends the
-     family's money (one page's narration, or reading the photos
-     again), and POST /content/remove, the only door in the hub that
+     family's money (one page's narration, reading the photos again,
+     or the moving pictures — the only dollars in the product), and
+     POST /content/remove, the only door in the hub that
      deletes a family's own files.
 
      Core, not a pack: shipped by tools/build-payload.sh and laid
@@ -202,15 +203,16 @@
       <p class="status">New ERA looks at every photo again and writes down the words it sees.
       The narration already recorded is kept — only the words change.</p>
 
+      <!-- The one button in the suite that spends real money (spec §5, T6.2).
+           Two rules it never breaks: it is disabled until this hub can QUOTE
+           the book (pages × the price of one clip, off the fal card), and the
+           price it will spend is written on the button itself — a parent must
+           never be able to press it without having been told the number. -->
       <div class="actions">
         <button id="animate" type="button" disabled>🎬 Animate this book</button>
-        <!-- Spec §5 writes this button "Animate this book (≈ $x)". There is no
-             $x to put in it until the fal card lands (Phase 6), and a made-up
-             number on the one button that would spend real money is worse than
-             none — so the promise is made in words instead. -->
-        <span class="status" id="animateHint">Not yet — moving pictures need a fal key,
-        and New ERA cannot make them on this computer today. When it can, this button
-        will say what a book costs before it spends anything.</span>
+        <span class="status" id="animateHint">Moving pictures need a fal key —
+        add one to the “Moving pages” card in Settings. This button will say what a book
+        costs before it spends anything.</span>
       </div>
 
       <div class="danger">
@@ -306,7 +308,35 @@ function paintBook(j) {
     $("bookFlags").textContent = bits.join(", ") + ".";
     show("bookFlags", true);
   }
+  paintAnimate(j);
   show("book", true);
+}
+
+// THE COST GATE, PAINTED (spec §4 step 5, T6.2). /content/status carries the
+// book's quote — how many pages, what one clip costs this family, what the two
+// multiply to — and `ready` is false whenever that could not be worked out: no
+// fal key, a key fal already refused, or a book that has not published yet. No
+// quote, no press: a button that spends dollars and cannot say how many is a
+// button nobody should be able to lean on, so the number goes ON the button and
+// the button is disabled without it.
+let QUOTE = null;
+function paintAnimate(j) {
+  const a = j.animate || { ready: false, pages: 0, perClip: null, total: null, done: 0 };
+  QUOTE = a;
+  const money = a.total == null ? null : "$" + a.total.toFixed(2);
+  const btn = $("animate");
+  btn.disabled = !a.ready;
+  btn.textContent = "🎬 Animate this book" + (money ? " (≈ " + money + ")" : "");
+  // What is already made, so a second press reads as "finish it" rather than
+  // "buy it all again" — and so a run that only managed half says so.
+  const made = a.done ? a.done + " of " + a.pages + " pages already have one. " : "";
+  $("animateHint").textContent = a.ready
+    ? made + "Every page gets a five-second moving picture. New ERA only pays for the ones it "
+           + "still has to make, and Ellie sees them at the next sync."
+    : (j.published
+        ? "Moving pictures need a fal key — add one to the “Moving pages” card in Settings. "
+          + "This button will say what a book costs before it spends anything."
+        : "New ERA makes the moving pictures once a book is finished — this one is still being built.");
 }
 
 // ============================================================ the page strip
@@ -753,6 +783,46 @@ async function rebuild() {
   bookNote("Read again ✓ — the words below came off the photos.", false);
 }
 $("rebuild").addEventListener("click", rebuild);
+
+// "Animate this book (≈ $x)" — the only press in the whole suite that spends
+// dollars, and the price it is about to spend is written on the button that
+// takes the press. It says what it is doing, and afterwards it says what it
+// GOT: how many pages ended up with a moving picture. There is no error line to
+// wait for, deliberately — a clip that could not be made is one page's loss and
+// never the book's (content-worker.js: an optional step never marks a finished
+// book failed), so the count is the honest answer to "did that work?".
+async function animateBook() {
+  const button = $("animate");
+  button.disabled = true;
+  const had = (QUOTE && QUOTE.done) || 0;
+  bookNote("Making the moving pictures… a page takes a couple of minutes, and each one lands "
+         + "in the book as it is finished.", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "animate" });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    bookNote("New ERA is not answering — nothing was made and nothing was spent.", true);
+    button.disabled = false; return;
+  }
+  // A refusal is already a sentence (no fal key, a book still being built) —
+  // shown as it came, not decorated.
+  if (!r.ok) {
+    bookNote((out && out.error) || "New ERA could not make the moving pictures.", true);
+    button.disabled = false; return;
+  }
+  const s = await settled();
+  const j = s && (s.jobs || []).find(b => b.slug === SLUG);
+  if (j) paintBook(j); else button.disabled = false;
+  const now = (j && j.animate && j.animate.done) || 0;
+  if (now > had)
+    bookNote("Made ✓ — " + now + " of " + ((j && j.animate.pages) || now)
+           + " pages have a moving picture now. Ellie sees them at the next sync.", false);
+  else
+    bookNote("No moving pictures were made this time, and the book is exactly as it was. "
+           + "Check the fal key in Settings, then try again.", true);
+}
+$("animate").addEventListener("click", animateBook);
 
 // "Remove this book". The only thing on this page that deletes anything, so it
 // asks first — and the answer is a different button in a different place.

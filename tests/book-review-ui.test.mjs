@@ -3,7 +3,8 @@
 // cover, then the per-page controls a parent actually came here for — the
 // flagged words picked out, an inline field to fix them, "Re-narrate this page"
 // and "Clear flag" — and finally the three that act on the WHOLE book: read the
-// photos again, remove the book, and the animate button that is not built yet.
+// photos again, remove the book, and the animate button — which is dead until
+// this hub can say what the book will cost.
 // A real browser drives it, because a drag is the whole feature and a DOM
 // assertion about a drag that never happened proves nothing.
 //
@@ -63,6 +64,9 @@ const FAKE_KEY = ["sk", "_", "bookreview", "0".repeat(24)].join("");
 // The AI-helper card's key, for the same reason and by the same rule: nothing
 // in a tracked file may LOOK like a credential either.
 const FAKE_AI_KEY = ["AQ", ".", "bookreview", "0".repeat(24)].join("");
+// And the fal card's, for the cost gate below. It is never spent: no test here
+// presses the one button that would, and the stand-in has no fal queue in it.
+const FAKE_FAL_KEY = ["fal", "-", "bookreview", "-", "0".repeat(12)].join("");
 const VOICE = "cgSgspJ2msm6clMCkdW9";
 // What the stand-in transcriber "reads" off every photo it is shown. Nothing a
 // parent could mistake for their own words, so a page that was re-read and a
@@ -711,7 +715,8 @@ test("Re-narrate this page buys that page and nothing else, and the shelf follow
 //
 // The three buttons under the strip: read the photos again (keeping the words a
 // grown-up typed unless they say otherwise), remove the book, and animate —
-// which is not built until Phase 6 and must say so rather than lie.
+// the one press in the suite that spends dollars, so it may not be pressed
+// until the book has a price on it (T6.2).
 
 const remove = (body) => fetch(`${BASE}/content/remove`, {
   method: "POST", headers: { "Content-Type": "application/json" },
@@ -721,20 +726,41 @@ const remove = (body) => fetch(`${BASE}/content/remove`, {
 // assertion below is a DELTA, so one test's spend can never be read as another's.
 const spent = (kind, from) => calls.slice(from).filter(c => c.kind === kind).length;
 
-test("Animate this book is on the page, and there is nothing to press yet", async () => {
+// THE COST GATE, IN A REAL BROWSER (T6.2, spec §4 step 5). Animation is the
+// only press in the suite that spends dollars, so the button is dead until this
+// hub can quote the book — and when it can, the price is ON it. Nothing here
+// presses it: this test proves the gate, and content-animate.test.mjs proves
+// what happens after it (against its own stand-in fal, never this one).
+test("Animate this book cannot be pressed until the book can be quoted", async () => {
+  const at = calls.length;
+  const cfg = path.join(DATA, "ai-config.json");
+  fs.writeFileSync(cfg, JSON.stringify({}));            // no fal card yet
   book("Not Yet", ["one", "two"]);
-  const { ctx, page } = await review("not-yet");
+  let { ctx, page } = await review("not-yet");
   assert.equal(await page.locator("#animate").count(), 1, "the button spec §5 asks for is there");
   assert.equal(await page.locator("#animate").isDisabled(), true);
   // A disabled button with no reason beside it is a button a parent presses
-  // twice and then writes to us about. Spec §5 puts "(≈ $x)" in the label; with
-  // no fal card yet there is no $x, so the hint promises the price instead of
-  // inventing one on the button that would spend it.
+  // twice and then writes to us about. With no card there is no price, so the
+  // hint says where the fix is rather than inventing a number on the one button
+  // that would spend it.
   const hint = await page.locator("#animateHint").textContent();
   assert.match(hint, /fal/i);
   assert.match(hint, /cost/i);
   assert.ok(!/\$\s*\d|\d+\s*p\b/.test(hint), "no made-up price: " + hint);
+  assert.ok(!/\$/.test(await page.locator("#animate").textContent()), "and none on the button");
   await ctx.close();
+
+  // The card as POST /fal-key leaves it. No fal traffic is needed to quote a
+  // book — the price is the one the probe recorded when the key was saved.
+  fs.writeFileSync(cfg, JSON.stringify({ fal: { apiKey: FAKE_FAL_KEY, keyOk: true } }));
+  ({ ctx, page } = await review("not-yet"));
+  await page.waitForFunction(() => !document.getElementById("animate").disabled);
+  // Two pages at $0.35 (ai-config.DEFAULT_CLIP_PRICE) — spec §5 writes the
+  // label "Animate this book (≈ $x)", and this is the $x.
+  assert.match(await page.locator("#animate").textContent(), /\$\s?0\.70/);
+  await ctx.close();
+  fs.writeFileSync(cfg, JSON.stringify({}));
+  assert.equal(calls.length, at, "quoting a book asks no provider anything");
 });
 
 test("Read the photos again with no AI key is a sentence, not a 500 — and buys nothing", async () => {

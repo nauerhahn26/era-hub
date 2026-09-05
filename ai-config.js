@@ -105,6 +105,17 @@ function aiRoles(dir) {
   return { vision: visionRole(cfg), elevenlabs: elevenRole(dir), fal: falRole(cfg) };
 }
 
+// WHAT ONE CLIP COSTS THIS FAMILY, and nothing else off the fal role — no key,
+// not even whether the key is long. The animate step's cost gate is mandatory
+// (spec §4 step 5), so content.js has to quote a book before the button can be
+// pressed, and content.js is a file in which no key is read and none ever will
+// be (its header's law). null means "no quote is possible", which is exactly
+// what keeps the button disabled: no key, or a key fal already refused.
+function falPrice(dir) {
+  const role = falRole(readJson(path.join(dir, "ai-config.json")));
+  return role ? role.perClipPrice : null;
+}
+
 // Which roles are SET UP, and nothing about what they are set up WITH. A caller
 // that only needs to know whether the family has bought a voice yet — content.js
 // refusing a re-narrate before it spawns a worker (spec §5) — must not have to
@@ -114,5 +125,5 @@ function haveRoles(dir) {
   return { vision: !!r.vision, elevenlabs: !!r.elevenlabs, fal: !!r.fal };
 }
 
-module.exports = { aiRoles, haveRoles, VISION_PROVIDERS, DEFAULT_MODEL_ID,
+module.exports = { aiRoles, haveRoles, falPrice, VISION_PROVIDERS, DEFAULT_MODEL_ID,
                    DEFAULT_CLIP_PRICE };

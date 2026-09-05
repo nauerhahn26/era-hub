@@ -15,8 +15,13 @@
 //
 // "reviewing" owes narration because review never blocks a book: a flagged
 // page publishes anyway and a parent fixes it afterwards (ruling 9/4 — "a
-// small mistake is tolerable; a book that never appears is not"). Animation
-// (spec §4, optional) plugs in after "published" the same way.
+// small mistake is tolerable; a book that never appears is not").
+//
+// ANIMATION IS IN THE TABLE BUT NOT IN THE WALK. It is the one step that spends
+// dollars, so no state owes it: it has `owes: null`, which means the walk above
+// can never select it and content.js's half-hourly scan can never reach it. The
+// only way in is being named — POST /content/run {step:"animate"} — which is to
+// say a parent pressing a button that quoted the book first (spec §4 step 5).
 //
 // A step whose `run` is still null is not an error and not a failure: the walk
 // stops there and says which step it was waiting for, leaving the claim, the
@@ -70,6 +75,7 @@ const path = require("path");
 const store = require("./content-store.js");
 const { ingest } = require("./content-ingest.js");
 const { narrateBook, said } = require("./content-narrate.js");
+const { animateBook } = require("./content-animate.js");
 const { transcribeBook } = require("./content-providers.js");
 const { publishBook } = require("./content-publish.js");
 
@@ -119,6 +125,22 @@ const STEPS = [
                                      only: c.only || (c.page == null ? null : [c.page]) }) },
   { name: store.STEP_OWED.narrating,    owes: "narrating",    then: "published",
     run: (c) => publishBook(c.dir, { slug: c.slug, title: c.name }) },
+  // THE OPTIONAL STEP, AND THE ONLY ONE THAT SPENDS DOLLARS (T6.2, spec §4
+  // step 5). `owes: null` is the whole of "off by default": no state owes it,
+  // so the walk above can never select it and neither can content.js's
+  // half-hourly scan — it is reachable ONLY by name, which is to say only by
+  // POST /content/run {step:"animate"}, which is to say only by a parent
+  // pressing a button that says what the book will cost. It never ticks a state
+  // off either (`then: null`): a published book stays published, and settle()
+  // still walks it to `done` because nothing here owes "published".
+  //
+  // `optional` is the other half: a clip that could not be made is one page's
+  // loss, never the book's. It must not hold the job (there is no state to
+  // resume) and a key fal refuses must not mark a FINISHED book failed — see
+  // the two guards in walk().
+  { name: store.STEP_ANIMATE, owes: null, then: null, optional: true,
+    run: (c) => animateBook(c.dir, { dataDir: c.dataDir, slug: c.slug, name: c.name,
+                                     only: c.only || (c.page == null ? null : [c.page]) }) },
 ];
 
 const byName = (n) => STEPS.find(s => s.name === n);
@@ -140,7 +162,7 @@ function summary(step, result) {
   // family's Drive folder and is not on the Reader's shelf yet (F5).
   for (const k of ["pages", "wrote", "copied", "transcribed", "escalated", "calls",
                    "narrated", "reused", "chars", "skipped", "silent", "flagged", "blank",
-                   "published", "errors"]) {
+                   "animated", "clips", "published", "errors"]) {
     const v = r[k];
     if (Array.isArray(v)) out[k] = v.length;
     else if (v != null) out[k] = v;
@@ -293,9 +315,28 @@ async function walk() {
     // job.json, /content/status or the Settings card ever said so.
     const errors = result && Array.isArray(result.errors) ? result.errors.filter(Boolean) : [];
     const permanent = !!(result && result.permanent);
-    // fail() writes the last message itself, so it is not noted twice.
-    const keep = permanent ? errors.slice(0, -1) : errors;
+    // fail() writes the last message itself, so it is not noted twice — unless
+    // this is the optional step, which never calls fail().
+    const keep = permanent && !step.optional ? errors.slice(0, -1) : errors;
     if (keep.length && now) now = store.writeJob(DIR, store.noteErrors(now, keep));
+
+    // THE OPTIONAL STEP IS NEVER THE BOOK'S PROBLEM. Animation is the one step
+    // no state owes, so neither of the two answers below fits it: there is no
+    // state to hold in (the book is already published, and holding would park a
+    // finished book on a "retry" the card would print under it for ever), and a
+    // key fal refused must not mark a FINISHED book failed — the family's book
+    // is on the shelf and reads perfectly; it is the moving pictures that did
+    // not happen. What went wrong is kept on the job's history (above) and in
+    // log.jsonl, and the review page tells the parent how many pages actually
+    // gained a clip.
+    if (step.optional) {
+      // The animate step re-publishes after every single clip itself, so the
+      // walk only steps in when that could not happen: a run that changed
+      // nothing must not hand Google Drive a fresh manifest to re-upload to
+      // every device in the family for nothing.
+      if (result && result.animated && !result.publishes) await republish(steps);
+      return { slug: SLUG, state: settle(store.readJob(DIR)), steps, finished: true };
+    }
 
     // A refusal will refuse every retry too (a key the provider will not take),
     // so the book stops and says why. It is not a dead end: content-store keeps

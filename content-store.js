@@ -55,7 +55,15 @@ const STEP_OWED = {
   reviewing: "narrate",
   narrating: "publish",
 };
-const STEP_NAMES = Object.values(STEP_OWED);
+// The OPTIONAL steps: real steps of the pipeline that no state owes, so the
+// walk never selects one and the half-hourly scan can never reach one. Animation
+// is the whole list, and its absence from STEP_OWED above is the whole of "off
+// by default" (spec §4 step 5): it costs dollars and is only ever run by name,
+// which is to say only by a parent pressing a button that quotes it first.
+// POST /content/run still has to accept the name, so STEP_NAMES carries it.
+const STEP_ANIMATE = "animate";
+const STEP_OPTIONAL = [STEP_ANIMATE];
+const STEP_NAMES = Object.values(STEP_OWED).concat(STEP_OPTIONAL);
 
 function stepOwed(state) { return STEP_OWED[state] || null; }
 
@@ -328,7 +336,8 @@ function noteErrors(job, msgs, opts) {
 // every write, and a book re-narrated a page at a time over a week would grow
 // an unbounded array there. Two numbers per step keep the file the size it is
 // and still answer the only question a parent asks ("what has this cost me?").
-// The unit is the step's own — characters for narrate — and is not mixed.
+// The unit is the step's own — characters for narrate, CLIPS for animate — and
+// is never mixed between steps.
 //
 // Returns a NEW job, like transition() and noteErrors(): a caller still holding
 // the old one must not see it move under them. A charge that is not a positive
@@ -397,7 +406,8 @@ function readLog(dir) {
 }
 
 module.exports = {
-  BUILD_DIR, STATES, LEGAL, STEP_OWED, STEP_NAMES, stepOwed, owedState,
+  BUILD_DIR, STATES, LEGAL, STEP_OWED, STEP_ANIMATE, STEP_OPTIONAL, STEP_NAMES,
+  stepOwed, owedState,
   buildDir, jobPath, textPath, logPath, tmpPathFor,
   writeAtomic, readJson, redact,
   normalizeText, readText, writeText,

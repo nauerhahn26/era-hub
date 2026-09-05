@@ -40,9 +40,13 @@ const booksIndex = require("./books-index.js");
 const { EXT: PHOTO_EXT } = require("./clothing-photos.js");
 const { narrationPath, forgetPage } = require("./content-narrate.js");
 const { pagesOf, pauseHolds } = require("./content-providers.js");
-// Booleans only — which roles the family has set up. No key is read in this
-// file and none ever will be (see the header).
-const { haveRoles } = require("./ai-config.js");
+// The book's quote, and how much of it is already made. Pure arithmetic and one
+// readdir — no key, no network (content-animate.js keeps both).
+const { quote, animatedCount } = require("./content-animate.js");
+// Booleans only — which roles the family has set up — plus the ONE number the
+// cost gate needs (what a clip costs this family). No key is read in this file
+// and none ever will be (see the header).
+const { haveRoles, falPrice } = require("./ai-config.js");
 
 // A folder must look identical across two observations at least this far apart
 // before it is claimed (spec §2 "Quiet period"; the local mirror syncs every
@@ -404,7 +408,7 @@ function bookFor(slug, st) {
 // name, no key — content.js never reads one and this payload is public.
 // The book's title is the one identifying thing in here, and it is the one
 // thing a parent needs to recognise their own book.
-function jobFor(name, dir, slug) {
+function jobFor(name, dir, slug, perClip) {
   const job = store.readJob(dir);
   const text = store.readText(dir);
   const narr = store.readJson(narrationPath(dir));
@@ -468,6 +472,18 @@ function jobFor(name, dir, slug) {
   // believes. A quota pause is not this: it has its own sentence and nothing to
   // press.
   const stuck = !!last && (job.state === "failed" || job.held === "retry");
+  // THE COST GATE (spec §4 step 5, T6.2). Animation is the one thing in the
+  // product that spends dollars, so the review page may only enable its button
+  // when this hub can say what the book will cost — pages × the price of one
+  // clip, off the fal card. No key, no price, no quote, and `ready:false` keeps
+  // the button disabled; a book that has not published yet is not quoted either,
+  // because animating a half-built book would freeze it onto Ellie's shelf.
+  // `done` is how many pages already have their clip, which is the only way a
+  // parent can see that a run did anything (an optional step never marks a
+  // finished book failed — content-worker.js).
+  const price = perClip === undefined ? (DATA ? falPrice(DATA) : null) : perClip;
+  const published = fs.existsSync(path.join(dir, "manifest.json"));
+  const q = published ? quote(count, price) : null;
   return {
     kind: "books",
     slug: slug || booksIndex.slugFor(path.dirname(dir), name) || "book",
@@ -483,9 +499,11 @@ function jobFor(name, dir, slug) {
     flags,
     pageFlags,
     edited,
+    animate: { ready: !!q, pages: count, perClip: q ? q.perClip : null,
+               total: q ? q.total : null, done: animatedCount(dir) },
     pausedUntil: (job && job.pausedUntil) || null,
     note: (job && job.pausedNote) || null,
-    published: fs.existsSync(path.join(dir, "manifest.json")),
+    published,
     // job.errors is a history kept on purpose (a book that fell over twice for
     // two reasons is the one a parent needs the whole story of); `error` is only
     // the current one. Settings turns it into a sentence — the raw provider
@@ -502,12 +520,15 @@ function jobs() {
   if (st.mode !== "local" || !st.folderPath) return [];
   const { root, list: shelf } = shelfOf(st);
   const out = [];
+  // One read of the fal card for the whole shelf, not one per book: every book
+  // is quoted at the same price, and this file is on the path of a status poll.
+  const perClip = DATA ? falPrice(DATA) : null;
   for (const { slug, dir: name } of shelf) {
     const dir = path.join(root, name);
     let j;
     // A folder that vanished mid-read, or a hand-edited text.json the schema
     // refuses: one bad book must never blank the whole card.
-    try { j = jobFor(name, dir, slug); } catch { continue; }
+    try { j = jobFor(name, dir, slug, perClip); } catch { continue; }
     if (running && running.dir === dir && progress && progress.step) j.step = progress.step;
     out.push(j);
   }
@@ -524,6 +545,14 @@ const NO_VISION = "New ERA cannot read pages yet — add a key to the AI helper 
 // And the one case where the button is right to do nothing: every page of the
 // book is a page a grown-up typed, and they asked us to keep those.
 const ALL_EDITED = "Every page of this book has words you typed yourself, and you asked to keep them — so there is nothing to read again.";
+// The one button in the product that spends dollars, pressed on a hub that has
+// no fal card. Said before a thread is spawned, because after that the family
+// is billed — and said in words that name where the fix is.
+const NO_FAL = "New ERA cannot make moving pictures yet — add a fal key to the Moving pages card in Settings, then ask for this book again.";
+// And the one case where the press is right to do nothing: animating a book
+// that has not published would write a manifest over a half-built book and put
+// it on Ellie's shelf before it is ready (content-worker.js's republish law).
+const NOT_FINISHED = "New ERA makes the moving pictures once a book is finished — this one is still being built.";
 
 // WHICH PAGES "Read the photos again" ASKS FOR (spec §5 "Rebuild text", T3.4).
 // The transcriber never re-reads a page that already has words — that rule is
@@ -592,6 +621,17 @@ function runStep(o) {
   // that quietly does not change.
   if (step === store.STEP_OWED.reviewing && !(DATA && haveRoles(DATA).elevenlabs))
     return { error: NO_VOICE };
+
+  // ANIMATION, THE ONE STEP THAT SPENDS DOLLARS (T6.2, spec §4 step 5). Both
+  // refusals happen HERE, before a worker thread exists: a key fal has already
+  // turned down buys nothing but a refusal, and a book that has not published
+  // must not gain a manifest — with or without clips — from this door. The
+  // review page keeps the button disabled in both cases; this is the same rule
+  // said again where it cannot be bypassed by anything that posts.
+  if (step === store.STEP_ANIMATE) {
+    if (!(DATA && haveRoles(DATA).fal)) return { error: NO_FAL };
+    if (!fs.existsSync(path.join(found.dir, "manifest.json"))) return { error: NOT_FINISHED };
+  }
 
   // "READ THE PHOTOS AGAIN" (spec §5). Only the reading step can be asked to go
   // over pages it has already read — every other step either has nothing to
@@ -965,6 +1005,7 @@ module.exports = {
   jobs, jobFor, bookFor, pagesFor, pageFile, saveOrder, savePage, saveText,
   rebuildPages, removeBook,
   KINDS, QUIET_MS, STALE_MS, MAX_PAGE_TEXT, NO_VOICE, NO_VISION, ALL_EDITED,
+  NO_FAL, NOT_FINISHED,
   _testReset: () => {
     running = null; inflight = null; queue = []; seen = new Map();
     progress = null; lastScan = null;
