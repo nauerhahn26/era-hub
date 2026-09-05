@@ -1986,3 +1986,129 @@ proven against a stand-in script, and a family's own PC (antivirus on the fresh
 binary, a Drive folder mid-sync, YouTube answering 403) is the first real test.
 Second risk: `POST /music/add` is a door a browser on the home LAN can reach; it
 refuses a slug that is a path, but nothing rate-limits it.
+
+## Retrospective: Phase 5
+
+Five hub commits (`5deb992`, `27c9d82`, `1d9ff55`, `8723687`, `10a0fbc`) and one
+board commit (`5e45729`) turned "the add is not built yet" — the honest sentence
+Phase 4 left on the movies board — into a working "+ Add": paste a Netflix link,
+or type "ada twist" and pick the film you meant.
+
+### Decisions
+- **The catalog has exactly one writer.** `POST /movies/add` (T5.1) is it;
+  `/movies/lookup` writes nothing and a grown-up's pick is what lands. Same law
+  as `music-add.js`, and it is what made the Phase 5 review fixes small.
+- **A typed name is a question, a pasted link is an answer.** Songs take the
+  first hit; films get a grid, because the wrong "peter rabbit" on a six-year-old's
+  board is worse than one more tap.
+- **Three behaviours, chosen by which keys a family typed, never by code:**
+  `none` (paste box only, nothing spent), `tmdb` (title/year/poster and *where*
+  it streams, no deep links — TMDB has none), `watchmode` (one extra free key,
+  2,500/month, turns "on Netflix" into a link and brings the age rating).
+  `<DATA>/content-config.json {movies:{provider,region}}` pins the choice per
+  spec §7; absent means the keys decide, and a pinned provider still degrades
+  rather than promising a key the machine does not hold.
+- **Link shapes are pinned in the suite** (research memo §5.3, probed live):
+  Netflix `/watch/{id}`, Disney+ `/browse/entity-{uuid}`, Prime
+  `primevideo.com/detail/{ASIN}` rebuilt from the Roku link and never
+  `watch.amazon.com?gti=`. Affiliate tags are stripped before a link goes near a
+  child's board; rent and buy are not tiles. A provider changing a shape must
+  fail a test rather than fail a six-year-old.
+- **Watchmode's source ids are not TMDB's** (its Netflix is 203, TMDB's is 8), so
+  the one service table is matched by id for TMDB and by name for Watchmode.
+- **Attribution travels with the pixels.** TMDB's credit is sourced from
+  `moviesAdd.TMDB_ATTRIBUTION` and sent by `/movies/lookup` with the rows; the
+  board keeps no copy to drift, and no key means `attribution:null` rather than a
+  credit for art nobody fetched.
+- **⇅ Arrange is deliberately NOT claimed for movies.** It assumes the order the
+  board *shows* is the order the hub *ranks* — true of songs, false of films
+  (`moviesRecipe` ranks the exploration tile separately and the catalog holds
+  titles drawn nowhere). `board-arrange.js` now says so instead of moving a tile
+  that would snap back.
+
+### Observations
+- **The phase's whole bug class was one shape:** the hub said a thing was done
+  and Ellie's board disagreed. All seven confirmed review findings were that.
+  The worst was structural, not incidental: a show is drawn from its *episodes*,
+  so a series written with `seasons:[]` was reported as drawn, counted as
+  pending, and never appeared — while the sheet told the parent "<Title> is on
+  the board". Most of what a six-year-old watches is a series, so that was the
+  **normal** path, not an edge case. A show with one deep link and no harvested
+  episodes now carries that link as its first episode, and `pending` means "the
+  board will not draw this", not "there is no `launch.url`".
+- **Phase 4's data-loss fix had to be made again, verbatim.** A re-add with no
+  url of its own blanked `launch.url` and `service` — and the board's own search
+  sheet posts exactly that body when a family has only a TMDB key, so re-picking
+  a film you already had took it off the board. Same rule and same words as
+  `music-add.js`'s Phase 4 fix. A law fixed in one writer does not propagate to
+  the next writer by itself.
+- **Slug collisions are real at family scale:** two "Cinderella"s replaced each
+  other, the survivor wearing the loser's poster. 2015 takes the year as its
+  surname; 1950 keeps its tile.
+- **The board reads links aloud.** The canonical Disney+ form put "Entity 4e2c9f1a
+  8b2c 4d5e 9f01 1234567890ab" on the board, spoken. A link's dash-words are
+  judged now, not just the whole segment.
+- **Two supply-chain holes came in with the poster hunt**, both from fetching on
+  a family's behalf: `og:image` followed redirects to whatever a stranger's page
+  named (now SSRF-judged before *every* hop — loopback, private, link-local,
+  `.local` — redirects walked by hand, three at most), and the Watchmode key rode
+  an `X-API-Key` header through `redirect:"follow"`, which undici re-sends to
+  whatever answers (the keyed call no longer follows one).
+- **The "add a key in Settings" dead end repeated too.** The hint named a
+  Settings card that did not exist; the only way in was hand-editing JSON — the
+  same shape as Phase 4's "Install it and try again". New **Films and shows**
+  card, `POST /movies-key` + `GET /movies/keys` (booleans, never a key), and
+  `/ai-key` now merges instead of rewriting the file those keys share.
+- The Phase 4 amendment's price was paid again rather than assumed: nothing in
+  the grid carries `.dwell` or `data-dwell-*`, a pointer parked on a poster past
+  the door's 2400 ms hold fills nothing, the board sleeps while the sheet is up,
+  and the door keeps its dwell throughout.
+
+### Adaptations
+- Gap 22 honoured: the board's new coverage went into a fresh
+  `tests/board-movies.test.mjs` (10 cases, 6 new) that spawns its own hub, not
+  into `board-routes.test.mjs`.
+- D57 is asserted **byte for byte**, `Content-Type` included, because a preflight
+  the native ERAgaze listener does not answer would stop every film opening.
+- The lookup suite's closing guardrail was upgraded from decorative to an
+  invariant it can actually fail: every request the stand-in saw is one it
+  serves, on one of the two fake keys.
+- Both review passes were run and fixed **in-phase** again; six of the seven
+  findings were data-loss, read-aloud or supply-chain bugs in code written this
+  same phase.
+- No test spends a key or touches the network: TMDB and Watchmode go through the
+  `ERA_STREAMING_URL`-style seams at a local fake, and `era-family/data/tmdb.env`
+  is never read.
+
+### Verification
+`node --test tests/movies-add.test.mjs tests/movies-lookup.test.mjs
+tests/settings-ui.test.mjs` → **50 pass, 0 fail**; clothing, movies, music,
+music-add, routes, packs, ai-config, content-routes and setup all green.
+Board: `era-gate 72 passed, 0 failed`; `board-movies.test.mjs` 10 cases, with a
+browser video recorded against a real hub, a temp Drive folder and loopback
+provider seams — a paste-add, a search-add, and a pick with no link.
+
+### Follow-ups
+- Phase 4's follow-ups are all still open: Gap 14 (`installPack` downloads the
+  suite tarball with no checksum), the pinned yt-dlp hash never re-verified on
+  the device, `mirrored:false` never retried, `board-arrange.test.mjs` hard-coded
+  to `http://localhost:8377`, last-writer-wins rank collisions.
+- **⇅ Arrange for movies needs a product decision** before it can be built: what
+  does dragging a film onto the exploration tile mean?
+- Nothing re-checks a deep link after it is written. A title pulled from Netflix
+  leaves a tile that opens onto an error, silently, until a parent sees it.
+- Watchmode's 2,500/month has no counter and no warning; the family finds out by
+  the grid going empty.
+- `POST /movies/add` and `/movies/lookup` are doors any browser on the home LAN
+  can reach, rate-limited by nothing — same residual as `/music/add`.
+
+### Confidence and risks
+Confidence **high** on the writer: one writer, every law under test, the
+provider seams proven by construction, and the review found its bugs where the
+hub and the board disagreed rather than where the code was wrong in isolation.
+Confidence **medium** on the availability data itself — the link shapes were
+probed live on 9/4 and are pinned, but they are a third party's private URL
+scheme and the pinning only converts a silent breakage into a red test *here*,
+not on a family's machine. Chief residual risk is the same as Phase 4's and
+belongs to **Phase 7**: none of this has run on Windows, against a real TMDB or
+Watchmode key, on a kiosk screen, with a Drive folder mid-sync.
