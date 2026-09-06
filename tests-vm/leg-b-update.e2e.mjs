@@ -23,7 +23,7 @@ let prevHasPacksLaw = false;
 const FEED = `http://127.0.0.1:${process.env.VM_FEED_PORT || 8427}`;
 const feed = (what) => vm.host(`curl -s -X POST ${FEED}/${what}`);
 
-test("VM: pristine snapshot, PREVIOUS release installed silently", { timeout: 600000 }, async () => {
+test("VM: pristine snapshot, PREVIOUS release installed silently", { timeout: 1200000 }, async () => {   // 493 s, then >600 s, on the starved 9/6 host
   // the family downloaded the newest release there was: nothing newer sits
   // on the feed while they answer the wizard. Held, /latest.json answers 503
   // and the previous release's 90 s boot check waits its 6 hours — that
