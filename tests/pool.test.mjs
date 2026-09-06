@@ -152,6 +152,40 @@ test("a profile zone this computer cannot resolve still records the pick, on the
   } finally { c3.kill("SIGKILL"); }
 });
 
+// spec §5: the per-install id is "used by pool.js and the clothing log alike
+// (two devices called 'hub' would share a file)". Every other hub in this file
+// is handed ERA_DEVICE_ID — the one precedence branch that behaved exactly the
+// same before device-id.js existed — so nothing here would have noticed a hub
+// that still fell back to the literal "hub". This one is given no id at all,
+// which is what a family's second tablet is.
+test("an install nobody named tags its pool events with its own name, never \"hub\"", async () => {
+  const T4 = fs.mkdtempSync(path.join(os.tmpdir(), "era-pool-own-"));
+  const PORT4 = PORT + 3;
+  const env = { ...process.env, ERA_DATA_DIR: T4, ERA_BIND: "127.0.0.1",
+    ERA_GEO_URL: "http://127.0.0.1:1", ERA_WEATHER_URL: "http://127.0.0.1:1",
+    ERA_AI_URL: "http://127.0.0.1:1" };
+  delete env.ERA_DEVICE_ID;              // the gate exports a private env; this hub names ITSELF
+  const c4 = spawn("node", ["server.js", String(PORT4)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"], env,
+  });
+  try {
+    let up = false;
+    for (let i = 0; i < 100 && !up; i++) {
+      try { await fetch(`http://127.0.0.1:${PORT4}/settings`); up = true; } catch { await new Promise(r => setTimeout(r, 100)); }
+    }
+    assert.ok(up, "the unnamed hub came up");
+    const r = await fetch(`http://127.0.0.1:${PORT4}/log`, { method: "POST", body: JSON.stringify({ app: "mw", ev: "pick" }) });
+    assert.equal(r.status, 204);
+
+    const id = fs.readFileSync(path.join(T4, "device-id"), "utf8").trim();
+    assert.match(id, /^[a-z0-9-]{1,32}$/);
+    assert.notEqual(id, "hub", "two hubs in one family would share every events file");
+    const e = JSON.parse(fs.readFileSync(path.join(T4, "pool", "events", id, DAY + ".jsonl"), "utf8").trim().split("\n").pop());
+    assert.equal(e.device, id, "the event is tagged with the name this install generated");
+    assert.ok(!fs.existsSync(path.join(T4, "pool", "events", "hub")), "…and nothing was written under the product's name");
+  } finally { c4.kill("SIGKILL"); fs.rmSync(T4, { recursive: true, force: true }); }
+});
+
 test("heartbeat file exists and is fresh", () => {
   const hb = JSON.parse(fs.readFileSync(path.join(TMP, "pool", "devices", "test-dev.json"), "utf8"));
   assert.equal(hb.device, "test-dev");

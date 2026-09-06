@@ -282,8 +282,8 @@ port rule) passes a free port instead, and the default is unchanged (r2).
 
 `tests/pool.test.mjs` (T2.2 verification step 1) has the same seam for the same
 reason: its hubs default to **8393/8394/8395**, inside the never-touch range, and
-`ERA_TEST_HUB_PORT` moves all three (`PORT`, `PORT + 1`, `PORT + 2`) — e.g.
-`ERA_TEST_HUB_PORT=8466 node --test tests/pool.test.mjs` (r3).
+`ERA_TEST_HUB_PORT` moves all FOUR (`PORT`, `PORT + 1`, `PORT + 2`, `PORT + 3` — the fourth is
+T4.1's unnamed-install hub) — e.g. `ERA_TEST_HUB_PORT=8466 node --test tests/pool.test.mjs` (r3).
 
 Never touch 8377-8416, 8425, 8427, 8450-8457. Every spawned hub sets
 `ERA_ELEVEN_URL ERA_FAL_URL ERA_GEO_URL ERA_WEATHER_URL ERA_RESEND_URL ERA_TMDB_URL
@@ -430,7 +430,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
 
 12. [ ] **T4.1 Per-install device id shared by `pool.js` and the clothing log**
     - **Acceptance:** new `device-id.js` (stdlib) exports `resolveDeviceId(DATA, {env, profile, hostname})` (`hostname` injectable, default `os.hostname()`): precedence I25; generated form `<hostname-slug>-<4 hex>` (slug: lowercase, `[^a-z0-9-]→-`, trim `-`, cut so the whole id ≤ 32); reads back `<DATA>/device-id` and regenerates if it fails `/^[a-z0-9-]{1,32}$/`; on write failure returns the hostname slug without hex and logs once. `server.js:67` uses it synchronously before `initPool`. `/setup` doc comment says a `deviceId` change needs a restart. `tools/build-payload.sh:23` lists `device-id.js`. **The gate's shared hub gets `ERA_DEVICE_ID=gate` on its launch line (`tools/era-gate.sh:67`, same commit)**: that hub's DATA defaults to `era-family/test-data` (`era-gate.sh:9`) and is launched without a device id today, so without this the first T7.1 run would generate a `device-id` file carrying the build box's hostname slug inside the private repo's working tree — a second era-family side effect this plan forbids (header: T6.1 is the only one).
-    - **Verification:** `node --test tests/device-id.test.mjs` (new, pure): env wins; profile beats file; file created once (two calls → same id, file mtime unchanged); a corrupted file (`"HUB!!"`) is replaced; read-only DATA → deterministic slug, no throw, with `hostname: "Family-PC.local"` injected so the log line carries the fixture slug, never the real one; slug of `"Family-PC.local"` matches the regex. `node --test tests/pool.test.mjs` green (`test-dev` paths). `grep -n "ERA_DEVICE_ID=gate" tools/era-gate.sh` — `1` hit on the `node "$HUB/server.js"` line.
+    - **Verification:** `node --test tests/device-id.test.mjs` (new, pure): env wins; profile beats file; file created once (two calls → same id, file mtime unchanged); a corrupted file (`"HUB!!"`) is replaced; read-only DATA → deterministic slug, no throw, with `hostname: "Family-PC.local"` injected so the log line carries the fixture slug, never the real one; slug of `"Family-PC.local"` matches the regex. `node --test tests/pool.test.mjs` green — and it gains the case spec §8's "`tests/pool.test.mjs` device id" row actually asks for: a fourth hub (`PORT + 3`) spawned with `ERA_DEVICE_ID` **deleted** from the child env, one POST `/log`, and the event's `device` plus its `pool/events/<device>/` directory asserted equal to `<DATA>/device-id` and not `"hub"`. The pre-existing `test-dev`/`tz-dev` hubs all pass an id, which is the one precedence branch that behaved identically before this change, so "the suite stays green" was no coverage at all (review r1). `grep -n "ERA_DEVICE_ID=gate" tools/era-gate.sh` — `1` hit on the `node "$HUB/server.js"` line.
     - **Guardrails:** TDD. Never print the real hostname in test output (inject fixture names). `tools/era-gate.sh` is edited on that one line only. §C.
     - **Gate:** with T4.4.
 
