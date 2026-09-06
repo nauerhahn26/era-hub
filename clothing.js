@@ -276,7 +276,16 @@ function readOutFor(items) {
     console.error("[clothing] the picks read-out could not be built: " + e.message);
     delete out.picks; delete out.memory;
   }
-  readOut = out; readOutKey = key;
+  // A FAILURE IS NEVER MEMOIZED. The key is the day plus the mtime and size of
+  // three files, and a scanner or a backup RELEASING history.json changes its
+  // ctime alone — so a blind read-out stored here would be handed back under
+  // the same key until something wrote the file again (the next Yes, or
+  // tomorrow's 05:00 build), and the card would stay blank for hours on the
+  // very box the rethrow in readHistory was written for. Retrying costs one
+  // failed open() per poll: the throw comes from readHistory() on the first
+  // line of the try, so the merge below it never runs (review r2).
+  if (out.picks) { readOut = out; readOutKey = key; }
+  else { readOut = null; readOutKey = null; }
   return out;
 }
 

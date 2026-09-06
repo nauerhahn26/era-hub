@@ -240,6 +240,7 @@ test("a memory the read-out cannot open makes it say nothing, not 'no picks reco
 }, async () => {
   assert.ok((await status()).picks.days > 0, "there IS a memory to be wrong about");
   writeHistory(readHistory());        // the same bytes: the memo turns over on the stat
+  const was = fs.statSync(HISTORY);
   fs.chmodSync(HISTORY, 0o000);
   let s;
   try { s = await status(); } finally { fs.chmodSync(HISTORY, 0o644); }
@@ -248,8 +249,15 @@ test("a memory the read-out cannot open makes it say nothing, not 'no picks reco
   assert.equal(s.sharing.mode, "drive", "what the read-out still knows it still says");
   assert.equal(s.sharing.devices, 4, "the folder and its writers are a different file");
 
-  writeHistory(readHistory());        // and the memory comes back with the bytes
-  const back = await status();
+  // AND IT HEALS THE MOMENT THE FILE OPENS AGAIN — with nothing written. A
+  // scanner or a backup letting go of history.json changes its ctime alone,
+  // never mtime or size, so a memo that had stored the blind answer under the
+  // same key would keep serving it: the card would stay blank on every
+  // five-second repaint until the next Yes or tomorrow's 05:00 build (r2).
+  const back = await status();        // chmod only — no write, so the key is unmoved
+  const now = fs.statSync(HISTORY);
+  assert.deepEqual([now.mtimeMs, now.size], [was.mtimeMs, was.size],
+    "nothing rewrote the memory: the poll above is the only thing that changed");
   assert.ok(back.picks.days > 0, "nothing was lost — the file was only shut for a moment");
 });
 
