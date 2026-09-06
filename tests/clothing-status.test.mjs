@@ -154,15 +154,20 @@ test("today's own Yes is not a day of picks yet — the memory counts days befor
 });
 
 test("sharing is local until the family has a Drive folder, and drive the moment they do", async () => {
+  // A folder the family has since disconnected (or swapped for API mode) leaves
+  // the OTHER devices' mirrored lines sitting under <DATA>/clothing/.era. The
+  // payload must not then say "not shared" and "two devices" in one breath.
+  deliver(`picks/dev-b/${D1}.jsonl`, { t: D1 + "T18:00:00Z", kind: "yes", combo: [items[2].id] });
+  writeHistory(readHistory());       // the memo turns over on the memory's stat
   let s = await status();
   assert.equal(s.sharing.mode, "local", "no folder — drive.js calls that mode 'local' too (W13)");
-  assert.equal(s.sharing.devices, 1, "just this one");
+  assert.equal(s.sharing.devices, 1, "nothing is shared, so nobody is sharing it: mode and count agree");
 
   fs.writeFileSync(path.join(DATA, "drive.json"),
     JSON.stringify({ mode: "local", folderPath: DRIVE }));
   s = await status();
   assert.equal(s.sharing.mode, "drive", "the card must not say 'not shared' until tomorrow");
-  assert.equal(s.sharing.devices, 1);
+  assert.equal(s.sharing.devices, 2, "…and the device whose lines were already mirrored counts from the same moment");
 });
 
 test("every other writer in the family's folder is counted, and none of them is named", async () => {

@@ -217,8 +217,12 @@ function readOutFor(items) {
   // inside clothing-log.js; only the count comes out. Its OWN try: who else is
   // in the folder is a different file from the memory, and a device that cannot
   // read its own history still knows the answer to this one.
+  // No folder means nothing is shared — and a family that disconnected one, or
+  // moved to API mode, still has the other devices' mirrored lines under
+  // <DATA>/clothing/.era. Counting those would answer {mode:"local",devices:2}:
+  // "not shared", with two devices in it (review r1).
   try {
-    out.sharing.devices = 1 + clothingLog.sharedWriters(DATA, deviceId).size;
+    if (folder) out.sharing.devices = 1 + clothingLog.sharedWriters(DATA, deviceId).size;
   } catch (e) {
     console.error("[clothing] the shared writers could not be counted: " + e.message);
   }
