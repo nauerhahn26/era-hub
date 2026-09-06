@@ -50,10 +50,22 @@ function zone() {
 let worker = null;
 let ingesting = null;   // {done, total} live from the worker
 let lastResult = null;
-// The last build could not read wardrobe/history.json (see the {done} handler):
-// the board on screen was dealt blind, so tick's freshness door does not count
-// it as the day's work.
-let memoryUnread = false;
+// The last build's memory did not work: either wardrobe/history.json would not
+// OPEN (the worker dealt blind — no staples, no yesterday bar, no freshness) or
+// the lineup it dealt would not be RECORDED (a hole in the sixty days, which
+// puts yesterday's page-1 looks back on page 1 tomorrow). Either way the board
+// on screen is not the day's work and tick deals again — but ONCE, and as a
+// RE-SORT:
+//   * once, because a file that will not open twice running never clears the
+//     flag, so an unbounded retry is a full build every 15 minutes for ever;
+//   * a re-sort, because this door jumps the freshness/allowance block below,
+//     and a FULL build there walked the provider ladder again for every photo
+//     still waiting — four times an hour into an allowance the hub already
+//     holds, the very thing holdDay exists to prevent (review r4).
+let memoryBlind = false;
+let memoryRedeals = 0;          // re-deals already bought by the current trouble
+const MEMORY_REDEALS = 1;
+let offerUnrecorded = false;    // the running build's {offer} did not land
 let queued = false;     // a regenerate asked for while one was running
 let queuedFull = false; // ...and at least one of those callers wanted a FULL build
 let waiters = [];       // callers that arrived mid-build, awaiting the queued run
@@ -122,8 +134,22 @@ function recordOffer(offer) {
   const h = readHistory();
   const combos = offer.page1.map(ids => ({ pieces: ids.map(id => ({ id })) }));
   rank.recordOffer(h, offer.date, combos, combos.length, offer.band);
-  contentStore.writeAtomic(historyPath(), h);
+  // The read half of this file is retried (clothing-worker.js) because a backup
+  // or a scanner holds a 5 KB file for milliseconds. The WRITE meets the same
+  // hand: writeAtomic is a writeFileSync + rename, and a rename over a file
+  // something else is holding is EPERM/EBUSY on the family's Windows box. A
+  // lost write is a lost day of the sixty, so try again — synchronously, since
+  // the single-writer rule (A4-1) is exactly "no await between the read above
+  // and the write below", and briefly, since this is the hub's own event loop.
+  for (let tryN = 1; ; tryN++) {
+    try { contentStore.writeAtomic(historyPath(), h); return; }
+    catch (e) {
+      if (tryN >= WRITE_TRIES) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, WRITE_WAIT_MS);
+    }
+  }
 }
+const WRITE_TRIES = 3, WRITE_WAIT_MS = 50;
 
 function status() {
   const cfg = aiCfg();
@@ -164,6 +190,7 @@ function regenerate(force, opts = {}) {
     // null, and the worker shares nothing.
     const st = drive.status();
     const driveFolder = st.mode === "local" && st.folderPath ? st.folderPath : null;
+    offerUnrecorded = false;   // this build's own verdict on the recorder
     worker = new Worker(path.join(__dirname, "clothing-worker.js"),
       // deviceId and driveFolder are the sharing seam: the worker does not read
       // them yet (they are consumed in T4.3), the zone it seeds the deal with
@@ -175,17 +202,30 @@ function regenerate(force, opts = {}) {
       // The lineup arrives BEFORE the composites are drawn (I9): the memory
       // tomorrow's deal reads must not depend on every picture surviving.
       if (m.offer) {
-        try { recordOffer(m.offer); } catch (e) { console.error("[clothing] history: " + e.message); }
+        try { recordOffer(m.offer); }
+        catch (e) {
+          // Say WHAT was lost, not just the errno: a day missing from the
+          // sixty is why yesterday's page-1 looks come back tomorrow.
+          console.error("[clothing] today's lineup was not recorded: " + e.message);
+          offerUnrecorded = true;
+        }
       }
       if (m.done) {
         done = m.done;
         // A build that dealt without her memory (history.json there but its
-        // bytes never came) is not the day's work: it has no staples, no
-        // yesterday bar and no freshness, and the day it dealt was never
-        // recorded either. The next tick deals again instead of leaving it up
-        // until the next forced door (r3). Only a build that reached the deal
-        // can answer this, so other results leave the flag alone.
-        if (m.done.mode === "cataloged") memoryUnread = !!m.done.historyUnread;
+        // bytes never came), or whose lineup would not go back in, is not the
+        // day's work: no staples, no yesterday bar, no freshness, and no day
+        // recorded for tomorrow to read. The next tick deals again instead of
+        // leaving it up until the next forced door (r3) — bounded, so a file
+        // that stays ill does not buy a build every pass (r4). Only a build
+        // that reached the deal can answer this; other results leave it alone.
+        if (m.done.mode === "cataloged") {
+          if (m.done.historyUnread || offerUnrecorded) {
+            memoryBlind = memoryRedeals < MEMORY_REDEALS;
+            if (!memoryBlind)
+              console.error("[clothing] her memory is still not working — today's board stands as it is");
+          } else { memoryBlind = false; memoryRedeals = 0; }
+        }
         // A re-sort that found nothing catalogued has no ingest behind it, so
         // it knows nothing about the allowance or a busy provider: keeping the
         // old verdict leaves the board's "allowance used up" coaching standing
@@ -270,17 +310,28 @@ function tick(reason) {
   const now = photoSet(path.join(DATA, "clothing"));
   const changed = seenPhotos !== null && now !== seenPhotos;
   seenPhotos = now;
-  let why = changed ? "photos changed, " : memoryUnread ? "the last board was dealt without her memory, " : "";
-  if (!changed && !memoryUnread && boardIsFresh(DATA)) {
-    const retry = aiCfg() && holdDay !== new Date().toDateString() &&
-      Date.now() - lastRetry >= RETRY_EVERY && pendingPhotos(DATA) > 0;
-    if (!retry) return null;
-    lastRetry = Date.now();
-    retryBuild = true;
-    why = "photos still waiting, ";
+  let why = changed ? "photos changed, " : "";
+  let rebuildOnly = false;
+  if (!changed) {
+    if (memoryBlind) {
+      // Spend the flag as it is consumed and count the re-deal: the build this
+      // asks for may meet the same shut file, and nothing else would ever stop
+      // the loop. A RE-SORT, never a full build — see memoryBlind above.
+      memoryBlind = false;
+      memoryRedeals++;
+      why = "the last board was dealt without her memory, ";
+      rebuildOnly = true;
+    } else if (boardIsFresh(DATA)) {
+      const retry = aiCfg() && holdDay !== new Date().toDateString() &&
+        Date.now() - lastRetry >= RETRY_EVERY && pendingPhotos(DATA) > 0;
+      if (!retry) return null;
+      lastRetry = Date.now();
+      retryBuild = true;
+      why = "photos still waiting, ";
+    }
   }
   console.log("[clothing] building today's board (" + why + reason + ")");
-  return regenerate(true).catch(e => console.error("[clothing] " + e.message));
+  return regenerate(true, { rebuildOnly }).catch(e => console.error("[clothing] " + e.message));
 }
 
 // noTimers: point the module at a data dir WITHOUT arming the schedule — for a
@@ -302,7 +353,8 @@ function start(dataDir, opts = {}) {
   tzOf = typeof opts.tz === "function" ? opts.tz : () => DEFAULT_TZ;
   deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
   seenPhotos = storedPhotoSet(dataDir);
-  memoryUnread = false;   // a fresh start knows nothing about the last build's read
+  // a fresh start knows nothing about the last build's memory, either half
+  memoryBlind = false; memoryRedeals = 0; offerUnrecorded = false;
   if (opts.noTimers) return;
   setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
@@ -318,4 +370,5 @@ function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
 // (server.js uses historyPath/readHistory/zone for POST /outfit-event).
 module.exports = { start, regenerate, rebuildToday, isBuilding, status, boardIsFresh, tick,
   historyPath, readHistory, zone,
-  _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false; memoryUnread = false; } };
+  _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false;
+    memoryBlind = false; memoryRedeals = 0; offerUnrecorded = false; } };

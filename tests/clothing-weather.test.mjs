@@ -420,29 +420,52 @@ test("start() without a zone is back to the module's own default", () => {
 // today.json was rewritten all the same, so the memory-free board STOOD as the
 // day's work until the next forced door (r3). The worker retries the read,
 // then says it dealt blind; the tick builds again rather than leave it up.
+// The three memory cases below share one data dir and run in order: T3 is made
+// by the first and carried by the two after it (the module is pointed at it).
+const rootHere = process.getuid && process.getuid() === 0 ? "root reads every file" : false;
+let T3 = null;
+const memPath = () => path.join(T3, "wardrobe", "history.json");
+const daysOf = () => JSON.parse(fs.readFileSync(memPath(), "utf8")).days;
+
 test("a build that could not read the memory is not the day's work", {
-  skip: process.getuid && process.getuid() === 0 ? "root reads every file" : false,
+  skip: rootHere,
 }, async () => {
-  const T3 = fs.mkdtempSync(path.join(os.tmpdir(), "era-clo-wx3-"));
+  T3 = fs.mkdtempSync(path.join(os.tmpdir(), "era-clo-wx3-"));
   fs.mkdirSync(path.join(T3, "clothing"), { recursive: true });
   fs.mkdirSync(path.join(T3, "wardrobe-items"), { recursive: true });
   makeJpg(path.join(T3, "clothing", "top.jpg"), 210, 70, 90);
   makeJpg(path.join(T3, "clothing", "bot.jpg"), 70, 90, 210);
+  // One photo nobody has named: it makes a FULL build reach the fake AI, which
+  // is what gives the "no model request was spent" assertions below their bite
+  // (a re-sort never opens the photo folder at all).
+  makeJpg(path.join(T3, "clothing", "waiting.jpg"), 200, 200, 70);
   makeJpg(path.join(T3, "wardrobe-items", "item_top.jpg"), 210, 70, 90);
   makeJpg(path.join(T3, "wardrobe-items", "item_bot.jpg"), 70, 90, 210);
-  // No ai-config.json in here: every build below is free, and the tick that
-  // follows one cannot be a photo retry (nothing is waiting to be named).
   fs.writeFileSync(path.join(T3, "wardrobe.json"), JSON.stringify({ items: {
     "top.jpg": { id: "item_top", ok: true, name: "Sunny tee", category: "top", warmth: "any" },
     "bot.jpg": { id: "item_bot", ok: true, name: "Pond leggings", category: "pants", warmth: "any" },
   } }, null, 1));
+  fs.writeFileSync(path.join(T3, "ai-config.json"),
+    JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
   clothing.start(T3, { noTimers: true });
+  const spentByFull = aiCalls;
   await clothing.regenerate(true);
-  const hp = path.join(T3, "wardrobe", "history.json");
-  const memory = fs.readFileSync(hp, "utf8");
-  assert.ok(Object.keys(JSON.parse(memory).days).length, "the healthy build recorded the day it dealt");
+  assert.ok(aiCalls > spentByFull, "a FULL build in this fixture really does ask the model");
+  const hp = memPath();
+  assert.ok(Object.keys(daysOf()).length, "the healthy build recorded the day it dealt");
+  // The leftover photo has an hourly door of its own (the AI refused it): let
+  // that door fire once, so every tick after this one is only ever about the
+  // memory. It lands nothing, so the day's allowance is held from here on.
+  const retry = clothing.tick("test");
+  assert.ok(retry, "the photo nobody could name is retried within the hour");
+  await retry;
+  assert.ok(clothing.status().heldToday, "...and a retry that landed nothing holds the day");
   assert.equal(clothing.tick("test"), null, "a board dealt with her memory is the day's work");
 
+  // Empty the memory before locking it, so the recovery build below has a hole
+  // to fill: without this the case never asserts that the day comes back.
+  fs.writeFileSync(hp, JSON.stringify({ days: {}, events: {} }));
+  const memory = fs.readFileSync(hp, "utf8");
   fs.chmodSync(hp, 0o000);
   let r;
   try { r = await clothing.rebuildToday(); } finally { fs.chmodSync(hp, 0o644); }
@@ -450,11 +473,76 @@ test("a build that could not read the memory is not the day's work", {
   assert.equal(r.historyUnread, true, "...but the build says it dealt without her memory");
   assert.equal(fs.readFileSync(hp, "utf8"), memory, "the memory it could not read is untouched");
 
+  const spent = aiCalls;
   const again = clothing.tick("test");
   assert.ok(again, "the next tick deals again instead of leaving the memory-free board up");
   const r2 = await again;
   assert.ok(!r2.historyUnread, "the second build read the memory");
+  assert.equal(aiCalls, spent,
+    "the re-deal is a RE-SORT: a memory that will not open never spends a model request");
+  const days = daysOf();
+  assert.equal(Object.keys(days).length, 1, "the day the memory came back is recorded");
+  assert.ok(days[Object.keys(days)[0]].page1.length > 0, "...with the lineup it dealt");
   assert.equal(clothing.tick("test"), null, "...and once it has, the board is the day's work again");
+});
+
+// The re-deal above is a RETRY, and a retry with no bound is a loop: while the
+// file stays shut every 15-minute pass would run another build, and while it
+// was a FULL build each pass walked the provider ladder again for the photo
+// still waiting — four times an hour into an allowance the hub already holds
+// (clothing.js's own rule two lines up: "an hourly loop into the same wall
+// would only spend the free requests"). One extra deal, then the board on
+// screen stands (review r4).
+test("a memory that stays shut buys ONE re-deal, not a build every fifteen minutes", {
+  skip: rootHere,
+}, async () => {
+  const hp = memPath();
+  assert.equal(clothing.tick("test"), null, "settled before the lock");
+  fs.chmodSync(hp, 0o000);
+  try {
+    const blind = await clothing.rebuildToday();
+    assert.equal(blind.historyUnread, true, "the forced door dealt blind");
+    assert.ok(clothing.status().heldToday, "the day's allowance is already held");
+    const spent = aiCalls;
+    const one = clothing.tick("test");
+    assert.ok(one, "the blind board buys one more deal");
+    assert.equal((await one).historyUnread, true, "...which still could not read it");
+    assert.equal(clothing.tick("test"), null, "and that is the end of it, not a build every pass");
+    assert.equal(clothing.tick("test"), null, "...still nothing to do on the pass after that");
+    assert.equal(aiCalls, spent,
+      "not one model request was spent on a file that will not open");
+  } finally { fs.chmodSync(hp, 0o644); }
+});
+
+// Only the READ half of the recorder was hardened at r3. When the WRITE fails
+// — writeAtomic is writeFileSync(tmp) + rename, and a rename over a file a
+// backup is holding is EPERM on the family's Windows box — the day's page-1
+// lineup was silently lost from the sixty-day memory: no retry, no flag, no
+// re-deal, and the next morning yesterday's page-1 looks came back on page 1
+// because no day had been recorded to bar them (review r4).
+test("a lineup the memory would not accept is not lost: the next pass records it", {
+  skip: rootHere,
+}, async () => {
+  const dir = path.join(T3, "wardrobe");
+  // A healthy build first: the memory works, so the re-deal budget the case
+  // above spent is back (a build that reads AND records clears it).
+  await clothing.rebuildToday();
+  assert.ok(Object.keys(daysOf()).length, "the memory is working again");
+  fs.writeFileSync(memPath(), JSON.stringify({ days: {}, events: {} }));
+  assert.equal(clothing.tick("test"), null, "settled before the write is blocked");
+  fs.chmodSync(dir, 0o555);           // the tmp file writeAtomic renames from cannot be made
+  let r;
+  try { r = await clothing.rebuildToday(); } finally { fs.chmodSync(dir, 0o755); }
+  assert.equal(r.mode, "cataloged", "a memory that will not take the write never costs her the board");
+  assert.deepEqual(daysOf(), {}, "the day really was not recorded");
+
+  const again = clothing.tick("test");
+  assert.ok(again, "a lineup that was not recorded is not the day's work either");
+  await again;
+  const days = daysOf();
+  assert.equal(Object.keys(days).length, 1, "the pass after it records the day");
+  assert.ok(days[Object.keys(days)[0]].page1.length > 0, "...with the lineup it dealt");
+  assert.equal(clothing.tick("test"), null, "and then it is settled");
 });
 
 // LAST — it repoints the module at a second data dir and lets the fake AI be
