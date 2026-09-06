@@ -338,6 +338,29 @@ test("a warmth level from the migrated wardrobe reads as the hub's word", () => 
   assert.equal(log.tagsFor(m, "item_cccc").warmth, "cold");
 });
 
+// W5 / A4-3: the device that PAID for the call is the only one that saw which
+// way up the photo was. A shared tag stands in for that answer, so it has to
+// carry the turn and the crop with it — a phone photo tagged on the first
+// device would otherwise draw a sideways tile on the second, which is dad's
+// 9/3 "upside-down shorts" all over again, this time for a garment nobody
+// re-described. Nothing else in the suite reads these two fields.
+test("a shared tag carries the turn and crop the tagging device saw", () => {
+  const b = beds();
+  const crop = { x: 0.1, y: 0.05, w: 0.8, h: 0.9 };
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_sideways", category: "pants", warmth: "warm",
+      colors: ["navy"], rotate_deg: 90, crop },
+    { t: "2026-09-05T09:00:01Z", id: "item_upright", category: "top", warmth: "warm",
+      colors: ["blue"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const sideways = log.tagsFor(m, "item_sideways");
+  assert.equal(sideways.rotate_deg, 90, "the tile is turned the way the photo needed");
+  assert.deepEqual(sideways.crop, crop, "…and trimmed the same way too");
+  const upright = log.tagsFor(m, "item_upright");
+  assert.equal("rotate_deg" in upright, false, "a line without them means rot 0, not 'unknown'");
+  assert.equal("crop" in upright, false);
+});
+
 test("the newest line for a garment wins, whichever device wrote it", () => {
   const b = beds();
   deliver(b.dataDir, "tags/dev-b.jsonl",

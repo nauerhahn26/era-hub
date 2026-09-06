@@ -344,6 +344,47 @@ test("a pair the grown-ups marked 'never together' is offered on neither device"
   assert.ok(allCombos(DATA_C).length >= 20, "…and the board is still a board");
 });
 
+// The other half of the `pairs/` log, and the one merged-log lever that had no
+// end-to-end bite: a `favorite` line reaches the deal only through
+// clothing-worker.js's `favorites: m.favorites`, and replacing that with an
+// empty Set left every suite in the tree green (final review r1). The reader
+// (clothing-log.test.mjs) and rankOf's +10 (clothing-rank.test.mjs) are tested
+// pure; this is the wiring between them — and the family's migration tool
+// writes exactly these lines (spec §7), so a silent break here would arrive on
+// the restore morning with nothing going red.
+test("a garment the grown-ups starred comes forward on this device too", async () => {
+  const idC = fs.readFileSync(path.join(DATA_C, "device-id"), "utf8").trim();
+  // The baseline deal and the starred one must differ in ONE line, so the
+  // previous case's avoid verdict is cleared first (a `pairs/` file rewritten
+  // without it re-admits that pair and reorders the deep pages on its own).
+  const mark = { t: today() + "T00:00:00Z", kind: "marker" };
+  put(DRIVE_C, "pairs/studio.jsonl", mark);
+  await syncInto(DATA_C);
+  await build(DATA_C, idC);
+  const base = allCombos(DATA_C);
+  // How far in a parent has to look before they see this garment at all. The
+  // +10 is per GARMENT, not per look (W2), and a page seats a garment once
+  // (§1 V3) — so what the star moves is the garment's BEST look, not every
+  // look it is in; a particular deep-page look can even be pushed further back
+  // by a better-ranked look of the same garment overtaking it.
+  const firstAt = (list, id) => list.findIndex(c => c.split("+").includes(id));
+  const ids = [...new Set(base.flatMap(c => c.split("+")))];
+  const latest = ids.reduce((a, b) => (firstAt(base, a) >= firstAt(base, b) ? a : b));
+  const was = firstAt(base, latest);
+  assert.ok(was >= 7, "the garment to star is one page 1 does not hold today");
+
+  put(DRIVE_C, "pairs/studio.jsonl", mark,
+    { t: today() + "T00:00:01Z", kind: "favorite", combo: [latest] });
+  await syncInto(DATA_C);
+  await build(DATA_C, idC);
+
+  const now = firstAt(allCombos(DATA_C), latest);
+  assert.ok(now >= 0, "the starred garment is still offered");
+  assert.ok(now < was, `a starred garment comes forward (was ${was}, now ${now})`);
+  fs.rmSync(path.join(DRIVE_C, "clothing", ".era", "pairs"), { recursive: true, force: true });
+  fs.rmSync(era(DATA_C, "pairs"), { recursive: true, force: true });
+});
+
 // ---- the family pays the AI once (spec §3.1 item 1, §5) -------------------
 
 test("a garment another device already described costs no call here — matched by content, not by name", async () => {
