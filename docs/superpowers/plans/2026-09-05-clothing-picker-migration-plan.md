@@ -210,6 +210,22 @@ history, sub-second); the end-to-end check is small (pre-tiled 5-7 garments, no 
     `perPage` looks fit garment-distinct), so a flat `slice(7,14)` of the returned
     list is only a page on wardrobes where every page fills; the variety gate's
     per-page assertions run on the 35-garment wardrobe where they do.
+12. §3.1 item 4 "degrade, never exclude" is stated for MISSING attributes; the
+    same floor now covers attributes the model DID supply. A wardrobe every
+    garment of which the model called a statement piece has no harmonizing pair
+    at all, and `buildCandidates` dealt only the dresses (reproduced: 8 tops ×
+    7 bottoms all loud → 0 outfits). `clothing-rank.js` therefore drops the
+    `harmonizes` predicate — `avoid` and the ranking stand — when, and only
+    when, tops × bottoms yields no pair, which is spec §3.4's "a wardrobe must
+    never empty the board" applied to the taste gate (P3 review r1).
+13. §3.1's source precedence ("1. shared tags … 3. the needs-attributes pass")
+    inverts on the upgrade morning: the pass stamps `attrsAt` within minutes of
+    first boot and `needsAttributes` never revisits a stamped garment, so a
+    `tags/` line arriving on a later Drive pull can no longer replace what the
+    local model said. **T4.3 decides and records** which it is: a `tagsFor`
+    sweep independent of `needsAttributes` (a tag whose `t` is newer than
+    `attrsAt` wins), or "place the migration tool's output before the upgraded
+    hub's first build" as the documented expectation (P3 review r1 nit).
 
 ---
 
