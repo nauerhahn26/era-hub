@@ -730,8 +730,12 @@ test("the picks line survives the branches that overwrite the AI status line", a
 });
 
 test("a pick made yesterday says yesterday; an older one names its weekday in the family's zone", async () => {
-  let { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
-    picks: { days: 2, lastDay: dayKeyBack(1, "UTC"), top: [] } }) });
+  // The browser is put in the same zone the key is built in: the card measures
+  // against the BROWSER's local midnight, so on a box east of UTC a bare
+  // dayKeyBack(1, "UTC") is two days back here and the sentence names a weekday.
+  let { ctx, page } = await settingsPage(null, { timezoneId: "UTC",
+    clothing: clothingPayload({
+      picks: { days: 2, lastDay: dayKeyBack(1, "UTC"), top: [] } }) });
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
   assert.match(await picksText(page), /yesterday/, "the one day a weekday name would be silly");
   await ctx.close();
@@ -746,5 +750,35 @@ test("a pick made yesterday says yesterday; an older one names its weekday in th
   const t = await picksText(page);
   assert.match(t, new RegExp("last " + weekdayOf(back4)), back4 + " → " + t);
   assert.doesNotMatch(t, /yesterday/, t);
+  await ctx.close();
+});
+
+// The hub buckets the day in the FAMILY's zone (profile.json) and this page in
+// the browser's, so a family whose profile sits a day ahead of the tablet's OS
+// hands the card a lastDay that is today here. "last one yesterday" for a pick
+// made today is a small wrong word, and the empty form already renders cleanly.
+test("a lastDay the browser has not reached yet says nothing about when, not 'yesterday'", async () => {
+  const ahead = dayKeyBack(0, "Pacific/Kiritimati");     // UTC+14: today or tomorrow in California
+  const { ctx, page } = await settingsPage(null, { timezoneId: "America/Los_Angeles",
+    clothing: clothingPayload({ picks: { days: 3, lastDay: ahead, top: [] } }) });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+  const t = await picksText(page);
+  assert.match(t, /3 days recorded\./, "the sentence still closes: " + t);
+  assert.doesNotMatch(t, /yesterday/, ahead + " → " + t);
+  await ctx.close();
+});
+
+// The read-out is painted from the same fetch as the AI status line and BEFORE
+// it (plan T5.2), so a payload the card cannot render must not take that line
+// down with it: aiPaint's one try/catch would swallow the throw and leave both
+// lines blank on every five-second repaint.
+test("a picks block the card cannot render never takes the AI status line with it", async () => {
+  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+    // names as a string, not an array: (c.names||[]).join is not a function
+    picks: { days: 4, lastDay: dayKeyBack(1, "UTC"),
+             top: [{ combo: ["item_aaaa"], names: "Sunny tee", weight: 1 }] } }) });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("aiStatus").textContent));
+  assert.match(await page.$eval("#aiStatus", e => e.textContent), /key checked and working/,
+    "the line that was there before this card existed is still there");
   await ctx.close();
 });

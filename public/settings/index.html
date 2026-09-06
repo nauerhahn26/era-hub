@@ -852,13 +852,21 @@ $("aiKeySave").onclick=async()=>{
   }
   else toast("Could not save the key",false);
 };
+// Family text — a garment name, a book title — is escaped before it is ever
+// put in innerHTML. Declared ABOVE its first caller (picksPaint, through
+// aiPaint): it used to sit with the books card 80 lines below, out of its
+// temporal dead zone only because every path to it crossed an await (r1).
+const CT_ESC = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 async function aiPaint(){
   try{
     const s=await (await fetch("/clothing/status",{cache:"no-store"})).json();
     if(s.aiProvider && !aiProvTouched && s.aiProvider!==aiProvSel){ aiProvSel=s.aiProvider; aiProvPaint(); }
     // Painted from the SAME answer, and before the branch chain below: the
     // read-out belongs to every one of those states, including "no key yet".
-    picksPaint(s);
+    // Its own try: this line arrived years after #aiStatus and must not be able
+    // to blank it — a payload shape picksPaint cannot walk would otherwise
+    // abort aiPaint before the chain, on every five-second repaint (review r1).
+    try{ picksPaint(s); }catch(e){}
     // no library-wide count here either: the batch total shifts as Drive keeps
     // materialising files (dad 9/1)
     if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos…</b> "+s.ingesting.done+" done so far.";
@@ -890,7 +898,12 @@ function picksDay(key){
   if(p.length!==3||p.some(isNaN)) return "";
   const then=new Date(p[0],p[1]-1,p[2]), now=new Date();
   const days=Math.round((new Date(now.getFullYear(),now.getMonth(),now.getDate())-then)/86400000);
-  if(days<=1) return "last one yesterday";
+  // The hub buckets the day in the FAMILY's zone and this page in the browser's,
+  // so a lastDay can be today or even tomorrow here (a profile zone ahead of the
+  // tablet's). Say nothing about when rather than the wrong word — the empty
+  // form renders as "Her picks: 3 days recorded." (review r1).
+  if(days<=0) return "";
+  if(days===1) return "last one yesterday";
   // A weekday name only says which day it was inside the last week; past that
   // "last Thursday" would be a lie a parent could act on, so name the date.
   if(days<7) return "last "+then.toLocaleDateString(undefined,{weekday:"long"});
@@ -927,7 +940,6 @@ aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
 // know what is happening to THEIR book and what, if anything, they must do.
 // A book title is the only family text in here, so it is escaped like The
 // Pencil's writings are.
-const CT_ESC = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 // state -> what the book is doing, in the parent's words. `reviewing` owes the
 // narration step, so it reads as "about to record" rather than "under review":
 // there is no human review in the middle of a build (the review page is for
