@@ -60,11 +60,15 @@ export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
   ERA_RESEND_URL="http://127.0.0.1:1" ERA_TMDB_URL="http://127.0.0.1:1" \
   ERA_STREAMING_URL="http://127.0.0.1:1"
 
+# ERA_DEVICE_ID: the gate's DATA is era-family/test-data (a PRIVATE repo's
+# working tree). Without a name given here the hub would generate one from
+# this build box's hostname and write <DATA>/device-id into that repo — a
+# side effect the clothing-migration plan forbids (device-id.js, plan T4.1).
 # start the hub test instance (killing any stale holder of the TEST port first —
 # a survivor from a killed session otherwise fails every live-server suite with
 # EADDRINUSE; bracket trick so pkill never matches this script's own cmdline)
 pkill -f "[n]ode .*server.js $PORT" 2>/dev/null; sleep 0.5
-ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" \
+ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate \
   node "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT

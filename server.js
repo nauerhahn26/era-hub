@@ -65,7 +65,12 @@ loadProfile();
 // ---- family data pool (shared-data contract v1; see pool.js) ----
 // Transition rule: legacy stores (logs/, wardrobe/history.json) stay canonical;
 // the pool is DOUBLE-WRITTEN so it accrues real data before readers migrate.
-const DEVICE_ID = process.env.ERA_DEVICE_ID || PROFILE.deviceId || "hub";
+// One name per INSTALL, not per product (device-id.js, spec §5): the pool and
+// the clothing log are both "one writer per file, under this device's id", and
+// two hubs both called "hub" shared every one of those files. Resolved once,
+// synchronously, before initPool — a /setup that changes profile.deviceId
+// takes effect on the next restart (see the /setup route below).
+const DEVICE_ID = require("./device-id.js").resolveDeviceId(DATA, { env: process.env, profile: PROFILE });
 const pool = require("./pool").initPool(DATA, DEVICE_ID);
 pool.heartbeat({ service: "era-hub" });
 setInterval(() => pool.heartbeat({ service: "era-hub" }), 60 * 60 * 1000).unref();
@@ -1348,6 +1353,10 @@ const server = http.createServer((req, res) => {
         try { cur = JSON.parse(fs.readFileSync(path.join(DATA, "profile.json"), "utf8")); } catch {}
         const prof = { ...cur, childName: name };
         if (inc.tz && typeof inc.tz === "string") prof.tz = inc.tz.slice(0, 60);
+        // Stored, but NOT live: DEVICE_ID is resolved once at boot (it names
+        // the files the pool and the clothing log append to, and swapping it
+        // mid-run would leave half a day's lines under the old name). A
+        // deviceId change needs a restart.
         if (inc.deviceId && /^[a-z0-9-]{1,32}$/.test(inc.deviceId)) prof.deviceId = inc.deviceId;
         fs.writeFileSync(path.join(DATA, "profile.json"), JSON.stringify(prof, null, 2) + "\n");
         loadProfile();
