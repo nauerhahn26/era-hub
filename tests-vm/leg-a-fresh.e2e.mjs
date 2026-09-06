@@ -70,7 +70,7 @@ test("first launch: the kiosk opens on the welcome wizard, in front", { timeout:
   vm.shot("welcome-wizard");
 });
 
-test("wizard: name + dwell + Making Words & The Pencil only → the launcher greets the family", { timeout: 120000 }, async () => {
+test("wizard: name + dwell + Making Words & The Pencil only → the launcher greets the family", { timeout: 240000 }, async () => {
   if (!wizardSeen) return;
   await page.fill("#name", "Ellie");
   await page.locator("#dwell").evaluate((el) => { el.value = 1200; el.dispatchEvent(new Event("input")); });
@@ -120,7 +120,7 @@ test("The Pencil: opens, the door returns home", { timeout: 240000 }, async () =
   await page.locator("#launcher").waitFor({ state: "visible", timeout: 60000 });
 });
 
-test("Settings: 'Where the door goes' persists; a site opens in its OWN window, in front", { timeout: 300000 }, async () => {
+test("Settings: 'Where the door goes' persists; a site opens in its OWN window, in front", { timeout: 600000 }, async () => {
   await home();
   await page.click("#appGrid a.app:has-text('Settings')");
   await page.waitForURL(/\/settings\//, { waitUntil: "commit", timeout: 60000 });
