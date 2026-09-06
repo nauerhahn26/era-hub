@@ -837,20 +837,31 @@ function aiProvPaint(){
 document.querySelectorAll("#aiProv button").forEach(b=>b.onclick=()=>{ aiProvSel=b.dataset.prov; aiProvTouched=true; aiProvPaint(); });
 $("aiOpen").onclick=()=>openSite(AI_PROVIDERS[aiProvSel].url);
 $("aiKeyPaste").onclick=()=>pasteInto("aiKey");
+// The door asks the provider before it answers (a free question — it lists
+// models), which can take the whole 15-second probe on a black-holed link. So
+// Save goes dead and the card says who is being asked, the way the Voice and
+// fal cards do — a Save that looks ignored gets pressed again, and two probes
+// then race each other over the same file (review 9/5). aiChecking keeps the
+// 5-second repaint below from wiping the pending line while the answer is out.
+let aiChecking=false;
 $("aiKeySave").onclick=async()=>{
   const k=$("aiKey").value.trim();
   if(!k){ toast("Paste a key first",false); return; }
-  const r=await fetch("/ai-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvSel,apiKey:k})});
-  // the door asks the provider before answering (a free question — it lists
-  // models), so "saved" and "working" are two different sentences here too
-  if(r.ok){
-    let v={}; try{ v=await r.json(); }catch(e){}
-    $("aiKey").value=""; aiProvTouched=false;
-    if(v.ok) toast("Key checked and working ✓ — preparing your photos");
-    else toast(v.error||"Key saved, but it could not be checked",false);
-    aiPaint();
-  }
-  else toast("Could not save the key",false);
+  if(aiChecking) return;
+  aiChecking=true; $("aiKeySave").disabled=true;
+  $("aiStatus").innerHTML="Checking the key with "+AI_PROVIDERS[aiProvSel].name+"…";
+  try{
+    const r=await fetch("/ai-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvSel,apiKey:k})});
+    // "saved" and "working" are two different sentences here too
+    if(r.ok){
+      let v={}; try{ v=await r.json(); }catch(e){}
+      $("aiKey").value=""; aiProvTouched=false;
+      if(v.ok) toast("Key checked and working ✓ — preparing your photos");
+      else toast(v.error||"Key saved, but it could not be checked",false);
+    }
+    else toast("Could not save the key",false);
+  }catch(e){ toast("Could not save the key",false); }
+  finally{ aiChecking=false; $("aiKeySave").disabled=false; aiPaint(); }
 };
 // Family text — a garment name, a book title — is escaped before it is ever
 // put in innerHTML. Declared ABOVE its first caller (picksPaint, through
@@ -858,6 +869,7 @@ $("aiKeySave").onclick=async()=>{
 // temporal dead zone only because every path to it crossed an await (r1).
 const CT_ESC = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 async function aiPaint(){
+  if(aiChecking) return;   // the pending line stands until the provider answers
   try{
     const s=await (await fetch("/clothing/status",{cache:"no-store"})).json();
     if(s.aiProvider && !aiProvTouched && s.aiProvider!==aiProvSel){ aiProvSel=s.aiProvider; aiProvPaint(); }

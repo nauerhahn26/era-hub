@@ -37,9 +37,31 @@ const GOOD_KEY = "sk_good_1234567890";   // the only key the stand-in accepts
 // same stand-in answers for api.fal.ai as well. Stand-in material only.
 const FAL_GOOD = "fal-good-1234567890";
 let falCalls = 0;
+// The AI helper card (T7.6 bug 6) proves its key the same way, so the stand-in
+// answers Google's models.list too. Stand-in material only — never a credential.
+//   AI_GOOD  recognised at once
+//   AI_SLOW  recognised, but the answer is PARKED until the test lets it go —
+//            the door blocks for the whole probe (up to 15 s on a black-holed
+//            link), and the card has to look busy for all of it
+//   AI_DEAD  the stand-in hangs up: the provider cannot be reached
+//   anything else: Google's 400 API_KEY_INVALID
+const AI_GOOD = "AQ.stand-in-good-key-0123456789";
+const AI_SLOW = "AQ.stand-in-slow-key-0123456789";
+const AI_DEAD = "AQ.stand-in-unplugged";
+let aiHold = null;      // the parked answer for AI_SLOW: call it to let the probe finish
 
 before(async () => {
   fake = http.createServer((req, res) => {
+    if (req.url.startsWith("/v1beta/models")) {
+      const key = req.headers["x-goog-api-key"];
+      if (key === AI_DEAD) { req.socket.destroy(); return; }
+      const answer = () => (key === AI_GOOD || key === AI_SLOW)
+        ? res.writeHead(200, { "Content-Type": "application/json" }).end('{"models":[{"name":"models/a-model"}]}')
+        : res.writeHead(400, { "Content-Type": "application/json" })
+            .end('{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}');
+      if (key === AI_SLOW) { aiHold = answer; return; }
+      return answer();
+    }
     if (req.url === "/v1/user/subscription") {
       if (req.headers["xi-api-key"] === GOOD_KEY)
         return res.writeHead(200, { "Content-Type": "application/json" }).end('{"tier":"free"}');
@@ -59,9 +81,10 @@ before(async () => {
   await new Promise(r => fake.listen(FAKE, "127.0.0.1", r));
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1",
+    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1", ERA_NO_UPDATE: "1",
            ERA_ELEVEN_URL: `http://127.0.0.1:${FAKE}`,
            ERA_FAL_URL: `http://127.0.0.1:${FAKE}`,
+           ERA_AI_URL: `http://127.0.0.1:${FAKE}`,
            // today's outfits are built on the hub's own timers and read the
            // weather: a dead loopback port keeps this suite off the internet
            ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1" },
@@ -190,6 +213,75 @@ test("a voice key ElevenLabs rejects never shows 'Premium voices active' (bug 14
   assert.match(await page.$eval("#ttsKeyStatus", e => e.textContent), /Key checked and working/);
   v = await (await fetch(`${BASE}/voices`)).json();
   assert.equal(v.enabled, true); assert.equal(v.keyOk, true);
+  await ctx.close();
+});
+
+// ---- AI helper key card (T7.6 bug 6, VM QA 9/5) ----
+//
+// The bug was a WORDING bug: a Google key with a character missing sat under
+// "key saved ✓" until the Clothing Picker quietly held every photo. The door
+// now asks the provider before it answers, and tests/ai-key.test.mjs pins the
+// JSON — this is the half a parent reads. Three sentences, one each for what
+// the provider said: refused (paste again — never "saved ✓"), unreachable
+// (saved, honestly unchecked), recognised (checked and working). The branch
+// ORDER in aiPaint is what the doesNotMatch pins: the refusal has to be tested
+// before the plain "configured" line or the old lie comes back.
+//
+// And because the door now blocks for the whole probe (15 s on a black-holed
+// link), Save has to look busy the way the Voice and fal cards do: the button
+// goes dead and the card says who is being asked, and the 5-second repaint
+// must not wipe that line while the answer is still out (review 9/5).
+test("the AI card goes busy while the key is checked, and never says 'saved ✓' for a refused key (T7.6 bug 6)", async () => {
+  const { ctx, page } = await settingsPage();
+  const status = () => page.$eval("#aiStatus", e => e.textContent);
+  const busy = () => page.$eval("#aiKeySave", b => b.disabled);
+
+  // in flight: the stand-in parks the answer, so the card is caught mid-probe
+  aiHold = null;
+  await page.fill("#aiKey", AI_SLOW);
+  await page.click("#aiKeySave");
+  for (let i = 0; i < 100 && !aiHold; i++) await new Promise(r => setTimeout(r, 100));
+  assert.ok(aiHold, "the probe reached the stand-in");
+  assert.equal(await busy(), true, "Save is dead while the door is asking the provider");
+  assert.match(await status(), /Checking the key with Google AI Studio/);
+  // the periodic repaint must not overwrite the pending line mid-probe
+  await page.evaluate(() => aiPaint());
+  assert.match(await status(), /Checking the key with Google AI Studio/,
+    "aiPaint's 5-second tick left the pending line alone");
+  aiHold(); aiHold = null;
+  await page.waitForFunction(() => !document.getElementById("aiKeySave").disabled);
+  await page.waitForFunction(() => /checked and working ✓/.test(document.getElementById("aiStatus").textContent));
+  assert.equal(await page.$eval("#aiKey", i => i.value), "", "the box is cleared, so the key is not left on screen");
+
+  // refused: a paste-again, and NOT the old "saved ✓"
+  await page.fill("#aiKey", "AQ.stand-in-typo-key");
+  await page.click("#aiKeySave");
+  await page.waitForFunction(() => /Copy it again/.test(document.getElementById("aiStatus").textContent));
+  let s = await status();
+  assert.match(s, /did not recognise that key/, s);
+  assert.doesNotMatch(s, /saved ✓/, "a refused key is never 'saved ✓' (the 9/5 lie)");
+  assert.doesNotMatch(s, /working/i, s);
+  assert.equal(await busy(), false, "Save is live again after the answer");
+
+  // unreachable: saved, and honestly unchecked — neither "working" nor a refusal
+  await page.fill("#aiKey", AI_DEAD);
+  await page.click("#aiKeySave");
+  await page.waitForFunction(() => /could not reach Google AI Studio/.test(document.getElementById("toast").textContent));
+  await page.waitForFunction(() => /key saved ✓/.test(document.getElementById("aiStatus").textContent));
+  s = await status();
+  assert.doesNotMatch(s, /checked and working/, s);
+  assert.doesNotMatch(s, /Copy it again/, "an unreachable provider is not a refusal");
+  assert.equal(await busy(), false);
+
+  // recognised: the sentence the Voice card already earns
+  await page.fill("#aiKey", AI_GOOD);
+  await page.click("#aiKeySave");
+  await page.waitForFunction(() => /checked and working ✓/.test(document.getElementById("aiStatus").textContent));
+  s = await status();
+  assert.match(s, /Google AI Studio key checked and working ✓/, s);
+  const st = await (await fetch(`${BASE}/clothing/status`)).json();
+  assert.equal(st.aiKeyOk, true);
+  assert.ok(!JSON.stringify(st).includes(AI_GOOD), "the key never comes back out of the hub");
   await ctx.close();
 });
 

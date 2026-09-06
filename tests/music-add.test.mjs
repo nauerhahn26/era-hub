@@ -63,6 +63,8 @@ if (argv.includes("--dump-single-json")) {
     process.exit(1);
   }
   if (st.mode === "no-hits") { process.stdout.write(JSON.stringify({ _type: "playlist", entries: [] })); process.exit(0); }
+  // exit 0 with something that is not JSON: yt-dlp cut off mid-write
+  if (st.mode === "garbage") { process.stdout.write("{\\"title\\": \\"Let It"); process.exit(0); }
   const info = { id: st.id || "vid123", title: st.title, duration: st.duration,
                  webpage_url: st.webpageUrl || "https://www.youtube.com/watch?v=" + (st.id || "vid123") };
   process.stdout.write(JSON.stringify(
@@ -76,6 +78,12 @@ if (st.mode === "fail-download") {
 const tmpl = argv[argv.indexOf("-o") + 1];
 const base = tmpl.replace(/\\.%\\(ext\\)s$/, "");
 fs.mkdirSync(path.dirname(base), { recursive: true });
+// exit 0 having written nothing at all (a format yt-dlp said it had, then did not)
+if (st.mode === "no-audio") process.exit(0);
+// the download worked, but while it ran Google Drive for Desktop half-wrote
+// manifest.json in the same folder: the check between the 202 and the swap
+if (st.mode === "corrupt-manifest")
+  fs.writeFileSync(path.join(path.dirname(base), "manifest.json"), '{"schemaVersion":1,"songs":[{"id":"let-it-go"');
 fs.writeFileSync(base + ".m4a", Buffer.from(st.audio || "fake-m4a-bytes-not-real-audio"));
 if (st.mode !== "no-thumbnail") fs.writeFileSync(base + ".webp", Buffer.from("fake-webp"));
 process.exit(0);
@@ -333,6 +341,8 @@ test("yt-dlp stopping non-zero surfaces a human message and leaves the manifest 
   assert.equal((await post("/music/add", { query: "asdfqwerzxcv" })).status, 202);
   const none = await settled();
   assert.equal(none.ok, false, "a search with no hits is a failure, not a blank song");
+  assert.equal(none.message, "nothing came back for that - check the link, or try a different name",
+               "and the parent is told to try a different NAME - 'try another link' is wrong for a typed name");
 });
 
 // Bug 5 (VM QA 9/5). From a datacenter IP YouTube answers with its bot check,
@@ -363,12 +373,28 @@ test("yt-dlp's bot check reaches the family as one sentence, and the raw line st
 
 // Everything else yt-dlp can say. The map is the point: a shape nobody has
 // seen before must still come out as a sentence, never as the raw text.
+//
+// The lines are yt-dlp's REAL ones (yt_dlp/extractor/youtube/_video.py, the
+// playability-status branch, and YoutubeDL.py's GeoRestrictedError handler),
+// not the shortest thing a regex would accept: a country block on copyright
+// grounds is "Video unavailable. …blocked it in your country…" on ONE line, and
+// an uploader's country block is three lines whose LAST — the one why() keeps —
+// is the VPN hint. The suite used to feed the country line with its
+// "Video unavailable." prefix cut off, which is how the table passed with the
+// generic rule sitting above the country one (review 9/5).
 test("every yt-dlp failure has a family sentence, and an unknown one still says something plain", async () => {
+  const GONE = "That video is not available any more. Try another link.";
+  const COUNTRY = "That video cannot be played in your country. Try another link.";
   const cases = [
-    ["ERROR: [youtube] abc: Video unavailable. This video has been removed by the uploader",
-     "That video is not available any more. Try another link."],
-    ["ERROR: [youtube] abc: The uploader has not made this video available in your country",
-     "That video cannot be played in your country. Try another link."],
+    ["ERROR: [youtube] abc: Video unavailable. This video has been removed by the uploader", GONE],
+    // a takedown is gone, not geo-blocked: the country rule must not swallow it
+    ["ERROR: [youtube] abc: Video unavailable. This video is no longer available due to a copyright claim by a label", GONE],
+    ["ERROR: [youtube] abc: Video unavailable. This video contains content from a label, who has blocked it in your country on copyright grounds",
+     COUNTRY],
+    ["ERROR: [youtube] abc: Video unavailable. The uploader has not made this video available in your country", COUNTRY],
+    ["ERROR: [youtube] abc: The uploader has not made this video available in your country\n" +
+     "This video is available in Sweden.\n" +
+     "You might want to use a VPN or a proxy server (with --proxy) to workaround.", COUNTRY],
     ["ERROR: unable to download webpage: <urlopen error [Errno -2] Name or service not known (getaddrinfo failed)>",
      "New ERA could not reach the internet to fetch it. Check the connection and try again."],
     ["ERROR: Unsupported URL: https://example.com/not/a/video",
@@ -381,9 +407,46 @@ test("every yt-dlp failure has a family sentence, and an unknown one still says 
     assert.equal((await post("/music/add", { url: "https://www.youtube.com/watch?v=nope" })).status, 202);
     const last = await settled();
     assert.equal(last.message, want, "for: " + stderr);
-    assert.match(last.error, /ERROR:/, "the raw line is still there for the hub");
+    assert.match(last.error, /ERROR:|VPN or a proxy/, "the raw (last) line is still there for the hub");
+    assert.ok(!/--proxy/.test(last.message), "and no flag reaches the family");
   }
   assert.equal(manifest().songs.length, 2, "and none of it wrote anything");
+});
+
+// The other half of bug 5. plainly() exists to keep yt-dlp's words off the
+// board, but runAdd also throws sentences THIS FILE wrote for a parent — after
+// the 202, so they land in the same catch — and every one of them came out as
+// the generic "try another link": wrong advice for a title that will not make
+// a name (type one), wrong for a typed name with no hits (try a different
+// name), and actively misleading for a song list Drive is mid-write on (wait a
+// minute; the link was never the problem) (review 9/5).
+test("the hub's own refusals reach the sheet in the hub's own words, not flattened to 'try another link'", async () => {
+  const file = path.join(MUSIC, "manifest.json");
+  const good = fs.readFileSync(file);
+  const url = "https://www.youtube.com/watch?v=own1";
+  const cases = [
+    [{ mode: "garbage" }, { url },
+     "could not make sense of what came back for that"],
+    [{ mode: "ok", id: "own1", title: "♪♪♪", duration: 9 }, { url },
+     "that title does not make a name we can save - type one yourself"],
+    [{ mode: "no-audio", id: "own1", title: "Own Words", duration: 9 }, { url },
+     "the download finished but left no audio file"],
+    [{ mode: "corrupt-manifest", id: "own1", title: "Own Words", duration: 9 }, { url },
+     "New ERA could not read the list of songs just now. Try again in a minute."],
+  ];
+  for (const [state, body, want] of cases) {
+    ctl(state);
+    assert.equal((await post("/music/add", body)).status, 202, "refused after the 202: " + state.mode);
+    const last = await settled();
+    assert.equal(last.ok, false, state.mode + " is a failure");
+    assert.equal(last.message, want, "for: " + state.mode);
+    assert.ok(!/ERROR:|http|--/.test(last.message), "and still nothing a family should not read");
+    assert.deepEqual(fs.readdirSync(MUSIC).filter(n => n.startsWith(".")), [],
+                     state.mode + " swept its staged download");
+    assert.equal(fs.existsSync(path.join(MUSIC, "own-words.m4a")), false, state.mode + " put no song on the shelf");
+    if (state.mode === "corrupt-manifest") fs.writeFileSync(file, good);
+  }
+  assert.deepEqual(manifest().songs.map(s => s.id), ["let-it-go", "how-far-ill-go"], "and the library is as it was");
 });
 
 // The re-add is the dangerous one: it used to delete the old audio and cover

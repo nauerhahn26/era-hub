@@ -136,22 +136,36 @@ function why(what, r) {
 // act on: no URL, no flag, no "ERROR:".
 //
 // Read most specific first: the bot-check line also talks about a download,
-// and a country block also says "not available". Anything unrecognised gets
-// the last sentence rather than the raw text — an unfamiliar shape is exactly
-// the one that would put a command line on a six-year-old's board.
+// and a country block also says "not available" — so the country rule MUST sit
+// above the "gone" rule, and the table's order is the whole design. It was the
+// other way round until review 9/5: yt-dlp joins YouTube's reason and subreason
+// into one line, so "Video unavailable. This video contains content from X,
+// who has blocked it in your country on copyright grounds" hit the gone rule
+// first and a licence-restricted video was called gone. Anything unrecognised
+// gets the last sentence rather than the raw text — an unfamiliar shape is
+// exactly the one that would put a command line on a six-year-old's board.
 //
-// (Everything refused BEFORE the 202 — no pack, no folder, a bad link, a song
-// list we cannot read — already reaches the sheet in this file's own words
-// through the door's `message`. Only what goes wrong mid-download comes here.)
+// Only yt-dlp's words come through this table. Everything refused BEFORE the
+// 202 — no pack, no folder, a bad link, a song list we cannot read — reaches
+// the sheet in this file's own words through the door's `message`; and what
+// runAdd refuses AFTER the 202 in its own words (a title that makes no name,
+// no audio file, a song list that went unreadable mid-download) is thrown as
+// an OwnWords so the catch in add() hands it over untouched (see below).
 const PLAIN = [
   [/Sign in to confirm you.re not a bot|confirm your age|login required/i,
    "YouTube would not let New ERA fetch that one from here. Try another link, or add the song from an MP3 in the family's music folder."],
+  // The two real country lines (yt_dlp/extractor/youtube/_video.py): "…who
+  // has blocked it in your country on copyright grounds" arrives on one line
+  // with its "Video unavailable." prefix, and "The uploader has not made this
+  // video available in your country" is a GeoRestrictedError, which YoutubeDL
+  // prints over three lines ending "You might want to use a VPN or a proxy
+  // server (with --proxy) to workaround." — and why() keeps the LAST line.
+  // Bare "copyright" is deliberately NOT here: "no longer available due to a
+  // copyright claim" is a takedown, and a takedown is gone, not geo-blocked.
+  [/blocked it in your country|available in your country|not available from your location|use a VPN or a proxy/i,
+   "That video cannot be played in your country. Try another link."],
   [/Video unavailable|Private video|This video is not available|removed/i,
    "That video is not available any more. Try another link."],
-  // "…has blocked it in your country on copyright grounds" and "The uploader
-  // has not made this video available in your country" are both real lines.
-  [/copyright|blocked it in your country|available in your country/i,
-   "That video cannot be played in your country. Try another link."],
   [/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|Unable to download|network|offline/i,
    "New ERA could not reach the internet to fetch it. Check the connection and try again."],
   [/Unsupported URL|is not a valid URL|No video formats/i,
@@ -166,6 +180,16 @@ function plainly(raw) {
   return PLAIN_LAST;
 }
 
+// A refusal in THIS FILE'S OWN WORDS, thrown from inside runAdd. It is already
+// the sentence a parent should read, so the catch in add() puts it straight
+// into `message` — never through plainly(), which knows only yt-dlp's shapes
+// and would flatten it to PLAIN_LAST. That is what happened until review 9/5:
+// "type one yourself", "try a different name" and "Try again in a minute" all
+// came out as "try another link", which for the unreadable-manifest case sent
+// a parent hunting for a new link when the link was never the problem. A class,
+// not a string match, so nothing yt-dlp prints can ever claim to be ours.
+class OwnWords extends Error {}
+
 // Ask yt-dlp what a link (or a search) actually is, WITHOUT downloading: the
 // title is what names the file, so it has to be known before the download's
 // output template can be written.
@@ -174,10 +198,10 @@ async function lookUp(t, target) {
                               "--skip-download", "--dump-single-json", target]);
   if (r.code !== 0) throw new Error(why("could not look that up", r));
   let j;
-  try { j = JSON.parse(r.stdout); } catch { throw new Error("could not make sense of what came back for that"); }
+  try { j = JSON.parse(r.stdout); } catch { throw new OwnWords("could not make sense of what came back for that"); }
   if (j && Array.isArray(j.entries)) j = j.entries[0];   // a search answers with a playlist
   if (!j || typeof j !== "object")
-    throw new Error("nothing came back for that - check the link, or try a different name");
+    throw new OwnWords("nothing came back for that - check the link, or try a different name");
   return j;
 }
 
@@ -275,7 +299,7 @@ function upsert(dir, fields) {
   // add() checked this before the download started; a minute has passed since,
   // and the file is in a folder Google Drive is syncing. Check again rather
   // than write a one-song library over a library we cannot see.
-  if (unreadable) throw new Error(UNREADABLE.message);
+  if (unreadable) throw new OwnWords(UNREADABLE.message);
   const at = songs.findIndex(s => s.id === fields.id);
   const rank = at >= 0 && Number.isFinite(songs[at].rank) ? songs[at].rank : nextRank(songs);
   const entry = { ...(at >= 0 ? songs[at] : {}), ...fields, rank };
@@ -297,7 +321,7 @@ async function runAdd(job, t, dir) {
   // fall back to "book"; a song says so instead, because the parent is standing
   // right there and can type a name.
   if (!SLUG_RE.test(slug))
-    throw new Error("that title does not make a name we can save - type one yourself");
+    throw new OwnWords("that title does not make a name we can save - type one yourself");
   job.slug = slug;
   job.title = title;
   job.phase = "downloading";
@@ -313,12 +337,12 @@ async function runAdd(job, t, dir) {
   try {
     await download(t, dir, stage, source);
     const ae = pickExt(dir, stage, AUDIO_EXT);
-    if (!ae) throw new Error("the download finished but left no audio file");
+    if (!ae) throw new OwnWords("the download finished but left no audio file");
     const ce = pickExt(dir, stage, COVER_EXT);
     // Last look before anything the family has is touched: upsert() would
     // refuse to write an unreadable manifest, and refusing AFTER the swap
     // would leave the old audio deleted and the manifest still naming it.
-    if (readManifest(dir).unreadable) throw new Error(UNREADABLE.message);
+    if (readManifest(dir).unreadable) throw new OwnWords(UNREADABLE.message);
     forget(dir, slug);                       // NOW yesterday's take may go
     audio = slug + ae;
     fs.renameSync(path.join(dir, stage + ae), path.join(dir, audio));
@@ -396,10 +420,11 @@ function add(body) {
       const raw = redact(String(e && e.message || e)).replace(/\s+/g, " ");
       // Two readers, two sentences: `error` is yt-dlp's line, kept for the
       // console and for whoever is fixing the hub, and `message` is the only
-      // one the board sheet ever shows (bug 5).
+      // one the board sheet ever shows (bug 5). A refusal this file wrote
+      // itself (OwnWords) is already that sentence and goes through as it is.
       console.error("[music-add] " + raw);
       last = { ok: false, id: job.slug || null, title: job.title || query,
-               error: raw, message: plainly(raw),
+               error: raw, message: e instanceof OwnWords ? e.message : plainly(raw),
                when: new Date().toISOString() };
     })
     .finally(() => { running = null; });

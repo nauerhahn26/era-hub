@@ -911,7 +911,7 @@ function weatherWindow() {
   } catch {}
   return null;
 }
-// Both ends INCLUSIVE: "10 AM-1 PM" is the hours 10, 11, 12 and 13.
+// Both ends INCLUSIVE: "2 PM-5 PM" is the hours 14, 15, 16 and 17.
 function inWindow(hour, win) { return !win || (hour >= win.from && hour <= win.to); }
 async function weather() {
   const win = weatherWindow();

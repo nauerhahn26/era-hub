@@ -2467,6 +2467,12 @@ log `<scratch>/t75/release-v0.32.1.log`):
   `feat/content-strip` (92609db, fast-forward). The signed publish runs as
   `release.sh v0.32.1` (gate → signed build → VM legs A+B → tag + release) as
   soon as the T7.6b driver releases the VM.
+- **PUBLISHED v0.32.1 (9/5 ~18:10 UTC)** — `release.sh v0.32.1` from era-hub
+  49dec60 (= tag) + era-board 6d29363, log `<scratch>/release-v0.32.1.log`:
+  gate green → signed build **20260905.1807**, `Signature verification: ok`,
+  `New-ERA-Setup.exe` sha256 `f754e6899d1edb55fee6fa08c09993adda1b4c146a1e0d11e327cfb7886b21ca`
+  → `vm-e2e: 14 passed, 0 failed` (legs A+B) → tag + GitHub release. The
+  first SIGNED family build. `feat/audit-fixes` and `master` pushed at 49dec60.
 
 ### T7.6 — Windows VM QA by hand (Opus driver, 13:55–15:25 UTC)
 Guest `era-qa-w10` (Win10 19045), reverted to the pristine snapshot; build
@@ -2701,3 +2707,54 @@ commit the installer came from" rule if landed now):
   is dad's.
 - ~~Answer HEAD on the immutable `/books/` media route.~~ Landed 9/5
   (959e18b) on all three media jails, `books.test` 27/27.
+
+### Phase 7 review — the 20 confirmed findings, disposition (9/5 19:00–21:45 UTC)
+The review gate (`rae-flow:reviewing` over era-hub d996044..HEAD and era-board
+fabf2b1..HEAD against spec §7 and the T7.6 notes) confirmed 20 findings; every
+one now has code, in three commits, none of them in v0.32.1's payload — all
+ride the **next cut** with the clothing work:
+- **d865588 (pushed to both public tips the same evening — it removes PII):**
+  the last two sites that stated the family's own hours (a test header and a
+  worker comment) say the reason only; the 9/5 key shapes (`AIza…`, `AQ.…`,
+  fal's `<uuid>:<hex>`) synced into the payload-gating scanner and every
+  sibling copy, pinned by `era-scan-parity.test`.
+- **e9f3a9b (era-hub, local):** the hub's own six refusals reach the sheet in
+  their own words (`OwnWords`, never flattened by `plainly()`); the country/VPN
+  rule outranks the takedown rule and matches yt-dlp's real
+  `GeoRestrictedError` lines; the AI card's Save disables itself and says
+  "Checking the key with <provider>…" until the probe answers, and a rejected
+  fetch no longer escapes as an unhandled rejection; `vm-e2e.sh` prints a
+  WARNING and marks the banner when its "previous" is an untagged
+  `dist/release-*`. music-add 20/20, settings-ui 25/25, new vm-e2e.test 4/4.
+- **a3cb025 (era-board `feat/content-strip`, local):** a board mounted under an
+  open sheet is asleep (`refreezeIfOpen()` re-snapshots after the splash→board
+  swap — the second board reviewer's blocking item); a song add outlives its
+  sheet (`watchAdd` keeps polling after Close and reloads when the song lands
+  with no sheet up; an in-flight add owns `seenWhen`); the splash strip carries
+  no Arrange; the launch banner climbs the footer ladder
+  (`footerClearance()`); `/app/launch` gets a 4 s deadline so a wedged ERAgaze
+  still shows the flag + banner. The ladder test flaked 3/4 runs because the
+  board's own `/content/status` poll cleared a hand-set `.show` — it now routes
+  that status to a building-books body and waits for `#contentNote.show`
+  (7/7 green). partner-strip 14/14 (needs a data dir with music/movies so
+  `/recipes/songs.json` exists — an empty `ERA_DATA_DIR` 404s it and
+  `window.Board` never mounts).
+- **Reviewer nits recorded, not fixed:** `settings-ui` could re-check
+  `aiChecking` after the await at `index.html:863`; `tests/ai-key.test.mjs`
+  binds 8449 (pre-existing); the music fixture's hybrid line at `:394`; this
+  workpad's 76→78 jump above is `ai-key` + the launcher `%~2` test (both new
+  suites, as the line says).
+- **Pre-existing holes still open (design calls, not this cut):** a resize or
+  navigation re-render under an open sheet recreates `.dwell` tiles
+  (`render()` should call `refreezeIfOpen`); the standing footers' own 54 px
+  ladder vs a two-line `#ttsWarn`; `#netWarn` fixed at `bottom:60px`; the
+  board's reload-on-sheet-close and the unconditional `reloadBoard()` after a
+  landed song (`board-partner.js:179`) are one decision for dad.
+- **Not done, dad's call ("say 'rewrite'"):** a history rewrite / force-push for
+  the school-hours disclosure in earlier public commits.
+
+Next: the clothing-picker migration (variety, favourites, yesterday, sharing —
+dad 9/5) is being built on `feat/clothing-migration` in its own worktree from
+`docs/superpowers/plans/2026-09-05-clothing-picker-migration-plan.md`; v0.32.2
+carries it plus e9f3a9b/a3cb025 (era-board's `feat/content-strip` merges to
+master before the tag, per the release rule above).

@@ -14,7 +14,12 @@
 #                        so a dry-run artefact is never "what the family has" —
 #                        9/5: v0.32.1's leg B picked the unpublished v0.32.0
 #                        cut over the v0.31.7 in the field); newest of all
-#                        when none is tagged
+#                        when none is tagged — LOUDLY (a WARNING line and an
+#                        UNTAGGED mark in the banner): that is the pre-9/5
+#                        behaviour back again, and a green leg B from a build
+#                        no family has is not the family's upgrade path (a
+#                        pruned dist/, as after the 9/3 disk-full, or a
+#                        checkout without its tags, is how it happens)
 # Needs era-family/data/vm.env (QA host + guest credentials) and the driver
 # scripts in era-family/tools/vm. Output: gate/vm-e2e/ (screenshots, logs).
 set -uo pipefail
@@ -22,7 +27,7 @@ HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 VMT="$ROOT/era-family/tools/vm"
 DIST="${1:?usage: vm-e2e.sh <candidate dist dir> [prev Setup.exe] [--only a|b]}"; shift
-PREV=""; ONLY=""
+PREV=""; ONLY=""; PREV_UNTAGGED=""
 while [ $# -gt 0 ]; do case "$1" in --only) ONLY="$2"; shift 2;; *) PREV="$1"; shift;; esac; done
 FEED_PORT=8427
 OUT="$HUB/gate/vm-e2e"; rm -rf "$OUT"; mkdir -p "$OUT"
@@ -39,14 +44,19 @@ if [ -z "$PREV" ]; then
     v="$(basename "$(dirname "$p")")"; v="${v#release-}"
     if git -C "$HUB" tag -l "$v" | grep -qx "$v"; then PREV="$p"; break; fi
   done
-  [ -n "$PREV" ] || PREV="$(ls -dt "$ROOT"/dist/release-*/New-ERA-Setup.exe 2>/dev/null | grep -v "^$DIST/" | head -1)"
+  if [ -z "$PREV" ]; then
+    # the pre-9/5 pick, and it says so: the "previous" banner line alone did
+    # not catch the v0.32.0 mistake, so the fallback gets a line of its own
+    PREV="$(ls -dt "$ROOT"/dist/release-*/New-ERA-Setup.exe 2>/dev/null | grep -v "^$DIST/" | head -1)"
+    [ -n "$PREV" ] && { PREV_UNTAGGED=1; echo "vm-e2e: WARNING no TAGGED dist/release-* under $ROOT/dist - falling back to the UNTAGGED $PREV; leg B self-updates from a build no family has (pass the family's installer as the 2nd argument)"; }
+  fi
   [ -n "$PREV" ] || { echo "vm-e2e: no previous installer found under $ROOT/dist"; exit 2; }
 fi
 [ -f "$PREV" ] || { echo "vm-e2e: previous installer $PREV missing"; exit 2; }
 . "$VMT/env.sh" || exit 2
 VER="$(python3 -c "import json;print(json.load(open('$DIST/latest.json'))['version'])")"
 BUILD="$(python3 -c "import json;print(json.load(open('$DIST/latest.json'))['build'])")"
-echo "== vm-e2e: candidate $VER ($BUILD) from $DIST; previous $PREV =="
+echo "== vm-e2e: candidate $VER ($BUILD) from $DIST; previous $PREV${PREV_UNTAGGED:+ (UNTAGGED - not a published release)} =="
 
 echo "-- assets -> QA host"
 $DROP "mkdir -p /root/qa/feed && rm -f /root/qa/feed/hits.log /root/qa/feed/hold" || exit 3
