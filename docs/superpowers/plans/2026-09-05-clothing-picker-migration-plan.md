@@ -218,6 +218,22 @@ history, sub-second); the end-to-end check is small (pre-tiled 5-7 garments, no 
     `harmonizes` predicate — `avoid` and the ranking stand — when, and only
     when, tops × bottoms yields no pair, which is spec §3.4's "a wardrobe must
     never empty the board" applied to the taste gate (P3 review r1).
+    **Empty-only is the threshold, on purpose** (P3 review r2 nit): a wardrobe
+    with ONE plain garment deals a shorter board than the all-loud one (35
+    synthetic garments, band `hot`: all-loud → 21 looks, one-plain-top → 12),
+    and that discontinuity is the garment-once-per-page rule
+    (`outfit_set.py:543-556`) meeting a pool whose every pair needs the same
+    top — not the floor's threshold. Measured: the widened trigger the nit
+    proposed (`pairs.length < pageCap`) deals a byte-identical board on both
+    rows, because in that band the pool already holds 8 harmonizing pairs
+    against a `pageCap` of 7. The board's page 1 there is the five looks it
+    could fill garment-distinct (two sets, two dresses, one pair) and every
+    look after it re-uses that one top, so it is A4-11's short page, not a
+    page-1 repeat: spec §1 V3 holds per ALGORITHMIC page, and a flat
+    `slice(0,7)` spans two of them. Widening the floor to pad such a board
+    with loud-on-loud pairs would push the harmony rule aside for ordinary
+    small wardrobes; the near-empty case degrades by design, and the taste
+    gate's floor stays the last resort spec §3.4 asks for.
 13. §3.1's source precedence ("1. shared tags … 3. the needs-attributes pass")
     inverts on the upgrade morning: the pass stamps `attrsAt` within minutes of
     first boot and `needsAttributes` never revisits a stamped garment, so a

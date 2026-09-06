@@ -280,6 +280,25 @@ describe("taste floor (spec §3.4's rule, §3.1 item 4): a wardrobe described as
     for (const c of pairs)
       assert.ok(c.pieces.some(p => p.id === quietId), c.key + ": only the plain bottom pairs while any pair harmonizes");
   });
+  // The same rule from the other side, and the answer to "the worst wardrobe
+  // deals a longer board than a slightly better one" (review r2 nit): one
+  // plain TOP gives every pair the same top, so page 1 fills garment-distinct
+  // and stops short (A4-11) and each deeper page carries one pair — 12 looks,
+  // not 21. That is the garment-once-per-page rule, not the floor's threshold:
+  // the floor must stay SHUT here, or a board with 8 honest pairs is padded
+  // with loud-on-loud ones.
+  test("one plain top: a shorter board, and still no loud-on-loud pair", () => {
+    const loud = ITEMS.map(g => ({ ...g, statement: true, pattern: "graphic", colors: ["magenta"] }));
+    const quietId = loud.find(x => x.category === "top").id;
+    const oneQuiet = loud.map(g => g.id === quietId ? { ...g, statement: false, pattern: "solid" } : g);
+    for (const band of [...BANDS, null]) {
+      const out = build(oneQuiet, band, "2026-08-05", { days: {}, events: {} }, { great: [], avoid: [] });
+      assert.ok(out.length > 0, `${band}: the board is never empty`);
+      for (const c of out.filter(x => x.pieces.length === 2))
+        assert.ok(c.pieces.some(p => p.id === quietId),
+          `${band} ${c.key}: only the plain top pairs while any pair harmonizes`);
+    }
+  });
 });
 
 describe("purity of clothing-rank.js", () => {
