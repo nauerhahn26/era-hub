@@ -8,9 +8,19 @@
 // 9 statement pieces, 28 at warmth level 1 (hot/warm) and 7 at level 2 (cool)
 // — so the ported gate exercises the same pool sizes and band gating.
 //
-// CLI (the materialize half — tiles, photos, wardrobe.json — lands in T4.4):
+// CLI:
 //   node tests/synthetic-wardrobe.mjs                   # print the items as JSON
-//   node tests/synthetic-wardrobe.mjs --materialize <DATA> [n]
+//   node tests/synthetic-wardrobe.mjs --materialize <DATA> [n] [--drive <folder>]
+//
+// `--materialize` lays a whole catalogued wardrobe on disk — photos, tiles and
+// wardrobe.json — so a hub boots straight into "35 garments, no AI key needed".
+// The ids are md5 of the photo's path under clothing/, exactly as the worker
+// computes them, so two data dirs materialized from the same names agree on
+// every id and can be compared board-for-board.
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 // mulberry32: a tiny seeded PRNG so a wardrobe is reproducible from its seed
@@ -116,13 +126,70 @@ export function stripAttributes(items) {
   return items.map(({ id, name, category, warmth }) => ({ id, name, category, warmth }));
 }
 
+// ---- materialize: the same wardrobe, on disk ------------------------------
+// The hub's id for a photo is md5 of its path under clothing/ (the worker's
+// own rule), so the FILENAME decides the id — and two devices that hold the
+// same filenames deal the same board. `makeItems`' own ids are replaced here
+// for exactly that reason.
+const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(path.join(HUB, "server.js"));
+const photoName = (i) => "g" + String(i + 1).padStart(2, "0") + ".jpg";
+export const idFor = (rel) => "item_" + crypto.createHash("md5").update(rel).digest("hex").slice(0, 10);
+
+// A flat colour JPEG. Every garment gets its own colour, so no two photos
+// share a byte-for-byte body — a hash-keyed match must not collide (I15).
+function makeJpg(file, w, h, r, g, b) {
+  const jpeg = require("./vendor/jpeg-js");
+  const data = Buffer.alloc(w * h * 4);
+  for (let i = 0; i < w * h; i++) { data[i * 4] = r; data[i * 4 + 1] = g; data[i * 4 + 2] = b; data[i * 4 + 3] = 255; }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, jpeg.encode({ data, width: w, height: h }, 85).data);
+}
+const rgbFor = (i) => [(i * 37) % 200 + 20, (i * 71) % 200 + 20, (i * 113) % 200 + 20];
+
+// materialize({dataDir, n, seed, driveFolder}) → the items as they were written.
+// Photos land in <DATA>/clothing (and in <folder>/clothing when one is given,
+// which is what a Drive-mirrored family looks like); tiles in
+// <DATA>/wardrobe-items; the catalogue in <DATA>/wardrobe.json, already
+// described (`attrsAt`) so no build ever needs a key.
+export function materialize({ dataDir, n = 35, seed = 1, driveFolder = null, day = "2026-01-01" } = {}) {
+  const items = makeItems({ n, seed }).map((g, i) => ({ ...g, id: idFor(photoName(i)) }));
+  const catalog = { items: {} };
+  items.forEach((g, i) => {
+    const rel = photoName(i);
+    const [r, gg, b] = rgbFor(i);
+    const photo = path.join(dataDir, "clothing", rel);
+    makeJpg(photo, 320, 480, r, gg, b);
+    if (driveFolder) makeJpg(path.join(driveFolder, "clothing", rel), 320, 480, r, gg, b);
+    makeJpg(path.join(dataDir, "wardrobe-items", g.id + ".jpg"), 640, 640, r, gg, b);
+    catalog.items[rel] = {
+      id: g.id, ok: true, name: g.name, category: g.category, warmth: g.warmth,
+      rotate_deg: 0, crop: {}, exif: 1,
+      colors: g.colors, pattern: g.pattern, statement: g.statement,
+      palette: g.palette, vibe: g.vibe,
+      hash: crypto.createHash("sha256").update(fs.readFileSync(photo)).digest("hex"),
+      attrsAt: day,          // already described: the needs-attributes pass is a no-op
+    };
+  });
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, "wardrobe.json"), JSON.stringify(catalog, null, 1));
+  return items;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
   const at = args.indexOf("--materialize");
   if (at >= 0) {
-    // T4.4 adds the materialize half (tiles + photos + wardrobe.json).
-    process.stderr.write("synthetic-wardrobe: --materialize is not implemented yet (plan T4.4)\n");
-    process.exit(2);
+    const dataDir = args[at + 1];
+    if (!dataDir) { process.stderr.write("usage: --materialize <DATA> [n] [--drive <folder>]\n"); process.exit(2); }
+    const d = args.indexOf("--drive");
+    const driveFolder = d >= 0 ? args[d + 1] : null;
+    const rest = args.filter((a, i) => i !== at && i !== at + 1 && i !== d && i !== d + 1);
+    const n = Number(rest[0]) || 35;
+    const items = materialize({ dataDir, n, driveFolder });
+    process.stdout.write("materialized " + items.length + " garments in " + dataDir +
+      (driveFolder ? " (+ " + driveFolder + "/clothing)" : "") + "\n");
+    process.exit(0);
   }
   const n = Number(args[0]) || 35;
   process.stdout.write(JSON.stringify(makeItems({ n }), null, 1) + "\n");
