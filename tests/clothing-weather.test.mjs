@@ -126,13 +126,18 @@ before(async () => {
   makeJpg(path.join(TMP, "wardrobe-items", "item_warmtop.jpg"), 80, 180, 100);
   makeJpg(path.join(TMP, "wardrobe-items", "item_hotbot.jpg"), 240, 200, 40);
   makeJpg(path.join(TMP, "wardrobe-items", "item_coldbot.jpg"), 40, 140, 140);
+  // attrsAt on every entry: a garment that has already been described is one
+  // the needs-attributes pass (T3.2) walks past, so this suite's "the AI is
+  // never called" pins hold on the full-build doors too. A fixed day, never
+  // today's — the marker's presence is what counts, not its value.
+  const DESCRIBED = "2026-09-01";
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
-    "top.jpg": { id: "item_top", ok: true, name: "Heart print tee", category: "top", warmth: "any" },
-    "bot.jpg": { id: "item_bot", ok: true, name: "Pink leggings", category: "pants", warmth: "any" },
-    "coldtop.jpg": { id: "item_coldtop", ok: true, name: "Wool sweater", category: "top", warmth: "cold" },
-    "warmtop.jpg": { id: "item_warmtop", ok: true, name: "Sunny tee", category: "top", warmth: "warm" },
-    "hotbot.jpg": { id: "item_hotbot", ok: true, name: "Linen shorts", category: "shorts", warmth: "hot" },
-    "coldbot.jpg": { id: "item_coldbot", ok: true, name: "Fleece pants", category: "pants", warmth: "cold" },
+    "top.jpg": { id: "item_top", ok: true, name: "Heart print tee", category: "top", warmth: "any", attrsAt: DESCRIBED },
+    "bot.jpg": { id: "item_bot", ok: true, name: "Pink leggings", category: "pants", warmth: "any", attrsAt: DESCRIBED },
+    "coldtop.jpg": { id: "item_coldtop", ok: true, name: "Wool sweater", category: "top", warmth: "cold", attrsAt: DESCRIBED },
+    "warmtop.jpg": { id: "item_warmtop", ok: true, name: "Sunny tee", category: "top", warmth: "warm", attrsAt: DESCRIBED },
+    "hotbot.jpg": { id: "item_hotbot", ok: true, name: "Linen shorts", category: "shorts", warmth: "hot", attrsAt: DESCRIBED },
+    "coldbot.jpg": { id: "item_coldbot", ok: true, name: "Fleece pants", category: "pants", warmth: "cold", attrsAt: DESCRIBED },
   } }, null, 1));
   // a key IS configured — the point is that the rebuild door still never calls it
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
@@ -442,8 +447,8 @@ test("a build that could not read the memory is not the day's work", {
   makeJpg(path.join(T3, "wardrobe-items", "item_top.jpg"), 210, 70, 90);
   makeJpg(path.join(T3, "wardrobe-items", "item_bot.jpg"), 70, 90, 210);
   fs.writeFileSync(path.join(T3, "wardrobe.json"), JSON.stringify({ items: {
-    "top.jpg": { id: "item_top", ok: true, name: "Sunny tee", category: "top", warmth: "any" },
-    "bot.jpg": { id: "item_bot", ok: true, name: "Pond leggings", category: "pants", warmth: "any" },
+    "top.jpg": { id: "item_top", ok: true, name: "Sunny tee", category: "top", warmth: "any", attrsAt: "2026-09-01" },
+    "bot.jpg": { id: "item_bot", ok: true, name: "Pond leggings", category: "pants", warmth: "any", attrsAt: "2026-09-01" },
   } }, null, 1));
   fs.writeFileSync(path.join(T3, "ai-config.json"),
     JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
@@ -643,7 +648,7 @@ test("tomorrow's memory trouble buys tomorrow's re-deal", {
   // tomorrow whatever the memory did — so the case would pass either way.
   const cat = JSON.parse(fs.readFileSync(path.join(T3, "wardrobe.json"), "utf8"));
   cat.items["waiting.jpg"] = { id: "item_waiting", ok: true, name: "Sunny shorts",
-    category: "shorts", warmth: "any" };
+    category: "shorts", warmth: "any", attrsAt: "2026-09-01" };
   fs.writeFileSync(path.join(T3, "wardrobe.json"), JSON.stringify(cat, null, 1));
   makeJpg(path.join(T3, "wardrobe-items", "item_waiting.jpg"), 200, 200, 70);
 

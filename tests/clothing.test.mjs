@@ -77,11 +77,29 @@ function makeTurnedJpg(file, orientation) {
   fs.writeFileSync(file, Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]));
 }
 
+// Every answer carries the taste attributes the 9/5 prompt asks for (spec
+// §3.1 item 2), so the needs-attributes pass (T3.2) finds nothing to do here:
+// an item the model has already described is never asked a second time, and
+// this file's AI-spend pins would otherwise move by one call per garment.
+// statement stays false and no palette/vibe is offered on purpose — with
+// those three absent every pair scores the same 55 it did before attributes
+// existed (styleScore: two basics +5), so this suite's boards are unchanged
+// by T3.1. The loud-print, palette and vibe halves of the whitelist are
+// exercised in tests/clothing-attrs.test.mjs, which owns its own wardrobe.
 const ANSWERS = [
-  { name: "Heart print tee", category: "top", warmth: "warm", rotate_deg: 90, crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } },
-  { name: "Pink leggings", category: "pants", warmth: "any", rotate_deg: 0, crop: { x: 0, y: 0, w: 1, h: 1 } },
-  { name: "Sunflower dress", category: "dress", warmth: "warm", rotate_deg: 0, crop: { x: 0.2, y: 0, w: 0.6, h: 1 } },
+  { name: "Heart print tee", category: "top", warmth: "warm", rotate_deg: 90, crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 },
+    colors: ["pink", "white"], pattern: "print", statement: false },
+  { name: "Pink leggings", category: "pants", warmth: "any", rotate_deg: 0, crop: { x: 0, y: 0, w: 1, h: 1 },
+    colors: ["pink"], pattern: "solid", statement: false },
+  { name: "Sunflower dress", category: "dress", warmth: "warm", rotate_deg: 0, crop: { x: 0.2, y: 0, w: 0.6, h: 1 },
+    colors: ["yellow", "white"], pattern: "floral", statement: false },
 ];
+// Hand-seeded catalogue entries below carry this instead of attributes: any
+// `attrsAt` at all means "this garment has already been described", so the
+// needs-attributes pass (T3.2) walks past it and no fixture in this file ever
+// buys an AI call it did not ask for. A fixed day, never today's: the marker's
+// presence is what counts, not its value.
+const DESCRIBED = "2026-09-01";
 let calls = 0;
 let forceAnswer = null;         // when set, every photo is described this way (label tests)
 let flaky = 0;                  // >0 = answer this many calls with a 503 first
@@ -105,6 +123,10 @@ const hits = [];   // every request path, 429s included
 let aborted = 0;
 const spent = () => calls - aborted;
 let lastProbe = ""; // base64 of the last picture a Google call was shown
+// The text half of a request, whatever the provider's envelope: what the hub
+// ASKED for. Recorded so a case can prove the prompt really asks for the taste
+// attributes (spec §3.1 item 2) instead of trusting the source (T3.1).
+const askOf = (parts) => (parts.find(p => typeof p.text === "string") || {}).text || "";
 
 before(async () => {
   process.env.ERA_AI_URL = `http://127.0.0.1:${AI_PORT}`;
@@ -157,18 +179,18 @@ before(async () => {
       if (req.url === "/v1/messages") {                       // anthropic
         if (parsed.messages[0].content[0].type !== "image")
           wireErrors.push("anthropic content[0] was " + parsed.messages[0].content[0].type);
-        wire.push({ path: req.url, auth: req.headers["x-api-key"] });
+        wire.push({ path: req.url, auth: req.headers["x-api-key"], ask: askOf(parsed.messages[0].content) });
         out = { content: [{ type: "text", text }] };
       } else if (req.url === "/v1/chat/completions") {        // openai
         if (parsed.messages[0].content[0].type !== "image_url")
           wireErrors.push("openai content[0] was " + parsed.messages[0].content[0].type);
-        wire.push({ path: req.url, auth: req.headers["authorization"] });
+        wire.push({ path: req.url, auth: req.headers["authorization"], ask: askOf(parsed.messages[0].content) });
         out = { choices: [{ message: { content: text } }] };
       } else if (req.url.startsWith("/v1beta/models/")) {     // google
         if (!(parsed.contents[0].parts[0].inline_data || {}).data)
           wireErrors.push("google parts[0] carried no inline_data");
         lastProbe = parsed.contents[0].parts[0].inline_data.data;
-        wire.push({ path: req.url, auth: req.headers["x-goog-api-key"] });
+        wire.push({ path: req.url, auth: req.headers["x-goog-api-key"], ask: askOf(parsed.contents[0].parts) });
         out = { candidates: [{ content: { parts: [{ text }] } }] };
       } else { res.writeHead(404).end(); return; }
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -249,7 +271,33 @@ test("with a key: photos are cataloged and the board is her exact graph", async 
   const top = items.find(i => i.category === "top");
   assert.equal(top.name, "Heart print tee");
 
+  // ---- the taste attributes the deal reads (spec §3.1 items 1-2, T3.1) ----
+  // One call per photo still, but it now comes back with what the garment
+  // LOOKS like as well as what it is, whitelisted like the other fields.
+  assert.match(wire[0].ask, /"colors"/, "the ingest prompt asks for colours");
+  for (const k of ["pattern", "statement", "palette", "vibe"])
+    assert.match(wire[0].ask, new RegExp('"' + k + '"'), "the ingest prompt asks for " + k);
+  assert.match(wire[0].ask, /ONLY a JSON object, no prose/, "…and still only wants JSON back");
+  const dayNow = dayKey(Date.now(), ZONE);
+  for (const i of items) {
+    assert.ok(Array.isArray(i.colors) && i.colors.length >= 1, i.name + " carries colours");
+    assert.equal(i.statement, false, i.name + " carries a statement flag, defaulted false");
+    assert.match(i.hash, /^[0-9a-f]{64}$/, i.name + " carries the sha256 of its photo");
+    assert.equal(i.attrsAt, dayNow, i.name + " is stamped with the day it was described");
+  }
+  // the same photo bytes hash the same on any device (spec §3.1 item 1: a
+  // shared tag is matched by id, else by hash)
+  const bytes = fs.readFileSync(path.join(TMP, "clothing", "photo_a.jpg"));
+  assert.equal(cat.items["photo_a.jpg"].hash,
+    require("node:crypto").createHash("sha256").update(bytes).digest("hex"),
+    "the hash is the sha256 of the photo's own bytes");
+
   const recipe = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  // Attributes are the deal's private business: the board carries names,
+  // pictures and ids, never a garment's colours (spec §3.1).
+  const recipeText = JSON.stringify(recipe);
+  for (const k of ["colors", "pattern", "statement", "palette", "vibe", "hash", "attrsAt"])
+    assert.ok(!recipeText.includes('"' + k + '"'), "no " + k + " in recipes/today.json");
   const ids = recipe.boards.map(b => b.id);
   for (const must of ["today", "confirm_0", "build", "choose_bottom", "cat_top", "cat_pants", "cat_shorts", "cat_dress", "cat_outfit"])
     assert.ok(ids.includes(must), "board " + must);
@@ -462,6 +510,8 @@ test("a missing tile is redrawn without asking the AI again", async () => {
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   const entry = cat.items["photo_f.jpg"];
   assert.ok(entry && entry.ok, "photo cataloged first");
+  assert.ok(entry.colors && entry.colors.length >= 1 && entry.hash && entry.attrsAt,
+    "…with the attributes and hash the repair below must not lose");
   const tile = path.join(TMP, "wardrobe-items", entry.id + ".jpg");
   assert.ok(fs.existsSync(tile), "tile written");
 
@@ -474,6 +524,23 @@ test("a missing tile is redrawn without asking the AI again", async () => {
   const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.equal(after.items["photo_f.jpg"].name, entry.name, "name survives the repair");
   assert.equal(after.items["photo_f.jpg"].category, entry.category, "category survives");
+  // …and so does everything the deal reads (W4): a repair that rebuilt the
+  // entry from five fields would drop the taste attributes and the photo hash,
+  // and the needs-attributes pass would then buy them again — one AI call per
+  // garment for every missing tile.
+  assert.deepEqual(after.items["photo_f.jpg"].colors, entry.colors, "colours survive the repair");
+  assert.equal(after.items["photo_f.jpg"].pattern, entry.pattern, "pattern survives");
+  assert.equal(after.items["photo_f.jpg"].statement, entry.statement, "statement survives");
+  // The hash is the photo's, so a repair recomputes it from the bytes on disk
+  // rather than carrying an entry's copy — the earlier case in this file wrote
+  // a DIFFERENT picture over photo_f.jpg, and the pre-repair entry still held
+  // the hash of the one before it. What must never happen is the field going
+  // missing: another device's shared tag finds this garment by that hash.
+  assert.equal(after.items["photo_f.jpg"].hash,
+    require("node:crypto").createHash("sha256")
+      .update(fs.readFileSync(path.join(TMP, "clothing", "photo_f.jpg"))).digest("hex"),
+    "the photo hash survives the repair (recomputed from the photo itself)");
+  assert.equal(after.items["photo_f.jpg"].attrsAt, entry.attrsAt, "the described-on day survives");
 });
 
 // Dad 9/2: "someone may want to delete clothes from the library that no
@@ -524,6 +591,10 @@ test("a phone photo with EXIF orientation is turned upright before the model see
 
   // A wardrobe catalogued before this fix (no `exif` field) gets its turned
   // photos redrawn — with no AI call, the name and category are known.
+  assert.ok(entry.colors.length >= 1 && entry.hash && entry.attrsAt,
+    "described with attributes and a hash before the legacy turn");
+  const described = { colors: entry.colors, pattern: entry.pattern, statement: entry.statement,
+                      hash: entry.hash, attrsAt: entry.attrsAt };
   delete entry.exif; entry.rotate_deg = 0;
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify(cat));
   const stamp = fs.statSync(tile).mtimeMs;
@@ -534,6 +605,11 @@ test("a phone photo with EXIF orientation is turned upright before the model see
   const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.equal(after.items["photo_g.jpg"].exif, 3, "legacy entry migrated");
   assert.ok(fs.statSync(tile).mtimeMs > stamp, "its tile was redrawn");
+  // the legacy turn is a redraw, not a re-description (W4)
+  const g = after.items["photo_g.jpg"];
+  assert.deepEqual({ colors: g.colors, pattern: g.pattern, statement: g.statement,
+                     hash: g.hash, attrsAt: g.attrsAt }, described,
+    "the turn kept every attribute, the hash and the described-on day");
   fs.rmSync(path.join(TMP, "clothing", "photo_g.jpg"));   // leave the later tests their photo set
   await clothing.regenerate(true);
 });
@@ -582,6 +658,7 @@ test("a sideways photo is turned by where the model saw the garment's top, not b
     JSON.stringify({ provider: "google", apiKey: "AIza-test" }));
   makeGarmentJpg(path.join(TMP, "clothing", "photo_side.jpg"), "right");
   forceAnswer = { name: "Green shorts", category: "shorts", warmth: "hot", top_side: "right",
+    colors: ["green"], pattern: "solid", statement: false,
     // ...and the same wrong angle the live model gave, which must now be ignored
     rotate_deg: 90, crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 } };
   try {
@@ -598,7 +675,8 @@ test("a sideways photo is turned by where the model saw the garment's top, not b
 
   // and the older answer shape still works for a model that ignores top_side
   makeGarmentJpg(path.join(TMP, "clothing", "photo_side2.jpg"), "left");
-  forceAnswer = { name: "Blue shorts", category: "shorts", warmth: "hot", rotate_deg: 90, crop: {} };
+  forceAnswer = { name: "Blue shorts", category: "shorts", warmth: "hot", rotate_deg: 90, crop: {},
+    colors: ["blue"], pattern: "solid", statement: false };
   try { await clothing.regenerate(true); } finally { forceAnswer = null; }
   const e2 = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8")).items["photo_side2.jpg"];
   assert.equal(e2.rotate_deg, 90, "rotate_deg alone is still honoured");
@@ -616,6 +694,7 @@ test("a sideways photo is turned by where the model saw the garment's top, not b
 test("the model's box cannot cut into a garment the cut-out already found (dad 9/3, the over-trimmed top)", async () => {
   makeGarmentJpg(path.join(TMP, "clothing", "photo_tight.jpg"), "top");
   forceAnswer = { name: "Leopard top", category: "top", warmth: "warm", top_side: "top",
+    colors: ["tan", "brown"], pattern: "print", statement: false,
     crop: { x: 0.3, y: 0.3, w: 0.4, h: 0.4 } };            // well inside the garment
   try { await clothing.regenerate(true); } finally { forceAnswer = null; }
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
@@ -628,7 +707,8 @@ test("the model's box cannot cut into a garment the cut-out already found (dad 9
 
   // malformed boxes (the live catalogue had {"y":2.7}, {"box_2d":...}, no "h") are dropped, not applied
   makeGarmentJpg(path.join(TMP, "clothing", "photo_junk.jpg"), "top");
-  forceAnswer = { name: "Odd top", category: "top", warmth: "warm", top_side: "top", crop: { x: 0.08, y: 2.7, w: 0.8 } };
+  forceAnswer = { name: "Odd top", category: "top", warmth: "warm", top_side: "top", crop: { x: 0.08, y: 2.7, w: 0.8 },
+    colors: ["grey"], pattern: "solid", statement: false };
   try { await clothing.regenerate(true); } finally { forceAnswer = null; }
   const junk = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8")).items["photo_junk.jpg"];
   assert.deepEqual(junk.crop, {}, "a malformed box is not remembered as geometry");
@@ -755,7 +835,7 @@ test("the worker never loads drive.js", () => {
 test("an item with no tile is left off the board, not fatal to it", async () => {
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   cat.items["ghost.jpg"] = { id: "item_ghost", ok: true, name: "Ghost tee",
-    category: "top", warmth: "any" };
+    category: "top", warmth: "any", attrsAt: DESCRIBED };
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify(cat));
   await clothing.regenerate(true);
   const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
@@ -774,8 +854,8 @@ test("a combo label is budgeted as a whole, so it never clips", async () => {
   const tileId = Object.values(cat.items).find(i => i.ok &&
     fs.existsSync(path.join(TMP, "wardrobe-items", i.id + ".jpg"))).id;
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
-    "long_top.jpg":    { id: tileId, ok: true, name: "Ribbed camisole", category: "top",    warmth: "any" },
-    "long_bottom.jpg": { id: tileId, ok: true, name: "Green shorts",    category: "shorts", warmth: "any" },
+    "long_top.jpg":    { id: tileId, ok: true, name: "Ribbed camisole", category: "top",    warmth: "any", attrsAt: DESCRIBED },
+    "long_bottom.jpg": { id: tileId, ok: true, name: "Green shorts",    category: "shorts", warmth: "any", attrsAt: DESCRIBED },
   }}));
   for (const f of ["long_top.jpg", "long_bottom.jpg"])   // the photos must exist or the entries are pruned
     fs.copyFileSync(path.join(TMP, "clothing", "photo_a.jpg"), path.join(TMP, "clothing", f));
@@ -811,8 +891,8 @@ test("a thin sleeve tie on a tile survives into the outfit picture (dad 9/3, the
   const bottomId = Object.values(JSON.parse(saved.toString("utf8")).items)
     .find(i => i.ok && fs.existsSync(path.join(TMP, "wardrobe-items", i.id + ".jpg"))).id;
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
-    "tie_top.jpg":    { id: "item_tie", ok: true, name: "Tie top", category: "top",   warmth: "any" },
-    "tie_bottom.jpg": { id: bottomId,   ok: true, name: "Pants",   category: "pants", warmth: "any" },
+    "tie_top.jpg":    { id: "item_tie", ok: true, name: "Tie top", category: "top",   warmth: "any", attrsAt: DESCRIBED },
+    "tie_bottom.jpg": { id: bottomId,   ok: true, name: "Pants",   category: "pants", warmth: "any", attrsAt: DESCRIBED },
   }}));
   // A wardrobe of exactly these two: the other photos step aside (else they
   // are re-ingested and the day's 21 outfits may not include this pair).
@@ -851,6 +931,7 @@ test("a thin sleeve tie on a tile survives into the outfit picture (dad 9/3, the
 // and every tile starts with a capital, single garment or combo.
 test("a long or lowercase AI name lands as a short, capitalised label (bugs 10, 11)", async () => {
   forceAnswer = { name: "light wash denim shorts", category: "shorts", warmth: "hot",
+    colors: ["light blue"], pattern: "denim", statement: false,
     rotate_deg: 0, crop: { x: 0, y: 0, w: 1, h: 1 } };
   try {
     makeJpg(path.join(TMP, "clothing", "photo_long.jpg"), 120, 160, 210);
@@ -908,6 +989,7 @@ test("a connection the provider drops is retried with the same picture — one p
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
     JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
   forceAnswer = { name: "Sunny tee", category: "top", warmth: "any",
+    colors: ["yellow"], pattern: "solid", statement: false,
     rotate_deg: 0, crop: { x: 0, y: 0, w: 1, h: 1 } };
   makeJpg(path.join(TMP, "clothing", "photo_drop.jpg"), 175, 45, 135);
   const beforeCalls = calls, beforeSpent = spent();
@@ -967,7 +1049,7 @@ function eightBySeven() {
   const mk = (id, name, category) => {
     fs.copyFileSync(src, path.join(TMP, "wardrobe-items", id + ".jpg"));
     fs.copyFileSync(src, path.join(TMP, "clothing", id + ".jpg"));   // a photo that has left the folder is pruned
-    items[id + ".jpg"] = { id, ok: true, name, category, warmth: "any" };
+    items[id + ".jpg"] = { id, ok: true, name, category, warmth: "any", attrsAt: DESCRIBED };
   };
   TOPS.forEach((n, i) => mk("item_top" + (i + 1), n, "top"));
   BOTTOMS.forEach((n, i) => mk("item_pants" + (i + 1), n, "pants"));

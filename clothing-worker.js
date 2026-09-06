@@ -55,7 +55,10 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape } = require("./clothing-rank.js");
+const { dayKey, buildCandidates, toWorkerShape, attributes } = require("./clothing-rank.js");
+// The family's day, in the family's zone — the stamp every "we have already
+// asked about this garment" marker carries (spec §3.2, plan A4-5/A4-8).
+const todayKey = () => dayKey(Date.now(), workerData.tz);
 const WEB = () => path.join(DATA, "clothing-web");
 const ITEMS = () => path.join(DATA, "wardrobe-items");
 // Is this item's picture actually on disk? A catalogue entry alone is not
@@ -141,8 +144,8 @@ function padSquare(img, dim) {
   return { data: out, width: dim, height: dim };
 }
 
-function readImageRgba(file) {
-  const buf = fs.readFileSync(file);
+function readImageRgba(file, bytes) {
+  const buf = bytes || fs.readFileSync(file);
   const ext = path.extname(file).toLowerCase();
   if ([".heic", ".heif"].includes(ext)) {
     ensureHeif();
@@ -165,9 +168,9 @@ function readImageRgba(file) {
 
 // Orientation a JPEG on disk carries (1 = none); HEIC/others report 1
 // because their decoder already turns them.
-function photoOrientation(file) {
+function photoOrientation(file, bytes) {
   if (![".jpg", ".jpeg"].includes(path.extname(file).toLowerCase())) return 1;
-  try { return exifOrientation(fs.readFileSync(file)); } catch { return 1; }
+  try { return exifOrientation(bytes || fs.readFileSync(file)); } catch { return 1; }
 }
 
 // Composites follow Ellie's generator exactly (outfit_set.py fit/compose):
@@ -386,13 +389,33 @@ function composite(fileA, fileB, dest) {
 // i13 wardrobe (dad 9/3) had two of three sideways shorts answered 90 when
 // 270 was right — the model can see a waistband on the right edge, it just
 // cannot do the mental turn. We do the turn (SIDE_DEG).
+// The same one call also asks what the garment LOOKS like: the taste rules
+// (never two loud pieces, a statement piece wants a plain partner, palettes
+// that clash) are what made the original's boards feel chosen rather than
+// shuffled, and they read colours, pattern, statement, palette and vibe
+// (spec §3.1 item 2). Every word of the vocabulary is whitelisted on the way
+// in (clothing-rank.attributes), so a model that invents a value simply
+// leaves that field absent — attributes degrade, they never exclude.
+const ATTRS_ASK =
+  '"colors": 1-3 plain colour words, ' +
+  '"pattern": one of "solid","denim","stripes","floral","graphic","print", ' +
+  '"statement": true if it is a loud print/graphic piece that wants a plain partner, ' +
+  '"palette": one of "warm","cool","neutral","pastel", ' +
+  '"vibe": one of "sweet","sporty","graphic","basic"';
 const INGEST_PROMPT =
   'This photo shows one clothing item (or a matching set) laid flat. Reply with ONLY a JSON object, no prose: ' +
   '{"name": a SHORT name, 2-3 words max, like "Pink leggings" or "Daisy tee" (a child picks by picture; long names do not fit the button), ' +
   '"category": one of "top","pants","shorts","dress","set", ' +
   '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
   '"top_side": which EDGE of this photo the garment\'s top is nearest - the neckline/shoulders of a top or dress, the WAISTBAND of pants or shorts - one of "top","bottom","left","right", ' +
-  '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the image bounding the garment - exclude floor, table, carpet, but never cut into the garment}';
+  '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the image bounding the garment - exclude floor, table, carpet, but never cut into the garment, ' +
+  ATTRS_ASK + '}';
+// The same questions for a garment the hub already knows by name: its tile is
+// on disk, only the taste attributes are missing (the needs-attributes pass,
+// spec §3.1 item 3). Nothing is asked twice.
+const ATTRS_PROMPT =
+  'This picture shows one clothing item (or a matching set) on a white background. ' +
+  'Reply with ONLY a JSON object, no prose: {' + ATTRS_ASK + '}';
 // clockwise turn that brings that edge to the top
 const SIDE_DEG = { top: 0, left: 90, bottom: 180, right: 270 };
 function turnFor(meta) {
@@ -412,7 +435,7 @@ function saneCrop(c) {
   return { x, y, w, h };
 }
 
-async function askModel(cfg, jpgFile) {
+async function askModel(cfg, jpgFile, prompt) {
   // A 429 retires THAT model for the rest of this build — the allowance is
   // per model, so the next one in the list is a fresh 20 photos. Once every
   // model is spent, stop asking: with a retry each, one photo could fire
@@ -427,7 +450,7 @@ async function askModel(cfg, jpgFile) {
   let lastErr = "";
   for (const model of list) {
     try {
-      const out = await callModel(cfg, jpgFile, model);
+      const out = await callModel(cfg, jpgFile, model, prompt);
       chosenModel = model;                       // this one works; stay on it
       return out;
     } catch (e) {
@@ -440,7 +463,8 @@ async function askModel(cfg, jpgFile) {
   throw new Error(lastErr || "no model answered");
 }
 
-async function callModel(cfg, jpgFile, model) {
+async function callModel(cfg, jpgFile, model, prompt) {
+  const ask = prompt || INGEST_PROMPT;
   const b64 = fs.readFileSync(jpgFile).toString("base64");
   const p = PROVIDERS[cfg.provider];
   const base = process.env.ERA_AI_URL || p.base;
@@ -448,17 +472,20 @@ async function callModel(cfg, jpgFile, model) {
   if (cfg.provider === "openai") {
     url = base + "/v1/chat/completions";
     headers = { "Authorization": "Bearer " + cfg.apiKey, "content-type": "application/json" };
-    body = { model, max_completion_tokens: 300,
+    // 480, not 300: the reply gained colours, pattern, statement, palette and
+    // vibe (spec §3.1 item 2) and a truncated one is a JSON.parse throw — a
+    // generic error the ladder answers by spending the next model (W6).
+    body = { model, max_completion_tokens: 480,
       messages: [{ role: "user", content: [
         { type: "image_url", image_url: { url: "data:image/jpeg;base64," + b64 } },
-        { type: "text", text: INGEST_PROMPT } ] }] };
+        { type: "text", text: ask } ] }] };
     extract = (j) => j.choices[0].message.content;
   } else if (cfg.provider === "google") {
     url = base + "/v1beta/models/" + model + ":generateContent";
     headers = { "x-goog-api-key": cfg.apiKey, "content-type": "application/json" };
     body = { contents: [{ parts: [
         { inline_data: { mime_type: "image/jpeg", data: b64 } },
-        { text: INGEST_PROMPT } ] }],
+        { text: ask } ] }],
       // thinking off: -latest aliases resolve to thinking models that burn
       // the whole token budget and 45s+ reasoning about a t-shirt (QA 9/1)
       generationConfig: { maxOutputTokens: 2000, thinkingConfig: { thinkingBudget: 0 } } };
@@ -466,10 +493,10 @@ async function callModel(cfg, jpgFile, model) {
   } else {
     url = base + "/v1/messages";
     headers = { "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" };
-    body = { model, max_tokens: 300,
+    body = { model, max_tokens: 480,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
-        { type: "text", text: INGEST_PROMPT } ] }] };
+        { type: "text", text: ask } ] }] };
     extract = (j) => j.content.map(c => c.text || "").join("");
   }
   // Providers throttle (Google 503 "high demand" hit EVERY call on the free
@@ -550,7 +577,11 @@ async function ingest() {
     for (const f of todo) {
       let usedAi = false;
       try {
-        const full = await readImageRgba(path.join(CLOTHING(), f));
+        // The photo's bytes, read ONCE: the decoder, the EXIF probe and the
+        // content hash all want them, and a phone HEIC is several megabytes.
+        const bytes = fs.readFileSync(path.join(CLOTHING(), f));
+        const hash = crypto.createHash("sha256").update(bytes).digest("hex");
+        const full = await readImageRgba(path.join(CLOTHING(), f), bytes);
         const work = scaleRgba(full, 1100);
         // 384px, not 700: providers bill images by tile, and at this size a
         // photo is a SINGLE tile (~258 tokens on Gemini). The model only has
@@ -559,14 +590,20 @@ async function ingest() {
         // faster (dad 9/2: keep it frugal even when paying a little).
         // Known garment, missing tile: redraw from what we already learned.
         const known = cat.items[f] && cat.items[f].ok ? cat.items[f] : null;
-        const orient = photoOrientation(path.join(CLOTHING(), f));
+        const orient = photoOrientation(path.join(CLOTHING(), f), bytes);
         let meta;
         if (known) {
           // A pre-EXIF entry's rotate_deg was the model compensating for the
           // sideways decode; now that the photo is turned as shot, drop it.
           const legacy = known.exif === undefined && orient !== 1;
+          // Everything the entry already carries, attributes included: this
+          // path rebuilds the entry from `meta`, so a meta that forgot them
+          // would hand the garment back to the needs-attributes pass and buy
+          // them a second time (W4).
           meta = { name: known.name, category: known.category, warmth: known.warmth,
-                   rotate_deg: legacy ? 0 : known.rotate_deg || 0, crop: known.crop || {} };
+                   rotate_deg: legacy ? 0 : known.rotate_deg || 0, crop: known.crop || {},
+                   colors: known.colors, pattern: known.pattern, statement: known.statement,
+                   palette: known.palette, vibe: known.vibe };
         } else {
           const probe = path.join(ITEMS(), "_probe.jpg");
           writeJpg(scaleRgba(work, 384), probe, 78);
@@ -602,10 +639,16 @@ async function ingest() {
         writeJpg(padSquare(best, 640), path.join(ITEMS(), id + ".jpg"), 85);
         // Keep the geometry: a later tile repair can then reproduce the same
         // picture without asking the model again.
-        cat.items[f] = { id, ok: true, name: shortLabel(meta.name),
+        // `...known` first so a repair keeps what this path does not recompute
+        // (the described-on day, an earlier pass's marker); `hash` is the
+        // sha256 of the photo's own bytes, which is how another device's
+        // shared tag finds this garment when the filename differs (spec §3.1
+        // item 1). attrsAt is stamped only when a model actually answered.
+        cat.items[f] = { ...(known || {}), id, ok: true, name: shortLabel(meta.name),
           rotate_deg: rot, crop: hint || {}, exif: orient,
           category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
-          warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any" };
+          warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any",
+          ...attributes(meta), hash, ...(usedAi ? { attrsAt: todayKey() } : {}) };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
         landed++;
         console.log("[clothing] " + (known ? "redrew " : "cataloged ") + f +

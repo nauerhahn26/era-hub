@@ -36,8 +36,11 @@ before(async () => {
     let body = ""; req.on("data", c => body += c);
     req.on("end", () => setTimeout(() => {
       res.writeHead(200, { "Content-Type": "application/json" });
+      // the answer carries the taste attributes the 9/5 prompt asks for (spec
+      // §3.1 item 2), so the needs-attributes pass finds nothing to buy here
       res.end(JSON.stringify({ content: [{ type: "text", text:
-        '{"name":"Test top","category":"top","warmth":"any","rotate_deg":0,"crop":{"x":0,"y":0,"w":1,"h":1}}' }] }));
+        '{"name":"Test top","category":"top","warmth":"any","rotate_deg":0,"crop":{"x":0,"y":0,"w":1,"h":1},' +
+        '"colors":["blue"],"pattern":"solid","statement":false,"palette":"cool","vibe":"basic"}' }] }));
     }, 1500));
   });
   await new Promise(r => ai.listen(AI_PORT, "127.0.0.1", r));
