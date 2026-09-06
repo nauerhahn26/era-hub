@@ -655,7 +655,13 @@ async function describeCatalogued(cfg, cat) {
         // parse) takes ATTRS_MAX_MISSES garments in a row before the pass
         // believes the provider rather than the garment: a 503 is transient by
         // definition, and stopping on the first one cost all thirty-five their
-        // day over one blip (review r2).
+        // day over one blip (review r2). Two in a ROW is the whole gate — a
+        // success clears the counter — so a provider that answers every other
+        // garment never trips it and the pass deliberately runs the wardrobe
+        // out: half of it gets described, at ~2.5 requests a garment instead
+        // of 1 (measured, review r3 nit). The documented failure is the
+        // constant one, a free tier answering 503 to everything, and that one
+        // still stops after two garments.
         const spent = /\bpermanent\b/.test(e.message) || /allowance spent/.test(e.message);
         if (spent || misses >= ATTRS_MAX_MISSES) { giveUp(i); break; }
       }
