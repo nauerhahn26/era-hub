@@ -124,6 +124,30 @@ test("log-only changes arriving on a sync never rebuild today's board", async ()
       rel + " was mirrored onto this device");
 });
 
+// The local memory caps a day at 200 events so a wedged client cannot grow the
+// file for ever. The family's copy of those picks lives in Google Drive and is
+// mirrored onto every device, so it needs the cap MORE, not less — and past the
+// cap the two stores were disagreeing: a Yes dropped here and shared there
+// means the other tablet derives a pick this one never learned, against spec
+// §5's "same board everywhere". This hub is the one with a real mount, which is
+// why the case lives in this file.
+test("past the day's 200-event cap the memory and the family's copy stop together", async () => {
+  const combo = ["item_aaaa", "item_bbbb"];
+  for (let i = 0; i < 205; i++) {
+    const r = await fetch(`${BASE}/outfit-event`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "yes", combo }) });
+    assert.equal(r.status, 204);
+  }
+  const h = JSON.parse(fs.readFileSync(path.join(DATA, "wardrobe", "history.json"), "utf8"));
+  const day = Object.keys(h.events).find(d => h.events[d].length);   // the hub's own family day
+  assert.equal(h.events[day].length, 200, "the memory stops at the cap");
+  const id = fs.readFileSync(path.join(DATA, "device-id"), "utf8").trim();
+  const mount = path.join(DRIVE, "clothing", ".era", "picks", id, day + ".jsonl");
+  assert.equal(fs.readFileSync(mount, "utf8").trim().split("\n").length, 200,
+    "…and the copy that costs the family cloud storage stops with it, recording the same facts");
+});
+
 test("a photo added to the Drive folder does rebuild the board", async () => {
   const before = fs.statSync(RECIPE).mtimeMs;
   fs.copyFileSync(path.join(DRIVE, "clothing", "g01.jpg"), path.join(DRIVE, "clothing", "g99.jpg"));

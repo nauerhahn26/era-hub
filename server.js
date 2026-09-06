@@ -1541,15 +1541,21 @@ const server = http.createServer((req, res) => {
         const h = clothing.readHistory();
         h.events = h.events || {};
         const evs = h.events[day] = h.events[day] || [];
-        // cap per day: a stuck client can't grow the file unboundedly
-        if (evs.length < 200) evs.push({ kind, combo, at: new Date().toISOString() });
+        // cap per day: a stuck client can't grow the file unboundedly. The
+        // family's copy on the mount (below) is inside the cap too: it lives in
+        // Google Drive and is mirrored to every device, so it needs the bound
+        // more than the local file does — and a pick recorded in one store and
+        // not the other would leave the two devices deriving different picks
+        // from the same day (review r1).
+        const recorded = evs.length < 200;
+        if (recorded) evs.push({ kind, combo, at: new Date().toISOString() });
         // a fresh install has no wardrobe/ yet — writeAtomic makes it; without
         // that every pick 400'd and favourites were never learned (QA 9/2)
         contentStore.writeAtomic(clothing.historyPath(), h);
         // ...and out to the family, AFTER the canonical write (spec §5 "the
         // local canonical is always written first"). It never throws and it is
         // never a reason to refuse a pick: the board is answered either way.
-        if (clothingLog) clothingLog.appendPick(day, { kind, combo });
+        if (recorded && clothingLog) clothingLog.appendPick(day, { kind, combo });
         // 204 with an empty body: era-board reads the status, not a payload.
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch (e) {
