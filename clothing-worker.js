@@ -55,7 +55,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey } = require("./clothing-rank.js");
+const { dayKey, buildCandidates, toWorkerShape } = require("./clothing-rank.js");
 const WEB = () => path.join(DATA, "clothing-web");
 const ITEMS = () => path.join(DATA, "wardrobe-items");
 // Is this item's picture actually on disk? A catalogue entry alone is not
@@ -65,7 +65,6 @@ function hasTile(id) {
 }
 const OUTFITS = () => path.join(DATA, "wardrobe-outfits");
 const CATALOG = () => path.join(DATA, "wardrobe.json");
-const HISTORY = () => path.join(DATA, "clothing-history.json");
 const RECIPES = () => path.join(DATA, "recipes");
 
 // One reader for every key the hub holds (ai-config.js), so the flat
@@ -76,48 +75,13 @@ function loadCatalog() {
   try { return JSON.parse(fs.readFileSync(CATALOG(), "utf8")); } catch { return { items: {} }; }
 }
 function saveCatalog(c) { fs.writeFileSync(CATALOG(), JSON.stringify(c, null, 1)); }
-function loadHistory() {
-  try { return JSON.parse(fs.readFileSync(HISTORY(), "utf8")); } catch { return { shown: {} }; }
-}
-function saveHistory(h) { fs.writeFileSync(HISTORY(), JSON.stringify(h, null, 1)); }
-
-// ---- her favourites (ported from outfit_set.py, dad's variety plan 8/5) ----
-// The board reports every outfit she gazes and every Yes to the hub, which
-// keeps them in wardrobe/history.json {events: {day: [{kind, combo}]}}.
-// Until the audit (9/2) the product's generator never read them: a Yes
-// changed nothing about tomorrow. Now a Yes is a confirmed wear (1.0) and a
-// day with no Yes credits her last-selected outfit at half weight, exactly
-// as dad's pipeline does; the most-picked looks earn the STAPLE slots.
-const PICKS = () => path.join(DATA, "wardrobe", "history.json");
-const YES_WEIGHT = 1.0, INFERRED_WEIGHT = 0.5;
-const STAPLE_SLOTS = 2;   // page-1 slots for proven favourites
-const STAPLE_POOL = 5;    // rotate among the top N so none squats daily
-function derivePicks(today) {
-  let h = {};
-  try { h = JSON.parse(fs.readFileSync(PICKS(), "utf8")); } catch {}
-  const picks = {};
-  for (const [day, evs] of Object.entries((h && h.events) || {})) {
-    if (!Array.isArray(evs) || day >= today) continue;   // only finished days count
-    const key = e => Array.isArray(e.combo) ? e.combo.join("+") : "";
-    const yes = new Set(evs.filter(e => e && e.kind === "yes" && key(e)).map(key));
-    if (yes.size) { for (const k of yes) picks[k] = (picks[k] || 0) + YES_WEIGHT; continue; }
-    const sel = evs.filter(e => e && e.kind === "select" && key(e)).pop();
-    if (sel) picks[key(sel)] = (picks[key(sel)] || 0) + INFERRED_WEIGHT;
-  }
-  return picks;
-}
-// Which of today's candidate combos take the staple slots: the top few by
-// pick weight, rotated by date so a single favourite is not on page 1 every
-// morning (continuity, not monotony).
-function staplesFor(combos, picks, dayIndex) {
-  const pool = combos.filter(c => (picks[c.key] || 0) > 0)
-    .sort((a, b) => picks[b.key] - picks[a.key] || a.key.localeCompare(b.key))
-    .slice(0, STAPLE_POOL);
-  if (!pool.length) return [];
-  const out = [];
-  for (let i = 0; i < pool.length && out.length < STAPLE_SLOTS; i++)
-    out.push(pool[(dayIndex + i) % pool.length]);
-  return out;
+// The deal's memory (which looks led page 1 on which day, her Yeses) is
+// wardrobe/history.json {days, events} — the shell writes it (A4-1), this
+// thread only reads it. Unreadable = no memory yet, never a failed build.
+const HISTORY = () => path.join(DATA, "wardrobe", "history.json");
+function readHistory() {
+  try { const h = JSON.parse(fs.readFileSync(HISTORY(), "utf8")); return h && typeof h === "object" ? h : {}; }
+  catch { return {}; }
 }
 
 // ---- image plumbing (vendored decoders; RGBA in Buffers throughout) ----
@@ -710,17 +674,10 @@ function hourLabel(h) {
 }
 
 // ---- the daily board: her exact graph ----
-// exact band first; too few choices -> widen to the neighboring band; a
-// wardrobe must never make an empty board just because the weather moved
-const BANDS = ["hot", "warm", "cool", "cold"];
-function forBand(items, band) {
-  if (!band) return items;
-  const dist = i => i.warmth === "any" ? 0 : Math.abs(BANDS.indexOf(i.warmth) - BANDS.indexOf(band));
-  const exact = items.filter(i => dist(i) === 0);
-  if (exact.length >= 2) return exact;
-  const near = items.filter(i => dist(i) <= 1);
-  return near.length ? near : items;
-}
+// Which garments the band admits, and the order of the day's 21, is the
+// original's deal (clothing-rank.js, ported from outfit_set.py): tops never
+// gated, bottoms widened to the neighbouring band when the exact one leaves
+// fewer than two, band null (weather offline) gates nothing.
 // Button plates are small by design (the PHOTO is the message) — a long name
 // clipped mid-word on the board (QA 9/1). Keep names to ~3 words / 22 chars,
 // dropping leading adjectives rather than truncating a word.
@@ -806,47 +763,25 @@ async function buildCataloged(cat) {
   // on "composite: ENOENT" and Ellie got a black screen). Ingest repairs the
   // tile on the next run; the board stays usable meanwhile.
   const items = Object.values(cat.items).filter(i => i.ok && hasTile(i.id));
-  const tops = forBand(items.filter(i => i.category === "top"), band);
-  const bottoms = forBand(items.filter(i => i.category === "pants" || i.category === "shorts"), band);
-  const ones = forBand(items.filter(i => i.category === "dress" || i.category === "set"), band);
 
-  // novel combos, least-recently-shown first (her rotation), no repeated
-  // top or bottom within today's slots while alternatives remain
-  const hist = loadHistory();
-  const combos = [];
-  for (const t of tops) for (const b of bottoms) combos.push({ key: t.id + "+" + b.id, top: t, bottom: b });
-  for (const d of ones) combos.push({ key: d.id, one: d });
-  combos.sort((a, b) =>
-    (hist.shown[a.key] || "").localeCompare(hist.shown[b.key] || "") || Math.random() - 0.5);
-  // Her favourites lead page 1 (up to two staple slots), then the freshest
-  // looks fill the rest — variety by prioritisation, never exclusion.
-  const dayStr = new Date().toLocaleDateString("en-CA");   // same day bucket as /outfit-event
-  const staples = staplesFor(combos, derivePicks(dayStr), Math.floor(Date.now() / 86400000));
-  const today = [];
-  const usedTop = new Set(), usedBottom = new Set();
-  for (const c of staples) {
-    today.push(c);
-    if (c.top) { usedTop.add(c.top.id); usedBottom.add(c.bottom.id); }
-  }
-  for (const c of combos) {
-    if (today.includes(c)) continue;
-    if (today.length >= PER_PAGE * PAGES) break;
-    if (c.top && (usedTop.has(c.top.id) || usedBottom.has(c.bottom.id))) continue;
-    today.push(c);
-    if (c.top) { usedTop.add(c.top.id); usedBottom.add(c.bottom.id); }
-  }
-  for (const c of combos) {
-    if (today.length >= PER_PAGE * PAGES) break;
-    if (!today.includes(c)) today.push(c);
-  }
-  for (const c of today) hist.shown[c.key] = new Date().toISOString();
-  saveHistory(hist);
+  // The day's 21, dealt by the original's rules (spec §3.5): page 1 is her
+  // staples then fresh, garment-distinct looks; yesterday's page 1 opens page
+  // 2; the seed is the family's day, so a same-day rebuild (weather re-sort,
+  // sync, restart) deals the same 21 in the same order — nothing random here.
+  // Curated pairs and hearts arrive with the shared taste file (T4.3): empty
+  // until then.
+  const seed = dayKey(Date.now(), workerData.tz);
+  const today = buildCandidates({
+    items, band, cap: PER_PAGE * PAGES, seed,
+    pairing: { great: [], avoid: [] }, favorites: new Set(),
+    history: readHistory(), perPage: PER_PAGE,
+  }).map(toWorkerShape);
 
   // The page-1 lineup goes to the shell FIRST (I9): it is the memory tomorrow's
   // deal reads, and a composite that fails must not lose it. ONE writer for
   // wardrobe/history.json — the shell's recordOffer, never this thread (A4-1).
   if (parentPort) parentPort.postMessage({ offer: {
-    date: dayKey(Date.now(), workerData.tz), band,
+    date: seed, band,
     page1: today.slice(0, PER_PAGE).map(c => c.one ? [c.one.id] : [c.top.id, c.bottom.id]) } });
 
   fs.mkdirSync(OUTFITS(), { recursive: true });
@@ -955,6 +890,9 @@ function storeSig(sig) {
 }
 
 async function regenerate(force) {
+  // The worker's private least-recently-shown file is retired (9/5): memory is
+  // wardrobe/history.json alone. Clear the old one so nothing stale lingers.
+  fs.rmSync(path.join(DATA, "clothing-history.json"), { force: true });
   const files = listPhotos(CLOTHING());
   const photos = files;
   prune(files);               // what left the folder leaves the wardrobe (before the tile count below)

@@ -800,15 +800,23 @@ test("the Shorts tile does not wear the Pants pictogram (bug 22)", () => {
   assert.notEqual(sym("Shorts"), sym("Pants"));
 });
 
-// ---- her favourites (audit 9/2) ----
+// ---- her favourites (audit 9/2; ported generator 9/5) ----
 // The board has always reported her gazes and Yeses to the hub
 // (wardrobe/history.json), but the product's generator never read them: a
 // Yes changed nothing about tomorrow. Dad's plan (outfit_set.py, 8/5): a Yes
 // is a confirmed wear, a day without one credits the last select at half
 // weight, and the most-worn looks lead page 1 in two staple slots — variety
-// by prioritisation, never exclusion.
+// by prioritisation, never exclusion. Since 9/5 the deal IS the original's
+// (clothing-rank.js): page 1 is garment-distinct and seeded by the family's
+// day, so this block's wardrobe is seven tops by seven bottoms — enough for
+// seven distinct looks on page 1 and 21 a day — and hermetic: every other
+// photo leaves clothing/ first, so no re-ingest can add a garment the fake
+// AI happens to name. Ids stay loose (item_top1): only /outfit-event
+// validates the hex shape (I10).
 const dayAgo = n => new Date(Date.now() - n * 86400e3).toLocaleDateString("en-CA");
-function fiveGarments() {
+const TOPS = ["Sunny tee", "Cloud tee", "Pond tee", "Maple tee", "Berry tee", "Fern tee", "Dune tee"];
+const BOTTOMS = ["Sky leggings", "Moss jeans", "Sand pants", "Ruby leggings", "Lake jeans", "Cocoa pants", "Mint leggings"];
+function sevenBySeven() {
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   const src = path.join(TMP, "wardrobe-items", Object.values(cat.items).find(i => i.ok).id + ".jpg");
   const items = {};
@@ -817,16 +825,19 @@ function fiveGarments() {
     fs.copyFileSync(src, path.join(TMP, "clothing", id + ".jpg"));   // a photo that has left the folder is pruned
     items[id + ".jpg"] = { id, ok: true, name, category, warmth: "any" };
   };
-  mk("item_top1", "Heart tee", "top"); mk("item_top2", "Striped tee", "top"); mk("item_top3", "Cat tee", "top");
-  mk("item_pants1", "Pink leggings", "pants"); mk("item_pants2", "Blue jeans", "pants");
+  TOPS.forEach((n, i) => mk("item_top" + (i + 1), n, "top"));
+  BOTTOMS.forEach((n, i) => mk("item_pants" + (i + 1), n, "pants"));
+  for (const e of fs.readdirSync(path.join(TMP, "clothing")))
+    if (!(e + "") .startsWith("item_")) fs.rmSync(path.join(TMP, "clothing", e), { recursive: true, force: true });
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items }));
 }
-const firstCombos = () => {
-  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
-  const today = rec.boards.find(b => b.id === "today");
-  return today.buttons.filter(x => x.type === "outfit")
-    .sort((a, b) => a.load.localeCompare(b.load)).map(x => x.combo.join("+"));
-};
+const boardsOf = () => JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8")).boards;
+const byLoad = (a, b) => Number(a.load.slice("confirm_".length)) - Number(b.load.slice("confirm_".length));
+const outfitsOf = board => board.buttons.filter(x => x.type === "outfit").sort(byLoad).map(x => x.combo.join("+"));
+const firstCombos = () => outfitsOf(boardsOf().find(b => b.id === "today"));
+// every outfit of every today page (today, today_2, today_3), board order then
+// slot order — the 21-for-21 comparator for "a same-day rebuild changes nothing"
+const allCombos = () => boardsOf().filter(b => /^today(_\d)?$/.test(b.id)).flatMap(outfitsOf);
 // history.json is {days, events} (spec §3.3): days = the page-1 lineups the
 // build recorded, events = the board's picks.
 const writePicks = (events, days = {}) =>
@@ -834,16 +845,29 @@ const writePicks = (events, days = {}) =>
    fs.writeFileSync(path.join(TMP, "wardrobe", "history.json"), JSON.stringify({ days, events })));
 
 test("with no picks yet, today is pure rotation (nothing seated)", async () => {
-  fiveGarments();
+  sevenBySeven();
   fs.rmSync(path.join(TMP, "wardrobe", "history.json"), { force: true });
   await clothing.regenerate(true);
   const first = firstCombos();
   assert.equal(first.length, 7, "page 1 is full: seven outfit slots (dad 9/3), the wardrobe has more");
-  // two bottoms → the first two looks share neither top nor bottom; the
-  // remaining slots are then filled from what is left (never exclusion)
-  const [a, b] = first.map(k => k.split("+"));
-  assert.notEqual(a[0], b[0], "no top repeat while alternatives remain");
-  assert.notEqual(a[1], b[1], "no bottom repeat while alternatives remain");
+  // seven tops, seven bottoms → page 1 repeats no garment (spec §1 V3)
+  const tops = first.map(k => k.split("+")[0]), bottoms = first.map(k => k.split("+")[1]);
+  assert.equal(new Set(tops).size, 7, "no top repeats on page 1");
+  assert.equal(new Set(bottoms).size, 7, "no bottom repeats on page 1");
+  assert.equal(allCombos().length, 21, "21 a day across today, today_2, today_3");
+  // the worker's private least-recently-shown file is retired: memory is
+  // wardrobe/history.json alone (plan T2.3)
+  assert.ok(!fs.existsSync(path.join(TMP, "clothing-history.json")), "no clothing-history.json after a build");
+});
+
+// spec §3.5: a rebuild on the same day — a weather re-sort, a sync, a restart —
+// deals the SAME 21 in the same order. The seed is the family's day and the
+// memory ignores today's own entries; nothing random is left in the worker.
+test("a same-day rebuild deals the same 21 in the same order", async () => {
+  const first = allCombos();
+  assert.equal(first.length, 21);
+  await clothing.regenerate(true);
+  assert.deepEqual(allCombos(), first, "21-for-21 identical across today, today_2, today_3");
 });
 
 // ONE writer for history.json (spec §3.3 as amended A4-1): the worker deals
