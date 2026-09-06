@@ -180,7 +180,8 @@ test("every other writer in the family's folder is counted, and none of them is 
     body: JSON.stringify({ kind: "yes", combo: [items[1].id] }) });
 
   const s = await status();
-  assert.equal(s.sharing.devices, 4, "this device, two others, and the family's migration tool");
+  assert.equal(s.sharing.devices, 3, "this device and two others — the migration tool's 'studio' "
+    + "lines are in the folder from before the first build (§7/A4-13) and are not a third tablet");
   const body = await raw();
   const own = fs.readFileSync(path.join(DATA, "device-id"), "utf8").trim();
   assert.equal(body.includes(own), false, "this device's own name never leaves it");
@@ -247,7 +248,7 @@ test("a memory the read-out cannot open makes it say nothing, not 'no picks reco
   assert.equal("picks" in s, false, "no picks block at all — Settings blanks the line (index.html picksPaint)");
   assert.equal("memory" in s, false, "…and no memory block either: zero days is a lie about her data");
   assert.equal(s.sharing.mode, "drive", "what the read-out still knows it still says");
-  assert.equal(s.sharing.devices, 4, "the folder and its writers are a different file");
+  assert.equal(s.sharing.devices, 3, "the folder and its writers are a different file");
 
   // AND IT HEALS THE MOMENT THE FILE OPENS AGAIN — with nothing written. A
   // scanner or a backup letting go of history.json changes its ctime alone,

@@ -284,13 +284,20 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
 }
 
 // ---- who else writes here (spec §4 "sharing", plan W12) --------------------
-// The distinct writer names under <DATA>/clothing/.era — every other device in
-// the family, plus any tool that wrote into the folder (the migration tool
-// signs its lines "studio", §7) — with this device's own name left out.
+// The distinct DEVICE names under <DATA>/clothing/.era, with this device's own
+// name left out.
 //
 // The NAMES stay here. /clothing/status is public and unauthenticated and a
 // writer name is a hostname slug (W12), so the only thing the caller may take
 // out of this Set is its size: "Shared with: 2 devices".
+//
+// The family's migration tool signs its lines "studio" (§7) and writes all four
+// kinds into the folder — and A4-13 requires them to be there BEFORE the
+// upgraded hub's first build, so this is not a corner case: every migrated
+// family would read one device more than it owns, for good. It is a tool, not a
+// device. A machine whose hostname really is "studio" is undercounted by one
+// instead, which is the far smaller lie (review r2).
+const TOOL_WRITER = "studio";
 function sharedWriters(dataDir, deviceId) {
   const own = slug(deviceId) || "hub";
   const root = path.join(String(dataDir || ""), "clothing", ERA);
@@ -312,6 +319,7 @@ function sharedWriters(dataDir, deviceId) {
       const writer = name.slice(0, -".jsonl".length);
       if (writer !== own) out.add(writer);
     }
+  out.delete(TOOL_WRITER);
   return out;
 }
 

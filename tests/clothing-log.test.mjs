@@ -464,10 +464,27 @@ test("the other writers in the family's folder are found, and this device is not
   // is still someone in the folder.
   deliver(b.dataDir, "pairs/dev-d.jsonl", { kind: "great", combo: ["item_aaaa", "item_bbbb"] });
   deliver(b.dataDir, `pairs/${OWN}.jsonl`, { kind: "favorite", combo: ["item_aaaa"] });
-  assert.deepEqual([...sharedWriters(b.dataDir, OWN)].sort(), ["dev-b", "dev-c", "dev-d", "studio"],
-    "three other devices and the family's migration tool; this device is not counted twice");
-  assert.deepEqual([...sharedWriters(b.dataDir, "OWN-DEV!")].sort(), ["dev-b", "dev-c", "dev-d", "studio"],
+  assert.deepEqual([...sharedWriters(b.dataDir, OWN)].sort(), ["dev-b", "dev-c", "dev-d"],
+    "three other devices; this device is not counted twice, and the tool is not a device");
+  assert.deepEqual([...sharedWriters(b.dataDir, "OWN-DEV!")].sort(), ["dev-b", "dev-c", "dev-d"],
     "the caller's id is slugged here too, exactly as an own write slugs it");
+});
+
+// "Shared with: N devices" is the sentence this count becomes, and the family's
+// migration tool is not a device. Spec §7 has it writing tags/studio.jsonl,
+// pairs/studio.jsonl and picks|offers/studio/<date>.jsonl into the folder, and
+// A4-13 requires them to be there BEFORE the upgraded hub's first build — so
+// every migrated family would read one device more than it owns, permanently
+// (review r2).
+test("the migration tool is not a device — its 'studio' lines never inflate the count", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/dev-b/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa"] });
+  deliver(b.dataDir, `picks/studio/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa"] });
+  deliver(b.dataDir, `offers/studio/${TODAY}.jsonl`, { band: null, page1: [["item_aaaa"]] });
+  deliver(b.dataDir, "tags/studio.jsonl", { id: "item_aaaa", category: "top", warmth: 1 });
+  deliver(b.dataDir, "pairs/studio.jsonl", { kind: "great", combo: ["item_aaaa", "item_bbbb"] });
+  assert.deepEqual([...sharedWriters(b.dataDir, OWN)], ["dev-b"],
+    "a family of two reads 'Shared with: 2 devices' — the tool that carried her old picks over is not a third");
 });
 
 // The file half of this walk already skips what the syncer leaves behind (I19:
