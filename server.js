@@ -2101,8 +2101,15 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "POST" && req.url === "/integrations/drive/create-folder") {
+    const r = drive.createContentFolder();
+    // The OTHER door that sets the local mount (drive.js: mode + folderPath),
+    // so the shared log has to be re-opened here exactly as it is after
+    // /integrations/drive/localfolder — otherwise this process keeps the
+    // `driveFolder: null` it booted with and every pick from now until a
+    // restart is recorded locally and shared with nobody (review r1).
+    if (r.ok) openClothingLog();
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(drive.createContentFolder()));
+    res.end(JSON.stringify(r));
     return;
   }
 

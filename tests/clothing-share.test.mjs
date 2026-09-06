@@ -409,6 +409,56 @@ test("a Drive folder with no clothing/ is left alone, and a sync prunes nothing"
     "and the local-only wardrobe survives the sync");
 });
 
+// Settings has TWO doors that set the local mount: "choose the folder"
+// (/integrations/drive/localfolder) and the one-click "make the folder"
+// (dad 8/29). The shared log is opened once at boot with the folder of the
+// moment, so a door that sets a folder and does not re-open it leaves this
+// hub writing nothing to the family until someone restarts it — silently, and
+// only for her picks (the worker re-resolves the folder at every build, so
+// offers and tags would keep flowing). Driven through the real route on a real
+// hub, because the bug is the wiring and nothing below it can see it.
+test("the one-click 'make the folder' button starts sharing straight away, with no restart", async () => {
+  // 8458 is the suite's one hub port (§B) and hub A gave it up three cases
+  // ago; a single-case run has not been through those, so make sure.
+  if (child) { child.kill("SIGKILL"); child = null; await new Promise(r => setTimeout(r, 500)); }
+  const D = path.join(TMP, "F");                      // a hub with no drive.json at all
+  const ROOT = path.join(TMP, "mount");               // …and a mount root to make it in
+  fs.mkdirSync(ROOT, { recursive: true });
+  fs.mkdirSync(D, { recursive: true });
+  const env = { ...process.env, ...SEAMS, ERA_DATA_DIR: D, ERA_DRIVE_LOCAL_ROOTS: ROOT };
+  delete env.ERA_DEVICE_ID;
+  const hub = spawn("node", ["server.js", String(PORT)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"], env,
+  });
+  try {
+    let up = false;
+    for (let i = 0; i < 200 && !up; i++) {
+      try { await fetch(`${BASE}/settings`); up = true; } catch { await new Promise(r => setTimeout(r, 100)); }
+    }
+    assert.ok(up, "the folderless hub came up");
+
+    const made = await (await fetch(`${BASE}/integrations/drive/create-folder`, { method: "POST" })).json();
+    assert.equal(made.ok, true, "the button made the family's content folder");
+    assert.equal(made.folderPath, path.join(ROOT, "New ERA Content"));
+
+    const combo = ["item_cccc3333", "item_dddd4444"];
+    const r = await fetch(`${BASE}/outfit-event`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "yes", combo }) });
+    assert.equal(r.status, 204);
+
+    const id = fs.readFileSync(path.join(D, "device-id"), "utf8").trim();
+    const mine = path.join(made.folderPath, "clothing", ".era", "picks", id);
+    const files = fs.existsSync(mine) ? fs.readdirSync(mine) : [];
+    assert.equal(files.length, 1, "her Yes reached the folder the button just made");
+    const last = fs.readFileSync(path.join(mine, files[0]), "utf8").trim().split("\n").map(JSON.parse).at(-1);
+    assert.deepEqual(last.combo, combo);
+  } finally {
+    hub.kill("SIGKILL");
+    await new Promise(r => setTimeout(r, 500));
+  }
+});
+
 test("a device on Drive's API mode keeps its picks to itself, quietly", async () => {
   const D = path.join(TMP, "E");
   fs.mkdirSync(D, { recursive: true });
