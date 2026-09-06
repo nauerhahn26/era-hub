@@ -309,3 +309,89 @@ wardrobe itself, at its own cost, and the boards are dealt either way.
 - A grown-up ♥ / "never together" control (Settings first; the header strip if he
   wants it on the board) — the `pairs/` log is already the store for it.
 - Yes on the confirm page marking the outfit or returning to page 1.
+
+## 9. As shipped in v0.32.2 — amendments to this design
+
+Written after the cut. Sections 1–8 above are left as they were written on 9/5; this
+section is the difference between them and the code that shipped. (It follows §9
+"Queued for dad" rather than renumbering it, so every "§n" reference elsewhere in the
+plan and in the source comments still points where it did.)
+
+### 9.1 The thirteen plan amendments (plan §A4)
+
+| # | Rule as shipped | Amends |
+|---|---|---|
+| 1 | `wardrobe/history.json` has **one** writer on the main thread, not two; same file, same shape. | §3.3 |
+| 2 | `/clothing/status` `sharing.devices` is a **count**, not a list of ids — no id list leaves the device. | §4 |
+| 3 | A `tags/` line may carry `rotate_deg` and `crop`; a `favorite`/`none` line in `pairs/` names exactly one id. | §5 |
+| 4 | `buildCandidates` sorts items by id before pooling, so the deal does not inherit catalogue order. | §3.2 |
+| 5 | The needs-attributes pass keys on an `attrsAt` marker: at most one describe per item per day. | §3.1 item 3 |
+| 6 | The mirror compares `.era/` paths by **bytes** (local) / `md5Checksum` (API), never by size. | §5 |
+| 7 | Tests add `clothing-log.test.mjs` (pure) and `synthetic-wardrobe.mjs` (helper); the read-out hub runs on 8461 and the attribute pass has its own `clothing-attrs.test.mjs` with a fake model on 8462, because `clothing.test.mjs` is near its 900 s ceiling. | §8 |
+| 8 | `holdDay` stays **photo-only**. The pass gets the same effect by stamping `attrsTriedAt = today` on every real call whatever its outcome, and never asking an item already stamped today. | §3.1 item 3 |
+| 9 | Own writes go to the Drive **mount only** — there is no local `.era` copy. The local canonical is `wardrobe/history.json` (picks/offers) and `wardrobe.json` (tags); `<DATA>/clothing/.era/**` belongs to the mirror alone, and own-id dirs are skipped on read. | §5 |
+| 10 | The events prune has a **young-history guard**: the "below the oldest kept day" cutoff applies only once `days` holds its 60; while it is younger, the 60 most recent event dates are kept, so a fresh or just-migrated install does not lose its migrated picks to its first offer. | §3.2 |
+| 11 | "A garment returns once per page" means once per **algorithmic** page. On a small pool a page can run short, so a flat `slice(7,14)` is a page only where every page fills. | §1 V3 |
+| 12 | "Degrade, never exclude" now also covers attributes the model **did** supply: when the harmonizing deal cannot fill one page (`pairs + singles < pageCap`), the `harmonizes` predicate is dropped for that deal — `avoid` and the ranking stand, the extra looks rank last. Above a page the floor stays shut and boards are byte-identical. | §3.1 item 4, §3.4 |
+| 13 | The §3.1 precedence is a one-way door: the migration tool's `.era` output must be in the mirrored folder **before** the upgraded hub's first build. Recorded in §3.1 item 3 and §7. | §3.1, §7 |
+
+### 9.2 Behaviours changed by review, beyond A4
+
+- **Untagged warmth is `any`.** A garment whose warmth word the hub does not know is
+  gated by no band (levels 1–3), and an unrecognised *band* word gates nothing at all
+  — the hub's "never empty the board" rule beating the original's `{1,2}` default
+  (§3.4; both are inputs the hub itself never produces, and both are pinned).
+- **A memory that will not open buys ONE re-deal per day, and that re-deal is a
+  re-sort.** It can never re-enter ingest or spend the day's model allowance, it sits
+  inside the board-freshness branch (a board that is also stale still gets the
+  morning's full build and the tile repair it carries), and the budget resets with the
+  day, as `holdDay` does (§3.5).
+- **`memory.days` counts today; `picks.days` does not.** A build a parent has just
+  triggered shows in the memory immediately, while a Yes made this morning counts
+  tomorrow — exactly as the deal reads it (§4, §3.3).
+- **A `/clothing/status` poll never writes.** The read-out opens `history.json`
+  read-only, so a public GET during a restore cannot quarantine a half-copied file
+  (§4).
+- **`sharing.devices` counts writers, not devices** — distinct names under `picks/`,
+  `offers/`, `tags/` and `pairs/`, plus this one, so the migration tool's `studio`
+  lines count as one (§4, §5).
+- **Yesterday's page-1 Yes leads page 2**, and a Yes from a deeper page is seated on
+  page 1 as a staple; a square wardrobe can re-seat a barred look in the last page-1
+  slot, which is the original's relaxation, faithfully ported (§1 V3, §4).
+- **An empty lineup is refused at both ends of the shared log** — `appendOffer` will
+  not write one and the reader will not read one — so a device whose tiles have gone
+  missing cannot blank that date's page 1 for the whole family (§5).
+- **Every door that sets the local mount re-opens the shared log**, including
+  `POST /integrations/drive/create-folder` (Settings' one-click "make the folder"),
+  which previously left the process sharing nothing until a restart (§5).
+- **The per-day 200-event cap covers the shared copy too**: past it the event is
+  written to neither store, so the two never disagree (§3.3, §5).
+- **`/outfit-event` still answers `204` with an empty body** after the added share
+  write; era-board relies on it (§6 step 2).
+- **The shared reader skips a line that lacks its kind's required field, and any
+  `marker` line**, and a skipped line is never "the last line of a date" (§5).
+- **Migration tool (§7): only the four PERMANENT statuses are held back** —
+  `too_big`, `too_small`, `retired`, `outgrown`. `dirty` (in the wash) and
+  `unavailable` are per-run rotation filters in the original, not migration decisions,
+  so they cross whole; a garment in the laundry on restore morning is no longer lost
+  to the do-not-copy list. Each held-back entry carries its reason.
+- **Migration tool: `mapped` means the taste crossed whole** (a photo matched *and* a
+  category the hub has a word for); everything else not held back counts as unmapped.
+  Category/warmth lookups use an own-property check, so a studio `type` of
+  `constructor` can no longer ship a tag line with no category. The out dir must BE
+  the `.era` dir, `do-not-copy.txt` is written first and always, stdout stays exactly
+  three counts, and the A4-13 ordering reminder goes to stderr.
+- **The re-run marker is idempotent by pad, not by count**, and a re-run is additive
+  per date and per kind; the hub's own 60-day prune retires what the studio dropped.
+
+### 9.3 Known, accepted, not fixed in this cut
+
+- Nothing prunes `<DATA>/clothing/.era` (≈0.7 MB per device per year), and the
+  `tags/` file grows one line per garment per describing device.
+- A device does not read its OWN tags back, so one device pays twice for the same
+  photo saved under two names; what "own lines are skipped" should mean wants a
+  decision, not a patch.
+- The `.era` byte-compare reads both files on every sync.
+- The card says nothing about `memory.yesterdayPage1`, though the payload carries it.
+- The upgraded hub's first morning has no yesterday bar (the old `shown` LRU is
+  retired without a shim) — one day, cosmetic.

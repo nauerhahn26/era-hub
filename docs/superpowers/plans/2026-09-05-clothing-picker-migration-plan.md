@@ -491,13 +491,13 @@ implementation with a test file; every function has a byte-for-byte oracle.
     - **Guardrails:** §C. Kill nothing by pattern (`pkill -f` self-match — memory); by pid only if a suite hangs past 900 s.
     - **Gate:** green gate is the gate.
 
-20. [ ] **T7.2 Final spec review**
+20. [x] **T7.2 Final spec review**
     - **Acceptance:** `rae-flow:reviewing` over the full diff (`git diff master...feat/clothing-migration --stat`) against the spec + A4, with the §D coverage table as the checklist.
     - **Verification:** review status `APPROVED` recorded in the workpad; every CHANGES_REQUESTED loop re-runs the affected suite(s) and T7.1 if a module changed.
     - **Guardrails:** §C.
     - **Gate:** APPROVED.
 
-21. [ ] **T7.3 Behavioural verification — a scratch hub and two DATA dirs on one temp Drive folder**
+21. [x] **T7.3 Behavioural verification — a scratch hub and two DATA dirs on one temp Drive folder**
     - **Acceptance:** the feature works as a parent would see it: picks/memory/sharing in status; 21 outfits with page 1 garment-distinct; a second sync leaves today's board alone; two devices deal the same 21. All on synthetic data, no key.
     - **Verification (run in order; expected output after each):**
       ```bash
@@ -587,6 +587,34 @@ implementation with a test file; every function has a byte-for-byte oracle.
     - **Verification:** there is no cheap preview: `--dry-run` runs the **full** pipeline (`release.sh:20-30` — step 1 the gate, taking the machine-wide `flock` and ~40 min if T7.1's gate is not still the freshest; step 2 `build-dist.sh` with makensis and the SimplySign signing rail; step 3 `vm-e2e.sh` on the QA host) and only skips the tag/publish (`:31`); budget ≥ 1 h and never overlap it with another gate. Cheap preflight instead: `df -Pm /home/claude/new-era | awk 'NR==2{print $4}'` ≥ 2048; `git -C /home/claude/new-era/era-hub--wt-clothing tag -l v0.32.2` prints nothing; `bash tools/era-gate.sh` result from T7.1 within the last commit (no module changed since). Then the real `bash tools/release.sh v0.32.2`.
     - **Guardrails:** not an implementer task; never run from `era-hub--wt-install-qa`; the gate must have finished (no concurrent gate/cut); `--dry-run` is a full build with the signing rail, not a listing.
     - **Gate:** orchestrator's.
+
+#### Final review (T7.2/T7.3) — result
+
+**Behavioural verification (T7.3): PASS.** T7.2 ran seven review lenses over
+`v0.32.1...HEAD`: the ranking/memory core against spec §3.1-§3.4/§4 with
+function-for-function parity against `outfit_set.py:61-73, :242-557`; the sharing rail
+(`device-id.js`, `clothing-log.js`, `drive.js`, `server.js` wiring, the gate and payload
+scripts, six suites) against §5/§8 with an independent scratch-hub reproduction of the
+A4-9 and §3.5 claims; the read-out half (`status()`/`readOutFor`, `GET /clothing/status`,
+the Settings card and its two suites) against §4/§7 and the board design rules; the
+private migration tool against §6/§7 and A4-13, round-tripped through the public reader
+and on into `buildCandidates`; the plan's §D coverage table row by row for bite, plus §E
+STOP conditions, §C guardrails, the payload cp list, the `clothing.test.mjs` duration
+ceiling and Gate 0; and a public-repo hygiene pass over all 69 commits (28 files,
++7683/-227). Six lenses returned APPROVED_WITH_COMMENTS and one (the read-out half)
+CHANGES_REQUESTED.
+
+**One fix round (r1), five commits, then re-review APPROVED_WITH_COMMENTS:**
+`550cba0` (a `/clothing/status` poll no longer sets her memory aside — the read-out
+opens `history.json` read-only), `0de7150` (T7.3's runbook records node's own pid, the
+A-is-down wait fails loudly, no session path in a public doc), `23a7b8a` (the two
+merged-log levers with no bite: a shared tag's `rotate_deg`/`crop`, and the favourite
+line's wiring into the deal), `026aa8c` (two comments that claimed more than the code
+does), and in the private repo `aecab41` (migration tool: a type that is not a string is
+not a type, a history key that is not a real date is not a day, and `do-not-copy.txt`
+says what its two columns are). Spec §9 records every A4 item and every review-driven
+behaviour change as shipped.
+
 
 ---
 
