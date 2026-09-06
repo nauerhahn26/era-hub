@@ -40,6 +40,7 @@
 const fs = require("fs");
 const path = require("path");
 const { dayKey, pairKey, HISTORY_DAYS_KEPT } = require("./clothing-rank.js");
+const { slug } = require("./device-id.js");
 
 const ERA = ".era";
 const DATE_NAME = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
@@ -48,15 +49,22 @@ const JSONL = /^[A-Za-z0-9._-]+\.jsonl$/;
 // migration tool carries the level, so the reader speaks both.
 const WARMTH_WORD = { 1: "warm", 2: "cool", 3: "cold" };
 let saidNoFolder = false;   // the "no Drive folder" line, once per process
+let saidNoClothing = false; // …and the "the folder has no clothing/ yet" line
 
 // ---- the shapes a line must have to be a line -------------------------------
 // A line that is skipped is not the last line of anything: the migration tool
 // ends every file it writes with a marker so a re-run changes the file's byte
 // length (W9), and "the last line of a date wins" must look past it.
 const strings = v => Array.isArray(v) && v.length > 0 && v.every(s => typeof s === "string" && s);
+// A lineup with no looks in it is not a lineup. The local canonical says the
+// same (clothing.js recordOffer: a build that finds every tile missing must not
+// REPLACE the morning's seven looks with none) and the shared half needs the
+// rule at both ends — an empty line published after a good one would blank that
+// date's page 1 for every OTHER device, and the yesterday bar (spec §1 V3)
+// would stop barring those looks family-wide.
 const VALID = {
   picks: l => strings(l.combo),
-  offers: l => Array.isArray(l.page1),
+  offers: l => Array.isArray(l.page1) && l.page1.length > 0,
   tags: l => typeof l.id === "string" || typeof l.hash === "string",
   pairs: l => strings(l.combo),
 };
@@ -86,7 +94,12 @@ const stamp = l => String((l && l.t) || "");
 // delivery point), driveFolder is where this device writes, deviceId names its
 // files, tz is the family zone a day key defaults to.
 function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
-  const own = String(deviceId || "hub");
+  // Slugged HERE, not merely by the caller: `own` is a directory name in a
+  // folder Google Drive mirrors onto Windows, macOS and Linux alike, and rule 2
+  // ("the only mkdir is BENEATH clothing/") is this module's to keep. Every
+  // caller in the tree already passes a device-id.js slug; a future one that
+  // passes a hostname or a `..` lands under "hub" instead of outside .era.
+  const own = slug(deviceId) || "hub";
   const zone = tz || "UTC";
   const mount = driveFolder ? String(driveFolder) : null;
   // Said once per process, not once per build: the worker opens a log on every
@@ -103,7 +116,19 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
   function mountEra(kind) {
     if (!mount) return null;
     const clothing = path.join(mount, "clothing");
-    try { if (!fs.statSync(clothing).isDirectory()) return null; } catch { return null; }
+    let there = false;
+    try { there = fs.statSync(clothing).isDirectory(); } catch {}
+    if (!there) {
+      // spec §5: an own write that cannot land is "a log line and nothing
+      // else". A parent who points Settings at their Drive folder before the
+      // Drive app has made clothing/ in it would otherwise get no signal at
+      // all that sharing is off. Once per process, like the line above.
+      if (!saidNoClothing) {
+        saidNoClothing = true;
+        console.log("[clothing] the Drive folder has no clothing/ yet — this device's picks stay local");
+      }
+      return null;
+    }
     return path.join(clothing, ERA, kind);
   }
   let warned = false;
@@ -124,7 +149,10 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
   const dayOr = d => (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) ? d : dayKey(Date.now(), zone);
 
   const appendPick = (day, line) => append("picks", path.join(own, dayOr(day) + ".jsonl"), line);
-  const appendOffer = (day, line) => append("offers", path.join(own, dayOr(day) + ".jsonl"), line);
+  // A line this module's own reader would skip is not worth writing: it cannot
+  // help another device and an empty lineup would outrank the day's real one.
+  const appendOffer = (day, line) =>
+    usable("offers", line) && append("offers", path.join(own, dayOr(day) + ".jsonl"), line);
   const appendTag = (line) => append("tags", own + ".jsonl", line);
 
   // ---- reads ---------------------------------------------------------------
@@ -150,7 +178,12 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
       // union of their page 1s (spec §5).
       const last = lines[lines.length - 1];
       const day = merged.offers[date] || (merged.offers[date] = { band: null, page1: [], _keys: new Set() });
-      if (last.band != null) day.band = last.band;
+      // The FIRST band read wins, matching mergeHistory below (which keeps the
+      // local band and takes a shared one only for a day this device never
+      // built). Two devices can only disagree about a date this one missed, and
+      // "whichever directory readdir listed last" is not an answer — dirsOf
+      // sorts, so this is the first device by name, every run.
+      if (day.band == null && last.band != null) day.band = last.band;
       for (const combo of last.page1) {
         if (!Array.isArray(combo) || !strings(combo)) continue;
         const k = combo.join("+");
@@ -247,7 +280,7 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
     return out;
   }
 
-  return { appendPick, appendOffer, appendTag, readMerged, tagsFor, deviceId: own };
+  return { appendPick, appendOffer, appendTag, readMerged, tagsFor };
 }
 
 // ---- one memory out of two (spec §5 "Reads", §6 step 4) ---------------------
@@ -298,7 +331,9 @@ function oldestKept(today) {
   return new Date(Date.UTC(y, m - 1, d - HISTORY_DAYS_KEPT)).toISOString().slice(0, 10);
 }
 function dirsOf(dir) {
-  try { return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name); }
+  // Sorted, like filesOf: readdir order is the filesystem's, and a merge rule
+  // that says "the first device wins" has to mean the same thing twice.
+  try { return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name).sort(); }
   catch { return []; }
 }
 function filesOf(dir) {

@@ -1061,8 +1061,15 @@ async function buildCataloged(cat) {
   if (parentPort) parentPort.postMessage({ offer: { date: seed, band, page1 } });
   // ...and the same lineup to the family, so tomorrow every device bars what
   // any of them showed today. The MOUNT only — <DATA>/clothing/.era belongs to
-  // the mirror (A4-9) — and never a reason to fail a build.
-  log().appendOffer(seed, { band, page1 });
+  // the mirror (A4-9) — and never a reason to fail a build. The same guard the
+  // local recorder has (clothing.js recordOffer): a build that could draw
+  // nothing deals an empty page 1, and publishing THAT would replace this
+  // date's real lineup with none on every other device (review r1). The log
+  // refuses it too; the rule is written at both writers so a reader comparing
+  // them sees one rule, not two. The offer is posted to the shell first and
+  // appended here on the same tick, so the shell's recordOffer lands after this
+  // line — harmless, since own lines are never read back.
+  if (page1.length) log().appendOffer(seed, { band, page1 });
 
   fs.mkdirSync(OUTFITS(), { recursive: true });
   // Layout per ux-contract.md placement LAW (dad 9/1: "follow the docs"):

@@ -88,15 +88,43 @@ test("offers and tags have their own shapes: a date file per device, one file pe
 // as "leave the local wardrobe alone" and an EMPTY one as "the parent deleted
 // everything". A side-effect mkdir here turns a family's Drive folder that has
 // no clothing/ yet into a delete-everything order on the next sync.
-test("a Drive folder with no clothing/ is left exactly as it was", () => {
+// ...and spec §5 says an own write that cannot land is "a log line and nothing
+// else". Said ONCE per process, like the no-folder line: the worker opens a log
+// on every build, so a per-call line would be printed every fifteen minutes for
+// ever. This is the first case in the file that refuses a write for this
+// reason, which is why it is the one that can see the line.
+test("a Drive folder with no clothing/ is left exactly as it was, and says so once", () => {
   const b = beds({ mount: false });
-  const log = open(b);
-  assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_aaaa"] }), false);
+  const said = [];
+  const realLog = console.log;
+  console.log = (...a) => said.push(a.join(" "));
+  let log;
+  try {
+    log = open(b);
+    assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_aaaa"] }), false);
+    assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_bbbb"] }), false);
+  } finally { console.log = realLog; }
+  assert.equal(said.filter(l => /no clothing\//.test(l)).length, 1,
+    "a parent who pointed Settings at a folder before making it is told once — not never, and not every build");
   assert.equal(log.appendOffer(TODAY, { band: null, page1: [["item_aaaa"]] }), false);
   assert.equal(log.appendTag({ id: "item_aaaa", category: "top" }), false);
   assert.ok(!fs.existsSync(path.join(b.driveFolder, "clothing")),
     "clothing/ was NOT created — an absent source must stay absent (W8)");
   assert.deepEqual(fs.readdirSync(b.driveFolder), [], "the Drive folder is untouched");
+});
+
+// The id becomes a DIRECTORY NAME in a folder Drive mirrors onto three
+// operating systems. device-id.js guarantees a slug and every caller in the
+// tree goes through it, but the rule the module's own header states ("the only
+// mkdir is BENEATH clothing/") has to be the module's, not the caller's.
+test("a device id that is not a slug never becomes a path of its own", () => {
+  const b = beds();
+  const log = openLog({ dataDir: b.dataDir, driveFolder: b.driveFolder,
+    deviceId: "../..", tz: ZONE });
+  assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_aaaa"] }), true);
+  assert.ok(fs.existsSync(path.join(b.driveFolder, "clothing", ".era", "picks", "hub", TODAY + ".jsonl")),
+    "nothing survives the slug, so the line lands under the fallback name");
+  assert.deepEqual(fs.readdirSync(b.driveFolder), ["clothing"], "and nowhere above it");
 });
 
 test("no Drive folder at all (API mode) is a quiet no-op, never a throw", () => {
@@ -188,6 +216,33 @@ test("a marker is never a line, even when it carries the field its file needs", 
   assert.deepEqual(m.picksEvents[YESTERDAY].map(e => e.combo), [["item_aaaa"]], "and the marker is no pick");
 });
 
+// The local canonical already refuses an empty lineup (clothing.js recordOffer:
+// a build that finds every tile missing must not REPLACE the morning's seven
+// looks with none). The shared half of that memory needs the same rule at both
+// ends, or one device's broken build blanks that day's page 1 for the whole
+// family — and the yesterday bar (spec §1 V3) stops barring those looks
+// everywhere, not just here.
+test("a lineup with no looks is never published to the family", () => {
+  const b = beds();
+  const log = open(b);
+  assert.equal(log.appendOffer(TODAY, { band: "warm", page1: [] }), false,
+    "an empty deal is not an offer");
+  assert.ok(!fs.existsSync(path.join(b.driveFolder, "clothing", ".era", "offers")),
+    "…and it does not even make the folder");
+  assert.equal(log.appendOffer(TODAY, { band: "warm", page1: [["item_aaaa"]] }), true,
+    "a real lineup still lands");
+});
+
+test("an empty lineup that reached the folder anyway leaves the day's page 1 standing", () => {
+  const b = beds();
+  deliver(b.dataDir, `offers/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T06:00:00Z", band: "warm", page1: [["item_aaaa", "item_bbbb"]] },
+    { t: "2026-09-05T18:00:00Z", band: "warm", page1: [] });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(m.offers[YESTERDAY].page1, [["item_aaaa", "item_bbbb"]],
+    "the last line with looks in it wins, not the empty one after it");
+});
+
 test("two devices' page 1 for one day is the union, one entry per look", () => {
   const b = beds();
   deliver(b.dataDir, `offers/dev-b/${YESTERDAY}.jsonl`,
@@ -197,6 +252,21 @@ test("two devices' page 1 for one day is the union, one entry per look", () => {
   const m = open(b).readMerged(TODAY);
   assert.deepEqual(m.offers[YESTERDAY].page1.map(c => c.join("+")).sort(),
     ["item_aaaa+item_bbbb", "item_cccc"]);
+});
+
+// Two devices can only disagree about a band for a date THIS device never
+// built (mergeHistory gives the local band priority), and the answer must not
+// be "whichever directory the filesystem happened to list last".
+test("when two devices disagree about a day's band, the same one always wins", () => {
+  const b = beds();
+  deliver(b.dataDir, `offers/dev-z/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T06:00:00Z", band: "cold", page1: [["item_cccc"]] });
+  deliver(b.dataDir, `offers/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T07:00:00Z", band: "warm", page1: [["item_aaaa"]] });
+  const m = open(b).readMerged(TODAY);
+  assert.equal(m.offers[YESTERDAY].band, "warm",
+    "the first device by name, the way mergeHistory keeps the first band it has");
+  assert.equal(m.offers[YESTERDAY].page1.length, 2, "…and both lineups still bar page 1");
 });
 
 // A day older than the memory itself can only slow the read down.
