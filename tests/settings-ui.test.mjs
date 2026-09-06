@@ -677,6 +677,19 @@ test("with no picks yet the card says what will happen tomorrow, not nothing", a
   await ctx.close();
 });
 
+// A hub that cannot read its own memory answers with no picks/memory blocks at
+// all rather than zeroed ones (clothing.js readOutFor, review r1) — because a
+// zero here would be printed as "No picks recorded yet", a claim about her data.
+// The empty line is the whole point: it says nothing.
+test("a payload with no picks block leaves the line empty instead of claiming there are none", async () => {
+  const { picks, memory, ...blind } = clothingPayload();
+  const { ctx, page } = await settingsPage(null, { clothing: blind });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("aiStatus").textContent));
+  assert.equal((await picksText(page)).trim(), "", "no sentence at all");
+  assert.doesNotMatch(await picksText(page), /No picks recorded yet/);
+  await ctx.close();
+});
+
 test("the sharing line appears only when the family really has a Drive folder", async () => {
   const shared = clothingPayload({ picks: { days: 4, lastDay: dayKeyBack(1, "UTC"), top: [] },
     sharing: { mode: "local", devices: 3 } });

@@ -213,11 +213,21 @@ function readOutFor(items) {
   const out = { picks: { days: 0, lastDay: null, top: [] },
                 memory: { days: 0, yesterdayPage1: 0 },
                 sharing: { mode: folder ? "drive" : "local", devices: 1 } };
+  // How many devices are writing into the family's folder. The names stay
+  // inside clothing-log.js; only the count comes out. Its OWN try: who else is
+  // in the folder is a different file from the memory, and a device that cannot
+  // read its own history still knows the answer to this one.
+  try {
+    out.sharing.devices = 1 + clothingLog.sharedWriters(DATA, deviceId).size;
+  } catch (e) {
+    console.error("[clothing] the shared writers could not be counted: " + e.message);
+  }
   try {
     // Her memory as the next build will read it: this device's canonical file
     // (A4-1) plus every other device's lines the mirror delivered (spec §5).
-    let local = {};
-    try { local = readHistory(); } catch { /* set aside/unreadable: say nothing rather than lie */ }
+    // readHistory RETHROWS a file that is there and will not open (a backup, a
+    // scanner, a mode change) — and that throw must reach the catch below.
+    const local = readHistory();
     const log = clothingLog.openLog({ dataDir: DATA, driveFolder: folder, deviceId, tz: zone() });
     const hist = clothingLog.mergeHistory(local, log.readMerged(today));
 
@@ -246,12 +256,14 @@ function readOutFor(items) {
     out.memory.days = Object.keys(hist.days).filter(d => DATE_KEY.test(d)).length;
     const yd = hist.days[rank.yesterdayOf(today)];
     out.memory.yesterdayPage1 = yd && Array.isArray(yd.page1) ? yd.page1.length : 0;
-
-    // …and how many devices are writing into the family's folder. The names
-    // stay inside clothing-log.js; only the count comes out.
-    out.sharing.devices = 1 + clothingLog.sharedWriters(DATA, deviceId).size;
   } catch (e) {
+    // SAY NOTHING RATHER THAN LIE. Zeroed blocks are not "no answer": Settings
+    // would print "No picks recorded yet — every Yes on the board is remembered
+    // from tomorrow." over sixty days of picks, every five seconds, because a
+    // scanner held the file for a moment. Without the blocks, picksPaint's
+    // `if (!(s && s.picks && s.memory))` blanks the line instead (review r1).
     console.error("[clothing] the picks read-out could not be built: " + e.message);
+    delete out.picks; delete out.memory;
   }
   readOut = out; readOutKey = key;
   return out;

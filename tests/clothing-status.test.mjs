@@ -223,3 +223,27 @@ test("her favourites come out most-chosen first, and never more than five (spec 
   // the other device's single); five is what a sentence can hold.
   assert.equal(s.picks.top.length, 5, "the top five, not the whole memory");
 });
+
+// The mirror of tests/clothing-weather.test.mjs' "a history.json the build
+// cannot open is left alone": readHistory rethrows every non-ENOENT read error
+// precisely so no caller can mistake a held file for an empty memory. The
+// read-out is the third caller, and the sentence it feeds is a claim about the
+// family's own data — "No picks recorded yet" repainted every five seconds
+// while sixty days sit on the disk. Saying nothing is the only honest answer.
+test("a memory the read-out cannot open makes it say nothing, not 'no picks recorded yet'", {
+  skip: process.getuid && process.getuid() === 0 ? "root reads every file" : false,
+}, async () => {
+  assert.ok((await status()).picks.days > 0, "there IS a memory to be wrong about");
+  writeHistory(readHistory());        // the same bytes: the memo turns over on the stat
+  fs.chmodSync(HISTORY, 0o000);
+  let s;
+  try { s = await status(); } finally { fs.chmodSync(HISTORY, 0o644); }
+  assert.equal("picks" in s, false, "no picks block at all — Settings blanks the line (index.html picksPaint)");
+  assert.equal("memory" in s, false, "…and no memory block either: zero days is a lie about her data");
+  assert.equal(s.sharing.mode, "drive", "what the read-out still knows it still says");
+  assert.equal(s.sharing.devices, 4, "the folder and its writers are a different file");
+
+  writeHistory(readHistory());        // and the memory comes back with the bytes
+  const back = await status();
+  assert.ok(back.picks.days > 0, "nothing was lost — the file was only shut for a moment");
+});
