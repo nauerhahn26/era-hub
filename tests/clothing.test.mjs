@@ -85,7 +85,12 @@ before(async () => {
     let body = "";
     req.on("data", c => body += c);
     req.on("end", () => {
-      const parsed = JSON.parse(body);
+      // A body that never finished arriving is answered, never thrown on: this
+      // handler lives in the before hook's async graph, where a throw becomes
+      // an uncaughtException and fails the whole FILE after every case has
+      // passed (r3).
+      let parsed;
+      try { parsed = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
       calls++;
       hits.push(req.url);
       if (throttleModel && req.url.includes(throttleModel) && calls > throttleAfter) {
@@ -132,10 +137,31 @@ before(async () => {
   fs.mkdirSync(path.join(TMP, "clothing", "album"), { recursive: true });
   makeJpg(path.join(TMP, "clothing", "album", "photo_c.jpg"), 250, 210, 60);
   clothing = require("./clothing.js");
-  clothing.start(TMP, { tz: () => ZONE });   // timers are unref'd; we drive regenerate() directly
+  // No schedule: this suite drives regenerate()/tick() itself. unref() only
+  // stops a timer from holding the loop open — it still FIRES, and this file
+  // runs ~500 s, so the 20 s startup tick and the 15-minute one really did
+  // start builds nobody awaited (r3), exactly as clothing-weather.test.mjs
+  // avoids. The zone is the suite's: the module otherwise defaults to LA and
+  // this box is UTC (plan T2.1/T2.4).
+  clothing.start(TMP, { noTimers: true, tz: () => ZONE });
 });
 after(() => { if (ai) ai.close(); delete process.env.ERA_AI_URL;
   delete process.env.ERA_GEO_URL; delete process.env.ERA_WEATHER_URL; });
+
+// The fake above is created INSIDE the before hook, so every request it serves
+// belongs to that hook's async graph: a body it could not parse threw there,
+// and node:test turns a throw after the hook has ended into an uncaught
+// exception and a FILE-level failure — 32 green cases and exit 1, which is
+// exactly what the gate reads (seen twice at r3, once in ~500 s). A body can
+// be empty or half-written whenever a client goes away mid-POST (the ingest
+// posts a base64 JPEG under AbortSignal.timeout), so the fake answers 400.
+test("the fake AI answers a body it cannot parse instead of throwing", async () => {
+  const before = calls;
+  const r = await fetch(`http://127.0.0.1:${AI_PORT}/v1/messages`,
+    { method: "POST", body: "", signal: AbortSignal.timeout(5000) });   // a throw answers nothing at all
+  assert.equal(r.status, 400, "an unparsable body gets an answer, not a throw");
+  assert.equal(calls, before, "...and is not counted as a model call");
+});
 
 test("photos but no AI key: no board, a no-key guidance state (dad 8/31: coach, don't dump raw tiles)", async () => {
   const r = await clothing.regenerate(true);
@@ -830,15 +856,19 @@ test("the Shorts tile does not wear the Pants pictogram (bug 22)", () => {
 // case walks included — so a case appended after it would lose garments it
 // never mentions (review r1).
 //
-// One day key for the whole block, read once WHEN THE BLOCK STARTS — set in
-// its first case, not at file load: the cases below span ~90 s and a midnight
-// roll partway through would flip half of them, but a top-level const is
-// evaluated ~500 s earlier (node:test loads the file before test 1), which
-// widened that window to the whole suite instead of closing it (review r2).
+// One day key for the whole block, read once WHEN THE BLOCK STARTS — on first
+// use, not at file load: the cases below span ~90 s and a midnight roll
+// partway through would flip half of them, but a top-level const is evaluated
+// ~500 s earlier (node:test loads the file before test 1), which widened that
+// window to the whole suite instead of closing it (review r2). Memoized rather
+// than assigned by the first case: a single-case run (--test-name-pattern, the
+// shape the red evidence for this block is captured with) otherwise walked
+// back from undefined and died in the fixture instead of on the assertion (r3).
 // n days ago is walked back with the rank's own calendar (never now −
 // n×86400e3: a DST day is 23 or 25 hours long, I6).
-let TODAY;
-const dayAgo = n => { let k = TODAY; for (let i = 0; i < n; i++) k = yesterdayOf(k); return k; };
+let _today;
+const todayKey = () => (_today ??= dayKey(Date.now(), ZONE));
+const dayAgo = n => { let k = todayKey(); for (let i = 0; i < n; i++) k = yesterdayOf(k); return k; };
 const TOPS = ["Sunny tee", "Cloud tee", "Pond tee", "Maple tee", "Berry tee", "Fern tee", "Dune tee", "Coral tee"];
 const BOTTOMS = ["Sky leggings", "Moss jeans", "Sand pants", "Ruby leggings", "Lake jeans", "Cocoa pants", "Mint leggings"];
 function eightBySeven() {
@@ -871,7 +901,7 @@ const writePicks = (events, days = {}) =>
 
 test("with no picks yet, today is pure rotation (nothing seated)", async () => {
   eightBySeven();
-  TODAY = dayKey(Date.now(), ZONE);   // the block's clock, read as the block starts
+  todayKey();   // the block's clock, read as the block starts
   fs.rmSync(path.join(TMP, "wardrobe", "history.json"), { force: true });
   await clothing.regenerate(true);
   const first = firstCombos();
@@ -902,7 +932,7 @@ test("a same-day rebuild deals the same 21 in the same order", async () => {
 // thread, so a read-modify-write never races. Weather is offline in this
 // suite, so the day's band is null.
 test("the build records today's page 1 in history.json and leaves the day's events alone", async () => {
-  const today = TODAY;
+  const today = todayKey();
   const seeded = [{ kind: "yes", combo: ["item_top2", "item_pants1"], at: new Date().toISOString() }];
   writePicks({ [today]: seeded });
   await clothing.regenerate(true);
