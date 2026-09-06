@@ -401,10 +401,23 @@ function buildCandidates(opts) {
   // would deal nothing but the dresses. When that happens the harmony rule
   // steps aside for this deal: `avoid` and the ranking still stand, so a
   // loud-on-loud look simply sinks to the bottom rather than vanishing.
-  if (!pairs.length && tops.length && bottoms.length)
+  //
+  // The floor opens whenever the honest deal cannot fill ONE page, not only
+  // when it is empty (A4-12, review r3). The board is min(cap, pool.length)
+  // looks, so `pairs + singles < pageCap` is exactly "this deal comes up short
+  // of a page". Measured on the 35-garment synthetic wardrobe, one plain top
+  // among 34 loud ones: `cool`/`cold` gate the bottoms to four, all loud, so
+  // the honest deal was 4 pairs + 2 dresses = SIX looks — fewer than the
+  // all-loud wardrobe's full 21, for a wardrobe described one garment better.
+  // Above the page the floor stays shut (`hot` 12, `warm`/band-null 18 are
+  // unchanged), so a board that already holds a page of harmonizing looks is
+  // never padded with loud-on-loud ones.
+  if (pairs.length + singles.length < pageCap && tops.length && bottoms.length) {
+    const already = new Set(pairs.map(comboKey));   // a harmonizing pair is not dealt twice
     for (const t of tops)
       for (const b of bottoms)
-        if (styleScore(t, b, pairing) > 0) pairs.push([t, b]);
+        if (!already.has(comboKey([t, b])) && styleScore(t, b, pairing) > 0) pairs.push([t, b]);
+  }
   const pool = singles.concat(pairs);
 
   // :412-427 — memory as of today (today's own entries ignored: same-date reruns stay stable).

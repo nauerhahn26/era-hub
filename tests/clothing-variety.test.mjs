@@ -39,6 +39,17 @@ const distinct = list => new Set(idsOf(list)).size === idsOf(list).length;
 
 const ITEMS = makeItems({ n: 35, seed: 1 });
 const PAIRING = makePairing(ITEMS);
+// The two bands above are the ported gate's (variety_test.py:49). Every band
+// the picker can be in — including band-null, weather offline — is what the
+// floor tests below must sweep: `cool` and `cold` gate the bottoms down to a
+// handful, which is exactly where a board can come up short (review r3).
+const ALL_BANDS = [...Object.keys(R.BAND_WARMTH), null];
+// In `cool` and `cold` the warmth gate leaves this wardrobe 4 eligible bottoms
+// and 2 dresses (17/8/4 in `hot`, 17/12/6 in `warm` and band-null), so page 1
+// runs out of garment-distinct looks and finishes through the tiny-pool
+// relaxation (outfit_set.py:527-533) — a repeat there is the port working, not
+// a variety failure, so only the roomy bands assert page-1 distinctness.
+const TIGHT_BANDS = new Set(["cool", "cold"]);
 
 function build(items, band, seed, history, pairing = PAIRING, perPage = PER_PAGE) {
   return R.buildCandidates({ items, band, cap: CAP, seed, pairing, favorites: new Set(), history, perPage });
@@ -241,10 +252,11 @@ describe("hub deviation (I5, spec §3.1 item 4): a wardrobe with no attributes s
       assert.ok(R.harmonizes(t, b), `${t.id}+${b.id} harmonizes`);
       assert.equal(R.styleScore(t, b, R.normalizePairing(empty)), 55);
     }
-    for (const band of [...BANDS, null]) {
+    for (const band of ALL_BANDS) {
       const out = build(bare, band, "2026-08-05", { days: {}, events: {} }, empty);
       assert.equal(out.length, CAP, String(band));
-      assert.ok(distinct(out.slice(0, PER_PAGE)), `${band}: page 1 garment-distinct`);
+      if (!TIGHT_BANDS.has(String(band)))
+        assert.ok(distinct(out.slice(0, PER_PAGE)), `${band}: page 1 garment-distinct`);
     }
   });
 });
@@ -264,12 +276,16 @@ describe("taste floor (spec §3.4's rule, §3.1 item 4): a wardrobe described as
     const bottoms = loud.filter(g => g.category === "pants" || g.category === "shorts");
     for (const t of tops) for (const b of bottoms)
       assert.equal(R.harmonizes(t, b), false, `${t.id}+${b.id}: two loud pieces never harmonize`);
-    for (const band of [...BANDS, null]) {
+    for (const band of ALL_BANDS) {
       const out = build(loud, band, "2026-08-05", { days: {}, events: {} }, empty);
       assert.equal(out.length, CAP, String(band));
-      assert.ok(distinct(out.slice(0, PER_PAGE)), `${band}: page 1 garment-distinct`);
+      if (!TIGHT_BANDS.has(String(band)))
+        assert.ok(distinct(out.slice(0, PER_PAGE)), `${band}: page 1 garment-distinct`);
     }
   });
+  // Band-null only, on purpose: in `cool`/`cold` the warmth gate leaves this
+  // plain bottom out of the pool (it is a level-1 garment), so the eligible
+  // bottoms are loud again and the floor is right to open there.
   test("the floor is a last resort: one plain bottom is enough to keep it shut", () => {
     const loud = ITEMS.map(g => ({ ...g, statement: true, pattern: "graphic", colors: ["magenta"] }));
     const oneQuiet = loud.map(g => g.id === loud.find(x => x.category === "pants").id
@@ -281,22 +297,33 @@ describe("taste floor (spec §3.4's rule, §3.1 item 4): a wardrobe described as
       assert.ok(c.pieces.some(p => p.id === quietId), c.key + ": only the plain bottom pairs while any pair harmonizes");
   });
   // The same rule from the other side, and the answer to "the worst wardrobe
-  // deals a longer board than a slightly better one" (review r2 nit): one
-  // plain TOP gives every pair the same top, so page 1 fills garment-distinct
-  // and stops short (A4-11) and each deeper page carries one pair — 12 looks,
-  // not 21. That is the garment-once-per-page rule, not the floor's threshold:
-  // the floor must stay SHUT here, or a board with 8 honest pairs is padded
-  // with loud-on-loud ones.
-  test("one plain top: a shorter board, and still no loud-on-loud pair", () => {
+  // deals a longer board than a slightly better one" (review r2 nit, re-measured
+  // across all five bands in r3). One plain TOP gives every pair the same top,
+  // so page 1 fills garment-distinct and stops short (A4-11) and each deeper
+  // page carries one pair. Where the honest deal still fills a page — `hot` 12,
+  // `warm` and band-null 18 — that shorter board is the garment-once-per-page
+  // rule and the floor must stay SHUT, or a board with honest pairs is padded
+  // with loud-on-loud ones. Where the band gate leaves four loud bottoms —
+  // `cool` and `cold`, four pairs plus two eligible dresses — the honest deal
+  // is SIX looks, less than one page, and the floor opens (A4-12).
+  //
+  // The lengths are pinned per band, not asserted `> 0`: a six-look cold
+  // morning walks straight through a `> 0` row, and that is the regression
+  // this test exists to catch.
+  const PLAIN_TOP_BOARD = { hot: 12, warm: 18, cool: CAP, cold: CAP, null: 18 };
+  const FLOOR_SHUT = new Set(["hot", "warm", "null"]);
+  test("one plain top: never fewer than a page, and no loud-on-loud pair while the deal fills one", () => {
     const loud = ITEMS.map(g => ({ ...g, statement: true, pattern: "graphic", colors: ["magenta"] }));
-    const quietId = loud.find(x => x.category === "top").id;
+    const quietId = loud.find(g => g.category === "top").id;
     const oneQuiet = loud.map(g => g.id === quietId ? { ...g, statement: false, pattern: "solid" } : g);
-    for (const band of [...BANDS, null]) {
+    for (const band of ALL_BANDS) {
       const out = build(oneQuiet, band, "2026-08-05", { days: {}, events: {} }, { great: [], avoid: [] });
-      assert.ok(out.length > 0, `${band}: the board is never empty`);
+      assert.ok(out.length >= PER_PAGE, `${band}: a full page at least, dealt ${out.length}`);
+      assert.equal(out.length, PLAIN_TOP_BOARD[String(band)], `${band}: board length`);
+      if (!FLOOR_SHUT.has(String(band))) continue;
       for (const c of out.filter(x => x.pieces.length === 2))
         assert.ok(c.pieces.some(p => p.id === quietId),
-          `${band} ${c.key}: only the plain top pairs while any pair harmonizes`);
+          `${band} ${c.key}: only the plain top pairs while the honest deal fills a page`);
     }
   });
 });

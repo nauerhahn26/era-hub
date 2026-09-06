@@ -565,21 +565,34 @@ describe("buildCandidates — the pool (outfit_set.py:393-410)", () => {
     const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, pairing: { great: [], avoid: [["item_b2", "item_t1"]] }, history: {}, perPage: 7 });
     assert.deepEqual(keysOf(out).sort(), ["item_t1+item_b1", "item_t2+item_b1", "item_t2+item_b2"]);
   });
+  // Six plain bottoms + the dress make a deal of exactly `pageCap` looks, so
+  // the floor below stays shut and the harmony rule is the only thing deciding
+  // the pool: the two loud pieces are never dealt together (A4-12's boundary).
   test("two statement pieces never pool together while a plain partner exists; a statement single is in the pool anyway (singles bypass harmonizes)", () => {
     const loud = { statement: true, colors: ["pink"], pattern: "floral" };
     const items = [top("item_t1", loud), bottom("item_b1", { ...loud, colors: ["orange"] }),
-                   bottom("item_b2"), g("item_d1", { category: "dress", ...loud })];
+                   g("item_d1", { category: "dress", ...loud })];
+    for (let i = 2; i <= 7; i++) items.push(bottom("item_b" + i));
     const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
-    assert.deepEqual(keysOf(out).sort(), ["item_d1", "item_t1+item_b2"]);
+    assert.deepEqual(keysOf(out).sort(),
+      ["item_d1", "item_t1+item_b2", "item_t1+item_b3", "item_t1+item_b4", "item_t1+item_b5", "item_t1+item_b6", "item_t1+item_b7"]);
   });
-  // The floor (spec §3.4's rule): when NO pair harmonizes at all the harmony
-  // rule stands aside rather than let the board come up empty of outfits —
-  // the last-resort branch tested end to end in clothing-variety.test.mjs.
+  // The floor (spec §3.4's rule, A4-12): when the harmonizing deal cannot fill
+  // even one page the harmony rule stands aside rather than let the board come
+  // up short — the branch tested band by band in clothing-variety.test.mjs.
   test("…but with no plain partner anywhere the two loud pieces are offered rather than no outfit at all", () => {
     const loud = { statement: true, colors: ["pink"], pattern: "floral" };
     const items = [top("item_t1", loud), bottom("item_b1", { ...loud, colors: ["orange"] })];
     const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
     assert.deepEqual(keysOf(out), ["item_t1+item_b1"]);
+  });
+  test("a deal shorter than a page opens the floor: the loud-on-loud pair joins the two honest looks, and sinks below them", () => {
+    const loud = { statement: true, colors: ["pink"], pattern: "floral" };
+    const items = [top("item_t1", loud), bottom("item_b1", { ...loud, colors: ["orange"] }),
+                   bottom("item_b2"), g("item_d1", { category: "dress", ...loud })];
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
+    assert.deepEqual(keysOf(out).sort(), ["item_d1", "item_t1+item_b1", "item_t1+item_b2"]);
+    assert.equal(keysOf(out).at(-1), "item_t1+item_b1", "the clash is dealt last: `avoid` and the ranking still stand");
   });
   test("every combo is {key, pieces:[garment…]} with the ids joined by +; toWorkerShape maps it", () => {
     const items = [top("item_t1"), bottom("item_b1"), g("item_d1", { category: "dress" })];
