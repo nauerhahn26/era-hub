@@ -11,6 +11,8 @@ const { Worker } = require("worker_threads");
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
 const { aiRoles, visionCheck } = require("./ai-config.js");
 const drive = require("./drive.js");
+const contentStore = require("./content-store.js");
+const rank = require("./clothing-rank.js");
 
 let DATA = null;
 // The family's calendar zone and this hub's name, handed in by server.js at
@@ -37,6 +39,43 @@ function aiCfg() {
 }
 
 function isBuilding() { return !!worker; }
+
+// ---- memory: wardrobe/history.json, ONE writer (spec §3.3, A4-1) ----------
+// {days: {date: {band, page1}}, events: {date: [{kind, combo, at}]}}. The
+// worker deals and posts the page-1 lineup; the shell records it here, and
+// POST /outfit-event (server.js) appends the board's picks through the same
+// two doors — every read-modify-write on the main thread, so none can
+// interleave, and every write is a rename (writeAtomic), so a reader never
+// sees half a file. Nothing else may write this file.
+function historyPath() { return path.join(DATA, "wardrobe", "history.json"); }
+function readHistory() {
+  const file = historyPath();
+  let raw;
+  try { raw = fs.readFileSync(file, "utf8"); } catch { return {}; }
+  try {
+    const h = JSON.parse(raw);
+    if (h && typeof h === "object" && !Array.isArray(h)) return h;
+  } catch {}
+  // Unreadable, and not empty: a parent's picks may be in there. Set it aside
+  // for a hand to look at rather than overwrite it with {} (plan T2.2).
+  if (raw.trim()) {
+    const aside = file + ".bad-" + Date.now();
+    try {
+      fs.renameSync(file, aside);
+      console.error("[clothing] history.json unreadable — moved to " + path.basename(aside));
+    } catch (e) { console.error("[clothing] history.json unreadable and could not be set aside: " + e.message); }
+  }
+  return {};
+}
+// The day's page-1 lineup as the worker dealt it: {date, band, page1: [[ids]]}.
+// Same-date reruns overwrite (idempotent) and the 60-day window is trimmed
+// by clothing-rank.recordOffer.
+function recordOffer(offer) {
+  const h = readHistory();
+  const combos = offer.page1.map(ids => ({ pieces: ids.map(id => ({ id })) }));
+  rank.recordOffer(h, offer.date, combos, combos.length, offer.band);
+  contentStore.writeAtomic(historyPath(), h);
+}
 
 function status() {
   const cfg = aiCfg();
@@ -82,6 +121,11 @@ function regenerate(force, opts = {}) {
                       tz: tzOf(), deviceId, driveFolder } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
+      // The lineup arrives BEFORE the composites are drawn (I9): the memory
+      // tomorrow's deal reads must not depend on every picture surviving.
+      if (m.offer) {
+        try { recordOffer(m.offer); } catch (e) { console.error("[clothing] history: " + e.message); }
+      }
       if (m.done) {
         done = m.done;
         // A re-sort that found nothing catalogued has no ingest behind it, so
@@ -206,4 +250,5 @@ function start(dataDir, opts = {}) {
 function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
 
 module.exports = { start, regenerate, rebuildToday, isBuilding, status, boardIsFresh, tick,
+  historyPath, readHistory, recordOffer,
   _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false; } };

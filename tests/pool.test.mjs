@@ -66,6 +66,24 @@ test("POST /outfit-event double-writes: history.json AND pool event", async () =
   assert.deepEqual(y.combo, ["item_abcd"]);
 });
 
+// An unreadable history.json holds a parent's picks (or half of them). It is
+// set aside under a .bad- name for a hand to look at, never overwritten with
+// {} — and the pick that arrived still lands (plan T2.2).
+test("a corrupt history.json is set aside, never overwritten", async () => {
+  const hp = path.join(TMP, "wardrobe", "history.json");
+  fs.writeFileSync(hp, "{ not json");
+  const r = await fetch(`${BASE}/outfit-event`, {
+    method: "POST", body: JSON.stringify({ kind: "select", combo: ["item_abcd", "item_ef01"] }) });
+  assert.equal(r.status, 204);
+  const bad = fs.readdirSync(path.join(TMP, "wardrobe")).filter(f => /^history\.json\.bad-\d+$/.test(f));
+  assert.equal(bad.length, 1, "the unreadable file was renamed, not lost");
+  assert.equal(fs.readFileSync(path.join(TMP, "wardrobe", bad[0]), "utf8"), "{ not json");
+  const h = JSON.parse(fs.readFileSync(hp, "utf8"));
+  assert.equal(h.events[HDAY].length, 1, "a fresh history starts with this pick");
+  assert.deepEqual(h.events[HDAY][0].combo, ["item_abcd", "item_ef01"]);
+  assert.ok(!fs.existsSync(path.join(TMP, "wardrobe", "history.tmp")), "writeAtomic left no tmp behind");
+});
+
 test("heartbeat file exists and is fresh", () => {
   const hb = JSON.parse(fs.readFileSync(path.join(TMP, "pool", "devices", "test-dev.json"), "utf8"));
   assert.equal(hb.device, "test-dev");

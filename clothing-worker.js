@@ -55,6 +55,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
+const { dayKey } = require("./clothing-rank.js");
 const WEB = () => path.join(DATA, "clothing-web");
 const ITEMS = () => path.join(DATA, "wardrobe-items");
 // Is this item's picture actually on disk? A catalogue entry alone is not
@@ -840,6 +841,13 @@ async function buildCataloged(cat) {
   }
   for (const c of today) hist.shown[c.key] = new Date().toISOString();
   saveHistory(hist);
+
+  // The page-1 lineup goes to the shell FIRST (I9): it is the memory tomorrow's
+  // deal reads, and a composite that fails must not lose it. ONE writer for
+  // wardrobe/history.json — the shell's recordOffer, never this thread (A4-1).
+  if (parentPort) parentPort.postMessage({ offer: {
+    date: dayKey(Date.now(), workerData.tz), band,
+    page1: today.slice(0, PER_PAGE).map(c => c.one ? [c.one.id] : [c.top.id, c.bottom.id]) } });
 
   fs.mkdirSync(OUTFITS(), { recursive: true });
   // Layout per ux-contract.md placement LAW (dad 9/1: "follow the docs"):

@@ -12,6 +12,7 @@ const path = require("path");
 const updater = require("./update");
 const drive = require("./drive");
 const clothing = require("./clothing");
+const { dayKey } = require("./clothing-rank.js");
 const content = require("./content.js");
 const musicAdd = require("./music-add.js");
 const moviesAdd = require("./movies-add.js");
@@ -73,9 +74,11 @@ setInterval(() => pool.heartbeat({ service: "era-hub" }), 60 * 60 * 1000).unref(
 const RECIPE_PATHS = [
   path.join(DATA, "recipes", "today.json"),
 ];
-// ELLIE_WARDROBE_DIR: test override only — route tests point POST /outfit-event
-// at a temp dir so they never touch the live history.json.
-const WARDROBE_DIR = process.env.ELLIE_WARDROBE_DIR || path.join(DATA, "wardrobe");
+// One wardrobe dir, no env override: history.json is written by exactly two
+// doors (clothing.js recordOffer and POST /outfit-event below) through
+// clothing.historyPath(), and a seam that let them point at different files
+// was how they diverged (plan T2.2, I24).
+const WARDROBE_DIR = path.join(DATA, "wardrobe");
 const GEN_ASSETS_DIR = path.join(DATA, "gen-assets");
 const BOOKS_DIR = path.join(DATA, "books");   // book packages (era-book-reader M3)
 const MUSIC_DIR = path.join(DATA, "music");   // songs overlay (Songs Board 8/24)
@@ -1495,19 +1498,19 @@ const server = http.createServer((req, res) => {
           Array.isArray(combo) && combo.length >= 1 && combo.length <= 2 &&
           combo.every(id => typeof id === "string" && /^item_[0-9a-f]{4,32}$/.test(id));
         if (!ok) { res.writeHead(400).end(); return; }
-        const day = new Date().toLocaleDateString("en-CA", { timeZone: TZ });  // family-profile tz buckets the day
-        const hp = path.join(WARDROBE_DIR, "history.json");
-        let h = {};
-        try { h = JSON.parse(fs.readFileSync(hp, "utf8")); } catch {}
-        if (typeof h !== "object" || h === null || Array.isArray(h)) h = {};
+        const day = dayKey(Date.now(), TZ);  // the family's calendar day buckets the pick
+        // The ONE history.json writer path (clothing.js): an unreadable file is
+        // set aside, never overwritten; the write is a rename, so the worker's
+        // read never sees half a file. Both writers run on this thread, so
+        // this read-modify-write cannot interleave with the build's.
+        const h = clothing.readHistory();
         h.events = h.events || {};
         const evs = h.events[day] = h.events[day] || [];
         // cap per day: a stuck client can't grow the file unboundedly
         if (evs.length < 200) evs.push({ kind, combo, at: new Date().toISOString() });
-        // a fresh install has no wardrobe/ yet — without this every pick 400'd
-        // and the board dropped it, so favourites were never learned (QA 9/2)
-        fs.mkdirSync(WARDROBE_DIR, { recursive: true });
-        fs.writeFileSync(hp, JSON.stringify(h, null, 2) + "\n");
+        // a fresh install has no wardrobe/ yet — writeAtomic makes it; without
+        // that every pick 400'd and favourites were never learned (QA 9/2)
+        contentStore.writeAtomic(clothing.historyPath(), h);
         pool.append("outfit-" + kind, { combo });
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch { res.writeHead(400).end(); }

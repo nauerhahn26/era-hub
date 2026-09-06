@@ -17,6 +17,12 @@ const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const AI_PORT = 8416;   // 8391-8415 held by sibling suites
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-clo-"));
 const require = createRequire(path.join(HUB, "server.js"));
+// ONE clock for the suite: the module defaults to the family's LA zone and
+// this box runs UTC, so every "today"/"yesterday" key here is derived over
+// ZONE and the module is started with the same zone (plan T2.1/T2.4) — never
+// an OS-zone toLocaleDateString, never now − n×86400e3 in a DST zone (I6).
+const ZONE = "UTC";
+const { dayKey, yesterdayOf } = require("./clothing-rank.js");
 let ai, clothing;
 
 // tiny solid-color JPEGs stand in for phone photos
@@ -122,7 +128,7 @@ before(async () => {
   fs.mkdirSync(path.join(TMP, "clothing", "album"), { recursive: true });
   makeJpg(path.join(TMP, "clothing", "album", "photo_c.jpg"), 250, 210, 60);
   clothing = require("./clothing.js");
-  clothing.start(TMP);   // timers are unref'd; we drive regenerate() directly
+  clothing.start(TMP, { tz: () => ZONE });   // timers are unref'd; we drive regenerate() directly
 });
 after(() => { if (ai) ai.close(); delete process.env.ERA_AI_URL;
   delete process.env.ERA_GEO_URL; delete process.env.ERA_WEATHER_URL; });
@@ -821,9 +827,11 @@ const firstCombos = () => {
   return today.buttons.filter(x => x.type === "outfit")
     .sort((a, b) => a.load.localeCompare(b.load)).map(x => x.combo.join("+"));
 };
-const writePicks = events =>
+// history.json is {days, events} (spec §3.3): days = the page-1 lineups the
+// build recorded, events = the board's picks.
+const writePicks = (events, days = {}) =>
   (fs.mkdirSync(path.join(TMP, "wardrobe"), { recursive: true }),
-   fs.writeFileSync(path.join(TMP, "wardrobe", "history.json"), JSON.stringify({ events })));
+   fs.writeFileSync(path.join(TMP, "wardrobe", "history.json"), JSON.stringify({ days, events })));
 
 test("with no picks yet, today is pure rotation (nothing seated)", async () => {
   fiveGarments();
@@ -836,6 +844,24 @@ test("with no picks yet, today is pure rotation (nothing seated)", async () => {
   const [a, b] = first.map(k => k.split("+"));
   assert.notEqual(a[0], b[0], "no top repeat while alternatives remain");
   assert.notEqual(a[1], b[1], "no bottom repeat while alternatives remain");
+});
+
+// ONE writer for history.json (spec §3.3 as amended A4-1): the worker deals
+// and POSTS the page-1 lineup; the shell records it beside the board's own
+// events, and POST /outfit-event goes through the same door — both on the main
+// thread, so a read-modify-write never races. Weather is offline in this
+// suite, so the day's band is null.
+test("the build records today's page 1 in history.json and leaves the day's events alone", async () => {
+  const today = dayKey(Date.now(), ZONE);
+  const seeded = [{ kind: "yes", combo: ["item_top2", "item_pants1"], at: new Date().toISOString() }];
+  writePicks({ [today]: seeded });
+  await clothing.regenerate(true);
+  const h = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe", "history.json"), "utf8"));
+  assert.deepEqual(h.events[today], seeded, "today's events are untouched by the build");
+  assert.equal(h.days[today].page1.length, 7, "page 1 as dealt: seven outfits");
+  assert.equal(h.days[today].band, null, "weather offline: no band");
+  assert.deepEqual(h.days[today].page1, firstCombos().map(k => k.split("+")), "the same seven the board shows, in order");
+  assert.ok(!fs.existsSync(path.join(TMP, "wardrobe", "history.tmp")), "the atomic write left no tmp file behind");
 });
 
 test("a Yes yesterday seats that outfit first on page 1 today — a Yes today waits for tomorrow", async () => {
