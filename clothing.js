@@ -93,7 +93,11 @@ function readHistory() {
   // Unreadable, and not empty: a parent's picks may be in there. Set it aside
   // for a hand to look at rather than overwrite it with {} (plan T2.2).
   if (raw.trim()) {
-    const aside = file + ".bad-" + Date.now();
+    // A name of its own: two set-asides in the same millisecond used to pick
+    // the same one, and the second rename clobbered the first quarantined
+    // copy — the very bytes this path exists to keep (review r2).
+    let aside = file + ".bad-" + Date.now();
+    for (let n = 2; fs.existsSync(aside); n++) aside = file + ".bad-" + Date.now() + "-" + n;
     try {
       fs.renameSync(file, aside);
       console.error("[clothing] history.json unreadable — moved to " + path.basename(aside));
@@ -105,6 +109,12 @@ function readHistory() {
 // Same-date reruns overwrite (idempotent) and the 60-day window is trimmed
 // by clothing-rank.recordOffer.
 function recordOffer(offer) {
+  // A build that could draw nothing — every tile gone, the precondition the
+  // tile repair exists for — deals an empty page 1. Recording it would REPLACE
+  // the morning's seven-look lineup with none (recordOffer overwrites the day
+  // wholesale), so that day would contribute nothing to tomorrow's yesterday
+  // bar or per-garment freshness. An empty deal leaves the memory alone (r2).
+  if (!offer || !Array.isArray(offer.page1) || !offer.page1.length) return;
   const h = readHistory();
   const combos = offer.page1.map(ids => ({ pieces: ids.map(id => ({ id })) }));
   rank.recordOffer(h, offer.date, combos, combos.length, offer.band);

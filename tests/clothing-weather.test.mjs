@@ -304,6 +304,82 @@ test("a profile time zone this computer does not know still builds today's board
   clothing.start(TMP, { noTimers: true });   // really back to the module's own default (below)
 });
 
+// The BUILD half of "an unreadable history.json is never overwritten" (spec
+// §3.3, plan T2.2). /outfit-event's half is pinned in pool.test.mjs; this is
+// the door that runs every ten minutes on a Drive-local family, so it is the
+// one a transient EBUSY/EPERM (a backup, a virus scanner holding the file)
+// really meets. readHistory rethrows, and the ONE catch around recordOffer
+// (clothing.js) turns that into "log it and keep the board" — without it the
+// throw lands in the worker's message listener and takes the hub down.
+test("a history.json the build cannot open is left alone and the board is still built", {
+  skip: process.getuid && process.getuid() === 0 ? "root reads every file" : false,
+}, async () => {
+  const dir = path.join(TMP, "wardrobe");
+  const hp = path.join(dir, "history.json");
+  fs.mkdirSync(dir, { recursive: true });
+  const seed = JSON.stringify({
+    days: { "2026-07-01": { band: null, page1: [["item_top", "item_bot"]] } },
+    events: { "2026-07-01": [{ kind: "yes", combo: ["item_top", "item_bot"] }] } });
+  fs.writeFileSync(hp, seed);
+  const asideBefore = fs.readdirSync(dir).filter(f => f.startsWith("history.json.bad-")).length;
+  fs.chmodSync(hp, 0o000);
+  try {
+    const r = await clothing.rebuildToday();
+    assert.equal(r.mode, "cataloged", "the board is still built");
+  } finally { fs.chmodSync(hp, 0o644); }
+  assert.equal(fs.readFileSync(hp, "utf8"), seed, "sixty days of memory are byte-for-byte what they were");
+  assert.equal(fs.readdirSync(dir).filter(f => f.startsWith("history.json.bad-")).length, asideBefore,
+    "nothing is wrong with the bytes, so nothing is set aside either");
+});
+
+// recordOffer overwrites the day wholesale, so a deal with nothing in it would
+// replace the morning's seven-look lineup with none — and that day would then
+// contribute nothing to tomorrow's yesterday-bar or freshness. A build can
+// deal nothing whenever every tile is gone (the same precondition the tile
+// repair exists for), which is exactly when the memory matters most (r2).
+test("a build that can draw nothing leaves the day's recorded lineup alone", async () => {
+  const hp = path.join(TMP, "wardrobe", "history.json");
+  await rebuild();
+  const before = JSON.parse(fs.readFileSync(hp, "utf8"));
+  const today = Object.keys(before.days).sort().pop();
+  assert.ok(before.days[today].page1.length > 0, "the morning build recorded a lineup");
+  const items = path.join(TMP, "wardrobe-items");
+  const kept = fs.readdirSync(items).map(f => [f, fs.readFileSync(path.join(items, f))]);
+  kept.forEach(([f]) => fs.rmSync(path.join(items, f)));
+  try { await clothing.rebuildToday(); }
+  finally { kept.forEach(([f, b]) => fs.writeFileSync(path.join(items, f), b)); }
+  const after = JSON.parse(fs.readFileSync(hp, "utf8"));
+  assert.deepEqual(after.days[today], before.days[today], "the day the board went blank still remembers its lineup");
+});
+
+// Two set-asides in the same millisecond used to pick the same name, and the
+// second rename clobbered the first quarantined copy — bytes this path exists
+// to preserve (r2). The sentinels below cover the millisecond the next
+// set-aside can land in, so the collision is certain, not a race.
+test("a set-aside never lands on a name that is already taken", () => {
+  const dir = path.join(TMP, "wardrobe");
+  const hp = path.join(dir, "history.json");
+  const now = Date.now();
+  const sentinels = [];
+  for (let t = now; t <= now + 100; t++) {
+    const f = path.join(dir, "history.json.bad-" + t);
+    fs.writeFileSync(f, "sentinel " + t);
+    sentinels.push([f, "sentinel " + t]);
+  }
+  fs.writeFileSync(hp, "{ not json");
+  clothing.readHistory();
+  try {
+    for (const [f, want] of sentinels)
+      assert.equal(fs.readFileSync(f, "utf8"), want, "an earlier set-aside was overwritten: " + path.basename(f));
+    const asides = fs.readdirSync(dir).filter(f => f.startsWith("history.json.bad-"));
+    assert.equal(asides.filter(f => fs.readFileSync(path.join(dir, f), "utf8") === "{ not json").length, 1,
+      "the unreadable bytes are kept under a name of their own");
+  } finally {
+    for (const f of fs.readdirSync(dir).filter(f => f.startsWith("history.json.bad-")))
+      fs.rmSync(path.join(dir, f));
+  }
+});
+
 // history.json has TWO doors (spec §3.3, A4-1): the build's recordOffer and
 // POST /outfit-event. Validating the zone on the build side alone only moved
 // the damage — the board came back and every Yes was answered 400 instead,
