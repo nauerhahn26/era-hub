@@ -2521,7 +2521,7 @@ server.on("listening", () => {
     else console.log("[content] shelved " + b.slug + " (" + r.files + " file(s) copied)");
     if (failed) console.error("[content] " + b.slug + ": " + failed + " file(s) would not copy onto the shelf: " + r.errors.join("; "));
   };
-  clothing.start(DATA);  // the Clothing Picker generator (no-op without photos)
+  clothing.start(DATA, { tz: () => TZ, deviceId: DEVICE_ID });  // the Clothing Picker generator (no-op without photos)
   content.start(DATA);   // book jobs in the family's Drive folder (local mode only)
   clearStageOnce();      // first boot after install: minimize covering browsers
   // installer-chosen apps install at first boot — but the wizard has the final

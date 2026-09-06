@@ -621,6 +621,40 @@ test("a photo the day's allowance left behind waits for tomorrow; one a transien
   assert.equal(clothing.tick("test"), null);
 });
 
+// A photo removed while the hub was DOWN (I23): the first tick after boot had
+// nothing to compare against (the memory started empty), the board was fresh
+// by the clock, so the removal waited for tomorrow's 5am. The worker now
+// stores what it saw beside .clothing-sig and start() reads it back — a hub
+// that reboots is as observant as one that stayed awake. A fresh copy of the
+// module stands in for the reboot; the shared one keeps its own memory.
+test("start() seeds the photo memory from the last build: a removal while the hub was down is seen by the first tick", async () => {
+  makeJpg(path.join(TMP, "clothing", "photo_k.jpg"), 60, 200, 200);
+  await clothing.regenerate(true);   // the build stores its photo set
+  let cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(cat.items["photo_k.jpg"] && cat.items["photo_k.jpg"].ok, "the photo was catalogued by that build");
+  const modPath = require.resolve("./clothing.js");
+  delete require.cache[modPath];
+  const booted = require("./clothing.js");
+  delete require.cache[modPath];      // the suite's copy stays the one `clothing` points at
+  booted.start(TMP, { noTimers: true });
+  fs.rmSync(path.join(TMP, "clothing", "photo_k.jpg"));
+  const p = booted.tick("test");
+  assert.ok(p, "the removal was noticed on the very first tick after boot");
+  await p;
+  cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.equal(cat.items["photo_k.jpg"], undefined, "and the garment left the wardrobe");
+  assert.equal(booted.tick("test"), null, "settled");
+});
+
+// The worker is spawned with the Drive folder already resolved by the shell
+// (plan W10): drive.js is a main-thread module with its own state, and a
+// second copy in a worker would read the config behind the main one's back.
+test("the worker never loads drive.js", () => {
+  const src = fs.readFileSync(path.join(HUB, "clothing-worker.js"), "utf8");
+  assert.ok(!/require\(["']\.\/drive(\.js)?["']\)/.test(src), "no require of drive.js in the worker");
+  assert.ok(!/drive\.start\(/.test(src), "no drive.start() in the worker");
+});
+
 // Until the repair runs, one absent picture must not empty the board.
 test("an item with no tile is left off the board, not fatal to it", async () => {
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));

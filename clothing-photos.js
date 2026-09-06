@@ -26,4 +26,15 @@ function listPhotos(dir) {
   return out.sort();
 }
 
-module.exports = { listPhotos, EXT };
+// The folder's photos as one string (names + sizes, one per line): what the
+// shell's tick compares between looks, and what the worker stores beside
+// .clothing-sig so a hub that reboots still sees a photo removed while it
+// was down (I23). One function, so the two can never disagree by a byte.
+function photoSet(dir) {
+  return listPhotos(dir).map(f => {
+    try { return f + ":" + fs.statSync(path.join(dir, f)).size; } catch { return f; }
+  }).join("\n");
+}
+const PHOTOSET_FILE = ".clothing-photos";   // written by the worker next to .clothing-sig
+
+module.exports = { listPhotos, photoSet, PHOTOSET_FILE, EXT };

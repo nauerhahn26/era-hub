@@ -54,7 +54,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // Photos as paths relative to clothing/, subfolders included: a family that
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
-const { listPhotos } = require("./clothing-photos");
+const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
 const WEB = () => path.join(DATA, "clothing-web");
 const ITEMS = () => path.join(DATA, "wardrobe-items");
 // Is this item's picture actually on disk? A catalogue entry alone is not
@@ -938,6 +938,13 @@ function clearPlainRecipe() {
 }
 
 const SIG = () => path.join(DATA, ".clothing-sig");
+// The signature and, beside it, the photo set this build saw (names + sizes):
+// the shell's start() reads that back so a photo removed while the hub was
+// down is a change to the first tick after boot (I23).
+function storeSig(sig) {
+  try { fs.writeFileSync(SIG(), sig); } catch {}
+  try { fs.writeFileSync(path.join(DATA, PHOTOSET_FILE), photoSet(CLOTHING())); } catch {}
+}
 
 async function regenerate(force) {
   const files = listPhotos(CLOTHING());
@@ -973,14 +980,14 @@ async function regenerate(force) {
     if (workerData.rebuildOnly) return { rebuildOnly: true, photos: photos.length };
     const guidance = !photos.length ? (aiCfg() ? "no-photos" : "nothing")
                    : (aiCfg() ? (quota ? "ai-quota" : busy ? "ai-busy" : "ingest-failed") : "no-key");
-    try { fs.writeFileSync(SIG(), sig); } catch {}
+    storeSig(sig);
     return { guidance, photos: photos.length, ...tally };
   }
   const boards = await buildCataloged(cat);
   fs.mkdirSync(RECIPES(), { recursive: true });
   fs.writeFileSync(path.join(RECIPES(), "today.json"), JSON.stringify({
     locale: "en-US", root: "today", home_label: "Clothing", boards }, null, 1));
-  try { fs.writeFileSync(SIG(), sig); } catch {}
+  storeSig(sig);
   console.log("[clothing] board built (" + boards.length + " boards)" +
     (tally.left ? ", " + tally.left + " photo(s) still waiting" + (tally.quotaHit ? " (daily allowance)" : "") : ""));
   return { built: boards.length, mode: "cataloged", photos: photos.length, ...tally };

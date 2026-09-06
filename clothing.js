@@ -8,10 +8,19 @@
 const fs = require("fs");
 const path = require("path");
 const { Worker } = require("worker_threads");
-const { listPhotos } = require("./clothing-photos");
+const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
 const { aiRoles, visionCheck } = require("./ai-config.js");
+const drive = require("./drive.js");
 
 let DATA = null;
+// The family's calendar zone and this hub's name, handed in by server.js at
+// start(): the worker seeds the day's deal from the family's day key (spec
+// §3.2) and signs what it shares with the device id. The zone is a getter so
+// a profile edit reaches the next build without a restart. A caller that
+// passes neither (an in-process suite) gets the server's own defaults — a
+// suite that seeds "yesterday" by the clock must pass its zone (plan T2.1).
+let tzOf = () => "America/Los_Angeles";
+let deviceId = "hub";
 let worker = null;
 let ingesting = null;   // {done, total} live from the worker
 let lastResult = null;
@@ -62,8 +71,15 @@ function regenerate(force, opts = {}) {
   }
   return new Promise((resolve) => {
     let done = null;
+    // The Drive folder is resolved HERE, at spawn, from the main thread's
+    // drive.js (the way content.js does): a worker of its own would read the
+    // config behind the main one's back (plan W10). API mode / no folder =
+    // null, and the worker shares nothing.
+    const st = drive.status();
+    const driveFolder = st.mode === "local" && st.folderPath ? st.folderPath : null;
     worker = new Worker(path.join(__dirname, "clothing-worker.js"),
-      { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly } });
+      { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly,
+                      tz: tzOf(), deviceId, driveFolder } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
       if (m.done) {
@@ -125,12 +141,12 @@ function boardIsFresh(dataDir) {
 // deletes photos at 3pm — Drive folder or the data folder itself — expects
 // the board to follow that afternoon, not tomorrow morning (dad 9/2: "all
 // that should just work by adding to the clothing directory").
+// The memory starts as what the LAST build saw (the worker stores its photo
+// set beside .clothing-sig, I23): a photo removed while the hub was down is
+// then a change to the first tick after boot, not a wait for tomorrow's 5am.
 let seenPhotos = null;
-function photoSet(dataDir) {
-  const dir = path.join(dataDir, "clothing");
-  return listPhotos(dir).map(f => {
-    try { return f + ":" + fs.statSync(path.join(dir, f)).size; } catch { return f; }
-  }).join("\n");
+function storedPhotoSet(dataDir) {
+  try { return fs.readFileSync(path.join(dataDir, PHOTOSET_FILE), "utf8"); } catch { return null; }
 }
 
 // Photos the AI has not named yet. A transient 503 or a hub restart mid-batch
@@ -149,7 +165,7 @@ function pendingPhotos(dataDir) {
 
 // Returns the build's promise when it acts, null when there is nothing to do.
 function tick(reason) {
-  const now = photoSet(DATA);
+  const now = photoSet(path.join(DATA, "clothing"));
   const changed = seenPhotos !== null && now !== seenPhotos;
   seenPhotos = now;
   let why = changed ? "photos changed, " : "";
@@ -169,8 +185,15 @@ function tick(reason) {
 // suite that drives the doors itself. The timers are unref'd, but a suite that
 // outlives the 20 s startup tick (a slow parallel gate on this two-CPU box)
 // would otherwise get a surprise full build, AI requests and all (9/5).
+// opts.tz: () => the family's IANA zone; opts.deviceId: this hub's name (both
+// from server.js). Known residual (I22): boardIsFresh's 5am cutoff and the
+// allowance hold (holdDay) still read the OS clock, not the family zone — the
+// deal itself is seeded in the family zone by the worker.
 function start(dataDir, opts = {}) {
   DATA = dataDir;
+  if (typeof opts.tz === "function") tzOf = opts.tz;
+  if (opts.deviceId) deviceId = String(opts.deviceId);
+  seenPhotos = storedPhotoSet(dataDir);
   if (opts.noTimers) return;
   setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
