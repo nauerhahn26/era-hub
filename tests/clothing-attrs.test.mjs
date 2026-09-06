@@ -57,6 +57,10 @@ const pictures = [];           // {width, height} of each picture it was shown
 // answer that will not parse) | "empty" (an answer with nothing in it)
 let mode = "ok";
 let delayMs = 0;               // how long the fake sits on an answer
+// A provider that is busy for a MOMENT and then answers: the next `busyLeft`
+// requests get the 503 whatever `mode` says. A real 503 is transient by
+// definition ("the model is overloaded"), so the pass has to survive one.
+let busyLeft = 0;
 // Three answers, cycled: between them they exercise the whole whitelist —
 // a colour string that must split and cap at three ("light blue" staying ONE
 // entry), a pattern word outside the vocabulary, the string "true" (which is
@@ -104,6 +108,7 @@ const PLAIN = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-p-"));
 const BUSY = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-b-"));
 const BADKEY = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-k-"));
 const NOISE = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-g-"));
+const BLIP = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-t-"));
 // Three attribute-less garments, the shape every wall case below is measured
 // on: enough that "once per garment" and "once for the pass" are different
 // numbers, few enough to stay inside the suite's budget.
@@ -140,6 +145,12 @@ before(async () => {
         } catch { pictures.push(null); }
       }
       const answer = () => {
+        if (busyLeft > 0) {
+          busyLeft--;
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end('{"error":{"code":503,"message":"The model is overloaded"}}');
+          return;
+        }
         if (mode === "429") {
           res.writeHead(429, { "Content-Type": "application/json" });
           res.end('{"error":{"code":429,"message":"Resource exhausted"}}');
@@ -354,9 +365,12 @@ test("a provider that is busy costs the ladder once for the whole pass, not once
   mode = "ok";
 
   // Anthropic's ladder is two models and each gets one retry: four requests.
-  // The first garment spends them and the pass stops for the day. Walking the
-  // wall per garment was twelve requests and 20 s on this fixture.
-  assert.equal(calls - before, 4, "the ladder is walked once, then the pass gives up");
+  // A 503 retires nothing, so it takes the same two garments in a row an
+  // unparsable reply takes — eight requests — before the pass believes the
+  // PROVIDER rather than the garment. Walking the wall per garment was twelve
+  // requests and 20 s on this fixture, and stopping at the first garment cost
+  // the whole wardrobe its day over one transient blip (review r2).
+  assert.equal(calls - before, 8, "two garments' worth of ladder, then the pass gives up");
   assert.equal(r.attrsDone, 0);
   assert.equal(r.attrsLeft, 3, "all three are still waiting");
   // The PHOTO counters are untouched here too (B1-c).
@@ -372,6 +386,35 @@ test("a provider that is busy costs the ladder once for the whole pass, not once
   const after = calls;
   await clothing.regenerate(true);
   assert.equal(calls, after, "and the same day, through a second door, it asks nothing");
+});
+
+// The other half of the same rule. A 503 is transient BY DEFINITION — the
+// model is overloaded this second and answers the next — so one busy moment
+// while the first garment is being asked about must not cost the other
+// thirty-four their day: `attrsTriedAt` means nothing today can come back for
+// them (review r2).
+test("a busy moment at the start of the pass costs one garment, not the wardrobe", async () => {
+  seedWardrobe(BLIP, THREE);
+  withKey(BLIP);
+  clothing.start(BLIP, { noTimers: true, tz: () => ZONE });
+  clothing._testReset();
+
+  busyLeft = 4;                 // exactly the first garment's ladder, then well again
+  const before = calls;
+  const r = await clothing.regenerate(true);
+  busyLeft = 0;
+
+  assert.equal(r.attrsDone, 2, "the two garments asked after the blip were described");
+  assert.equal(r.attrsLeft, 1, "only the garment the blip landed on waits for tomorrow");
+  assert.equal(calls - before, 6, "one wasted ladder, then one call each for the rest");
+
+  const items = catalogOf(BLIP);
+  assert.equal(items["item_w1.jpg"].attrsAt, undefined, "the garment the blip landed on is undescribed");
+  assert.equal(items["item_w1.jpg"].attrsTriedAt, today(), "…but it was tried, so it is not asked again today");
+  for (const k of ["item_w2.jpg", "item_w3.jpg"]) {
+    assert.equal(items[k].attrsAt, today(), k + " was described");
+    assert.ok(items[k].colors.length >= 1, k + " has colours the taste rules can read");
+  }
 });
 
 test("a key the provider refuses stops the pass at the first garment, not at the thirty-fifth", async () => {

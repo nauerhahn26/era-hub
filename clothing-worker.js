@@ -649,14 +649,15 @@ async function describeCatalogued(cfg, cat) {
       } catch (e) {
         console.error("[clothing] attributes " + it.id + ": " + e.message);
         if (calledModel) misses++;
-        // Nothing left to ask WITH (every model spent, or a bad key), or a
-        // provider that is plainly not answering anybody today: stop. The
-        // first two are one garment's evidence; a busy or nonsense answer
-        // takes ATTRS_MAX_MISSES garments in a row before the pass believes
-        // the provider rather than the garment.
+        // Nothing left to ask WITH — every model spent, or a key the provider
+        // refuses — is one garment's evidence and answers for the whole
+        // wardrobe. Everything else (a busy provider, a reply that will not
+        // parse) takes ATTRS_MAX_MISSES garments in a row before the pass
+        // believes the provider rather than the garment: a 503 is transient by
+        // definition, and stopping on the first one cost all thirty-five their
+        // day over one blip (review r2).
         const spent = /\bpermanent\b/.test(e.message) || /allowance spent/.test(e.message);
-        const busy = /\b(503|502|500|high demand|timeout)\b/i.test(e.message);
-        if (spent || busy || misses >= ATTRS_MAX_MISSES) { giveUp(i); break; }
+        if (spent || misses >= ATTRS_MAX_MISSES) { giveUp(i); break; }
       }
       // An answer that parses but carries nothing usable still counts as
       // described: attributes degrade, they never exclude (spec §3.1 item 4).
