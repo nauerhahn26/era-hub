@@ -109,18 +109,28 @@ before(async () => {
   makeJpg(path.join(TMP, "clothing", "waiting.jpg"), 200, 200, 60);
   makeJpg(path.join(TMP, "wardrobe-items", "item_top.jpg"), 220, 60, 90);
   makeJpg(path.join(TMP, "wardrobe-items", "item_bot.jpg"), 60, 90, 220);
-  // ...and three garments the band gate has an opinion about (spec §3.4):
-  // a cold top (tops are never gated), a hot bottom and a cold bottom
+  // ...and four garments the band gate has an opinion about (spec §3.4):
+  // a cold top (tops are never gated), a hot bottom, a cold bottom — and a
+  // SECOND top the warm band admits exactly. Without that second warm top the
+  // "tops never gated" assertion under the warm band could not fail: a gated
+  // top pool would hold one exact match, the widen rule (clothing-rank.js
+  // eligible, "< 2 exact takes the neighbour bands too") would re-admit the
+  // cold top anyway, and the test would pass whether tops were gated or not
+  // (review r1). With two exact warm tops the widen never runs, so the cold
+  // top is on the board only because tops are ungated.
   makeJpg(path.join(TMP, "clothing", "coldtop.jpg"), 120, 40, 160);
+  makeJpg(path.join(TMP, "clothing", "warmtop.jpg"), 80, 180, 100);
   makeJpg(path.join(TMP, "clothing", "hotbot.jpg"), 240, 200, 40);
   makeJpg(path.join(TMP, "clothing", "coldbot.jpg"), 40, 140, 140);
   makeJpg(path.join(TMP, "wardrobe-items", "item_coldtop.jpg"), 120, 40, 160);
+  makeJpg(path.join(TMP, "wardrobe-items", "item_warmtop.jpg"), 80, 180, 100);
   makeJpg(path.join(TMP, "wardrobe-items", "item_hotbot.jpg"), 240, 200, 40);
   makeJpg(path.join(TMP, "wardrobe-items", "item_coldbot.jpg"), 40, 140, 140);
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
     "top.jpg": { id: "item_top", ok: true, name: "Heart print tee", category: "top", warmth: "any" },
     "bot.jpg": { id: "item_bot", ok: true, name: "Pink leggings", category: "pants", warmth: "any" },
     "coldtop.jpg": { id: "item_coldtop", ok: true, name: "Wool sweater", category: "top", warmth: "cold" },
+    "warmtop.jpg": { id: "item_warmtop", ok: true, name: "Sunny tee", category: "top", warmth: "warm" },
     "hotbot.jpg": { id: "item_hotbot", ok: true, name: "Linen shorts", category: "shorts", warmth: "hot" },
     "coldbot.jpg": { id: "item_coldbot", ok: true, name: "Fleece pants", category: "pants", warmth: "cold" },
   } }, null, 1));
@@ -261,14 +271,37 @@ test("a hot window: tops never gated (the cold top is dealt), the hot bottom is 
   assert.equal(aiCalls, 0);
 });
 
+// The warm band admits levels {1,2}: the plain top and the warm top are two
+// EXACT matches, so a gated top pool would stop at those two and the cold top
+// (level 3) could not be widened back in. The cold top is on the board only
+// because tops are never gated (review r1).
 test("a warm window: tops never gated (the cold top is dealt), cold bottom absent", async () => {
   setWindow({ from: 9, to: 12 });
   const t = await rebuild();
   assert.match(t.label, /^67°/, "the 9-12 window is warm, not hot");
   const ids = dealtIds();
+  assert.ok(ids.includes("item_warmtop"), "the two warm-eligible tops are dealt: no widening is possible");
+  assert.ok(ids.includes("item_top"));
   assert.ok(ids.includes("item_coldtop"), "the cold top is still on the board");
   assert.ok(!ids.includes("item_coldbot"), "a cold bottom is not for a warm day");
   assert.equal(aiCalls, 0);
+});
+
+// A profile can name a zone this computer does not know: "Pacific Time" and
+// "America/Los_Angelos" are not IANA names, and dayKey (toLocaleDateString
+// with timeZone) throws RangeError on them. Since the deal is seeded with the
+// family's day key, an unchecked zone threw inside the worker, recipes/
+// today.json was never rewritten and the board was simply gone, every build,
+// with one console line as the only signal (review r1). The shell probes the
+// zone at spawn and falls back to its default instead.
+test("a profile time zone this computer does not know still builds today's board", async () => {
+  clothing.start(TMP, { noTimers: true, tz: () => "Pacific Time" });
+  setWindow({ from: 14, to: 17 });
+  const t = await rebuild();
+  assert.match(t.label, /^80°/, "the board was rebuilt for the 2-5 PM window");
+  assert.ok(dealtIds().includes("item_hotbot"), "and it really has outfits on it");
+  assert.equal(aiCalls, 0);
+  clothing.start(TMP, { noTimers: true });   // back to the module's own default
 });
 
 // LAST — it repoints the module at a second data dir and lets the fake AI be

@@ -21,8 +21,27 @@ let DATA = null;
 // a profile edit reaches the next build without a restart. A caller that
 // passes neither (an in-process suite) gets the server's own defaults — a
 // suite that seeds "yesterday" by the clock must pass its zone (plan T2.1).
-let tzOf = () => "America/Los_Angeles";
+const DEFAULT_TZ = "America/Los_Angeles";
+let tzOf = () => DEFAULT_TZ;
 let deviceId = "hub";
+let badZone = "";   // the last unusable zone we complained about
+// The zone the next build is seeded with. profile.json can hold a zone this
+// computer does not know — "Pacific Time" and "America/Los_Angelos" are not
+// IANA names — and dayKey throws RangeError on those. The deal is seeded with
+// dayKey(now, tz), so an unchecked zone threw inside the worker and the board
+// was simply never rebuilt, every build, with one console line as the only
+// signal. Probe it here and fall back to the default instead (review r1).
+function zone() {
+  const z = String(tzOf() || DEFAULT_TZ);
+  try { rank.dayKey(Date.now(), z); return z; }
+  catch {
+    if (badZone !== z) {
+      badZone = z;
+      console.error("[clothing] profile time zone \"" + z + "\" is not one this computer knows — using " + DEFAULT_TZ);
+    }
+    return DEFAULT_TZ;
+  }
+}
 let worker = null;
 let ingesting = null;   // {done, total} live from the worker
 let lastResult = null;
@@ -51,7 +70,17 @@ function historyPath() { return path.join(DATA, "wardrobe", "history.json"); }
 function readHistory() {
   const file = historyPath();
   let raw;
-  try { raw = fs.readFileSync(file, "utf8"); } catch { return {}; }
+  try { raw = fs.readFileSync(file, "utf8"); }
+  catch (e) {
+    if (e.code === "ENOENT") return {};   // no memory yet: the first build makes it
+    // The file IS there and its bytes never arrived — a backup or a virus
+    // scanner holding it, a mode change. That is NOT "no memory": answering
+    // {} here and writing it back replaces 60 days of page-1 lineups and
+    // every Yes with one entry. Both callers already survive a throw (the
+    // build logs and keeps the board, /outfit-event answers 400), so one
+    // lost pick beats sixty lost days (review r1).
+    throw e;
+  }
   try {
     const h = JSON.parse(raw);
     if (h && typeof h === "object" && !Array.isArray(h)) return h;
@@ -117,8 +146,11 @@ function regenerate(force, opts = {}) {
     const st = drive.status();
     const driveFolder = st.mode === "local" && st.folderPath ? st.folderPath : null;
     worker = new Worker(path.join(__dirname, "clothing-worker.js"),
+      // deviceId and driveFolder are the sharing seam: the worker does not read
+      // them yet (they are consumed in T4.3), the zone it seeds the deal with
+      // is live from this build on.
       { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly,
-                      tz: tzOf(), deviceId, driveFolder } });
+                      tz: zone(), deviceId, driveFolder } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
       // The lineup arrives BEFORE the composites are drawn (I9): the memory
@@ -230,7 +262,9 @@ function tick(reason) {
 // outlives the 20 s startup tick (a slow parallel gate on this two-CPU box)
 // would otherwise get a surprise full build, AI requests and all (9/5).
 // opts.tz: () => the family's IANA zone; opts.deviceId: this hub's name (both
-// from server.js). Known residual (I22): boardIsFresh's 5am cutoff and the
+// from server.js). A zone this computer cannot resolve is never honoured —
+// zone() falls back to the default — so the two clocks below can only ever be
+// a real zone apart. Known residual (I22): boardIsFresh's 5am cutoff and the
 // allowance hold (holdDay) still read the OS clock, not the family zone — the
 // deal itself is seeded in the family zone by the worker.
 function start(dataDir, opts = {}) {
@@ -249,6 +283,8 @@ function start(dataDir, opts = {}) {
 // cannot be slowed down by a folder full of new photos.
 function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
 
+// recordOffer is not exported: the worker's {offer} message is its only caller
+// (server.js uses historyPath/readHistory for POST /outfit-event).
 module.exports = { start, regenerate, rebuildToday, isBuilding, status, boardIsFresh, tick,
-  historyPath, readHistory, recordOffer,
+  historyPath, readHistory,
   _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false; } };

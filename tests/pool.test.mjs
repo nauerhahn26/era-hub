@@ -84,6 +84,28 @@ test("a corrupt history.json is set aside, never overwritten", async () => {
   assert.ok(!fs.existsSync(path.join(TMP, "wardrobe", "history.tmp")), "writeAtomic left no tmp behind");
 });
 
+// ...and the other half of the same promise: a file whose BYTES never arrived
+// (a backup or the virus scanner holding it, a mode change) is not "no memory
+// yet". Answering {} there and writing it back replaces 60 days of page-1
+// lineups and every Yes with one pick. The pick is dropped instead — one look
+// against sixty days (review r1).
+test("a history.json that will not open is left alone and the pick is refused", {
+  skip: process.getuid && process.getuid() === 0 ? "root reads every file" : false,
+}, async () => {
+  const hp = path.join(TMP, "wardrobe", "history.json");
+  const before = fs.readFileSync(hp, "utf8");
+  const asideBefore = fs.readdirSync(path.join(TMP, "wardrobe")).filter(f => f.startsWith("history.json.bad-")).length;
+  fs.chmodSync(hp, 0o000);
+  try {
+    const r = await fetch(`${BASE}/outfit-event`, {
+      method: "POST", body: JSON.stringify({ kind: "yes", combo: ["item_beef"] }) });
+    assert.equal(r.status, 400, "the pick is refused rather than answered from an empty memory");
+  } finally { fs.chmodSync(hp, 0o644); }
+  assert.equal(fs.readFileSync(hp, "utf8"), before, "the memory is byte-for-byte what it was");
+  const aside = fs.readdirSync(path.join(TMP, "wardrobe")).filter(f => f.startsWith("history.json.bad-")).length;
+  assert.equal(aside, asideBefore, "nothing is wrong with the bytes, so nothing is set aside either");
+});
+
 test("heartbeat file exists and is fresh", () => {
   const hb = JSON.parse(fs.readFileSync(path.join(TMP, "pool", "devices", "test-dev.json"), "utf8"));
   assert.equal(hb.device, "test-dev");
