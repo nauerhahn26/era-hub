@@ -215,25 +215,44 @@ history, sub-second); the end-to-end check is small (pre-tiled 5-7 garments, no 
     garment of which the model called a statement piece has no harmonizing pair
     at all, and `buildCandidates` dealt only the dresses (reproduced: 8 tops ×
     7 bottoms all loud → 0 outfits). `clothing-rank.js` therefore drops the
-    `harmonizes` predicate — `avoid` and the ranking stand — when, and only
-    when, tops × bottoms yields no pair, which is spec §3.4's "a wardrobe must
+    `harmonizes` predicate — `avoid` and the ranking stand — when the
+    harmonizing deal cannot fill one page, which is spec §3.4's "a wardrobe must
     never empty the board" applied to the taste gate (P3 review r1).
-    **Empty-only is the threshold, on purpose** (P3 review r2 nit): a wardrobe
-    with ONE plain garment deals a shorter board than the all-loud one (35
-    synthetic garments, band `hot`: all-loud → 21 looks, one-plain-top → 12),
-    and that discontinuity is the garment-once-per-page rule
-    (`outfit_set.py:543-556`) meeting a pool whose every pair needs the same
-    top — not the floor's threshold. Measured: the widened trigger the nit
-    proposed (`pairs.length < pageCap`) deals a byte-identical board on both
-    rows, because in that band the pool already holds 8 harmonizing pairs
-    against a `pageCap` of 7. The board's page 1 there is the five looks it
-    could fill garment-distinct (two sets, two dresses, one pair) and every
-    look after it re-uses that one top, so it is A4-11's short page, not a
-    page-1 repeat: spec §1 V3 holds per ALGORITHMIC page, and a flat
-    `slice(0,7)` spans two of them. Widening the floor to pad such a board
-    with loud-on-loud pairs would push the harmony rule aside for ordinary
-    small wardrobes; the near-empty case degrades by design, and the taste
-    gate's floor stays the last resort spec §3.4 asks for.
+    **The threshold is a PAGE, not emptiness** (P3 review r3; r2's nit was
+    rejected on a `hot`-only measurement and the rejection was wrong in two of
+    the five bands). Re-measured across every band the picker can be in, 35
+    synthetic garments, all-loud vs the same wardrobe with ONE plain top, board
+    length under the shipped empty-only trigger vs `pairs + singles < pageCap`:
+
+    | band | all-loud | one-plain-top, empty-only | one-plain-top, page floor |
+    |---|---|---|---|
+    | hot | 21 | 12 | 12 |
+    | warm | 21 | 18 | 18 |
+    | cool | 21 | **6** | 21 |
+    | cold | 21 | **6** | 21 |
+    | null | 21 | 18 | 18 |
+
+    `cool`/`cold` gate the bottoms to four, all loud, so the only harmonizing
+    pairs are the four using that one plain top: 4 pairs + 2 eligible dresses =
+    a SIX-look board — under one page, and 3.5× shorter than the all-loud
+    wardrobe's, for a wardrobe the model described one garment better. The
+    trigger is therefore `pairs.length + singles.length < pageCap` (the board is
+    `min(cap, pool.length)` looks, so that reads "this deal comes up short of a
+    page"), de-duplicated so a harmonizing pair is never dealt twice. Above a
+    page the floor stays SHUT: `hot` 12 and `warm`/band-null 18 are unchanged,
+    the ordinary 35-garment wardrobe deals a byte-identical board in all five
+    bands, and a board that already holds a page of harmonizing looks is never
+    padded with loud-on-loud ones. Below it a clash is offered rather than a
+    short board, ranked last (`clothing-rank.test.mjs` "a deal shorter than a
+    page opens the floor"). The remaining `hot` 21 → 12 step is the
+    garment-once-per-page rule (`outfit_set.py:543-556`) meeting a pool whose
+    every pair needs the same top, not the floor's threshold: that board's page
+    1 is the five looks it could fill garment-distinct and every look after it
+    re-uses that top, so it is A4-11's short page — spec §1 V3 holds per
+    ALGORITHMIC page and a flat `slice(0,7)` spans two of them.
+    `tests/clothing-variety.test.mjs` pins the board LENGTH per band (a `> 0`
+    row cannot catch a six-look cold morning) and sweeps all five bands, which
+    the r2 rows did not.
 13. §3.1's source precedence ("1. shared tags … 3. the needs-attributes pass")
     inverts on the upgrade morning: the pass stamps `attrsAt` within minutes of
     first boot and `needsAttributes` never revisits a stamped garment, so a
