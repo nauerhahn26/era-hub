@@ -564,7 +564,19 @@ function prune(files) {
 // 429 or 503 alike — so the ladder is spent at most once per garment per day
 // across every intra-day door: a regenerate, a Sync now, the morning tick
 // (plan A4-8).
-const SPACING_MS = Number(process.env.ERA_AI_SPACING_MS) || 5000;
+// The pass's spacing, and its test seam. The PHOTO loop keeps its literal 5 s
+// (`namePhotos`): that one is a rate-limit defence with an incident behind it,
+// and an env var meant to shorten a suite must not be able to take it away.
+const ATTRS_SPACING_MS = Number(process.env.ERA_AI_SPACING_MS) || 5000;
+// How many garments in a row may fail through a healthy-looking ladder before
+// the pass calls the PROVIDER the problem and stops for the day. A 429 retires
+// a model (`spentModels`) and is caught by the "allowance spent" stop below; a
+// 503, a refused key or a reply that will not parse retire nothing, so without
+// this every garment re-walks the whole ladder — ~140 requests and minutes of
+// backoff on the family's 35-garment upgrade morning (review r1). Two in a row
+// is enough: a provider overloaded for two garments is overloaded for the
+// wardrobe, and `attrsTriedAt` means tomorrow tries again from scratch.
+const ATTRS_MAX_MISSES = 2;
 function needsAttributes(it) {
   if (it.attrsAt) return false;                                    // already described
   if (Array.isArray(it.colors) && it.colors.length) return false;  // ...or plainly already has them
@@ -585,17 +597,41 @@ function attrsProbe(id) {
 
 async function describeCatalogued(cfg, cat) {
   const day = todayKey();
-  const todo = Object.values(cat.items).filter(it =>
+  // A probe a killed pass left behind is litter in the family's
+  // wardrobe-items folder and a permanent +1 on the build signature's tile
+  // count, so it is swept whether or not there is anything to describe.
+  const sweepProbe = () => { try { fs.rmSync(path.join(ITEMS(), "_attrs.jpg"), { force: true }); } catch {} };
+  // Entries, not values: the key is the photo's path under clothing/, and the
+  // hash backfill below needs it.
+  const todo = Object.entries(cat.items).filter(([, it]) =>
     it && it.ok && hasTile(it.id) && needsAttributes(it) && it.attrsTriedAt !== day);
-  if (!todo.length) return { attrsDone: 0, attrsLeft: 0 };
+  if (!todo.length) { sweepProbe(); return { attrsDone: 0, attrsLeft: 0 }; }
   let done = 0;
+  let misses = 0;                 // garments in a row whose model call failed
   // Its OWN progress field, not `ingesting` (I16): Settings says "naming 3 of
   // 12 photos" for one loop and something else for the other.
   const post = () => { if (parentPort) parentPort.postMessage({ attrs: { done, total: todo.length } }); };
   post();
+  // Stop for the day: stamp every garment the pass has not reached, so no
+  // later door today walks the same wall garment by garment (I13, A4-8).
+  const giveUp = (i) => {
+    for (const [, rest] of todo.slice(i + 1)) rest.attrsTriedAt = day;
+    saveCatalog(cat);
+  };
   try {
     for (let i = 0; i < todo.length; i++) {
-      const it = todo[i];
+      const [file, it] = todo[i];
+      // The photo's own sha256 is how another device's shared tag finds this
+      // garment when the filename differs (spec §3.1 item 1). A wardrobe
+      // catalogued before this field existed already has its tile, so it
+      // never goes back through the photo loop that computes it — this pass
+      // is the one place that opens the photo again, and without it the
+      // "else by hash" half of the match is dead for exactly the wardrobe the
+      // pass exists to serve. One read, once ever (review r1).
+      if (!it.hash) {
+        try { it.hash = crypto.createHash("sha256").update(fs.readFileSync(path.join(CLOTHING(), file))).digest("hex"); }
+        catch { /* photo gone, tile survives: the id path still matches */ }
+      }
       const shared = tagsFor(it.id, it.hash);
       if (shared) {   // paid for on another device: no call, no spacing
         Object.assign(it, attributes(shared), { attrsAt: day });
@@ -604,28 +640,36 @@ async function describeCatalogued(cfg, cat) {
       }
       it.attrsTriedAt = day;          // stamped before the outcome is known
       saveCatalog(cat);
-      let meta = null;
-      try { meta = await askModel(cfg, attrsProbe(it.id), ATTRS_PROMPT); }
-      catch (e) {
+      let meta = null, calledModel = false;
+      try {
+        const probe = attrsProbe(it.id);     // an unreadable tile asks nobody anything
+        calledModel = true;
+        meta = await askModel(cfg, probe, ATTRS_PROMPT);
+        misses = 0;
+      } catch (e) {
         console.error("[clothing] attributes " + it.id + ": " + e.message);
-        // Nothing left to ask WITH (every model spent, or a bad key): stop,
-        // and stamp the rest of the pass so no later door today walks the
-        // same wall garment by garment (I13, A4-8).
-        if (/\bpermanent\b/.test(e.message) || /allowance spent/.test(e.message)) {
-          for (const rest of todo.slice(i + 1)) rest.attrsTriedAt = day;
-          saveCatalog(cat);
-          break;
-        }
+        if (calledModel) misses++;
+        // Nothing left to ask WITH (every model spent, or a bad key), or a
+        // provider that is plainly not answering anybody today: stop. The
+        // first two are one garment's evidence; a busy or nonsense answer
+        // takes ATTRS_MAX_MISSES garments in a row before the pass believes
+        // the provider rather than the garment.
+        const spent = /\bpermanent\b/.test(e.message) || /allowance spent/.test(e.message);
+        const busy = /\b(503|502|500|high demand|timeout)\b/i.test(e.message);
+        if (spent || busy || misses >= ATTRS_MAX_MISSES) { giveUp(i); break; }
       }
       // An answer that parses but carries nothing usable still counts as
       // described: attributes degrade, they never exclude (spec §3.1 item 4).
-      if (meta) { Object.assign(it, attributes(meta), { attrsAt: day }); done++; }
-      saveCatalog(cat);
-      await new Promise(r => setTimeout(r, SPACING_MS));   // only after a real call
+      if (meta) {
+        Object.assign(it, attributes(meta), { attrsAt: day });
+        done++;
+        saveCatalog(cat);        // nothing changed since the stamp write otherwise
+      }
+      if (calledModel) await new Promise(r => setTimeout(r, ATTRS_SPACING_MS));
       post();
     }
   } finally {
-    try { fs.rmSync(path.join(ITEMS(), "_attrs.jpg"), { force: true }); } catch {}
+    sweepProbe();
     if (parentPort) parentPort.postMessage({ attrs: null });
   }
   if (done) console.log("[clothing] described " + done + " garment(s) the taste rules had no colours for");
@@ -760,7 +804,9 @@ async function namePhotos(cfg, cat, todo) {
       // comfortably under it: a 40-item wardrobe still finishes in ~5 minutes,
       // once, in the background.
       // ...but a tile repair asked nobody anything, so it need not wait.
-      if (usedAi) await new Promise(r => setTimeout(r, SPACING_MS));
+      // Literal, not the pass's seam: this 5 s is the defence, and a stray
+      // ERA_AI_SPACING_MS must not be able to remove it (review r1).
+      if (usedAi) await new Promise(r => setTimeout(r, 5000));
 
       if (parentPort) parentPort.postMessage({ ingesting });
     }

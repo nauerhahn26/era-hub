@@ -26,6 +26,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -52,7 +53,9 @@ let ai, clothing;
 let calls = 0;                 // requests the fake was shown
 const asks = [];               // the TEXT half of each request: what was asked
 const pictures = [];           // {width, height} of each picture it was shown
-let mode = "ok";               // "ok" | "429" | "empty"
+// "ok" | "429" (allowance) | "503" (busy) | "401" (bad key) | "garbage" (an
+// answer that will not parse) | "empty" (an answer with nothing in it)
+let mode = "ok";
 let delayMs = 0;               // how long the fake sits on an answer
 // Three answers, cycled: between them they exercise the whole whitelist —
 // a colour string that must split and cap at three ("light blue" staying ONE
@@ -98,6 +101,15 @@ const DATA = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-"));
 const QUOTA = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-q-"));
 const NOTHING = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-n-"));
 const PLAIN = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-p-"));
+const BUSY = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-b-"));
+const BADKEY = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-k-"));
+const NOISE = fs.mkdtempSync(path.join(os.tmpdir(), "era-attrs-g-"));
+// Three attribute-less garments, the shape every wall case below is measured
+// on: enough that "once per garment" and "once for the pass" are different
+// numbers, few enough to stay inside the suite's budget.
+const THREE = [["item_w1", "Sunny tee", "top"], ["item_w2", "Pond tee", "top"],
+               ["item_w3", "Sky leggings", "pants"]];
+const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 before(async () => {
   process.env.ERA_AI_URL = `http://127.0.0.1:${AI_PORT}`;
@@ -131,6 +143,21 @@ before(async () => {
         if (mode === "429") {
           res.writeHead(429, { "Content-Type": "application/json" });
           res.end('{"error":{"code":429,"message":"Resource exhausted"}}');
+          return;
+        }
+        if (mode === "503") {   // the shape Google's free tier answered EVERY call with, live QA 9/1
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end('{"error":{"code":503,"message":"The model is overloaded"}}');
+          return;
+        }
+        if (mode === "401") {   // a key the family typed wrong, or one that lapsed
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end('{"error":{"message":"invalid x-api-key"}}');
+          return;
+        }
+        if (mode === "garbage") {   // 200, and prose where the JSON object should be
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ content: [{ type: "text", text: "Sorry, I cannot tell." }] }));
           return;
         }
         const a = mode === "empty" ? {} : ATTRS_ANSWERS[(asks.length - 1) % ATTRS_ANSWERS.length];
@@ -197,6 +224,16 @@ test("a wardrobe catalogued before the taste rules is described once, from its o
   for (const it of [a1, a2, a3]) {
     assert.equal(it.attrsAt, today(), it.name + " is stamped with the day it was described");
     assert.equal(it.attrsTriedAt, today(), it.name + " is stamped with the day it was asked");
+  }
+  // A garment catalogued before `hash` existed already has its tile, so it
+  // never goes back through the photo loop — this pass is the one place that
+  // opens its photo again, and without the sha256 the shared-tag "else by
+  // hash" match (spec §3.1 item 1) is dead for exactly the wardrobe the pass
+  // exists to serve.
+  for (const key of ["item_a1.jpg", "item_a2.jpg", "item_a3.jpg"]) {
+    assert.match(items[key].hash || "", /^[0-9a-f]{64}$/, key + " remembers its photo's sha256");
+    assert.equal(items[key].hash, sha256(path.join(DATA, "clothing", key)),
+      key + "'s hash is of the photo's own bytes");
   }
   // the whitelist, end to end (spec §3.1 item 2, clothing-rank.attributes)
   assert.deepEqual(a1.colors, ["pink", "white", "light blue"],
@@ -294,6 +331,105 @@ test("the spent ladder is not spent again the same day, and tomorrow buys exactl
   assert.ok(after["item_q2.jpg"].colors.length >= 1, "the garment that came due was described");
   assert.equal(after["item_q1.jpg"].attrsAt, undefined, "the two still stamped today were left alone");
   assert.equal(after["item_q3.jpg"].attrsAt, undefined);
+});
+
+// A 429 is the one wall that retires a model (`spentModels`), so it is the one
+// wall the "allowance spent" stop above can see. The three below are the walls
+// that leave the ladder looking healthy — a provider under load, a key the
+// provider refuses, a model answering prose — and each of them, unstopped,
+// costs the WHOLE ladder for EVERY garment: on the family's 35-garment upgrade
+// morning that is ~140 requests and minutes of backoff sleeping inside one
+// build, against a free tier of 20 requests a day per model. `attrsTriedAt`
+// bounds it to once a day; nothing bounded it inside a single door (review r1).
+
+test("a provider that is busy costs the ladder once for the whole pass, not once per garment", async () => {
+  seedWardrobe(BUSY, THREE);
+  withKey(BUSY);
+  clothing.start(BUSY, { noTimers: true, tz: () => ZONE });
+  clothing._testReset();
+
+  mode = "503";
+  const before = calls;
+  const r = await clothing.regenerate(true);
+  mode = "ok";
+
+  // Anthropic's ladder is two models and each gets one retry: four requests.
+  // The first garment spends them and the pass stops for the day. Walking the
+  // wall per garment was twelve requests and 20 s on this fixture.
+  assert.equal(calls - before, 4, "the ladder is walked once, then the pass gives up");
+  assert.equal(r.attrsDone, 0);
+  assert.equal(r.attrsLeft, 3, "all three are still waiting");
+  // The PHOTO counters are untouched here too (B1-c).
+  assert.equal(r.left, 0, "no photo is waiting: the pass does not report photos");
+  assert.equal(r.quotaHit, false, "a busy provider is not the photo allowance");
+  assert.equal(clothing.status().heldToday, false, "the day is not held: a photo could still be named today");
+
+  const items = catalogOf(BUSY);
+  for (const k of Object.keys(items)) {
+    assert.equal(items[k].attrsTriedAt, today(), k + " was tried today");
+    assert.equal(items[k].attrsAt, undefined, k + " is still undescribed");
+  }
+  const after = calls;
+  await clothing.regenerate(true);
+  assert.equal(calls, after, "and the same day, through a second door, it asks nothing");
+});
+
+test("a key the provider refuses stops the pass at the first garment, not at the thirty-fifth", async () => {
+  seedWardrobe(BADKEY, THREE);
+  withKey(BADKEY);
+  clothing.start(BADKEY, { noTimers: true, tz: () => ZONE });
+  clothing._testReset();
+
+  mode = "401";
+  const before = calls;
+  const r = await clothing.regenerate(true);
+  mode = "ok";
+
+  // A bad key is not a per-garment problem: one refusal answers for the whole
+  // wardrobe. (Without the give-up branch this is one request per garment.)
+  assert.equal(calls - before, 1, "one request answers for the whole wardrobe");
+  assert.equal(r.attrsDone, 0);
+  assert.equal(r.attrsLeft, 3);
+  assert.equal(r.quotaHit, false);
+  assert.equal(clothing.status().heldToday, false, "the day is not held: the pass has no say over photos");
+
+  const items = catalogOf(BADKEY);
+  for (const k of Object.keys(items)) {
+    assert.equal(items[k].attrsTriedAt, today(), k + " was tried today");
+    assert.equal(items[k].attrsAt, undefined, k + " is still undescribed");
+  }
+  const after = calls;
+  await clothing.regenerate(true);
+  assert.equal(calls, after, "and the same day, through a second door, it asks nothing");
+});
+
+test("a model answering prose is given two garments, not the whole wardrobe", async () => {
+  seedWardrobe(NOISE, THREE);
+  withKey(NOISE);
+  clothing.start(NOISE, { noTimers: true, tz: () => ZONE });
+  clothing._testReset();
+
+  mode = "garbage";
+  const before = calls;
+  const r = await clothing.regenerate(true);
+  mode = "ok";
+
+  // An unparsable reply retires nothing, so the ladder looks healthy for ever.
+  // Two garments in a row is enough evidence that the provider, not the
+  // garment, is the problem: two ladders (two models each), then stop.
+  assert.equal(calls - before, 4, "two garments' worth of ladder, then the pass gives up");
+  assert.equal(r.attrsDone, 0);
+  assert.equal(r.attrsLeft, 3);
+  assert.equal(r.quotaHit, false);
+
+  const items = catalogOf(NOISE);
+  for (const k of Object.keys(items)) {
+    assert.equal(items[k].attrsTriedAt, today(), k + " was tried today");
+    assert.equal(items[k].attrsAt, undefined, k + " is still undescribed");
+  }
+  const after = calls;
+  await clothing.regenerate(true);
+  assert.equal(calls, after, "and the same day, through a second door, it asks nothing");
 });
 
 // A model that looks at a garment and has nothing usable to say about it is
