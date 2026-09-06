@@ -474,6 +474,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
 
 18. [ ] **T6.1 `era-family/tools/clothing-migrate-studio.mjs`**
     - **Acceptance (told to the implementer verbatim):** the file lives at `/home/claude/new-era/era-family/tools/clothing-migrate-studio.mjs`; usage `<studio wardrobe dir> <photos dir> <out .era dir>`; no keys, no network; reads the original `wardrobe.json`, `pairing.json`, `history.json`; maps each garment to a hub id by `sha256(photo bytes) === source_hash` over the photos dir (relative path incl. subfolders, I17), falling back to `"item_" + md5(relative path).slice(0,10)`; writes `tags/studio.jsonl` (hash + id + attributes, warmth as word, `rotate_deg` absent, `retired`/`too_big` skipped and their **filenames written to `<out .era dir>/../do-not-copy.txt`**, one per line — I8; **never printed**, since a curated wardrobe's photo filenames can be garment names and stdout lands in workpads, §F), `pairs/studio.jsonl` (`great`/`avoid`, and per-garment `favorite` lines with one id), `offers/studio/<date>.jsonl` and `picks/studio/<date>.jsonl` with hub ids and `t`; every output file ends with a marker line `{"t":…,"kind":"marker"}` so a re-run changes byte length (W9 — the public reader skips `kind: marker`, T4.2); stdout is **exactly three counts** (`mapped N`, `unmapped N`, `skipped N`, the last being the do-not-copy count) and **never a garment name, colour, filename or id-to-name pair**. A test in `era-family/tools/` (private) runs it on a synthetic studio fixture the test itself generates (invented names, photo filenames that *are* the invented names — the hostile case), asserts the counts, the line shapes, that `do-not-copy.txt` holds the expected entries, and that stdout contains no fixture name and no filename.
+    - **Amended after final review (r1):** `do-not-copy.txt`'s "one per line" is one HELD PHOTO per line as `<path><TAB><why it is held back>`, under a single `#` comment line naming those two columns — the reason is what lets an operator tell outgrown from lost, and without the header a copy-exclusion list fed this file straight would swallow the reason as part of each path. Two guards go with it: a studio `type` that is not a string is no type at all (`isStr`, the guard every other field here already keeps — `String(["top"])` would otherwise ship a category), and a history key is used only when it round-trips through the calendar (`9999-99-99` matches the date SHAPE, and the hub's 60-day window is a string compare, so one junk key would hold a slot in her memory for good).
     - **Verification:** `cd /home/claude/new-era/era-family && node --test tools/clothing-migrate-studio.test.mjs` — `# fail 0`; `node tools/clothing-migrate-studio.mjs <fixture> <fixture-photos> <tmp>/.era | wc -l` — `3`; `grep -n '"marker"' /home/claude/new-era/era-hub--wt-clothing/clothing-log.js` — ≥ 1 hit (the reader's skip, landed in T4.2 with its own test case).
     - **Guardrails:** TDD on the synthetic fixture. **Never** run the tool on real family data as part of this task; the operator runs it from the private restore runbook. Commit only in `era-family` with the named path; nothing from it enters era-hub. The implementer must not open, list or describe any file under `era-family/data/`. §C.
     - **Gate:** `rae-flow:reviewing` — **Scope:** spec §7; output hygiene (no names in stdout); marker line honoured by the public reader. Then **Phase 6 retrospective**.
@@ -485,7 +486,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
     - **Acceptance:** `bash tools/era-gate.sh` from `/home/claude/new-era/era-hub--wt-clothing` completes green with every new suite listed.
     - **Verification:**
       1. `ps -eo pid,cmd | grep -c "[e]ra-gate.sh"` — `0` **before** starting (never run two gates; if `flock -n 9 9>/tmp/era-gate.lock` fails, wait — do not kill).
-      2. `cd /home/claude/new-era/era-hub--wt-clothing && setsid nohup bash tools/era-gate.sh > /tmp/claude-1001/-home-claude-new-era-era-hub--wt-install-qa/7f33e0bc-29df-4672-94e1-76ae3bedc520/scratchpad/clothing/gate.log 2>&1 &` then poll the log (10-minute tool ceiling: background + Monitor).
+      2. `cd /home/claude/new-era/era-hub--wt-clothing && setsid nohup bash tools/era-gate.sh > <scratch>/gate.log 2>&1 &` then poll the log (10-minute tool ceiling: background + Monitor). `<scratch>` is the running agent's own scratchpad directory — a session-id path means nothing to a later reader, so it is not written down here (amended after final review).
       3. The gate prints `PASS <suite>` / `FAIL <suite> (see gate/<suite>.out)` per suite and one summary `== era-gate: N passed, M failed[ → names] ==` (`tools/era-gate.sh:79-80,89-92`); the `# fail` TAP lines live in `gate/<suite>.out`, never in gate.log. So: `grep -cE '^== era-gate: [0-9]+ passed, 0 failed' …/gate.log` — `1`; `grep -c '^FAIL ' …/gate.log` — `0`; `grep -cE 'clothing-(rank|variety|log|share|sync-rebuild|status|attrs)' …/gate.log` — `7` (note `-E`: with BRE the `(`/`|` are literal and the count is 0 on a green log); read `# fail` from `gate/<suite>.out` only when a `FAIL` line names a suite; `clothing.test` duration in `gate/clothing.test.out` `< 720000`.
     - **Guardrails:** §C. Kill nothing by pattern (`pkill -f` self-match — memory); by pid only if a suite hangs past 900 s.
     - **Gate:** green gate is the gate.
@@ -500,7 +501,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
     - **Acceptance:** the feature works as a parent would see it: picks/memory/sharing in status; 21 outfits with page 1 garment-distinct; a second sync leaves today's board alone; two devices deal the same 21. All on synthetic data, no key.
     - **Verification (run in order; expected output after each):**
       ```bash
-      S=/tmp/claude-1001/-home-claude-new-era-era-hub--wt-install-qa/7f33e0bc-29df-4672-94e1-76ae3bedc520/scratchpad/clothing/bv
+      S=<scratch>/bv                     # the running agent's own scratchpad dir
       H=/home/claude/new-era/era-hub--wt-clothing
       rm -rf "$S"; mkdir -p "$S/A" "$S/B" "$S/drive/clothing"
       # two consecutive free ports: A and B never share one (a same-port handoff races the
@@ -522,7 +523,15 @@ implementation with a test file; every function has a byte-for-byte oracle.
       for d in A B; do printf '{"mode":"local","folderPath":"%s"}' "$S/drive" > "$S/$d/drive.json"; done
       SEAMS="ERA_ELEVEN_URL=http://127.0.0.1:1 ERA_FAL_URL=http://127.0.0.1:1 ERA_GEO_URL=http://127.0.0.1:1 ERA_WEATHER_URL=http://127.0.0.1:1 ERA_RESEND_URL=http://127.0.0.1:1 ERA_TMDB_URL=http://127.0.0.1:1 ERA_STREAMING_URL=http://127.0.0.1:1 ERA_BIND=127.0.0.1"
       U="http://127.0.0.1:$PORT"; UB="http://127.0.0.1:$PORTB"
-      (cd "$H" && env $SEAMS ERA_DATA_DIR="$S/A" setsid nohup node server.js $PORT > "$S/hubA.log" 2>&1 & echo $! > "$S/hubA.pid")
+      # The pid file must hold NODE's pid (amended after final review): `env … setsid nohup node &`
+      # + `echo $!` records the wrapper — env execs setsid, setsid forks the session leader and
+      # exits — so `kill $(cat hubA.pid)` before step 4 was a no-op, hub A ran on through hub B's
+      # build on the same temp mount, and both ports leaked at the end (observed: hubA.pid 217058
+      # vs `node server.js 8464` 217059). `bash -c 'echo $$; exec …'` keeps the pid across the exec.
+      starthub() { setsid bash -c "echo \$\$ > '$2'; cd '$H'; exec env $SEAMS ERA_DATA_DIR='$1' node server.js $3" > "$4" 2>&1 & }
+      stophub() { local p; p=$(cat "$1" 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null || { echo "STOP: $2 is not running under the pid it recorded"; return 1; }
+        kill "$p"; for i in $(seq 1 50); do kill -0 "$p" 2>/dev/null || return 0; sleep 0.2; done; echo "STOP: $2 did not exit"; return 1; }
+      starthub "$S/A" "$S/hubA.pid" $PORT "$S/hubA.log"
       waitfor "$U/clothing/status" '"cataloged":35' 60 || echo "STOP: hub A never catalogued 35"
       # → (nothing) — a TIMEOUT/STOP line here is the §E stop
       curl -s -X POST "$U/clothing/regenerate"; echo   # → {"started":true}
@@ -537,7 +546,12 @@ implementation with a test file; every function has a byte-for-byte oracle.
       ID1=$(node -e 'const r=require(process.argv[1]);console.log(r.boards.find(x=>x.id==="today").buttons.find(y=>y.type==="outfit").combo.join(","))' "$S/A/recipes/today.json")
       curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'content-type: application/json' -d "{\"kind\":\"yes\",\"combo\":[\"${ID1/,/\",\"}\"]}" "$U/outfit-event"
       # → 204   (the route answers 204 with an empty body, server.js:1512 — T4.3 keeps that; there is no {"ok":true})
-      ls "$S/drive/clothing/.era/picks/"*/ | head -1        # → <today>.jsonl
+      # The MOUNT line is what carries A4-9 here; the "0" below is only true BEFORE the first
+      # sync mirrors A's own lines back under <DATA_A>/clothing/.era (T4.4 case 2), so these two
+      # lines must stay above the syncs and a bare "0" proves nothing on its own — hence the
+      # non-empty test on the mount file (amended after final review).
+      test -s "$(ls "$S/drive/clothing/.era/picks/"*/*.jsonl | head -1)" && echo "the mount has her pick"
+      # → the mount has her pick
       ls "$S/A/clothing/.era" 2>/dev/null | wc -l           # → 0   (the hub never writes under the mirror target, A4-9)
       idle "$U"; M1=$(stat -c %Y "$S/A/recipes/today.json")
       curl -s -X POST "$U/integrations/drive/sync" >/dev/null; idle "$U"
@@ -546,15 +560,23 @@ implementation with a test file; every function has a byte-for-byte oracle.
       # → mtime unchanged: yes
       # 4. device B deals the same 21 from the same logs (same date, band null, same tags)
       cp "$S/A/wardrobe/history.json" "$S/B/wardrobe/history.json" 2>/dev/null || true   # only days[] < today matter; on day 1 both are empty
-      kill $(cat "$S/hubA.pid"); for i in $(seq 1 50); do kill -0 $(cat "$S/hubA.pid") 2>/dev/null || break; sleep 0.2; done
-      (cd "$H" && env $SEAMS ERA_DATA_DIR="$S/B" setsid nohup node server.js $PORTB > "$S/hubB.log" 2>&1 & echo $! > "$S/hubB.pid")
+      # A is DOWN before B builds — both hubs share the one temp mount, and a live A that
+      # re-synced and rebuilt would silently invalidate the 21-for-21 comparison below. The
+      # STOP line is the point of the wait: a silent `break` is what let A run on (amended
+      # after final review).
+      stophub "$S/hubA.pid" "hub A" || echo "STOP: hub A is still up — do not compare boards"
+      starthub "$S/B" "$S/hubB.pid" $PORTB "$S/hubB.log"
       waitfor "$UB/clothing/status" '"cataloged":35' 60 || echo "STOP: hub B never catalogued 35"
       curl -s -X POST "$UB/clothing/regenerate" >/dev/null; idle "$UB" || echo "STOP: build never settled"
       ALL() { node -e 'const r=require(process.argv[1]);console.log(r.boards.filter(x=>/^today(_\d)?$/.test(x.id)).sort((a,b)=>a.id.localeCompare(b.id)).map(x=>x.id+": "+x.buttons.filter(y=>y.type==="outfit").sort((a,b)=>a.load.localeCompare(b.load)).map(y=>y.combo.join("+")).join(" ")).join("\n"))' "$1"; }
       diff <(ALL "$S/A/recipes/today.json") <(ALL "$S/B/recipes/today.json") && echo "all 21 identical"
       # → all 21 identical   (spec §8 "the identical 21" — pages 2-3, where demotion and garment-once live, are compared too)
       grep -c "device-id" <(ls "$S/A" "$S/B")   # → 2
-      kill $(cat "$S/hubB.pid")
+      stophub "$S/hubB.pid" "hub B"
+      # …and the two reserved ports are given back — the leak that stranded them was invisible
+      # until someone else needed 8464/8465 (amended after final review).
+      ss -ltn | grep -qE ":($PORT|$PORTB) " && echo "STOP: a hub of mine is still listening" || echo "both ports released"
+      # → both ports released
       ```
       Capture every printed line into the workpad's Execution Evidence, tagged with the spec row it proves (O1, V3, V4, S1/§5 "same board everywhere", A4-9).
     - **Guardrails:** synthetic wardrobe only; two ports ≥ 8464 chosen by `ss`, never one port for both hubs; kill by pid and wait for exit; no key file in either DATA; every wait bounded (a `TIMEOUT`/`STOP` line is the §E stop — never loosen a bound). If `cataloged` never reaches 35, STOP (the materialize helper or ingest gate is wrong — do not add a key). If `mtime unchanged: NO` appears, first check `idle` really saw `building:false` twice — a chained build is the usual cause, a rebuild on a log-only sync is the bug. §C.
@@ -584,7 +606,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
 | §1 S1 sharing without a server | T4.1-T4.4 |
 | §1 O1 Settings shows learning | T5.1, T5.2 |
 | §3 module layout (rank / log / worker / clothing / server / settings) | T1.1, T4.2, T2.3, T2.1, T4.3, T5.2; payload list I2 |
-| §3.1 item 1 shared tags by id then hash | T4.2 (reader + `tagsFor` hash-only and id-differs cases), T4.3 (lookup before `askModel`), T4.4 case 6 (hash path end-to-end) |
+| §3.1 item 1 shared tags by id then hash | T4.2 (reader + `tagsFor` hash-only and id-differs cases, and — added after final review — A4-3's `rotate_deg`/`crop` carried across so a device that skips the call does not draw a sideways tile), T4.3 (lookup before `askModel`), T4.4 case 6 (hash path end-to-end) |
 | §3.1 item 2 `INGEST_PROMPT` + whitelist | T3.1 |
 | §3.1 item 3 needs-attributes pass (holdDay as amended A4-8) | T3.2 |
 | §3.1 item 4 degrade, never exclude | T1.2 (isNeutral rule), T1.5 ("no attributes" case: zero-attribute wardrobe fills 21) |
@@ -601,7 +623,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
 | §3.4 weather bands, mapping (incl. `any`), widen, offline = none | T1.1 (`WARMTH_LEVELS`), T1.4 (positive + negative gating cases), T2.3, T2.4 (cold bottom absent) |
 | §3.5 `onSynced → tick`; log-only changes never rebuild; intra-day doors reproduce | T4.3, T4.4 (sync-rebuild "log-only" case), T2.3 |
 | §4 learned favourites (derivePicks, staples, loved) | T1.3, T1.4 |
-| §4 curated pairs + favorite from `pairs/` | T4.2, T4.3 |
+| §4 curated pairs + favorite from `pairs/` | T4.2, T4.3, T4.4 (the `favorite` wiring end-to-end — added after final review: the reader and rankOf both bit, the wiring between them did not) |
 | §4 `/clothing/status` picks/memory/sharing (as A4-2) | T5.1 |
 | §4 Settings sentences | T5.2 |
 | §5 layout of `.era/` | T4.2 |
