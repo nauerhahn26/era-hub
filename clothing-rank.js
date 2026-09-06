@@ -120,8 +120,11 @@ const word = (v, allowed) => {
 // a bug — but the whitelist is where a reply's size is bounded.
 const MAX_COLOR_LEN = 24;
 function colorList(v) {
-  const parts = Array.isArray(v) ? v.flatMap(c => String(c).split(/\s*(?:,|\/|&)\s*|\s+and\s+/i))
-    : typeof v === "string" ? v.split(/\s*(?:,|\/|&)\s*|\s+and\s+/i) : [];
+  // A colour is a STRING, like every other whitelisted word: `String({})`
+  // would write "[object object]" into the family's wardrobe.json (r2 nit).
+  const split = (s) => s.split(/\s*(?:,|\/|&)\s*|\s+and\s+/i);
+  const parts = Array.isArray(v) ? v.filter(c => typeof c === "string").flatMap(split)
+    : typeof v === "string" ? split(v) : [];
   const out = [];
   for (const p of parts) {
     const c = p.trim().toLowerCase().replace(/\s+/g, " ");   // "light blue" stays one entry

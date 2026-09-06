@@ -140,6 +140,12 @@ describe("attributes() whitelist (spec §3.1 item 2, I14)", () => {
     assert.ok(!("palette" in R.attributes({ palette: ["warm"] })));
     assert.ok(!("pattern" in R.attributes({ pattern: ["solid"] })));
     assert.ok(!("vibe" in R.attributes({ vibe: { v: "sporty" } })));
+    // A colour is a word too. `String({})` put "[object object]" in the
+    // family's wardrobe.json — harmless to the board (colours are only ever
+    // compared against NEUTRALS) and still junk the whitelist was written to
+    // keep out (review r2 nit).
+    assert.deepEqual(R.attributes({ colors: [{}, "navy"] }).colors, ["navy"]);
+    assert.deepEqual(R.attributes({ colors: [["red", "blue"]] }).colors, []);
   });
   test("a colour word is a word, not a paragraph", () => {
     assert.deepEqual(R.attributes({ colors: ["x".repeat(50)] }).colors, []);
