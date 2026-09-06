@@ -252,3 +252,26 @@ test("a memory the read-out cannot open makes it say nothing, not 'no picks reco
   const back = await status();
   assert.ok(back.picks.days > 0, "nothing was lost — the file was only shut for a moment");
 });
+
+// The names in "Favourites: …" come from wardrobe.json, so wardrobe.json is one
+// of the files the read-out reads THROUGH and belongs in the memo key beside the
+// memory and the folder. Without it a garment the family removed keeps its name
+// in the card until the next build or Yes — and a catalogue that was unreadable
+// for one poll leaves Favourites empty for the rest of the day.
+test("a garment renamed in the catalogue is renamed in her favourites on the next poll", async () => {
+  const before = await status();
+  const id = before.picks.top[0].combo[0];
+  const catFile = path.join(DATA, "wardrobe.json");
+  const cat = JSON.parse(fs.readFileSync(catFile, "utf8"));
+  const rel = Object.keys(cat.items).find(f => cat.items[f].id === id);
+  const was = fs.statSync(HISTORY);
+  cat.items[rel].name = "Willow cardigan";
+  fs.writeFileSync(catFile, JSON.stringify(cat, null, 1));
+
+  const s = await status();
+  const now = fs.statSync(HISTORY);
+  assert.deepEqual([now.mtimeMs, now.size], [was.mtimeMs, was.size],
+    "the memory did not move — the catalogue is the only thing that changed");
+  assert.equal(s.picks.top[0].names[0], "Willow cardigan",
+    "the card names the garment the catalogue holds now, not the one it held this morning");
+});

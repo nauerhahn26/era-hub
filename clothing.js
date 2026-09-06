@@ -178,9 +178,10 @@ const WRITE_TRIES = 3, WRITE_WAIT_MS = 50;
 // MEMOIZED, NEVER CACHED ON A TIMER (plan W11). Settings polls this every 5 s
 // and the board every 3-15 s, and derivePicks over the merged log on each poll
 // would eat into the 900 ms bound clothing-responsive.test.mjs pins. The key
-// is the family's day plus the stat of the two files the block reads THROUGH —
+// is the family's day plus the stat of the three files the block reads THROUGH —
 // wardrobe/history.json (the memory, and the door every Yes and every build
-// goes through) and drive.json (the folder). A TTL instead would hide a
+// goes through), drive.json (the folder) and wardrobe.json (the names, and the
+// rule that a combo the catalogue lost is dropped). A TTL instead would hide a
 // history.json written a moment ago — by the build, by a Yes, by a hand — for
 // up to a minute, and would leave the card saying "not shared" for that long
 // after a parent picked their Drive folder.
@@ -207,7 +208,13 @@ const hasPick = evs => Array.isArray(evs) && evs.some(e => e && (e.kind === "yes
 
 function readOutFor(items) {
   const today = rank.dayKey(Date.now(), zone());
-  const key = today + "|" + statKey(historyPath()) + "|" + statKey(drivePath());
+  // THE THREE FILES THIS BLOCK READS THROUGH, and nothing else: the memory,
+  // the folder, and the catalogue the garment NAMES come from. A key missing
+  // the catalogue keeps a removed garment's name in "Favourites" until the next
+  // build — and memoizes an empty Favourites for the rest of the day if
+  // wardrobe.json was mid-write on the poll that missed (review r1).
+  const key = today + "|" + statKey(historyPath()) + "|" + statKey(drivePath())
+                    + "|" + statKey(path.join(DATA, "wardrobe.json"));
   if (readOut && readOutKey === key) return readOut;
   const folder = driveFolder();
   const out = { picks: { days: 0, lastDay: null, top: [] },
