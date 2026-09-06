@@ -48,7 +48,13 @@ const JSONL = /^[A-Za-z0-9._-]+\.jsonl$/;
 // The original's warmth is an int level; the hub's is a word (plan W3). The
 // migration tool carries the level, so the reader speaks both.
 const WARMTH_WORD = { 1: "warm", 2: "cool", 3: "cold" };
-let saidNoFolder = false;   // the "no Drive folder" line, once per process
+// Once per module registry: once per process on the main thread, and once per
+// BUILD in the worker, which gets a registry of its own on every run (measured:
+// two consecutive worker runs say the line twice — final review r1). That is
+// still one or two lines a day, because tick() only builds when the photo set
+// changed, the board is stale or leftovers are due; it is not the every-fifteen-
+// minutes line the flag exists to prevent.
+let saidNoFolder = false;   // the "no Drive folder" line
 let saidNoClothing = false; // …and the "the folder has no clothing/ yet" line
 
 // ---- the shapes a line must have to be a line -------------------------------
@@ -102,9 +108,9 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
   const own = slug(deviceId) || "hub";
   const zone = tz || "UTC";
   const mount = driveFolder ? String(driveFolder) : null;
-  // Said once per process, not once per build: the worker opens a log on every
-  // run, and a family without Drive would otherwise read this line every
-  // fifteen minutes for ever.
+  // Said once, not on every append: a family without Drive would otherwise read
+  // this line on every pick and every tag (see the flag's own note above for
+  // what "once" means either side of the worker boundary).
   if (!mount && !saidNoFolder) {
     saidNoFolder = true;
     console.log("[clothing] no Drive folder — this device's picks stay local (nothing is shared)");
@@ -122,7 +128,7 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
       // spec §5: an own write that cannot land is "a log line and nothing
       // else". A parent who points Settings at their Drive folder before the
       // Drive app has made clothing/ in it would otherwise get no signal at
-      // all that sharing is off. Once per process, like the line above.
+      // all that sharing is off. Once, like the line above.
       if (!saidNoClothing) {
         saidNoClothing = true;
         console.log("[clothing] the Drive folder has no clothing/ yet — this device's picks stay local");

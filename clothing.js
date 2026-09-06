@@ -515,9 +515,11 @@ function tick(reason) {
 // reset the zone had not — review r2). A zone this computer cannot resolve is
 // never honoured at either history.json door — zone() falls back to the
 // default — so the two clocks below can only ever be a real zone apart.
-// Known residual (I22): boardIsFresh's 5am cutoff and the
-// allowance hold (holdDay) still read the OS clock, not the family zone — the
-// deal itself is seeded in the family zone by the worker.
+// Known residual (I22): boardIsFresh's 5am cutoff, the allowance hold (holdDay)
+// and the blind-memory re-deal budget (redealDay) all still read the OS clock,
+// not the family zone — the deal itself is seeded in the family zone by the
+// worker. Three doors, and they flip at the box's midnight together (the third
+// was missing from this list until the final review).
 function start(dataDir, opts = {}) {
   DATA = dataDir;
   tzOf = typeof opts.tz === "function" ? opts.tz : () => DEFAULT_TZ;
