@@ -612,7 +612,7 @@ merged-log levers with no bite: a shared tag's `rotate_deg`/`crop`, and the favo
 line's wiring into the deal), `026aa8c` (two comments that claimed more than the code
 does), and in the private repo `aecab41` (migration tool: a type that is not a string is
 not a type, a history key that is not a real date is not a day, and `do-not-copy.txt`
-says what its two columns are). Spec §9 records every A4 item and every review-driven
+says what its two columns are). Spec §10 records every A4 item and every review-driven
 behaviour change as shipped.
 
 

@@ -310,12 +310,11 @@ wardrobe itself, at its own cost, and the boards are dealt either way.
   wants it on the board) — the `pairs/` log is already the store for it.
 - Yes on the confirm page marking the outfit or returning to page 1.
 
-## 9. As shipped in v0.32.2 — amendments to this design
+## 10. As shipped in v0.32.2 — amendments to this design
 
-Written after the cut. Sections 1–8 above are left as they were written on 9/5; this
-section is the difference between them and the code that shipped. (It follows §9
-"Queued for dad" rather than renumbering it, so every "§n" reference elsewhere in the
-plan and in the source comments still points where it did.)
+Written after the cut. Sections 1–9 above are left as they were written on 9/5; this
+section is the difference between them and the code that shipped, so every "§n"
+reference elsewhere in the plan and in the source comments still points where it did.
 
 ### 9.1 The thirteen plan amendments (plan §A4)
 
