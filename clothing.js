@@ -50,6 +50,10 @@ function zone() {
 let worker = null;
 let ingesting = null;   // {done, total} live from the worker
 let lastResult = null;
+// The last build could not read wardrobe/history.json (see the {done} handler):
+// the board on screen was dealt blind, so tick's freshness door does not count
+// it as the day's work.
+let memoryUnread = false;
 let queued = false;     // a regenerate asked for while one was running
 let queuedFull = false; // ...and at least one of those callers wanted a FULL build
 let waiters = [];       // callers that arrived mid-build, awaiting the queued run
@@ -175,6 +179,13 @@ function regenerate(force, opts = {}) {
       }
       if (m.done) {
         done = m.done;
+        // A build that dealt without her memory (history.json there but its
+        // bytes never came) is not the day's work: it has no staples, no
+        // yesterday bar and no freshness, and the day it dealt was never
+        // recorded either. The next tick deals again instead of leaving it up
+        // until the next forced door (r3). Only a build that reached the deal
+        // can answer this, so other results leave the flag alone.
+        if (m.done.mode === "cataloged") memoryUnread = !!m.done.historyUnread;
         // A re-sort that found nothing catalogued has no ingest behind it, so
         // it knows nothing about the allowance or a busy provider: keeping the
         // old verdict leaves the board's "allowance used up" coaching standing
@@ -259,8 +270,8 @@ function tick(reason) {
   const now = photoSet(path.join(DATA, "clothing"));
   const changed = seenPhotos !== null && now !== seenPhotos;
   seenPhotos = now;
-  let why = changed ? "photos changed, " : "";
-  if (!changed && boardIsFresh(DATA)) {
+  let why = changed ? "photos changed, " : memoryUnread ? "the last board was dealt without her memory, " : "";
+  if (!changed && !memoryUnread && boardIsFresh(DATA)) {
     const retry = aiCfg() && holdDay !== new Date().toDateString() &&
       Date.now() - lastRetry >= RETRY_EVERY && pendingPhotos(DATA) > 0;
     if (!retry) return null;
@@ -291,6 +302,7 @@ function start(dataDir, opts = {}) {
   tzOf = typeof opts.tz === "function" ? opts.tz : () => DEFAULT_TZ;
   deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
   seenPhotos = storedPhotoSet(dataDir);
+  memoryUnread = false;   // a fresh start knows nothing about the last build's read
   if (opts.noTimers) return;
   setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
@@ -303,7 +315,7 @@ function start(dataDir, opts = {}) {
 function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
 
 // recordOffer is not exported: the worker's {offer} message is its only caller
-// (server.js uses historyPath/readHistory for POST /outfit-event).
+// (server.js uses historyPath/readHistory/zone for POST /outfit-event).
 module.exports = { start, regenerate, rebuildToday, isBuilding, status, boardIsFresh, tick,
   historyPath, readHistory, zone,
-  _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false; } };
+  _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false; memoryUnread = false; } };

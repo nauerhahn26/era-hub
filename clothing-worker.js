@@ -77,13 +77,34 @@ function loadCatalog() {
 function saveCatalog(c) { fs.writeFileSync(CATALOG(), JSON.stringify(c, null, 1)); }
 // The deal's memory (which looks led page 1 on which day, her Yeses) is
 // wardrobe/history.json {days, events} — the shell writes it (A4-1), this
-// thread only reads it. Unreadable = no memory yet, never a failed build.
+// thread only reads it. A file that is not there yet is simply no memory. A
+// file that IS there and will not open is not: dealing "no memory" gives her a
+// board with no staples, no yesterday bar and no freshness — and the shell's
+// recorder throws on the same bytes, so the day is never recorded either,
+// while recipes/today.json is rewritten and that board then STANDS as the
+// day's work. So: retry the read (a backup or a scanner holds a 5 KB file for
+// milliseconds), and if it still will not come, tell the shell (r3).
 const HISTORY = () => path.join(DATA, "wardrobe", "history.json");
+const READ_TRIES = 3, READ_WAIT_MS = 100;
+let historyUnread = false;   // this build dealt without her memory
+function napMs(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 function readHistory() {
-  // Same shape contract as the shell's reader (clothing.js): a plain object,
-  // or no memory. An array is neither (review r1).
-  try { const h = JSON.parse(fs.readFileSync(HISTORY(), "utf8")); return h && typeof h === "object" && !Array.isArray(h) ? h : {}; }
-  catch { return {}; }
+  for (let tryN = 1; ; tryN++) {
+    let raw;
+    try { raw = fs.readFileSync(HISTORY(), "utf8"); }
+    catch (e) {
+      if (e.code === "ENOENT") return {};        // no memory yet: the first build makes it
+      if (tryN < READ_TRIES) { napMs(READ_WAIT_MS); continue; }
+      historyUnread = true;
+      console.error("[clothing] history.json would not open (" + e.code + ") — dealing without her memory");
+      return {};
+    }
+    // Same shape contract as the shell's reader (clothing.js): a plain object,
+    // or no memory. An array is neither (review r1). Bytes that will not parse
+    // are the shell's to set aside, not this thread's to write.
+    try { const h = JSON.parse(raw); return h && typeof h === "object" && !Array.isArray(h) ? h : {}; }
+    catch { return {}; }
+  }
 }
 
 // ---- image plumbing (vendored decoders; RGBA in Buffers throughout) ----
@@ -938,7 +959,10 @@ async function regenerate(force) {
   storeSig(sig);
   console.log("[clothing] board built (" + boards.length + " boards)" +
     (tally.left ? ", " + tally.left + " photo(s) still waiting" + (tally.quotaHit ? " (daily allowance)" : "") : ""));
-  return { built: boards.length, mode: "cataloged", photos: photos.length, ...tally };
+  // historyUnread only when it really happened: the shell reads it as "this
+  // board is not the day's work, build again on the next tick" (r3).
+  return { built: boards.length, mode: "cataloged", photos: photos.length, ...tally,
+           ...(historyUnread ? { historyUnread: true } : {}) };
 }
 
 regenerate(!!workerData.force)

@@ -346,8 +346,13 @@ test("a build that can draw nothing leaves the day's recorded lineup alone", asy
   const items = path.join(TMP, "wardrobe-items");
   const kept = fs.readdirSync(items).map(f => [f, fs.readFileSync(path.join(items, f))]);
   kept.forEach(([f]) => fs.rmSync(path.join(items, f)));
-  try { await clothing.rebuildToday(); }
-  finally { kept.forEach(([f, b]) => fs.writeFileSync(path.join(items, f), b)); }
+  try {
+    await clothing.rebuildToday();
+    // ...and the build really did draw nothing: without this the case would
+    // stay green if a missing tile ever stopped emptying the deal, while
+    // asserting nothing about the guard it exists for (r3).
+    assert.equal(dealtIds().length, 0, "every tile is gone: the deal is empty");
+  } finally { kept.forEach(([f, b]) => fs.writeFileSync(path.join(items, f), b)); }
   const after = JSON.parse(fs.readFileSync(hp, "utf8"));
   assert.deepEqual(after.days[today], before.days[today], "the day the board went blank still remembers its lineup");
 });
@@ -405,6 +410,51 @@ test("start() without a zone is back to the module's own default", () => {
   clothing.start(TMP, { noTimers: true, tz: () => "Pacific/Kiritimati" });
   clothing.start(TMP, { noTimers: true });
   assert.equal(clothing.zone(), "America/Los_Angeles");
+});
+
+// The OTHER reader of history.json is the worker's, and it used to answer "no
+// memory" for every read error the shell rethrows. A file whose bytes will not
+// come for a moment (a backup, a scanner) therefore dealt a board with no
+// staples, no yesterday bar and no freshness — while the shell's recorder threw
+// on the same file, so that day was never recorded either — and recipes/
+// today.json was rewritten all the same, so the memory-free board STOOD as the
+// day's work until the next forced door (r3). The worker retries the read,
+// then says it dealt blind; the tick builds again rather than leave it up.
+test("a build that could not read the memory is not the day's work", {
+  skip: process.getuid && process.getuid() === 0 ? "root reads every file" : false,
+}, async () => {
+  const T3 = fs.mkdtempSync(path.join(os.tmpdir(), "era-clo-wx3-"));
+  fs.mkdirSync(path.join(T3, "clothing"), { recursive: true });
+  fs.mkdirSync(path.join(T3, "wardrobe-items"), { recursive: true });
+  makeJpg(path.join(T3, "clothing", "top.jpg"), 210, 70, 90);
+  makeJpg(path.join(T3, "clothing", "bot.jpg"), 70, 90, 210);
+  makeJpg(path.join(T3, "wardrobe-items", "item_top.jpg"), 210, 70, 90);
+  makeJpg(path.join(T3, "wardrobe-items", "item_bot.jpg"), 70, 90, 210);
+  // No ai-config.json in here: every build below is free, and the tick that
+  // follows one cannot be a photo retry (nothing is waiting to be named).
+  fs.writeFileSync(path.join(T3, "wardrobe.json"), JSON.stringify({ items: {
+    "top.jpg": { id: "item_top", ok: true, name: "Sunny tee", category: "top", warmth: "any" },
+    "bot.jpg": { id: "item_bot", ok: true, name: "Pond leggings", category: "pants", warmth: "any" },
+  } }, null, 1));
+  clothing.start(T3, { noTimers: true });
+  await clothing.regenerate(true);
+  const hp = path.join(T3, "wardrobe", "history.json");
+  const memory = fs.readFileSync(hp, "utf8");
+  assert.ok(Object.keys(JSON.parse(memory).days).length, "the healthy build recorded the day it dealt");
+  assert.equal(clothing.tick("test"), null, "a board dealt with her memory is the day's work");
+
+  fs.chmodSync(hp, 0o000);
+  let r;
+  try { r = await clothing.rebuildToday(); } finally { fs.chmodSync(hp, 0o644); }
+  assert.equal(r.mode, "cataloged", "a locked memory file never costs her the board");
+  assert.equal(r.historyUnread, true, "...but the build says it dealt without her memory");
+  assert.equal(fs.readFileSync(hp, "utf8"), memory, "the memory it could not read is untouched");
+
+  const again = clothing.tick("test");
+  assert.ok(again, "the next tick deals again instead of leaving the memory-free board up");
+  const r2 = await again;
+  assert.ok(!r2.historyUnread, "the second build read the memory");
+  assert.equal(clothing.tick("test"), null, "...and once it has, the board is the day's work again");
 });
 
 // LAST — it repoints the module at a second data dir and lets the fake AI be
