@@ -21,14 +21,17 @@ const RESUME = process.env.VM_RESUME ? "VM_RESUME: driving the VM as it stands" 
 // every journey starts from the launcher: a failed step never cascades into the next
 const home = () => vm.home(page);
 
-test("VM: pristine snapshot, candidate installer in the guest", { timeout: 480000, skip: RESUME }, () => {
+test("VM: pristine snapshot, candidate installer in the guest", { timeout: 600000, skip: RESUME }, () => {   // 390 s on the starved 9/6 host
   vm.revert();
   vm.push("qa/candidate.exe", "setup.exe");
   assert.ok(vm.exists(GUEST_HOME + "\\setup.exe"), "setup.exe landed");
   assert.ok(!vm.exists(INSTDIR + "\\start-hub.bat"), "pristine: no New ERA installed");
 });
 
-test("silent install (/S): core + node + shortcuts land, the hub does NOT auto-launch", { timeout: 300000, skip: RESUME }, async () => {
+// 600 s like leg B's same step: installSilently alone budgets 2 × 180 s, and on
+// 9/6 (QA host 31–44 % CPU steal from a noisy neighbour) the install that took
+// 118 s the day before blew a 300 s cap while every later step still passed
+test("silent install (/S): core + node + shortcuts land, the hub does NOT auto-launch", { timeout: 600000, skip: RESUME }, async () => {
   await vm.installSilently("setup.exe");
   for (const f of ["start-hub.bat", "server.js", "node\\node.exe", "VERSION", "public\\favicon.ico", "Uninstall.exe", "data\\apps.json"])
     assert.ok(vm.exists(INSTDIR + "\\" + f), f + " installed");
