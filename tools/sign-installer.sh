@@ -36,7 +36,12 @@
 # Alternative (PFX exported from a card/cloud tool — same env file):
 #   SIGN_PFX=/home/claude/new-era/era-family/data/certum-oss.pfx  SIGN_PFX_PASS=…
 set -euo pipefail
-EXE="${1:?usage: sign-installer.sh <file.exe>}"
+EXE="${1:?usage: sign-installer.sh <file.exe> | --check}"
+# --check: sign nothing — exit 0 when a cut WOULD sign (or honestly not sign),
+# 1 when it would fail on the login. release.sh asks before spending the gate:
+# the Desktop's login lapses after ~2 h and on 9/6 a 50-min green gate was
+# followed by "not logged in" at the cut.
+CHECK=0; [ "$EXE" = "--check" ] && CHECK=1
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 ENV="$ROOT/era-family/data/signing.env"
@@ -44,11 +49,13 @@ OSSL="$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode"
 SS="$ROOT/era-family/cache/simplysign"
 
 if [ ! -f "$ENV" ]; then
+  [ "$CHECK" = 1 ] && { echo "sign: ready (no signing.env — the cut stays honestly unsigned)"; exit 0; }
   echo "sign: UNSIGNED $(basename "$EXE") (no era-family/data/signing.env — see docs/signing-plan.md)"
   exit 0
 fi
 set -a; . "$ENV"; set +a
 [ -x "$OSSL" ] || { echo "sign: osslsigncode missing at $OSSL"; exit 1; }
+[ "$CHECK" = 1 ] && [ -n "${SIGN_PFX:-}" ] && { echo "sign: ready (PFX)"; exit 0; }
 
 TSA="${SIGN_TSA:-http://time.certum.pl}"
 COMMON=(-n "New ERA" -i "https://neweracommunications.org" -h sha256 -ts "$TSA")
@@ -72,6 +79,7 @@ else
     echo "sign: SimplySign Desktop is not logged in (no token) — era-family/tools/simplysign.sh login/token, then re-cut"
     exit 1
   fi
+  [ "$CHECK" = 1 ] && { echo "sign: ready (SimplySign token on the slot)"; exit 0; }
   if [ -n "${SIGN_CERT_PEM:-}" ]; then CERTARGS=(-certs "$SIGN_CERT_PEM" -key "$KEY_URI")
   else CERTARGS=(-pkcs11cert "$CERT_URI" -key "$KEY_URI"); fi
   [ -f "$CHAIN" ] && CERTARGS+=(-ac "$CHAIN")
