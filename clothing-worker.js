@@ -551,6 +551,92 @@ function prune(files) {
   return gone;
 }
 
+// ---- the needs-attributes pass (spec §3.1 item 3) -------------------------
+// A garment the hub already knows by name but has never described. One call
+// each, through the SAME provider ladder the photos use (one `chosenModel`,
+// one `spentModels`), from the tile that is already on disk — never a second
+// HEIC decode (I12).
+//
+// The marker is `attrsAt` (plan A4-5), never "colours empty": a model that
+// answers with nothing usable still stamps it, so a garment it has nothing to
+// say about is not asked again every morning for ever. `attrsTriedAt` is the
+// day's stamp and goes on BEFORE the answer is known — parsed, unparsable,
+// 429 or 503 alike — so the ladder is spent at most once per garment per day
+// across every intra-day door: a regenerate, a Sync now, the morning tick
+// (plan A4-8).
+const SPACING_MS = Number(process.env.ERA_AI_SPACING_MS) || 5000;
+function needsAttributes(it) {
+  if (it.attrsAt) return false;                                    // already described
+  if (Array.isArray(it.colors) && it.colors.length) return false;  // ...or plainly already has them
+  return !it.pattern;
+}
+// Another device may have paid for this garment already (spec §3.1 item 1:
+// by id, else by content hash). The shared log is wired in T4.3; until then
+// nothing can hit and every garment goes to the model.
+function tagsFor(_id, _hash) { return null; }
+// The picture the pass sends: the 640 tile, scaled to the same 384 px single
+// billing tile the photo probe uses. The photo itself is never opened again.
+function attrsProbe(id) {
+  const tile = decodeJpg(fs.readFileSync(path.join(ITEMS(), id + ".jpg")), { maxMemoryUsageInMB: 1024 });
+  const probe = path.join(ITEMS(), "_attrs.jpg");
+  writeJpg(scaleRgba(tile, 384), probe, 78);
+  return probe;
+}
+
+async function describeCatalogued(cfg, cat) {
+  const day = todayKey();
+  const todo = Object.values(cat.items).filter(it =>
+    it && it.ok && hasTile(it.id) && needsAttributes(it) && it.attrsTriedAt !== day);
+  if (!todo.length) return { attrsDone: 0, attrsLeft: 0 };
+  let done = 0;
+  // Its OWN progress field, not `ingesting` (I16): Settings says "naming 3 of
+  // 12 photos" for one loop and something else for the other.
+  const post = () => { if (parentPort) parentPort.postMessage({ attrs: { done, total: todo.length } }); };
+  post();
+  try {
+    for (let i = 0; i < todo.length; i++) {
+      const it = todo[i];
+      const shared = tagsFor(it.id, it.hash);
+      if (shared) {   // paid for on another device: no call, no spacing
+        Object.assign(it, attributes(shared), { attrsAt: day });
+        saveCatalog(cat); done++; post();
+        continue;
+      }
+      it.attrsTriedAt = day;          // stamped before the outcome is known
+      saveCatalog(cat);
+      let meta = null;
+      try { meta = await askModel(cfg, attrsProbe(it.id), ATTRS_PROMPT); }
+      catch (e) {
+        console.error("[clothing] attributes " + it.id + ": " + e.message);
+        // Nothing left to ask WITH (every model spent, or a bad key): stop,
+        // and stamp the rest of the pass so no later door today walks the
+        // same wall garment by garment (I13, A4-8).
+        if (/\bpermanent\b/.test(e.message) || /allowance spent/.test(e.message)) {
+          for (const rest of todo.slice(i + 1)) rest.attrsTriedAt = day;
+          saveCatalog(cat);
+          break;
+        }
+      }
+      // An answer that parses but carries nothing usable still counts as
+      // described: attributes degrade, they never exclude (spec §3.1 item 4).
+      if (meta) { Object.assign(it, attributes(meta), { attrsAt: day }); done++; }
+      saveCatalog(cat);
+      await new Promise(r => setTimeout(r, SPACING_MS));   // only after a real call
+      post();
+    }
+  } finally {
+    try { fs.rmSync(path.join(ITEMS(), "_attrs.jpg"), { force: true }); } catch {}
+    if (parentPort) parentPort.postMessage({ attrs: null });
+  }
+  if (done) console.log("[clothing] described " + done + " garment(s) the taste rules had no colours for");
+  return { attrsDone: done, attrsLeft: todo.length - done };
+}
+
+// Ingest is TWO loops (W7). The first names the photos nobody has named; the
+// second describes the garments nobody has described (spec §3.1 item 3) — the
+// family's own wardrobe on the morning of the upgrade has no new photos at
+// all, and an early `return {done: 0}` there would have meant it never got the
+// attributes the taste rules read.
 async function ingest() {
   const cfg = aiCfg();
   if (!cfg) return { skipped: "no-ai-key" };
@@ -568,7 +654,16 @@ async function ingest() {
   const legacyTurn = (f) => cat.items[f] && cat.items[f].ok && cat.items[f].exif === undefined &&
     photoOrientation(path.join(CLOTHING(), f)) !== 1;
   const todo = files.filter(f => !cat.items[f] || !cat.items[f].ok || !hasTile(cat.items[f].id) || legacyTurn(f));
-  if (!todo.length) return { done: 0 };
+  const named = todo.length ? await namePhotos(cfg, cat, todo)
+    : { done: 0, landed: 0, left: 0, quotaHit: false, busy: false, quota: false };
+  // The pass never touches the photo counters above: `holdDay`, the board's
+  // "allowance used up" coaching and the hourly leftovers retry are all about
+  // PHOTOS, and a pass that ran out of requests must not silence any of them
+  // (plan A4-8, blocker B1-c).
+  return { ...named, ...await describeCatalogued(cfg, cat) };
+}
+
+async function namePhotos(cfg, cat, todo) {
   fs.mkdirSync(ITEMS(), { recursive: true });
   ingesting = { done: 0, total: todo.length };
   let busyCount = 0, quotaCount = 0, landed = 0;
@@ -665,7 +760,7 @@ async function ingest() {
       // comfortably under it: a 40-item wardrobe still finishes in ~5 minutes,
       // once, in the background.
       // ...but a tile repair asked nobody anything, so it need not wait.
-      if (usedAi) await new Promise(r => setTimeout(r, 5000));
+      if (usedAi) await new Promise(r => setTimeout(r, SPACING_MS));
 
       if (parentPort) parentPort.postMessage({ ingesting });
     }
@@ -988,7 +1083,12 @@ async function regenerate(force) {
   const quota = !!(ing && ing.quota);
   // What the shell needs to decide on a same-day retry: how many photos are
   // still waiting, and whether this build ran into the day's allowance.
-  const tally = { landed: (ing && ing.landed) || 0, left: (ing && ing.left) || 0, quotaHit: !!(ing && ing.quotaHit) };
+  const tally = { landed: (ing && ing.landed) || 0, left: (ing && ing.left) || 0, quotaHit: !!(ing && ing.quotaHit),
+    // The needs-attributes pass keeps its own two counters (plan T3.2). They
+    // are reported, never acted on: `left`/`quotaHit` above are the PHOTO
+    // counters the shell's holdDay and the board's coaching read, and the pass
+    // has no say over either (A4-8).
+    attrsDone: (ing && ing.attrsDone) || 0, attrsLeft: (ing && ing.attrsLeft) || 0 };
   const cat = loadCatalog();
   const haveCatalog = Object.values(cat.items).some(i => i.ok);
   if (!haveCatalog) {

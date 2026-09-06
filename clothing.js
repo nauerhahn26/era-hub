@@ -49,6 +49,10 @@ function zone() {
 }
 let worker = null;
 let ingesting = null;   // {done, total} live from the worker
+// The needs-attributes pass counts itself separately (I16): "naming 3 of 12
+// photos" and "describing 4 of 35 garments" are two different sentences, and
+// the pass must never look like photo work — nothing about it holds the day.
+let attrs = null;       // {done, total} live from the pass
 let lastResult = null;
 // The last build's memory did not work: either wardrobe/history.json would not
 // OPEN (the worker dealt blind — no staples, no yesterday bar, no freshness) or
@@ -165,7 +169,7 @@ function status() {
     cataloged = Object.values(cat.items || {}).filter(i => i.ok).length;
   } catch {}
   photos = listPhotos(path.join(DATA, "clothing")).length;
-  return { building: !!worker, ingesting, cataloged, photos,
+  return { building: !!worker, ingesting, attrs, cataloged, photos,
     aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null,
     // whether the provider recognised the key when it was saved (null = unchecked)
     aiKeyOk: cfg ? cfg.keyOk : null, aiKeyError: cfg ? cfg.keyError : "",
@@ -205,6 +209,7 @@ function regenerate(force, opts = {}) {
                       tz: zone(), deviceId, driveFolder } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
+      if ("attrs" in m) attrs = m.attrs;
       // The lineup arrives BEFORE the composites are drawn (I9): the memory
       // tomorrow's deal reads must not depend on every picture surviving.
       if (m.offer) {
@@ -252,7 +257,7 @@ function regenerate(force, opts = {}) {
     });
     worker.on("error", (e) => console.error("[clothing] worker: " + e.message));
     worker.on("exit", () => {
-      worker = null; ingesting = null;
+      worker = null; ingesting = null; attrs = null;
       const result = done || lastResult || {};
       resolve(result);
       if (queued) {
@@ -374,6 +379,7 @@ function start(dataDir, opts = {}) {
   tzOf = typeof opts.tz === "function" ? opts.tz : () => DEFAULT_TZ;
   deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
   seenPhotos = storedPhotoSet(dataDir);
+  ingesting = null; attrs = null;
   // a fresh start knows nothing about the last build's memory, either half
   memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false;
   if (opts.noTimers) return;
