@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(path.join(HUB, "server.js"));
-const { openLog, mergeHistory } = require("./clothing-log.js");
+const { openLog, mergeHistory, sharedWriters } = require("./clothing-log.js");
 const { dayKey, yesterdayOf, HISTORY_DAYS_KEPT } = require("./clothing-rank.js");
 
 const ZONE = "UTC";
@@ -442,4 +442,32 @@ test("an empty or broken local memory merges to just the shared half", () => {
   }
   const alone = mergeHistory({ events: { "2026-09-04": [] }, days: {} }, { picksEvents: {}, offers: {} });
   assert.deepEqual(alone.days, {}, "no shared half is no change");
+});
+
+// ---- who else is in the folder (spec §4 "sharing", plan T5.1/W12) ----------
+//
+// Settings says "Shared with: 2 devices". A COUNT is all the hub may say: a
+// writer name is a hostname slug and /clothing/status is public and
+// unauthenticated (W12), so the module hands back the names and the caller
+// takes .size — the ids never leave this device.
+
+test("the other writers in the family's folder are found, and this device is not one of them", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/${OWN}/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa", "item_bbbb"] });
+  deliver(b.dataDir, `picks/dev-b/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa", "item_bbbb"] });
+  deliver(b.dataDir, `offers/dev-b/${TODAY}.jsonl`, { band: null, page1: [["item_aaaa"]] });
+  deliver(b.dataDir, `offers/dev-c/${TODAY}.jsonl`, { band: null, page1: [["item_cccc"]] });
+  deliver(b.dataDir, "tags/studio.jsonl", { id: "item_aaaa", category: "top", warmth: 1 });
+  deliver(b.dataDir, `tags/${OWN}.jsonl`, { id: "item_bbbb", category: "top", warmth: 1 });
+  assert.deepEqual([...sharedWriters(b.dataDir, OWN)].sort(), ["dev-b", "dev-c", "studio"],
+    "two other devices and the family's migration tool; this device is not counted twice");
+  assert.deepEqual([...sharedWriters(b.dataDir, "OWN-DEV!")].sort(), ["dev-b", "dev-c", "studio"],
+    "the caller's id is slugged here too, exactly as an own write slugs it");
+});
+
+test("a family that has never shared anything has no other writers", () => {
+  const b = beds();
+  assert.equal(sharedWriters(b.dataDir, OWN).size, 0, "and no throw for a folder that is not there");
+  deliver(b.dataDir, `picks/${OWN}/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa"] });
+  assert.equal(sharedWriters(b.dataDir, OWN).size, 0, "one device's own lines coming back are not company");
 });

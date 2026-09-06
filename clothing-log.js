@@ -283,6 +283,29 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
   return { appendPick, appendOffer, appendTag, readMerged, tagsFor };
 }
 
+// ---- who else writes here (spec §4 "sharing", plan W12) --------------------
+// The distinct writer names under <DATA>/clothing/.era — every other device in
+// the family, plus any tool that wrote into the folder (the migration tool
+// signs its lines "studio", §7) — with this device's own name left out.
+//
+// The NAMES stay here. /clothing/status is public and unauthenticated and a
+// writer name is a hostname slug (W12), so the only thing the caller may take
+// out of this Set is its size: "Shared with: 2 devices".
+function sharedWriters(dataDir, deviceId) {
+  const own = slug(deviceId) || "hub";
+  const root = path.join(String(dataDir || ""), "clothing", ERA);
+  const out = new Set();
+  for (const kind of ["picks", "offers"])
+    for (const name of dirsOf(path.join(root, kind))) if (name !== own) out.add(name);
+  for (const kind of ["tags", "pairs"])
+    for (const name of filesOf(path.join(root, kind))) {
+      if (!JSONL.test(name)) continue;                 // .part siblings, .mirrored.json (I19)
+      const writer = name.slice(0, -".jsonl".length);
+      if (writer !== own) out.add(writer);
+    }
+  return out;
+}
+
 // ---- one memory out of two (spec §5 "Reads", §6 step 4) ---------------------
 // buildCandidates takes a single {days, events}. The LOCAL canonical is this
 // device's — wardrobe/history.json, one writer (A4-1/A4-9) — and everything
@@ -341,4 +364,4 @@ function filesOf(dir) {
   catch { return []; }
 }
 
-module.exports = { openLog, mergeHistory };
+module.exports = { openLog, mergeHistory, sharedWriters };

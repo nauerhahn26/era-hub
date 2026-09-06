@@ -13,6 +13,7 @@ const { aiRoles, visionCheck } = require("./ai-config.js");
 const drive = require("./drive.js");
 const contentStore = require("./content-store.js");
 const rank = require("./clothing-rank.js");
+const clothingLog = require("./clothing-log.js");
 
 let DATA = null;
 // The family's calendar zone and this hub's name, handed in by server.js at
@@ -161,15 +162,112 @@ function recordOffer(offer) {
 }
 const WRITE_TRIES = 3, WRITE_WAIT_MS = 50;
 
+// ---- the read-out: what a parent can SEE of the learning (spec §4) ---------
+//
+// Settings' Clothing Picker card is the only window onto any of this: how many
+// days of picks are recorded, which looks she keeps choosing (by name), how
+// much of the sixty-day memory is filled, and whether the family's other
+// devices are in it too. Everything here is derived from files this module
+// already owns — no new store, and nothing written.
+//
+// PUBLIC ENDPOINT. /clothing/status answers anyone on the network, and the
+// sibling /content/status deliberately says nothing about devices. So sharing
+// is a COUNT, never the writer names (plan W12/A4-2), the Drive folder's path
+// is never in the payload, and nothing about a garment but its name and id.
+//
+// MEMOIZED, NEVER CACHED ON A TIMER (plan W11). Settings polls this every 5 s
+// and the board every 3-15 s, and derivePicks over the merged log on each poll
+// would eat into the 900 ms bound clothing-responsive.test.mjs pins. The key
+// is the family's day plus the stat of the two files the block reads THROUGH —
+// wardrobe/history.json (the memory, and the door every Yes and every build
+// goes through) and drive.json (the folder). A TTL instead would hide a
+// history.json written a moment ago — by the build, by a Yes, by a hand — for
+// up to a minute, and would leave the card saying "not shared" for that long
+// after a parent picked their Drive folder.
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+let readOut = null, readOutKey = null;
+function statKey(file) {
+  try { const st = fs.statSync(file); return st.mtimeMs + ":" + st.size; } catch { return "0"; }
+}
+function drivePath() { return path.join(DATA, "drive.json"); }
+// The Drive folder without drive.status(): drive.js's own `mode` is "local"
+// even when no folder was ever picked (it means "Drive for Desktop", not
+// "unshared"), so the card would say "Shared with 1 device" to every family
+// that never connected anything (W13).
+function driveFolder() {
+  try {
+    const d = JSON.parse(fs.readFileSync(drivePath(), "utf8"));
+    if (d && d.mode === "local" && d.folderPath) return String(d.folderPath);
+  } catch {}
+  return null;
+}
+// A day counts as a day of picks if derivePicks would credit something for it.
+const hasPick = evs => Array.isArray(evs) && evs.some(e => e && (e.kind === "yes" || e.kind === "select")
+  && Array.isArray(e.combo) && e.combo.length);
+
+function readOutFor(items) {
+  const today = rank.dayKey(Date.now(), zone());
+  const key = today + "|" + statKey(historyPath()) + "|" + statKey(drivePath());
+  if (readOut && readOutKey === key) return readOut;
+  const folder = driveFolder();
+  const out = { picks: { days: 0, lastDay: null, top: [] },
+                memory: { days: 0, yesterdayPage1: 0 },
+                sharing: { mode: folder ? "drive" : "local", devices: 1 } };
+  try {
+    // Her memory as the next build will read it: this device's canonical file
+    // (A4-1) plus every other device's lines the mirror delivered (spec §5).
+    let local = {};
+    try { local = readHistory(); } catch { /* set aside/unreadable: say nothing rather than lie */ }
+    const log = clothingLog.openLog({ dataDir: DATA, driveFolder: folder, deviceId, tz: zone() });
+    const hist = clothingLog.mergeHistory(local, log.readMerged(today));
+
+    // picks: days strictly before today (§3.3), so this morning's own Yes
+    // counts tomorrow — exactly as the deal reads it.
+    const dates = Object.keys(hist.events)
+      .filter(d => DATE_KEY.test(d) && d < today && hasPick(hist.events[d])).sort();
+    out.picks.days = dates.length;
+    out.picks.lastDay = dates.length ? dates[dates.length - 1] : null;
+    const names = new Map();
+    for (const it of Object.values(items || {})) if (it && it.ok && it.id) names.set(it.id, it.name || "");
+    const weights = rank.derivePicks(hist.events, today);
+    out.picks.top = Object.entries(weights)
+      // by weight, then by key so two combos she likes equally do not swap
+      // places between two polls a second apart
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .map(([k, weight]) => ({ combo: k.split("+"), weight }))
+      // A combo naming a garment the catalogue no longer holds (a photo the
+      // family deleted) is dropped, not shown with a hole in it.
+      .filter(c => c.combo.every(id => names.has(id)))
+      .slice(0, 5)
+      .map(c => ({ combo: c.combo, names: c.combo.map(id => names.get(id)), weight: c.weight }));
+
+    // memory: every day the sixty holds, TODAY INCLUDED — the build that just
+    // finished is the first thing a parent looks for after "new outfits".
+    out.memory.days = Object.keys(hist.days).filter(d => DATE_KEY.test(d)).length;
+    const yd = hist.days[rank.yesterdayOf(today)];
+    out.memory.yesterdayPage1 = yd && Array.isArray(yd.page1) ? yd.page1.length : 0;
+
+    // …and how many devices are writing into the family's folder. The names
+    // stay inside clothing-log.js; only the count comes out.
+    out.sharing.devices = 1 + clothingLog.sharedWriters(DATA, deviceId).size;
+  } catch (e) {
+    console.error("[clothing] the picks read-out could not be built: " + e.message);
+  }
+  readOut = out; readOutKey = key;
+  return out;
+}
+
 function status() {
   const cfg = aiCfg();
-  let cataloged = 0, photos = 0;
+  let cataloged = 0, photos = 0, items = {};
   try {
     const cat = JSON.parse(fs.readFileSync(path.join(DATA, "wardrobe.json"), "utf8"));
-    cataloged = Object.values(cat.items || {}).filter(i => i.ok).length;
+    items = cat.items || {};
+    cataloged = Object.values(items).filter(i => i.ok).length;
   } catch {}
   photos = listPhotos(path.join(DATA, "clothing")).length;
   return { building: !!worker, ingesting, attrs, cataloged, photos,
+    ...readOutFor(items),
     aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null,
     // whether the provider recognised the key when it was saved (null = unchecked)
     aiKeyOk: cfg ? cfg.keyOk : null, aiKeyError: cfg ? cfg.keyError : "",
@@ -380,6 +478,10 @@ function start(dataDir, opts = {}) {
   deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
   seenPhotos = storedPhotoSet(dataDir);
   ingesting = null; attrs = null;
+  // The read-out's memo is keyed on the day and two files' stats, and a data
+  // dir that has neither file yet keys the same as any other — so a start()
+  // pointed at a new dir must forget it, not answer the last one's numbers.
+  readOut = null; readOutKey = null;
   // a fresh start knows nothing about the last build's memory, either half
   memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false;
   if (opts.noTimers) return;
