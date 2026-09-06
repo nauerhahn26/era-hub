@@ -200,6 +200,12 @@
       <button id="aiKeySave">Save key</button>
     </div>
     <div class="status" id="aiStatus"></div>
+    <!-- What the Clothing Picker has learned (spec §4 / §1 row O1). Its own
+         line, under #aiStatus: that one is overwritten wholesale by four
+         exclusive branches, so a read-out inside it would vanish the moment a
+         key went missing or a batch of photos started naming — exactly when a
+         parent goes looking. -->
+    <div class="status" id="picksStatus"></div>
   </div>
 
   <div class="card" id="content">
@@ -850,6 +856,9 @@ async function aiPaint(){
   try{
     const s=await (await fetch("/clothing/status",{cache:"no-store"})).json();
     if(s.aiProvider && !aiProvTouched && s.aiProvider!==aiProvSel){ aiProvSel=s.aiProvider; aiProvPaint(); }
+    // Painted from the SAME answer, and before the branch chain below: the
+    // read-out belongs to every one of those states, including "no key yet".
+    picksPaint(s);
     // no library-wide count here either: the batch total shifts as Drive keeps
     // materialising files (dad 9/1)
     if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos…</b> "+s.ingesting.done+" done so far.";
@@ -866,6 +875,50 @@ async function aiPaint(){
     }
     else $("aiStatus").innerHTML='<span class="bad">No key yet — the Clothing Picker waits for one (its screen walks you through this too).</span>';
   }catch(e){}
+}
+// ---- "Her picks": what the Clothing Picker has learned (spec §4, T5.2) ----
+// Two sentences, from /clothing/status' picks/memory/sharing. Garment names
+// are the only family text on this page besides a book title, so they go
+// through CT_ESC exactly as those do. A payload without the block (an older
+// hub answering a newer page during an update) simply leaves the line empty.
+//
+// The day key is turned into a date with the three NUMBERS — new Date(y,m-1,d),
+// never new Date("2026-09-02"), which is midnight UTC and so the day before in
+// California, and would name the wrong weekday for half the family's day.
+function picksDay(key){
+  const p=String(key||"").split("-").map(Number);
+  if(p.length!==3||p.some(isNaN)) return "";
+  const then=new Date(p[0],p[1]-1,p[2]), now=new Date();
+  const days=Math.round((new Date(now.getFullYear(),now.getMonth(),now.getDate())-then)/86400000);
+  if(days<=1) return "last one yesterday";
+  // A weekday name only says which day it was inside the last week; past that
+  // "last Thursday" would be a lie a parent could act on, so name the date.
+  if(days<7) return "last "+then.toLocaleDateString(undefined,{weekday:"long"});
+  return "last on "+then.toLocaleDateString(undefined,{day:"numeric",month:"long"});
+}
+function picksPaint(s){
+  const el=$("picksStatus"); if(!el) return;
+  if(!(s&&s.picks&&s.memory)){ el.innerHTML=""; return; }
+  let h;
+  if(!s.picks.days){
+    h="No picks recorded yet — every Yes on the board is remembered from tomorrow.";
+  } else {
+    const when=picksDay(s.picks.lastDay);
+    h="<b>Her picks:</b> "+s.picks.days+" day"+(s.picks.days===1?"":"s")+" recorded"+(when?", "+when:"")+".";
+    const top=(s.picks.top||[]).map(c=>
+      CT_ESC((c.names||[]).join(" + "))+" (×"+(Math.round((c.weight||0)*10)/10)+")");
+    if(top.length) h+=" Favourites: "+top.join(", ")+".";
+  }
+  // "Shared with" only when the family really has a mirrored folder: drive.js
+  // calls its default mode "local" whether or not one was ever picked, so the
+  // hub says "drive" only when there is a folder (W13). One device is not a
+  // family — say what is true rather than "shared with 1 device".
+  if(s.sharing&&s.sharing.mode==="drive"){
+    const n=s.sharing.devices||1;
+    h+="<br>"+(n>1?"Shared with: <b>"+n+" devices</b>."
+                 :"Shared through your Google Drive folder — no other device has written to it yet.");
+  }
+  el.innerHTML=h;
 }
 aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
 

@@ -80,8 +80,16 @@ after(async () => {
   fake.close();
 });
 
-async function settingsPage(contentStatus) {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+// settingsPage(contentStatus, opts) — opts.clothing stubs /clothing/status the
+// way contentStatus stubs /content/status (the Clothing Picker read-out has to
+// be reachable without a wardrobe, a build or a key), and opts.timezoneId puts
+// the browser in a named zone: the card turns a day key into a weekday, and
+// "2026-09-02" parsed as a UTC instant is the day BEFORE in California.
+async function settingsPage(contentStatus, opts = {}) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true,
+    ...(opts.timezoneId ? { timezoneId: opts.timezoneId } : {}) });
+  if (opts.clothing) await ctx.route("**/clothing/status", r => r.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify(opts.clothing) }));
   // ERAgaze lives on 127.0.0.1:49155 on the family PC; here nothing answers
   await ctx.route("http://127.0.0.1:49155/**", r => r.abort());
   // A book job needs a local Drive folder full of photos; the card's job is to
@@ -604,4 +612,126 @@ test("the weather-window row loads the saved hours and saves a change", async ()
     assert.equal(await saved(), undefined);
     assert.equal(await page.$eval("#wxTo", s => s.disabled), true);
   } finally { await ctx.close(); await post(null); }
+});
+
+// ---- "Her picks": the Clothing Picker read-out (spec §4, plan T5.2) --------
+//
+// Nothing in Settings used to show that the picker learns anything at all
+// (spec §1 row O1): a parent saw "35 clothing items catalogued" and had no way
+// to tell whether the Yeses on the board were remembered. This card is that
+// window — and it is the only place a garment NAME is printed on this page, so
+// it is escaped like a book title is.
+//
+// /clothing/status is stubbed per case: the read-out's own arithmetic is
+// pinned in tests/clothing-status.test.mjs, and what this suite owns is the
+// sentence a parent reads.
+const clothingPayload = (over) => ({
+  building: false, ingesting: null, attrs: null, cataloged: 8, photos: 8,
+  aiConfigured: true, aiProvider: "google", aiKeyOk: true, aiKeyError: "",
+  waiting: 0, heldToday: false, guidance: null,
+  picks: { days: 0, lastDay: null, top: [] },
+  memory: { days: 0, yesterdayPage1: 0 },
+  sharing: { mode: "local", devices: 1 },
+  ...over,
+});
+// A day key `back` days before today IN THE BROWSER'S ZONE, and the weekday
+// name that key stands for (built from the three numbers, never parsed from
+// the string — that is the bug the card's local-date rule exists for).
+function dayKeyBack(back, timeZone) {
+  const [y, m, d] = new Date().toLocaleDateString("en-CA", { timeZone }).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - back)).toISOString().slice(0, 10);
+}
+const weekdayOf = (key) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "long" });
+};
+const picksText = (page) => page.$eval("#picksStatus", e => e.textContent);
+
+test("the picks card names her favourite looks, and escapes the names (O1)", async () => {
+  const yesterday = dayKeyBack(1, "UTC");
+  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+    picks: { days: 24, lastDay: yesterday, top: [
+      { combo: ["item_aaaa", "item_bbbb"], names: ["Sunny <b>tee</b>", "Pond shorts"], weight: 3 },
+      { combo: ["item_cccc"], names: ["Meadow dress"], weight: 2 },
+    ] },
+    memory: { days: 33, yesterdayPage1: 7 },
+  }) });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+  const t = await picksText(page);
+  assert.match(t, /24 days recorded/, t);
+  assert.match(t, /Sunny <b>tee<\/b> \+ Pond shorts \(×3\)/, "a two-piece look reads as one outfit: " + t);
+  assert.match(t, /Meadow dress \(×2\)/, "a dress is one name, not an empty half: " + t);
+  const html = await page.$eval("#picksStatus", e => e.innerHTML);
+  assert.match(html, /Sunny &lt;b&gt;tee&lt;\/b&gt;/, "a garment name is family text, escaped: " + html);
+  assert.equal(html.includes("<b>tee</b>"), false, "…and never markup the page runs");
+  assert.equal(t.includes("item_"), false, "an id is not a sentence: " + t);
+  await ctx.close();
+});
+
+test("with no picks yet the card says what will happen tomorrow, not nothing", async () => {
+  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload() });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+  const t = await picksText(page);
+  assert.match(t, /No picks recorded yet/, t);
+  assert.match(t, /every Yes on the board is remembered from tomorrow/, t);
+  await ctx.close();
+});
+
+test("the sharing line appears only when the family really has a Drive folder", async () => {
+  const shared = clothingPayload({ picks: { days: 4, lastDay: dayKeyBack(1, "UTC"), top: [] },
+    sharing: { mode: "local", devices: 3 } });
+  let { ctx, page } = await settingsPage(null, { clothing: shared });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+  assert.doesNotMatch(await picksText(page), /Shared with/, "no folder, no claim about other devices");
+  await ctx.close();
+
+  ({ ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+    picks: shared.picks, sharing: { mode: "drive", devices: 3 } }) }));
+  await page.waitForFunction(() => /Shared with/.test(document.getElementById("picksStatus").textContent));
+  assert.match(await picksText(page), /Shared with: 3 devices/);
+  await ctx.close();
+
+  // A folder nobody else has written into yet is not "shared with 1 device".
+  ({ ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+    picks: shared.picks, sharing: { mode: "drive", devices: 1 } }) }));
+  await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+  const t = await picksText(page);
+  assert.doesNotMatch(t, /Shared with: 1 device/, t);
+  assert.match(t, /no other device/i, t);
+  await ctx.close();
+});
+
+test("the picks line survives the branches that overwrite the AI status line", async () => {
+  const picks = { days: 6, lastDay: dayKeyBack(1, "UTC"),
+    top: [{ combo: ["item_aaaa"], names: ["Sunny tee"], weight: 1.5 }] };
+  for (const over of [{ aiConfigured: false, aiProvider: null, aiKeyOk: null, cataloged: 0 },
+                      { ingesting: { done: 2, total: 9 } },
+                      { aiConfigured: true, aiKeyOk: false, aiKeyError: "That key was not recognised" }]) {
+    const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({ picks, ...over }) });
+    await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+    const t = await picksText(page);
+    assert.match(t, /6 days recorded/, JSON.stringify(over) + " → " + t);
+    assert.match(t, /Sunny tee \(×1\.5\)/, "half a credit is still a favourite: " + t);
+    await ctx.close();
+  }
+});
+
+test("a pick made yesterday says yesterday; an older one names its weekday in the family's zone", async () => {
+  let { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+    picks: { days: 2, lastDay: dayKeyBack(1, "UTC"), top: [] } }) });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+  assert.match(await picksText(page), /yesterday/, "the one day a weekday name would be silly");
+  await ctx.close();
+
+  // California, four days back: "2026-09-02" parsed as an instant is midnight
+  // UTC, which is the day BEFORE here — the card would name the wrong weekday.
+  const zone = "America/Los_Angeles";
+  const back4 = dayKeyBack(4, zone);
+  ({ ctx, page } = await settingsPage(null, { timezoneId: zone,
+    clothing: clothingPayload({ picks: { days: 9, lastDay: back4, top: [] } }) }));
+  await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+  const t = await picksText(page);
+  assert.match(t, new RegExp("last " + weekdayOf(back4)), back4 + " → " + t);
+  assert.doesNotMatch(t, /yesterday/, t);
+  await ctx.close();
 });
