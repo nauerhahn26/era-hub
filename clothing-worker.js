@@ -595,6 +595,16 @@ const ATTRS_SPACING_MS = Number(process.env.ERA_AI_SPACING_MS) || 5000;
 // is enough: a provider overloaded for two garments is overloaded for the
 // wardrobe, and `attrsTriedAt` means tomorrow tries again from scratch.
 const ATTRS_MAX_MISSES = 2;
+// A4-13, decided in T4.3 and written up in spec §3.1 item 3 + §7: `attrsAt` is
+// a ONE-WAY door. A garment this device has described is never re-opened, so a
+// `tags/` line arriving on a later Drive pull cannot replace what the local
+// model said — spec §3.1's "shared tags first" holds only if the migration
+// tool's output is in the mirrored folder before this hub's first build, which
+// is the documented operator order. The rejected alternative (a sweep in which
+// a tag whose `t` is newer than `attrsAt` wins) does not even cover the case it
+// was proposed for: the tool stamps `t` when the operator RUNS it, hours before
+// the upgraded hub boots, so the sweep would read an older tag and keep the
+// model's answer anyway.
 function needsAttributes(it) {
   if (it.attrsAt) return false;                                    // already described
   if (Array.isArray(it.colors) && it.colors.length) return false;  // ...or plainly already has them
@@ -663,6 +673,12 @@ async function describeCatalogued(cfg, cat) {
       }
       const shared = tagsFor(it.id, it.hash);
       if (shared) {   // paid for on another device: no call, no spacing
+        // Attributes ONLY — deliberately not the tag's `rotate_deg`/`crop`,
+        // which the photo loop does take (W5). This pass runs on garments whose
+        // tile already exists and is not redrawn here, and it was cut with THIS
+        // device's own turn: adopting a foreign geometry without redrawing
+        // would turn a correct tile wrong (the 9/3 upside-down-shorts failure)
+        // instead of righting a wrong one.
         Object.assign(it, attributes(shared), { attrsAt: day });
         saveCatalog(cat); done++; post();
         continue;

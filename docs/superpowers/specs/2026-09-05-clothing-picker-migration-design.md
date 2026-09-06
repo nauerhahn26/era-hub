@@ -87,6 +87,20 @@ public/settings      "Her picks" read-out
    call per item through the same provider ladder, the same 5 s spacing, the same
    holdDay/allowance rules, and only when a vision key is configured. Items it cannot
    reach today stay as they are.
+   **This precedence is a one-way door, and the order of the upgrade morning decides
+   it** (plan A4-13, settled in T4.3): the pass stamps `attrsAt` on a garment within
+   minutes of first boot and nothing revisits a stamped garment, so a `tags/` line that
+   arrives on a LATER Drive pull can no longer replace what this device's own model
+   said. Source 1 therefore only beats source 3 if the migration tool's output is
+   already in the mirrored folder when the upgraded hub builds for the first time —
+   which is why §7's placement step comes before the first boot, not after it. The
+   alternative considered and rejected was a `tagsFor` sweep independent of
+   `needsAttributes` in which a tag whose `t` is newer than `attrsAt` wins: it does not
+   actually cover this case, because the tool's `t` is stamped when the operator RUNS
+   it, which on the restore is hours *before* the hub's first boot — the sweep would
+   look at an older tag and keep the model's answer. It would also let one device's
+   later re-describe silently overwrite another's, for a family that has no way to see
+   or undo it.
 4. **Missing attributes degrade, never exclude**: no colours/pattern → `isNeutral`
    is treated as true when `statement` is false; `statement` defaults false; empty
    palette/vibe score 0. A wardrobe with no attributes at all ranks as "all basics"
@@ -248,6 +262,15 @@ back to `md5(source filename)` (= the hub id when the filename is unchanged); wr
 with hub ids, and prints counts of what could not be mapped. Placement into the
 family Drive folder is an operator step in the private restore runbook. Nothing from
 it enters era-hub.
+
+**Ordering (A4-13): the tool's `.era` output must be in the mirrored folder BEFORE the
+upgraded hub builds for the first time.** The hub's needs-attributes pass (§3.1 item 3)
+describes every garment it can reach on that first morning and stamps `attrsAt`, and a
+stamped garment is never revisited — so a `tags/studio.jsonl` that lands afterwards is
+read for garments the hub has not described yet and ignored for the ones it has. Placing
+the folder first is what makes §3.1 item 1's "zero AI calls" true for the family's
+already-tagged wardrobe. Nothing breaks if the order slips: the hub describes the
+wardrobe itself, at its own cost, and the boards are dealt either way.
 
 ## 8. Tests (node:test, no key, no network; ports 8458–8462 — 8450–8457 are taken by hand-run hubs)
 
