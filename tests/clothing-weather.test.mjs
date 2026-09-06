@@ -69,6 +69,12 @@ function tile() {
   const today = r.boards.find(b => b.id === "today");
   return today.buttons.find(b => b.type === "control" && b.row === 1 && b.col === 1);
 }
+// every outfit's garment ids, from every today page (today, today_2, ...)
+function dealtIds() {
+  const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  return r.boards.filter(b => /^today(_\d)?$/.test(b.id))
+    .flatMap(b => b.buttons.filter(x => x.type === "outfit").flatMap(x => x.combo));
+}
 
 before(async () => {
   process.env.ERA_GEO_URL = `http://127.0.0.1:${WX_PORT}/geo`;
@@ -103,9 +109,20 @@ before(async () => {
   makeJpg(path.join(TMP, "clothing", "waiting.jpg"), 200, 200, 60);
   makeJpg(path.join(TMP, "wardrobe-items", "item_top.jpg"), 220, 60, 90);
   makeJpg(path.join(TMP, "wardrobe-items", "item_bot.jpg"), 60, 90, 220);
+  // ...and three garments the band gate has an opinion about (spec §3.4):
+  // a cold top (tops are never gated), a hot bottom and a cold bottom
+  makeJpg(path.join(TMP, "clothing", "coldtop.jpg"), 120, 40, 160);
+  makeJpg(path.join(TMP, "clothing", "hotbot.jpg"), 240, 200, 40);
+  makeJpg(path.join(TMP, "clothing", "coldbot.jpg"), 40, 140, 140);
+  makeJpg(path.join(TMP, "wardrobe-items", "item_coldtop.jpg"), 120, 40, 160);
+  makeJpg(path.join(TMP, "wardrobe-items", "item_hotbot.jpg"), 240, 200, 40);
+  makeJpg(path.join(TMP, "wardrobe-items", "item_coldbot.jpg"), 40, 140, 140);
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
     "top.jpg": { id: "item_top", ok: true, name: "Heart print tee", category: "top", warmth: "any" },
     "bot.jpg": { id: "item_bot", ok: true, name: "Pink leggings", category: "pants", warmth: "any" },
+    "coldtop.jpg": { id: "item_coldtop", ok: true, name: "Wool sweater", category: "top", warmth: "cold" },
+    "hotbot.jpg": { id: "item_hotbot", ok: true, name: "Linen shorts", category: "shorts", warmth: "hot" },
+    "coldbot.jpg": { id: "item_coldbot", ok: true, name: "Fleece pants", category: "pants", warmth: "cold" },
   } }, null, 1));
   // a key IS configured — the point is that the rebuild door still never calls it
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
@@ -228,6 +245,30 @@ test("the rebuild door never wakes the AI (photos wait for a real run)", async (
   assert.equal(aiCalls, 0, "waiting.jpg was NOT ingested: rebuildToday() re-sorts only");
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.ok(!cat.items["waiting.jpg"], "the uncatalogued photo is still waiting");
+});
+
+// The band gate is the original's (outfit_set.py:397-402, spec §3.4): bottoms
+// and singles are gated by the hours she is out, TOPS NEVER ARE — a sweater
+// on a hot day is her call, a fleece pant on a hot day is not dealt.
+test("a hot window: tops never gated (the cold top is dealt), the hot bottom is dealt, cold bottom absent from every page", async () => {
+  setWindow({ from: 14, to: 17 });
+  const t = await rebuild();
+  assert.ok(t.label.includes("hot"), "the 2-5 PM window really is hot: " + t.label);
+  const ids = dealtIds();
+  assert.ok(ids.includes("item_coldtop"), "the cold top is still on the board");
+  assert.ok(ids.includes("item_hotbot"), "the hot bottom is dealt");
+  assert.ok(!ids.includes("item_coldbot"), "the cold bottom is absent from every look of every page");
+  assert.equal(aiCalls, 0);
+});
+
+test("a warm window: tops never gated (the cold top is dealt), cold bottom absent", async () => {
+  setWindow({ from: 9, to: 12 });
+  const t = await rebuild();
+  assert.match(t.label, /^67°/, "the 9-12 window is warm, not hot");
+  const ids = dealtIds();
+  assert.ok(ids.includes("item_coldtop"), "the cold top is still on the board");
+  assert.ok(!ids.includes("item_coldbot"), "a cold bottom is not for a warm day");
+  assert.equal(aiCalls, 0);
 });
 
 // LAST — it repoints the module at a second data dir and lets the fake AI be

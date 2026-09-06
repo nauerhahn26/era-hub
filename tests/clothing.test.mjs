@@ -808,13 +808,18 @@ test("the Shorts tile does not wear the Pants pictogram (bug 22)", () => {
 // weight, and the most-worn looks lead page 1 in two staple slots — variety
 // by prioritisation, never exclusion. Since 9/5 the deal IS the original's
 // (clothing-rank.js): page 1 is garment-distinct and seeded by the family's
-// day, so this block's wardrobe is seven tops by seven bottoms — enough for
-// seven distinct looks on page 1 and 21 a day — and hermetic: every other
+// day, so this block's wardrobe is EIGHT tops by seven bottoms — seven
+// distinct looks on page 1, 21 a day, and always one garment spare so page 1
+// can sit out yesterday's look without the tiny-pool relaxation (a 7×7 with
+// one look demoted leaves exactly that pair for the seventh slot) — and
+// hermetic: every other
 // photo leaves clothing/ first, so no re-ingest can add a garment the fake
 // AI happens to name. Ids stay loose (item_top1): only /outfit-event
 // validates the hex shape (I10).
-const dayAgo = n => new Date(Date.now() - n * 86400e3).toLocaleDateString("en-CA");
-const TOPS = ["Sunny tee", "Cloud tee", "Pond tee", "Maple tee", "Berry tee", "Fern tee", "Dune tee"];
+// n days ago as a family-day key, walked back with the rank's own calendar
+// (never now − n×86400e3: a DST day is 23 or 25 hours long, I6)
+const dayAgo = n => { let k = dayKey(Date.now(), ZONE); for (let i = 0; i < n; i++) k = yesterdayOf(k); return k; };
+const TOPS = ["Sunny tee", "Cloud tee", "Pond tee", "Maple tee", "Berry tee", "Fern tee", "Dune tee", "Coral tee"];
 const BOTTOMS = ["Sky leggings", "Moss jeans", "Sand pants", "Ruby leggings", "Lake jeans", "Cocoa pants", "Mint leggings"];
 function sevenBySeven() {
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
@@ -888,17 +893,40 @@ test("the build records today's page 1 in history.json and leaves the day's even
   assert.ok(!fs.existsSync(path.join(TMP, "wardrobe", "history.tmp")), "the atomic write left no tmp file behind");
 });
 
-test("a Yes yesterday seats that outfit first on page 1 today — a Yes today waits for tomorrow", async () => {
+// dad's 8/5 ruling (outfit_set.py:483-492, :538-556): a look that sat on page 1
+// yesterday sits out page 1 today — even her Yes — and opens page 2 instead,
+// so the board never shows the same first page two mornings running. A Yes
+// today waits for tomorrow (today's own entries are ignored by the deal).
+test("a Yes yesterday on yesterday's page 1 sits out page 1 today and opens page 2 — a Yes today waits for tomorrow", async () => {
+  const yesterday = dayAgo(1), today = dayAgo(0);
+  const days = { [yesterday]: { band: null, page1: [["item_top3", "item_pants2"]] } };
+  const yEvents = [{ kind: "select", combo: ["item_top1", "item_pants1"] },
+                   { kind: "yes",    combo: ["item_top3", "item_pants2"] }];
+  writePicks({ [yesterday]: yEvents, [today]: [{ kind: "yes", combo: ["item_top2", "item_pants1"] }] }, days);
+  await clothing.regenerate(true);
+  const all = allCombos();
+  assert.equal(all.length, 21);
+  assert.ok(!firstCombos().includes("item_top3+item_pants2"), "yesterday's page-1 look is not on page 1 again");
+  assert.equal(all[7], "item_top3+item_pants2", "…it opens today_2 instead (her Yes leads the demoted looks)");
+  // today's Yes changes nothing about today: the same day without it deals
+  // the very same 21 (and a same-day rebuild never shuffles — LRU would have)
+  writePicks({ [yesterday]: yEvents }, days);
+  await clothing.regenerate(true);
+  assert.deepEqual(allCombos(), all, "a Yes today waits for tomorrow; same day, same deal");
+});
+
+// The Yes counts whether or not the look was dealt: a look she said Yes to
+// from page 2 (not on yesterday's page 1) is a staple and leads page 1.
+test("a Yes yesterday on a look that was not on yesterday's page 1 leads page 1 today as a staple", async () => {
+  const yesterday = dayAgo(1);
   writePicks({
-    [dayAgo(1)]: [{ kind: "select", combo: ["item_top1", "item_pants1"] },
-                  { kind: "yes",    combo: ["item_top3", "item_pants2"] }],
-    [dayAgo(0)]: [{ kind: "yes",    combo: ["item_top2", "item_pants1"] }],
+    [yesterday]: [{ kind: "yes", combo: ["item_top3", "item_pants2"] }],
+  }, {
+    [yesterday]: { band: null, page1: [] },
   });
   await clothing.regenerate(true);
-  assert.equal(firstCombos()[0], "item_top3+item_pants2", "yesterday's Yes leads the board");
-  // a second rebuild the same day keeps her favourite up front (LRU would have buried it)
-  await clothing.regenerate(true);
-  assert.equal(firstCombos()[0], "item_top3+item_pants2", "still first on a rebuild");
+  assert.equal(firstCombos()[0], "item_top3+item_pants2", "her Yes leads the board");
+  assert.equal(allCombos().length, 21);
 });
 
 test("a day with no Yes credits her last-selected outfit at half weight; only the top looks are seated", async () => {
@@ -907,6 +935,8 @@ test("a day with no Yes credits her last-selected outfit at half weight; only th
     [dayAgo(2)]: [{ kind: "yes", combo: ["item_top3", "item_pants2"] }],
     [dayAgo(1)]: [{ kind: "select", combo: ["item_top2", "item_pants2"] },
                   { kind: "select", combo: ["item_top1", "item_pants1"] }],   // last look of the day
+  }, {
+    [dayAgo(1)]: { band: null, page1: [] },   // nothing sat on page 1 yesterday: nothing is demoted
   });
   await clothing.regenerate(true);
   const seated = firstCombos().slice(0, 2);
