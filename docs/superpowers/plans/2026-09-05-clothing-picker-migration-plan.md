@@ -224,6 +224,11 @@ history, sub-second); the end-to-end check is small (pre-tiled 5-7 garments, no 
 | 8462 | `tests/clothing-attrs.test.mjs` | fake AI for the needs-attributes pass (A4-7) |
 | ≥ 8464 | T7.3 scratch hubs | two consecutive free ports by `ss -ltn` (8463 is occupied): hub A, then hub B on the next one — never a same-port handoff |
 
+`tests/clothing.test.mjs`'s own fake AI is pinned at **8416** — inside the
+never-touch range, pre-dating this plan — so it now reads `ERA_TEST_AI_PORT`:
+a run on a box where a sibling worktree holds 8416 (or a reviewer held to the
+port rule) passes a free port instead, and the default is unchanged (r2).
+
 Never touch 8377-8416, 8425, 8427, 8450-8457. Every spawned hub sets
 `ERA_ELEVEN_URL ERA_FAL_URL ERA_GEO_URL ERA_WEATHER_URL ERA_RESEND_URL ERA_TMDB_URL
 ERA_STREAMING_URL=http://127.0.0.1:1` and `ERA_BIND=127.0.0.1`. **Any hub given a
@@ -326,7 +331,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
    - **Gate:** with T2.4.
 
 7. [ ] **T2.2 Single-writer `wardrobe/history.json` (B2) + `writeAtomic` + one path**
-   - **Acceptance:** `clothing.js` owns `historyPath = <DATA>/wardrobe/history.json` and exports `recordOffer(offer)` (RMW with `clothing-rank.recordOffer`, `contentStore.writeAtomic`); the worker never writes history.json — it posts `{offer:{date, band, page1}}` on `parentPort` before rendering composites (I9); `clothing.js:67-81` handles `m.offer`. `server.js` `/outfit-event` reads/writes through the same path via `writeAtomic`, keeps the 200-events-per-day cap (`server.js:1506`), and on a parse failure of a non-empty file renames it to `history.json.bad-<ts>` and logs instead of overwriting with `{}`. `ELLIE_WARDROBE_DIR` (I24): removed if `grep -rn ELLIE_WARDROBE_DIR --include=*.js --include=*.mjs --include=*.sh --include=*.ps1 .` finds only `server.js:76,78`; otherwise the same env is threaded into `clothing.js` — the two paths can never disagree.
+   - **Acceptance:** `clothing.js` owns `historyPath = <DATA>/wardrobe/history.json` and exports `historyPath`/`readHistory`/`zone`; `recordOffer(offer)` (RMW with `clothing-rank.recordOffer`, `contentStore.writeAtomic`) stays PRIVATE to the `{offer}` handler — one fewer public writer on a single-writer file, and `server.js`'s `/outfit-event` needs only the three exports (amended after review r2, which found the literal wording unmet; `zone()` is exported so both doors bucket by the same validated family zone). The worker never writes history.json — it posts `{offer:{date, band, page1}}` on `parentPort` before rendering composites (I9); `clothing.js:67-81` handles `m.offer`. `server.js` `/outfit-event` reads/writes through the same path via `writeAtomic`, keeps the 200-events-per-day cap (`server.js:1506`), and on a parse failure of a non-empty file renames it to `history.json.bad-<ts>` and logs instead of overwriting with `{}`. `ELLIE_WARDROBE_DIR` (I24): removed if `grep -rn ELLIE_WARDROBE_DIR --include=*.js --include=*.mjs --include=*.sh --include=*.ps1 .` finds only `server.js:76,78`; otherwise the same env is threaded into `clothing.js` — the two paths can never disagree.
    - **Verification:**
      1. `node --test tests/pool.test.mjs` — green (`h.events[HDAY].length === 1` still holds).
      2. `node --test tests/clothing.test.mjs` — new case: seed `events[today]` with one Yes, `regenerate(true)`, read history.json → `events[today]` unchanged and `days[today].page1.length === 7` (or the wardrobe's page size) and `days[today].band === null` (weather offline). `today` here is the suite's `ZONE` day key (T2.4), the same zone the module was started with.
