@@ -107,17 +107,25 @@ function yesterdayOf(key) {
 const PATTERNS = new Set(["solid", "denim", "stripes", "floral", "graphic", "print"]);
 const PALETTES = new Set(["warm", "cool", "neutral", "pastel"]);
 const VIBES = new Set(["sweet", "sporty", "graphic", "basic"]);
+// A word is a STRING. `["warm"]` is a shape the prompt never asks for, and
+// stringifying it would walk it straight through a whitelist written to refuse
+// anything the prompt did not ask for (review r1 nit).
 const word = (v, allowed) => {
-  const w = String(v == null ? "" : v).trim().toLowerCase();
+  if (typeof v !== "string") return undefined;
+  const w = v.trim().toLowerCase();
   return allowed.has(w) ? w : undefined;
 };
+// "light blue" is a colour; a sentence is not. Colours are only ever compared
+// against NEUTRALS, so a long one is dead weight in wardrobe.json rather than
+// a bug — but the whitelist is where a reply's size is bounded.
+const MAX_COLOR_LEN = 24;
 function colorList(v) {
   const parts = Array.isArray(v) ? v.flatMap(c => String(c).split(/\s*(?:,|\/|&)\s*|\s+and\s+/i))
     : typeof v === "string" ? v.split(/\s*(?:,|\/|&)\s*|\s+and\s+/i) : [];
   const out = [];
   for (const p of parts) {
     const c = p.trim().toLowerCase().replace(/\s+/g, " ");   // "light blue" stays one entry
-    if (c && !out.includes(c)) out.push(c);
+    if (c && c.length <= MAX_COLOR_LEN && !out.includes(c)) out.push(c);
     if (out.length === 3) break;
   }
   return out;
@@ -383,6 +391,17 @@ function buildCandidates(opts) {
   for (const t of tops)
     for (const b of bottoms)
       if (harmonizes(t, b) && styleScore(t, b, pairing) > 0) pairs.push([t, b]);
+  // HUB DEVIATION (spec §3.4's rule, §3.1 item 4): the taste gate has the same
+  // floor the weather gate has — "a wardrobe must never empty the board". A
+  // model that calls EVERY garment a statement piece leaves no harmonizing
+  // pair at all (a loud piece only goes with a plain partner), and the board
+  // would deal nothing but the dresses. When that happens the harmony rule
+  // steps aside for this deal: `avoid` and the ranking still stand, so a
+  // loud-on-loud look simply sinks to the bottom rather than vanishing.
+  if (!pairs.length && tops.length && bottoms.length)
+    for (const t of tops)
+      for (const b of bottoms)
+        if (styleScore(t, b, pairing) > 0) pairs.push([t, b]);
   const pool = singles.concat(pairs);
 
   // :412-427 — memory as of today (today's own entries ignored: same-date reruns stay stable).

@@ -134,6 +134,18 @@ describe("attributes() whitelist (spec §3.1 item 2, I14)", () => {
     for (const v of ["sweet", "sporty", "graphic", "basic"])
       assert.equal(R.attributes({ vibe: v }).vibe, v);
   });
+  test("a wrong-typed value is dropped, never coerced into a whitelisted word", () => {
+    // `["warm"]` is a shape the prompt never asks for; stringifying it to
+    // "warm" would let a reply the whitelist was written to refuse through.
+    assert.ok(!("palette" in R.attributes({ palette: ["warm"] })));
+    assert.ok(!("pattern" in R.attributes({ pattern: ["solid"] })));
+    assert.ok(!("vibe" in R.attributes({ vibe: { v: "sporty" } })));
+  });
+  test("a colour word is a word, not a paragraph", () => {
+    assert.deepEqual(R.attributes({ colors: ["x".repeat(50)] }).colors, []);
+    assert.deepEqual(R.attributes({ colors: ["navy", "y".repeat(40)] }).colors, ["navy"]);
+    assert.deepEqual(R.attributes({ colors: ["light blue"] }).colors, ["light blue"]);
+  });
   test("nothing but the five attribute keys comes out", () => {
     const a = R.attributes({ name: "Sunny tee", category: "top", colors: ["yellow"], hash: "x" });
     assert.deepEqual(Object.keys(a).sort(), ["colors", "statement"]);
@@ -547,11 +559,21 @@ describe("buildCandidates — the pool (outfit_set.py:393-410)", () => {
     const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, pairing: { great: [], avoid: [["item_b2", "item_t1"]] }, history: {}, perPage: 7 });
     assert.deepEqual(keysOf(out).sort(), ["item_t1+item_b1", "item_t2+item_b1", "item_t2+item_b2"]);
   });
-  test("two statement pieces never pool together; a statement single is in the pool anyway (singles bypass harmonizes)", () => {
+  test("two statement pieces never pool together while a plain partner exists; a statement single is in the pool anyway (singles bypass harmonizes)", () => {
     const loud = { statement: true, colors: ["pink"], pattern: "floral" };
-    const items = [top("item_t1", loud), bottom("item_b1", { ...loud, colors: ["orange"] }), g("item_d1", { category: "dress", ...loud })];
+    const items = [top("item_t1", loud), bottom("item_b1", { ...loud, colors: ["orange"] }),
+                   bottom("item_b2"), g("item_d1", { category: "dress", ...loud })];
     const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
-    assert.deepEqual(keysOf(out), ["item_d1"]);
+    assert.deepEqual(keysOf(out).sort(), ["item_d1", "item_t1+item_b2"]);
+  });
+  // The floor (spec §3.4's rule): when NO pair harmonizes at all the harmony
+  // rule stands aside rather than let the board come up empty of outfits —
+  // the last-resort branch tested end to end in clothing-variety.test.mjs.
+  test("…but with no plain partner anywhere the two loud pieces are offered rather than no outfit at all", () => {
+    const loud = { statement: true, colors: ["pink"], pattern: "floral" };
+    const items = [top("item_t1", loud), bottom("item_b1", { ...loud, colors: ["orange"] })];
+    const out = R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
+    assert.deepEqual(keysOf(out), ["item_t1+item_b1"]);
   });
   test("every combo is {key, pieces:[garment…]} with the ids joined by +; toWorkerShape maps it", () => {
     const items = [top("item_t1"), bottom("item_b1"), g("item_d1", { category: "dress" })];

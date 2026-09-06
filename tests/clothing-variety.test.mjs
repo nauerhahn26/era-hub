@@ -249,6 +249,39 @@ describe("hub deviation (I5, spec §3.1 item 4): a wardrobe with no attributes s
   });
 });
 
+// The mirror image of the case above. There the model had said NOTHING and the
+// degradation clause carried the wardrobe; here it has spoken, and said "loud"
+// about every single garment — the one answer that can empty tops × bottoms,
+// because a statement piece only harmonizes with a plain partner. Spec §3.4
+// states the principle for the weather gate ("a wardrobe must never empty the
+// board") and widens the band to keep it; the taste gate needs the same floor,
+// or a hub whose model has a bad morning deals a board with no outfits on it.
+describe("taste floor (spec §3.4's rule, §3.1 item 4): a wardrobe described as all-loud still fills the board", () => {
+  test("every garment a statement piece: 21 looks, page 1 garment-distinct", () => {
+    const loud = ITEMS.map(g => ({ ...g, statement: true, pattern: "graphic", colors: ["magenta"] }));
+    const empty = { great: [], avoid: [] };
+    const tops = loud.filter(g => g.category === "top");
+    const bottoms = loud.filter(g => g.category === "pants" || g.category === "shorts");
+    for (const t of tops) for (const b of bottoms)
+      assert.equal(R.harmonizes(t, b), false, `${t.id}+${b.id}: two loud pieces never harmonize`);
+    for (const band of [...BANDS, null]) {
+      const out = build(loud, band, "2026-08-05", { days: {}, events: {} }, empty);
+      assert.equal(out.length, CAP, String(band));
+      assert.ok(distinct(out.slice(0, PER_PAGE)), `${band}: page 1 garment-distinct`);
+    }
+  });
+  test("the floor is a last resort: one plain bottom is enough to keep it shut", () => {
+    const loud = ITEMS.map(g => ({ ...g, statement: true, pattern: "graphic", colors: ["magenta"] }));
+    const oneQuiet = loud.map(g => g.id === loud.find(x => x.category === "pants").id
+      ? { ...g, statement: false, pattern: "solid" } : g);
+    const out = build(oneQuiet, null, "2026-08-05", { days: {}, events: {} }, { great: [], avoid: [] });
+    const pairs = out.filter(c => c.pieces.length === 2);
+    const quietId = loud.find(x => x.category === "pants").id;
+    for (const c of pairs)
+      assert.ok(c.pieces.some(p => p.id === quietId), c.key + ": only the plain bottom pairs while any pair harmonizes");
+  });
+});
+
 describe("purity of clothing-rank.js", () => {
   test("no Math.random, Date.now or fs in the module", () => {
     const src = fs.readFileSync(path.join(HUB, "clothing-rank.js"), "utf8");
