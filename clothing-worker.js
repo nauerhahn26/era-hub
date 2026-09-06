@@ -80,7 +80,9 @@ function saveCatalog(c) { fs.writeFileSync(CATALOG(), JSON.stringify(c, null, 1)
 // thread only reads it. Unreadable = no memory yet, never a failed build.
 const HISTORY = () => path.join(DATA, "wardrobe", "history.json");
 function readHistory() {
-  try { const h = JSON.parse(fs.readFileSync(HISTORY(), "utf8")); return h && typeof h === "object" ? h : {}; }
+  // Same shape contract as the shell's reader (clothing.js): a plain object,
+  // or no memory. An array is neither (review r1).
+  try { const h = JSON.parse(fs.readFileSync(HISTORY(), "utf8")); return h && typeof h === "object" && !Array.isArray(h) ? h : {}; }
   catch { return {}; }
 }
 

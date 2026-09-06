@@ -816,12 +816,21 @@ test("the Shorts tile does not wear the Pants pictogram (bug 22)", () => {
 // photo leaves clothing/ first, so no re-ingest can add a garment the fake
 // AI happens to name. Ids stay loose (item_top1): only /outfit-event
 // validates the hex shape (I10).
-// n days ago as a family-day key, walked back with the rank's own calendar
-// (never now − n×86400e3: a DST day is 23 or 25 hours long, I6)
-const dayAgo = n => { let k = dayKey(Date.now(), ZONE); for (let i = 0; i < n; i++) k = yesterdayOf(k); return k; };
+//
+// THIS BLOCK MUST STAY LAST in the file: eightBySeven() prunes clothing/ of
+// every photo that is not one of its own — the album/ subfolder an earlier
+// case walks included — so a case appended after it would lose garments it
+// never mentions (review r1).
+//
+// One day key for the whole block, read once: the cases below span ~90 s and a
+// midnight roll partway through would otherwise flip half of them. n days ago
+// is walked back with the rank's own calendar (never now − n×86400e3: a DST
+// day is 23 or 25 hours long, I6).
+const TODAY = dayKey(Date.now(), ZONE);
+const dayAgo = n => { let k = TODAY; for (let i = 0; i < n; i++) k = yesterdayOf(k); return k; };
 const TOPS = ["Sunny tee", "Cloud tee", "Pond tee", "Maple tee", "Berry tee", "Fern tee", "Dune tee", "Coral tee"];
 const BOTTOMS = ["Sky leggings", "Moss jeans", "Sand pants", "Ruby leggings", "Lake jeans", "Cocoa pants", "Mint leggings"];
-function sevenBySeven() {
+function eightBySeven() {
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   const src = path.join(TMP, "wardrobe-items", Object.values(cat.items).find(i => i.ok).id + ".jpg");
   const items = {};
@@ -850,12 +859,12 @@ const writePicks = (events, days = {}) =>
    fs.writeFileSync(path.join(TMP, "wardrobe", "history.json"), JSON.stringify({ days, events })));
 
 test("with no picks yet, today is pure rotation (nothing seated)", async () => {
-  sevenBySeven();
+  eightBySeven();
   fs.rmSync(path.join(TMP, "wardrobe", "history.json"), { force: true });
   await clothing.regenerate(true);
   const first = firstCombos();
   assert.equal(first.length, 7, "page 1 is full: seven outfit slots (dad 9/3), the wardrobe has more");
-  // seven tops, seven bottoms → page 1 repeats no garment (spec §1 V3)
+  // eight tops, seven bottoms → page 1 repeats no garment (spec §1 V3)
   const tops = first.map(k => k.split("+")[0]), bottoms = first.map(k => k.split("+")[1]);
   assert.equal(new Set(tops).size, 7, "no top repeats on page 1");
   assert.equal(new Set(bottoms).size, 7, "no bottom repeats on page 1");
@@ -881,7 +890,7 @@ test("a same-day rebuild deals the same 21 in the same order", async () => {
 // thread, so a read-modify-write never races. Weather is offline in this
 // suite, so the day's band is null.
 test("the build records today's page 1 in history.json and leaves the day's events alone", async () => {
-  const today = dayKey(Date.now(), ZONE);
+  const today = TODAY;
   const seeded = [{ kind: "yes", combo: ["item_top2", "item_pants1"], at: new Date().toISOString() }];
   writePicks({ [today]: seeded });
   await clothing.regenerate(true);
