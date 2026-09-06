@@ -459,10 +459,31 @@ test("the other writers in the family's folder are found, and this device is not
   deliver(b.dataDir, `offers/dev-c/${TODAY}.jsonl`, { band: null, page1: [["item_cccc"]] });
   deliver(b.dataDir, "tags/studio.jsonl", { id: "item_aaaa", category: "top", warmth: 1 });
   deliver(b.dataDir, `tags/${OWN}.jsonl`, { id: "item_bbbb", category: "top", warmth: 1 });
-  assert.deepEqual([...sharedWriters(b.dataDir, OWN)].sort(), ["dev-b", "dev-c", "studio"],
-    "two other devices and the family's migration tool; this device is not counted twice");
-  assert.deepEqual([...sharedWriters(b.dataDir, "OWN-DEV!")].sort(), ["dev-b", "dev-c", "studio"],
+  // pairs/ is the fourth kind (spec §5) and the reason the count is of WRITERS
+  // rather than devices: a tablet that has only ever shared what goes together
+  // is still someone in the folder.
+  deliver(b.dataDir, "pairs/dev-d.jsonl", { kind: "great", combo: ["item_aaaa", "item_bbbb"] });
+  deliver(b.dataDir, `pairs/${OWN}.jsonl`, { kind: "favorite", combo: ["item_aaaa"] });
+  assert.deepEqual([...sharedWriters(b.dataDir, OWN)].sort(), ["dev-b", "dev-c", "dev-d", "studio"],
+    "three other devices and the family's migration tool; this device is not counted twice");
+  assert.deepEqual([...sharedWriters(b.dataDir, "OWN-DEV!")].sort(), ["dev-b", "dev-c", "dev-d", "studio"],
     "the caller's id is slugged here too, exactly as an own write slugs it");
+});
+
+// The file half of this walk already skips what the syncer leaves behind (I19:
+// `.part` siblings, `.mirrored.json`); the directory half had no name rule at
+// all, so a scratch directory arriving through the shared folder would be
+// counted as a device and Settings would say "Shared with: 4 devices" to a
+// family of two.
+test("a directory with no day in it is not a device — a syncer's scratch never inflates the count", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/dev-b/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa"] });
+  fs.mkdirSync(era(b.dataDir, "picks", ".tmp-sync"), { recursive: true });
+  fs.mkdirSync(era(b.dataDir, "offers", "dev-b.part"), { recursive: true });
+  fs.mkdirSync(era(b.dataDir, "offers", "dev-e"), { recursive: true });   // a writer with nothing in it
+  deliver(b.dataDir, "picks/dev-f/notes.txt", "not a day");
+  assert.deepEqual([...sharedWriters(b.dataDir, OWN)].sort(), ["dev-b"],
+    "one other device really writes here; the rest are the mirror's leavings");
 });
 
 test("a family that has never shared anything has no other writers", () => {

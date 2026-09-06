@@ -295,8 +295,17 @@ function sharedWriters(dataDir, deviceId) {
   const own = slug(deviceId) || "hub";
   const root = path.join(String(dataDir || ""), "clothing", ERA);
   const out = new Set();
+  // A writer is a directory with a DAY in it. The file half below already skips
+  // what the syncer leaves behind (I19), and the directory half needs the same
+  // rule: a scratch or `.part` directory arriving through the shared folder, or
+  // one left empty, is not another device — and "Shared with: 4 devices" to a
+  // family of two is a sentence a parent cannot check.
   for (const kind of ["picks", "offers"])
-    for (const name of dirsOf(path.join(root, kind))) if (name !== own) out.add(name);
+    for (const name of dirsOf(path.join(root, kind))) {
+      if (name === own) continue;
+      if (!filesOf(path.join(root, kind, name)).some(f => DATE_NAME.test(f))) continue;
+      out.add(name);
+    }
   for (const kind of ["tags", "pairs"])
     for (const name of filesOf(path.join(root, kind))) {
       if (!JSONL.test(name)) continue;                 // .part siblings, .mirrored.json (I19)
