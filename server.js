@@ -1498,7 +1498,13 @@ const server = http.createServer((req, res) => {
           Array.isArray(combo) && combo.length >= 1 && combo.length <= 2 &&
           combo.every(id => typeof id === "string" && /^item_[0-9a-f]{4,32}$/.test(id));
         if (!ok) { res.writeHead(400).end(); return; }
-        const day = dayKey(Date.now(), TZ);  // the family's calendar day buckets the pick
+        // The family's calendar day buckets the pick — through the SAME
+        // validated zone the build seeds its deal with. profile.json can hold
+        // a zone this computer cannot resolve ("Pacific Time"), dayKey throws
+        // RangeError on those, and the catch below then answered 400 to every
+        // Yes and every select, forever, with no console line at all: the
+        // board built each morning and only the learning was dead (review r2).
+        const day = dayKey(Date.now(), clothing.zone());
         // The ONE history.json writer path (clothing.js): an unreadable file is
         // set aside, never overwritten; the write is a rename, so the worker's
         // read never sees half a file. Both writers run on this thread, so

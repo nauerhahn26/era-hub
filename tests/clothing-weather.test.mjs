@@ -301,7 +301,34 @@ test("a profile time zone this computer does not know still builds today's board
   assert.match(t.label, /^80°/, "the board was rebuilt for the 2-5 PM window");
   assert.ok(dealtIds().includes("item_hotbot"), "and it really has outfits on it");
   assert.equal(aiCalls, 0);
-  clothing.start(TMP, { noTimers: true });   // back to the module's own default
+  clothing.start(TMP, { noTimers: true });   // really back to the module's own default (below)
+});
+
+// history.json has TWO doors (spec §3.3, A4-1): the build's recordOffer and
+// POST /outfit-event. Validating the zone on the build side alone only moved
+// the damage — the board came back and every Yes was answered 400 instead,
+// silently, forever, so favourites could never be learned (review r2). One
+// validated zone, both doors.
+test("the pick recorder buckets by the shell's validated zone, never the raw profile one", () => {
+  const src = fs.readFileSync(path.join(HUB, "server.js"), "utf8");
+  assert.match(src, /dayKey\(Date\.now\(\), clothing\.zone\(\)\)/,
+    "POST /outfit-event takes its day key from clothing.zone()");
+  assert.ok(!/dayKey\(Date\.now\(\), TZ\)/.test(src), "the unvalidated profile zone never reaches dayKey");
+});
+
+test("zone() answers the module default for a zone this computer cannot resolve", () => {
+  clothing.start(TMP, { noTimers: true, tz: () => "Pacific Time" });
+  assert.equal(clothing.zone(), "America/Los_Angeles");
+  clothing.start(TMP, { noTimers: true, tz: () => "Pacific/Kiritimati" });
+  assert.equal(clothing.zone(), "Pacific/Kiritimati", "a zone it CAN resolve is honoured as it is");
+});
+
+// start() used to assign the getter only when one was passed, so a suite could
+// never hand the zone back — the line above pretended to and did not (r2).
+test("start() without a zone is back to the module's own default", () => {
+  clothing.start(TMP, { noTimers: true, tz: () => "Pacific/Kiritimati" });
+  clothing.start(TMP, { noTimers: true });
+  assert.equal(clothing.zone(), "America/Los_Angeles");
 });
 
 // LAST — it repoints the module at a second data dir and lets the fake AI be

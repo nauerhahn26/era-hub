@@ -31,6 +31,11 @@ let badZone = "";   // the last unusable zone we complained about
 // dayKey(now, tz), so an unchecked zone threw inside the worker and the board
 // was simply never rebuilt, every build, with one console line as the only
 // signal. Probe it here and fall back to the default instead (review r1).
+// EXPORTED because history.json has two doors: POST /outfit-event buckets its
+// pick by a day key as well, and on the raw profile zone it threw RangeError
+// inside the route, answered 400 and dropped every Yes — silently, every
+// pick, so favourites could never be learned at all (review r2). One
+// validated zone, both doors.
 function zone() {
   const z = String(tzOf() || DEFAULT_TZ);
   try { rank.dayKey(Date.now(), z); return z; }
@@ -262,15 +267,19 @@ function tick(reason) {
 // outlives the 20 s startup tick (a slow parallel gate on this two-CPU box)
 // would otherwise get a surprise full build, AI requests and all (9/5).
 // opts.tz: () => the family's IANA zone; opts.deviceId: this hub's name (both
-// from server.js). A zone this computer cannot resolve is never honoured —
-// zone() falls back to the default — so the two clocks below can only ever be
-// a real zone apart. Known residual (I22): boardIsFresh's 5am cutoff and the
+// from server.js). Both are AUTHORITATIVE: a start() without them puts the
+// module back on its own defaults, so a suite can hand a zone back (it used to
+// assign only when the option was present, and the caller that thought it had
+// reset the zone had not — review r2). A zone this computer cannot resolve is
+// never honoured at either history.json door — zone() falls back to the
+// default — so the two clocks below can only ever be a real zone apart.
+// Known residual (I22): boardIsFresh's 5am cutoff and the
 // allowance hold (holdDay) still read the OS clock, not the family zone — the
 // deal itself is seeded in the family zone by the worker.
 function start(dataDir, opts = {}) {
   DATA = dataDir;
-  if (typeof opts.tz === "function") tzOf = opts.tz;
-  if (opts.deviceId) deviceId = String(opts.deviceId);
+  tzOf = typeof opts.tz === "function" ? opts.tz : () => DEFAULT_TZ;
+  deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
   seenPhotos = storedPhotoSet(dataDir);
   if (opts.noTimers) return;
   setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
@@ -286,5 +295,5 @@ function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
 // recordOffer is not exported: the worker's {offer} message is its only caller
 // (server.js uses historyPath/readHistory for POST /outfit-event).
 module.exports = { start, regenerate, rebuildToday, isBuilding, status, boardIsFresh, tick,
-  historyPath, readHistory,
+  historyPath, readHistory, zone,
   _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false; } };
