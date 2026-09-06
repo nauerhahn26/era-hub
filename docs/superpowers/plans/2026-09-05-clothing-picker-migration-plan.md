@@ -229,6 +229,11 @@ never-touch range, pre-dating this plan — so it now reads `ERA_TEST_AI_PORT`:
 a run on a box where a sibling worktree holds 8416 (or a reviewer held to the
 port rule) passes a free port instead, and the default is unchanged (r2).
 
+`tests/pool.test.mjs` (T2.2 verification step 1) has the same seam for the same
+reason: its hubs default to **8393/8394/8395**, inside the never-touch range, and
+`ERA_TEST_HUB_PORT` moves all three (`PORT`, `PORT + 1`, `PORT + 2`) — e.g.
+`ERA_TEST_HUB_PORT=8466 node --test tests/pool.test.mjs` (r3).
+
 Never touch 8377-8416, 8425, 8427, 8450-8457. Every spawned hub sets
 `ERA_ELEVEN_URL ERA_FAL_URL ERA_GEO_URL ERA_WEATHER_URL ERA_RESEND_URL ERA_TMDB_URL
 ERA_STREAMING_URL=http://127.0.0.1:1` and `ERA_BIND=127.0.0.1`. **Any hub given a
