@@ -284,3 +284,32 @@ test("a garment renamed in the catalogue is renamed in her favourites on the nex
   assert.equal(s.picks.top[0].names[0], "Willow cardigan",
     "the card names the garment the catalogue holds now, not the one it held this morning");
 });
+
+// A POLL IS A READ. /clothing/status is public, unauthenticated and asked every
+// few seconds (Settings 5 s, the board 3-15 s); the two doors that WRITE the
+// memory — the build's recordOffer and POST /outfit-event — are the ones
+// allowed to set an unreadable file aside. The concrete case is the family's
+// own restore: a plain `cp` of a keep's history.json into a running hub's data
+// dir is not atomic, so a poll landing mid-copy used to rename the half-written
+// file to history.json.bad-<ts> and leave the finished copy with no
+// history.json in place — the read-out doing the one thing its own header says
+// it never does ("nothing written"). Same rule as clothing-worker.js:124-125.
+test("a poll never sets the memory aside — quarantine belongs to the doors that write", async () => {
+  const good = fs.readFileSync(HISTORY);
+  const dir = path.dirname(HISTORY);
+  const before = fs.readdirSync(dir).sort();
+  const halfCopied = '{"days":{"' + D1 + '":{"band":null,"page1":[["item_00';
+  fs.writeFileSync(HISTORY, halfCopied);          // a `cp` caught in the middle
+
+  const s = await status();
+  assert.deepEqual(fs.readdirSync(dir).sort(), before,
+    "the poll renamed nothing: history.json is still history.json, with no .bad- sibling");
+  assert.equal(fs.readFileSync(HISTORY, "utf8"), halfCopied,
+    "…and the bytes on disk are the ones the copy is still writing");
+  assert.equal("picks" in s, false,
+    "a memory it cannot read makes the read-out say nothing — never 'no picks recorded yet'");
+  assert.equal("memory" in s, false);
+
+  fs.writeFileSync(HISTORY, good);                 // the copy finishes
+  assert.ok((await status()).picks.days > 0, "and the finished copy is read on the next poll");
+});

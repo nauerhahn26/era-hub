@@ -99,7 +99,17 @@ function isBuilding() { return !!worker; }
 // interleave, and every write is a rename (writeAtomic), so a reader never
 // sees half a file. Nothing else may write this file.
 function historyPath() { return path.join(DATA, "wardrobe", "history.json"); }
-function readHistory() {
+// opts.readOnly: for a caller that only LOOKS at the memory. The set-aside
+// below is a write, and it belongs to the two doors that write this file (the
+// build's recordOffer and POST /outfit-event) — never to /clothing/status,
+// which is public, unauthenticated and polled every few seconds. A `cp` of a
+// keep's history.json into a running hub's data dir is not atomic, so a poll
+// landing mid-copy would otherwise rename the half-written file aside and the
+// finished copy would end up under .bad-<ts> with no history.json in place.
+// A read-only caller gets a throw instead, so it says nothing rather than
+// answering {} (the same rule clothing-worker.js:124-127 states from the
+// worker's side).
+function readHistory(opts = {}) {
   const file = historyPath();
   let raw;
   try { raw = fs.readFileSync(file, "utf8"); }
@@ -119,6 +129,7 @@ function readHistory() {
   } catch {}
   // Unreadable, and not empty: a parent's picks may be in there. Set it aside
   // for a hand to look at rather than overwrite it with {} (plan T2.2).
+  if (raw.trim() && opts.readOnly) throw new Error("history.json is there and does not parse");
   if (raw.trim()) {
     // A name of its own: two set-asides in the same millisecond used to pick
     // the same one, and the second rename clobbered the first quarantined
@@ -238,7 +249,10 @@ function readOutFor(items) {
     // (A4-1) plus every other device's lines the mirror delivered (spec §5).
     // readHistory RETHROWS a file that is there and will not open (a backup, a
     // scanner, a mode change) — and that throw must reach the catch below.
-    const local = readHistory();
+    // readOnly: a poll looks, it never moves the file aside (see readHistory);
+    // bytes that will not parse throw here for the same reason and the blocks
+    // drop out below.
+    const local = readHistory({ readOnly: true });
     const log = clothingLog.openLog({ dataDir: DATA, driveFolder: folder, deviceId, tz: zone() });
     const hist = clothingLog.mergeHistory(local, log.readMerged(today));
 
