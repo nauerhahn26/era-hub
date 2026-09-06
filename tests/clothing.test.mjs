@@ -14,7 +14,11 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const AI_PORT = 8416;   // 8391-8415 held by sibling suites
+// 8391-8415 are held by sibling suites. The port is a SEAM because 8416 is
+// inside the range this repo's port rule tells a reviewer never to bind, and
+// a sibling worktree's hub does sometimes hold it — without the seam the
+// Phase-2 evidence for this suite could not be reproduced by anyone (r2).
+const AI_PORT = Number(process.env.ERA_TEST_AI_PORT) || 8416;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-clo-"));
 const require = createRequire(path.join(HUB, "server.js"));
 // ONE clock for the suite: the module defaults to the family's LA zone and
@@ -642,7 +646,12 @@ test("start() seeds the photo memory from the last build: a removal while the hu
   delete require.cache[modPath];
   const booted = require("./clothing.js");
   delete require.cache[modPath];      // the suite's copy stays the one `clothing` points at
-  booted.start(TMP, { noTimers: true });
+  // the suite's own clock: a fresh copy started without one would deal and
+  // record under the module's LA default, leaving a second `days` key in the
+  // suite's history.json — inside 00:00-07:00 UTC that key is the suite's
+  // OWN yesterday, and every later build would read it as the yesterday bar
+  // (review r2). This case is about the photo memory, not the zone.
+  booted.start(TMP, { noTimers: true, tz: () => ZONE });
   fs.rmSync(path.join(TMP, "clothing", "photo_k.jpg"));
   const p = booted.tick("test");
   assert.ok(p, "the removal was noticed on the very first tick after boot");
@@ -811,22 +820,24 @@ test("the Shorts tile does not wear the Pants pictogram (bug 22)", () => {
 // day, so this block's wardrobe is EIGHT tops by seven bottoms — seven
 // distinct looks on page 1, 21 a day, and always one garment spare so page 1
 // can sit out yesterday's look without the tiny-pool relaxation (a 7×7 with
-// one look demoted leaves exactly that pair for the seventh slot) — and
-// hermetic: every other
-// photo leaves clothing/ first, so no re-ingest can add a garment the fake
-// AI happens to name. Ids stay loose (item_top1): only /outfit-event
-// validates the hex shape (I10).
+// one look demoted leaves exactly that pair for the seventh slot). It is also
+// hermetic: every other photo leaves clothing/ first, so no re-ingest can add
+// a garment the fake AI happens to name. Ids stay loose (item_top1): only
+// /outfit-event validates the hex shape (I10).
 //
 // THIS BLOCK MUST STAY LAST in the file: eightBySeven() prunes clothing/ of
 // every photo that is not one of its own — the album/ subfolder an earlier
 // case walks included — so a case appended after it would lose garments it
 // never mentions (review r1).
 //
-// One day key for the whole block, read once: the cases below span ~90 s and a
-// midnight roll partway through would otherwise flip half of them. n days ago
-// is walked back with the rank's own calendar (never now − n×86400e3: a DST
-// day is 23 or 25 hours long, I6).
-const TODAY = dayKey(Date.now(), ZONE);
+// One day key for the whole block, read once WHEN THE BLOCK STARTS — set in
+// its first case, not at file load: the cases below span ~90 s and a midnight
+// roll partway through would flip half of them, but a top-level const is
+// evaluated ~500 s earlier (node:test loads the file before test 1), which
+// widened that window to the whole suite instead of closing it (review r2).
+// n days ago is walked back with the rank's own calendar (never now −
+// n×86400e3: a DST day is 23 or 25 hours long, I6).
+let TODAY;
 const dayAgo = n => { let k = TODAY; for (let i = 0; i < n; i++) k = yesterdayOf(k); return k; };
 const TOPS = ["Sunny tee", "Cloud tee", "Pond tee", "Maple tee", "Berry tee", "Fern tee", "Dune tee", "Coral tee"];
 const BOTTOMS = ["Sky leggings", "Moss jeans", "Sand pants", "Ruby leggings", "Lake jeans", "Cocoa pants", "Mint leggings"];
@@ -842,7 +853,7 @@ function eightBySeven() {
   TOPS.forEach((n, i) => mk("item_top" + (i + 1), n, "top"));
   BOTTOMS.forEach((n, i) => mk("item_pants" + (i + 1), n, "pants"));
   for (const e of fs.readdirSync(path.join(TMP, "clothing")))
-    if (!(e + "") .startsWith("item_")) fs.rmSync(path.join(TMP, "clothing", e), { recursive: true, force: true });
+    if (!e.startsWith("item_")) fs.rmSync(path.join(TMP, "clothing", e), { recursive: true, force: true });
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items }));
 }
 const boardsOf = () => JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8")).boards;
@@ -860,6 +871,7 @@ const writePicks = (events, days = {}) =>
 
 test("with no picks yet, today is pure rotation (nothing seated)", async () => {
   eightBySeven();
+  TODAY = dayKey(Date.now(), ZONE);   // the block's clock, read as the block starts
   fs.rmSync(path.join(TMP, "wardrobe", "history.json"), { force: true });
   await clothing.regenerate(true);
   const first = firstCombos();
