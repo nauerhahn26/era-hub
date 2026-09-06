@@ -34,8 +34,10 @@ const { dayKey, yesterdayOf } = require("./clothing-rank.js");
 // T2.1 exists to add had no test at all (review r4). +14 and −12 are the two
 // ends of the world's calendar dates; between 00:00 and ~07:00 UTC only two
 // dates exist anywhere and the box and the module hold one each, so in those
-// hours the second clause keeps the OS-clock half pinned (the module-default
-// half is what the box/module disagreement itself covers then).
+// hours NO zone can differ from both and the second clause keeps the OS-clock
+// half pinned. The module-default half is then not pinned here at all — it is
+// tests/clothing-weather.test.mjs's "start() without a zone …" case that holds
+// it, and no zone this picker could choose would do better (review r5).
 const ZONE = (() => {
   const now = Date.now();
   const box = dayKey(now, "UTC"), mod = dayKey(now, "America/Los_Angeles");
@@ -89,22 +91,19 @@ let throttleAfter = 0;          // ...but only once `calls` passes this (a quota
 const wire = [];   // {path, auth} per request — proves each provider's format
 const wireErrors = [];   // wire-format complaints, RECORDED not thrown (see below)
 const hits = [];   // every request path, 429s included
-// Every distinct picture the model was shown. THIS, not `calls`, is what the
-// AI-spend pins count: a request the server received but never answered is
-// invisible in the worker's log (callModel retries a transport failure
-// silently), and the retry sends the SAME picture again — which used to move
-// the raw counter twice for one photo and fail "already-cataloged photos are
-// never re-sent" about one run in three (review r4). `calls` stays for the
-// pins that really are about request counts (the 503 and 429 ladders).
-const described = new Set();
-function pictureOf(url, p) {
-  try {
-    if (url === "/v1/messages") return p.messages[0].content[0].source.data;
-    if (url === "/v1/chat/completions") return p.messages[0].content[0].image_url.url;
-    if (url.startsWith("/v1beta/models/")) return p.contents[0].parts[0].inline_data.data;
-  } catch {}
-  return null;
-}
+// Requests this fake accepted and then never ANSWERED. `spent()` — the counter
+// every AI-spend pin below reads — is `calls` minus these: a connection the
+// provider drops mid-flight is one the worker silently retries with the same
+// picture (callModel), so the server counts two requests for one ask and the
+// raw counter used to fail "already-cataloged photos are never re-sent" about
+// one run in three (review r4). Discounting the DROPPED half absorbs exactly
+// that retry and nothing else: a fresh ask is always answered, so it always
+// counts — where de-duplicating PICTURES also swallowed a photo genuinely sent
+// a second time, which is the very regression those pins are named for
+// (review r5). `calls` stays raw for the pins that really are about request
+// counts (the 503 and 429 ladders, and the drop case's own two requests).
+let aborted = 0;
+const spent = () => calls - aborted;
 let lastProbe = ""; // base64 of the last picture a Google call was shown
 
 before(async () => {
@@ -127,8 +126,10 @@ before(async () => {
       try { parsed = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
       calls++;
       hits.push(req.url);
-      const pic = pictureOf(req.url, parsed);
-      if (pic) described.add(pic);
+      // A response that closes without finishing is a request the client never
+      // got an answer to — the dropped half of a transport retry (below), or a
+      // connection that went away on its own. Counted here, subtracted there.
+      res.on("close", () => { if (!res.writableFinished) aborted++; });
       // A provider that accepts the request and then drops the connection: the
       // client sees a transport error, the server has already counted the
       // request, and callModel sends the very same picture again 3 s later.
@@ -315,12 +316,13 @@ test("morning rule: a board built yesterday is stale, one built after 5am today 
 });
 
 test("second regenerate makes no further AI calls (catalog is durable)", async () => {
-  // DISTINCT pictures, not raw requests: a transport-level retry sends the same
-  // photo twice and the raw counter cannot tell that from a photo being
-  // re-described (review r4 — the case below pins the difference).
-  const before = described.size;
+  // ANSWERED requests, not raw ones: a transport-level retry is one ask the
+  // provider dropped and one it answered, and only the answered one counts as
+  // spend (review r4/r5 — the drop case below pins the difference). Zero
+  // tolerance: any fresh ask about a photo already catalogued moves this.
+  const before = spent();
   await clothing.regenerate(true);
-  assert.equal(described.size, before, "already-cataloged photos are never re-sent");
+  assert.equal(spent(), before, "already-cataloged photos are never re-sent");
   assert.ok(wire.slice(0, 3).every(w => w.path === "/v1/messages" && w.auth === "sk-test"),
     "anthropic calls used /v1/messages with x-api-key");
   assert.deepEqual(wireErrors, [], "every request so far carried the provider's own picture field");
@@ -464,11 +466,11 @@ test("a missing tile is redrawn without asking the AI again", async () => {
   assert.ok(fs.existsSync(tile), "tile written");
 
   fs.rmSync(tile);                       // the picture disappears
-  const before = described.size;
+  const before = spent();
   await clothing.regenerate(true);
 
   assert.ok(fs.existsSync(tile), "the tile is redrawn on the next build");
-  assert.equal(described.size, before, "no AI call was spent redrawing a known garment");
+  assert.equal(spent(), before, "no AI call was spent redrawing a known garment");
   const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.equal(after.items["photo_f.jpg"].name, entry.name, "name survives the repair");
   assert.equal(after.items["photo_f.jpg"].category, entry.category, "category survives");
@@ -484,7 +486,7 @@ test("a photo removed from clothing/ leaves the catalogue, its tile and the boar
   assert.ok(fs.existsSync(tile), "starts on the board");
 
   fs.rmSync(path.join(TMP, "clothing", "photo_f.jpg"));   // it no longer fits
-  const before = described.size;
+  const before = spent();
   await clothing.regenerate(true);
 
   const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
@@ -492,7 +494,7 @@ test("a photo removed from clothing/ leaves the catalogue, its tile and the boar
   assert.ok(!fs.existsSync(tile), "tile removed");
   const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
   assert.ok(!JSON.stringify(rec.boards).includes(entry.id), "no outfit still wears it");
-  assert.equal(described.size, before, "removing a garment costs no AI call");
+  assert.equal(spent(), before, "removing a garment costs no AI call");
   assert.ok(rec.boards.some(b => String(b.id).startsWith("confirm_")), "the board still builds");
 });
 
@@ -525,10 +527,10 @@ test("a phone photo with EXIF orientation is turned upright before the model see
   delete entry.exif; entry.rotate_deg = 0;
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify(cat));
   const stamp = fs.statSync(tile).mtimeMs;
-  const before = described.size;
+  const before = spent();
   await new Promise(r => setTimeout(r, 20));
   await clothing.regenerate(true);
-  assert.equal(described.size, before, "the legacy redraw costs no AI call");
+  assert.equal(spent(), before, "the legacy redraw costs no AI call");
   const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.equal(after.items["photo_g.jpg"].exif, 3, "legacy entry migrated");
   assert.ok(fs.statSync(tile).mtimeMs > stamp, "its tile was redrawn");
@@ -894,9 +896,10 @@ test("the Shorts tile does not wear the Pants pictogram (bug 22)", () => {
 // the server count a request the worker never reports is callModel's
 // transport-level retry: a connection the provider accepts and then drops is a
 // second request for the SAME picture, and no console line said so. Here that
-// path is driven on purpose, so the difference between "two requests" and "two
-// photos described" is a pinned property rather than an unattributable flake —
-// and the retry now says its name in the log (clothing-worker.js).
+// path is driven on purpose, so the difference between "two requests reached
+// the server" and "one of them was answered" is a pinned property rather than
+// an unattributable flake — and the retry now says its name in the log
+// (clothing-worker.js).
 //
 // LAST case before the favourites block, which prunes clothing/ to its own
 // wardrobe: this one leaves a photo behind and would otherwise shift which
@@ -907,7 +910,7 @@ test("a connection the provider drops is retried with the same picture — one p
   forceAnswer = { name: "Sunny tee", category: "top", warmth: "any",
     rotate_deg: 0, crop: { x: 0, y: 0, w: 1, h: 1 } };
   makeJpg(path.join(TMP, "clothing", "photo_drop.jpg"), 175, 45, 135);
-  const beforeCalls = calls, beforePics = described.size;
+  const beforeCalls = calls, beforeSpent = spent();
   hangups = 1;
   try { await clothing.regenerate(true); } finally { forceAnswer = null; hangups = 0; }
 
@@ -916,8 +919,8 @@ test("a connection the provider drops is retried with the same picture — one p
     "the photo was catalogued through the retry");
   assert.equal(calls - beforeCalls, 2,
     "the server counted the request twice: one dropped, one answered");
-  assert.equal(described.size - beforePics, 1,
-    "...but only ONE picture was described — which is what an AI-spend pin must count");
+  assert.equal(spent() - beforeSpent, 1,
+    "...but only ONE of them was answered — which is what an AI-spend pin must count");
   assert.deepEqual(wireErrors, [], "both requests were well-formed vision requests");
 });
 
