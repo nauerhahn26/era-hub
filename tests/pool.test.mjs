@@ -16,7 +16,11 @@ const HUB = path.resolve(__dirname, "..");
 const require = createRequire(import.meta.url);
 const { initPool } = require(path.join(HUB, "pool.js"));
 
-const PORT = 8393; // never the live port
+// never the live port. A SEAM for the same reason clothing.test.mjs's fake AI
+// got one (plan §B): 8393-8395 are inside the range this repo's port rule tells
+// a reviewer never to bind, so the suite's own evidence could not otherwise be
+// reproduced by the person reviewing it. The default is unchanged (r3).
+const PORT = Number(process.env.ERA_TEST_HUB_PORT) || 8393;
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-pool-"));
 const DAY = new Date().toISOString().slice(0, 10);          // pool files: UTC day
@@ -75,7 +79,9 @@ test("a corrupt history.json is set aside, never overwritten", async () => {
   const r = await fetch(`${BASE}/outfit-event`, {
     method: "POST", body: JSON.stringify({ kind: "select", combo: ["item_abcd", "item_ef01"] }) });
   assert.equal(r.status, 204);
-  const bad = fs.readdirSync(path.join(TMP, "wardrobe")).filter(f => /^history\.json\.bad-\d+$/.test(f));
+  // the producer (clothing.js) adds a -N when a name is already taken, so the
+  // pattern here follows it rather than only its first form (r3)
+  const bad = fs.readdirSync(path.join(TMP, "wardrobe")).filter(f => /^history\.json\.bad-\d+(-\d+)?$/.test(f));
   assert.equal(bad.length, 1, "the unreadable file was renamed, not lost");
   assert.equal(fs.readFileSync(path.join(TMP, "wardrobe", bad[0]), "utf8"), "{ not json");
   const h = JSON.parse(fs.readFileSync(hp, "utf8"));
@@ -95,6 +101,8 @@ test("a history.json that will not open is left alone and the pick is refused", 
   const hp = path.join(TMP, "wardrobe", "history.json");
   const before = fs.readFileSync(hp, "utf8");
   const asideBefore = fs.readdirSync(path.join(TMP, "wardrobe")).filter(f => f.startsWith("history.json.bad-")).length;
+  const poolFile = path.join(TMP, "pool", "events", "test-dev", DAY + ".jsonl");
+  const poolBefore = fs.readFileSync(poolFile, "utf8").trim().split("\n").length;
   fs.chmodSync(hp, 0o000);
   try {
     const r = await fetch(`${BASE}/outfit-event`, {
@@ -102,8 +110,46 @@ test("a history.json that will not open is left alone and the pick is refused", 
     assert.equal(r.status, 400, "the pick is refused rather than answered from an empty memory");
   } finally { fs.chmodSync(hp, 0o644); }
   assert.equal(fs.readFileSync(hp, "utf8"), before, "the memory is byte-for-byte what it was");
+  // ...and the OTHER store still gets the pick: the pool is a different file
+  // with a different failure mode, and no reason to share history.json's bad
+  // day (r3). One look is lost from the memory, not from everywhere.
+  const poolEvents = fs.readFileSync(poolFile, "utf8").trim().split("\n").map(JSON.parse);
+  assert.equal(poolEvents.length, poolBefore + 1, "the pool event was written even though the memory could not be");
+  assert.deepEqual(poolEvents.pop().combo, ["item_beef"]);
   const aside = fs.readdirSync(path.join(TMP, "wardrobe")).filter(f => f.startsWith("history.json.bad-")).length;
   assert.equal(aside, asideBefore, "nothing is wrong with the bytes, so nothing is set aside either");
+});
+
+// The pick's day key comes from the shell's VALIDATED zone (clothing.zone()).
+// A profile.json naming a zone this computer cannot resolve ("Pacific Time" is
+// not an IANA name) made dayKey throw RangeError inside the route, so every Yes
+// and every select was answered 400 — for ever, silently, and favourites could
+// never be learned (review r2). Pinned here on a real hub, where the route
+// contract lives, rather than by a grep over server.js (r3).
+test("a profile zone this computer cannot resolve still records the pick, on the fallback day", async () => {
+  const T3 = fs.mkdtempSync(path.join(os.tmpdir(), "era-pool-tz-"));
+  fs.writeFileSync(path.join(T3, "profile.json"), JSON.stringify({ tz: "Pacific Time" }));
+  const PORT3 = PORT + 2;
+  const c3 = spawn("node", ["server.js", String(PORT3)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env, ERA_DATA_DIR: T3, ERA_BIND: "127.0.0.1", ERA_DEVICE_ID: "tz-dev",
+           ERA_GEO_URL: "http://127.0.0.1:1", ERA_WEATHER_URL: "http://127.0.0.1:1",
+           ERA_AI_URL: "http://127.0.0.1:1" },
+  });
+  try {
+    let up = false;
+    for (let i = 0; i < 100; i++) {
+      try { await fetch(`http://127.0.0.1:${PORT3}/settings`); up = true; break; } catch {}
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.ok(up, "the hub with the unresolvable zone came up");
+    const r = await fetch(`http://127.0.0.1:${PORT3}/outfit-event`, {
+      method: "POST", body: JSON.stringify({ kind: "yes", combo: ["item_abcd"] }) });
+    assert.equal(r.status, 204, "her Yes is recorded, not refused because of the zone");
+    const h = JSON.parse(fs.readFileSync(path.join(T3, "wardrobe", "history.json"), "utf8"));
+    assert.deepEqual(Object.keys(h.events), [HDAY], "bucketed by the America/Los_Angeles fallback day");
+    assert.deepEqual(h.events[HDAY][0].combo, ["item_abcd"]);
+  } finally { c3.kill("SIGKILL"); }
 });
 
 test("heartbeat file exists and is fresh", () => {
@@ -145,7 +191,7 @@ test("one writer per file: appends land only under this device's dir", () => {
 test("LAW: pool unavailable at boot — server still runs, apps still serve, legacy log intact", async () => {
   const TMP2 = fs.mkdtempSync(path.join(os.tmpdir(), "era-nopool-"));
   fs.mkdirSync(path.join(TMP2, "wardrobe"), { recursive: true });
-  const PORT2 = 8394;
+  const PORT2 = PORT + 1;
   // unwritable parent → mkdir throws fast → pool must degrade, server must live.
   // (NOT a network/procfs path: those can HANG sync fs calls — pool dirs must be
   // local folders that a syncer mirrors, never mounts.)

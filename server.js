@@ -1498,6 +1498,11 @@ const server = http.createServer((req, res) => {
           Array.isArray(combo) && combo.length >= 1 && combo.length <= 2 &&
           combo.every(id => typeof id === "string" && /^item_[0-9a-f]{4,32}$/.test(id));
         if (!ok) { res.writeHead(400).end(); return; }
+        // The pool copy goes FIRST, because the history.json read below can
+        // throw (a file whose bytes will not come is never overwritten with an
+        // empty memory, review r1) and used to take this line down with it —
+        // losing the pick from BOTH stores when only one of them was ill (r3).
+        pool.append("outfit-" + kind, { combo });
         // The family's calendar day buckets the pick — through the SAME
         // validated zone the build seeds its deal with. profile.json can hold
         // a zone this computer cannot resolve ("Pacific Time"), dayKey throws
@@ -1517,7 +1522,6 @@ const server = http.createServer((req, res) => {
         // a fresh install has no wardrobe/ yet — writeAtomic makes it; without
         // that every pick 400'd and favourites were never learned (QA 9/2)
         contentStore.writeAtomic(clothing.historyPath(), h);
-        pool.append("outfit-" + kind, { combo });
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch { res.writeHead(400).end(); }
     });
