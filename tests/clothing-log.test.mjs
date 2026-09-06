@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(path.join(HUB, "server.js"));
-const { openLog } = require("./clothing-log.js");
+const { openLog, mergeHistory } = require("./clothing-log.js");
 const { dayKey, yesterdayOf, HISTORY_DAYS_KEPT } = require("./clothing-rank.js");
 
 const ZONE = "UTC";
@@ -328,4 +328,48 @@ test("a pairs line with no combo is skipped, marker lines included", () => {
     { t: "2026-09-05T09:00:02Z", kind: "great", combo: ["item_aaaa", "item_bbbb"] });
   const m = open(b).readMerged(TODAY);
   assert.equal(m.pairing.great.size, 1);
+});
+
+// ---- the merge the deal actually reads (spec §5 "Reads", §6 step 4) --------
+// buildCandidates takes ONE {days, events}. The local canonical is this
+// device's (history.json, one writer); everything else arrives through the
+// mirror. mergeHistory is where the two become one memory — without it a
+// family's second tablet learns nothing from the first.
+
+test("another device's Yes joins this device's events for the day", () => {
+  const local = { events: { "2026-09-04": [{ kind: "select", combo: ["item_aaaa"], at: "2026-09-04T08:00:00Z" }] }, days: {} };
+  const merged = { picksEvents: { "2026-09-04": [{ kind: "yes", combo: ["item_bbbb"], t: "2026-09-04T19:00:00Z" }],
+                                  "2026-09-03": [{ kind: "yes", combo: ["item_cccc"], t: "2026-09-03T19:00:00Z" }] },
+                   offers: {} };
+  const h = mergeHistory(local, merged);
+  assert.deepEqual(h.events["2026-09-04"].map(e => e.combo.join("+")), ["item_aaaa", "item_bbbb"],
+    "both devices' events, oldest first");
+  assert.deepEqual(h.events["2026-09-03"].map(e => e.combo.join("+")), ["item_cccc"],
+    "a day only the other device saw is a day all the same");
+  assert.deepEqual(local.events["2026-09-04"].length, 1, "the local memory is never mutated");
+});
+
+test("yesterday's page 1 is the union of what every device offered", () => {
+  const local = { days: { "2026-09-04": { band: "warm", page1: [["item_aaaa", "item_bbbb"]] } }, events: {} };
+  const merged = { picksEvents: {},
+    offers: { "2026-09-04": { band: "cool", page1: [["item_aaaa", "item_bbbb"], ["item_cccc"]] },
+              "2026-09-03": { band: "hot", page1: [["item_dddd"]] } } };
+  const h = mergeHistory(local, merged);
+  assert.deepEqual(h.days["2026-09-04"].page1.map(c => c.join("+")).sort(),
+    ["item_aaaa+item_bbbb", "item_cccc"], "the look this device never offered still bars page 1 tomorrow");
+  assert.equal(h.days["2026-09-04"].band, "warm", "this device's own band for its own day");
+  assert.deepEqual(h.days["2026-09-03"].page1, [["item_dddd"]]);
+  assert.equal(h.days["2026-09-03"].band, "hot", "a day only the other device recorded keeps its band");
+});
+
+test("an empty or broken local memory merges to just the shared half", () => {
+  const merged = { picksEvents: { "2026-09-04": [{ kind: "yes", combo: ["item_aaaa"], t: "2026-09-04T19:00:00Z" }] },
+                   offers: { "2026-09-04": { band: null, page1: [["item_aaaa"]] } } };
+  for (const local of [{}, null, { days: "nope", events: 7 }]) {
+    const h = mergeHistory(local, merged);
+    assert.deepEqual(Object.keys(h.events), ["2026-09-04"]);
+    assert.deepEqual(h.days["2026-09-04"].page1, [["item_aaaa"]]);
+  }
+  const alone = mergeHistory({ events: { "2026-09-04": [] }, days: {} }, { picksEvents: {}, offers: {} });
+  assert.deepEqual(alone.days, {}, "no shared half is no change");
 });

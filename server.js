@@ -84,6 +84,20 @@ const RECIPE_PATHS = [
 // clothing.historyPath(), and a seam that let them point at different files
 // was how they diverged (plan T2.2, I24).
 const WARDROBE_DIR = path.join(DATA, "wardrobe");
+// ---- the family's shared clothing log (clothing-log.js, spec §5) -----------
+// The board's picks go to wardrobe/history.json (the local canonical) AND to
+// <Drive folder>/clothing/.era/picks/<device>/<day>.jsonl, so the other
+// tablet's tomorrow knows what she chose here today. Opened once the Drive
+// config is loaded (drive.js has no DATA before start(), W10) and re-opened
+// whenever the folder or the family zone can have changed.
+let clothingLog = null;
+function openClothingLog() {
+  const st = drive.status();
+  clothingLog = require("./clothing-log.js").openLog({
+    dataDir: DATA, deviceId: DEVICE_ID, tz: clothing.zone(),
+    driveFolder: st.mode === "local" && st.folderPath ? st.folderPath : null,
+  });
+}
 const GEN_ASSETS_DIR = path.join(DATA, "gen-assets");
 const BOOKS_DIR = path.join(DATA, "books");   // book packages (era-book-reader M3)
 const MUSIC_DIR = path.join(DATA, "music");   // songs overlay (Songs Board 8/24)
@@ -1360,6 +1374,7 @@ const server = http.createServer((req, res) => {
         if (inc.deviceId && /^[a-z0-9-]{1,32}$/.test(inc.deviceId)) prof.deviceId = inc.deviceId;
         fs.writeFileSync(path.join(DATA, "profile.json"), JSON.stringify(prof, null, 2) + "\n");
         loadProfile();
+        if (clothingLog) openClothingLog();   // the family zone names the log's day files
         if (typeof inc.dwellMs === "number") {
           let a = {}; try { a = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")); } catch {}
           a.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
@@ -1531,6 +1546,11 @@ const server = http.createServer((req, res) => {
         // a fresh install has no wardrobe/ yet — writeAtomic makes it; without
         // that every pick 400'd and favourites were never learned (QA 9/2)
         contentStore.writeAtomic(clothing.historyPath(), h);
+        // ...and out to the family, AFTER the canonical write (spec §5 "the
+        // local canonical is always written first"). It never throws and it is
+        // never a reason to refuse a pick: the board is answered either way.
+        if (clothingLog) clothingLog.appendPick(day, { kind, combo });
+        // 204 with an empty body: era-board reads the status, not a payload.
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch (e) {
         // Say so. The other two history.json doors already log (the build's
@@ -2441,6 +2461,7 @@ const server = http.createServer((req, res) => {
         const { folderPath } = JSON.parse(body);
         const r = drive.setLocalFolder(String(folderPath || ""));
         if (r.error) { res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify(r)); return; }
+        openClothingLog();   // a new mount is a new home for the shared log
         res.writeHead(204).end();
       } catch { res.writeHead(400).end(); }
     });
@@ -2527,7 +2548,15 @@ server.on("listening", () => {
   // exists (or risk quietly overwriting it — that is how a slot with two
   // owners loses one).
   drive.onSynced = () => {
-    clothing.regenerate(true).catch(() => {});              // fresh photos -> fresh board
+    // tick(), not regenerate(true): a sync every ten minutes RE-DEALT the
+    // board every ten minutes, so the least-recently-shown signal collapsed
+    // within the hour and the lineup flipped all day (spec §1 V4). tick only
+    // acts when the photos really changed, the board predates this morning's
+    // cutoff, or leftovers are due a retry — so another device's picks, offers
+    // and tags arriving change nothing today and count tomorrow, which is what
+    // the original did (spec §3.5).
+    try { clothing.tick("drive sync"); }
+    catch (e) { console.error("[clothing] " + e.message); }
     try { content.tick("drive sync"); }                     // fresh books -> a build
     catch (e) { console.error("[content] " + e.message); }
   };
@@ -2551,6 +2580,7 @@ server.on("listening", () => {
     if (failed) console.error("[content] " + b.slug + ": " + failed + " file(s) would not copy onto the shelf: " + r.errors.join("; "));
   };
   clothing.start(DATA, { tz: () => TZ, deviceId: DEVICE_ID });  // the Clothing Picker generator (no-op without photos)
+  openClothingLog();     // after drive.start: drive.js has no DATA before it (W10)
   content.start(DATA);   // book jobs in the family's Drive folder (local mode only)
   clearStageOnce();      // first boot after install: minimize covering browsers
   // installer-chosen apps install at first boot — but the wizard has the final

@@ -244,6 +244,16 @@ function manifestsLast(entries) {
 const isManifest = (name) => MANIFEST_NAMES.includes(String(name).toLowerCase());
 const md5 = (p) => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex");
 
+// The family's shared clothing log (clothing-log.js, spec §5) lives at
+// <folder>/clothing/.era/**. Like a manifest, it must be compared by CONTENT,
+// not by byte count: the migration tool rewrites tags/studio.jsonl wholesale
+// and a device's own re-run can land a file of exactly the same length, which
+// the size-equal skip below would never copy (W9). Two devices would then
+// disagree about the family's taste for ever, silently. It is also a DOT
+// entry, so pruneTree never touches it — a log line is nobody's to delete.
+const SHARED_LOG_DIR = ".era";
+const inSharedLog = (p) => String(p).split(path.sep).includes(SHARED_LOG_DIR);
+
 // Write through a .part sibling, then rename. copyFileSync/writeFileSync
 // truncate the destination and only then fill it, so a shelf load or a reader
 // fetch that lands mid-copy reads half a manifest — the very failure the
@@ -274,7 +284,7 @@ async function mirrorDir(tok, folderId, destDir, stats, have) {
       // would keep the old one forever — and exportedAt is exactly the reader's
       // cache-bust key. Manifests compare by checksum instead; everything else
       // is content-addressed enough by size.
-      if (fs.existsSync(dest) && (isManifest(safe)
+      if (fs.existsSync(dest) && ((isManifest(safe) || inSharedLog(dest))
             ? (f.md5Checksum && md5(dest) === f.md5Checksum)
             : (f.size && fs.statSync(dest).size === Number(f.size)))) { stats.skipped++; continue; }
       const r = await fetch(API + "/drive/v3/files/" + f.id + "?alt=media",
@@ -403,7 +413,10 @@ function contentReady() {
   for (const sub of MIRROR_SUBDIRS) {
     out[sub] = false;
     if (!c.folderPath) continue;
-    try { out[sub] = fs.readdirSync(path.join(c.folderPath, sub)).length > 0; } catch {}
+    // Dot entries do not count as content (I20): clothing/.era is the hub's
+    // OWN shared log, and a family with no photos at all would otherwise see
+    // the checklist tick "clothing" the moment their first Yes wrote a line.
+    try { out[sub] = fs.readdirSync(path.join(c.folderPath, sub)).some(n => !n.startsWith(".")); } catch {}
   }
   return out;
 }
@@ -444,7 +457,9 @@ function copyTreeLocal(src, dest, stats, have, rel = "") {
       // Manifests compare by BYTES, not size: a re-publish that only bumps
       // exportedAt keeps the same length, and exportedAt is the reader's
       // cache-bust key — size-equal would strand every fix on the one device.
-      if (fs.existsSync(d) && (isManifest(e.name)
+      // The clothing log under .era/ is compared the same way, for the same
+      // reason (W9 — a wholesale rewrite of the same length).
+      if (fs.existsSync(d) && ((isManifest(e.name) || inSharedLog(d))
             ? fs.readFileSync(d).equals(fs.readFileSync(s))
             : fs.statSync(d).size === fs.statSync(s).size)) { stats.skipped++; continue; }
       atomically(d, (tmp) => fs.copyFileSync(s, tmp));

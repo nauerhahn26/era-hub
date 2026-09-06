@@ -9,6 +9,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -37,6 +38,9 @@ const TREE = {
   F3: [{ id: "m2", name: "manifest.json", mimeType: "application/json", size: "2" },
        { id: "p1", name: "p1.jpg", mimeType: "image/jpeg", size: "3" }],
 };
+// What the fake serves for a file id, when "xx" will not do (the .era case
+// below needs two DIFFERENT bodies of the SAME length).
+const MEDIA = {};
 
 before(async () => {
   api = http.createServer((req, res) => {
@@ -44,7 +48,7 @@ before(async () => {
     const media = u.pathname.match(/^\/drive\/v3\/files\/([^/]+)$/);
     if (media && u.searchParams.get("alt") === "media") {
       downloads.push(media[1]);
-      res.writeHead(200).end("xx");
+      res.writeHead(200).end(MEDIA[media[1]] === undefined ? "xx" : MEDIA[media[1]]);
       return;
     }
     const parent = (u.searchParams.get("q") || "").match(/'([^']+)' in parents/);
@@ -355,4 +359,89 @@ test("clothing adopts what it already mirrored; the other libraries do not", asy
   assert.ok(fs.existsSync(path.join(D, "clothing", "dress.jpg")), "dress.jpg stayed");
   assert.ok(fs.existsSync(path.join(D, "books", "tiddler", "manifest.json")),
     "and the shelf is still nobody's to prune");
+});
+
+// ---- the shared clothing log rides inside this mirror (spec §5) -------------
+// clothing/.era/ carries every device's picks, offers and tags. Three mirror
+// properties make that safe, and all three are load-bearing:
+//   * it is COPIED (dotfiles are, in both copy paths),
+//   * it is never PRUNED (pruneTree skips dot entries),
+//   * and a rewrite of the SAME LENGTH still reaches the other device — the
+//     migration tool rewrites tags/studio.jsonl wholesale, and the size-equal
+//     skip would strand it on the device that ran the tool (W9).
+test("local mode: .era is mirrored, byte-compared, and never pruned", async () => {
+  const D = path.join(TMP, "data-era"), S = path.join(TMP, "My Drive", "Era Content");
+  const line = (t, id) => JSON.stringify({ t, kind: "yes", combo: [id] }) + "\n";
+  const rel = path.join("clothing", ".era", "picks", "dev-b", "2026-09-01.jsonl");
+  fs.mkdirSync(path.join(S, "clothing", ".era", "picks", "dev-b"), { recursive: true });
+  fs.writeFileSync(path.join(S, "clothing", "tee.jpg"), "tee");
+  fs.writeFileSync(path.join(S, rel), line("2026-09-01T09:00:00Z", "item_aaaa"));
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+
+  await drive.sync();
+  assert.ok(fs.existsSync(path.join(D, rel)), "another device's picks reached this one");
+
+  // A same-LENGTH rewrite: one id swapped for another of the same width. Under
+  // the size-equal skip this is invisible and the line never crosses.
+  const rewritten = line("2026-09-01T09:00:00Z", "item_bbbb");
+  assert.equal(rewritten.length, line("2026-09-01T09:00:00Z", "item_aaaa").length, "the rewrite is the same size");
+  fs.writeFileSync(path.join(S, rel), rewritten);
+  await drive.sync();
+  assert.equal(fs.readFileSync(path.join(D, rel), "utf8"), rewritten,
+    "a same-size rewrite of a .era file is copied anyway (W9)");
+
+  // ...and the prune leaves it alone even when the wardrobe beside it shrinks.
+  fs.rmSync(path.join(S, "clothing", "tee.jpg"));
+  const r = await drive.sync();
+  assert.equal(r.removed, 1, "the photo that left the wardrobe went");
+  assert.ok(fs.existsSync(path.join(D, rel)), "the shared log is nobody's to prune");
+});
+
+test("API mode: a .era file that changed without changing size is downloaded again", async () => {
+  const D = path.join(TMP, "data-era-api");
+  const body1 = JSON.stringify({ t: "2026-09-01T09:00:00Z", kind: "yes", combo: ["item_aaaa"] }) + "\n";
+  const body2 = JSON.stringify({ t: "2026-09-01T09:00:00Z", kind: "yes", combo: ["item_bbbb"] }) + "\n";
+  assert.equal(body1.length, body2.length);
+  const md5 = (s) => crypto.createHash("md5").update(s).digest("hex");
+  MEDIA.e1 = body1;
+  TREE.F0 = [{ id: "C1", name: "clothing", mimeType: "application/vnd.google-apps.folder" }];
+  TREE.C1 = [{ id: "C2", name: ".era", mimeType: "application/vnd.google-apps.folder" }];
+  TREE.C2 = [{ id: "C3", name: "picks", mimeType: "application/vnd.google-apps.folder" }];
+  TREE.C3 = [{ id: "C4", name: "dev-b", mimeType: "application/vnd.google-apps.folder" }];
+  TREE.C4 = [{ id: "e1", name: "2026-09-01.jsonl", mimeType: "application/json",
+               size: String(body1.length), md5Checksum: md5(body1) }];
+  const dest = path.join(D, "clothing", ".era", "picks", "dev-b", "2026-09-01.jsonl");
+
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({
+    mode: "api", folderId: "F0",
+    token: { access_token: "fake-for-the-test", refresh_token: "fake-for-the-test",
+             expiry: Date.now() + 3600e3 },
+  }));
+  drive.start(D);
+  await drive.sync();
+  assert.equal(fs.readFileSync(dest, "utf8"), body1);
+
+  MEDIA.e1 = body2;
+  TREE.C4[0].md5Checksum = md5(body2);
+  await drive.sync();
+  assert.equal(fs.readFileSync(dest, "utf8"), body2,
+    "the checksum, not the byte count, decides whether a .era file is re-fetched (W9)");
+});
+
+// I20: <DATA>/clothing/.era is content the hub itself made. A family with no
+// photos at all must not see the Settings checklist tick "clothing" because
+// their first Yes wrote a log line.
+test("the Settings checklist counts photos, not the hub's own dot-folder", async () => {
+  const D = path.join(TMP, "data-ready"), S = path.join(TMP, "My Drive", "Ready Content");
+  fs.mkdirSync(path.join(S, "clothing", ".era", "picks", "dev-b"), { recursive: true });
+  fs.writeFileSync(path.join(S, "clothing", ".era", "picks", "dev-b", "2026-09-01.jsonl"), "{}\n");
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+  assert.equal(drive.status().content.clothing, false, "a log line is not a wardrobe");
+  fs.writeFileSync(path.join(S, "clothing", "tee.jpg"), "tee");
+  assert.equal(drive.status().content.clothing, true, "…a photo is");
 });

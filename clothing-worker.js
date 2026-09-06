@@ -56,9 +56,27 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
 const { dayKey, buildCandidates, toWorkerShape, attributes } = require("./clothing-rank.js");
+const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
 // asked about this garment" marker carries (spec §3.2, plan A4-5/A4-8).
 const todayKey = () => dayKey(Date.now(), workerData.tz);
+
+// ---- the family's shared taste (clothing-log.js, spec §5) ------------------
+// The Drive folder and this device's name are resolved by the SHELL at spawn
+// (plan W10): a drive.js of its own in here would read the config behind the
+// main thread's back and arm a second set of sync timers. Both the log and the
+// merged read are made once per build and reused — ingest and the deal want
+// the same answer, and the mirror does not change under one run.
+let sharedLog = null, mergedLog = null;
+function log() {
+  if (!sharedLog) sharedLog = openLog({ dataDir: DATA, driveFolder: workerData.driveFolder,
+                                        deviceId: workerData.deviceId, tz: workerData.tz });
+  return sharedLog;
+}
+function shared() {
+  if (!mergedLog) mergedLog = log().readMerged(todayKey());
+  return mergedLog;
+}
 const WEB = () => path.join(DATA, "clothing-web");
 const ITEMS = () => path.join(DATA, "wardrobe-items");
 // Is this item's picture actually on disk? A catalogue entry alone is not
@@ -583,9 +601,20 @@ function needsAttributes(it) {
   return !it.pattern;
 }
 // Another device may have paid for this garment already (spec §3.1 item 1:
-// by id, else by content hash). The shared log is wired in T4.3; until then
-// nothing can hit and every garment goes to the model.
-function tagsFor(_id, _hash) { return null; }
+// by id, else by content hash). A hit is what makes the family pay the AI
+// ONCE for a garment rather than once per device (spec §5).
+function tagsFor(id, hash) { return log().tagsFor(shared(), id, hash); }
+// One catalogue entry, written out as a shared tag line (spec §5). Sent only
+// after a REAL model answer — a garment described from someone else's line is
+// already in the log. `rotate_deg`/`crop` ride along (W5) so the device that
+// skips the call can still draw the tile the right way up; every other field
+// has already been through the whitelist on its way into wardrobe.json.
+function shareTag(it) {
+  if (!it || !it.id) return;
+  log().appendTag({ id: it.id, hash: it.hash, name: it.name, category: it.category,
+    warmth: it.warmth, colors: it.colors, pattern: it.pattern, statement: it.statement,
+    palette: it.palette, vibe: it.vibe, rotate_deg: it.rotate_deg || 0, crop: it.crop || {} });
+}
 // The picture the pass sends: the 640 tile, scaled to the same 384 px single
 // billing tile the photo probe uses. The photo itself is never opened again.
 function attrsProbe(id) {
@@ -671,6 +700,9 @@ async function describeCatalogued(cfg, cat) {
         Object.assign(it, attributes(meta), { attrsAt: day });
         done++;
         saveCatalog(cat);        // nothing changed since the stamp write otherwise
+        // The family paid for this answer once; every other device reads it
+        // from here instead of buying it again (spec §5 "tags pay once").
+        shareTag(it);
       }
       if (calledModel) await new Promise(r => setTimeout(r, ATTRS_SPACING_MS));
       post();
@@ -737,7 +769,12 @@ async function namePhotos(cfg, cat, todo) {
         // Known garment, missing tile: redraw from what we already learned.
         const known = cat.items[f] && cat.items[f].ok ? cat.items[f] : null;
         const orient = photoOrientation(path.join(CLOTHING(), f), bytes);
-        let meta;
+        // The id is the md5 of the photo's path under clothing/, so it is the
+        // same on every device that has the same file — the first half of the
+        // shared-tag match (spec §3.1 item 1). It is needed BEFORE the model
+        // is asked now, not after.
+        const id = "item_" + crypto.createHash("md5").update(f).digest("hex").slice(0, 10);
+        let meta, sharedTag = null;
         if (known) {
           // A pre-EXIF entry's rotate_deg was the model compensating for the
           // sideways decode; now that the photo is turned as shot, drop it.
@@ -750,6 +787,18 @@ async function namePhotos(cfg, cat, todo) {
                    rotate_deg: legacy ? 0 : known.rotate_deg || 0, crop: known.crop || {},
                    colors: known.colors, pattern: known.pattern, statement: known.statement,
                    palette: known.palette, vibe: known.vibe };
+        } else if ((sharedTag = tagsFor(id, hash))) {
+          // Another device in the family already asked about this garment —
+          // by id (same filename) or by content hash (the same photo saved
+          // under another name). The tile is still drawn HERE; only the
+          // question is free. `top_side` is not in a tag line, so the turn
+          // comes from the rotate_deg the tagging device wrote (W5) — without
+          // it a sideways photo would draw a sideways tile on this device.
+          meta = { name: sharedTag.name, category: sharedTag.category, warmth: sharedTag.warmth,
+                   rotate_deg: sharedTag.rotate_deg || 0, crop: sharedTag.crop || {},
+                   colors: sharedTag.colors, pattern: sharedTag.pattern, statement: sharedTag.statement,
+                   palette: sharedTag.palette, vibe: sharedTag.vibe };
+          console.log("[clothing] " + f + " was already described by another device — no AI call");
         } else {
           const probe = path.join(ITEMS(), "_probe.jpg");
           writeJpg(scaleRgba(work, 384), probe, 78);
@@ -757,7 +806,6 @@ async function namePhotos(cfg, cat, todo) {
           meta = await askModel(cfg, probe);
         }
         const rot = turnFor(meta);
-        const id = "item_" + crypto.createHash("md5").update(f).digest("hex").slice(0, 10);
         // Trim on the FULL upright photo — its border really is floor/table, so
         // the background sample is honest. (Doing this after the model's crop
         // sampled the GARMENT and trimmed nothing: wood floor survived onto the
@@ -794,8 +842,11 @@ async function namePhotos(cfg, cat, todo) {
           rotate_deg: rot, crop: hint || {}, exif: orient,
           category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any",
-          ...attributes(meta), hash, ...(usedAi ? { attrsAt: todayKey() } : {}) };
+          ...attributes(meta), hash, ...(usedAi || sharedTag ? { attrsAt: todayKey() } : {}) };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
+        // Only a real answer is worth sharing: a garment described FROM the
+        // shared log is already in it, and a tile repair learned nothing new.
+        if (usedAi) shareTag(cat.items[f]);
         landed++;
         console.log("[clothing] " + (known ? "redrew " : "cataloged ") + f +
           " -> " + cat.items[f].name + " (" + cat.items[f].category + ")");
@@ -990,21 +1041,28 @@ async function buildCataloged(cat) {
   // staples then fresh, garment-distinct looks; yesterday's page 1 opens page
   // 2; the seed is the family's day, so a same-day rebuild (weather re-sort,
   // sync, restart) deals the same 21 in the same order — nothing random here.
-  // Curated pairs and hearts arrive with the shared taste file (T4.3): empty
-  // until then.
+  // The memory is BOTH halves (spec §5, §6 step 4): this device's own
+  // history.json — the local canonical, one writer — merged with every other
+  // device's picks and offers as the mirror delivered them. Curated pairs and
+  // hearts come from the same shared folder (the migration tool writes the
+  // family's; there is no UI for them this cut).
   const seed = dayKey(Date.now(), workerData.tz);
+  const m = shared();
   const today = buildCandidates({
     items, band, cap: PER_PAGE * PAGES, seed,
-    pairing: { great: [], avoid: [] }, favorites: new Set(),
-    history: readHistory(), perPage: PER_PAGE,
+    pairing: m.pairing, favorites: m.favorites,
+    history: mergeHistory(readHistory(), m), perPage: PER_PAGE,
   }).map(toWorkerShape);
 
   // The page-1 lineup goes to the shell FIRST (I9): it is the memory tomorrow's
   // deal reads, and a composite that fails must not lose it. ONE writer for
   // wardrobe/history.json — the shell's recordOffer, never this thread (A4-1).
-  if (parentPort) parentPort.postMessage({ offer: {
-    date: seed, band,
-    page1: today.slice(0, PER_PAGE).map(c => c.one ? [c.one.id] : [c.top.id, c.bottom.id]) } });
+  const page1 = today.slice(0, PER_PAGE).map(c => c.one ? [c.one.id] : [c.top.id, c.bottom.id]);
+  if (parentPort) parentPort.postMessage({ offer: { date: seed, band, page1 } });
+  // ...and the same lineup to the family, so tomorrow every device bars what
+  // any of them showed today. The MOUNT only — <DATA>/clothing/.era belongs to
+  // the mirror (A4-9) — and never a reason to fail a build.
+  log().appendOffer(seed, { band, page1 });
 
   fs.mkdirSync(OUTFITS(), { recursive: true });
   // Layout per ux-contract.md placement LAW (dad 9/1: "follow the docs"):

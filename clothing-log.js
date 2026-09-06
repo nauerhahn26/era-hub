@@ -47,6 +47,7 @@ const JSONL = /^[A-Za-z0-9._-]+\.jsonl$/;
 // The original's warmth is an int level; the hub's is a word (plan W3). The
 // migration tool carries the level, so the reader speaks both.
 const WARMTH_WORD = { 1: "warm", 2: "cool", 3: "cold" };
+let saidNoFolder = false;   // the "no Drive folder" line, once per process
 
 // ---- the shapes a line must have to be a line -------------------------------
 // A line that is skipped is not the last line of anything: the migration tool
@@ -88,7 +89,13 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
   const own = String(deviceId || "hub");
   const zone = tz || "UTC";
   const mount = driveFolder ? String(driveFolder) : null;
-  if (!mount) console.log("[clothing] no Drive folder — this device's picks stay local (nothing is shared)");
+  // Said once per process, not once per build: the worker opens a log on every
+  // run, and a family without Drive would otherwise read this line every
+  // fifteen minutes for ever.
+  if (!mount && !saidNoFolder) {
+    saidNoFolder = true;
+    console.log("[clothing] no Drive folder — this device's picks stay local (nothing is shared)");
+  }
 
   // The mount's clothing/ folder, only if it is ALREADY there (rule 2). Checked
   // on every append, not once: a family can point Settings at a folder before
@@ -243,6 +250,47 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
   return { appendPick, appendOffer, appendTag, readMerged, tagsFor, deviceId: own };
 }
 
+// ---- one memory out of two (spec §5 "Reads", §6 step 4) ---------------------
+// buildCandidates takes a single {days, events}. The LOCAL canonical is this
+// device's — wardrobe/history.json, one writer (A4-1/A4-9) — and everything
+// else arrives through the mirror. Union, never replacement:
+//   * events: both devices' lines for a date, oldest first. derivePicks then
+//     collapses them per its own rules (one credit per combo per day, and the
+//     day's last select only when nobody said Yes).
+//   * days:   this device's band for its own day; page 1 is the UNION, so a
+//     look the other tablet offered yesterday sits out page 1 here today.
+// `local` is never mutated: the shell reads the same object back to write it.
+function mergeHistory(local, merged) {
+  const src = local && typeof local === "object" ? local : {};
+  const days = src.days && typeof src.days === "object" && !Array.isArray(src.days) ? src.days : {};
+  const events = src.events && typeof src.events === "object" && !Array.isArray(src.events) ? src.events : {};
+  const out = { days: {}, events: {} };
+
+  for (const [date, evs] of Object.entries(events)) if (Array.isArray(evs)) out.events[date] = evs.slice();
+  for (const [date, evs] of Object.entries((merged && merged.picksEvents) || {}))
+    (out.events[date] || (out.events[date] = [])).push(...evs);
+  const when = e => String((e && (e.at || e.t)) || "");
+  for (const evs of Object.values(out.events)) evs.sort((a, b) => when(a).localeCompare(when(b)));
+
+  for (const [date, entry] of Object.entries(days)) {
+    if (!entry || typeof entry !== "object") continue;
+    out.days[date] = { band: entry.band == null ? null : entry.band,
+      page1: (Array.isArray(entry.page1) ? entry.page1 : []).filter(Array.isArray).map(c => c.slice()) };
+  }
+  for (const [date, entry] of Object.entries((merged && merged.offers) || {})) {
+    const day = out.days[date] || (out.days[date] = { band: null, page1: [] });
+    if (day.band == null && entry.band != null) day.band = entry.band;
+    const seen = new Set(day.page1.map(c => c.join("+")));
+    for (const combo of entry.page1 || []) {
+      const k = combo.join("+");
+      if (seen.has(k)) continue;
+      seen.add(k);
+      day.page1.push(combo.slice());
+    }
+  }
+  return out;
+}
+
 // The oldest date a read bothers with: HISTORY_DAYS_KEPT before `today`.
 function oldestKept(today) {
   if (typeof today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
@@ -258,4 +306,4 @@ function filesOf(dir) {
   catch { return []; }
 }
 
-module.exports = { openLog };
+module.exports = { openLog, mergeHistory };

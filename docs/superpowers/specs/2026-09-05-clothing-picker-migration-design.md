@@ -222,8 +222,8 @@ they already live in the mirrored folder's photos. ~2 KB per device per day.
 - **Tags pay the AI once per family**: `ingest()` checks merged tags by id, then by
   content hash, before `askModel`; a hit records the attributes and skips the call
   (the tile is still drawn locally).
-- Latency is Drive's upload plus the 10-minute pull; fine, since a build only ever
-  reads days strictly before today.
+- Latency is Drive's upload plus the 10-minute pull (6 h in API mode); fine, since a
+  build only ever reads days strictly before today.
 
 ## 6. Data flow (one morning)
 
