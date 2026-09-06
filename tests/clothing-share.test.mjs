@@ -462,12 +462,23 @@ test("the one-click 'make the folder' button starts sharing straight away, with 
 test("a device on Drive's API mode keeps its picks to itself, quietly", async () => {
   const D = path.join(TMP, "E");
   fs.mkdirSync(D, { recursive: true });
+  // A family that used a local folder and then moved to the API leaves the old
+  // folderPath behind in drive.json — with a real clothing/ still in it. So the
+  // resolution is the thing under test here, not a hand-passed null: a guard
+  // that forgot the `mode` half (server.js and clothing.js each carry a copy)
+  // would write this device's picks into a mount it no longer has.
+  const stale = path.join(TMP, "drive-stale");
+  fs.mkdirSync(path.join(stale, "clothing"), { recursive: true });
   fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({
-    mode: "api", folderId: "F0",
+    mode: "api", folderId: "F0", folderPath: stale,
     token: { access_token: "fake-for-the-test", refresh_token: "fake-for-the-test" },
   }));
+  drive.start(D);
+  const st = drive.status();
+  const driveFolder = st.mode === "local" && st.folderPath ? st.folderPath : null;
+  assert.equal(driveFolder, null, "API mode is no local mount, whatever folder it remembers");
   const { openLog } = require("./clothing-log.js");
-  const log = openLog({ dataDir: D, driveFolder: null, deviceId: "api-dev", tz: ZONE });
+  const log = openLog({ dataDir: D, driveFolder, deviceId: "api-dev", tz: ZONE });
   assert.equal(log.appendPick(today(), { kind: "yes", combo: ["item_aaaa1111"] }), false);
   assert.equal(log.appendTag({ id: "item_aaaa1111", category: "top" }), false);
   assert.deepEqual(log.readMerged(today()).picksEvents, {}, "…and reads an empty family");

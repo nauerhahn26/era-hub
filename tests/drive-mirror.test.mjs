@@ -406,7 +406,9 @@ test("API mode: a .era file that changed without changing size is downloaded aga
   assert.equal(body1.length, body2.length);
   const md5 = (s) => crypto.createHash("md5").update(s).digest("hex");
   MEDIA.e1 = body1;
-  TREE.F0 = [{ id: "C1", name: "clothing", mimeType: "application/vnd.google-apps.folder" }];
+  // Its OWN root id, not F0's: overwriting the shared tree would hand every
+  // API-mode case added after this one a wardrobe-only Drive (review r1 nit).
+  TREE.G0 = [{ id: "C1", name: "clothing", mimeType: "application/vnd.google-apps.folder" }];
   TREE.C1 = [{ id: "C2", name: ".era", mimeType: "application/vnd.google-apps.folder" }];
   TREE.C2 = [{ id: "C3", name: "picks", mimeType: "application/vnd.google-apps.folder" }];
   TREE.C3 = [{ id: "C4", name: "dev-b", mimeType: "application/vnd.google-apps.folder" }];
@@ -416,7 +418,7 @@ test("API mode: a .era file that changed without changing size is downloaded aga
 
   fs.mkdirSync(D, { recursive: true });
   fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({
-    mode: "api", folderId: "F0",
+    mode: "api", folderId: "G0",
     token: { access_token: "fake-for-the-test", refresh_token: "fake-for-the-test",
              expiry: Date.now() + 3600e3 },
   }));
