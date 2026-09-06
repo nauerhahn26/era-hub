@@ -1523,7 +1523,14 @@ const server = http.createServer((req, res) => {
         // that every pick 400'd and favourites were never learned (QA 9/2)
         contentStore.writeAtomic(clothing.historyPath(), h);
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
-      } catch { res.writeHead(400).end(); }
+      } catch (e) {
+        // Say so. The other two history.json doors already log (the build's
+        // recorder and the worker's reader); this one refused the pick in
+        // silence, so the one symptom a parent could act on — "her Yeses
+        // stopped being remembered" — never reached the hub log (review r4).
+        console.error("[clothing] outfit-event: " + e.message);
+        res.writeHead(400).end();
+      }
     });
     return;
   }

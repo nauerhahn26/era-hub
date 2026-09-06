@@ -545,6 +545,31 @@ test("a lineup the memory would not accept is not lost: the next pass records it
   assert.equal(clothing.tick("test"), null, "and then it is settled");
 });
 
+// I9: the worker posts the page-1 lineup to the shell BEFORE it draws the
+// composites and writes the board — "the memory tomorrow's deal reads must not
+// depend on every picture surviving". Nothing exercised that ordering: moving
+// the post below the draw (or into the {done} payload) left every case green
+// (review r4). Here the board cannot be written at all, and the day is
+// remembered anyway.
+test("the day's lineup is recorded even when the board itself cannot be written", {
+  skip: rootHere,
+}, async () => {
+  const recipes = path.join(T3, "recipes");
+  fs.writeFileSync(memPath(), JSON.stringify({ days: {}, events: {} }));
+  // The board file has to be CREATED for the write to need the folder: an
+  // existing today.json is opened by permissions of its own and lands happily
+  // in a read-only folder (the first shape of this case did exactly that and
+  // proved nothing).
+  fs.rmSync(path.join(recipes, "today.json"), { force: true });
+  fs.chmodSync(recipes, 0o555);
+  let r;
+  try { r = await clothing.rebuildToday(); } finally { fs.chmodSync(recipes, 0o755); }
+  assert.ok(r.error, "the build really did die on the board it could not write: " + JSON.stringify(r));
+  const days = daysOf();
+  assert.equal(Object.keys(days).length, 1, "...and the lineup it dealt was recorded all the same");
+  assert.ok(days[Object.keys(days)[0]].page1.length > 0, "...with the looks it dealt");
+});
+
 // LAST — it repoints the module at a second data dir and lets the fake AI be
 // called, so it must run after the aiCalls assertions above.
 //
