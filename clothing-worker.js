@@ -483,7 +483,15 @@ async function callModel(cfg, jpgFile, model) {
     try {
       r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body),
         signal: AbortSignal.timeout(120000) });
-    } catch (e) { last = e.message; continue; }        // timeout/network: retry
+    } catch (e) {
+      // Say so. This retry sends the same picture again and used to leave no
+      // trace at all: the provider had already received (and counted) the
+      // request, so a run showed two requests for one photo with nothing in
+      // the log to attribute them to (review r4).
+      last = e.message;
+      console.error("[clothing] model " + model + " did not answer (" + e.message + ") — asking once more");
+      continue;                                        // timeout/network: retry
+    }
     if (r.ok) {
       const txt = extract(await r.json());
       return JSON.parse(txt.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));

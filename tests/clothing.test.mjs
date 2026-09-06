@@ -21,12 +21,28 @@ const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const AI_PORT = Number(process.env.ERA_TEST_AI_PORT) || 8416;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-clo-"));
 const require = createRequire(path.join(HUB, "server.js"));
-// ONE clock for the suite: the module defaults to the family's LA zone and
-// this box runs UTC, so every "today"/"yesterday" key here is derived over
+const { dayKey, yesterdayOf } = require("./clothing-rank.js");
+// ONE clock for the suite: every "today"/"yesterday" key here is derived over
 // ZONE and the module is started with the same zone (plan T2.1/T2.4) — never
 // an OS-zone toLocaleDateString, never now − n×86400e3 in a DST zone (I6).
-const ZONE = "UTC";
-const { dayKey, yesterdayOf } = require("./clothing-rank.js");
+//
+// And ZONE is deliberately NEITHER of the two wrong answers a worker can give:
+// not this box's own zone (Etc/UTC) and not the module's default
+// (America/Los_Angeles). It used to be "UTC", which IS this box's zone, so a
+// worker that ignored workerData.tz and read the OS clock dealt byte-identical
+// seeds, byte-identical days keys and byte-identical boards — the plumbing
+// T2.1 exists to add had no test at all (review r4). +14 and −12 are the two
+// ends of the world's calendar dates; between 00:00 and ~07:00 UTC only two
+// dates exist anywhere and the box and the module hold one each, so in those
+// hours the second clause keeps the OS-clock half pinned (the module-default
+// half is what the box/module disagreement itself covers then).
+const ZONE = (() => {
+  const now = Date.now();
+  const box = dayKey(now, "UTC"), mod = dayKey(now, "America/Los_Angeles");
+  const ends = ["Pacific/Kiritimati", "Etc/GMT+12"];
+  return ends.find(z => dayKey(now, z) !== box && dayKey(now, z) !== mod)
+      || ends.find(z => dayKey(now, z) !== box) || ends[0];
+})();
 let ai, clothing;
 
 // tiny solid-color JPEGs stand in for phone photos
@@ -67,10 +83,28 @@ const ANSWERS = [
 let calls = 0;
 let forceAnswer = null;         // when set, every photo is described this way (label tests)
 let flaky = 0;                  // >0 = answer this many calls with a 503 first
+let hangups = 0;                // >0 = drop this many connections mid-request (a transport error)
 let throttleModel = "";         // a model id that always answers 429
 let throttleAfter = 0;          // ...but only once `calls` passes this (a quota that runs out mid-build)
 const wire = [];   // {path, auth} per request — proves each provider's format
+const wireErrors = [];   // wire-format complaints, RECORDED not thrown (see below)
 const hits = [];   // every request path, 429s included
+// Every distinct picture the model was shown. THIS, not `calls`, is what the
+// AI-spend pins count: a request the server received but never answered is
+// invisible in the worker's log (callModel retries a transport failure
+// silently), and the retry sends the SAME picture again — which used to move
+// the raw counter twice for one photo and fail "already-cataloged photos are
+// never re-sent" about one run in three (review r4). `calls` stays for the
+// pins that really are about request counts (the 503 and 429 ladders).
+const described = new Set();
+function pictureOf(url, p) {
+  try {
+    if (url === "/v1/messages") return p.messages[0].content[0].source.data;
+    if (url === "/v1/chat/completions") return p.messages[0].content[0].image_url.url;
+    if (url.startsWith("/v1beta/models/")) return p.contents[0].parts[0].inline_data.data;
+  } catch {}
+  return null;
+}
 let lastProbe = ""; // base64 of the last picture a Google call was shown
 
 before(async () => {
@@ -93,6 +127,12 @@ before(async () => {
       try { parsed = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
       calls++;
       hits.push(req.url);
+      const pic = pictureOf(req.url, parsed);
+      if (pic) described.add(pic);
+      // A provider that accepts the request and then drops the connection: the
+      // client sees a transport error, the server has already counted the
+      // request, and callModel sends the very same picture again 3 s later.
+      if (hangups > 0) { hangups--; req.destroy(); return; }
       if (throttleModel && req.url.includes(throttleModel) && calls > throttleAfter) {
         res.writeHead(429, { "Content-Type": "application/json" });
         res.end('{"error":{"code":429,"message":"Resource exhausted"}}');
@@ -109,16 +149,23 @@ before(async () => {
       const answer = forceAnswer || ANSWERS[wire.length % ANSWERS.length];
       const text = "Here you go:\n" + JSON.stringify(answer);
       let out;
+      // A wire-format complaint is RECORDED, never thrown: this handler lives
+      // in the before hook's async graph, where a throw is an uncaughtException
+      // and a FILE-level failure with no case name on it — the same shape r3
+      // removed from the JSON.parse above. The cases that care read wireErrors.
       if (req.url === "/v1/messages") {                       // anthropic
-        assert.equal(parsed.messages[0].content[0].type, "image");
+        if (parsed.messages[0].content[0].type !== "image")
+          wireErrors.push("anthropic content[0] was " + parsed.messages[0].content[0].type);
         wire.push({ path: req.url, auth: req.headers["x-api-key"] });
         out = { content: [{ type: "text", text }] };
       } else if (req.url === "/v1/chat/completions") {        // openai
-        assert.equal(parsed.messages[0].content[0].type, "image_url");
+        if (parsed.messages[0].content[0].type !== "image_url")
+          wireErrors.push("openai content[0] was " + parsed.messages[0].content[0].type);
         wire.push({ path: req.url, auth: req.headers["authorization"] });
         out = { choices: [{ message: { content: text } }] };
       } else if (req.url.startsWith("/v1beta/models/")) {     // google
-        assert.ok(parsed.contents[0].parts[0].inline_data.data.length > 0);
+        if (!(parsed.contents[0].parts[0].inline_data || {}).data)
+          wireErrors.push("google parts[0] carried no inline_data");
         lastProbe = parsed.contents[0].parts[0].inline_data.data;
         wire.push({ path: req.url, auth: req.headers["x-goog-api-key"] });
         out = { candidates: [{ content: { parts: [{ text }] } }] };
@@ -268,11 +315,15 @@ test("morning rule: a board built yesterday is stale, one built after 5am today 
 });
 
 test("second regenerate makes no further AI calls (catalog is durable)", async () => {
-  const before = calls;
+  // DISTINCT pictures, not raw requests: a transport-level retry sends the same
+  // photo twice and the raw counter cannot tell that from a photo being
+  // re-described (review r4 — the case below pins the difference).
+  const before = described.size;
   await clothing.regenerate(true);
-  assert.equal(calls, before, "already-cataloged photos are never re-sent");
+  assert.equal(described.size, before, "already-cataloged photos are never re-sent");
   assert.ok(wire.slice(0, 3).every(w => w.path === "/v1/messages" && w.auth === "sk-test"),
     "anthropic calls used /v1/messages with x-api-key");
+  assert.deepEqual(wireErrors, [], "every request so far carried the provider's own picture field");
 });
 
 test("preferred-LLM: an OpenAI key ingests new photos through their wire format", async () => {
@@ -283,6 +334,7 @@ test("preferred-LLM: an OpenAI key ingests new photos through their wire format"
   const w = wire[wire.length - 1];
   assert.equal(w.path, "/v1/chat/completions");
   assert.equal(w.auth, "Bearer sk-oa-test");
+  assert.deepEqual(wireErrors, [], "the openai body carried an image_url part");
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.ok(cat.items["photo_d.jpg"].ok, "photo cataloged via OpenAI");
 });
@@ -338,6 +390,7 @@ test("preferred-LLM: a Google key ingests through generateContent with x-goog-ap
   const w = wire.filter(x => x.path.startsWith("/v1beta/models/")).pop();
   assert.ok(w.path.startsWith("/v1beta/models/") && w.path.endsWith(":generateContent"), w.path);
   assert.equal(w.auth, "AIza-test", "key travels in the header, never the URL");
+  assert.deepEqual(wireErrors, [], "the google body carried inline_data");
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.ok(cat.items["photo_e.jpg"].ok, "photo cataloged via Google");
 });
@@ -411,11 +464,11 @@ test("a missing tile is redrawn without asking the AI again", async () => {
   assert.ok(fs.existsSync(tile), "tile written");
 
   fs.rmSync(tile);                       // the picture disappears
-  const before = calls;
+  const before = described.size;
   await clothing.regenerate(true);
 
   assert.ok(fs.existsSync(tile), "the tile is redrawn on the next build");
-  assert.equal(calls, before, "no AI call was spent redrawing a known garment");
+  assert.equal(described.size, before, "no AI call was spent redrawing a known garment");
   const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.equal(after.items["photo_f.jpg"].name, entry.name, "name survives the repair");
   assert.equal(after.items["photo_f.jpg"].category, entry.category, "category survives");
@@ -431,7 +484,7 @@ test("a photo removed from clothing/ leaves the catalogue, its tile and the boar
   assert.ok(fs.existsSync(tile), "starts on the board");
 
   fs.rmSync(path.join(TMP, "clothing", "photo_f.jpg"));   // it no longer fits
-  const before = calls;
+  const before = described.size;
   await clothing.regenerate(true);
 
   const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
@@ -439,7 +492,7 @@ test("a photo removed from clothing/ leaves the catalogue, its tile and the boar
   assert.ok(!fs.existsSync(tile), "tile removed");
   const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
   assert.ok(!JSON.stringify(rec.boards).includes(entry.id), "no outfit still wears it");
-  assert.equal(calls, before, "removing a garment costs no AI call");
+  assert.equal(described.size, before, "removing a garment costs no AI call");
   assert.ok(rec.boards.some(b => String(b.id).startsWith("confirm_")), "the board still builds");
 });
 
@@ -472,10 +525,10 @@ test("a phone photo with EXIF orientation is turned upright before the model see
   delete entry.exif; entry.rotate_deg = 0;
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify(cat));
   const stamp = fs.statSync(tile).mtimeMs;
-  const before = calls;
+  const before = described.size;
   await new Promise(r => setTimeout(r, 20));
   await clothing.regenerate(true);
-  assert.equal(calls, before, "the legacy redraw costs no AI call");
+  assert.equal(described.size, before, "the legacy redraw costs no AI call");
   const after = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.equal(after.items["photo_g.jpg"].exif, 3, "legacy entry migrated");
   assert.ok(fs.statSync(tile).mtimeMs > stamp, "its tile was redrawn");
@@ -833,6 +886,39 @@ test("the Shorts tile does not wear the Pants pictogram (bug 22)", () => {
   const sym = label => b.buttons.find(x => x.label === label).symbol;
   assert.equal(sym("Shorts"), "13638");
   assert.notEqual(sym("Shorts"), sym("Pants"));
+});
+
+// The gate reads this file's exit code, and it went red about one run in three
+// on "already-cataloged photos are never re-sent" — `5 !== 3`, on a build whose
+// ingest logged nothing at all (review r4). The one production path that makes
+// the server count a request the worker never reports is callModel's
+// transport-level retry: a connection the provider accepts and then drops is a
+// second request for the SAME picture, and no console line said so. Here that
+// path is driven on purpose, so the difference between "two requests" and "two
+// photos described" is a pinned property rather than an unattributable flake —
+// and the retry now says its name in the log (clothing-worker.js).
+//
+// LAST case before the favourites block, which prunes clothing/ to its own
+// wardrobe: this one leaves a photo behind and would otherwise shift which
+// answer the fake gives the photos after it.
+test("a connection the provider drops is retried with the same picture — one photo, two requests", async () => {
+  fs.writeFileSync(path.join(TMP, "ai-config.json"),
+    JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
+  forceAnswer = { name: "Sunny tee", category: "top", warmth: "any",
+    rotate_deg: 0, crop: { x: 0, y: 0, w: 1, h: 1 } };
+  makeJpg(path.join(TMP, "clothing", "photo_drop.jpg"), 175, 45, 135);
+  const beforeCalls = calls, beforePics = described.size;
+  hangups = 1;
+  try { await clothing.regenerate(true); } finally { forceAnswer = null; hangups = 0; }
+
+  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  assert.ok(cat.items["photo_drop.jpg"] && cat.items["photo_drop.jpg"].ok,
+    "the photo was catalogued through the retry");
+  assert.equal(calls - beforeCalls, 2,
+    "the server counted the request twice: one dropped, one answered");
+  assert.equal(described.size - beforePics, 1,
+    "...but only ONE picture was described — which is what an AI-spend pin must count");
+  assert.deepEqual(wireErrors, [], "both requests were well-formed vision requests");
 });
 
 // ---- her favourites (audit 9/2; ported generator 9/5) ----
