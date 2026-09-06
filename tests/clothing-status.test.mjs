@@ -181,11 +181,45 @@ test("every other writer in the family's folder is counted, and none of them is 
   assert.equal(body.includes(own), false, "this device's own name never leaves it");
   for (const name of ["dev-b", "dev-c", "studio"])
     assert.equal(body.includes(name), false, name + " is a count, not a name");
-  assert.equal(JSON.stringify(s.sharing).includes("item_"), false, "no ids under sharing");
+  assert.deepEqual(Object.keys(s.sharing).sort(), ["devices", "mode"],
+    "two fields, and neither of them can carry a name: a payload that grew a third has to argue here");
   assert.equal(body.includes(DRIVE), false, "and no folder path — this endpoint is public");
 
   // …and the other device's Yes really did reach the read-out: without the
   // merge the assertion above would pass just as well.
   assert.equal(s.picks.top.some(c => c.combo.length === 1 && c.combo[0] === items[2].id), true,
     "another device's pick is one of hers too (spec §5 'Reads')");
+});
+
+// The whole point of the sentence Settings writes — "Favourites: A + B (×3),
+// C (×2)…" — is that A is the look she chooses MOST. Until now every case in
+// this suite had one resolvable combo, so any order at all was green: a
+// comparator flipped by a typo would have shown a parent her five LEAST-chosen
+// looks, and the "top five" of spec §4 would have been "all of them".
+test("her favourites come out most-chosen first, and never more than five (spec §4 'top five')", async () => {
+  // Six more combos, each said Yes to on a different NUMBER of past days, so
+  // the weight is the only thing that can put them in this order.
+  const combos = [
+    [items[0].id, items[1].id], [items[2].id, items[3].id], [items[4].id, items[5].id],
+    [items[6].id, items[7].id], [items[0].id], [items[1].id],
+  ];
+  const days = [];
+  for (let d = D3, i = 0; i < 9; i++) days.push(d = yesterdayOf(d));
+  const h = readHistory();
+  combos.forEach((combo, i) => {
+    for (let n = 0; n < 9 - i; n++) {          // weights 9, 8, 7, 6, 5, 4
+      const day = days[n];
+      (h.events[day] || (h.events[day] = [])).push(yes(combo, day + "T18:0" + i + ":00Z"));
+    }
+  });
+  writeHistory(h);
+
+  const s = await status();
+  assert.deepEqual(s.picks.top.map(c => c.weight), [9, 8, 7, 6, 5],
+    "best-loved first — a parent reads the first name as the one she wears most");
+  assert.deepEqual(s.picks.top.map(c => c.combo), combos.slice(0, 5),
+    "…and the names go with the weights");
+  // Eight combos resolve now (these six, the two-piece of the second case and
+  // the other device's single); five is what a sentence can hold.
+  assert.equal(s.picks.top.length, 5, "the top five, not the whole memory");
 });
