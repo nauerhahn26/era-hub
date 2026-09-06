@@ -570,6 +570,108 @@ test("the day's lineup is recorded even when the board itself cannot be written"
   assert.ok(days[Object.keys(days)[0]].page1.length > 0, "...with the looks it dealt");
 });
 
+// The blind-memory door and the freshness door answer DIFFERENT builds: a
+// re-sort for a board that is otherwise the day's work, the morning's FULL
+// build for one that predates this morning's cutoff (spec §3.5). Asking the
+// blind flag FIRST made it REPLACE the stale-board door instead of borrowing
+// it, so a blind deal that happened to be the last thing before 05:00
+// downgraded that morning to a re-sort — and a re-sort never runs ingest,
+// which is the only door that redraws a tile that has gone missing (QA 9/2:
+// a wipe left 20 catalogued items with 5 tiles). The garment was then in no
+// outfit for the rest of the day, because nothing re-opens either door once
+// the board is fresh again (review r5).
+test("a stale board still gets the morning's FULL build when the last deal was blind", {
+  skip: rootHere,
+}, async () => {
+  const hp = memPath();
+  await clothing.rebuildToday();               // healthy: the memory is read and recorded
+  assert.equal(clothing.tick("test"), null, "settled before the blind deal");
+
+  fs.chmodSync(hp, 0o000);
+  try { assert.equal((await clothing.rebuildToday()).historyUnread, true, "the last deal was blind"); }
+  finally { fs.chmodSync(hp, 0o644); }
+
+  const board = path.join(T3, "recipes", "today.json");
+  const stale = new Date(Date.now() - 30 * 3600e3);
+  fs.utimesSync(board, stale, stale);
+  assert.equal(clothing.boardIsFresh(T3), false, "...and the board it left predates this morning");
+
+  const tileOf = (f) => {
+    const c = JSON.parse(fs.readFileSync(path.join(T3, "wardrobe.json"), "utf8"));
+    return path.join(T3, "wardrobe-items", c.items[f].id + ".jpg");
+  };
+  fs.rmSync(tileOf("top.jpg"));                // only ingest redraws a tile
+
+  const build = clothing.tick("test");
+  assert.ok(build, "the morning tick builds");
+  await build;
+  // the id is re-read: a repair re-derives it from the photo's name, so the
+  // hand-seeded "item_top" of this fixture becomes the worker's own id
+  assert.ok(fs.existsSync(tileOf("top.jpg")),
+    "the tick ran the morning's FULL build: the garment's lost tile was redrawn");
+  assert.equal(clothing.tick("test"), null, "...and the day's board is settled");
+});
+
+// Tomorrow, for the shell's own clock: the module reads `new Date()` directly
+// (boardIsFresh's 5am cutoff, holdDay, the re-deal budget below), so a case
+// about "the next day" has to move that clock and put it back. A subclass
+// rather than node:test's mock.timers: this needs Date and nothing else, and
+// the mock API prints an ExperimentalWarning into the gate's log.
+const RealDate = Date;
+async function tomorrow(fn) {
+  const shift = 24 * 3600e3;
+  globalThis.Date = class extends RealDate {
+    constructor(...a) { super(...(a.length ? a : [RealDate.now() + shift])); }
+    static now() { return RealDate.now() + shift; }
+  };
+  try { return await fn(); } finally { globalThis.Date = RealDate; }
+}
+
+// The re-deal budget belongs to the DAY, the way holdDay does. Counted per
+// OUTAGE and cleared only by a build that succeeds, the one re-deal was spent
+// for good: a history.json shut for a moment on two mornings running left the
+// second morning's blind board standing — no staples, no yesterday bar, no day
+// recorded — and bought no re-deal at all (review r5).
+test("tomorrow's memory trouble buys tomorrow's re-deal", {
+  skip: rootHere,
+}, async () => {
+  const hp = memPath();
+  const board = path.join(T3, "recipes", "today.json");
+  const freshen = () => { const t = Date.now() / 1000; fs.utimesSync(board, t, t); };
+  // Nothing left for the hourly leftovers door to want: it shares this branch
+  // with the re-deal, and a photo still waiting would fire a build of its own
+  // tomorrow whatever the memory did — so the case would pass either way.
+  const cat = JSON.parse(fs.readFileSync(path.join(T3, "wardrobe.json"), "utf8"));
+  cat.items["waiting.jpg"] = { id: "item_waiting", ok: true, name: "Sunny shorts",
+    category: "shorts", warmth: "any" };
+  fs.writeFileSync(path.join(T3, "wardrobe.json"), JSON.stringify(cat, null, 1));
+  makeJpg(path.join(T3, "wardrobe-items", "item_waiting.jpg"), 200, 200, 70);
+
+  await clothing.rebuildToday();                    // healthy: the budget is clear
+  assert.equal(clothing.tick("test"), null, "settled before the outage");
+
+  fs.chmodSync(hp, 0o000);
+  try {
+    assert.equal((await clothing.rebuildToday()).historyUnread, true, "today's deal was blind");
+    const one = clothing.tick("test");
+    assert.ok(one, "today's one re-deal");
+    await one;
+    assert.equal(clothing.tick("test"), null, "...and today's budget is spent");
+
+    await tomorrow(async () => {
+      const blind = await clothing.rebuildToday();  // the file is still shut
+      assert.equal(blind.historyUnread, true, "tomorrow's deal is blind too");
+      freshen();
+      assert.equal(clothing.boardIsFresh(T3), true, "...and its board is tomorrow's own");
+      const two = clothing.tick("test");
+      assert.ok(two, "a new day buys a new re-deal");
+      await two;
+      freshen();
+      assert.equal(clothing.tick("test"), null, "...one, and only one");
+    });
+  } finally { fs.chmodSync(hp, 0o644); }
+});
+
 // LAST — it repoints the module at a second data dir and lets the fake AI be
 // called, so it must run after the aiCalls assertions above.
 //

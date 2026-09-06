@@ -54,16 +54,22 @@ let lastResult = null;
 // OPEN (the worker dealt blind — no staples, no yesterday bar, no freshness) or
 // the lineup it dealt would not be RECORDED (a hole in the sixty days, which
 // puts yesterday's page-1 looks back on page 1 tomorrow). Either way the board
-// on screen is not the day's work and tick deals again — but ONCE, and as a
-// RE-SORT:
+// on screen is not the day's work and tick deals again — but ONCE A DAY, and
+// as a RE-SORT:
 //   * once, because a file that will not open twice running never clears the
 //     flag, so an unbounded retry is a full build every 15 minutes for ever;
-//   * a re-sort, because this door jumps the freshness/allowance block below,
-//     and a FULL build there walked the provider ladder again for every photo
-//     still waiting — four times an hour into an allowance the hub already
-//     holds, the very thing holdDay exists to prevent (review r4).
+//     a day, because that budget is the day's, exactly as holdDay is — trouble
+//     on a second morning deserves that morning's re-deal (review r5);
+//   * a re-sort, because this door jumps the allowance retry beside it, and a
+//     FULL build there walked the provider ladder again for every photo still
+//     waiting — four times an hour into an allowance the hub already holds,
+//     the very thing holdDay exists to prevent (review r4).
+// It lives INSIDE the freshness branch: a board that is stale is not the day's
+// work whatever the memory did, and that morning owes her the full build
+// (review r5).
 let memoryBlind = false;
-let memoryRedeals = 0;          // re-deals already bought by the current trouble
+let memoryRedeals = 0;          // re-deals already bought TODAY
+let redealDay = "";             // ...and the day they were bought on
 const MEMORY_REDEALS = 1;
 let offerUnrecorded = false;    // the running build's {offer} did not land
 let queued = false;     // a regenerate asked for while one was running
@@ -221,6 +227,12 @@ function regenerate(force, opts = {}) {
         // that reached the deal can answer this; other results leave it alone.
         if (m.done.mode === "cataloged") {
           if (m.done.historyUnread || offerUnrecorded) {
+            // The budget is the DAY's, the way holdDay is: counted per OUTAGE
+            // and cleared only by a build that succeeded, the one re-deal was
+            // spent for good, so a file shut for a moment on a second morning
+            // bought nothing and that day's blind board simply stood (r5).
+            const day = new Date().toDateString();
+            if (redealDay !== day) { redealDay = day; memoryRedeals = 0; }
             memoryBlind = memoryRedeals < MEMORY_REDEALS;
             if (!memoryBlind)
               console.error("[clothing] her memory is still not working — today's board stands as it is");
@@ -313,21 +325,30 @@ function tick(reason) {
   let why = changed ? "photos changed, " : "";
   let rebuildOnly = false;
   if (!changed) {
-    if (memoryBlind) {
-      // Spend the flag as it is consumed and count the re-deal: the build this
-      // asks for may meet the same shut file, and nothing else would ever stop
-      // the loop. A RE-SORT, never a full build — see memoryBlind above.
-      memoryBlind = false;
-      memoryRedeals++;
-      why = "the last board was dealt without her memory, ";
-      rebuildOnly = true;
-    } else if (boardIsFresh(DATA)) {
-      const retry = aiCfg() && holdDay !== new Date().toDateString() &&
-        Date.now() - lastRetry >= RETRY_EVERY && pendingPhotos(DATA) > 0;
-      if (!retry) return null;
-      lastRetry = Date.now();
-      retryBuild = true;
-      why = "photos still waiting, ";
+    // A board that predates this morning's cutoff falls through all of this to
+    // the day's FULL build. The blind-memory door BORROWS the freshness door,
+    // it never replaces it: asked first, it downgraded a morning that was also
+    // blind to a re-sort, and a re-sort runs no ingest — so a garment whose
+    // tile had gone missing was in no outfit all day, with no door left to
+    // re-open (review r5). A full build re-reads the memory anyway, which is
+    // what clears the flag, so nothing is owed to the re-deal budget here.
+    if (boardIsFresh(DATA)) {
+      if (memoryBlind) {
+        // Spend the flag as it is consumed and count the re-deal: the build this
+        // asks for may meet the same shut file, and nothing else would ever stop
+        // the loop. A RE-SORT, never a full build — see memoryBlind above.
+        memoryBlind = false;
+        memoryRedeals++;
+        why = "the last board was dealt without her memory, ";
+        rebuildOnly = true;
+      } else {
+        const retry = aiCfg() && holdDay !== new Date().toDateString() &&
+          Date.now() - lastRetry >= RETRY_EVERY && pendingPhotos(DATA) > 0;
+        if (!retry) return null;
+        lastRetry = Date.now();
+        retryBuild = true;
+        why = "photos still waiting, ";
+      }
     }
   }
   console.log("[clothing] building today's board (" + why + reason + ")");
@@ -354,7 +375,7 @@ function start(dataDir, opts = {}) {
   deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
   seenPhotos = storedPhotoSet(dataDir);
   // a fresh start knows nothing about the last build's memory, either half
-  memoryBlind = false; memoryRedeals = 0; offerUnrecorded = false;
+  memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false;
   if (opts.noTimers) return;
   setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
@@ -371,4 +392,4 @@ function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
 module.exports = { start, regenerate, rebuildToday, isBuilding, status, boardIsFresh, tick,
   historyPath, readHistory, zone,
   _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false;
-    memoryBlind = false; memoryRedeals = 0; offerUnrecorded = false; } };
+    memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false; } };
