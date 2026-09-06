@@ -645,6 +645,12 @@ const weekdayOf = (key) => {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "long" });
 };
+// …and the date a key past the week stands for, in the family browser's en-US
+// default: "August 28", not "28 August" (plan T5.2 as amended r1).
+const monthDayOf = (key) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { day: "numeric", month: "long" });
+};
 const picksText = (page) => page.$eval("#picksStatus", e => e.textContent);
 
 test("the picks card names her favourite looks, and escapes the names (O1)", async () => {
@@ -749,6 +755,23 @@ test("a pick made yesterday says yesterday; an older one names its weekday in th
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
   const t = await picksText(page);
   assert.match(t, new RegExp("last " + weekdayOf(back4)), back4 + " → " + t);
+  assert.doesNotMatch(t, /yesterday/, t);
+  await ctx.close();
+});
+
+// The fourth `when` form (plan T5.2 as amended r1), and the one no case pinned:
+// past a week a weekday name says nothing about WHICH week, so "last Thursday"
+// for a three-week-old pick is a lie a parent could act on. Replacing the whole
+// branch with "" left every other case in this suite green (review r2).
+test("a pick more than a week old names its date instead of a weekday", async () => {
+  const zone = "America/Los_Angeles";
+  const back9 = dayKeyBack(9, zone);
+  const { ctx, page } = await settingsPage(null, { timezoneId: zone,
+    clothing: clothingPayload({ picks: { days: 12, lastDay: back9, top: [] } }) });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
+  const t = await picksText(page);
+  assert.match(t, new RegExp("last on " + monthDayOf(back9)), back9 + " → " + t);
+  assert.doesNotMatch(t, /last (Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day/, t);
   assert.doesNotMatch(t, /yesterday/, t);
   await ctx.close();
 });
