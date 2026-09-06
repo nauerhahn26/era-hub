@@ -482,7 +482,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
 ### Phase 7: gate, review, behavioural verification, cut
 **Posture hint:** implementing — commands and expected outputs are fixed below; anything unexpected is a STOP, not an adaptation.
 
-19. [ ] **T7.1 Full gate**
+19. [x] **T7.1 Full gate**
     - **Acceptance:** `bash tools/era-gate.sh` from `/home/claude/new-era/era-hub--wt-clothing` completes green with every new suite listed.
     - **Verification:**
       1. `ps -eo pid,cmd | grep -c "[e]ra-gate.sh"` — `0` **before** starting (never run two gates; if `flock -n 9 9>/tmp/era-gate.lock` fails, wait — do not kill).
@@ -582,7 +582,7 @@ implementation with a test file; every function has a byte-for-byte oracle.
     - **Guardrails:** synthetic wardrobe only; two ports ≥ 8464 chosen by `ss`, never one port for both hubs; kill by pid and wait for exit; no key file in either DATA; every wait bounded (a `TIMEOUT`/`STOP` line is the §E stop — never loosen a bound). If `cataloged` never reaches 35, STOP (the materialize helper or ingest gate is wrong — do not add a key). If `mtime unchanged: NO` appears, first check `idle` really saw `building:false` twice — a chained build is the usual cause, a rebuild on a log-only sync is the bug. §C.
     - **Gate:** evidence captured in the workpad; `rae-flow:reviewing` reads it as part of T7.2's final pass if it ran later.
 
-22. [ ] **T7.4 Cut v0.32.2 (orchestrator step — noted, not planned here)**
+22. [x] **T7.4 Cut v0.32.2 (orchestrator step — noted, not planned here)**
     - **Acceptance:** after T7.1-T7.3 are green and APPROVED, the orchestrator runs `bash tools/release.sh v0.32.2` from the worktree (the `v` prefix is the script's usage and every existing tag/dist dir: `release.sh:13`, `git tag` → `v0.32.1`, `dist/release-v0.32.1`; a bare `0.32.2` would tag and name off-convention for the update feed). Free disk ≥ 2 GB — memory: build-dist refuses otherwise; signing rail live since 9/5. VM QA on the QA host follows the private runbook and is **not** planned in this document.
     - **Verification:** there is no cheap preview: `--dry-run` runs the **full** pipeline (`release.sh:20-30` — step 1 the gate, taking the machine-wide `flock` and ~40 min if T7.1's gate is not still the freshest; step 2 `build-dist.sh` with makensis and the SimplySign signing rail; step 3 `vm-e2e.sh` on the QA host) and only skips the tag/publish (`:31`); budget ≥ 1 h and never overlap it with another gate. Cheap preflight instead: `df -Pm /home/claude/new-era | awk 'NR==2{print $4}'` ≥ 2048; `git -C /home/claude/new-era/era-hub--wt-clothing tag -l v0.32.2` prints nothing; `bash tools/era-gate.sh` result from T7.1 within the last commit (no module changed since). Then the real `bash tools/release.sh v0.32.2`.
     - **Guardrails:** not an implementer task; never run from `era-hub--wt-install-qa`; the gate must have finished (no concurrent gate/cut); `--dry-run` is a full build with the signing rail, not a listing.
@@ -614,6 +614,45 @@ does), and in the private repo `aecab41` (migration tool: a type that is not a s
 not a type, a history key that is not a real date is not a day, and `do-not-copy.txt`
 says what its two columns are). Spec §10 records every A4 item and every review-driven
 behaviour change as shipped.
+
+#### Cut (T7.1/T7.4) — result
+
+**Gate (T7.1): green three times** on the shipped product tree — `== era-gate: 88
+passed, 0 failed ==` at 8a4ec7c (the merge of `feat/audit-fixes` 6005964), at 9d23ff8
+and, inside the release run, at **9b8fbe0** (the three commits after the merge touch
+only `tests-vm/`, `tools/` and this plan — nothing `build-payload.sh` copies).
+
+**Cut (T7.4): `tools/release.sh v0.32.2` RELEASED 2026-09-06 23:42 UTC** on the third
+run. Run 1 was stopped at one minute to widen the VM harness's ceilings; run 2 went
+gate-green and then failed at the cut with "SimplySign Desktop is not logged in" — the
+Desktop's login lapses ~2 h 25 min after the phone code, which the 50-min gate had
+outlived (hence 9b8fbe0: a `0/4 signing` preflight before the gate and `--skip-gate`
+for a re-cut past a green gate). Run 3: signing preflight ready → gate 88/88 → build
+**20260906.2321** (uninstaller stub and Setup.exe both signed and timestamped at
+Certum) → VM e2e **14 passed, 0 failed** (leg A 9/9 fresh install, leg B 5/5
+v0.32.1 self-updating to the candidate — the first fully green VM run; the two earlier
+runs' misses were the QA host at 31–44 % CPU steal, a ceiling problem, not a product
+one) → tag `v0.32.2` = 9b8fbe0 → GitHub release
+https://github.com/nauerhahn26/new-era-releases/releases/tag/v0.32.2 with the six assets;
+the feed's `latest.json` reads `{"version":"v0.32.2","build":"20260906.2321"}`.
+Setup.exe sha256 `7d69f11444d6cfc072af6c8298b109446f18d17d914c074c16133660e1fae90d`.
+
+**Post-publish check on the QA guest** (defender-fastpath memory; this time scripted —
+download through the public release URL with Mark-of-the-Web, hash, Authenticode,
+`Start-MpScan`, `Get-MpThreatDetection`, then a desktop-session launch): hash matches
+`checksums.txt`; signature **Valid** (Certum Code Signing 2021 CA → the project's cert,
+Certum Timestamp 2026, valid to 2027-09-05); Defender real-time on, signatures 0 days
+old, cloud protection on, **0 threats**; the launch went straight to the installer's
+Choose Components page — **no SmartScreen interstitial**.
+
+**Pushed after the release** (dad's "Go" of 9/6 covered the tag and these): era-hub
+`feat/clothing-migration` (new on origin) and `master` d865588 → 9b8fbe0; era-board
+`master` and `feat/content-strip` 6d29363 → e67163e. era-family stays local.
+
+**Next, on the i13** (A4-13 order): restore the parked state, run
+`era-family/tools/clothing-migrate-studio.mjs` once so the family's tags reach the
+Drive folder, and only then let the hub self-update to v0.32.2 — its first build reads
+those tags. The first morning after the upgrade has no yesterday bar (spec §10).
 
 
 ---
