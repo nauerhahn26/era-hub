@@ -153,7 +153,23 @@ rem The flag exists only when the launcher's environment sets ERA_QA_CDP —
 rem a family's double-click never has it.
 set CDP=
 if defined ERA_QA_CDP set CDP=--remote-debugging-port=%ERA_QA_CDP%
-start "" "%B%" --kiosk "http://127.0.0.1:%PORT%%OPEN%" --edge-kiosk-type=fullscreen --user-data-dir="%~dp0data\kiosk-profile" --no-first-run --disable-pinch --overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required %CDP%
+rem Close any kiosk we already have open before opening the next one. A second
+rem launch on the SAME profile does not start a browser: it hands the url to the
+rem running one, which ignores kiosk on that hand-off and opens an ordinary
+rem window with the taskbar sitting over its bottom row (dad 9/6: Making Words
+rem with the taskbar across her letters). Matched on the kiosk-profile marker,
+rem the same marker the gaze engine uses for the hub's kiosks, so the engine's
+rem own windows (its streaming profile, its picker profile) are never touched.
+rem Plain wmic, never a scripted shell: Defender's download-time ML flags a bat
+rem that invokes one (8/29), and tests/start-hub-bat.test.mjs pins that law.
+wmic process where "(name='msedge.exe' or name='chrome.exe') and commandline like '%%kiosk-profile%%'" call terminate >nul 2>&1
+timeout /t 1 /nobreak >nul
+rem Scale is forced to 1 so a page gets the whole panel: her I-13 is 1920x1080
+rem at 150 percent, where an unforced browser reports a 1280x720 window and
+rem every tile, letter and book cover comes out half again too big (dad 9/6:
+rem Making Words and the Book Reader both oversized). The old suite forced it
+rem too, and the gaze engine still does.
+start "" "%B%" --force-device-scale-factor=1 --kiosk "http://127.0.0.1:%PORT%%OPEN%" --edge-kiosk-type=fullscreen --user-data-dir="%~dp0data\kiosk-profile" --no-first-run --disable-pinch --overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required %CDP%
 :done
 BAT
 cat > "$OUT/start-hub.sh" <<'SH'

@@ -18,6 +18,39 @@ test("the kiosk line exists and carries the family flags", () => {
     assert.ok(kioskLine.includes(f), "kiosk keeps " + f);
 });
 
+test("the page renders at the panel's real size (--force-device-scale-factor=1)", () => {
+  // Her I-13 is 1920x1080 at 150% text scaling: without this flag the browser
+  // hands the page a 1280x720 window and every tile, letter row and book cover
+  // is 1.5x oversized (dad 9/6: Making Words AND the Book Reader). The old
+  // suite forced it (aac-studio/install/windows-device.ps1) and the gaze
+  // engine's own kiosk still does (ERAgaze.cs LaunchStreamingKiosk).
+  assert.ok(kioskLine.includes("--force-device-scale-factor=1"), "kiosk forces scale 1");
+  assert.ok(kioskLine.indexOf("--force-device-scale-factor=1") < kioskLine.indexOf("--kiosk"),
+    "the scale flag comes before --kiosk");
+});
+
+test("a relaunch closes our own kiosk first, and only ours", () => {
+  // Chromium with the SAME --user-data-dir does not start a browser: it hands
+  // the url to the running one, which ignores --kiosk on that hand-off and
+  // opens a plain window with the taskbar over its bottom row (dad 9/6). The
+  // gaze engine already guards its streaming kiosk this way (ERAgaze.cs
+  // KillChromeByCmd, "a same-profile relaunch would JOIN the existing Chrome").
+  const kill = bat.split("\n").find((l) => /^wmic process where /.test(l));
+  assert.ok(kill, "the launcher closes any kiosk on our profile before launching");
+  assert.ok(bat.indexOf(kill) < bat.indexOf(kioskLine), "it runs BEFORE the kiosk launch");
+  // scoped to the two browsers we launch — wmic must never match itself
+  assert.ok(/name='msedge\.exe' or name='chrome\.exe'/.test(kill), "scoped to msedge/chrome only");
+  // OUR marker only: the gaze engine's own profile dirs are "streaming-profile"
+  // and "<its base dir name>-profile", neither of which contains this marker —
+  // and the engine itself identifies the hub's kiosks by exactly this string.
+  assert.ok(/commandline like '%%kiosk-profile%%'/.test(kill), "matched on the kiosk-profile marker");
+  assert.ok(!/streaming-profile/.test(kill), "never touches the gaze engine's own kiosks");
+  // %% is how a .bat writes a literal % — a single % would be read as a variable
+  assert.ok(!/like '%kiosk-profile%'/.test(kill), "the LIKE wildcards are doubled for cmd");
+  assert.ok(/^timeout \/t \d+ \/nobreak >nul$/m.test(bat.slice(bat.indexOf(kill))),
+    "and gives the old window a moment to go away before launching");
+});
+
 test("CDP is opt-in via ERA_QA_CDP and never a bare port", () => {
   assert.ok(/if defined ERA_QA_CDP set CDP=--remote-debugging-port=%ERA_QA_CDP%/.test(bat),
     "the flag is built only when ERA_QA_CDP is defined");
