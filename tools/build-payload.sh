@@ -168,8 +168,11 @@ rem Scale is forced to 1 so a page gets the whole panel: her I-13 is 1920x1080
 rem at 150 percent, where an unforced browser reports a 1280x720 window and
 rem every tile, letter and book cover comes out half again too big (dad 9/6:
 rem Making Words and the Book Reader both oversized). The old suite forced it
-rem too, and the gaze engine still does.
-start "" "%B%" --force-device-scale-factor=1 --kiosk "http://127.0.0.1:%PORT%%OPEN%" --edge-kiosk-type=fullscreen --user-data-dir="%~dp0data\kiosk-profile" --no-first-run --disable-pinch --overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required %CDP%
+rem too, and the gaze engine still does. The bubble flag goes with it: the line
+rem above ends the previous kiosk the hard way, and a browser that was not shut
+rem down cleanly offers to restore its tabs on the next start - never a bubble
+rem over a child's first tap.
+start "" "%B%" --force-device-scale-factor=1 --hide-crash-restore-bubble --kiosk "http://127.0.0.1:%PORT%%OPEN%" --edge-kiosk-type=fullscreen --user-data-dir="%~dp0data\kiosk-profile" --no-first-run --disable-pinch --overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required %CDP%
 :done
 BAT
 cat > "$OUT/start-hub.sh" <<'SH'

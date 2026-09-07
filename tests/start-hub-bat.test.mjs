@@ -16,6 +16,12 @@ test("the kiosk line exists and carries the family flags", () => {
   assert.ok(kioskLine, "start-hub.bat launches a --kiosk window");
   for (const f of ["--user-data-dir=\"%~dp0data\\kiosk-profile\"", "--no-first-run", "--autoplay-policy=no-user-gesture-required"])
     assert.ok(kioskLine.includes(f), "kiosk keeps " + f);
+  // The relaunch guard below terminates the previous kiosk, which is an
+  // unclean exit: without this the next launch can land on a "restore pages?"
+  // bubble sitting over her first tap. Never a bubble on a child's screen.
+  assert.ok(kioskLine.includes("--hide-crash-restore-bubble"), "kiosk hides the crash-restore bubble");
+  assert.ok(kioskLine.indexOf("--force-device-scale-factor=1") < kioskLine.indexOf("--hide-crash-restore-bubble"),
+    "it sits with the scale flag, ahead of --kiosk");
 });
 
 test("the page renders at the panel's real size (--force-device-scale-factor=1)", () => {
