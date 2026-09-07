@@ -49,6 +49,20 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-reader-size-"));
 let child, browser;
 
+// No test may spend a real key, and a hub reaches out on its own the moment it
+// boots: server.js calls clothing.start() for every hub and the 20 s tick asks
+// ipapi/Open-Meteo for the weather (clothing-worker.js:926-939), /content/status
+// asks ElevenLabs for the month's voice left, a Resend send is a real email, fal
+// spends per press. An UNSET seam means the provider's production base, and this
+// suite spawns with `...process.env`, so every one has to be named here — the
+// same list tools/era-gate.sh exports gate-wide (the last test pins the parity).
+const SEAMS = {
+  ERA_AI_URL: "http://127.0.0.1:1", ERA_ELEVEN_URL: "http://127.0.0.1:1",
+  ERA_FAL_URL: "http://127.0.0.1:1", ERA_GEO_URL: "http://127.0.0.1:1/geo",
+  ERA_WEATHER_URL: "http://127.0.0.1:1", ERA_TMDB_URL: "http://127.0.0.1:1",
+  ERA_STREAMING_URL: "http://127.0.0.1:1", ERA_RESEND_URL: "http://127.0.0.1:1",
+};
+
 // Minimal valid 1x1 JPEG (synthetic bytes, no image lib needed).
 const JPEG = Buffer.from(
   "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof" +
@@ -89,9 +103,9 @@ before(async () => {
 
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB,
-    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_CONSOLE: "1",
-           // no test may spend a real key: every provider seam points nowhere
-           ERA_AI_URL: "http://127.0.0.1:1", ERA_TTS_URL: "http://127.0.0.1:1" },
+    // ...SEAMS last: every provider seam points nowhere, whatever this shell
+    // happens to have exported.
+    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_CONSOLE: "1", ...SEAMS },
     stdio: "ignore",
   });
   for (let i = 0; i < 100; i++) {
@@ -220,4 +234,26 @@ test("page arrows at 1920x1080 CSS: 3.2rem corner glyphs, 5.625x ready-arrow", a
   assert.ok(Math.abs(grew - 5.625) < 0.05, `ready arrow grows 5.625x, got ${grew.toFixed(3)}`);
   assert.ok(Math.abs(m.ready.h - 485.07) < 6, `ready arrow height ${m.ready.h}, old app 485.07`);
   assert.ok(Math.abs(m.ready.w - 552.57) < 6, `ready arrow width ${m.ready.w}, old app 552.57`);
+});
+
+// The harness guard on SEAMS itself. A name no hub file reads LOOKS like a
+// closed seam and closes nothing — this suite shipped with ERA_TTS_URL, which
+// exists nowhere in era-hub, while the real ElevenLabs/fal/geo/weather seams
+// sat at their production URLs (9/7 review). A seam LEFT OUT is the same bug
+// with no misspelling to notice, so pin both directions: every name here is
+// read by the hub, and nothing the gate closes gate-wide is missing here.
+test("every provider seam this suite spawns with is real, and none is missing", () => {
+  const src = fs.readdirSync(HUB).filter((f) => f.endsWith(".js"))
+    .map((f) => fs.readFileSync(path.join(HUB, f), "utf8")).join("\n");
+  // assert.ok, not assert.match: a failing match would dump the whole hub.
+  for (const name of Object.keys(SEAMS))
+    assert.ok(new RegExp(`process\\.env\\.${name}\\b`).test(src),
+      `${name} is not a seam — no hub file reads it, so it closes nothing`);
+
+  const gate = fs.readFileSync(path.join(HUB, "tools/era-gate.sh"), "utf8");
+  const closed = new Set([...gate.matchAll(/\b(ERA_[A-Z_]*URL)="http:\/\/127\.0\.0\.1:1/g)].map((m) => m[1]));
+  assert.ok(closed.size >= 8, `only ${closed.size} seams parsed out of era-gate.sh`);
+  for (const name of closed)
+    assert.ok(name in SEAMS,
+      `era-gate.sh closes ${name} gate-wide; this suite leaves it at its production base`);
 });
