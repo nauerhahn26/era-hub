@@ -91,6 +91,12 @@ const run = (body) => fetch(`${BASE}/content/run`, {
   method: "POST", headers: { "Content-Type": "application/json" },
   body: typeof body === "string" ? body : JSON.stringify(body),
 });
+// "…and let me say otherwise" (dad 9/7): the door that renames the folder a
+// gathered pile of loose photos was given.
+const rename = (body) => fetch(`${BASE}/content/rename`, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: typeof body === "string" ? body : JSON.stringify(body),
+});
 
 before(async () => {
   fs.mkdirSync(DATA, { recursive: true });
@@ -367,5 +373,51 @@ test("with Drive not in local mode there is nothing to build and the page says s
     assert.equal((await r.json()).error, "needs-local-drive");
   } finally {
     driveCfg({ mode: "local", folderPath: FOLDER });
+  }
+});
+
+// ---------------------------------------------------------- rename (dad 9/7)
+
+test("POST /content/rename moves the folder and the book keeps its photos", async () => {
+  book("New book 2026-09-07", { sources: ["IMG_0001.HEIC"],
+                                job: { state: "inbox", autoTitle: true } });
+  const r = await rename({ kind: "books", slug: "new-book-2026-09-07", title: "Sunny Pond" });
+  assert.equal(r.status, 200);
+  const out = await r.json();
+  assert.equal(out.renamed, true);
+  assert.equal(out.title, "Sunny Pond");
+  assert.equal(out.slug, "sunny-pond");
+  assert.equal(fs.existsSync(path.join(BOOKS, "Sunny Pond", "sources", "IMG_0001.HEIC")), true);
+  assert.equal(fs.existsSync(path.join(BOOKS, "New book 2026-09-07")), false);
+  fs.rmSync(path.join(BOOKS, "Sunny Pond"), { recursive: true, force: true });
+});
+
+test("a rename never names a folder on the family's disk when it refuses", async () => {
+  const r = await rename({ kind: "books", slug: "nothing-here", title: "Sunny Pond" });
+  assert.equal(r.status, 400);
+  const out = await r.json();
+  assert.equal(out.error, "unknown book");
+  assert.doesNotMatch(out.error, /[/\\]/);
+});
+
+test("with Drive not in local mode nothing can be renamed either", async () => {
+  driveCfg({ mode: "api", folderId: "F0", token: { refresh_token: "x" } });
+  try {
+    const r = await rename({ kind: "books", slug: "x", title: "Sunny Pond" });
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).error, "needs-local-drive");
+  } finally {
+    driveCfg({ mode: "local", folderPath: FOLDER });
+  }
+});
+
+test("/content/status counts photos that are loose in books/, and names the wait", async () => {
+  fs.writeFileSync(path.join(BOOKS, "IMG_0900.HEIC"), Buffer.alloc(64, 3));
+  try {
+    const { body } = await statusOf();
+    assert.equal(body.loose, 1, "a photo with no folder is still a book on its way");
+    assert.equal(body.quietMs, 10 * 60 * 1000, "and the card's promise is this number");
+  } finally {
+    fs.rmSync(path.join(BOOKS, "IMG_0900.HEIC"), { force: true });
   }
 });

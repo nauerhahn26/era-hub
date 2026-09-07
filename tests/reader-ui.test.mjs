@@ -401,3 +401,99 @@ test("an empty shelf notices the first book without a relaunch (bug 31)", async 
   assert.equal(await page.locator("#shelfEmpty").isHidden(), true, "the notice is gone");
   await ctx.close();
 });
+
+// ------------------------------------------------ the shelf that is not empty
+// yet (dad 9/7). "No books yet — 📚 Add books with Google Drive, set it up in
+// Settings" was shown in EVERY state with nothing on the shelf: it was on the
+// screen while seventeen of his photos sat in the Drive folder he had already
+// set up. The Drive prompt is true in exactly one state, and the shelf now says
+// what is really happening in the others. /content/status is the Settings
+// card's own payload; the shelf reads the same one, so the two can never tell a
+// family two different stories.
+const contentStatus = (over) => ({
+  mode: "local", local: true, skipped: null, loose: 0, quietMs: 600000,
+  building: false, job: null, queued: [], jobs: [], lastScan: null, ...over });
+
+async function shelfWith(status, index = "[]") {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+  await ctx.route("**/books/index.json",
+    r => r.fulfill({ status: 200, contentType: "application/json", body: index }));
+  await ctx.route("**/content/status",
+    r => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(status) }));
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
+  await page.waitForFunction(() => window.Reader && typeof window.Reader.state === "function");
+  return { ctx, page };
+}
+
+test("no Drive folder on this computer: the Drive prompt is the right answer", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ local: false, mode: "off" }));
+  await page.waitForFunction(() => window.Reader.state().drive === false);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), false);
+  assert.equal(await page.locator("#shelfEmptyLink").isHidden(), false, "the link to Settings");
+  await ctx.close();
+});
+
+test("Drive IS set up and there are no books: the prompt names the folder, not Settings", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ local: true }));
+  await page.waitForFunction(() => window.Reader.state().drive === true);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), false);
+  assert.equal(await page.locator("#shelfEmptyLink").isHidden(), true,
+    "never 'set up Google Drive' at a family whose Drive is set up");
+  const s = await page.locator("#shelfEmptyLine").textContent();
+  assert.match(s, /books folder in your Google Drive/i, s);
+  await ctx.close();
+});
+
+test("photos are waiting in books/: the shelf says a book is coming, not 'no books'", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ loose: 17 }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), true, "not an empty shelf at all");
+  const card = page.locator("#shelfGrid .shelf-card.is-building");
+  const s = await card.textContent();
+  assert.match(s, /17 photos/, s);
+  assert.match(s, /about 10 minutes/, "and when it will start");
+  // NEVER a gaze target: she must be able to rest her eyes on it.
+  assert.equal(await card.locator(".dwell").count(), 0);
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0);
+  await ctx.close();
+});
+
+test("a book being built shows how far it has got, and is not openable", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "transcribing",
+      progress: { pages: 16, transcribed: 4, narrated: 0 }, held: null, error: null, paused: null }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const s = await page.locator("#shelfGrid .shelf-card.is-building").textContent();
+  assert.match(s, /Sunny Pond/);
+  assert.match(s, /Making this book/i);
+  assert.match(s, /4 of 16 pages read/);
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0, "nothing to open yet");
+  await ctx.close();
+});
+
+test("a book that is stuck says WHY, and never 'set up Google Drive'", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "inbox",
+      progress: { pages: 17, transcribed: 0, narrated: 0 },
+      held: "needs-photo-decoder", error: null, paused: null }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const s = await page.locator("#shelfGrid .shelf-card.is-building").textContent();
+  assert.match(s, /iPhone photos/i, s);
+  assert.doesNotMatch(s, /set it up in Settings/i);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), true);
+  await ctx.close();
+});
+
+test("a book already on the shelf is not shown twice while the mirror catches up", async () => {
+  const { ctx, page } = await shelfWith(
+    contentStatus({ jobs: [
+      { kind: "books", slug: "luna-the-fox", title: "Luna the Fox", state: "done",
+        progress: { pages: 4, transcribed: 4, narrated: 4 }, held: null, error: null, paused: null }] }),
+    JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox", cover: "/books/luna-the-fox/cover.jpg",
+                     pages: 4, hasVideo: false, authored: false }]));
+  await page.waitForFunction(() => window.Reader.state().shelfCount === 1);
+  assert.equal(await page.evaluate(() => window.Reader.state().buildingCount), 0);
+  assert.equal(await page.locator("#shelfGrid .shelf-card.is-building").count(), 0);
+  await ctx.close();
+});

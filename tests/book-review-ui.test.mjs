@@ -1053,6 +1053,7 @@ test("a page from somewhere else cannot delete, rewrite or spend through these d
   });
   const doors = [
     ["/content/remove", { kind: "books", slug: "not-yours" }],
+    ["/content/rename", { kind: "books", slug: "not-yours", title: "Somebody Else" }],
     ["/content/text", { slug: "not-yours", order: [2, 1] }],
     ["/content/text", { slug: "not-yours", page: 1, text: "not their words" }],
     ["/content/run", { kind: "books", slug: "not-yours", step: "narrate", page: 1 }],
@@ -1066,7 +1067,7 @@ test("a page from somewhere else cannot delete, rewrite or spend through these d
     headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" },
     body: JSON.stringify({ kind: "books", slug: "not-yours" }),
   })).status, 403);
-  assert.ok(fs.existsSync(dir), "the book is still on the family's disk");
+  assert.ok(fs.existsSync(dir), "the book is still on the family's disk, under its own name");
   assert.deepEqual(orderOf("Not Yours"), [1, 2], "in the order they left it");
   assert.equal(textOf("Not Yours")[0].text, "one", "with the words they left in it");
   assert.equal(spent("narrate", at) + spent("read", at), 0, "and nothing was bought");

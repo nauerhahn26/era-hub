@@ -210,7 +210,7 @@
 
   <div class="card" id="content">
     <h2>📚 Your books</h2>
-    <p class="hint">Photograph the pages of one of her picture books, make a folder inside <b>books</b> in your Google Drive named after the book, and put the photos in it. New ERA reads the words off the photos, records the narration and the book turns up in <b>Book Reader</b> on every device in the family &mdash; you only pay for it once. Nothing ever leaves your own Drive.</p>
+    <p class="hint">Photograph the pages of one of her picture books and put the photos in <b>books</b> in your Google Drive. That is all &mdash; New ERA takes a pile of loose photos to be <b>one book</b>, makes the folder, names it from the cover, reads the words off the photos and records the narration, and the book turns up in <b>Book Reader</b> on every device in the family. (Two books at once? Make a folder for each, named after the book, and put its photos in that.) You only pay for it once, and nothing ever leaves your own Drive.</p>
     <div class="row" id="contentActions" style="display:none; margin-bottom:10px">
       <button id="ctLook">📚 Look for new books now</button>
     </div>
@@ -991,6 +991,26 @@ function ctSorry(msg){
 // honest choices: wait, and it carries on by itself, or add credit and press
 // Try again now.
 const CT_PROVIDER={ google:"Google AI Studio", elevenlabs:"ElevenLabs" };
+// content.js QUIET_MS in minutes, refreshed on every paint. The default is only
+// what the card says for the half-second before the first status lands.
+let CT_QUIET_MIN=10;
+// The holds content-worker.js parks a book on that are neither a pause nor a
+// failure. Each one names what is missing and where the fix is; a hold with no
+// sentence here simply shows nothing, which is what "no-pages" deserves on a
+// folder a parent has just started filling.
+const CT_WAITING={
+  "no-ai-key":'This book is waiting for an <b>AI helper key</b> &mdash; add one in the card above and it starts by itself.',
+  "retry":'A page did not come back last time. New ERA tries that page again on its next look; every page already read is kept.',
+  "needs-title":'Reading the cover to find out what this book is called&hellip;',
+  // The 9/7 dead end, said out loud. iPhones write HEIC, New ERA opens HEIC
+  // with the file that ships alongside the Clothing Picker, and a hub that has
+  // Book Reader on its own does not have it. Nothing is lost while it waits.
+  "needs-photo-decoder":'These are <b>iPhone photos (HEIC)</b>. New ERA opens those with the file that comes with the '
+    +'<b>Clothing Picker</b> app &mdash; tick it in <b>Apps</b> above and this book carries on by itself. '
+    +'(Or save the photos as <b>JPEG</b> and put them back in the folder.) Every photo is kept either way.',
+  "unreadable-photos":'None of these files can be made into pages. A page has to be a <b>JPEG</b> photo or an '
+    +'<b>iPhone photo (HEIC)</b> &mdash; a PDF, a screenshot in another format or a document cannot be one.',
+};
 // What pressing "add credit" actually gets a family, which is not the same
 // thing for the two: Google's free day comes back either way and the paid tier
 // buys SPEED; ElevenLabs' month is a top-up and buys the narration itself.
@@ -1031,7 +1051,11 @@ function ctRow(j){
   d.style.cssText="border-top:1px solid var(--line);padding:10px 0";
   const p=j.progress||{pages:0,transcribed:0,narrated:0};
   let h='<div style="font-size:20px;font-weight:650">'+CT_ESC(j.title||j.slug)+'</div>';
-  h+='<div class="status" style="margin-top:2px">'+(CT_DOING[j.state]||"Working…");
+  // "Waiting to start" is only useful if it says WHAT it is waiting for and for
+  // HOW LONG (dad 9/7). The number is the hub's own quiet period, not a guess.
+  h+='<div class="status" style="margin-top:2px">'+(j.state==="inbox"
+    ? "Waiting to start — building begins about "+CT_QUIET_MIN+" minutes after the last photo arrives."
+    : (CT_DOING[j.state]||"Working…"));
   // Two counts, because they are the two things that cost money and time. The
   // narration count only appears once there is one — "0 of 12 narrated" under a
   // book that has not reached that step reads like a failure.
@@ -1054,7 +1078,19 @@ function ctRow(j){
   // and the scan behind it leaves a claim alone until its heartbeat is half an
   // hour cold. So a stopped book gets its own button, which asks the hub to run
   // this one book (POST /content/run) and starts it there and then.
+  // WAITING IS NOT WORKING, and it is not failing either (dad 9/7). A book with
+  // no AI key sat on "Reading the words off the photos…" for ever, and a family
+  // reading that had nothing to press and nothing to fix. content.js now says
+  // which hold a book is parked on, and these are the four it can be.
+  if(!j.error && !j.paused && CT_WAITING[j.held]) h+='<div class="status">'+CT_WAITING[j.held]+'</div>';
   if(j.error) h+='<div class="status bad">'+CT_ESC(ctSorry(j.error))+'</div>';
+  // A book NEW ERA named itself, off a pile of loose photos and its own cover.
+  // Said plainly, because the guess can be wrong in two different ways and the
+  // fix is different for each: a wrong NAME is the button below; a pile that was
+  // really two books is a folder the parent makes in Drive.
+  if(j.autoTitle) h+='<div class="status">New ERA gathered these loose photos into one book and gave it this name. '
+    +'Press <b>Rename</b> if that is wrong &mdash; or if these were really two books, move one book&rsquo;s photos '
+    +'into their own folder inside <b>books</b>.</div>';
   // A flag count on its own tells a parent nothing to do with it, and the two
   // kinds of mark are not the same sentence: j.flags counts WORDS the readers
   // were unsure of (the review page highlights those inside the page's own
@@ -1086,8 +1122,40 @@ function ctRow(j){
       +CT_ESC(CT_PROVIDER[j.paused.provider]||"AI")+' page</button>':'')
    +(j.error||j.paused?'<button data-run="'+CT_ESC(j.slug)+'">🔄 '
       +(j.paused?'Try again now':'Try this book again')+'</button>':'')
-   +'</div>';
+   // "…and let me say otherwise" (dad 9/7). A plain button and a plain box —
+   // no dwell, no gaze, no confirm dialog: this page is a grown-up's, and the
+   // worst a wrong press can do is give a folder a different name.
+   +'<button data-rename="'+CT_ESC(j.slug)+'">✏️ Rename</button>'
+   +'</div>'
+   +'<div class="row ct-rename" style="margin-top:8px;display:none">'
+   +'<input class="ct-rename-box" type="text" maxlength="60" aria-label="What this book is called"'
+   +' value="'+CT_ESC(j.title||"")+'" style="flex:1;min-width:220px">'
+   +'<button class="ct-rename-save">Save name</button></div>';
   d.innerHTML=h;
+  // ---- rename ----------------------------------------------------------
+  const ren=d.querySelector("button[data-rename]"), box=d.querySelector(".ct-rename");
+  // display, not [hidden]: the page's own .row sets display:flex, which wins.
+  const shown=()=>box.style.display!=="none";
+  if(ren) ren.onclick=()=>{ box.style.display=shown()?"none":"flex"; if(shown()) box.querySelector("input").focus(); };
+  const saveName=async()=>{
+    const input=box.querySelector("input"), title=(input.value||"").trim();
+    if(!title) { toast("Type what the book is called",false); return; }
+    const btn=box.querySelector(".ct-rename-save"); btn.disabled=true;
+    let out={};
+    try{ out=await (await fetch("/content/rename",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({kind:"books",slug:j.slug,title})})).json(); }catch(e){ out={error:"That did not go through — try again."}; }
+    btn.disabled=false;
+    // The hub's own sentence, never a status code: a book being built right now
+    // refuses with "try again in a minute", and that is the whole answer.
+    if(out.error){ toast(out.error,false); return; }
+    box.style.display="none";
+    toast(out.renamed?("Renamed to "+out.title):"That is already its name");
+    contentPaint();
+  };
+  if(box){
+    box.querySelector(".ct-rename-save").onclick=saveName;
+    box.querySelector("input").addEventListener("keydown",e=>{ if(e.key==="Enter") saveName(); });
+  }
   const add=d.querySelector("button[data-add]");
   if(add) add.onclick=()=>openSite(add.dataset.add);
   const again=d.querySelector("button[data-run]");
@@ -1136,12 +1204,20 @@ async function contentPaint(){
     list.innerHTML=""; return;
   }
   $("contentActions").style.display="";
-  const jobs=s.jobs||[];
+  // The wait before a pile of loose photos becomes a book, in the hub's own
+  // number rather than one typed in here (content.js QUIET_MS).
+  CT_QUIET_MIN=Math.max(1,Math.round((Number(s.quietMs)||600000)/60000));
+  const jobs=s.jobs||[], loose=Number(s.loose)||0;
+  // PHOTOS ARE NOT NOTHING (dad 9/7). A pile dropped straight into books/ is
+  // invisible for its first few minutes — no folder, no job — and the card used
+  // to say "No books yet" over the top of it.
+  const ctLoose=loose?'<b>'+loose+' photo'+(loose===1?'':'s')+'</b> just arrived in <b>books</b> — New ERA takes them '
+    +'to be one book and starts building about <b>'+CT_QUIET_MIN+' minutes</b> after the last one lands.':'';
   if(!jobs.length){
-    st.innerHTML='No books yet — make a folder inside <b>books</b> named after the book and drop the page photos in it.';
+    st.innerHTML=ctLoose||'No books yet — drop the page photos of one book into <b>books</b> in your Google Drive. New ERA makes the folder and names it for you.';
     list.innerHTML=""; return;
   }
-  st.innerHTML='<b>'+jobs.length+' book'+(jobs.length===1?'':'s')+'</b> in your Drive folder.';
+  st.innerHTML='<b>'+jobs.length+' book'+(jobs.length===1?'':'s')+'</b> in your Drive folder.'+(ctLoose?' '+ctLoose:'');
   list.innerHTML="";
   for(const j of jobs) list.appendChild(ctRow(j));
 }

@@ -37,6 +37,11 @@ const { Worker } = require("worker_threads");
 const drive = require("./drive.js");
 const store = require("./content-store.js");
 const booksIndex = require("./books-index.js");
+// The pile of photos a parent dropped into books/ without making a folder
+// (dad 9/7). Pure disk — no decoder, no network — so requiring it here costs
+// the hub's main process nothing (content-ingest.js is kept at arm's length for
+// exactly the opposite reason; see photoNames below).
+const gatherer = require("./content-gather.js");
 const { EXT: PHOTO_EXT } = require("./clothing-photos.js");
 // `voiceAllowance` is two numbers and a date off ElevenLabs' subscription
 // endpoint — how many characters are left this month and when the counter turns
@@ -65,6 +70,10 @@ const STALE_MS = 30 * 60 * 1000;
 // How often we look. Half the quiet period, so a book that stopped changing is
 // claimed within about fifteen minutes of the last photo landing.
 const SCAN_EVERY = 5 * 60 * 1000;
+// The hold content-worker.js parks a gathered book on once the cover has told
+// it what the book is called. It is not a failure and not a pause: it is the
+// worker saying "the folder is yours to move now" (see begin(), nameBook()).
+const NEEDS_TITLE = "needs-title";
 
 let DATA = null;
 let running = null;     // {kind, slug, dir, step} of the job in flight
@@ -214,14 +223,91 @@ function shelfOf(st) {
 // Write the claim. A fresh inbox gets a new job.json; a takeover keeps the
 // job exactly as the other device left it (state, startedAt, errors) and only
 // changes hands, so the build resumes at the step that fell over.
-function claim(dir, job, now) {
+// `extra` is merged into the job before it is written: the one caller that uses
+// it is the loose-photo gather below, which has to mark the folder it just made
+// as one nobody has named yet (`autoTitle`). Merged rather than written a second
+// time because job.json lives inside the family's Drive folder and every write
+// of it is an upload to every device.
+function claim(dir, job, now, extra) {
   const me = whoami();
   const next = job
     ? { ...store.transition(job, job.state, { now: iso(now) }), claimedBy: me }
     : store.newJob({ claimedBy: me, now: iso(now) });
-  store.writeJob(dir, next);
+  const written = store.writeJob(dir, extra ? { ...next, ...extra } : next);
   store.appendLog(dir, "claim", job ? "taken over by " + me : "claimed by " + me, { now: iso(now) });
-  return next;
+  return written;
+}
+
+// The slug the shelf gives a folder that was made a moment ago. books-index
+// caches per root on the root's mtime, and creating a directory bumps that — but
+// a rename inside the same second may not, so the miss is retried against a
+// forced rebuild before anything is run under a slug that names another book.
+function slugOf(root, name) {
+  return booksIndex.slugFor(root, name) ||
+         (booksIndex.bookDirs(root, true).list.find(e => e.dir === name) || {}).slug ||
+         null;
+}
+
+// ---------------------------------------------- the pile with no folder (9/7)
+
+// "I didn't put into, like, a folder and name it. I think that the system
+// should be smart enough to say, okay, these all belong to a single book,
+// because I just uploaded a bunch" (dad, 9/7). Photos sitting DIRECTLY in
+// `books/` were invisible to everything above: the walk is over books-index's
+// DIRECTORY list, so a pile of loose pages was never an inbox, was never
+// claimed, never built, and left the Book Reader telling a family with Drive
+// set up perfectly to go and set up Drive.
+//
+// The pile is ONE book, and it is on exactly the same quiet clock a book folder
+// is: `observe()` over the loose listing, ten minutes of stillness before
+// anything is moved. That is what makes "the photos are still arriving" and
+// "the parent has finished uploading" different things — a phone trickles a
+// twenty-photo album in over several minutes, and every arrival resets the
+// clock, so every one of them lands in the SAME book.
+//
+// Everything about the move itself — the marker that finishes an interrupted
+// one, the placeholder name, never deleting a photo, never creating `books/` —
+// is content-gather.js's. This function is only the decision to call it, and
+// what to do with the folder afterwards: claim it and start it, with
+// `autoTitle` set so the walk knows nobody has named this book yet.
+function gatherLoose(root, now) {
+  const list = listing(root);
+  if (!list) return null;                          // no books/ at all: nothing to do
+  const open = gatherer.pending(root);             // a move a stopped hub left half done
+  if (!list.count && !open) { seen.delete(root); return null; }
+  // An interrupted move is finished AT ONCE and never re-timed: those photos
+  // have already had their quiet ten minutes, and leaving half of them loose is
+  // how one book becomes two.
+  if (!open && observe(root, list.sig, now) < QUIET_MS) return null;
+  seen.delete(root);
+  let g = null;
+  try { g = gatherer.gather(root, { now }); }
+  catch (e) {
+    // The photos are exactly where the parent put them. Say so in the hub's own
+    // console — never into books/, which is the family's own folder and not a
+    // place for our scratch.
+    console.error("[content] could not gather the loose photos in books/: " + store.redact(e.message));
+    return null;
+  }
+  if (!g) return null;
+  const slug = slugOf(root, g.name);
+  if (!slug) return null;                          // the folder went away under us
+  store.appendLog(g.dir, "gather", (g.resumed ? "carried on" : "took in") + " " + g.moved +
+    " photo(s) that were loose in books/ — they are one book until a grown-up says otherwise",
+    { now: iso(now) });
+  const b = { name: g.name, slug, images: g.moved, inbox: true, quiet: true,
+              takeable: false, gathered: true, state: null };
+  try {
+    // `autoTitle` is the whole difference between this folder and one a parent
+    // named: it is the note that says the cover, not a person, will name this
+    // book (content-worker.js's title hold, and nameBook() below).
+    claim(g.dir, store.readJob(g.dir), now, { autoTitle: true });
+    run({ kind: "books", slug, name: g.name, dir: g.dir, dataDir: DATA });
+  } catch (e) {
+    console.error("[content] could not claim " + g.name + ": " + e.message);
+    return null;
+  }
+  return b;
 }
 
 // Walks <folderPath>/books/*. Returns a small JSON-safe picture of every book
@@ -265,6 +351,13 @@ function scan(opts) {
       console.error("[content] could not claim " + name + ": " + e.message);
     }
   }
+  // LAST, and deliberately after the folders: the pile becomes a folder of its
+  // own, and doing it first would have this same scan walk a book that is one
+  // readdir old. It is picked up as an ordinary book by every scan after this
+  // one; this pass claims and starts it itself, so the shelf says "building"
+  // straight away rather than in five minutes' time.
+  const pile = gatherLoose(root, now);
+  if (pile) { books.push(pile); claimed.push(pile.slug); }
   lastScan = { at: iso(now), books: books.length,
                inboxes: books.filter(b => b.inbox).length, claimed: claimed.slice() };
   return { books, claimed };
@@ -360,8 +453,19 @@ function begin(job) {
         notePause(job.slug, job.name || path.basename(job.dir),
                   { pausedUntil: result.pausedUntil, pausedProvider: result.provider || null,
                     pausedNote: result.note || null });
+      // THE BOOK THE COVER JUST NAMED (dad 9/7). The worker parked here rather
+      // than renaming its own folder out from under itself; the thread has
+      // exited by the time this line runs, so the move is safe to make now.
+      // Whatever comes back — a renamed folder or the placeholder it kept —
+      // carries `autoTitle` cleared, so the book is asked exactly once.
+      const named = result && result.held === NEEDS_TITLE
+        ? nameBook(job, result.title) : null;
       const next = queue.shift();
       if (next) begin(next.job).then(r => next.waiters.forEach(w => w(r)));
+      // AFTER the queue, never in front of it: begin() has just taken the one
+      // slot, and starting a second run here would have two workers writing
+      // into two book folders at once. run() queues it behind them.
+      if (named) run(named).catch(() => {});
       return result;
     });
   inflight = p;
@@ -648,6 +752,20 @@ function jobFor(name, dir, slug, perClip) {
     animate: { ready: !!q, pages: count, perClip: q ? q.perClip : null,
                total: q ? q.total : null, done: animatedCount(dir),
                clips, spent: price ? Math.round(clips * price * 100) / 100 : null },
+    // NOBODY HAS NAMED THIS BOOK YET (dad 9/7). True for a pile of loose photos
+    // the hub gathered and gave a placeholder name to, until the cover names it
+    // or a grown-up does. Two readers: the Settings card, which offers the
+    // rename button under it, and the Book Reader's shelf, which is careful not
+    // to announce a placeholder as if it were a title.
+    autoTitle: !!(job && job.autoTitle),
+    // WHAT IT IS WAITING FOR, when that is neither a pause nor a failure. The
+    // holds content-worker.js parks a book on: "no-ai-key" (there is nothing to
+    // spend yet), "retry" (a page the provider lost), "no-pages", "needs-title".
+    // A book with no key used to be indistinguishable from one that was working
+    // — the card said "Reading the words off the photos…" for ever, and the
+    // Reader's shelf said "Add books with Google Drive" at a family whose Drive
+    // was set up (dad 9/7). A hold is not an error, so it is its own field.
+    held: (job && typeof job.held === "string" && job.held) || null,
     pausedUntil: (job && job.pausedUntil) || null,
     note: (job && job.pausedNote) || null,
     // The same pause, said in full: which allowance ran out, when it comes
@@ -854,6 +972,102 @@ function busyWith(dir) {
   if (queue.some(q => path.resolve(q.job.dir) === at))
     return { error: "New ERA is about to work on this book — try again in a minute." };
   return null;
+}
+
+// ------------------------------------------------------- naming a book (9/7)
+
+// The other half of content-worker.js's `needs-title` hold: the worker has
+// exited, so the folder is free to move. Called from begin() and from nowhere
+// else. Returns the job to run the book under next — the SAME book, at the step
+// it was already on — or null if it can no longer be found.
+//
+// Nothing here is allowed to be a reason a book stops. A title that turns into
+// nothing usable, a rename Windows refuses because Drive has the folder open, a
+// job.json that will not take a write: every one of them ends the same way, with
+// the book carrying on under the placeholder name it was born with and a parent
+// able to rename it in Settings. The ONE thing that must happen is that
+// `autoTitle` goes, because that is what stops the book being asked twice.
+function nameBook(job, title) {
+  const root = path.dirname(job.dir);
+  const was = path.basename(job.dir);
+  let out = { name: was, dir: job.dir, renamed: false };
+  try { out = gatherer.rename(root, was, title); }
+  catch (e) { console.error("[content] could not name " + was + ": " + store.redact(e.message)); }
+  const j = store.readJob(out.dir);
+  if (j) {
+    const next = { ...j };
+    delete next.autoTitle;
+    delete next.held;                  // the hold is answered; nothing is waiting
+    try { store.writeJob(out.dir, next); }
+    catch (e) { console.error("[content] could not clear the name note: " + store.redact(e.message)); }
+  }
+  if (out.renamed) {
+    seen.delete(job.dir);
+    store.appendLog(out.dir, "title", "the cover names this book: " + out.name);
+    console.log("[content] the gathered book is called " + out.name);
+  }
+  const slug = slugOf(root, out.name);
+  if (!slug) return null;
+  return { kind: "books", slug, name: out.name, dir: out.dir, dataDir: job.dataDir || DATA };
+}
+
+// "…and let me say otherwise" (dad, 9/7). The hub's guess is a guess: the cover
+// may be an inside page, the pile may have been two books, and a parent must be
+// able to put it right without opening a file browser. POST /content/rename is
+// that, and it is deliberately the same three guards "Remove this book" has —
+// a slug is never a path, not while it is being built, and nothing is said back
+// that names a folder on the family's disk.
+//
+// Renaming a book that is ALREADY ON THE SHELF is allowed and is followed by a
+// publish, because manifest.json is the only thing the Reader ever reads and it
+// carries the title. The package's URL changes with its folder (books-index.js
+// assigns slugs from folder names), so the shelf shows the new book and the
+// mirror takes the old copy away on its next sync — the same way it does for a
+// book renamed by hand in Google Drive, which has always been possible.
+//
+// Returns {renamed, slug, title, was}, {skipped:"needs-local-drive"} (409) or
+// {error} (400).
+function renameBook(o) {
+  const req = o || {};
+  if (!KINDS.includes(req.kind)) return { error: "unknown kind" };
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
+  if (typeof req.slug !== "string" || !req.slug) return { error: "unknown book" };
+  const want = gatherer.safeTitle(req.title);
+  if (!want) return { error: "That name will not work as a folder name — letters, numbers and spaces are safest." };
+  const found = bookFor(req.slug, st);
+  if (!found) return { error: "unknown book" };
+  const root = path.resolve(st.folderPath, "books");
+  const dir = path.resolve(root, found.name);
+  if (path.dirname(dir) !== root || dir === root) return { error: "unknown book" };
+  const busy = busyWith(dir);
+  if (busy) return busy;
+  if (want === found.name) return { renamed: false, slug: req.slug, title: found.name };
+  let res;
+  try { res = gatherer.rename(root, found.name, want); }
+  catch (e) {
+    console.error("[content] could not rename " + found.name + ": " + store.redact(e.message));
+    return { error: "That book could not be renamed — close anything that has its "
+                  + "folder open on this computer and try again." };
+  }
+  seen.delete(dir);
+  const slug = slugOf(root, res.name) || req.slug;
+  // A GROWN-UP HAS NAMED IT, so the cover never gets to overrule them: a book
+  // renamed while it was still waiting for its title keeps the name they typed.
+  const j = store.readJob(res.dir);
+  if (j && j.autoTitle) {
+    const next = { ...j };
+    delete next.autoTitle;
+    try { store.writeJob(res.dir, next); } catch {}
+  }
+  // Already on the shelf: publish again, so the manifest (and with it the
+  // Reader's shelf card) carries the name a parent just typed. Not on the shelf
+  // yet: carry on with whatever step it owed.
+  const published = fs.existsSync(path.join(res.dir, "manifest.json"));
+  run({ kind: "books", slug, name: res.name, dir: res.dir, dataDir: DATA,
+        step: published ? store.STEP_OWED.narrating : null }).catch(() => {});
+  console.log("[content] a grown-up renamed a book folder");
+  return { renamed: true, slug, title: res.name, was: found.name };
 }
 
 // ------------------------------------------------------- "Remove this book"
@@ -1138,6 +1352,15 @@ function status() {
     // sentence: the hub's Drive scope is read-only, so a book built in API mode
     // could never reach the family's Drive (Gap 1).
     skipped: local ? null : "needs-local-drive",
+    // THE PILE THAT IS NOT A BOOK YET (dad 9/7). Photos sitting loose in
+    // books/, counted so both cards can say "seventeen photos are waiting"
+    // rather than "no books yet" — which is what the Book Reader said to a
+    // family whose seventeen photos were sitting right there. `quietMs` travels
+    // with it so neither page has to hard-code the ten minutes: the card's
+    // promise ("building starts about ten minutes after the last photo") is
+    // then the same number this module actually waits.
+    loose: local ? gatherer.looseNames(path.join(st.folderPath, "books")).length : 0,
+    quietMs: QUIET_MS,
     building: !!running,
     job: running ? { kind: running.kind, slug: running.slug,
                      step: (progress && progress.step) || running.step || null } : null,
@@ -1176,7 +1399,7 @@ module.exports = {
   onPublished: null,
   start, scan, tick, run, runJob, runStep, isBuilding, idle, status, beat, claim,
   jobs, jobFor, bookFor, pagesFor, pageFile, saveOrder, savePage, saveText,
-  rebuildPages, removeBook,
+  rebuildPages, removeBook, renameBook, gatherLoose,
   KINDS, QUIET_MS, STALE_MS, MAX_PAGE_TEXT, NO_VOICE, NO_VISION, ALL_EDITED,
   NO_FAL, NOT_FINISHED,
   _testReset: () => {

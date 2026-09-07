@@ -36,6 +36,8 @@ const S = {
   exitTo: "tdsnap",   // from /settings: where the door will REALLY go (doorGoes: TD Snap only
                       // with an engine on the bus, else home) — names the tile
   index: [],          // /books/index.json rows {slug,title,cover,pages,hasVideo,authored}
+  building: [],       // /content/status rows for books not on the shelf yet
+  drive: null,        // true/false/null — has this computer a Drive folder set up?
   manifest: null,     // the open book's manifest
   slug: null,
   page: 0,
@@ -101,10 +103,81 @@ function clearPos(slug) { try { localStorage.removeItem(posKey(slug)); } catch {
 
 // ---------- shelf (old library-client structure: shelf-card grid, coral rim
 // on authored books, Back-to-TD-Snap tile as the exit affordance) ----------
+// ---------- books that are still being made (dad 9/7) ----------
+// A pile of photos dropped into the Drive folder is a book minutes later, and
+// until then the shelf said "No books yet — set up Google Drive" at a family
+// whose Drive was set up. These four sentences are what it says instead. Every
+// one of them is the REAL reason: a book waiting for a key says so, a book that
+// stopped says so, and the Drive prompt is never one of the answers.
+const HELD_WORDS = {
+  "no-ai-key": { head: "Waiting for a key", note: "A grown-up adds an AI helper key in Settings." },
+  "needs-photo-decoder": { head: "Waiting for iPhone photos",
+    note: "A grown-up ticks Clothing Picker in Settings, or saves the photos as JPEG." },
+  "unreadable-photos": { head: "These photos will not open",
+    note: "Pages have to be JPEG photos or iPhone photos." },
+};
+
+function buildingWords(j) {
+  // A pile of photos that has not become a folder yet (see refreshShelf).
+  if (j.loose)
+    return { head: "New photos arrived",
+             note: j.loose + " photo" + (j.loose === 1 ? "" : "s") + " — this book starts in about "
+                   + j.startsIn + " minutes." };
+  if (j.error) return { head: "This book stopped", note: j.error };
+  if (j.paused || j.pausedUntil)
+    return { head: "Waiting its turn", note: "It carries on by itself when there is more room today." };
+  if (HELD_WORDS[j.held]) return HELD_WORDS[j.held];
+  if (j.state === "inbox")
+    return { head: "Getting ready…", note: "Building starts about " + j.startsIn
+                                           + " minutes after the last photo arrives." };
+  if (j.state === "published" || j.state === "animating" || j.state === "done")
+    return { head: "Nearly ready", note: "This book is on its way to the shelf." };
+  const p = j.progress || {};
+  return { head: "Making this book…",
+           note: p.pages ? p.transcribed + " of " + p.pages + " pages read" : "Reading the photos." };
+}
+
+function buildingCard(j) {
+  const card = document.createElement("div");
+  card.className = "shelf-card is-building";
+  card.dataset.slug = j.slug;
+  const box = document.createElement("div");
+  box.className = "shelf-card-waiting";           // NOT .dwell — never a gaze target
+  const mark = document.createElement("span");
+  mark.className = "shelf-waiting-mark";
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = "📖";
+  const name = document.createElement("span");
+  name.className = "shelf-title";
+  name.textContent = j.title || "A new book";
+  const words = buildingWords(j);
+  const note = document.createElement("span");
+  note.className = "shelf-waiting-note muted";
+  note.textContent = words.head + (words.note ? " " + words.note : "");
+  box.appendChild(mark); box.appendChild(name); box.appendChild(note);
+  card.appendChild(box);
+  return card;
+}
+
+// What the shelf says when there is nothing on it. THE DRIVE PROMPT IS ONLY
+// TRUE IN ONE STATE — no Drive folder on this computer — and it was shown in
+// all of them. `drive === null` means the hub did not answer; the prompt is the
+// safest guess then, because a hub that cannot say has usually not been set up.
+function paintEmpty() {
+  const nothing = !S.index.length && !S.building.length;
+  $("shelfEmpty").hidden = !nothing;
+  if (!nothing) return;
+  const set = S.drive === true;
+  $("shelfEmptyLine").textContent = set
+    ? "No books yet. Put the photos of one book in the books folder in your Google Drive — New ERA makes the book by itself."
+    : "No books yet.";
+  $("shelfEmptyLink").hidden = set;
+}
+
 function renderShelf() {
   const grid = $("shelfGrid");
   grid.innerHTML = "";
-  $("shelfEmpty").hidden = S.index.length > 0;
+  paintEmpty();
   for (const b of S.index) {
     const card = document.createElement("div");
     card.className = b.authored === true ? "shelf-card is-authored" : "shelf-card";
@@ -145,6 +218,8 @@ function renderShelf() {
     }
     grid.appendChild(card);
   }
+  // …then the books that are still being made, after the ones she can read.
+  for (const j of S.building) grid.appendChild(buildingCard(j));
   // Back to TD Snap / New ERA — old shelf's exit tile, named for where the
   // door goes (Settings, dad 9/3); leaving the app is the highest-consequence
   // hold (EXIT_HOLD_MS 2400, ux-contract §C).
@@ -466,6 +541,36 @@ function startOutro(p) {
 }
 
 // ---------- boot ----------
+
+// The shelf is TWO answers now: the packages the reader can open
+// (/books/index.json, served out of <DATA>) and the books still being built in
+// the family's Drive folder (/content/status, which is the Settings card's own
+// payload). A book appears in both for the ten minutes between publishing and
+// the mirror carrying it across, so the second list is always minus the first.
+// Neither fetch may be a reason the app does not start: a hub that will not
+// answer leaves an empty shelf and a living reader (the 8/19 law).
+async function refreshShelf() {
+  try {
+    const idx = await (await fetch("/books/index.json")).json();
+    S.index = Array.isArray(idx) ? idx : [];
+  } catch { S.index = []; }
+  try {
+    const s = await (await fetch("/content/status", { cache: "no-store" })).json();
+    S.drive = !!s.local;
+    const mins = Math.max(1, Math.round((Number(s.quietMs) || 600000) / 60000));
+    const have = new Set(S.index.map(b => b.slug));
+    S.building = (Array.isArray(s.jobs) ? s.jobs : [])
+      .filter(j => j && !have.has(j.slug))
+      .map(j => ({ ...j, startsIn: mins }));
+    // Photos dropped straight into books/ have no folder and no job for their
+    // first few minutes. They are still a book on its way, and saying so is the
+    // whole difference between this shelf and the one that told a family with
+    // seventeen photos in Drive to go and set up Drive (dad 9/7).
+    const loose = Number(s.loose) || 0;
+    if (loose) S.building.push({ slug: " loose", title: "A new book", loose, startsIn: mins });
+  } catch { S.drive = null; S.building = []; }
+}
+
 async function boot() {
   try {
     const st = await (await fetch("/settings")).json();
@@ -484,22 +589,22 @@ async function boot() {
     if ((st.doorGoes || st.exitTo) === "home") S.exitTo = "home";
   } catch { /* defaults stand — never block the shelf on settings */ }
 
-  try {
-    const idx = await (await fetch("/books/index.json")).json();
-    S.index = Array.isArray(idx) ? idx : [];
-  } catch { S.index = []; }                    // degraded law: empty shelf, alive app
+  await refreshShelf();
   renderShelf();
   suppress();
   // An empty shelf keeps looking: Drive delivers the first book minutes after
   // "set it up in Settings", and "No books yet" must not need a relaunch to
-  // notice (VM QA 9/2). Stops the moment a book appears.
-  if (!S.index.length) {
+  // notice (VM QA 9/2). It ALSO keeps looking while a book is being made, so
+  // "Making this book… 4 of 16 pages read" counts up in front of whoever is
+  // watching and turns into a real card by itself. Stops once the shelf has
+  // books on it and nothing is left building.
+  if (!S.index.length || S.building.length) {
     const again = setInterval(async () => {
-      if (S.index.length) { clearInterval(again); return; }
-      try {
-        const idx = await (await fetch("/books/index.json")).json();
-        if (Array.isArray(idx) && idx.length) { S.index = idx; if (!S.slug) renderShelf(); }
-      } catch {}
+      if (S.index.length && !S.building.length) { clearInterval(again); return; }
+      const had = S.index.length, was = S.building.length;
+      await refreshShelf();
+      if (!S.slug && (S.index.length !== had || S.building.length !== was ||
+                      S.building.length)) renderShelf();
     }, 20000);
   }
 
@@ -527,6 +632,8 @@ window.Reader = {
     bookFinished: S.bookFinished,
     videoShowing: S.playingOutro,
     shelfCount: S.index.length,
+    buildingCount: S.building.length,
+    drive: S.drive,
   }),
   open: openBook,
 };

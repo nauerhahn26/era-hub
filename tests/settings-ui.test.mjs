@@ -130,12 +130,17 @@ async function settingsPage(contentStatus, opts = {}) {
 // overridden. Kept next to the tests so a change to that payload breaks here.
 function statusPayload(over) {
   return { mode: "local", local: true, skipped: null, building: false, job: null,
+           // The pile of photos with no folder yet, and the wait before it
+           // becomes one (dad 9/7). Both travel on the status so no card has to
+           // hard-code the ten minutes content.js actually waits.
+           loose: 0, quietMs: 10 * 60 * 1000,
            queued: [], jobs: [], lastScan: null, ...over };
 }
 function bookJob(over) {
   return { kind: "books", slug: "tabby-mctat", title: "Tabby McTat", state: "transcribing",
            step: "transcribe", progress: { pages: 12, transcribed: 3, narrated: 0 },
            cost: { characters: 0, narrated: 0 }, flags: 0, pageFlags: 0, edited: 0,
+           autoTitle: false, held: null,
            pausedUntil: null, note: null, paused: null, published: false, error: null, ...over };
 }
 // The pause as content.js derives it (T6b.1): whose allowance ran out, when it
@@ -895,5 +900,86 @@ test("a picks block the card cannot render never takes the AI status line with i
   await page.waitForFunction(() => /\S/.test(document.getElementById("aiStatus").textContent));
   assert.match(await page.$eval("#aiStatus", e => e.textContent), /key checked and working/,
     "the line that was there before this card existed is still there");
+  await ctx.close();
+});
+
+// ---------------------------------------------- loose photos and their book (9/7)
+// dad dropped seventeen iPhone photos straight into books/ and the card said
+// "No books yet" over the top of them for ten minutes.
+
+test("photos waiting in books/ are said out loud, with how long the wait is", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [], loose: 17 }));
+  await page.waitForFunction(() => /photo/.test(document.getElementById("contentStatus").textContent));
+  const s = await page.$eval("#contentStatus", e => e.textContent);
+  assert.match(s, /17 photos/, s);
+  assert.match(s, /one book/i, "the hub says what it is going to assume");
+  assert.match(s, /10 minutes/, "and when it will act on it");
+  assert.doesNotMatch(s, /No books yet/i, "never over the top of seventeen photos");
+  await ctx.close();
+});
+
+test("a book waiting to start says what it is waiting for", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "inbox", step: "ingest", progress: { pages: 17, transcribed: 0, narrated: 0 } })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(s, /building begins about 10 minutes after the last photo arrives/i, s);
+  await ctx.close();
+});
+
+test("iPhone photos with no decoder: the card names the fix, not a code word", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "inbox", held: "needs-photo-decoder" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(s, /HEIC/, s);
+  assert.match(s, /Clothing Picker/, "it names the app that carries the decoder");
+  assert.match(s, /JPEG/, "…and the other way out");
+  assert.doesNotMatch(s, /needs-photo-decoder/, "the code word never reaches the parent");
+  await ctx.close();
+});
+
+test("a book with no AI key says so instead of pretending to read", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "transcribing", held: "no-ai-key" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(s, /AI helper key/i, s);
+  await ctx.close();
+});
+
+test("a book New ERA named itself offers the rename, and says how to split it", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ title: "New book 2026-09-07", autoTitle: true })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await row.textContent();
+  assert.match(s, /gathered these loose photos into one book/i, s);
+  assert.match(s, /own folder/i, "and how to say 'these were two books'");
+  // touch-only, no dwell, no confirm dialog: a button and a box.
+  assert.equal(await row.locator("button[data-rename]").count(), 1);
+  assert.equal(await row.locator(".ct-rename").isHidden(), true, "the box is out of the way until asked for");
+  await row.locator("button[data-rename]").click();
+  await row.locator(".ct-rename").waitFor({ state: "visible" });
+  assert.equal(await row.locator(".ct-rename input").inputValue(), "New book 2026-09-07",
+    "prefilled with the name it has now");
+  await ctx.close();
+});
+
+test("the rename box posts the new name and shows the hub's own refusal", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({ autoTitle: true })] }));
+  let sent = null;
+  await page.route("**/content/rename", (r) => {
+    sent = JSON.parse(r.request().postData());
+    r.fulfill({ status: 400, contentType: "application/json",
+                body: JSON.stringify({ error: "New ERA is working on this book right now — try again in a minute." }) });
+  });
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  await row.locator("button[data-rename]").click();
+  await row.locator(".ct-rename input").fill("Sunny Pond");
+  await row.locator(".ct-rename-save").click();
+  await page.waitForFunction(() => /working on this book/i.test(document.body.textContent));
+  assert.deepEqual(sent, { kind: "books", slug: "tabby-mctat", title: "Sunny Pond" });
   await ctx.close();
 });

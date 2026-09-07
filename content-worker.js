@@ -76,7 +76,7 @@ const store = require("./content-store.js");
 const { ingest } = require("./content-ingest.js");
 const { narrateBook, said } = require("./content-narrate.js");
 const { animateBook } = require("./content-animate.js");
-const { transcribeBook } = require("./content-providers.js");
+const { transcribeBook, titleOf } = require("./content-providers.js");
 const { publishBook } = require("./content-publish.js");
 
 const DIR = workerData.dir;
@@ -142,6 +142,20 @@ const STEPS = [
     run: (c) => animateBook(c.dir, { dataDir: c.dataDir, slug: c.slug, name: c.name,
                                      only: c.only || (c.page == null ? null : [c.page]) }) },
 ];
+
+// NAMING A GATHERED BOOK is not a step of the walk and must never become one:
+// no state owes it, it ticks nothing off, and a book that already has a name
+// (every book a parent made a folder for) never reaches it. It is a question
+// asked once, between two real steps — so it carries just enough shape to hand
+// holdHere() a name for the log and for /content/status.
+const TITLE_STEP = { name: "title" };
+// The hold that means "I know what this book is called; somebody who is not
+// holding the folder open should move it". content.js is that somebody.
+const NEEDS_TITLE = "needs-title";
+// Where ingest puts page 1 (content-ingest.js PAGES + pageName(1); it exports
+// neither, and the existence check below is the only reader in the hub).
+const PAGES_DIR = "pages";
+const FIRST_PAGE = "001.jpg";
 
 const byName = (n) => STEPS.find(s => s.name === n);
 // The narration step, by the state that owes it. Named once because two callers
@@ -308,6 +322,32 @@ async function walk() {
     if (!job) throw new Error("no job.json in " + path.basename(DIR));
     const owed = owedState(job);
     if (owed === null) return { slug: SLUG, state: job.state, steps, failed: true };
+
+    // THE BOOK WITH NO NAME (dad 9/7, content-gather.js). A pile of loose
+    // photos was gathered into a folder with a placeholder name, and `autoTitle`
+    // is the note saying so: nobody has typed a title for this book yet, and the
+    // one thing that knows it is the cover, which ingest has just made page 1
+    // out of. So the ask happens HERE — at the top of the loop, after the ingest
+    // pass that built the page and before the transcribe pass that costs real
+    // pages of a free key — and it is the same ask however the book got here: a
+    // hub that died between the ask and the rename simply asks again, and one
+    // that has already been renamed carries no `autoTitle` and never asks.
+    //
+    // The RENAME is not done here. This thread has the folder open (DIR is
+    // fixed for the life of the worker), so renaming it underneath ourselves
+    // would leave every later step writing into a path that no longer exists.
+    // Instead the walk parks the book with the title it found and content.js —
+    // which knows the worker has exited, because it is holding its exit — does
+    // the move and starts the book again under its real name.
+    if (!ONLY && job.autoTitle && fs.existsSync(path.join(DIR, PAGES_DIR, FIRST_PAGE))) {
+      post({ step: TITLE_STEP.name, state: job.state, slug: SLUG });
+      const t = await titleOf(DIR, { dataDir: DATA, job });
+      if (t && t.hold) return holdHere(job, TITLE_STEP, t, steps);
+      const out = holdHere(job, TITLE_STEP, { hold: NEEDS_TITLE }, steps);
+      out.title = (t && t.title) || null;
+      return out;
+    }
+
     const step = ONLY ? byName(ONLY) : STEPS.find(s => s.owes === owed);
     if (ONLY && !step) throw new Error("no such build step: " + ONLY);
     if (!step) return { slug: SLUG, state: settle(job), steps, finished: true };
