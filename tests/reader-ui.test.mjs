@@ -29,7 +29,9 @@ const HUB = path.resolve(__dirname, "..");
 
 // scratch-port map: books=8392/8398, pool=8393/8394, setup=8397, board=8390 —
 // never the live hub port.
-const PORT = 8391;
+// …overridable, the way pool.test.mjs's is, so this suite can be run on a
+// scratch port while the box's own hubs hold the map above.
+const PORT = Number(process.env.ERA_TEST_HUB_PORT) || 8391;
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-reader-"));
 let child, browser;
@@ -399,5 +401,188 @@ test("an empty shelf notices the first book without a relaunch (bug 31)", async 
   await page.waitForFunction(() => window.Reader.state().shelfCount === 1);
   await page.locator("#shelfGrid .shelf-card-button", { hasText: "Luna the Fox" }).waitFor();
   assert.equal(await page.locator("#shelfEmpty").isHidden(), true, "the notice is gone");
+  await ctx.close();
+});
+
+// ------------------------------------------------ the shelf that is not empty
+// yet (dad 9/7). "No books yet — 📚 Add books with Google Drive, set it up in
+// Settings" was shown in EVERY state with nothing on the shelf: it was on the
+// screen while seventeen of his photos sat in the Drive folder he had already
+// set up. The Drive prompt is true in exactly one state, and the shelf now says
+// what is really happening in the others. /content/status is the Settings
+// card's own payload; the shelf reads the same one, so the two can never tell a
+// family two different stories.
+const contentStatus = (over) => ({
+  mode: "local", local: true, skipped: null, loose: 0, quietMs: 600000,
+  building: false, job: null, queued: [], jobs: [], lastScan: null, ...over });
+
+async function shelfWith(status, index = "[]") {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+  await ctx.route("**/books/index.json",
+    r => r.fulfill({ status: 200, contentType: "application/json", body: index }));
+  await ctx.route("**/content/status",
+    r => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(status) }));
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
+  await page.waitForFunction(() => window.Reader && typeof window.Reader.state === "function");
+  return { ctx, page };
+}
+
+test("no Drive folder on this computer: the Drive prompt is the right answer", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ local: false, mode: "off" }));
+  await page.waitForFunction(() => window.Reader.state().drive === false);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), false);
+  assert.equal(await page.locator("#shelfEmptyLink").isHidden(), false, "the link to Settings");
+  await ctx.close();
+});
+
+test("Drive IS set up and there are no books: the prompt names the folder, not Settings", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ local: true }));
+  await page.waitForFunction(() => window.Reader.state().drive === true);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), false);
+  assert.equal(await page.locator("#shelfEmptyLink").isHidden(), true,
+    "never 'set up Google Drive' at a family whose Drive is set up");
+  const s = await page.locator("#shelfEmptyLine").textContent();
+  assert.match(s, /books folder in your Google Drive/i, s);
+  await ctx.close();
+});
+
+test("photos are waiting in books/: the shelf says a book is coming, not 'no books'", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ loose: 17 }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), true, "not an empty shelf at all");
+  const card = page.locator("#shelfGrid .shelf-card.is-building");
+  const s = await card.textContent();
+  assert.match(s, /17 photos/, s);
+  assert.match(s, /about 10 minutes/, "and when it will start");
+  // NEVER a gaze target: she must be able to rest her eyes on it.
+  assert.equal(await card.locator(".dwell").count(), 0);
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0);
+  await ctx.close();
+});
+
+test("a book being built shows how far it has got, and is not openable", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "transcribing",
+      progress: { pages: 16, transcribed: 4, narrated: 0 }, held: null, error: null, paused: null }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const s = await page.locator("#shelfGrid .shelf-card.is-building").textContent();
+  assert.match(s, /Sunny Pond/);
+  assert.match(s, /Making this book/i);
+  assert.match(s, /4 of 16 pages read/);
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0, "nothing to open yet");
+  await ctx.close();
+});
+
+test("a book that is stuck says WHY, and never 'set up Google Drive'", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "inbox",
+      progress: { pages: 17, transcribed: 0, narrated: 0 },
+      held: "needs-photo-decoder", error: null, paused: null }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const s = await page.locator("#shelfGrid .shelf-card.is-building").textContent();
+  assert.match(s, /iPhone photos/i, s);
+  assert.doesNotMatch(s, /set it up in Settings/i);
+  assert.equal(await page.locator("#shelfEmpty").isHidden(), true);
+  await ctx.close();
+});
+
+// A book that STOPPED, said to a six-year-old. `error` is the provider's own
+// string off job.errors — the Settings card is forbidden to print it
+// (public/settings/index.html ctSorry: "it names nothing a parent can act on and
+// reads like a crash") and this shelf is the last place it belongs.
+test("a stopped book never puts the provider's own words on her screen", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "failed",
+      progress: { pages: 16, transcribed: 4, narrated: 0 },
+      held: null, paused: null, error: "ai(google/gemini-3-flash-preview) 500 boom" }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const s = await page.locator("#shelfGrid .shelf-card.is-building").textContent();
+  assert.match(s, /This book stopped/i, s);
+  assert.match(s, /grown-up/i, "and who can do something about it");
+  assert.doesNotMatch(s, /gemini|500|boom|ai\(/i, "the raw provider string reached her screen: " + s);
+  await ctx.close();
+});
+
+// A book holding on "retry" ALWAYS carries an error (content-worker.js notes the
+// page it lost and only then holds), and it has not stopped at all — it is
+// waiting for its next look and will carry on by itself.
+test("a book that lost one page and will try again is not called stopped", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "transcribing",
+      progress: { pages: 16, transcribed: 12, narrated: 0 },
+      held: "retry", paused: null, error: "ai(google/gemini-3-flash-preview) 500 boom on page 13" }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const s = await page.locator("#shelfGrid .shelf-card.is-building").textContent();
+  assert.doesNotMatch(s, /stopped/i, s);
+  assert.match(s, /12 of 16 pages read/, "it is still making this book: " + s);
+  await ctx.close();
+});
+
+// THE SHELF IS NOT REBUILT UNDER HER GAZE. renderShelf() empties the grid and
+// makes every card again — the openable books' dwell-buttons and #btnExit (the
+// highest-consequence hold in the app) with them — and era-core/dwell.js tracks
+// the ELEMENT, so a rebuild throws an in-flight dwell away. A book that cannot
+// finish (no key yet, a hold nobody has lifted) keeps the poll running for the
+// whole session, so "re-render because something is building" meant doing that
+// every twenty seconds, for ever.
+test("the poll only repaints the shelf when something actually changed", async () => {
+  const job = { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "inbox",
+                progress: { pages: 16, transcribed: 4, narrated: 0 },
+                held: "no-ai-key", paused: null, error: null };
+  const live = { status: contentStatus({ jobs: [job] }) };
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+  await ctx.addInitScript(() => {
+    window.__timers = [];
+    const si = window.setInterval.bind(window);
+    window.setInterval = (fn, ms) => { window.__timers.push({ fn, ms }); return si(fn, ms); };
+  });
+  await ctx.route("**/books/index.json", r => r.fulfill({ status: 200, contentType: "application/json",
+    body: JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: false }]) }));
+  await ctx.route("**/content/status", r => r.fulfill({ status: 200, contentType: "application/json",
+    body: JSON.stringify(live.status) }));
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
+  await page.waitForFunction(() => window.Reader && window.Reader.state().buildingCount === 1);
+  const tick = () => page.evaluate(async () => {
+    for (const t of window.__timers.filter(x => x.ms === 20000)) await t.fn();
+  });
+  // The two nodes her gaze may be resting on when the poll comes round.
+  await page.evaluate(() => {
+    document.getElementById("btnExit").dataset.mark = "same";
+    document.querySelector("#shelfGrid .shelf-card-button").dataset.mark = "same";
+  });
+
+  await tick(); await tick();
+  assert.equal(await page.locator("#btnExit").getAttribute("data-mark"), "same",
+    "the exit tile was replaced under her gaze while nothing had changed");
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").getAttribute("data-mark"), "same",
+    "so was the book she was about to open");
+  assert.equal(await page.evaluate(() => window.Reader.state().buildingCount), 1,
+    "…and it would have gone on doing it for the whole session");
+
+  // …and a card whose words really did change still repaints, settling her gaze
+  // afterwards the way every other render in this app does (D51).
+  live.status = contentStatus({ jobs: [{ ...job, held: null, state: "transcribing",
+    progress: { pages: 16, transcribed: 9, narrated: 0 } }] });
+  await tick();
+  await page.locator("#shelfGrid .shelf-card.is-building", { hasText: "9 of 16 pages read" }).waitFor();
+  assert.equal(await page.locator("#btnExit").getAttribute("data-mark"), null, "a real change repaints");
+  assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0,
+    "a fresh set of dwell targets never inherits her gaze");
+  await ctx.close();
+});
+
+test("a book already on the shelf is not shown twice while the mirror catches up", async () => {
+  const { ctx, page } = await shelfWith(
+    contentStatus({ jobs: [
+      { kind: "books", slug: "luna-the-fox", title: "Luna the Fox", state: "done",
+        progress: { pages: 4, transcribed: 4, narrated: 4 }, held: null, error: null, paused: null }] }),
+    JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox", cover: "/books/luna-the-fox/cover.jpg",
+                     pages: 4, hasVideo: false, authored: false }]));
+  await page.waitForFunction(() => window.Reader.state().shelfCount === 1);
+  assert.equal(await page.evaluate(() => window.Reader.state().buildingCount), 0);
+  assert.equal(await page.locator("#shelfGrid .shelf-card.is-building").count(), 0);
   await ctx.close();
 });

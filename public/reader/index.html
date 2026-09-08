@@ -140,6 +140,34 @@
     padding-bottom: 4px;
   }
 
+  /* A BOOK THAT IS STILL BEING MADE (dad 9/7). Same footprint as a real card
+     so the shelf does not jump when it turns into one, and DELIBERATELY NOT a
+     dwell target: it has no .dwell class, no click handler and no cover, so
+     her gaze can rest on it as safely as it rests on the gutters. It is the
+     one thing on this shelf that is for a grown-up to read, and it exists
+     because "No books yet — set up Google Drive" is a lie to a family whose
+     Drive is set up and whose book is four minutes from being finished. */
+  .shelf-card-waiting {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    padding: 14px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.62);
+    border: 1px dashed var(--line);
+    text-align: center;
+  }
+  .shelf-waiting-mark {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 14px;
+    background: #f0ece0;
+    font-size: 3rem;
+  }
+  .shelf-waiting-note { font-size: 1rem; line-height: 1.35; }
+
   /* Personalized ("Ellie's story") books: a warm coral rim so the card reads
      as special from across the room, without changing its shape or size. */
   .shelf-card.is-authored .shelf-card-button.dwell-button {
@@ -447,9 +475,15 @@
     <header class="shelf-header">
       <h2 class="shelf-heading" id="shelfTitle">My Bookshelf</h2>
     </header>
+    <!-- THE EMPTY SHELF SAYS ONE OF TWO THINGS, and until 9/7 it always said
+         the first: "set up Google Drive", shown to a family whose Drive was set
+         up perfectly and whose photos were sitting in it. The link is the right
+         answer only when this computer has no Drive folder; when it HAS one the
+         honest sentence is where to put the photos. reader.js picks. -->
     <div class="shelf-status" id="shelfEmpty" hidden style="text-align:center">
-      <p class="muted" style="font-size:22px">No books yet.</p>
-      <a href="/settings/#integrations" style="display:inline-block;background:#2E7D5B;color:#fff;border-radius:14px;
+      <p class="muted" style="font-size:22px" id="shelfEmptyLine">No books yet.</p>
+      <a href="/settings/#integrations" id="shelfEmptyLink"
+         style="display:inline-block;background:#2E7D5B;color:#fff;border-radius:14px;
          padding:16px 22px;text-decoration:none;font-size:19px;margin-top:6px">📚 Add books with Google Drive —
          set it up in Settings</a>
     </div>

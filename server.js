@@ -2371,6 +2371,29 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /content/rename {kind, slug, title} - "…and let me say otherwise"
+  // (dad 9/7). A pile of photos dropped straight into books/ is gathered into
+  // ONE book and named off its cover; this is the door that puts a wrong guess
+  // right, before or after the build. It moves a folder inside the family's own
+  // Drive folder, so it is an own-door POST like /content/remove, and content.js
+  // owns the jail, the "not while it is being built" rule and every sentence a
+  // refusal says.
+  if (req.method === "POST" && urlPath === "/content/rename") {
+    if (!ownDoor(req, res)) return;             // it moves a family's folder — this hub's own pages only
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.renameBook(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      const code = out.error ? 400 : out.skipped ? 409 : 200;
+      res.writeHead(code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out.error ? { error: out.error }
+        : out.skipped ? { error: out.skipped } : out));
+    });
+    return;
+  }
+
   // ---- the review page's strip (spec §5): read the pages, write their words --
   // GET /content/text?slug= - every page of one book in reading order, with the
   // URL of its own photo. POST the same path writes back either the whole

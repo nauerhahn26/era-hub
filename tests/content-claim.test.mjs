@@ -304,6 +304,49 @@ test("a pause that has passed wakes the book, even with a heartbeat minutes old"
   content._testReset();
 });
 
+// A HOLD THAT WAITS ON A PERSON (review 9/8). The two holds ingest can park a
+// book on — an iPhone photo with no decoder installed, files nothing can open —
+// are lifted by a grown-up ticking a box or saving the photos again, never by a
+// clock. They write a fresh heartbeat as they hold (content-worker.js holdHere)
+// and then stop, so on the ordinary half-hourly rule every scan for the rest of
+// the book's life re-claimed it: a job.json rewrite, a "claim" line in
+// log.jsonl and a worker thread every thirty minutes, INSIDE the family's Drive
+// folder, for Drive to re-upload to every device. It is a slow look, not a dead
+// end — the Settings card promises the book carries on by itself.
+test("a book waiting for the photo decoder is looked at twice a day, not every half hour", () => {
+  const dir = book("Needs Decoder", { "IMG_1.HEIC": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "inbox", now: T0 });
+  job = { ...job, held: "needs-photo-decoder" };
+  const was = store.writeJob(dir, job);
+
+  for (const mins of [31, 60, 6 * 60]) {
+    const res = content.scan({ now: T0 + mins * MIN });
+    assert.equal(found(res, "Needs Decoder").takeable, false, mins + " minutes is not a new look");
+    assert.deepEqual(res.claimed, []);
+    assert.deepEqual(jobOf(dir), was, "and nothing was rewritten inside the family's Drive folder");
+  }
+
+  // …and the slow look does come: the family ticked the box overnight and the
+  // book starts by itself in the morning.
+  content.runJob = () => Promise.resolve({ ok: true });
+  const after = content.scan({ now: T0 + 13 * 60 * MIN });
+  assert.equal(found(after, "Needs Decoder").takeable, true);
+  assert.deepEqual(after.claimed, ["needs-decoder"]);
+  content._testReset();
+});
+
+test("a book holding for a page the provider lost still gets its half-hourly look", () => {
+  const dir = book("Retry", { "IMG_1.jpg": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  job = { ...job, held: "retry" };
+  store.writeJob(dir, job);
+  content.runJob = () => Promise.resolve({ ok: true });
+  const res = content.scan({ now: T0 + 31 * MIN });
+  assert.equal(found(res, "Retry").takeable, true, "a lost page is worth asking for again soon");
+  assert.deepEqual(res.claimed, ["retry"]);
+  content._testReset();
+});
+
 test("two scans in a row do not claim the same book twice", async () => {
   const dir = book("Once", { "IMG_1.jpg": 10 });
   const jobs = [];

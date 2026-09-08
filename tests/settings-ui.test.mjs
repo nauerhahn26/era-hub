@@ -130,12 +130,17 @@ async function settingsPage(contentStatus, opts = {}) {
 // overridden. Kept next to the tests so a change to that payload breaks here.
 function statusPayload(over) {
   return { mode: "local", local: true, skipped: null, building: false, job: null,
+           // The pile of photos with no folder yet, and the wait before it
+           // becomes one (dad 9/7). Both travel on the status so no card has to
+           // hard-code the ten minutes content.js actually waits.
+           loose: 0, quietMs: 10 * 60 * 1000,
            queued: [], jobs: [], lastScan: null, ...over };
 }
 function bookJob(over) {
   return { kind: "books", slug: "tabby-mctat", title: "Tabby McTat", state: "transcribing",
            step: "transcribe", progress: { pages: 12, transcribed: 3, narrated: 0 },
            cost: { characters: 0, narrated: 0 }, flags: 0, pageFlags: 0, edited: 0,
+           autoTitle: false, held: null,
            pausedUntil: null, note: null, paused: null, published: false, error: null, ...over };
 }
 // The pause as content.js derives it (T6b.1): whose allowance ran out, when it
@@ -895,5 +900,143 @@ test("a picks block the card cannot render never takes the AI status line with i
   await page.waitForFunction(() => /\S/.test(document.getElementById("aiStatus").textContent));
   assert.match(await page.$eval("#aiStatus", e => e.textContent), /key checked and working/,
     "the line that was there before this card existed is still there");
+  await ctx.close();
+});
+
+// ---------------------------------------------- loose photos and their book (9/7)
+// dad dropped seventeen iPhone photos straight into books/ and the card said
+// "No books yet" over the top of them for ten minutes.
+
+test("photos waiting in books/ are said out loud, with how long the wait is", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [], loose: 17 }));
+  await page.waitForFunction(() => /photo/.test(document.getElementById("contentStatus").textContent));
+  const s = await page.$eval("#contentStatus", e => e.textContent);
+  assert.match(s, /17 photos/, s);
+  assert.match(s, /one book/i, "the hub says what it is going to assume");
+  assert.match(s, /10 minutes/, "and when it will act on it");
+  assert.doesNotMatch(s, /No books yet/i, "never over the top of seventeen photos");
+  await ctx.close();
+});
+
+test("a book waiting to start says what it is waiting for", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "inbox", step: "ingest", progress: { pages: 17, transcribed: 0, narrated: 0 } })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(s, /building begins about 10 minutes after the last photo arrives/i, s);
+  await ctx.close();
+});
+
+test("iPhone photos with no decoder: the card names the fix, not a code word", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "inbox", held: "needs-photo-decoder" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(s, /HEIC/, s);
+  assert.match(s, /Clothing Picker/, "it names the app that carries the decoder");
+  assert.match(s, /JPEG/, "…and the other way out");
+  assert.doesNotMatch(s, /needs-photo-decoder/, "the code word never reaches the parent");
+  await ctx.close();
+});
+
+test("a book with no AI key says so instead of pretending to read", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "transcribing", held: "no-ai-key" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(s, /AI helper key/i, s);
+  await ctx.close();
+});
+
+// A HOLD IS DECIDED BY THE HOLD, not by the absence of an error. A book holding
+// on "retry" ALWAYS carries one — content-worker.js notes the page it lost and
+// only then holds, and content.js publishes that last message as `error` for
+// exactly this state — so the sentence written for it could never be shown, and
+// a book that is going to try again by itself was reported as stopped.
+test("a book that lost a page says it will try again, and is not called stopped", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "transcribing", held: "retry",
+                     error: "ai(google/gemini-3-flash-preview) 500 boom on page 4" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await row.textContent();
+  assert.match(s, /tries that page again/i, s);
+  assert.match(s, /every page already read is kept/i);
+  assert.equal(await row.locator(".status.bad").count(), 0, "a book that is still going is not a red line");
+  await ctx.close();
+});
+
+test("a book that really stopped keeps its red line, in words and never the provider's", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    // …carrying the hold it was under when it fell over: content-store.fail
+    // keeps `held`, so the card must not tell a parent to wait AND that it
+    // stopped in the same breath.
+    jobs: [bookJob({ state: "failed", held: "needs-photo-decoder",
+                     error: "ai(google/gemini-3-flash-preview) 500 boom" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  assert.equal(await row.locator(".status.bad").count(), 1);
+  assert.doesNotMatch(await row.textContent(), /carries on by itself/i,
+    "a book that stopped is not also waiting");
+  const s = await row.locator(".status.bad").textContent();
+  assert.match(s, /could not be reached/i, s);
+  assert.doesNotMatch(s, /gemini|boom/i, "the raw provider string never reaches the card");
+  assert.equal(await row.locator("button[data-run]").count(), 1, "and there is something to press");
+  await ctx.close();
+});
+
+// The two holds only a PERSON can lift are looked at twice a day rather than
+// every half hour (content.js SLOW_HOLDS), so the parent who has just ticked the
+// box gets a press that says "look now" instead of waiting until the morning.
+test("a book waiting on a person can be started by hand", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "inbox", held: "needs-photo-decoder" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  assert.equal(await row.locator("button[data-run]").count(), 1);
+  let sent = null;
+  await page.route("**/content/run", (r) => {
+    sent = JSON.parse(r.request().postData());
+    r.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+  await row.locator("button[data-run]").click();
+  await page.waitForFunction(() => /Starting/i.test(document.body.textContent));
+  assert.deepEqual(sent, { kind: "books", slug: "tabby-mctat", step: null, retry: true });
+  await ctx.close();
+});
+
+test("a book New ERA named itself offers the rename, and says how to split it", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ title: "New book 2026-09-07", autoTitle: true })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await row.textContent();
+  assert.match(s, /gathered these loose photos into one book/i, s);
+  assert.match(s, /own folder/i, "and how to say 'these were two books'");
+  // touch-only, no dwell, no confirm dialog: a button and a box.
+  assert.equal(await row.locator("button[data-rename]").count(), 1);
+  assert.equal(await row.locator(".ct-rename").isHidden(), true, "the box is out of the way until asked for");
+  await row.locator("button[data-rename]").click();
+  await row.locator(".ct-rename").waitFor({ state: "visible" });
+  assert.equal(await row.locator(".ct-rename input").inputValue(), "New book 2026-09-07",
+    "prefilled with the name it has now");
+  await ctx.close();
+});
+
+test("the rename box posts the new name and shows the hub's own refusal", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({ autoTitle: true })] }));
+  let sent = null;
+  await page.route("**/content/rename", (r) => {
+    sent = JSON.parse(r.request().postData());
+    r.fulfill({ status: 400, contentType: "application/json",
+                body: JSON.stringify({ error: "New ERA is working on this book right now — try again in a minute." }) });
+  });
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  await row.locator("button[data-rename]").click();
+  await row.locator(".ct-rename input").fill("Sunny Pond");
+  await row.locator(".ct-rename-save").click();
+  await page.waitForFunction(() => /working on this book/i.test(document.body.textContent));
+  assert.deepEqual(sent, { kind: "books", slug: "tabby-mctat", title: "Sunny Pond" });
   await ctx.close();
 });

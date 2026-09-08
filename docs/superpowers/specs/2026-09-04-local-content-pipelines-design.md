@@ -352,3 +352,112 @@ room for `suggested[]` without a schema bump.
   six months and the default provider is a config value, not code.
 - **Copyright.** Packages never leave the family's Drive; the review page and
   the strip offer no share or export.
+
+---
+
+## 8. Amendment, 9/7: a pile of photos with no folder
+
+Dad, after setting Drive up and going to Ellie's bookshelf: *"I still get to add
+books with Google Drive set up in settings when I go to Ellie's bookshelf. But
+the piece there, I didn't put into, like, a folder and name it. I think that the
+system should be smart enough to say, okay, these all belong to a single book,
+because I just uploaded a bunch — you should assume they are, and let me say
+otherwise — and then it should build the book and put everything into a single
+folder for that book."*
+
+What he actually had in `books/`: **seventeen loose `.HEIC` files**, no
+subfolder, all landed within five seconds. Nothing happened, and the Book Reader
+told him to go and set up Google Drive.
+
+**Three separate faults, all of which had to be fixed for the pile to become a
+book.**
+
+1. **Loose photos were invisible.** `content.scan()` walks
+   `books-index.bookDirs()`, which is a list of DIRECTORIES. A file sitting in
+   `books/` was in nobody's list, so no folder was an inbox, no job was claimed
+   and nothing was ever built.
+2. **HEIC was claimed and could not be paged.** `content.photoNames()` uses
+   `clothing-photos.EXT`, which has counted `.heic` since 8/31;
+   `content-ingest.PAGE_EXTS` was `[".jpg", ".jpeg"]`. So a `books/<Title>/` of
+   iPhone photos WAS claimed, a `job.json` WAS written — and ingest then built
+   zero pages and walked on. A silent dead end with a card that said it was
+   reading the photos.
+3. **The empty-shelf prompt was wrong in every state but one.**
+   `reader.js` showed "📚 Add books with Google Drive — set it up in Settings"
+   whenever `/books/index.json` was empty, including to a family whose Drive was
+   set up and whose photos were four minutes from being a book.
+
+### 8.1 The pile is one book
+
+- Photos DIRECTLY in `books/` are one pending book, on the SAME ten-minute quiet
+  clock a book folder is on (`content.gatherLoose` → `observe()` over the loose
+  listing). Every new arrival resets it, so a phone trickling an album in over
+  several minutes lands every photo in the same book.
+- `content-gather.gather()` then creates `books/New book <YYYY-MM-DD>` and MOVES
+  the pile into it. Rules: a photo is moved, never deleted or converted; the hub
+  never creates `books/` itself (the rule `clothing-log.js` keeps for
+  `clothing/`); and the target folder is written into `books/.gather.json`
+  BEFORE the first file moves, so a hub that dies half way FINISHES that move
+  instead of making the eight files still loose into a second book.
+  `.gather.json` is a dotfile in the directory `books-index` already keeps
+  `.slugs.json` in — copied by the mirror, never pruned.
+- The folder is claimed and started in the same scan, so the shelf says
+  "building" straight away rather than five minutes later.
+
+### 8.2 The cover names it
+
+- `job.autoTitle: true` is the note that nobody has named this book.
+- `content-worker`'s walk, at the top of its loop, once `pages/001.jpg` exists
+  (i.e. after ingest, before the transcribe pass that costs pages of a free
+  key), calls `content-providers.titleOf()`: ONE call on page 1, the
+  transcriber's own ladder and key, the transcriber's own `{"text": …}` output
+  contract. No key or a spent allowance are the transcribe step's own two holds
+  and are taken as such.
+- The worker cannot rename its own folder (`DIR` is fixed for the life of the
+  thread), so it parks on `{hold:"needs-title", title}`. `content.js` — which
+  knows the thread has exited, because it is holding its exit — renames and
+  starts the book again under its real name. `autoTitle` is cleared either way,
+  so the question is asked exactly once.
+- A title the model cannot give, or one that is not a folder name Windows will
+  take (`content-gather.safeTitle`: NTFS characters, reserved device names, a
+  trailing dot, a LEADING dot — which would make the finished book invisible to
+  `books-index`), keeps the placeholder. That is never a failure.
+
+### 8.3 "…and let me say otherwise"
+
+- `POST /content/rename {kind, slug, title}` — same three guards as
+  `/content/remove` (a slug is never a path, not while it is being built, no
+  path on the family's disk is ever quoted back). A book already on the shelf is
+  re-published so the manifest carries the new title.
+- Settings' book card: a plain **✏️ Rename** button and a text box. Touch only,
+  no dwell, no confirm dialog. A book the hub named itself says so and says the
+  other fix in the same breath: if the pile was really two books, make a folder
+  for one of them in Drive.
+- Splitting inside the app is NOT built. The honest escape hatch is the folder
+  the parent can make in their own Drive, which has always worked; the card
+  names it.
+
+### 8.4 iPhone photos
+
+- `content-ingest` pages `.heic`/`.heif` through clothing-worker's decoder
+  (`vendor/libheif.js`), which rides in the **board** pack.
+- No decoder + HEIC present ⇒ `{hold:"needs-photo-decoder"}`. The whole book
+  waits, keeping every photo, rather than building the JPEGs and freezing a book
+  with pages missing into the manifest. The card names the fix: tick Clothing
+  Picker, or save the photos as JPEG.
+- Files nothing can open (PNG, WebP, …) and no pages at all ⇒
+  `{hold:"unreadable-photos"}`, never a folder recorded as "built, nothing in
+  it".
+- A HEIC that will not decode is NOT copied through as its page (the JPEG
+  copy-through law does not survive a format no browser and no provider takes):
+  it is counted in `lost`, logged, and the rest of the book is built.
+- `ingest()` is async from here: libheif answers through a callback.
+
+### 8.5 What the shelf says
+
+`/content/status` gains `loose` (photos with no folder yet), `quietMs` (so no
+page hard-codes the ten minutes), `held` (the hold a book is parked on) and
+`autoTitle`. The Book Reader's shelf reads the same payload the Settings card
+does, so the two can never tell a family two different stories, and shows a
+card — not a dwell target, never openable — for every book that is on its way.
+The Drive prompt is shown in ONE state: this computer has no Drive folder.

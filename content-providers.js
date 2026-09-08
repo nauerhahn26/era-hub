@@ -726,6 +726,15 @@ function pagesOf(dir) {
   return names.map(n => ({ index: Number(n.slice(0, 3)), source: "pages/" + n, image: "pages/" + n }));
 }
 
+// Does this `source` actually NAME AN ORIGINAL, or is it the page file standing
+// in for one? Only ingest's own record knows which photo a page was made from;
+// the fallback above names the page itself, and a book whose .build/ has not
+// synced yet would otherwise look as though every one of its photos had been
+// swapped — and be read again, at a page of the family's free key each.
+const SOURCES_PREFIX = "sources/";
+const traced = (s) => typeof s === "string" && s.startsWith(SOURCES_PREFIX);
+const sameSource = (a, b) => !traced(a.source) || !traced(b.source) || a.source === b.source;
+
 // transcribeBook(dir, opts) — read every page of `dir` that has no text yet.
 //
 //   opts.dataDir  <DATA>, for the vision card and content-config.json
@@ -836,7 +845,19 @@ async function transcribeBook(dir, opts) {
     // A page that already has text is DONE — including a page a parent typed
     // themselves in power mode, and including a page the model correctly read
     // as wordless. text.json is the interop point; we do not overwrite it.
-    const done = had.get(page.index);
+    //
+    // …AS LONG AS THAT PAGE NUMBER STILL MEANS THE SAME PHOTO. An index is a
+    // POSITION in the book, and a position moves: a photo added to the folder,
+    // or one that would not open this time, shifts every page after it along by
+    // one. Reusing by number alone then put page 3's words under page 4's
+    // picture — and content-narrate keeps the mp3 of a page whose words did not
+    // change, so page 3's VOICE went with them, word-highlighting one page while
+    // speaking another to somebody who cannot read yet. Both files record which
+    // original each page was made from, and that is the one identity a page
+    // has, so the two are compared before a penny of the family's allowance is
+    // saved on the strength of them.
+    const stored = had.get(page.index);
+    const done = stored && sameSource(stored, page) ? stored : null;
     const forced = !!only && only.has(page.index);
     if (done && !forced) { out.push(done); reused++; continue; }
     if (only && !forced) { if (done) { out.push(done); reused++; } continue; }
@@ -1037,12 +1058,113 @@ async function transcribeBook(dir, opts) {
   return res;
 }
 
+// -------------------------------------------------------- what is it called?
+
+// WHAT A PILE OF LOOSE PHOTOS IS A BOOK OF (dad 9/7). A parent who made a
+// folder and typed a name into it has already answered this; a parent who
+// dropped twenty photos straight into `books/` has not, and content-gather.js
+// can only give that pile a placeholder ("New book 2026-09-07"). The cover is
+// sitting right there in page 1, so this asks the same key, the same ladder and
+// the same output contract the transcriber uses — one call, once, for one book.
+//
+// THE OUTPUT CONTRACT IS DELIBERATELY THE TRANSCRIBER'S ({"text": …}). Not
+// because a title is a transcription, but because parseModelJson is the one
+// salvage path 2,900 recorded bake-off calls were measured against — a second
+// shape would need its own fence-stripping, its own chatty-preamble handling
+// and its own tests, to carry one string.
+const TITLE_PROMPT = `You are looking at the front cover, or the first page, of a children's picture book.
+Reply with a single JSON object and nothing else - no prose, no markdown code fence:
+{"text": "<the book's printed title>"}
+RULES
+1. The TITLE and nothing else: not the author, not the illustrator, not the publisher, not a series name, not a strapline, not a review quote.
+2. Copy the casing and the punctuation exactly as printed, on ONE line.
+3. Ignore everything added to this particular copy: handwritten names, gift inscriptions, library stamps, price stickers.
+4. If this page shows no printed title - it is an inside page, or the lettering cannot be read - reply {"text": ""}.
+Never invent a title, and never describe the picture.`;
+
+// titleOf(dir, opts) -> {title} | {hold:"no-ai-key"} | {hold:"quota", …}
+//
+//   opts.dataDir  <DATA>, for the vision card and content-config.json
+//   opts.job      the job as read from job.json, for its pausedUntil moment
+//   opts.now      pinned clock (tests)
+//
+// NEVER THROWS, and never returns a title it is not sure of. A book that cannot
+// be named keeps the name content-gather gave it and a parent can rename it —
+// so every unhappy answer here is `{title:null}`, which is not a failure and
+// must never be one: a book that stopped building because a cover was blurred
+// would be the worst trade in the pipeline.
+//
+// The two HOLDS are the exception, and they are the same two the transcribe
+// step takes: no key at all, and an allowance that is spent. Both are answers
+// content-worker.js already knows how to park a book on, both leave the claim
+// and the state exactly where they are, and both make the Settings card and the
+// shelf say the REAL reason — which is the whole point of this task's other
+// half. Asking anyway would spend a free key's page on a question we already
+// know the answer to.
+async function titleOf(dir, opts) {
+  const o = opts || {};
+  const cfg = o.cfg || (o.dataDir ? aiRoles(o.dataDir).vision : null);
+  const log = (msg) => store.appendLog(dir, "title", msg, { now: o.now });
+  if (!cfg || !cfg.apiKey) {
+    log("no AI key yet - the book keeps the name it was given");
+    return { hold: "no-ai-key" };
+  }
+  // Already told "not yet" by this provider: asking again costs a request to
+  // hear the same thing, and on a free key that request is a page.
+  const paused = o.job && o.job.pausedUntil;
+  const mine = !o.job || !o.job.pausedProvider || o.job.pausedProvider === providerOf(cfg);
+  if (mine && pauseHolds(paused, o.now))
+    return { hold: "quota", pausedUntil: paused, note: (o.job && o.job.pausedNote) || QUOTA_NOTE,
+             provider: (o.job && o.job.pausedProvider) || providerOf(cfg) };
+
+  // Page 1 as INGEST BUILT IT: upright, long edge 2048, a JPEG whatever the
+  // phone shot. That is what makes this one call cheap and what makes it work
+  // for a family whose camera writes HEIC — the format none of the providers
+  // and none of the hub's own decoders take.
+  const pages = pagesOf(dir).slice().sort((a, b) => a.index - b.index);
+  if (!pages.length) return { title: null };
+  const imagePath = path.join(dir, pages[0].image);
+  try {
+    const r = await transcribePage({ imagePath, cfg, config: o.config || loadConfig(o.dataDir),
+                                     policy: TITLE_PROMPT });
+    // A REPLY WE COULD NOT PARSE IS NOT A TITLE. parseModelJson keeps an
+    // unparsable answer whole as `text` on purpose — for a PAGE, a page of right
+    // words with a parse flag beats a blank page — but here that string becomes
+    // the folder's NAME, the book's title and its slug, and only the google
+    // branch of callModel can ask for JSON at all (responseMimeType), so an
+    // OpenAI or Anthropic vision key has nothing stopping a chatty refusal.
+    // "I am sorry, I cannot read the title from this image" is a folder in the
+    // family's Drive; the placeholder name is not, and this function's contract
+    // is that it never returns a title it is not sure of.
+    if (r && r.parseError) {
+      log("the cover's answer did not come back in the shape we asked for - the book keeps the name it was given");
+      return { title: null };
+    }
+    const title = String((r && r.text) || "").split(/[\r\n]+/).map(s => s.trim()).filter(Boolean)[0] || "";
+    log(title ? "the cover reads: " + title : "the cover does not say what the book is called");
+    return { title: title || null, model: (r && r.model) || null };
+  } catch (e) {
+    if (isPermanent(e.message)) {
+      // A key the provider refused. Not this step's business to fail the book
+      // over — the transcribe step is two minutes away and will say it properly,
+      // with the provider's own words and a "Try this book again" button.
+      log("the AI provider would not take the key - the book keeps the name it was given");
+      return { title: null };
+    }
+    if (e.quota)
+      return { hold: "quota", pausedUntil: pausedUntilFor(o.now, e.retryAfter), note: QUOTA_NOTE,
+               provider: providerOf(cfg) };
+    log("could not read the cover (" + store.redact(e.message) + ") - the book keeps the name it was given");
+    return { title: null };
+  }
+}
+
 module.exports = {
-  PROMPT_TEXT, DEFAULT_PROMPTS, PASSES, TRANSCRIBE_PROMPT, promptFor,
+  PROMPT_TEXT, DEFAULT_PROMPTS, PASSES, TRANSCRIBE_PROMPT, TITLE_PROMPT, promptFor,
   PROVIDERS, DEFAULTS, CONFIG_FILE,
   QUOTA_NOTE, TIMEOUT_MS, MAX_TOKENS, QUOTA_TZ,
   aiBase, baseFor, loadConfig, ladderFor, parseModelJson, normalizeLoose, firstDivergence,
   dayOf, tomorrow, pagesOf,
   retryAfterMs, nextZoneMidnight, pausedUntilFor, pauseHolds,
-  callModel, transcribePage, transcribeBook,
+  callModel, transcribePage, transcribeBook, titleOf,
 };
