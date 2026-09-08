@@ -608,7 +608,7 @@ async function refreshShelf() {
     // whole difference between this shelf and the one that told a family with
     // seventeen photos in Drive to go and set up Drive (dad 9/7).
     const loose = Number(s.loose) || 0;
-    if (loose) S.building.push({ slug: " loose", title: "A new book", loose, startsIn: mins });
+    if (loose) S.building.push({ slug: "\u0000loose", title: "A new book", loose, startsIn: mins });
   } catch { S.drive = null; S.building = []; }
 }
 
