@@ -47,8 +47,13 @@ export function bat(name, lines, opts = {}) {
 }
 /** run lines in the INTERACTIVE desktop session (schtasks /it /rl highest — the
  *  only way a GUI or a foreground-window query works from ssh, vm-qa lessons).
- *  Returns once the task has been fired; poll for effects with waitFor(). */
-export function interactive(name, lines, { tr } = {}) {
+ *  Returns once the task has been fired; poll for effects with waitFor().
+ *  elevated:false drops /rl highest — the task then runs with the family's own
+ *  FILTERED token, which is what our RequestExecutionLevel-user installer gets
+ *  on a family PC. Anything measuring what Windows shows a family (leg C's
+ *  SmartScreen prompt, anything UAC-shaped) has to run that way: a full admin
+ *  token is not the state under test. */
+export function interactive(name, lines, { tr, elevated = true } = {}) {
   if (!tr) {
     const f = path.join(OUT, name + ".cmd");            // .cmd: shipped, not run
     fs.writeFileSync(f, "@echo off\r\n" + lines.join("\r\n") + "\r\n");
@@ -57,7 +62,7 @@ export function interactive(name, lines, { tr } = {}) {
   }
   return bat(name + "-task", [
     `schtasks /delete /tn era-qa-${name} /f >nul 2>&1`,
-    `schtasks /create /tn era-qa-${name} /tr "${tr}" /sc once /st 00:00 /it /rl highest /f`,
+    `schtasks /create /tn era-qa-${name} /tr "${tr}" /sc once /st 00:00 /it${elevated ? " /rl highest" : ""} /f`,
     `schtasks /run /tn era-qa-${name}`,
   ]);
 }
@@ -65,6 +70,9 @@ export function interactive(name, lines, { tr } = {}) {
 export const push = (file, name) => sh(["vm.sh", "push", file, name], { timeout: 300000 });
 /** run a command on the QA host itself */
 export const host = (cmd, opts) => sh(["vm.sh", "host", cmd], opts);
+/** wake a display Windows has turned off (an Edge launched onto a dark one sat
+ *  as a 9 MB stub with no window, 9/3) */
+export const wake = () => sh(["vm.sh", "wake"], { soft: true });
 /** roll the VM back to the pristine snapshot, wait for the guest's ssh, and
  *  take the VM's own noise out of the run (prepGuest) */
 export function revert() { const out = sh(["revert.sh"], { timeout: 400000 }); prepped = false; prepGuest(); return out; }

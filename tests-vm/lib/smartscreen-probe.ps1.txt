@@ -1,0 +1,198 @@
+# smartscreen-probe.ps1 - the two NATIVE dialogs a family meets, driven by UI
+# Automation in the INTERACTIVE desktop session. Shipped as .txt (ship.sh RUNS a
+# .ps1 in the ssh session, where session 0 has no desktop and no window is ever
+# visible); the leg renames it and fires it with schtasks /it and NO /rl highest,
+# because an elevated task gets a full admin token and the family double-click
+# does not. ASCII only, PowerShell 5.1 (memory: vm-qa-driving-lessons).
+#
+#   -Stage keep   Edge's own download warning ("... is not commonly downloaded"):
+#                 press Keep / Keep anyway in the download flyout.
+#   -Stage run    the family's gesture: the shell ShellExecutes the downloaded
+#                 file. Only a shell launch consults the Mark-of-the-Web:
+#                 "MotW files invoked by non-shell means (e.g. cmd.exe or
+#                 PowerShell) do not trigger security checks or prompts"
+#                 (textslashplain.com/2016/04/04/downloads-and-the-mark-of-the-
+#                 web). cmd's `start ""`, `schtasks /tr <exe>` and NSIS `/S`
+#                 over ssh all miss it - which is exactly how the 9/6
+#                 post-publish check reported "no SmartScreen interstitial" for
+#                 a build that showed one on the family's own PC.
+#
+# Reads the target from <profile>\smartscreen-target.txt, appends every step to
+# <profile>\smartscreen-probe.log and ends with PROBE_DONE. Never a secret.
+param([ValidateSet('keep','run')][string]$Stage = 'run')
+$ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'
+
+$log = Join-Path $env:USERPROFILE 'smartscreen-probe.log'
+function W([string]$m) { ("{0:HH:mm:ss} {1}" -f (Get-Date), $m) | Out-File -Append -Encoding ascii $log }
+
+$target = ''
+$tf = Join-Path $env:USERPROFILE 'smartscreen-target.txt'
+if (Test-Path $tf) { $target = ((Get-Content $tf) -join '').Trim() }
+W ("STAGE " + $Stage)
+W ("TARGET " + $target)
+# the whole point of the unelevated task: a family double-click has a filtered
+# token, so UAC and SmartScreen behave as they do on their PC
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+W ("ELEVATED " + $isAdmin)
+
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type -Name Cur -Namespace Probe -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int extra);
+'@
+
+$TRUE_COND = [Windows.Automation.Condition]::TrueCondition
+$DESC = [Windows.Automation.TreeScope]::Descendants
+$CHILD = [Windows.Automation.TreeScope]::Children
+
+function Get-ProcName([int]$id) {
+  try { return (Get-Process -Id $id -ErrorAction Stop).ProcessName } catch { return '' }
+}
+
+# a top-level window belonging to one of $procs, or whose title matches $namePattern
+function Find-TopWindow([string[]]$procs, [string]$namePattern) {
+  $root = [Windows.Automation.AutomationElement]::RootElement
+  $kids = $root.FindAll($CHILD, $TRUE_COND)
+  foreach ($k in $kids) {
+    $pn = ''
+    $nm = ''
+    try { $pn = Get-ProcName $k.Current.ProcessId; $nm = $k.Current.Name } catch { continue }
+    if ($procs -and ($procs -contains $pn)) { return $k }
+    if ($namePattern -and $nm -and ($nm -match $namePattern)) { return $k }
+  }
+  return $null
+}
+
+# every named element under $el, one per line, so the log carries the exact words
+# the family reads ("Windows protected your PC", "Publisher: ...", "Run anyway")
+function Dump-Window($el, [string]$tag) {
+  if (-not $el) { W ("UIA " + $tag + " (no window)"); return @() }
+  $names = New-Object System.Collections.ArrayList
+  try { $all = $el.FindAll($DESC, $TRUE_COND) } catch { W ("UIA " + $tag + " walk failed: " + $_.Exception.Message); return @() }
+  W ("UIA " + $tag + " title=" + $el.Current.Name + " proc=" + (Get-ProcName $el.Current.ProcessId) + " count=" + $all.Count)
+  foreach ($e in $all) {
+    $n = ''
+    $c = ''
+    try { $n = $e.Current.Name; $c = $e.Current.ControlType.ProgrammaticName } catch { continue }
+    if ($n) {
+      [void]$names.Add($n)
+      W ("  UIA " + $tag + " [" + ($c -replace 'ControlType\.', '') + "] " + $n)
+    }
+  }
+  return $names
+}
+
+# Invoke by name; DirectUI buttons that carry no InvokePattern get a real click
+# at the middle of their bounding rectangle (SmartScreen's "Run anyway" has been
+# both over the years, so try both rather than guess).
+function Click-ByName($root, [string]$name) {
+  if (-not $root) { return $false }
+  $cond = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, $name)
+  $e = $null
+  try { $e = $root.FindFirst($DESC, $cond) } catch { }
+  if (-not $e) { W ("CLICK miss: " + $name); return $false }
+  try {
+    $p = $e.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
+    $p.Invoke()
+    W ("CLICK invoke: " + $name)
+    return $true
+  } catch { }
+  try {
+    $r = $e.Current.BoundingRectangle
+    $x = [int]($r.X + $r.Width / 2)
+    $y = [int]($r.Y + $r.Height / 2)
+    [void][Probe.Cur]::SetCursorPos($x, $y)
+    Start-Sleep -Milliseconds 300
+    [Probe.Cur]::mouse_event(0x0002, 0, 0, 0, 0)
+    [Probe.Cur]::mouse_event(0x0004, 0, 0, 0, 0)
+    W ("CLICK mouse: " + $name + " at " + $x + "," + $y)
+    return $true
+  } catch { W ("CLICK failed: " + $name + " - " + $_.Exception.Message); return $false }
+}
+
+function Click-AnyName($root, [string[]]$names) {
+  foreach ($n in $names) { if (Click-ByName $root $n) { return $n } }
+  return ''
+}
+
+if ($Stage -eq 'keep') {
+  # Edge keeps an unrecognised download in the flyout behind Keep / Keep anyway.
+  # Not a SmartScreen App Reputation prompt - a download-reputation one, and the
+  # first thing the family hits (website copy names both).
+  $edge = Find-TopWindow @('msedge') 'Microsoft.{0,3}Edge'
+  $names = Dump-Window $edge 'edge'
+  $hit = Click-AnyName $edge @('Keep anyway', 'Keep', 'Download unverified file', 'Keep dangerous file')
+  W ("KEEP=" + $(if ($hit) { $hit } else { 'none' }))
+  W 'PROBE_DONE'
+  return
+}
+
+if (-not $target -or -not (Test-Path $target)) { W 'ERROR target missing'; W 'PROBE_DONE'; return }
+
+# ---- the family's gesture -----------------------------------------------
+# Shell.Application's ShellExecute is served by explorer.exe, so this IS the
+# shell opening the file: the Zone.Identifier is consulted and SmartScreen App
+# Reputation runs, exactly as for a double-click. Launching it from this
+# PowerShell process instead (& $target) would go through CreateProcess, which
+# does not look at the Mark-of-the-Web at all.
+$shell = New-Object -ComObject Shell.Application
+$shell.ShellExecute($target)
+W 'SHELLEXECUTE fired (Shell.Application, i.e. Explorer)'
+
+$ss = $null
+$inst = $null
+$t0 = Get-Date
+while (((Get-Date) - $t0).TotalSeconds -lt 240) {
+  $ss = Find-TopWindow @('smartscreen') 'Windows protected your PC'
+  if ($ss) { break }
+  $inst = Find-TopWindow @() 'New ERA Setup'
+  if ($inst) { break }
+  Start-Sleep -Milliseconds 1500
+}
+
+if ($ss) {
+  W 'SMARTSCREEN=shown'
+  [void](Dump-Window $ss 'smartscreen-collapsed')
+  # More info reveals App: and Publisher: - the only place the family is shown
+  # who signed it, and the line that separates "signed, no reputation yet" from
+  # "unsigned" (which reads Publisher: Unknown publisher)
+  [void](Click-AnyName $ss @('More info', 'More Info'))
+  Start-Sleep -Seconds 2
+  $names = Dump-Window $ss 'smartscreen-expanded'
+  $pub = ''
+  $app = ''
+  foreach ($n in $names) {
+    if (-not $pub -and $n -match '^\s*Publisher:?\s*(.+)$') { $pub = $Matches[1].Trim() }
+    if (-not $app -and $n -match '^\s*App:?\s*(.+)$') { $app = $Matches[1].Trim() }
+  }
+  W ("PUBLISHER=" + $(if ($pub) { $pub } else { 'not-shown' }))
+  W ("APPNAME=" + $(if ($app) { $app } else { 'not-shown' }))
+  $ran = Click-AnyName $ss @('Run anyway', 'Run Anyway')
+  W ("RUNANYWAY=" + $(if ($ran) { 'clicked' } else { 'no-such-button' }))
+  Start-Sleep -Seconds 3
+} else {
+  # not a pass by itself: the leg checks SmartScreen was ON and the file carried
+  # a browser-written MOTW, so "absent" here means reputation, not a blind check
+  W 'SMARTSCREEN=absent'
+}
+
+# UAC comes after SmartScreen for an installer that asks for admin
+$uac = Find-TopWindow @('consent') 'User Account Control'
+if ($uac) {
+  [void](Dump-Window $uac 'uac')
+  W 'UAC=shown'
+} else { W 'UAC=absent' }
+
+$t1 = Get-Date
+while (((Get-Date) - $t1).TotalSeconds -lt 180) {
+  $inst = Find-TopWindow @() 'New ERA Setup'
+  if ($inst) { break }
+  Start-Sleep -Milliseconds 1500
+}
+if ($inst) {
+  [void](Dump-Window $inst 'installer')
+  W 'INSTALLER=up'
+} else { W 'INSTALLER=absent' }
+W 'PROBE_DONE'
