@@ -43,6 +43,21 @@ rm -rf "$OUT/vendor/yt-dlp"
 # WEBASSEMBLY build. Deliberately not the native binding: a clean Windows 10
 # ships no Visual C++ runtime, so the .node refused to load on the QA machine
 # and would fail the same way on a family's fresh PC. WASM needs only Node.
+# The blanket copy above is the runtime's ONLY way into a payload, and segment.js
+# degrades QUIETLY when it cannot load ("[segment] model unavailable ... falling
+# back") — so a cut from a checkout that is missing a piece ships a Clothing
+# Picker that trims by colour alone and nobody finds out until dad does. It
+# nearly happened for 0.32.3: a bare `dist/` in .gitignore also matched
+# vendor/onnxruntime-web/dist/, so the runtime existed only in whichever
+# checkout had run the npm fetch. The files are committed now, and a missing
+# one stops the cut instead of shipping a silent fallback.
+for f in vendor/onnxruntime-web/dist/ort.node.min.js \
+         vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs \
+         vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm \
+         vendor/onnxruntime-web/node_modules/onnxruntime-common/dist/cjs/index.js \
+         vendor/models/u2netp.onnx; do
+  [ -s "$OUT/$f" ] || { echo "build-payload: $f is missing - the garment cut-out would fall back to the colour heuristic; no build."; exit 1; }
+done
 du -sh "$OUT/vendor/onnxruntime-web" "$OUT/vendor/models" 2>/dev/null || true
 
 # media-tools pack (packs.js): yt-dlp.exe, the downloader behind Music's

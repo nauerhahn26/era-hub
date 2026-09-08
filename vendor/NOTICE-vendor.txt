@@ -6,8 +6,10 @@ Vendored third-party libraries (used for on-device photo conversion):
 --------------------------------------------------------------------------
 onnxruntime-web (Microsoft) — MIT License.
   vendor/onnxruntime-web/ — the WebAssembly build (single-threaded SIMD
-  kernel plus its Node entry point). Chosen over the native binding because
-  it needs no Visual C++ runtime, which a freshly installed Windows lacks.
+  kernel plus its Node entry point), and the onnxruntime-common library it
+  requires, both v1.29.0 as published on npm and unmodified. Chosen over the
+  native binding because it needs no Visual C++ runtime, which a freshly
+  installed Windows lacks.
 
 U^2-Net ("u2netp") — Apache License 2.0.
   Qin et al., "U2-Net: Going Deeper with Nested U-Structure for Salient

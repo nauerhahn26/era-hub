@@ -14,7 +14,11 @@ public/runway.json
 public/dist-payload.tar.gz
 public/pilot-verify.ps1
 server.log
-dist/
+# the build output at the ROOT of the checkout (dist/new-era-payload,
+# dist/release-*) — anchored, because a bare `dist/` also swallowed
+# vendor/onnxruntime-web/dist/, so the ONNX runtime shipped only from a
+# checkout that had happened to run the npm fetch (v0.32.3).
+/dist/
 
 # ONNX Runtime: only the Windows x64 CPU binaries ship. The linux build is
 # a local convenience for running the segmentation tests on this machine.

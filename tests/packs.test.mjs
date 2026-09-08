@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { PACKS, packInstalled, packOf, ytDlp } = require("../packs.js");
@@ -45,6 +46,51 @@ test("the garment cut-out runtime is part of the board pack, not the core", () =
   assert.equal(packOf("public/pencil/index.html"), "pencil");
   assert.equal(packOf("public/pencil-extra/x"), null);     // prefix must be a whole path segment
   assert.equal(packOf("server.js"), null);
+});
+
+// segment.js degrades QUIETLY: a runtime it cannot load logs "[segment] model
+// unavailable ... falling back" and the Clothing Picker trims by colour alone.
+// So the only thing standing between a family and a half-trimmed wardrobe is
+// that these files were in the checkout the cut was made from — and until
+// 0.32.3 they were not committed at all (a bare `dist/` in .gitignore matched
+// vendor/onnxruntime-web/dist/ as well as the build output). Both halves are
+// pinned here: the files are in the repo, and the build stops without them.
+const CUTOUT_FILES = [
+  "vendor/onnxruntime-web/dist/ort.node.min.js",              // what segment.js requires
+  "vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs",   // the glue it imports from wasmPaths
+  "vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",  // the kernel itself (~14 MB)
+  "vendor/onnxruntime-web/node_modules/onnxruntime-common/dist/cjs/index.js",  // require("onnxruntime-common")
+  "vendor/models/u2netp.onnx",                                // dad 9/1: "add the 50mb"
+];
+
+test("the cut-out runtime is IN the checkout, so the blanket vendor copy can ship it", () => {
+  for (const f of CUTOUT_FILES) {
+    const p = new URL("../" + f, import.meta.url);
+    assert.ok(fs.existsSync(p) && fs.statSync(p).size > 0,
+              f + " is missing from this checkout - a cut here ships no cut-out engine");
+  }
+});
+
+test("build-payload refuses to cut a payload with a piece of the cut-out engine missing", () => {
+  const blanket = PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"');
+  const guard = PAYLOAD.match(/for f in vendor\/onnxruntime-web[\s\S]*?\ndone\n/);
+  assert.ok(guard && PAYLOAD.indexOf(guard[0]) > blanket, "the guard runs after the vendor copy");
+  for (const f of CUTOUT_FILES) assert.ok(guard[0].includes(f), "the guard names " + f);
+
+  // and it really fires — the loop is run here against a synthetic payload
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "era-cutout-"));
+  const run = () => spawnSync("bash", ["-c", 'OUT="' + out + '"\n' + guard[0]], { encoding: "utf8" });
+  try {
+    for (const f of CUTOUT_FILES) {
+      fs.mkdirSync(path.join(out, path.dirname(f)), { recursive: true });
+      fs.writeFileSync(path.join(out, f), "x");
+    }
+    assert.equal(run().status, 0, "a complete payload passes");
+    fs.rmSync(path.join(out, CUTOUT_FILES[2]));           // lose the wasm kernel
+    const bad = run();
+    assert.equal(bad.status, 1, "one missing file stops the cut");
+    assert.match(bad.stdout, /ort-wasm-simd-threaded\.wasm is missing/, "and says which one");
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
 test("packInstalled reads the pack's presence marker", () => {
