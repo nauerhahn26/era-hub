@@ -129,8 +129,16 @@ function renderShelf() {
     const name = document.createElement("span");
     name.className = "shelf-title";
     name.textContent = b.title;
-    btn.appendChild(cover);
-    btn.appendChild(name);
+    // The old DwellButton wrapped its children in <span class="dwell-label">;
+    // the card grid therefore holds ONE stretched item and the title stays an
+    // inline box (no 10px grid gap under the cover, 30px line box). Appending
+    // cover+title straight to the button made them two blockified grid items
+    // and grew every card by ~14px. Keep the wrapper — it is load-bearing.
+    const label = document.createElement("span");
+    label.className = "dwell-label";
+    label.appendChild(cover);
+    label.appendChild(name);
+    btn.appendChild(label);
     btn.addEventListener("click", () => openBook(b.slug));
     card.appendChild(btn);
     if (b.authored === true) {
@@ -157,9 +165,10 @@ function renderShelf() {
   exitBtn.setAttribute("data-dwell-ms", "2400");
   exitBtn.setAttribute("data-dwell-say", exitLabel.toLowerCase());
   exitBtn.setAttribute("aria-label", exitLabel);
-  exitBtn.innerHTML = '<span class="shelf-tdsnap-icon" aria-hidden="true">' +
+  exitBtn.innerHTML = '<span class="dwell-label">' +   // old DwellButton wrapper (see renderShelf)
+    '<span class="shelf-tdsnap-icon" aria-hidden="true">' +
     (S.exitTo === "home" ? "\u{1F3E0}" : "\u{1F4AC}") + '</span>' +
-    '<span class="shelf-title">' + exitLabel + '</span>';
+    '<span class="shelf-title">' + exitLabel + '</span></span>';
   exitBtn.addEventListener("click", exitApp);
   exitCard.appendChild(exitBtn);
   grid.appendChild(exitCard);

@@ -44,6 +44,10 @@
      The engine injects .dwell-fx > .dwell-fill/.dwell-flash/.dwell-ring; we
      hide its rising fill and restyle its ring into the old conic progress
      ring (reader.js mirrors fill height into --dwell-progress). ==== */
+  /* display:flex + centring stands in for the <button> element the old app
+     used (these are divs, so nothing centres the label for us). It must NOT
+     leak into the tiles that re-declare display:grid — see .shelf-card-button
+     and .shelf-tdsnap-button below, which reset it. */
   .dwell-button {
     position: relative;
     min-height: 72px;
@@ -94,6 +98,14 @@
   .shelf-card { position: relative; }
   .shelf-card-button.dwell-button {
     display: grid;
+    /* The old app's card is a <button>, so the grid ran on the initial
+       alignment: one stretched column, cover at the card's full inner width
+       (5 identical 320px squares a row on the I-13). .dwell-button's flex
+       centring above sized the column to the TITLE's max-content instead —
+       covers came out 113–271px, ragged, card heights 263–344px (dad 9/7:
+       "a lot of sizing on the book reader is off"). Keep these resets. */
+    align-items: normal;
+    justify-content: normal;
     gap: 10px;
     width: 100%;
     padding: 14px;
@@ -159,6 +171,7 @@
   /* ===== Shelf: Back to TD Snap tile (the old shelf's exit affordance) ===== */
   .shelf-tdsnap-button.dwell-button {
     display: grid;
+    justify-content: normal;   /* same reset as .shelf-card-button (grid, not flex) */
     gap: 10px;
     place-items: center;
     width: 100%;
