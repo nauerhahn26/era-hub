@@ -726,6 +726,15 @@ function pagesOf(dir) {
   return names.map(n => ({ index: Number(n.slice(0, 3)), source: "pages/" + n, image: "pages/" + n }));
 }
 
+// Does this `source` actually NAME AN ORIGINAL, or is it the page file standing
+// in for one? Only ingest's own record knows which photo a page was made from;
+// the fallback above names the page itself, and a book whose .build/ has not
+// synced yet would otherwise look as though every one of its photos had been
+// swapped — and be read again, at a page of the family's free key each.
+const SOURCES_PREFIX = "sources/";
+const traced = (s) => typeof s === "string" && s.startsWith(SOURCES_PREFIX);
+const sameSource = (a, b) => !traced(a.source) || !traced(b.source) || a.source === b.source;
+
 // transcribeBook(dir, opts) — read every page of `dir` that has no text yet.
 //
 //   opts.dataDir  <DATA>, for the vision card and content-config.json
@@ -836,7 +845,19 @@ async function transcribeBook(dir, opts) {
     // A page that already has text is DONE — including a page a parent typed
     // themselves in power mode, and including a page the model correctly read
     // as wordless. text.json is the interop point; we do not overwrite it.
-    const done = had.get(page.index);
+    //
+    // …AS LONG AS THAT PAGE NUMBER STILL MEANS THE SAME PHOTO. An index is a
+    // POSITION in the book, and a position moves: a photo added to the folder,
+    // or one that would not open this time, shifts every page after it along by
+    // one. Reusing by number alone then put page 3's words under page 4's
+    // picture — and content-narrate keeps the mp3 of a page whose words did not
+    // change, so page 3's VOICE went with them, word-highlighting one page while
+    // speaking another to somebody who cannot read yet. Both files record which
+    // original each page was made from, and that is the one identity a page
+    // has, so the two are compared before a penny of the family's allowance is
+    // saved on the strength of them.
+    const stored = had.get(page.index);
+    const done = stored && sameSource(stored, page) ? stored : null;
     const forced = !!only && only.has(page.index);
     if (done && !forced) { out.push(done); reused++; continue; }
     if (only && !forced) { if (done) { out.push(done); reused++; } continue; }
@@ -1106,6 +1127,19 @@ async function titleOf(dir, opts) {
   try {
     const r = await transcribePage({ imagePath, cfg, config: o.config || loadConfig(o.dataDir),
                                      policy: TITLE_PROMPT });
+    // A REPLY WE COULD NOT PARSE IS NOT A TITLE. parseModelJson keeps an
+    // unparsable answer whole as `text` on purpose — for a PAGE, a page of right
+    // words with a parse flag beats a blank page — but here that string becomes
+    // the folder's NAME, the book's title and its slug, and only the google
+    // branch of callModel can ask for JSON at all (responseMimeType), so an
+    // OpenAI or Anthropic vision key has nothing stopping a chatty refusal.
+    // "I am sorry, I cannot read the title from this image" is a folder in the
+    // family's Drive; the placeholder name is not, and this function's contract
+    // is that it never returns a title it is not sure of.
+    if (r && r.parseError) {
+      log("the cover's answer did not come back in the shape we asked for - the book keeps the name it was given");
+      return { title: null };
+    }
     const title = String((r && r.text) || "").split(/[\r\n]+/).map(s => s.trim()).filter(Boolean)[0] || "";
     log(title ? "the cover reads: " + title : "the cover does not say what the book is called");
     return { title: title || null, model: (r && r.model) || null };

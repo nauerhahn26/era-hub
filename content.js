@@ -67,6 +67,16 @@ const notify = require("./notify.js");
 const QUIET_MS = 10 * 60 * 1000;
 // A claim nobody has touched for this long is abandoned (spec §2 "Claim").
 const STALE_MS = 30 * 60 * 1000;
+// …and this long for a book parked on a hold only a PERSON can lift (see
+// takeable). Twelve hours, so a family that ticks the box in the evening finds
+// the book building in the morning without anyone pressing anything, and a book
+// that waits a month costs sixty log lines rather than fifteen hundred.
+const SLOW_MS = 12 * 60 * 60 * 1000;
+// The two of those, by name. content-ingest.js owns the words (NO_DECODER and
+// UNREADABLE) and they are copied here rather than imported for the reason
+// SOURCES is below: requiring that module would drag the vendored JPEG decoder
+// into the hub's MAIN process for two strings.
+const SLOW_HOLDS = new Set(["needs-photo-decoder", "unreadable-photos"]);
 // How often we look. Half the quiet period, so a book that stopped changing is
 // claimed within about fifteen minutes of the last photo landing.
 const SCAN_EVERY = 5 * 60 * 1000;
@@ -207,7 +217,19 @@ function takeable(job, now) {
   if (job.pausedUntil != null && job.pausedUntil !== "")
     return !pauseHolds(job.pausedUntil, now);
   const beat = Date.parse(job.heartbeat);
-  return !(beat >= 0) || now - beat > STALE_MS;
+  if (!(beat >= 0)) return true;                    // no readable heartbeat: abandoned
+  // A HOLD THAT WAITS ON A PERSON BACKS OFF (review 9/8). The two holds ingest
+  // can park a book on wait for something no clock brings: a pack ticked in
+  // Settings, or the photos saved again as JPEG. On the half-hourly rule they
+  // were re-claimed for ever — a job.json rewrite, a "claim" line in
+  // log.jsonl and a worker thread every thirty minutes, inside the family's
+  // Drive folder, for Drive to re-upload to every device — which is exactly the
+  // churn the rest of this function exists to stop.
+  // It is NOT a dead end, because the Settings card promises it is not ("tick
+  // it in Apps above and this book carries on by itself"): the book is looked at
+  // twice a day instead of forty-eight times, and a parent who does not want to
+  // wait has "Try this book again" under the sentence that told them what to fix.
+  return now - beat > (SLOW_HOLDS.has(job.held) ? SLOW_MS : STALE_MS);
 }
 
 // Every book folder under `<folderPath>/books`, each with the slug it owns.
@@ -290,10 +312,22 @@ function gatherLoose(root, now) {
     return null;
   }
   if (!g) return null;
+  // A PASS THAT MOVED NOTHING IS NOT NEWS. Either every photo is still held by
+  // whatever has it open (the marker keeps this folder as the target, so the
+  // next look carries the same move on), or the move had already finished — and
+  // either way the folder is an ordinary book folder now, which the walk above
+  // claims under the ordinary rules. Logging and re-claiming it on every scan
+  // would write a "gather" line and a "claim" line into the family's Drive
+  // folder every five minutes for as long as the file stayed locked.
+  if (!g.moved) return null;
   const slug = slugOf(root, g.name);
   if (!slug) return null;                          // the folder went away under us
   store.appendLog(g.dir, "gather", (g.resumed ? "carried on" : "took in") + " " + g.moved +
-    " photo(s) that were loose in books/ — they are one book until a grown-up says otherwise",
+    " photo(s) that were loose in books/ — they are one book until a grown-up says otherwise" +
+    // Said, because the alternative is a book that is quietly one page short: a
+    // photo still open in Drive is left loose and joins THIS book on the next
+    // look (content-gather.js keeps the marker until the pile is empty).
+    (g.failed ? "; " + g.failed + " could not be moved yet and will join it on the next look" : ""),
     { now: iso(now) });
   const b = { name: g.name, slug, images: g.moved, inbox: true, quiet: true,
               takeable: false, gathered: true, state: null };
@@ -1063,9 +1097,18 @@ function renameBook(o) {
   // Already on the shelf: publish again, so the manifest (and with it the
   // Reader's shelf card) carries the name a parent just typed. Not on the shelf
   // yet: carry on with whatever step it owed.
+  //
+  // THERE IS NOTHING TO RUN ON A BOOK NOBODY HAS CLAIMED. A folder still inside
+  // its quiet ten minutes has no job.json, and the worker's first act is to read
+  // one: it throws "no job.json in <folder>", and the catch around it writes
+  // that line into .build/log.jsonl INSIDE the family's Drive folder — making a
+  // .build/ directory, for Drive to upload to every device, under a folder the
+  // parent has only just made. The next scan picks the folder up under its new
+  // name anyway (its quiet clock was reset by the seen.delete above), which is
+  // the same minute it would have started in had nobody renamed it.
   const published = fs.existsSync(path.join(res.dir, "manifest.json"));
-  run({ kind: "books", slug, name: res.name, dir: res.dir, dataDir: DATA,
-        step: published ? store.STEP_OWED.narrating : null }).catch(() => {});
+  if (j) run({ kind: "books", slug, name: res.name, dir: res.dir, dataDir: DATA,
+               step: published ? store.STEP_OWED.narrating : null }).catch(() => {});
   console.log("[content] a grown-up renamed a book folder");
   return { renamed: true, slug, title: res.name, was: found.name };
 }

@@ -948,6 +948,63 @@ test("a book with no AI key says so instead of pretending to read", async () => 
   await ctx.close();
 });
 
+// A HOLD IS DECIDED BY THE HOLD, not by the absence of an error. A book holding
+// on "retry" ALWAYS carries one — content-worker.js notes the page it lost and
+// only then holds, and content.js publishes that last message as `error` for
+// exactly this state — so the sentence written for it could never be shown, and
+// a book that is going to try again by itself was reported as stopped.
+test("a book that lost a page says it will try again, and is not called stopped", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "transcribing", held: "retry",
+                     error: "ai(google/gemini-3-flash-preview) 500 boom on page 4" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await row.textContent();
+  assert.match(s, /tries that page again/i, s);
+  assert.match(s, /every page already read is kept/i);
+  assert.equal(await row.locator(".status.bad").count(), 0, "a book that is still going is not a red line");
+  await ctx.close();
+});
+
+test("a book that really stopped keeps its red line, in words and never the provider's", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    // …carrying the hold it was under when it fell over: content-store.fail
+    // keeps `held`, so the card must not tell a parent to wait AND that it
+    // stopped in the same breath.
+    jobs: [bookJob({ state: "failed", held: "needs-photo-decoder",
+                     error: "ai(google/gemini-3-flash-preview) 500 boom" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  assert.equal(await row.locator(".status.bad").count(), 1);
+  assert.doesNotMatch(await row.textContent(), /carries on by itself/i,
+    "a book that stopped is not also waiting");
+  const s = await row.locator(".status.bad").textContent();
+  assert.match(s, /could not be reached/i, s);
+  assert.doesNotMatch(s, /gemini|boom/i, "the raw provider string never reaches the card");
+  assert.equal(await row.locator("button[data-run]").count(), 1, "and there is something to press");
+  await ctx.close();
+});
+
+// The two holds only a PERSON can lift are looked at twice a day rather than
+// every half hour (content.js SLOW_HOLDS), so the parent who has just ticked the
+// box gets a press that says "look now" instead of waiting until the morning.
+test("a book waiting on a person can be started by hand", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "inbox", held: "needs-photo-decoder" })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+  assert.equal(await row.locator("button[data-run]").count(), 1);
+  let sent = null;
+  await page.route("**/content/run", (r) => {
+    sent = JSON.parse(r.request().postData());
+    r.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+  await row.locator("button[data-run]").click();
+  await page.waitForFunction(() => /Starting/i.test(document.body.textContent));
+  assert.deepEqual(sent, { kind: "books", slug: "tabby-mctat", step: null, retry: true });
+  await ctx.close();
+});
+
 test("a book New ERA named itself offers the rename, and says how to split it", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
     jobs: [bookJob({ title: "New book 2026-09-07", autoTitle: true })] }));

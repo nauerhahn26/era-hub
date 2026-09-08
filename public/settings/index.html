@@ -1011,6 +1011,11 @@ const CT_WAITING={
   "unreadable-photos":'None of these files can be made into pages. A page has to be a <b>JPEG</b> photo or an '
     +'<b>iPhone photo (HEIC)</b> &mdash; a PDF, a screenshot in another format or a document cannot be one.',
 };
+// The two of those that wait on a PERSON rather than on a clock (content.js
+// SLOW_HOLDS). They get the "Try this book again" button under their sentence,
+// because the fix for both is something a parent does — and having done it,
+// nobody should have to wait for the hub's next slow look.
+const CT_SLOW=["needs-photo-decoder","unreadable-photos"];
 // What pressing "add credit" actually gets a family, which is not the same
 // thing for the two: Google's free day comes back either way and the paid tier
 // buys SPEED; ElevenLabs' month is a top-up and buys the narration itself.
@@ -1081,9 +1086,21 @@ function ctRow(j){
   // WAITING IS NOT WORKING, and it is not failing either (dad 9/7). A book with
   // no AI key sat on "Reading the words off the photos…" for ever, and a family
   // reading that had nothing to press and nothing to fix. content.js now says
-  // which hold a book is parked on, and these are the four it can be.
-  if(!j.error && !j.paused && CT_WAITING[j.held]) h+='<div class="status">'+CT_WAITING[j.held]+'</div>';
-  if(j.error) h+='<div class="status bad">'+CT_ESC(ctSorry(j.error))+'</div>';
+  // which hold a book is parked on, and these are the five it can be.
+  //
+  // DECIDED BY THE HOLD, NOT BY THE ABSENCE OF AN ERROR (review 9/8). A book
+  // holding on "retry" ALWAYS carries an error — content-worker.js notes the
+  // page it lost and only then holds, and content.js publishes that last message
+  // as `error` for exactly this state — so "no error" could never be true of it
+  // and the one sentence written for it could never be shown. The red line is
+  // for a book that really stopped, which is the one content.js calls `failed`;
+  // a book that is holding is going to try again by itself, and saying so is
+  // the whole difference between a card a parent believes and one they do not.
+  // A book that FELL OVER keeps whatever hold it was under (content-store.fail
+  // does not clear it), so the failure has the last word and the two sentences
+  // never contradict each other on one card.
+  if(j.state!=="failed" && !j.paused && CT_WAITING[j.held]) h+='<div class="status">'+CT_WAITING[j.held]+'</div>';
+  if(j.error&&j.state==="failed") h+='<div class="status bad">'+CT_ESC(ctSorry(j.error))+'</div>';
   // A book NEW ERA named itself, off a pile of loose photos and its own cover.
   // Said plainly, because the guess can be wrong in two different ways and the
   // fix is different for each: a wrong NAME is the button below; a pile that was
@@ -1120,7 +1137,12 @@ function ctRow(j){
    // sentence — it has always been the one thing that restarts THIS book.
    +(j.paused&&j.paused.addUrl?'<button data-add="'+CT_ESC(j.paused.addUrl)+'">💳 Open my '
       +CT_ESC(CT_PROVIDER[j.paused.provider]||"AI")+' page</button>':'')
-   +(j.error||j.paused?'<button data-run="'+CT_ESC(j.slug)+'">🔄 '
+   // …and a book parked on one of the two holds only a PERSON can lift gets it
+   // too (review 9/8). Those wait on a pack being ticked or the photos being
+   // saved again as JPEG, so the hub looks at them twice a day rather than every
+   // half hour (content.js SLOW_HOLDS) — this is the press that says "I have
+   // done it, look now" instead of waiting until the morning.
+   +(j.error||j.paused||CT_SLOW.includes(j.held)?'<button data-run="'+CT_ESC(j.slug)+'">🔄 '
       +(j.paused?'Try again now':'Try this book again')+'</button>':'')
    // "…and let me say otherwise" (dad 9/7). A plain button and a plain box —
    // no dwell, no gaze, no confirm dialog: this page is a grown-up's, and the

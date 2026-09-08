@@ -117,15 +117,36 @@ const HELD_WORDS = {
     note: "Pages have to be JPEG photos or iPhone photos." },
 };
 
+// A STOPPED BOOK IN HER WORDS, NEVER THE PROVIDER'S. `j.error` is the raw
+// string off job.errors — "ai(google/gemini-3-flash-preview) 500 boom" — and
+// the Settings card is forbidden to print it (public/settings/index.html
+// ctSorry: "it names nothing a parent can act on and reads like a crash").
+// This shelf is the one screen a six-year-old looks at, so it is the last place
+// it belongs; and there is nothing here she can act on either, so it says less
+// than Settings does — that the book stopped, and who can help.
+function sorry(msg) {
+  const m = String(msg || "");
+  if (/\b429\b|quota|allowance|RESOURCE_EXHAUSTED/i.test(m))
+    return "It carries on by itself when there is more room.";
+  return "A grown-up can start it again in Settings.";
+}
+
 function buildingWords(j) {
   // A pile of photos that has not become a folder yet (see refreshShelf).
   if (j.loose)
     return { head: "New photos arrived",
              note: j.loose + " photo" + (j.loose === 1 ? "" : "s") + " — this book starts in about "
                    + j.startsIn + " minutes." };
-  if (j.error) return { head: "This book stopped", note: j.error };
   if (j.paused || j.pausedUntil)
     return { head: "Waiting its turn", note: "It carries on by itself when there is more room today." };
+  // ONLY A BOOK THAT REALLY STOPPED SAYS IT STOPPED, and after that the HOLD
+  // decides — never the presence of an error. A book holding on "retry" carries
+  // one too (content.js sets both), and it has not stopped at all: it is waiting
+  // for its next look and will carry on by itself. Saying "This book stopped"
+  // over it was wrong on the one shelf that cannot ask anybody.
+  // `failed` comes first of the two because a hold is not cleared when a book
+  // falls over (content-store.fail keeps it), so the last word is the failure.
+  if (j.state === "failed") return { head: "This book stopped", note: sorry(j.error) };
   if (HELD_WORDS[j.held]) return HELD_WORDS[j.held];
   if (j.state === "inbox")
     return { head: "Getting ready…", note: "Building starts about " + j.startsIn
@@ -238,6 +259,17 @@ function renderShelf() {
   exitBtn.addEventListener("click", exitApp);
   exitCard.appendChild(exitBtn);
   grid.appendChild(exitCard);
+}
+
+// Everything the shelf PAINTS, in one string — the covers she can open and the
+// sentence under each book on its way. Two polls that would draw the same shelf
+// have the same signature, and the second one draws nothing (see boot).
+function shelfSig() {
+  return JSON.stringify([
+    S.drive, S.exitTo, S.childName,
+    S.index.map(b => [b.slug, b.title, b.cover, b.authored]),
+    S.building.map(j => { const w = buildingWords(j); return [j.slug, j.title, w.head, w.note]; }),
+  ]);
 }
 
 async function exitApp() {
@@ -599,12 +631,27 @@ async function boot() {
   // watching and turns into a real card by itself. Stops once the shelf has
   // books on it and nothing is left building.
   if (!S.index.length || S.building.length) {
+    // ONLY WHEN SOMETHING ACTUALLY CHANGED. renderShelf() empties the grid and
+    // builds every card again — the openable books' .dwell-buttons and #btnExit
+    // with them — and era-core/dwell.js tracks the ELEMENT under the gaze, so a
+    // rebuild throws away an in-flight dwell (clear() + begin() on a node it has
+    // not seen before). Re-rendering on every tick because SOMETHING is building
+    // therefore tore the shelf out from under her every twenty seconds, for as
+    // long as a book stayed unbuildable — which for a family that has not added
+    // an AI key yet is the whole session. The signature is what the cards
+    // actually say, so a page count ticking up still repaints and nothing else
+    // does; and a repaint suppresses dwell for the settle window, like every
+    // other render in this file (D51).
+    let painted = shelfSig();
     const again = setInterval(async () => {
       if (S.index.length && !S.building.length) { clearInterval(again); return; }
-      const had = S.index.length, was = S.building.length;
       await refreshShelf();
-      if (!S.slug && (S.index.length !== had || S.building.length !== was ||
-                      S.building.length)) renderShelf();
+      const fresh = shelfSig();
+      if (fresh === painted) return;
+      painted = fresh;
+      if (S.slug) return;              // she is inside a book; goLibrary() repaints
+      renderShelf();
+      suppress();
     }, 20000);
   }
 

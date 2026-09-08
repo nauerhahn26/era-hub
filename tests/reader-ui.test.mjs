@@ -29,7 +29,9 @@ const HUB = path.resolve(__dirname, "..");
 
 // scratch-port map: books=8392/8398, pool=8393/8394, setup=8397, board=8390 —
 // never the live hub port.
-const PORT = 8391;
+// …overridable, the way pool.test.mjs's is, so this suite can be run on a
+// scratch port while the box's own hubs hold the map above.
+const PORT = Number(process.env.ERA_TEST_HUB_PORT) || 8391;
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-reader-"));
 let child, browser;
@@ -482,6 +484,93 @@ test("a book that is stuck says WHY, and never 'set up Google Drive'", async () 
   assert.match(s, /iPhone photos/i, s);
   assert.doesNotMatch(s, /set it up in Settings/i);
   assert.equal(await page.locator("#shelfEmpty").isHidden(), true);
+  await ctx.close();
+});
+
+// A book that STOPPED, said to a six-year-old. `error` is the provider's own
+// string off job.errors — the Settings card is forbidden to print it
+// (public/settings/index.html ctSorry: "it names nothing a parent can act on and
+// reads like a crash") and this shelf is the last place it belongs.
+test("a stopped book never puts the provider's own words on her screen", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "failed",
+      progress: { pages: 16, transcribed: 4, narrated: 0 },
+      held: null, paused: null, error: "ai(google/gemini-3-flash-preview) 500 boom" }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const s = await page.locator("#shelfGrid .shelf-card.is-building").textContent();
+  assert.match(s, /This book stopped/i, s);
+  assert.match(s, /grown-up/i, "and who can do something about it");
+  assert.doesNotMatch(s, /gemini|500|boom|ai\(/i, "the raw provider string reached her screen: " + s);
+  await ctx.close();
+});
+
+// A book holding on "retry" ALWAYS carries an error (content-worker.js notes the
+// page it lost and only then holds), and it has not stopped at all — it is
+// waiting for its next look and will carry on by itself.
+test("a book that lost one page and will try again is not called stopped", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "transcribing",
+      progress: { pages: 16, transcribed: 12, narrated: 0 },
+      held: "retry", paused: null, error: "ai(google/gemini-3-flash-preview) 500 boom on page 13" }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const s = await page.locator("#shelfGrid .shelf-card.is-building").textContent();
+  assert.doesNotMatch(s, /stopped/i, s);
+  assert.match(s, /12 of 16 pages read/, "it is still making this book: " + s);
+  await ctx.close();
+});
+
+// THE SHELF IS NOT REBUILT UNDER HER GAZE. renderShelf() empties the grid and
+// makes every card again — the openable books' dwell-buttons and #btnExit (the
+// highest-consequence hold in the app) with them — and era-core/dwell.js tracks
+// the ELEMENT, so a rebuild throws an in-flight dwell away. A book that cannot
+// finish (no key yet, a hold nobody has lifted) keeps the poll running for the
+// whole session, so "re-render because something is building" meant doing that
+// every twenty seconds, for ever.
+test("the poll only repaints the shelf when something actually changed", async () => {
+  const job = { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "inbox",
+                progress: { pages: 16, transcribed: 4, narrated: 0 },
+                held: "no-ai-key", paused: null, error: null };
+  const live = { status: contentStatus({ jobs: [job] }) };
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+  await ctx.addInitScript(() => {
+    window.__timers = [];
+    const si = window.setInterval.bind(window);
+    window.setInterval = (fn, ms) => { window.__timers.push({ fn, ms }); return si(fn, ms); };
+  });
+  await ctx.route("**/books/index.json", r => r.fulfill({ status: 200, contentType: "application/json",
+    body: JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: false }]) }));
+  await ctx.route("**/content/status", r => r.fulfill({ status: 200, contentType: "application/json",
+    body: JSON.stringify(live.status) }));
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
+  await page.waitForFunction(() => window.Reader && window.Reader.state().buildingCount === 1);
+  const tick = () => page.evaluate(async () => {
+    for (const t of window.__timers.filter(x => x.ms === 20000)) await t.fn();
+  });
+  // The two nodes her gaze may be resting on when the poll comes round.
+  await page.evaluate(() => {
+    document.getElementById("btnExit").dataset.mark = "same";
+    document.querySelector("#shelfGrid .shelf-card-button").dataset.mark = "same";
+  });
+
+  await tick(); await tick();
+  assert.equal(await page.locator("#btnExit").getAttribute("data-mark"), "same",
+    "the exit tile was replaced under her gaze while nothing had changed");
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").getAttribute("data-mark"), "same",
+    "so was the book she was about to open");
+  assert.equal(await page.evaluate(() => window.Reader.state().buildingCount), 1,
+    "…and it would have gone on doing it for the whole session");
+
+  // …and a card whose words really did change still repaints, settling her gaze
+  // afterwards the way every other render in this app does (D51).
+  live.status = contentStatus({ jobs: [{ ...job, held: null, state: "transcribing",
+    progress: { pages: 16, transcribed: 9, narrated: 0 } }] });
+  await tick();
+  await page.locator("#shelfGrid .shelf-card.is-building", { hasText: "9 of 16 pages read" }).waitFor();
+  assert.equal(await page.locator("#btnExit").getAttribute("data-mark"), null, "a real change repaints");
+  assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0,
+    "a fresh set of dwell targets never inherits her gaze");
   await ctx.close();
 });
 

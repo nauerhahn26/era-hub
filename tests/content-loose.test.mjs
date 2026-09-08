@@ -44,6 +44,34 @@ function driveCfg(cfg) {
 // A photo landing in books/ itself — the thing that was invisible until 9/7.
 // Bytes, not pixels: nothing in this suite decodes anything.
 const drop = (name, bytes) => fs.writeFileSync(path.join(BOOKS, name), Buffer.alloc(bytes || 64, 7));
+
+// ONE PHOTO THE DISK WILL NOT MOVE — the ordinary case on Windows, where Google
+// Drive for Desktop still holds an upload handle open on the file that landed a
+// second ago. Both halves of moveIn refuse it (rename, then copy+unlink), which
+// is what an EPERM/EBUSY looks like from in here. ext4 will not produce one on
+// demand, so the two calls are stood in for, the way this suite stands in for
+// content.runJob.
+function withUnmovable(name, fn) {
+  const rename = fs.renameSync, copy = fs.copyFileSync;
+  const locked = (p) => path.basename(String(p)) === name;
+  fs.renameSync = (a, b) => { if (locked(a)) throw new Error("EPERM: operation not permitted"); return rename(a, b); };
+  fs.copyFileSync = (a, b) => { if (locked(a)) throw new Error("EPERM: operation not permitted"); return copy(a, b); };
+  try { return fn(); } finally { fs.renameSync = rename; fs.copyFileSync = copy; }
+}
+
+// THE FAMILY'S DISK, MODELLED. NTFS (and a Mac's APFS) hold "Sunny Pond" and
+// "sunny pond" to be one folder; the QA box's ext4 does not, which is exactly
+// why a whole class of naming bug was invisible to this suite. fs.existsSync is
+// the call that decided "taken", so it is the one stood in for.
+function withCaseBlindDisk(fn) {
+  const exists = fs.existsSync;
+  fs.existsSync = (p) => {
+    if (exists(p)) return true;
+    const at = String(p), want = path.basename(at).toLowerCase();
+    try { return fs.readdirSync(path.dirname(at)).some(n => n.toLowerCase() === want); } catch { return false; }
+  };
+  try { return fn(); } finally { fs.existsSync = exists; }
+}
 const inBooks = () => fs.readdirSync(BOOKS).sort();
 const dirs = () => fs.readdirSync(BOOKS, { withFileTypes: true })
   .filter(d => d.isDirectory()).map(d => d.name).sort();
@@ -155,6 +183,95 @@ test("a marker whose `dir` is a path names no folder at all", () => {
   const g = gather.gather(BOOKS, { now: T0 });
   assert.equal(g.resumed, false);
   assert.equal(path.dirname(path.resolve(g.dir)), path.resolve(BOOKS));
+});
+
+// RULE 3 IS NOT ONLY ABOUT A CRASH. One photo the disk refuses used to clear
+// the marker anyway, and the photos left loose became an ordinary new pile: ten
+// minutes later they were a SECOND book, with its own folder, its own claim and
+// its own transcription off the family's free key — and the page was detached
+// from its real book for ever, with nothing to tell the parent.
+test("one photo the disk will not move keeps the marker, and joins the SAME book next look", () => {
+  drop("IMG_0001.HEIC"); drop("IMG_0002.HEIC"); drop("IMG_0003.HEIC");
+  const g = withUnmovable("IMG_0002.HEIC", () => gather.gather(BOOKS, { now: T0 }));
+  assert.equal(g.moved, 2);
+  assert.equal(g.failed, 1, "and it says so, so content.js can put it in the log");
+  assert.equal(gather.pending(BOOKS), g.name, "the marker stays while the pile is not empty");
+  assert.deepEqual(looseLeft(), ["IMG_0002.HEIC"], "the photo is exactly where the parent put it");
+
+  // Drive lets go of the file; the next look FINISHES the same move.
+  const again = gather.gather(BOOKS, { now: T0 + 5 * MIN });
+  assert.equal(again.resumed, true);
+  assert.equal(again.name, g.name);
+  assert.deepEqual(dirs(), [g.name], "one book, not two");
+  assert.equal(fs.readdirSync(g.dir).length, 3, "all three pages of it");
+  assert.equal(gather.pending(BOOKS), null, "and only now is the marker gone");
+});
+
+test("a photo nothing will ever move lets the marker go rather than pinning books/ for ever", () => {
+  drop("IMG_0001.HEIC"); drop("IMG_0002.HEIC");
+  withUnmovable("IMG_0002.HEIC", () => {
+    // One look per scan: the resume never waits out the quiet clock again.
+    for (let i = 0; i <= gather.MAX_RESUMES; i++) gather.gather(BOOKS, { now: T0 + i * MIN });
+  });
+  assert.equal(gather.pending(BOOKS), null, "held any longer, books/ could never be gathered again");
+  assert.deepEqual(looseLeft(), ["IMG_0002.HEIC"]);
+  assert.equal(dirs().length, 1, "and the book that was made is still one book");
+});
+
+test("a pile nothing could move at all leaves no empty book behind", () => {
+  drop("IMG_0001.HEIC");
+  withUnmovable("IMG_0001.HEIC", () => {
+    for (let i = 0; i <= gather.MAX_RESUMES; i++) gather.gather(BOOKS, { now: T0 + i * MIN });
+  });
+  assert.deepEqual(dirs(), [], "no phantom book, and the name is free for the real one");
+  assert.deepEqual(looseLeft(), ["IMG_0001.HEIC"], "and the photo is untouched");
+});
+
+// A folder made and then a marker that never landed left an EMPTY phantom: not
+// an inbox (no photos in it), so never claimed, never built, never swept — but
+// with a slug, a permanent zero-page card on the Settings page, and the NAME, so
+// the real book was born as "New book 2026-09-07 (2)".
+test("a marker that will not land leaves books/ exactly as the parent left it", () => {
+  drop("IMG_0001.HEIC");
+  const write = fs.writeFileSync;
+  fs.writeFileSync = (p, d, ...rest) => {
+    if (path.basename(String(p)).startsWith(".gather")) throw new Error("power loss");
+    return write(p, d, ...rest);
+  };
+  try { assert.throws(() => gather.gather(BOOKS, { now: T0 }), /power loss/); }
+  finally { fs.writeFileSync = write; }
+
+  assert.deepEqual(dirs(), [], "no empty phantom book squatting the name");
+  assert.equal(gather.pending(BOOKS), null, "and no marker left pointing at one");
+  assert.deepEqual(looseLeft(), ["IMG_0001.HEIC"]);
+  // …so when the disk comes back, the book is born under the name the parent
+  // will recognise rather than under "(2)".
+  assert.equal(gather.gather(BOOKS, { now: T0 }).name, "New book 2026-09-07");
+});
+
+test("a folder the disk refuses takes its marker with it", () => {
+  drop("IMG_0001.HEIC");
+  const mkdir = fs.mkdirSync;
+  fs.mkdirSync = (p, o) => {
+    if (path.basename(String(p)).startsWith(gather.FALLBACK_PREFIX)) throw new Error("no space left");
+    return mkdir(p, o);
+  };
+  try { assert.throws(() => gather.gather(BOOKS, { now: T0 }), /no space left/); }
+  finally { fs.mkdirSync = mkdir; }
+  assert.deepEqual(inBooks(), ["IMG_0001.HEIC"], "not even the marker of a folder that never was");
+});
+
+test("the marker lands whole — a torn one would make the rest of the pile a second book", () => {
+  drop("IMG_0001.HEIC");
+  const write = fs.writeFileSync, seen = [];
+  fs.writeFileSync = (p, d, ...rest) => { seen.push(path.basename(String(p))); return write(p, d, ...rest); };
+  try { gather.gather(BOOKS, { now: T0 }); } finally { fs.writeFileSync = write; }
+  assert.equal(seen.includes(gather.MARKER), false, "never written in place under its own name");
+  assert.ok(seen.some(n => n.startsWith(".gather") && n.endsWith(".tmp")), "tmp + rename, like every other file");
+  // Why it matters: half a marker reads as NO marker, and a resume that reads no
+  // marker starts a second book out of the photos still loose.
+  fs.writeFileSync(path.join(BOOKS, gather.MARKER), '{"dir":"New bo');
+  assert.equal(gather.pending(BOOKS), null);
 });
 
 test("a second pile on the same day gets its own folder, never the first one's", () => {
@@ -307,6 +424,57 @@ test("'let me say otherwise': a rename moves the folder and keeps every photo", 
     ["IMG_0001.HEIC"]);
   assert.equal(store.readJob(path.join(BOOKS, "Sunny Pond")).autoTitle, undefined,
     "a grown-up named it, so the cover never overrules them");
+});
+
+// A NAME IS TAKEN WHATEVER ITS CAPITALS, because the disk this ships on decides
+// it that way: on NTFS "Sunny Pond" and "sunny pond" are one folder. Answering
+// otherwise on ext4 hid the whole class of bug from this suite.
+test("a name is taken whatever its capitals — and never by the folder asking", () => {
+  fs.mkdirSync(path.join(BOOKS, "Sunny Pond"));
+  assert.equal(gather.freeDirName(BOOKS, "sunny pond"), "sunny pond (2)");
+  assert.equal(gather.freeDirName(BOOKS, "sunny pond", "Sunny Pond"), "sunny pond",
+    "…except by the folder that is being renamed, which is allowed to be itself");
+});
+
+// Fixing the capitals of a machine-made name is one of the likeliest first uses
+// of the Rename button, and it used to answer "Sunny Pond (2)": a new folder, a
+// new slug (books-index assigns them off folder names) and a package Ellie's
+// saved place is not in.
+test("retyping a title in different capitals renames the book, it does not clone it", () => {
+  fs.mkdirSync(path.join(BOOKS, "sunny pond"));
+  fs.writeFileSync(path.join(BOOKS, "sunny pond", "p1.jpg"), Buffer.alloc(64, 1));
+  const out = withCaseBlindDisk(() => gather.rename(BOOKS, "sunny pond", "Sunny Pond"));
+  assert.equal(out.renamed, true);
+  assert.equal(out.name, "Sunny Pond");
+  assert.deepEqual(dirs(), ["Sunny Pond"], "one book on the shelf, not two");
+  assert.deepEqual(fs.readdirSync(out.dir), ["p1.jpg"], "with its photo still in it");
+});
+
+test("a title that clashes with ANOTHER book, in any capitals, still gets its own folder", () => {
+  fs.mkdirSync(path.join(BOOKS, "Sunny Pond"));
+  fs.mkdirSync(path.join(BOOKS, "New book 2026-09-07"));
+  const out = withCaseBlindDisk(() => gather.rename(BOOKS, "New book 2026-09-07", "sunny pond"));
+  assert.equal(out.name, "sunny pond (2)", "two books that share a title are two books");
+  assert.deepEqual(dirs(), ["Sunny Pond", "sunny pond (2)"]);
+});
+
+// The worker's first act is to read a job.json, and a folder still inside its
+// quiet ten minutes has none: it threw "no job.json in <folder>", and the catch
+// around it wrote that line into .build/log.jsonl INSIDE the family's Drive
+// folder — a whole .build/ directory, for Drive to upload to every device, under
+// a book the parent had only just made.
+test("renaming a book nobody has claimed yet does not start a build", async () => {
+  const runs = [];
+  content.runJob = (job) => { runs.push(job); return Promise.resolve({ ok: true }); };
+  fs.mkdirSync(path.join(BOOKS, "Sunny Pond"));
+  fs.writeFileSync(path.join(BOOKS, "Sunny Pond", "p1.jpg"), Buffer.alloc(64, 1));
+  content.scan({ now: T0 });                       // seen once: the quiet clock, no claim
+  const out = content.renameBook({ kind: "books", slug: "sunny-pond", title: "Sunny Pond 2" });
+  await content.idle();
+  assert.equal(out.renamed, true);
+  assert.deepEqual(runs, [], "nothing to run on a book with no job.json");
+  assert.equal(fs.existsSync(path.join(BOOKS, "Sunny Pond 2", ".build")), false,
+    "and nothing of ours appears in the family's folder");
 });
 
 test("a rename is refused while the book is being built", async () => {

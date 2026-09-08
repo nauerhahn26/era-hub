@@ -181,6 +181,10 @@ before(async () => {
       const payload = typeof next === "function" ? next({ model, calls: calls.length }) : next;
       const text = mode === "chatty"
         ? "Sure! Here is the page:\n```json\n" + JSON.stringify(payload) + "\n```\nHope that helps."
+        // Plain prose and no JSON anywhere in it. Only the google branch of
+        // callModel can ask for a JSON reply (responseMimeType), so this is what
+        // an OpenAI or Anthropic vision key can answer with at any time.
+        : mode === "prose" ? String(payload)
         : JSON.stringify(payload);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(replyFor(provider, text)));
@@ -335,6 +339,46 @@ test("a page already in text.json is never paid for twice", async () => {
   const one = await providers.transcribeBook(dir, { dataDir: DATA, only: [2] });
   assert.equal(calls.length, 3);
   assert.equal(one.transcribed, 1);
+});
+
+// WORDS ARE WELDED TO THE PHOTO, NOT TO THE PAGE NUMBER. An index is a POSITION
+// in the book, and a position moves: a photo that joins the folder, or one that
+// would not open this time, shifts every page after it along by one. Reusing by
+// number alone then put page 2's words under page 3's picture — and, because
+// content-narrate keeps the mp3 of a page whose words did not change, page 2's
+// VOICE with them: Ellie sees one page and hears another, for good.
+test("a page whose photo changed is read again, not reused by its number", async () => {
+  reset({ config: SINGLE });
+  const dir = book("Renumbered", 2);
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.equal(calls.length, 2);
+
+  // What a second ingest leaves behind when a photo joined the book: page 2 is
+  // now a different original.
+  const rec = store.readJson(path.join(store.buildDir(dir), "ingest.json"));
+  rec.pages[1].source = "sources/IMG_0009.jpg";
+  store.writeAtomic(path.join(store.buildDir(dir), "ingest.json"), rec);
+
+  const again = await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.equal(again.reused, 1, "page 1 is the same photo and is not paid for twice");
+  assert.equal(again.transcribed, 1, "page 2 is a different photo, so its words are bought again");
+  assert.equal(calls.length, 3);
+  assert.equal(store.readText(dir).pages.find(p => p.index === 2).source, "sources/IMG_0009.jpg");
+});
+
+// …and the other side of that: pagesOf() names the PAGE file when ingest's own
+// record is missing (a folder built by hand in power mode, a .build/ that has
+// not synced). Reading that as "every photo was swapped" would buy the whole
+// book again, a page of the family's free key at a time.
+test("a book whose ingest record has gone is not read all over again", async () => {
+  reset({ config: SINGLE });
+  const dir = book("No Record", 2);
+  await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.equal(calls.length, 2);
+  fs.rmSync(path.join(store.buildDir(dir), "ingest.json"));
+  const again = await providers.transcribeBook(dir, { dataDir: DATA });
+  assert.equal(calls.length, 2, "nothing here says the photos changed, so nothing is paid for twice");
+  assert.equal(again.reused, 2);
 });
 
 test("a re-read leaves the book in the order a grown-up dragged it into", async () => {
@@ -1250,6 +1294,41 @@ test("a re-shape on the page that then meets a refused key is still written down
   assert.equal(retunes.length, 1,
     "the re-shape happened and the ledger has to say so: " + JSON.stringify(store.readLog(dir).map(l => l.msg)));
   assert.ok(retunes[0].msg.startsWith(transcriber + ":"), "and it names the model that asked for it");
+});
+
+// ------------------------------------------------- what the cover is called
+
+test("the cover names the book", async () => {
+  reset({ config: SINGLE, answers: [{ text: "Sunny Pond", uncertain: [] }] });
+  const dir = book("New book 2026-09-07");
+  const out = await providers.titleOf(dir, { dataDir: DATA });
+  assert.equal(out.title, "Sunny Pond");
+  assert.equal(calls.length, 1, "one call, for one book");
+  assert.equal(calls[0].prompt, providers.TITLE_PROMPT);
+});
+
+test("a title we cannot even ask for is a hold, not a failure", async () => {
+  reset({ config: SINGLE });
+  fs.unlinkSync(path.join(DATA, "ai-config.json"));
+  const out = await providers.titleOf(book("Nameless"), { dataDir: DATA });
+  visionKey("google");
+  assert.equal(out.hold, "no-ai-key");
+});
+
+// AN ANSWER WE COULD NOT PARSE NAMES NOTHING. parseModelJson keeps an unparsable
+// reply whole as `text` on purpose — for a PAGE, a page of right words with a
+// parse flag beats a blank page — but this string becomes the FOLDER NAME inside
+// the family's Drive, the book's title and its slug. Only the google branch of
+// callModel can ask for JSON at all, so a chatty apology on an OpenAI or
+// Anthropic key is an ordinary answer, not an exotic one.
+test("a reply that is not the shape we asked for never becomes a book's name", async () => {
+  reset({ config: SINGLE, mode: "prose",
+          answers: ["I am sorry, I cannot read the title from this image."] });
+  const dir = book("New book 2026-09-08");
+  const out = await providers.titleOf(dir, { dataDir: DATA });
+  mode = "ok";
+  assert.equal(out.title, null, "the book keeps the name content-gather gave it");
+  assert.match(store.readLog(dir).map(l => l.msg).join("\n"), /shape we asked for/);
 });
 
 // --------------------------------------------------------------- the tally

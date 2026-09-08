@@ -305,13 +305,56 @@ test("a HEIC that will not open is not a page — and it is NEVER copied through
 
   assert.equal(out.lost, 1);
   assert.equal(out.pages.length, 1, "the book is built without it, not stopped by it");
-  assert.equal(out.pages[0].index, 1, "and the pages that did work are numbered 1..N");
+  // A PAGE NUMBER IS ITS PLACE IN THE BOOK. a.HEIC was first and could not be
+  // opened, so page 1 is simply not there and b.HEIC stays page 2 — the number
+  // never depends on which photos decoded, because text.json, audio/NNN.mp3 and
+  // the manifest are all keyed by it.
+  assert.equal(out.pages[0].index, 2, "the lost photo leaves a gap; it does not renumber the book");
   assert.equal(out.pages[0].source, "sources/b.HEIC");
-  assert.deepEqual(fs.readdirSync(path.join(dir, "pages")), ["001.jpg"]);
+  assert.deepEqual(fs.readdirSync(path.join(dir, "pages")), ["002.jpg"]);
   // The copy-through law is a JPEG law: a .heic renamed .jpg is a page no
   // browser shows and no vision provider accepts.
-  assert.notDeepEqual(fs.readFileSync(path.join(dir, "pages", "001.jpg")), heicBytes);
+  assert.notDeepEqual(fs.readFileSync(path.join(dir, "pages", "002.jpg")), heicBytes);
   assert.match(logLines(dir), /a\.HEIC/);
+});
+
+// THE ONE THAT COSTS A FAMILY A BOOK. Every step after ingest is keyed by the
+// page INDEX — content-providers reuses the words stored against it, content-
+// narrate names the mp3 after it, content-publish pairs the three — so a second
+// ingest that numbered the pages differently would put page 2's paid-for words
+// and page 2's paid-for voice under page 3's picture, silently and for good.
+// Numbering by position rather than by "how many worked" is what makes the
+// numbering a function of the photos in the folder and of nothing else.
+test("a photo that stops decoding does not renumber the pages after it", async () => {
+  const dir = book("heic-renumber");
+  const broken = Buffer.from("ftypheic - this one goes bad half way through the book");
+  let breaks = false;
+  withHeif(async (buf) => {
+    if (breaks && buf.equals(broken)) throw new Error("this HEIC could not be opened");
+    return rgba(20, 30, 200);
+  });
+  drop(dir, "IMG_0001.HEIC", heicBytes);
+  drop(dir, "IMG_0002.HEIC", broken);
+  drop(dir, "IMG_0003.HEIC", Buffer.from("ftypheic - the third photo, and page three for ever"));
+  const first = await ingest.ingest(dir);
+  assert.deepEqual(first.pages.map(p => [p.index, p.source]),
+    [[1, "sources/IMG_0001.HEIC"], [2, "sources/IMG_0002.HEIC"], [3, "sources/IMG_0003.HEIC"]]);
+
+  // The middle photo will not open this time (a decoder that went away, a file
+  // Drive has not finished syncing). Its mtime moves — the same photo, re-synced
+  // — so the unchanged-input short-circuit does not hide the second pass.
+  breaks = true;
+  const at = new Date(Date.now() + 60000);
+  fs.utimesSync(path.join(dir, "sources", "IMG_0002.HEIC"), at, at);
+  const again = await ingest.ingest(dir);
+  realHeif();
+
+  assert.equal(again.lost, 1);
+  assert.deepEqual(again.pages.map(p => [p.index, p.source]),
+    [[1, "sources/IMG_0001.HEIC"], [3, "sources/IMG_0003.HEIC"]],
+    "the third photo is still page 3 — the words and the voice bought for it are still its own");
+  assert.deepEqual(fs.readdirSync(path.join(dir, "pages")).sort(), ["001.jpg", "003.jpg"],
+    "page 2 is swept because it is gone, and page 3 is NOT swept for being past the end");
 });
 
 test("every photo failed: the book waits rather than recording that it has none", async () => {

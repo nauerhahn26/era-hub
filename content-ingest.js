@@ -269,11 +269,25 @@ async function ingest(dir, opts) {
     return { pages: prev.pages, wrote: 0, copied: 0, lost: 0, skipped: true };
 
   // 4. write the pages -----------------------------------------------------
+  //
+  // A PAGE NUMBER IS A PLACE IN THE BOOK, NOT A COUNT OF WHAT WORKED. Every
+  // step after this one is keyed by the index written here: text.json's entries
+  // (content-providers.js reuses the words stored against a page rather than
+  // paying to read it twice), audio/NNN.mp3 (content-narrate.js), and the
+  // manifest that pairs the three (content-publish.js). So the numbering has to
+  // be a function of the SOURCE SET and nothing else — if it also depended on
+  // which photos happened to DECODE, then one iPhone photo that would not open
+  // this time (a half-synced file, a decoder that was not there) would shift
+  // every page after it down by one, and the next pass would put page 4's words
+  // and page 4's paid-for narration under page 5's picture: Ellie sees one page
+  // and hears another, silently and for good. Numbering by position leaves a
+  // GAP where a lost photo would have been, and the sweep below is written in
+  // terms of the pages that exist rather than how many there are.
   fs.mkdirSync(pageDir, { recursive: true });
   const pages = [];
-  let wrote = 0, copied = 0, lost = 0;
+  let wrote = 0, copied = 0, lost = 0, at = 0;
   for (const e of ordered) {
-    const index = pages.length + 1;                  // only the pages that WORKED are numbered
+    const index = ++at;                              // its place in `ordered`, whatever happens below
     const src = path.join(srcDir, e.name), out = path.join(pageDir, pageName(index));
     let asIs = false;
     try {
@@ -302,10 +316,14 @@ async function ingest(dir, opts) {
     pages.push({ index, source: SOURCES + "/" + e.name, image: PAGES + "/" + pageName(index), copied: asIs });
   }
 
-  // 5. sweep pages a shorter book no longer has ----------------------------
+  // 5. sweep pages this book no longer has ---------------------------------
+  // By NUMBER, not by count: the numbering above leaves a gap where a photo
+  // could not be opened, so "anything past the end" would have deleted the last
+  // real page of the book every time one was lost.
+  const kept = new Set(pages.map(p => p.index));
   for (const f of fs.readdirSync(pageDir)) {
     if (!/^\d{3}\.jpg$/.test(f)) continue;
-    if (Number(f.slice(0, 3)) > pages.length) { try { fs.unlinkSync(path.join(pageDir, f)); } catch {} }
+    if (!kept.has(Number(f.slice(0, 3)))) { try { fs.unlinkSync(path.join(pageDir, f)); } catch {} }
   }
 
   // EVERY photo failed to open, and they were all HEICs the decoder is there
