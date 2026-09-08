@@ -39,7 +39,7 @@ test("silent install (/S): core + node + shortcuts land, the hub does NOT auto-l
   assert.ok(vm.exists(GUEST_HOME + "\\Desktop\\New ERA.lnk"), "desktop shortcut");
   // /S must never start the hub (the finish page's tick does that) — nothing listens on 8377
   assert.equal(vm.hubGet("/settings"), null, "no hub running after a silent install");
-  assert.ok(!/node\.exe/i.test(vm.guest("tasklist | findstr /i node.exe", { soft: true })), "no node.exe running");
+  assert.ok(!vm.processRunning("node.exe"), "no node.exe running");   // exact image name, never a substring (9/8)
   vm.shot("installed-desktop");
 });
 

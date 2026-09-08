@@ -102,12 +102,31 @@ export async function installSilently(exe) {
   // took >60 s (9/5 leg B, previous installer), and on a starved one (9/6, the QA
   // host at 31–44 % CPU steal) >180 s — 600 s is a ceiling, not a budget: the
   // step ends as soon as the setup process is gone
-  await waitFor(() => !new RegExp(exe, "i").test(guest("tasklist | findstr /i " + exe, { soft: true })) && { ok: 1 },
+  await waitFor(() => !processRunning(exe) && { ok: 1 },
     { timeout: 600000, every: 3000, what: "installer process to exit" });
   return out;
 }
 /** does a path exist in the guest? (quotes survive only inside a shipped .bat) */
 export const exists = (p) => /EXISTS=1/.test(bat("exists", [`if exist "${p}" (echo EXISTS=1) else (echo EXISTS=0)`]));
+
+/** has a `tasklist /fo csv /nh` answer a row for EXACTLY this image name? Every
+ *  row opens with the quoted name, so the quote anchors the match; "INFO: No
+ *  tasks are running which match the specified criteria." — and an empty answer
+ *  — mean gone. Pure, so it can be checked without a VM. */
+export const tasklistHasImage = (out, exe) =>
+  new RegExp('^"' + exe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"', "im").test(out || "");
+/** is <exe> running in the guest, by EXACT image name? Never by substring:
+ *  Windows' own OneDriveSetup.exe CONTAINS "setup.exe", so `tasklist | findstr
+ *  /i setup.exe` called our installer alive for as long as a freshly reverted
+ *  profile churned on OneDrive — the wait above then sat out its whole 600 s
+ *  cap with the install long finished (9/8: leg A test 2 cancelled at 600 s,
+ *  leg B test 1 "timed out waiting for installer process to exit" after 753 s,
+ *  on an unchanged v0.32.2 installer; everything downstream passed). The /fi
+ *  needs double quotes, which cross two ssh hops only inside a shipped .bat —
+ *  and the .bat is NOT called tasklist.bat: cmd searches its own directory
+ *  first and the file would call itself. */
+export const processRunning = (exe) =>
+  tasklistHasImage(bat("tasks", [`tasklist /fi "imagename eq ${exe}" /fo csv /nh`], { soft: true }), exe);
 
 /** launch the installed hub + kiosk on the desktop with the QA environment:
  *  CDP on 9222 (forwarded to the QA host's :9223 through the guest's sshd),

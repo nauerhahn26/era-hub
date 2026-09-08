@@ -98,7 +98,7 @@ test("after the update: profile intact, removed pack still absent, chosen packs 
   // the candidate's boot reconcile stops what the family never chose —
   // else the first door hands the kiosk to it (run 2, 9/3: /kiosk/exit
   // answered "closed" on a PC with no eye tracker)
-  await vm.waitFor(() => !/ERAgaze\.exe/i.test(vm.guest("tasklist", { soft: true })) && { ok: 1 },
+  await vm.waitFor(() => !vm.processRunning("ERAgaze.exe") && { ok: 1 },   // exact image name, never a substring (9/8)
     { timeout: 60000, every: 3000, what: "the unchosen engine to be stopped" });
   // and the new build's door law is live: the hub now answers /kiosk/exit
   const ex = await vm.api(page, "/kiosk/exit", "POST");
