@@ -2338,6 +2338,15 @@ const server = http.createServer((req, res) => {
       let out;
       try { out = content.runStep(JSON.parse(body)); }
       catch { res.writeHead(400).end(); return; }
+      // ANOTHER COMPUTER HAS THIS BOOK (spec §14, step 1). It comes back before
+      // `error` is looked at because a refusal carries both, and it is the only
+      // one of the two the card can render as anything but a mistake: `refused`
+      // says which of the three answers this is, `error` is the sentence
+      // content.js wrote for a parent to read. This door never gets step 2 —
+      // every review-page action runs through here on a book that HAS a
+      // manifest, so "already made" would lock a family out of their own book.
+      if (out.refused) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ refused: out.refused, error: out.error })); return; }
       if (out.error) { res.writeHead(400, { "Content-Type": "application/json" })
         .end(JSON.stringify({ error: out.error })); return; }
       // Nothing this hub builds in API mode could ever reach the family's Drive
@@ -2346,6 +2355,40 @@ const server = http.createServer((req, res) => {
         .end(JSON.stringify({ error: out.skipped })); return; }
       res.writeHead(202, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ started: true }));
+    });
+    return;
+  }
+
+  // POST /content/build {kind:"books", slug} or {kind:"books", loose:true} —
+  // THE TAP (spec §13, §14). Since "built here" the scan starts nothing by
+  // itself: it never claims a quiet inbox, never gathers the loose pile and
+  // never takes over another computer's job. This door is the whole of how a
+  // pile of photos becomes a book, and it is deliberately the same door
+  // /content/run is — `ownDoor`, a small JSON body, 202 and the walk runs on
+  // behind it — because it spends exactly the same money on exactly the same
+  // book. `loose:true` is the pile in books/ itself, which has no slug until
+  // it is gathered; the answer hands the new one back so the card can follow
+  // the book it just started.
+  //
+  // content.js owns every decision behind this: who holds the book, whether it
+  // is already made, and the sentence each refusal says. Nothing here invents a
+  // wording, and no answer names a device or a folder.
+  if (req.method === "POST" && urlPath === "/content/build") {
+    if (!ownDoor(req, res)) return;             // it spends money — this hub's own pages only
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.build(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      if (out.refused) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ refused: out.refused, error: out.error })); return; }
+      if (out.error) { res.writeHead(400, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: out.error })); return; }
+      if (out.skipped) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: out.skipped })); return; }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ started: true, slug: out.slug }));
     });
     return;
   }
@@ -2386,6 +2429,15 @@ const server = http.createServer((req, res) => {
       let out;
       try { out = content.renameBook(JSON.parse(body)); }
       catch { res.writeHead(400).end(); return; }
+      // The same 409 as the two doors above, in the same shape, and it is the
+      // one of the three this door does not use today: a rename with a foreign
+      // claim RENAMES and simply starts nothing (spec §14 — the folder is the
+      // family's to name, the build is the other computer's to finish). The
+      // mapping is here so that a refusal content.js ever does return arrives
+      // as a sentence a card can show, rather than as a bare 400 saying the
+      // request was wrong when it was only the moment.
+      if (out.refused) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ refused: out.refused, error: out.error })); return; }
       const code = out.error ? 400 : out.skipped ? 409 : 200;
       res.writeHead(code, { "Content-Type": "application/json" });
       res.end(JSON.stringify(out.error ? { error: out.error }
@@ -2593,7 +2645,13 @@ server.on("listening", () => {
     // the original did (spec §3.5).
     try { clothing.tick("drive sync"); }
     catch (e) { console.error("[clothing] " + e.message); }
-    try { content.tick("drive sync"); }                     // fresh books -> a build
+    // ...and content.tick() no longer starts one either (spec §12 "Built
+    // here"): a book only builds where a grown-up tapped Build. What this
+    // still does is look — a folder that arrived from another device, or the
+    // family's own book finished on this one, reaches /content/status (and so
+    // the shelf and the Settings card) on the sync rather than up to five
+    // minutes later. It also resumes THIS device's own job after a crash.
+    try { content.tick("drive sync"); }                     // fresh books -> the card
     catch (e) { console.error("[content] " + e.message); }
   };
   // And the way back: a book that just published is in the family's DRIVE
@@ -2617,7 +2675,12 @@ server.on("listening", () => {
   };
   clothing.start(DATA, { tz: () => TZ, deviceId: DEVICE_ID });  // the Clothing Picker generator (no-op without photos)
   openClothingLog();     // after drive.start: drive.js has no DATA before it (W10)
-  content.start(DATA);   // book jobs in the family's Drive folder (local mode only)
+  // book jobs in the family's Drive folder (local mode only). DEVICE_ID is what
+  // every claim this hub writes is signed with from here on (spec §14): two PCs
+  // a family bought together are both "DESKTOP-7F3K" to os.hostname(), so on the
+  // machine name alone every claim read as our own and "is anyone else already
+  // building this?" could not be asked at all.
+  content.start(DATA, { deviceId: DEVICE_ID });
   clearStageOnce();      // first boot after install: minimize covering browsers
   // installer-chosen apps install at first boot — but the wizard has the final
   // say, and until it is answered the installer's ticks are only its pre-fill.

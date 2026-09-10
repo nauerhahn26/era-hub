@@ -1,16 +1,29 @@
-// content-routes.test.mjs — the two doors onto the book pipeline (plan T2.9):
-// GET /content/status, which the Settings card and the board note read, and
-// POST /content/run, the manual kick that re-runs one step of one book.
+// content-routes.test.mjs — the doors onto the book pipeline (plan T2.9, and
+// the tap of plan B1.6): GET /content/status, which the Settings card and the
+// board note read; POST /content/run, the manual kick that re-runs one step of
+// one book; POST /content/rename; and POST /content/build, which since spec
+// §12 is the ONLY way a pile of photos becomes a book — the scan stopped
+// starting anything by itself.
 //
 // PORTS: 8434 (the real server.js). No fake provider is needed and none is
 // started — see the money guardrail below.
 //
 // MONEY GUARDRAIL (plan §B.2, Gap 20): the hub is spawned with its own mkdtemp
 // ERA_DATA_DIR, so the gate's real ElevenLabs credential is nowhere near this
-// suite, and the only step this suite actually runs is `publish`, which is pure
-// disk — no provider is called, so no seam is needed. The two key files written
+// suite, and the only step this suite ASKS for is `publish`, which is pure
+// disk. The build door is different: it starts the whole walk behind its 202,
+// so both provider seams are pointed at a closed port below and the fixtures
+// it walks are 64 bytes of nothing — no photo here decodes, so ingest holds
+// the book before a key would be reached at all. The two key files written
 // here hold obvious placeholders and exist for exactly one reason: to prove
 // /content/status never echoes them back.
+//
+// WHO THIS HUB IS. The child is given ERA_DEVICE_ID (device-id.js precedence
+// 1), because from spec §14 a claim is signed with the device id rather than
+// the machine name and this suite has to be able to write a claim that is
+// somebody ELSE's. Fixtures below still sign with os.hostname(), which
+// content.isMine() forgives on purpose — that is the shape of every job.json
+// written before this release.
 //
 // The clock is left alone: everything here is driven by files on disk, and the
 // hub's own scan does not fire for ninety seconds (content.js:start).
@@ -34,6 +47,12 @@ const FOLDER = path.join(TMP, "My Drive", "New ERA Content");
 const BOOKS = path.join(FOLDER, "books");
 
 const store = require("./content-store.js");
+
+// This install, and another computer in the same family. Both are slugs, which
+// is what a device id always is (device-id.js ID_RE) and what keeps the second
+// one from ever reading as this machine's hostname.
+const DEVICE = "kitchen-pc";
+const OTHER = "study-pc";
 
 let child;
 
@@ -115,7 +134,8 @@ before(async () => {
     // back. Pointed at a closed port, that question is answered by the kernel
     // in a millisecond and never leaves this box.
     env: { ...process.env, ERA_DATA_DIR: DATA, ERA_BIND: "127.0.0.1",
-           ERA_ELEVEN_URL: "http://127.0.0.1:1" },
+           ERA_ELEVEN_URL: "http://127.0.0.1:1", ERA_AI_URL: "http://127.0.0.1:1",
+           ERA_DEVICE_ID: DEVICE },
   });
   let up = false;
   for (let i = 0; i < 100; i++) {
@@ -425,4 +445,236 @@ test("/content/status counts photos that are loose in books/, and names the wait
   } finally {
     fs.rmSync(path.join(BOOKS, "IMG_0900.HEIC"), { force: true });
   }
+});
+
+// -------------------------------------------------- build: the tap (§13/§14)
+//
+// The scan no longer claims anything (spec §12 "Built here"), so this door is
+// the whole of how a pile of photos becomes a book on THIS computer: a grown-up
+// taps Build on the shelf or the Settings card of the machine that will do the
+// work. content-build.test.mjs pins every decision content.build() makes; what
+// is asked here is the DOOR — /content/run's own guard, a JSON body, 202 with
+// the slug, and a 409 that carries `refused` so a card knows which of the three
+// answers it was handed.
+//
+// The code and `refused` are what these tests assert, never the sentence (spec
+// §14): the wording is a parent's, content.js owns it, and it must be free to
+// improve without a suite going red.
+
+const build = (body, headers) => fetch(`${BASE}/content/build`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", ...(headers || {}) },
+  body: typeof body === "string" ? body : JSON.stringify(body),
+});
+
+// A claim written by the OTHER computer, in the form this release writes:
+// "<device id>:<pid>". `extra` overwrites whatever the test needs (an old
+// heartbeat, a finished state).
+const foreignJob = (dir, extra) =>
+  store.writeJob(dir, { ...store.newJob({ claimedBy: OTHER + ":9" }), ...(extra || {}) });
+const minsAgo = (n) => new Date(Date.now() - n * 60 * 1000).toISOString();
+
+test("POST /content/build claims the pile for THIS device and starts it", async () => {
+  const dir = book("Tap Me", { photos: ["IMG_0001.jpg", "IMG_0002.jpg"] });
+  const r = await build({ kind: "books", slug: "tap-me" });
+  assert.equal(r.status, 202);
+  const out = await r.json();
+  assert.equal(out.started, true);
+  assert.equal(out.slug, "tap-me", "the card needs the slug back to follow the book");
+  const job = store.readJob(dir);
+  assert.ok(job, "the tap is what writes job.json — nothing else does any more");
+  // THE DEVICE ID REACHED content.js (spec §14 "Who this host is"). Without
+  // server.js handing DEVICE_ID to content.start(), this would be the machine
+  // name — two PCs a family bought together read as one host and the question
+  // "is anyone else already building this?" cannot be asked at all.
+  assert.equal(job.claimedBy.slice(0, DEVICE.length + 1), DEVICE + ":",
+    "the claim must be signed with this install's device id, got " + job.claimedBy);
+});
+
+test("a book another computer is building right now is refused, and says which refusal", async () => {
+  const dir = book("Busy Elsewhere", { photos: ["IMG_0001.jpg"] });
+  foreignJob(dir, { state: "transcribing", heartbeat: minsAgo(1) });
+  const r = await build({ kind: "books", slug: "busy-elsewhere" });
+  assert.equal(r.status, 409);
+  const out = await r.json();
+  assert.equal(out.refused, "elsewhere");
+  // The card renders this verbatim, so it has to be there — but which words
+  // they are is content.js's business, not this suite's.
+  assert.equal(typeof out.error, "string");
+  assert.ok(out.error.length > 0);
+});
+
+test("a job.json caught mid-rewrite is 'checking', never 'nobody has this'", async () => {
+  const dir = book("Half Written", { photos: ["IMG_0001.jpg"] });
+  fs.mkdirSync(path.join(dir, ".build"), { recursive: true });
+  fs.writeFileSync(store.jobPath(dir), '{"state":"transcr');
+  const r = await build({ kind: "books", slug: "half-written" });
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).refused, "checking");
+});
+
+test("the other computer's claim LINE holds the book even before its job.json lands", async () => {
+  const dir = book("Line Only", { photos: ["IMG_0001.jpg"] });
+  // Drive mirrors .build/ in whatever order it likes, and log.jsonl is usually
+  // what arrives first (spec §15's residual race, narrowed to this window).
+  store.appendLog(dir, "claim", "claimed by " + OTHER + ":9", { by: OTHER + ":9" });
+  const r = await build({ kind: "books", slug: "line-only" });
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).refused, "checking");
+});
+
+test("a book that is already made is never made twice", async () => {
+  const dir = book("Made Already", { pages: [{ text: "one" }] });
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ id: "x", pages: [] }));
+  const r = await build({ kind: "books", slug: "made-already" });
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).refused, "built");
+  assert.equal(store.readJob(dir), null, "and no claim was written into a finished book");
+});
+
+test("the weekly book's finished job holds even while its manifest is still on its way", async () => {
+  // The maker writes job.json `done` BEFORE it uploads manifest.json (spec §8),
+  // precisely so a device that sees the folder half-delivered leaves it alone.
+  const dir = book("Down The Wire", { pages: [{ text: "one" }] });
+  foreignJob(dir, { state: "done", heartbeat: minsAgo(90) });
+  const r = await build({ kind: "books", slug: "down-the-wire" });
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).refused, "built");
+});
+
+test("a claim gone cold is a book a grown-up may take over", async () => {
+  const dir = book("Cold Claim", { photos: ["IMG_0001.jpg"] });
+  foreignJob(dir, { state: "inbox", heartbeat: minsAgo(45) });
+  const r = await build({ kind: "books", slug: "cold-claim" });
+  assert.equal(r.status, 202);
+  const job = store.readJob(dir);
+  assert.equal(job.claimedBy.slice(0, DEVICE.length + 1), DEVICE + ":",
+    "the takeover re-signs the job with this device");
+});
+
+test("loose:true gathers the pile in books/ with no slug and no quiet clock", async () => {
+  fs.writeFileSync(path.join(BOOKS, "IMG_0901.jpg"), jpg(4));
+  fs.writeFileSync(path.join(BOOKS, "IMG_0902.jpg"), jpg(5));
+  const r = await build({ kind: "books", loose: true });
+  assert.equal(r.status, 202);
+  const out = await r.json();
+  assert.equal(out.started, true);
+  // The card has no slug to send for this pile (reader.js's old " loose"
+  // sentinel is never sent), so the door hands one back.
+  assert.equal(typeof out.slug, "string");
+  assert.ok(out.slug.length > 0);
+  const { body } = await statusOf();
+  assert.ok(jobOf(body, out.slug), "the gathered pile is a book on the card now");
+  assert.equal(body.loose, 0, "and nothing is left loose in books/");
+});
+
+test("the build door is this hub's own pages only, like /content/run", async () => {
+  const dir = book("Not From Here", { photos: ["IMG_0001.jpg"] });
+  const r = await build({ kind: "books", slug: "not-from-here" },
+                        { "sec-fetch-site": "cross-site" });
+  assert.equal(r.status, 403);
+  assert.equal(store.readJob(dir), null, "a request from somewhere else claims nothing");
+});
+
+test("an unknown kind, an unknown book and a body that is not JSON are all refused", async () => {
+  assert.equal((await build({ kind: "cheese", slug: "tap-me" })).status, 400);
+  assert.equal((await build({ kind: "books", slug: "no-such-book" })).status, 400);
+  assert.equal((await build({ kind: "books" })).status, 400);
+  assert.equal((await build("{not json")).status, 400);
+});
+
+test("a body far bigger than any build request is dropped on the floor", async () => {
+  await assert.rejects(() => build(JSON.stringify({ kind: "books", slug: "tap-me",
+                                                    pad: "x".repeat(8192) })));
+});
+
+test("with Drive not in local mode there is nothing to build here either", async () => {
+  driveCfg({ mode: "api", folderId: "F0", token: { refresh_token: "x" } });
+  try {
+    const r = await build({ kind: "books", slug: "tap-me" });
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).error, "needs-local-drive");
+  } finally {
+    driveCfg({ mode: "local", folderPath: FOLDER });
+  }
+});
+
+// ------------------------------- step 1 on the two older doors (spec §14)
+//
+// /content/run and /content/rename get the foreign-claim refusal and nothing
+// else — never "this book is already made", because every review-page action
+// comes back through /content/run on a book that HAS a manifest. Before this
+// they could not say why at all: {error} became a 400 and {skipped} a 409 with
+// nothing a card could render.
+
+test("/content/run refuses a book another computer is building, in words the card can show", async () => {
+  const dir = book("Run Elsewhere", { job: { state: "narrating" }, pages: [{ text: "a word" }] });
+  foreignJob(dir, { state: "narrating", heartbeat: minsAgo(2) });
+  const r = await run({ kind: "books", slug: "run-elsewhere", step: "publish" });
+  assert.equal(r.status, 409);
+  const out = await r.json();
+  assert.equal(out.refused, "elsewhere");
+  assert.equal(typeof out.error, "string");
+  assert.ok(out.error.length > 0);
+});
+
+test("/content/run still runs a book whose claim is this computer's own", async () => {
+  book("Run Mine", { job: { state: "narrating" }, pages: [{ text: "a word" }] });
+  const r = await run({ kind: "books", slug: "run-mine", step: "publish" });
+  assert.equal(r.status, 202);
+});
+
+test("a rename with a foreign claim renames the folder and starts nothing", async () => {
+  // A grown-up may name their own book whatever is building it — the folder
+  // moves inside their own Drive for the other device to see — but the build
+  // that would follow is the other computer's to finish (spec §14).
+  const dir = book("Their Book", { sources: ["IMG_0001.HEIC"] });
+  foreignJob(dir, { state: "transcribing", heartbeat: minsAgo(2) });
+  // A title of its own: the earlier rename test's book was still being walked
+  // when its folder was deleted, so the walk put "Sunny Pond" back, and
+  // freeDirName would hand this one "Sunny Pond (2)".
+  const r = await rename({ kind: "books", slug: "their-book", title: "Quiet Pond" });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).renamed, true);
+  const moved = path.join(BOOKS, "Quiet Pond");
+  assert.equal(fs.existsSync(path.join(moved, "sources", "IMG_0001.HEIC")), true);
+  await new Promise(r2 => setTimeout(r2, 300));
+  assert.equal(store.readJob(moved).claimedBy, OTHER + ":9",
+    "nothing here may take the book off the computer that holds it");
+  assert.equal(fs.existsSync(path.join(moved, "manifest.json")), false);
+  fs.rmSync(moved, { recursive: true, force: true });
+});
+
+// ------------------------------- what the card may offer (spec §14, §13)
+//
+// Three derived answers on every row, and no device name behind any of them:
+// the shelf draws a Build card over `waiting`, Settings says "N photos —
+// waiting for a grown-up to tap Build", and `elsewhere` is the one time a card
+// says why there is no button at all.
+
+test("a pile nobody has claimed is waiting for a tap, and says it is buildable", async () => {
+  book("Waiting Pile", { photos: ["IMG_0001.jpg", "IMG_0002.jpg"] });
+  const j = jobOf((await statusOf()).body, "waiting-pile");
+  assert.equal(j.waiting, "pile");
+  assert.equal(j.buildable, true);
+  assert.equal(j.elsewhere, false);
+});
+
+test("a book another computer holds is not buildable, and the card is told which", async () => {
+  const dir = book("Held There", { photos: ["IMG_0001.jpg"] });
+  foreignJob(dir, { state: "transcribing", heartbeat: minsAgo(1) });
+  const j = jobOf((await statusOf()).body, "held-there");
+  assert.equal(j.elsewhere, true);
+  assert.equal(j.buildable, false);
+  assert.equal(j.waiting, null, "a claimed book is not a pile waiting for a tap");
+  const raw = (await statusOf()).raw;
+  assert.ok(!raw.includes(OTHER), "and the other computer is never named to the page");
+});
+
+test("a finished book offers no Build at all", async () => {
+  const dir = book("All Done", { pages: [{ text: "one" }] });
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ id: "y", pages: [] }));
+  const j = jobOf((await statusOf()).body, "all-done");
+  assert.equal(j.buildable, false);
+  assert.equal(j.waiting, null);
 });
