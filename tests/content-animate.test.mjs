@@ -270,6 +270,27 @@ test("every page gets a clip, and the manifest is re-published after each one", 
   assert.ok(calls.slice(at).filter(c => c.kind === "status").length >= 4);
 });
 
+// THE RIM SURVIVES THE PRESS (spec §12, plan B1.4). The weekly book
+// arrives with `authored: true` — the coral rim and the "…'s story" badge on
+// the shelf (reader.js:204) — and Animate is the press most likely to take it
+// away, because it re-publishes after every single clip. Publish reads the flag
+// back off the manifest it is replacing rather than writing a constant, and
+// this is the real run that proves it: sixteen pages would be sixteen chances.
+test("a press of Animate on the weekly book leaves it authored, clip after clip", async () => {
+  falCard(true);
+  const dir = book("Nell And The Lost Sock", ["nell ran", "the end"]);
+  // as the maker posted it: the flag in the manifest and in the job beside it
+  const m0 = manifestOf("Nell And The Lost Sock");
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...m0, authored: true });
+  const r = await animate.animateBook(dir,
+    { dataDir: DATA, slug: "nell-and-the-lost-sock", name: "Nell And The Lost Sock", pollMs: 5 });
+  assert.equal(r.animated, 2);
+  assert.equal(r.publishes, 2, "re-published after each clip — each one a chance to lose it");
+  const m = manifestOf("Nell And The Lost Sock");
+  assert.equal(m.authored, true, "a book she was given does not become an ordinary one by being used");
+  assert.deepEqual(m.pages.map(p => p.video), ["video/001.mp4", "video/002.mp4"]);
+});
+
 test("the request is the documented one: the model, five seconds, the standing negatives", async () => {
   const at = calls.length;
   falCard(true);

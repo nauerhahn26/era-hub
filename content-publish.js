@@ -28,7 +28,8 @@
 //     (public/reader/reader.js:187), so a re-publish that kept the old stamp
 //     would leave the family looking at yesterday's audio for 24 hours. The
 //     book's `id` is the opposite: read back from the manifest we are replacing,
-//     so a package keeps one identity for life.
+//     so a package keeps one identity for life. So is `authored` — the rim on a
+//     book written for her — which this step keeps but never awards.
 //
 // No network, no key, no clock beyond the one the caller passes. The narration
 // credit (provider/model/voice) is read from .build/narration.json, which
@@ -161,6 +162,30 @@ function publishBook(dir, opts) {
   const id = previous && typeof previous.id === "string" && previous.id
     ? previous.id : crypto.randomUUID();
 
+  // WHO WROTE THE BOOK IS NOT OURS TO CHANGE. `authored: true` is the coral rim
+  // and the "…'s story" badge on the shelf (reader.js:204) — a book written for
+  // her rather than scanned out of a picture book — and until the weekly book
+  // existed, nothing this file wrote could honestly carry it, so a constant
+  // `false` was the truth. It stopped being the truth when the weekly-book
+  // maker started posting a finished, authored package into the Drive folder
+  // (spec §12).
+  //
+  // Everything the hub does to that book afterwards comes back through here: a
+  // word fixed on the review page, a rename, and Animate, which re-publishes
+  // after EVERY clip (content-animate.js:386). A constant would strip the rim
+  // on the first of those presses, and no later step would put it back — the
+  // family would watch the week's book turn ordinary by using it.
+  //
+  // So it is read, never invented, from the two places that can honestly hold
+  // it: the job beside the book (the maker writes job.json before the manifest,
+  // so on a Drive mirror this is sometimes the only one here yet) and
+  // the manifest we are replacing (a hand-made package has no job at all). Both
+  // are asked `=== true`, the same question server.js:475 and the reader ask,
+  // because a foreign file may hold anything at all in that key.
+  const job = store.readJob(dir);
+  const authored = (!!job && job.authored === true) ||
+                   (!!previous && previous.authored === true);
+
   const manifest = {
     schemaVersion: SCHEMA_VERSION,
     id, slug, title, exportedAt,
@@ -168,7 +193,7 @@ function publishBook(dir, opts) {
     // Omitted rather than guessed at: booksIndex() falls back to cover.jpg and
     // the reader shows its own "No cover" card, so a bad path helps nobody.
     ...(cover ? { cover } : {}),
-    authored: false,      // built by the hub; `true` is reserved for the books written by hand
+    authored,             // kept, never claimed: see the block above
     pages,
   };
   // LAST. Every path above has been stat'd, and the cover is already beside it.

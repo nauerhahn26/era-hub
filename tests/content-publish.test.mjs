@@ -270,6 +270,102 @@ test("a second publish bumps exportedAt and keeps the book's id", async () => {
   assert.equal(after.id, before.id, "the same book, so the same id");
 });
 
+// ------------------------------------------------------ authored, and kept
+//
+// `authored: true` is the coral rim and the "…'s story" badge on the shelf
+// (reader.js:204, :238): this book was WRITTEN for her, not scanned out of a
+// picture book. Until now nothing but a hand-made package could carry it, so a
+// constant `false` here was the truth. It stopped being the truth the week the
+// weekly-book maker started posting a finished book into the Drive folder with
+// `authored: true` in its manifest and in the job.json beside it (spec §12).
+//
+// Everything the hub then does to that book goes back through this function:
+// a word fixed on the review page, a rename, and Animate, which re-publishes
+// after EVERY clip (content-animate.js:386). A constant would quietly strip the
+// rim on the first of those presses and no later step would ever put it back —
+// the family would watch the weekly book turn into an ordinary one by using it.
+// So publish READS the flag from the two places that can honestly hold it and
+// never invents it: the job beside the book, and the manifest being replaced.
+test("a book that arrived authored is still authored after the hub re-publishes it", async () => {
+  const dir = book("Nell And The Lost Sock", [
+    { text: "Nell found a sock.", audio: true },
+    { text: "The end.", audio: true },
+  ]);
+  // the shape the maker leaves behind: job.json (state done, its own claim)
+  // written BEFORE the manifest, and both saying who wrote the book
+  store.writeJob(dir, { ...store.newJob({ claimedBy: "study-pc:ellie-this-week" }),
+                        state: "done", authored: true });
+  await publish.publishBook(dir, { slug: "nell-and-the-lost-sock", now: "2026-09-09T07:00:00.000Z" });
+  assert.equal(read(dir).authored, true, "the first publish keeps what the job says");
+  const id = read(dir).id;
+
+  // a grown-up fixes a word and presses Save on the review page
+  const t = store.readText(dir);
+  t.pages[0].text = "Nell found her sock.";
+  store.writeText(dir, t);
+  await publish.publishBook(dir, { slug: "nell-and-the-lost-sock", now: "2026-09-09T08:00:00.000Z" });
+  const m = read(dir);
+  assert.equal(m.authored, true, "an edit is not a demotion");
+  assert.equal(m.pages[0].text, "Nell found her sock.");
+  assert.equal(m.id, id, "the same book, so the same id");
+  assert.equal(m.exportedAt, "2026-09-09T08:00:00.000Z");
+});
+
+test("the manifest alone is enough: a book whose job.json never mirrored keeps its rim", async () => {
+  // Drive mirrors file by file and a hand-made package has no job.json at all,
+  // so the manifest being replaced has to be able to say it on its own.
+  const dir = book("Hand Made", [{ text: "Once upon a time." }]);
+  await publish.publishBook(dir, { slug: "hand-made", now: "2026-09-09T09:00:00.000Z" });
+  const was = read(dir);
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...was, authored: true });
+  assert.ok(!fs.existsSync(path.join(dir, ".build", "job.json")), "no job beside this one");
+
+  await publish.publishBook(dir, { slug: "hand-made", now: "2026-09-09T09:30:00.000Z" });
+  assert.equal(read(dir).authored, true);
+});
+
+test("the job alone is enough: the manifest can be the very first one written here", async () => {
+  // job.json lands before manifest.json (the maker writes it in that order,
+  // and Drive can hand us the two files hours apart), so the flag has to
+  // survive a publish that has no previous manifest to read it from.
+  const dir = book("Job First", [{ text: "A sock, alone." }]);
+  store.writeJob(dir, { ...store.newJob({ claimedBy: "study-pc:ellie-this-week" }),
+                        state: "done", authored: true });
+  assert.ok(!fs.existsSync(path.join(dir, "manifest.json")), "nothing to inherit from");
+  await publish.publishBook(dir, { slug: "job-first", now: "2026-09-09T10:00:00.000Z" });
+  assert.equal(read(dir).authored, true);
+});
+
+// The other direction matters just as much: `authored` is a claim about a
+// person, and a book this hub scanned out of a picture book must never wear it.
+test("a book the hub built stays plain — a job with no such flag is not a yes", async () => {
+  const dir = book("Scanned Here", [{ text: "The butcher's cat.", audio: true }]);
+  store.writeJob(dir, store.newJob({ claimedBy: "kitchen-pc-a1b2:1234" }));
+  await publish.publishBook(dir, { slug: "scanned-here", now: "2026-09-09T11:00:00.000Z" });
+  assert.equal(read(dir).authored, false, "absent is not true");
+
+  // and neither is a value that merely looks like one — the manifest carries a
+  // real boolean, because reader.js and server.js both ask `=== true`
+  store.writeJob(dir, { ...store.readJob(dir), authored: "yes" });
+  await publish.publishBook(dir, { slug: "scanned-here", now: "2026-09-09T11:05:00.000Z" });
+  assert.equal(read(dir).authored, false);
+  assert.equal(typeof read(dir).authored, "boolean");
+});
+
+// Animate is the press that would have cost the most: it re-publishes after
+// every single clip, so one press on a sixteen-page book is sixteen chances to
+// lose the rim. This pins the call it makes — no `now`, no extra options, over
+// and over — while content-animate.test.mjs drives the real run.
+test("animate's re-publish, made once per clip, never wears the flag away", async () => {
+  const dir = book("Moving Nell", [{ text: "Nell ran.", audio: true }, { text: "The end.", audio: true }]);
+  store.writeJob(dir, { ...store.newJob({ claimedBy: "study-pc:ellie-this-week" }),
+                        state: "done", authored: true });
+  await publish.publishBook(dir, { slug: "moving-nell", now: "2026-09-09T12:00:00.000Z" });
+  for (let i = 0; i < 5; i++)
+    publish.publishBook(dir, { slug: "moving-nell", title: "Moving Nell" });
+  assert.equal(read(dir).authored, true);
+});
+
 test("an animated page carries its video; a folder with no pages holds instead", async () => {
   const dir = book("Superworm", [{ text: "Superworm is super-long.", audio: true, video: true }]);
   await publish.publishBook(dir, { slug: "superworm" });
