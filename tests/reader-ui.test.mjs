@@ -851,6 +851,54 @@ test("a book another computer is making says so, and offers nothing to press", a
   await ctx.close();
 });
 
+// …AND NEITHER DOES THE BOOK THIS COMPUTER IS MAKING (B1.7's flagged gap, 9/10).
+// `buildable` is "the door would say yes", and the door says yes to a job that is
+// already ours — that is how run() joins a build in flight. So the card that had
+// just been tapped drew "Making this book… 4 of 16 pages read" and "Build a book"
+// over the same photo, on the one screen in the product that cannot ask anybody
+// what it means. /content/status already says which book this hub has in hand
+// (`building` + `job.slug`, and `queued` for the one waiting its turn), so the
+// press is simply not offered on it.
+test("the book THIS computer is making offers nothing to press either", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({
+    building: true, job: { kind: "books", slug: "sunny-pond", step: "transcribe" },
+    jobs: [
+      { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "transcribing",
+        waiting: null, buildable: true, elsewhere: false,
+        progress: { pages: 16, transcribed: 4, narrated: 0 }, held: null, error: null, paused: null },
+      pileRow(),
+    ],
+  }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 2);
+  const mine = page.locator("#shelfGrid .shelf-card.is-building");
+  const s = await mine.textContent();
+  assert.match(s, /4 of 16 pages read/, s);
+  assert.equal(await mine.locator(".shelf-build-button").count(), 0,
+    "the card says what is happening; it does not also ask for it: " + s);
+  assert.equal(await mine.locator(".shelf-build-tag").count(), 0, "and no tag over the cover");
+  // The pile beside it is untouched: nothing is building on it, so the press stays.
+  assert.equal(await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").count(), 1,
+    "the pile of photos still has its Build");
+  await ctx.close();
+});
+
+// The book that is only QUEUED here is the same answer: to a parent "it is
+// building" and "it is about to build" are one sentence (content.js busyWith).
+test("a book queued behind another on this computer offers nothing to press", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({
+    building: true, job: { kind: "books", slug: "other-book", step: "transcribe" },
+    queued: ["sunny-pond"],
+    jobs: [
+      { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "inbox",
+        waiting: null, buildable: true, elsewhere: false,
+        progress: { pages: 16, transcribed: 0, narrated: 0 }, held: null, error: null, paused: null },
+    ],
+  }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  assert.equal(await page.locator("#shelfGrid .shelf-card.is-building .shelf-build-button").count(), 0);
+  await ctx.close();
+});
+
 // EVERY SENTENCE THAT PROMISED AN AUTOMATIC START GOES (spec §12). The scan
 // claims nothing now, so "this book starts in about 10 minutes", "building
 // starts about 10 minutes after the last photo arrives" and "New ERA makes the

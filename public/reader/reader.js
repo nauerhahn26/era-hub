@@ -39,6 +39,10 @@ const S = {
   building: [],       // /content/status rows for books not on the shelf yet — a
                       // pile of photos nobody has tapped Build on, and a book
                       // being made (spec §13)
+  here: [],           // the slugs THIS hub has in hand right now — the book it is
+                      // building and the ones queued behind it (/content/status
+                      // `job` + `queued`). A card for one of those asks for
+                      // nothing: see offersBuild()
   asking: null,       // {slug} while the Build question is open over one card
   drive: null,        // true/false/null — has this computer a Drive folder set up?
   manifest: null,     // the open book's manifest
@@ -158,6 +162,21 @@ function pileWords(j) {
   return { head: n + " photo" + (n === 1 ? "" : "s"), note: "" };
 }
 
+// DOES THIS CARD OFFER A BUILD? A pile is always ours to start. A job is offered
+// when the build door would say yes to it — no manifest, no other computer's warm
+// claim — MINUS the one book the door would say yes to for the opposite reason.
+//
+// `buildable` cannot tell those two apart, and is right not to: a job already
+// ours is one the door admits precisely so run() can JOIN the build in flight
+// (content.js step 3). But on a card that is exactly the both-at-once oddity
+// this shelf must never show — "Making this book… 4 of 16 pages read" with
+// "Build a book" laid over the same photo, on the one screen in the product that
+// cannot ask a grown-up what it means. So the hub's own answer to "what have I
+// got in hand?" (`building` + `job.slug`, and `queued` for the book waiting its
+// turn) suppresses the press, and nothing new had to be added to say it.
+const offersBuild = (j) => j.loose ? true
+  : j.buildable === true && !S.here.includes(j.slug);
+
 function buildingWords(j) {
   // ANOTHER COMPUTER IS MAKING THIS ONE (spec §13, §15). First of all the
   // answers because it is the only one that is about WHERE the work is: the
@@ -232,9 +251,7 @@ function coverInto(cover, j) {
 function notYetCard(j) {
   const pile = isPile(j);
   const words = pile ? pileWords(j) : buildingWords(j);
-  // A pile is always ours to start; a job is offered only when the build door
-  // would say yes to it — no manifest, and no other computer's warm claim.
-  const canBuild = j.loose ? true : j.buildable === true;
+  const canBuild = offersBuild(j);
   const card = document.createElement("div");
   card.className = "shelf-card dwell " + (pile ? "is-pile" : "is-building");
   card.setAttribute("data-dwell-disabled", "");
@@ -519,7 +536,7 @@ function shelfSig() {
     S.index.map(b => [b.slug, b.title, b.cover, b.authored]),
     S.building.map(j => {
       const w = isPile(j) ? pileWords(j) : buildingWords(j);
-      return [j.slug, j.title, w.head, w.note, isPile(j), j.loose ? true : j.buildable === true];
+      return [j.slug, j.title, w.head, w.note, isPile(j), offersBuild(j)];
     }),
   ]);
 }
@@ -843,6 +860,12 @@ async function refreshShelf() {
     S.drive = !!s.local;
     const have = new Set(S.index.map(b => b.slug));
     S.building = (Array.isArray(s.jobs) ? s.jobs : []).filter(j => j && !have.has(j.slug));
+    // What this hub has in hand, for offersBuild(). The running job and the ones
+    // queued behind it are the same answer to a family — content.js's own
+    // busyWith() says both in the same two sentences — and both are books this
+    // shelf must describe rather than ask about.
+    S.here = [].concat(s.building && s.job && s.job.slug ? [s.job.slug] : [],
+                       Array.isArray(s.queued) ? s.queued : []);
     // Photos dropped straight into books/ have no folder at all, so no row of
     // the hub's own describes them. They are still a book waiting to happen, and
     // saying so is the whole difference between this shelf and the one that told
@@ -851,7 +874,7 @@ async function refreshShelf() {
     // carries the tap that turns them into a book.
     const loose = Number(s.loose) || 0;
     if (loose) S.building.push({ slug: "\u0000loose", title: "A new book", loose, waiting: "pile" });
-  } catch { S.drive = null; S.building = []; }
+  } catch { S.drive = null; S.building = []; S.here = []; }
 }
 
 // ---------- the shelf keeps looking (spec §13) ----------
