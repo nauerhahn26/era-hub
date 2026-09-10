@@ -90,6 +90,11 @@ function claimLine(dir, opts) {
   fs.appendFileSync(store.logPath(dir), JSON.stringify(line) + "\n");
 }
 
+// Where ingest puts the originals once it has taken them in (content-ingest.js
+// owns the name; content.js keeps its own copy of the string for the same
+// reason — requiring the ingest module drags a JPEG decoder in for one word).
+const SOURCES_DIR = "sources";
+
 const jobOf = (dir) => store.readJob(dir);
 const rowOf = (title) => content.jobs().find(j => j.title === title);
 const found = (res, name) => (res.books || []).find(b => b.name === name);
@@ -503,4 +508,56 @@ test("a finished book offers no Build at all", () => {
   assert.equal(row.buildable, false);
   assert.equal(row.waiting, null);
   assert.equal(row.elsewhere, false);
+});
+
+// ------------------------------------- THE BOOK THAT IS STILL COMING DOWN (9/10)
+
+// Drive for Desktop brings a folder down in whatever order it likes, and the
+// art is usually first: pages/ and the cover copied from page 1 are here, while
+// .build/job.json and manifest.json are still on their way. For those minutes
+// the folder has no job to refuse it, no manifest to say it is finished, and not
+// one loose photo — and it used to come back `buildable`, so both screens laid
+// "Build a book" over the weekly-book maker's own folder. A tap would have
+// claimed it, run the walk over a folder with zero photos in it, and left a
+// .build/job.json for the maker's arriving one to collide with.
+function arriving(name) {
+  const dir = path.join(BOOKS, name);
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  for (const n of ["001.jpg", "002.jpg", "003.jpg"])
+    fs.writeFileSync(path.join(dir, "pages", n), Buffer.alloc(64, 3));
+  fs.writeFileSync(path.join(dir, "cover.jpg"), Buffer.alloc(64, 3));   // publish's copy of page 1
+  return dir;
+}
+
+test("a book still arriving — pages and a cover, no job and no manifest yet — offers no Build", () => {
+  const dir = arriving("Detective Dog Nell");
+  const row = rowOf("Detective Dog Nell");
+  assert.equal(row.published, false, "the manifest has not landed yet");
+  assert.equal(row.waiting, null, "a cover is not a pile of photos (NOT_A_PAGE)");
+  assert.equal(row.buildable, false, "and there is nothing here for a build to do");
+});
+
+test("…and the door refuses the tap that beat the paint to it", () => {
+  const dir = arriving("Detective Dog Nell");
+  const out = content.build({ kind: "books", slug: "detective-dog-nell" });
+  assert.equal(out.refused, "checking");
+  assert.match(out.error, /still arriving/i, "which is exactly what they are doing");
+  assert.equal(jobOf(dir), null, "and the maker's folder is not claimed out from under it");
+  assert.equal(fs.existsSync(store.buildDir(dir)), false, "no .build/ to collide with the one coming");
+  assert.deepEqual(started, []);
+});
+
+// The other side of the same rule: "something to build" is a job that owes work
+// OR loose photos, never both. Ingest MOVES the pile into sources/ as it runs,
+// so a book part-way through has no loose photo left in it at all — and it is
+// exactly the book a grown-up walks over to Settings to restart.
+test("a book part-way through, its photos moved into sources/, is still buildable", () => {
+  const dir = book("Half Read");
+  fs.mkdirSync(path.join(dir, SOURCES_DIR), { recursive: true });
+  for (const n of ["IMG_1.jpg", "IMG_2.jpg"])
+    fs.renameSync(path.join(dir, n), path.join(dir, SOURCES_DIR, n));
+  jobOn(dir, OTHER + ":12", { heartbeat: ago(31 * MIN), state: "transcribing" });
+  assert.equal(rowOf("Half Read").buildable, true, "a job that owes work is something to build");
+  assert.equal(content.build({ kind: "books", slug: "half-read" }).started, true);
+  assert.equal(jobOf(dir).claimedBy, ME());
 });

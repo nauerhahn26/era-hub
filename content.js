@@ -882,6 +882,17 @@ function jobFor(name, dir, slug, perClip) {
   // is another computer's warm claim, which is the one time the card says why
   // there is no button; `buildable` is simply "this door would say yes", asked
   // of the door's own two steps rather than guessed at again in two pages.
+  //
+  // AND OF ONE THING THE DOOR'S TWO STEPS CANNOT SEE: IS THERE ANYTHING TO
+  // BUILD? (review 9/10). The weekly-book maker's folder comes down through
+  // Drive in whatever order Drive likes, and the art usually lands first: for
+  // those minutes there are pages/ and a cover and NOTHING ELSE — no job.json
+  // to refuse the tap, no manifest to call it finished, and not one loose photo
+  // (the cover is not one, NOT_A_PAGE). Both screens laid "Build a book" over
+  // the maker's own folder, and a tap would have claimed it, walked a folder
+  // with no photos in it and written a .build/job.json for the maker's arriving
+  // one to collide with. So: a job that owes work, or photos to make pages out
+  // of. Neither is neither.
   const held = heldElsewhere(dir, Date.now(), job);
   const finished = alreadyBuilt(dir, job);
   return {
@@ -892,7 +903,7 @@ function jobFor(name, dir, slug, perClip) {
     // waiting for a tap, and the Settings card must be able to say so.
     state: job ? job.state : "inbox",
     waiting: !job && !published && photos > 0 ? "pile" : null,
-    buildable: !held && !finished,
+    buildable: !held && !finished && (!!job || photos > 0),
     elsewhere: !!held && held.refused === "elsewhere",
     step: store.stepOwed(owed),
     progress: { pages: count, transcribed, narrated: narrated.size },
@@ -1279,6 +1290,17 @@ function build(o) {
   if (built) return built;
   const held = heldElsewhere(found.dir, now);
   if (held) return held;
+
+  // AND NOTHING TO BUILD IS ITS OWN ANSWER (review 9/10). A folder with no
+  // job.json at all is a pile — that is the only reason this door opens on one —
+  // so a pile with no photos in it is a folder still coming down the wire: the
+  // maker's book with its art here and its .build/ and manifest still to come,
+  // or a parent's folder whose photos Drive is holding open as it writes them.
+  // Both are the sentence below word for word, and neither is a folder this hub
+  // may claim and walk. `buildable` says the same thing to the two cards a whole
+  // paint earlier; this is the door saying it to the tap that beat the paint.
+  if (!job && pilePhotos(photoNames(found.dir) || []).length === 0)
+    return { refused: "checking", error: STILL_ARRIVING };
 
   try {
     // A pile folder is claimed at `inbox`; another device's job is taken over
