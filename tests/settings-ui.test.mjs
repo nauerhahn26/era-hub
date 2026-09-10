@@ -996,6 +996,24 @@ test("an armed Build survives the card's own repaint", async () => {
   await ctx.close();
 });
 
+// TWO BUTTONS, ONE ARM (review 9/10). The arm lives outside the paint so it can
+// survive a repaint, which meant the button that WAS armed went on reading "Tap
+// again to build" until the next five-second repaint came round — two armed
+// buttons on the card and no way to tell which tap spends.
+test("arming a second Build puts the first one back to rest", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [
+    pileJob(), pileJob({ slug: "sunny-pond", title: "Sunny Pond" })] }));
+  const first = page.locator('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
+  const second = page.locator('#contentBooks [data-slug="sunny-pond"] button[data-build]');
+  await first.click();
+  assert.match(await first.textContent(), /again/i, "the first one is armed");
+  await second.click();
+  assert.match(await second.textContent(), /again/i, "and now the second one is");
+  assert.doesNotMatch(await first.textContent(), /again/i,
+    "the one that lost the arm says so at once, not five seconds later");
+  await ctx.close();
+});
+
 // The pile in books/ has no folder and so no slug until the hub gathers it, so
 // its tap says `loose:true` and the hub hands the new slug back (spec §14). The
 // reader's old NUL-prefixed grid marker is never sent, and neither is this
@@ -1064,6 +1082,26 @@ test("a book another computer is building says so, and offers no Build (spec §1
   await ctx.close();
 });
 
+// A HOLD ON ANOTHER COMPUTER'S BOOK IS NOT THIS COMPUTER'S PROMISE (review
+// 9/10). Every CT_WAITING sentence ends with the same offer — "add one in the
+// card above and it starts by itself" — and every one of them is true of a book
+// THIS hub is holding, because this hub's own scan picks its own job back up.
+// Under "Building on another computer." it was a promise nothing could keep:
+// content.js's scan never resumes a foreign job (spec §14), so a family who
+// added the key here would have waited for a book that was never coming back on
+// its own. An `elsewhere` row says where the work is, and nothing else.
+test("a book held on ANOTHER computer says only that, never 'it starts by itself'", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
+    state: "inbox", step: "ingest", held: "no-ai-key",
+    elsewhere: true, buildable: false })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(row, /Building on another computer\./, row);
+  assert.doesNotMatch(row, /starts by itself/i, row);
+  assert.doesNotMatch(row, /AI helper key/i, "and the fix is not on this computer either: " + row);
+  await ctx.close();
+});
+
 // …AND WHEN IT STOPS HOLDING IT, THE BUTTON COMES BACK HERE TOO (B1.8's flagged
 // parity gap, 9/10). The shelf has always offered Build on a job whose claim has
 // gone cold — `buildable` is the door's own answer — and Settings offered it on
@@ -1126,6 +1164,24 @@ test("a finished book from another computer says it is ready to read (§17)", as
   assert.match(s, /Ready to read in Book Reader ✓/, s);
   assert.equal(await page.$$eval('#contentBooks button[data-build]', b => b.length), 0,
     "an already-made book is never offered a build");
+  await ctx.close();
+});
+
+// …AND IT IS NOT ALSO COUNTED (review 9/10). The maker's package carries its
+// words in manifest.json and no .build/text.json at all, so a finished weekly
+// book counts zero pages transcribed however finished it is — and the row read
+// "Ready to read in Book Reader ✓ 0 of 16 pages read", which is a book that
+// failed, described. Nothing is missing and there is nothing to do: a book that
+// is made is made, and the counter is for the walk that is still running.
+test("a finished book says it is ready, and counts no pages it never had to read", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
+    slug: "first-grade-news", title: "First Grade News", state: "done", step: null,
+    published: true, buildable: false,
+    progress: { pages: 16, transcribed: 0, narrated: 0 } })] }));
+  await page.waitForSelector('#contentBooks [data-slug="first-grade-news"]');
+  const row = await page.$eval('#contentBooks [data-slug="first-grade-news"]', e => e.textContent);
+  assert.match(row, /Ready to read in Book Reader ✓/, row);
+  assert.doesNotMatch(row, /pages read/i, row);
   await ctx.close();
 });
 

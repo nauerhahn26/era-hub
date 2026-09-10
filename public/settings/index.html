@@ -1129,9 +1129,18 @@ function ctBuildBtn(key, attr){
   return '<button class="ctbuild'+(on?' armed':'')+'" '+attr+'>'
     +(on?CT_BUILD_ARMED:CT_BUILD_LABEL)+'</button>';
 }
+// The arm lives outside the paint (see above), so dropping it is not enough on
+// its own: the button that HAD it goes on saying "Tap again to build" until the
+// next five-second repaint comes round. With two piles on the card that is two
+// armed buttons and no way to tell which tap spends — so the label is put back
+// here, in the DOM, the moment the arm leaves. Every armed button, because the
+// arm is one at a time and this is the one place it ends.
 function ctDisarm(paint){
   if(CT_ARM_TIMER){ clearTimeout(CT_ARM_TIMER); CT_ARM_TIMER=null; }
   CT_ARMED=null;
+  for(const b of document.querySelectorAll("button.ctbuild.armed")){
+    b.classList.remove("armed"); b.textContent=CT_BUILD_LABEL;
+  }
   if(paint) contentPaint();
 }
 function ctWireBuild(el, key, body, title){
@@ -1188,7 +1197,14 @@ function ctRow(j){
   // nobody has started gets neither: "0 of 17 pages read" under photos nothing
   // has touched yet reads like a book that failed, when it is a book that has
   // not been asked for.
-  if(p.pages&&!pile) h+=' <span style="color:#5A6A70">'+p.transcribed+' of '+p.pages+' pages read'
+  // AND A BOOK THAT IS MADE GETS NEITHER (review 9/10). The weekly-book maker's
+  // package carries its words in manifest.json and brings no .build/text.json
+  // with it, so `transcribed` is zero for it however finished it is — and this
+  // row read "Ready to read in Book Reader ✓ 0 of 16 pages read", which is a
+  // book that failed, described. The counter belongs to a walk that is still
+  // running; when the book is on the shelf there is nothing left to count.
+  const ctDone=j.published===true||j.state==="done"||j.state==="published";
+  if(p.pages&&!pile&&!ctDone) h+=' <span style="color:#5A6A70">'+p.transcribed+' of '+p.pages+' pages read'
     +(p.narrated?', '+p.narrated+' of '+p.pages+' narrated':'')+'.</span>';
   h+='</div>';
   // Out of allowance, with a name on it and both choices (T6b.2). A hub that
@@ -1223,7 +1239,16 @@ function ctRow(j){
   // A book that FELL OVER keeps whatever hold it was under (content-store.fail
   // does not clear it), so the failure has the last word and the two sentences
   // never contradict each other on one card.
-  if(j.state!=="failed" && !j.paused && CT_WAITING[j.held]) h+='<div class="status">'+CT_WAITING[j.held]+'</div>';
+  //
+  // AND NEVER UNDER "BUILDING ON ANOTHER COMPUTER" (review 9/10). Every sentence
+  // in CT_WAITING ends with the same offer — "add one in the card above and it
+  // starts by itself" — and every one of them is true of a book THIS hub is
+  // holding, because this hub's own scan picks its own job back up. Of another
+  // computer's book it is a promise nothing can keep: content.js never resumes a
+  // foreign job (spec §14), so a family who added the key here would sit waiting
+  // for a book that was never coming back on its own. An `elsewhere` row says
+  // where the work is and mirrors how far it has got, and stops there.
+  if(j.state!=="failed" && !j.paused && !j.elsewhere && CT_WAITING[j.held]) h+='<div class="status">'+CT_WAITING[j.held]+'</div>';
   if(j.error&&j.state==="failed") h+='<div class="status bad">'+CT_ESC(ctSorry(j.error))+'</div>';
   // A book NEW ERA named itself, off a pile of loose photos and its own cover.
   // Said plainly, because the guess can be wrong in two different ways and the
