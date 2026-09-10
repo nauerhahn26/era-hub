@@ -393,11 +393,15 @@ test("an empty shelf notices the first book without a relaunch (bug 31)", async 
   await page.waitForFunction(() => window.Reader && window.Reader.state().shelfCount === 0);
   assert.equal(await page.locator("#shelfEmpty").isHidden(), false, "'No books yet' shows");
   assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0);
-  const poll = await page.evaluate(() => (window.__timers.find(t => t.ms === 20000) || {}).ms);
-  assert.equal(poll, 20000, "the empty shelf keeps asking for the index");
+  // The slower of the two clocks (spec §13): nothing is in flight on an empty
+  // shelf — no book is being made — so the shelf looks once a minute rather
+  // than every twenty seconds. It still never needs a relaunch, which is the
+  // whole of bug 31.
+  const poll = await page.evaluate(() => (window.__timers.find(t => t.ms === 60000) || {}).ms);
+  assert.equal(poll, 60000, "the empty shelf keeps asking for the index");
 
   empty = false;                                   // Drive delivered the first book
-  await page.evaluate(() => window.__timers.filter(t => t.ms === 20000).forEach(t => t.fn()));
+  await page.evaluate(() => window.__timers.filter(t => t.ms === 60000).forEach(t => t.fn()));
   await page.waitForFunction(() => window.Reader.state().shelfCount === 1);
   await page.locator("#shelfGrid .shelf-card-button", { hasText: "Luna the Fox" }).waitFor();
   assert.equal(await page.locator("#shelfEmpty").isHidden(), true, "the notice is gone");
@@ -416,16 +420,60 @@ const contentStatus = (over) => ({
   mode: "local", local: true, skipped: null, loose: 0, quietMs: 600000,
   building: false, job: null, queued: [], jobs: [], lastScan: null, ...over });
 
-async function shelfWith(status, index = "[]") {
+// A PILE OF PHOTOS NOBODY HAS TAPPED BUILD ON (spec §13/§14). content.jobFor
+// reports one as a job row with no job.json behind it: `waiting:"pile"`,
+// `buildable` (this door would say yes) and `elsewhere` (another computer's
+// warm claim) are the three derived answers the card is drawn from, and the
+// photo count arrives as `progress.pages` like every other row's.
+const pileRow = (over) => ({
+  kind: "books", slug: "kitchen-table", title: "Kitchen Table", state: "inbox",
+  waiting: "pile", buildable: true, elsewhere: false,
+  progress: { pages: 12, transcribed: 0, narrated: 0 },
+  held: null, error: null, paused: null, ...over });
+
+// THE STATUS STUB (spec §17's reader list). Everything on this shelf that is
+// not yet a book is drawn from /content/status, and the tap that starts one
+// goes back out of the same page as POST /content/build — so the whole of Part
+// B's shelf can be driven by handing the page a payload and reading what it
+// posts. `status` may be a function so a test can change the hub's answer
+// between polls; `posts` collects the build requests, raw as well as parsed,
+// because "never the sentinel" is a claim about the BYTES on the wire.
+// The timer hooks are the same idiom the two poll tests already use: the poll
+// is a real interval, and a suite must be able to turn it by hand rather than
+// wait a minute of wall clock for it.
+async function shelfWith(status, index = "[]", opts = {}) {
+  const posts = [];
+  const answer = opts.answer || { code: 202, body: { started: true, slug: "kitchen-table" } };
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+  await ctx.addInitScript(() => {
+    window.__timers = [];
+    const si = window.setInterval.bind(window);
+    window.setInterval = (fn, ms) => { window.__timers.push({ fn, ms, kind: "interval" }); return si(fn, ms); };
+    const st = window.setTimeout.bind(window);
+    window.setTimeout = (fn, ms) => { window.__timers.push({ fn, ms, kind: "timeout" }); return st(fn, ms); };
+  });
   await ctx.route("**/books/index.json",
     r => r.fulfill({ status: 200, contentType: "application/json", body: index }));
-  await ctx.route("**/content/status",
-    r => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(status) }));
+  await ctx.route("**/content/status", r => r.fulfill({ status: 200, contentType: "application/json",
+    body: JSON.stringify(typeof status === "function" ? status() : status) }));
+  await ctx.route("**/content/build", (r) => {
+    const raw = r.request().postData() || "";
+    let json = null; try { json = JSON.parse(raw); } catch {}
+    posts.push({ raw, json });
+    r.fulfill({ status: answer.code, contentType: "application/json", body: JSON.stringify(answer.body) });
+  });
   const page = await ctx.newPage();
   await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
   await page.waitForFunction(() => window.Reader && typeof window.Reader.state === "function");
-  return { ctx, page };
+  // turn every poll interval the page has armed, whichever clock it chose
+  const tick = () => page.evaluate(async () => {
+    for (const t of window.__timers.filter(x => x.ms === 20000 || x.ms === 60000)) await t.fn();
+  });
+  // and the ask's own fifteen seconds, without waiting fifteen of them
+  const fire = (ms) => page.evaluate((n) => {
+    for (const t of window.__timers.filter(x => x.ms === n)) t.fn();
+  }, ms);
+  return { ctx, page, posts, tick, fire };
 }
 
 test("no Drive folder on this computer: the Drive prompt is the right answer", async () => {
@@ -447,17 +495,24 @@ test("Drive IS set up and there are no books: the prompt names the folder, not S
   await ctx.close();
 });
 
+// The loose pile is a PILE card now (spec §13), not a book with a clock on it:
+// "17 photos" and Build a book, because since "built here" nothing on this
+// shelf starts by itself and "about 10 minutes" was a promise the hub stopped
+// keeping. The gaze rule it was written for is unchanged in substance — her
+// gaze can never arm on it — but the card is no longer classless: it carries
+// .dwell AND data-dwell-disabled, so a grown-up's slow press still works on
+// Windows (dwell.js's long-press rescue matches .dwell alone).
 test("photos are waiting in books/: the shelf says a book is coming, not 'no books'", async () => {
   const { ctx, page } = await shelfWith(contentStatus({ loose: 17 }));
   await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
   assert.equal(await page.locator("#shelfEmpty").isHidden(), true, "not an empty shelf at all");
-  const card = page.locator("#shelfGrid .shelf-card.is-building");
+  const card = page.locator("#shelfGrid .shelf-card.is-pile");
   const s = await card.textContent();
   assert.match(s, /17 photos/, s);
-  assert.match(s, /about 10 minutes/, "and when it will start");
-  // NEVER a gaze target: she must be able to rest her eyes on it.
-  assert.equal(await card.locator(".dwell").count(), 0);
-  assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0);
+  assert.match(s, /Build a book/, "and what a grown-up does about it: " + s);
+  assert.equal(await card.locator(".dwell:not([data-dwell-disabled])").count(), 0,
+    "her gaze can never arm on it");
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0, "nothing to open");
   await ctx.close();
 });
 
@@ -584,5 +639,264 @@ test("a book already on the shelf is not shown twice while the mirror catches up
   await page.waitForFunction(() => window.Reader.state().shelfCount === 1);
   assert.equal(await page.evaluate(() => window.Reader.state().buildingCount), 0);
   assert.equal(await page.locator("#shelfGrid .shelf-card.is-building").count(), 0);
+  await ctx.close();
+});
+
+// ============================================================ BUILT ONCE (§13)
+// Nothing on this shelf starts a book any more. The scan stopped claiming quiet
+// inboxes and stopped gathering the loose pile, so a pile of photos sits there
+// until a grown-up taps Build on the device that will do the work — and this
+// shelf is one of the two places that tap lives. Everything below is spec §13's
+// contract: the card keeps a real card's box so the slot never reflows, her
+// gaze can never arm on any of it, the press only ASKS, and while the question
+// is open the whole shelf is asleep the way the board is under its partner
+// sheet (board-partner.js freezeBoard).
+
+test("a pile of photos keeps a real card's box, and her gaze can never arm any of it", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [pileRow()] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const card = page.locator("#shelfGrid .shelf-card.is-pile");
+  await card.waitFor();
+  assert.equal(await card.locator(".shelf-cover").count(), 1, "the picture sits where the cover goes");
+  assert.equal(await card.locator(".shelf-title").textContent(), "Kitchen Table");
+  const s = await card.textContent();
+  assert.match(s, /12 photos/, s);
+  assert.match(s, /Build a book/, s);
+  // §13 gaze safety, and it is NOT "no class": .dwell keeps dwell.js's
+  // long-press rescue and its context-menu suppression alive for a finger,
+  // data-dwell-disabled keeps targetAt() away from it for her gaze.
+  assert.ok(await card.evaluate(el => el.classList.contains("dwell")), "the card carries .dwell");
+  assert.equal(await card.getAttribute("data-dwell-disabled"), "", "…and is stamped disabled");
+  assert.equal(await card.locator(".dwell:not([data-dwell-disabled])").count(), 0,
+    "zero live dwell targets inside a pile card");
+  assert.ok(await card.locator(".dwell-button").count() >= 1, "the pile has a button to press");
+  assert.equal(await card.locator(".dwell-button:not([data-dwell-disabled])").count(), 0,
+    "every button on it carries data-dwell-disabled");
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0, "nothing to open yet");
+  await ctx.close();
+});
+
+test("Build does not build: it opens the ask, and the confirming button is a different element", async () => {
+  const { ctx, page, posts } = await shelfWith(contentStatus({ jobs: [pileRow()] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
+  const ask = page.locator("#shelfAsk");
+  await ask.waitFor();
+  const q = await ask.textContent();
+  assert.match(q, /Build a book from these 12 photos\?\s*A grown-up should do this\./, q);
+  assert.equal(posts.length, 0, "pressing Build spends nothing and starts nothing");
+  // two different buttons in two different places — the press that starts a
+  // book can never be the second half of the press that asked the question
+  const same = await page.evaluate(() => {
+    const yes = document.getElementById("shelfAskYes");
+    const b = document.querySelector("#shelfGrid .shelf-card.is-pile .shelf-build-button");
+    return yes === b || (b ? b.contains(yes) : false);
+  });
+  assert.equal(same, false, "the confirming button is its own element");
+  const boxes = await page.evaluate(() => {
+    const r = (el) => { const b = el.getBoundingClientRect(); return [b.left, b.top]; };
+    return [r(document.getElementById("shelfAskYes")), r(document.getElementById("shelfAskNo"))];
+  });
+  assert.notDeepEqual(boxes[0], boxes[1], "…in a different place from Not now");
+  await ctx.close();
+});
+
+test("while the ask is open the shelf is asleep — no live dwell target, the exit tile included", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [pileRow()] }),
+    JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
+  await page.locator("#shelfAsk").waitFor();
+  assert.equal(await page.locator("#sShelf .dwell:not([data-dwell-disabled])").count(), 0,
+    "a parked gaze could still fire the shelf behind the question");
+  // the exit tile is the highest-consequence hold in the app, and unlike the
+  // board's door it is NOT kept awake under this one
+  assert.equal(await page.locator("#btnExit").getAttribute("data-dwell-disabled"), "");
+  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), false,
+    "the class goes too — dwell.js's 150ms tap-rescue matches .dwell alone");
+  assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0,
+    "opening the ask settles her gaze (Dwell.suppress(600))");
+  await ctx.close();
+});
+
+test("Not now closes the ask, thaws with a settle window, and wakes nothing that was born asleep", async () => {
+  const { ctx, page, posts } = await shelfWith(contentStatus({ jobs: [pileRow()] }),
+    JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
+  await page.locator("#shelfAsk").waitFor();
+  await page.evaluate(() => window.Dwell.suppress(1));   // let the opening settle window run down
+  await page.waitForTimeout(30);
+  await page.locator("#shelfAskNo").click();
+  await page.waitForFunction(() => !document.getElementById("shelfAsk"));
+  assert.equal(posts.length, 0, "Not now spends nothing");
+  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), true);
+  assert.equal(await page.locator("#btnExit").getAttribute("data-dwell-disabled"), null,
+    "the shelf she can use is handed back");
+  assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0,
+    "closing settles her gaze too");
+  // …and the pile card, which was asleep BEFORE the ask, is still asleep: a
+  // thaw that woke everything it found would hand her gaze the Build button.
+  assert.equal(await page.locator("#shelfGrid .shelf-card.is-pile .dwell:not([data-dwell-disabled])").count(), 0);
+  await ctx.close();
+});
+
+test("fifteen seconds untouched closes the ask by itself and thaws the shelf", async () => {
+  const { ctx, page, fire } = await shelfWith(contentStatus({ jobs: [pileRow()] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
+  await page.locator("#shelfAsk").waitFor();
+  assert.equal(await page.evaluate(() => (window.__timers.find(t => t.ms === 15000) || {}).ms), 15000,
+    "the question does not sit on her shelf for ever");
+  await page.evaluate(() => window.Dwell.suppress(1));
+  await page.waitForTimeout(30);
+  await fire(15000);
+  await page.waitForFunction(() => !document.getElementById("shelfAsk"));
+  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), true,
+    "the shelf comes back on its own");
+  assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0);
+  await ctx.close();
+});
+
+test("Build it posts /content/build for the pile folder and thaws the shelf", async () => {
+  const { ctx, page, posts } = await shelfWith(contentStatus({ jobs: [pileRow()] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
+  await page.locator("#shelfAskYes").click();
+  await page.waitForFunction(() => !document.getElementById("shelfAsk"));
+  assert.equal(posts.length, 1, "exactly one build, on the press she confirmed");
+  assert.deepEqual(posts[0].json, { kind: "books", slug: "kitchen-table" });
+  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), true,
+    "and the shelf is hers again");
+  await ctx.close();
+});
+
+test("the loose pile posts loose:true — its sentinel slug never leaves this page", async () => {
+  const { ctx, page, posts } = await shelfWith(contentStatus({ loose: 9 }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const card = page.locator("#shelfGrid .shelf-card.is-pile");
+  assert.match(await card.textContent(), /9 photos/);
+  await card.locator(".shelf-build-button").click();
+  await page.locator("#shelfAskYes").click();
+  await page.waitForFunction(() => !document.getElementById("shelfAsk"));
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0].json, { kind: "books", loose: true },
+    "the pile in books/ has no slug until the hub gathers it");
+  assert.equal(posts[0].raw.includes("\u0000"), false, "the sentinel reached the hub: " + posts[0].raw);
+  assert.equal(posts[0].raw.includes("slug"), false, "…as a slug: " + posts[0].raw);
+  await ctx.close();
+});
+
+test("the ask survives a repaint: S.asking is outside the signature, and the fresh cards are asleep again", async () => {
+  let st = contentStatus({ jobs: [pileRow()] });
+  const { ctx, page, tick } = await shelfWith(() => st,
+    JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
+  await page.locator("#shelfAsk").waitFor();
+  await page.evaluate(() => { document.getElementById("btnExit").dataset.mark = "same"; });
+  // a real change: one more photo landed in the pile while the question was up
+  st = contentStatus({ jobs: [pileRow({ progress: { pages: 13, transcribed: 0, narrated: 0 } })] });
+  await tick();
+  await page.locator("#shelfGrid .shelf-card.is-pile", { hasText: "13 photos" }).waitFor();
+  assert.equal(await page.locator("#btnExit").getAttribute("data-mark"), null, "the shelf really was rebuilt");
+  await page.locator("#shelfAsk").waitFor();
+  assert.match(await page.locator("#shelfAsk").textContent(), /13 photos/,
+    "the question came back over the card it belongs to");
+  assert.equal(await page.locator("#sShelf .dwell:not([data-dwell-disabled])").count(), 0,
+    "a rebuilt shelf under an open ask is awake again unless the freeze is asked for a second time");
+  await page.locator("#shelfAskNo").click();
+  await page.waitForFunction(() => !document.getElementById("shelfAsk"));
+  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), true);
+  await ctx.close();
+});
+
+test("the poll runs on a shelf that already has books — a pile dropped on a full shelf needs no relaunch", async () => {
+  const full = JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
+    cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]);
+  let st = contentStatus({});
+  const { ctx, page, tick } = await shelfWith(() => st, full);
+  await page.waitForFunction(() => window.Reader.state().shelfCount === 1);
+  assert.equal(await page.evaluate(() => window.Reader.state().buildingCount), 0);
+  // Nothing is in flight, so the shelf looks on the slower clock — but it DOES
+  // look: before §13 the interval was never armed at all once the shelf had a
+  // book on it, and a pile dropped into Drive waited for a relaunch.
+  assert.equal(await page.evaluate(() => window.Reader.state().pollMs), 60000);
+  st = contentStatus({ jobs: [pileRow()] });
+  await tick();
+  await page.locator("#shelfGrid .shelf-card.is-pile").waitFor();
+  // …and a book actually being made moves it to the faster one
+  st = contentStatus({ jobs: [{ kind: "books", slug: "sunny-pond", title: "Sunny Pond",
+    state: "transcribing", buildable: true, elsewhere: false, waiting: null,
+    progress: { pages: 16, transcribed: 4, narrated: 0 }, held: null, error: null, paused: null }] });
+  await tick();
+  await page.waitForFunction(() => window.Reader.state().pollMs === 20000);
+  await ctx.close();
+});
+
+test("a book another computer is making says so, and offers nothing to press", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({ jobs: [
+    { kind: "books", slug: "sunny-pond", title: "Sunny Pond", state: "transcribing",
+      waiting: null, buildable: false, elsewhere: true,
+      progress: { pages: 16, transcribed: 4, narrated: 0 }, held: null, error: null, paused: null }] }));
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  const card = page.locator("#shelfGrid .shelf-card.is-building");
+  const s = await card.textContent();
+  assert.match(s, /Building on another computer/i, s);
+  assert.equal(await card.locator(".shelf-build-button").count(), 0, "no button while it is theirs");
+  assert.equal(await card.locator(".dwell:not([data-dwell-disabled])").count(), 0);
+  await ctx.close();
+});
+
+// EVERY SENTENCE THAT PROMISED AN AUTOMATIC START GOES (spec §12). The scan
+// claims nothing now, so "this book starts in about 10 minutes", "building
+// starts about 10 minutes after the last photo arrives" and "New ERA makes the
+// book by itself" were all the hub promising something it had stopped doing.
+test("no card on this shelf promises a book that starts by itself", async () => {
+  // The three sentences by name, not "any mention of time": a book that is
+  // PAUSED on a spent allowance really does carry on by itself when there is
+  // more room, and that one stays.
+  const PROMISE = /makes the book by itself|starts in about|Building starts about|minutes after the last photo/i;
+  for (const st of [
+    contentStatus({}),                                   // Drive set up, nothing on it
+    contentStatus({ local: false, mode: "off" }),        // no Drive folder on this computer
+    contentStatus({ loose: 17 }),                        // the pile in books/
+    contentStatus({ jobs: [pileRow()] }),                // a pile folder
+    contentStatus({ jobs: [pileRow({ waiting: null })] }),   // …once it has been claimed
+    contentStatus({ jobs: [{ kind: "books", slug: "sunny-pond", title: "Sunny Pond",
+      state: "transcribing", waiting: null, buildable: true, elsewhere: false,
+      progress: { pages: 16, transcribed: 4, narrated: 0 }, held: null, error: null, paused: null }] }),
+  ]) {
+    const { ctx, page } = await shelfWith(st);
+    await page.waitForFunction(() => window.Reader.state().drive !== null);
+    const text = await page.evaluate(() => document.body.innerText);
+    assert.doesNotMatch(text, PROMISE, "a card still promises an automatic start: " + text);
+    await ctx.close();
+  }
+});
+
+// The coral rim is the whole point of the weekly book on this shelf: `authored`
+// travels in the manifest, survives a word edit and animate's re-publish
+// (content-publish.js), and lands here as a warm border a six-year-old can pick
+// out from across the room.
+test("an authored manifest paints the rim", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({}),
+    JSON.stringify([
+      { slug: "luna-the-fox", title: "Luna the Fox", cover: "/books/luna-the-fox/cover.jpg",
+        pages: 4, hasVideo: false, authored: true },
+      { slug: "plain-book", title: "Plain Book", cover: "/books/plain-book/cover.jpg",
+        pages: 4, hasVideo: false, authored: false },
+    ]));
+  await page.waitForFunction(() => window.Reader.state().shelfCount === 2);
+  assert.equal(await page.locator("#shelfGrid .shelf-card.is-authored").count(), 1);
+  const rims = await page.evaluate(() => [...document.querySelectorAll("#shelfGrid .shelf-card-button")]
+    .map(el => getComputedStyle(el).borderColor));
+  assert.match(rims[0], /222,\s*110,\s*75/, "the authored book wears the coral rim: " + rims[0]);
+  assert.doesNotMatch(rims[1], /222,\s*110,\s*75/, "and a plain book does not: " + rims[1]);
+  assert.equal(await page.locator("#shelfGrid .shelf-card").first()
+    .evaluate(el => el.classList.contains("is-authored")), true);
   await ctx.close();
 });

@@ -36,7 +36,10 @@ const S = {
   exitTo: "tdsnap",   // from /settings: where the door will REALLY go (doorGoes: TD Snap only
                       // with an engine on the bus, else home) — names the tile
   index: [],          // /books/index.json rows {slug,title,cover,pages,hasVideo,authored}
-  building: [],       // /content/status rows for books not on the shelf yet
+  building: [],       // /content/status rows for books not on the shelf yet — a
+                      // pile of photos nobody has tapped Build on, and a book
+                      // being made (spec §13)
+  asking: null,       // {slug} while the Build question is open over one card
   drive: null,        // true/false/null — has this computer a Drive folder set up?
   manifest: null,     // the open book's manifest
   slug: null,
@@ -131,12 +134,38 @@ function sorry(msg) {
   return "A grown-up can start it again in Settings.";
 }
 
+// THE PILE IN books/ ITSELF, which has no folder and no slug until the hub
+// gathers it. It is one of this file's own grid rows rather than one of the
+// hub's, so it carries a slug nothing else can collide with — and that slug is
+// a marker for THIS page only: the tap sends `loose:true` (spec §14), never
+// this string. Nothing outside startBuild() has to know that, which is exactly
+// why the sentinel is safe to keep.
+const LOOSE = "\u0000loose";
+
+// A pile of photos and a book being made are the same box with different words
+// in it, and the hub says which is which: `waiting:"pile"` is a folder with
+// photos and no job.json (nobody has claimed it), and the loose pile is the
+// same thing without a folder. Everything else has a job behind it.
+const isPile = (j) => j.waiting === "pile" || !!j.loose;
+// The photo count, wherever it lives: the loose pile carries its own, a pile
+// folder arrives with the same `progress.pages` every other row has.
+const photosIn = (j) => Number(j.loose) || Number(j.progress && j.progress.pages) || 0;
+// What a pile says: how many photos are in it. It does NOT say when the book
+// will start, because since "built here" nothing starts until a grown-up taps
+// Build — the card's own button is the honest end of that sentence.
+function pileWords(j) {
+  const n = photosIn(j);
+  return { head: n + " photo" + (n === 1 ? "" : "s"), note: "" };
+}
+
 function buildingWords(j) {
-  // A pile of photos that has not become a folder yet (see refreshShelf).
-  if (j.loose)
-    return { head: "New photos arrived",
-             note: j.loose + " photo" + (j.loose === 1 ? "" : "s") + " — this book starts in about "
-                   + j.startsIn + " minutes." };
+  // ANOTHER COMPUTER IS MAKING THIS ONE (spec §13, §15). First of all the
+  // answers because it is the only one that is about WHERE the work is: the
+  // job's own state is the other device's news, and repeating it here would
+  // have this shelf counting up pages nothing on this computer is turning.
+  // Build comes back on its own when their heartbeat is half an hour old —
+  // `elsewhere` goes false, `buildable` goes true, and nobody has to be told.
+  if (j.elsewhere) return { head: "Building on another computer", note: "" };
   if (j.paused || j.pausedUntil)
     return { head: "Waiting its turn", note: "It carries on by itself when there is more room today." };
   // ONLY A BOOK THAT REALLY STOPPED SAYS IT STOPPED, and after that the HOLD
@@ -148,9 +177,12 @@ function buildingWords(j) {
   // falls over (content-store.fail keeps it), so the last word is the failure.
   if (j.state === "failed") return { head: "This book stopped", note: sorry(j.error) };
   if (HELD_WORDS[j.held]) return HELD_WORDS[j.held];
+  // A job at `inbox` has been CLAIMED — a grown-up tapped Build, or this
+  // computer picked its own job back up after a restart. The old sentence here
+  // ("Building starts about ten minutes after the last photo arrives") was the
+  // hub promising a start it stopped making: the scan claims nothing now.
   if (j.state === "inbox")
-    return { head: "Getting ready…", note: "Building starts about " + j.startsIn
-                                           + " minutes after the last photo arrives." };
+    return { head: "Getting ready…", note: "New ERA has started on this book." };
   if (j.state === "published" || j.state === "animating" || j.state === "done")
     return { head: "Nearly ready", note: "This book is on its way to the shelf." };
   const p = j.progress || {};
@@ -158,26 +190,81 @@ function buildingWords(j) {
            note: p.pages ? p.transcribed + " of " + p.pages + " pages read" : "Reading the photos." };
 }
 
-function buildingCard(j) {
+// The picture where the cover goes. A book already being made has pages/ on
+// disk, so the hub can hand its first photo over (/content/page reads straight
+// out of the book folder, ahead of the ten-minute mirror); a pile has its
+// photos loose at the top of the folder and no page record yet, and the pile in
+// books/ has no folder at all. Both of those answer 404 and fall back to the
+// mark — the same shape the real card's cover uses when its image will not
+// load, so a card that cannot show a picture is still a card.
+function coverInto(cover, j) {
+  const mark = () => {
+    const m = document.createElement("span");
+    m.className = "shelf-waiting-mark";
+    m.setAttribute("aria-hidden", "true");
+    m.textContent = "📖";
+    cover.appendChild(m);
+  };
+  if (j.loose || !j.slug) { mark(); return; }
+  const img = document.createElement("img");
+  img.alt = "";
+  img.onerror = () => { img.remove(); mark(); };
+  img.src = "/content/page?slug=" + encodeURIComponent(j.slug) + "&index=0";
+  cover.appendChild(img);
+}
+
+// THE TWO CARDS THAT ARE NOT A BOOK YET (spec §13). Both keep EXACTLY a real
+// card's box — the picture where the cover goes, the title under it, "Build a
+// book" laid over the bottom of the picture — so her shelf does not reflow the
+// moment the built book takes the slot.
+//
+// GAZE SAFETY, and it is deliberately not "no class" the way the old waiting
+// card was. `class="dwell" data-dwell-disabled` on the card AND on its button:
+// dwell.js's targetAt() skips [data-dwell-disabled], so her gaze can never arm
+// on either of them, but the tap-parity long-press rescue and the context-menu
+// suppression match on `.dwell` ALONE — without the class a slow press on
+// Windows is dead and a long press opens the right-click menu on her shelf.
+// Building is a grown-up's press, made with a finger, and this is the reader's
+// own setDisabled() idiom said once at build time.
+//
+// Returns the card, its box and the row it was drawn from, because the ask has
+// to be able to find its way back to all three after a repaint.
+function notYetCard(j) {
+  const pile = isPile(j);
+  const words = pile ? pileWords(j) : buildingWords(j);
+  // A pile is always ours to start; a job is offered only when the build door
+  // would say yes to it — no manifest, and no other computer's warm claim.
+  const canBuild = j.loose ? true : j.buildable === true;
   const card = document.createElement("div");
-  card.className = "shelf-card is-building";
+  card.className = "shelf-card dwell " + (pile ? "is-pile" : "is-building");
+  card.setAttribute("data-dwell-disabled", "");
   card.dataset.slug = j.slug;
   const box = document.createElement("div");
-  box.className = "shelf-card-waiting";           // NOT .dwell — never a gaze target
-  const mark = document.createElement("span");
-  mark.className = "shelf-waiting-mark";
-  mark.setAttribute("aria-hidden", "true");
-  mark.textContent = "📖";
+  box.className = "dwell dwell-button shelf-card-box"
+    + (canBuild ? " shelf-build-button" : "");
+  box.setAttribute("data-dwell-disabled", "");
+  const label = document.createElement("span");   // the old DwellButton wrapper (see renderShelf)
+  label.className = "dwell-label";
+  const cover = document.createElement("span");
+  cover.className = "shelf-cover";
+  coverInto(cover, j);
+  if (canBuild) {
+    const tag = document.createElement("span");
+    tag.className = "shelf-build-tag";
+    tag.textContent = "Build a book";
+    cover.appendChild(tag);
+  }
   const name = document.createElement("span");
   name.className = "shelf-title";
   name.textContent = j.title || "A new book";
-  const words = buildingWords(j);
   const note = document.createElement("span");
   note.className = "shelf-waiting-note muted";
   note.textContent = words.head + (words.note ? " " + words.note : "");
-  box.appendChild(mark); box.appendChild(name); box.appendChild(note);
+  label.appendChild(cover); label.appendChild(name); label.appendChild(note);
+  box.appendChild(label);
   card.appendChild(box);
-  return card;
+  if (canBuild) box.addEventListener("click", () => openAsk(j, card, box));
+  return { j, card, box };
 }
 
 // What the shelf says when there is nothing on it. THE DRIVE PROMPT IS ONLY
@@ -189,10 +276,143 @@ function paintEmpty() {
   $("shelfEmpty").hidden = !nothing;
   if (!nothing) return;
   const set = S.drive === true;
+  // …and the second half of that sentence is no longer "New ERA makes the book
+  // by itself", because it does not: a pile of photos waits on this shelf until
+  // a grown-up taps Build on the computer that will do the work (spec §12).
   $("shelfEmptyLine").textContent = set
-    ? "No books yet. Put the photos of one book in the books folder in your Google Drive — New ERA makes the book by itself."
+    ? "No books yet. Put the photos of one book in the books folder in your Google Drive, then a grown-up taps Build a book here."
     : "No books yet.";
   $("shelfEmptyLink").hidden = set;
+}
+
+// ---------- the ask (spec §13) ----------
+// PRESSING BUILD DOES NOT BUILD. It turns the card into the review page's ask
+// shape — the question, then "Build it" and "Not now" as two different buttons
+// in two different places, so the press that spends a family's allowance can
+// never be the second half of the press that asked about it.
+//
+// While the question is up the shelf beneath it is asleep, the way the board is
+// under its partner sheet (board-partner.js freezeBoard): a full-screen
+// backdrop would hide nothing, because dwell.js's targetAt() walks the whole
+// elementsFromPoint stack for the first `.dwell:not([data-dwell-disabled])` and
+// steps straight over anything without the class. So both halves go — the
+// attribute stops the gaze fill, dropping the class stops the 150 ms
+// long-press tap-rescue. Unlike the board, the way out is NOT kept awake: the
+// exit tile sleeps with everything else, because a question this small has an
+// answer on it and fifteen seconds to live.
+//
+// Only LIVE targets are put to sleep, which is what makes the thaw safe: the
+// pile cards were born asleep, and waking everything the shelf holds would hand
+// her gaze the Build button the freeze exists to keep away from her.
+let frozen = [];
+let askTimer = null;
+
+function suppressFor(ms) {
+  try { if (window.Dwell && Dwell.suppress) Dwell.suppress(ms); } catch {}
+}
+
+function freezeShelf(except) {
+  frozen = [...document.querySelectorAll("#sShelf .dwell:not([data-dwell-disabled])")]
+    .filter(el => !except.contains(el));
+  for (const el of frozen) {
+    el.classList.remove("dwell");
+    el.setAttribute("data-dwell-disabled", "");
+  }
+}
+function thawShelf() {
+  for (const el of frozen) {
+    el.classList.add("dwell");
+    el.removeAttribute("data-dwell-disabled");
+  }
+  frozen = [];
+}
+
+// The question names the number, because that is the one thing a grown-up
+// standing at the screen can check before they spend anything.
+function askWords(j) {
+  const n = photosIn(j);
+  return (n ? "Build a book from these " + n + " photo" + (n === 1 ? "" : "s") + "?"
+            : "Build a book from these photos?")
+    + " A grown-up should do this.";
+}
+
+// The ask lives INSIDE the card, in place of its box, so the slot keeps its
+// place in the grid and the shelf around it does not move under her.
+function paintAsk(j, card, box) {
+  box.hidden = true;
+  const ask = document.createElement("div");
+  ask.className = "shelf-ask";
+  ask.id = "shelfAsk";
+  const q = document.createElement("p");
+  q.className = "shelf-ask-q";
+  q.textContent = askWords(j);
+  const row = document.createElement("div");
+  row.className = "shelf-ask-actions";
+  const yes = document.createElement("div");
+  yes.id = "shelfAskYes";
+  yes.className = "dwell dwell-button shelf-ask-yes";
+  yes.setAttribute("data-dwell-disabled", "");
+  yes.textContent = "Build it";
+  const no = document.createElement("div");
+  no.id = "shelfAskNo";
+  no.className = "dwell dwell-button shelf-ask-no";
+  no.setAttribute("data-dwell-disabled", "");
+  no.textContent = "Not now";
+  yes.addEventListener("click", () => { closeAsk(); startBuild(j); });
+  no.addEventListener("click", () => closeAsk());
+  row.appendChild(yes); row.appendChild(no);
+  ask.appendChild(q); ask.appendChild(row);
+  card.appendChild(ask);
+  freezeShelf(ask);
+  suppressFor(600);
+}
+
+function openAsk(j, card, box) {
+  if (S.asking) closeAsk();
+  S.asking = { slug: j.slug };
+  paintAsk(j, card, box);
+  // Fifteen seconds untouched and the question goes away by itself. A grown-up
+  // walks off mid-thought more often than they answer, and a modal left on a
+  // six-year-old's bookshelf is a shelf she cannot use.
+  askTimer = setTimeout(() => { askTimer = null; closeAsk(); }, 15000);
+  log("build-ask", { loose: !!j.loose });
+}
+
+function closeAsk() {
+  if (askTimer) { clearTimeout(askTimer); askTimer = null; }
+  S.asking = null;
+  const ask = $("shelfAsk");
+  if (ask) {
+    const card = ask.parentNode;
+    ask.remove();
+    const box = card && card.querySelector(".shelf-card-box");
+    if (box) box.hidden = false;
+  }
+  thawShelf();
+  suppressFor(600);                              // the pointer may be parked on a tile
+}
+
+// The one press in this app that spends a family's allowance. The pile in
+// books/ has no slug until the hub gathers it, so it sends `loose:true` and the
+// hub hands the new slug back (spec §14); LOOSE is this file's own grid marker
+// and never goes near the wire.
+//
+// Whatever the hub answers, the shelf's next look is the honest report: a claim
+// it took shows as a book being made, a refusal leaves the card saying what it
+// said before, or "Building on another computer" the moment the other claim
+// lands. No refusal sentence is printed here — Settings is where a grown-up
+// reads those, and this is the one screen a six-year-old looks at.
+async function startBuild(j) {
+  const body = j.loose ? { kind: "books", loose: true } : { kind: "books", slug: j.slug };
+  log("build", { loose: !!j.loose });
+  try {
+    await fetch("/content/build", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch {}
+  await refreshShelf();
+  painted = shelfSig();
+  renderShelf();
+  suppress();
 }
 
 function renderShelf() {
@@ -247,8 +467,10 @@ function renderShelf() {
     }
     grid.appendChild(card);
   }
-  // …then the books that are still being made, after the ones she can read.
-  for (const j of S.building) grid.appendChild(buildingCard(j));
+  // …then the ones that are not books yet — a pile waiting for a tap, a book
+  // being made — after the ones she can actually read.
+  const notYet = S.building.map(notYetCard);
+  for (const c of notYet) grid.appendChild(c.card);
   // Back to TD Snap / New ERA — old shelf's exit tile, named for where the
   // door goes (Settings, dad 9/3); leaving the app is the highest-consequence
   // hold (EXIT_HOLD_MS 2400, ux-contract §C).
@@ -268,16 +490,37 @@ function renderShelf() {
   exitBtn.addEventListener("click", exitApp);
   exitCard.appendChild(exitBtn);
   grid.appendChild(exitCard);
+
+  // THE ASK IS NOT IN shelfSig(), ON PURPOSE. A full grid rebuild is what the
+  // poll was fixed to avoid, and putting an open question into the signature
+  // would make every repaint an argument about which of the two wins. So the
+  // question is a local DOM change and this is where it comes back: the row it
+  // belongs to is found again by slug and the ask is re-painted over the FRESH
+  // card, with the freeze asked for a second time — every node the old list
+  // held went out with the old grid, exactly as board-partner's
+  // refreezeIfOpen() has to do when a board arrives under an open sheet.
+  // Its fifteen seconds keep running; a repaint is not an answer.
+  if (S.asking) {
+    const hit = notYet.find(c => c.j.slug === S.asking.slug);
+    if (hit) { frozen = []; paintAsk(hit.j, hit.card, hit.box); }
+    else if (askTimer) { clearTimeout(askTimer); askTimer = null; S.asking = null; }
+    else S.asking = null;   // the pile became a book, or another computer took it
+  }
 }
 
-// Everything the shelf PAINTS, in one string — the covers she can open and the
-// sentence under each book on its way. Two polls that would draw the same shelf
-// have the same signature, and the second one draws nothing (see boot).
+// Everything the shelf PAINTS, in one string — the covers she can open, the
+// sentence under each book on its way, and whether the card offers a Build.
+// Two polls that would draw the same shelf have the same signature, and the
+// second one draws nothing (see boot). S.asking is deliberately NOT in here:
+// see renderShelf's tail.
 function shelfSig() {
   return JSON.stringify([
     S.drive, S.exitTo, S.childName,
     S.index.map(b => [b.slug, b.title, b.cover, b.authored]),
-    S.building.map(j => { const w = buildingWords(j); return [j.slug, j.title, w.head, w.note]; }),
+    S.building.map(j => {
+      const w = isPile(j) ? pileWords(j) : buildingWords(j);
+      return [j.slug, j.title, w.head, w.note, isPile(j), j.loose ? true : j.buildable === true];
+    }),
   ]);
 }
 
@@ -598,18 +841,58 @@ async function refreshShelf() {
   try {
     const s = await (await fetch("/content/status", { cache: "no-store" })).json();
     S.drive = !!s.local;
-    const mins = Math.max(1, Math.round((Number(s.quietMs) || 600000) / 60000));
     const have = new Set(S.index.map(b => b.slug));
-    S.building = (Array.isArray(s.jobs) ? s.jobs : [])
-      .filter(j => j && !have.has(j.slug))
-      .map(j => ({ ...j, startsIn: mins }));
-    // Photos dropped straight into books/ have no folder and no job for their
-    // first few minutes. They are still a book on its way, and saying so is the
-    // whole difference between this shelf and the one that told a family with
-    // seventeen photos in Drive to go and set up Drive (dad 9/7).
+    S.building = (Array.isArray(s.jobs) ? s.jobs : []).filter(j => j && !have.has(j.slug));
+    // Photos dropped straight into books/ have no folder at all, so no row of
+    // the hub's own describes them. They are still a book waiting to happen, and
+    // saying so is the whole difference between this shelf and the one that told
+    // a family with seventeen photos in Drive to go and set up Drive (dad 9/7).
+    // It is a pile like any other now: it says how many photos there are, and it
+    // carries the tap that turns them into a book.
     const loose = Number(s.loose) || 0;
-    if (loose) S.building.push({ slug: "\u0000loose", title: "A new book", loose, startsIn: mins });
+    if (loose) S.building.push({ slug: "\u0000loose", title: "A new book", loose, waiting: "pile" });
   } catch { S.drive = null; S.building = []; }
+}
+
+// ---------- the shelf keeps looking (spec §13) ----------
+// It used to stop the moment there was a book on the shelf and nothing being
+// made — so a pile of photos dropped into Drive at teatime sat there unnoticed
+// until somebody relaunched the app. Now the poll runs for as long as the shelf
+// is up, on the faster of two clocks while something is actually in flight and
+// the slower one when nothing is: a pile changes only when a grown-up walks
+// over and taps it, and a shelf that has finished changing does not need to ask
+// three times a minute what it already knows.
+const POLL_FAST = 20000, POLL_SLOW = 60000;
+let pollTimer = null, pollMs = 0, painted = "";
+const inFlight = () => S.building.some(j => !isPile(j));
+
+function schedulePoll() {
+  const want = inFlight() ? POLL_FAST : POLL_SLOW;
+  if (pollTimer && pollMs === want) return;
+  if (pollTimer) clearInterval(pollTimer);
+  pollMs = want;
+  pollTimer = setInterval(pollShelf, want);
+}
+
+// ONLY WHEN SOMETHING ACTUALLY CHANGED. renderShelf() empties the grid and
+// builds every card again — the openable books' .dwell-buttons and #btnExit
+// with them — and era-core/dwell.js tracks the ELEMENT under the gaze, so a
+// rebuild throws away an in-flight dwell (clear() + begin() on a node it has
+// not seen before). Re-rendering on every tick because SOMETHING is building
+// tore the shelf out from under her every twenty seconds, for as long as a book
+// stayed unbuildable — which for a family that has not added an AI key yet is
+// the whole session. The signature is what the cards actually say, so a page
+// count ticking up still repaints and nothing else does; and a repaint
+// suppresses dwell for the settle window, like every other render here (D51).
+async function pollShelf() {
+  await refreshShelf();
+  schedulePoll();                  // what is on the shelf now decides the next clock
+  const fresh = shelfSig();
+  if (fresh === painted) return;
+  painted = fresh;
+  if (S.slug) return;              // she is inside a book; goLibrary() repaints
+  renderShelf();
+  suppress();
 }
 
 async function boot() {
@@ -633,36 +916,16 @@ async function boot() {
   await refreshShelf();
   renderShelf();
   suppress();
-  // An empty shelf keeps looking: Drive delivers the first book minutes after
-  // "set it up in Settings", and "No books yet" must not need a relaunch to
-  // notice (VM QA 9/2). It ALSO keeps looking while a book is being made, so
-  // "Making this book… 4 of 16 pages read" counts up in front of whoever is
-  // watching and turns into a real card by itself. Stops once the shelf has
-  // books on it and nothing is left building.
-  if (!S.index.length || S.building.length) {
-    // ONLY WHEN SOMETHING ACTUALLY CHANGED. renderShelf() empties the grid and
-    // builds every card again — the openable books' .dwell-buttons and #btnExit
-    // with them — and era-core/dwell.js tracks the ELEMENT under the gaze, so a
-    // rebuild throws away an in-flight dwell (clear() + begin() on a node it has
-    // not seen before). Re-rendering on every tick because SOMETHING is building
-    // therefore tore the shelf out from under her every twenty seconds, for as
-    // long as a book stayed unbuildable — which for a family that has not added
-    // an AI key yet is the whole session. The signature is what the cards
-    // actually say, so a page count ticking up still repaints and nothing else
-    // does; and a repaint suppresses dwell for the settle window, like every
-    // other render in this file (D51).
-    let painted = shelfSig();
-    const again = setInterval(async () => {
-      if (S.index.length && !S.building.length) { clearInterval(again); return; }
-      await refreshShelf();
-      const fresh = shelfSig();
-      if (fresh === painted) return;
-      painted = fresh;
-      if (S.slug) return;              // she is inside a book; goLibrary() repaints
-      renderShelf();
-      suppress();
-    }, 20000);
-  }
+  // The shelf keeps looking, and now it never stops. An empty one has to notice
+  // the first Drive book without a relaunch (VM QA 9/2); a book being made has
+  // to count its pages up in front of whoever is watching; and a FULL shelf has
+  // to notice a pile of photos landing in Drive, which is the one the old
+  // "stop once there are books and nothing is building" rule got wrong — since
+  // §13 that pile is the whole start of a book and it waits on a card she
+  // cannot see until somebody relaunches the app. schedulePoll() picks the
+  // clock (see above).
+  painted = shelfSig();
+  schedulePoll();
 
   $("btnNext").addEventListener("click", goNext);
   $("btnPrev").addEventListener("click", goPrev);
@@ -689,6 +952,8 @@ window.Reader = {
     videoShowing: S.playingOutro,
     shelfCount: S.index.length,
     buildingCount: S.building.length,
+    asking: S.asking ? S.asking.slug : null,
+    pollMs,                                                   // 20 s in flight, 60 s idle
     drive: S.drive,
   }),
   open: openBook,

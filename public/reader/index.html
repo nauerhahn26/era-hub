@@ -96,7 +96,8 @@
     gap: 36px;
   }
   .shelf-card { position: relative; }
-  .shelf-card-button.dwell-button {
+  .shelf-card-button.dwell-button,
+  .shelf-card-box.dwell-button {
     display: grid;
     /* The old app's card is a <button>, so the grid ran on the initial
        alignment: one stretched column, cover at the card's full inner width
@@ -116,6 +117,7 @@
     text-align: center;
   }
   .shelf-cover {
+    position: relative;      /* the "Build a book" tag is laid over its bottom */
     display: grid;
     place-items: center;
     width: 100%;
@@ -140,22 +142,44 @@
     padding-bottom: 4px;
   }
 
-  /* A BOOK THAT IS STILL BEING MADE (dad 9/7). Same footprint as a real card
-     so the shelf does not jump when it turns into one, and DELIBERATELY NOT a
-     dwell target: it has no .dwell class, no click handler and no cover, so
-     her gaze can rest on it as safely as it rests on the gutters. It is the
-     one thing on this shelf that is for a grown-up to read, and it exists
-     because "No books yet — set up Google Drive" is a lie to a family whose
-     Drive is set up and whose book is four minutes from being finished. */
-  .shelf-card-waiting {
-    display: grid;
-    gap: 10px;
-    width: 100%;
-    padding: 14px;
-    border-radius: 20px;
+  /* A BOOK THAT IS NOT A BOOK YET (dad 9/7; spec §13). Two of them: a PILE of
+     photos nobody has tapped Build on, and a book being MADE. Both keep
+     EXACTLY a real card's box — the picture where the cover goes, the title
+     under it, "Build a book" laid over the bottom of the picture — so the slot
+     does not reflow the moment the built book takes it. They exist because
+     "No books yet — set up Google Drive" is a lie to a family whose Drive is
+     set up and whose photos are sitting in it.
+
+     GAZE SAFETY, and it is deliberately NOT "no class" the way the old waiting
+     card was. reader.js gives the card and its button `class="dwell"
+     data-dwell-disabled`: dwell.js's targetAt() skips [data-dwell-disabled] so
+     her gaze can never arm on them, but the tap-parity long-press rescue and
+     the context-menu suppression match on `.dwell` ALONE — drop the class and
+     a slow press on Windows is dead and a long press opens the right-click
+     menu on her shelf. Building is a grown-up's press, made with a finger. */
+  .shelf-card.is-pile .shelf-card-box.dwell-button {
     background: rgba(255, 255, 255, 0.62);
-    border: 1px dashed var(--line);
-    text-align: center;
+    border-style: dashed;
+  }
+  .shelf-card.is-building .shelf-card-box.dwell-button {
+    background: rgba(255, 255, 255, 0.78);
+  }
+  /* Laid OVER the bottom of the picture, the way the old app's cards wear
+     their overlays — the card keeps a real card's shape, and the one thing on
+     it a grown-up is looking for is the thing they can press. */
+  .shelf-build-tag {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 9px 10px;
+    background: rgba(222, 110, 75, 0.94);
+    color: #fff;
+    font-size: 1.05rem;
+    font-weight: 800;
+    line-height: 1.2;
+    border-bottom-left-radius: 14px;
+    border-bottom-right-radius: 14px;
   }
   .shelf-waiting-mark {
     display: grid;
@@ -167,6 +191,36 @@
     font-size: 3rem;
   }
   .shelf-waiting-note { font-size: 1rem; line-height: 1.35; }
+
+  /* THE ASK (spec §13). Pressing Build does not build: the card turns into the
+     review page's question shape, in this shelf's own idiom rather than that
+     page's. The two answers sit at opposite ends of the card, so the press
+     that spends a family's allowance can never be the second half of the press
+     that asked about it. It fills the slot the card's box just left, so the
+     grid around it does not move under her while a grown-up reads it. */
+  .shelf-ask {
+    display: grid;
+    gap: 16px;
+    width: 100%;
+    padding: 20px 16px;
+    border-radius: 20px;
+    background: #fff;
+    border: 1px solid rgba(222, 110, 75, 0.55);
+    box-shadow: 0 8px 18px rgba(222, 110, 75, 0.18);
+    text-align: center;
+  }
+  .shelf-ask-q { margin: 0; font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
+  .shelf-ask-actions { display: flex; gap: 18px; justify-content: space-between; }
+  .shelf-ask-yes.dwell-button, .shelf-ask-no.dwell-button {
+    flex: 1 1 0;
+    min-height: 66px;
+    border-radius: 999px;
+  }
+  .shelf-ask-yes.dwell-button {
+    background: #2E7D5B;
+    border-color: #27694c;
+    color: #fff;
+  }
 
   /* Personalized ("Ellie's story") books: a warm coral rim so the card reads
      as special from across the room, without changing its shape or size. */
