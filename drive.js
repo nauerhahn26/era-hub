@@ -241,8 +241,69 @@ function manifestsLast(entries) {
   return rest.concat(last);
 }
 
-const isManifest = (name) => MANIFEST_NAMES.includes(String(name).toLowerCase());
+// TWO QUESTIONS, TWO LISTS. One constant used to answer both and they are not
+// the same question: "does this file go last" (the ready signal, above) and
+// "is this file compared by its BYTES rather than its length" (the skip below).
+// job.json is the second without being the first. It is the build claim and the
+// anti-rebuild latch, and every line of it — a heartbeat a minute later, `state`
+// going from building to done — is the same number of characters as the line
+// before, so under a size-equal skip the news never leaves the computer that
+// wrote it and two devices disagree about who owns a book. It must NOT wait for
+// the end of its directory though: the sooner the other computers can read the
+// claim, the smaller the window in which two of them build the same pile.
+const BYTE_COMPARE = MANIFEST_NAMES.concat(["job.json"]);
+const byteCompared = (name) => BYTE_COMPARE.includes(String(name).toLowerCase());
 const md5 = (p) => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex");
+
+// THE READY SIGNAL WAITS FOR THE BOOK. manifestsLast settles the order WE copy
+// in; it cannot settle the order Drive desktop downloads in. The weekly book is
+// assembled somewhere else and uploaded manifest-last, and the family's Drive
+// folder still shows us that manifest with half the pages on their way — so
+// before manifest.json is copied, every file it names must be here with bytes
+// in it. Otherwise it is left where it is and the next pass (ten minutes) picks
+// it up: the shelf shows the book whole or not at all, and a book that opens on
+// a missing picture is the thing she remembers.
+//
+// Only manifest.json, and only the keys the hub's own publisher writes (`cover`
+// and each page's `image`/`audio`/`video`, content-publish.js:133-157).
+// catalog.json is a movie list and a music manifest names songs — neither is a
+// package whose parts can arrive after it. And "there is a file with that name"
+// is not the question: Drive lands a big mp4 as a zero-length placeholder
+// first, so it is bytes, exactly as `present()` asks on the publishing side.
+// A manifest we cannot even parse is mid-write by definition and waits too.
+// (API mode's mirrorDir has no such guard: the maker delivers into the family's
+// Drive FOLDER, which is local mode. An API-mode hub keeps today's behaviour.)
+const BOOK_MANIFEST = "manifest.json";
+const isBookManifest = (name) => String(name).toLowerCase() === BOOK_MANIFEST;
+function missingFrom(bookDir) {
+  let m = null;
+  try { m = JSON.parse(fs.readFileSync(path.join(bookDir, BOOK_MANIFEST), "utf8")); }
+  catch { return BOOK_MANIFEST; }              // half-written: not a signal yet
+  if (!m || typeof m !== "object") return "";
+  const named = [];
+  if (typeof m.cover === "string") named.push(m.cover);
+  if (Array.isArray(m.pages)) for (const p of m.pages) {
+    if (!p || typeof p !== "object") continue;
+    for (const k of ["image", "audio", "video"]) if (typeof p[k] === "string") named.push(p[k]);
+  }
+  for (const rel of named) {
+    if (!rel) continue;
+    try { if (fs.statSync(path.join(bookDir, rel)).size > 0) continue; } catch {}
+    return rel;
+  }
+  return "";
+}
+// Once per book, not once per pass: the mirror runs every ten minutes, a big
+// upload can span several of them, and a log that repeats itself is a log
+// nobody reads. The book is forgotten the moment it is shelved, so a re-drop
+// that goes incomplete again says so again.
+const waitingBooks = new Set();
+function noteWaiting(bookDir, missing) {
+  if (waitingBooks.has(bookDir)) return;
+  waitingBooks.add(bookDir);
+  console.log("[drive] " + path.basename(bookDir) + ": manifest.json names " + missing +
+              ", which is not here yet - leaving the book off the shelf until it is");
+}
 
 // The family's shared clothing log (clothing-log.js, spec §5) lives at
 // <folder>/clothing/.era/**. Like a manifest, it must be compared by CONTENT,
@@ -283,8 +344,9 @@ async function mirrorDir(tok, folderId, destDir, stats, have) {
       // LENGTH (an ISO stamp is always the same size), so the size-equal skip
       // would keep the old one forever — and exportedAt is exactly the reader's
       // cache-bust key. Manifests compare by checksum instead; everything else
-      // is content-addressed enough by size.
-      if (fs.existsSync(dest) && ((isManifest(safe) || inSharedLog(dest))
+      // is content-addressed enough by size. (job.json rides the same rail —
+      // BYTE_COMPARE — for the same reason: a same-length rewrite of the latch.)
+      if (fs.existsSync(dest) && ((byteCompared(safe) || inSharedLog(dest))
             ? (f.md5Checksum && md5(dest) === f.md5Checksum)
             : (f.size && fs.statSync(dest).size === Number(f.size)))) { stats.skipped++; continue; }
       const r = await fetch(API + "/drive/v3/files/" + f.id + "?alt=media",
@@ -453,13 +515,24 @@ function copyTreeLocal(src, dest, stats, have, rel = "") {
     try {
       if (e.isDirectory()) { have.dirs.add(r); copyTreeLocal(s, d, stats, have, r); continue; }
       if (!e.isFile()) continue;
+      // In have.files BEFORE the wait below, and that order is load-bearing:
+      // have.files is what the prune keeps, so a manifest we are declining to
+      // copy this pass must still read as "the source has it". Left out, a
+      // re-drop that is halfway uploaded would look like a parent deleting the
+      // manifest and the book she is reading would leave the shelf.
       have.files.add(r);
+      if (isBookManifest(e.name)) {
+        const missing = missingFrom(src);           // see the block on missingFrom
+        if (missing) { noteWaiting(src, missing); continue; }
+        waitingBooks.delete(src);                   // whole again
+      }
       // Manifests compare by BYTES, not size: a re-publish that only bumps
       // exportedAt keeps the same length, and exportedAt is the reader's
       // cache-bust key — size-equal would strand every fix on the one device.
       // The clothing log under .era/ is compared the same way, for the same
-      // reason (W9 — a wholesale rewrite of the same length).
-      if (fs.existsSync(d) && ((isManifest(e.name) || inSharedLog(d))
+      // reason (W9 — a wholesale rewrite of the same length), and job.json for
+      // its own (BYTE_COMPARE).
+      if (fs.existsSync(d) && ((byteCompared(e.name) || inSharedLog(d))
             ? fs.readFileSync(d).equals(fs.readFileSync(s))
             : fs.statSync(d).size === fs.statSync(s).size)) { stats.skipped++; continue; }
       atomically(d, (tmp) => fs.copyFileSync(s, tmp));

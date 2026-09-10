@@ -127,6 +127,12 @@ test("one ordering rule: manifest.json and catalog.json go last, everything else
            { name: "catalog.json" }, { name: "b.jpg" }]),
     ["a.jpg", "pages", "b.jpg", "manifest.json", "catalog.json"]);
   assert.deepEqual(names([{ name: "a.jpg" }, { name: "b.jpg" }]), ["a.jpg", "b.jpg"]);
+  // job.json is byte-compared like a manifest (below) but is NOT one: it is the
+  // claim latch, and the sooner the other computers see it the smaller the
+  // window in which two of them build the same book. It keeps its place.
+  assert.deepEqual(
+    names([{ name: "job.json" }, { name: "manifest.json" }, { name: "log.jsonl" }]),
+    ["job.json", "log.jsonl", "manifest.json"]);
 });
 
 test("local mode: a book's manifest is copied after its pages, at every level", async () => {
@@ -446,4 +452,114 @@ test("the Settings checklist counts photos, not the hub's own dot-folder", async
   assert.equal(drive.status().content.clothing, false, "a log line is not a wardrobe");
   fs.writeFileSync(path.join(S, "clothing", "tee.jpg"), "tee");
   assert.equal(drive.status().content.clothing, true, "…a photo is");
+});
+
+// ---- the mirror shelves COMPLETE books only (spec §14) ---------------------
+// The weekly book is built somewhere else entirely and arrives through Drive
+// desktop, which downloads a folder in whatever order it likes. Uploading the
+// manifest last (the maker's two rclone passes) settles the order going UP and
+// nothing settles it coming DOWN — so the manifests-last rule above, which is
+// only about the order WE copy in, is not enough on its own: a manifest can be
+// sitting in the source folder with half the pages still on their way.
+// manifest.json is the reader's "this package is ready" signal, so it waits
+// until every file it names is here with bytes in it. Ten more minutes is
+// nothing; a book that opens on a missing picture is the thing she remembers.
+const capture = async (fn) => {
+  const said = [], real = console.log;
+  console.log = (...a) => said.push(a.map(String).join(" "));
+  try { await fn(); } finally { console.log = real; }
+  return said;
+};
+
+test("a manifest is copied only once every file it names is in the source", async () => {
+  const D = path.join(TMP, "data-half"), S = path.join(TMP, "My Drive", "Half Content");
+  const src = path.join(S, "books", "Half Arrived");
+  fs.mkdirSync(path.join(src, "pages"), { recursive: true });
+  fs.mkdirSync(path.join(src, "audio"), { recursive: true });
+  fs.writeFileSync(path.join(src, "cover.jpg"), "cover");
+  fs.writeFileSync(path.join(src, "pages", "001.jpg"), "page one");
+  // Drive lands a big file as a zero-length placeholder first, so "there is a
+  // file with that name" is not the question — "does it have bytes" is.
+  fs.writeFileSync(path.join(src, "audio", "001.mp3"), "");
+  fs.writeFileSync(path.join(src, "manifest.json"), JSON.stringify({
+    schemaVersion: 1, id: "b1", slug: "half-arrived", title: "Half Arrived",
+    exportedAt: "2026-09-09T20:00:00.000Z", cover: "cover.jpg", authored: true,
+    pages: [{ index: 1, image: "pages/001.jpg", text: "one", audio: "audio/001.mp3" },
+            { index: 2, image: "pages/002.jpg", text: "two" }],
+  }));
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+
+  const said = await capture(async () => { await drive.sync(); await drive.sync(); });
+  const dest = path.join(D, "books", "Half Arrived");
+  assert.ok(fs.existsSync(path.join(dest, "pages", "001.jpg")), "what HAS arrived is mirrored");
+  assert.ok(!fs.existsSync(path.join(dest, "manifest.json")), "…but the ready signal is not");
+  assert.equal(said.filter(l => l.includes("Half Arrived")).length, 1,
+    "said once for the book, not once per ten-minute pass");
+
+  // The rest of the upload lands: the very next pass shelves the whole book.
+  fs.writeFileSync(path.join(src, "pages", "002.jpg"), "page two");
+  fs.writeFileSync(path.join(src, "audio", "001.mp3"), "mp3");
+  await drive.sync();
+  const got = JSON.parse(fs.readFileSync(path.join(dest, "manifest.json"), "utf8"));
+  assert.equal(got.pages.length, 2, "the manifest arrived whole, with the book under it");
+  assert.equal(got.authored, true, "and it is still the week's book");
+});
+
+// The other half of the same rule: waiting must never look like deleting. The
+// manifest is in the source the whole time it is being skipped, so it stays in
+// the source's file list — otherwise the prune below would read "the parent
+// deleted it" and take a finished book off the shelf while a re-drop uploads.
+test("a book already on the shelf is not taken off it while its source is incomplete", async () => {
+  const D = path.join(TMP, "data-redrop"), S = path.join(TMP, "My Drive", "Redrop Content");
+  const src = path.join(S, "books", "Re Dropped");
+  fs.mkdirSync(path.join(src, "pages"), { recursive: true });
+  fs.writeFileSync(path.join(src, "pages", "001.jpg"), "one");
+  fs.writeFileSync(path.join(src, "pages", "002.jpg"), "two");
+  const manifest = JSON.stringify({ schemaVersion: 1, pages: [
+    { index: 1, image: "pages/001.jpg", text: "one" },
+    { index: 2, image: "pages/002.jpg", text: "two" }] });
+  fs.writeFileSync(path.join(src, "manifest.json"), manifest);
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+  await drive.sync();
+  const dest = path.join(D, "books", "Re Dropped");
+  assert.ok(fs.existsSync(path.join(dest, "manifest.json")), "shelved whole");
+
+  fs.rmSync(path.join(src, "pages", "002.jpg"));   // mid re-upload
+  const r = await drive.sync();
+  assert.equal(r.removed, 1, "the page that left the source left the device");
+  assert.ok(fs.existsSync(path.join(dest, "manifest.json")),
+    "the manifest is skipped, never pruned — the book she has stays readable");
+});
+
+// job.json is the anti-rebuild latch and the claim. It has to cross devices on
+// its BYTES: a heartbeat a minute later, or `state` going from building to
+// done, is the same number of characters as the line before it, and the
+// size-equal skip would strand the news on the computer that wrote it — two
+// devices then disagree about who owns the book, which is the one thing the
+// build door asks.
+test("a job.json rewritten to the same length still reaches the other computer", async () => {
+  const D = path.join(TMP, "data-latch"), S = path.join(TMP, "My Drive", "Latch Content");
+  const src = path.join(S, "books", "Latched");
+  fs.mkdirSync(path.join(src, ".build"), { recursive: true });
+  fs.writeFileSync(path.join(src, "IMG_0001.jpg"), "img");
+  const job = (hb) => JSON.stringify({ state: "building", claimedBy: "kitchen-pc:4120",
+                                       startedAt: "2026-09-09T10:00:00.000Z", heartbeat: hb });
+  const first = job("2026-09-09T10:00:00.000Z"), later = job("2026-09-09T10:31:00.000Z");
+  assert.equal(first.length, later.length, "a heartbeat never changes the file's length");
+  fs.writeFileSync(path.join(src, ".build", "job.json"), first);
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+
+  const dest = path.join(D, "books", "Latched", ".build", "job.json");
+  await drive.sync();
+  assert.equal(fs.readFileSync(dest, "utf8"), first, "the claim crossed");
+  fs.writeFileSync(path.join(src, ".build", "job.json"), later);
+  await drive.sync();
+  assert.equal(fs.readFileSync(dest, "utf8"), later,
+    "the bytes, not the byte count, decide whether the latch is re-copied");
 });
