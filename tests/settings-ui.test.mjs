@@ -130,9 +130,10 @@ async function settingsPage(contentStatus, opts = {}) {
 // overridden. Kept next to the tests so a change to that payload breaks here.
 function statusPayload(over) {
   return { mode: "local", local: true, skipped: null, building: false, job: null,
-           // The pile of photos with no folder yet, and the wait before it
-           // becomes one (dad 9/7). Both travel on the status so no card has to
-           // hard-code the ten minutes content.js actually waits.
+           // The pile of photos with no folder yet (dad 9/7). `quietMs` still
+           // travels — older readers of this payload use it — but since "built
+           // here" (spec §12) nothing in the hub starts on that clock, so no
+           // card may say a number of minutes out loud any more.
            loose: 0, quietMs: 10 * 60 * 1000,
            queued: [], jobs: [], lastScan: null, ...over };
 }
@@ -141,7 +142,18 @@ function bookJob(over) {
            step: "transcribe", progress: { pages: 12, transcribed: 3, narrated: 0 },
            cost: { characters: 0, narrated: 0 }, flags: 0, pageFlags: 0, edited: 0,
            autoTitle: false, held: null,
+           // What the card may OFFER (spec §14): `waiting:"pile"` is a folder of
+           // photos nobody has claimed, `elsewhere` another computer's warm
+           // claim, `buildable` "this door would say yes". A book being built
+           // here is none of the three.
+           waiting: null, buildable: true, elsewhere: false,
            pausedUntil: null, note: null, paused: null, published: false, error: null, ...over };
+}
+// A pile of photos in a folder of its own: no job.json, no manifest, nobody's
+// claim — the row the Build button belongs to (content.js jobFor).
+function pileJob(over) {
+  return bookJob({ state: "inbox", step: "ingest", waiting: "pile",
+                   progress: { pages: 17, transcribed: 0, narrated: 0 }, ...over });
 }
 // The pause as content.js derives it (T6b.1): whose allowance ran out, when it
 // comes back, and where more is added. `hours` from now, so the sentence the
@@ -906,24 +918,178 @@ test("a picks block the card cannot render never takes the AI status line with i
 // ---------------------------------------------- loose photos and their book (9/7)
 // dad dropped seventeen iPhone photos straight into books/ and the card said
 // "No books yet" over the top of them for ten minutes.
+//
+// The ten minutes themselves are gone (spec §12, "built here"): the scan no
+// longer gathers that pile, so the card that used to promise a start on a clock
+// now offers the tap that is the only thing which starts one.
 
-test("photos waiting in books/ are said out loud, with how long the wait is", async () => {
+test("photos waiting in books/ are said out loud, and they wait for a TAP", async () => {
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [], loose: 17 }));
   await page.waitForFunction(() => /photo/.test(document.getElementById("contentStatus").textContent));
   const s = await page.$eval("#contentStatus", e => e.textContent);
   assert.match(s, /17 photos/, s);
   assert.match(s, /one book/i, "the hub says what it is going to assume");
-  assert.match(s, /10 minutes/, "and when it will act on it");
+  assert.match(s, /tap Build|press Build/i, "and who starts it");
+  assert.doesNotMatch(s, /10 minutes/, "nothing starts on a clock any more");
   assert.doesNotMatch(s, /No books yet/i, "never over the top of seventeen photos");
+  assert.equal(await page.isVisible("#contentStatus button[data-build-loose]"), true,
+    "the pile with no folder gets its own Build");
   await ctx.close();
 });
 
-test("a book waiting to start says what it is waiting for", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({
-    jobs: [bookJob({ state: "inbox", step: "ingest", progress: { pages: 17, transcribed: 0, narrated: 0 } })] }));
+// Spec §14: "the Settings content card renders `waiting` rows as 'N photos —
+// waiting for a grown-up to tap Build'". The count is the photos, and the
+// pages-read counter stays away: nothing has been read, and "0 of 17 pages
+// read" under a pile nobody has started reads like a failure.
+test("a pile of photos says how many, and that it is waiting for a grown-up (spec §14)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }));
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
-  assert.match(s, /building begins about 10 minutes after the last photo arrives/i, s);
+  assert.match(s, /17 photos/, s);
+  assert.match(s, /waiting for a grown-up to tap Build/i, s);
+  assert.doesNotMatch(s, /0 of 17 pages read/, "nothing has been read; that is not a failure to report");
+  assert.doesNotMatch(s, /building begins|by itself/i, s);
+  await ctx.close();
+});
+
+// The press that spends the family's money, in Settings' own two-tap arm (the
+// shutdown button's idiom, index.html:596): the first tap arms and buys
+// nothing, the second is the one that builds.
+test("Build on a pile row arms on the first tap and posts on the second (spec §14)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }));
+  const posts = [];
+  await page.route("**/content/build", r => {
+    posts.push(JSON.parse(r.request().postData()));
+    r.fulfill({ status: 202, contentType: "application/json",
+                body: JSON.stringify({ started: true, slug: "tabby-mctat" }) });
+  });
+  const btn = page.locator('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
+  assert.match(await btn.textContent(), /Build/i);
+  await btn.click();
+  await page.waitForFunction(() => /again/i.test(
+    document.querySelector('#contentBooks [data-slug="tabby-mctat"] button[data-build]').textContent));
+  assert.deepEqual(posts, [], "one tap spends nothing");
+  const [req] = await Promise.all([
+    page.waitForRequest(r => r.url().includes("/content/build") && r.method() === "POST"),
+    btn.click(),
+  ]);
+  assert.deepEqual(JSON.parse(req.postData()), { kind: "books", slug: "tabby-mctat" });
+  await ctx.close();
+});
+
+// This card rebuilds every row every five seconds, so an arm kept on the button
+// would be thrown away half a second before the second tap. It lives outside the
+// paint, the way the reader's ask does (`S.asking`, spec §13).
+test("an armed Build survives the card's own repaint", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }));
+  await page.route("**/content/build", r => r.fulfill({ status: 202,
+    contentType: "application/json", body: JSON.stringify({ started: true, slug: "tabby-mctat" }) }));
+  const btn = page.locator('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
+  await btn.click();
+  await page.evaluate(() => contentPaint());
+  assert.match(await btn.textContent(), /again/i, "the arm outlived the repaint");
+  const [req] = await Promise.all([
+    page.waitForRequest(r => r.url().includes("/content/build") && r.method() === "POST"),
+    btn.click(),
+  ]);
+  assert.deepEqual(JSON.parse(req.postData()), { kind: "books", slug: "tabby-mctat" });
+  await ctx.close();
+});
+
+// The pile in books/ has no folder and so no slug until the hub gathers it, so
+// its tap says `loose:true` and the hub hands the new slug back (spec §14). The
+// reader's old NUL-prefixed grid marker is never sent, and neither is this
+// card's own copy of it.
+test("the loose pile's Build posts loose:true, never a slug", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [], loose: 17 }));
+  await page.route("**/content/build", r => r.fulfill({ status: 202,
+    contentType: "application/json", body: JSON.stringify({ started: true, slug: "photos-10-september" }) }));
+  const btn = page.locator("#contentStatus button[data-build-loose]");
+  await btn.click();
+  await page.waitForFunction(() => /again/i.test(
+    document.querySelector("#contentStatus button[data-build-loose]").textContent));
+  const [req] = await Promise.all([
+    page.waitForRequest(r => r.url().includes("/content/build") && r.method() === "POST"),
+    btn.click(),
+  ]);
+  const body = req.postData();
+  assert.deepEqual(JSON.parse(body), { kind: "books", loose: true });
+  assert.doesNotMatch(body, /\u0000|slug/, body);
+  await ctx.close();
+});
+
+// A refusal is a sentence the hub wrote, not a status code: "another computer
+// in the family is making this book" is the whole answer, and the card says it
+// in the hub's own words (server.js answers 409 {refused, error}).
+test("a refused Build shows the hub's own sentence", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }));
+  await page.route("**/content/build", r => r.fulfill({ status: 409,
+    contentType: "application/json", body: JSON.stringify({ refused: "elsewhere",
+      error: "Another computer in the family is making this book." }) }));
+  const btn = page.locator('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
+  await btn.click();
+  await page.waitForFunction(() => /again/i.test(
+    document.querySelector('#contentBooks [data-slug="tabby-mctat"] button[data-build]').textContent));
+  await btn.click();
+  await page.waitForFunction(() => /Another computer in the family/i.test(document.body.textContent));
+  await ctx.close();
+});
+
+// The same door, the same manners: since "built here" /content/run refuses a
+// book another computer holds (server.js answers 409 {refused, error}), and
+// "Try this book again" used to throw that answer away — leaving a parent
+// pressing a button that plainly did nothing.
+test("a run this hub may not make says why, in the hub's own words", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
+    state: "failed", step: "transcribe", elsewhere: true, buildable: false,
+    error: "ai(google/gemini-3-flash-preview) 500 boom" })] }));
+  await page.route("**/content/run", r => r.fulfill({ status: 409,
+    contentType: "application/json", body: JSON.stringify({ refused: "elsewhere",
+      error: "Another computer in the family is making this book." }) }));
+  await page.click('#contentBooks [data-slug="tabby-mctat"] button[data-run]');
+  await page.waitForFunction(() => /Another computer in the family/i.test(document.body.textContent));
+  await ctx.close();
+});
+
+// The one time the card says why there is no button (spec §13/§14). No device
+// name, no path: another computer is enough.
+test("a book another computer is building says so, and offers no Build (spec §13)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ elsewhere: true, buildable: false })] }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+  const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.match(s, /Building on another computer/i, s);
+  assert.equal(await page.$$eval('#contentBooks button[data-build]', b => b.length), 0,
+    "nothing to press: the other computer holds this book");
+  await ctx.close();
+});
+
+// The weekly book (spec §8): it arrives finished, its job.json says `done`
+// before the manifest lands, and this hub never builds it. The row it gets is
+// the one every finished book gets, unchanged.
+test("a finished book from another computer says it is ready to read (§17)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
+    slug: "first-grade-news", title: "First Grade News", state: "done", step: null,
+    published: true, buildable: false, progress: { pages: 8, transcribed: 8, narrated: 8 } })] }));
+  await page.waitForSelector('#contentBooks [data-slug="first-grade-news"]');
+  const s = await page.$eval('#contentBooks [data-slug="first-grade-news"]', e => e.textContent);
+  assert.match(s, /Ready to read in Book Reader ✓/, s);
+  assert.equal(await page.$$eval('#contentBooks button[data-build]', b => b.length), 0,
+    "an already-made book is never offered a build");
+  await ctx.close();
+});
+
+// Spec §12: "every sentence that promised an automatic start goes", and "a test
+// asserts no card promises one". The whole card is read, static copy included —
+// the hint above the list promised the same thing in the same breath.
+test("nothing in Your books promises a build that starts by itself (spec §12)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()], loose: 17 }));
+  await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
+  const card = await page.$eval("#content", e => e.textContent);
+  for (const promise of [/building begins/i, /starts building/i, /looks for new photos/i,
+                         /minutes after the last/i, /by itself/i, /on its own/i])
+    assert.doesNotMatch(card, promise, card);
+  assert.match(card, /tap Build|press Build/i, "and it says what does start one");
   await ctx.close();
 });
 

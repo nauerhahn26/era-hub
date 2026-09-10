@@ -64,6 +64,10 @@
   button.stopbtn.armed{background:var(--coral); border-color:#B85C34; color:#fff}
   .stophint{font-size:15px; color:#8A7266; margin-top:8px}
   .stophint.armed{color:#B85C34; font-weight:600}
+  /* The Build tap (spec §14). It borrows the shutdown button's armed colours
+     because it is the same gesture — tap to arm, tap again to act — and this is
+     the one press on a grown-up's page that spends the family's allowance. */
+  button.ctbuild.armed{background:var(--coral); border-color:#B85C34; color:#fff}
   /* Persistent stopped state (also shown when the engine is offline on load) */
   .stopped{display:flex; gap:16px; align-items:flex-start; background:#F5EEEA;
            border:1px solid #E1CFC5; border-radius:14px; padding:20px 22px}
@@ -210,7 +214,12 @@
 
   <div class="card" id="content">
     <h2>📚 Your books</h2>
-    <p class="hint">Photograph the pages of one of her picture books and put the photos in <b>books</b> in your Google Drive. That is all &mdash; New ERA takes a pile of loose photos to be <b>one book</b>, makes the folder, names it from the cover, reads the words off the photos and records the narration, and the book turns up in <b>Book Reader</b> on every device in the family. (Two books at once? Make a folder for each, named after the book, and put its photos in that.) You only pay for it once, and nothing ever leaves your own Drive.</p>
+    <!-- WHO STARTS A BOOK (spec §12, "built here"). Nothing here begins on a
+         clock any more: a grown-up presses Build, on this card or on her shelf,
+         and the computer they pressed it on is the one that does the work. The
+         hint says so, because the sentence it used to carry — photos in, book
+         out, no press named — is the promise the whole rule removes. -->
+    <p class="hint">Photograph the pages of one of her picture books, put the photos in <b>books</b> in your Google Drive, and press <b>Build</b> &mdash; here or on her shelf. New ERA takes a pile of loose photos to be <b>one book</b>, makes the folder, names it from the cover, reads the words off the photos and records the narration, and the book turns up in <b>Book Reader</b> on every device in the family. Only the computer you pressed Build on does the work, so no book is ever made &mdash; or paid for &mdash; twice. (Two books at once? Make a folder for each, named after the book, and put its photos in that.) You only pay for it once, and nothing ever leaves your own Drive.</p>
     <div class="row" id="contentActions" style="display:none; margin-bottom:10px">
       <button id="ctLook">📚 Look for new books now</button>
     </div>
@@ -956,8 +965,14 @@ aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
 // narration step, so it reads as "about to record" rather than "under review":
 // there is no human review in the middle of a build (the review page is for
 // afterwards).
+// `inbox` is no longer "waiting for a clock": since "built here" (spec §12) a
+// folder only reaches this state once a grown-up has tapped Build on THIS
+// computer, so it is the first minute of the walk — ingest, taking the photos in
+// — and not a promise that something will happen on its own. A pile nobody has
+// tapped never gets here: it has no job at all, and ctRow says so in its own
+// sentence instead.
 const CT_DOING = {
-  inbox: "Waiting to start — New ERA looks for new photos every few minutes.",
+  inbox: "Getting the photos ready…",
   transcribing: "Reading the words off the photos…",
   reviewing: "Words read — about to record the narration.",
   narrating: "Recording the narration…",
@@ -991,9 +1006,10 @@ function ctSorry(msg){
 // honest choices: wait, and it carries on by itself, or add credit and press
 // Try again now.
 const CT_PROVIDER={ google:"Google AI Studio", elevenlabs:"ElevenLabs" };
-// content.js QUIET_MS in minutes, refreshed on every paint. The default is only
-// what the card says for the half-second before the first status lands.
-let CT_QUIET_MIN=10;
+// (content.js's quiet period used to be kept here, in minutes, so two sentences
+// could say when a pile would start building on its own. Since "built here"
+// (spec §12) no pile starts on its own, so there is no number to keep: the two
+// sentences say who presses Build instead.)
 // The holds content-worker.js parks a book on that are neither a pause nor a
 // failure. Each one names what is missing and where the fix is; a hold with no
 // sentence here simply shows nothing, which is what "no-pages" deserves on a
@@ -1050,21 +1066,95 @@ function ctPaused(j){
     +'</div>';
 }
 
+// ---- THE TAP THAT BUILDS (spec §12 "built here", §14) --------------------
+// "The 'build' for local button is simply to make sure that when users upload a
+// book multiple devices don't build the same book" (dad, 9/9). Nothing in the
+// hub starts a build by itself any more, so this button is the whole of how a
+// pile of photos becomes a book — and it builds it HERE, on the computer whose
+// Settings page was pressed.
+//
+// Settings' own two-tap arm (the shutdown button's idiom, :596): the first tap
+// arms, the second spends, and five seconds untouched cancels it. A grown-up's
+// page has no dwell and no confirm dialog, but this is the one press on it that
+// costs a family money, so it is not a single stray tap either.
+//
+// THE ARM LIVES OUT HERE, not on the button, because this card rebuilds every
+// row every five seconds: an arm kept in the DOM would be thrown away half a
+// second before the second tap. The paint reads it back, which is the reader's
+// rule for its ask (`S.asking`, spec §13) in this page's own shape.
+const CT_LOOSE="\u0000loose";     // the pile in books/ has no slug yet: JS only, never the DOM
+const CT_BUILD_LABEL="🔨 Build this book";
+const CT_BUILD_ARMED="🔨 Tap again to build";
+let CT_ARMED=null, CT_ARM_TIMER=null;
+// `attr` is what tells the two apart on the way back: a row's button carries the
+// book's slug, the loose pile's carries nothing at all — it has no slug until
+// the hub gathers it, and the NUL marker above must never reach an attribute
+// (an HTML parser turns it into U+FFFD).
+function ctBuildBtn(key, attr){
+  const on=CT_ARMED===key;
+  return '<button class="ctbuild'+(on?' armed':'')+'" '+attr+'>'
+    +(on?CT_BUILD_ARMED:CT_BUILD_LABEL)+'</button>';
+}
+function ctDisarm(paint){
+  if(CT_ARM_TIMER){ clearTimeout(CT_ARM_TIMER); CT_ARM_TIMER=null; }
+  CT_ARMED=null;
+  if(paint) contentPaint();
+}
+function ctWireBuild(el, key, body, title){
+  const b=el.querySelector(key===CT_LOOSE?"button[data-build-loose]":"button[data-build]");
+  if(!b) return;
+  b.onclick=()=>{
+    if(CT_ARMED!==key){                          // first tap: arm this one, disarm any other
+      ctDisarm(false);
+      CT_ARMED=key; b.classList.add("armed"); b.textContent=CT_BUILD_ARMED;
+      CT_ARM_TIMER=setTimeout(()=>ctDisarm(true), 5000);
+      return;
+    }
+    ctDisarm(false);                             // second tap: fire, and let the answer repaint
+    ctBuild(body, title);
+  };
+}
+async function ctBuild(body, title){
+  let out={};
+  try{ out=await (await fetch("/content/build",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body)})).json(); }catch(e){ out={error:"That did not go through — try again."}; }
+  // The hub's own sentence, never a status code: "another computer in the family
+  // is making this book", "this book is already made", "those photos are still
+  // arriving". content.js wrote all three for a parent to read, and this card
+  // has nothing truer to say than the door that refused.
+  if(out.error) toast(out.error,false);
+  else toast("Building "+title+" — this card shows the progress");
+  contentPaint();
+}
+
 function ctRow(j){
   const d=document.createElement("div");
   d.dataset.slug=j.slug;
   d.style.cssText="border-top:1px solid var(--line);padding:10px 0";
   const p=j.progress||{pages:0,transcribed:0,narrated:0};
   let h='<div style="font-size:20px;font-weight:650">'+CT_ESC(j.title||j.slug)+'</div>';
-  // "Waiting to start" is only useful if it says WHAT it is waiting for and for
-  // HOW LONG (dad 9/7). The number is the hub's own quiet period, not a guess.
-  h+='<div class="status" style="margin-top:2px">'+(j.state==="inbox"
-    ? "Waiting to start — building begins about "+CT_QUIET_MIN+" minutes after the last photo arrives."
+  // WHAT THIS FOLDER IS, in three sentences and this order (spec §13, §14).
+  // A PILE is photos nobody has claimed: it says how many there are and who has
+  // to press the button, because until somebody does, nothing whatever happens
+  // to it. "Waiting to start — building begins about N minutes after the last
+  // photo arrives" used to sit here and was, from the day the scan stopped
+  // claiming, simply untrue.
+  // ELSEWHERE is another computer's warm claim — the one time this card says why
+  // there is no button. No device name and no folder: another computer is the
+  // whole of what the family is owed, and the payload carries nothing else.
+  // Everything else is a book on its walk, in the words it has always used.
+  const pile=j.waiting==="pile";
+  h+='<div class="status" style="margin-top:2px">'+(pile
+    ? '<b>'+p.pages+' photo'+(p.pages===1?'':'s')+'</b> — waiting for a grown-up to tap <b>Build</b>.'
+    : j.elsewhere ? "Building on another computer."
     : (CT_DOING[j.state]||"Working…"));
   // Two counts, because they are the two things that cost money and time. The
   // narration count only appears once there is one — "0 of 12 narrated" under a
-  // book that has not reached that step reads like a failure.
-  if(p.pages) h+=' <span style="color:#5A6A70">'+p.transcribed+' of '+p.pages+' pages read'
+  // book that has not reached that step reads like a failure. And a pile that
+  // nobody has started gets neither: "0 of 17 pages read" under photos nothing
+  // has touched yet reads like a book that failed, when it is a book that has
+  // not been asked for.
+  if(p.pages&&!pile) h+=' <span style="color:#5A6A70">'+p.transcribed+' of '+p.pages+' pages read'
     +(p.narrated?', '+p.narrated+' of '+p.pages+' narrated':'')+'.</span>';
   h+='</div>';
   // Out of allowance, with a name on it and both choices (T6b.2). A hub that
@@ -1128,7 +1218,16 @@ function ctRow(j){
     +' words you typed yourself &mdash; &ldquo;Read the photos again&rdquo; keeps them.</div>';
   // The review page is where a parent fixes words, reorders pages and picks the
   // cover; it is worth offering for every book, not only flagged ones.
-  h+='<div class="row" style="margin-top:8px"><a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'
+  h+='<div class="row" style="margin-top:8px">'
+   // The press that starts this book, and the only one in the card that spends
+   // (spec §14). It is offered on a PILE and nowhere else: a book that is
+   // already on its walk needs no starting, a finished one is refused by the
+   // door, and another computer's book has the sentence above instead of a
+   // button. A pile the door would refuse anyway — a claim line arriving before
+   // its job.json — still gets it, because the refusal that comes back is a
+   // truer sentence than any this card could guess from the payload.
+   +(pile?ctBuildBtn(j.slug,'data-build="'+CT_ESC(j.slug)+'"'):'')
+   +'<a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'
    +' style="font-size:17px;color:var(--teal-deep);text-decoration:none;font-weight:650;'
    +'border:2px solid var(--teal);border-radius:12px;padding:10px 16px;background:#fff">📖 Review this book</a>'
    // Choice two, made pressable: the page where allowance is added (the address
@@ -1154,6 +1253,11 @@ function ctRow(j){
    +' value="'+CT_ESC(j.title||"")+'" style="flex:1;min-width:220px">'
    +'<button class="ct-rename-save">Save name</button></div>';
   d.innerHTML=h;
+  // ---- build (spec §14) -------------------------------------------------
+  // A folder has a slug already, so its tap sends one; only the pile in books/
+  // itself goes as `loose:true`, and that button lives on the line above the
+  // list rather than in a row.
+  if(pile) ctWireBuild(d, j.slug, {kind:"books",slug:j.slug}, j.title||j.slug);
   // ---- rename ----------------------------------------------------------
   const ren=d.querySelector("button[data-rename]"), box=d.querySelector(".ct-rename");
   // display, not [hidden]: the page's own .row sets display:flex, which wins.
@@ -1183,13 +1287,19 @@ function ctRow(j){
   const again=d.querySelector("button[data-run]");
   if(again) again.onclick=async()=>{
     again.disabled=true;
-    toast("Starting "+(j.title||j.slug)+" again");
     // retry:true is what makes this press different from every other run: it is
     // the one thing in the hub that lifts a PERMANENT failure (a key the
     // provider refused) and puts the book back on the walk. content.js takes it
     // from nobody else, so a save on the review page cannot do it by accident.
-    try{ await fetch("/content/run",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({kind:"books",slug:j.slug,step:null,retry:true})}); }catch(e){}
+    let out={};
+    try{ out=await (await fetch("/content/run",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({kind:"books",slug:j.slug,step:null,retry:true})})).json(); }
+    catch(e){ out={error:"That did not go through — try again."}; }
+    // …and since "built here" (spec §14) this door can refuse: a book another
+    // computer holds is not restarted from here, and it says so in the hub's own
+    // words. Swallowing that answer left a parent pressing a button that plainly
+    // did nothing.
+    toast(out.error?out.error:"Starting "+(j.title||j.slug)+" again", !out.error);
     contentPaint();
   };
   return d;
@@ -1222,24 +1332,29 @@ async function contentPaint(){
   // computer does the work instead of printing the code word.
   if(!s.local){
     $("contentActions").style.display="none";
-    st.innerHTML='<span class="bad">Books are built on the computer that has the <b>Google Drive</b> app and the folder set up in the card above.</span> Set that up and New ERA starts on its own.';
+    st.innerHTML='<span class="bad">Books are built on the computer that has the <b>Google Drive</b> app and the folder set up in the card above.</span> Set that up, and <b>Build</b> on that computer makes the book.';
     list.innerHTML=""; return;
   }
   $("contentActions").style.display="";
-  // The wait before a pile of loose photos becomes a book, in the hub's own
-  // number rather than one typed in here (content.js QUIET_MS).
-  CT_QUIET_MIN=Math.max(1,Math.round((Number(s.quietMs)||600000)/60000));
   const jobs=s.jobs||[], loose=Number(s.loose)||0;
-  // PHOTOS ARE NOT NOTHING (dad 9/7). A pile dropped straight into books/ is
-  // invisible for its first few minutes — no folder, no job — and the card used
-  // to say "No books yet" over the top of it.
+  // PHOTOS ARE NOT NOTHING (dad 9/7). A pile dropped straight into books/ has no
+  // folder and no job, and the card used to say "No books yet" over the top of
+  // it. It has no slug either, which is why its tap is `loose:true` (spec §14)
+  // and why the button sits on this line rather than in a row.
+  //
+  // The ten minutes are gone with the clock that used to run them (spec §12):
+  // `quietMs` still travels on the status for older readers, but no scan gathers
+  // this pile any more, so a card promising a start "about 10 minutes after the
+  // last one lands" would be promising something nothing does.
   const ctLoose=loose?'<b>'+loose+' photo'+(loose===1?'':'s')+'</b> just arrived in <b>books</b> — New ERA takes them '
-    +'to be one book and starts building about <b>'+CT_QUIET_MIN+' minutes</b> after the last one lands.':'';
+    +'to be <b>one book</b>, waiting for a grown-up to tap <b>Build</b>. '
+    +ctBuildBtn(CT_LOOSE,'data-build-loose'):'';
   if(!jobs.length){
-    st.innerHTML=ctLoose||'No books yet — drop the page photos of one book into <b>books</b> in your Google Drive. New ERA makes the folder and names it for you.';
-    list.innerHTML=""; return;
+    st.innerHTML=ctLoose||'No books yet — drop the page photos of one book into <b>books</b> in your Google Drive, then press <b>Build</b>. New ERA makes the folder and names it for you.';
+    list.innerHTML=""; ctWireBuild(st,CT_LOOSE,{kind:"books",loose:true},"the new book"); return;
   }
   st.innerHTML='<b>'+jobs.length+' book'+(jobs.length===1?'':'s')+'</b> in your Drive folder.'+(ctLoose?' '+ctLoose:'');
+  ctWireBuild(st,CT_LOOSE,{kind:"books",loose:true},"the new book");
   list.innerHTML="";
   for(const j of jobs) list.appendChild(ctRow(j));
 }
