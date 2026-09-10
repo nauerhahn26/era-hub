@@ -1281,13 +1281,26 @@ function build(o) {
   if (held) return held;
 
   try {
-    // A pile folder is claimed at `inbox`; another device's cold job is taken
-    // over exactly as a scan used to do it, keeping its state and its errors so
-    // it resumes where it fell over. A job that is ALREADY ours and still warm
-    // is neither: it is running or about to, and run() below joins it rather
-    // than writing job.json out from under the worker that holds the folder.
+    // A pile folder is claimed at `inbox`; another device's job is taken over
+    // exactly as a scan used to do it, keeping its state and its errors so it
+    // resumes where it fell over. A job that is ALREADY ours and still warm is
+    // neither: it is running or about to, and run() below joins it rather than
+    // writing job.json out from under the worker that holds the folder.
+    //
+    // WHOEVER THE DOOR LETS BUILD, SIGNS (review 9/10). The test is "is this
+    // claim ours?", NOT takeable() — the two questions disagree in a window
+    // wide enough to matter. A job held for something no clock brings backs off
+    // to the twelve-hour look (SLOW_HOLDS in takeable), so between half an hour
+    // and twelve hours the claim is cold to the door above (which let this tap
+    // through) and still not takeable to the scan. Claiming only on takeable()
+    // ran the book HERE while job.json went on naming the other computer: no
+    // claim line for it to read, and its own next scan saw a claim naming ITSELF
+    // go warm again and could resume the same book — the double build §14 is
+    // written to prevent. takeable() stays in the test for the one case isMine()
+    // cannot see: OUR OWN job gone stale, which is a resume and wants the fresh
+    // heartbeat and the line that says so.
     if (!job) claim(found.dir, null, now);
-    else if (takeable(job, now)) claim(found.dir, job, now);
+    else if (!isMine(job) || takeable(job, now)) claim(found.dir, job, now);
   } catch (e) {
     console.error("[content] could not claim " + found.name + ": " + store.redact(e.message));
     return { refused: "checking", error: CHECKING };

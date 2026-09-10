@@ -345,6 +345,38 @@ test("another computer's abandoned job is taken over BY THE TAP, keeping its sta
   assert.equal(store.readLog(dir).pop().msg, "taken over by " + ME());
 });
 
+// THE SLOW WINDOW IS NOT A LICENCE TO BUILD ANONYMOUSLY (B1.3 review, 9/10).
+// A job held for something no clock brings — "needs-photo-decoder" — backs off
+// to the twelve-hour look, so between half an hour and twelve hours it is cold
+// to claimWarm() (the door lets the tap through) and not yet takeable() (the
+// scan leaves it alone). That gap used to run the book HERE while job.json still
+// named the other computer: no claim line, no change of hands, and the other
+// device's next scan read a claim naming ITSELF going warm again and could
+// resume the very same book. Whoever the door lets build, signs.
+test("a foreign claim cold inside the slow-hold window is taken over by the tap", () => {
+  const dir = book("Blurry Photos");
+  let job = store.newJob({ claimedBy: OTHER + ":41", state: "inbox" });
+  store.writeJob(dir, { ...job, held: "needs-photo-decoder", heartbeat: ago(45 * MIN) });
+  assert.equal(content.build({ kind: "books", slug: "blurry-photos" }).started, true);
+  const taken = jobOf(dir);
+  assert.equal(taken.claimedBy, ME(), "the device that is doing the work is the device on the job");
+  assert.equal(taken.state, "inbox", "and it resumes where the other one stopped");
+  const line = store.readLog(dir).filter(l => l.step === "claim").pop();
+  assert.equal(line.by, ME(), "with a claim line the other device can read in a field");
+});
+
+// The other half of the same rule: a book THIS device is already building is
+// joined, not re-claimed. run() picks it up as it stands, and rewriting job.json
+// out from under the worker that holds the folder is exactly what the claim
+// rules exist to stop — the shelf's "Making this book…" card is reading it.
+test("a warm job of our own is joined without a fresh claim", () => {
+  const dir = book("Ours, Running");
+  const was = jobOn(dir, DEVICE + ":9", { heartbeat: ago(MIN) });
+  assert.equal(content.build({ kind: "books", slug: "ours-running" }).started, true);
+  assert.deepEqual(jobOf(dir), was, "not one byte of job.json for Drive to re-upload");
+  assert.deepEqual(store.readLog(dir), [], "and no second claim line inside the family's folder");
+});
+
 test("a book that fell over on a page the provider lost is buildable again", () => {
   const dir = book("Retry Me");
   let job = store.newJob({ claimedBy: DEVICE + ":9", state: "transcribing" });
