@@ -1064,6 +1064,56 @@ test("a book another computer is building says so, and offers no Build (spec §1
   await ctx.close();
 });
 
+// …AND WHEN IT STOPS HOLDING IT, THE BUTTON COMES BACK HERE TOO (B1.8's flagged
+// parity gap, 9/10). The shelf has always offered Build on a job whose claim has
+// gone cold — `buildable` is the door's own answer — and Settings offered it on
+// `waiting:"pile"` rows alone. But Settings is exactly where a grown-up goes
+// after the other laptop was closed mid-build: the shelf is a six-year-old's
+// screen, and the parent looking for the restart was on the page that had no
+// button at all. The door stays the authority, so a press that has gone stale
+// between the paint and the tap gets the 409 sentence this card already renders.
+test("a book the other computer gave up on offers Build in Settings too (spec §14)", async () => {
+  const { ctx, page } = await settingsPage(statusPayload({
+    jobs: [bookJob({ state: "transcribing", buildable: true, elsewhere: false })] }));
+  const btn = page.locator('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
+  await btn.waitFor();
+  const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+  assert.doesNotMatch(s, /waiting for a grown-up/i, "it is a half-built book, not a pile: " + s);
+  await btn.click();                                     // the same two-tap arm as a pile's
+  await page.waitForFunction(() => /again/i.test(
+    document.querySelector('#contentBooks [data-slug="tabby-mctat"] button[data-build]').textContent));
+  const [req] = await Promise.all([
+    page.waitForRequest(r => r.url().includes("/content/build") && r.method() === "POST"),
+    btn.click(),
+  ]);
+  assert.deepEqual(JSON.parse(req.postData()), { kind: "books", slug: "tabby-mctat" },
+    "the same body a pile's press sends");
+  await ctx.close();
+});
+
+// The two rows that must NOT grow one. A warm claim elsewhere is the other
+// computer's book (its own test above says the sentence); and the book THIS
+// computer has in hand is the reader's oddity in this card's shape — the row
+// would have said "Reading the words off the photos…" and offered to start the
+// book it was already reading.
+test("Settings offers no Build on a book being made — here or on the other computer", async () => {
+  for (const [what, over] of [
+    ["the other computer's warm claim", { jobs: [bookJob({ elsewhere: true, buildable: false })] }],
+    ["this computer's own job, in flight", { building: true,
+      job: { kind: "books", slug: "tabby-mctat", step: "transcribe" }, jobs: [bookJob()] }],
+    ["this computer's own job, queued behind another", { building: true,
+      job: { kind: "books", slug: "other-book", step: "transcribe" },
+      queued: ["tabby-mctat"], jobs: [bookJob()] }],
+  ]) {
+    const { ctx, page } = await settingsPage(statusPayload(over));
+    await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
+    const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
+    assert.match(s, /read|Building on another computer/i, what + ": " + s);
+    assert.equal(await page.$$eval("#contentBooks button[data-build]", b => b.length), 0, what);
+    await ctx.close();
+  }
+});
+
 // The weekly book (spec §8): it arrives finished, its job.json says `done`
 // before the manifest lands, and this hub never builds it. The row it gets is
 // the one every finished book gets, unchanged.

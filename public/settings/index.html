@@ -1086,10 +1086,44 @@ const CT_LOOSE="\u0000loose";     // the pile in books/ has no slug yet: JS only
 const CT_BUILD_LABEL="🔨 Build this book";
 const CT_BUILD_ARMED="🔨 Tap again to build";
 let CT_ARMED=null, CT_ARM_TIMER=null;
+// The books THIS hub has in hand right now — the one it is building and the ones
+// queued behind it (/content/status `job` + `queued`, which content.js's own
+// busyWith() answers in the same two sentences). Out here for the same reason
+// the arm is: ctRow() is handed one job row and this is a fact about the whole
+// payload. See ctCanBuild().
+let CT_HERE=[];
 // `attr` is what tells the two apart on the way back: a row's button carries the
 // book's slug, the loose pile's carries nothing at all — it has no slug until
 // the hub gathers it, and the NUL marker above must never reach an attribute
 // (an HTML parser turns it into U+FFFD).
+// DOES THIS ROW GET THE PRESS? (spec §14, B1.8 review.)
+//
+// A PILE always, refusable or not: a claim line that arrived ahead of its
+// job.json makes the door say no, and the sentence that comes back is truer than
+// any this card could guess from the payload.
+//
+// AND A JOB THE DOOR WOULD SAY YES TO. This used to be piles alone, and the
+// shelf has offered it on a cold claim since §13 — which left the parity exactly
+// backwards. A book stops half-built when the other laptop is closed, and the
+// grown-up who restarts it is not standing at a six-year-old's shelf; they are
+// on this page, which had nothing to press. `buildable` is the door's own
+// answer ("no manifest, no other computer's warm claim"), and the door stays the
+// authority: a press that goes stale between this paint and the tap comes back
+// as the 409 sentence ctBuild() already renders.
+//
+// MINUS THE BOOK THIS COMPUTER IS ALREADY MAKING. The door says yes to a job
+// that is ours precisely so run() can join the build in flight, so `buildable`
+// cannot tell "nobody is doing this" from "we are doing it" — and a row reading
+// "Reading the words off the photos… 3 of 12 pages read" beside a button
+// offering to start it is the same both-at-once oddity the shelf just lost.
+// The `done`/`published` guard is belt and braces: alreadyBuilt() already takes
+// `buildable` away from a finished book, and this card must never be the one
+// place that offers to make the week's book a second time.
+function ctCanBuild(j){
+  if(j.waiting==="pile") return true;
+  return j.buildable===true && j.state!=="done" && j.state!=="published"
+    && !CT_HERE.includes(j.slug);
+}
 function ctBuildBtn(key, attr){
   const on=CT_ARMED===key;
   return '<button class="ctbuild'+(on?' armed':'')+'" '+attr+'>'
@@ -1143,7 +1177,7 @@ function ctRow(j){
   // there is no button. No device name and no folder: another computer is the
   // whole of what the family is owed, and the payload carries nothing else.
   // Everything else is a book on its walk, in the words it has always used.
-  const pile=j.waiting==="pile";
+  const pile=j.waiting==="pile", canBuild=ctCanBuild(j);
   h+='<div class="status" style="margin-top:2px">'+(pile
     ? '<b>'+p.pages+' photo'+(p.pages===1?'':'s')+'</b> — waiting for a grown-up to tap <b>Build</b>.'
     : j.elsewhere ? "Building on another computer."
@@ -1220,13 +1254,9 @@ function ctRow(j){
   // cover; it is worth offering for every book, not only flagged ones.
   h+='<div class="row" style="margin-top:8px">'
    // The press that starts this book, and the only one in the card that spends
-   // (spec §14). It is offered on a PILE and nowhere else: a book that is
-   // already on its walk needs no starting, a finished one is refused by the
-   // door, and another computer's book has the sentence above instead of a
-   // button. A pile the door would refuse anyway — a claim line arriving before
-   // its job.json — still gets it, because the refusal that comes back is a
-   // truer sentence than any this card could guess from the payload.
-   +(pile?ctBuildBtn(j.slug,'data-build="'+CT_ESC(j.slug)+'"'):'')
+   // (spec §14): a pile of photos, or a book the door would take on — see
+   // ctCanBuild() for which rows those are and which are left button-free.
+   +(canBuild?ctBuildBtn(j.slug,'data-build="'+CT_ESC(j.slug)+'"'):'')
    +'<a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'
    +' style="font-size:17px;color:var(--teal-deep);text-decoration:none;font-weight:650;'
    +'border:2px solid var(--teal);border-radius:12px;padding:10px 16px;background:#fff">📖 Review this book</a>'
@@ -1257,7 +1287,7 @@ function ctRow(j){
   // A folder has a slug already, so its tap sends one; only the pile in books/
   // itself goes as `loose:true`, and that button lives on the line above the
   // list rather than in a row.
-  if(pile) ctWireBuild(d, j.slug, {kind:"books",slug:j.slug}, j.title||j.slug);
+  if(canBuild) ctWireBuild(d, j.slug, {kind:"books",slug:j.slug}, j.title||j.slug);
   // ---- rename ----------------------------------------------------------
   const ren=d.querySelector("button[data-rename]"), box=d.querySelector(".ct-rename");
   // display, not [hidden]: the page's own .row sets display:flex, which wins.
@@ -1312,6 +1342,9 @@ function ctRow(j){
 const CT_CHARS_PER_PAGE=120;
 async function contentPaint(){
   let s; try{ s=await (await fetch("/content/status",{cache:"no-store"})).json(); }catch(e){ return; }
+  // Read before any row is painted: ctCanBuild() asks it of every one of them.
+  CT_HERE=[].concat(s.building&&s.job&&s.job.slug?[s.job.slug]:[],
+                    Array.isArray(s.queued)?s.queued:[]);
   // WHAT IS LEFT OF THIS MONTH'S VOICE (T6b.2), painted on the Voice card
   // above. Two units, because a parent thinks in books and ElevenLabs bills in
   // characters. `narration` is null whenever the hub cannot say — no voice key,
