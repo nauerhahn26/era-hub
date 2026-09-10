@@ -160,8 +160,12 @@
        so only the computer running the Google Drive app can build one. -->
   <div class="card" id="notLocal" hidden>
     <h2>This computer does not build books</h2>
+    <!-- …and nothing starts it by itself over there either (spec §12): this
+         card promised that in the same breath as the inbox sentence below, and
+         a hub being set up is exactly where a false promise costs the most. -->
     <p class="status">Books are built on the computer that has the <b>Google Drive</b> app
-    and the content folder set up in Settings. Set that up there and New ERA starts on its own.</p>
+    and the content folder set up in Settings. Set that up there, then tap <b>Build</b>
+    on that computer.</p>
   </div>
 
   <!-- No ?slug=, or a slug for a folder that is not there any more. -->
@@ -266,7 +270,14 @@ let TITLE = SLUG;
 // Settings card: a parent who read it there must not meet a different sentence
 // here. No state name and no step name ever reaches the screen.
 const DOING = {
-  inbox: "Waiting to start — New ERA looks for new photos every few minutes.",
+  // Since "built here" (spec §12) nothing starts a book on a clock, so the
+  // sentence that used to sit here — the hub looking for new photos every few
+  // minutes — was the automatic start the other two screens have just stopped
+  // promising. Both the things that DO start one are said instead, because a
+  // row can be either: a pile nobody has claimed (a grown-up taps Build in
+  // Settings) or a job this computer already holds and picks back up after a
+  // restart.
+  inbox: "Waiting to start — a grown-up taps Build in Settings, or this computer picks its own book back up.",
   transcribing: "Reading the words off the photos…",
   reviewing: "Words read — about to record the narration.",
   narrating: "Recording the narration…",

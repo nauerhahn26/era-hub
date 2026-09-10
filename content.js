@@ -852,7 +852,17 @@ function jobFor(name, dir, slug, perClip) {
   // ahead (the re-narrate case, which is the whole point), the pages that
   // demonstrably have audio when it is behind, and never less than before.
   const ledger = Number(job && job.spent && job.spent.narrate && job.spent.narrate.chars) || 0;
-  const owed = job ? store.owedState(job) : "inbox";
+  // A FOLDER HOLDING manifest.json IS A FINISHED BOOK, job.json or no job.json
+  // (spec §12). Drive mirrors .build/ in whatever order it likes, so the latch
+  // that says `done` often lands minutes after the book it belongs to — and "no
+  // job" was read here as `inbox`, which is the state a book is in on the way
+  // IN. So a book that is already made announced itself as one about to start:
+  // "Getting ready… New ERA has started on this book." on the shelf, "Getting
+  // the photos ready…" on the Settings card. The manifest is the answer to both,
+  // and `done` is what every other finished book on the shelf says. Nothing owes
+  // a step on a book that is made, either.
+  const published = fs.existsSync(path.join(dir, MANIFEST));
+  const owed = job ? store.owedState(job) : (published ? null : "inbox");
   const last = job && (job.errors || [])[job.errors.length - 1];
   // Worth showing while the book is stopped for good, and while the step it is
   // ON gave up part-way (job.held === "retry", written by content-worker.js for
@@ -873,7 +883,6 @@ function jobFor(name, dir, slug, perClip) {
   // finished book failed — content-worker.js).
   const price = perClip === undefined ? (DATA ? falPrice(DATA) : null) : perClip;
   const clips = Number(job && job.spent && job.spent.animate && job.spent.animate.calls) || 0;
-  const published = fs.existsSync(path.join(dir, MANIFEST));
   const q = published ? quote(count, price) : null;
   // WHAT THE CARD MAY OFFER (spec §14, §13). Three derived answers, and no
   // device name behind any of them: `waiting` is a pile of photos nobody has
@@ -900,8 +909,10 @@ function jobFor(name, dir, slug, perClip) {
     slug: slug || booksIndex.slugFor(path.dirname(dir), name) || "book",
     title: name,
     // A folder nobody has claimed is still a job — it is a pile of photos
-    // waiting for a tap, and the Settings card must be able to say so.
-    state: job ? job.state : "inbox",
+    // waiting for a tap, and the Settings card must be able to say so. Unless
+    // there is a manifest in it, in which case it is a book that is already
+    // made and the latch simply has not mirrored yet (see `owed` above).
+    state: job ? job.state : (published ? "done" : "inbox"),
     waiting: !job && !published && photos > 0 ? "pile" : null,
     buildable: !held && !finished && (!!job || photos > 0),
     elsewhere: !!held && held.refused === "elsewhere",
@@ -1751,10 +1762,15 @@ function status() {
     // THE PILE THAT IS NOT A BOOK YET (dad 9/7). Photos sitting loose in
     // books/, counted so both cards can say "seventeen photos are waiting"
     // rather than "no books yet" — which is what the Book Reader said to a
-    // family whose seventeen photos were sitting right there. `quietMs` travels
-    // with it so neither page has to hard-code the ten minutes: the card's
-    // promise ("building starts about ten minutes after the last photo") is
-    // then the same number this module actually waits.
+    // family whose seventeen photos were sitting right there.
+    //
+    // `quietMs` no longer promises anything. It travelled so neither page had
+    // to hard-code the ten minutes in "building starts about ten minutes after
+    // the last photo arrives" — and since "built here" (spec §12) no pile
+    // starts on that clock or any other, so no card in this release says a
+    // number of minutes out loud. The field stays on the payload for readers
+    // written before that change; the quiet period itself is still real, and
+    // still what the scan measures a folder's stillness against.
     loose: local ? gatherer.looseNames(path.join(st.folderPath, "books")).length : 0,
     quietMs: QUIET_MS,
     building: !!running,

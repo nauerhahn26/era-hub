@@ -1193,3 +1193,19 @@ test("every provider call the whole suite made went to the stand-in, and to noth
     .every(c => c.method === "GET" && c.key === FAKE_KEY && !c.url.includes(FAKE_KEY)),
     "an allowance read is a GET, on the stand-in, with the key in the header and never in the URL");
 });
+
+// Spec §12: "every sentence that promised an automatic start goes, and a test
+// asserts no card promises one." This page kept the last two of them — "Waiting
+// to start — New ERA looks for new photos every few minutes" under a book on
+// its way in, and "Set that up there and New ERA starts on its own" on the card
+// a hub with no Drive folder shows. Nothing in the hub starts a book on a clock
+// any more (the scan claims no inbox, gathers no pile), so both were promises
+// only a grown-up's tap could keep. Read off the page as served, so the copy is
+// held whether or not a book on this machine is in that state.
+test("no sentence on the review page promises a start that nothing makes (spec §12)", async () => {
+  const src = await (await fetch(`${BASE}/book-review/`)).text();
+  for (const promise of [/looks for new photos/i, /starts on its own/i,
+                         /building begins/i, /minutes after the last/i])
+    assert.doesNotMatch(src, promise, "the page still promises a start on a clock");
+  assert.match(src, /taps? <?b?>?Build/i, "and it says what does start one");
+});

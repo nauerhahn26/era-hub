@@ -417,11 +417,12 @@ test("no loose photos: books/ is left exactly as it is", () => {
     "no marker, no new folder, nothing (books-index's own .slugs.json aside)");
 });
 
-test("status counts the photos that are waiting, and says how long the wait is", () => {
+test("status counts the photos that are waiting, and still carries the quiet period", () => {
   drop("IMG_0001.HEIC"); drop("IMG_0002.HEIC");
   const s = content.status();
   assert.equal(s.loose, 2, "seventeen photos are never 'no books yet'");
-  assert.equal(s.quietMs, content.QUIET_MS, "the card's promise is the hub's own number");
+  assert.equal(s.quietMs, content.QUIET_MS,
+    "the quiet period travels as this module's own number — no card promises it any more");
   assert.deepEqual(s.jobs, [], "and they are not a book yet");
 });
 

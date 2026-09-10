@@ -441,7 +441,8 @@ test("/content/status counts photos that are loose in books/, and names the wait
   try {
     const { body } = await statusOf();
     assert.equal(body.loose, 1, "a photo with no folder is still a book on its way");
-    assert.equal(body.quietMs, 10 * 60 * 1000, "and the card's promise is this number");
+    assert.equal(body.quietMs, 10 * 60 * 1000,
+      "the quiet period still travels for readers written before 'built here'");
   } finally {
     fs.rmSync(path.join(BOOKS, "IMG_0900.HEIC"), { force: true });
   }

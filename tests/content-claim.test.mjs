@@ -166,11 +166,13 @@ test("a folder that already has job.json is not an inbox", () => {
 // is not there to say no on this device. manifest.json is, and that is the
 // whole rule: a folder holding one is a BOOK, whatever sits loose beside it.
 //
-// FROM ALL THREE CALLERS. The hub has exactly one starter, scan(), and three
-// things that reach it, each through content.tick() with its own word: the
-// 90-second boot tick, the five-minute interval (content.js start()) and
-// drive.onSynced's tick after every mirror pass (server.js) — which is the one
-// that runs the instant a book like this lands. All three are asked here.
+// THROUGH THE TICK EVERY CALLER SHARES. The hub has exactly one starter,
+// scan(), and everything that reaches it goes through content.tick() with its
+// own word for the log: the 90-second boot tick, the five-minute interval
+// (content.js start()) and drive.onSynced's tick after every mirror pass
+// (server.js) — which is the one that runs the instant a book like this lands.
+// They share the path, so the loop below proves the RULE rather than three
+// wirings; that the three callers exist at all is server.js's own to hold.
 function madeElsewhere(name) {
   const dir = path.join(FOLDER, "books", name);
   fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
@@ -184,7 +186,7 @@ function madeElsewhere(name) {
   return dir;
 }
 
-test("a book that arrived finished is never an inbox, from any of the three ticks", () => {
+test("a book that arrived finished is never an inbox, whatever word the tick arrives with", () => {
   const dir = madeElsewhere("Fossil Week");
   for (const reason of ["startup", "scan", "drive sync"]) {
     const res = content.tick(reason);

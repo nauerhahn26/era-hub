@@ -873,7 +873,7 @@ async function refreshShelf() {
     // It is a pile like any other now: it says how many photos there are, and it
     // carries the tap that turns them into a book.
     const loose = Number(s.loose) || 0;
-    if (loose) S.building.push({ slug: "\u0000loose", title: "A new book", loose, waiting: "pile" });
+    if (loose) S.building.push({ slug: LOOSE, title: "A new book", loose, waiting: "pile" });
   } catch { S.drive = null; S.building = []; S.here = []; }
 }
 

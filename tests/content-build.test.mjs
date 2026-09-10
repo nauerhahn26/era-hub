@@ -203,6 +203,24 @@ test("a stray photo dropped beside a finished book leaves it a book, not an inbo
   assert.deepEqual(started, []);
 });
 
+// A MANIFEST WITH NO job.json BESIDE IT IS STILL A FINISHED BOOK (review 9/10).
+// Drive mirrors .build/ in whatever order it likes, so the latch that says
+// `done` often lands minutes after the book itself — and "no job" was read as
+// `state:"inbox"`, which the Reader's shelf turns into "Getting ready… New ERA
+// has started on this book." over a book that is already made, and the Settings
+// card into "Getting the photos ready…". The manifest is the answer both
+// screens needed, and `done` is what every other finished book on the shelf
+// says; nothing owes a step on a book that is made.
+test("a finished book whose .build/ has not mirrored yet reports the done shape", () => {
+  madeElsewhere("The Fossil Hunter");
+  const row = rowOf("The Fossil Hunter");
+  assert.equal(row.published, true);
+  assert.equal(row.state, "done", "not 'inbox': nothing is about to start on this");
+  assert.equal(row.step, null, "and there is no step owing on it");
+  assert.equal(row.waiting, null);
+  assert.equal(row.buildable, false);
+});
+
 test("the Build door refuses a folder that already has a manifest", () => {
   madeElsewhere("The Red Bicycle");
   const out = content.build({ kind: "books", slug: "the-red-bicycle" });
