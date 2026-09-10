@@ -173,6 +173,36 @@ test("a finished book with a cover and no job.json is never an inbox and never a
   assert.deepEqual(started, []);
 });
 
+// THE TWO GUARDS NOTHING WAS MEASURING (review 9/10). Both halves of "a folder
+// with a manifest is a BOOK" — scan()'s `!list.published` and jobFor()'s
+// `!published` — could be deleted with every suite in the hub still green,
+// because no fixture had ever put a loose photo beside a finished book. That is
+// the shape they exist for and the shape that happens: a parent drops one more
+// photo into the folder of a book that is already made, or the maker's package
+// lands in a folder a stray was already sitting in. Without the guards the
+// count is one, the folder is an inbox again, ten still minutes make it quiet,
+// and the card offers to build the book that is already on the shelf.
+test("a stray photo dropped beside a finished book leaves it a book, not an inbox", () => {
+  const T0 = Date.now();
+  const dir = madeElsewhere("The Fossil Hunter");
+  fs.writeFileSync(path.join(dir, "IMG_9999.jpg"), Buffer.alloc(64, 9));    // a parent's drop
+  content.scan({ now: T0 });
+  const res = content.scan({ now: T0 + 11 * MIN });
+  const b = found(res, "The Fossil Hunter");
+  assert.equal(b.inbox, false, "a folder holding manifest.json is never an inbox");
+  assert.equal(b.quiet, false, "and nothing is on the quiet clock to go quiet");
+  const row = rowOf("The Fossil Hunter");
+  assert.equal(row.published, true);
+  assert.equal(row.waiting, null, "nor a pile of photos waiting for a tap");
+  assert.equal(row.buildable, false);
+  // …and no tick of any kind — the boot one, the five-minute one, the one after
+  // every Drive mirror — leaves a mark of ours inside the family's folder.
+  for (const reason of ["startup", "scan", "drive sync"]) content.tick(reason);
+  assert.equal(jobOf(dir), null, "nothing of ours was written beside their book");
+  assert.equal(fs.existsSync(store.buildDir(dir)), false);
+  assert.deepEqual(started, []);
+});
+
 test("the Build door refuses a folder that already has a manifest", () => {
   madeElsewhere("The Red Bicycle");
   const out = content.build({ kind: "books", slug: "the-red-bicycle" });
