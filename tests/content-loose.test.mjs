@@ -7,14 +7,32 @@
 //                      moved and never deleted, an interrupted move is finished
 //                      rather than restarted, and a model's title is turned
 //                      into a name Windows will actually take.
-//   content.js         the decision — the same ten-minute quiet clock a book
-//                      folder is on, the claim, the `autoTitle` note, the
-//                      rename door, and the loose count /content/status
-//                      publishes so no card ever says "no books yet" over the
-//                      top of seventeen photos.
+//   content.js         the decision — the TAP that gathers the pile, the claim,
+//                      the `autoTitle` note, the rename door, and the loose
+//                      count /content/status publishes so no card ever says
+//                      "no books yet" over the top of seventeen photos.
+//
+// BUILT HERE (spec §12 and §14, plan B1.3). The decision half of this suite
+// used to be a clock: ten still minutes and the hub made the folder, named it
+// after today, claimed it and started reading the photos against the family's
+// vision key, with nobody asked. The gather is also the one path that renames a
+// folder by itself. A clock can only ever GUESS that the photos have stopped
+// arriving; the grown-up whose photos they are knows, so the guess stopped
+// being a licence: `build({kind:"books", loose:true})` — the Build button on the
+// loose card — is the sentence the clock was trying to infer, and it skips the
+// quiet period outright because the tap IS "I have finished putting them in".
+//
+// The clock itself is not gone and is still asserted below: gatherLoose keeps
+// its unforced path, where every arriving photo restarts the ten minutes so a
+// phone trickling an album in over five of them makes ONE book. Nothing in the
+// hub calls it that way today; it is the guard for whatever asks next, and it
+// is tested directly rather than through a scan that no longer gathers.
 //
 // Disk plus a fake clock: no server, no port, no network, no key, no model, and
-// no real waiting. Every title here is synthetic ("Sunny Pond").
+// no real waiting — except that the TAP reads the wall clock, because a finger
+// happens now, so a gathered pile is born under TODAY's placeholder name and
+// this suite asks content-gather for it rather than writing a date down twice.
+// Every title here is synthetic ("Sunny Pond").
 // (Port table: this suite claims none.)
 import { test, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -72,6 +90,15 @@ function withCaseBlindDisk(fn) {
   };
   try { return fn(); } finally { fs.existsSync = exists; }
 }
+// THE TAP on the loose card, which is the only thing that gathers now: the
+// Build button the Book Reader's shelf and the Settings content card both post
+// to /content/build. `loose:true` and never a slug — the pile has no folder yet,
+// so it has no slug either (reader.js's old " loose" sentinel is never sent).
+const tap = () => content.build({ kind: "books", loose: true });
+// The placeholder name a pile gathered by a tap is born with. The tap reads the
+// wall clock, so this is TODAY's name, asked of the one module that owns it
+// rather than written down here as a second copy that would rot overnight.
+const today = () => gather.fallbackTitle(Date.now());
 const inBooks = () => fs.readdirSync(BOOKS).sort();
 const dirs = () => fs.readdirSync(BOOKS, { withFileTypes: true })
   .filter(d => d.isDirectory()).map(d => d.name).sort();
@@ -293,52 +320,81 @@ test("two phones, one file name: both photos are kept", () => {
   assert.deepEqual(fs.readdirSync(first.dir).sort(), ["IMG_0001-2.HEIC", "IMG_0001.HEIC"]);
 });
 
-// --------------------------------------------------- the quiet clock and scan
+// --------------------------------------------------- the quiet clock and the tap
 
-test("a first sighting is never gathered — the photos may still be arriving", () => {
+// A FIRST SIGHTING IS NEVER GATHERED, and neither is a hundredth. This used to
+// be the first half of the quiet clock — one observation proves nothing, two
+// ten minutes apart proved the photos had stopped arriving — and the second
+// half is the one that went: a scan does not gather at all now, however long
+// the pile has sat there, because making a folder inside the family's own Drive
+// and spending their vision key on what is in it is a decision with a person's
+// name on it (spec §12, "built here"). The photos stay exactly where the parent
+// put them until somebody taps Build, which is the companion below.
+test("the scan never gathers the pile, however long the photos sit there", () => {
   drop("IMG_0001.HEIC"); drop("IMG_0002.HEIC");
-  content.scan({ now: T0 });
-  assert.equal(dirs().length, 0, "no folder yet");
-  assert.equal(looseLeft().length, 2, "and the photos are where the parent put them");
+  for (const mins of [0, 11, 60, 24 * 60]) content.scan({ now: T0 + mins * MIN });
+  assert.deepEqual(dirs(), [], "no folder was made in the family's own Drive folder");
+  assert.deepEqual(looseLeft(), ["IMG_0001.HEIC", "IMG_0002.HEIC"],
+    "and the photos are where the parent put them");
+  assert.equal(fs.existsSync(path.join(BOOKS, gather.MARKER)), false, "not even a marker");
+  assert.equal(content.status().loose, 2, "…but the card can still say they are there");
 });
 
+// THE CLOCK ITSELF IS KEPT, one caller further out. gatherLoose's unforced path
+// is what makes a phone trickling a twenty-photo album in over five minutes ONE
+// book: every arrival restarts the ten minutes, so none of them is ever left
+// behind in a second folder. Nothing in the hub asks for it that way today —
+// this test used to drive it through content.scan(), which no longer gathers —
+// so it is asked of the exported function directly, which is where the guard
+// now lives for whatever calls it next.
 test("a photo that lands during the quiet period joins the SAME book, and resets the clock", () => {
   drop("IMG_0001.HEIC");
-  content.scan({ now: T0 });
-  content.scan({ now: T0 + 9 * MIN });
+  content.gatherLoose(BOOKS, T0);
+  content.gatherLoose(BOOKS, T0 + 9 * MIN);
   assert.equal(dirs().length, 0, "nine minutes is not ten");
   drop("IMG_0002.HEIC");                      // Drive trickles the next one in
-  content.scan({ now: T0 + 10 * MIN });
+  content.gatherLoose(BOOKS, T0 + 10 * MIN);
   assert.equal(dirs().length, 0, "the newcomer restarted the ten minutes");
-  content.scan({ now: T0 + 21 * MIN });
+  content.gatherLoose(BOOKS, T0 + 21 * MIN);
   assert.equal(dirs().length, 1, "…and then one book");
   assert.deepEqual(gather.looseNames(path.join(BOOKS, dirs()[0])).length, 2, "with BOTH photos in it");
 });
 
-test("ten quiet minutes: one folder, claimed, marked as a book nobody has named", async () => {
+// …AND THE TAP DOES NOT WAIT FOR IT AT ALL (spec §14 step 3). Everything this
+// test asserted about the folder a gather leaves behind is unchanged — one
+// folder, claimed at `inbox`, `autoTitle` so the cover may still name it, and
+// the build started in the same breath. What changed is the sentence in front
+// of it: not "ten minutes have passed" but "a grown-up pressed Build", which is
+// why there is no quiet period left to wait out. The photos may have landed a
+// second ago; the person who put them there says they are all in.
+test("the tap: one folder, claimed at once, marked as a book nobody has named", async () => {
   const started = [];
   content.runJob = (job) => { started.push(job); return Promise.resolve({ ok: true }); };
   drop("IMG_0001.HEIC"); drop("IMG_0002.HEIC"); drop("IMG_0003.HEIC");
-  content.scan({ now: T0 });
-  const res = content.scan({ now: T0 + 11 * MIN });
+  const out = tap();                          // no scan first, and no clock at all
 
-  assert.equal(dirs().length, 1);
+  assert.equal(out.started, true);
+  assert.deepEqual(dirs(), [today()], "one folder, named for the day it was tapped");
   const dir = path.join(BOOKS, dirs()[0]);
   const job = store.readJob(dir);
   assert.equal(job.state, "inbox");
   assert.ok(job.claimedBy, "claimed by this hub");
+  assert.equal(content.isMine(job), true, "…which is the computer the button was on");
   assert.equal(job.autoTitle, true, "nobody has named this book yet");
-  assert.equal(res.claimed.length, 1, "the scan says it claimed it");
-  assert.equal(started.length, 1, "and the build started at once, not in five minutes");
+  assert.equal(started.length, 1, "and the build started at once");
   assert.equal(started[0].dir, dir);
+  assert.equal(started[0].slug, out.slug, "the door answers with the slug it just made");
+  assert.deepEqual(looseLeft(), [], "nothing left loose");
   await content.idle();
 });
 
-test("a second scan does not make a second book out of the same pile", async () => {
+test("a second tap does not make a second book out of the same pile", async () => {
   drop("IMG_0001.HEIC");
-  content.scan({ now: T0 });
-  content.scan({ now: T0 + 11 * MIN });
+  assert.equal(tap().started, true);
   await content.idle();
+  // Nothing left to gather: a second press (or the other parent's, on the other
+  // computer's card, a moment later) says so rather than making an empty book.
+  assert.equal(tap().refused, "checking");
   content.scan({ now: T0 + 22 * MIN });
   await content.idle();
   assert.equal(dirs().length, 1);
@@ -348,8 +404,7 @@ test("loose photos never disturb the book folders beside them", () => {
   fs.mkdirSync(path.join(BOOKS, "Sunny Pond"));
   fs.writeFileSync(path.join(BOOKS, "Sunny Pond", "p1.jpg"), Buffer.alloc(64, 1));
   drop("IMG_0001.HEIC");
-  content.scan({ now: T0 });
-  content.scan({ now: T0 + 11 * MIN });
+  assert.equal(tap().started, true);
   assert.deepEqual(gather.looseNames(path.join(BOOKS, "Sunny Pond")), ["p1.jpg"]);
   assert.equal(dirs().length, 2);
 });
@@ -372,6 +427,11 @@ test("status counts the photos that are waiting, and says how long the wait is",
 
 // -------------------------------------------------------- naming, and undoing
 
+// The gather is started by a tap now rather than by the clock (above), and the
+// rest of this half of the suite is unchanged: what the cover is allowed to say
+// about a machine-made name, and what a grown-up is allowed to say over the top
+// of it. Only the two scans that used to stand in for "the pile is ready" have
+// become the press that says so.
 test("the cover's title renames the folder and the book carries on under it", async () => {
   const runs = [];
   content.runJob = (job) => {
@@ -381,8 +441,7 @@ test("the cover's title renames the folder and the book carries on under it", as
       : { ok: true });
   };
   drop("IMG_0001.HEIC");
-  content.scan({ now: T0 });
-  content.scan({ now: T0 + 11 * MIN });
+  tap();
   await content.idle();
 
   assert.deepEqual(dirs(), ["Sunny Pond"], "the placeholder folder became the book");
@@ -400,21 +459,19 @@ test("a cover that says nothing keeps the placeholder name, and still carries on
   const runs = [];
   content.runJob = () => Promise.resolve(runs.push(1) === 1 ? { held: "needs-title", title: null } : { ok: true });
   drop("IMG_0001.HEIC");
-  content.scan({ now: T0 });
-  content.scan({ now: T0 + 11 * MIN });
+  tap();
   await content.idle();
-  assert.deepEqual(dirs(), ["New book 2026-09-07"]);
-  assert.equal(store.readJob(path.join(BOOKS, "New book 2026-09-07")).autoTitle, undefined);
+  assert.deepEqual(dirs(), [today()]);
+  assert.equal(store.readJob(path.join(BOOKS, today())).autoTitle, undefined);
   assert.equal(runs.length, 2);
 });
 
 test("'let me say otherwise': a rename moves the folder and keeps every photo", async () => {
   drop("IMG_0001.HEIC");
-  content.scan({ now: T0 });
-  content.scan({ now: T0 + 11 * MIN });
+  const made = tap();
   await content.idle();
   const was = dirs()[0];
-  const out = content.renameBook({ kind: "books", slug: "new-book-2026-09-07", title: "Sunny Pond" });
+  const out = content.renameBook({ kind: "books", slug: made.slug, title: "Sunny Pond" });
   await content.idle();
   assert.equal(out.renamed, true);
   assert.equal(out.title, "Sunny Pond");
@@ -481,11 +538,10 @@ test("a rename is refused while the book is being built", async () => {
   drop("IMG_0001.HEIC");
   let release;
   content.runJob = () => new Promise((r) => { release = () => r({ ok: true }); });
-  content.scan({ now: T0 });
-  content.scan({ now: T0 + 11 * MIN });
-  const out = content.renameBook({ kind: "books", slug: "new-book-2026-09-07", title: "Sunny Pond" });
+  const made = tap();
+  const out = content.renameBook({ kind: "books", slug: made.slug, title: "Sunny Pond" });
   assert.match(out.error, /working on this book/i);
-  assert.deepEqual(dirs(), ["New book 2026-09-07"]);
+  assert.deepEqual(dirs(), [today()]);
   release();
   await content.idle();
 });
@@ -501,13 +557,12 @@ test("a rename names a book by its slug, and a slug is never a path", () => {
 
 test("a rename to something no folder could be called is refused, and says so plainly", async () => {
   drop("IMG_0001.HEIC");
-  content.scan({ now: T0 });
-  content.scan({ now: T0 + 11 * MIN });
+  const made = tap();
   await content.idle();
-  const out = content.renameBook({ kind: "books", slug: "new-book-2026-09-07", title: " ??? " });
+  const out = content.renameBook({ kind: "books", slug: made.slug, title: " ??? " });
   assert.match(out.error, /folder name/i);
   assert.doesNotMatch(out.error, /[/\\]/, "no path on the family's disk is ever quoted back");
-  assert.deepEqual(dirs(), ["New book 2026-09-07"], "and nothing moved");
+  assert.deepEqual(dirs(), [today()], "and nothing moved");
 });
 
 test("a rename in API mode is refused with the one word Settings turns into a sentence", () => {
