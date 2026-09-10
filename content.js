@@ -9,18 +9,30 @@
 //      ({skipped:"needs-local-drive"}) and Settings says so. The book is built
 //      IN PLACE in books/<Title>/ and Google Drive for Windows does the
 //      uploading for us.
-//   2. WHICH folder is ready?  A folder is an inbox when it holds photos and no
-//      .build/job.json — nothing else is asked of the parent. It is only
-//      claimed once its listing (names + sizes) has not moved for ten minutes,
-//      so a half-uploaded book never starts. That ten minutes is measured on
-//      THIS module's own clock, not on a count of syncs: a parent hammering
-//      "Sync now" in Settings must not talk us into claiming a book whose
-//      photos are still arriving.
+//   2. WHICH folder is ready?  A folder is a PILE — photos and no
+//      .build/job.json and no manifest.json — and a pile builds when a grown-up
+//      taps Build on the device that will do it (spec §14, "built here"). The
+//      scan starts nothing by itself any more: the ten-minute quiet clock is
+//      still measured (a card says how long the photos have been still) but it
+//      is no longer a licence, because "the photos stopped arriving" and "make
+//      this into a book" are not the same sentence, and the second one costs
+//      the family's vision key and their narration allowance.
+//      A FOLDER WITH manifest.json IS NEVER AN INBOX AND NEVER A PILE, whatever
+//      loose files sit beside it (spec §12, "never twice"): the weekly-book
+//      maker — the machine that writes Ellie's weekly story and copies the
+//      finished package into this same folder, cover.jpg and all (spec §8) —
+//      hands us books that are already made, and a hub that treated one as a
+//      pile of photos would read every page again against the vision key and
+//      buy the narration a second time.
 //   3. MAY WE take it?  Every device in the family sees the same folder, so a
-//      job is claimed by writing claimedBy + heartbeat into job.json. A claim
-//      whose heartbeat stopped more than thirty minutes ago is abandoned — a
-//      laptop that was closed mid-book — and may be taken over, keeping the
-//      job's state and its error history so it resumes where it fell over.
+//      job is claimed by writing claimedBy + heartbeat into job.json — and
+//      claimedBy names the DEVICE (device-id.js), because this file now reads
+//      it back. A claim whose heartbeat stopped more than thirty minutes ago is
+//      abandoned — a laptop that was closed mid-book — and may be taken over,
+//      keeping the job's state and its error history so it resumes where it
+//      fell over. By a SCAN only when the abandoned claim is this device's own;
+//      another computer's is handed back to a grown-up, on the card, and taken
+//      over only by their tap (build() below).
 //
 // The building itself is not here: like clothing.js, this shell only tracks
 // state and runs ONE job at a time, so /content/status answers instantly while
@@ -86,16 +98,43 @@ const SCAN_EVERY = 5 * 60 * 1000;
 const NEEDS_TITLE = "needs-title";
 
 let DATA = null;
+let DEVICE = null;      // this install's device id, handed over by server.js
 let running = null;     // {kind, slug, dir, step} of the job in flight
 let inflight = null;    // its promise, for idle()
 let queue = [];         // [{job, waiters[]}] — books asked for while one runs
 let progress = null;    // {step, state} the running worker last reported
 let lastScan = null;    // small JSON-safe summary for status()
 
-// Who holds the claim, written into job.json and read by the other devices.
-// The machine name is what makes it useful to a parent ("still claimed by the
-// laptop"); it is never a key and never leaves the family's own folder.
-function whoami() { return os.hostname() + ":" + process.pid; }
+// Who holds the claim, written into job.json and read by the other devices —
+// and now read back by THIS one, which is the whole reason it is the device id
+// and not the machine name (spec §14 "Who this host is"). Two PCs a family
+// bought together are both "DESKTOP-7F3K" to os.hostname(), so every claim read
+// as our own and "is anyone else already building this?" could not be asked at
+// all; device-id.js gives each install one stable slug and server.js hands it
+// over at start(). The pid keeps two hubs on one device honest.
+// It is never a key and never leaves the family's own folder — and never
+// reaches /content/status either (jobFor's law).
+function whoami() { return (DEVICE || os.hostname()) + ":" + process.pid; }
+
+// The device half of a claim: everything before the LAST colon, because the pid
+// is the only thing that follows one. "" for a claim that names nobody.
+function deviceOf(claimedBy) {
+  const s = String(claimedBy == null ? "" : claimedBy);
+  const at = s.lastIndexOf(":");
+  return at < 0 ? s : s.slice(0, at);
+}
+
+// Is this name ours? Our own device id — or this machine's HOSTNAME, which is
+// what every job.json written before this release is signed with. That fallback
+// is the ambiguity above, kept on purpose and only in this direction: without
+// it, every book a family started last week reads as a stranger's and their own
+// computer tells them "Building on another computer" about the book it is
+// building itself. A device id is a slug (device-id.js ID_RE), so it can never
+// collide with a hostname that contains a dot or a capital.
+function mineName(who) {
+  return !!who && (who === (DEVICE || os.hostname()) || who === os.hostname());
+}
+function isMine(job) { return mineName(deviceOf(job && job.claimedBy)); }
 
 const iso = (now) => new Date(now).toISOString();
 
@@ -118,34 +157,61 @@ function photoNames(dir) {
   return out;
 }
 
+// The one .jpg in a book root that is not a photo a parent dropped in: the
+// publish step copies page 1's bytes there as the shelf's cover
+// (content-publish.COVER). Ingest skips it by the same name (its OURS list) so
+// it never becomes a page, and it must not be counted as one either — a
+// finished sixteen-page book said seventeen without this.
+//
+// IT IS NOT A PILE EITHER (spec §12). Counting it here is how a finished book
+// became an inbox: a book still arriving, whose manifest.json has not mirrored
+// yet, is a cover, a pages/ folder and nothing else on top, so the cover made it
+// "one photo waiting", ten quiet minutes made it claimable, and the walk read
+// every page again against the vision key. The manifest rule below is the other
+// half of that; this half is what makes a book MID-DOWNLOAD — the manifest not
+// there yet — neither a pile nor an inbox.
+const NOT_A_PAGE = new Set(["cover.jpg"]);
+
+// The photos a parent dropped in: what photoNames found, less anything of ours.
+// One filter, so "is this a pile?", "how many photos is this book?" and the
+// quiet clock's signature can never disagree about what counts.
+function pilePhotos(names) {
+  return (names || []).filter(n => !NOT_A_PAGE.has(n.toLowerCase()));
+}
+
 // Top-level photos only, with their sizes: this is the pile the parent dropped
 // in, not the pages/ and sources/ the builder makes afterwards (by then
 // job.json exists and the folder is no longer an inbox). The signature is what
 // the quiet period watches, so it must see the loose files and only those — a
 // folder is still changing while photos are landing in IT, never while ingest
 // is tidying them away.
+//
+// `published` travels with the count because a folder holding manifest.json is
+// a BOOK: never an inbox, never a pile, whatever is loose beside it (spec §12).
+// It is one existsSync per folder per scan, on a path this file already stats
+// twice elsewhere.
 function listing(dir) {
   const names = photoNames(dir);
   if (!names) return null;
-  const parts = names.map(n => {
+  const parts = pilePhotos(names).map(n => {
     let size = -1;
     try { size = fs.statSync(path.join(dir, n)).size; } catch {}
     return n + ":" + size;
   });
   parts.sort();
-  return { count: parts.length, sig: parts.join("\n") };
+  return { count: parts.length, sig: parts.join("\n"),
+           published: fs.existsSync(path.join(dir, MANIFEST)) };
 }
 
 // Where ingest puts the originals once it has taken them in (content-ingest.js
 // owns the name; it is not exported because requiring that module here would
 // drag the JPEG decoder into the hub's main process for one string).
 const SOURCES = "sources";
-// The one .jpg in a book root that is not a photo a parent dropped in: the
-// publish step copies page 1's bytes there as the shelf's cover
-// (content-publish.COVER). Ingest skips it by the same name (its OURS list) so
-// it never becomes a page, and it must not be counted as one either — a
-// finished sixteen-page book said seventeen without this.
-const NOT_A_PAGE = new Set(["cover.jpg"]);
+// The file that makes a folder a BOOK: content-publish.js writes it last, and
+// the weekly-book maker uploads it last for the same reason (spec §8) — no
+// device may see a manifest before the files it names. Everything that asks
+// "is this finished?" asks for this name.
+const MANIFEST = "manifest.json";
 
 // How many photos a book folder holds, WHEREVER THEY SIT. The pile starts
 // loose in the folder and ingest MOVES it into sources/ one file at a time, so
@@ -166,8 +232,7 @@ const NOT_A_PAGE = new Set(["cover.jpg"]);
 // life, with nothing that will ever make it sixteen.
 function photoCount(dir, job) {
   const inbox = !job || store.owedState(job) === "inbox";
-  const loose = inbox
-    ? (photoNames(dir) || []).filter(n => !NOT_A_PAGE.has(n.toLowerCase())).length : 0;
+  const loose = inbox ? pilePhotos(photoNames(dir)).length : 0;
   return loose + (photoNames(path.join(dir, SOURCES)) || []).length;
 }
 
@@ -182,8 +247,21 @@ function observe(dir, sig, now) {
   return now - prev.since;
 }
 
-// A claim is stale when its heartbeat stopped long enough ago — or when it is
-// unreadable, which is the same thing from here.
+// IS THERE WORK LEFT ON THIS BOOK, AND HAS WHOEVER HAD IT STOPPED? A claim is
+// stale when its heartbeat stopped long enough ago — or when it is unreadable,
+// which is the same thing from here.
+//
+// WHAT THIS FUNCTION IS NOT (spec §14, "built here"). It never says WHOSE the
+// book is, and since the scan stopped starting books by itself it is no longer
+// anybody's whole licence:
+//   • the scan takes a stale claim over only when isMine() as well — another
+//     computer's abandoned book is handed back to a grown-up on the card, and
+//     no machine in the family ever takes a book off another one;
+//   • the Build door (build() below) asks a different question again, because
+//     the folders it exists for — a pile of photos nobody has claimed — have no
+//     job.json at all, and this returns false for every one of them.
+// So: this is "is there work owing, and is the claim cold?", and who holds it
+// is isMine()/heldElsewhere()'s to answer.
 //
 // A book with no work left is NEVER taken over, however old it is. That is the
 // difference between a shelf that settles down and one that churns: every
@@ -256,7 +334,13 @@ function claim(dir, job, now, extra) {
     ? { ...store.transition(job, job.state, { now: iso(now) }), claimedBy: me }
     : store.newJob({ claimedBy: me, now: iso(now) });
   const written = store.writeJob(dir, extra ? { ...next, ...extra } : next);
-  store.appendLog(dir, "claim", job ? "taken over by " + me : "claimed by " + me, { now: iso(now) });
+  // `by` is the same string the claim itself carries, in a FIELD (spec §14 step
+  // 1, content-store.appendLog). The other device reads this line when it
+  // catches job.json mid-mirror — the worker rewrites it every 60 s while it
+  // builds — and reading a device id back out of the sentence would mean
+  // parsing prose that belongs to whoever next improves the wording.
+  store.appendLog(dir, "claim", job ? "taken over by " + me : "claimed by " + me,
+                  { now: iso(now), by: me });
   return written;
 }
 
@@ -280,19 +364,28 @@ function slugOf(root, name) {
 // claimed, never built, and left the Book Reader telling a family with Drive
 // set up perfectly to go and set up Drive.
 //
-// The pile is ONE book, and it is on exactly the same quiet clock a book folder
-// is: `observe()` over the loose listing, ten minutes of stillness before
-// anything is moved. That is what makes "the photos are still arriving" and
-// "the parent has finished uploading" different things — a phone trickles a
-// twenty-photo album in over several minutes, and every arrival resets the
-// clock, so every one of them lands in the SAME book.
+// The pile is ONE book, and `force` is a grown-up saying so with their finger
+// (spec §14 step 3). The tap on the loose card IS the sentence the quiet clock
+// used to have to guess — "I have finished putting the photos in" — so the
+// clock is skipped when it comes from there, and the pile becomes a book in the
+// second the card was pressed rather than ten minutes later.
+//
+// Without `force` the ten-minute clock still stands, because the caller then
+// has nobody's word for it: `observe()` over the loose listing, ten minutes of
+// stillness before anything is moved. That is what makes "the photos are still
+// arriving" and "the parent has finished uploading" different things — a phone
+// trickles a twenty-photo album in over several minutes, and every arrival
+// resets the clock, so every one of them lands in the SAME book. Nothing in the
+// hub calls it that way today: the scan stopped gathering when it stopped
+// claiming (§12, "built here"), and this is the guard for whatever asks next.
 //
 // Everything about the move itself — the marker that finishes an interrupted
 // one, the placeholder name, never deleting a photo, never creating `books/` —
 // is content-gather.js's. This function is only the decision to call it, and
 // what to do with the folder afterwards: claim it and start it, with
 // `autoTitle` set so the walk knows nobody has named this book yet.
-function gatherLoose(root, now) {
+function gatherLoose(root, now, opts) {
+  const force = !!(opts && opts.force);
   const list = listing(root);
   if (!list) return null;                          // no books/ at all: nothing to do
   const open = gatherer.pending(root);             // a move a stopped hub left half done
@@ -300,7 +393,7 @@ function gatherLoose(root, now) {
   // An interrupted move is finished AT ONCE and never re-timed: those photos
   // have already had their quiet ten minutes, and leaving half of them loose is
   // how one book becomes two.
-  if (!open && observe(root, list.sig, now) < QUIET_MS) return null;
+  if (!force && !open && observe(root, list.sig, now) < QUIET_MS) return null;
   seen.delete(root);
   let g = null;
   try { g = gatherer.gather(root, { now }); }
@@ -347,6 +440,15 @@ function gatherLoose(root, now) {
 // Walks <folderPath>/books/*. Returns a small JSON-safe picture of every book
 // folder plus the slugs claimed this time round; the jobs themselves run
 // behind it (one at a time — see run()).
+//
+// WHAT A SCAN MAY START, since "built here" (spec §12): exactly one thing —
+// this device's OWN abandoned job. Not a quiet inbox (a pile of photos is a
+// grown-up's tap away from being a book, and the tap is the only thing that
+// says "yes, make this one"), not the loose pile in books/ (same tap, through
+// build()), and never another computer's job, however cold its claim. The
+// hub is still the thing that notices a book stopped: it says so on the card
+// and hands the decision to a person, which is the difference between a family
+// with two computers and a family with two computers arguing.
 function scan(opts) {
   const o = opts || {};
   const now = o.now == null ? Date.now() : o.now;
@@ -365,16 +467,27 @@ function scan(opts) {
     // the shared folder — or one this hub wrote before it was restarted — gets
     // said out loud. Deduped inside, so a shelf of parked books is silent.
     notePause(slug, name, job, now);
-    const inbox = !job && list.count > 0;
+    // A FOLDER WITH A MANIFEST IS A BOOK (spec §12): not an inbox, not a pile,
+    // whatever is loose beside it. That is what keeps the weekly book — and any
+    // book another device in the family finished — off the walk.
+    const inbox = !job && !list.published && list.count > 0;
     // Only an inbox is on the quiet clock; anything else forgets its listing so
     // a shelf of a hundred published books costs us nothing to remember.
     if (!inbox) seen.delete(dir);
+    // Still measured, no longer a licence: the card says how long the photos
+    // have been still, and a grown-up decides (build()).
     const quiet = inbox && observe(dir, list.sig, now) >= QUIET_MS;
     const stale = takeable(job, now);
     const b = { name, slug, images: list.count, inbox,
                 quiet, takeable: stale, state: job ? job.state : null };
     books.push(b);
-    if (!quiet && !stale) continue;
+    // OURS TO RESUME, or nobody's to resume. A claim naming another device is
+    // left exactly as it is even when it went cold half an hour ago — the card
+    // offers Build to the family instead (§15: "no machine takes over by
+    // itself"). A job.json carrying no claim at all is nobody's, so this hub
+    // may as well be the one that finishes it.
+    const ours = isMine(job) || !deviceOf(job && job.claimedBy);
+    if (!stale || !ours) continue;
     try {
       claim(dir, job, now);
       claimed.push(b.slug);
@@ -385,13 +498,12 @@ function scan(opts) {
       console.error("[content] could not claim " + name + ": " + e.message);
     }
   }
-  // LAST, and deliberately after the folders: the pile becomes a folder of its
-  // own, and doing it first would have this same scan walk a book that is one
-  // readdir old. It is picked up as an ordinary book by every scan after this
-  // one; this pass claims and starts it itself, so the shelf says "building"
-  // straight away rather than in five minutes' time.
-  const pile = gatherLoose(root, now);
-  if (pile) { books.push(pile); claimed.push(pile.slug); }
+  // AND THE PILE IN books/ IS LEFT WHERE IT IS. It used to be gathered here,
+  // last of all, the moment its own ten minutes were up — a folder made, named
+  // and claimed inside the family's own Drive folder with nobody asked. It is a
+  // tap on the loose card now (build({loose:true})), which is the same decision
+  // made by the person whose photos they are. `status().loose` still counts
+  // them, so both cards can say the photos are there and waiting.
   lastScan = { at: iso(now), books: books.length,
                inboxes: books.filter(b => b.inbox).length, claimed: claimed.slice() };
   return { books, claimed };
@@ -698,7 +810,10 @@ function jobFor(name, dir, slug, perClip) {
   // — counted on both sides of the move it is half way through (photoCount).
   let built = [];
   try { built = pagesOf(dir); } catch {}
-  const count = Math.max(built.length, pages.length, photoCount(dir, job));
+  // The loose pile, counted once: it is both the honest floor under `count`
+  // below and the whole of "is this folder a pile waiting for a tap?".
+  const photos = photoCount(dir, job);
+  const count = Math.max(built.length, pages.length, photos);
   // TWO COUNTS, because there are two kinds of mark and they are not the same
   // sentence to a parent. `flags` is WORDS somebody was unsure of, the ones the
   // review page highlights inside the page's own text; `pageFlags` is whole
@@ -758,15 +873,27 @@ function jobFor(name, dir, slug, perClip) {
   // finished book failed — content-worker.js).
   const price = perClip === undefined ? (DATA ? falPrice(DATA) : null) : perClip;
   const clips = Number(job && job.spent && job.spent.animate && job.spent.animate.calls) || 0;
-  const published = fs.existsSync(path.join(dir, "manifest.json"));
+  const published = fs.existsSync(path.join(dir, MANIFEST));
   const q = published ? quote(count, price) : null;
+  // WHAT THE CARD MAY OFFER (spec §14, §13). Three derived answers, and no
+  // device name behind any of them: `waiting` is a pile of photos nobody has
+  // claimed — no job, no manifest — which the shelf draws a Build card over and
+  // Settings says "N photos, waiting for a grown-up to tap Build"; `elsewhere`
+  // is another computer's warm claim, which is the one time the card says why
+  // there is no button; `buildable` is simply "this door would say yes", asked
+  // of the door's own two steps rather than guessed at again in two pages.
+  const held = heldElsewhere(dir, Date.now(), job);
+  const finished = alreadyBuilt(dir, job);
   return {
     kind: "books",
     slug: slug || booksIndex.slugFor(path.dirname(dir), name) || "book",
     title: name,
-    // A folder nobody has claimed is still a job — it is an inbox waiting for
-    // its quiet ten minutes, and the Settings card must be able to say so.
+    // A folder nobody has claimed is still a job — it is a pile of photos
+    // waiting for a tap, and the Settings card must be able to say so.
     state: job ? job.state : "inbox",
+    waiting: !job && !published && photos > 0 ? "pile" : null,
+    buildable: !held && !finished,
+    elsewhere: !!held && held.refused === "elsewhere",
     step: store.stepOwed(owed),
     progress: { pages: count, transcribed, narrated: narrated.size },
     // The narration side of the bill: ElevenLabs characters owed, and the ones
@@ -899,6 +1026,16 @@ function runStep(o) {
   if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
   const found = bookFor(req.slug, st);
   if (!found) return { error: "unknown book" };
+  // NOT WHILE ANOTHER COMPUTER HAS IT (spec §14: this door gets step 1, and
+  // step 1 only). Two hubs running the same book's step both write text.json,
+  // job.json and the narration ledger into one folder inside the family's Drive,
+  // and the loser's minutes of work — and whatever they were billed for — are
+  // simply overwritten. Never step 2: every write on the review page comes back
+  // through here on a book that HAS a manifest, and animate REQUIRES one, so a
+  // "this is already built" refusal here would lock a family out of the book
+  // that just arrived.
+  const elsewhere = heldElsewhere(found.dir, Date.now());
+  if (elsewhere) return elsewhere;
 
   // ONE PAGE. Checked here rather than inside the worker for one reason: every
   // refusal has to happen before a thread is spawned and a provider is called,
@@ -985,6 +1122,179 @@ function runStep(o) {
   run({ kind: req.kind, slug: req.slug, name: found.name, dir: found.dir,
         dataDir: DATA, step, page, pages }).catch(() => {});
   return { started: true };
+}
+
+// ------------------------------------------- BUILD THIS ONE, HERE (spec §14)
+
+// THE THREE REFUSALS, IN A PARENT'S OWN WORDS. Every door below answers
+// {refused, error} and the card renders the sentence verbatim: only the hub
+// knows WHY, and a bare code would have three pages inventing three wordings
+// for the same thing (server.js's two older doors could not say why at all —
+// {error} became 400 and {skipped} became 409 with nothing to render).
+const ELSEWHERE = "Another computer in the family is making this book. It will "
+  + "appear here when it is finished.";
+const CHECKING = "New ERA is checking whether another computer has already "
+  + "started this book. Try again in a minute.";
+const BUILT = "This book is already made — you can read it in Book Reader.";
+// The tap landed while the photos were still being copied onto this computer
+// (Drive holds a handle open on a file it is still writing, and content-gather
+// leaves it exactly where it is). Nothing was made, and the next tap will work.
+const STILL_ARRIVING = "Those photos are still arriving on this computer. Try "
+  + "again in a minute.";
+
+// The claim line the OTHER hub left, or null. `by` is a field on lines written
+// by this release (content-store.appendLog); the two literal prefixes are what
+// a line from an older hub has instead, and they are read rather than dropped
+// because a family updates one computer at a time.
+const CLAIM_PROSE = /^(?:claimed by|taken over by)\s+(\S+)/;
+function lastClaim(dir) {
+  const lines = store.readLog(dir);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (!l || l.step !== "claim") continue;
+    if (l.by != null && String(l.by) !== "") return { who: deviceOf(l.by), t: l.t };
+    const m = CLAIM_PROSE.exec(String(l.msg || ""));
+    if (m) return { who: deviceOf(m[1]), t: l.t };
+    return null;                       // a claim line that names nobody at all
+  }
+  return null;
+}
+
+// Is the claim still warm? Not the heartbeat alone: a book that held for a spent
+// allowance wrote a fresh heartbeat as it held and then stopped beating
+// (content-worker.js holdHere), so on the heartbeat alone a second device walks
+// in the moment `pausedUntil` passes — before the owner's own scan has had its
+// turn at the book it is waiting on. The later of the two is the moment the
+// claim starts going cold, and STALE_MS is the same half hour everywhere else.
+function claimWarm(job, now) {
+  const beat = Date.parse(job && job.heartbeat);
+  const wake = Date.parse(job && job.pausedUntil);
+  const last = Math.max(Number.isFinite(beat) ? beat : -Infinity,
+                        Number.isFinite(wake) ? wake : -Infinity);
+  return Number.isFinite(last) && now - last < STALE_MS;
+}
+
+// A book with no work left is not "being built somewhere else": its claim is a
+// record of who built it, not a hand on the wheel. takeable() has said the same
+// since the first release, and this door must agree with it — the weekly book
+// arrives signed with a claim whose heartbeat is minutes old (spec §8), and
+// every review-page action on that book comes through the two doors that get
+// step 1.
+function owesWork(job) {
+  return !!job && job.state !== "done" && job.state !== "published" &&
+         store.owedState(job) !== null;
+}
+
+// WHO HOLDS THIS BOOK (spec §14 step 1), or null when nobody else does.
+//
+// job.json is the answer when there is one to read, and there often is not:
+// the worker rewrites it every 60 s while it builds (content-worker.js), Drive
+// mirrors .build/ in whatever order it likes, and a file caught mid-mirror
+// parses as nothing. So an unreadable job.json is "checking" rather than "free"
+// — the difference between the two answers is a second copy of a build the
+// family has already paid for — and a folder with NO job.json is asked of
+// log.jsonl instead, where the other hub's claim line usually lands first.
+// `known` is the job.json the caller has already read (jobFor reads one per
+// book on every status poll); leave it out and this reads its own.
+function heldElsewhere(dir, now, known) {
+  const job = known === undefined ? store.readJob(dir) : known;
+  if (job) {
+    if (!owesWork(job)) return null;
+    // A claim that names nobody (a job.json written by hand in power mode) is
+    // not another computer's.
+    const who = deviceOf(job.claimedBy);
+    if (!who || mineName(who)) return null;
+    return claimWarm(job, now) ? { refused: "elsewhere", error: ELSEWHERE } : null;
+  }
+  if (fs.existsSync(store.jobPath(dir))) return { refused: "checking", error: CHECKING };
+  const line = lastClaim(dir);
+  if (!line || !line.who || mineName(line.who)) return null;
+  const at = Date.parse(line.t);
+  if (!Number.isFinite(at) || now - at >= STALE_MS) return null;
+  return { refused: "checking", error: CHECKING };
+}
+
+// NEVER TWICE (spec §14 step 2). A manifest is a finished book; `done` and
+// `published` are the two states the walk owes nothing from — and the weekly
+// book's job.json says `done` BEFORE its manifest is uploaded (spec §8),
+// precisely so a hub that sees the folder half-delivered leaves it alone.
+function alreadyBuilt(dir, job) {
+  const done = job && (job.state === "done" || job.state === "published");
+  return done || fs.existsSync(path.join(dir, MANIFEST))
+    ? { refused: "built", error: BUILT } : null;
+}
+
+// POST /content/build's whole decision: the tap on a Build card (spec §13, §14).
+// "The 'build' for local button is simply to make sure that when users upload a
+// book multiple devices don't build the same book. You should have logic to
+// make sure that once a book is built in drive it is not built again too"
+// (dad, 9/9). Everything the scan stopped doing happens here, once, because a
+// person asked for it on the computer that will do the work:
+//
+//   {kind:"books", slug}       a pile folder, or a job this hub may take over
+//   {kind:"books", loose:true} the pile in books/ itself, which has no slug
+//                              until it is gathered
+//
+// Returns {started, slug}, {refused, error} (409), {error} (400) or
+// {skipped:"needs-local-drive"} (409).
+function build(o) {
+  const req = o || {};
+  if (!KINDS.includes(req.kind)) return { error: "unknown kind" };
+  const st = drive.status();
+  if (st.mode !== "local" || !st.folderPath) return { skipped: "needs-local-drive" };
+  const now = Date.now();
+  const root = path.join(st.folderPath, "books");
+
+  // THE PILE WITH NO FOLDER. Nothing to refuse it with: it has no folder, so no
+  // job.json, no claim line and no manifest — which is why the card sends
+  // `loose:true` rather than a slug (reader.js's old " loose" sentinel is never
+  // sent). The gather makes the folder, names it after today, claims it with
+  // `autoTitle` and starts it, all inside gatherLoose().
+  if (req.loose === true) {
+    let pile = null;
+    try { pile = gatherLoose(root, now, { force: true }); }
+    catch (e) {
+      console.error("[content] could not gather the loose photos: " + store.redact(e.message));
+      return { refused: "checking", error: STILL_ARRIVING };
+    }
+    // Nothing moved: either there was no pile left (another device gathered it
+    // and Drive has already told us), or every photo is still held open by
+    // whatever is copying it in. Both are "try again in a minute", and neither
+    // leaves anything behind.
+    if (!pile) return { refused: "checking", error: STILL_ARRIVING };
+    return { started: true, slug: pile.slug };
+  }
+
+  if (typeof req.slug !== "string" || !req.slug) return { error: "unknown book" };
+  const found = bookFor(req.slug, st);
+  if (!found) return { error: "unknown book" };
+  const job = store.readJob(found.dir);
+
+  // Step 2 before step 1 in ONE case, deliberately: when both would refuse, the
+  // true sentence is "this book is already made", not "another computer is
+  // making it". The weekly book arrives finished AND with a claim minutes old,
+  // and a card that told a family to wait for a book that is already on their
+  // shelf would be a card nobody believes.
+  const built = alreadyBuilt(found.dir, job);
+  if (built) return built;
+  const held = heldElsewhere(found.dir, now);
+  if (held) return held;
+
+  try {
+    // A pile folder is claimed at `inbox`; another device's cold job is taken
+    // over exactly as a scan used to do it, keeping its state and its errors so
+    // it resumes where it fell over. A job that is ALREADY ours and still warm
+    // is neither: it is running or about to, and run() below joins it rather
+    // than writing job.json out from under the worker that holds the folder.
+    if (!job) claim(found.dir, null, now);
+    else if (takeable(job, now)) claim(found.dir, job, now);
+  } catch (e) {
+    console.error("[content] could not claim " + found.name + ": " + store.redact(e.message));
+    return { refused: "checking", error: CHECKING };
+  }
+  run({ kind: "books", slug: req.slug, name: found.name, dir: found.dir,
+        dataDir: DATA }).catch(() => {});
+  return { started: true, slug: req.slug };
 }
 
 // ---------------------------------------- "not while it is being built" (§5)
@@ -1106,9 +1416,17 @@ function renameBook(o) {
   // parent has only just made. The next scan picks the folder up under its new
   // name anyway (its quiet clock was reset by the seen.delete above), which is
   // the same minute it would have started in had nobody renamed it.
-  const published = fs.existsSync(path.join(res.dir, "manifest.json"));
-  if (j) run({ kind: "books", slug, name: res.name, dir: res.dir, dataDir: DATA,
-               step: published ? store.STEP_OWED.narrating : null }).catch(() => {});
+  //
+  // AND NOTHING RUNS WHILE ANOTHER COMPUTER HAS THE BOOK (spec §14: this door
+  // gets step 1 too). The rename itself always happens — a grown-up may name
+  // their own book whatever is building it, and the folder moves inside their
+  // own Drive for the other device to see — but the build that would follow is
+  // the other computer's to finish, and two hubs on one folder is exactly what
+  // step 1 exists to prevent.
+  const published = fs.existsSync(path.join(res.dir, MANIFEST));
+  if (j && !heldElsewhere(res.dir, Date.now()))
+    run({ kind: "books", slug, name: res.name, dir: res.dir, dataDir: DATA,
+          step: published ? store.STEP_OWED.narrating : null }).catch(() => {});
   console.log("[content] a grown-up renamed a book folder");
   return { renamed: true, slug, title: res.name, was: found.name };
 }
@@ -1427,8 +1745,13 @@ function tick(reason) {
   return res;
 }
 
-function start(dataDir) {
+// `deviceId` is server.js's DEVICE_ID (device-id.js), and it is what every
+// claim this hub writes is signed with from here on. Absent — a test, or a
+// caller written before spec §14 — the claim falls back to the machine name it
+// has always used, which is exactly what isMine() forgives on the way back in.
+function start(dataDir, opts) {
   DATA = dataDir;
+  DEVICE = (opts && opts.deviceId) || null;
   // Late enough that the first local sync (drive.js:493) has had its go, so a
   // fresh install does not spend its first scan on a half-copied folder.
   setTimeout(() => tick("startup"), 90 * 1000).unref();
@@ -1440,14 +1763,19 @@ module.exports = {
   // One property, one owner — the same shape (and the same warning about a slot
   // with two owners) as drive.onSynced.
   onPublished: null,
-  start, scan, tick, run, runJob, runStep, isBuilding, idle, status, beat, claim,
+  start, scan, tick, run, runJob, runStep, build, isBuilding, idle, status, beat, claim,
   jobs, jobFor, bookFor, pagesFor, pageFile, saveOrder, savePage, saveText,
-  rebuildPages, removeBook, renameBook, gatherLoose,
+  rebuildPages, removeBook, renameBook, gatherLoose, isMine,
   KINDS, QUIET_MS, STALE_MS, MAX_PAGE_TEXT, NO_VOICE, NO_VISION, ALL_EDITED,
-  NO_FAL, NOT_FINISHED,
-  _testReset: () => {
+  NO_FAL, NOT_FINISHED, ELSEWHERE, CHECKING, BUILT,
+  // `deviceId` is set only when it is given, and left alone otherwise: a suite
+  // that named this device at start() gets it back on every reset without
+  // having to say so twice (clothing.js's _testReset takes its options the same
+  // way).
+  _testReset: (opts) => {
     running = null; inflight = null; queue = []; seen = new Map();
     progress = null; lastScan = null; told = new Map();
+    if (opts && "deviceId" in opts) DEVICE = opts.deviceId || null;
     module.exports.runJob = runJob;
     module.exports.onPublished = null;
   },

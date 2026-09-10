@@ -409,10 +409,14 @@ test("a Drive sync feeds the Clothing Picker AND the book scan", async () => {
   const folder2 = path.join(TMP, "hub-drive");
   fs.mkdirSync(path.join(folder2, "books"), { recursive: true });
   driveCfg({ mode: "local", folderPath: folder2 }, data2);
-  // A claim whose heartbeat stopped an hour ago: takeable at once, so the test
-  // never has to wait out the ten-minute quiet period a fresh inbox owes.
+  // THIS HUB'S OWN CLAIM, from before it was restarted, with a heartbeat that
+  // stopped an hour ago: the one thing a scan may still start by itself (spec
+  // §14) — so the test never has to wait out a quiet period, and never has to
+  // pretend another computer's abandoned book is a scan's to take. The
+  // hostname form is what content.isMine() forgives for a job.json written
+  // before the device id existed.
   const dir = book(folder2, "The Snail and the Whale", PHOTOS);
-  store.writeJob(dir, store.newJob({ claimedBy: "a-laptop-that-closed", now: Date.now() - 60 * MIN }));
+  store.writeJob(dir, store.newJob({ claimedBy: os.hostname() + ":1", now: Date.now() - 60 * MIN }));
 
   let aiCalls = 0, elevenCalls = 0;
   const stand = (count) => http.createServer((req, res) => { count(); res.writeHead(404).end(); });

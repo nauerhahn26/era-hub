@@ -280,8 +280,13 @@ function unread(root, name) {
   return dir;
 }
 
+// CLAIMED BY THE HUB UNDER TEST. It has to be said now that content.js reads
+// claimedBy back (spec §14): /content/run refuses a book another computer is
+// building, and a fixture signed "test:1" is another computer. The hostname
+// form is what every job.json written before this release carries, and
+// content.isMine() forgives it on purpose.
 function job(dir, extra) {
-  const base = store.newJob({ claimedBy: "test:1" });
+  const base = store.newJob({ claimedBy: os.hostname() + ":1" });
   store.writeJob(dir, { ...base, ...extra });
 }
 
@@ -555,7 +560,7 @@ test("try again now lifts a GOOGLE pause too, rather than holding on it again", 
 test("try again now on a FAILED book lifts its pause too, or the press buys nothing", async () => {
   const dir = unread(BOOKS, "Failed And Paused Book");
   const stale = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
-  const base = store.newJob({ claimedBy: "test:1" });
+  const base = store.newJob({ claimedBy: os.hostname() + ":1" });   // this hub's own, as above
   const failed = store.fail({ ...base, state: "transcribing" },
                             "permanent: the provider did not accept that key");
   store.writeJob(dir, { ...failed, held: "quota", pausedProvider: "google",

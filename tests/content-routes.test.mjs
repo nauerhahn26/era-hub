@@ -74,7 +74,12 @@ function book(name, o) {
         { provider: "elevenlabs", model: "eleven_multilingual_v2", voice: "v1", pages: narr });
   }
   if (opts.job) {
-    const job = { ...store.newJob({ claimedBy: "test:1", now: opts.now }), ...opts.job };
+    // CLAIMED BY THE HUB UNDER TEST, and it has to be said now that content.js
+    // reads claimedBy back (spec §14): /content/run refuses a book another
+    // computer is building, and a fixture signed "test:1" is another computer.
+    // The hostname form is the one every job.json written before this release
+    // carries, and content.isMine() forgives it on purpose.
+    const job = { ...store.newJob({ claimedBy: os.hostname() + ":1", now: opts.now }), ...opts.job };
     store.writeJob(dir, job);
   }
   return dir;
