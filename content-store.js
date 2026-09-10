@@ -3,7 +3,7 @@
 //
 //   books/<Title>/.build/job.json    the claim + the state machine
 //   books/<Title>/.build/text.json   page order + transcribed text + flags
-//   books/<Title>/.build/log.jsonl   one {t, step, msg} line per step
+//   books/<Title>/.build/log.jsonl   one {t, step, msg, by?} line per step
 //
 // Why one module: a book is built IN PLACE inside the family's Drive folder,
 // so the same three files are read and written by the hub worker, by a second
@@ -392,13 +392,31 @@ function writeJob(dir, job) {
 
 // ------------------------------------------------------------------ log.jsonl
 
-// Exactly {t, step, msg}, one JSON object per line, both strings redacted.
-// Never throws: a build that cannot write its log must still finish the book
-// (same law as pool.js's append — history is nice-to-have, the artefact is not).
-// Returns the line written, or null if the log was unwritable.
+// {t, step, msg} and an optional `by`, one JSON object per line, every string
+// redacted. Never throws: a build that cannot write its log must still finish
+// the book (same law as pool.js's append — history is nice-to-have, the
+// artefact is not). Returns the line written, or null if the log was unwritable.
+//
+// WHO WROTE THE LINE, as a field rather than as prose (spec §14 step 1). The
+// worker rewrites job.json every 60 s while it builds (content-worker.js), so
+// a second device asking "is anyone already building this book?" keeps catching
+// the file mid-rewrite, and the newest `claim` line in here is what is left to
+// ask. Reading a device id back out of "taken over by kitchen-pc-a1b2:1234"
+// means parsing a sentence — and the sentence belongs to whoever next improves
+// the wording, so `by` says it where nobody has to.
+//
+// Written ONLY when the caller gives one, and the KEY IS ABSENT when they do
+// not: that absence is exactly how the reader tells a line an older hub wrote
+// (and falls back to the two literal prefixes for) from a line whose author is
+// genuinely nobody. An empty string is not an author either.
+//
+// Redacted along with the rest — the law at the top of this file has no
+// exceptions — which costs nothing here, because a device id is a slug
+// (device-id.js ID_RE) and no redaction rule can touch one.
 function appendLog(dir, step, msg, opts) {
   const o = opts || {};
   const line = { t: iso(o.now), step: redact(step), msg: redact(msg) };
+  if (o.by != null && String(o.by) !== "") line.by = redact(o.by);
   try {
     fs.mkdirSync(buildDir(dir), { recursive: true });
     fs.appendFileSync(logPath(dir), JSON.stringify(line) + "\n");
@@ -409,7 +427,12 @@ function appendLog(dir, step, msg, opts) {
   return line;
 }
 
-// Torn last line tolerated: Drive can mirror a log mid-append.
+// Torn last line tolerated: Drive can mirror a log mid-append. Each good line
+// comes back WHOLE, not rebuilt from the fields this version knows about — the
+// log inside a family's Drive folder is written by every hub they own and by
+// Claude Code in power mode, so a line may carry keys a older hub never wrote
+// (`by`), or keys a newer one has yet to invent. A reader that dropped them would
+// answer "nobody holds this book" for exactly the lines that say who does.
 function readLog(dir) {
   let raw;
   try { raw = fs.readFileSync(logPath(dir), "utf8"); } catch { return []; }

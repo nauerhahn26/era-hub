@@ -228,6 +228,30 @@ test("job.json round-trips and a bad state is refused", () => {
   assert.throws(() => store.writeJob(dir, { ...job, state: "melting" }), /melting/);
 });
 
+// A FINISHED BOOK'S job.json, written somewhere else and read by a hub that
+// did not write it: state "done", a claim naming a host that is not a device on
+// this shelf, and keys this hub has no schema for. readJob is a reader, not a
+// validator — it hands back exactly what is on disk, because /content/build's
+// "who holds it" and "never twice" steps both ask about fields (`claimedBy`,
+// `state`, `authored`) that a normaliser of this hub's own shape would round
+// off. This test is here to keep it that way while `by` is added next door.
+test("readJob hands back a foreign job.json exactly as written", () => {
+  const dir = book("jobforeign");
+  const elsewhere = {
+    state: "done",
+    claimedBy: "book-maker-7c31:41",
+    startedAt: "2026-09-09T09:00:00.000Z",
+    heartbeat: "2026-09-09T09:41:07.512Z",
+    steps: { done: { at: "2026-09-09T09:41:07.512Z" } },
+    errors: [],
+    authored: true,
+    week: "2026-09-07",
+  };
+  fs.mkdirSync(store.buildDir(dir), { recursive: true });
+  fs.writeFileSync(store.jobPath(dir), JSON.stringify(elsewhere, null, 2) + "\n");
+  assert.deepEqual(store.readJob(dir), elsewhere);
+});
+
 // -------------------------------------------------------------- the ledger
 
 // L5, from the 16-page live run of 9/4: what a book COST cannot be worked out
@@ -278,6 +302,60 @@ test("log.jsonl is one {t, step, msg} object per line", () => {
   const back = store.readLog(dir);
   assert.equal(back.length, 2);
   assert.equal(back[1].msg, "page 1 of 3");
+});
+
+// WHO WROTE THE LINE. /content/build asks log.jsonl who holds a book while
+// job.json is mid-rewrite (spec §14 step 1), so the device id has to be a field
+// it can read rather than a sentence it has to parse. `by` is optional both
+// ways: a line a step writes for nobody carries none, and neither does a line
+// an older hub wrote — the door falls back to the "claimed by " prefix for
+// those, and it can only tell the two apart if the key is absent, not null.
+test("appendLog writes `by` when it is given, and no key at all when it is not", () => {
+  const dir = book("logby");
+  const mine = "kitchen-pc-a1b2:1234";
+  const claim = store.appendLog(dir, "claim", "claimed by " + mine, { now: "2026-09-09T10:00:00.000Z", by: mine });
+  assert.deepEqual(claim, { t: "2026-09-09T10:00:00.000Z", step: "claim", msg: "claimed by " + mine, by: mine });
+  const plain = store.appendLog(dir, "ingest", "3 pages", { now: "2026-09-09T10:00:01.000Z" });
+  assert.deepEqual(Object.keys(plain).sort(), ["msg", "step", "t"]);
+  // An empty by is not a by: a caller that has no id must not stamp one.
+  for (const empty of [null, "", undefined]) {
+    const line = store.appendLog(dir, "ingest", "x", { by: empty });
+    assert.ok(!("by" in line), String(empty) + " should not become a by");
+  }
+  const lines = fs.readFileSync(store.logPath(dir), "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
+  assert.deepEqual(Object.keys(lines[0]).sort(), ["by", "msg", "step", "t"]);
+  assert.equal(lines[0].by, mine);
+  assert.ok(!("by" in lines[1]));
+  // and it survives the round trip the door actually makes
+  assert.equal(store.readLog(dir)[0].by, mine);
+});
+
+test("`by` is redacted like every other string that reaches the log", () => {
+  const dir = book("logbykey");
+  const HEX = "0123456789abcdef0123456789abcdef";
+  const line = store.appendLog(dir, "claim", "claimed", { by: HEX });
+  assert.ok(!line.by.includes(HEX), "leaked -> " + line.by);
+  assert.ok(!fs.readFileSync(store.logPath(dir), "utf8").includes(HEX), "leaked to disk");
+  // A real device id is a slug (device-id.js ID_RE) and nothing here touches it.
+  assert.equal(store.appendLog(dir, "claim", "claimed", { by: "kitchen-pc-a1b2:1234" }).by, "kitchen-pc-a1b2:1234");
+});
+
+// A log written by a NEWER hub, or by Claude Code in power mode, may carry keys
+// this one has never heard of. readLog hands the line back whole rather than
+// rebuilding it from the three it knows: the door reads `by` off lines this
+// version does not write, and a reader that dropped unknown keys would answer
+// "nobody holds it" for every one of them.
+test("readLog hands back every key a line carries", () => {
+  const dir = book("logextra");
+  const older = { t: "2026-09-09T10:00:00.000Z", step: "claim", msg: "claimed by study-pc-9f3c:882",
+                  by: "study-pc-9f3c:882", note: "a key this hub has never seen", n: 7 };
+  fs.mkdirSync(store.buildDir(dir), { recursive: true });
+  fs.appendFileSync(store.logPath(dir), JSON.stringify(older) + "\n");
+  store.appendLog(dir, "ingest", "3 pages", { now: "2026-09-09T10:00:01.000Z" });
+  const back = store.readLog(dir);
+  assert.equal(back.length, 2);
+  assert.deepEqual(back[0], older);
+  assert.deepEqual(Object.keys(back[1]).sort(), ["msg", "step", "t"]);
 });
 
 test("readLog tolerates a torn last line", () => {
