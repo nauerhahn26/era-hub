@@ -366,6 +366,32 @@
     <div class="desc" id="mvolDesc"></div>
   </div>
 
+  <!-- The board's lock (dad 9/14): in class, or when a sibling is poking the
+       tablet and the music has to stop. Deterrence, not security — the
+       passcode only stops someone repeating what they watched a grown-up do,
+       so it is hashed in this page and the digits never go to New ERA or
+       onto the disk. -->
+  <div class="card" id="lock">
+    <h2>🔒 Lock</h2>
+    <p class="hint">Hold the 🔒 in the corner of the Music or Films board and the music and films stop. Everything else &mdash; her words, her books, her drawing &mdash; keeps working.</p>
+    <div class="stepper">
+      <button id="lockDown">−</button>
+      <div class="val" id="lockVal">45 minutes</div>
+      <button id="lockUp">+</button>
+    </div>
+    <div class="desc" id="lockDesc"></div>
+    <div style="margin-top:16px; border-top:2px dashed var(--line); padding-top:16px">
+      <p class="hint" style="margin-bottom:8px">With no passcode, holding the 🔒 again unlocks the board. Set one and unlocking asks for it instead, so a curious sibling can&rsquo;t simply copy what they saw you do.</p>
+      <div class="row">
+        <input id="lockPass" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Passcode (4 to 6 digits)"
+               style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+        <button id="lockPassSave">Save</button>
+        <button id="lockPassClear">Clear</button>
+      </div>
+      <div class="status" id="lockPassStatus">No passcode &mdash; holding the 🔒 again unlocks the board.</div>
+    </div>
+  </div>
+
   <div class="card">
     <h2>⏸ Pause eye-gaze (testing)</h2>
     <p class="hint">Temporarily stop ERAgaze from moving the cursor, so you can check whether another program behaves differently without it. The eye-gaze keeps running in the background and turns back on the moment you tap Running.</p>
@@ -495,6 +521,64 @@ document.querySelectorAll("#mvolPresets button").forEach(b=>
   b.onclick=()=>{ mvol=parseInt(b.dataset.mvol,10); saveMvol(); mvolChips(); });
 $("settleUp").onclick=()=>{ settle=Math.min(2000,settle+50); saveSettle(); };
 $("settleDown").onclick=()=>{ settle=Math.max(0,settle-50); saveSettle(); };
+
+// ---- Lock (dad 9/14) ----
+// A fixed list of stops rather than free minutes: a parent is choosing "the
+// rest of the lesson" or "the rest of the day", not a number. 0 sits at the
+// far end, past a day, because "until I say so" is the longest lock there is.
+const LOCKS=[5,10,15,30,45,60,90,120,180,240,480,720,1440,0];
+let lockMin=45;
+function lockLabel(m){
+  if(!m) return "Until unlocked";
+  if(m<60) return m+" minutes";
+  const h=m/60; return h===1?"1 hour":h+" hours";
+}
+function lockDesc(){
+  $("lockVal").textContent=lockLabel(lockMin);
+  $("lockDesc").textContent = lockMin
+    ? "Music and films stop for "+lockLabel(lockMin).toLowerCase()+", then come back by themselves."
+    : "Music and films stay stopped until a grown-up unlocks it.";
+}
+async function saveLock(){
+  lockDesc();
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({lockMinutes:lockMin})});
+  toast("Lock: "+lockLabel(lockMin).toLowerCase());
+}
+function lockStep(d){
+  const i=LOCKS.indexOf(lockMin);
+  lockMin=LOCKS[Math.max(0,Math.min(LOCKS.length-1,(i<0?LOCKS.indexOf(45):i)+d))];
+  saveLock();
+}
+$("lockUp").onclick=()=>lockStep(1);
+$("lockDown").onclick=()=>lockStep(-1);
+lockDesc();
+
+// The digits stay in this page: what New ERA keeps is their SHA-256, and the
+// board compares against that with nobody to ask. So there is nothing to hand
+// back and nothing to read off the disk — only "there is one" or "there isn't".
+async function lockHash(digits){
+  const b=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(digits));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+function lockPassPaint(has){
+  $("lockPassStatus").innerHTML = has
+    ? "<b>Passcode set ✓</b> Unlocking the board asks for it."
+    : "No passcode &mdash; holding the 🔒 again unlocks the board.";
+}
+async function lockPassPost(hash){
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({lockPasscodeHash:hash})});
+  if(!r.ok){ toast("Could not save",false); return; }
+  $("lockPass").value="";
+  lockPassPaint(hash!=="");
+  toast(hash?"Passcode set ✓":"Passcode cleared");
+}
+$("lockPassSave").onclick=async()=>{
+  const d=$("lockPass").value.trim();
+  if(!/^[0-9]{4,6}$/.test(d)){ $("lockPassStatus").innerHTML='<span class="bad">A passcode is 4 to 6 digits.</span>'; return; }
+  await lockPassPost(await lockHash(d));
+};
+$("lockPassClear").onclick=()=>lockPassPost("");
 
 // ---- Engine (cursor feel / grace / ring) ----
 const FEEL = {
@@ -1275,9 +1359,16 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
        if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));
        if(typeof s.musicVolCap==="number") mvol=Math.max(1,Math.min(100,Math.round(s.musicVolCap)));
+       if(typeof s.lockMinutes==="number"){
+         const m=Math.max(0,Math.min(1440,Math.round(s.lockMinutes)));
+         // the stepper walks a fixed list, so a hand-edited number shows on its
+         // nearest stop — never on "until unlocked", which nobody types by accident
+         lockMin = LOCKS.includes(m) ? m : LOCKS.reduce((a,b)=> b && Math.abs(b-m)<Math.abs(a-m) ? b : a, 5);
+       }
+       lockPassPaint(!!s.lockPasscodeHash);
        exitPaint(s.exitTo==="home"?"home":"tdsnap");
        wxPaint(s.weatherWindow||null); }catch(e){ exitPaint("tdsnap"); wxPaint(null); }
-  dwellDesc(); settleDesc(); mvolDesc();
+  dwellDesc(); settleDesc(); mvolDesc(); lockDesc();
   try{
     const c=await (await fetch(ENGINE+"/config")).json();
     if(c.radius===0) document.querySelector('#ring button[data-ring="off"]').click();

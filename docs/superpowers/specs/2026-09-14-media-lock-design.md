@@ -6,10 +6,10 @@ the written record. Implementation plan follows via `superpowers:writing-plans`.
 ## 1. Goal and non-goals
 
 **Goal.** A grown-up can stop music and movies on the device — in class, or
-when the boy is poking the tablet and needs to stop — by holding one button in
-the board's top bar. The lock lasts a configurable period (default 45 min) or
-until a grown-up unlocks it, and unlocking can require a passcode so the boy
-can't just copy what he saw us do.
+when her brother is poking the tablet and the music has to stop — by holding
+one button in the board's top bar. The lock lasts a configurable period
+(default 45 min) or until a grown-up unlocks it, and unlocking can require a
+passcode so a sibling can't just copy what they saw us do.
 
 **This is deterrence, not security** (dad, 9/14). It is fine that another
 device is not locked, that clearing the browser profile clears the lock, and
