@@ -143,4 +143,63 @@ Publish (v0.32.4, signed build, VM 14/14, i13 self-update) is a separate call fo
 dad — not part of this plan.
 
 ## §C Evidence / retros
-(appended as work lands)
+
+### Phase 1 — hub (9/14) — landed era-hub `261a2dd`
+- `server.js` defaults + allowlist (`lockMinutes` 0–1440 round, `lockPasscodeHash`
+  `""` | 64-hex); Settings "🔒 Lock" card (stepper over 14 stops, passcode Save/Clear
+  hashing in-page with WebCrypto). routes.test +1, settings-ui.test +2 — green.
+- Retro: the card's first draft named the wrong child as the tablet-poker; fixed to
+  "a sibling" in the card, the spec and a builder comment before commit. Copy about
+  the family is reviewed word by word, not skimmed.
+
+### Phase 2 — board (9/14) — landed era-board `25a3334`, `6f13658`
+- `board-lock.js` (new) + strip/render/boot/css hooks per §B; `board-lock.test.mjs`
+  11 → 12 tests; partner-strip labels updated.
+- Builder-found and fixed before review: `writeLock(until | 0)` truncated the epoch
+  to 32 bits (the lock "expired" in 1970) → `Math.round`; the keypad closed itself on
+  the release click of the hold that opened it → backdrop dismisses on `pointerdown`.
+- `board-arrange` 8 red / `board-music` 2 red when run straight against the live
+  8377 — environmental (live data, live `musicVolCap`); both PASS under the gate.
+
+### Phase 3 — behavioral verification (9/14)
+- **Gate** (`tools/era-gate.sh`, fixture data, 8378): `== era-gate: 81 passed,
+  1 failed → ai-key.test.mjs ==`. The one FAIL is `listen EADDRINUSE 127.0.0.1:8431`
+  — a two-day-old `ssh -f -N -L 8431:127.0.0.1:8377 i13` tunnel (pid 1171678, not
+  this session's; left running) sits on ai-key's fake-provider port. Not a code
+  failure; the memory now says tunnels go on 8500+ (the suite table reaches 8449).
+  Every lock/board suite PASS.
+- **Recorded run**, scratch hub 8460 over a copy of `era-family/test-data`, Playwright
+  `hasTouch` + CDP `Input.dispatchTouchEvent` for the finger (script, log, seven
+  screenshots and the video in `~/new-era/dist/qa/2026-09-14-media-lock/`,
+  `media-lock-e2e.webm`):
+  1. `/settings/` → stepper 45 → 5 minutes; passcode 2468 → "Passcode set ✓";
+     `GET /settings` = `lockMinutes: 5`, 64-hex hash, digits absent from the body.
+  2. `/board/?recipe=songs`: 9 song tiles, all `.dwell`. A **tap** on 🔒 → not locked.
+     A **1.9 s finger** → `era.lock` written, banner "Locked until 10:50 PM",
+     until−now = 5 min; every song tile lost `.dwell` and gained
+     `data-dwell-disabled`; `#barDoor` still `.dwell` and the ONLY `.dwell` in
+     `.msgbar`.
+  3. Finger on a song tile while locked → `Music.play` calls = 0, `playingId` null.
+  4. Reload while locked → still locked, same banner, tiles still inert.
+  5. Hold 🔒 → keypad. 1111 ✓ → keypad stays, still locked (shake). 2468 ✓ → keypad
+     gone, unlocked, all 9 tiles `.dwell` again.
+  6. `lockMinutes: 0`, no passcode → hold → banner "Locked", `until: 0`; hold again
+     → unlocked. No page errors across the run.
+- **Found by the recording, fixed, re-recorded:** `#lockWarn` painted ON `#ttsWarn`
+  at the shared `bottom:6px` ("…check the speakers or W[Locked until 10:45 PM]") —
+  the same overlap review 9/5 cured for `#launchWarn`. Same cure (measure the
+  standing footers, sit 6 px above; `#lockWarn.show` joins board-render's
+  `STANDING_FOOTERS`; re-measure on resize since a lock outlives a rotation) —
+  era-board `6f13658`, +1 test (12/12, partner-strip 14/14, movies 12/12). The
+  re-run's `03-board-locked.png` shows both banners readable.
+
+### Follow-ups (not in this plan)
+- A board reads `lockMinutes` / `lockPasscodeHash` once at mount; a Settings change
+  reaches an open board on its next reload. Fine for a kiosk that reboots nightly.
+- A footer that APPEARS while the lock banner already stands (a `#contentNote` from
+  the content poll) paints under it until the next `setWarn`; `#launchWarn` has the
+  same gap and survives it by being transient. A MutationObserver on the footers
+  would close it for both — queue line, not a quiet widening here.
+- Spec non-goal restated: a movie already fullscreen in the external app can't be
+  stopped from the board; exit the app as today, then lock.
+- Publish (v0.32.4 signed build, VM 14/14, i13 self-update) is dad's call.
