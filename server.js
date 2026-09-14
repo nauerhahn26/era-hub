@@ -1290,6 +1290,7 @@ const server = http.createServer((req, res) => {
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
     let s = { dwellMs: 1200, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
+              lockMinutes: 45, lockPasscodeHash: "",
               voiceId: loadTtsCfg().voiceId,
               childName: PROFILE.childName || "friend", hasProfile: HAS_PROFILE,
               personalWords: [] };
@@ -1326,6 +1327,17 @@ const server = http.createServer((req, res) => {
           s.musicVolCap = Math.max(1, Math.min(100, Math.round(inc.musicVolCap)));
         // where every app's door goes (dad 9/3): her talker, or New ERA's home
         if (inc.exitTo === "tdsnap" || inc.exitTo === "home") s.exitTo = inc.exitTo;
+        // how long the board's 🔒 stops music and movies for (dad 9/14), and
+        // the passcode that ends it early. 0 = until a grown-up unlocks it.
+        // The passcode reaches the hub already hashed and is handed back the
+        // same way: the board has to compare against it with no one to ask,
+        // and this is deterrence, not security — so the door checks the SHAPE
+        // (SHA-256 hex, or empty for none) and nothing more. Digits never
+        // arrive here at all.
+        if (typeof inc.lockMinutes === "number" && Number.isFinite(inc.lockMinutes))
+          s.lockMinutes = Math.max(0, Math.min(1440, Math.round(inc.lockMinutes)));
+        if (inc.lockPasscodeHash === "" || (typeof inc.lockPasscodeHash === "string" &&
+            /^[0-9a-f]{64}$/.test(inc.lockPasscodeHash))) s.lockPasscodeHash = inc.lockPasscodeHash;
         // the hours the outfits are sorted for (dad 9/5): she dresses for
         // the hours she is out, not for the afternoon high. Both ends
         // inclusive; null clears it back to the whole day. Anything else is

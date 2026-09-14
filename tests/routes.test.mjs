@@ -193,3 +193,53 @@ test("Settings weatherWindow round-trips, rejects junk, and re-sorts today's out
   assert.equal(await get(), undefined, "null clears it back to the whole day");
   assert.ok(!fs.existsSync(cache), "clearing it is a change too");
 });
+
+// The media lock (dad 9/14): a grown-up holds the board's 🔒 and music and
+// movies stop for a while. Two knobs live here beside the other board
+// settings — how long the lock lasts, and the passcode that ends it early.
+// Deterrence, not security: the hub only ever sees the SHA-256 of the digits,
+// the page keeps the digits, and the hash being readable back is the point —
+// the board compares against it offline. So the door's whole job is shape:
+// a whole number of minutes it can act on, and a hash it can compare.
+test("Settings lockMinutes clamps and lockPasscodeHash only takes a hash", async () => {
+  const post = (body) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const get = async () => (await (await fetch(`${BASE}/settings`)).json());
+
+  const s0 = await get();
+  assert.equal(s0.lockMinutes, 45, "45 minutes is the default lock");
+  assert.equal(s0.lockPasscodeHash, "", "no passcode until a parent sets one");
+
+  await post({ lockMinutes: 90 });
+  assert.equal((await get()).lockMinutes, 90);
+  await post({ lockMinutes: -5 });
+  assert.equal((await get()).lockMinutes, 0, "below zero is 'until a grown-up unlocks it'");
+  await post({ lockMinutes: 99999 });
+  assert.equal((await get()).lockMinutes, 1440, "a day is as long as it gets");
+  await post({ lockMinutes: 45.6 });
+  assert.equal((await get()).lockMinutes, 46, "a fraction of a minute is no use to a timer");
+  for (const junk of ["60", null, {}, [30], true]) {
+    await post({ lockMinutes: junk });
+    assert.equal((await get()).lockMinutes, 46, "ignored: " + JSON.stringify(junk));
+  }
+
+  const hash = "a".repeat(64);
+  await post({ lockPasscodeHash: hash });
+  assert.equal((await get()).lockPasscodeHash, hash);
+  for (const junk of ["1234", "A".repeat(64), "a".repeat(65), "a".repeat(63),
+                      "g".repeat(64), 1234, null, {}]) {
+    await post({ lockPasscodeHash: junk });
+    assert.equal((await get()).lockPasscodeHash, hash, "ignored: " + JSON.stringify(junk));
+  }
+  await post({ lockPasscodeHash: "" });
+  assert.equal((await get()).lockPasscodeHash, "", "an empty hash clears the passcode");
+
+  // the lock card saves one knob at a time, and must not blank the rest
+  await post({ musicVolCap: 40, exitTo: "home" });
+  await post({ lockMinutes: 15 });
+  const s1 = await get();
+  assert.equal(s1.lockMinutes, 15);
+  assert.equal(s1.musicVolCap, 40, "a lock-only save leaves the other settings alone");
+  assert.equal(s1.exitTo, "home");
+  await post({ exitTo: "tdsnap" });
+});

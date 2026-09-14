@@ -19,6 +19,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
@@ -1311,4 +1312,99 @@ test("the rename box posts the new name and shows the hub's own refusal", async 
   await page.waitForFunction(() => /working on this book/i.test(document.body.textContent));
   assert.deepEqual(sent, { kind: "books", slug: "tabby-mctat", title: "Sunny Pond" });
   await ctx.close();
+});
+
+// ---- Lock card (media lock, dad 9/14) ----
+//
+// The board's 🔒 stops music and movies; this card decides for how long, and
+// sets the passcode that ends it early. The passcode is the delicate half: the
+// digits are the family's, so the page hashes them here and only the hash is
+// ever posted or stored — the hub could not show them back if it wanted to.
+// That is the point of the test below that reads the request body itself.
+test("the Lock card steps the lock length and saves it", async () => {
+  const { ctx, page } = await settingsPage();
+  try {
+    const val = () => page.$eval("#lockVal", e => e.textContent);
+    const lockMinutes = async () => (await (await fetch(`${BASE}/settings`)).json()).lockMinutes;
+    const step = async (id) => {
+      const done = page.waitForResponse(r => r.url().endsWith("/settings") && r.request().method() === "POST");
+      await page.click(id); await done;
+    };
+    assert.match(await val(), /45 minutes/, "45 minutes is where a family starts");
+
+    await step("#lockUp");
+    assert.match(await val(), /1 hour\b/);
+    assert.equal(await lockMinutes(), 60);
+
+    // 90 · 120 · 180 · 240 · 480 · 720 · 1440, then off the end into "until unlocked"
+    for (let i = 0; i < 7; i++) await step("#lockUp");
+    assert.match(await val(), /24 hours/);
+    assert.equal(await lockMinutes(), 1440);
+    await step("#lockUp");
+    assert.match(await val(), /Until unlocked/i);
+    assert.match(await page.$eval("#lockDesc", e => e.textContent), /until a grown-up unlocks it/);
+    assert.equal(await lockMinutes(), 0);
+
+    // and back: the far end of the list is a day, not a dead stop
+    await step("#lockDown");
+    assert.match(await val(), /24 hours/);
+    assert.equal(await lockMinutes(), 1440);
+
+    await step("#lockDown");
+    assert.equal(await lockMinutes(), 720);
+    assert.match(await val(), /12 hours/);
+  } finally {
+    await ctx.close();
+    await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lockMinutes: 45 }) });
+  }
+});
+
+test("the passcode is hashed in the page — the digits never leave it", async () => {
+  const { ctx, page } = await settingsPage();
+  const posts = [];
+  page.on("request", r => {
+    if (r.method() === "POST" && r.url().endsWith("/settings")) posts.push(r.postData() || "");
+  });
+  try {
+    const status = () => page.$eval("#lockPassStatus", e => e.textContent);
+    const stored = async () => (await (await fetch(`${BASE}/settings`)).json()).lockPasscodeHash;
+    assert.match(await status(), /No passcode/);
+
+    // too short: the page says so and asks the hub for nothing
+    await page.fill("#lockPass", "12");
+    await page.click("#lockPassSave");
+    await page.waitForFunction(() => /4 to 6 digits/.test(document.getElementById("lockPassStatus").textContent));
+    assert.deepEqual(posts, [], "a passcode that is not 4-6 digits is never sent");
+    assert.equal(await stored(), "");
+
+    await page.fill("#lockPass", "1234");
+    let done = page.waitForResponse(r => r.url().endsWith("/settings") && r.request().method() === "POST");
+    await page.click("#lockPassSave");
+    await done;
+    const want = createHash("sha256").update("1234").digest("hex");
+    assert.equal(posts.length, 1);
+    assert.deepEqual(JSON.parse(posts[0]), { lockPasscodeHash: want },
+      "one key, and it is the hash");
+    assert.equal(posts[0].includes("1234"), false, "the digits are not in the request at all");
+    assert.equal(await stored(), want);
+    await page.waitForFunction(() => /Passcode set/.test(document.getElementById("lockPassStatus").textContent));
+    assert.equal(await page.$eval("#lockPass", i => i.value), "",
+      "the box is cleared, so the passcode is not left on screen");
+    assert.equal(await page.$eval("#lockPass", i => i.type), "password");
+
+    // a parent coming back sees THAT there is one, never what it is
+    const re = await settingsPage();
+    try {
+      await re.page.waitForFunction(() => /Passcode set/.test(document.getElementById("lockPassStatus").textContent));
+      assert.equal(await re.page.$eval("#lockPass", i => i.value), "");
+    } finally { await re.ctx.close(); }
+
+    done = page.waitForResponse(r => r.url().endsWith("/settings") && r.request().method() === "POST");
+    await page.click("#lockPassClear");
+    await done;
+    assert.deepEqual(JSON.parse(posts[1]), { lockPasscodeHash: "" });
+    assert.equal(await stored(), "");
+    await page.waitForFunction(() => /No passcode/.test(document.getElementById("lockPassStatus").textContent));
+  } finally { await ctx.close(); }
 });
