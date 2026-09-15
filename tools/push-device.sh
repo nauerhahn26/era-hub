@@ -113,18 +113,27 @@ fi
 [ -n "$TREE" ] || die "cannot determine the dist's tree sha (no $DIST/TREE and $HUB is not a git checkout)"
 
 # Green stamp, same acceptance rule as release.sh step 1: it exists, its first
-# line is a green summary, and its at= is under 2 h old. No pipes (a `grep -q`
-# under pipefail is how the signing rail learned about SIGPIPE, 9/5).
+# line is a green summary, it carries no `dirty=1` line (era-gate.sh marks a run
+# that happened over uncommitted tracked changes — what was tested was then not
+# the tree the key names, and this dist claims that tree), and its at= is under
+# 2 h old. Extra lines, in any order, are ignored: only what we ask for is read.
+# No pipes (a `grep -q` under pipefail is how the signing rail learned about
+# SIGPIPE, 9/5).
+stamp_dirty() { grep -qx 'dirty=1' "$1" 2>/dev/null; }
 stamp_ok() {
   local first at now
   [ -f "$1" ] || return 1
   IFS= read -r first <"$1" || return 1
   case "$first" in *" 0 failed"*) ;; *) return 1;; esac
+  if stamp_dirty "$1"; then return 1; fi
   at="$(awk -F= '/^at=/{print $2; exit}' "$1")"
   [ -n "$at" ] || return 1
   now="$(date +%s)"
   [ $(( now - at )) -lt 7200 ]
 }
+if [ -f "$GREEN/$TREE" ] && stamp_dirty "$GREEN/$TREE"; then
+  die "gate ran on a dirty tree (stamp has dirty=1) — commit, re-run the gate, then push"
+fi
 stamp_ok "$GREEN/$TREE" || die "no green gate under 2 h for tree ${TREE:0:7} — run \`bash tools/era-gate.sh\` in the worktree"
 STAMPAT="$(awk -F= '/^at=/{print $2; exit}' "$GREEN/$TREE")"
 echo "gated tree ${TREE:0:7}, green $(date -d "@$STAMPAT" +%H:%M) — $(sed -n 1p "$GREEN/$TREE")"
