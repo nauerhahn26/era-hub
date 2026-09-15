@@ -27,6 +27,9 @@
 #   --prerelease  hidden from the website and from the updater (legal with --patch too)
 #   --dry-run     SIGNED: stop after the VM, with an unsigned exe, before asking for a
 #                 code. PATCH: stop after the VM, before the tag. Publishes nothing.
+#                 It DOES leave $DIST/VM-GREEN behind (vm-e2e.sh writes it on any
+#                 green run) — that marker is precisely what makes a later
+#                 --resume-sign legal: the VM really did drive these bytes.
 #   --skip-gate   re-cut after a failure PAST a green gate (a lapsed login, a starved
 #                 VM host) — allowed only on the strength of a green stamp
 #                 ($ERA_GATE_STAMPS/<tree>, default /tmp/era-gate-green, written by
@@ -46,7 +49,12 @@
 #                   · $DIST exists and $DIST/TREE is exactly this HEAD's tree — the
 #                     checkout has not moved since the build;
 #                   · latest.json's sha256 still matches new-era-suite-$V.tar.gz — the
-#                     tarball the VM drove is byte-for-byte the one being published.
+#                     tarball the VM drove is byte-for-byte the one being published;
+#                   · $DIST/VM-GREEN says legs=a,b and names that same sha — the VM
+#                     ACTUALLY RAN on these bytes. Without it a bare
+#                     `build-dist.sh --unsigned` into $DIST satisfied every other
+#                     precondition and --resume-sign would sign and publish a cut no
+#                     Windows box ever installed (P4/P5 review, 9/15).
 #                 Anything else: re-run the whole cut (with --skip-gate if the gate is
 #                 still green), VM legs included.
 #   --gate-check  (hidden, with --skip-gate) evaluate the gate step only and exit 0/1 —
@@ -77,6 +85,39 @@ GREEN="${ERA_GATE_STAMPS:-/tmp/era-gate-green}"
 REPO=nauerhahn26/new-era-releases
 if [ "$PATCH" = 1 ]; then N=4; else N=5; fi
 
+# $DIST/VM-GREEN — vm-e2e.sh's record of a run that finished 0 failed: which legs
+# ran, and the sha256 of the versioned tarball they drove. Nothing signs and
+# nothing publishes without one that names the bytes in hand, so no path reaches
+# `gh release create` on a dist the VM never saw. Prints its own reason and
+# returns 1; the caller only has to add "no release".
+#   want=a,b  the signed flow (a full vm-e2e run)
+#   want=b    the patch flow (vm-e2e.sh --only b, which is the shape by design)
+vm_green() {
+  local want="$1" legs tsha now feed
+  [ -f "$DIST/VM-GREEN" ] || {
+    echo "no $DIST/VM-GREEN — no VM run has ever finished green on this dist. The marker is written by tools/vm-e2e.sh (a --dry-run cut writes it too); a build alone never does."
+    return 1; }
+  legs="$(awk -F= '/^legs=/{print $2; exit}' "$DIST/VM-GREEN")"
+  tsha="$(awk -F= '/^tarball=/{print $2; exit}' "$DIST/VM-GREEN")"
+  case "$want" in
+    a,b) [ "$legs" = "a,b" ] || {
+           echo "$DIST/VM-GREEN records legs=${legs:-<none>} — a signed release publishes only what legs A (fresh install) AND B (self-update) both drove; run the full tools/vm-e2e.sh."
+           return 1; };;
+    b)   case ",${legs}," in
+           *,b,*) ;;
+           *) echo "$DIST/VM-GREEN records legs=${legs:-<none>} — a patch is only ever delivered by self-update, so leg B must have run."; return 1;;
+         esac;;
+  esac
+  now="$(sha256sum "$DIST/new-era-suite-$V.tar.gz" | cut -d' ' -f1)"
+  [ -n "$tsha" ] && [ "$tsha" = "$now" ] || {
+    echo "$DIST/VM-GREEN vouches for tarball ${tsha:-<none>}, but new-era-suite-$V.tar.gz is now $now — the payload was rebuilt after the VM ran; drive it again."
+    return 1; }
+  feed="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('sha256',''))")"
+  [ "$feed" = "$now" ] || {
+    echo "latest.json names sha256 ${feed:-<none>}, the tarball the VM drove is $now — the feed and the payload disagree; no release."
+    return 1; }
+}
+
 # --resume-sign preconditions, checked BEFORE anything else so a hopeless
 # re-entry is refused in a second rather than after a stamp lookup: the dist the
 # VM drove is still here, it was built from THIS tree, and its tarball has not
@@ -93,6 +134,9 @@ if [ "$RESUME" = 1 ]; then
   WAS="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('sha256',''))")"
   NOW="$(sha256sum "$DIST/new-era-suite-$V.tar.gz" | cut -d' ' -f1)"
   [ -n "$WAS" ] && [ "$WAS" = "$NOW" ] || { echo "--resume-sign: the tarball changed since the VM drove it (latest.json says ${WAS:-<none>}, it is now $NOW) — cut the release again."; exit 1; }
+  # …and the VM really ran. Everything above is satisfied by a bare
+  # `build-dist.sh --unsigned` into $DIST; only the marker proves a green run.
+  vm_green a,b || { echo "--resume-sign: refused — this re-entry signs and publishes a build the VM already drove green; cut the release again (--skip-gate while the gate stamp holds: build + VM legs, ~15 min)."; exit 1; }
 fi
 
 # A green stamp counts when it exists, its first line is a green summary, it does
@@ -207,6 +251,19 @@ else
 Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. The installer is code-signed (Certum; right-click › Properties › Digital Signatures shows the publisher) — Windows may still ask once while the new signature earns its reputation: choose More info, then Run anyway. The portable .zip works too. Installed copies update themselves; Uninstall never touches your data.
 $TAIL"
 fi
+
+# LAST GATE BEFORE THE WORLD SEES IT — both shapes come through here.
+#  · VM-GREEN: a green vm-e2e run on THESE bytes (legs A+B signed, leg B patch).
+#    The signed flow's own step 3/5 already refused a red VM, but --resume-sign
+#    re-enters past it, so the proof is re-read here rather than assumed.
+#  · the stable new-era-suite.tar.gz is what every installed hub downloads — it
+#    is a copy, and a copy is exactly the kind of thing that goes stale quietly.
+#    latest.json's sha256 is the contract; assert the bytes keep it.
+if [ "$PATCH" = 1 ]; then WANT=b; else WANT=a,b; fi
+vm_green "$WANT" || { echo "NO GREEN VM RUN FOR THIS DIST — no release. Evidence would be $HUB/gate/vm-e2e/."; exit 1; }
+STABLE_SHA="$(sha256sum "$DIST/new-era-suite.tar.gz" | cut -d' ' -f1)"
+FEED_SHA="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('sha256',''))")"
+[ "$STABLE_SHA" = "$FEED_SHA" ] || { echo "new-era-suite.tar.gz (the stable name every device fetches) is $STABLE_SHA but latest.json names ${FEED_SHA:-<none>} — devices would download bytes whose sha the updater rejects; no release."; exit 1; }
 
 git -C "$HUB" tag -f "$V"
 git -C "$HUB" push -q origin "refs/tags/$V" --force

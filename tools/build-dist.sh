@@ -30,9 +30,15 @@ NSIS="$ROOT/era-family/cache/nsis"
 
 # A full disk makes makensis die with SIGBUS and no message (9/3: 46 MB free,
 # rc=1 after "== installer =="). A cut needs ~300 MB; insist on 2 GB headroom.
-FREE_MB="$(df -Pm "$(dirname "$DIST")" | awk 'NR==2 {print $4}')"
+DISTPARENT="$(dirname "$DIST")"
+# df on a path that does not exist prints an error and an empty NR==2, and the
+# arithmetic test below then dies with an unhelpful "integer expression expected".
+[ -d "$DISTPARENT" ] || {
+  echo "$DISTPARENT does not exist — <dist dir> must sit inside a real directory (there is no disk to measure, let alone build into); no build."
+  exit 1; }
+FREE_MB="$(df -Pm "$DISTPARENT" | awk 'NR==2 {print $4}')"
 if [ "$FREE_MB" -lt 2048 ]; then
-  echo "only ${FREE_MB} MB free under $(dirname "$DIST") — clear old dist/release-* dirs first; no build."
+  echo "only ${FREE_MB} MB free under $DISTPARENT — clear old dist/release-* dirs first; no build."
   exit 1
 fi
 
@@ -94,9 +100,24 @@ build_installer() {   # [--sign]
   fi
   [ -s "$DIST/New-ERA-Setup.exe" ] || { echo "New-ERA-Setup.exe missing or empty — no release."; exit 1; }
   if [ "$sign" = 1 ]; then
+    # HALF-SIGNED IS THE DANGEROUS CASE (P4/P5 review, 9/15). makensis swallows
+    # the exit code of its !uninstfinalize / !finalize commands, so a
+    # sign-installer.sh that died on the uninstaller stub (a lapsed SimplySign
+    # login mid-cut, a timestamp timeout) still yields a Setup.exe that verifies
+    # — osslsigncode cannot see the unsigned stub packed inside it, and the
+    # family meets it months later at Uninstall. sign-installer.sh prints exactly
+    # one `sign: SIGNED <file> (timestamped at …)` line per file it signs, and a
+    # -DSIGN cut signs two: the stub, then Setup.exe. Anything but two is a
+    # failed release, not a warning.
+    local n
+    n="$(grep -c '^sign: SIGNED ' "$DIST/makensis.log" || true)"
+    [ "${n:-0}" = 2 ] || {
+      echo "installer: SIGNING INCOMPLETE (${n:-0}/2 signed) — no release."
+      echo "-- sign lines in $DIST/makensis.log:"; grep -E '^sign:' "$DIST/makensis.log" || echo "(none)"
+      exit 1; }
     verify_signature "$DIST/New-ERA-Setup.exe" \
       || { echo "installer: SIGNING WAS REQUESTED BUT Setup.exe DID NOT VERIFY — no release."; exit 1; }
-    echo "installer: signed and verified"
+    echo "installer: signed and verified (uninstaller stub + Setup.exe, 2/2)"
   else
     echo "installer: UNSIGNED (by request)"
   fi
@@ -170,6 +191,11 @@ case "$MODE" in
     WAS="$(python3 -c "import json;print(json.load(open('$DIST/latest.json'))['sha256'])")"
     NOW="$(sha256sum "$DIST/new-era-suite-$V.tar.gz" | cut -d' ' -f1)"
     [ "$WAS" = "$NOW" ] || { echo "--sign-only: the tarball changed since the VM drove it ($WAS -> $NOW) — no release."; exit 1; }
+    # The stable name is the URL every installed hub fetches. The versioned
+    # tarball is the one just proved unchanged, so re-assert the copy from it
+    # rather than trusting whatever has been sitting under the stable name since
+    # the unsigned cut (this mode is the only one that skipped the cp below).
+    cp "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz"
     build_installer --sign
     write_checksums
     write_latest "$V"

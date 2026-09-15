@@ -190,7 +190,11 @@ curl -fsS -m 2 "http://127.0.0.1:$P/latest.json" >/dev/null || die "local feed n
 
 # ------------------------------------------------------------ 3. tunnels
 echo "== tunnels: -R $R → feed :$P, -L $L → $HOST:$DEVPORT =="
-ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 \
+# BatchMode: this ssh runs in the background with its stdin inherited. A device
+# whose key has gone missing would otherwise sit at a password prompt forever
+# (or eat the terminal's input) instead of dying into $WORK/ssh.log where the
+# loop below can read the reason.
+ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 \
     -R "$R:127.0.0.1:$P" -L "$L:127.0.0.1:$DEVPORT" "$HOST" >"$WORK/ssh.log" 2>&1 &
 SSH_PID=$!
 
@@ -241,7 +245,7 @@ echo "$RESP"
 [ -n "$RESP" ] || die "no answer from /update/check"
 
 if ! jhas feed <<<"$RESP"; then
-  die "device hub predates the feed override — deliver v0.33.3 first (it ignored the body and ran a normal public-feed check)"
+  die "device hub predates the feed override — deliver a release whose hub honours {feed} (v0.33.3 or later) first (it ignored the body and ran a normal public-feed check)"
 fi
 STATUS="$(jget status <<<"$RESP")"
 [ "$STATUS" = "updated" ] || die "update did not apply: status=$STATUS — nothing changed on $HOST"
@@ -249,9 +253,12 @@ STATUS="$(jget status <<<"$RESP")"
 # ------------------------------------------------------------- 6. confirm
 # The hub restarts ~1 s after answering "updated", so curl failures here are
 # expected for a few seconds — keep polling rather than giving up on the first.
+#   A DEADLINE, not a count: each turn of the loop is `sleep 3` PLUS a curl that
+# can burn its own 3 s timeout while the hub is down for the restart, so thirty
+# turns was anywhere up to 180 s under a banner promising 90.
 echo "== confirm: polling /version for $DISTBUILD (up to 90 s) =="
-NOW=""
-for _ in $(seq 1 30); do
+NOW=""; DEADLINE=$(( SECONDS + 90 ))
+while [ "$SECONDS" -lt "$DEADLINE" ]; do
   sleep 3
   VJSON="$(curl -fsS -m 3 "http://127.0.0.1:$L/version" 2>/dev/null || true)"
   [ -n "$VJSON" ] || continue
@@ -260,8 +267,13 @@ for _ in $(seq 1 30); do
   DEVBUILD="$NOW"
   if [ "$NOW" = "$DISTBUILD" ]; then
     NOWVER="$(jget version <<<"$VJSON")"
+    # The EXIT trap's "$HOST is on … — the public feed will move it" line is a
+    # consolation for a push that did NOT happen; after a successful one it reads
+    # as a warning. Clear the variable and say the same thing deliberately, once.
+    DEVBUILD=""
     echo "pushed: $HOST now on $NOW (${NOWVER:-$DISTVER})"
     echo "note: app packs still come from the public feed (server.js downloads packs from updater.FEED)"
+    echo "note: nothing was published — $HOST stays on this build until a published release carries a newer one"
     exit 0
   fi
 done

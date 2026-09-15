@@ -27,15 +27,30 @@
 #                      guest and opened by the shell): run AFTER gh release create
 # Needs era-family/data/vm.env (QA host + guest credentials) and the driver
 # scripts in era-family/tools/vm. Output: gate/vm-e2e/ (screenshots, logs).
+#
+# VM-GREEN — the marker release.sh will not publish without. A run that finishes
+# with 0 failed writes $DIST/VM-GREEN naming the legs that actually ran
+# (legs=a,b for a full run, legs=b for the patch shape's --only b), the sha256 of
+# the new-era-suite-<V>.tar.gz those legs drove, and the epoch it happened. Every
+# run except --post-publish deletes a stale marker BEFORE it starts, so the file
+# can only ever describe the run that just finished. release.sh refuses to sign
+# (--resume-sign) or to publish (step 5/5 and 4/4) without one whose sha is the
+# tarball being published — that is what stops a bare `build-dist.sh --unsigned`
+# from walking into a release the VM never drove.
 set -uo pipefail
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 VMT="$ROOT/era-family/tools/vm"
 DIST="${1:?usage: vm-e2e.sh <candidate dist dir> [prev Setup.exe] [--only a|b] [--post-publish]}"; shift
 PREV=""; ONLY=""; PREV_UNTAGGED=""; POST=0
-while [ $# -gt 0 ]; do case "$1" in --only) ONLY="$2"; shift 2;; --post-publish) POST=1; ONLY=c; shift;; *) PREV="$1"; shift;; esac; done
+while [ $# -gt 0 ]; do case "$1" in --only) ONLY="${2:?--only needs a|b|c}"; shift 2;; --post-publish) POST=1; ONLY=c; shift;; *) PREV="$1"; shift;; esac; done
 FEED_PORT=8427
 OUT="$HUB/gate/vm-e2e"; rm -rf "$OUT"; mkdir -p "$OUT"
+# The marker describes the run that is about to happen and nothing else: a stale
+# one from an earlier cut of the same version would otherwise vouch for bytes
+# this run is replacing. (--post-publish drives the PUBLISHED download; it neither
+# proves nor disproves the dist, so it leaves the marker alone.)
+[ "$POST" = 1 ] || rm -f "$DIST/VM-GREEN"
 
 # machine-wide: one VM, one run at a time (the 8/24 two-session lesson)
 exec 9>/tmp/era-vm-e2e.lock
@@ -75,6 +90,9 @@ if [ "$POST" = 1 ]; then
 else
   VER="$(python3 -c "import json;print(json.load(open('$DIST/latest.json'))['version'])")"
   BUILD="$(python3 -c "import json;print(json.load(open('$DIST/latest.json'))['build'])")"
+  # the VM-GREEN marker names this exact file, so refuse now rather than after
+  # twenty minutes of VM driving with nothing to record the run against
+  [ -f "$DIST/new-era-suite-$VER.tar.gz" ] || { echo "vm-e2e: $DIST/new-era-suite-$VER.tar.gz missing — the VM-GREEN marker names the versioned tarball the legs drove"; exit 2; }
   if [ -n "$PATCH_INSTALLER" ]; then PREV_NOTE=" (installer $PATCH_INSTALLER re-attached)"; else PREV_NOTE="${PREV_UNTAGGED:+ (UNTAGGED - not a published release)}"; fi
   echo "== vm-e2e: candidate $VER ($BUILD) from $DIST; previous = $PREV$PREV_NOTE =="
 
@@ -100,10 +118,11 @@ trap cleanup EXIT
 
 export VM_OUT="$OUT" VM_GUEST_USER VM_CANDIDATE_VERSION="${VER:-}" VM_CANDIDATE_BUILD="${BUILD:-}" VM_FEED_PORT="$FEED_PORT"
 export VM_DIST="$DIST"   # leg C reads the expected sha256 out of $DIST/checksums.txt
-pass=0; fail=0
+pass=0; fail=0; RAN=""
 run_leg() {
   local name="$1" file="$2"
   [ -n "$ONLY" ] && [ "$ONLY" != "$name" ] && return 0
+  RAN="${RAN:+$RAN,}$name"
   echo "-- leg $name: $file"
   # `node <file>` (not `node --test <file>`): the runner buffers a whole file's
   # TAP until it ends; run directly, node:test streams every ok/not ok live
@@ -122,4 +141,13 @@ else
   $SCP_DROP root@$VM_DROPLET:/root/qa/feed/hits.log "$OUT/feed-hits.log" 2>/dev/null
 fi
 echo "== vm-e2e: $pass passed, $fail failed =="
+# The marker release.sh reads (see the header). Written ONLY on a green run of
+# the candidate, never by --post-publish, and it names the bytes: a later
+# rebuild of the same version changes the tarball's sha and the marker stops
+# matching, so a publish of those new bytes needs a new VM run.
+if [ "$POST" != 1 ] && [ $fail -eq 0 ] && [ -n "$RAN" ]; then
+  printf 'legs=%s\ntarball=%s\nat=%s\n' \
+    "$RAN" "$(sha256sum "$DIST/new-era-suite-$VER.tar.gz" | cut -d' ' -f1)" "$(date +%s)" > "$DIST/VM-GREEN"
+  echo "vm-e2e: wrote $DIST/VM-GREEN (legs=$RAN)"
+fi
 [ $fail -eq 0 ]
