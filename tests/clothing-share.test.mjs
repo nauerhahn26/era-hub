@@ -500,6 +500,57 @@ test("the one-click 'make the folder' button starts sharing straight away, with 
   }
 });
 
+// And the THIRD door — the one nobody taps. Since 9/15 the hub adopts a
+// "New ERA Content" a mount already holds (dad's tablet: Drive signed in, the
+// family's folder fully synced down, every app empty because folderPath is
+// written by a tap and this was the second device). Adoption can happen long
+// after boot — Drive for Desktop signs in late — so it is the same wiring bug
+// as the two buttons above with nothing to hang the re-open on but
+// drive.onAdopted. Without that hook this hub records her Yes locally and
+// shares it with nobody until someone restarts the app.
+test("a content folder that appears while the hub runs starts sharing by itself, no tap and no restart", async () => {
+  if (child) { child.kill("SIGKILL"); child = null; await new Promise(r => setTimeout(r, 500)); }
+  const D = path.join(TMP, "G");                      // a hub with no drive.json at all
+  const MOUNT = path.join(TMP, "late-mount");         // signed in, and empty so far
+  fs.mkdirSync(MOUNT, { recursive: true });
+  fs.mkdirSync(D, { recursive: true });
+  const env = { ...process.env, ...SEAMS, ERA_DATA_DIR: D, ERA_DRIVE_LOCAL_ROOTS: MOUNT };
+  delete env.ERA_DEVICE_ID;
+  const hub = spawn("node", ["server.js", String(PORT)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"], env,
+  });
+  const driveStatus = () => fetch(`${BASE}/integrations/drive/status`, { cache: "no-store" }).then(r => r.json());
+  try {
+    let up = false;
+    for (let i = 0; i < 200 && !up; i++) {
+      try { await fetch(`${BASE}/settings`); up = true; } catch { await new Promise(r => setTimeout(r, 100)); }
+    }
+    assert.ok(up, "the folderless hub came up");
+    assert.equal((await driveStatus()).folderPath, "", "nothing adopted: the mount is bare");
+
+    // …and now Drive for Desktop finishes bringing the family's folder down.
+    const folder = path.join(MOUNT, "New ERA Content");
+    fs.mkdirSync(path.join(folder, "clothing"), { recursive: true });
+    assert.equal((await driveStatus()).folderPath, folder, "adopted on the very next paint");
+
+    const combo = ["item_eeee5555", "item_ffff6666"];
+    const r = await fetch(`${BASE}/outfit-event`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "yes", combo }) });
+    assert.equal(r.status, 204);
+
+    const id = fs.readFileSync(path.join(D, "device-id"), "utf8").trim();
+    const mine = path.join(folder, "clothing", ".era", "picks", id);
+    const files = fs.existsSync(mine) ? fs.readdirSync(mine) : [];
+    assert.equal(files.length, 1, "her Yes reached the folder the hub adopted on its own");
+    const last = fs.readFileSync(path.join(mine, files[0]), "utf8").trim().split("\n").map(JSON.parse).at(-1);
+    assert.deepEqual(last.combo, combo);
+  } finally {
+    hub.kill("SIGKILL");
+    await new Promise(r => setTimeout(r, 500));
+  }
+});
+
 test("a device on Drive's API mode keeps its picks to itself, quietly", async () => {
   const D = path.join(TMP, "E");
   fs.mkdirSync(D, { recursive: true });

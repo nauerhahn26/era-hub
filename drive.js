@@ -10,6 +10,10 @@
 // Read-only scope; nothing is ever uploaded. Config in <DATA>/drive.json:
 //   { clientId, clientSecret, folderId, token:{...} } — clientId/secret come
 // from the family's own Google Cloud OAuth client (Settings explains).
+// The default family path is LOCAL mode, not that OAuth client — see the
+// block above detectLocal(). There the folder need not be pointed at at all:
+// adoptLocal() takes a "New ERA Content" a mount already holds, so the second
+// device and every reinstall just work (dad 9/15).
 // Test seams: ERA_DRIVE_OAUTH / ERA_DRIVE_API point at fake servers, and
 // ERA_DRIVE_LOCAL_ROOTS names extra local mount roots (path.delimiter-
 // separated) so the local-mode door is drivable off Windows — see detectLocal().
@@ -28,6 +32,10 @@ const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 // This ONE list is the mirror set: syncLocal(), sync()'s subfolder filter,
 // createContentFolder()'s one-tap setup and the Settings checklist all walk it.
 const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing"];
+// The name "✨ Create it for me" gives the family's folder — and, since 9/15,
+// the name adoptLocal() goes looking for in a mount somebody else's computer
+// already filled. One constant so the two can never drift.
+const CONTENT_FOLDER = "New ERA Content";
 
 let DATA = null;
 let pendingDevice = null;   // {device_code, user_code, verification_url, interval, expires}
@@ -39,6 +47,14 @@ function loadCfg() { try { return JSON.parse(fs.readFileSync(cfgPath(), "utf8"))
 function saveCfg(c) { fs.writeFileSync(cfgPath(), JSON.stringify(c, null, 2)); }
 
 function status() {
+  // Settings repaints this every 5 s and content.js/clothing.js read it on
+  // every tick, which makes it the one place a folder that appears while the
+  // app is running is noticed promptly. adoptLocal() returns on the first line
+  // once drive.json names a folder, so an already-configured hub pays one more
+  // read of that small file and nothing else; only an UNCONFIGURED one goes on
+  // to stat a handful of candidate paths, and it stops doing that the moment it
+  // finds one. Nothing is cached across calls — drive.json is the whole memory.
+  adoptLocal();
   const c = loadCfg();
   const local = detectLocal();
   return {
@@ -401,9 +417,11 @@ async function sync() {
 
 // ---- LOCAL MODE (the default family path, dad 8/29): Google Drive for
 // Windows makes the person's Drive a local folder — Google's own app does
-// login and syncing, we just read files. detect() finds the mount; the
-// person picks a folder in Settings; sync() copies its books/music/content
-// subfolders into the data dir. No OAuth client needed anywhere.
+// login and syncing, we just read files. detect() finds the mount; the folder
+// inside it is either ADOPTED (adoptLocal, below — the second device and every
+// reinstall) or picked/made by hand in Settings; sync() copies its
+// books/music/content subfolders into the data dir. No OAuth client needed
+// anywhere.
 function detectLocal() {
   const os = require("os");
   // the Drive app can be installed but not yet signed in (no mount yet) —
@@ -496,12 +514,83 @@ function browseLocal(dir) {
   } catch (e) { return { error: String(e.message) }; }
 }
 
+// ARMING THE MIRROR. start() used to be the only place the local timers were
+// set, and it sets them only when drive.json ALREADY names a folder — so a
+// family that picked one (or tapped "✨ Create it for me") got the single sync
+// the Settings page fires by hand and then nothing until the app was next
+// restarted. Books finished on the other computer, songs a parent uploaded
+// from their phone: none of it arrived, and no screen said why. Every door that
+// can set folderPath calls this now.
+//
+// Once per process, because those doors can be walked more than once (pick a
+// folder, change your mind, pick another) and each walk would otherwise leave
+// another ten-minute timer behind, syncing the same folder N times an hour.
+// The timers read drive.json at fire time, so one pair covers every folder the
+// hub is ever pointed at. Unref'd: the suites spawn hubs and SIGKILL them, and
+// a live handle is a hub that will not exit on its own.
+let localArmed = false;
+function armLocal() {
+  if (localArmed) return false;
+  localArmed = true;
+  setTimeout(() => { sync(); }, 60 * 1000).unref();
+  setInterval(() => { sync(); }, 10 * 60 * 1000).unref();  // local copy: cheap, keep it fresh
+  return true;
+}
+// Exported probe, not an ERA_DRIVE_* timing seam: a test needs to know the
+// mirror was armed, and how long a family's hub waits between passes is not a
+// thing a test should be able to move.
+const timersArmed = () => localArmed;
+
+// ADOPTION (dad 9/15, home tablet, fresh v0.33.1 install): Drive for Desktop
+// signed in, G:\My Drive\New ERA Content fully synced down with books, music
+// and movies in it — and every app on the tablet empty, because folderPath is
+// written by a tap in Settings and this was the family's SECOND device. Dad:
+// "Please fix and then when I update the app it should just work."
+//
+// So: no folder of our own and nobody else's OAuth in play, and one of the
+// mounts holds a "New ERA Content" with a library already inside it — take it.
+//
+// A KNOWN SUBFOLDER IS REQUIRED, not just the name. A bare folder of that name
+// is somebody's empty lookalike, or the one this hub is about to create, and
+// silently mirroring an empty source is how a prune eats a shelf (see the
+// provenance ledger above). One directory from MIRROR_SUBDIRS is the family
+// saying "this is the one".
+//
+// Skipped for a hub that is on, or is being put on, the API: mode "api" is a
+// device-code flow half finished, and flipping it to local under the person
+// would be the app undoing what they are in the middle of doing.
+function adoptLocal() {
+  if (!DATA) return null;                       // before start(): no drive.json to write
+  const c = loadCfg();
+  if (c.folderPath || c.token || c.mode === "api") return null;
+  for (const root of detectLocal().roots) {
+    const base = path.join(root, CONTENT_FOLDER);
+    const hasLibrary = MIRROR_SUBDIRS.some(sub => {
+      try { return fs.statSync(path.join(base, sub)).isDirectory(); } catch { return false; }
+    });
+    if (!hasLibrary) continue;
+    c.mode = "local"; c.folderPath = base;
+    saveCfg(c);                                 // on disk BEFORE anyone is told
+    console.log("[drive] adopted " + base);
+    armLocal();
+    // server.js hangs openClothingLog() here: its clothing log is the one
+    // consumer that caches the folder instead of re-reading drive.json, so
+    // without this the picks made between now and the next restart would be
+    // shared with nobody, silently (the same bug review r1 found on the
+    // create-folder door).
+    if (module.exports.onAdopted) try { module.exports.onAdopted(base); } catch {}
+    return base;
+  }
+  return null;
+}
+
 function setLocalFolder(p) {
   const check = browseLocal(p);
   if (check.error) return check;
   const c = loadCfg();
   c.mode = "local"; c.folderPath = path.normalize(p);
   saveCfg(c);
+  armLocal();     // Settings fires one sync; this is every pass after it
   return { ok: true };
 }
 
@@ -630,17 +719,27 @@ async function listFolders() {
 // One-click setup (dad 8/29: "run a job to add the folder - smarter"): the
 // mount is a real folder, so we create New ERA Content + one subfolder per
 // program right in it; the Drive app syncs it up. Also selects it.
+//
+// `existed` is for the SENTENCE Settings says, not for the work: mkdirSync
+// recursive has always been happy to find the folder already there, and
+// adoptLocal takes that case before anyone taps. But dad stopped at step 3 on
+// the tablet 9/15 because the button read "makes New ERA Content in your
+// Drive" over a Drive that already had one, and that sounds like a duplicate.
+// So the hub says which of the two things it did and the toast follows.
 function createContentFolder() {
   const { roots } = detectLocal();
   if (!roots.length) return { error: "no-mount" };
-  const base = path.join(roots[0], "New ERA Content");
+  const base = path.join(roots[0], CONTENT_FOLDER);
+  let existed = false;
+  try { existed = fs.statSync(base).isDirectory(); } catch {}
   try {
     for (const sub of MIRROR_SUBDIRS) fs.mkdirSync(path.join(base, sub), { recursive: true });
   } catch (e) { return { error: String(e.message) }; }
   const c = loadCfg();
   c.mode = "local"; c.folderPath = base;
   saveCfg(c);
-  return { ok: true, folderPath: base };
+  armLocal();     // as with setLocalFolder: Settings' one sync is not a mirror
+  return { ok: true, folderPath: base, existed };
 }
 
 function setFolder(folderId) {
@@ -651,14 +750,24 @@ function setFolder(folderId) {
 
 function start(dataDir) {
   DATA = dataDir;
+  adoptLocal();          // a folder another device already made (9/15) — arms too
   const c = loadCfg();
   if (c.mode === "local" && c.folderPath) {
-    setTimeout(() => { sync(); }, 60 * 1000).unref();
-    setInterval(() => { sync(); }, 10 * 60 * 1000).unref();  // local copy: cheap, keep it fresh
+    armLocal();
   } else if (c.token && c.folderId) {
     setTimeout(() => { sync(); }, 2 * 60 * 1000).unref();
     setInterval(() => { sync(); }, 6 * 60 * 60 * 1000).unref();
+  } else {
+    // Nothing configured yet. Google Drive for Desktop signs in minutes after
+    // the hub boots — on the 9/15 tablet the mount was not there at first boot
+    // at all — and a hub that only looked at start() would sit empty until
+    // somebody restarted the app. Settings' own paint calls status() (which
+    // adopts) every 5 s, but nobody is standing at Settings; this is the poll
+    // for the tablet propped on a kitchen counter. It clears itself the moment
+    // it finds the folder, so an adopted hub runs no timer it does not need.
+    const iv = setInterval(() => { if (adoptLocal()) clearInterval(iv); }, 60 * 1000);
+    iv.unref();
   }
 }
 
-module.exports = { start, status, connect, sync, mirrorBook, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast };
+module.exports = { start, status, connect, sync, mirrorBook, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed };

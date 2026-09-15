@@ -1538,11 +1538,20 @@ async function drivePaint(){
         btn:"⬇ Open download page", fn:()=>openSite("https://www.google.com/drive/download/") },
       { done:s.signedIn, title:"2. Sign in to Google Drive",
         hint:"Open the Drive app it installed and sign in with your Google account. This box ticks by itself." },
-      { done:!!s.folderPath, title:"3. Create your content folder",
-        hint:"One tap: makes New ERA Content in your Drive with books, music, movies, content, and clothing folders inside. (Or pick an existing folder below.)",
+      // "Create your content folder" over a Drive that already HAS one is what
+      // stopped dad on the tablet 9/15: it reads as "make a duplicate", so he
+      // did not tap, and on that device nothing ever did. The hub finds an
+      // existing folder by itself now (drive.js adoptLocal), which is why this
+      // step ticks with nobody's hand on it — the title has to be a state, not
+      // an instruction, and the hint has to say so.
+      { done:!!s.folderPath, title:"3. Your content folder",
+        hint:"Found by itself when New ERA Content already exists in your Drive (another computer made it). Otherwise one tap makes it, with books, music, movies, content, and clothing folders inside — or pick a folder below.",
         btn:"✨ Create it for me", fn:async()=>{
           const r=await (await fetch("/integrations/drive/create-folder",{method:"POST"})).json();
-          if(r.ok){ toast("Folder created in your Drive"); fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); }
+          // The same tap, two true sentences: the hub says which one it did
+          // (drive.js `existed`), because "created" over a folder that was
+          // already full is the sentence that made a duplicate sound likely.
+          if(r.ok){ toast(r.existed?"Folder connected":"Folder created in your Drive"); fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); }
           else toast("Could not create: "+(r.error||""),false);
         } },
       { done:hasContent, title:"4. Put content in it",

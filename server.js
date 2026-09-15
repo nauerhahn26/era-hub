@@ -2641,6 +2641,18 @@ server.on("listening", () => {
   // installed payloads only; checkouts are a no-op. Never restart under the
   // welcome wizard: the timers wait for a profile (leg B, 9/3)
   updater.start(PORT, () => HAS_PROFILE);
+  // THE THIRD DOOR onto the family's Drive folder, and the only one with no
+  // tap behind it: drive.js adopts a "New ERA Content" a mount already holds
+  // (dad's tablet 9/15 — Drive signed in, the folder fully synced down, every
+  // app empty because folderPath was only ever written by a tap in Settings and
+  // that was the family's SECOND device). The two Settings doors re-open the
+  // shared log where they are handled; this one can fire minutes or hours after
+  // boot, when Drive for Desktop finally signs in, so it needs the hook. The
+  // cached clothingLog is the one consumer that does not re-read drive.json
+  // live — without this, every pick from adoption until the next restart is
+  // recorded locally and shared with nobody, silently (review r1's bug again).
+  // Set BEFORE start(), which adopts.
+  drive.onAdopted = () => openClothingLog();
   drive.start(DATA);     // Google Drive content mirror (no-op until connected)
   // A finished sync feeds BOTH pipelines. onSynced is one property, so the
   // fan-out lives here rather than in either module: whoever is added next

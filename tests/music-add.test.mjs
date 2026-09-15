@@ -581,7 +581,11 @@ test("an order that does not name every song is refused, and the manifest never 
 
 test("with no Drive folder chosen there is nothing to arrange, and it says so", async () => {
   await stopHub();
-  await startHub({ ERA_YTDLP: BIN });   // fresh <DATA>, no folder picked yet
+  // fresh <DATA>, and NO mount to adopt: since 9/15 a hub beside a root whose
+  // New ERA Content already has a library takes it by itself (drive.js
+  // adoptLocal), and by now the suite's shared root has one — so "no folder
+  // chosen" needs the roots seam emptied, or the case tests the wrong state.
+  await startHub({ ERA_YTDLP: BIN, ERA_DRIVE_LOCAL_ROOTS: "" });
 
   const r = await post("/music/order", { ids: ["let-it-go"] });
   assert.equal(r.status, 409, "a refusal the sheet can render, not a crash");
