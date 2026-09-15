@@ -16,10 +16,12 @@ GATE="$HUB/gate"
 # thrash CPU and can fight over default ports — the second run WAITS its turn.
 # (Born of the 8/24 two-session collision; see aac-board-builder
 # docs/parallel-worktrees.md.)
-# A green run leaves a stamp at /tmp/era-gate-green/<HEAD^{tree}> (see
-# write_green_stamp below) so anything that needs "is THIS tree gated?" can ask
-# by tree sha instead of trusting one global file two worktrees overwrite:
-# release.sh --skip-gate, worktree.sh land, push-device.sh all read it.
+# A green run leaves a stamp at $ERA_GATE_STAMPS/<HEAD^{tree}> (default
+# /tmp/era-gate-green; see write_green_stamp below) so anything that needs "is
+# THIS tree gated?" can ask by tree sha instead of trusting one global file two
+# worktrees overwrite: release.sh --skip-gate, worktree.sh land, push-device.sh
+# all read it, and they honour the same ERA_GATE_STAMPS seam so a test run can
+# point the whole rail at a scratch dir.
 LOCK="/tmp/era-gate.lock"
 exec 9>"$LOCK"
 flock -n 9 || { echo "== era-gate: another gate run is active — queued, waiting… =="; flock 9; }
@@ -27,22 +29,40 @@ flock -n 9 || { echo "== era-gate: another gate run is active — queued, waitin
 # the green stamp (dev-flow spec §3.1): called ONLY on a fully green run, so a
 # red gate never writes one and never disturbs another tree's. Keyed by the
 # tree sha of HEAD — two worktrees on different code leave two stamps.
-# Uncommitted work does not change the key, so say so out loud; the WARNING is
-# printed BEFORE the summary line because release.sh reads the gate's `tail -1`.
+# Stamp shape, 4 lines when the tree is clean:
+#   1 == era-gate: <n> passed, <n> failed ==   (the summary line, verbatim)
+#   2 head=<HEAD sha>
+#   3 at=<unix seconds>
+#   4 hub=<checkout path>
+# plus a 5th line `dirty=1` when the gate ran over uncommitted TRACKED changes.
+# Dirtiness is tracked modifications only (`status --untracked-files=no`):
+# untracked files — vendor/ artefacts, gate/ leftovers — are not the tested
+# content changing, so they never mark a stamp dirty. A dirty stamp still gets
+# written (the run really did happen) but readers refuse it: the tested content
+# was not the committed tree the key names. The WARNING is printed BEFORE the
+# summary line because release.sh reads the gate's `tail -1`; that is also why
+# the refusal has to live IN the stamp — a stripped warning cannot stop anyone.
 write_green_stamp() {
-  local tree dir at
+  local tree dir at dirty
   tree="$(git -C "$HUB" rev-parse 'HEAD^{tree}' 2>/dev/null || true)"
   [ -n "$tree" ] || { echo "WARNING: not a git checkout — no green stamp written"; return 0; }
-  dir=/tmp/era-gate-green
+  dir="${ERA_GATE_STAMPS:-/tmp/era-gate-green}"
   mkdir -p "$dir" || return 0
-  [ -n "$(git -C "$HUB" status --porcelain 2>/dev/null || true)" ] && \
-    echo "WARNING: working tree dirty — stamp is for committed HEAD^{tree} only"
+  dirty="$(git -C "$HUB" status --porcelain --untracked-files=no 2>/dev/null || true)"
   at="$(date +%s)"
-  printf '%s\n%s\n%s\n%s\n' \
-    "== era-gate: $pass passed, $fail failed${failed:+ →$failed} ==" \
-    "head=$(git -C "$HUB" rev-parse HEAD)" \
-    "at=$at" \
-    "hub=$HUB" >"$dir/$tree"
+  if [ -n "$dirty" ]; then
+    echo "WARNING: working tree has uncommitted tracked changes — stamp marked dirty=1; release.sh/land/push-device will refuse it until you commit and re-gate:"
+    echo "$dirty"
+  fi
+  {
+    printf '%s\n%s\n%s\n%s\n' \
+      "== era-gate: $pass passed, $fail failed${failed:+ →$failed} ==" \
+      "head=$(git -C "$HUB" rev-parse HEAD)" \
+      "at=$at" \
+      "hub=$HUB"
+    [ -n "$dirty" ] && printf 'dirty=1\n'
+  } >"$dir/$tree"
+  return 0
 }
 
 # a fresh worktree checkout has a bare public/ (the symlink farm is untracked)
