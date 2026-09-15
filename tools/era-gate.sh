@@ -16,9 +16,34 @@ GATE="$HUB/gate"
 # thrash CPU and can fight over default ports — the second run WAITS its turn.
 # (Born of the 8/24 two-session collision; see aac-board-builder
 # docs/parallel-worktrees.md.)
+# A green run leaves a stamp at /tmp/era-gate-green/<HEAD^{tree}> (see
+# write_green_stamp below) so anything that needs "is THIS tree gated?" can ask
+# by tree sha instead of trusting one global file two worktrees overwrite:
+# release.sh --skip-gate, worktree.sh land, push-device.sh all read it.
 LOCK="/tmp/era-gate.lock"
 exec 9>"$LOCK"
 flock -n 9 || { echo "== era-gate: another gate run is active — queued, waiting… =="; flock 9; }
+
+# the green stamp (dev-flow spec §3.1): called ONLY on a fully green run, so a
+# red gate never writes one and never disturbs another tree's. Keyed by the
+# tree sha of HEAD — two worktrees on different code leave two stamps.
+# Uncommitted work does not change the key, so say so out loud; the WARNING is
+# printed BEFORE the summary line because release.sh reads the gate's `tail -1`.
+write_green_stamp() {
+  local tree dir at
+  tree="$(git -C "$HUB" rev-parse 'HEAD^{tree}' 2>/dev/null || true)"
+  [ -n "$tree" ] || { echo "WARNING: not a git checkout — no green stamp written"; return 0; }
+  dir=/tmp/era-gate-green
+  mkdir -p "$dir" || return 0
+  [ -n "$(git -C "$HUB" status --porcelain 2>/dev/null || true)" ] && \
+    echo "WARNING: working tree dirty — stamp is for committed HEAD^{tree} only"
+  at="$(date +%s)"
+  printf '%s\n%s\n%s\n%s\n' \
+    "== era-gate: $pass passed, $fail failed${failed:+ →$failed} ==" \
+    "head=$(git -C "$HUB" rev-parse HEAD)" \
+    "at=$at" \
+    "hub=$HUB" >"$dir/$tree"
+}
 
 # a fresh worktree checkout has a bare public/ (the symlink farm is untracked)
 # — assemble it against the gate's data dir so the test hub serves the apps.
@@ -93,5 +118,6 @@ for t in *.test.mjs; do
   if timeout 900 node --test "$t" >"${t%.mjs}.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
   else fail=$((fail+1)); failed="$failed $t"; echo "FAIL $t (see gate/${t%.mjs}.out)"; fi
 done
+[ "$fail" -eq 0 ] && write_green_stamp
 echo "== era-gate: $pass passed, $fail failed${failed:+ →$failed} =="
 [ "$fail" -eq 0 ]
