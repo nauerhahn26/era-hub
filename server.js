@@ -2596,9 +2596,31 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "POST" && req.url === "/update/check") {
-    updater.check(PORT).then((r) => {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(r));
+    // Optional body {feed}: take THIS build from that base URL instead of the
+    // public release feed (tools/push-device.sh, dev-flow spec §5.3). The
+    // route is ungated and reachable from the LAN whenever ERA_BIND opens the
+    // hub up, so the override is honoured only when the SOCKET's peer is the
+    // machine itself — otherwise anyone on a school network could install
+    // code on the Tobii. Headers (X-Forwarded-For & co) are attacker-written
+    // and never consulted. No body, bad JSON, or a feed that isn't an
+    // http(s) string: ignore it and check the default feed exactly as the
+    // Settings button (which POSTs no body at all) always has.
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let feed;
+      if (updater.isLoopback(req.socket && req.socket.remoteAddress)) {
+        try {
+          const inc = JSON.parse(body);
+          if (inc && typeof inc.feed === "string" &&
+              (inc.feed.startsWith("http://") || inc.feed.startsWith("https://")))
+            feed = inc.feed;
+        } catch {}
+      }
+      updater.check(PORT, feed).then((r) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(r));
+      });
     });
     return;
   }

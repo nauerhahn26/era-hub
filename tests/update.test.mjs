@@ -228,3 +228,93 @@ test("a checkout hub keeps the updater disabled", async () => {
     assert.equal(r.status, "disabled");
   } finally { c2.kill("SIGKILL"); }
 });
+
+// ---- feed override on POST /update/check (dev-flow spec §5.3) ----
+// push-device.sh serves one build from the operator's laptop and asks ONE
+// device to take it. The route is ungated and reachable on the LAN whenever
+// ERA_BIND opens the hub up, so the override is honoured only when the
+// request's SOCKET peer is loopback — headers (X-Forwarded-For & co) are
+// attacker-controlled and never consulted.
+//
+// Why the refusal is covered by a unit test and not a real off-loopback
+// socket: server.js binds `ERA_BIND || "127.0.0.1"` (server.js:28, :2724) and
+// this suite's hub runs with ERA_BIND=127.0.0.1, so no non-loopback socket can
+// reach it at all — and standing a second updatable hub up on 0.0.0.0 during
+// the gate is exactly the exposure this rule exists to prevent. The decision
+// itself lives in updater.isLoopback(), tested here against every form.
+test("isLoopback accepts only the three loopback socket addresses", async () => {
+  const updater = (await import(`file://${path.join(HUB, "update.js")}`)).default;
+  for (const ok of ["127.0.0.1", "::1", "::ffff:127.0.0.1"])
+    assert.equal(updater.isLoopback(ok), true, `${ok} is loopback`);
+  for (const no of ["10.0.0.5", "::ffff:10.0.0.5", "localhost", "127.0.0.2",
+                    "192.168.1.9", "", undefined, null, 0, {}])
+    assert.equal(updater.isLoopback(no), false, `${JSON.stringify(no)} is not loopback`);
+});
+
+test("a malformed body (and the FE's body-less POST) is ignored, not a 400", async () => {
+  for (const init of [{ method: "POST" },
+                      { method: "POST", body: "not json" },
+                      { method: "POST", body: JSON.stringify({ feed: 42 }) },
+                      { method: "POST", body: JSON.stringify({ feed: "file:///etc" }) }]) {
+    const res = await fetch(`${BASE}/update/check`, init);
+    assert.equal(res.status, 200);
+    const r = await res.json();
+    assert.equal(r.status, "up-to-date", "default feed was used");
+    assert.equal(r.build, NEW_BUILD);
+    assert.ok(!("feed" in r), "no override was applied, so no feed is reported");
+  }
+});
+
+test("a loopback POST with {feed} updates from THAT feed, not the default one", async () => {
+  const FEED2_PORT = 8412;   // free again: the checkout-hub case above is done
+  const PUSHED = "21000101.0000";
+  const rel2 = path.join(TMP, "rel2");
+  makeInstall(path.join(rel2, "new-era-suite"), PUSHED, "hello from the pushed build\n");
+  layPacks(path.join(rel2, "new-era-suite"), PUSHED);
+  execFileSync("tar", ["-czf", path.join(TMP, "pushed.tar.gz"), "-C", rel2, "new-era-suite"]);
+  const tarball2 = fs.readFileSync(path.join(TMP, "pushed.tar.gz"));
+  const latest2 = JSON.stringify({ version: "v99.0.1", build: PUSHED,
+    sha256: crypto.createHash("sha256").update(tarball2).digest("hex") });
+
+  let hits = 0;
+  const feed2 = http.createServer((req, res) => {
+    hits++;
+    if (req.url === "/latest.json") { res.writeHead(200).end(latest2); return; }
+    if (req.url === "/new-era-suite.tar.gz") { res.writeHead(200).end(tarball2); return; }
+    res.writeHead(404).end();
+  });
+  for (let i = 0; ; i++) {  // the checkout hub above held this port
+    try { await new Promise((ok, no) => feed2.once("error", no).listen(FEED2_PORT, "127.0.0.1", ok)); break; }
+    catch (e) { if (i > 40) throw e; await new Promise(r => setTimeout(r, 250)); }
+  }
+  try {
+    const pid0 = (await (await fetch(`${BASE}/version`)).json()).pid;
+    const r = await (await fetch(`${BASE}/update/check`, { method: "POST",
+      body: JSON.stringify({ feed: `http://127.0.0.1:${FEED2_PORT}` }) })).json();
+    assert.equal(r.status, "updated");
+    assert.equal(r.from, NEW_BUILD);
+    assert.equal(r.to, PUSHED);
+    assert.equal(r.feed, `http://127.0.0.1:${FEED2_PORT}`, "the answer names the feed it used");
+    assert.ok(hits >= 2, "the override feed served latest.json and the tarball");
+    assert.equal(fs.readFileSync(at("public/updated-marker.txt"), "utf8"),
+                 "hello from the pushed build\n", "the marker from THE PUSHED tarball landed");
+
+    let build = "", pid = pid0;
+    for (let i = 0; i < 120; i++) {
+      await new Promise(rr => setTimeout(rr, 250));
+      try {
+        const v = await (await fetch(`${BASE}/version`)).json();
+        build = v.build; pid = v.pid;
+        if (build === PUSHED && pid !== pid0) break;
+      } catch { /* between old exit and new bind */ }
+    }
+    assert.equal(build, PUSHED, "the hub restarted on the pushed build");
+    assert.notEqual(pid, pid0);
+
+    // and the default feed never moves it backwards afterwards
+    const back = await (await fetch(`${BASE}/update/check`, { method: "POST" })).json();
+    assert.equal(back.status, "up-to-date");
+    assert.equal(back.build, PUSHED);
+    assert.ok(!("feed" in back), "a plain check reports no feed");
+  } finally { feed2.close(); }
+});
