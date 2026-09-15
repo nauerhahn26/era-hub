@@ -114,3 +114,21 @@ the tablet after the update.
   `/integrations/drive/status` on the tablet shows `folderPath G:\My Drive\New ERA Content`
   and the reader/music/movies/clothing populate with no tap. That is the
   acceptance test dad asked for ("when I update the app it should just work").
+
+## T4 result (2026-09-15, landed in 3c25088)
+
+- Scratch hub 8481: adopted at boot, auto-mirror at ~60 s, `lastSync.files:1`.
+- Gate 94/0 on 3c25088 (06:05). `release.sh v0.33.2 --skip-gate`: signing
+  ready (SimplySign re-staged once — the first `token` step overran 60 s,
+  got backgrounded and took the Desktop process with it; the retry ran
+  under `timeout 25`), both signatures timestamped, VM e2e 14/14 on build
+  20260915.0641 (v0.33.1 self-updating to it), published, `RELEASE-EXIT 0`.
+- Tablet (dad's fresh v0.33.1 install): `POST /update/check` via tunnel 8503
+  → `20260915.0136 -> 20260915.0641; restarting`, hub.log next lines
+  `era-hub on http://127.0.0.1:8377` / `[drive] adopted G:\My Drive\New ERA
+  Content`. Status: `folderPath` set, `lastSync {files:596, errors:[]}`,
+  reader 10 books, music manifest served, movies catalog 37 titles, clothing
+  35 photos with `sharing.mode:"drive"` (3 devices). Zero taps. While the
+  596-file first mirror ran the hub did not answer HTTP for ~3 min (sync is
+  synchronous on the event loop) — it recovered by itself; noted, not fixed.
+- i13: same POST on 8502 → v0.33.2, folder intact (already configured).
