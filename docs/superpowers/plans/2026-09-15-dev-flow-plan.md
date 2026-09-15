@@ -49,7 +49,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 ### Phase 1: Hub — feed override on `POST /update/check` (spec §5.3)
 **Posture hint:** implementing
 
-1. [ ] `update.js`: `check(port, feed = FEED)` — the override is a parameter;
+1. [x] `update.js`: `check(port, feed = FEED)` — the override is a parameter;
    boot/6-hourly ticks keep calling `check(port)`.
    - **Acceptance:** `check(port, "http://127.0.0.1:8411")` uses that base
      for `latest.json` and the tarball; `FEED` export unchanged.
@@ -58,7 +58,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
    - **Guardrails:** TDD — write the failing test first (a second fake feed
      on 8412 serving a newer build; assert the hub updated from IT while the
      default feed still says up-to-date).
-2. [ ] `server.js` `/update/check`: read a JSON body (inline, 4 KB cap, as
+2. [x] `server.js` `/update/check`: read a JSON body (inline, 4 KB cap, as
    :1317); honour `{feed}` only when `req.socket.remoteAddress` is
    `127.0.0.1` / `::1` / `::ffff:127.0.0.1`; otherwise ignore the body and
    call `check(PORT)`. Malformed JSON = ignore body, not 400 (the FE's
@@ -80,7 +80,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 ### Phase 2: Per-tree green stamp (spec §3.1)
 **Posture hint:** implementing
 
-3. [ ] `era-gate.sh`: on `fail == 0`, write
+3. [x] `era-gate.sh`: on `fail == 0`, write
    `/tmp/era-gate-green/<tree-sha>` (`git -C "$HUB" rev-parse HEAD^{tree}`)
    containing the summary line + `date +%s` + `$HUB`. Untracked/dirty trees
    still stamp (the tree sha is HEAD's; a dirty worktree is the operator's
@@ -92,7 +92,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
      /tmp/era-gate-green/$(git rev-parse HEAD^{tree})`.
    - **Guardrails:** shell only; no test suite for the gate itself (it IS the
      suite runner) — verify by running it once.
-4. [ ] `release.sh --skip-gate`: read the per-tree stamp for `$HEAD^{tree}`
+4. [x] `release.sh --skip-gate`: read the per-tree stamp for `$HEAD^{tree}`
    (same 2 h window, same `git diff --quiet` exclusions of tools/, tests-vm/,
    docs/ — compare against the stamped HEAD recorded in the file). Keep
    writing the old `/tmp/era-release-gate.*` for one release (i13 runbooks
@@ -105,7 +105,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 ### Phase 3: `worktree.sh` — open / sync / land / close (spec §3.2-3.3)
 **Posture hint:** implementing
 
-5. [ ] `aac-board-builder/tools/worktree.sh`: `open` (`--fix` → `fix/<slug>`;
+5. [x] `aac-board-builder/tools/worktree.sh`: `open` (`--fix` → `fix/<slug>`;
    runs `tools/assemble.sh` against `era-family/test-data` when the repo has
    one; prints the port ledger, no `IN FLIGHT` text); `sync` (in the
    worktree: `git merge master`, no-edit, refuses on a dirty tree); `land`
@@ -121,7 +121,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
      The green-stamp path and the 2 h window are shared with release.sh
      (Phase 2) — read `/tmp/era-gate-green/<tree>`; the test seeds one by
      hand.
-6. [ ] `aac-board-builder/tools/worktree.test.sh`: throwaway repo under
+6. [x] `aac-board-builder/tools/worktree.test.sh`: throwaway repo under
    `$(mktemp -d)` with a `master`; `open` → commit → advance master → `land`
    refuses (master moved) → `sync` → `land` refuses (no stamp) → seed stamp
    → `land` succeeds; assert `git log --merges -1` is the `--no-ff` commit,
@@ -135,7 +135,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 ### Phase 4: Release shapes (spec §4)
 **Posture hint:** implementing (dry-runs are the proof; no publish in this phase)
 
-7. [ ] `build-dist.sh`: split the makensis block into `build_installer
+7. [x] `build-dist.sh`: split the makensis block into `build_installer
    [--sign]`; new flags `--patch` (skip makensis; fetch the current feed's
    `latest.json` → `installer` (fallback `version`) → `gh release download
    <tag> -p New-ERA-Setup.exe --repo nauerhahn26/new-era-releases` into
@@ -154,7 +154,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
    - **Guardrails:** `sign-installer.sh` loses its soft-exit: no
      `signing.env` → exit 1 (and `--check` → exit 1). Nothing calls it
      without meaning to sign any more.
-8. [ ] `release.sh`: `--patch` flow (gate → build --patch → `vm-e2e.sh $DIST
+8. [x] `release.sh`: `--patch` flow (gate → build --patch → `vm-e2e.sh $DIST
    --only b` → tag + publish with patch notes naming the installer tag);
    signed flow reordered (gate → build --unsigned → vm-e2e A+B → prompt
    "VM green — ready for the SimplySign code" + `sign-installer.sh --check`
@@ -171,7 +171,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
      patch); the patch one must not claim the tarball is signed. Wire
      `run_leg c` in vm-e2e.sh behind `--post-publish` so release.sh can call
      it alone.
-9. [ ] `vm-e2e.sh`: in patch mode (`$DIST/latest.json` has `installer` ≠
+9. [x] `vm-e2e.sh`: in patch mode (`$DIST/latest.json` has `installer` ≠
    `version`) PREV defaults to `$DIST/New-ERA-Setup.exe` itself (it IS the
    family's installer); the TAGGED-dist search stays for signed cuts.
    `--post-publish` runs leg C only.
@@ -186,7 +186,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 ### Phase 5: `tools/push-device.sh` (spec §5.2)
 **Posture hint:** implementing
 
-10. [ ] `push-device.sh <host> <dist-dir>`: checks (assets present; the
+10. [x] `push-device.sh <host> <dist-dir>`: checks (assets present; the
     dist's `VERSION`→ its tree stamp: `build-dist` writes `$DIST/TREE` with
     the tree sha so push-device can look up `/tmp/era-gate-green/<tree>`;
     refuse without it); `ss -ltn` free-port pick for local feed (8480-8499)
@@ -212,7 +212,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 ### Phase 6: Policy, docs, memory, cleanup (spec §3.4-3.5)
 **Posture hint:** collaborating (wording of house law; deleting branches)
 
-11. [ ] `aac-board-builder/docs/parallel-worktrees.md` rewritten as the
+11. [x] `aac-board-builder/docs/parallel-worktrees.md` rewritten as the
     default flow: open/sync/land/close; rules 1,3,4,5 kept; rule 2 and the
     rebase close-out removed; a "dad's routine" section: new chat in the
     main checkout → "new feature: <name>" → the chat opens + enters the
@@ -223,7 +223,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
       "opt-in" in either file.
     - **Verification:** `grep -n "rebase\|IN FLIGHT\|opt-in" docs/
       parallel-worktrees.md CLAUDE.md` → empty.
-12. [ ] era-hub `docs/dev-flow.md` (one page: the routine, the three release
+12. [x] era-hub `docs/dev-flow.md` (one page: the routine, the three release
     shapes, push-device, links to the aac-board-builder doc and this spec);
     `tools/era-gate.sh` header comment points at it too. Memory file
     (Fable's `memory/`): "new feature: <name>" ⇒ `worktree.sh open` +
@@ -231,7 +231,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
     - **Acceptance:** a fresh era-hub session reading MEMORY.md + dev-flow.md
       can run the routine without this chat.
     - **Verification:** read-through by the reviewer; `ls docs/dev-flow.md`.
-13. [ ] Cleanup: for each of books-loose, built-once, clothing, launcher,
+13. [x] Cleanup: for each of books-loose, built-once, clothing, launcher,
     movie-player, reader, smartscreen: `git merge-base --is-ancestor <branch>
     master && worktree.sh close`; `git worktree remove
     .claude/worktrees/agent-a5e6cbddb39ac78fd` + `git branch -D
@@ -322,7 +322,79 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 - Order change vs plan: P4 + P5 dispatched right after P1–P3 reported, concurrently with
   the P1 and P2+P3 reviews (different files; index.lock retries).
 
+### Reviews of Phases 1–3 (9/15 ~20:00 UTC, two Opus reviewers) → fixes `7630804`, `051fcfa`, `6aa28bc`, `7f099b3`
+- P1 APPROVED_WITH_COMMENTS. Fixed: the off-loopback path was never exercised → a test
+  now boots a throwaway hub with `ERA_NO_UPDATE=1 ERA_BIND=0.0.0.0` on 8412 and proves
+  a LAN-socket `{feed}` is ignored (red both ways first); body overflow used to
+  `req.destroy()` with no reply → 413; the 4 KB cap was a string-length cap → byte-exact
+  `Buffer.concat`. `update.test` 11/11, `routes.test` 12/12. Left: `/settings`
+  (`server.js:1317`) still reads its body with the old `body += c` idiom — follow-up.
+- P2/P3 CHANGES_REQUESTED, all taken: stamp dir hardcoded → `ERA_GATE_STAMPS` seam; a
+  tree with tracked modifications got a clean-looking stamp → gate writes `dirty=1`
+  (`--untracked-files=no`) and every reader (release.sh, `land`, push-device) refuses it;
+  release.sh fallback took the first glob → newest `at=`; `land` on a detached-HEAD
+  worktree silently did nothing → refusal in land/sync/close; uncommitted worktree work at
+  `land` → WARNING. `worktree.test.sh` PASS 75/75.
+
+### Phases 4–5 built (9/15 ~20:30 UTC) — `2ed61b2`, `63cb70e`; adversarial review → `ae50ca8`
+- P4 `build-dist.sh` grew four modes behind one `build_installer`: `--patch` (no makensis;
+  fetches the live `latest.json` `installer` field — fallback `version` — refuses unless
+  X.Y matches, `gh release download` of that tag's `New-ERA-Setup.exe`, osslsigncode
+  verify), `--unsigned`, default, `--sign-only` (makensis again with `-DSIGN`, asserts the
+  tarball sha unchanged, re-copies the stable tarball, verify ok). Every mode writes
+  `$DIST/TREE` + `$DIST/HEAD`; `latest.json` gains `"installer":"<tag>"`.
+  `release.sh`: signed flow gate → unsigned build → legs A+B → (`--dry-run` stops here) →
+  "stage the SimplySign code" + `sign-installer.sh --check` → `--sign-only` → publish →
+  `vm-e2e.sh --post-publish` (leg C; red prints PULL THE RELEASE, deletes nothing). Patch
+  flow gate → `--patch` build → `--only b` → publish with PATCH notes. `--resume-sign`
+  for a dead code. `sign-installer.sh` now hard-fails without `signing.env`.
+  Surprise: makensis does NOT propagate a failed `!finalize` — osslsigncode verify and the
+  `sign: SIGNED` count are the load-bearing checks, not makensis's exit code.
+- P5 `tools/push-device.sh <host> <dist> [--dry-run]` (259 lines): host alias from
+  `~/.ssh/config` → six assets → sha → `TREE` == HEAD tree → green stamp → ports; python
+  `http.server` on 8480–8499 bound to 127.0.0.1; one `ssh -N -o BatchMode=yes -o
+  ExitOnForwardFailure=yes -R <8500+>:127.0.0.1:<P> -L <8500+>:127.0.0.1:8377`; POST
+  `{feed}` over the -L leg only; string compare of `YYYYMMDD.HHMM` stamps = no downgrade;
+  90 s poll of `/version`. Builder found its own subshell port-picker bug (`printf -v`).
+- Adversarial review (P4+P5, one Opus reviewer) found one HIGH: `--resume-sign` could
+  publish a dist the VM never drove (a bare `build-dist.sh` dist looks identical to a
+  `--dry-run` one). Fix `ae50ca8`: `vm-e2e.sh` writes `$DIST/VM-GREEN` (`legs=`,
+  `tarball=<sha>`, `at=`) only on 0 failed, removes it at the start of every non-`--post-
+  publish` run; every `gh release create` requires it (signed: `legs=a,b`; patch: legs ∋
+  `b`) with the sha matching both the tarball and `latest.json`; `--resume-sign` requires
+  `legs=a,b`. Also: a half-signed installer (uninstaller stub unsigned) → assert
+  `grep -c '^sign: SIGNED '` == 2; stable tarball re-copied and re-asserted before
+  publish; `--only ${2:?}`; DEVBUILD trap fix; dirname check on `<dist>`.
+- Discovery (the fixer, running the suite): `tests/vm-e2e.test.mjs` went 0/4 on this
+  branch — it parses `tools/vm-e2e.sh` as text and the P4 reshaping indented the banner
+  behind `--post-publish` and moved the UNTAGGED mark into a `PREV_NOTE=` line. Test-only
+  fix dispatched (Phase 7 cannot start until the gate is green).
+
+### Phase 6 done (9/15 ~21:30 UTC) — docs `d218429` (era-hub), `f184638` + `6d435cb` (aac-board-builder); cleanup by hand
+- `docs/dev-flow.md` (115 lines) + `# Flow: docs/dev-flow.md` in era-gate.sh's header;
+  aac-board-builder `docs/parallel-worktrees.md` rewritten as the default flow, CLAUDE.md
+  "How we work" paragraph, status.md IN FLIGHT block replaced by the 9/15 ruling. Memory
+  `dev-flow-worktree-per-feature-2026-09-15` carries dad's verb → command table.
+- Cleanup (task 13, done early): 13 merged worktrees closed via `worktree.sh close`
+  (era-hub ×7, era-board ×2, era-family, era-gaze, era-making-words, era-website); local
+  `feat/install-qa` (an ancestor of master — the plan's "unmerged" guess was wrong, `-d`
+  sufficed) and `feat/app-picker` deleted; remote `feat/app-picker`, `feat/clothing-
+  migration`, `feat/movie-player` deleted. Left for dad: era-hub's tool-made
+  `.claude/worktrees/agent-a5e6cbddb39ac78fd` (one commit `05a17cf`, already on master as
+  `b115c2c`, superseded by `3cf0f65`) — needs `-D`, so it waits for his word.
+
 ## Follow-ups (not in this plan)
+- `server.js:1317` `/settings` still reads its body with the unbounded `body += c` idiom
+  — give it the 4 KB `Buffer.concat` + 413 treatment `/update/check` got.
+- Nothing prunes `${ERA_GATE_STAMPS:-/tmp/era-gate-green}/` — one file per gated tree,
+  forever (tiny, but a `find -mtime +7 -delete` in the gate would do).
+- `vm-e2e.sh --only a` writes a `legs=a` VM-GREEN marker no publisher accepts — harmless,
+  but the message could say so.
+- `/version` returns `{build, disk, updater, pid}` and no `version` key; push-device
+  reports the build stamp only.
+- App packs still download from the public `updater.FEED` (`server.js:160`) — a
+  push-device'd hub fetches packs from the last published release; first delivery of the
+  feed override to any device is itself a normal release (v0.33.3).
 - `installPack()` fetches the tarball with no checksum (Gap 14, content-
   pipelines plan) — unchanged here.
 - `.github/workflows/build-installer.yml` builds an unused unsigned exe on
