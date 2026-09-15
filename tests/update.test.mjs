@@ -228,3 +228,171 @@ test("a checkout hub keeps the updater disabled", async () => {
     assert.equal(r.status, "disabled");
   } finally { c2.kill("SIGKILL"); }
 });
+
+// ---- feed override on POST /update/check (dev-flow spec §5.3) ----
+// push-device.sh serves one build from the operator's laptop and asks ONE
+// device to take it. The route is ungated and reachable on the LAN whenever
+// ERA_BIND opens the hub up, so the override is honoured only when the
+// request's SOCKET peer is loopback — headers (X-Forwarded-For & co) are
+// attacker-controlled and never consulted.
+//
+// Why the refusal is covered by a unit test and not a real off-loopback
+// socket: server.js binds `ERA_BIND || "127.0.0.1"` (server.js:28, :2724) and
+// this suite's hub runs with ERA_BIND=127.0.0.1, so no non-loopback socket can
+// reach it at all — and standing a second updatable hub up on 0.0.0.0 during
+// the gate is exactly the exposure this rule exists to prevent. The decision
+// itself lives in updater.isLoopback(), tested here against every form.
+test("isLoopback accepts only the three loopback socket addresses", async () => {
+  const updater = (await import(`file://${path.join(HUB, "update.js")}`)).default;
+  for (const ok of ["127.0.0.1", "::1", "::ffff:127.0.0.1"])
+    assert.equal(updater.isLoopback(ok), true, `${ok} is loopback`);
+  for (const no of ["10.0.0.5", "::ffff:10.0.0.5", "localhost", "127.0.0.2",
+                    "192.168.1.9", "", undefined, null, 0, {}])
+    assert.equal(updater.isLoopback(no), false, `${JSON.stringify(no)} is not loopback`);
+});
+
+test("a malformed body (and the FE's body-less POST) is ignored, not a 400", async () => {
+  for (const init of [{ method: "POST" },
+                      { method: "POST", body: "not json" },
+                      { method: "POST", body: JSON.stringify({ feed: 42 }) },
+                      { method: "POST", body: JSON.stringify({ feed: "file:///etc" }) }]) {
+    const res = await fetch(`${BASE}/update/check`, init);
+    assert.equal(res.status, 200);
+    const r = await res.json();
+    assert.equal(r.status, "up-to-date", "default feed was used");
+    assert.equal(r.build, NEW_BUILD);
+    assert.ok(!("feed" in r), "no override was applied, so no feed is reported");
+  }
+});
+
+test("a loopback POST with {feed} updates from THAT feed, not the default one", async () => {
+  const FEED2_PORT = 8412;   // free again: the checkout-hub case above is done
+  const PUSHED = "21000101.0000";
+  const rel2 = path.join(TMP, "rel2");
+  makeInstall(path.join(rel2, "new-era-suite"), PUSHED, "hello from the pushed build\n");
+  layPacks(path.join(rel2, "new-era-suite"), PUSHED);
+  execFileSync("tar", ["-czf", path.join(TMP, "pushed.tar.gz"), "-C", rel2, "new-era-suite"]);
+  const tarball2 = fs.readFileSync(path.join(TMP, "pushed.tar.gz"));
+  const latest2 = JSON.stringify({ version: "v99.0.1", build: PUSHED,
+    sha256: crypto.createHash("sha256").update(tarball2).digest("hex") });
+
+  let hits = 0;
+  const feed2 = http.createServer((req, res) => {
+    hits++;
+    if (req.url === "/latest.json") { res.writeHead(200).end(latest2); return; }
+    if (req.url === "/new-era-suite.tar.gz") { res.writeHead(200).end(tarball2); return; }
+    res.writeHead(404).end();
+  });
+  for (let i = 0; ; i++) {  // the checkout hub above held this port
+    try { await new Promise((ok, no) => feed2.once("error", no).listen(FEED2_PORT, "127.0.0.1", ok)); break; }
+    catch (e) { if (i > 40) throw e; await new Promise(r => setTimeout(r, 250)); }
+  }
+  try {
+    const pid0 = (await (await fetch(`${BASE}/version`)).json()).pid;
+    const r = await (await fetch(`${BASE}/update/check`, { method: "POST",
+      body: JSON.stringify({ feed: `http://127.0.0.1:${FEED2_PORT}` }) })).json();
+    assert.equal(r.status, "updated");
+    assert.equal(r.from, NEW_BUILD);
+    assert.equal(r.to, PUSHED);
+    assert.equal(r.feed, `http://127.0.0.1:${FEED2_PORT}`, "the answer names the feed it used");
+    assert.ok(hits >= 2, "the override feed served latest.json and the tarball");
+    assert.equal(fs.readFileSync(at("public/updated-marker.txt"), "utf8"),
+                 "hello from the pushed build\n", "the marker from THE PUSHED tarball landed");
+
+    let build = "", pid = pid0;
+    for (let i = 0; i < 120; i++) {
+      await new Promise(rr => setTimeout(rr, 250));
+      try {
+        const v = await (await fetch(`${BASE}/version`)).json();
+        build = v.build; pid = v.pid;
+        if (build === PUSHED && pid !== pid0) break;
+      } catch { /* between old exit and new bind */ }
+    }
+    assert.equal(build, PUSHED, "the hub restarted on the pushed build");
+    assert.notEqual(pid, pid0);
+
+    // and the default feed never moves it backwards afterwards
+    const back = await (await fetch(`${BASE}/update/check`, { method: "POST" })).json();
+    assert.equal(back.status, "up-to-date");
+    assert.equal(back.build, PUSHED);
+    assert.ok(!("feed" in back), "a plain check reports no feed");
+  } finally { feed2.close(); }
+});
+
+// The one that matters: the ROUTE's gate, over a REAL off-loopback socket.
+// isLoopback() being right is not the same property as server.js consulting
+// it — a refactor could drop the call, or start trusting a header, and the
+// unit test above would stay green. So stand a second hub on 0.0.0.0 and
+// POST to it from this machine's own LAN address.
+//
+// Doing that safely is the whole trick: the hub is started with
+// ERA_NO_UPDATE=1, so its updater is OFF and every check answers "disabled"
+// with nothing downloaded or installed, whoever asks. The exposure this rule
+// guards against (a stranger installing code on the device) is therefore
+// impossible for the seconds this hub is up, while the gate's answer is still
+// observable: when the override IS honoured the reply carries `feed` back
+// (update.js check()), and when it is refused the key is absent.
+test("off a real LAN socket the {feed} override is refused; from loopback it is honoured", async (t) => {
+  const lan = Object.values(os.networkInterfaces()).flat()
+    .filter(i => i && i.family === "IPv4" && !i.internal).map(i => i.address);
+  // prefer an RFC1918 address — same socket property, no round trip past the edge
+  const ip = lan.find(a => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a)) || lan[0];
+  if (!ip) { t.skip("no non-internal IPv4 on this machine: nothing can reach a hub off loopback"); return; }
+
+  const PORT3 = 8412;                       // free again: the pushed-feed case above closed it
+  const OFF = `http://127.0.0.1:9999`;      // nothing listens there; only the ECHO is under test
+  for (let i = 0; ; i++) {                  // wait for 8412 to come back
+    const probe = http.createServer();
+    try { await new Promise((ok, no) => probe.once("error", no).listen(PORT3, "127.0.0.1", ok));
+          await new Promise(r => probe.close(r)); break; }
+    catch (e) { try { probe.close(); } catch {} if (i > 40) throw e; await new Promise(r => setTimeout(r, 250)); }
+  }
+  const lanDir = path.join(TMP, "laninstall"), lanData = path.join(TMP, "landata");
+  makeInstall(lanDir, NEW_BUILD, null);
+  fs.mkdirSync(lanData, { recursive: true });
+  const c3 = spawn("node", ["server.js", String(PORT3)], {
+    cwd: lanDir, stdio: ["ignore", "ignore", "ignore"],
+    env: { ...process.env, ERA_DATA_DIR: lanData, ERA_BIND: "0.0.0.0",
+           ERA_UPDATE_URL: `http://127.0.0.1:${FEED_PORT}`, ERA_NO_UPDATE: "1" },
+  });
+  const post = (host, headers) => fetch(`http://${host}:${PORT3}/update/check`,
+    { method: "POST", headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ feed: OFF }) }).then(r => r.json());
+  try {
+    let up = false;
+    for (let i = 0; i < 100; i++) {
+      try { await fetch(`http://127.0.0.1:${PORT3}/settings`); up = true; break; } catch {}
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.ok(up, "the 0.0.0.0 hub came up");
+    assert.equal((await (await fetch(`http://127.0.0.1:${PORT3}/version`)).json()).updater, false,
+                 "ERA_NO_UPDATE: this hub cannot install anything, whoever asks");
+
+    // (a) from the LAN address — a genuinely non-loopback socket
+    const lanR = await post(ip);
+    assert.equal(lanR.status, "disabled", "the hub was reachable off loopback (so the socket was real)");
+    assert.ok(!("feed" in lanR), "the route REFUSED the override from a non-loopback socket");
+
+    // (b) positive control: the identical POST over loopback IS honoured
+    const loR = await post("127.0.0.1");
+    assert.equal(loR.status, "disabled");
+    assert.equal(loR.feed, OFF, "from loopback the same body takes effect (so (a) proves the gate, not a typo)");
+
+    // (c) the headers an attacker writes never buy their way in
+    const spoof = await post(ip, { "X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1",
+                                   "Host": `127.0.0.1:${PORT3}` });
+    assert.equal(spoof.status, "disabled");
+    assert.ok(!("feed" in spoof), "X-Forwarded-For / X-Real-IP / Host are never consulted");
+
+    // and an oversize body gets a readable 413, not a socket reset (the FE
+    // could not tell a reset from the hub being down)
+    const big = await fetch(`http://127.0.0.1:${PORT3}/update/check`,
+      { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ feed: OFF, pad: "x".repeat(5000) }) });
+    assert.equal(big.status, 413);
+    assert.deepEqual(await big.json(), { error: "body too large" });
+  } finally {
+    c3.kill("SIGKILL");                                  // by pid, never pkill -f
+    await new Promise(r => c3.once("exit", r).once("error", r));
+  }
+});

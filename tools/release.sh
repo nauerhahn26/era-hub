@@ -1,64 +1,281 @@
 #!/usr/bin/env bash
-# release.sh <version> [--prerelease] [--dry-run] [--skip-gate] — cut a New ERA suite release.
-# Server-driven (the machine that already runs the gate + holds the siblings):
-#   0. the signing login must be live (sign-installer.sh --check) — asked
-#      BEFORE the gate: SimplySign Desktop's login lapses after ~2 h and on
-#      9/6 a 50-min green gate ended in "not logged in" at the cut
-#   1. era-gate must be fully green (no release on a red gate, ever)
-#   2. build: payload WITH bundled node (era-scan enforced inside), zip,
-#      installer, checksums, latest.json  (tools/build-dist.sh)
-#   3. VM e2e must be fully green: the very files about to be published,
-#      installed and driven on a pristine Windows 10 (tools/vm-e2e.sh)
-#   4. tag era-hub + GitHub Release with tarball + checksums + notes
-#   --dry-run: stop after 3 (build + both gates), publish nothing
-#   --skip-gate: re-cut after a failure PAST a green gate (a lapsed login, a
-#      starved VM host) — allowed only while the gated files are byte-identical
-#      to the tree that last went green here (/tmp/era-release-gate.head) and
-#      that gate is under 2 h old; tools/, tests-vm/ and docs/ may differ (the
-#      build and the VM legs run again regardless). Never a way past a red gate.
+# release.sh <version> [--patch] [--prerelease] [--dry-run] [--skip-gate] [--resume-sign] — cut a New ERA suite release.
+# Two shapes (docs/superpowers/specs/2026-09-15-dev-flow-worktrees-and-patch-releases-design.md §4):
+#
+#   SIGNED (default, normally vX.Y.0 — a new installer)
+#     1/5 gate       era-gate fully green (no release on a red gate, ever)
+#     2/5 build      build-dist.sh --unsigned: payload WITH bundled node, tarball,
+#                    zip, checksums, latest.json, and an UNSIGNED Setup.exe
+#     3/5 VM e2e     legs A+B on those very files, pristine Windows 10 (vm-e2e.sh)
+#     4/5 sign       ONLY now is the SimplySign code wanted: sign-installer.sh --check
+#                    then build-dist.sh --sign-only (makensis again WITH -DSIGN over the
+#                    same payload — signing lives inside makensis, so the uninstaller
+#                    stub is signed too; the tarball is asserted unchanged)
+#     5/5 publish    tag + GitHub Release (six assets), then leg C against the real
+#                    download URL; a red leg C says PULL THE RELEASE and exits 1 —
+#                    it deletes nothing, because a pulled release 404s the website
+#
+#   PATCH (--patch, vX.Y.Z with Z>=1 — a new tarball under the SAME installer)
+#     1/4 gate    2/4 build (build-dist.sh --patch: no makensis; the signed installer
+#     named by the live latest.json is downloaded and re-attached, signature verified)
+#     3/4 VM e2e  vm-e2e.sh --only b: that installer, fresh on the VM, self-updating to
+#     the candidate tarball — the only path a patch takes on any device
+#     4/4 publish tag + Release with notes naming the installer tag. No signing, no code.
+#
+# Flags
+#   --patch       the patch shape above; $V must share X.Y with the installer it carries
+#   --prerelease  hidden from the website and from the updater (legal with --patch too)
+#   --dry-run     SIGNED: stop after the VM, with an unsigned exe, before asking for a
+#                 code. PATCH: stop after the VM, before the tag. Publishes nothing.
+#                 It DOES leave $DIST/VM-GREEN behind (vm-e2e.sh writes it on any
+#                 green run) — that marker is precisely what makes a later
+#                 --resume-sign legal: the VM really did drive these bytes.
+#   --skip-gate   re-cut after a failure PAST a green gate (a lapsed login, a starved
+#                 VM host) — allowed only on the strength of a green stamp
+#                 ($ERA_GATE_STAMPS/<tree>, default /tmp/era-gate-green, written by
+#                 era-gate.sh on every green run from any checkout) under 2 h old:
+#                 either this HEAD's own tree, or a stamped HEAD whose tree differs
+#                 from ours only under tools/, tests-vm/ and docs/ — and among those,
+#                 the NEWEST such stamp. THE BUILD AND THE VM LEGS RUN AGAIN (~15 min):
+#                 --skip-gate skips the gate, nothing else. A stamp carrying `dirty=1`
+#                 (the gate ran over uncommitted tracked changes) is refused outright:
+#                 the tested content was not the tree the key names. Never a way past a
+#                 red gate. Legal in both shapes.
+#   --resume-sign SIGNED only: re-enter at step 4/5 when the SimplySign code died under
+#                 you — signs the exe that is already in $DIST, publishes, runs leg C.
+#                 Gate, build and VM are all skipped, so it is legal ONLY when nothing
+#                 can have moved since the VM drove those very files:
+#                   · a green stamp, same rule as --skip-gate (and never a dirty one);
+#                   · $DIST exists and $DIST/TREE is exactly this HEAD's tree — the
+#                     checkout has not moved since the build;
+#                   · latest.json's sha256 still matches new-era-suite-$V.tar.gz — the
+#                     tarball the VM drove is byte-for-byte the one being published;
+#                   · $DIST/VM-GREEN says legs=a,b and names that same sha — the VM
+#                     ACTUALLY RAN on these bytes. Without it a bare
+#                     `build-dist.sh --unsigned` into $DIST satisfied every other
+#                     precondition and --resume-sign would sign and publish a cut no
+#                     Windows box ever installed (P4/P5 review, 9/15).
+#                 Anything else: re-run the whole cut (with --skip-gate if the gate is
+#                 still green), VM legs included.
+#   --gate-check  (hidden, with --skip-gate) evaluate the gate step only and exit 0/1 —
+#                 nothing is built, signed or published.
 # The website's download links point at the latest release assets.
 set -euo pipefail
-V="${1:?usage: release.sh vX.Y.Z [--prerelease] [--dry-run] [--skip-gate]}"; shift
-PRE=""; DRY=0; SKIPGATE=0
-for a in "$@"; do case "$a" in --prerelease) PRE=1;; --dry-run) DRY=1;; --skip-gate) SKIPGATE=1;; *) echo "release.sh: unknown flag $a"; exit 2;; esac; done
+V="${1:?usage: release.sh vX.Y.Z [--patch] [--prerelease] [--dry-run] [--skip-gate] [--resume-sign]}"; shift
+PRE=""; DRY=0; SKIPGATE=0; GATECHECK=0; PATCH=0; RESUME=0
+for a in "$@"; do case "$a" in --prerelease) PRE=1;; --dry-run) DRY=1;; --skip-gate) SKIPGATE=1;; --gate-check) GATECHECK=1;; --patch) PATCH=1;; --resume-sign) RESUME=1;; *) echo "release.sh: unknown flag $a"; exit 2;; esac; done
+if [ "$GATECHECK" = 1 ] && [ "$SKIPGATE" = 0 ]; then
+  echo "release.sh: --gate-check only makes sense with --skip-gate (it must never start a gate)"; exit 2
+fi
+if [ "$RESUME" = 1 ] && [ "$PATCH" = 1 ]; then
+  echo "release.sh: --resume-sign is the SIGNED flow's re-entry; a patch is never signed"; exit 2
+fi
+if [ "$RESUME" = 1 ] && [ "$DRY" = 1 ]; then
+  echo "release.sh: --resume-sign exists to finish a cut (sign + publish); --dry-run stops before signing"; exit 2
+fi
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 DIST="$ROOT/dist/release-$V"
 HEAD="$(git -C "$HUB" rev-parse HEAD)"
+TREE="$(git -C "$HUB" rev-parse 'HEAD^{tree}')"
+# The green-stamp dir is a seam shared by era-gate.sh (the writer), worktree.sh
+# land, push-device.sh and this script — a test run points the whole rail at a
+# scratch dir with one env var, and never at the real one.
+GREEN="${ERA_GATE_STAMPS:-/tmp/era-gate-green}"
+REPO=nauerhahn26/new-era-releases
+if [ "$PATCH" = 1 ]; then N=4; else N=5; fi
 
-echo "== 0/4 signing =="
-bash "$HUB/tools/sign-installer.sh" --check || { echo "SIGNING NOT READY — no release (log in first, the gate takes 50 min)."; exit 1; }
+# $DIST/VM-GREEN — vm-e2e.sh's record of a run that finished 0 failed: which legs
+# ran, and the sha256 of the versioned tarball they drove. Nothing signs and
+# nothing publishes without one that names the bytes in hand, so no path reaches
+# `gh release create` on a dist the VM never saw. Prints its own reason and
+# returns 1; the caller only has to add "no release".
+#   want=a,b  the signed flow (a full vm-e2e run)
+#   want=b    the patch flow (vm-e2e.sh --only b, which is the shape by design)
+vm_green() {
+  local want="$1" legs tsha now feed
+  [ -f "$DIST/VM-GREEN" ] || {
+    echo "no $DIST/VM-GREEN — no VM run has ever finished green on this dist. The marker is written by tools/vm-e2e.sh (a --dry-run cut writes it too); a build alone never does."
+    return 1; }
+  legs="$(awk -F= '/^legs=/{print $2; exit}' "$DIST/VM-GREEN")"
+  tsha="$(awk -F= '/^tarball=/{print $2; exit}' "$DIST/VM-GREEN")"
+  case "$want" in
+    a,b) [ "$legs" = "a,b" ] || {
+           echo "$DIST/VM-GREEN records legs=${legs:-<none>} — a signed release publishes only what legs A (fresh install) AND B (self-update) both drove; run the full tools/vm-e2e.sh."
+           return 1; };;
+    b)   case ",${legs}," in
+           *,b,*) ;;
+           *) echo "$DIST/VM-GREEN records legs=${legs:-<none>} — a patch is only ever delivered by self-update, so leg B must have run."; return 1;;
+         esac;;
+  esac
+  now="$(sha256sum "$DIST/new-era-suite-$V.tar.gz" | cut -d' ' -f1)"
+  [ -n "$tsha" ] && [ "$tsha" = "$now" ] || {
+    echo "$DIST/VM-GREEN vouches for tarball ${tsha:-<none>}, but new-era-suite-$V.tar.gz is now $now — the payload was rebuilt after the VM ran; drive it again."
+    return 1; }
+  feed="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('sha256',''))")"
+  [ "$feed" = "$now" ] || {
+    echo "latest.json names sha256 ${feed:-<none>}, the tarball the VM drove is $now — the feed and the payload disagree; no release."
+    return 1; }
+}
 
-echo "== 1/4 gate =="
-if [ "$SKIPGATE" = 1 ]; then
-  G="$(cat /tmp/era-release-gate.head 2>/dev/null || true)"
-  [ -n "$G" ] && grep -q " 0 failed" /tmp/era-release-gate.txt 2>/dev/null \
-    && [ $(( $(date +%s) - $(stat -c %Y /tmp/era-release-gate.txt) )) -lt 7200 ] \
-    && git -C "$HUB" diff --quiet "$G" "$HEAD" -- . ':(exclude)tools' ':(exclude)tests-vm' ':(exclude)docs' \
-    || { echo "--skip-gate: no green gate under 2 h old on these gated files (last: ${G:-none}) — run without it."; exit 1; }
-  echo "gated files identical to ${G:0:7}, green $(date -r /tmp/era-release-gate.txt +%H:%M) — gate skipped: $(cat /tmp/era-release-gate.txt)"
+# --resume-sign preconditions, checked BEFORE anything else so a hopeless
+# re-entry is refused in a second rather than after a stamp lookup: the dist the
+# VM drove is still here, it was built from THIS tree, and its tarball has not
+# moved since latest.json named it. (build-dist.sh --sign-only re-asserts the
+# tarball itself; doing it here too means we never ask for a code we cannot use.)
+if [ "$RESUME" = 1 ]; then
+  [ -d "$DIST" ] || { echo "--resume-sign: no $DIST — there is nothing to sign; cut the release again (--skip-gate while the gate stamp is green: the build and the VM legs run, ~15 min)."; exit 1; }
+  for f in latest.json "new-era-suite-$V.tar.gz" new-era-suite.tar.gz new-era-suite.zip; do
+    [ -f "$DIST/$f" ] || { echo "--resume-sign: $DIST/$f is missing — this re-entry signs an existing build, it does not make one; cut the release again."; exit 1; }
+  done
+  [ -s "$DIST/TREE" ] || { echo "--resume-sign: $DIST/TREE is missing — cannot prove the dist was built from this checkout; cut the release again."; exit 1; }
+  IFS= read -r DTREE <"$DIST/TREE" || DTREE=""
+  [ "$DTREE" = "$TREE" ] || { echo "--resume-sign: $DIST was built from tree ${DTREE:0:7}, this checkout is on ${TREE:0:7} — the code moved since the VM drove it; cut the release again."; exit 1; }
+  WAS="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('sha256',''))")"
+  NOW="$(sha256sum "$DIST/new-era-suite-$V.tar.gz" | cut -d' ' -f1)"
+  [ -n "$WAS" ] && [ "$WAS" = "$NOW" ] || { echo "--resume-sign: the tarball changed since the VM drove it (latest.json says ${WAS:-<none>}, it is now $NOW) — cut the release again."; exit 1; }
+  # …and the VM really ran. Everything above is satisfied by a bare
+  # `build-dist.sh --unsigned` into $DIST; only the marker proves a green run.
+  vm_green a,b || { echo "--resume-sign: refused — this re-entry signs and publishes a build the VM already drove green; cut the release again (--skip-gate while the gate stamp holds: build + VM legs, ~15 min)."; exit 1; }
+fi
+
+# A green stamp counts when it exists, its first line is a green summary, it does
+# NOT carry `dirty=1` (era-gate.sh writes that line when the run happened over
+# uncommitted tracked changes — the tested content was then not the tree the key
+# names, so no stamp reader may trust it) and its at= is under 2 h old. No pipes
+# here: `… | grep -q` under pipefail is how the signing rail learned about
+# SIGPIPE (9/5). Lines after the first may arrive in any order and a stamp may
+# grow lines we do not know about — only the ones we ask for are read.
+stamp_dirty() { grep -qx 'dirty=1' "$1" 2>/dev/null; }
+stamp_ok() {
+  local first at now
+  [ -f "$1" ] || return 1
+  IFS= read -r first <"$1" || return 1
+  case "$first" in *" 0 failed"*) ;; *) return 1;; esac
+  if stamp_dirty "$1"; then return 1; fi
+  at="$(awk -F= '/^at=/{print $2; exit}' "$1")"
+  [ -n "$at" ] || return 1
+  now="$(date +%s)"
+  [ $(( now - at )) -lt 7200 ]
+}
+
+echo "== 1/$N gate =="
+if [ "$SKIPGATE" = 1 ] || [ "$RESUME" = 1 ]; then
+  # A dirty stamp for OUR OWN tree is a hard stop, not something to scan past:
+  # the operator ran the gate over uncommitted work and would otherwise release
+  # code no suite ever saw.
+  if [ -f "$GREEN/$TREE" ] && stamp_dirty "$GREEN/$TREE"; then
+    echo "gate ran on a dirty tree (stamp has dirty=1) — commit, re-run the gate, then release"; exit 1
+  fi
+  S=""
+  if stamp_ok "$GREEN/$TREE"; then
+    S="$GREEN/$TREE"                      # this exact tree went green, anywhere
+  else
+    # No stamp for our tree: accept a stamped HEAD whose tree differs from ours
+    # only under tools/, tests-vm/ and docs/ — the old --skip-gate rule, kept
+    # because nothing the suites exercise moved (build + VM legs run again).
+    # Among several such stamps take the NEWEST: glob order is alphabetical by
+    # tree sha, which would otherwise hand back an arbitrary (often the oldest,
+    # nearly-stale) run.
+    SAT=0
+    for f in "$GREEN"/*; do
+      stamp_ok "$f" || continue
+      g="$(awk -F= '/^head=/{print $2; exit}' "$f")"
+      [ -n "$g" ] || continue
+      git -C "$HUB" diff --quiet "$g" "$HEAD" -- . ':(exclude)tools' ':(exclude)tests-vm' ':(exclude)docs' 2>/dev/null || continue
+      a="$(awk -F= '/^at=/{print $2; exit}' "$f")"
+      [ "${a:-0}" -gt "$SAT" ] || continue
+      SAT="$a"; S="$f"
+    done
+  fi
+  [ -n "$S" ] || { echo "--skip-gate: no green stamp under 2 h old for tree ${TREE:0:7} (nor for a tree differing only under tools/, tests-vm/, docs/) — run without it."; exit 1; }
+  ST="$(basename "$S")"; SH="$(awk -F= '/^head=/{print $2; exit}' "$S")"; SAT="$(awk -F= '/^at=/{print $2; exit}' "$S")"
+  echo "gated tree ${ST:0:7} from ${SH:0:7}, green $(date -d "@$SAT" +%H:%M) — gate skipped: $(head -1 "$S")"
 else
   bash "$HUB/tools/era-gate.sh" | tail -1 | tee /tmp/era-release-gate.txt
   grep -q " 0 failed" /tmp/era-release-gate.txt || { echo "GATE NOT GREEN — no release."; exit 1; }
+  # DEPRECATED, written one more release because the i13 runbooks name these two
+  # files: the truth is now era-gate.sh's /tmp/era-gate-green/<tree> stamp.
   echo "$HEAD" >/tmp/era-release-gate.head
 fi
+if [ "$GATECHECK" = 1 ]; then exit 0; fi
 
-echo "== 2/4 build (payload, zip, installer, checksums, latest.json) =="
-bash "$HUB/tools/build-dist.sh" "$V" "$DIST"
+# the app list is server.js APPS — keep the two in step
+APPS="New ERA suite $V — free eye-gaze apps for a child on a Tobii device, all running on the family's own PC: Making Words, The Pencil, Clothing Picker, Music, Movies, Book Reader, plus the ERAgaze engine for PCs without one. Bundled Node runtime; nothing about your child leaves the machine."
+TAIL="Every release is installed and driven end to end on a clean Windows 10 before it is published. sha256 in checksums.txt."
 
-echo "== 3/4 VM e2e (the candidate installed and driven on a pristine Windows 10; the previous release self-updating to it) =="
-bash "$HUB/tools/vm-e2e.sh" "$DIST" | tee /tmp/era-release-vm-e2e.txt | tail -20
-grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
+if [ "$PATCH" = 1 ]; then
+  echo "== 2/4 build (payload, zip, checksums, latest.json; the published signed installer re-attached) =="
+  bash "$HUB/tools/build-dist.sh" "$V" "$DIST" --patch
+  TAG="$(python3 -c "import json;print(json.load(open('$DIST/latest.json'))['installer'])")"
 
-if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V in $DIST — not tagged, not published."; exit 0; fi
-echo "== 4/4 tag + release =="
+  echo "== 3/4 VM e2e (leg B: $TAG's installer fresh on a pristine Windows 10, self-updating to $V — the only path a patch takes) =="
+  bash "$HUB/tools/vm-e2e.sh" "$DIST" --only b | tee /tmp/era-release-vm-e2e.txt | tail -20
+  grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
+
+  if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V (patch, installer $TAG) in $DIST — not tagged, not published."; exit 0; fi
+  echo "== 4/4 tag + release =="
+  NOTES="$APPS
+Installer: $TAG (code-signed, Certum). Installed copies update themselves to $V on first run; a fresh install from the website gets $TAG and updates itself within minutes.
+$TAIL"
+else
+  if [ "$RESUME" = 1 ]; then
+    echo "== 2/5 build — SKIPPED (--resume-sign: $DIST is the build the VM drove, tree ${TREE:0:7}, tarball unchanged) =="
+    echo "== 3/5 VM e2e — SKIPPED (--resume-sign: legs A+B already ran green on these very files) =="
+  else
+    echo "== 2/5 build (payload, zip, checksums, latest.json, UNSIGNED installer — it is signed after the VM) =="
+    bash "$HUB/tools/build-dist.sh" "$V" "$DIST" --unsigned
+
+    echo "== 3/5 VM e2e (the candidate installed and driven on a pristine Windows 10; the previous release self-updating to it) =="
+    bash "$HUB/tools/vm-e2e.sh" "$DIST" | tee /tmp/era-release-vm-e2e.txt | tail -20
+    grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
+
+    if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V in $DIST with an UNSIGNED installer — signing not attempted, not published."; exit 0; fi
+  fi
+
+  echo "== 4/5 sign =="
+  echo "VM green — ready for the SimplySign code (stage it now)."
+  # Both failures below leave $DIST exactly as the VM drove it, so the cheap
+  # re-entry is --resume-sign: it re-checks the stamp, the tree and the tarball
+  # and goes straight back here. --skip-gate would skip ONLY the gate and spend
+  # ~15 min rebuilding and re-driving the VM over files that never changed.
+  bash "$HUB/tools/sign-installer.sh" --check || {
+    echo "SIGNING NOT READY — no release; nothing was published and $DIST is untouched."
+    echo "log in to SimplySign, then re-enter at signing: bash tools/release.sh $V --resume-sign"; exit 1; }
+  bash "$HUB/tools/build-dist.sh" "$V" "$DIST" --sign-only || {
+    echo "signing failed — $DIST still holds the build the VM drove, with an UNSIGNED (or half-cut) Setup.exe; nothing was tagged or published."
+    echo "stage a fresh SimplySign code, then re-enter at signing: bash tools/release.sh $V --resume-sign"; exit 1; }
+
+  echo "== 5/5 tag + release =="
+  NOTES="$APPS
+Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. The installer is code-signed (Certum; right-click › Properties › Digital Signatures shows the publisher) — Windows may still ask once while the new signature earns its reputation: choose More info, then Run anyway. The portable .zip works too. Installed copies update themselves; Uninstall never touches your data.
+$TAIL"
+fi
+
+# LAST GATE BEFORE THE WORLD SEES IT — both shapes come through here.
+#  · VM-GREEN: a green vm-e2e run on THESE bytes (legs A+B signed, leg B patch).
+#    The signed flow's own step 3/5 already refused a red VM, but --resume-sign
+#    re-enters past it, so the proof is re-read here rather than assumed.
+#  · the stable new-era-suite.tar.gz is what every installed hub downloads — it
+#    is a copy, and a copy is exactly the kind of thing that goes stale quietly.
+#    latest.json's sha256 is the contract; assert the bytes keep it.
+if [ "$PATCH" = 1 ]; then WANT=b; else WANT=a,b; fi
+vm_green "$WANT" || { echo "NO GREEN VM RUN FOR THIS DIST — no release. Evidence would be $HUB/gate/vm-e2e/."; exit 1; }
+STABLE_SHA="$(sha256sum "$DIST/new-era-suite.tar.gz" | cut -d' ' -f1)"
+FEED_SHA="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('sha256',''))")"
+[ "$STABLE_SHA" = "$FEED_SHA" ] || { echo "new-era-suite.tar.gz (the stable name every device fetches) is $STABLE_SHA but latest.json names ${FEED_SHA:-<none>} — devices would download bytes whose sha the updater rejects; no release."; exit 1; }
+
 git -C "$HUB" tag -f "$V"
 git -C "$HUB" push -q origin "refs/tags/$V" --force
-# the app list is server.js APPS — keep the two in step
-NOTES="New ERA suite $V — free eye-gaze apps for a child on a Tobii device, all running on the family's own PC: Making Words, The Pencil, Clothing Picker, Music, Movies, Book Reader, plus the ERAgaze engine for PCs without one. Bundled Node runtime; nothing about your child leaves the machine.
-Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. The installer is code-signed (Certum; right-click › Properties › Digital Signatures shows the publisher) — Windows may still ask once while the new signature earns its reputation: choose More info, then Run anyway. The portable .zip works too. Installed copies update themselves; Uninstall never touches your data.
-Every release is installed and driven end to end on a clean Windows 10 before it is published. sha256 in checksums.txt."
-gh release create "$V" --repo nauerhahn26/new-era-releases --title "New ERA suite $V" \
+gh release create "$V" --repo "$REPO" --title "New ERA suite $V" \
   --notes "$NOTES" ${PRE:+--prerelease} \
   "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/new-era-suite.zip" "$DIST/New-ERA-Setup.exe" "$DIST/checksums.txt" "$DIST/latest.json"
 echo "RELEASED: $V"
+
+if [ "$PATCH" = 0 ]; then
+  echo "== post-publish: leg C (the website's own download, in a browser, opened by the shell) =="
+  if ! bash "$HUB/tools/vm-e2e.sh" "$DIST" --post-publish; then
+    echo "LEG C RED — PULL THE RELEASE: gh release delete $V --repo $REPO --yes  (and re-attach the previous installer first if the website must stay up)"
+    exit 1
+  fi
+fi

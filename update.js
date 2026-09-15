@@ -62,17 +62,38 @@ function scheduleRestart(port) {
   }
 }
 
+// Is this socket's peer the machine itself? The ONLY addresses node reports
+// for a loopback connection, spelled out — no prefix matching, no DNS name,
+// no header. Callers pass req.socket.remoteAddress and nothing else: an
+// X-Forwarded-For can say anything, and on a hub opened to the LAN by
+// ERA_BIND that would be an open door to installing code on the device
+// (dev-flow spec §5.3).
+const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+function isLoopback(addr) {
+  return typeof addr === "string" && LOOPBACK.has(addr);
+}
+
 let inFlight = false;
 // One full check-and-apply pass. Returns a status object; when it returns
 // {status:"updated"} a restart is already scheduled (~1s out) — respond to
 // the client first, the exit comes after.
-async function check(port) {
+//
+// `feed` overrides the release feed for THIS call only (push-device.sh sends
+// one build to one device over an ssh tunnel); the boot check and the
+// 6-hourly tick pass no feed and keep using FEED. When an override is used
+// the answer carries it back, so the operator can see which feed served.
+async function check(port, feed = FEED) {
+  const r = await runCheck(port, feed);
+  return feed === FEED ? r : { ...r, feed };
+}
+
+async function runCheck(port, feed) {
   if (!enabled) return { status: "disabled" };
   if (inFlight) return { status: "busy" };
   inFlight = true;
   try {
     const local = currentBuild();
-    const r = await fetch(FEED + "/latest.json", { cache: "no-store", redirect: "follow" });
+    const r = await fetch(feed + "/latest.json", { cache: "no-store", redirect: "follow" });
     if (!r.ok) return { status: "feed-error", code: r.status, build: local };
     const latest = await r.json();
     if (!latest.build || !(String(latest.build) > local))
@@ -81,7 +102,7 @@ async function check(port) {
     const stage = fs.mkdtempSync(path.join(os.tmpdir(), "era-update-"));
     try {
       const tarball = path.join(stage, "suite.tar.gz");
-      const dl = await fetch(FEED + "/new-era-suite.tar.gz", { redirect: "follow" });
+      const dl = await fetch(feed + "/new-era-suite.tar.gz", { redirect: "follow" });
       if (!dl.ok) return { status: "download-error", code: dl.status, build: local };
       fs.writeFileSync(tarball, Buffer.from(await dl.arrayBuffer()));
       if (latest.sha256 && sha256(tarball) !== latest.sha256)
@@ -140,4 +161,4 @@ function start(port, ready = () => true) {
   setInterval(() => { if (ready()) check(port); }, 6 * 60 * 60 * 1000).unref();
 }
 
-module.exports = { enabled, currentBuild, runningBuild, check, start, FEED };
+module.exports = { enabled, currentBuild, runningBuild, check, start, FEED, isLoopback };

@@ -20,15 +20,32 @@ import { execFileSync } from "node:child_process";
 
 const SH = fs.readFileSync(new URL("../tools/vm-e2e.sh", import.meta.url), "utf8");
 const lines = SH.split("\n");
+// the patch pair, which runs before the picker: a patch release re-attaches an
+// older signed installer, so $DIST's own Setup.exe IS what the family runs and
+// leg B starts from it. It also defines PATCH_INSTALLER, which the picker's
+// successors read under `set -u`.
+const patchDetect = lines.findIndex((l) => l.trim().startsWith("PATCH_INSTALLER="));
+const patchPick = lines.findIndex((l) => l.trim().startsWith('if [ -z "$PREV" ] && [ -n "$PATCH_INSTALLER" ]'));
+const patch = [lines[patchDetect], lines[patchPick]].join("\n");
 // the picker: from `if [ -z "$PREV" ]; then` to the `fi` before the file check
 const start = lines.findIndex((l) => l.startsWith('if [ -z "$PREV" ]; then'));
 const end = lines.findIndex((l, i) => i > start && l === "fi");
 const picker = lines.slice(start, end + 1).join("\n");
-const banner = lines.find((l) => l.startsWith('echo "== vm-e2e: candidate'));
+// the banner sits indented in the non---post-publish branch, and the UNTAGGED
+// mark it carries is assembled on the line immediately above it (PREV_NOTE), so
+// both lines are taken together — one without the other prints nothing useful
+const bannerAt = lines.findIndex((l) => l.trim().startsWith('echo "== vm-e2e: candidate'));
+const noteAt = bannerAt - 1;
+const banner = [lines[noteAt], lines[bannerAt]].map((l) => l.trim()).join("\n");
 
 test("the picker and banner are where this test thinks they are", () => {
   assert.ok(start > 0 && end > start, "the PREV picker block was found");
-  assert.ok(banner, "the one-line banner naming candidate and previous was found");
+  assert.ok(patchDetect > 0 && patchPick > patchDetect, "the PATCH_INSTALLER pair was found");
+  assert.ok(bannerAt > 0, "the one-line banner naming candidate and previous was found");
+  // a reshuffle that moves PREV_NOTE away from the banner must fail here, not
+  // as a mystifying empty mark in the run-the-bash tests below
+  assert.match(lines[noteAt].trim(), /^if \[ -n "\$PATCH_INSTALLER" \]; then PREV_NOTE=/,
+    "the line above the banner is the one that assembles PREV_NOTE");
   assert.match(picker, /git -C "\$HUB" tag -l/, "a previous is one whose version is tagged");
 });
 
@@ -45,9 +62,11 @@ test("the untagged fallback says so out loud, and the banner never reads like th
 });
 
 // A scratch ROOT with HUB=ROOT/era-hub (a git repo with one tag) and the dist
-// dirs given: each entry is [dirname, tagged]. Returns what the picker printed
-// and the PREV it settled on.
-function pick(dists) {
+// dirs given: each entry is [dirname, tagged]. `latest`, when given, is written
+// into the candidate dir (with a stand-in installer beside it) so the patch pair
+// has something to read. Returns what the picker printed and the PREV it
+// settled on.
+function pick(dists, latest) {
   const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "era-vm-e2e-"));
   const HUB = path.join(ROOT, "era-hub");
   fs.mkdirSync(HUB);
@@ -56,6 +75,10 @@ function pick(dists) {
   git("init", "-q"); git("commit", "-q", "--allow-empty", "-m", "x");
   const DIST = path.join(ROOT, "dist", "release-candidate");
   fs.mkdirSync(DIST, { recursive: true });
+  if (latest) {
+    fs.writeFileSync(path.join(DIST, "latest.json"), JSON.stringify(latest));
+    fs.writeFileSync(path.join(DIST, "New-ERA-Setup.exe"), "stand-in");
+  }
   let t = Date.now() - 60_000 * dists.length;
   for (const [name, tagged] of dists) {
     const d = path.join(ROOT, "dist", "release-" + name);
@@ -66,14 +89,14 @@ function pick(dists) {
     t += 60_000; fs.utimesSync(exe, new Date(t), new Date(t));
     if (tagged) git("tag", name);
   }
-  const script = `set -uo pipefail\nHUB=${JSON.stringify(HUB)}\nROOT=${JSON.stringify(ROOT)}\nDIST=${JSON.stringify(DIST)}\nPREV="" PREV_UNTAGGED=""\nVER=v9 BUILD=b9\n${picker}\n${banner}\n`;
+  const script = `set -uo pipefail\nHUB=${JSON.stringify(HUB)}\nROOT=${JSON.stringify(ROOT)}\nDIST=${JSON.stringify(DIST)}\nPREV="" PREV_UNTAGGED=""\nVER=v9 BUILD=b9\n${patch}\n${picker}\n${banner}\n`;
   const out = execFileSync("bash", ["-c", script], { encoding: "utf8", stdio: "pipe" });
-  return { out, ROOT };
+  return { out, ROOT, DIST };
 }
 
 test("a tagged cut is picked over a newer untagged one, quietly (9/5)", () => {
   const { out, ROOT } = pick([["v0.1.0", true], ["v0.2.0", false]]);
-  assert.match(out, new RegExp("previous " + ROOT + "/dist/release-v0.1.0/New-ERA-Setup.exe"), out);
+  assert.match(out, new RegExp("previous = " + ROOT + "/dist/release-v0.1.0/New-ERA-Setup.exe"), out);
   assert.doesNotMatch(out, /WARNING|UNTAGGED/, "nothing to warn about: " + out);
 });
 
@@ -83,6 +106,19 @@ test("with no tagged cut the fallback is loud and the banner is marked", () => {
   assert.match(out, /^vm-e2e: WARNING/m, "a WARNING line of its own: " + out);
   assert.ok(out.includes("UNTAGGED") && out.includes(prev), "it names the untagged cut it fell back to: " + out);
   const b = out.split("\n").find((l) => l.startsWith("== vm-e2e: candidate"));
-  assert.ok(b && b.includes("previous " + prev) && b.includes("UNTAGGED"),
+  assert.ok(b && b.includes("previous = " + prev) && b.includes("UNTAGGED"),
     "the banner never reads like the tagged case: " + b);
+});
+
+test("a patch dist starts leg B from its own re-attached installer, and says whose", () => {
+  // latest.json's `installer` names an older cut: $DIST's Setup.exe is that
+  // older signed installer, i.e. the one the family already runs
+  const { out, DIST } = pick([["v0.1.0", true], ["v0.2.0", true]],
+    { version: "v0.2.1", build: "b9", installer: "v0.2.0" });
+  const b = out.split("\n").find((l) => l.startsWith("== vm-e2e: candidate"));
+  assert.ok(b && b.includes("previous = " + path.join(DIST, "New-ERA-Setup.exe")),
+    "leg B starts from the candidate dir's own installer: " + b);
+  assert.ok(b.includes("(installer v0.2.0 re-attached)"),
+    "and the banner names the cut it was re-attached from: " + b);
+  assert.doesNotMatch(out, /WARNING|UNTAGGED/, "nothing fell back: " + out);
 });

@@ -2596,9 +2596,52 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "POST" && req.url === "/update/check") {
-    updater.check(PORT).then((r) => {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(r));
+    // Optional body {feed}: take THIS build from that base URL instead of the
+    // public release feed (tools/push-device.sh, dev-flow spec §5.3). The
+    // route is ungated and reachable from the LAN whenever ERA_BIND opens the
+    // hub up, so the override is honoured only when the SOCKET's peer is the
+    // machine itself — otherwise anyone on a school network could install
+    // code on the Tobii. Headers (X-Forwarded-For & co) are attacker-written
+    // and never consulted. No body, bad JSON, or a feed that isn't an
+    // http(s) string: ignore it and check the default feed exactly as the
+    // Settings button (which POSTs no body at all) always has.
+    //
+    // The cap is counted in BYTES over the raw Buffer chunks (not `body += c`,
+    // which stringifies each chunk on its own — a multibyte character split
+    // across two TCP reads comes out as U+FFFD — and caps characters, so a
+    // 4096-char body of 3-byte characters is 12 KB of buffer). And an
+    // oversize body gets a 413 it can read, not a socket reset: a reset is
+    // indistinguishable from the hub being down, and the old code destroyed
+    // the request without answering at all, so the default check never ran.
+    const chunks = []; let total = 0, over = false;
+    req.on("error", () => {});   // the destroy below must not throw
+    req.on("data", c => {
+      if (over) return;
+      total += c.length;
+      if (total > 4096) {
+        over = true;
+        res.writeHead(413, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "body too large" }), () => req.destroy());
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (over) return;
+      const body = Buffer.concat(chunks).toString("utf8");
+      let feed;
+      if (updater.isLoopback(req.socket && req.socket.remoteAddress)) {
+        try {
+          const inc = JSON.parse(body);
+          if (inc && typeof inc.feed === "string" &&
+              (inc.feed.startsWith("http://") || inc.feed.startsWith("https://")))
+            feed = inc.feed;
+        } catch {}
+      }
+      updater.check(PORT, feed).then((r) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(r));
+      });
     });
     return;
   }

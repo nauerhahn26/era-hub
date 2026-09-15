@@ -4,8 +4,10 @@
 # !uninstfinalize / !finalize lines in installer.nsi), so every release is
 # either fully signed or honestly unsigned — never half.
 #
-# No certificate yet (era-family/data/signing.env absent): print UNSIGNED and
-# exit 0, so builds keep working exactly as today.
+# Nothing calls this script unless it means to sign: era-family/data/signing.env
+# absent is a hard failure (both plain and --check), never a quiet unsigned build.
+# An honestly unsigned installer is build-dist.sh --unsigned, which omits -DSIGN
+# and never reaches here.
 # Certificate present: sign with osslsigncode (vendored deb in
 # era-family/cache/osslsigncode — no root on the build box) through Certum's
 # SimplySign cloud PKCS#11 module, RFC-3161 timestamp at Certum, then verify.
@@ -37,21 +39,20 @@
 #   SIGN_PFX=/home/claude/new-era/era-family/data/certum-oss.pfx  SIGN_PFX_PASS=…
 set -euo pipefail
 EXE="${1:?usage: sign-installer.sh <file.exe> | --check}"
-# --check: sign nothing — exit 0 when a cut WOULD sign (or honestly not sign),
-# 1 when it would fail on the login. release.sh asks before spending the gate:
-# the Desktop's login lapses after ~2 h and on 9/6 a 50-min green gate was
-# followed by "not logged in" at the cut.
+# --check: sign nothing — exit 0 when a cut WOULD sign, 1 when it would fail on
+# the login (or on a missing signing.env). release.sh asks it at the signing step,
+# after a green VM: the Desktop's login lapses after ~2 h and on 9/6 a 50-min
+# green gate was followed by "not logged in" at the cut.
 CHECK=0; [ "$EXE" = "--check" ] && CHECK=1
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
-ENV="$ROOT/era-family/data/signing.env"
+ENV="${ERA_SIGNING_ENV:-$ROOT/era-family/data/signing.env}"   # overridable for tests only
 OSSL="$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode"
 SS="$ROOT/era-family/cache/simplysign"
 
 if [ ! -f "$ENV" ]; then
-  [ "$CHECK" = 1 ] && { echo "sign: ready (no signing.env — the cut stays honestly unsigned)"; exit 0; }
-  echo "sign: UNSIGNED $(basename "$EXE") (no era-family/data/signing.env — see docs/signing-plan.md)"
-  exit 0
+  echo "sign: SIGNING REQUIRED but era-family/data/signing.env is absent"
+  exit 1
 fi
 set -a; . "$ENV"; set +a
 [ -x "$OSSL" ] || { echo "sign: osslsigncode missing at $OSSL"; exit 1; }
