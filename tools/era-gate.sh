@@ -3,6 +3,7 @@
 # Collects every sibling repo's test suite into gate/ (copies, port re-pointed
 # to the test instance), starts the hub server on $ERA_TEST_PORT (default 8378,
 # NEVER the live 8377), runs the suites, reports.
+# Flow: docs/dev-flow.md
 set -uo pipefail
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
