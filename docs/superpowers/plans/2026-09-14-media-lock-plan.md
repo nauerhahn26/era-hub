@@ -202,4 +202,31 @@ dad — not part of this plan.
   would close it for both — queue line, not a quiet widening here.
 - Spec non-goal restated: a movie already fullscreen in the external app can't be
   stopped from the board; exit the app as today, then lock.
-- Publish (v0.32.4 signed build, VM 14/14, i13 self-update) is dad's call.
+- ~~Publish (v0.32.4 signed build, VM 14/14, i13 self-update) is dad's call.~~ Done — see below.
+
+### Publish — v0.33.1 (9/15, dad's "Go for it")
+Master already carried v0.33.0 (9/10), so the number is v0.33.1, not v0.32.4.
+`tools/release.sh v0.33.1` on era-hub master `378bb93` (merge of feat/audit-fixes) +
+era-board master `6f13658`:
+- **Try 1 gate 92/2**, both environmental, neither in the diff: `ai-key`
+  (`EADDRINUSE 127.0.0.1:8431` — a 9/12 `ssh -f -N -L 8431:127.0.0.1:8377 i13` tunnel
+  from another session, 0 live connections, killed by pid) and `clothing-sync-rebuild`
+  (port 8460 — the Phase 3 recording's scratch hub, orphaned when the strict-mode
+  crash skipped its own `hub.kill()`). Lesson recorded: scratch hubs 8480+, tunnels
+  8500+, `ss -ltnp` before any cut.
+- **Try 2: gate 94/0**, signed build `20260915.0136` (SimplySign login needed a fresh
+  app code — the first expired in transit; second worked), **VM e2e 14/14**,
+  `RELEASED: v0.33.1` on nauerhahn26/new-era-releases (6 assets, 02:10 UTC).
+  `New-ERA-Setup.exe` sha256 `c4f245cd329985036009f7173b68f230f50679d6a12fd275652e5d6ff60c138a`,
+  suite tar `d5028fd5d8e29f44c70893051354f3b3cd117e798440a4a755ead7a155869ceb`.
+- **Defender check on the QA VM** (public URL download with Zone 3 MotW): hash OK,
+  Authenticode **Valid** (Certum Code Signing 2021 CA, Certum Timestamp 2026),
+  real-time on, signatures 0 d old, custom scan ran, **0 detections**. Note:
+  `Start-MpScan` under sshd throws a console-buffer HostException unless
+  `$ProgressPreference = "SilentlyContinue"`.
+- **i13** self-updated through a tunnel on 8501: `POST /update/check` →
+  `{"status":"updated","from":"20260910.2115","to":"20260915.0136"}`, new hub pid 2152,
+  `/settings/` serves the Lock card. No lock keys set yet (defaults: 45 min, no PIN).
+  Kiosk keeps the old flags until the tile relaunches — dad to reopen once.
+- Pushed: era-hub `master` + `feat/audit-fixes`, era-board `master` + `feat/content-strip`.
+
