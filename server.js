@@ -2605,9 +2605,30 @@ const server = http.createServer((req, res) => {
     // and never consulted. No body, bad JSON, or a feed that isn't an
     // http(s) string: ignore it and check the default feed exactly as the
     // Settings button (which POSTs no body at all) always has.
-    let body = "";
-    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    //
+    // The cap is counted in BYTES over the raw Buffer chunks (not `body += c`,
+    // which stringifies each chunk on its own — a multibyte character split
+    // across two TCP reads comes out as U+FFFD — and caps characters, so a
+    // 4096-char body of 3-byte characters is 12 KB of buffer). And an
+    // oversize body gets a 413 it can read, not a socket reset: a reset is
+    // indistinguishable from the hub being down, and the old code destroyed
+    // the request without answering at all, so the default check never ran.
+    const chunks = []; let total = 0, over = false;
+    req.on("error", () => {});   // the destroy below must not throw
+    req.on("data", c => {
+      if (over) return;
+      total += c.length;
+      if (total > 4096) {
+        over = true;
+        res.writeHead(413, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "body too large" }), () => req.destroy());
+        return;
+      }
+      chunks.push(c);
+    });
     req.on("end", () => {
+      if (over) return;
+      const body = Buffer.concat(chunks).toString("utf8");
       let feed;
       if (updater.isLoopback(req.socket && req.socket.remoteAddress)) {
         try {

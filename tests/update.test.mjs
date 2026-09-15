@@ -318,3 +318,81 @@ test("a loopback POST with {feed} updates from THAT feed, not the default one", 
     assert.ok(!("feed" in back), "a plain check reports no feed");
   } finally { feed2.close(); }
 });
+
+// The one that matters: the ROUTE's gate, over a REAL off-loopback socket.
+// isLoopback() being right is not the same property as server.js consulting
+// it — a refactor could drop the call, or start trusting a header, and the
+// unit test above would stay green. So stand a second hub on 0.0.0.0 and
+// POST to it from this machine's own LAN address.
+//
+// Doing that safely is the whole trick: the hub is started with
+// ERA_NO_UPDATE=1, so its updater is OFF and every check answers "disabled"
+// with nothing downloaded or installed, whoever asks. The exposure this rule
+// guards against (a stranger installing code on the device) is therefore
+// impossible for the seconds this hub is up, while the gate's answer is still
+// observable: when the override IS honoured the reply carries `feed` back
+// (update.js check()), and when it is refused the key is absent.
+test("off a real LAN socket the {feed} override is refused; from loopback it is honoured", async (t) => {
+  const lan = Object.values(os.networkInterfaces()).flat()
+    .filter(i => i && i.family === "IPv4" && !i.internal).map(i => i.address);
+  // prefer an RFC1918 address — same socket property, no round trip past the edge
+  const ip = lan.find(a => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a)) || lan[0];
+  if (!ip) { t.skip("no non-internal IPv4 on this machine: nothing can reach a hub off loopback"); return; }
+
+  const PORT3 = 8412;                       // free again: the pushed-feed case above closed it
+  const OFF = `http://127.0.0.1:9999`;      // nothing listens there; only the ECHO is under test
+  for (let i = 0; ; i++) {                  // wait for 8412 to come back
+    const probe = http.createServer();
+    try { await new Promise((ok, no) => probe.once("error", no).listen(PORT3, "127.0.0.1", ok));
+          await new Promise(r => probe.close(r)); break; }
+    catch (e) { try { probe.close(); } catch {} if (i > 40) throw e; await new Promise(r => setTimeout(r, 250)); }
+  }
+  const lanDir = path.join(TMP, "laninstall"), lanData = path.join(TMP, "landata");
+  makeInstall(lanDir, NEW_BUILD, null);
+  fs.mkdirSync(lanData, { recursive: true });
+  const c3 = spawn("node", ["server.js", String(PORT3)], {
+    cwd: lanDir, stdio: ["ignore", "ignore", "ignore"],
+    env: { ...process.env, ERA_DATA_DIR: lanData, ERA_BIND: "0.0.0.0",
+           ERA_UPDATE_URL: `http://127.0.0.1:${FEED_PORT}`, ERA_NO_UPDATE: "1" },
+  });
+  const post = (host, headers) => fetch(`http://${host}:${PORT3}/update/check`,
+    { method: "POST", headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ feed: OFF }) }).then(r => r.json());
+  try {
+    let up = false;
+    for (let i = 0; i < 100; i++) {
+      try { await fetch(`http://127.0.0.1:${PORT3}/settings`); up = true; break; } catch {}
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.ok(up, "the 0.0.0.0 hub came up");
+    assert.equal((await (await fetch(`http://127.0.0.1:${PORT3}/version`)).json()).updater, false,
+                 "ERA_NO_UPDATE: this hub cannot install anything, whoever asks");
+
+    // (a) from the LAN address — a genuinely non-loopback socket
+    const lanR = await post(ip);
+    assert.equal(lanR.status, "disabled", "the hub was reachable off loopback (so the socket was real)");
+    assert.ok(!("feed" in lanR), "the route REFUSED the override from a non-loopback socket");
+
+    // (b) positive control: the identical POST over loopback IS honoured
+    const loR = await post("127.0.0.1");
+    assert.equal(loR.status, "disabled");
+    assert.equal(loR.feed, OFF, "from loopback the same body takes effect (so (a) proves the gate, not a typo)");
+
+    // (c) the headers an attacker writes never buy their way in
+    const spoof = await post(ip, { "X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1",
+                                   "Host": `127.0.0.1:${PORT3}` });
+    assert.equal(spoof.status, "disabled");
+    assert.ok(!("feed" in spoof), "X-Forwarded-For / X-Real-IP / Host are never consulted");
+
+    // and an oversize body gets a readable 413, not a socket reset (the FE
+    // could not tell a reset from the hub being down)
+    const big = await fetch(`http://127.0.0.1:${PORT3}/update/check`,
+      { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ feed: OFF, pad: "x".repeat(5000) }) });
+    assert.equal(big.status, 413);
+    assert.deepEqual(await big.json(), { error: "body too large" });
+  } finally {
+    c3.kill("SIGKILL");                                  // by pid, never pkill -f
+    await new Promise(r => c3.once("exit", r).once("error", r));
+  }
+});
