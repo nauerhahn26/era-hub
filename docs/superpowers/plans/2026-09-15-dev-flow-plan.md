@@ -303,6 +303,25 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 ## Phase retrospectives
 (append after each phase: decisions, surprises, follow-ups)
 
+### Phases 1–3 built in parallel (9/15 ~19:20 UTC, three Opus builders) — review pending
+- P1 hub `f816024`: `check(port, feed = FEED)` over `runCheck`; `isLoopback()` exported
+  as an exact-string Set; route reads body inline (4 KB cap), honours `{feed}` only when
+  `isLoopback(req.socket.remoteAddress)` and the value is an http(s) string; every other
+  path = today's `check(PORT)`. `update.test.mjs` 10/10 (was 7), `routes.test.mjs` 12/12.
+  Off-loopback covered by a unit test only (hub binds `ERA_BIND || 127.0.0.1`) —
+  adversarial review asked to prove the route wiring empirically on a 0.0.0.0 throwaway.
+  Discovery: `server.js:160` app packs still download from `updater.FEED` (push-device
+  can't override packs) — accepted, noted in push-device output.
+- P2 gate `36a6845`: `write_green_stamp` (summary/head=/at=/hub=) called before the
+  byte-identical summary echo; `release.sh --skip-gate` reads the exact-tree stamp, falls
+  back to a `head=` differing only under tools/tests-vm/docs; `--gate-check` hidden flag,
+  refused without `--skip-gate`. No gate run (P1 held 8410–8412). Stamps dir left empty.
+  Follow-up: nothing prunes `/tmp/era-gate-green/`; fallback scan takes first match.
+- P3 aac-board-builder `538ead9`: `worktree.sh` open/sync/land/close/list per §3.2–3.3;
+  seams `ERA_GATE_STAMPS`, `ERA_LAND_LOCK`; `worktree.test.sh` red-first, `PASS 43/43`.
+- Order change vs plan: P4 + P5 dispatched right after P1–P3 reported, concurrently with
+  the P1 and P2+P3 reviews (different files; index.lock retries).
+
 ## Follow-ups (not in this plan)
 - `installPack()` fetches the tarball with no checksum (Gap 14, content-
   pipelines plan) — unchanged here.
