@@ -254,7 +254,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
 ### Phase 7: Behavioral verification (mandatory)
 **Posture hint:** collaborating (dad's "go" on the publish; his device)
 
-14. [ ] First `land`: in `/home/claude/new-era/era-hub` (main checkout),
+14. [x] First `land`: in `/home/claude/new-era/era-hub` (main checkout),
     `worktree.sh land era-hub audit-fixes` — expected: refuses until a green
     stamp exists for this tree (run the gate here first), then a `--no-ff`
     merge on master pushed to origin. Then `worktree.sh close era-hub
@@ -265,7 +265,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
     checkout for the release only.
     - **Evidence:** `git log --oneline --merges -1` on master; `git
       worktree list` = main only.
-15. [ ] `tools/release.sh v0.33.3 --patch --dry-run` → expected
+15. [x] `tools/release.sh v0.33.3 --patch --dry-run` → expected
     `== vm-e2e: N passed, 0 failed ==` from leg B alone and `DRY RUN`; then,
     on dad's go, `tools/release.sh v0.33.3 --patch` → `RELEASED: v0.33.3`;
     `gh release view v0.33.3 --json assets` lists six assets;
@@ -275,7 +275,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
     sha equals v0.33.2's `checksums.txt` line. No SimplySign code was asked
     for at any point (the log has no "sign:" line).
     - **Evidence:** the four outputs pasted below this task.
-16. [ ] i13 takes the patch: `ssh i13 'curl.exe -s -X POST
+16. [x] i13 takes the patch: `ssh i13 'curl.exe -s -X POST
     http://127.0.0.1:8377/update/check'` → `{"status":"updated",…}`; within
     ~30 s `/version` → `build` = v0.33.3's stamp. (Tablet + school follow on
     their 6 h tick; check the tablet the same way.)
@@ -289,7 +289,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
     record which).
     - **Evidence:** push-device output + the two `/version` lines +
       `latest.json`.
-18. [ ] Signed-flow rehearsal without publishing: `tools/release.sh v0.34.0
+18. [x] Signed-flow rehearsal without publishing: `tools/release.sh v0.34.0
     --dry-run` → gate, unsigned build, legs A+B green, stops with "DRY RUN:
     signing not attempted". Not the real signed cut — that happens when the
     installer next changes.
@@ -383,7 +383,56 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
   `.claude/worktrees/agent-a5e6cbddb39ac78fd` (one commit `05a17cf`, already on master as
   `b115c2c`, superseded by `3cf0f65`) — needs `-D`, so it waits for his word.
 
+### Phase 7 — behavioral verification (9/15 23:11 → 9/16 00:40 UTC)
+- Gate on `e9f948a` (worktree, after the vm-e2e.test fix): `== era-gate: 94 passed, 0
+  failed ==`, stamp `/tmp/era-gate-green/f850a54…` clean (no `dirty=1`).
+- **Task 14 — first `land`** from the main checkout: `ac6431a land feat/audit-fixes: ==
+  era-gate: 94 passed, 0 failed ==`, pushed `45cc0ac..ac6431a master -> master`;
+  `git reflog | grep -c rebase` = 0. Master's tree == the branch tip's, so the worktree's
+  stamp covered master unchanged — every later `--skip-gate` read it ("gated tree f850a54
+  from e9f948a, green 23:11 — gate skipped"). The plan's predicted `close` refusal was
+  wrong: `close` reads the branch off the worktree, so the misnamed dir was fine; git
+  itself refused — 149 untracked npm files under `vendor/onnxruntime-web/` (only in this
+  worktree). Follow-up below. Worktree retired by hand at the end of the session.
+- **Task 15 — `release.sh v0.33.3 --patch --dry-run --skip-gate`**: build without makensis,
+  `installer: v0.33.2 re-attached, signature ok`, leg B `5 passed, 0 failed`, `VM-GREEN
+  legs=b` sha == tarball == latest.json, zero `sign:` lines, stopped at `DRY RUN … not
+  tagged, not published`. Then, on dad's "publish v0.33.3" (00:21 UTC): rebuilt
+  (`20260916.0021`), leg B 5/0, `RELEASED: v0.33.3`. Verified live: six assets;
+  `latest.json` = `{"version":"v0.33.3","build":"20260916.0021","sha256":"22e9a69d…",
+  "installer":"v0.33.2"}`; the website's `New-ERA-Setup.exe` sha `dde14cc4eb083301…` ==
+  v0.33.2's checksums line; tag `v0.33.3` on `ac6431a`. No SimplySign at any point.
+- **Task 16 — i13 takes the patch**: `/version` `20260915.0641` → `POST /update/check` →
+  `{"status":"updated","from":"20260915.0641","to":"20260916.0021","version":"v0.33.3",
+  "restart":"restarting"}` → `/version` `{"build":"20260916.0021","disk":"20260916.0021",
+  "updater":true,"pid":2844}` within 60 s. Tablet unreachable over ssh at 00:40 (asleep);
+  it follows on its 6 h tick.
+- **Task 18 — `release.sh v0.34.0 --dry-run --skip-gate`**: unsigned build (makensis
+  1m50 s, 47.5 MB), leg A 9 + leg B 5 = `14 passed, 0 failed`, `VM-GREEN legs=a,b`,
+  stopped at `DRY RUN … UNSIGNED installer — signing not attempted, not published`.
+  Operator error on the first attempt: `pgrep` returned the `setsid` wrapper's pid, the
+  watcher fired "exited" at once, and the dist was `rm -rf`'d under a live makensis —
+  that run then failed leg A on the mangled dist (as it should). Lesson: watch the
+  `bash …/release.sh` pid, never the wrapper.
+- **Task 17 (push-device) and task 19 (dad's routine) — open**, moved to 9/16: 17 needs
+  a `v0.33.4` dry-run dist + the i13 (now on v0.33.3, so eligible); 19 needs the
+  Mac-app question below answered first.
+- Dad's UX (9/16 00:10): he works from the Claude Mac app over remote-control sessions,
+  each pinned to a folder on the build box; "+" opens a chat in that session. Decision: one home
+  session "New ERA" in `/home/claude/new-era/era-hub`; `new feature: X` / `new board
+  feature: X` / `new fix: X` there. Unverified: whether two "+" chats in one session can
+  sit in two worktrees at once; if not, add `worktree.sh open --session` (spawn a named
+  `claude-session` in the worktree so it appears in the app). Verify before he relies on
+  parallel chats.
+
 ## Follow-ups (not in this plan)
+- `worktree.sh close` fails on any untracked file in the worktree (git's own refusal) —
+  list what would go and take `--force`; every long-lived feature worktree hits this.
+- `worktree.sh land` requires the exact-tree stamp; a docs-only commit after a green
+  gate needs a full re-gate. Give `land` release.sh's docs/tools/tests-vm-only fallback.
+- Closing merged worktrees pulls the floor from any remote-control session still living
+  in them (pid 730300 sat in `era-board--wt-music-player`, now `(deleted)`): `close`
+  should refuse while a process has the dir as cwd (`fuser`/`lsof`), or say so.
 - `server.js:1317` `/settings` still reads its body with the unbounded `body += c` idiom
   — give it the 4 KB `Buffer.concat` + 413 treatment `/update/check` got.
 - Nothing prunes `${ERA_GATE_STAMPS:-/tmp/era-gate-green}/` — one file per gated tree,
