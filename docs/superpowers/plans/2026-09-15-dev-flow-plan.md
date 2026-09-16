@@ -280,7 +280,7 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
     ~30 s `/version` → `build` = v0.33.3's stamp. (Tablet + school follow on
     their 6 h tick; check the tablet the same way.)
     - **Evidence:** both JSON lines.
-17. [ ] push-device end to end: `tools/release.sh v0.33.4 --patch --dry-run`
+17. [x] push-device end to end: `tools/release.sh v0.33.4 --patch --dry-run`
     (a dist with a newer stamp, leg B green) → `tools/push-device.sh i13
     dist/release-v0.33.4` → prints `{"status":"updated",…,"feed":"http://
     127.0.0.1:85xx"}` and `i13 now on <stamp>`; public `latest.json` still
@@ -424,6 +424,46 @@ on 8377-8416 / 8425 / 8427 / 8450-8462; era-gate once machine-wide (check
   sit in two worktrees at once; if not, add `worktree.sh open --session` (spawn a named
   `claude-session` in the worktree so it appears in the app). Verify before he relies on
   parallel chats.
+
+### Phase 7, continued (9/16 05:15 → 06:05 UTC) — task 17 done, sessions reshaped
+- **Task 17 — push-device end to end.** Worktree `push-e2e` off `72e999d` (tree
+  `51f7ecf`). `release.sh v0.33.4 --patch --dry-run`: gate `94 passed, 0 failed` (stamp
+  `51f7ecf…` 05:42), build `20260916.0542` with `installer: v0.33.2` re-attached, leg B
+  `5 passed, 0 failed`, `VM-GREEN legs=b`, `DRY RUN … not tagged, not published`.
+  `push-device.sh i13 dist/release-v0.33.4 --dry-run`: first attempt "no answer from
+  i13's hub … after 30 s" — the i13 had rebooted 9/15 19:58 (device time) and nothing
+  autostarts the hub (`NewERAHubSvc` task Disabled since the 9/14 wipe; the tile is the
+  only launcher). Started the hub alone in her session (one-shot `.vbs` task, no kiosk at
+  23:00): `/version` `{"build":"20260916.0021",…,"pid":11544}`. Dry-run then: `device: i13
+  on build 20260916.0021 … would push 20260916.0542 (tree 51f7ecf) via -R 8500 ← :8480`.
+  Real push: feed `127.0.0.1:8480`, tunnels `-R 8500 / -L 8501`, `POST /update/check
+  {"feed":"http://127.0.0.1:8500"}` → `{"status":"updated","from":"20260916.0021","to":
+  "20260916.0542","version":"v0.33.4","restart":"restarting","feed":"http://127.0.0.1:
+  8500"}` → `pushed: i13 now on 20260916.0542 (v0.33.4)`; device `/version`
+  `{"build":"20260916.0542","disk":"20260916.0542","updater":true,"pid":10880}`, hub.log
+  `[update] 20260916.0021 -> 20260916.0542 (v0.33.4); restarting`. Public `latest.json`
+  still v0.33.3 — **left unpublished**: the i13 sits one unpublished build ahead and takes
+  the next published build (a later stamp) as usual. Worktree closed via the new `close`
+  (no commits on `fix/push-e2e`; "no remote branch").
+- **Follow-ups taken (aac-board-builder `b6fc750`, `d588765`, `worktree.test.sh`
+  131/131):** `close` deletes the landed branch with `-D` + `push origin --delete`, lists
+  untracked/modified files and wants `--force` (DISCARDED), refuses while a process has the
+  dir as cwd (`fuser`, never overridden), kills a `tmux wt-<slug>` it started; `sync`
+  ignores untracked files; `land` accepts a docs-only stamp (this very commit); `open
+  --session` spawns a named `claude-session` in the worktree.
+- **Parallel-chat question answered** (remote-control docs): the installed `claude`
+  2.1.251 runs one cwd per `--remote-control` process, so two "+" chats in one session
+  share a directory — `EnterWorktree` moves only that chat, which is what dad's routine
+  needs. The real fix is server mode (`claude remote-control --spawn=same-dir`, needs
+  `claude update` ≥ 2.1.200) — proposed to dad, not done. Sessions reshaped 9/16: "New
+  ERA" launched in `/home/claude/new-era/era-hub` (tmux `newera`, keepalive); Music
+  Player + Ellie Music Board retired (notes in `~/session-state/retired/`); Install QA
+  retired after this record. `~/bin/claude-session` now picks the real 2.1.251 binary
+  itself (npm's half-install left a stub on PATH since 9/10).
+- New follow-up: the i13 hub has no autostart — a reboot leaves the device dark until
+  someone taps the tile (`NewERAHubSvc` Disabled). Decide: re-enable the task (battery
+  settings!) or a Startup shortcut to `start-hub.bat`, the way ERAgaze has one.
+- Task 19 (dad's routine, his verdict) stays open — it happens in the New ERA session.
 
 ## Follow-ups (not in this plan)
 - `worktree.sh close` fails on any untracked file in the worktree (git's own refusal) —
