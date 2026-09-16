@@ -1371,14 +1371,42 @@ test("the passcode is hashed in the page — the digits never leave it", async (
     const stored = async () => (await (await fetch(`${BASE}/settings`)).json()).lockPasscodeHash;
     assert.match(await status(), /No passcode/);
 
+    // The box must not be type=password: on the tablet that input scope wins
+    // over inputmode and the full keyboard comes up, so it is a text box
+    // masked in CSS instead — and it is four digits, no more.
+    const box = await page.$eval("#lockPass", i => ({
+      type: i.type,
+      inputmode: i.getAttribute("inputmode"),
+      maxlength: i.getAttribute("maxlength"),
+      mask: getComputedStyle(i).webkitTextSecurity
+    }));
+    assert.notEqual(box.type, "password", "type=password brings up the full keyboard");
+    assert.equal(box.type, "text");
+    assert.equal(box.inputmode, "numeric", "the tablet keyboard comes up numeric");
+    assert.equal(box.maxlength, "4");
+    assert.equal(box.mask, "disc", "the digits are masked even though it is a text box");
+
     // too short: the page says so and asks the hub for nothing
     await page.fill("#lockPass", "12");
     await page.click("#lockPassSave");
-    await page.waitForFunction(() => /4 to 6 digits/.test(document.getElementById("lockPassStatus").textContent));
-    assert.deepEqual(posts, [], "a passcode that is not 4-6 digits is never sent");
+    await page.waitForFunction(() => /4 digits/.test(document.getElementById("lockPassStatus").textContent));
+    assert.deepEqual(posts, [], "a passcode that is not 4 digits is never sent");
     assert.equal(await stored(), "");
 
-    await page.fill("#lockPass", "1234");
+    // too long, forced past maxlength the way only a script can: the validator
+    // is the second lock, and it refuses five digits as well
+    // (blank the message first, or the one above would answer for it)
+    await page.$eval("#lockPassStatus", e => { e.textContent = ""; });
+    await page.$eval("#lockPass", i => { i.value = "12345"; });
+    await page.click("#lockPassSave");
+    await page.waitForFunction(() => /4 digits/.test(document.getElementById("lockPassStatus").textContent));
+    assert.deepEqual(posts, [], "five digits is not a passcode either");
+    assert.equal(await stored(), "");
+
+    // and a fifth digit never gets in by hand: the box stops at four
+    await page.fill("#lockPass", "12345");
+    assert.equal(await page.$eval("#lockPass", i => i.value), "1234",
+      "maxlength keeps the box at four digits");
     let done = page.waitForResponse(r => r.url().endsWith("/settings") && r.request().method() === "POST");
     await page.click("#lockPassSave");
     await done;
@@ -1391,7 +1419,7 @@ test("the passcode is hashed in the page — the digits never leave it", async (
     await page.waitForFunction(() => /Passcode set/.test(document.getElementById("lockPassStatus").textContent));
     assert.equal(await page.$eval("#lockPass", i => i.value), "",
       "the box is cleared, so the passcode is not left on screen");
-    assert.equal(await page.$eval("#lockPass", i => i.type), "password");
+    assert.equal(await page.$eval("#lockPass", i => getComputedStyle(i).webkitTextSecurity), "disc");
 
     // a parent coming back sees THAT there is one, never what it is
     const re = await settingsPage();

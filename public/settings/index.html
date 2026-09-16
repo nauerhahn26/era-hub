@@ -385,7 +385,10 @@
        tablet and the music has to stop. Deterrence, not security — the
        passcode only stops someone repeating what they watched a grown-up do,
        so it is hashed in this page and the digits never go to New ERA or
-       onto the disk. -->
+       onto the disk. Four digits, to match the board's keypad. The box is a
+       text input masked in CSS, NOT type="password": on the tablet the
+       password input scope beats inputmode and brings up the whole keyboard
+       when all we want are the numbers. -->
   <div class="card" id="lock">
     <h2>🔒 Lock</h2>
     <p class="hint">Hold the 🔒 in the corner of the Music or Films board and the music and films stop. Everything else &mdash; her words, her books, her drawing &mdash; keeps working.</p>
@@ -398,8 +401,8 @@
     <div style="margin-top:16px; border-top:2px dashed var(--line); padding-top:16px">
       <p class="hint" style="margin-bottom:8px">With no passcode, holding the 🔒 again unlocks the board. Set one and unlocking asks for it instead, so a curious sibling can&rsquo;t simply copy what they saw you do.</p>
       <div class="row">
-        <input id="lockPass" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Passcode (4 to 6 digits)"
-               style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+        <input id="lockPass" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="Passcode (4 digits)"
+               style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px;-webkit-text-security:disc">
         <button id="lockPassSave">Save</button>
         <button id="lockPassClear">Clear</button>
       </div>
@@ -590,7 +593,7 @@ async function lockPassPost(hash){
 }
 $("lockPassSave").onclick=async()=>{
   const d=$("lockPass").value.trim();
-  if(!/^[0-9]{4,6}$/.test(d)){ $("lockPassStatus").innerHTML='<span class="bad">A passcode is 4 to 6 digits.</span>'; return; }
+  if(!/^[0-9]{4}$/.test(d)){ $("lockPassStatus").innerHTML='<span class="bad">A passcode is 4 digits.</span>'; return; }
   await lockPassPost(await lockHash(d));
 };
 $("lockPassClear").onclick=()=>lockPassPost("");
