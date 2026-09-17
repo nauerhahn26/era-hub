@@ -55,7 +55,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape, attributes,
+const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder,
         GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
@@ -1138,9 +1138,21 @@ function comboLabel(top, bottom) {
   return cap(a) + " + " + cap(b);
 }
 
+// What a tile is MADE OF, for the board's hold sheet: it names the rows under
+// a finger from these objects instead of parsing a label (spec §4). Four
+// fields, nothing of the deal's private business (colours, warmth, hashes) —
+// and `occasion` is answered even for a garment described before the word
+// existed, because a chip with no value selected is a sheet that cannot save.
+function itemRef(it) {
+  return { id: it.id, name: it.name, category: it.category, occasion: it.occasion || "everyday" };
+}
+
 // 3x4 browse pages per ux-contract: Back top-left [1,1], up to 6 items in
 // fixed slots, More bottom-LEFT [3,1]; empties become center/bottom rest cells.
-function gridPages(id, name, items, backLoad) {
+// `extra` (optional) is one button repeated on EVERY page at [3,4] — the
+// corner today pages give Build my own — because she can be standing on page 3
+// of the tops when she wants a jacket (spec §4.1).
+function gridPages(id, name, items, backLoad, extra) {
   const pages = [];
   const per = 6;
   const CELLS = [[1,2],[1,3],[1,4],[2,1],[2,2],[2,3]];
@@ -1150,11 +1162,12 @@ function gridPages(id, name, items, backLoad) {
       load: p === 0 ? backLoad : (p === 1 ? id : id + "_" + p), row: 1, col: 1 }];
     items.slice(p * per, (p + 1) * per).forEach((it, k) => {
       buttons.push({ label: it.name, say: it.name, type: "clothing",
-        image: "wardrobe-items/" + it.id + ".jpg",
+        image: "wardrobe-items/" + it.id + ".jpg", items: [itemRef(it)],
         row: CELLS[k][0], col: CELLS[k][1] });
     });
     if ((p + 1) * per < items.length)
       buttons.push({ label: "More", type: "control", symbol: "more", load: id + "_" + (p + 2), row: 3, col: 1 });
+    if (extra) buttons.push({ ...extra, row: 3, col: 4 });
     pages.push({ id: pid, name, rows: 3, columns: 4, buttons });
     if ((p + 1) * per >= items.length) break;
   }
@@ -1162,10 +1175,33 @@ function gridPages(id, name, items, backLoad) {
 }
 
 // today pages: the 3x4 grid minus weather/Back [1,1], More [3,1], Build [3,4]
-// and the two CENTER rest cells [2,2][2,3] (lib contract restCells: "center")
+// and the two CENTER rest cells [2,2][2,3] (lib contract restCells: "center").
+// [3,3] is LAST on purpose: it is the cell the accessories door takes when the
+// family has any (dad 9/17), so a page with accessories is this list minus its
+// tail — six looks — and a page without one is all seven, unchanged.
 const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,2],[3,3]];
-const PER_PAGE = SLOTS.length;
+const ACC_CELL = [3,3];
+const todaySlots = (present) =>
+  present.length ? SLOTS.filter(([r, c]) => !(r === ACC_CELL[0] && c === ACC_CELL[1])) : SLOTS;
 const PAGES = 3;   // how many "More" pages a day gets at most
+
+// The one door she has to learn, wherever it turns up: today [3,3], "This
+// one?" [3,2], every browse page [3,4], Build my own's last cell when the
+// kinds outgrow it. "accessories" is an ARASAAC bestsearch word (25634, the
+// fashion-accessories pictogram — checked 9/17), the worker's own convention
+// for a category tile.
+const accDoor = (row, col) =>
+  ({ label: "Accessories", type: "category", symbol: "accessories", load: "acc", row, col });
+
+// The words a parent sees on a chip: ONE garment, so singular — the grids'
+// plural names ("Tops", "Dresses") name a page, not a thing you can hold.
+// Accessory kinds keep the label clothing-rank gives them, so the two lists
+// cannot drift (preflight 1).
+const GARMENT_LABEL = { top: "Top", pants: "Pants", shorts: "Shorts", dress: "Dress", set: "Set" };
+const RECIPE_CATEGORIES = [
+  ...GARMENT_KINDS.map(id => ({ id, label: GARMENT_LABEL[id] })),
+  ...ACCESSORY_KINDS.map(k => ({ id: k.id, label: k.label })),
+];
 
 async function buildCataloged(cat) {
   const w = await weather();
@@ -1183,6 +1219,11 @@ async function buildCataloged(cat) {
   // cannot produce an empty grid (spec §7). T5 draws the entry tile, the `acc`
   // menu and the `acc_<kind>` grids from exactly this list.
   const present = ACCESSORY_KINDS.map(k => k.id).filter(id => items.some(i => i.category === id));
+  // While she has accessories the seventh outfit slot IS the door, so the
+  // whole build — the deal's cap, the page size, the lineup the memory keeps
+  // and the "More" arithmetic — follows this one number and never a constant.
+  const slots = todaySlots(present);
+  const per = slots.length;
 
   // The day's 21, dealt by the original's rules (spec §3.5): page 1 is her
   // staples then fresh, garment-distinct looks; yesterday's page 1 opens page
@@ -1196,15 +1237,15 @@ async function buildCataloged(cat) {
   const seed = dayKey(Date.now(), workerData.tz);
   const m = shared();
   const today = buildCandidates({
-    items, band, cap: PER_PAGE * PAGES, seed,
+    items, band, cap: per * PAGES, seed,
     pairing: m.pairing, favorites: m.favorites,
-    history: mergeHistory(readHistory(), m), perPage: PER_PAGE,
+    history: mergeHistory(readHistory(), m), perPage: per,
   }).map(toWorkerShape);
 
   // The page-1 lineup goes to the shell FIRST (I9): it is the memory tomorrow's
   // deal reads, and a composite that fails must not lose it. ONE writer for
   // wardrobe/history.json — the shell's recordOffer, never this thread (A4-1).
-  const page1 = today.slice(0, PER_PAGE).map(c => c.one ? [c.one.id] : [c.top.id, c.bottom.id]);
+  const page1 = today.slice(0, per).map(c => c.one ? [c.one.id] : [c.top.id, c.bottom.id]);
   if (parentPort) parentPort.postMessage({ offer: { date: seed, band, page1 } });
   // ...and the same lineup to the family, so tomorrow every device bars what
   // any of them showed today. The MOUNT only — <DATA>/clothing/.era belongs to
@@ -1229,7 +1270,7 @@ async function buildCataloged(cat) {
   // cells left over stay black. Ten targets = under the contract's
   // comfortable 12.
   const boards = [];
-  const pages = Math.max(1, Math.ceil(today.length / PER_PAGE));
+  const pages = Math.max(1, Math.ceil(today.length / per));
   for (let pg = 0; pg < pages; pg++) {
     const pid = pg === 0 ? "today" : "today_" + (pg + 1);
     const buttons = [];
@@ -1252,8 +1293,8 @@ async function buildCataloged(cat) {
       buttons.push({ label: "Back", type: "back", glyph: "\u2190",
         load: pg === 1 ? "today" : "today_" + pg, row: 1, col: 1 });
     }
-    today.slice(pg * PER_PAGE, (pg + 1) * PER_PAGE).forEach((c, k) => {
-      const i = pg * PER_PAGE + k;
+    today.slice(pg * per, (pg + 1) * per).forEach((c, k) => {
+      const i = pg * per + k;
       const label = c.one ? c.one.name : comboLabel(c.top, c.bottom);
       const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
       const img = "outfit_" + i + ".jpg";
@@ -1262,31 +1303,67 @@ async function buildCataloged(cat) {
           c.one ? null : path.join(ITEMS(), c.bottom.id + ".jpg"), path.join(OUTFITS(), img));
       } catch (e) { console.error("[clothing] composite: " + e.message); return; }
       const combo = c.one ? [c.one.id] : [c.top.id, c.bottom.id];
+      // The same two halves the label is made of, as objects: `combo` is what
+      // the decision log wants, `items` is what a parent holding the tile
+      // wants (spec §4) — the ids agree, in the same order.
+      const made = c.one ? [itemRef(c.one)] : [itemRef(c.top), itemRef(c.bottom)];
       buttons.push({ label, say, type: "outfit", image: "wardrobe-outfits/" + img,
-        load: "confirm_" + i, say_on_load: true, combo,
-        row: SLOTS[k][0], col: SLOTS[k][1] });
+        load: "confirm_" + i, say_on_load: true, combo, items: made,
+        row: slots[k][0], col: slots[k][1] });
       boards.push({ id: "confirm_" + i, name: "This one?", rows: 3, columns: 2, buttons: [
-        { label, say, type: "outfit", image: "wardrobe-outfits/" + img, combo, row: 1, col: 1 },
+        { label, say, type: "outfit", image: "wardrobe-outfits/" + img, combo, items: made, row: 1, col: 1 },
         { label: "Yes", type: "yes", glyph: "\u2713", say: "Yes", combo, row: 1, col: 2 },
         { label: "Change top", type: "category", symbol: "shirt", load: "cat_top", row: 2, col: 1 },
         { label: "Change bottoms", type: "category", symbol: "trousers", load: "choose_bottom", row: 2, col: 2 },
         { label: "Back", type: "back", glyph: "\u2190", load: pid, row: 3, col: 1 },
+        // …and the door on the one empty cell "This one?" has had all along:
+        // she changes her mind about the top AFTER she picked the look, so the
+        // jacket has to be reachable from here too (dad 9/17).
+        ...(present.length ? [accDoor(3, 2)] : []),
       ]});
     });
-    if ((pg + 1) * PER_PAGE < today.length)
+    if ((pg + 1) * per < today.length)
       buttons.push({ label: "More", type: "control", symbol: "more", load: "today_" + (pg + 2), row: 3, col: 1 });
+    if (present.length) buttons.push(accDoor(ACC_CELL[0], ACC_CELL[1]));
     buttons.push({ label: "Build my own", type: "category", symbol: "clothes", load: "build", row: 3, col: 4 });
     boards.push({ id: pid, name: "What will I wear today?", rows: 3, columns: 4, buttons });
   }
   // hoist today pages to the front so `today` is the root board in order
   boards.sort((a, b) => (a.id.startsWith("today") ? 0 : 1) - (b.id.startsWith("today") ? 0 : 1));
-  boards.push({ id: "build", name: "Build my own", rows: 3, columns: 2, buttons: [
-    { label: "Tops", type: "category", symbol: "shirt", load: "cat_top" },
-    { label: "Bottoms", type: "category", symbol: "trousers", load: "choose_bottom" },
-    { label: "Dresses", type: "category", symbol: "dress", load: "cat_dress" },
-    { label: "Outfits", type: "category", symbol: "clothes", load: "cat_outfit" },
-    { label: "Back", type: "back", glyph: "←", load: "today" },
-  ]});
+  // Build my own is a 3x4 board with the two CENTRE cells black, always —
+  // accessories or none (dad 9/17), so the four garment doors never move under
+  // her when a jacket arrives. Ten edge cells, filled clockwise from the
+  // contract's back anchor: Back, Tops, Bottoms, Dresses, Outfits, then the
+  // present kinds. Empty edge cells stay black, like every other rest cell.
+  const kinds = ACCESSORY_KINDS.filter(k => present.includes(k.id));
+  const KIND_CELLS = [[2,4],[3,1],[3,2],[3,3],[3,4]];
+  const kindTile = (k, row, col) =>
+    ({ label: k.label, type: "category", symbol: k.symbol, load: "acc_" + k.id, row, col });
+  const buildButtons = [
+    { label: "Back", type: "back", glyph: "←", load: "today", row: 1, col: 1 },
+    { label: "Tops", type: "category", symbol: "shirt", load: "cat_top", row: 1, col: 2 },
+    { label: "Bottoms", type: "category", symbol: "trousers", load: "choose_bottom", row: 1, col: 3 },
+    { label: "Dresses", type: "category", symbol: "dress", load: "cat_dress", row: 1, col: 4 },
+    { label: "Outfits", type: "category", symbol: "clothes", load: "cat_outfit", row: 2, col: 1 },
+  ];
+  KIND_CELLS.forEach(([row, col], i) => {
+    if (i >= kinds.length) return;
+    // Six kinds can never fit five cells: the LAST cell becomes the door to
+    // the menu rather than the fifth kind, so nothing is ever unreachable.
+    const overflow = i === KIND_CELLS.length - 1 && kinds.length > KIND_CELLS.length;
+    buildButtons.push(overflow ? accDoor(row, col) : kindTile(kinds[i], row, col));
+  });
+  boards.push({ id: "build", name: "Build my own", rows: 3, columns: 4, buttons: buildButtons });
+  // The menu behind the door: the same shape, Back top-left, one tile per
+  // present kind over the nine remaining edge cells. Six kinds is the most
+  // there can ever be (ACCESSORY_KINDS), so it always fits on one page.
+  if (kinds.length) {
+    const MENU_CELLS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,1],[3,2],[3,3],[3,4]];
+    boards.push({ id: "acc", name: "Accessories", rows: 3, columns: 4, buttons: [
+      { label: "Back", type: "back", glyph: "←", load: "today", row: 1, col: 1 },
+      ...kinds.map((k, i) => kindTile(k, MENU_CELLS[i][0], MENU_CELLS[i][1])),
+    ]});
+  }
   boards.push({ id: "choose_bottom", name: "Pants or shorts?", rows: 2, columns: 2, buttons: [
     { label: "Pants", type: "category", symbol: "trousers", load: "cat_pants" },
     // "shorts" has no ARASAAC bestsearch hit; 13638 IS the shorts pictogram
@@ -1294,13 +1371,24 @@ async function buildCataloged(cat) {
     { label: "Shorts", type: "category", symbol: "13638", load: "cat_shorts" },
     { label: "Back", type: "back", glyph: "←", load: "today" },
   ]});
-  boards.push(...gridPages("cat_top", "Tops", items.filter(i => i.category === "top"), "today"));
-  boards.push(...gridPages("cat_pants", "Pants", items.filter(i => i.category === "pants"), "choose_bottom"));
-  boards.push(...gridPages("cat_shorts", "Shorts", items.filter(i => i.category === "shorts"), "choose_bottom"));
-  boards.push(...gridPages("cat_dress", "Dresses", items.filter(i => i.category === "dress"), "build"));
-  boards.push(...gridPages("cat_outfit", "Outfits", items.filter(i => i.category === "set"), "build"));
-  // Every browse grid above asks for a GARMENT word, so an accessory can fall
-  // into none of them (preflight 2) — it gets its own pages in T5.
+  // Every browse page carries the door at [3,4] — she can be on page 3 of the
+  // tops when she decides she wants a jacket (spec §4.1).
+  const door = present.length ? accDoor(3, 4) : null;
+  boards.push(...gridPages("cat_top", "Tops", items.filter(i => i.category === "top"), "today", door));
+  boards.push(...gridPages("cat_pants", "Pants", items.filter(i => i.category === "pants"), "choose_bottom", door));
+  boards.push(...gridPages("cat_shorts", "Shorts", items.filter(i => i.category === "shorts"), "choose_bottom", door));
+  boards.push(...gridPages("cat_dress", "Dresses", items.filter(i => i.category === "dress"), "build", door));
+  boards.push(...gridPages("cat_outfit", "Outfits", items.filter(i => i.category === "set"), "build", door));
+  // Every browse grid above asks for a GARMENT word, so an accessory falls
+  // into none of them (preflight 2): each present kind gets its own pages.
+  // Back goes to `today` — the door can be entered from anywhere, so the one
+  // place she is always happy to land is home. The day's band only RE-ORDERS
+  // these pages (accessoryOrder): on a cold morning the coats lead, but no
+  // accessory is ever weather-hidden (spec §4.1). No door on these pages: she
+  // is already behind it.
+  for (const k of kinds)
+    boards.push(...gridPages("acc_" + k.id, k.label,
+      accessoryOrder(items.filter(i => i.category === k.id), band), "today"));
   return { boards, present };
 }
 
@@ -1375,8 +1463,13 @@ async function regenerate(force) {
   }
   const { boards, present } = await buildCataloged(cat);
   fs.mkdirSync(RECIPES(), { recursive: true });
+  // `categories` is the whole filing cabinet, not this wardrobe's corner of
+  // it: the board's hold sheet names its chips from here (spec §4.2), and a
+  // parent moving a hoodie to "Jackets" needs the chip to exist on a device
+  // that has never seen a jacket. Always written, whatever `present` says.
   fs.writeFileSync(path.join(RECIPES(), "today.json"), JSON.stringify({
-    locale: "en-US", root: "today", home_label: "Clothing", boards }, null, 1));
+    locale: "en-US", root: "today", home_label: "Clothing",
+    categories: RECIPE_CATEGORIES, boards }, null, 1));
   storeSig(sig);
   console.log("[clothing] board built (" + boards.length + " boards)" +
     (tally.left ? ", " + tally.left + " photo(s) still waiting" + (tally.quotaHit ? " (daily allowance)" : "") : ""));

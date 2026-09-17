@@ -315,6 +315,45 @@ jewelry 29088, hat 2572, hair 2851, make up 8626). Gate fix: clothing-log's loca
 `OCCASIONS` now imports the clothing-rank list (the T2 builder left it local to avoid
 racing T1 in the shared worktree).
 
+**Gate 2 (9/17)** — T3 + T4 + T5 + T6 green, re-run by the reviewer: `node --test
+tests/clothing-accessories.test.mjs tests/clothing-variety.test.mjs
+tests/clothing-rank.test.mjs tests/clothing-item.test.mjs tests/clothing-log.test.mjs
+tests/settings-ui.test.mjs` → 277 pass, 0 fail; builder's `clothing.test.mjs` run 34/34
+(799 s, untouched). T5 red-then-green 12/8 → 20/0. Decisions: (1) `PER_PAGE` deleted —
+`todaySlots(present)` drops `[3,3]` while any accessory exists and every cap/page/More
+computation follows `per`; (2) zero-accessory byte-identity is MEASURED in the suite
+(runs `c1a0195:clothing-worker.js` as a Worker over the same data dir, deep-compares
+minus `items`/`categories`/`build`); (3) Build my own is 3×4 centre-black always, five
+fixed doors + present kinds over `[2,4][3,1][3,2][3,3][3,4]`, fifth cell → the
+Accessories door when >5 kinds; (4) symbol `"accessories"` is a live ARASAAC bestsearch
+word (25634) — no pinned id; (5) recipe root `categories` always written (a chip must
+exist on a device that has never seen a jacket), garment labels singular via a new
+`GARMENT_LABEL` (the grids' plurals name pages, not things); (6) `acc_*` tiles carry
+`items` too, so an accessory can be re-filed from its own grid; (7) cold-band case
+reuses fake model 8467 for `/geo` + `/v1/forecast` — no new port; (8)
+`synthetic-wardrobe.mjs --accessories jacket=3,shoes=1` added for T11, default output
+byte-identical.
+
+**Gate 3 (9/17, era-board `deadd8e`, reviewed before Gate 2 — T5 was still building)**
+— T7 + T8 + T9 green, re-run by the reviewer on a scratch hub (8485) over the jackets
+worktree: board-edit 10, board-lock 12, board-pixel 1, board-input 8,
+board-clothing-visuals 2 — 0 fail. Red-then-green: T7 1/1 → 2/0; board-edit 0/10 → 10/0.
+Decisions: (1) **No `preventDefault` on the arming pointerdown** — measured: it does not
+stop Chromium's touch click, so "prevent + replay" double-fired a quick tap. A tap on a
+tile is her board (the lock could afford it; 🔒 taps mean nothing). Instead the module
+swallows ONE release click, only after a press ≥ 600 ms (dwell.js's Windows press-and-
+hold line) or a completed hold; quick taps are never touched. (2) The two doors
+(`#barDoor`, `#barTalk`) are exempt from the sheet's freeze — board-partner's law. (3)
+Timeout after Done says "The board will update by itself in a minute" and closes
+(plan wording) rather than the spec's "stays open": the edit IS saved by then.
+(4) Thumbnails are `/wardrobe-items/<id>.jpg` (absolute, as `imageSrc()`); the spec's
+relative form 404s under `/board/`. (5) Re-render under an open sheet: MutationObserver
+on `.board-area` re-freezes (board-arrange's answer). (6) `pointerleave` only counts on
+the pressed tile (the listener is on `window`); release position checked against the
+tile's box like dwell.js's `inHalo`. Local-run recipe for era-board Playwright suites
+(no documented one existed): scratch hub 848x over the hub worktree's `public/board`
+symlink, test COPIES in `tests/.scratch/` with `sed s/8377/PORT/`, plus
+`tests/public → hub/public` so board-pixel finds `lib/contract.js`; both removed after.
 
 ## §D Follow-ups (not this cut)
 
