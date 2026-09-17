@@ -289,4 +289,8 @@ verbatim. Commits in all five worktrees. Retro → §C.
 
 ## §C Retro (appended per gate)
 
-_(empty until Gate 0)_
+**Gate 0 (T0+T1, 9/17).** era-core 2b8f326, aac-board-builder 09cc54e, hub 9895c06.
+- §A-7 undersold the interim red: the apps do not carry bare literals, they `import { holdForDoor }` BY NAME from contract.js, so removing the export is a module-link error — Making Words and the Pencil are dead pages (targets=0), the board writes `data-dwell-ms="undefined"` on its door, until T5/T7/T8 swap the import. Sequencing already covers it (Gate 2 runs era-board after T5; the full gate is Gate 3), but any hub-worktree browser suite run between now and then (pencil-ui, MW suites) is red for that reason and no other. Land order in T10 stands: era-core never lands alone.
+- Review added: `holdFor("talk")` (the ruling names two doors), `HOLD_RETIRED` violation for 1600/1800/2200 checked AFTER set membership (2×800=1600 stays legal) so a missed markup literal is red not a warn, 5 s timeout on the /settings fetch (GET /settings waits on the gaze-bus probe), only `ERR_MODULE_NOT_FOUND` swallowed by the two-path import.
+- `tools/gen-contract-json.mjs` named by the sync test does not exist; contract.json is hand-edited. Follow-up, not this feature.
+- Pre-existing, untouched: `/reader/` has `FONT_MIN btnExit 24<44` (tile T6 deletes); contract.js header still says "not yet imported by any app".
