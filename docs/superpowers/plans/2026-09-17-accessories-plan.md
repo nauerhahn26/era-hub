@@ -355,6 +355,37 @@ tile's box like dwell.js's `inHalo`. Local-run recipe for era-board Playwright s
 symlink, test COPIES in `tests/.scratch/` with `sed s/8377/PORT/`, plus
 `tests/public → hub/public` so board-pixel finds `lib/contract.js`; both removed after.
 
+**Gate 4 (9/17) — gate + land** — `ERA_WT_SUFFIX=--wt-jackets bash tools/era-gate.sh`
+over both worktrees: **102 passed, 0 failed** (stamps: hub tree `ab0478a` head=879b645,
+era-board tree `8be02c3` head=deadd8e). era-board landed first (`54fcb20..6dae070`).
+Hub `land` refused once — master had moved to 5e46d52 (the second pause-to-talk land,
+`tests-vm/` only) — `sync` merged it (726cd96), re-gate **102/0** (tree `16ff73a`), hub
+landed as **2de1b46** and pushed. Neither land restarts live 8377. Note: v0.34.0 was
+PUBLISHED at 18:35 UTC while this branch was in flight (signed installer, `legs=a,b`),
+so the patch is `v0.34.1 --patch` (T10 said v0.33.7 — a patch shares X.Y with its
+installer). The dry-run ran `--skip-gate` on the 20:19 stamp for the landed tree.
+
+**T11 (9/17) — behavioral, 24/24** — evidence in
+`~/new-era/dist/qa/2026-09-17-accessories/` (README.md table, `video/page@…webm`,
+`shots/01-today.png … 11-cat-top-after.png`, `01-materialize.txt … 06-second-device.txt`,
+scripts `fake-ai.mjs` / `drive-board.mjs` / `assert2.sh,5.sh,6.sh`). Scratch hubs
+8481/8482/8483 over `synthetic-wardrobe.mjs --accessories jacket=3,shoes=1`, fake model
+answering jacket/shoes + cold `/v1/forecast`. Graph: today `outfits=6`, Accessories at
+[3,3]; every confirm page's door at [3,2], every browse page's at [3,4]; Build my own
+3×4 with 0 buttons at the centre; `acc_jacket` 3 tiles; recipe `categories` 11; 0 tiles
+missing `items`. Recorded walk: Accessories → Jackets → tap spoke `["Maple parka"]`;
+hold on `Sunny tee` (1.6 s, touch) → sheet 1 row / 11 chips → Jackets → Done → reload in
+6.9 s → `acc_jacket` 4 tiles, tee gone from `cat_top`; `/clothing/status` →
+`{"kinds":[{"kind":"jacket","count":4},{"kind":"shoes","count":1}],"hidden":0}`;
+`edits.json` entry carries `t`; Drive `tags/qa1.jsonl` last line `"manual":true`. Second
+device (qa2, same Drive folder, `POST /clothing/regenerate`) → `"category":"jacket"` +
+`manualAt`, no edits.json of its own. Observations: (1) in `mode:"local"` the manual tag
+line lands straight in the Drive folder (`drive.js:144`) — fine, just not the spool path;
+(2) `accessoryOrder` tie (any vs cold, both distance 0) → lower id first, as Gate 1 (2)
+says; (3) "Accessories" is the widest label on today and fills its tile edge-to-edge at
+1280×720 — cosmetic, dad may want a shorter word. Dad's tablet hold-a-real-tile round
+trip is still owed post-push.
+
 ## §D Follow-ups (not this cut)
 
 - "Dress up" page over `occasion:"fancy"` (garments + accessories).
