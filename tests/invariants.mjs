@@ -15,19 +15,22 @@
 // Laws enforced per visible .dwell target / page (see comments at each check):
 //   1. size floor (message-bar chrome instead fills the strip and is 2x as wide
 //      as tall — dad 9/2) + fully on-screen + center not occluded + gap-or-adjacency
-//   2. data-dwell-ms on the hold ladder (unknown-but-in-band = warn)
+//   2. data-dwell-ms is one of the four legal holds — her dwell (from the hub's
+//      /settings), 2x it for a door that leaves the screen, or a reading target
+//      (support read 1000 / prediction 2000). Off-set but in-band = warn, except
+//      a retired rung (1600/1800/2200) which is a violation for one release.
 //   3. park corner is inert (not a .dwell target)
 //   4. no h-scroll; font floors (44 absolute; 74 text-tile @1920 unless reduced)
 //   5. word-integrity CSS on labels (word-break normal, no partial words)
 //
 // Terse violation/warn strings mirror board-pixel's style:
 //   OFFSCREEN / OCCLUDED / MINGAP / HSCROLL / PARK_TARGET / SIZE /
-//   FONT_MIN / FONT_FLOOR / BREAK_CSS / PARTIAL_WORD   (violations)
+//   FONT_MIN / FONT_FLOOR / BREAK_CSS / PARTIAL_WORD / HOLD_RETIRED (violations)
 //   GAP / HOLD_ODD / FONT_REDUCED / FONT_SUB            (warns)
 
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { CONTRACT } from "../public/lib/contract.js";
+import { CONTRACT, holdForExit } from "../public/lib/contract.js";
 
 export const BASE = process.env.INVARIANTS_BASE || "http://localhost:8377";
 
@@ -48,19 +51,38 @@ const S = CONTRACT.sizes;
 // linearly with viewport width relative to the 1920 reference (=> 60px @1280).
 const SIZE_FLOOR_1920 = Math.ceil((S.fontFloor * 1.16) / 5) * 5; // = 90
 
-// The hold ladder (law 2): the real tile-hold rungs. navBonus(400) is a bonus,
-// not a standalone hold; tuneMax(3000) is the ceiling; holdForDoor is a fn — all
-// excluded from the ladder set. boardRuntimeMin(600) IS a valid hold (§E-6
-// exception to the 800 floor), so it is a ladder rung. Exact match => OK; a
-// value inside [floor, tuneMax] but off-ladder => warn (HOLD_ODD, listed);
-// anything outside => violation (HOLD_OOR).
-const HOLD_LADDER = [
-  H.boardRuntimeMin, H.floor, H.supportRead, H.content,
-  H.answer, H.backspace, H.clear, H.send, H.exit,
-]; // 600, 800, 1000, 1200, 1600, 1800, 2000, 2200, 2400
+// The allowed holds (law 2). AMENDED 9/17 (dad's ruling, ux-contract §C): there
+// is no invented rung ladder any more — the field ships ONE dwell per user, so
+// the only legal holds on a page are HER dwell, twice it for the two doors that
+// leave the screen (🚪 / 💬), and the two reading targets that are deliberately
+// off the dwell (support read 1000, under it; prediction slots 2000, above it).
+// `dwell` is whatever the hub's GET /settings says right now, so the set moves
+// with Settings instead of pinning numbers here. Exact match => OK; a value
+// inside [floor, tuneMax] but off the set => warn (HOLD_ODD, listed); anything
+// outside => violation (HOLD_OOR).
+function holdSet(dwellMs) {
+  return [dwellMs, holdForExit(dwellMs), H.supportRead, CONTRACT.prediction.holdMs];
+}
+
+// Her dwell, read ONCE from the hub under audit (the same server the pages load
+// from). If /settings can't be reached we fall back to the contract default
+// rather than failing the audit on a network hiccup.
+let _dwellMs = null;
+export async function hubDwellMs() {
+  if (_dwellMs != null) return _dwellMs;
+  try {
+    // GET /settings waits on a gaze-bus probe — a hung probe must not hang the
+    // whole audit, so cap the read and fall through to the contract default.
+    const r = await fetch(BASE + "/settings", { signal: AbortSignal.timeout(5000) });
+    const s = await r.json();
+    if (Number.isFinite(s.dwellMs)) _dwellMs = s.dwellMs;
+  } catch { /* hub not answering /settings — contract default below */ }
+  if (_dwellMs == null) _dwellMs = CONTRACT.dwellEngine.ms;
+  return _dwellMs;
+}
 
 // Config handed to the in-page MEASURE fn (page.evaluate can't import the module).
-function measureConfig(vp) {
+function measureConfig(vp, dwellMs) {
   return {
     sizeFloor: +(SIZE_FLOOR_1920 * (vp.w / 1920)).toFixed(1),
     is1920: vp.w >= 1920,
@@ -72,7 +94,8 @@ function measureConfig(vp) {
                                // floor, so the W("GAP") band below is empty by
                                // construction (the board draws exactly the floor)
     park: CONTRACT.parkCorner, // {x01, y01}
-    ladder: HOLD_LADDER,
+    ladder: holdSet(dwellMs),  // {dwell, 2*dwell, 1000, 2000} — dad 9/17
+    retired: [1600, 1800, 2200], // the old invented rungs (see law 2 below)
     holdBandLo: H.floor,       // 800
     holdBandHi: H.tuneMax,     // 3000
     adjEps: 1.5,               // touching/shared-edge tolerance (full-bleed rows)
@@ -160,13 +183,19 @@ function MEASURE(C) {
       W("GAP", `${rects[i].label}|${rects[j].label} ${d.toFixed(1)}`);
   }
 
-  // --- law 2: data-dwell-ms on the hold ladder ---
+  // --- law 2: data-dwell-ms is her dwell, 2x it (a door), or a reading target ---
   for (const { el, label } of rects) {
     const raw = el.getAttribute("data-dwell-ms");
     if (raw == null) continue;               // inherits engine default — not a per-tile claim
     const ms = Number(raw);
     if (!Number.isFinite(ms)) { V("HOLD_OOR", `${label} "${raw}"`); continue; }
-    if (C.ladder.includes(ms)) continue;     // exact ladder rung => OK
+    if (C.ladder.includes(ms)) continue;     // one of the four legal holds => OK
+    // A retired rung (1600/1800/2200, gone 9/17). Membership above is checked
+    // FIRST on purpose, so 2 x 800 = 1600 or a configured dwell of 1800 stays
+    // legal; this guard exists for one release only, so a markup literal the
+    // migration missed (pencil index.html still carries data-dwell-ms="1600")
+    // lands as a violation instead of a warn.
+    if (C.retired.includes(ms)) { V("HOLD_RETIRED", `${label} ${ms}`); continue; }
     if (ms >= C.holdBandLo && ms <= C.holdBandHi) W("HOLD_ODD", `${label} ${ms}`);
     else V("HOLD_OOR", `${label} ${ms}`);
   }
@@ -281,7 +310,7 @@ export const STATES = [
   { id: "/board/", path: "/board/" },
 ];
 
-async function measureAt(browser, path, vp, setup) {
+async function measureAt(browser, path, vp, setup, dwellMs) {
   const ctx = await browser.newContext({ viewport: { width: vp.w, height: vp.h } });
   // hermetic: no ElevenLabs, no logging, deterministic speech
   await ctx.route("**/log", (r) => r.fulfill({ status: 204, body: "" }));
@@ -299,7 +328,7 @@ async function measureAt(browser, path, vp, setup) {
     .catch(() => {});
   await page.waitForTimeout(400); // let fit/layout + any async render finish
   if (setup) await page.evaluate(setup);   // drive into an in-lesson state
-  const m = await page.evaluate(MEASURE, measureConfig(vp));
+  const m = await page.evaluate(MEASURE, measureConfig(vp, dwellMs));
   for (const e of pageErrors) m.violations.push({ code: "PAGEERROR", detail: e.slice(0, 120) });
   await ctx.close();
   return m;
@@ -317,8 +346,9 @@ export async function auditPath(browser, pathOrState) {
   const st = typeof pathOrState === "string" ? { id: pathOrState, path: pathOrState } : pathOrState;
   const viewports = [];
   const violations = [], warns = [];
+  const dwellMs = await hubDwellMs();   // her dwell, once per run (law 2)
   for (const vp of CONTRACT.gateViewports) {
-    const m = await measureAt(browser, st.path, vp, st.setup);
+    const m = await measureAt(browser, st.path, vp, st.setup, dwellMs);
     const tag = `@${vp.w}x${vp.h}`;
     const v = fmt(m.violations), w = fmt(m.warns);
     viewports.push({ vp, nTargets: m.nTargets, violations: v, warns: w });
