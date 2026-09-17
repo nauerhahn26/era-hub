@@ -136,8 +136,10 @@ called a top last month) is corrected with the hold sheet; the `attrsAt` door st
 ## 4. What she sees
 
 All boards are built server-side in `clothing-worker.js`; the board learns nothing new
-to render them. Every garment/outfit tile gains `items: [id…]` (one id on a garment
-tile, the `combo` ids on an outfit tile) so the board can name what is under a finger.
+to render them. Every garment/outfit tile gains `items: [{id, name, category, occasion}…]`
+(one entry on a garment tile, the `combo` entries on an outfit tile) so the board can
+name what is under a finger without parsing labels. (Amended at planning, 9/17: the
+plan's T5/T7/T8 depend on objects, not bare ids.)
 
 ### 4.1 Boards
 
