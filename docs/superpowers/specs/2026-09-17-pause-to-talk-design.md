@@ -1,0 +1,235 @@
+# Pause to talk — design
+
+**Date:** 2026-09-17 · **Asked by:** dad ("new feature: pause to talk") ·
+**Branch:** `feat/pause-to-talk` (era-hub), with matching branches in
+era-core, era-board, era-making-words, era-pencil.
+
+## 1. The ask
+
+She is in the middle of an app — a song half played, a book open at page
+six, a word half spelled — and needs to say something. Today the only way to
+TD Snap is the 🚪, and the 🚪 closes the app: when she comes back the app
+starts over. Dad wants a second door, **💬, top centre of the header**, that
+takes her straight to TD Snap and *pauses* the app instead, so that picking
+the same app's tile in TD Snap brings her back **exactly where she left off**
+— the song picks up mid-song, the book on the same page.
+
+Every app gets it: the boards (songs, movies, outfits), the Book Reader,
+Making Words, The Pencil. The Reader has no header today and gains one.
+
+## 2. Today's round trip (what changes)
+
+| | today | after |
+|---|---|---|
+| leaving | 🚪 → `POST /kiosk/exit` → hub asks ERAgaze `/app/exit` (foregrounds TD Snap) **and kills the kiosk browser** | unchanged for 🚪. 💬 → `POST /kiosk/pause` → hub foregrounds TD Snap and **leaves the kiosk alive, minimized** |
+| coming back | TD Snap tile → `RaeGaze\<App>.bat` → `start-hub.bat`, which `wmic`-kills any kiosk and launches a fresh one at the app's URL | `start-hub.bat` first asks the hub `POST /kiosk/resume`; if **that app** is paused the hub brings its window forward and the bat stops. Otherwise the bat does exactly what it does today |
+
+Nothing in the gaze engine changes. The engine is on both devices as
+compiled C#; everything here is hub, launcher and app code.
+
+## 3. The hub (era-hub `server.js`)
+
+### 3.1 `POST /kiosk/pause`  body `{ "path": "/board/?recipe=songs" }`
+
+1. Remember `paused = { path, when: Date.now() }` — in memory only; a hub
+   restart forgets it (the kiosk it named is gone too).
+2. `enginePost("/app/park", "{}")` — drop the app's park override so the
+   corner park returns while she is in TD Snap (exactly what `/kiosk/exit`
+   does on the "home" leg).
+3. Minimize our kiosk windows: the existing `stepAsideFromKiosk()` shape
+   (PowerShell over `Win32_Process … -like '*kiosk-profile*'`, `ShowWindow
+   MINIMIZE`). Windows only; on other platforms step 3–4 are no-ops and the
+   answer is still `paused`.
+4. Foreground the AAC app: `explorer.exe <ForegroundApp>`, where
+   `ForegroundApp` is read from the engine's `GET /config` (it is the value
+   `/app/exit` itself uses, and a family may have changed it in
+   ERAgaze.json); default `shell:AppsFolder\TobiiDynavox.Snap_626b2w651dr5w!App`
+   when the engine does not answer.
+5. Answer `{ "action": "paused" }`.
+
+`exitTarget()` gate: when the door goes "home" (Settings, or no engine on the
+bus — VM, dev browser), pause is meaningless (home lives in the same kiosk),
+so the hub answers `{ "action": "home" }` and does none of the above. The
+apps never mount 💬 in that case (§5), so this leg is a belt for a stray
+POST, not a path she can reach.
+
+### 3.2 `POST /kiosk/resume`  body `{ "path": "/board/?recipe=songs" }`
+
+- No `paused`, or `paused.path` ≠ body path (compared after trimming and
+  lower-casing — `/reader/` vs `/reader` are the same app) → **409**
+  `{ "action": "launch" }`. The launcher then kills-and-launches as today,
+  which also disposes of any paused app that is *not* the one she picked.
+- Match → restore + foreground the kiosk window (`ShowWindow RESTORE` +
+  `SetForegroundWindow` on the first kiosk-profile process with a main window
+  — the shape the welcome-page "settle" already uses at server.js ~L359),
+  clear `paused`, answer **200** `{ "action": "resumed" }`.
+- Match but no kiosk window found (someone closed it by hand) → clear
+  `paused`, **409** `launch`.
+
+Neither endpoint is `ownDoor`-guarded, like `/kiosk/exit`: the launcher
+calls `/kiosk/resume` from `curl` (no `Sec-Fetch-Site`), and neither door
+can delete or spend anything — the worst a hostile tab could do is park her
+in TD Snap, which the 🚪 already allows.
+
+### 3.3 `GET /settings`
+
+Adds `pauseGoes: "tdsnap" | "home"` — the same probe as `doorGoes` (it *is*
+`doorGoes`; a separate key so an app can tell "no pause here" apart from an
+old hub that never heard of it: an older hub omits the key and the apps
+treat a missing key as `home`).
+
+## 4. The launcher (`tools/build-payload.sh` → `start-hub.bat`)
+
+Between the "already running? just open the page" probe and the `wmic`
+terminate, one guarded step:
+
+```bat
+rem Paused app? (💬 door, 9/17) The hub brings the paused kiosk forward when
+rem this is the SAME app she paused; anything else answers 4xx and we open
+rem the page the usual way below.
+curl.exe -s -f -o NUL --max-time 4 -X POST -H "Content-Type: application/json" --data "{\"path\":\"%OPEN%\"}" http://127.0.0.1:%PORT%/kiosk/resume
+if not errorlevel 1 goto done
+```
+
+- `curl -f` exits 22 on a 4xx, so `errorlevel 1` is exactly "not resumed".
+- No hub running → the earlier probe already failed and the hub is starting;
+  the resume call fails too and the normal launch follows. Correct: a fresh
+  hub has nothing paused.
+- Still plain `curl.exe` + `wmic`, no scripted shell (the Defender law
+  pinned by `tests/start-hub-bat.test.mjs`, which gains an assertion that the
+  resume line sits *before* the `wmic` terminate and *after* the `:open`
+  label).
+- `%OPEN%` holds `?` and `=`; it is inside double quotes inside the JSON
+  string, which cmd passes through untouched (the same rule that fixed the
+  Music/Movies icons, T7.6b). The bat test pins this line byte-for-byte.
+
+## 5. The bar (era-core `lib/doorbar.js` + `doorbar.css`)
+
+`mountDoorBar` moves out of era-board's `board-render.js` into era-core so
+all five apps share one bar. Same look and law as today, plus one door:
+
+- **🚪** top-left, as today: `dwellMs = holds.exit` (2400), silent, `onLeave`
+  then `/kiosk/exit`.
+- **💬** **top centre** (absolutely centred in the bar, same height as 🚪,
+  same 2:1 width): `dwellMs = holds.exit` — it takes her off the screen, the
+  same consequence tier as 🚪; no new number (whitelist principle,
+  ux-contract). `data-dwell-say="talk"`, `aria-label="talk"`.
+  Click → `onPause()` (the app's hook, §6) then `POST /kiosk/pause` with the
+  app's path; on `{action:"paused"}` nothing more — the window is about to
+  be minimized under her. On anything else (`home`, network error) fall back
+  to the 🚪 behaviour: `onLeave()` + `/kiosk/exit`. The app must not be
+  left silent *and* on screen.
+- 💬 is mounted only when `/settings` says `pauseGoes === "tdsnap"`. The bar
+  is mounted before `/settings` returns on the splash (the board's 9/3 rule:
+  a door from the first paint), so the bar exposes `setPause(on)` and the
+  app calls it once settings land; 💬 appears then. On the VM and in a dev
+  browser the bar looks exactly as it does today.
+- `sizeBar()` sizes both doors from the same `--bar-inner`; the partner
+  strip keeps its right-hand slot (board-partner.js reads `--bar-inner`,
+  unchanged). Centre and right must not overlap at 1280 px: the strip is
+  right-anchored and ≤ a third of the bar wide today; the 💬 is 2×inner
+  ≈ 2×(9 % of 720) ≈ 130 px. Pinned by a layout test.
+
+**Board law amended (dad, 9/17):** *the message bar carries the two doors —
+🚪 and 💬 — and nothing else; they are its only dwell targets.* The 9/4
+partner-strip amendment stands. `docs/board-design-rules` (era-board) gets
+the line; `board-render.js`'s header comment points at era-core.
+
+## 6. In each app
+
+One contract, five implementations. Each app registers two hooks with the
+bar and one listener:
+
+- `onPause()` — stop making sound, remember where you are, set
+  `S.paused = true`. Called before `/kiosk/pause`.
+- `onResume()` — pick up where you were, re-post your park override (what
+  you posted at boot), `S.paused = false`.
+- `document.addEventListener("visibilitychange", …)`: on `visible`, **only
+  if `S.paused`**, call `onResume()`. A hidden→visible flip that was *not*
+  a pause (the movies picker under a streaming kiosk, a partner alt-tabbing)
+  changes nothing.
+
+Per app:
+
+| app | `onPause` | `onResume` |
+|---|---|---|
+| **boards** (era-board) | `music-player.js`: pause the `<audio>`, keep the element and position (it already keeps a paused spot per clip); stop speech | `audio.play()` on the kept element; nothing if nothing was playing |
+| **Book Reader** (era-hub) | stop narration/clip, keep `S.page`; stop speech | resume the clip from its kept `currentTime`, else re-narrate the current page from the top (a half-read sentence is not a place a child wants to resume at) |
+| **Making Words** (era-making-words) | stop speech; the lesson state is already in memory | nothing — the letters are where she left them |
+| **The Pencil** (era-pencil) | stop speech | nothing — the page is as she left it |
+
+`dwell.js` gets no changes: a minimized window receives no pointer events,
+and on return the bar calls `Dwell.suppress(600)` (the partner sheet's
+settle window) so a gaze parked where the 💬 was does not fire it twice.
+
+### 6.1 The Reader's new header (era-hub `public/reader/`)
+
+The Reader has no header today; its 🚪 is a "Back to TD Snap" tile on the
+shelf. It mounts the shared bar on **both** the shelf and the page view,
+takes `barHeight(innerHeight)` off the top of its layout the way the board
+does (`--bar-h` custom property; shelf grid and page canvas both `top:
+var(--bar-h)`), and the shelf's exit tile is **removed** — the header door
+replaces it, one door per screen. The book-page's own nav (page turn, back
+to shelf) is untouched.
+
+## 7. Edges, decided
+
+- **Different app while paused:** she pauses Songs, picks Movies → 409,
+  the bat kills the Songs kiosk and launches Movies. Only the same app
+  resumes. `paused` is cleared whenever it can no longer be true: on a
+  refused resume for a different path (that launch kills the paused kiosk)
+  and on every `/kiosk/exit`.
+- **Long pause:** no expiry in v1. A minimized Chrome costs memory and
+  nothing else; if it ever bites, `lockMinutes`-style expiry is a one-line
+  follow-up in `/kiosk/resume`.
+- **Hub restarts while paused:** `paused` is gone; the tile launches fresh.
+  The orphan kiosk is killed by the bat's `wmic` line as today.
+- **She hits 💬 with nothing playing:** still a valid pause — the point is
+  the *place*, not the sound.
+- **Partner strip / media lock while paused:** untouched; a locked board
+  resumes locked (lock state is localStorage).
+- **🚪 while paused:** unreachable — the kiosk is not in front.
+- **Two doors, one bar, gaze in the middle of the screen:** the 💬 sits in
+  the top-centre strip, above the grid's top row and its centre column;
+  dwell targets never overlap (the bar is its own box, as today).
+
+## 8. Testing
+
+- **era-hub unit** (`tests/`): `/kiosk/pause` and `/kiosk/resume` with the
+  engine and `spawn` stubbed — records/clears `paused`, 200 vs 409, path
+  normalisation, `home` gate, `ForegroundApp` from `/config` with default.
+- **`tests/start-hub-bat.test.mjs`:** the resume line, its position, no
+  scripted shell.
+- **era-board Playwright:** the bar carries exactly two `.dwell` targets;
+  💬 absent when `pauseGoes` is `home`; 💬 hold = exit hold; 💬 click
+  pauses audio + POSTs `/kiosk/pause`; a `visibilitychange` to visible
+  with `S.paused` resumes the audio at the kept position; without `S.paused`
+  does nothing; centre door and partner strip do not overlap at 1280×720.
+- **Reader Playwright:** header on shelf and page; no shelf exit tile;
+  narration pause/resume by page.
+- **Making Words / Pencil:** their own suites — bar present, two doors,
+  speech stops on 💬.
+- **Device:** `push-device` to the tablet (dry-run dist); a real round trip
+  from a TD Snap tile: Songs mid-song → 💬 → TD Snap → Songs tile → same
+  song continues. Then Reader mid-book; then Movies → 💬 → Songs tile
+  (different app) → Songs opens fresh, Movies gone.
+
+## 9. Order of work
+
+1. era-hub: `/kiosk/pause`, `/kiosk/resume`, `pauseGoes`, launcher line —
+   with tests. Landable on its own (no app uses it yet).
+2. era-core: `lib/doorbar.js` + css, two doors, `setPause`, hooks — tests.
+3. era-board: import the shared bar, delete its own `mountDoorBar`, music
+   hooks — tests; board law amended in its docs.
+4. era-hub Reader: header + hooks, shelf tile removed — tests.
+5. era-making-words, era-pencil: bar + hooks — tests.
+6. Gate, `push-device` to the tablet, the device round trips of §8.
+7. Release as a patch (v0.33.x) once dad has used it.
+
+## 10. Out of scope
+
+- Pausing an external streaming app (Disney+/Prime) — the board never plays
+  video and the engine's watch mode owns those kiosks.
+- An engine-side `/app/pause` — not needed; revisit only if foregrounding
+  from the hub proves flaky on a device.
+- Expiry of a paused app (§7).
