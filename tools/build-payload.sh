@@ -9,6 +9,13 @@
 set -euo pipefail
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
+# ERA_WT_SUFFIX (9/17): a multi-repo feature keeps sibling worktrees
+# (<repo>--wt-<slug>); when set and that directory exists, source the
+# sibling from there, else from the main checkout as before. A dry-run cut
+# from a hub worktree otherwise ships MASTER's apps under the feature's hub.
+# era-gaze (engine source) and era-family (the private cache) have no feature
+# worktrees and stay on $ROOT.
+sib() { local d="$ROOT/$1${ERA_WT_SUFFIX:-}"; [ -d "$d" ] && echo "$d" || echo "$ROOT/$1"; }
 # Default output lives INSIDE this checkout (worktree-safe: the old $ROOT/dist
 # default made a worktree run rm -rf the main checkout's reference payload).
 # `--with-node` as the first arg is a flag, not an output dir.
@@ -91,22 +98,22 @@ if ytdlp_sha_ok; then
   mkdir -p "$OUT/vendor/yt-dlp"
   cp "$YTDLP" "$OUT/vendor/yt-dlp/yt-dlp.exe"
 fi
-cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$HUB/../era-core/NOTICE" "$OUT/" 2>/dev/null || true
+cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$(sib era-core)/NOTICE" "$OUT/" 2>/dev/null || true
 # apps + shared foundation - COPIES, never symlinks
-cp -rL "$ROOT/era-core/lib" "$OUT/public/lib"
-cp "$ROOT/era-core/dwell.js" "$ROOT/era-core/speech.js" "$OUT/public/"
-cp "$ROOT/era-making-words/app/index.html" "$ROOT/era-making-words/app/studio.js" "$OUT/public/"
+cp -rL "$(sib era-core)/lib" "$OUT/public/lib"
+cp "$(sib era-core)/dwell.js" "$(sib era-core)/speech.js" "$OUT/public/"
+cp "$(sib era-making-words)/app/index.html" "$(sib era-making-words)/app/studio.js" "$OUT/public/"
 # lesson content ships with the app (dad's 8/28 ruling) — the PUBLIC copy in
 # era-making-words/content, never the family one (runway/sentences stay home)
-cp "$ROOT/era-making-words/content/lessons.json" "$OUT/public/lessons.json"
+cp "$(sib era-making-words)/content/lessons.json" "$OUT/public/lessons.json"
 # ERAgaze engine SOURCE ships (dad 8/29: gaze is the point of the product).
 # The hub compiles it on-device with Windows' built-in csc and pairs it with
 # the Tobii runtime already present on Tobii devices (NuGet fallback) — we
 # never redistribute Tobii's binaries.
 mkdir -p "$OUT/gaze"
 cp "$ROOT/era-gaze/device/ERAgaze.cs" "$OUT/gaze/ERAgaze.cs"
-cp -r "$ROOT/era-pencil/app" "$OUT/public/pencil"
-cp -r "$ROOT/era-board/app" "$OUT/public/board"
+cp -r "$(sib era-pencil)/app" "$OUT/public/pencil"
+cp -r "$(sib era-board)/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"
 cp -r "$HUB/public/home" "$OUT/public/home"
 cp -r "$HUB/public/reader" "$OUT/public/reader"

@@ -35,6 +35,11 @@ verification command listed, STOP conditions listed. Builders are Opus agents
 
 No blockers.
 
+Dad's answers at go (9/17): the Reader's header is **thin like the music
+board's** (`barHeight(innerHeight)` = min(124 px, 9 % of the viewport) — no
+taller); §A-9 settled — **Making Words' chooser tiles take normal dwell** like
+every other control.
+
 ## §B Tasks
 
 ### Phase 0 — worktrees and the contract
