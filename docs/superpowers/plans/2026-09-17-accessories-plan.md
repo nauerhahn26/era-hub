@@ -393,3 +393,12 @@ trip is still owed post-push.
 - Settings wardrobe list on the same route (the 9/4 "too busy" ruling stands for now).
 - Tracked outfit + jacket (3-id combos) if dad wants the Yes to carry it.
 - Prune `<DATA>/clothing/.era` and the growing `tags/` files (known since 9/6).
+- **Re-sort today's board after a self-update.** Found on the 9/17 push of v0.34.1 to
+  the tablet: the hub came up new but `/recipes/today.json` was the OLD graph (no
+  `categories`, old Build my own) until a `POST /clothing/regenerate` by hand — the
+  worker only re-deals at the 5 am cutoff or on a photo change, so a graph-shape
+  change is invisible for up to a day and the hold sheet does not mount. Fix: the
+  startup tick should `rebuildToday()` when the recipe's writer build stamp (add one
+  to the recipe root) differs from the running hub's.
+- "Accessories" is the widest label on today and fills its tile edge-to-edge at
+  1280×720 — a shorter word if dad wants one.
