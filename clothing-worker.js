@@ -55,7 +55,8 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape, attributes } = require("./clothing-rank.js");
+const { dayKey, buildCandidates, toWorkerShape, attributes,
+        GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
 // asked about this garment" marker carries (spec §3.2, plan A4-5/A4-8).
@@ -420,10 +421,26 @@ const ATTRS_ASK =
   '"statement": true if it is a loud print/graphic piece that wants a plain partner, ' +
   '"palette": one of "warm","cool","neutral","pastel", ' +
   '"vibe": one of "sweet","sporty","graphic","basic"';
+// The eleven words, written out of clothing-rank's own lists (accessories spec
+// §3.3, preflight 1): the prompt, the whitelist below and the pools all read
+// the SAME list, so a kind cannot be asked for and then filed as a "top" — the
+// drift the inline whitelist at the item writer used to invite. The jacket
+// definition is the sentence that decides most of a real wardrobe: without it
+// the model calls a hoodie a top (which is exactly what happened to the
+// family's own, spec §3.5), and a pullover sweater IS a top.
+const KIND_WORDS = [...GARMENT_KINDS, ...ACCESSORY_KINDS.map(k => k.id)]
+  .map(w => '"' + w + '"').join(",");
+const CATEGORY_ASK =
+  '"category": one of ' + KIND_WORDS + ' — ' +
+  '"jacket" is an outer layer worn over another top and taken off indoors ' +
+  '(jacket, coat, hoodie, cardigan, zip fleece, vest; a pullover sweater is a "top"); ' +
+  '"set" is a matching top and bottom; "hair" is a hair accessory (clip, band, bow); ' +
+  '"jewelry" is a necklace, bracelet, ring or earrings, ' +
+  '"occasion": "fancy" only if it is party, holiday or dress-up wear, else "everyday", ';
 const INGEST_PROMPT =
-  'This photo shows one clothing item (or a matching set) laid flat. Reply with ONLY a JSON object, no prose: ' +
+  'This photo shows one clothing item, accessory or matching set laid flat. Reply with ONLY a JSON object, no prose: ' +
   '{"name": a SHORT name, 2-3 words max, like "Pink leggings" or "Daisy tee" (a child picks by picture; long names do not fit the button), ' +
-  '"category": one of "top","pants","shorts","dress","set", ' +
+  CATEGORY_ASK +
   '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
   '"top_side": which EDGE of this photo the garment\'s top is nearest - the neckline/shoulders of a top or dress, the WAISTBAND of pants or shorts - one of "top","bottom","left","right", ' +
   '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the image bounding the garment - exclude floor, table, carpet, but never cut into the garment, ' +
@@ -493,6 +510,10 @@ async function callModel(cfg, jpgFile, model, prompt) {
     // 480, not 300: the reply gained colours, pattern, statement, palette and
     // vibe (spec §3.1 item 2) and a truncated one is a JSON.parse throw — a
     // generic error the ladder answers by spending the next model (W6).
+    // The accessories cut (9/17) lengthened the PROMPT, not the answer: the
+    // reply gained one short field ("occasion":"everyday", ~8 tokens) on an
+    // answer measured at 245 bytes / ~70 tokens, so the cap is untouched in
+    // all three provider blocks.
     body = { model, max_completion_tokens: 480,
       messages: [{ role: "user", content: [
         { type: "image_url", image_url: { url: "data:image/jpeg;base64," + b64 } },
@@ -621,7 +642,11 @@ function tagsFor(id, hash) { return log().tagsFor(shared(), id, hash); }
 // has already been through the whitelist on its way into wardrobe.json.
 function shareTag(it) {
   if (!it || !it.id) return;
+  // `occasion` rides along like every other answer (spec §3.4); `hidden`,
+  // `manualAt` and `manual` deliberately do NOT — this is the MODEL's line,
+  // and only the route that a parent pressed writes a manual one (spec §5.1).
   log().appendTag({ id: it.id, hash: it.hash, name: it.name, category: it.category,
+    occasion: it.occasion,
     warmth: it.warmth, colors: it.colors, pattern: it.pattern, statement: it.statement,
     palette: it.palette, vibe: it.vibe, rotate_deg: it.rotate_deg || 0, crop: it.crop || {} });
 }
@@ -800,6 +825,7 @@ async function namePhotos(cfg, cat, todo) {
           // would hand the garment back to the needs-attributes pass and buy
           // them a second time (W4).
           meta = { name: known.name, category: known.category, warmth: known.warmth,
+                   occasion: known.occasion,
                    rotate_deg: legacy ? 0 : known.rotate_deg || 0, crop: known.crop || {},
                    colors: known.colors, pattern: known.pattern, statement: known.statement,
                    palette: known.palette, vibe: known.vibe };
@@ -811,6 +837,7 @@ async function namePhotos(cfg, cat, todo) {
           // comes from the rotate_deg the tagging device wrote (W5) — without
           // it a sideways photo would draw a sideways tile on this device.
           meta = { name: sharedTag.name, category: sharedTag.category, warmth: sharedTag.warmth,
+                   occasion: sharedTag.occasion,
                    rotate_deg: sharedTag.rotate_deg || 0, crop: sharedTag.crop || {},
                    colors: sharedTag.colors, pattern: sharedTag.pattern, statement: sharedTag.statement,
                    palette: sharedTag.palette, vibe: sharedTag.vibe };
@@ -854,9 +881,16 @@ async function namePhotos(cfg, cat, todo) {
         // sha256 of the photo's own bytes, which is how another device's
         // shared tag finds this garment when the filename differs (spec §3.1
         // item 1). attrsAt is stamped only when a model actually answered.
+        // `hidden` and `manualAt` are carried by the `...known` spread alone:
+        // they are a PARENT's fields (accessories spec §3.2) and nothing on
+        // this path — not the model, not another device's tag — may write them.
+        // `category` and `occasion` are rewritten from `meta`, which on a
+        // redraw is the entry's own word (so a parent's "jacket" survives a
+        // tile repair) and on a shared tag is the family's.
         cat.items[f] = { ...(known || {}), id, ok: true, name: shortLabel(meta.name),
           rotate_deg: rot, crop: hint || {}, exif: orient,
-          category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
+          category: CATEGORIES.has(meta.category) ? meta.category : "top",
+          occasion: OCCASIONS.includes(meta.occasion) ? meta.occasion : "everyday",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any",
           ...attributes(meta), hash, ...(usedAi || sharedTag ? { attrsAt: todayKey() } : {}) };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
@@ -892,6 +926,95 @@ async function namePhotos(cfg, cat, todo) {
   return { done: todo.length, landed, left: todo.length - landed, quotaHit: quotaCount > 0,
     busy: busyCount > 0 && (busyCount + quotaCount) === todo.length,
     quota: quotaCount > 0 && (busyCount + quotaCount) === todo.length && quotaCount >= busyCount };
+}
+
+// ---- the manual sweep (accessories spec §3.4) ------------------------------
+// A parent LOOKED at the garment; the model guessed at it. So a manual
+// correction outranks the model for ever, on every device — and the only way
+// to mean "for ever" is to re-apply it at the top of every build, a full one
+// and a weather re-sort alike (preflight 3), before a single look is dealt.
+//
+// Two places a correction comes from, read the same way:
+//   * <DATA>/wardrobe/edits.json — this device's own, written by the route the
+//     parent pressed (spec §5.1). A device never reads its OWN lines back out
+//     of the mirror (A4-9), which is the whole reason its own edits need a
+//     local file as well as a shared line.
+//   * the merged tags map — every other device's manual lines, already reduced
+//     to the newest manual line per id/hash (clothing-log's `beats`).
+// The newer `t` of the two wins, it applies only if it is newer than the stamp
+// the entry already carries, and it stamps `manualAt` with its own clock.
+//
+// `manualAt` is the winning edit's OWN `t`, a full ISO instant — not the
+// `YYYY-MM-DD` spec §3.2 asked for (T4, measured). A day stamp is the family's
+// day, `dayKey(t, tz)`, and in a zone ahead of UTC that day is TOMORROW's date
+// for the last hours of the evening: the stamp "2026-09-18" then sits above
+// every `t` a parent can produce until midnight UTC, and the second correction
+// of the evening — the parent fixing a mistake twice in one minute, which is
+// the ordinary case — is silently refused. An instant compares exactly, in any
+// zone, and still begins with the day it happened, so `manualAt >= dayKey(t)`
+// (the route's 60-day prune rule, T6) reads the same. The apply is idempotent
+// — a field is written only when it differs — so the same edit re-winning
+// tomorrow costs a string compare and no write.
+const EDITS = () => path.join(DATA, "wardrobe", "edits.json");
+// READ-ONLY, always (spec §7 and the plan's choice, T4): the route owns this
+// file and prunes it on its own next write, so there is never a second writer.
+// A file that will not open or will not parse is one log line and an empty
+// map — deleting a parent's corrections because a syncer caught the file
+// mid-write is not a trade this family would make.
+function readEdits() {
+  let raw;
+  try { raw = fs.readFileSync(EDITS(), "utf8"); }
+  catch (e) {
+    if (e.code !== "ENOENT") console.error("[clothing] edits.json would not open (" + e.code + ") — building without this device's own edits");
+    return {};
+  }
+  try {
+    const e = JSON.parse(raw);
+    if (e && typeof e === "object" && !Array.isArray(e)) return e;
+  } catch {}
+  console.error("[clothing] edits.json is not a map of edits — building without this device's own edits");
+  return {};
+}
+// What a manual line is allowed to say. Same rule as the shared log's
+// (clothing-log normalizeTag): a malformed field is DROPPED and the rest of
+// the correction stands, so `hidden: "yes"` costs that writer its hide and not
+// the family its category.
+function manualFields(src) {
+  const out = {};
+  if (CATEGORIES.has(src.category)) out.category = src.category;
+  if (OCCASIONS.includes(src.occasion)) out.occasion = src.occasion;
+  if (typeof src.hidden === "boolean") out.hidden = src.hidden;
+  return out;
+}
+function applyManual(cat) {
+  const edits = readEdits();
+  let changed = 0;
+  for (const it of Object.values(cat.items)) {
+    if (!it || !it.ok || !it.id) continue;
+    const own = edits[it.id];
+    const tag = tagsFor(it.id, it.hash);          // by id, else by hash (spec §3.1 item 1)
+    const cands = [];
+    if (own && typeof own === "object" && typeof own.t === "string") cands.push(own);
+    // Only a MANUAL winner: an ordinary tag line is the model talking, and the
+    // model does not get to stamp manualAt (clothing-log carries `manual`/`t`
+    // on a manual winner alone).
+    if (tag && tag.manual === true && typeof tag.t === "string") cands.push(tag);
+    if (!cands.length) continue;
+    const win = cands.reduce((a, b) => (b.t > a.t ? b : a));
+    if (it.manualAt && win.t <= it.manualAt) continue;
+    if (!Number.isFinite(Date.parse(win.t))) continue;   // a stamp nobody can read is not a clock
+    const fields = manualFields(win);
+    if (!Object.keys(fields).length) continue;    // nothing usable was said
+    fields.manualAt = win.t;
+    let touched = false;
+    for (const [k, v] of Object.entries(fields)) if (it[k] !== v) { it[k] = v; touched = true; }
+    if (touched) changed++;
+  }
+  if (changed) {
+    saveCatalog(cat);
+    console.log("[clothing] " + changed + " garment(s) follow the family's own word, not the model's");
+  }
+  return changed;
 }
 
 // ---- weather (keyless; cached 3h; null offline = board just has no tile) ----
@@ -1051,7 +1174,15 @@ async function buildCataloged(cat) {
   // than let one missing file empty the whole board (QA 9/2: every outfit died
   // on "composite: ENOENT" and Ellie got a black screen). Ingest repairs the
   // tile on the next run; the board stays usable meanwhile.
-  const items = Object.values(cat.items).filter(i => i.ok && hasTile(i.id));
+  // ...and a garment a parent hid is not drawn at all: dropped HERE, before
+  // the deal, the grids and `present` (spec §4.1). The entry itself is kept —
+  // hiding is not deleting, and the sheet can put it back.
+  const items = Object.values(cat.items).filter(i => i.ok && i.hidden !== true && hasTile(i.id));
+  // The accessory kinds the family really has, in ACCESSORY_KINDS order: at
+  // least one ok, un-hidden item WITH A TILE, so a picture that never landed
+  // cannot produce an empty grid (spec §7). T5 draws the entry tile, the `acc`
+  // menu and the `acc_<kind>` grids from exactly this list.
+  const present = ACCESSORY_KINDS.map(k => k.id).filter(id => items.some(i => i.category === id));
 
   // The day's 21, dealt by the original's rules (spec §3.5): page 1 is her
   // staples then fresh, garment-distinct looks; yesterday's page 1 opens page
@@ -1168,7 +1299,9 @@ async function buildCataloged(cat) {
   boards.push(...gridPages("cat_shorts", "Shorts", items.filter(i => i.category === "shorts"), "choose_bottom"));
   boards.push(...gridPages("cat_dress", "Dresses", items.filter(i => i.category === "dress"), "build"));
   boards.push(...gridPages("cat_outfit", "Outfits", items.filter(i => i.category === "set"), "build"));
-  return boards;
+  // Every browse grid above asks for a GARMENT word, so an accessory can fall
+  // into none of them (preflight 2) — it gets its own pages in T5.
+  return { boards, present };
 }
 
 // No catalog yet -> no board. Decide which coaching state the splash shows.
@@ -1224,6 +1357,9 @@ async function regenerate(force) {
     // has no say over either (A4-8).
     attrsDone: (ing && ing.attrsDone) || 0, attrsLeft: (ing && ing.attrsLeft) || 0 };
   const cat = loadCatalog();
+  // The family's own word, re-applied before anything is dealt — on BOTH build
+  // paths, because the one the route asks for is the re-sort (preflight 3).
+  applyManual(cat);
   const haveCatalog = Object.values(cat.items).some(i => i.ok);
   if (!haveCatalog) {
     clearPlainRecipe();
@@ -1237,7 +1373,7 @@ async function regenerate(force) {
     storeSig(sig);
     return { guidance, photos: photos.length, ...tally };
   }
-  const boards = await buildCataloged(cat);
+  const { boards, present } = await buildCataloged(cat);
   fs.mkdirSync(RECIPES(), { recursive: true });
   fs.writeFileSync(path.join(RECIPES(), "today.json"), JSON.stringify({
     locale: "en-US", root: "today", home_label: "Clothing", boards }, null, 1));
@@ -1246,7 +1382,11 @@ async function regenerate(force) {
     (tally.left ? ", " + tally.left + " photo(s) still waiting" + (tally.quotaHit ? " (daily allowance)" : "") : ""));
   // historyUnread only when it really happened: the shell reads it as "this
   // board is not the day's work, build again on the next tick" (r3).
+  // `accessories` is the kinds this build could really offer (spec §4.1
+  // `present`), reported the way every other build fact is — the shell hands
+  // the whole object back to whoever asked for the build.
   return { built: boards.length, mode: "cataloged", photos: photos.length, ...tally,
+           accessories: present,
            ...(historyUnread ? { historyUnread: true } : {}) };
 }
 

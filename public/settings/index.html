@@ -210,6 +210,11 @@
          key went missing or a batch of photos started naming — exactly when a
          parent goes looking. -->
     <div class="status" id="picksStatus"></div>
+    <!-- …and what she can reach BESIDES the outfits (accessories spec §5.2):
+         the jackets, shoes and the rest the model has filed, plus anything a
+         grown-up has hidden from her board with the hold sheet. Its own line
+         under the picks read-out, and silent until there is something to say. -->
+    <div class="status" id="accStatus"></div>
   </div>
 
   <div class="card" id="content">
@@ -975,6 +980,7 @@ async function aiPaint(){
     // to blank it — a payload shape picksPaint cannot walk would otherwise
     // abort aiPaint before the chain, on every five-second repaint (review r1).
     try{ picksPaint(s); }catch(e){}
+    try{ accPaint(s); }catch(e){}
     // no library-wide count here either: the batch total shifts as Drive keeps
     // materialising files (dad 9/1)
     if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos…</b> "+s.ingesting.done+" done so far.";
@@ -1040,6 +1046,32 @@ function picksPaint(s){
                  :"Shared through your Google Drive folder — no other device has written to it yet.");
   }
   el.innerHTML=h;
+}
+// ---- Accessories: what else is on her board, and what is off it -----------
+// One sentence from /clothing/status' `accessories` block (accessories spec
+// §5.2): "Accessories: 4 jackets, 1 shoes · 2 hidden items". The KINDS come
+// from the hub in the order she meets the tiles in, and the words are the
+// hub's own — this page keeps no list of accessory kinds, so it cannot drift
+// from the worker's. They are text from the family's own data all the same, so
+// they go through CT_ESC like a garment name does.
+// Nothing at all when there is nothing to say: a parent with no accessories
+// and nothing hidden is owed silence, not "Accessories: 0".
+function accPaint(s){
+  const el=$("accStatus"); if(!el) return;
+  const a=s&&s.accessories;
+  const kinds=(a&&Array.isArray(a.kinds)?a.kinds:[]).filter(k=>k&&Number(k.count)>0);
+  const hidden=Number(a&&a.hidden)||0;
+  if(!kinds.length&&!hidden){ el.innerHTML=""; return; }
+  const parts=[];
+  // "shoes" is already plural; "jacket" is not, and one of it is a jacket. The
+  // hub's kind ids are the one list, so the page pluralises rather than
+  // carrying a second set of words.
+  if(kinds.length) parts.push("<b>Accessories:</b> "+kinds.map(k=>{
+    const word=String(k.kind), n=Number(k.count);
+    return CT_ESC(k.count)+" "+CT_ESC(n===1||/s$/.test(word)?word:word+"s");
+  }).join(", "));
+  if(hidden) parts.push(hidden+" hidden item"+(hidden===1?"":"s")+" (not on her board)");
+  el.innerHTML=parts.join(" &middot; ")+".";
 }
 aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
 

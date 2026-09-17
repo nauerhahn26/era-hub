@@ -12,7 +12,10 @@ const path = require("path");
 const updater = require("./update");
 const drive = require("./drive");
 const clothing = require("./clothing");
-const { dayKey } = require("./clothing-rank.js");
+// CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
+// the worker's whitelist, the pools and this hub's edit door all read it, so a
+// word cannot be a category here and a stranger three files away.
+const { dayKey, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const content = require("./content.js");
 const musicAdd = require("./music-add.js");
 const moviesAdd = require("./movies-add.js");
@@ -2556,6 +2559,144 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/clothing/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(clothing.status()));
+    return;
+  }
+
+  // POST /clothing/item {id, category?, occasion?, hidden?} — the board's
+  // hold-to-edit sheet (accessories spec §5.1, dad 9/17: "can there be a user
+  // override without too many changes to UX"). The model files a hoodie as a
+  // top; a grown-up holds the tile for 1.6 s and says otherwise, and that word
+  // must outlive every later build on every device in the family.
+  //
+  // THIS DOOR NEVER WRITES wardrobe.json (preflight 4). The catalogue has
+  // exactly one writer — the build worker, with a plain writeFileSync — and a
+  // second one on this thread would hand the family half a file. What the
+  // route writes is the QUEUE the next build reads (wardrobe/edits.json, one
+  // writer: this route) and the family's shared line; the build applies both.
+  // So a catalogue it cannot read is not a refusal of the edit — it is "not
+  // this second": 503 and the sheet says try again.
+  if (req.method === "POST" && urlPath === "/clothing/item") {
+    if (!ownDoor(req, res)) return;             // it re-files a garment family-wide — this hub's own pages only
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      const say = (code, out) => {
+        res.writeHead(code, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      };
+      // Every refusal is ONE sentence a parent reads on the sheet, in their
+      // words — the sheet prints whatever comes back, so a code word here is a
+      // code word on the board.
+      const no = (sentence) => say(400, { error: sentence });
+      const UNKNOWN = "New ERA does not know which piece of clothing that is.";
+      let b;
+      try { b = JSON.parse(body); } catch { return no("That edit did not arrive in one piece — try again."); }
+      if (!b || typeof b !== "object" || Array.isArray(b)) return no("That edit did not say what to change.");
+      if (typeof b.id !== "string" || !/^item_[0-9a-f]{4,32}$/.test(b.id)) return no(UNKNOWN);
+      // Only the three fields, each through its own list, and at least one of
+      // them: an edit that says nothing would still cost the family a shared
+      // line and a build.
+      const fields = {};
+      if ("category" in b) {
+        if (typeof b.category !== "string" || !CATEGORIES.has(b.category))
+          return no("That is not a kind of clothing New ERA knows about.");
+        fields.category = b.category;
+      }
+      if ("occasion" in b) {
+        if (!OCCASIONS.includes(b.occasion)) return no("Clothes here are either everyday or fancy.");
+        fields.occasion = b.occasion;
+      }
+      if ("hidden" in b) {
+        if (typeof b.hidden !== "boolean") return no("Hiding a piece of clothing is a yes or a no.");
+        fields.hidden = b.hidden;
+      }
+      if (!Object.keys(fields).length) return no("That edit did not change anything.");
+
+      // The catalogue, read-only. A file that is not there yet is a family
+      // with no wardrobe at all — that is "no such garment", not "busy"; a
+      // file that IS there and will not parse is the worker mid-write.
+      let items;
+      try {
+        items = JSON.parse(fs.readFileSync(path.join(DATA, "wardrobe.json"), "utf8")).items || {};
+      } catch (e) {
+        if (e.code === "ENOENT") items = {};
+        else return say(503, { error: "catalogue busy — try again" });
+      }
+      // By id across the entries, because the KEY is the photo's path under
+      // clothing/ and the board only ever knows the id.
+      const item = Object.values(items).find(i => i && i.id === b.id);
+      if (!item) return no(UNKNOWN);
+
+      // 1. the queue the next build reads. One writer (this route), through
+      // writeAtomic, so a build reading it never sees half a file.
+      const file = path.join(WARDROBE_DIR, "edits.json");
+      let store = {};
+      try {
+        const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) store = parsed;
+        else console.error("[clothing] edits.json is not a set of edits — starting a new one");
+      } catch (e) {
+        if (e.code !== "ENOENT")
+          console.error("[clothing] edits.json could not be read (" + e.message + ") — starting a new one");
+      }
+      // The parent's LATEST WORD, whole: the entry is REPLACED, never merged
+      // into. A sheet sends every row it changed, so "category only" a minute
+      // after "category and hide" means they have since decided not to hide
+      // it, and a merge would keep hiding the garment for ever.
+      store[b.id] = { ...fields, t: new Date().toISOString() };
+      // Pruned on OUR write and nowhere else (plan T4: the worker never writes
+      // this file, so there is one writer and no lock). An entry goes only
+      // when it is both old and already in the catalogue — a queue the build
+      // has not read yet outlives any clock.
+      const stamped = new Map();
+      for (const it of Object.values(items)) if (it && it.id) stamped.set(it.id, it.manualAt);
+      const OLD = 60 * 24 * 60 * 60 * 1000;
+      for (const [id, e] of Object.entries(store)) {
+        const at = Date.parse(e && e.t);
+        if (!at || Date.now() - at < OLD) continue;
+        const day = dayKey(at, clothing.zone());
+        const manualAt = stamped.get(id);
+        if (typeof manualAt === "string" && manualAt >= day) delete store[id];
+      }
+      try { contentStore.writeAtomic(file, store); }
+      catch (e) {
+        console.error("[clothing] the edit could not be written: " + e.message);
+        return say(500, { error: "That change could not be saved — try again." });
+      }
+
+      // 2. …and out to the family, AFTER the local write, exactly as a Yes
+      // goes. A COMPLETE tag line (shareTag's field set, spec §5.1 step 2):
+      // the device that receives it may never have ingested this photo, and a
+      // fragment would file the garment with no name and no warmth. Sharing
+      // off (no Drive folder) is not an error: appendTag says so and the local
+      // queue still stands.
+      if (clothingLog) {
+        try {
+          clothingLog.appendTag({
+            name: item.name, category: item.category, warmth: item.warmth,
+            colors: item.colors, pattern: item.pattern, statement: item.statement,
+            palette: item.palette, vibe: item.vibe,
+            rotate_deg: item.rotate_deg || 0, crop: item.crop || {},
+            occasion: item.occasion, hidden: item.hidden,
+            ...fields, manual: true, id: item.id, hash: item.hash });
+        } catch (e) { console.error("[clothing] the manual tag was not shared: " + e.message); }
+      }
+
+      // 3. the build. `builds` is what the sheet waits on: true when THIS edit
+      // started a rebuild-only build, false when one was already running — in
+      // which case regenerate queues a run behind it and the edit lands on
+      // that one instead (preflight 7). Either way the edit is on disk, so a
+      // false is a "not yet", never a failure.
+      let builds = false;
+      try {
+        builds = !clothing.isBuilding();
+        clothing.rebuildToday().catch(() => {});
+      } catch (e) {
+        builds = false;
+        console.error("[clothing] the board was not rebuilt after an edit: " + e.message);
+      }
+      say(200, { ok: true, builds });
+    });
     return;
   }
 
