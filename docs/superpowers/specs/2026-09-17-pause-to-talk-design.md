@@ -108,12 +108,11 @@ if not errorlevel 1 goto done
 `mountDoorBar` moves out of era-board's `board-render.js` into era-core so
 all five apps share one bar. Same look and law as today, plus one door:
 
-- **🚪** top-left, as today: `dwellMs = holds.exit` (2400), silent, `onLeave`
-  then `/kiosk/exit`.
+- **🚪** top-left, as today: hold = `holdForExit(dwell)` (§5.1), silent,
+  `onLeave` then `/kiosk/exit`.
 - **💬** **top centre** (absolutely centred in the bar, same height as 🚪,
-  same 2:1 width): `dwellMs = holds.exit` — it takes her off the screen, the
-  same consequence tier as 🚪; no new number (whitelist principle,
-  ux-contract). `data-dwell-say="talk"`, `aria-label="talk"`.
+  same 2:1 width): the same hold as 🚪 — it takes her off the screen, the
+  same consequence. `data-dwell-say="talk"`, `aria-label="talk"`.
   Click → `onPause()` (the app's hook, §6) then `POST /kiosk/pause` with the
   app's path; on `{action:"paused"}` nothing more — the window is about to
   be minimized under her. On anything else (`home`, network error) fall back
@@ -134,6 +133,39 @@ all five apps share one bar. Same look and law as today, plus one door:
 🚪 and 💬 — and nothing else; they are its only dwell targets.* The 9/4
 partner-strip amendment stands. `docs/board-design-rules` (era-board) gets
 the line; `board-render.js`'s header comment points at era-core.
+
+### 5.1 Holds: two speeds, both hers (dad's ruling, 9/17)
+
+Dad caught that the exit door was a flat 2400 ms whatever Settings said,
+and asked what the field does. The field ships **one** dwell time per user
+(TD Snap, Grid 3, Communicator; Grid 3 allows a per-cell override as a
+therapist's tool). Our content < nav < clear < send < exit ladder was our
+own invention. Ruling:
+
+- **the two doors that leave the screen — 🚪 and 💬 — hold `2 × dwell`;**
+- **everything else holds `dwell`** — nav doors (category, back, more,
+  show, board loads, movie/episode launches), Speak, clear, backspace,
+  send, the reader's tiles, the Pencil's and Making Words' controls;
+- no floors, no bonuses, no fixed numbers. `dwell` is the Settings value
+  (600–3000). At today's 1200 the doors stay at 2400 — nothing she has
+  learned moves.
+
+Left alone, on purpose, because they are about *reading vs selecting*, not
+consequence: the support-read (a glance reads a word aloud, under `dwell`
+so it never commits) and the prediction slots (held above `dwell` so
+reading the three suggestions cannot pick one).
+
+Where it lives: `era-core/lib/contract.js` — `holds.exit` becomes
+`holdForExit(contentMs) = 2 * contentMs`; `holdForDoor`, `navBonus`,
+`navMin`, `answer`, `backspace`, `clear`, `send` are **removed** (the
+whitelist principle cuts both ways: a rung nobody may use must not exist
+to be reached for). `aac-board-builder/knowledge/ux-contract.md` §C is
+rewritten first, as its header demands. Each app's hard-coded rung
+(`board-render` `tileDwellMs`, `DWELL_SPEAK`/`DWELL_CLEAR`; `studio.js`
+backspace 1800 / clear / send; `pencil.js`; `reader.js` `"2400"`) is
+replaced by `dwell` or `holdForExit(dwell)`, and every app re-applies the
+holds when `/settings` lands (the bar exposes `setDwell(contentMs)` for
+its two doors; the board already re-renders on settings).
 
 ## 6. In each app
 
@@ -200,8 +232,15 @@ to shelf) is untouched.
   normalisation, `home` gate, `ForegroundApp` from `/config` with default.
 - **`tests/start-hub-bat.test.mjs`:** the resume line, its position, no
   scripted shell.
+- **era-core contract:** `holdForExit(1200) === 2400`, `holdForExit(600)
+  === 1200`; the removed rungs are gone (a test that imports them fails
+  to compile is the point).
+- **holds, every app:** with `/settings` at 900 ms, every grid/tray tile
+  reads `data-dwell-ms="900"` (nav doors, Speak, clear, backspace, send
+  included) and both bar doors read `1800`; support-read and the
+  prediction slots keep their own values.
 - **era-board Playwright:** the bar carries exactly two `.dwell` targets;
-  💬 absent when `pauseGoes` is `home`; 💬 hold = exit hold; 💬 click
+  💬 absent when `pauseGoes` is `home`; 💬 hold = 🚪 hold = 2 × dwell; 💬 click
   pauses audio + POSTs `/kiosk/pause`; a `visibilitychange` to visible
   with `S.paused` resumes the audio at the kept position; without `S.paused`
   does nothing; centre door and partner strip do not overlap at 1280×720.
@@ -216,15 +255,21 @@ to shelf) is untouched.
 
 ## 9. Order of work
 
-1. era-hub: `/kiosk/pause`, `/kiosk/resume`, `pauseGoes`, launcher line —
+1. ux-contract.md §C rewritten (two speeds), then era-core `contract.js`:
+   `holdForExit`, rungs removed — tests. Nothing imports the removed
+   rungs until step 3–5 land in the same push, so this is done on the
+   feature branches together, not landed alone.
+2. era-hub: `/kiosk/pause`, `/kiosk/resume`, `pauseGoes`, launcher line —
    with tests. Landable on its own (no app uses it yet).
-2. era-core: `lib/doorbar.js` + css, two doors, `setPause`, hooks — tests.
-3. era-board: import the shared bar, delete its own `mountDoorBar`, music
-   hooks — tests; board law amended in its docs.
-4. era-hub Reader: header + hooks, shelf tile removed — tests.
-5. era-making-words, era-pencil: bar + hooks — tests.
-6. Gate, `push-device` to the tablet, the device round trips of §8.
-7. Release as a patch (v0.33.x) once dad has used it.
+3. era-core: `lib/doorbar.js` + css, two doors, `setPause`, `setDwell`,
+   hooks — tests.
+4. era-board: import the shared bar, delete its own `mountDoorBar`, music
+   hooks, every tile on `dwell` — tests; board law amended in its docs.
+5. era-hub Reader: header + hooks, shelf tile removed, tiles on `dwell` —
+   tests.
+6. era-making-words, era-pencil: bar + hooks, controls on `dwell` — tests.
+7. Gate, `push-device` to the tablet, the device round trips of §8.
+8. Release as a patch (v0.33.x) once dad has used it.
 
 ## 10. Out of scope
 
