@@ -147,17 +147,30 @@ Let `present` = the accessory kinds that have at least one `ok`, un-hidden item 
 tile, in `ACCESSORY_KINDS` order.
 
 - **Entry tile.** When `present.length === 0` there is no entry tile anywhere (today's
-  boards, byte-identical). When `present.length === 1` the tile is that kind ("Jackets",
-  its symbol, `load: "acc_jacket"`). When ≥ 2 the tile is "Accessories" (`load: "acc"`).
-  It is a `type:"category"` tile like Build my own — a dwell target, never a partner
-  control.
+  boards, byte-identical). Otherwise the tile is always "Accessories" (`load: "acc"`,
+  symbol as the menu's) — one target to learn, whatever the number of kinds. It is a
+  `type:"category"` tile like Build my own — a dwell target, never a partner control.
+  (Dad 9/17 re-route: the earlier "Jackets goes straight to the grid when it is the
+  only kind" is dropped.)
+- **Today pages** — the entry tile sits at `[3,3]`, to the LEFT of Build my own (dad
+  9/17). `[3,3]` is the seventh outfit slot, so while `present` is non-empty a today
+  page carries **6 outfits** (`SLOTS` minus `[3,3]`, `PAGES` still 3 → 18 a day); with no
+  accessories the page keeps its 7 and the 9/4 law holds unchanged. `cap`/`perPage`
+  passed to `buildCandidates` follow the slot count.
 - **"This one?"** — entry tile at `[3,2]`.
 - **Browse grids** `cat_top / cat_pants / cat_shorts / cat_dress / cat_outfit` — entry
   tile at `[3,4]` on every page of the grid (the corner Build my own uses on today pages).
   `gridPages` gains an optional `extra` button placed on each page.
-- **Build my own** — a row for the entry tile (label/symbol as above) after Outfits.
-- **Accessories menu** `acc` (only when ≥ 2 kinds): one tile per present kind, laid out
-  like Build my own, Back → `today`.
+- **Build my own** — becomes a **3 × 4 board with the centre `[2,2]` `[2,3]` black**
+  (dad 9/17), ALWAYS, accessories or not. Ten edge cells, filled clockwise from the
+  contract's back anchor: `[1,1]` Back, `[1,2]` Tops, `[1,3]` Bottoms, `[1,4]` Dresses,
+  `[2,1]` Outfits, then the present accessory kinds in `ACCESSORY_KINDS` order over
+  `[2,4]`, `[3,1]`, `[3,2]`, `[3,3]`, `[3,4]`. Six kinds can never fit five cells: when
+  `present.length > 5` the fifth cell is "Accessories" → `acc` instead of the fifth
+  kind. Empty edge cells stay black (rest cells).
+- **Accessories menu** `acc` — same shape as Build my own: 3 × 4, centre black, `[1,1]`
+  Back → `today`, one tile per present kind over the remaining nine edge cells in
+  `ACCESSORY_KINDS` order, `load: "acc_<kind>"`. Exists whenever `present` is non-empty.
 - **Accessory grids** `acc_<kind>` — `gridPages` over that kind's items, `type:"clothing"`
   tiles (tap speaks the name), Back → `today`, More as usual, **no entry tile** on these
   pages. Jackets are ordered by closeness of their warmth level to today's band level
@@ -166,7 +179,7 @@ tile, in `ACCESSORY_KINDS` order.
   weather-hidden** (dad may reverse: flagged).
 - **Hidden items** (`hidden: true`) are dropped from `items` at the top of
   `buildCataloged` — out of the deal, every grid, and `present`.
-- Today pages, `choose_bottom`, Yes, `/outfit-event`, composites: unchanged.
+- `choose_bottom`, Yes, `/outfit-event`, composites: unchanged.
 
 ### 4.2 The hold-to-edit sheet (era-board `app/board-edit.js`)
 
@@ -231,10 +244,11 @@ Read-only, no writes on a poll (existing rule).
 
 1. Dad photographs a jacket into `clothing/`. Next tick: `namePhotos` asks the model →
    `category: "jacket"`, `occasion: "everyday"`, warmth `cold`; tile drawn; `tags/` line
-   shared; `present = [jacket]`; the build adds "Jackets" tiles to This one?, every
-   browse grid and Build my own, and an `acc_jacket` grid.
-2. She picks an outfit → "This one?" → Jackets → taps "Blue puffer" → the board says
-   "Blue puffer". Or: Change top → tops grid → Jackets from the same corner.
+   shared; `present = [jacket]`; the build adds "Accessories" tiles to today [3,3],
+   This one?, every browse grid, a "Jackets" cell on Build my own, the `acc` menu and
+   an `acc_jacket` grid; today pages drop to 6 outfits.
+2. She picks an outfit → "This one?" → Accessories → Jackets → taps "Blue puffer" → the
+   board says "Blue puffer". Or from today: Accessories at [3,3] → Jackets.
 3. The model filed a hoodie as a top. Dad holds the tile 1.6 s on the tops grid → sheet →
    Jacket chip → Done. The hub writes `edits.json`, appends the manual line, rebuilds; the
    sheet reloads the board; the hoodie is now on the Jackets grid, gone from the outfits.
@@ -262,9 +276,9 @@ assignment — 8391 and 8423 are known collisions, 8440/8441 are holes)
 - `tests/clothing-log.test.mjs` — manual line beats a newer non-manual line; newest
   manual wins; a manual line missing `id` and `hash` is unusable.
 - `tests/clothing-accessories.test.mjs` (new; own hub + fake-model ports) — fake model
-  returns a jacket and a hoodie-as-top: `acc_jacket` exists, entry tile at This one? [3,2],
-  every browse page [3,4], Build my own row, label "Jackets"; add shoes → "Accessories" +
-  `acc` menu; `POST /clothing/item` happy path (edits.json written, tag line appended
+  returns a jacket and a hoodie-as-top: `acc_jacket` and `acc` exist, "Accessories" at
+  today [3,3] (6 outfits/page), This one? [3,2], every browse page [3,4]; Build my own is
+  3×4 with Jackets at [2,4] and [2,2]/[2,3] empty; add shoes → Shoes at [3,1] and on `acc`; `POST /clothing/item` happy path (edits.json written, tag line appended
   with `manual:true`, rebuild moves the hoodie, `manualAt` stamped), 400 on bad body,
   ownDoor refusal, hidden item leaves the deal and the grids; a second DATA dir on the
   same Drive folder applies the manual line on its build; `/clothing/status.accessories`.

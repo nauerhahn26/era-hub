@@ -28,7 +28,7 @@ exist in the band).
 | 6 | `readMerged` picks the newest `tags` line per id/hash by `t` (`clothing-log.js:204-215`) — no manual notion | warn | manual-beats-non-manual rule in that reducer; `tagsFor` unchanged for ingest → T2 |
 | 7 | `clothing.rebuildToday()` exists (`clothing.js:544`, `regenerate(true,{rebuildOnly:true})`) | info | the route calls it; a build already running → `regenerate` decides (queue/no-op) — the route reports `builds:false` and the edit still lands on the next build → T6 |
 | 8 | `/clothing/status` has no build stamp; the board's `#wardrobeNote` detects a new board with `watcher.checkNow()` (recipe ETag, `board.js:390`) | info | no `builtAt` needed: the sheet polls `watcher.checkNow()` after Done, then `location.reload()` — same door the note uses → T8 |
-| 9 | Confirm page is `rows:3, columns:2` (`:1137`); `[3,2]` empty. Browse grids `[3,4]` empty; today pages already put a dwell tile at `[3,4]` (Build my own) and pass the park-corner law (park = literal 0.995/0.995 pixel) | info | placements as specced → T5 |
+| 9 | Confirm page is `rows:3, columns:2` (`:1137`); `[3,2]` empty. Browse grids `[3,4]` empty; today pages already put a dwell tile at `[3,4]` (Build my own) and pass the park-corner law (park = literal 0.995/0.995 pixel). Build my own is `rows:3, columns:2` with flow-placed buttons (`:1152`); today `SLOTS` (`:1043`) hold 7 with `[3,3]` last | info | placements as specced → T5; dad's 9/17 re-route: Accessories at today `[3,3]` (6 slots while present), Build my own 3×4 centre-black always |
 | 10 | `tests/clothing.test.mjs:302-339` asserts board ids exist and confirm-page buttons; 616 s runtime | warn | additive only; if it asserts an exact button COUNT on `confirm_0`, extend that one assertion, add nothing else there → T5 |
 | 11 | `tests/synthetic-wardrobe.mjs` hard-codes 17/12/3/3 and the variety gate depends on it | info | optional `accessories:{jacket:n,…}` arg, default none; existing suites byte-identical → T5 |
 | 12 | `board-render.js` stamps `el.dataset.tileType` (`:253`) and closes over `btn` in `onTile(btn, el)` (`:657,:758`); no ids on the element | warn | render stamps `el.dataset.items` when `btn.items` is present → T7 |
@@ -140,30 +140,37 @@ message, trailers). Retro note appended to §C.
 - STOP if: `readMerged` is not reachable on the rebuild-only path without opening the
   Drive mount (check `shared()` init order) — then open it the same way the attrs pass does.
 
-**T5 — the board graph** · posture: implementing
+**T5 — the board graph** · posture: implementing  (re-routed by dad 9/17 — read spec §4.1 as amended, not the mockup)
 - `buildCataloged`/`gridPages` per spec §4.1: `items:[{id,name,category,occasion}…]`
   on every garment/outfit tile (objects, not bare ids — the board's edit sheet names
-  the rows from them; spec §4.1 amended here);
-  `present`; entry tile (`type:"category"`, label/symbol from `ACCESSORY_KINDS` or
-  "Accessories"/`acc`) at confirm `[3,2]`, every browse page `[3,4]` (`gridPages` gains
-  `extra`), a Build-my-own row; `acc` menu when ≥ 2 kinds (layout = Build my own's);
-  `acc_<kind>` grids via `gridPages` with `accessoryOrder`, Back → `today`, no entry
-  tile; recipe root gains `categories: [{id,label}]` (garments then accessories).
-  Zero accessories → boards byte-identical to today except the `items` field (assert).
+  the rows from them); `present`; the entry tile is ALWAYS "Accessories" → `acc` when
+  `present` is non-empty: today pages `[3,3]` (slots drop to six while present is
+  non-empty; `cap`/`perPage` follow), confirm `[3,2]`, every browse page `[3,4]`
+  (`gridPages` gains `extra`); Build my own becomes 3×4 centre-black ALWAYS — `[1,1]`
+  Back, `[1,2]` Tops, `[1,3]` Bottoms, `[1,4]` Dresses, `[2,1]` Outfits, present kinds
+  over `[2,4] [3,1] [3,2] [3,3] [3,4]`, a sixth present kind turns the fifth cell into
+  "Accessories" → `acc`; `acc` menu same shape (Back `[1,1]`, kinds over the nine
+  remaining edge cells), exists whenever present is non-empty; `acc_<kind>` grids via
+  `gridPages` with `accessoryOrder`, Back → `today`, no entry tile; recipe root gains
+  `categories: [{id,label}]` (garments then accessories). Zero accessories → boards
+  byte-identical to today except `items` and the Build my own shape (assert both).
 - `tests/synthetic-wardrobe.mjs`: optional `accessories` counts (preflight 11).
-- Tests first, `tests/clothing-accessories.test.mjs`: with one jacket → `acc_jacket`
-  exists, entry tile "Jackets" at `confirm_0` [3,2], at `cat_top` [3,4] on every page,
-  Build row present, no `acc` board; add a shoe → label "Accessories", `acc` board with
-  two tiles, `acc_shoes` exists; jackets ordered by band (fake weather cold); `items`
-  on tiles; root `categories`; no accessories → the recipe equals the pre-change
-  recipe modulo `items` (deep-compare after deleting `items`).
-- `tests/clothing.test.mjs` (preflight 10): only if an exact confirm-button count
-  breaks — extend that assertion; nothing else.
+- Tests first, `tests/clothing-accessories.test.mjs`: one jacket → `acc` and
+  `acc_jacket` exist, "Accessories" at `today` [3,3] with six outfit tiles and no tile
+  at the old seventh slot, at `confirm_0` [3,2], at `cat_top` [3,4] on every page,
+  Build my own has Jackets at [2,4] and nothing at [2,2]/[2,3]; add a shoe → Shoes at
+  [3,1] on build and second tile on `acc`, `acc_shoes` exists; jackets ordered by band
+  (fake weather cold); `items` objects on tiles; root `categories`; no accessories →
+  the recipe equals the pre-change recipe modulo `items` and the build board (deep-
+  compare after deleting `items` and `build`), build has exactly Back/Tops/Bottoms/
+  Dresses/Outfits at their cells and seven outfits per today page.
+- `tests/clothing.test.mjs` (preflight 10): only if an exact confirm-button count or
+  the build board's row/column count breaks — extend that assertion; nothing else.
 - Verify: `node --test tests/clothing-accessories.test.mjs`; then, once,
-  `node --test tests/clothing.test.mjs` (budget 900 s) to prove nothing moved.
+  `node --test tests/clothing.test.mjs` (budget 900 s) to prove nothing else moved.
 - STOP if: `board-pixel`/`board-input` gates (run in Phase 3) reject a tile at
-  confirm `[3,2]` — fall back to no entry tile on the confirm page and report; do not
-  move it into the msgbar or the centre.
+  confirm `[3,2]` or the centre-black build page — report; do not move anything into
+  the msgbar or the centre.
 
 **T6 — `POST /clothing/item`, status, Settings sentence** · posture: implementing
 - `server.js` route per spec §5.1: `ownDoor`, 4 KB cap, validation (id regex + exists
