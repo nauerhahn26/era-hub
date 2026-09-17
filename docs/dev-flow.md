@@ -25,6 +25,16 @@ Ports: `ERA_TEST_PORT` 8380-8389 for manual hubs, 8480+ scratch, 8500+ tunnels,
 never 8377/8378/8425/8427/8450-8462. Refusal messages → fixes are tabled in the
 aac-board-builder doc.
 
+A feature that spans repos keeps one worktree per repo, all on the same slug
+(`<repo>--wt-<slug>`), and `ERA_WT_SUFFIX=--wt-<slug>` is what makes
+`assemble.sh`, `era-gate.sh` and `build-payload.sh` reach into them instead of
+the main checkouts — per repo, falling back to `$ROOT/<repo>` for any repo the
+feature doesn't touch. A green gate then stamps the hub's tree **and** every
+sibling worktree tree it sourced (each with its own `dirty=1` verdict), so
+`worktree.sh land` accepts each repo in turn; land in dependency order, in one
+sitting while the 2 h stamps hold: era-core → era-board → era-making-words →
+era-pencil → era-hub, and never restart the live 8377 hub in between.
+
 ## The three release shapes
 
 A dist lives at `/home/claude/new-era/dist/release-<V>/` (sibling of the
