@@ -55,7 +55,8 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape, attributes } = require("./clothing-rank.js");
+const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder,
+        GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
 // asked about this garment" marker carries (spec §3.2, plan A4-5/A4-8).
@@ -420,10 +421,26 @@ const ATTRS_ASK =
   '"statement": true if it is a loud print/graphic piece that wants a plain partner, ' +
   '"palette": one of "warm","cool","neutral","pastel", ' +
   '"vibe": one of "sweet","sporty","graphic","basic"';
+// The eleven words, written out of clothing-rank's own lists (accessories spec
+// §3.3, preflight 1): the prompt, the whitelist below and the pools all read
+// the SAME list, so a kind cannot be asked for and then filed as a "top" — the
+// drift the inline whitelist at the item writer used to invite. The jacket
+// definition is the sentence that decides most of a real wardrobe: without it
+// the model calls a hoodie a top (which is exactly what happened to the
+// family's own, spec §3.5), and a pullover sweater IS a top.
+const KIND_WORDS = [...GARMENT_KINDS, ...ACCESSORY_KINDS.map(k => k.id)]
+  .map(w => '"' + w + '"').join(",");
+const CATEGORY_ASK =
+  '"category": one of ' + KIND_WORDS + ' — ' +
+  '"jacket" is an outer layer worn over another top and taken off indoors ' +
+  '(jacket, coat, hoodie, cardigan, zip fleece, vest; a pullover sweater is a "top"); ' +
+  '"set" is a matching top and bottom; "hair" is a hair accessory (clip, band, bow); ' +
+  '"jewelry" is a necklace, bracelet, ring or earrings, ' +
+  '"occasion": "fancy" only if it is party, holiday or dress-up wear, else "everyday", ';
 const INGEST_PROMPT =
-  'This photo shows one clothing item (or a matching set) laid flat. Reply with ONLY a JSON object, no prose: ' +
+  'This photo shows one clothing item, accessory or matching set laid flat. Reply with ONLY a JSON object, no prose: ' +
   '{"name": a SHORT name, 2-3 words max, like "Pink leggings" or "Daisy tee" (a child picks by picture; long names do not fit the button), ' +
-  '"category": one of "top","pants","shorts","dress","set", ' +
+  CATEGORY_ASK +
   '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
   '"top_side": which EDGE of this photo the garment\'s top is nearest - the neckline/shoulders of a top or dress, the WAISTBAND of pants or shorts - one of "top","bottom","left","right", ' +
   '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the image bounding the garment - exclude floor, table, carpet, but never cut into the garment, ' +
@@ -493,6 +510,10 @@ async function callModel(cfg, jpgFile, model, prompt) {
     // 480, not 300: the reply gained colours, pattern, statement, palette and
     // vibe (spec §3.1 item 2) and a truncated one is a JSON.parse throw — a
     // generic error the ladder answers by spending the next model (W6).
+    // The accessories cut (9/17) lengthened the PROMPT, not the answer: the
+    // reply gained one short field ("occasion":"everyday", ~8 tokens) on an
+    // answer measured at 245 bytes / ~70 tokens, so the cap is untouched in
+    // all three provider blocks.
     body = { model, max_completion_tokens: 480,
       messages: [{ role: "user", content: [
         { type: "image_url", image_url: { url: "data:image/jpeg;base64," + b64 } },
@@ -621,7 +642,11 @@ function tagsFor(id, hash) { return log().tagsFor(shared(), id, hash); }
 // has already been through the whitelist on its way into wardrobe.json.
 function shareTag(it) {
   if (!it || !it.id) return;
+  // `occasion` rides along like every other answer (spec §3.4); `hidden`,
+  // `manualAt` and `manual` deliberately do NOT — this is the MODEL's line,
+  // and only the route that a parent pressed writes a manual one (spec §5.1).
   log().appendTag({ id: it.id, hash: it.hash, name: it.name, category: it.category,
+    occasion: it.occasion,
     warmth: it.warmth, colors: it.colors, pattern: it.pattern, statement: it.statement,
     palette: it.palette, vibe: it.vibe, rotate_deg: it.rotate_deg || 0, crop: it.crop || {} });
 }
@@ -800,6 +825,7 @@ async function namePhotos(cfg, cat, todo) {
           // would hand the garment back to the needs-attributes pass and buy
           // them a second time (W4).
           meta = { name: known.name, category: known.category, warmth: known.warmth,
+                   occasion: known.occasion,
                    rotate_deg: legacy ? 0 : known.rotate_deg || 0, crop: known.crop || {},
                    colors: known.colors, pattern: known.pattern, statement: known.statement,
                    palette: known.palette, vibe: known.vibe };
@@ -811,6 +837,7 @@ async function namePhotos(cfg, cat, todo) {
           // comes from the rotate_deg the tagging device wrote (W5) — without
           // it a sideways photo would draw a sideways tile on this device.
           meta = { name: sharedTag.name, category: sharedTag.category, warmth: sharedTag.warmth,
+                   occasion: sharedTag.occasion,
                    rotate_deg: sharedTag.rotate_deg || 0, crop: sharedTag.crop || {},
                    colors: sharedTag.colors, pattern: sharedTag.pattern, statement: sharedTag.statement,
                    palette: sharedTag.palette, vibe: sharedTag.vibe };
@@ -854,9 +881,16 @@ async function namePhotos(cfg, cat, todo) {
         // sha256 of the photo's own bytes, which is how another device's
         // shared tag finds this garment when the filename differs (spec §3.1
         // item 1). attrsAt is stamped only when a model actually answered.
+        // `hidden` and `manualAt` are carried by the `...known` spread alone:
+        // they are a PARENT's fields (accessories spec §3.2) and nothing on
+        // this path — not the model, not another device's tag — may write them.
+        // `category` and `occasion` are rewritten from `meta`, which on a
+        // redraw is the entry's own word (so a parent's "jacket" survives a
+        // tile repair) and on a shared tag is the family's.
         cat.items[f] = { ...(known || {}), id, ok: true, name: shortLabel(meta.name),
           rotate_deg: rot, crop: hint || {}, exif: orient,
-          category: ["top", "pants", "shorts", "dress", "set"].includes(meta.category) ? meta.category : "top",
+          category: CATEGORIES.has(meta.category) ? meta.category : "top",
+          occasion: OCCASIONS.includes(meta.occasion) ? meta.occasion : "everyday",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any",
           ...attributes(meta), hash, ...(usedAi || sharedTag ? { attrsAt: todayKey() } : {}) };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
@@ -892,6 +926,95 @@ async function namePhotos(cfg, cat, todo) {
   return { done: todo.length, landed, left: todo.length - landed, quotaHit: quotaCount > 0,
     busy: busyCount > 0 && (busyCount + quotaCount) === todo.length,
     quota: quotaCount > 0 && (busyCount + quotaCount) === todo.length && quotaCount >= busyCount };
+}
+
+// ---- the manual sweep (accessories spec §3.4) ------------------------------
+// A parent LOOKED at the garment; the model guessed at it. So a manual
+// correction outranks the model for ever, on every device — and the only way
+// to mean "for ever" is to re-apply it at the top of every build, a full one
+// and a weather re-sort alike (preflight 3), before a single look is dealt.
+//
+// Two places a correction comes from, read the same way:
+//   * <DATA>/wardrobe/edits.json — this device's own, written by the route the
+//     parent pressed (spec §5.1). A device never reads its OWN lines back out
+//     of the mirror (A4-9), which is the whole reason its own edits need a
+//     local file as well as a shared line.
+//   * the merged tags map — every other device's manual lines, already reduced
+//     to the newest manual line per id/hash (clothing-log's `beats`).
+// The newer `t` of the two wins, it applies only if it is newer than the stamp
+// the entry already carries, and it stamps `manualAt` with its own clock.
+//
+// `manualAt` is the winning edit's OWN `t`, a full ISO instant — not the
+// `YYYY-MM-DD` spec §3.2 asked for (T4, measured). A day stamp is the family's
+// day, `dayKey(t, tz)`, and in a zone ahead of UTC that day is TOMORROW's date
+// for the last hours of the evening: the stamp "2026-09-18" then sits above
+// every `t` a parent can produce until midnight UTC, and the second correction
+// of the evening — the parent fixing a mistake twice in one minute, which is
+// the ordinary case — is silently refused. An instant compares exactly, in any
+// zone, and still begins with the day it happened, so `manualAt >= dayKey(t)`
+// (the route's 60-day prune rule, T6) reads the same. The apply is idempotent
+// — a field is written only when it differs — so the same edit re-winning
+// tomorrow costs a string compare and no write.
+const EDITS = () => path.join(DATA, "wardrobe", "edits.json");
+// READ-ONLY, always (spec §7 and the plan's choice, T4): the route owns this
+// file and prunes it on its own next write, so there is never a second writer.
+// A file that will not open or will not parse is one log line and an empty
+// map — deleting a parent's corrections because a syncer caught the file
+// mid-write is not a trade this family would make.
+function readEdits() {
+  let raw;
+  try { raw = fs.readFileSync(EDITS(), "utf8"); }
+  catch (e) {
+    if (e.code !== "ENOENT") console.error("[clothing] edits.json would not open (" + e.code + ") — building without this device's own edits");
+    return {};
+  }
+  try {
+    const e = JSON.parse(raw);
+    if (e && typeof e === "object" && !Array.isArray(e)) return e;
+  } catch {}
+  console.error("[clothing] edits.json is not a map of edits — building without this device's own edits");
+  return {};
+}
+// What a manual line is allowed to say. Same rule as the shared log's
+// (clothing-log normalizeTag): a malformed field is DROPPED and the rest of
+// the correction stands, so `hidden: "yes"` costs that writer its hide and not
+// the family its category.
+function manualFields(src) {
+  const out = {};
+  if (CATEGORIES.has(src.category)) out.category = src.category;
+  if (OCCASIONS.includes(src.occasion)) out.occasion = src.occasion;
+  if (typeof src.hidden === "boolean") out.hidden = src.hidden;
+  return out;
+}
+function applyManual(cat) {
+  const edits = readEdits();
+  let changed = 0;
+  for (const it of Object.values(cat.items)) {
+    if (!it || !it.ok || !it.id) continue;
+    const own = edits[it.id];
+    const tag = tagsFor(it.id, it.hash);          // by id, else by hash (spec §3.1 item 1)
+    const cands = [];
+    if (own && typeof own === "object" && typeof own.t === "string") cands.push(own);
+    // Only a MANUAL winner: an ordinary tag line is the model talking, and the
+    // model does not get to stamp manualAt (clothing-log carries `manual`/`t`
+    // on a manual winner alone).
+    if (tag && tag.manual === true && typeof tag.t === "string") cands.push(tag);
+    if (!cands.length) continue;
+    const win = cands.reduce((a, b) => (b.t > a.t ? b : a));
+    if (it.manualAt && win.t <= it.manualAt) continue;
+    if (!Number.isFinite(Date.parse(win.t))) continue;   // a stamp nobody can read is not a clock
+    const fields = manualFields(win);
+    if (!Object.keys(fields).length) continue;    // nothing usable was said
+    fields.manualAt = win.t;
+    let touched = false;
+    for (const [k, v] of Object.entries(fields)) if (it[k] !== v) { it[k] = v; touched = true; }
+    if (touched) changed++;
+  }
+  if (changed) {
+    saveCatalog(cat);
+    console.log("[clothing] " + changed + " garment(s) follow the family's own word, not the model's");
+  }
+  return changed;
 }
 
 // ---- weather (keyless; cached 3h; null offline = board just has no tile) ----
@@ -1015,9 +1138,21 @@ function comboLabel(top, bottom) {
   return cap(a) + " + " + cap(b);
 }
 
+// What a tile is MADE OF, for the board's hold sheet: it names the rows under
+// a finger from these objects instead of parsing a label (spec §4). Four
+// fields, nothing of the deal's private business (colours, warmth, hashes) —
+// and `occasion` is answered even for a garment described before the word
+// existed, because a chip with no value selected is a sheet that cannot save.
+function itemRef(it) {
+  return { id: it.id, name: it.name, category: it.category, occasion: it.occasion || "everyday" };
+}
+
 // 3x4 browse pages per ux-contract: Back top-left [1,1], up to 6 items in
 // fixed slots, More bottom-LEFT [3,1]; empties become center/bottom rest cells.
-function gridPages(id, name, items, backLoad) {
+// `extra` (optional) is one button repeated on EVERY page at [3,4] — the
+// corner today pages give Build my own — because she can be standing on page 3
+// of the tops when she wants a jacket (spec §4.1).
+function gridPages(id, name, items, backLoad, extra) {
   const pages = [];
   const per = 6;
   const CELLS = [[1,2],[1,3],[1,4],[2,1],[2,2],[2,3]];
@@ -1027,11 +1162,12 @@ function gridPages(id, name, items, backLoad) {
       load: p === 0 ? backLoad : (p === 1 ? id : id + "_" + p), row: 1, col: 1 }];
     items.slice(p * per, (p + 1) * per).forEach((it, k) => {
       buttons.push({ label: it.name, say: it.name, type: "clothing",
-        image: "wardrobe-items/" + it.id + ".jpg",
+        image: "wardrobe-items/" + it.id + ".jpg", items: [itemRef(it)],
         row: CELLS[k][0], col: CELLS[k][1] });
     });
     if ((p + 1) * per < items.length)
       buttons.push({ label: "More", type: "control", symbol: "more", load: id + "_" + (p + 2), row: 3, col: 1 });
+    if (extra) buttons.push({ ...extra, row: 3, col: 4 });
     pages.push({ id: pid, name, rows: 3, columns: 4, buttons });
     if ((p + 1) * per >= items.length) break;
   }
@@ -1039,10 +1175,33 @@ function gridPages(id, name, items, backLoad) {
 }
 
 // today pages: the 3x4 grid minus weather/Back [1,1], More [3,1], Build [3,4]
-// and the two CENTER rest cells [2,2][2,3] (lib contract restCells: "center")
+// and the two CENTER rest cells [2,2][2,3] (lib contract restCells: "center").
+// [3,3] is LAST on purpose: it is the cell the accessories door takes when the
+// family has any (dad 9/17), so a page with accessories is this list minus its
+// tail — six looks — and a page without one is all seven, unchanged.
 const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,2],[3,3]];
-const PER_PAGE = SLOTS.length;
+const ACC_CELL = [3,3];
+const todaySlots = (present) =>
+  present.length ? SLOTS.filter(([r, c]) => !(r === ACC_CELL[0] && c === ACC_CELL[1])) : SLOTS;
 const PAGES = 3;   // how many "More" pages a day gets at most
+
+// The one door she has to learn, wherever it turns up: today [3,3], "This
+// one?" [3,2], every browse page [3,4], Build my own's last cell when the
+// kinds outgrow it. "accessories" is an ARASAAC bestsearch word (25634, the
+// fashion-accessories pictogram — checked 9/17), the worker's own convention
+// for a category tile.
+const accDoor = (row, col) =>
+  ({ label: "Accessories", type: "category", symbol: "accessories", load: "acc", row, col });
+
+// The words a parent sees on a chip: ONE garment, so singular — the grids'
+// plural names ("Tops", "Dresses") name a page, not a thing you can hold.
+// Accessory kinds keep the label clothing-rank gives them, so the two lists
+// cannot drift (preflight 1).
+const GARMENT_LABEL = { top: "Top", pants: "Pants", shorts: "Shorts", dress: "Dress", set: "Set" };
+const RECIPE_CATEGORIES = [
+  ...GARMENT_KINDS.map(id => ({ id, label: GARMENT_LABEL[id] })),
+  ...ACCESSORY_KINDS.map(k => ({ id: k.id, label: k.label })),
+];
 
 async function buildCataloged(cat) {
   const w = await weather();
@@ -1051,7 +1210,20 @@ async function buildCataloged(cat) {
   // than let one missing file empty the whole board (QA 9/2: every outfit died
   // on "composite: ENOENT" and Ellie got a black screen). Ingest repairs the
   // tile on the next run; the board stays usable meanwhile.
-  const items = Object.values(cat.items).filter(i => i.ok && hasTile(i.id));
+  // ...and a garment a parent hid is not drawn at all: dropped HERE, before
+  // the deal, the grids and `present` (spec §4.1). The entry itself is kept —
+  // hiding is not deleting, and the sheet can put it back.
+  const items = Object.values(cat.items).filter(i => i.ok && i.hidden !== true && hasTile(i.id));
+  // The accessory kinds the family really has, in ACCESSORY_KINDS order: at
+  // least one ok, un-hidden item WITH A TILE, so a picture that never landed
+  // cannot produce an empty grid (spec §7). T5 draws the entry tile, the `acc`
+  // menu and the `acc_<kind>` grids from exactly this list.
+  const present = ACCESSORY_KINDS.map(k => k.id).filter(id => items.some(i => i.category === id));
+  // While she has accessories the seventh outfit slot IS the door, so the
+  // whole build — the deal's cap, the page size, the lineup the memory keeps
+  // and the "More" arithmetic — follows this one number and never a constant.
+  const slots = todaySlots(present);
+  const per = slots.length;
 
   // The day's 21, dealt by the original's rules (spec §3.5): page 1 is her
   // staples then fresh, garment-distinct looks; yesterday's page 1 opens page
@@ -1065,15 +1237,15 @@ async function buildCataloged(cat) {
   const seed = dayKey(Date.now(), workerData.tz);
   const m = shared();
   const today = buildCandidates({
-    items, band, cap: PER_PAGE * PAGES, seed,
+    items, band, cap: per * PAGES, seed,
     pairing: m.pairing, favorites: m.favorites,
-    history: mergeHistory(readHistory(), m), perPage: PER_PAGE,
+    history: mergeHistory(readHistory(), m), perPage: per,
   }).map(toWorkerShape);
 
   // The page-1 lineup goes to the shell FIRST (I9): it is the memory tomorrow's
   // deal reads, and a composite that fails must not lose it. ONE writer for
   // wardrobe/history.json — the shell's recordOffer, never this thread (A4-1).
-  const page1 = today.slice(0, PER_PAGE).map(c => c.one ? [c.one.id] : [c.top.id, c.bottom.id]);
+  const page1 = today.slice(0, per).map(c => c.one ? [c.one.id] : [c.top.id, c.bottom.id]);
   if (parentPort) parentPort.postMessage({ offer: { date: seed, band, page1 } });
   // ...and the same lineup to the family, so tomorrow every device bars what
   // any of them showed today. The MOUNT only — <DATA>/clothing/.era belongs to
@@ -1098,7 +1270,7 @@ async function buildCataloged(cat) {
   // cells left over stay black. Ten targets = under the contract's
   // comfortable 12.
   const boards = [];
-  const pages = Math.max(1, Math.ceil(today.length / PER_PAGE));
+  const pages = Math.max(1, Math.ceil(today.length / per));
   for (let pg = 0; pg < pages; pg++) {
     const pid = pg === 0 ? "today" : "today_" + (pg + 1);
     const buttons = [];
@@ -1121,8 +1293,8 @@ async function buildCataloged(cat) {
       buttons.push({ label: "Back", type: "back", glyph: "\u2190",
         load: pg === 1 ? "today" : "today_" + pg, row: 1, col: 1 });
     }
-    today.slice(pg * PER_PAGE, (pg + 1) * PER_PAGE).forEach((c, k) => {
-      const i = pg * PER_PAGE + k;
+    today.slice(pg * per, (pg + 1) * per).forEach((c, k) => {
+      const i = pg * per + k;
       const label = c.one ? c.one.name : comboLabel(c.top, c.bottom);
       const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
       const img = "outfit_" + i + ".jpg";
@@ -1131,31 +1303,67 @@ async function buildCataloged(cat) {
           c.one ? null : path.join(ITEMS(), c.bottom.id + ".jpg"), path.join(OUTFITS(), img));
       } catch (e) { console.error("[clothing] composite: " + e.message); return; }
       const combo = c.one ? [c.one.id] : [c.top.id, c.bottom.id];
+      // The same two halves the label is made of, as objects: `combo` is what
+      // the decision log wants, `items` is what a parent holding the tile
+      // wants (spec §4) — the ids agree, in the same order.
+      const made = c.one ? [itemRef(c.one)] : [itemRef(c.top), itemRef(c.bottom)];
       buttons.push({ label, say, type: "outfit", image: "wardrobe-outfits/" + img,
-        load: "confirm_" + i, say_on_load: true, combo,
-        row: SLOTS[k][0], col: SLOTS[k][1] });
+        load: "confirm_" + i, say_on_load: true, combo, items: made,
+        row: slots[k][0], col: slots[k][1] });
       boards.push({ id: "confirm_" + i, name: "This one?", rows: 3, columns: 2, buttons: [
-        { label, say, type: "outfit", image: "wardrobe-outfits/" + img, combo, row: 1, col: 1 },
+        { label, say, type: "outfit", image: "wardrobe-outfits/" + img, combo, items: made, row: 1, col: 1 },
         { label: "Yes", type: "yes", glyph: "\u2713", say: "Yes", combo, row: 1, col: 2 },
         { label: "Change top", type: "category", symbol: "shirt", load: "cat_top", row: 2, col: 1 },
         { label: "Change bottoms", type: "category", symbol: "trousers", load: "choose_bottom", row: 2, col: 2 },
         { label: "Back", type: "back", glyph: "\u2190", load: pid, row: 3, col: 1 },
+        // …and the door on the one empty cell "This one?" has had all along:
+        // she changes her mind about the top AFTER she picked the look, so the
+        // jacket has to be reachable from here too (dad 9/17).
+        ...(present.length ? [accDoor(3, 2)] : []),
       ]});
     });
-    if ((pg + 1) * PER_PAGE < today.length)
+    if ((pg + 1) * per < today.length)
       buttons.push({ label: "More", type: "control", symbol: "more", load: "today_" + (pg + 2), row: 3, col: 1 });
+    if (present.length) buttons.push(accDoor(ACC_CELL[0], ACC_CELL[1]));
     buttons.push({ label: "Build my own", type: "category", symbol: "clothes", load: "build", row: 3, col: 4 });
     boards.push({ id: pid, name: "What will I wear today?", rows: 3, columns: 4, buttons });
   }
   // hoist today pages to the front so `today` is the root board in order
   boards.sort((a, b) => (a.id.startsWith("today") ? 0 : 1) - (b.id.startsWith("today") ? 0 : 1));
-  boards.push({ id: "build", name: "Build my own", rows: 3, columns: 2, buttons: [
-    { label: "Tops", type: "category", symbol: "shirt", load: "cat_top" },
-    { label: "Bottoms", type: "category", symbol: "trousers", load: "choose_bottom" },
-    { label: "Dresses", type: "category", symbol: "dress", load: "cat_dress" },
-    { label: "Outfits", type: "category", symbol: "clothes", load: "cat_outfit" },
-    { label: "Back", type: "back", glyph: "←", load: "today" },
-  ]});
+  // Build my own is a 3x4 board with the two CENTRE cells black, always —
+  // accessories or none (dad 9/17), so the four garment doors never move under
+  // her when a jacket arrives. Ten edge cells, filled clockwise from the
+  // contract's back anchor: Back, Tops, Bottoms, Dresses, Outfits, then the
+  // present kinds. Empty edge cells stay black, like every other rest cell.
+  const kinds = ACCESSORY_KINDS.filter(k => present.includes(k.id));
+  const KIND_CELLS = [[2,4],[3,1],[3,2],[3,3],[3,4]];
+  const kindTile = (k, row, col) =>
+    ({ label: k.label, type: "category", symbol: k.symbol, load: "acc_" + k.id, row, col });
+  const buildButtons = [
+    { label: "Back", type: "back", glyph: "←", load: "today", row: 1, col: 1 },
+    { label: "Tops", type: "category", symbol: "shirt", load: "cat_top", row: 1, col: 2 },
+    { label: "Bottoms", type: "category", symbol: "trousers", load: "choose_bottom", row: 1, col: 3 },
+    { label: "Dresses", type: "category", symbol: "dress", load: "cat_dress", row: 1, col: 4 },
+    { label: "Outfits", type: "category", symbol: "clothes", load: "cat_outfit", row: 2, col: 1 },
+  ];
+  KIND_CELLS.forEach(([row, col], i) => {
+    if (i >= kinds.length) return;
+    // Six kinds can never fit five cells: the LAST cell becomes the door to
+    // the menu rather than the fifth kind, so nothing is ever unreachable.
+    const overflow = i === KIND_CELLS.length - 1 && kinds.length > KIND_CELLS.length;
+    buildButtons.push(overflow ? accDoor(row, col) : kindTile(kinds[i], row, col));
+  });
+  boards.push({ id: "build", name: "Build my own", rows: 3, columns: 4, buttons: buildButtons });
+  // The menu behind the door: the same shape, Back top-left, one tile per
+  // present kind over the nine remaining edge cells. Six kinds is the most
+  // there can ever be (ACCESSORY_KINDS), so it always fits on one page.
+  if (kinds.length) {
+    const MENU_CELLS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,1],[3,2],[3,3],[3,4]];
+    boards.push({ id: "acc", name: "Accessories", rows: 3, columns: 4, buttons: [
+      { label: "Back", type: "back", glyph: "←", load: "today", row: 1, col: 1 },
+      ...kinds.map((k, i) => kindTile(k, MENU_CELLS[i][0], MENU_CELLS[i][1])),
+    ]});
+  }
   boards.push({ id: "choose_bottom", name: "Pants or shorts?", rows: 2, columns: 2, buttons: [
     { label: "Pants", type: "category", symbol: "trousers", load: "cat_pants" },
     // "shorts" has no ARASAAC bestsearch hit; 13638 IS the shorts pictogram
@@ -1163,12 +1371,25 @@ async function buildCataloged(cat) {
     { label: "Shorts", type: "category", symbol: "13638", load: "cat_shorts" },
     { label: "Back", type: "back", glyph: "←", load: "today" },
   ]});
-  boards.push(...gridPages("cat_top", "Tops", items.filter(i => i.category === "top"), "today"));
-  boards.push(...gridPages("cat_pants", "Pants", items.filter(i => i.category === "pants"), "choose_bottom"));
-  boards.push(...gridPages("cat_shorts", "Shorts", items.filter(i => i.category === "shorts"), "choose_bottom"));
-  boards.push(...gridPages("cat_dress", "Dresses", items.filter(i => i.category === "dress"), "build"));
-  boards.push(...gridPages("cat_outfit", "Outfits", items.filter(i => i.category === "set"), "build"));
-  return boards;
+  // Every browse page carries the door at [3,4] — she can be on page 3 of the
+  // tops when she decides she wants a jacket (spec §4.1).
+  const door = present.length ? accDoor(3, 4) : null;
+  boards.push(...gridPages("cat_top", "Tops", items.filter(i => i.category === "top"), "today", door));
+  boards.push(...gridPages("cat_pants", "Pants", items.filter(i => i.category === "pants"), "choose_bottom", door));
+  boards.push(...gridPages("cat_shorts", "Shorts", items.filter(i => i.category === "shorts"), "choose_bottom", door));
+  boards.push(...gridPages("cat_dress", "Dresses", items.filter(i => i.category === "dress"), "build", door));
+  boards.push(...gridPages("cat_outfit", "Outfits", items.filter(i => i.category === "set"), "build", door));
+  // Every browse grid above asks for a GARMENT word, so an accessory falls
+  // into none of them (preflight 2): each present kind gets its own pages.
+  // Back goes to `today` — the door can be entered from anywhere, so the one
+  // place she is always happy to land is home. The day's band only RE-ORDERS
+  // these pages (accessoryOrder): on a cold morning the coats lead, but no
+  // accessory is ever weather-hidden (spec §4.1). No door on these pages: she
+  // is already behind it.
+  for (const k of kinds)
+    boards.push(...gridPages("acc_" + k.id, k.label,
+      accessoryOrder(items.filter(i => i.category === k.id), band), "today"));
+  return { boards, present };
 }
 
 // No catalog yet -> no board. Decide which coaching state the splash shows.
@@ -1224,6 +1445,9 @@ async function regenerate(force) {
     // has no say over either (A4-8).
     attrsDone: (ing && ing.attrsDone) || 0, attrsLeft: (ing && ing.attrsLeft) || 0 };
   const cat = loadCatalog();
+  // The family's own word, re-applied before anything is dealt — on BOTH build
+  // paths, because the one the route asks for is the re-sort (preflight 3).
+  applyManual(cat);
   const haveCatalog = Object.values(cat.items).some(i => i.ok);
   if (!haveCatalog) {
     clearPlainRecipe();
@@ -1237,16 +1461,25 @@ async function regenerate(force) {
     storeSig(sig);
     return { guidance, photos: photos.length, ...tally };
   }
-  const boards = await buildCataloged(cat);
+  const { boards, present } = await buildCataloged(cat);
   fs.mkdirSync(RECIPES(), { recursive: true });
+  // `categories` is the whole filing cabinet, not this wardrobe's corner of
+  // it: the board's hold sheet names its chips from here (spec §4.2), and a
+  // parent moving a hoodie to "Jackets" needs the chip to exist on a device
+  // that has never seen a jacket. Always written, whatever `present` says.
   fs.writeFileSync(path.join(RECIPES(), "today.json"), JSON.stringify({
-    locale: "en-US", root: "today", home_label: "Clothing", boards }, null, 1));
+    locale: "en-US", root: "today", home_label: "Clothing",
+    categories: RECIPE_CATEGORIES, boards }, null, 1));
   storeSig(sig);
   console.log("[clothing] board built (" + boards.length + " boards)" +
     (tally.left ? ", " + tally.left + " photo(s) still waiting" + (tally.quotaHit ? " (daily allowance)" : "") : ""));
   // historyUnread only when it really happened: the shell reads it as "this
   // board is not the day's work, build again on the next tick" (r3).
+  // `accessories` is the kinds this build could really offer (spec §4.1
+  // `present`), reported the way every other build fact is — the shell hands
+  // the whole object back to whoever asked for the build.
   return { built: boards.length, mode: "cataloged", photos: photos.length, ...tally,
+           accessories: present,
            ...(historyUnread ? { historyUnread: true } : {}) };
 }
 

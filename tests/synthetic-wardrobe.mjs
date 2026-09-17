@@ -11,6 +11,7 @@
 // CLI:
 //   node tests/synthetic-wardrobe.mjs                   # print the items as JSON
 //   node tests/synthetic-wardrobe.mjs --materialize <DATA> [n] [--drive <folder>]
+//                                     [--accessories jacket=3,shoes=1]
 //
 // `--materialize` lays a whole catalogued wardrobe on disk — photos, tiles and
 // wardrobe.json — so a hub boots straight into "35 garments, no AI key needed".
@@ -40,6 +41,20 @@ const ADJ = ["Sunny", "Pond", "Maple", "Comet", "Pebble", "Breezy", "Marble", "T
   "Acorn", "Bramble", "Cobalt", "Dune", "Echo", "Foxglove", "Glacier", "Heron", "Iris", "Juniper",
   "Kestrel", "Lantern", "Moss", "Nimbus", "Otter"];
 const NOUN = { top: ["tee", "blouse", "polo", "sweater", "shirt"], pants: ["pants", "leggings"], shorts: ["shorts"], dress: ["dress"], set: ["set"] };
+// Accessories (spec 2026-09-17 §4.1) — OPTIONAL, and never invented unless a
+// suite asks for them by name, so the 17/12/3/3 garment wardrobe every other
+// suite measures stays byte-for-byte what it was. The kinds are listed in
+// clothing-rank's ACCESSORY_KINDS order, so `{shoes: 1, jacket: 1}` lays the
+// same photos down as `{jacket: 1, shoes: 1}` and two data dirs agree on ids.
+const ACC_NOUN = {
+  jacket: ["jacket", "coat", "parka"], shoes: ["sneakers", "boots"],
+  jewelry: ["necklace", "bracelet"], hat: ["hat", "beanie"],
+  hair: ["bow", "clip"], makeup: ["lip gloss", "blush"],
+};
+// Cycled per kind so `accessoryOrder` has something to sort: on a cold band the
+// coat leads, the "any" piece ties with it (it suits every band), and the warm
+// one falls to the back.
+const ACC_WARMTH = ["cold", "cool", "any", "warm"];
 const LOUD_COLORS = ["pink", "orange", "red", "purple", "yellow", "teal", "green", "coral", "lime", "magenta"];
 const QUIET_COLORS = ["navy", "black", "white", "gray", "blue", "cream", "beige", "tan", "light blue"];
 // Patterns are the hub's whitelist words only (clothing-rank.js PATTERNS), so
@@ -60,9 +75,12 @@ export function categoriesFor(n) {
   return { top, bottom, dress, set: Math.max(0, n - top - bottom - dress) };
 }
 
-// makeItems({n, seed}) → hub-shaped garments: {id, name, category, warmth,
-// colors, pattern, statement, palette, vibe}. Deterministic for a seed.
-export function makeItems({ n = 35, seed = 1 } = {}) {
+// makeItems({n, seed, accessories}) → hub-shaped garments: {id, name, category,
+// warmth, colors, pattern, statement, palette, vibe}. Deterministic for a seed.
+// `accessories` is an optional count per kind ({jacket: 3, shoes: 1}); they are
+// appended AFTER the n garments, so with none asked for the output is exactly
+// what it was before accessories existed.
+export function makeItems({ n = 35, seed = 1, accessories = null } = {}) {
   const rnd = prng(seed);
   const pick = a => a[Math.floor(rnd() * a.length)];
   const hex = () => { let s = ""; for (let i = 0; i < 10; i++) s += Math.floor(rnd() * 16).toString(16); return s; };
@@ -95,6 +113,28 @@ export function makeItems({ n = 35, seed = 1 } = {}) {
       vibe: pick(VIBES),
     });
   });
+  // The accessories a suite asked for, drawn from the same stream once every
+  // garment is made — a wardrobe with none spends not a single extra rnd().
+  let slot = cats.length;
+  for (const kind of Object.keys(ACC_NOUN)) {
+    const count = (accessories && accessories[kind]) || 0;
+    for (let j = 0; j < count; j++, slot++) {
+      let id;
+      do id = "item_" + hex(); while (seen.has(id));
+      seen.add(id);
+      items.push({
+        id,
+        name: `${ADJ[slot % ADJ.length]} ${ACC_NOUN[kind][j % ACC_NOUN[kind].length]}`,
+        category: kind,
+        warmth: ACC_WARMTH[j % ACC_WARMTH.length],
+        colors: [pick(QUIET_COLORS)],
+        pattern: pick(QUIET_PATTERNS),
+        statement: false,
+        palette: pick(PALETTES),
+        vibe: pick(VIBES),
+      });
+    }
+  }
   return items;
 }
 
@@ -152,8 +192,9 @@ const rgbFor = (i) => [(i * 37) % 200 + 20, (i * 71) % 200 + 20, (i * 113) % 200
 // which is what a Drive-mirrored family looks like); tiles in
 // <DATA>/wardrobe-items; the catalogue in <DATA>/wardrobe.json, already
 // described (`attrsAt`) so no build ever needs a key.
-export function materialize({ dataDir, n = 35, seed = 1, driveFolder = null, day = "2026-01-01" } = {}) {
-  const items = makeItems({ n, seed }).map((g, i) => ({ ...g, id: idFor(photoName(i)) }));
+export function materialize({ dataDir, n = 35, seed = 1, driveFolder = null, day = "2026-01-01",
+                              accessories = null } = {}) {
+  const items = makeItems({ n, seed, accessories }).map((g, i) => ({ ...g, id: idFor(photoName(i)) }));
   const catalog = { items: {} };
   items.forEach((g, i) => {
     const rel = photoName(i);
@@ -176,21 +217,39 @@ export function materialize({ dataDir, n = 35, seed = 1, driveFolder = null, day
   return items;
 }
 
+// "jacket=3,shoes=1" → {jacket: 3, shoes: 1}; nothing asked for stays null, so
+// the CLI's wardrobe is the garments-only one unless a hand types otherwise.
+function parseAccessories(s) {
+  if (!s) return null;
+  const out = {};
+  for (const part of String(s).split(",")) {
+    const [kind, n] = part.split("=");
+    if (kind && Number(n) > 0) out[kind.trim()] = Number(n);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
   const at = args.indexOf("--materialize");
+  const a = args.indexOf("--accessories");
+  const accessories = a >= 0 ? parseAccessories(args[a + 1]) : null;
   if (at >= 0) {
     const dataDir = args[at + 1];
-    if (!dataDir) { process.stderr.write("usage: --materialize <DATA> [n] [--drive <folder>]\n"); process.exit(2); }
+    if (!dataDir) {
+      process.stderr.write("usage: --materialize <DATA> [n] [--drive <folder>] [--accessories jacket=3,shoes=1]\n");
+      process.exit(2);
+    }
     const d = args.indexOf("--drive");
     const driveFolder = d >= 0 ? args[d + 1] : null;
-    const rest = args.filter((a, i) => i !== at && i !== at + 1 && i !== d && i !== d + 1);
+    const skip = new Set([at, at + 1, d, d + 1, a, a + 1].filter(i => i >= 0));
+    const rest = args.filter((_, i) => !skip.has(i));
     const n = Number(rest[0]) || 35;
-    const items = materialize({ dataDir, n, driveFolder });
-    process.stdout.write("materialized " + items.length + " garments in " + dataDir +
+    const items = materialize({ dataDir, n, driveFolder, accessories });
+    process.stdout.write("materialized " + items.length + " items in " + dataDir +
       (driveFolder ? " (+ " + driveFolder + "/clothing)" : "") + "\n");
     process.exit(0);
   }
-  const n = Number(args[0]) || 35;
-  process.stdout.write(JSON.stringify(makeItems({ n }), null, 1) + "\n");
+  const n = Number(args.filter(x => !x.startsWith("--") && x !== args[a + 1])[0]) || 35;
+  process.stdout.write(JSON.stringify(makeItems({ n, accessories }), null, 1) + "\n");
 }

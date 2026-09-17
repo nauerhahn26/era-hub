@@ -916,6 +916,61 @@ test("a picks block the card cannot render never takes the AI status line with i
   await ctx.close();
 });
 
+// ---- the accessories line (accessories spec §5.2, plan T6) ----------------
+// One sentence under the picks read-out: what the Clothing Picker has to offer
+// her beyond the outfits, and how many garments a grown-up has taken off the
+// board. Both numbers come from /clothing/status; the kind words come from the
+// hub too, so this page has no list of its own to drift from the worker's.
+const accText = (page) => page.$eval("#accStatus", e => e.textContent);
+
+test("the accessories line counts the kinds she can reach and the garments a grown-up hid", async () => {
+  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+    accessories: { kinds: [{ kind: "jacket", count: 4 }, { kind: "shoes", count: 1 }], hidden: 2 } }) });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("accStatus").textContent));
+  const t = await accText(page);
+  assert.match(t, /Accessories/, t);
+  assert.match(t, /4 jackets/, t);
+  assert.match(t, /1 shoes/, "a kind that is already plural is not pluralised twice: " + t);
+  assert.match(t, /2 hidden items/, t);
+  await ctx.close();
+});
+
+test("one of a kind, and one hidden garment, are said in the singular", async () => {
+  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+    accessories: { kinds: [{ kind: "jacket", count: 1 }], hidden: 1 } }) });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("accStatus").textContent));
+  const t = await accText(page);
+  assert.match(t, /1 jacket\b/, t);
+  assert.doesNotMatch(t, /1 jackets/, t);
+  assert.match(t, /1 hidden item\b/, t);
+  assert.doesNotMatch(t, /1 hidden items/, t);
+  await ctx.close();
+});
+
+// The kind word arrives from the hub, and everything from the hub that is
+// printed on this page goes through CT_ESC — the garment names beside it do.
+test("a kind word is family text: it is escaped, never markup the page runs", async () => {
+  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+    accessories: { kinds: [{ kind: "<b>jacket</b>", count: 2 }], hidden: 0 } }) });
+  await page.waitForFunction(() => /\S/.test(document.getElementById("accStatus").textContent));
+  assert.match(await accText(page), /<b>jacket<\/b>/, "the text is shown as text");
+  const html = await page.$eval("#accStatus", e => e.innerHTML);
+  assert.match(html, /&lt;b&gt;jacket/, html);
+  assert.equal(html.includes("<b>jacket"), false, "…and never run: " + html);
+  await ctx.close();
+});
+
+test("no accessories and nothing hidden: the card says nothing at all", async () => {
+  // Both the empty block and no block at all (an older hub answering a newer
+  // page during an update) leave the line empty rather than claiming a zero.
+  for (const acc of [{ kinds: [], hidden: 0 }, undefined]) {
+    const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({ accessories: acc }) });
+    await page.waitForFunction(() => /\S/.test(document.getElementById("aiStatus").textContent));
+    assert.equal((await accText(page)).trim(), "", "no sentence at all for " + JSON.stringify(acc));
+    await ctx.close();
+  }
+});
+
 // ---------------------------------------------- loose photos and their book (9/7)
 // dad dropped seventeen iPhone photos straight into books/ and the card said
 // "No books yet" over the top of them for ten minutes.
