@@ -96,7 +96,7 @@ test("VM: pristine snapshot, SmartScreen on, the check can actually fire", { tim
   assert.equal(f.PRESENT, "0", "pristine: nothing downloaded yet");
   assert.equal(f.SS_BINARY, "True", "smartscreen.exe is present on the guest");
   // "unset" is the shipping default (on); only an explicit Off/0 is fatal
-  assert.notMatch(f.SS_EXPLORER || "", /^Off$/i, "Explorer's SmartScreenEnabled must not be Off — this leg would pass blind");
+  assert.doesNotMatch(f.SS_EXPLORER || "", /^Off$/i, "Explorer's SmartScreenEnabled must not be Off — this leg would pass blind");
   assert.notEqual(f.SS_POLICY, "0", "the EnableSmartScreen policy must not be 0 — this leg would pass blind");
   assert.notEqual(f.SS_APPHOST, "0", "EnableWebContentEvaluation must not be 0 — this leg would pass blind");
   assert.equal(f.DEF_RTP, "True", "Defender real-time protection is on");
@@ -126,6 +126,14 @@ test("the family's download: the website's own button, in a browser", { timeout:
   console.log("# the site's download button points at " + href);
   assert.match(href, /New-ERA-Setup\.exe$/, "the site hands the family the one-file installer");
   vm.shot("site-download-button");
+  // connectOverCDP pointed Edge's downloads at a Playwright directory on THIS
+  // machine (Browser.setDownloadBehavior allowAndName): the guest's Edge cannot
+  // write there and shows "<guid> — Couldn't download - Download error" (9/17,
+  // v0.34.0's first leg C). Hand Edge its own Downloads folder — and its own
+  // download-reputation prompt — back before the family's click.
+  const cdp = await browser.newBrowserCDPSession();
+  await cdp.send("Browser.setDownloadBehavior", { behavior: "default", eventsEnabled: false });
+  await cdp.detach();
   await page.locator(SELECTOR).first().click();
   // Edge parks an unrecognised download behind Keep / Keep anyway. Give the
   // plain download a chance first, then press it the way the site tells families to.
