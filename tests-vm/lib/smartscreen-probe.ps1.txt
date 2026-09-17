@@ -65,6 +65,29 @@ function Find-TopWindow([string[]]$procs, [string]$namePattern) {
   return $null
 }
 
+# Windows 10 19041 hosts the App Reputation interstitial as an explorer.exe
+# ApplicationFrameWindow with an EMPTY title whose content belongs to
+# CHXSmartScreen.exe — no smartscreen.exe window at all — so a by-process /
+# by-title scan of the desktop never sees it (v0.34.0's leg C, 9/17). The words
+# the family reads are still there: find the heading anywhere on the desktop
+# and climb to its top-level window.
+function Find-WindowByText([string]$text) {
+  $root = [Windows.Automation.AutomationElement]::RootElement
+  $cond = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, $text)
+  $e = $null
+  try { $e = $root.FindFirst($DESC, $cond) } catch { return $null }
+  if (-not $e) { return $null }
+  $walker = [Windows.Automation.TreeWalker]::ControlViewWalker
+  $top = $e
+  for ($i = 0; $i -lt 50; $i++) {
+    $p = $null
+    try { $p = $walker.GetParent($top) } catch { break }
+    if (-not $p -or [Windows.Automation.Automation]::Compare($p, $root)) { break }
+    $top = $p
+  }
+  return $top
+}
+
 # every named element under $el, one per line, so the log carries the exact words
 # the family reads ("Windows protected your PC", "Publisher: ...", "Run anyway")
 function Dump-Window($el, [string]$tag) {
@@ -137,8 +160,13 @@ if (-not $target -or -not (Test-Path $target)) { W 'ERROR target missing'; W 'PR
 # Reputation runs, exactly as for a double-click. Launching it from this
 # PowerShell process instead (& $target) would go through CreateProcess, which
 # does not look at the Mark-of-the-Web at all.
-$shell = New-Object -ComObject Shell.Application
-$shell.ShellExecute($target)
+#
+# Fired from a throwaway child process: ShellExecute does not return while the
+# SmartScreen interstitial is up (the App Reputation check is modal in the
+# caller), so a probe that calls it inline can never reach More info / Run
+# anyway — v0.34.0's leg C sat on "Don't run" for 15 min (9/17).
+$launch = "(New-Object -ComObject Shell.Application).ShellExecute('" + ($target -replace "'", "''") + "')"
+Start-Process -FilePath powershell.exe -WindowStyle Hidden -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $launch)
 W 'SHELLEXECUTE fired (Shell.Application, i.e. Explorer)'
 
 $ss = $null
@@ -146,6 +174,7 @@ $inst = $null
 $t0 = Get-Date
 while (((Get-Date) - $t0).TotalSeconds -lt 240) {
   $ss = Find-TopWindow @('smartscreen') 'Windows protected your PC'
+  if (-not $ss) { $ss = Find-WindowByText 'Windows protected your PC' }
   if ($ss) { break }
   $inst = Find-TopWindow @() 'New ERA Setup'
   if ($inst) { break }
@@ -163,9 +192,17 @@ if ($ss) {
   $names = Dump-Window $ss 'smartscreen-expanded'
   $pub = ''
   $app = ''
-  foreach ($n in $names) {
-    if (-not $pub -and $n -match '^\s*Publisher:?\s*(.+)$') { $pub = $Matches[1].Trim() }
-    if (-not $app -and $n -match '^\s*App:?\s*(.+)$') { $app = $Matches[1].Trim() }
+  # 19041 lays the expanded dialog out as a grid: "Publisher:" and the name are
+  # two DataItems, so the value is the NEXT name after a bare label (9/17)
+  for ($i = 0; $i -lt $names.Count; $i++) {
+    $n = [string]$names[$i]
+    $next = $(if ($i + 1 -lt $names.Count) { [string]$names[$i + 1] } else { '' })
+    # \s+ before the value: on a bare "Publisher:" the optional colon backtracks
+    # and (.+) would capture ":" itself (run 4, 9/17)
+    if (-not $pub -and $n -match '^\s*Publisher:?\s+(\S.*)$') { $pub = $Matches[1].Trim() }
+    elseif (-not $pub -and $n -match '^\s*Publisher:?\s*$') { $pub = $next.Trim() }
+    if (-not $app -and $n -match '^\s*App:?\s+(\S.*)$') { $app = $Matches[1].Trim() }
+    elseif (-not $app -and $n -match '^\s*App:?\s*$') { $app = $next.Trim() }
   }
   W ("PUBLISHER=" + $(if ($pub) { $pub } else { 'not-shown' }))
   W ("APPNAME=" + $(if ($app) { $app } else { 'not-shown' }))

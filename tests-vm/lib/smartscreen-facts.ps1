@@ -12,28 +12,32 @@ if (-not (Test-Path $f)) {
   if ($alt) { $f = $alt.FullName }
 }
 "FILE=" + $f
-if (-not (Test-Path $f)) { "PRESENT=0"; "FACTS_DONE"; return }
-"PRESENT=1"
-"BYTES=" + (Get-Item $f).Length
-"SHA256=" + (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+# The file facts need the file; the SmartScreen and Defender facts below do not
+# and are read on the pristine snapshot BEFORE anything is downloaded (leg C's
+# first test) — an early return here left them all undefined (9/17 v0.34.0).
+if (Test-Path $f) {
+  "PRESENT=1"
+  "BYTES=" + (Get-Item $f).Length
+  "SHA256=" + (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
 
-# Mark-of-the-Web. It must have been written BY THE BROWSER: a HostUrl pointing
-# at the release asset host is something only a real download produces. The 9/6
-# check stamped the ADS by hand with Set-Content -Stream, which proves nothing
-# about the path a family walks.
-$z = Get-Content -Path $f -Stream Zone.Identifier -ErrorAction SilentlyContinue
-if ($z) { "MOTW=" + (($z | Where-Object { $_ }) -join ' | ') } else { "MOTW=none" }
+  # Mark-of-the-Web. It must have been written BY THE BROWSER: a HostUrl pointing
+  # at the release asset host is something only a real download produces. The 9/6
+  # check stamped the ADS by hand with Set-Content -Stream, which proves nothing
+  # about the path a family walks.
+  $z = Get-Content -Path $f -Stream Zone.Identifier -ErrorAction SilentlyContinue
+  if ($z) { "MOTW=" + (($z | Where-Object { $_ }) -join ' | ') } else { "MOTW=none" }
 
-$sig = Get-AuthenticodeSignature $f
-"SIG_STATUS=" + $sig.Status
-"SIG_MESSAGE=" + $sig.StatusMessage
-if ($sig.SignerCertificate) {
-  "SIG_SUBJECT=" + $sig.SignerCertificate.Subject
-  "SIG_ISSUER=" + $sig.SignerCertificate.Issuer
-  "SIG_NOTAFTER=" + $sig.SignerCertificate.NotAfter.ToString('yyyy-MM-dd')
-  "SIG_THUMBPRINT=" + $sig.SignerCertificate.Thumbprint
-} else { "SIG_SUBJECT="; "SIG_ISSUER="; "SIG_NOTAFTER="; "SIG_THUMBPRINT=" }
-if ($sig.TimeStamperCertificate) { "SIG_TIMESTAMPER=" + $sig.TimeStamperCertificate.Subject } else { "SIG_TIMESTAMPER=" }
+  $sig = Get-AuthenticodeSignature $f
+  "SIG_STATUS=" + $sig.Status
+  "SIG_MESSAGE=" + $sig.StatusMessage
+  if ($sig.SignerCertificate) {
+    "SIG_SUBJECT=" + $sig.SignerCertificate.Subject
+    "SIG_ISSUER=" + $sig.SignerCertificate.Issuer
+    "SIG_NOTAFTER=" + $sig.SignerCertificate.NotAfter.ToString('yyyy-MM-dd')
+    "SIG_THUMBPRINT=" + $sig.SignerCertificate.Thumbprint
+  } else { "SIG_SUBJECT="; "SIG_ISSUER="; "SIG_NOTAFTER="; "SIG_THUMBPRINT=" }
+  if ($sig.TimeStamperCertificate) { "SIG_TIMESTAMPER=" + $sig.TimeStamperCertificate.Subject } else { "SIG_TIMESTAMPER=" }
+} else { "PRESENT=0" }
 
 # SmartScreen's own switches: a leg that runs on a guest with SmartScreen off
 # would report "no interstitial" forever and mean nothing by it.
