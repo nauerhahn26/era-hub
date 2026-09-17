@@ -106,7 +106,7 @@ test("Making Words: opens from its tile, the door returns home (no engine → ho
   await home();
   await vm.openTile(page, "Making Words", /127\.0\.0\.1:8377\/(\?.*)?$/);
   vm.shot("making-words");
-  await page.click("#door");
+  await page.click(vm.DOOR);
   await page.waitForURL(/\/home\//, { waitUntil: "commit", timeout: 60000 });
   await page.locator("#launcher").waitFor({ state: "visible", timeout: 60000 });
 });
@@ -115,7 +115,7 @@ test("The Pencil: opens, the door returns home", { timeout: 240000 }, async () =
   await home();
   await vm.openTile(page, "The Pencil", /\/pencil\//);
   vm.shot("pencil");
-  await page.click("#door");
+  await page.click(vm.DOOR);
   await page.waitForURL(/\/home\//, { waitUntil: "commit", timeout: 60000 });
   await page.locator("#launcher").waitFor({ state: "visible", timeout: 60000 });
 });

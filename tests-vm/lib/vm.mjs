@@ -256,12 +256,16 @@ export async function home(page) {
   if (!/\/home\/?(\?|#|$)/.test(page.url())) await page.goto(HUB_URL + "/home/", { waitUntil: "commit", timeout: 60000 });
   await page.locator("#launcher").waitFor({ state: "visible", timeout: 90000 });
 }
-/** click an app tile on the launcher and wait for the app's door (its page is up) */
+/** click an app tile on the launcher and wait for the app's door (its page is up).
+ *  Since 9/17 every app wears era-core's shared bar and its door is #barDoor
+ *  (pause-to-talk, doorbar.js); the older ids stay so leg B can still drive a
+ *  PREVIOUS release's apps before the update lands. */
+export const DOOR = "#barDoor";
 export async function openTile(page, title, urlRe) {
   const t0 = Date.now();
   await page.click(`#appGrid a.app:has-text('${title}')`);
   await page.waitForURL(urlRe, { waitUntil: "commit", timeout: 60000 });
-  await page.locator("#door:visible, #exit:visible, [data-dwell-say*='back to']:visible").first().waitFor({ state: "visible", timeout: 120000 });
+  await page.locator(`${DOOR}:visible, #door:visible, #exit:visible, [data-dwell-say*='back to']:visible`).first().waitFor({ state: "visible", timeout: 120000 });
   console.log(`# ${title}: door up ${((Date.now() - t0) / 1000).toFixed(1)} s after the tile`);
 }
 /** attach to the kiosk window over CDP; returns { browser, page } (page = the kiosk tab) */
