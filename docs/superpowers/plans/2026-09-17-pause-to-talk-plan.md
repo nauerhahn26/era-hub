@@ -294,3 +294,11 @@ verbatim. Commits in all five worktrees. Retro → §C.
 - Review added: `holdFor("talk")` (the ruling names two doors), `HOLD_RETIRED` violation for 1600/1800/2200 checked AFTER set membership (2×800=1600 stays legal) so a missed markup literal is red not a warn, 5 s timeout on the /settings fetch (GET /settings waits on the gaze-bus probe), only `ERR_MODULE_NOT_FOUND` swallowed by the two-path import.
 - `tools/gen-contract-json.mjs` named by the sync test does not exist; contract.json is hand-edited. Follow-up, not this feature.
 - Pre-existing, untouched: `/reader/` has `FONT_MIN btnExit 24<44` (tile T6 deletes); contract.js header still says "not yet imported by any app".
+
+**Gate 1 (T2+T3, 9/17).** hub 6e616de. 99/99 across kiosk-pause, start-hub-bat, routes, book-review-ui, fal-key, content-animate in ONE parallel `node --test`.
+- §A/T2 assigned the suite **8440/8441 — both already taken** (book-review-ui FAKE; fal-key + content-animate). The serial gate hid it; a parallel run proved 8 failures. Now 8463/8464. Rule: grep `84[0-9][0-9]` in tests/ before assigning, never count from the table's top.
+- Plan deviation, deliberate: `foregroundKiosk()` does not call into `clearStageOnce`; both share PowerShell *string builders* (`psWindowPrelude`, `psSettleKiosk(tries)`), so the first-launch script stays byte-identical apart from a no-sleep-after-last-try tweak and the `found`/`none` last line. T2's STOP-if anticipated exactly this.
+- The pause gate is `doorGoes()` (Settings AND an engine on the bus), not bare `exitTarget()` — spec §3.1 was right, the T2 prompt was loose. GET /settings now computes doorGoes/pauseGoes through the same helper.
+- Review caught a silent tablet-only failure: stdout+stderr in one buffer with the answer parsed off the tail — a late Add-Type warning would have turned every successful restore into a relaunch, invisible to the Linux gate. Split.
+- `--max-time` 4 → 8: the hub's own foreground kill is 6 s, curl must outlast it so the hub is always the decider (else curl 28 → wmic kills the window PowerShell is restoring). Cost: a wedged hub (first Drive mirror) makes a tile press wait 8 s instead of 4, once per install.
+- hub path match strips case + trailing slash only, never `#` → bar posts `pathname + search` (T4 doc-commented and tested).
