@@ -10,6 +10,13 @@ ROOT="$(dirname "$HUB")"
 DATA="${ERA_DATA_DIR:-$ROOT/era-family/test-data}"  # gate NEVER points at live data
 PORT="${ERA_TEST_PORT:-8378}"
 GATE="$HUB/gate"
+# ERA_WT_SUFFIX (9/17): a multi-repo feature keeps sibling worktrees
+# (<repo>--wt-<slug>); when set and that directory exists, source the
+# sibling from there, else from the main checkout as before. Without it a
+# hub-worktree gate would collect MASTER's era-core/board/pencil/words suites
+# and never run the feature's — the same blind spot as the 8/28 one below,
+# one repo over. era-gaze and era-family have no feature worktrees.
+sib() { local d="$ROOT/$1${ERA_WT_SUFFIX:-}"; [ -d "$d" ] && echo "$d" || echo "$ROOT/$1"; }
 # optional private env (e.g. ERA_GAZE_SRC until era-gaze is imported)
 [ -f "$ROOT/era-family/gate-env.sh" ] && . "$ROOT/era-family/gate-env.sh"
 
@@ -43,32 +50,73 @@ flock -n 9 || { echo "== era-gate: another gate run is active — queued, waitin
 # was not the committed tree the key names. The WARNING is printed BEFORE the
 # summary line because release.sh reads the gate's `tail -1`; that is also why
 # the refusal has to live IN the stamp — a stripped warning cannot stop anyone.
-write_green_stamp() {
-  local tree dir at dirty
-  tree="$(git -C "$HUB" rev-parse 'HEAD^{tree}' 2>/dev/null || true)"
-  [ -n "$tree" ] || { echo "WARNING: not a git checkout — no green stamp written"; return 0; }
+#
+# SIBLING WORKTREES (9/17): with ERA_WT_SUFFIX set this run collected — and ran
+# — the suites of each sibling worktree sib() resolved, against that worktree's
+# code. `worktree.sh land` is per repo and keys on THAT repo's branch tree, so a
+# hub-only stamp left every sibling land refused ("no green gate under 2 h for
+# this tree") right after the 20-minute run that had just gated it. So each
+# sibling worktree the gate sourced gets its own stamp, same shape plus a
+# `repo=<path>` line and its own dirty= verdict (one worktree can be dirty while
+# the others are clean). Main checkouts reached through sib()'s fallback are NOT
+# stamped: this run changed nothing on master's tree, and land never merges
+# master into itself. Readers tolerate the extra line — worktree.sh land greps
+# head=/at=/dirty=1, release.sh and push-device.sh read only the first line,
+# head= and at=, and a foreign repo's head= sha simply doesn't resolve in the hub
+# (release.sh's --skip-gate scan drops it), so a sibling stamp can never stand in
+# for the hub's.
+stamp_tree() {
+  # $1 = checkout to stamp, $2 = sibling label (empty for the hub itself)
+  local d="$1" label="${2:-}" tree dir at dirty
+  tree="$(git -C "$d" rev-parse 'HEAD^{tree}' 2>/dev/null || true)"
+  if [ -z "$tree" ]; then
+    [ -n "$label" ] || echo "WARNING: not a git checkout — no green stamp written"
+    return 0
+  fi
   dir="${ERA_GATE_STAMPS:-/tmp/era-gate-green}"
   mkdir -p "$dir" || return 0
-  dirty="$(git -C "$HUB" status --porcelain --untracked-files=no 2>/dev/null || true)"
+  dirty="$(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null || true)"
   at="$(date +%s)"
   if [ -n "$dirty" ]; then
-    echo "WARNING: working tree has uncommitted tracked changes — stamp marked dirty=1; release.sh/land/push-device will refuse it until you commit and re-gate:"
+    echo "WARNING: ${label:+$label: }working tree has uncommitted tracked changes — stamp marked dirty=1; release.sh/land/push-device will refuse it until you commit and re-gate:"
     echo "$dirty"
   fi
   {
     printf '%s\n%s\n%s\n%s\n' \
       "== era-gate: $pass passed, $fail failed${failed:+ →$failed} ==" \
-      "head=$(git -C "$HUB" rev-parse HEAD)" \
+      "head=$(git -C "$d" rev-parse HEAD)" \
       "at=$at" \
       "hub=$HUB"
+    [ -n "$label" ] && printf 'repo=%s\n' "$d"
     [ -n "$dirty" ] && printf 'dirty=1\n'
   } >"$dir/$tree"
+  [ -n "$label" ] && echo "stamp: $label ${tree:0:7}"
+  return 0
+}
+
+write_green_stamp() {
+  local repo d
+  stamp_tree "$HUB"
+  for repo in era-core era-making-words era-pencil era-board; do
+    d="$(sib "$repo")"
+    [ "$d" = "$ROOT/$repo" ] && continue   # the main checkout — this run gated no tree of its own there
+    [ -d "$d/.git" ] || [ -f "$d/.git" ] || continue
+    stamp_tree "$d" "$(basename "$d")"
+  done
   return 0
 }
 
 # a fresh worktree checkout has a bare public/ (the symlink farm is untracked)
 # — assemble it against the gate's data dir so the test hub serves the apps.
-[ -e "$HUB/public/pencil" ] || ERA_DATA_DIR="$DATA" bash "$HUB/tools/assemble.sh"
+# It is re-assembled when the farm points at the WRONG siblings too: with
+# ERA_WT_SUFFIX set, a public/ left behind by an earlier unsuffixed run still
+# exists, so the old "is it there?" test alone would serve MASTER's apps to
+# every browser suite while the collector below read the worktrees' (9/17).
+want="../../$(basename "$(sib era-pencil)")/app"
+if [ ! -e "$HUB/public/pencil" ] ||
+   { [ -L "$HUB/public/pencil" ] && [ "$(readlink "$HUB/public/pencil")" != "$want" ]; }; then
+  ERA_DATA_DIR="$DATA" bash "$HUB/tools/assemble.sh"
+fi
 
 rm -rf "$GATE"; mkdir -p "$GATE"
 # era-hub's own suites come from THIS checkout ($HUB) so a feature-worktree
@@ -78,7 +126,7 @@ for repo in era-core era-making-words era-pencil era-board era-hub; do
   # era-hub's suites come from THIS checkout — in a worktree gate, a suite
   # added on the feature branch must run too (8/28: routes.test.mjs silently
   # skipped because the collector only looked at the main checkout).
-  src="$ROOT/$repo"; [ "$repo" = "era-hub" ] && src="$HUB"
+  src="$(sib "$repo")"; [ "$repo" = "era-hub" ] && src="$HUB"
   [ -d "$src/tests" ] || continue
   for f in "$src"/tests/*; do
     base="$(basename "$f")"

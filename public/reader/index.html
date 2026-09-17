@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Book Reader</title>
+<!-- the shared message bar (era-core lib/doorbar.js), FIRST so this page's own
+     stylesheet still has the last word about anything it wants to tune -->
+<link rel="stylesheet" href="../lib/doorbar.css">
 <style>
   /* ============================================================
      Book Reader v2 — the OLD Book-Reader UI (dad: "I like my old
@@ -37,8 +40,14 @@
 
   .screen { display: none; }
   .screen.show { display: block; }
-  #sShelf.show { position: fixed; inset: 0; overflow-y: auto; padding: 18px 14px; }
-  #sRead.show { position: fixed; inset: 0; }
+  /* BOTH screens sit UNDER the shared door bar (9/17). The bar is the page's
+     one in-flow element; the screens are fixed, so they take the strip off the
+     top themselves. --bar-h is published by doorbar.js's sizeBar() and mirrored
+     onto <html> by reader.js (the screens are the bar's SIBLINGS, and a custom
+     property only travels downwards). 0px until the bar mounts — a screen must
+     never wait on a fetch to be the right size. */
+  #sShelf.show { position: fixed; inset: 0; top: var(--bar-h, 0px); overflow-y: auto; padding: 18px 14px; }
+  #sRead.show { position: fixed; inset: 0; top: var(--bar-h, 0px); }
 
   /* ==== dwell targets: era-core dwell.js ENGINE + the old DwellButton LOOK.
      The engine injects .dwell-fx > .dwell-fill/.dwell-flash/.dwell-ring; we
@@ -47,7 +56,7 @@
   /* display:flex + centring stands in for the <button> element the old app
      used (these are divs, so nothing centres the label for us). It must NOT
      leak into the tiles that re-declare display:grid — see .shelf-card-button
-     and .shelf-tdsnap-button below, which reset it. */
+     below, which resets it. */
   .dwell-button {
     position: relative;
     min-height: 72px;
@@ -64,8 +73,18 @@
     cursor: pointer;
   }
   .dwell-button.is-disabled { opacity: 0.4; }
-  .dwell .dwell-fill { opacity: 0 !important; }
-  .dwell .dwell-ring {
+  /* :not(.bardoor) — THE BAR IS NOT THE READER'S (9/17). These two rules are
+     the old DwellButton LOOK, and the shared strip above the app must keep the
+     look era-core gives it: doorbar.css's own onset gate (~200ms of nothing, so
+     a glance across 🚪/💬 flashes no feedback) lives on .bardoor .dwell-fill,
+     and `opacity:0 !important` here used to beat it outright — the feedback
+     moved to the ring below, which has NO gate at all, and the two doors
+     flashed coral in the Reader where the same glyphs stay quiet in her other
+     four apps. Scoped out, the doors wear doorbar.css and nothing else.
+     reader.js's --dwell-progress mirror is scoped the same way, for the same
+     reason. */
+  .dwell:not(.bardoor) .dwell-fill { opacity: 0 !important; }
+  .dwell:not(.bardoor) .dwell-ring {
     padding: 2px;
     box-shadow: none !important;
     background: conic-gradient(var(--brand-coral) var(--dwell-progress, 0deg), transparent 0deg);
@@ -250,31 +269,9 @@
     z-index: 2;
   }
 
-  /* ===== Shelf: Back to TD Snap tile (the old shelf's exit affordance) ===== */
-  .shelf-tdsnap-button.dwell-button {
-    display: grid;
-    justify-content: normal;   /* same reset as .shelf-card-button (grid, not flex) */
-    gap: 10px;
-    place-items: center;
-    width: 100%;
-    height: 100%;
-    padding: 14px;
-    border-radius: 20px;
-    background: #fdf1ec;
-    border: 1px solid #f0cfc2;
-    box-shadow: 0 8px 18px rgba(31, 43, 44, 0.08);
-    text-align: center;
-  }
-  .shelf-tdsnap-icon {
-    display: grid;
-    place-items: center;
-    width: 100%;
-    aspect-ratio: 1 / 1;
-    border-radius: 14px;
-    background: #fbe3d9;
-    font-size: 6rem;
-    line-height: 1;
-  }
+  /* The shelf's "Back to TD Snap" tile is GONE (9/17): the door is the shared
+     bar's 🚪 now, one door per screen, in the corner every other app puts it
+     in. Its .shelf-tdsnap-button / .shelf-tdsnap-icon rules went with it. */
 
   @media (max-width: 680px) {
     .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 23px; }
@@ -283,7 +280,8 @@
   }
 
   /* ===== Reading screen — ported verbatim from the old reader ===== */
-  .reader-shell { display: block; margin: 0; padding: 0; height: 100dvh; }
+  /* the stage owns the screen MINUS the bar (9/17) — it used to own all of it */
+  .reader-shell { display: block; margin: 0; padding: 0; height: calc(100dvh - var(--bar-h, 0px)); }
   .reader-stage {
     position: relative;
     height: 100%;
@@ -524,6 +522,11 @@
 </head>
 <body>
 
+<!-- ONE bar for both screens (spec §6.1): the shelf and the book page are two
+     fixed panels under the same strip, so the door does not move — and is not
+     rebuilt — when she opens a book or comes back to the shelf. -->
+<div id="bar"></div>
+
 <div id="sShelf" class="screen show">
   <section class="shelf">
     <header class="shelf-header">
@@ -588,6 +591,16 @@
   window.DwellConfig = { audioPreview: false, chime: false, color: "#de6e4b" };
 </script>
 <script src="../dwell.js"></script>
-<script src="reader.js"></script>
+<script type="module">
+  // door-bar shim (the Pencil's precedent): reader.js stays a CLASSIC script —
+  // the suites reach window.Reader and the file's own globals — and a module
+  // runs before a deferred classic in document order, so window.DoorBar is
+  // there by the time boot() asks for it.
+  import { mountDoorBar, barHeight } from "../lib/doorbar.js";
+  import { CONTRACT, holdFor, holdForExit } from "../lib/contract.js";
+  window.DoorBar = { mountDoorBar, barHeight };
+  window.EllieContract = { CONTRACT, holdFor, holdForExit };
+</script>
+<script src="reader.js" defer></script>
 </body>
 </html>

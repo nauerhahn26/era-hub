@@ -25,6 +25,11 @@
 //  * A textless/silent page is "finished" the moment it shows (ready arrow
 //    immediately) — she is never stuck.
 //  * Read/Pause pill: pauses mid-word, resumes in place, restarts after end.
+// THE DOOR IS THE SHARED BAR (9/17, spec §6.1): the shelf's "Back to TD Snap"
+// tile is gone and both screens sit under era-core's lib/doorbar.js strip —
+// 🚪 leave, 💬 pause to talk. The bar owns the holds (2 x her dwell on both
+// doors) and the coming-back listener; this file owns only what PAUSING means
+// to a book: stop the sound where it is, and pick the page up again.
 // Missing index/manifest degrades to an empty shelf / page 1 — never a dead
 // app (8/19 law). Every page render suppresses dwell for the settle window
 // (D51) — a fresh page never inherits her gaze.
@@ -33,8 +38,6 @@
 const S = {
   session: "r" + Date.now(),
   childName: "",      // from /settings at boot — the shelf title and the "…'s story" badge
-  exitTo: "tdsnap",   // from /settings: where the door will REALLY go (doorGoes: TD Snap only
-                      // with an engine on the bus, else home) — names the tile
   index: [],          // /books/index.json rows {slug,title,cover,pages,hasVideo,authored}
   building: [],       // /content/status rows for books not on the shelf yet — a
                       // pile of photos nobody has tapped Build on, and a book
@@ -59,7 +62,18 @@ const S = {
   pulseTimer: null,   // 5s ready -> pulse timer (old reader's nudge)
   ignorePause: null,  // one-tick latch: our own stop must not read as "Paused"
   renderGen: 0,       // bumps per render — stale async media outcomes are ignored
+  talkResume: null,   // what 💬 interrupted, decided while it was still true:
+                      // "video" | "narration" | null (see onTalkPause)
 };
+
+// her dwell out of /settings, in the hub's own band (the board's clampDwell).
+// The bar doubles it for its two doors; nothing else in this app carries a
+// literal hold at all (dad 9/17: one dwell, and only leaving the screen buys
+// extra time).
+function clampDwell(n) {
+  if (typeof n !== "number" || !isFinite(n)) return 1200;
+  return Math.max(600, Math.min(3000, n));
+}
 
 const $ = (id) => document.getElementById(id);
 // "Maya's story" when Settings knows her name, "My story" until it does
@@ -86,7 +100,12 @@ new MutationObserver((muts) => {
   for (const mu of muts) {
     const el = mu.target;
     if (!el.classList || !el.classList.contains("dwell-fill")) continue;
-    const host = el.closest(".dwell");
+    // :not(.bardoor) — the shared bar keeps era-core's feedback, not ours
+    // (index.html's two .dwell-fill/.dwell-ring rules are scoped the same way).
+    // Mirroring the fill into the conic ring on a door would paint the Reader's
+    // coral progress on it from the first frame, past doorbar.css's ~200ms
+    // onset gate — the one thing the 🚪 and the 💬 must never do.
+    const host = el.closest(".dwell:not(.bardoor)");
     if (!host) continue;
     const pct = parseFloat(el.style.height) || 0;
     host.style.setProperty("--dwell-progress", (pct * 3.6).toFixed(1) + "deg");
@@ -109,7 +128,7 @@ function loadPos(slug, maxPage) {
 function clearPos(slug) { try { localStorage.removeItem(posKey(slug)); } catch {} }
 
 // ---------- shelf (old library-client structure: shelf-card grid, coral rim
-// on authored books, Back-to-TD-Snap tile as the exit affordance) ----------
+// on authored books; the exit affordance is the bar's 🚪 since 9/17) ---------
 // ---------- books that are still being made (dad 9/7) ----------
 // A pile of photos dropped into the Drive folder is a book minutes later, and
 // until then the shelf said "No books yet — set up Google Drive" at a family
@@ -314,9 +333,9 @@ function paintEmpty() {
 // elementsFromPoint stack for the first `.dwell:not([data-dwell-disabled])` and
 // steps straight over anything without the class. So both halves go — the
 // attribute stops the gaze fill, dropping the class stops the 150 ms
-// long-press tap-rescue. Unlike the board, the way out is NOT kept awake: the
-// exit tile sleeps with everything else, because a question this small has an
-// answer on it and fifteen seconds to live.
+// long-press tap-rescue. Unlike the board, the way out is NOT kept awake: both
+// of the bar's doors sleep with everything else, because a question this small
+// has an answer on it and fifteen seconds to live.
 //
 // Only LIVE targets are put to sleep, which is what makes the thaw safe: the
 // pile cards were born asleep, and waking everything the shelf holds would hand
@@ -328,13 +347,26 @@ function suppressFor(ms) {
   try { if (window.Dwell && Dwell.suppress) Dwell.suppress(ms); } catch {}
 }
 
+// The shelf AND the bar above it (9/17). The doors are no longer drawn inside
+// #sShelf, and the rule they were written for is unchanged: while the question
+// is up, nothing on this screen is a live gaze target — the 🚪 and the 💬
+// included, exactly as the exit TILE slept under it before.
+const LIVE_TARGETS =
+  "#sShelf .dwell:not([data-dwell-disabled]), .msgbar .dwell:not([data-dwell-disabled])";
+
+// APPENDS, because the two lists have different lifetimes: a repaint throws the
+// shelf's frozen nodes away and makes fresh ones (renderShelf's tail asks for
+// the freeze a second time), while the bar is mounted once and lives through
+// every repaint. A plain re-assignment would lose the doors — they are already
+// stamped disabled, so the second freeze cannot find them again — and thaw
+// would hand her back a shelf with two dead doors on it.
 function freezeShelf(except) {
-  frozen = [...document.querySelectorAll("#sShelf .dwell:not([data-dwell-disabled])")]
-    .filter(el => !except.contains(el));
-  for (const el of frozen) {
+  const live = [...document.querySelectorAll(LIVE_TARGETS)].filter(el => !except.contains(el));
+  for (const el of live) {
     el.classList.remove("dwell");
     el.setAttribute("data-dwell-disabled", "");
   }
+  frozen = frozen.concat(live);
 }
 function thawShelf() {
   for (const el of frozen) {
@@ -488,25 +520,9 @@ function renderShelf() {
   // being made — after the ones she can actually read.
   const notYet = S.building.map(notYetCard);
   for (const c of notYet) grid.appendChild(c.card);
-  // Back to TD Snap / New ERA — old shelf's exit tile, named for where the
-  // door goes (Settings, dad 9/3); leaving the app is the highest-consequence
-  // hold (EXIT_HOLD_MS 2400, ux-contract §C).
-  const exitLabel = S.exitTo === "home" ? "Back to New ERA" : "Back to TD Snap";
-  const exitCard = document.createElement("div");
-  exitCard.className = "shelf-card";
-  const exitBtn = document.createElement("div");
-  exitBtn.id = "btnExit";
-  exitBtn.className = "dwell dwell-button shelf-tdsnap-button";
-  exitBtn.setAttribute("data-dwell-ms", "2400");
-  exitBtn.setAttribute("data-dwell-say", exitLabel.toLowerCase());
-  exitBtn.setAttribute("aria-label", exitLabel);
-  exitBtn.innerHTML = '<span class="dwell-label">' +   // old DwellButton wrapper (see renderShelf)
-    '<span class="shelf-tdsnap-icon" aria-hidden="true">' +
-    (S.exitTo === "home" ? "\u{1F3E0}" : "\u{1F4AC}") + '</span>' +
-    '<span class="shelf-title">' + exitLabel + '</span></span>';
-  exitBtn.addEventListener("click", exitApp);
-  exitCard.appendChild(exitBtn);
-  grid.appendChild(exitCard);
+  // NO exit tile on the shelf any more (9/17): the 🚪 lives in the bar above,
+  // where every other app of hers keeps it, and it is never rebuilt under her
+  // gaze by a poll the way a grid tile was.
 
   // THE ASK IS NOT IN shelfSig(), ON PURPOSE. A full grid rebuild is what the
   // poll was fixed to avoid, and putting an open question into the signature
@@ -519,9 +535,21 @@ function renderShelf() {
   // Its fifteen seconds keep running; a repaint is not an answer.
   if (S.asking) {
     const hit = notYet.find(c => c.j.slug === S.asking.slug);
-    if (hit) { frozen = []; paintAsk(hit.j, hit.card, hit.box); }
-    else if (askTimer) { clearTimeout(askTimer); askTimer = null; S.asking = null; }
-    else S.asking = null;   // the pile became a book, or another computer took it
+    // …keeping the nodes that SURVIVED the repaint (the bar's two doors) on the
+    // frozen list: they are still asleep, the second freeze cannot find them
+    // again, and the thaw that ends the question has to wake them.
+    if (hit) { frozen = frozen.filter(el => el.isConnected); paintAsk(hit.j, hit.card, hit.box); }
+    // The pile became a book, or another computer took it: the question has no
+    // card left to stand on. It has to be CLOSED, not merely forgotten —
+    // closeAsk() is the only thing that THAWS. Dropping S.asking on the floor
+    // was invisible while every frozen node was a shelf node the repaint
+    // destroyed; since the bar (9/17) the two doors survive the repaint frozen,
+    // and a build finishing under an open ask left 🚪 and 💬 stamped
+    // data-dwell-disabled with .dwell gone FOR EVER — she is on the shelf with
+    // no way off it and no way to ask to talk. closeAsk() clears askTimer,
+    // clears S.asking, takes the (already destroyed) ask node out, thaws and
+    // re-suppresses.
+    else closeAsk();
   }
 }
 
@@ -532,7 +560,7 @@ function renderShelf() {
 // see renderShelf's tail.
 function shelfSig() {
   return JSON.stringify([
-    S.drive, S.exitTo, S.childName,
+    S.drive, S.childName,
     S.index.map(b => [b.slug, b.title, b.cover, b.authored]),
     S.building.map(j => {
       const w = isPile(j) ? pileWords(j) : buildingWords(j);
@@ -541,14 +569,71 @@ function shelfSig() {
   ]);
 }
 
-async function exitApp() {
+// ---------- the two doors (era-core lib/doorbar.js) ----------
+// The round trip itself is the BAR's — it POSTs /kiosk/exit and /kiosk/pause
+// and follows the hub's answer. These are the three things only a book knows.
+
+// 🚪 leaving: the story stops dead, because she is not coming back to it.
+function onDoorLeave() {
   log("door", {});
-  // The hub decides (Settings > where the door goes): "closed" = ERAgaze took
-  // the screen and this kiosk is closing; anything else = New ERA's home.
-  let action = "home";
-  try { action = (await (await fetch("/kiosk/exit", { method: "POST" })).json()).action; } catch {}
-  if (action === "closed") return;
-  location.href = "/home/";
+  stopMedia();
+}
+
+// 💬 stepping out to TALK: pause IN PLACE. stopMedia() zeroes the narration and
+// tears the video down, which is right for the 🚪 and wrong here — she comes
+// back to this same page and must find it where she left it.
+function pauseMedia() {
+  clearPulse();                                  // no arrow pulsing at an empty screen
+  // the stopIgnorePause latch (stopMedia's): our own pause() must not flip the
+  // pill into "Paused" — give the pause event a tick, then unlatch.
+  S.ignorePause = true;
+  try { narration.pause(); } catch {}
+  setTimeout(() => { S.ignorePause = false; }, 0);
+  try { video.pause(); } catch {}                // src + onended KEPT: the outro
+                                                 // still has a page to turn
+}
+
+function onTalkPause() {
+  // what to pick up when she comes back, decided while it is still true
+  // "paused" is the third answer: she had ALREADY stopped the story herself
+  // (the Read/Pause pill) before she stepped out. Nothing to restart — but the
+  // page must come back exactly as she left it, which is not the same as the
+  // idle `null` (see onTalkResume).
+  S.talkResume = video.getAttribute("src") ? "video"
+    : (S.reading && !S.paused) ? "narration"
+    : S.paused ? "paused" : null;
+  pauseMedia();
+  S.paused = true;
+  updateUi();
+}
+
+// Back from TD Snap (the bar's visibilitychange, only after a pause it made).
+// A clip carries on from its own currentTime; narration starts the PAGE again
+// from the top — a half-read sentence is not a place a child wants to resume
+// at (spec §6).
+function onTalkResume() {
+  const what = S.talkResume;
+  S.talkResume = null;
+  // "paused" hands her own pause BACK to her. Clearing S.paused there flipped
+  // the pill to "Ready to read" over narration still sitting at t>0, and
+  // toggleRead's resume branch (it wants S.paused) stopped matching — the next
+  // Read started the page again from the top and threw away the place she
+  // stopped at on purpose. Every other answer means she was not stopped.
+  S.paused = what === "paused";
+  if (what === "video") {
+    video.play().catch(() => {});
+  } else if (what === "narration") {
+    resetHighlight();
+    try { narration.currentTime = 0; } catch {}
+    narration.play().catch(() => {});
+  } else if (what === null && S.finished && !S.playingOutro) {
+    // She stepped out with the big ready-arrow waiting for her. pauseMedia()
+    // cleared its pulse (no arrow pulsing at a screen she isn't looking at) and
+    // nothing re-armed it, so the page she had finished came back with a still
+    // arrow and the nudge never returned. markReadyForNext() is the arm.
+    markReadyForNext();
+  }
+  updateUi();
 }
 
 async function openBook(slug) {
@@ -898,8 +983,8 @@ function schedulePoll() {
 }
 
 // ONLY WHEN SOMETHING ACTUALLY CHANGED. renderShelf() empties the grid and
-// builds every card again — the openable books' .dwell-buttons and #btnExit
-// with them — and era-core/dwell.js tracks the ELEMENT under the gaze, so a
+// builds every card again — every book she could have been about to open — and
+// era-core/dwell.js tracks the ELEMENT under the gaze, so a
 // rebuild throws away an in-flight dwell (clear() + begin() on a node it has
 // not seen before). Re-rendering on every tick because SOMETHING is building
 // tore the shelf out from under her every twenty seconds, for as long as a book
@@ -918,12 +1003,35 @@ async function pollShelf() {
   suppress();
 }
 
+// The strip, mounted once for BOTH screens. doorbar.js publishes --bar-h on the
+// element it is mounted in; the shelf and the page are that element's SIBLINGS
+// (two fixed panels), and a custom property only travels downwards — so the
+// height is mirrored onto <html>, which every one of them inherits from.
+function mountBar() {
+  const DB = window.DoorBar, mount = $("bar");
+  if (!DB || !mount) return { setDwell() {}, setPause() {} };   // never a dead app (8/19)
+  const door = DB.mountDoorBar(mount, {
+    onLeave: onDoorLeave, onPause: onTalkPause, onResume: onTalkResume,
+  });
+  const size = () => {
+    document.documentElement.style.setProperty("--bar-h", door.sizeBar() + "px");
+  };
+  size();
+  window.addEventListener("resize", size);
+  return door;
+}
+
 async function boot() {
+  // THE DOOR IS UP BEFORE THE FETCH (the board's splash rule, dad 9/3): a hub
+  // that will not answer /settings must never leave her on a screen she cannot
+  // leave. Her real dwell and the 💬 land on it the moment settings do.
+  const door = mountBar();
+
   try {
     const st = await (await fetch("/settings")).json();
     if (window.Dwell) {
       if (typeof st.dwellMs === "number" && isFinite(st.dwellMs))
-        Dwell.setMs(Math.max(600, Math.min(3000, st.dwellMs)));
+        Dwell.setMs(clampDwell(st.dwellMs));   // the same number the doors double
       if (typeof st.settleMs === "number" && isFinite(st.settleMs))
         Dwell.set({ settleMs: Math.max(0, Math.min(2000, st.settleMs)) });
     }
@@ -931,9 +1039,13 @@ async function boot() {
     // before setup, and "friend's story" is nobody's (QA 9/2: every book was
     // "Ellie's story" for every family)
     if (st.hasProfile && st.childName) { S.childName = st.childName; $("shelfTitle").textContent = st.childName + "'s Bookshelf"; }
-    // doorGoes (hub ≥ 0.31.4) is what /kiosk/exit will answer; older hubs
-    // only say the setting
-    if ((st.doorGoes || st.exitTo) === "home") S.exitTo = "home";
+    // her dwell, doubled by the bar onto its two doors (dad 9/17) — and the 💬,
+    // which only exists where there is a talker to step out TO. pauseGoes is
+    // the hub's own answer to that (spec §3.3): an older hub omits the key, and
+    // a missing key is never "tdsnap", so no 💬 is mounted against a hub that
+    // could not honour it.
+    door.setDwell(clampDwell(st.dwellMs));
+    door.setPause(st.pauseGoes === "tdsnap");
   } catch { /* defaults stand — never block the shelf on settings */ }
 
   await refreshShelf();

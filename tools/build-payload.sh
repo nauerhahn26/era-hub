@@ -9,6 +9,13 @@
 set -euo pipefail
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
+# ERA_WT_SUFFIX (9/17): a multi-repo feature keeps sibling worktrees
+# (<repo>--wt-<slug>); when set and that directory exists, source the
+# sibling from there, else from the main checkout as before. A dry-run cut
+# from a hub worktree otherwise ships MASTER's apps under the feature's hub.
+# era-gaze (engine source) and era-family (the private cache) have no feature
+# worktrees and stay on $ROOT.
+sib() { local d="$ROOT/$1${ERA_WT_SUFFIX:-}"; [ -d "$d" ] && echo "$d" || echo "$ROOT/$1"; }
 # Default output lives INSIDE this checkout (worktree-safe: the old $ROOT/dist
 # default made a worktree run rm -rf the main checkout's reference payload).
 # `--with-node` as the first arg is a flag, not an output dir.
@@ -91,22 +98,22 @@ if ytdlp_sha_ok; then
   mkdir -p "$OUT/vendor/yt-dlp"
   cp "$YTDLP" "$OUT/vendor/yt-dlp/yt-dlp.exe"
 fi
-cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$HUB/../era-core/NOTICE" "$OUT/" 2>/dev/null || true
+cp "$HUB/LICENSE" "$HUB/README.md" "$OUT/"; cp "$(sib era-core)/NOTICE" "$OUT/" 2>/dev/null || true
 # apps + shared foundation - COPIES, never symlinks
-cp -rL "$ROOT/era-core/lib" "$OUT/public/lib"
-cp "$ROOT/era-core/dwell.js" "$ROOT/era-core/speech.js" "$OUT/public/"
-cp "$ROOT/era-making-words/app/index.html" "$ROOT/era-making-words/app/studio.js" "$OUT/public/"
+cp -rL "$(sib era-core)/lib" "$OUT/public/lib"
+cp "$(sib era-core)/dwell.js" "$(sib era-core)/speech.js" "$OUT/public/"
+cp "$(sib era-making-words)/app/index.html" "$(sib era-making-words)/app/studio.js" "$OUT/public/"
 # lesson content ships with the app (dad's 8/28 ruling) — the PUBLIC copy in
 # era-making-words/content, never the family one (runway/sentences stay home)
-cp "$ROOT/era-making-words/content/lessons.json" "$OUT/public/lessons.json"
+cp "$(sib era-making-words)/content/lessons.json" "$OUT/public/lessons.json"
 # ERAgaze engine SOURCE ships (dad 8/29: gaze is the point of the product).
 # The hub compiles it on-device with Windows' built-in csc and pairs it with
 # the Tobii runtime already present on Tobii devices (NuGet fallback) — we
 # never redistribute Tobii's binaries.
 mkdir -p "$OUT/gaze"
 cp "$ROOT/era-gaze/device/ERAgaze.cs" "$OUT/gaze/ERAgaze.cs"
-cp -r "$ROOT/era-pencil/app" "$OUT/public/pencil"
-cp -r "$ROOT/era-board/app" "$OUT/public/board"
+cp -r "$(sib era-pencil)/app" "$OUT/public/pencil"
+cp -r "$(sib era-board)/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"
 cp -r "$HUB/public/home" "$OUT/public/home"
 cp -r "$HUB/public/reader" "$OUT/public/reader"
@@ -149,11 +156,33 @@ if exist "%~dp0node\node.exe" set NODE=%~dp0node\node.exe
 start "New ERA hub" /min "%NODE%" server.js %PORT%
 timeout /t 2 /nobreak >nul
 :open
+rem Paused app? (talk door, 9/17) Leaving an app by the talk door does NOT close
+rem it: the hub parks that kiosk window minimized while she says her piece in TD
+rem Snap. So before we close anything, ask the hub whether the app this tile just
+rem asked for is the one sitting parked. A 2xx means the hub brought that window
+rem back to the front and the song, book or half-spelled word is already on her
+rem screen - there is nothing left for this file to do, so we jump past the
+rem kill-and-launch below to the end. Anything else falls through to exactly
+rem today's behaviour: nothing parked, a different app, or no hub yet all answer
+rem 4xx or refuse the connection, and curl -f turns each into a non-zero exit
+rem (22 on a 4xx or 5xx, 7 on a refused connection, 28 on the timeout), which is
+rem what "if not errorlevel 1" filters out. The 8-second cap is there so a wedged
+rem hub costs her a pause, not a dead tile - and 8 because the hub gives its own
+rem window-restore 6 seconds before it gives up and answers "launch". A shorter
+rem cap here would make curl the decider: it would time out mid-restore and the
+rem bat would kill the very window the hub was about to bring back. The hub
+rem always answers first; this cap only catches a hub that answers never.
+rem The body is the app path as PLAIN TEXT, not JSON: the path carries ? and =,
+rem and escaping a JSON brace and its quotes through cmd is the trap that killed
+rem the Music and Movies icons (T7.6b). The hub takes either shape.
+rem curl.exe has shipped in Windows since 10 1803; her devices are Windows 11.
+curl.exe -s -f -o NUL --max-time 8 -X POST -H "Content-Type: text/plain" --data "%OPEN%" http://127.0.0.1:%PORT%/kiosk/resume
+if not errorlevel 1 goto done
 rem full-screen, chrome-less app experience (dad 8/29): kiosk mode in Chrome
 rem or Edge with its own profile; a plain browser tab only as a last resort.
 rem Leave an app via its door (back to the hub home); leave the window with
 rem Alt+F4 or the gaze engine's exit.
-rem (explicit paths: under a 32-bit parent, the ProgramFiles variable lies — dad's first
+rem (explicit paths: under a 32-bit parent, the ProgramFiles variable lies - dad's first
 rem launch fell back to Edge because the installer is a 32-bit process)
 set B=
 if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" set B=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
@@ -164,7 +193,7 @@ if not defined B (
   goto done
 )
 rem QA only: the unattended VM e2e drives this very window over DevTools.
-rem The flag exists only when the launcher's environment sets ERA_QA_CDP —
+rem The flag exists only when the launcher's environment sets ERA_QA_CDP -
 rem a family's double-click never has it.
 set CDP=
 if defined ERA_QA_CDP set CDP=--remote-debugging-port=%ERA_QA_CDP%
