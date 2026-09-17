@@ -131,9 +131,12 @@ async function shelfAt(width, height) {
     const grid = document.querySelector(".shelf-grid");
     const gs = getComputedStyle(grid);
     const cards = [...document.querySelectorAll("#shelfGrid .shelf-card")]
-      .filter(c => c.querySelector(".shelf-card-button"));   // exclude the exit tile
+      .filter(c => c.querySelector(".shelf-card-button"));
     const rect = (e) => e.getBoundingClientRect();
     return {
+      // the shared door bar takes its strip off the top of the shelf (9/17):
+      // measured, never restated — doorbar.js owns the 9% rule.
+      barH: +rect(document.querySelector(".msgbar")).height.toFixed(2),
       columns: gs.gridTemplateColumns.split(" ").length,
       gap: gs.gap,
       gridWidth: +rect(grid).width.toFixed(2),
@@ -161,6 +164,7 @@ async function readerAt(width, height) {
   const m = await page.evaluate(() => {
     const rect = (e) => { const b = e.getBoundingClientRect();
       return { w: +b.width.toFixed(2), h: +b.height.toFixed(2), x: +b.x.toFixed(2), y: +b.y.toFixed(2) }; };
+    const barH = +document.querySelector(".msgbar").getBoundingClientRect().height.toFixed(2);
     const prev = document.querySelector(".reader-prev-button");
     const next = document.querySelector(".reader-next-button");
     // a silent fixture page is "ready" the moment it opens, so drop the ready
@@ -172,7 +176,7 @@ async function readerAt(width, height) {
     next.classList.add("reader-next-button-ready", "reader-next-button-pulse");
     const ready = rect(next);
     const transform = getComputedStyle(next).transform;
-    return { small, ready, transform };
+    return { small, ready, transform, barH };
   });
   await ctx.close();
   return m;
@@ -200,8 +204,13 @@ test("shelf at 1920x1080 CSS: the old app's 5 columns of uniform 319.6px square 
   assert.ok(Math.abs(m.coverWidths[0] - m.coverHeights[0]) < 0.5, "covers are square (aspect-ratio 1/1)");
   assert.ok(Math.abs(m.cardHeights[0] - 379.22) < 2, `card height ${m.cardHeights[0]}, old app 379.22`);
   assert.ok(m.titleWrapped, "cover+title live inside the old DwellButton's .dwell-label wrapper");
+  // …AND STILL TEN WITH THE DOOR BAR ON (9/17). The shelf starts barH lower, so
+  // this is the number dad's "thin like the music board's header" ruling has to
+  // buy back: two rows of five still finish above the fold at 1080.
+  assert.ok(m.barH > 0 && m.barH <= 124, `the bar is a slim strip, got ${m.barH}`);
+  console.log(`# bar ${m.barH}px — ${m.fullyVisible} books fully on the first screen at 1920x1080`);
   assert.ok(m.fullyVisible >= 10,
-    `at least 10 books on the first screen (old app: 10), got ${m.fullyVisible}`);
+    `at least 10 books on the first screen (old app: 10), got ${m.fullyVisible} under a ${m.barH}px bar`);
 });
 
 test("shelf at 1280x720 CSS (no scale-factor flag): still uniform, just 3 columns", async () => {
@@ -225,7 +234,10 @@ test("page arrows at 1920x1080 CSS: 3.2rem corner glyphs, 5.625x ready-arrow", a
   assert.ok(Math.abs(m.small.prev.h - 86.23) < 1, `prev arrow box height ${m.small.prev.h}, old app 86.23`);
   assert.ok(Math.abs(m.small.next.h - 86.23) < 1, `next arrow box height ${m.small.next.h}, old app 86.23`);
   assert.equal(m.small.prev.x, 16, "prev arrow 16px from the left edge");
-  assert.equal(m.small.prev.y, 16, "prev arrow 16px from the top edge");
+  // 16px from the top of the STAGE, which now starts under the shared door bar
+  // (9/17) — the arrow kept its place in the frame, the frame moved down.
+  assert.equal(m.small.prev.y, +(16 + m.barH).toFixed(2),
+    `prev arrow 16px below the ${m.barH}px bar`);
   assert.ok(Math.abs(m.small.next.x + m.small.next.w - (1920 - 16)) < 1, "next arrow 16px from the right edge");
 
   // the big "she may turn the page now" arrow: scale(5.625), never bigger.

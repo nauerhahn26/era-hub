@@ -4,7 +4,8 @@
 // the SYNTHETIC "Luna the Fox" fixture package (never real book content), then
 // drives /reader/ with Playwright. Proves: the shelf renders the OLD layout
 // (shelf-card grid, square covers, NO in-grid black rest cell — generous
-// gutters are the drift protection — plus the Back-to-TD-Snap exit tile), a
+// gutters are the drift protection — under the shared door bar, era-core's
+// lib/doorbar.js: 🚪 leave and 💬 pause to talk, both holding 2x her dwell), a
 // tap opens the book and narration PLAYS, word-sync highlights >=1 token with
 // a monotonically non-decreasing active index (manifest words AND the
 // interpolation fallback), next/prev/Read-Pause work by synthetic click
@@ -43,6 +44,36 @@ const JPEG = Buffer.from(
   "AAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==",
   "base64");
 
+// An 8-second 16x16 silent VP9-in-MP4 clip (ffmpeg -f lavfi color, 2fps, 6kbps;
+// synthetic bytes, never family video). VP9 rather than H.264 because
+// Playwright's Chromium ships no proprietary codecs, and MP4 rather than WebM
+// because the hub's books jail serves .mp3/.mp4/.wav only (server.js
+// BOOK_AV_EXTS). It is the per-page outro on page 1, so the 💬 has something
+// playing to interrupt.
+const MP4 = Buffer.from(
+  "AAAAHGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQAAAAhmcmVlAAABBm1kYXSCSYNCAADwAPYAOCQc" +
+  "GEIAADBgAAAQv//9iyoAAIYAQJKcAElAAAMgAABCQIYAQJKcAErAAAMgAABCQIYAQJKcAEnAAAMg" +
+  "AABCQIYAQJKcAEigAAMgAABCQIYAQJKcAEeAAAMgAABCQIYAQJKcAEbgAAMgAABCQIYAQJKcAEZA" +
+  "AAMgAABCQIYAQJKcAEXAAAMgAABCQIYAQJKcAEVAAAMgAABCQIYAwJKcAEEAAAMgAABCQIYAQJKc" +
+  "AETgAAMgAABCQIYAQJKcAERgAAMgAABCQIYAQJKcAEQAAAMgAABCQIYAQJKcAEOgAAMgAABCQIYA" +
+  "QJKcAENAAAMgAABCQAAAA1Jtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAfQAABAAABAAAA" +
+  "AAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAA" +
+  "AAAAAAAAAAAAAAAAAAACAAACfXRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAfQAAA" +
+  "AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAEAAAABAA" +
+  "AAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAH0AAAAAAAAEAAAAAAfVtZGlhAAAAIG1kaGQAAAAA" +
+  "AAAAAAAAAAAAAEAAAAIAAFXEAAAAAAAtaGRscgAAAAAAAAAAdmlkZQAAAAAAAAAAAAAAAFZpZGVv" +
+  "SGFuZGxlcgAAAAGgbWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAA" +
+  "AAABAAAADHVybCAAAAABAAABYHN0YmwAAACoc3RzZAAAAAAAAAABAAAAmHZwMDkAAAAAAAAAAQAA" +
+  "AAAAAAAAAAAAAAAAAAAAEAAQAEgAAABIAAAAAAAAAAEXTGF2YzYxLjMuMTAwIGxpYnZweC12cDkA" +
+  "AAAAAAAAAAAY//8AAAAUdnBjQwEAAAAACoICAgIAAAAAAApmaWVsAQAAAAAQcGFzcAAAAAEAAAAB" +
+  "AAAAFGJ0cnQAAAAAAAAXcAAAAP4AAAAYc3R0cwAAAAAAAAABAAAAEAAAIAAAAAAUc3RzcwAAAAAA" +
+  "AAABAAAAAQAAABxzdHNjAAAAAAAAAAEAAAABAAAAEAAAAAEAAABUc3RzegAAAAAAAAAAAAAAEAAA" +
+  "AB0AAAAPAAAADwAAAA8AAAAPAAAADwAAAA8AAAAPAAAADwAAAA8AAAAPAAAADwAAAA8AAAAPAAAA" +
+  "DwAAAA8AAAAUc3RjbwAAAAAAAAABAAAALAAAAGF1ZHRhAAAAWW1ldGEAAAAAAAAAIWhkbHIAAAAA" +
+  "AAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALGlsc3QAAAAkqXRvbwAAABxkYXRhAAAAAQAAAABMYXZm" +
+  "NjEuMS4xMDA=",
+  "base64");
+
 // Valid PCM WAV: 44-byte RIFF header + 16-bit mono sine. 8kHz, `secs` long.
 function makeWav(secs) {
   const samples = Math.round(8000 * secs);
@@ -60,12 +91,15 @@ function makeWav(secs) {
 
 before(async () => {
   // fixture package — four page shapes the reader must handle:
-  //   p0: words+audio (manifest timings)   p1: audio, NO words (interpolation)
+  //   p0: words+audio (manifest timings)   p1: audio, NO words (interpolation),
+  //                                            plus the outro VIDEO
   //   p2: textless + silent MIDDLE page (ready arrow IMMEDIATELY)
   //   p3: LAST page with audio (narration end -> book finished -> Library)
   const book = path.join(TMP, "books", "luna-the-fox");
   fs.mkdirSync(path.join(book, "pages"), { recursive: true });
   fs.mkdirSync(path.join(book, "audio"), { recursive: true });
+  fs.mkdirSync(path.join(book, "video"), { recursive: true });
+  fs.writeFileSync(path.join(book, "video", "002.mp4"), MP4);
   fs.writeFileSync(path.join(book, "cover.jpg"), JPEG);
   for (const n of ["001", "002", "003", "004"]) fs.writeFileSync(path.join(book, "pages", n + ".jpg"), JPEG);
   for (const n of ["001", "002", "004"]) fs.writeFileSync(path.join(book, "audio", n + ".wav"), makeWav(3));
@@ -83,7 +117,8 @@ before(async () => {
         words: [{ word: "Luna", start: 0.10, end: 0.80 },
                 { word: "naps", start: 0.90, end: 1.70 },
                 { word: "now.", start: 1.80, end: 2.60 }] },
-      { index: 1, image: "pages/002.jpg", text: "The fox sleeps.", audio: "audio/002.wav" },
+      { index: 1, image: "pages/002.jpg", text: "The fox sleeps.", audio: "audio/002.wav",
+        video: "video/002.mp4" },
       { index: 2, image: "pages/003.jpg", text: "", audio: null },
       { index: 3, image: "pages/004.jpg", text: "Good night fox.", audio: "audio/004.wav" },
     ],
@@ -109,7 +144,11 @@ after(async () => {
 // hasTouch contexts: the required next/prev/Read interactions are the touch
 // path (synthetic click/tap — parity law); the dwell engine itself is proven in
 // dwell-engine.test.mjs. speechSynthesis.speak is wrapped to COUNT calls.
-async function makePage() {
+// `opts.settings` overlays keys onto the hub's OWN /settings answer (dwellMs and
+// her name stay real) — the one seam the 💬 needs, because pauseGoes is "tdsnap"
+// only where a gaze engine answers the bus and this box has none.
+// `opts.routes(ctx)` runs before the first navigation, for /kiosk/* stubs.
+async function makePage(opts = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
   await ctx.addInitScript(() => {
     window.__testHooks = true;                     // reader records highlights to __hlSeq
@@ -118,10 +157,24 @@ async function makePage() {
       speechSynthesis.speak = () => { window.__speakCalls++; };
     }
   });
+  // `opts.init` is one more init script, for a suite that needs a seam of its
+  // own (the pulse test hooks setTimeout so five seconds can be turned by hand).
+  if (opts.init) await ctx.addInitScript(opts.init);
+  if (opts.settings) await settingsOverlay(ctx, opts.settings);
+  if (opts.routes) await opts.routes(ctx);
   const page = await ctx.newPage();
   await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
   await page.waitForFunction(() => window.Reader && typeof window.Reader.state === "function");
   return { ctx, page };
+}
+
+async function settingsOverlay(ctx, over) {
+  await ctx.route("**/settings", async (r) => {
+    let base = {};
+    try { base = await (await r.fetch()).json(); } catch {}
+    await r.fulfill({ status: 200, contentType: "application/json",
+      body: JSON.stringify({ ...base, ...over }) });
+  });
 }
 const state = (page) => page.evaluate(() => window.Reader.state());
 const openLuna = async (page) => {
@@ -129,7 +182,7 @@ const openLuna = async (page) => {
   await page.waitForFunction(() => window.Reader.state().screen === "sRead");
 };
 
-test("shelf: OLD layout — shelf-card grid, square cover, NO in-grid rest cell, TD Snap exit tile", async () => {
+test("shelf: OLD layout — shelf-card grid, square cover, NO in-grid rest cell, and the shared door bar above it", async () => {
   const { ctx, page } = await makePage();
   const tile = page.locator("#shelfGrid .shelf-card-button.dwell").first();
   await tile.waitFor();
@@ -139,58 +192,146 @@ test("shelf: OLD layout — shelf-card grid, square cover, NO in-grid rest cell,
   // the OLD shelf's drift protection is its generous gutters — no black cells
   assert.equal(await page.locator("#shelfGrid .restCell").count(), 0, "no in-grid rest cell (old layout)");
   assert.equal(await page.locator("#rest").count(), 0, "no rest area anywhere (dad 8/25)");
-  assert.equal(await page.locator("#shelfGrid .shelf-tdsnap-button").count(), 1, "Back to TD Snap exit tile");
-  assert.equal(await page.locator("#shelfGrid .shelf-tdsnap-button").getAttribute("data-dwell-ms"),
-    "2400", "leaving the app is the highest-consequence hold (EXIT_HOLD_MS)");
+  // THE EXIT TILE IS GONE (9/17): the door is the shared bar's 🚪, in the same
+  // corner as every other app of hers, and it costs the shelf no slot.
+  assert.equal(await page.locator(".shelf-tdsnap-button").count(), 0, "no exit tile on the shelf");
+  assert.equal(await page.locator("#bar .msgbar #barDoor.dwell").count(), 1, "the bar's 🚪 is up");
   assert.equal((await state(page)).shelfCount, 1);
   await ctx.close();
 });
 
-// The door goes where Settings says (dad 9/3). The tile is named for where
-// the door will REALLY go — TD Snap only when a gaze engine answers the bus
-// (VM leg B 9/3: a PC with no engine promised "Back to TD Snap" and went
-// home) — and both answers of the hub's /kiosk/exit are followed.
-test("exit tile: named for the door's REAL destination; follows /kiosk/exit (closed stays, home navigates)", async () => {
+// ONE bar, mounted once, above BOTH screens (spec §6.1) — so the door does not
+// move when she opens a book, and the poll cannot rebuild it under her gaze.
+test("the bar is the same strip on the shelf and inside a book, and the app sits under it", async () => {
+  const { ctx, page } = await makePage();
+  const geom = () => page.evaluate(() => {
+    const bar = document.querySelector(".msgbar").getBoundingClientRect();
+    const screen = document.querySelector(".screen.show").getBoundingClientRect();
+    return { barTop: bar.top, barH: +bar.height.toFixed(2), screenTop: +screen.top.toFixed(2),
+             barH_css: getComputedStyle(document.documentElement).getPropertyValue("--bar-h").trim(),
+             doors: document.querySelectorAll(".msgbar .dwell").length };
+  });
+  await page.evaluate(() => { document.getElementById("barDoor").dataset.mark = "same"; });
+  const shelf = await geom();
+  assert.equal(shelf.barTop, 0, "the strip is the top of the screen");
+  assert.ok(shelf.barH > 0 && shelf.barH <= 124, `a slim strip, got ${shelf.barH}`);
+  assert.equal(shelf.barH_css, `${Math.round(shelf.barH)}px`, "--bar-h is published for the page's own chrome");
+  assert.ok(Math.abs(shelf.screenTop - shelf.barH) < 1.5,
+    `the shelf starts under the bar (${shelf.screenTop} vs ${shelf.barH})`);
+  await openLuna(page);
+  const read = await geom();
+  assert.ok(Math.abs(read.screenTop - read.barH) < 1.5, "so does the book page");
+  assert.equal(read.doors, shelf.doors, "the same doors, not a second set");
+  assert.equal(await page.locator("#barDoor").getAttribute("data-mark"), "same",
+    "the very same element — one bar for the whole app");
+  // and the stage fits in what is left, instead of hanging off the bottom
+  const over = await page.evaluate(() => {
+    const st = document.querySelector(".reader-stage").getBoundingClientRect();
+    return +(st.bottom - innerHeight).toFixed(2);
+  });
+  assert.ok(over <= 0.5, `the stage ends at the bottom of the screen, overshoot ${over}px`);
+  await ctx.close();
+});
+
+// The 🚪 is silent glyph chrome now (the boards' door since 8/5, shared since
+// 9/17): it is not NAMED for its destination any more, because the hub decides
+// where it goes at the moment she uses it and the tile that carried the promise
+// is gone. What is pinned is the behaviour — it POSTs /kiosk/exit exactly once
+// and follows the hub's answer: "closed" = ERAgaze took the screen, stay put;
+// anything else (or no hub) = New ERA's home.
+test("🚪: silent chrome that POSTs /kiosk/exit and follows the answer (closed stays, home navigates)", async () => {
   const setExit = (v) => fetch(`${BASE}/settings`, { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ exitTo: v }) });
-  // a stand-in ERAgaze on its fixed port; skip that half (not fail) if a real one holds it
-  const http = await import("node:http");
-  const engine = http.createServer((q, s) => { s.writeHead(200).end("ok"); });
-  const bound = await new Promise((res) => { engine.once("error", () => res(false)); engine.listen(49155, "127.0.0.1", () => res(true)); });
   try {
     await setExit("home");
     const { ctx, page } = await makePage();
-    const tile = page.locator("#shelfGrid .shelf-tdsnap-button");
-    assert.equal(await tile.locator(".shelf-title").textContent(), "Back to New ERA");
-    assert.equal(await tile.getAttribute("data-dwell-say"), "back to new era");
-    await tile.click();                                   // live hub → home
+    const door = page.locator("#barDoor");
+    assert.equal(await door.textContent(), "\u{1F6AA}", "the door is a glyph");
+    assert.equal(await door.getAttribute("data-dwell-say"), "door", "silent chrome — it promises nothing");
+    assert.equal(await door.getAttribute("aria-label"), "door");
+    await door.click();                                   // live hub, no engine → home
     await page.waitForURL(/\/home\/?$/, { timeout: 8000 });
     await ctx.close();
 
-    await setExit("tdsnap");
-    if (bound) {
-      const { ctx: c2, page: p2 } = await makePage();
-      const t2 = p2.locator("#shelfGrid .shelf-tdsnap-button");
-      assert.equal(await t2.locator(".shelf-title").textContent(), "Back to TD Snap", "an engine on the bus: the door really goes to TD Snap");
-      let hits = 0;
-      await c2.route("**/kiosk/exit", (r) => { hits++; r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' }); });
-      await t2.click();
-      await p2.waitForTimeout(300);
-      assert.equal(hits, 1, "door POSTs /kiosk/exit exactly once");
-      assert.match(p2.url(), /\/reader\//, "closed: the hub is closing the kiosk — no navigation");
-      await c2.close();
-      engine.close();
-      await new Promise((r) => engine.once("close", r));
-    } else console.log("# 49155 busy — engine stand-in half skipped");
+    let hits = 0;
+    const { ctx: c2, page: p2 } = await makePage({ routes: (c) =>
+      c.route("**/kiosk/exit", (r) => { hits++;
+        r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' }); }) });
+    await p2.locator("#barDoor").click();
+    await p2.waitForTimeout(300);
+    assert.equal(hits, 1, "door POSTs /kiosk/exit exactly once");
+    assert.match(p2.url(), /\/reader\//, "closed: the hub is closing the kiosk — no navigation");
+    await c2.close();
+  } finally { await setExit("tdsnap"); }
+});
 
-    // Settings still says TD Snap, but no engine answers: the tile must not promise it
-    const { ctx: c3, page: p3 } = await makePage();
-    const t3 = p3.locator("#shelfGrid .shelf-tdsnap-button");
-    assert.equal(await t3.locator(".shelf-title").textContent(), "Back to New ERA", "no engine: the door goes home and the tile says so");
-    await t3.click();
-    await p3.waitForURL(/\/home\/?$/, { timeout: 8000 });
-    await c3.close();
-  } finally { if (bound && engine.listening) engine.close(); await setExit("tdsnap"); }
+// DAD'S 9/17 RULING, on the one screen that used to carry a literal 2400: the
+// two doors hold TWICE her Settings dwell and everything else holds her dwell
+// exactly. No floors, no bonuses, no fixed numbers anywhere in this app.
+test("both doors hold 2x her dwell, and nothing else in the Reader claims a hold at all", async () => {
+  const setDwell = (ms) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dwellMs: ms }) });
+  try {
+    for (const dwell of [900, 1500]) {
+      await setDwell(dwell);
+      const { ctx, page } = await makePage({ settings: { pauseGoes: "tdsnap" } });
+      await page.waitForFunction((d) =>
+        document.getElementById("barDoor").dataset.dwellMs === String(2 * d), dwell, { timeout: 5000 });
+      assert.equal(await page.locator("#barTalk").getAttribute("data-dwell-ms"), String(2 * dwell),
+        "the 💬 leaves the screen too — same consequence, same hold");
+      // the shelf, its cards and the page's own controls carry NO literal hold
+      assert.equal(await page.locator("[data-dwell-ms]:not(.bardoor)").count(), 0,
+        "something outside the bar claims a hold of its own");
+      await ctx.close();
+    }
+  } finally { await setDwell(1200); }
+});
+
+// THE BAR IS NOT THE READER'S (spec §5). This page restyles dwell.js's feedback
+// into the old DwellButton look — the rising fill hidden, the ring turned into a
+// coral conic progress arc that reader.js drives from the fill's height — and
+// both rules used to be written `.dwell …`, which is every door on the shared
+// strip too. The doors came out wearing the Reader's coral ring from the FIRST
+// frame, past doorbar.css's ~200ms onset gate: a glance across 🚪/💬 flashed
+// feedback that the very same glyphs suppress in her other four apps.
+test("the bar's two doors wear era-core's feedback, not the Reader's: no conic ring, no mirrored progress, onset gate intact", async () => {
+  const { ctx, page } = await makePage({ settings: { pauseGoes: "tdsnap" } });
+  await page.locator("#barTalk").waitFor();
+  // dwell.js's own fx markup, driven the way the engine drives it (it sets the
+  // fill's HEIGHT every frame — that style mutation is reader.js's mirror hook)
+  const probe = (sel) => page.evaluate(async (s) => {
+    const host = document.querySelector(s);
+    const fx = document.createElement("div"); fx.className = "dwell-fx";
+    const fill = document.createElement("div"); fill.className = "dwell-fill";
+    const ring = document.createElement("div"); ring.className = "dwell-ring";
+    fx.appendChild(fill); fx.appendChild(ring); host.appendChild(fx);
+    fill.style.height = "40%";
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const cf = getComputedStyle(fill), cr = getComputedStyle(ring);
+    const out = { progress: host.style.getPropertyValue("--dwell-progress"),
+                  fillOpacity: cf.opacity, ringBg: cr.backgroundImage };
+    host.classList.add("dwell-active");            // what the engine adds on arm
+    await new Promise(r => requestAnimationFrame(r));
+    out.onset = getComputedStyle(fill).animationName;
+    host.classList.remove("dwell-active"); fx.remove();
+    return out;
+  }, sel);
+
+  const door = await probe("#barDoor");
+  assert.equal(door.progress, "", "the Reader never mirrors gaze progress onto a door");
+  assert.equal(door.ringBg.includes("conic-gradient"), false,
+    "no coral progress arc on the 🚪: " + door.ringBg);
+  assert.notEqual(door.fillOpacity, "0",
+    "doorbar.css's fill governs the bar — the Reader's blanket opacity:0 beat it outright");
+  assert.equal(door.onset, "dwellOnset",
+    "…so the ~200ms onset gate is back: a glance across the door flashes nothing");
+
+  // …and the app's own targets are untouched: the old DwellButton look stands
+  const card = await probe("#shelfGrid .shelf-card-button.dwell");
+  assert.equal(card.progress, "144.0deg", "the Reader's ring still tracks the engine (40% -> 144deg)");
+  assert.equal(card.fillOpacity, "0", "…with the rising fill still hidden under it");
+  assert.equal(card.ringBg.includes("conic-gradient"), true, card.ringBg);
+  await ctx.close();
 });
 
 test("open book by tap: reading screen, narration audio PLAYS (no speechSynthesis)", async () => {
@@ -265,6 +406,219 @@ test("next/prev/Read-Pause by synthetic click (touch parity); arrow stops narrat
   await page.waitForFunction(() => window.Reader.state().audio === "playing", null, { timeout: 3000 });
   assert.ok((await state(page)).audioTime >= tPaused - 0.3, "resume continues from where she paused");
   assert.equal(await page.evaluate(() => window.__speakCalls), 0, "still no speechSynthesis");
+  await ctx.close();
+});
+
+// ======================================================= 💬 PAUSE TO TALK (9/17)
+// She is mid-book and wants to SAY something. The 💬 pauses the story IN PLACE
+// (the 🚪 would stop it dead and leave), POSTs /kiosk/pause with this app's own
+// path so her tile can find the same kiosk again, and does nothing more — the
+// window is about to go under her talker. When TD Snap hands the screen back the
+// page gets a visibilitychange and picks the page up: a clip carries on, a
+// narration starts the page again from the top (spec §6 — a half-read sentence
+// is not a place a child wants to resume at).
+async function talkPage(opts = {}) {
+  const pauses = [];
+  const answer = opts.answer || { status: 200, body: '{"action":"paused"}' };
+  const r = await makePage({
+    settings: { pauseGoes: "tdsnap", ...(opts.settings || {}) },
+    // opts.timers: record every setTimeout the page arms, so the ready-arrow's
+    // five seconds can be fired by hand — and, crucially, so a test can fire
+    // ONLY the ones armed after a given moment (the same stale-closure trap the
+    // shelf's __timers hook has: re-firing the timer from BEFORE the pause would
+    // paint the pulse the resume was supposed to re-arm).
+    init: opts.timers ? (() => {
+      window.__timers = [];
+      const st = window.setTimeout.bind(window);
+      window.setTimeout = (fn, ms) => { window.__timers.push({ fn, ms }); return st(fn, ms); };
+    }) : undefined,
+    routes: (c) => c.route("**/kiosk/pause", (route) => {
+      pauses.push({ raw: route.request().postData() || "",
+                    json: (() => { try { return JSON.parse(route.request().postData() || ""); } catch { return null; } })() });
+      route.fulfill({ status: answer.status, contentType: "application/json", body: answer.body });
+    }),
+  });
+  // Use the 💬 and WAIT FOR THE HUB TO ANSWER: the bar arms its "she is coming
+  // back" latch on that reply, so a hand-back dispatched before it lands is one
+  // the bar is right to ignore (and a flaky test, 9/17).
+  const talk = async () => {
+    const answered = r.page.waitForResponse((res) => res.url().includes("/kiosk/pause"));
+    await r.page.locator("#barTalk").click();
+    await answered;
+  };
+  // TD Snap gives the screen back: the launcher's /kiosk/resume line
+  // re-foregrounds this kiosk, and the page hears a visibilitychange.
+  const handBack = () => r.page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  // how many timers have been armed so far, and "fire the ms-second ones armed
+  // since then" — never the whole list (see init above)
+  const armed = () => r.page.evaluate(() => window.__timers.length);
+  const fireSince = (since, ms) => r.page.evaluate(
+    ({ since, ms }) => { for (const t of window.__timers.slice(since)) if (t.ms === ms) t.fn(); },
+    { since, ms });
+  return { ...r, pauses, talk, handBack, armed, fireSince };
+}
+
+test("💬 exists only where there is a talker to step out to", async () => {
+  const { ctx, page } = await makePage({ settings: { pauseGoes: "home" } });
+  assert.equal(await page.locator("#barTalk").count(), 1, "the door is built either way");
+  assert.equal(await page.locator("#barTalk").isVisible(), false,
+    "…and stays hidden on a PC with no gaze engine — the bar looks exactly as it did before 9/17");
+  assert.equal(await page.locator("#barDoor").isVisible(), true, "the 🚪 never hides");
+  await ctx.close();
+
+  const t = await makePage({ settings: { pauseGoes: "tdsnap" } });
+  assert.equal(await t.page.locator("#barTalk").isVisible(), true, "her talker is there: the 💬 is up");
+  await t.ctx.close();
+});
+
+test("💬 mid-narration: the story stops WHERE SHE IS, /kiosk/pause carries /reader/, and coming back re-reads the page", async () => {
+  const { ctx, page, pauses, talk, handBack } = await talkPage();
+  await openLuna(page);
+  await page.waitForFunction(() => window.Reader.state().audioTime > 0.7, null, { timeout: 8000 });
+  await talk();
+  await page.waitForFunction(() => window.Reader.state().audio === "paused", null, { timeout: 3000 });
+  const s = await state(page);
+  assert.ok(s.audioTime > 0.6, `the 💬 is not the 🚪: narration keeps her place (t=${s.audioTime})`);
+  assert.equal(s.page, 0, "and her page");
+  assert.equal(s.screen, "sRead", "…and the book is still open behind her talker");
+  await page.waitForTimeout(200);
+  assert.equal(pauses.length, 1, "one pause, POSTed once");
+  assert.deepEqual(pauses[0].json, { path: "/reader/" },
+    "the path her tile will ask to resume: " + pauses[0].raw);
+  assert.match(page.url(), /\/reader\//, "paused: the hub is minimizing this kiosk — no navigation");
+
+  await handBack();
+  await page.waitForFunction((was) => {
+    const st = window.Reader.state();
+    return st.audio === "playing" && st.audioTime < was;
+  }, s.audioTime, { timeout: 5000 });
+  assert.equal((await state(page)).page, 0, "the same page she left — never a fresh book");
+  assert.equal(await page.evaluate(() => window.__speakCalls), 0, "still no speechSynthesis");
+  await ctx.close();
+});
+
+test("💬 mid-outro: the clip pauses and carries on from where it stopped", async () => {
+  const { ctx, page, talk, handBack } = await talkPage();
+  await openLuna(page);
+  await page.locator("#btnNext").click();                    // -> page 1, the page with the video
+  await page.waitForFunction(() => window.Reader.state().arrow === true, null, { timeout: 12000 });
+  await page.locator("#btnNext").click();                    // her arrow starts the outro
+  await page.waitForFunction(() => {
+    const v = document.getElementById("pageVideo");
+    return window.Reader.state().videoShowing && !v.paused && v.currentTime > 0.2;
+  }, null, { timeout: 8000 });
+
+  await talk();
+  const paused = await page.evaluate(() => {
+    const v = document.getElementById("pageVideo");
+    return { paused: v.paused, t: v.currentTime, src: !!v.getAttribute("src") };
+  });
+  assert.equal(paused.paused, true, "the clip stopped");
+  assert.equal(paused.src, true, "…and was NOT torn down: she is coming back to it");
+  assert.ok(paused.t > 0.1, `it kept its place (t=${paused.t})`);
+  assert.equal((await state(page)).videoShowing, true, "the page did not turn under the pause");
+
+  await handBack();
+  await page.waitForFunction((was) => {
+    const v = document.getElementById("pageVideo");
+    return !v.paused && v.currentTime >= was;
+  }, paused.t, { timeout: 5000 });
+  assert.equal((await state(page)).page, 1, "still her page");
+  await ctx.close();
+});
+
+// She must never be left silent AND on screen (spec §5): a hub that answers
+// anything but "paused" means there is nothing to step out to, so the 💬 IS the
+// 🚪 — stop the story and take the hub's exit answer.
+test("💬 with nothing to step out to falls through to the 🚪", async () => {
+  const { ctx, page } = await talkPage({ answer: { status: 200, body: '{"action":"home"}' } });
+  await openLuna(page);
+  await page.waitForFunction(() => window.Reader.state().audioTime > 0.2, null, { timeout: 8000 });
+  await page.locator("#barTalk").click();
+  await page.waitForURL(/\/home\/?$/, { timeout: 8000 });    // live hub, no engine → home
+  await ctx.close();
+});
+
+// She stepped out with the big ready-arrow waiting for her. pauseMedia() clears
+// its pulse — an arrow must not pulse at a screen she is not looking at — and
+// nothing used to put it back: the page she had finished came back with a still
+// arrow and the old reader's gentle nudge was gone until she turned the page.
+test("💬 with the ready-arrow waiting: the pulse comes back with her", async () => {
+  const { ctx, page, talk, handBack, armed, fireSince } = await talkPage({ timers: true });
+  await openLuna(page);
+  await page.waitForFunction(() => window.Reader.state().arrow === true, null, { timeout: 12000 });
+  const pulse = page.locator("#btnNext.reader-next-button-pulse");
+  await fireSince(0, 5000);                                  // the nudge, without five real seconds
+  assert.equal(await pulse.count(), 1, "the arrow is pulsing at her before she steps out");
+
+  await talk();
+  assert.equal(await pulse.count(), 0, "no arrow pulsing at a screen she is not looking at");
+  const mark = await armed();                                // only timers armed AFTER this count
+
+  await handBack();
+  assert.equal((await state(page)).arrow, true, "the arrow is still hers to press");
+  await fireSince(mark, 5000);
+  assert.equal(await pulse.count(), 1, "…and the nudge was armed again when she came back");
+  await ctx.close();
+});
+
+// The 💬 pressed while SHE had already stopped the story (the Read/Pause pill).
+// There is nothing to restart — but the page has to come back exactly as she
+// left it. Clearing S.paused flipped the pill to "Ready to read" over narration
+// still sitting mid-page, and toggleRead's resume branch stopped matching: her
+// next Read threw away the place she had stopped at on purpose.
+test("💬 while she is already paused hands her pause back, and Read carries on from it", async () => {
+  const { ctx, page, talk, handBack } = await talkPage();
+  await openLuna(page);
+  await page.waitForFunction(() => window.Reader.state().audioTime > 0.7, null, { timeout: 8000 });
+  await page.locator("#btnRead").click();                    // her own Pause, mid-page
+  await page.waitForFunction(() => window.Reader.state().audio === "paused", null, { timeout: 3000 });
+  const t0 = (await state(page)).audioTime;
+  assert.ok(t0 > 0.6, `she stopped part-way through (t=${t0})`);
+  assert.match(await page.locator("#pageMeta").textContent(), /Paused/);
+
+  await talk();
+  await handBack();
+  await page.waitForTimeout(200);
+  const s = await state(page);
+  assert.equal(s.audio, "paused", "the 💬 never starts the story she stopped herself");
+  assert.ok(Math.abs(s.audioTime - t0) < 0.01, `…and never moves it (t=${s.audioTime} vs ${t0})`);
+  assert.equal(s.page, 0, "her page");
+  assert.match(await page.locator("#pageMeta").textContent(), /Paused/,
+    "the pill still says Paused — it is her pause, not a fresh page");
+  assert.equal(await page.locator("#btnReadLabel").textContent(), "Read");
+
+  await page.locator("#btnRead").click();                    // and Read carries on, never restarts
+  const t1 = await page.evaluate(() => document.getElementById("narration").currentTime);
+  assert.ok(t1 >= t0 - 0.05, `Read resumed where she stopped (t=${t1} vs ${t0})`);
+  await page.waitForFunction(() => window.Reader.state().audio === "playing", null, { timeout: 5000 });
+  await ctx.close();
+});
+
+// The bar arms its "she is coming back" latch on the hub's `paused` answer, so a
+// visibilitychange with NO pause pending is an alt-tab (or a QA VM's window
+// manager), not TD Snap handing the screen back. It must change nothing at all.
+test("a visibilitychange with no pause pending is an alt-tab, and changes nothing", async () => {
+  const kiosk = [];
+  const { ctx, page } = await makePage({
+    settings: { pauseGoes: "tdsnap" },
+    routes: (c) => c.route("**/kiosk/**", (r) => { kiosk.push(r.request().url());
+      r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"paused"}' }); }),
+  });
+  await openLuna(page);
+  await page.waitForFunction(() => window.Reader.state().audioTime > 0.5, null, { timeout: 8000 });
+  await page.locator("#btnRead").click();                    // her own pause; the 💬 was never used
+  await page.waitForFunction(() => window.Reader.state().audio === "paused", null, { timeout: 3000 });
+  const before = await state(page);
+
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.waitForTimeout(250);
+  const after = await state(page);
+  assert.equal(after.audio, "paused", "nothing started playing under her");
+  assert.ok(Math.abs(after.audioTime - before.audioTime) < 0.01, "her place is where she left it");
+  assert.equal(after.page, before.page, "and her page");
+  assert.match(await page.locator("#pageMeta").textContent(), /Paused/, "still Paused");
+  assert.equal(kiosk.length, 0, "no /kiosk/* traffic at all: " + kiosk.join(", "));
   await ctx.close();
 });
 
@@ -452,6 +806,7 @@ async function shelfWith(status, index = "[]", opts = {}) {
     const st = window.setTimeout.bind(window);
     window.setTimeout = (fn, ms) => { window.__timers.push({ fn, ms, kind: "timeout" }); return st(fn, ms); };
   });
+  if (opts.settings) await settingsOverlay(ctx, opts.settings);
   await ctx.route("**/books/index.json",
     r => r.fulfill({ status: 200, contentType: "application/json", body: index }));
   await ctx.route("**/content/status", r => r.fulfill({ status: 200, contentType: "application/json",
@@ -575,8 +930,8 @@ test("a book that lost one page and will try again is not called stopped", async
 });
 
 // THE SHELF IS NOT REBUILT UNDER HER GAZE. renderShelf() empties the grid and
-// makes every card again — the openable books' dwell-buttons and #btnExit (the
-// highest-consequence hold in the app) with them — and era-core/dwell.js tracks
+// makes every card again — every book she could have been about to open — and
+// era-core/dwell.js tracks
 // the ELEMENT, so a rebuild throws an in-flight dwell away. A book that cannot
 // finish (no key yet, a hold nobody has lifted) keeps the poll running for the
 // whole session, so "re-render because something is building" meant doing that
@@ -603,17 +958,17 @@ test("the poll only repaints the shelf when something actually changed", async (
   const tick = () => page.evaluate(async () => {
     for (const t of window.__timers.filter(x => x.ms === 20000)) await t.fn();
   });
-  // The two nodes her gaze may be resting on when the poll comes round.
+  // The nodes her gaze may be resting on when the poll comes round. The door is
+  // one of them and is no longer ON the shelf (9/17) — it is marked here too,
+  // because a repaint must not reach it at all now.
   await page.evaluate(() => {
-    document.getElementById("btnExit").dataset.mark = "same";
+    document.getElementById("barDoor").dataset.mark = "same";
     document.querySelector("#shelfGrid .shelf-card-button").dataset.mark = "same";
   });
 
   await tick(); await tick();
-  assert.equal(await page.locator("#btnExit").getAttribute("data-mark"), "same",
-    "the exit tile was replaced under her gaze while nothing had changed");
   assert.equal(await page.locator("#shelfGrid .shelf-card-button").getAttribute("data-mark"), "same",
-    "so was the book she was about to open");
+    "the book she was about to open was replaced under her gaze while nothing had changed");
   assert.equal(await page.evaluate(() => window.Reader.state().buildingCount), 1,
     "…and it would have gone on doing it for the whole session");
 
@@ -623,7 +978,10 @@ test("the poll only repaints the shelf when something actually changed", async (
     progress: { pages: 16, transcribed: 9, narrated: 0 } }] });
   await tick();
   await page.locator("#shelfGrid .shelf-card.is-building", { hasText: "9 of 16 pages read" }).waitFor();
-  assert.equal(await page.locator("#btnExit").getAttribute("data-mark"), null, "a real change repaints");
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").getAttribute("data-mark"), null,
+    "a real change repaints");
+  assert.equal(await page.locator("#barDoor").getAttribute("data-mark"), "same",
+    "…and never the door: it lives above the shelf, out of the repaint's way");
   assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0,
     "a fresh set of dwell targets never inherits her gaze");
   await ctx.close();
@@ -701,20 +1059,26 @@ test("Build does not build: it opens the ask, and the confirming button is a dif
   await ctx.close();
 });
 
-test("while the ask is open the shelf is asleep — no live dwell target, the exit tile included", async () => {
+test("while the ask is open the shelf is asleep — no live dwell target, BOTH doors included", async () => {
   const { ctx, page } = await shelfWith(contentStatus({ jobs: [pileRow()] }),
     JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
-      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]));
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]),
+    { settings: { pauseGoes: "tdsnap" } });                // …with the 💬 up too
   await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  await page.locator("#barTalk").waitFor();
   await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
   await page.locator("#shelfAsk").waitFor();
   assert.equal(await page.locator("#sShelf .dwell:not([data-dwell-disabled])").count(), 0,
     "a parked gaze could still fire the shelf behind the question");
-  // the exit tile is the highest-consequence hold in the app, and unlike the
-  // board's door it is NOT kept awake under this one
-  assert.equal(await page.locator("#btnExit").getAttribute("data-dwell-disabled"), "");
-  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), false,
-    "the class goes too — dwell.js's 150ms tap-rescue matches .dwell alone");
+  // the two doors are the highest-consequence holds in the app, and unlike the
+  // board's door they are NOT kept awake under this one
+  assert.equal(await page.locator(".msgbar .dwell:not([data-dwell-disabled])").count(), 0,
+    "a parked gaze could still fire a door over the question");
+  for (const id of ["#barDoor", "#barTalk"]) {
+    assert.equal(await page.locator(id).getAttribute("data-dwell-disabled"), "", id + " stays armed");
+    assert.equal(await page.locator(id).evaluate(el => el.classList.contains("dwell")), false,
+      "the class goes too — dwell.js's 150ms tap-rescue matches .dwell alone (" + id + ")");
+  }
   assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0,
     "opening the ask settles her gaze (Dwell.suppress(600))");
   await ctx.close();
@@ -732,9 +1096,9 @@ test("Not now closes the ask, thaws with a settle window, and wakes nothing that
   await page.locator("#shelfAskNo").click();
   await page.waitForFunction(() => !document.getElementById("shelfAsk"));
   assert.equal(posts.length, 0, "Not now spends nothing");
-  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), true);
-  assert.equal(await page.locator("#btnExit").getAttribute("data-dwell-disabled"), null,
-    "the shelf she can use is handed back");
+  assert.equal(await page.locator("#barDoor").evaluate(el => el.classList.contains("dwell")), true);
+  assert.equal(await page.locator("#barDoor").getAttribute("data-dwell-disabled"), null,
+    "the shelf she can use, and the door out of it, are handed back");
   assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0,
     "closing settles her gaze too");
   // …and the pile card, which was asleep BEFORE the ask, is still asleep: a
@@ -754,7 +1118,7 @@ test("fifteen seconds untouched closes the ask by itself and thaws the shelf", a
   await page.waitForTimeout(30);
   await fire(15000);
   await page.waitForFunction(() => !document.getElementById("shelfAsk"));
-  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), true,
+  assert.equal(await page.locator("#barDoor").evaluate(el => el.classList.contains("dwell")), true,
     "the shelf comes back on its own");
   assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0);
   await ctx.close();
@@ -768,7 +1132,7 @@ test("Build it posts /content/build for the pile folder and thaws the shelf", as
   await page.waitForFunction(() => !document.getElementById("shelfAsk"));
   assert.equal(posts.length, 1, "exactly one build, on the press she confirmed");
   assert.deepEqual(posts[0].json, { kind: "books", slug: "kitchen-table" });
-  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), true,
+  assert.equal(await page.locator("#barDoor").evaluate(el => el.classList.contains("dwell")), true,
     "and the shelf is hers again");
   await ctx.close();
 });
@@ -797,12 +1161,13 @@ test("the ask survives a repaint: S.asking is outside the signature, and the fre
   await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
   await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
   await page.locator("#shelfAsk").waitFor();
-  await page.evaluate(() => { document.getElementById("btnExit").dataset.mark = "same"; });
+  await page.evaluate(() => { document.querySelector("#shelfGrid .shelf-card-button").dataset.mark = "same"; });
   // a real change: one more photo landed in the pile while the question was up
   st = contentStatus({ jobs: [pileRow({ progress: { pages: 13, transcribed: 0, narrated: 0 } })] });
   await tick();
   await page.locator("#shelfGrid .shelf-card.is-pile", { hasText: "13 photos" }).waitFor();
-  assert.equal(await page.locator("#btnExit").getAttribute("data-mark"), null, "the shelf really was rebuilt");
+  assert.equal(await page.locator("#shelfGrid .shelf-card-button").getAttribute("data-mark"), null,
+    "the shelf really was rebuilt");
   await page.locator("#shelfAsk").waitFor();
   assert.match(await page.locator("#shelfAsk").textContent(), /13 photos/,
     "the question came back over the card it belongs to");
@@ -810,7 +1175,49 @@ test("the ask survives a repaint: S.asking is outside the signature, and the fre
     "a rebuilt shelf under an open ask is awake again unless the freeze is asked for a second time");
   await page.locator("#shelfAskNo").click();
   await page.waitForFunction(() => !document.getElementById("shelfAsk"));
-  assert.equal(await page.locator("#btnExit").evaluate(el => el.classList.contains("dwell")), true);
+  assert.equal(await page.locator("#barDoor").evaluate(el => el.classList.contains("dwell")), true,
+    "…and the door the repaint left frozen is awake again with it");
+  await ctx.close();
+});
+
+// THE QUESTION'S CARD CAN ALSO GO AWAY. The build finishes (or another computer
+// takes the pile) while the ask is up, and the row leaves /content/status: the
+// repaint has no card to paint the question over. Dropping S.asking on the floor
+// was invisible before the bar — every frozen node was a shelf node the repaint
+// had already destroyed — but the strip is mounted ONCE and lives through every
+// repaint, so both doors stayed stamped data-dwell-disabled with .dwell removed
+// for ever: she was left on the shelf with no way off it and no way to ask to
+// talk. The question must be CLOSED, which is the only thing that thaws.
+test("a build that finishes under the ask closes it — and never leaves her doors dead", async () => {
+  let st = contentStatus({ jobs: [pileRow()] });
+  const { ctx, page, tick } = await shelfWith(() => st,
+    JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]),
+    { settings: { pauseGoes: "tdsnap" } });                  // …with the 💬 up too
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
+  await page.locator("#barTalk").waitFor();
+  await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
+  await page.locator("#shelfAsk").waitFor();
+  assert.equal(await page.locator(".msgbar .dwell:not([data-dwell-disabled])").count(), 0,
+    "both doors are asleep under the question");
+
+  // the pile is a book now: the row is gone from the hub's answer
+  st = contentStatus({ jobs: [] });
+  await tick();
+  await page.waitForFunction(() => window.Reader.state().buildingCount === 0);
+  await page.waitForFunction(() => !document.getElementById("shelfAsk"));
+  assert.equal((await state(page)).asking, null, "the question is closed, not merely forgotten");
+  assert.equal(await page.locator(".msgbar .dwell").count(), 2, "the strip still carries two doors");
+  assert.equal(await page.locator(".msgbar .dwell:not([data-dwell-disabled])").count(), 2,
+    "…and BOTH of them are hers again");
+  for (const id of ["#barDoor", "#barTalk"]) {
+    assert.equal(await page.locator(id).getAttribute("data-dwell-disabled"), null,
+      id + " is still stamped disabled — she cannot leave and cannot ask to talk");
+    assert.equal(await page.locator(id).evaluate(el => el.classList.contains("dwell")), true,
+      "the class comes back too — dwell.js's 150ms tap-rescue matches .dwell alone (" + id + ")");
+  }
+  assert.ok(await page.evaluate(() => window.Dwell.state().suppressedMs) > 0,
+    "closing under her gaze settles it, like every other close");
   await ctx.close();
 });
 
