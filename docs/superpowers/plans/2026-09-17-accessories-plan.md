@@ -9,9 +9,10 @@ Every task: TDD (`superpowers:test-driven-development` — failing test first), 
 verification command, STOP conditions. Builders are Opus agents (`model:'opus'`); Fable
 reviews at each phase gate (`rae-flow:reviewing`). Posture hints are advisory.
 
-Ports: the 84xx census on 9/17 across all five repos' tests shows 8465–8479 free
-(8463/8464 = kiosk-pause, 8480 taken). **The accessories suite takes 8465 (hub) and 8466
-(fake model)** — `ss -ltn | grep -E '846[56]'` must be empty before the first run, and
+Ports: the 84xx census on 9/17 across all five repos' tests shows 8465–8479 free of suites
+(8463/8464 = kiosk-pause, 8480 taken). **The accessories suite takes 8465 (hub) and 8467
+(fake model)** — 8466 is named in an era-making-words manual-run comment, so it is skipped;
+`ss -ltn | grep -E '846[57]'` must be empty before the first run, and
 grep the five repos again before binding (tunnel-ports memory: two collisions already
 exist in the band).
 
@@ -128,7 +129,7 @@ message, trailers). Retro note appended to §C.
 - The needs-attributes pass leaves `category`/`occasion`/`hidden` alone (it only writes
   `attributes(meta)` — assert with a test, don't assume).
 - Tests first, in the new `tests/clothing-accessories.test.mjs` (hub 8465, fake model
-  8466; wardrobe from `synthetic-wardrobe.mjs` + explicit jacket/hoodie photos as the
+  8467; wardrobe from `synthetic-wardrobe.mjs` + explicit jacket/hoodie photos as the
   existing suites make them): an `edits.json` entry moves a top to `jacket` on a
   rebuild-only build and stamps `manualAt`; a shared manual line from a second writer
   does the same on a second DATA dir; a later manual line wins over an earlier one;
