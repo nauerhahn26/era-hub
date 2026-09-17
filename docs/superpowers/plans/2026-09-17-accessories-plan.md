@@ -365,6 +365,18 @@ PUBLISHED at 18:35 UTC while this branch was in flight (signed installer, `legs=
 so the patch is `v0.34.1 --patch` (T10 said v0.33.7 — a patch shares X.Y with its
 installer). The dry-run ran `--skip-gate` on the 20:19 stamp for the landed tree.
 
+**Publish (9/17 evening)** — dry-run v0.34.1 (build 20260917.2020, VM leg B 5/0) was
+push-device'd to the tablet first (unpublished). Dad: "yes publish" → `release.sh v0.34.1
+--patch --skip-gate` from master b9e42fa: rebuild, VM leg B 5/0 again, **PUBLISHED 23:26
+UTC as build 20260917.2314** under the v0.34.0 signed installer
+(https://github.com/nauerhahn26/new-era-releases/releases/tag/v0.34.1). Both devices
+moved the same night by `POST /update/check` on their loopback: **tablet 2020 → 2314,
+i13 1751 → 2314** (i13 hub was up, pid 5916). Then `POST /clothing/regenerate` by hand
+on each (see §D re-sort follow-up) — both now serve the new graph: 11 `categories`,
+Build my own 3×4 centre-black, today 7 outfits with no door until the first accessory
+is filed. Dad's hold-a-real-tile round trip still owed. The patch rail has no dry-run
+re-entry (`--resume-sign` is signed-only), so a real `--patch` costs a full ~30 min.
+
 **T11 (9/17) — behavioral, 24/24** — evidence in
 `~/new-era/dist/qa/2026-09-17-accessories/` (README.md table, `video/page@…webm`,
 `shots/01-today.png … 11-cat-top-after.png`, `01-materialize.txt … 06-second-device.txt`,
