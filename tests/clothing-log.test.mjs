@@ -380,6 +380,153 @@ test("a tag line naming neither an id nor a hash is not a tag", () => {
   assert.equal(m.tags.size, 0);
 });
 
+// ---- manual edits: the grown-up outranks the model, for ever ---------------
+// (accessories spec 2026-09-17 §3.4.) A model line is a guess; a `manual:true`
+// line is a parent who looked at the garment and said what it is. So the usual
+// "newest wins" is suspended in one direction only: a manual line beats any
+// non-manual line for the same id or hash whatever the clocks say — including
+// a model line written later by a device whose ingest ran after the edit, which
+// is the ordinary case (the edit lands today, another tablet describes the same
+// photo tomorrow). Among manual lines the newest parent wins; among non-manual
+// lines nothing changes at all.
+
+test("a manual line beats a newer line from the model, and says so", () => {
+  const b = beds();
+  const hash = "f".repeat(64);
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-06T09:00:00Z", id: "item_aaaa", hash, category: "top", warmth: "warm", colors: ["navy"] });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_aaaa", hash, category: "jacket", occasion: "fancy",
+      hidden: false, manual: true, warmth: "cold", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const tag = log.tagsFor(m, "item_aaaa");
+  assert.equal(tag.category, "jacket", "the model described it again yesterday; the parent still wins");
+  assert.equal(tag.manual, true, "…and the worker can tell, so it can stamp manualAt");
+  assert.equal(tag.t, "2026-09-05T09:00:00Z", "…and knows when the parent said it");
+  // The sweep looks up by id THEN hash, so the hash key has to carry the same
+  // winner: a photo that arrived under another filename is the same garment.
+  assert.equal(log.tagsFor(m, "item_unknown", hash).category, "jacket");
+});
+
+test("among manual lines the newest one wins, and a later model line still loses", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_aaaa", category: "jacket", manual: true, colors: ["navy"] },
+    { t: "2026-09-07T09:00:00Z", id: "item_aaaa", category: "top", manual: true, colors: ["navy"] });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-08T09:00:00Z", id: "item_aaaa", category: "dress", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const tag = log.tagsFor(m, "item_aaaa");
+  assert.equal(tag.category, "top", "the parent changed their mind, and the model never gets a vote");
+  assert.equal(tag.t, "2026-09-07T09:00:00Z");
+});
+
+test("a manual line naming neither an id nor a hash is no more a tag than any other", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-06T09:00:00Z", category: "jacket", manual: true, colors: ["navy"] },
+    { t: "2026-09-05T09:00:00Z", id: "item_aaaa", category: "top", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  assert.equal(m.tags.size, 1, "manual is a precedence flag, not a way past the shape rule");
+  assert.equal(log.tagsFor(m, "item_aaaa").category, "top");
+});
+
+test("a shared tag carries the occasion the model gave it and the hide a parent set", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_party", category: "dress", occasion: "fancy", colors: ["red"] },
+    { t: "2026-09-05T09:00:01Z", id: "item_gone", category: "top", hidden: true, manual: true, colors: ["grey"] },
+    { t: "2026-09-05T09:00:02Z", id: "item_plain", category: "top", colors: ["blue"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  assert.equal(log.tagsFor(m, "item_party").occasion, "fancy");
+  assert.equal(log.tagsFor(m, "item_gone").hidden, true);
+  const plain = log.tagsFor(m, "item_plain");
+  assert.equal("occasion" in plain, false, "a line without them says nothing, rather than saying 'everyday'");
+  assert.equal("hidden" in plain, false);
+  assert.equal("manual" in plain, false);
+});
+
+// The file's rule for a bad OPTIONAL field is already settled by normalizeTag:
+// a warmth that is neither a word nor a level, a rotate_deg that is not a
+// number, a crop that is not an object — the FIELD is dropped and the line
+// stands. These three follow it. Dropping the whole line instead would throw
+// away a good `category` because a writer sent `hidden:"yes"`, and a bad
+// `manual` would be no better off either way.
+test("a malformed occasion, hidden or manual is ignored — the line itself still stands", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_junk", category: "jacket", colors: ["navy"],
+      occasion: "weird", hidden: "yes", manual: 1 });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-06T09:00:00Z", id: "item_junk", category: "top", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const tag = log.tagsFor(m, "item_junk");
+  assert.equal(tag.category, "top", "manual:1 is not manual, so the newer line wins as it always did");
+  assert.equal("occasion" in tag, false);
+  assert.equal("hidden" in tag, false);
+  assert.equal("manual" in tag, false);
+  // …and the junk line is still a tag in its own right, category and all.
+  const alone = open(beds()).readMerged(TODAY);
+  assert.equal(alone.tags.size, 0);
+  const c = beds();
+  deliver(c.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_junk", category: "jacket", colors: ["navy"],
+      occasion: "weird", hidden: "yes", manual: 1 });
+  const only = open(c);
+  assert.equal(only.tagsFor(only.readMerged(TODAY), "item_junk").category, "jacket");
+});
+
+// A family with no manual lines must read EXACTLY what it read before the rule
+// existed: three writers, ids and hashes, a migrated int warmth, the geometry
+// fields, this device's own line coming back through the mirror, and a torn
+// tail. Snapshot taken by running this fixture against the module before the
+// change (2026-09-17).
+test("the merged tags are byte-identical for a family that has never made a manual edit", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_theirs", hash: "d".repeat(64), category: "top",
+      warmth: "hot", colors: ["red"], pattern: "solid", statement: false },
+    { t: "2026-09-05T09:01:00Z", id: "item_mine", hash: "e".repeat(64), category: "top",
+      warmth: "cold", colors: ["navy"], rotate_deg: 90, crop: { x: 0.1, y: 0.05, w: 0.8, h: 0.9 } });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-06T09:00:00Z", id: "item_mine", category: "top", warmth: "warm",
+      colors: ["green"], palette: "bright", vibe: "sporty" });
+  deliver(b.dataDir, "tags/studio.jsonl",
+    { t: "2026-09-04T09:00:00Z", id: "item_migrated", category: "pants", warmth: 2, colors: ["navy"] },
+    { t: "2026-09-05T08:00:00Z", hash: "b".repeat(64), name: "Sunny tee", category: "top",
+      warmth: "warm", colors: ["blue"] });
+  deliver(b.dataDir, `tags/${OWN}.jsonl`,
+    { t: "2026-09-07T09:00:00Z", id: "item_mine", category: "dress", colors: ["gold"] });
+  fs.appendFileSync(era(b.dataDir, "tags/dev-c.jsonl"), '{"t":"2026-09-08T09:00:00Z","id":"item_to');
+
+  const m = open(b).readMerged(TODAY);
+  const entries = [...m.tags.entries()].sort((a, c) => a[0].localeCompare(c[0]));
+  assert.deepEqual(JSON.parse(JSON.stringify(entries)), [
+    ["b".repeat(64), { name: "Sunny tee", category: "top", colors: ["blue"], warmth: "warm" }],
+    ["d".repeat(64), { category: "top", colors: ["red"], pattern: "solid", statement: false, warmth: "hot" }],
+    ["e".repeat(64), { category: "top", colors: ["navy"], warmth: "cold", rotate_deg: 90,
+      crop: { x: 0.1, y: 0.05, w: 0.8, h: 0.9 } }],
+    ["item_migrated", { category: "pants", colors: ["navy"], warmth: "cool" }],
+    ["item_mine", { category: "top", colors: ["green"], palette: "bright", vibe: "sporty", warmth: "warm" }],
+    ["item_theirs", { category: "top", colors: ["red"], pattern: "solid", statement: false, warmth: "hot" }],
+  ]);
+});
+
+test("an own manual tag carries occasion, hidden and manual out to the family", () => {
+  const b = beds();
+  const log = open(b);
+  assert.equal(log.appendTag({ id: "item_aaaa", hash: "a".repeat(64), name: "Blue puffer",
+    category: "jacket", occasion: "fancy", hidden: false, manual: true,
+    warmth: "cold", colors: ["blue"], pattern: "solid", statement: false }), true);
+  const file = path.join(b.driveFolder, "clothing", ".era", "tags", OWN + ".jsonl");
+  const line = JSON.parse(fs.readFileSync(file, "utf8").trim());
+  assert.equal(line.category, "jacket");
+  assert.equal(line.occasion, "fancy");
+  assert.equal(line.hidden, false);
+  assert.equal(line.manual, true, "the flag the other devices' readers rank on");
+  assert.match(line.t, /^\d{4}-\d{2}-\d{2}T/, "stamped like every other line — manual lines are ranked by t too");
+});
+
 // ---- pairs: the grown-up's curated taste (spec §4, §5) ---------------------
 
 test("a curated pair keys the same however the two ids are ordered", () => {

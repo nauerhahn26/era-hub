@@ -303,6 +303,28 @@ function readOutFor(items) {
   return out;
 }
 
+// What the Clothing Picker has to offer her beyond the outfits, and what a
+// grown-up has taken off the board (accessories spec §5.2). READ-ONLY, out of
+// the catalogue this call has already opened: a poll may not write, and it may
+// not spawn a build to find out either.
+//
+// A kind is listed only when she can really reach it — `ok`, not hidden, and
+// counted in ACCESSORY_KINDS order, which is the order she meets the tiles in.
+// `hidden` is every hidden garment, accessory or not: it answers the parent's
+// question ("what have I taken away?"), not the board's.
+function accessoriesOf(items) {
+  const counts = new Map();
+  let hidden = 0;
+  for (const it of Object.values(items)) {
+    if (!it || !it.ok) continue;
+    if (it.hidden === true) { hidden++; continue; }
+    if (!rank.isAccessory(it.category)) continue;
+    counts.set(String(it.category).toLowerCase(), (counts.get(String(it.category).toLowerCase()) || 0) + 1);
+  }
+  return { kinds: rank.ACCESSORY_KINDS.filter(k => counts.get(k.id))
+                    .map(k => ({ kind: k.id, count: counts.get(k.id) })), hidden };
+}
+
 function status() {
   const cfg = aiCfg();
   let cataloged = 0, photos = 0, items = {};
@@ -313,6 +335,7 @@ function status() {
   } catch {}
   photos = listPhotos(path.join(DATA, "clothing")).length;
   return { building: !!worker, ingesting, attrs, cataloged, photos,
+    accessories: accessoriesOf(items),
     ...readOutFor(items),
     aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null,
     // whether the provider recognised the key when it was saved (null = unchecked)
