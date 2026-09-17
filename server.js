@@ -324,44 +324,121 @@ function stepAsideFromKiosk() {
   } catch {}
 }
 
+// The window-poking prelude both the first-launch settle and the talk door's
+// resume need: the user32 calls, and the "$browsers" scriptblock that finds
+// real browser windows (never a --type= child process). Same quoting law as
+// stepAsideFromKiosk — no double quotes anywhere, WQL strings double their
+// single quotes — because node's arg re-quoting mangles them (VM QA 9/1).
+function psWindowPrelude() {
+  const dll = "[DllImport(" + JSON.stringify("user32.dll") + ")] public static extern ";
+  return "Add-Type -Name W -Namespace U -MemberDefinition '" +
+    dll + "bool ShowWindow(IntPtr h, int n); " +
+    dll + "bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f); " +
+    dll + "bool SetForegroundWindow(IntPtr h); " +
+    dll + "IntPtr GetForegroundWindow(); " +
+    dll + "int GetSystemMetrics(int n);'; " +
+    "$browsers = { Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" + " or Name=" + "''" + "msedge.exe" + "''" + "' | Where-Object { $_.CommandLine -notlike '*--type=*' } }; ";
+}
+// SETTLE our kiosk window: on a cold first launch Edge's full-screen window
+// sometimes lands at (10,10) with the taskbar over it (VM 9/3, four runs out
+// of ~eight — a race Edge loses while the disk is still busy) and the focus
+// stays with the desktop. SetWindowPos puts it on the screen,
+// SetForegroundWindow gives it the focus; when Windows refuses (a background
+// process may not foreground) a minimize+restore of the window is allowed and
+// does it — proven from the VM. Exactly the same move brings a PAUSED kiosk
+// back when she picks its TD Snap tile (talk door, 9/17), so it lives here in
+// one place. `tries` × 5 s is how long to wait for a window to exist: 24 for
+// the first launch (the kiosk is still starting), 1 for a resume (the launcher's
+// curl waits 8 s, which is deliberately longer than foregroundKiosk's own 6 s
+// kill so the HUB is always the one that decides — and a paused kiosk either
+// exists now or never will).
+// The LAST line is 'found' or 'none' — foregroundKiosk() reads only that, so
+// every other line is free to be a diagnostic and the 'none' branch spends one
+// saying WHY (a clear-stage log that only says 'none' tells the VM post-mortem
+// nothing about whether the loop ever saw a window).
+function psSettleKiosk(tries) {
+  return "$k = $null; for ($i = 0; $i -lt " + tries + " -and -not $k; $i++) { " +
+    "$k = & $browsers | Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; " +
+    "if (-not $k -and $i -lt " + (tries - 1) + ") { Start-Sleep -Seconds 5 } }; " +
+    "if ($k) { $h = $k.MainWindowHandle; " +
+    "'settle ' + $k.Id + ' pos ' + [U.W]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, [U.W]::GetSystemMetrics(0), [U.W]::GetSystemMetrics(1), 0x40) + ' fg ' + [U.W]::SetForegroundWindow($h); " +
+    "if ([U.W]::GetForegroundWindow() -ne $h) { 'settle min ' + [U.W]::ShowWindow($h, 6); Start-Sleep -Milliseconds 700; 'settle restore ' + [U.W]::ShowWindow($h, 9) + ' fg ' + [U.W]::SetForegroundWindow($h) }; " +
+    "'settle front ' + ([U.W]::GetForegroundWindow() -eq $h); " +
+    "'found' } else { 'settle: no kiosk window'; 'none' }";
+}
+// Bring our kiosk window back to the front — the talk door's return leg
+// (spec §3.2). Resolves TRUE only when a kiosk-profile window was actually
+// found and settled; FALSE means there is nothing to come back to and the
+// launcher must launch the app fresh.
+//
+// Off Windows there are no windows to poke, so the answer comes from
+// ERA_FAKE_KIOSK_WINDOW: the hub's suites need BOTH legs, and this is the
+// only seam (the Windows branches are otherwise flat no-ops). Default (unset)
+// is "the window is there", so a dev browser on Linux behaves like the device.
+function foregroundKiosk() {
+  if (process.platform !== "win32")
+    return Promise.resolve(process.env.ERA_FAKE_KIOSK_WINDOW !== "0");
+  const { spawn } = require("child_process");
+  const ps = psWindowPrelude() + psSettleKiosk(1);
+  return new Promise((resolve) => {
+    // TWO buffers, on purpose. The answer is the LAST LINE OF STDOUT, and
+    // PowerShell writes to stderr whenever it feels like it — an Add-Type
+    // warning, a CIM hiccup, a localized "cannot find process" — with no
+    // ordering guarantee against stdout. Interleaved into one string, a single
+    // stderr chunk arriving after 'found' would put itself last and turn a
+    // successful restore into a relaunch: her song starts over because a
+    // warning was late. So the regex reads stdout only; stderr is logged
+    // beside it, because the post-mortem needs it when the answer is 'none'.
+    let out = "", err = "";
+    let done = false;
+    let killer = null;
+    const finish = (found) => {
+      if (done) return;
+      done = true;
+      if (killer) { clearTimeout(killer); killer = null; }
+      try {
+        fs.appendFileSync(path.join(LOGS, "foreground.log"),
+          new Date().toISOString() + " foreground\n" + out + (err ? "stderr: " + err + "\n" : "") + "\n");
+      } catch {}
+      resolve(found);
+    };
+    try {
+      // piped (not redirected to the log) because the ANSWER is in the output:
+      // we log it ourselves on the way past.
+      const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+        { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      c.stdout.on("data", (b) => { out += b; });
+      c.stderr.on("data", (b) => { err += b; });
+      c.on("error", () => finish(false));
+      c.on("close", () => finish(/(^|\n)found\s*$/.test(out.trim() + "\n")));
+      killer = setTimeout(() => { try { c.kill(); } catch {} finish(false); }, 6000);
+    } catch { finish(false); }
+  });
+}
+// Minimize our kiosk windows — the talk door's step 3 is the step-aside, the
+// same PowerShell and the same reason (dad 8/29).
+const minimizeKiosk = stepAsideFromKiosk;
+
 // One-time stage-clearing at the very first boot after install (dad 9/1:
 // the welcome kiosk opened BEHIND the browser the family had just downloaded
 // with — "did anything happen?"). Windows won't let a background process
 // foreground our window, but it will let us MINIMIZE the covering browsers;
 // the kiosk is then the visible surface. Same proven spawn shape as
 // stepAsideFromKiosk, inverted filter (non-kiosk browser windows), logged.
-// Then the kiosk itself is SETTLED: on a cold first launch Edge's full-screen
-// window sometimes lands at (10,10) with the taskbar over it (VM 9/3, four
-// runs out of ~eight — a race Edge loses while the disk is still busy) and
-// the focus stays with the desktop. SetWindowPos puts it on the screen,
-// SetForegroundWindow gives it the focus; when Windows refuses (a background
-// process may not foreground) a minimize+restore of the window is allowed
-// and does it — proven from the VM. Waits up to 2 min for the window.
+// Then the kiosk itself is settled (psSettleKiosk), waiting up to 2 min for
+// the window — one PowerShell spawn for both halves, as it has always been.
 function clearStageOnce() {
   if (process.platform !== "win32") return;
   const marker = path.join(DATA, ".first-launch-done");
   if (fs.existsSync(marker)) return;
   try { fs.writeFileSync(marker, new Date().toISOString()); } catch {}
   const { spawn } = require("child_process");
-  const dll = "[DllImport(" + JSON.stringify("user32.dll") + ")] public static extern ";
   const ps =
-    "Add-Type -Name W -Namespace U -MemberDefinition '" +
-    dll + "bool ShowWindow(IntPtr h, int n); " +
-    dll + "bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f); " +
-    dll + "bool SetForegroundWindow(IntPtr h); " +
-    dll + "IntPtr GetForegroundWindow(); " +
-    dll + "int GetSystemMetrics(int n);'; " +
-    "$browsers = { Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" + " or Name=" + "''" + "msedge.exe" + "''" + "' | Where-Object { $_.CommandLine -notlike '*--type=*' } }; " +
+    psWindowPrelude() +
     "& $browsers | Where-Object { $_.CommandLine -notlike '*kiosk-profile*' } | ForEach-Object { " +
     "$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; " +
     "if ($p -and $p.MainWindowHandle -ne 0) { 'cleared ' + $_.ProcessId + ' rc ' + [U.W]::ShowWindow($p.MainWindowHandle, 6) } }; " +
-    "$k = $null; for ($i = 0; $i -lt 24 -and -not $k; $i++) { " +
-    "$k = & $browsers | Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; " +
-    "if (-not $k) { Start-Sleep -Seconds 5 } }; " +
-    "if ($k) { $h = $k.MainWindowHandle; " +
-    "'settle ' + $k.Id + ' pos ' + [U.W]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, [U.W]::GetSystemMetrics(0), [U.W]::GetSystemMetrics(1), 0x40) + ' fg ' + [U.W]::SetForegroundWindow($h); " +
-    "if ([U.W]::GetForegroundWindow() -ne $h) { 'settle min ' + [U.W]::ShowWindow($h, 6); Start-Sleep -Milliseconds 700; 'settle restore ' + [U.W]::ShowWindow($h, 9) + ' fg ' + [U.W]::SetForegroundWindow($h) }; " +
-    "'settle front ' + ([U.W]::GetForegroundWindow() -eq $h) } else { 'settle: no kiosk window in 2 min' }";
+    psSettleKiosk(24);
   setTimeout(() => {
     try {
       const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
@@ -1235,6 +1312,32 @@ function enginePost(p, body) {
     r.end(body);
   });
 }
+// GET from the local gaze engine and parse its answer — resolves the object,
+// or null when the engine is not there, is slow, or says something that is not
+// JSON. Never throws, never rejects: every caller has a default to fall back
+// on (talk door 9/17: ForegroundApp from /config, TD Snap if the bus is quiet).
+function engineGet(p, ms = 1500) {
+  return new Promise((resolve) => {
+    const r = http.get({ host: "127.0.0.1", port: 49155, path: p, timeout: ms }, (rs) => {
+      if (rs.statusCode < 200 || rs.statusCode >= 300) { rs.resume(); resolve(null); return; }
+      let body = "";
+      rs.setEncoding("utf8");
+      rs.on("data", (c) => { body += c; if (body.length > 65536) { r.destroy(); resolve(null); } });
+      rs.on("end", () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+    });
+    r.on("timeout", () => { r.destroy(); resolve(null); });
+    r.on("error", () => resolve(null));
+  });
+}
+// Where the doors ACTUALLY go: TD Snap needs BOTH the Setting and an engine on
+// the bus (Ellie's device runs its own; a VM or a dev browser has none). One
+// helper so GET /settings (doorGoes, pauseGoes) and POST /kiosk/pause can never
+// disagree about it.
+function doorGoes() {
+  return exitTarget() === "tdsnap"
+    ? gazeBusAlive().then((alive) => (alive ? "tdsnap" : "home"))
+    : Promise.resolve("home");
+}
 // Close our kiosk window(s) — the ones launched with the kiosk-profile
 // user-data-dir — via the one powershell spawn shape proven from the
 // detached production hub (see stepAsideFromKiosk). Windows only; logged.
@@ -1254,6 +1357,29 @@ function closeKiosk() {
     c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
     c.unref();
   } catch {}
+}
+
+// ---- the talk door's memory (dad 9/17, "pause to talk") --------------------
+// Which app she stepped out of, so that picking its TD Snap tile brings the
+// SAME app back instead of launching it over. In memory only, on purpose: a
+// hub restart forgets it, and the kiosk it named is gone with the hub anyway
+// (spec §7). Cleared whenever it can no longer be true — a resume for another
+// app (that launch kills the paused kiosk), a resume that found no window, and
+// every /kiosk/exit.
+let paused = null;   // { path, when } | null
+
+// Two spellings of one app are one app: "/reader/" is "/reader", and the
+// launcher's %OPEN% may or may not carry the trailing slash the hub's own 301
+// adds. Case folds too (a .bat is not careful about it). The QUERY is kept —
+// /board/?recipe=songs and /board/?recipe=movies are different apps to her.
+function normalizePath(p) {
+  const s = String(p == null ? "" : p).trim().toLowerCase();
+  if (!s) return "";
+  const q = s.indexOf("?");
+  let head = q < 0 ? s : s.slice(0, q);
+  const tail = q < 0 ? "" : s.slice(q);
+  if (head.length > 1 && head.endsWith("/")) head = head.slice(0, -1);
+  return head + tail;
 }
 
 // ------------------------------- doors only THIS hub's own pages may press ---
@@ -1305,8 +1431,14 @@ const server = http.createServer((req, res) => {
     // home — so a tile named for the door (the Reader's) must not promise
     // "Back to TD Snap" on a PC that has none (VM leg B, 9/3: a fresh
     // v0.31.3 profile showed exactly that). Same probe as the door itself.
-    (s.exitTo === "tdsnap" ? gazeBusAlive() : Promise.resolve(false)).then((alive) => {
-      s.doorGoes = alive ? "tdsnap" : "home";
+    doorGoes().then((goes) => {
+      s.doorGoes = goes;
+      // pauseGoes IS doorGoes — the talk door 💬 goes exactly where 🚪 goes.
+      // It gets a key of its own so an app can tell "no pause on this PC"
+      // apart from an OLD hub that never heard of pausing: an old hub omits
+      // the key, and a missing key means "home", so no 💬 is ever mounted
+      // against a hub that could not honour it (dad 9/17, spec §3.3).
+      s.pauseGoes = goes;
       res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
       res.end(JSON.stringify(s));
     });
@@ -2254,6 +2386,9 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify({ action }));
     };
+    // the 🚪 ends the app, so whatever she had paused is over too — and the
+    // window it named is one of the ones about to be closed (spec §7).
+    if (paused) { console.log("[kiosk] exit: forgetting the paused " + paused.path); paused = null; }
     if (exitTarget() === "home") {
       // stay in the kiosk; just drop the app's park override so the corner park returns
       enginePost("/app/park", "{}").catch(() => {});
@@ -2262,6 +2397,103 @@ const server = http.createServer((req, res) => {
     }
     enginePost("/app/exit", "").then((ok) => {
       if (ok) { closeKiosk(); answer("closed"); } else answer("home");
+    });
+    return;
+  }
+
+  // ---- the talk door: step out to TD Snap without losing her place ---------
+  // (dad 9/17, "pause to talk"; spec §3.) 💬 POSTs here with the app's own
+  // path. The kiosk is left ALIVE and minimized, the engine's park override is
+  // dropped so the corner park returns while she talks, and her talker comes
+  // to the front. Nothing is spent, nothing is deleted — so, like /kiosk/exit,
+  // this is not ownDoor-guarded: the launcher's curl sends no Sec-Fetch-Site
+  // and no JSON content type, and the worst a hostile tab could do is park her
+  // in TD Snap, which the 🚪 already allows (spec §3.2).
+  if (req.method === "POST" && urlPath === "/kiosk/pause") {
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let want = "";
+      try { const j = JSON.parse(body); if (j && typeof j.path === "string") want = j.path; } catch {}
+      if (!normalizePath(want)) {
+        // a pause with nowhere to come back to is not a pause
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "pause needs the app's path" }));
+        return;
+      }
+      doorGoes().then(async (goes) => {
+        const answer = (action) => {
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+          res.end(JSON.stringify({ action }));
+        };
+        // Door goes home (Settings, or no engine on the bus — a VM, a dev
+        // browser): home lives in THIS kiosk, so there is nothing to step out
+        // to and pausing is meaningless. The apps never mount 💬 in that case
+        // (§5); this is the belt for a stray POST.
+        if (goes !== "tdsnap") { answer("home"); return; }
+
+        paused = { path: normalizePath(want), when: Date.now() };
+        console.log("[kiosk] paused " + paused.path + " — handing the screen to her talker");
+        enginePost("/app/park", "{}").catch(() => {});   // fire-and-forget, as /kiosk/exit does
+        minimizeKiosk();
+        // where her talker lives is the engine's to say (a family may have
+        // changed ForegroundApp in ERAgaze.json); TD Snap when it will not say.
+        const cfg = await engineGet("/config");
+        const target = (cfg && typeof cfg.ForegroundApp === "string" && cfg.ForegroundApp)
+          || "shell:AppsFolder\\TobiiDynavox.Snap_626b2w651dr5w!App";
+        if (process.platform === "win32") {
+          try {
+            const { spawn } = require("child_process");
+            spawn("explorer.exe", [target], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+          } catch (e) { console.error("[kiosk] pause: " + e.message); }
+        }
+        answer("paused");
+      });
+    });
+    return;
+  }
+
+  // ---- back from talking: her tile asks before it launches ----------------
+  // start-hub.bat POSTs here FIRST, with the bare path as text/plain (%OPEN%
+  // carries ? and =, and quoting that into JSON inside a .bat is the fragile
+  // thing the Music/Movies icons taught us not to do) — JSON {path} is
+  // accepted too, for the tests and for anything else that calls it.
+  // 200 "resumed" = the same app is back in front and the bat stops; 409
+  // "launch" = launch it the way you always did (curl -f exits 22 on a 4xx,
+  // so `if not errorlevel 1` is exactly "not resumed").
+  if (req.method === "POST" && urlPath === "/kiosk/resume") {
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", async () => {
+      let want = body;
+      try { const j = JSON.parse(body); if (j && typeof j.path === "string") want = j.path; } catch {}
+      const asked = normalizePath(want);
+      const launch = (why) => {
+        if (paused) console.log("[kiosk] resume " + (asked || "(no path)") + ": " + why + " — forgetting " + paused.path);
+        else console.log("[kiosk] resume " + (asked || "(no path)") + ": " + why);
+        // Whatever was paused cannot survive this: the bat that gets the 409
+        // kills every kiosk window before it launches (spec §7).
+        paused = null;
+        res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ action: "launch" }));
+      };
+      if (!paused) { launch("nothing is paused"); return; }
+      if (!asked || asked !== paused.path) { launch("a different app"); return; }
+      // Hold the name across the await: `paused` can be REPLACED or cleared
+      // while PowerShell works (a 🚪 exit, or a second pause), and the lines
+      // below must talk about the entry we actually matched, not whatever is
+      // there when we wake up.
+      const was = paused.path;
+      if (!(await foregroundKiosk())) { launch("the paused window has gone"); return; }
+      // Re-check before answering. If a /kiosk/exit landed during the wait, the
+      // window we just foregrounded is being torn down: answering "resumed"
+      // would leave the bat with nothing on screen and no launch. 409 instead —
+      // the bat kills whatever is left and launches fresh, which is right.
+      if (!paused || paused.path !== was) { launch("the pause was dropped while we waited"); return; }
+      console.log("[kiosk] resumed " + was);
+      paused = null;   // spent: the window is in front, there is nothing left to restore
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ action: "resumed" }));
     });
     return;
   }

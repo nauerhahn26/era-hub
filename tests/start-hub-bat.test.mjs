@@ -7,6 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 
 const SH = fs.readFileSync(new URL("../tools/build-payload.sh", import.meta.url), "utf8");
 const bat = SH.slice(SH.indexOf("cat > \"$OUT/start-hub.bat\""), SH.indexOf("\nBAT\n", SH.indexOf("cat > \"$OUT/start-hub.bat\"")));
@@ -160,6 +161,87 @@ test("an app path with ?recipe= survives the launcher (Music/Movies shortcuts, V
   assert.ok(!/"%2"/.test(bat), "never re-quote the raw %2");
 });
 
+// ---- pause to talk (9/17): the resume handshake -----------------------------
+// She leaves an app by the talk door, says her piece in TD Snap, and taps the
+// same app's tile again. That tile runs THIS launcher, which today kills the
+// kiosk and opens a fresh one — the song starts over. The line below asks the
+// hub first: if the app she picked is the one sitting minimized, the hub brings
+// its window forward and the bat is done. Everything else falls through to
+// today's behaviour unchanged.
+const resume = bat.split("\n").find((l) => l.includes("/kiosk/resume"));
+
+test("the launcher asks the hub to resume a paused app before it kills one", () => {
+  assert.ok(resume, "start-hub.bat calls /kiosk/resume");
+  assert.ok(/^curl\.exe /.test(resume), "plain curl.exe, no scripted shell (Defender 8/29)");
+  assert.ok(/ -X POST /.test(resume), "it POSTs");
+  assert.ok(/ -f /.test(resume), "-f so a 4xx is a non-zero exit, not a happy 0 with a body");
+  // 8s, not 4: the hub's own foregroundKiosk() kills its PowerShell at 6s and
+  // then answers. curl must outlast that, or a slow restore becomes a timeout
+  // here and the bat kills the window the hub was bringing back.
+  assert.ok(/ --max-time 8 /.test(resume), "capped at 8s: outlasts the hub's 6s restore, still no dead tile");
+  assert.ok(/ -o NUL /.test(resume), "the answer goes nowhere near her screen");
+  assert.ok(/http:\/\/127\.0\.0\.1:%PORT%\/kiosk\/resume$/.test(resume), "local hub, on the launcher's port");
+});
+
+test("the resume attempt sits after :open and before the kiosk sweep", () => {
+  // Order is the whole feature. After `:open` because that is where both paths
+  // meet (hub already up -> goto open; hub just started -> falls through), and
+  // before the wmic terminate because that sweep is exactly what destroys the
+  // paused window we are trying to bring back.
+  assert.ok(bat.indexOf("\n:open\n") < bat.indexOf(resume), "after the :open label");
+  assert.ok(bat.indexOf(resume) < bat.indexOf(kill), "and BEFORE the kill-and-launch");
+  assert.ok(bat.indexOf(resume) < bat.indexOf(kioskLine), "and before the kiosk launch");
+});
+
+test("a resumed app skips the launch by jumping to a label that really exists", () => {
+  // `if not errorlevel 1` is cmd for "exit code is 0" — only a 2xx continues.
+  // curl -f exits 22 on 4xx/5xx, 7 on a refused connection (no hub), 28 on the
+  // timeout, and every one of those must fall through to the normal launch.
+  const lines = bat.split("\n");
+  const next = lines[lines.indexOf(resume) + 1];
+  const jump = /^if not errorlevel 1 goto ([a-z]+)$/.exec(next || "");
+  assert.ok(jump, "the very next line is `if not errorlevel 1 goto <label>`: " + next);
+  const label = ":" + jump[1];
+  // the label may be the bat's very last line, so match end-of-line, not "\n"
+  const at = new RegExp("^" + label + "$", "m").exec(bat);
+  assert.ok(at, "the bat defines " + label);
+  assert.ok(at.index > bat.indexOf(resume),
+    "and " + label + " sits AFTER it, so the jump skips the launch instead of looping");
+  // the jump must land past the sweep, or a resumed kiosk gets terminated anyway
+  assert.ok(at.index > bat.indexOf(kill), label + " sits past the kiosk sweep");
+  assert.ok(at.index > bat.indexOf(kioskLine), label + " sits past the kiosk launch");
+});
+
+test("the resume body is the bare path, not JSON (cmd quoting, T7.6b)", () => {
+  // %OPEN% carries ? and =. Wrapping it in {\"path\":\"...\"} means backslash-
+  // escaped quotes inside a cmd argument — the same class of quoting that left
+  // the Music and Movies icons dead. The hub accepts a raw text path, so the
+  // launcher sends one and there is nothing to escape.
+  assert.ok(/ --data "%OPEN%" /.test(resume), "the body is exactly the path variable");
+  assert.ok(!resume.includes("{"), "no JSON brace on the line: " + resume);
+  assert.ok(!resume.includes("\\\""), "no escaped quotes on the line");
+  assert.ok(/-H "Content-Type: text\/plain"/.test(resume), "declared as text/plain");
+});
+
+test("every generated bat is 7-bit ASCII (cmd code pages)", () => {
+  // The bat is written and read as CP1252/OEM on a Windows box. A door emoji or
+  // a curly quote from a paste becomes mojibake at best and aborts the file at
+  // worst — and the launcher is the one file that must never fail to parse.
+  // Checked over the SAME slice as the rem-% test below (start-hub.bat and
+  // everything the script writes after it: INSTALL.bat, UNINSTALL.bat), because
+  // the law is about cmd, not about one file — and a curly quote pasted into
+  // UNINSTALL.bat breaks a family's uninstall exactly as hard. Only the
+  // heredoc BODIES though: build-payload.sh's own `#` prose is UTF-8 and stays
+  // in the .sh, so testing the raw slice would fail on an em dash that never
+  // reaches a device.
+  const launchers = SH.slice(SH.indexOf("cat > \"$OUT/start-hub.bat\""));
+  const bats = [...launchers.matchAll(/cat > "\$OUT\/([^"]+\.bat)" <<'BAT'\n([\s\S]*?)\nBAT\n/g)];
+  assert.equal(bats.length, 3, "all three bats found: " + bats.map((m) => m[1]).join(", "));
+  for (const [, name, body] of bats)
+    for (const l of body.split("\n"))
+      assert.ok(!/[^\x00-\x7F]/.test(l), "non-ASCII in " + name + ": " + l);
+});
+
 test("no comment in a generated launcher carries a percent sign (T7.6b: the fix's own rem killed the icons)", () => {
   // cmd expands %-variables inside `rem` lines too. The 9/5 fix above was
   // right and DEAD: its explanatory comment said "%~2, not %2", a bare
@@ -171,4 +253,11 @@ test("no comment in a generated launcher carries a percent sign (T7.6b: the fix'
   const rems = launchers.split("\n").filter((l) => /^\s*rem(\s|$)/i.test(l));
   assert.ok(rems.length > 5, "the launcher is commented");
   for (const l of rems) assert.ok(!l.includes("%"), "no % in a rem line: " + l);
+});
+
+test("build-payload.sh still parses (the heredoc is closed)", () => {
+  // Every assertion above reads the bat as TEXT sliced out of a shell script.
+  // A heredoc left unterminated, or a stray quote in a line added to it, would
+  // keep all of them green while the cut itself died at "== payload ==".
+  execFileSync("bash", ["-n", new URL("../tools/build-payload.sh", import.meta.url).pathname]);
 });

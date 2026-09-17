@@ -84,24 +84,43 @@ Between the "already running? just open the page" probe and the `wmic`
 terminate, one guarded step:
 
 ```bat
-rem Paused app? (💬 door, 9/17) The hub brings the paused kiosk forward when
-rem this is the SAME app she paused; anything else answers 4xx and we open
-rem the page the usual way below.
-curl.exe -s -f -o NUL --max-time 4 -X POST -H "Content-Type: application/json" --data "{\"path\":\"%OPEN%\"}" http://127.0.0.1:%PORT%/kiosk/resume
+curl.exe -s -f -o NUL --max-time 8 -X POST -H "Content-Type: text/plain" --data "%OPEN%" http://127.0.0.1:%PORT%/kiosk/resume
 if not errorlevel 1 goto done
 ```
 
-- `curl -f` exits 22 on a 4xx, so `errorlevel 1` is exactly "not resumed".
+(with a `rem` paragraph above it, in the bat's own voice: no `%` in a `rem`
+line and no emoji anywhere in the file — cmd expands `%` in comments too, and
+the bat is read as a Windows code page.)
+
+- **Plain text body, not JSON** (amended 9/17 from the JSON shape above):
+  `%OPEN%` carries `?` and `=`, and `--data "{\"path\":\"%OPEN%\"}"` puts
+  backslash-escaped quotes inside a cmd argument — the same class of quoting
+  that left the Music and Movies icons dead (T7.6b). The bare path needs no
+  escaping at all. §3.2's hub route therefore accepts **either** a JSON
+  `{path}` body or a raw text path.
+- `curl -f` exits 22 on a 4xx/5xx, 7 on a refused connection and 28 on the
+  timeout, so `if not errorlevel 1` is exactly "resumed"; every other outcome
+  falls through to today's kill-and-launch.
+- **`--max-time 8`, not 4**: the hub's own `foregroundKiosk()` kills its
+  PowerShell at 6 s and then answers, so curl must outlast it — otherwise a
+  slow restore times out here and the bat sweeps away the very window the hub
+  was bringing back. The hub is always the decider. The trade-off: a hub that
+  is genuinely wedged (the first Drive mirror blocks HTTP for minutes) now
+  costs her 8 seconds of a dead-looking tile instead of 4 before the launch
+  goes ahead anyway.
 - No hub running → the earlier probe already failed and the hub is starting;
   the resume call fails too and the normal launch follows. Correct: a fresh
   hub has nothing paused.
+- `goto done` lands on the bat's existing final label, past both the `wmic`
+  terminate and the kiosk `start` — a resumed window must not be swept.
 - Still plain `curl.exe` + `wmic`, no scripted shell (the Defender law
-  pinned by `tests/start-hub-bat.test.mjs`, which gains an assertion that the
-  resume line sits *before* the `wmic` terminate and *after* the `:open`
-  label).
-- `%OPEN%` holds `?` and `=`; it is inside double quotes inside the JSON
-  string, which cmd passes through untouched (the same rule that fixed the
-  Music/Movies icons, T7.6b). The bat test pins this line byte-for-byte.
+  pinned by `tests/start-hub-bat.test.mjs`, which gains assertions that the
+  resume line sits *after* the `:open` label and *before* the `wmic`
+  terminate, that its body is the bare variable with no `{`, and that every
+  line of every generated bat — `start-hub.bat`, `INSTALL.bat`,
+  `UNINSTALL.bat` — is 7-bit ASCII).
+- `curl.exe` has shipped with Windows since 10 1803; both devices are
+  Windows 11.
 
 ## 5. The bar (era-core `lib/doorbar.js` + `doorbar.css`)
 

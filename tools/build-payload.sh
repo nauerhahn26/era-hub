@@ -156,11 +156,33 @@ if exist "%~dp0node\node.exe" set NODE=%~dp0node\node.exe
 start "New ERA hub" /min "%NODE%" server.js %PORT%
 timeout /t 2 /nobreak >nul
 :open
+rem Paused app? (talk door, 9/17) Leaving an app by the talk door does NOT close
+rem it: the hub parks that kiosk window minimized while she says her piece in TD
+rem Snap. So before we close anything, ask the hub whether the app this tile just
+rem asked for is the one sitting parked. A 2xx means the hub brought that window
+rem back to the front and the song, book or half-spelled word is already on her
+rem screen - there is nothing left for this file to do, so we jump past the
+rem kill-and-launch below to the end. Anything else falls through to exactly
+rem today's behaviour: nothing parked, a different app, or no hub yet all answer
+rem 4xx or refuse the connection, and curl -f turns each into a non-zero exit
+rem (22 on a 4xx or 5xx, 7 on a refused connection, 28 on the timeout), which is
+rem what "if not errorlevel 1" filters out. The 8-second cap is there so a wedged
+rem hub costs her a pause, not a dead tile - and 8 because the hub gives its own
+rem window-restore 6 seconds before it gives up and answers "launch". A shorter
+rem cap here would make curl the decider: it would time out mid-restore and the
+rem bat would kill the very window the hub was about to bring back. The hub
+rem always answers first; this cap only catches a hub that answers never.
+rem The body is the app path as PLAIN TEXT, not JSON: the path carries ? and =,
+rem and escaping a JSON brace and its quotes through cmd is the trap that killed
+rem the Music and Movies icons (T7.6b). The hub takes either shape.
+rem curl.exe has shipped in Windows since 10 1803; her devices are Windows 11.
+curl.exe -s -f -o NUL --max-time 8 -X POST -H "Content-Type: text/plain" --data "%OPEN%" http://127.0.0.1:%PORT%/kiosk/resume
+if not errorlevel 1 goto done
 rem full-screen, chrome-less app experience (dad 8/29): kiosk mode in Chrome
 rem or Edge with its own profile; a plain browser tab only as a last resort.
 rem Leave an app via its door (back to the hub home); leave the window with
 rem Alt+F4 or the gaze engine's exit.
-rem (explicit paths: under a 32-bit parent, the ProgramFiles variable lies — dad's first
+rem (explicit paths: under a 32-bit parent, the ProgramFiles variable lies - dad's first
 rem launch fell back to Edge because the installer is a 32-bit process)
 set B=
 if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" set B=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
@@ -171,7 +193,7 @@ if not defined B (
   goto done
 )
 rem QA only: the unattended VM e2e drives this very window over DevTools.
-rem The flag exists only when the launcher's environment sets ERA_QA_CDP —
+rem The flag exists only when the launcher's environment sets ERA_QA_CDP -
 rem a family's double-click never has it.
 set CDP=
 if defined ERA_QA_CDP set CDP=--remote-debugging-port=%ERA_QA_CDP%
