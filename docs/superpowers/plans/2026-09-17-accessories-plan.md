@@ -288,7 +288,26 @@ needed for publish; the rest is mechanical)
 
 ## §C Retro / evidence (appended per gate)
 
-(empty — filled by the executing session)
+**Gate 1 (9/17)** — T1 + T2 green: `node --test tests/clothing-rank.test.mjs
+tests/clothing-log.test.mjs tests/clothing-variety.test.mjs` → 187 pass, 0 fail.
+Byte-identity proven both ways: 70 `buildCandidates` deals (35 garments × 5 bands × 7
+seeds) against `git show HEAD:clothing-rank.js` — 0 differ; `readMerged` snapshot on a
+three-writer fixture with no manual lines — identical.
+Decisions: (1) `attributes()` does NOT carry `occasion`/`hidden`/`manualAt` — it is what
+the needs-attributes pass and the shared-tag path write over an item, so widening it
+would let the model overwrite a parent's edit (spec §3.2); `toWorkerShape` passes them
+through whole. T3 parses `occasion` beside `category`; T4 owns `hidden`/`manualAt`.
+(2) `accessoryOrder`: `any`/untagged is distance 0 and ties with the exact band match
+(the plan's prose said "before hot" and was loose; the metric is the rule).
+(3) A malformed optional field (`occasion:"weird"`, `hidden:"yes"`, `manual:1`) is
+dropped and the line stands — the file's existing rule for warmth/rotate/crop;
+`manual:1` therefore cannot smuggle precedence. (4) The reducer carries `t` only on a
+manual winner (unconditional `t` broke byte-stability and leaked onto every item).
+(5) Symbols are ARASAAC bestsearch words, checked live 9/17 (jacket 2319, shoes 2622,
+jewelry 29088, hat 2572, hair 2851, make up 8626). Gate fix: clothing-log's local
+`OCCASIONS` now imports the clothing-rank list (the T2 builder left it local to avoid
+racing T1 in the shared worktree).
+
 
 ## §D Follow-ups (not this cut)
 

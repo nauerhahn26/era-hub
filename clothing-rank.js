@@ -36,6 +36,14 @@
 //         an untagged bottom level 2 and an untagged dress/set level 1.
 //   (D2)  eligible: an unknown band word gates nothing, like band null. The
 //         original (:394) defaults an unknown band to levels {1,2}.
+//
+// Added 9/17 with no counterpart in the original (accessories spec
+// docs/superpowers/specs/2026-09-17-accessories-design.md §3.1, §4.1): the
+// eleven category kinds (GARMENT_KINDS / ACCESSORY_KINDS / CATEGORIES /
+// OCCASIONS / isAccessory), the "accessory" role, buildCandidates dropping
+// accessories and `hidden` items at its one door, and accessoryOrder. The
+// deal itself is untouched — a wardrobe holding neither deals what it dealt
+// on 9/5, garment for garment.
 "use strict";
 const crypto = require("crypto");
 
@@ -312,11 +320,44 @@ function yesterdayPage1(history, day) {
 // the whole category is dealt — the board is never emptied by the weather.
 
 const BANDS = ["hot", "warm", "cool", "cold"];
-const CATEGORY = { top: "top", pants: "bottom", shorts: "bottom", dress: "single", set: "single" };
 
+// ---- the eleven kinds (accessories spec §3.1, 9/17 — no original) -----------
+//
+// Five GARMENT kinds are pooled into looks exactly as outfit_set.py pooled
+// them; six ACCESSORY kinds are never pooled — she taps one on its own page
+// and the board speaks its name. This list is the ONE place the kinds live:
+// the model prompt, the worker's whitelist and the board's chips all read it,
+// so the words cannot drift apart (preflight 1).
+//
+// `symbol` follows the worker's own convention for a category tile
+// (clothing-worker.js "Tops"/"Bottoms"/"Build my own"): an ARASAAC bestsearch
+// WORD, or a pinned pictogram id when bestsearch has no good hit (the
+// "shorts" → 13638 case). Each word below was checked against
+// api.arasaac.org/api/pictograms/en/bestsearch on 9/17 (jacket 2319,
+// shoes 2622, jewelry 29088, hat 2572, hair 2851, make up 8626).
+const GARMENT_KINDS = ["top", "pants", "shorts", "dress", "set"];
+const ACCESSORY_KINDS = [
+  { id: "jacket", label: "Jackets", symbol: "jacket" },
+  { id: "shoes", label: "Shoes", symbol: "shoes" },
+  { id: "jewelry", label: "Jewelry", symbol: "jewelry" },
+  { id: "hat", label: "Hats", symbol: "hat" },
+  { id: "hair", label: "Hair", symbol: "hair" },
+  { id: "makeup", label: "Makeup", symbol: "makeup" },
+];
+const CATEGORIES = new Set([...GARMENT_KINDS, ...ACCESSORY_KINDS.map(k => k.id)]);
+const OCCASIONS = ["everyday", "fancy"];
+
+const CATEGORY = { top: "top", pants: "bottom", shorts: "bottom", dress: "single", set: "single" };
+for (const k of ACCESSORY_KINDS) CATEGORY[k.id] = "accessory";
+
+// The pool role of an item: "top" | "bottom" | "single" | "accessory", or null
+// for a word the hub does not know (the model's unknowns become "top" before
+// they ever reach here — clothing-worker.js).
 function categoryOf(item) {
   return lookup(CATEGORY, String(item.category || "").toLowerCase()) || null;
 }
+// A category WORD (or an item carrying one) that belongs to an accessory kind.
+const isAccessory = cat => categoryOf(cat && typeof cat === "object" ? cat : { category: cat }) === "accessory";
 
 function byId(a, b) {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
@@ -383,7 +424,15 @@ function buildCandidates(opts) {
   const pairing = normalizePairing(opts.pairing || { great: [], avoid: [] });
   const favorites = opts.favorites instanceof Set ? opts.favorites : new Set(opts.favorites || []);
   const history = opts.history || {};
-  const items = [...(opts.items || [])].sort(byId);              // W1: catalogue order = id order
+  // W1: catalogue order = id order. This is also the one door the wardrobe
+  // comes through, so it is where the two kinds of non-garment are dropped
+  // (accessories spec §4.1): an accessory is never pooled into a look, and a
+  // hidden item is out of the deal entirely. Everything below reads `items`
+  // and nothing else, so no pool can hold one. A wardrobe with neither deals
+  // exactly what it dealt before (the variety gate's 35 garments).
+  const items = [...(opts.items || [])]
+    .filter(i => i.hidden !== true && categoryOf(i) !== "accessory")
+    .sort(byId);
   const pageCap = Math.min(perPage, cap);
 
   // :397-410 — the pool: singles (standalone) then tops × bottoms.
@@ -509,6 +558,31 @@ function buildCandidates(opts) {
   return chosen.slice(0, cap).map(pieces => ({ key: key(pieces), pieces }));
 }
 
+// ---- accessoryOrder (accessories spec §4.1, 9/17 — no original) ------------
+//
+// One accessory kind's items, warmest-for-today first: on a cold morning the
+// coats lead the Jackets grid. Distance is the SMALLEST gap between the item's
+// warmth levels (WARMTH_LEVELS) and the band's (BAND_WARMTH), so a warmth
+// "any" — or an untagged item, which is every level (D1) — is distance 0 to
+// every band and sorts with the exact matches. Ties break by id, so two
+// devices lay the grid out the same way. No band (weather offline) or a band
+// word the hub does not know (D2): catalogue order, i.e. by id.
+//
+// Unlike `eligible` this NEVER drops an item: an accessory is never weather-
+// hidden (spec §4.1), the weather only reorders the page.
+function accessoryOrder(items, band) {
+  const list = [...(items || [])];
+  const levels = band == null ? undefined : lookup(BAND_WARMTH, band);
+  if (!levels) return list.sort(byId);
+  const distance = (item) => {
+    let best = Infinity;
+    for (const l of WARMTH_LEVELS(item.warmth)) for (const b of levels) best = Math.min(best, Math.abs(l - b));
+    return best;
+  };
+  const d = new Map(list.map(i => [i, distance(i)]));
+  return list.sort((a, b) => d.get(a) - d.get(b) || byId(a, b));
+}
+
 // The worker's combo shape: a single is {key, one}; a pair is {key, top, bottom}.
 function toWorkerShape(combo) {
   return combo.pieces.length === 1
@@ -520,6 +594,7 @@ module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
   BAND_WARMTH, WARMTH_LEVELS,
+  GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder,
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
   derivePicks, recordOffer, pruneEvents, lastPage1, yesterdayPage1,

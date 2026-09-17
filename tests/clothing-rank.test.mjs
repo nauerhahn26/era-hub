@@ -11,6 +11,9 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+// invented garments too (the same 35 the variety gate deals) — used by the
+// accessories block below to prove the deal is untouched by what it drops.
+import { makeItems } from "./synthetic-wardrobe.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HUB = path.resolve(__dirname, "..");
@@ -892,6 +895,178 @@ describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", 
     assert.deepEqual(keysOf(out).slice(0, 7),
       ["item_t1+item_b1", "item_t3+item_b3", "item_t5+item_b5", "item_t2+item_b2", "item_t0+item_b0", "item_t4+item_b4", "item_t6+item_b6"]);
     assert.equal(out.length, 21);
+  });
+});
+
+// ---- T1.5 categories, accessories, hidden (accessories spec §3.1, §4.1) ----
+//
+// The accessories cut (docs/superpowers/specs/2026-09-17-accessories-design.md)
+// adds six non-pooled kinds and a `hidden` flag. Everything here is about what
+// NEVER reaches the deal: the 9/5 ranking is untouched, so the cases below all
+// prove absence, plus the one new ordering rule (accessoryOrder).
+
+describe("the eleven kinds (accessories spec §3.1)", () => {
+  test("GARMENT_KINDS is the 9/5 five, in the original order", () => {
+    assert.deepEqual(R.GARMENT_KINDS, ["top", "pants", "shorts", "dress", "set"]);
+  });
+  test("ACCESSORY_KINDS is the specced order with a label and an ARASAAC symbol each", () => {
+    assert.deepEqual(R.ACCESSORY_KINDS.map(k => k.id), ["jacket", "shoes", "jewelry", "hat", "hair", "makeup"]);
+    assert.deepEqual(R.ACCESSORY_KINDS.map(k => k.label), ["Jackets", "Shoes", "Jewelry", "Hats", "Hair", "Makeup"]);
+    for (const k of R.ACCESSORY_KINDS) {
+      assert.equal(typeof k.symbol, "string", k.id);
+      assert.ok(k.symbol.length, k.id);            // the worker's convention: a bestsearch word (or a pinned id)
+      assert.deepEqual(Object.keys(k).sort(), ["id", "label", "symbol"], k.id);
+    }
+  });
+  test("CATEGORIES holds exactly the eleven = garments + accessory ids", () => {
+    assert.ok(R.CATEGORIES instanceof Set);
+    assert.equal(R.CATEGORIES.size, 11);
+    assert.deepEqual([...R.CATEGORIES], [...R.GARMENT_KINDS, ...R.ACCESSORY_KINDS.map(k => k.id)]);
+    for (const w of ["top", "pants", "shorts", "dress", "set", "jacket", "shoes", "jewelry", "hat", "hair", "makeup"])
+      assert.ok(R.CATEGORIES.has(w), w);
+    assert.ok(!R.CATEGORIES.has("banana"));
+  });
+  test("OCCASIONS is everyday | fancy", () => {
+    assert.deepEqual(R.OCCASIONS, ["everyday", "fancy"]);
+  });
+  test("isAccessory: the six, by word or by item; garments and junk are false", () => {
+    for (const w of ["jacket", "shoes", "jewelry", "hat", "hair", "makeup"]) {
+      assert.equal(R.isAccessory(w), true, w);
+      assert.equal(R.isAccessory({ category: w }), true, w + " (item)");
+    }
+    for (const w of ["top", "pants", "shorts", "dress", "set", "banana", "", "constructor", undefined, null])
+      assert.equal(R.isAccessory(w), false, String(w));
+    assert.equal(R.isAccessory({ category: "top" }), false);
+    assert.equal(R.isAccessory({}), false);
+  });
+});
+
+describe("categoryOf — the eleven kinds' roles (accessories spec §3.1)", () => {
+  test("the five garments keep their 9/5 roles", () => {
+    assert.equal(R.categoryOf({ category: "top" }), "top");
+    assert.equal(R.categoryOf({ category: "pants" }), "bottom");
+    assert.equal(R.categoryOf({ category: "shorts" }), "bottom");
+    assert.equal(R.categoryOf({ category: "dress" }), "single");
+    assert.equal(R.categoryOf({ category: "set" }), "single");
+  });
+  test("the six accessories are role \"accessory\" — never null (preflight 2)", () => {
+    for (const w of ["jacket", "shoes", "jewelry", "hat", "hair", "makeup"])
+      assert.equal(R.categoryOf({ category: w }), "accessory", w);
+    assert.equal(R.categoryOf({ category: "Jacket" }), "accessory");   // words are lowercased
+  });
+  test("an unknown word, an empty one or a missing category is still null (unchanged)", () => {
+    for (const w of ["banana", "", "hoodie", "coat"]) assert.equal(R.categoryOf({ category: w }), null, w);
+    assert.equal(R.categoryOf({ category: undefined }), null);
+    assert.equal(R.categoryOf({}), null);
+  });
+});
+
+describe("buildCandidates — accessories and hidden items never pool (accessories spec §4.1)", () => {
+  // The A4-4 choke point: the wardrobe enters buildCandidates once, where it is
+  // sorted by id. Dropping the two kinds of non-garment there is what keeps
+  // every pool (tops/bottoms/singles, the coverage sweep) free of them.
+  const wardrobe = makeItems({ n: 35, seed: 1 });
+  const jackets = [
+    g("item_jk1", { category: "jacket", warmth: "cold", name: "Blue puffer" }),
+    g("item_jk2", { category: "jacket", warmth: "cool" }),
+    g("item_jk3", { category: "jacket", warmth: "any" }),
+  ];
+  const hiddenTop = g("item_hid1", { category: "top", hidden: true, colors: ["navy"], pattern: "solid" });
+  const deal = items => R.buildCandidates({ items, band: null, cap: 21, seed: SEED, history: {}, perPage: 7 });
+
+  test("the deal over a wardrobe + 3 jackets + 1 hidden top is the deal without them", () => {
+    const plain = deal(wardrobe);
+    assert.equal(plain.length, 21);                       // precondition: a full board
+    const withExtras = deal([...wardrobe, ...jackets, hiddenTop]);
+    assert.deepEqual(withExtras, plain);
+  });
+  test("no accessory id and no hidden id appears anywhere in the output", () => {
+    const ids = idsIn(deal([...wardrobe, ...jackets, hiddenTop]));
+    for (const x of [...jackets, hiddenTop]) assert.ok(!ids.has(x.id), x.id);
+  });
+  test("a hidden garment is out of the pool even when it would otherwise be dealt", () => {
+    // The decisive case: on this three-garment wardrobe the hidden top's pair
+    // is the difference between one look and two.
+    const items = [top("item_t1"), top("item_t2", { hidden: true }), bottom("item_b1")];
+    assert.deepEqual(keysOf(deal(items)), ["item_t1+item_b1"]);
+    assert.deepEqual(keysOf(deal([top("item_t1"), top("item_t2"), bottom("item_b1")])).sort(),
+      ["item_t1+item_b1", "item_t2+item_b1"]);       // precondition: without `hidden` both are dealt
+  });
+  test("a wardrobe of nothing but accessories and hidden garments deals []", () => {
+    assert.deepEqual(deal([...jackets, hiddenTop]), []);
+    assert.deepEqual(deal([top("item_t1", { hidden: true }), bottom("item_b1", { hidden: true })]), []);
+  });
+  test("hidden is boolean true only — hidden:\"yes\" or hidden:false still deals", () => {
+    const items = [top("item_t1", { hidden: false }), bottom("item_b1", { hidden: "yes" })];
+    assert.deepEqual(keysOf(deal(items)), ["item_t1+item_b1"]);
+  });
+  test("an accessory is never eligible as top / bottom / single either", () => {
+    for (const cat of ["top", "bottom", "single"])
+      assert.deepEqual(R.eligible(jackets, cat, null), [], cat);
+  });
+});
+
+describe("accessoryOrder — warmth closeness to the band (accessories spec §4.1)", () => {
+  // distance = the SMALLEST gap between the item's warmth levels and the band's
+  // levels, so an "any" (or untagged) item is distance 0 to every band and
+  // sorts with the exact matches, by id. Cold band = level {3}:
+  //   cold {3} → 0 · any/unknown {1,2,3} → 0 · cool {2} → 1 · hot/warm {1} → 2
+  const a = (id, warmth) => g(id, { category: "jacket", warmth });
+  test("cold band: distance 0 first (cold, any, unknown — by id), then cool, then warm/hot", () => {
+    const items = [a("item_e_warm", "warm"), a("item_c_cool", "cool"), a("item_b_cold", "cold"),
+                   a("item_d_hot", "hot"), a("item_a_any", "any"), a("item_f_junk", "banana")];
+    assert.deepEqual(R.accessoryOrder(items, "cold").map(i => i.id),
+      ["item_a_any", "item_b_cold", "item_f_junk", "item_c_cool", "item_d_hot", "item_e_warm"]);
+  });
+  test("hot band {1}: warm/hot/any lead, then cool, then cold", () => {
+    const items = [a("item_b_cold", "cold"), a("item_c_cool", "cool"), a("item_a_hot", "hot"), a("item_d_warm", "warm")];
+    assert.deepEqual(R.accessoryOrder(items, "hot").map(i => i.id),
+      ["item_a_hot", "item_d_warm", "item_c_cool", "item_b_cold"]);
+  });
+  test("a multi-level band (warm = {1,2}) is distance 0 to both its levels", () => {
+    const items = [a("item_b_cold", "cold"), a("item_c_cool", "cool"), a("item_a_hot", "hot")];
+    assert.deepEqual(R.accessoryOrder(items, "warm").map(i => i.id), ["item_a_hot", "item_c_cool", "item_b_cold"]);
+  });
+  test("an int warmth 3 behaves as cold (migrated tag, W3)", () => {
+    const items = [a("item_a", 1), a("item_b", 3)];
+    assert.deepEqual(R.accessoryOrder(items, "cold").map(i => i.id), ["item_b", "item_a"]);
+  });
+  test("band null, undefined or an unknown word (D2): id order, warmth ignored", () => {
+    const items = [a("item_c", "cold"), a("item_a", "hot"), a("item_b", "cool")];
+    for (const band of [null, undefined, "nope", "", "constructor"])
+      assert.deepEqual(R.accessoryOrder(items, band).map(i => i.id), ["item_a", "item_b", "item_c"], String(band));
+  });
+  test("pure: the input array is not mutated and a missing list is []", () => {
+    const items = [a("item_c", "cold"), a("item_a", "hot")];
+    R.accessoryOrder(items, "cold");
+    assert.deepEqual(items.map(i => i.id), ["item_c", "item_a"]);
+    assert.deepEqual(R.accessoryOrder(undefined, "cold"), []);
+    assert.deepEqual(R.accessoryOrder([], null), []);
+  });
+});
+
+describe("the manual fields ride through the pure module (accessories spec §3.2)", () => {
+  test("attributes() stays the TASTE whitelist: occasion / hidden / manualAt are not its business", () => {
+    // Deliberate (spec §3.2, plan T4): attributes() is what the needs-attributes
+    // pass writes over an item from a MODEL reply. Letting occasion/hidden
+    // through here would let the model undo a manual edit — "manual beats model,
+    // forever". The worker parses `occasion` beside `category`/`warmth` (T3) and
+    // the manual sweep owns `hidden`/`manualAt` (T4).
+    const a = R.attributes({ colors: ["navy"], occasion: "fancy", hidden: true, manualAt: "2026-09-17" });
+    assert.deepEqual(Object.keys(a).sort(), ["colors", "statement"]);
+  });
+  test("toWorkerShape passes the whole item through — occasion / hidden / manualAt survive the deal", () => {
+    const t = top("item_t1", { occasion: "fancy", manualAt: "2026-09-17" });
+    const b = bottom("item_b1", { occasion: "everyday" });
+    const d = g("item_d1", { category: "dress", occasion: "fancy", manualAt: "2026-09-16" });
+    const out = R.buildCandidates({ items: [t, b, d], band: null, cap: 21, seed: SEED, history: {}, perPage: 7 })
+      .map(R.toWorkerShape);
+    const pair = out.find(c => c.top), single = out.find(c => c.one);
+    assert.equal(pair.top.occasion, "fancy");
+    assert.equal(pair.top.manualAt, "2026-09-17");
+    assert.equal(pair.bottom.occasion, "everyday");
+    assert.equal(single.one.occasion, "fancy");
+    assert.equal(single.one.manualAt, "2026-09-16");
   });
 });
 

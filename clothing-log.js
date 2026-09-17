@@ -7,7 +7,8 @@
 //     tags/<writer>.jsonl                    {t, id?, hash?, name?, category,
 //                                             warmth, colors, pattern,
 //                                             statement, palette, vibe,
-//                                             rotate_deg?, crop?}
+//                                             rotate_deg?, crop?,
+//                                             occasion?, hidden?, manual?}
 //     pairs/<writer>.jsonl                   {t, kind: great|avoid|favorite|none,
 //                                             combo:[ids]}
 //
@@ -39,7 +40,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const { dayKey, pairKey, HISTORY_DAYS_KEPT } = require("./clothing-rank.js");
+const { dayKey, pairKey, HISTORY_DAYS_KEPT, OCCASIONS: OCCASION_WORDS } = require("./clothing-rank.js");
 const { slug } = require("./device-id.js");
 
 const ERA = ".era";
@@ -68,6 +69,14 @@ const strings = v => Array.isArray(v) && v.length > 0 && v.every(s => typeof s =
 // rule at both ends — an empty line published after a good one would blank that
 // date's page 1 for every OTHER device, and the yesterday bar (spec §1 V3)
 // would stop barring those looks family-wide.
+// Each kind checks only what it cannot be a line without. A tags line needs a
+// name for the garment it describes and nothing else: every other field is
+// optional, and a bad one is DROPPED BY normalizeTag while the line stands
+// (that is already the rule for warmth, rotate_deg and crop — see there). The
+// accessories fields follow it, so `hidden:"yes"` from some future writer costs
+// that writer its hide, not the whole family its category. The three live in
+// the tags row alone: picks, offers and pairs are unchanged and unloosened.
+const OCCASIONS = new Set(OCCASION_WORDS);   // the one list, clothing-rank.js (spec §3.2)
 const VALID = {
   picks: l => strings(l.combo),
   offers: l => Array.isArray(l.page1) && l.page1.length > 0,
@@ -209,7 +218,7 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
       for (const k of [line.id, line.hash]) {
         if (typeof k !== "string" || !k) continue;
         const have = newest.get(k);
-        if (!have || stamp(line) >= stamp(have.raw)) newest.set(k, { raw: line, tag: t });
+        if (!have || beats(line, have.raw)) newest.set(k, { raw: line, tag: t });
       }
     }
     for (const [k, v] of newest) merged.tags.set(k, v.tag);
@@ -235,6 +244,22 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
     return merged;
   }
 
+  // Which of two lines for the same key the family should believe (accessories
+  // spec §3.4). A model line is a guess and a `manual:true` line is a grown-up
+  // who looked at the garment, so manual outranks non-manual WHATEVER the
+  // clocks say: the ordinary case is a parent correcting a hoodie today and
+  // another tablet describing the same photo for the first time tomorrow, and
+  // "newest wins" would hand that garment straight back to the model. Among
+  // manual lines the newest parent wins; among non-manual lines this is, to the
+  // byte, the rule that was here before — a wardrobe with no manual line in it
+  // merges exactly as it did (proven by a snapshot in the suite).
+  const manualLine = l => !!l && l.manual === true;
+  function beats(line, have) {
+    const mine = manualLine(line), theirs = manualLine(have);
+    if (mine !== theirs) return mine;
+    return stamp(line) >= stamp(have);
+  }
+
   // A shared tag stands in for the model's answer, so it hands back the same
   // fields askModel would have — with the migrated int warmth translated (W3)
   // and the geometry the tagging device saw (W5: without rotate_deg/crop a
@@ -248,6 +273,19 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
       : (typeof l.warmth === "string" ? l.warmth.toLowerCase() : undefined);
     if (typeof l.rotate_deg === "number") out.rotate_deg = l.rotate_deg;
     if (l.crop && typeof l.crop === "object") out.crop = l.crop;
+    // Accessories (spec §3.2/§3.4). Added only when the line really carries
+    // them, like the two above: a pre-accessories line must normalize to the
+    // same object it always did, and an ABSENT occasion is "nobody said",
+    // which the worker turns into "everyday" — not this module's default to
+    // invent. `manual` and its `t` ride along on a winning manual line so the
+    // worker's sweep can stamp manualAt from the parent's own clock; a model
+    // line carries neither, which is what every line in the folder today is.
+    if (OCCASIONS.has(l.occasion)) out.occasion = l.occasion;
+    if (typeof l.hidden === "boolean") out.hidden = l.hidden;
+    if (manualLine(l)) {
+      out.manual = true;
+      if (stamp(l)) out.t = stamp(l);
+    }
     return out;
   }
 
