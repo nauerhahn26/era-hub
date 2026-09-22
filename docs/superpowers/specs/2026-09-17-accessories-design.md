@@ -37,7 +37,10 @@ Decisions taken with dad on 9/17 (AskUserQuestion, three rounds):
   centre [2,2][2,3] black — full. "This one?" (`confirm_<i>`, 3×2): photo, Yes, Change
   top, Change bottoms, Back — **[3,2] empty.** Browse grids (`cat_*`, 3×4): Back [1,1],
   six garment tiles at [1,2][1,3][1,4][2,1][2,2][2,3], More [3,1] — **[2,4][3,2][3,3][3,4]
-  empty.** A garment tile (`type:"clothing"`) has no `load`: tapping it speaks the name.
+  empty.** *(That was the state on 9/17 and it was a BUG — the 9/1 port filled the two
+  centre rest cells and blacked three edge cells, the exact inverse of the law. Fixed
+  9/22: the slots are now `SLOTS` + `[3,4]`, eight to a page, seven behind the door.
+  See "Browse grids" in §4.1.)* A garment tile (`type:"clothing"`) has no `load`: tapping it speaks the name.
   Yes speaks "Yes" and posts the pick; nothing else happens.
 - There is **no** route, Settings control or gesture that edits a garment. The closest
   editing pattern is books: `POST /content/rename` / `/content/remove` — `ownDoor`-gated,
@@ -161,6 +164,16 @@ tile, in `ACCESSORY_KINDS` order.
 - **Browse grids** `cat_top / cat_pants / cat_shorts / cat_dress / cat_outfit` — entry
   tile at `[3,4]` on every page of the grid (the corner Build my own uses on today pages).
   `gridPages` gains an optional `extra` button placed on each page.
+  **Amended 9/22 (dad, "all tops doesn't follow our design guidelines"):** a browse page
+  obeys the same law every other 3×4 page does — Back `[1,1]`, More `[3,1]`, centre
+  `[2,2]` `[2,3]` black, a garment in every cell that is left. `gridPages` deals `SLOTS`
+  (`[1,2][1,3][1,4][2,1][2,4][3,2][3,3]`) plus `[3,4]` when nothing else claims that
+  corner: **eight** garments a page on a grid with no door, **seven** with one, and the
+  `acc_<kind>` grids behind the door keep all eight. That is the original generator's
+  `item_slots` (`outfit_set.py:839`) garment for garment; the 9/1 port had written the
+  first six cells in reading order, which filled the two centre rest cells and blacked
+  `[2,4][3,2][3,3][3,4]`. Pages a short tail does not reach stay black — the slots never
+  move, so one layout serves every page of every grid.
 - **Build my own** — becomes a **3 × 4 board with the centre `[2,2]` `[2,3]` black**
   (dad 9/17), ALWAYS, accessories or not. Ten edge cells, filled clockwise from the
   contract's back anchor: `[1,1]` Back, `[1,2]` Tops, `[1,3]` Bottoms, `[1,4]` Dresses,

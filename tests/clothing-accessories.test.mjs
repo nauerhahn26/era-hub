@@ -160,6 +160,10 @@ const pagesOf = (dir, id) =>
   recipeOf(dir).boards.filter(b => b.id === id || String(b.id).startsWith(id + "_"));
 // The button in a cell, or undefined for a black rest cell.
 const at = (board, row, col) => (board.buttons || []).find(b => b.row === row && b.col === col);
+// Every cell one kind of button stands in, in reading order — the measure of
+// a page's LAYOUT rather than its contents (the grid law, dad 9/22).
+const cellsOf = (board, type) => (board.buttons || []).filter(b => b.type === type)
+  .map(b => b.row + "," + b.col).sort();
 const cellOf = (board, label) => {
   const b = (board.buttons || []).find(x => x.label === label);
   return b ? b.row + "," + b.col : null;
@@ -567,6 +571,63 @@ test("one jacket opens the accessories door on every page she can be standing on
   assert.ok(!g.buttons.some(x => x.label === "Accessories"), "no door on the door's own grid");
 });
 
+// ---- the grid law (dad 9/22) ----------------------------------------------
+//
+// A browse page is the same 4x3 Home mirror every other page is: Back [1,1],
+// More BOTTOM-LEFT [3,1], the two CENTRE cells [2,2][2,3] black rest cells
+// (lib contract restCells: "center"), and a garment in every cell that is
+// left. Eight to a page, or seven once the accessories door stands on [3,4].
+// The original generator dealt exactly these slots (outfit_set.py:839
+// `item_slots`); dad found the hub's port filling the centre and blacking the
+// edges instead — "all tops doesn't follow our design guidelines of all cells
+// filled and black squares in middle", and the same on jackets and bottoms.
+test("a browse grid fills every cell around the black centre: eight to a page when no door stands on [3,4]", async () => {
+  const D = dataDir("gridlaw");
+  materialize({ dataDir: D, n: 35 });   // 17 tops, and no accessories: no door anywhere
+  await build(D, "dev-gridlaw");
+
+  const page = boardOf(D, "cat_top");
+  assert.deepEqual(cellsOf(page, "clothing"),
+    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3", "3,4"],
+    "a garment in every cell but Back, More and the two centre rest cells");
+  assert.equal(at(page, 2, 2), undefined, "the centre cells stay black");
+  assert.equal(at(page, 2, 3), undefined, "…both of them");
+  assert.equal(cellOf(page, "Back"), "1,1", "Back keeps the top-left corner");
+  assert.equal(cellOf(page, "More"), "3,1", "More keeps the bottom-left (TD Snap muscle memory)");
+
+  // Positions are stable page to page — one layout everywhere — so a short
+  // last page leaves its leftover cells black rather than re-flowing.
+  const pages = pagesOf(D, "cat_top");
+  assert.equal(pages.length, 3, "17 tops is three pages of eight");
+  assert.deepEqual(cellsOf(pages[2], "clothing"), ["1,2"],
+    "the seventeenth top sits in the first slot of page 3, the rest black");
+  assert.equal(cellOf(pages[2], "More"), null, "and the last page offers no More");
+});
+
+test("the accessories door owns [3,4], so a browse grid behind it carries seven", async () => {
+  const D = dataDir("gridlawdoor");
+  // Nine jackets: one full page of the kind's own grid and a second behind More.
+  materialize({ dataDir: D, n: 35, accessories: { jacket: 9 } });
+  await build(D, "dev-gridlawdoor");
+
+  const tops = boardOf(D, "cat_top");
+  assert.deepEqual(cellsOf(tops, "clothing"),
+    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3"],
+    "seven tops — the door has the eighth cell");
+  assertEntryTile(at(tops, 3, 4), "cat_top [3,4]");
+  assert.equal(at(tops, 2, 2), undefined, "the centre cells stay black");
+  assert.equal(at(tops, 2, 3), undefined, "…both of them");
+
+  // Behind the door there is no door, so a kind's own grid keeps all eight.
+  const jackets = boardOf(D, "acc_jacket");
+  assert.deepEqual(cellsOf(jackets, "clothing"),
+    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3", "3,4"],
+    "eight jackets on the kind's own grid, [3,4] among them");
+  assert.equal(cellOf(jackets, "More"), "3,1", "the ninth jacket is behind More");
+  assert.equal(at(jackets, 2, 2), undefined, "the centre stays black behind the door too");
+  assert.equal(at(jackets, 2, 3), undefined, "…both of them");
+});
+
 test("a pair of shoes takes the next cell on Build my own and the second on the menu", async () => {
   const D = dataDir("jacketshoes");
   materialize({ dataDir: D, n: 12, accessories: { jacket: 1, shoes: 1 } });
@@ -719,15 +780,34 @@ test("a wardrobe with no accessories gets the board she had yesterday", async ()
 
   // The three things T5 adds and nothing else: the items on the tiles, the
   // category list at the root, and the reshaped Build my own board.
+  //
+  // Plus, since 9/22, the browse grids — the ONE cell-for-cell difference this
+  // family is meant to see. The baseline dealt six garments a page into
+  // [1,2][1,3][1,4][2,1][2,2][2,3]; the grid law deals eight around a black
+  // centre, so `cat_*` pages carry a different split of the same list. They
+  // come out of the cell-for-cell comparison and are measured on their own
+  // terms below: same garments, same order, new slots.
   const strip = (recipe) => {
     const r2 = JSON.parse(JSON.stringify(recipe));
     delete r2.categories;
-    r2.boards = r2.boards.filter(b => b.id !== "build");
+    r2.boards = r2.boards.filter(b => b.id !== "build" && !/^cat_/.test(b.id));
     for (const b of r2.boards) for (const btn of b.buttons) delete btn.items;
     return r2;
   };
   assert.deepEqual(strip(after), strip(before),
     "board for board, cell for cell, the board she had before accessories existed");
+
+  // Nothing fell off a grid and nothing was re-ordered when the slots changed:
+  // page by page, in order, the same garments (dad 9/22).
+  const gridGarments = (recipe, id) => recipe.boards
+    .filter(b => b.id === id || String(b.id).startsWith(id + "_"))
+    .flatMap(b => b.buttons.filter(x => x.type === "clothing").map(x => x.image));
+  for (const id of ["cat_top", "cat_pants", "cat_shorts", "cat_dress", "cat_outfit"])
+    assert.deepEqual(gridGarments(after, id), gridGarments(before, id),
+      id + ": the same garments in the same order — only the slots moved");
+  assert.deepEqual(cellsOf(boardOf(D, "cat_top"), "clothing"),
+    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3", "3,4"],
+    "…into the eight cells the grid law leaves, with no door to pay for");
   assert.ok(!JSON.stringify(after).includes("Accessories"), "and no door anywhere on it");
   assert.ok(!after.boards.some(b => String(b.id).startsWith("acc")), "no acc boards either");
   for (const pid of ["today", "today_2", "today_3"])
