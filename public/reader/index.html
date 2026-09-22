@@ -241,6 +241,144 @@
     color: #fff;
   }
 
+  /* ============================================================
+     BOOK SHARING (spec 2026-09-22): a grown-up's hold on a book,
+     and a grown-up's door for a book somebody sent. Everything
+     below belongs to reader-share.js and reader-strip.js, and NOT
+     ONE RULE OF IT DESCRIBES A GAZE TARGET — there is no .dwell
+     anywhere in this block, on purpose and for ever.
+     ============================================================ */
+
+  /* THE HOLD (spec §4.1). Windows' press-and-hold wants to put a right-click
+     menu and a selection on her shelf; reader-share.js refuses the contextmenu
+     and these two refuse the rest. `manipulation` keeps the shelf scrolling
+     and kills only the double-tap zoom. */
+  .shelf-card { -webkit-touch-callout: none; touch-action: manipulation; }
+  /* The fill, timed off ONE custom property that reader-share.js publishes from
+     its own HOLD_MS — so the 1.6 s a grown-up has learned is stated once, in
+     the module, and never as a number in a stylesheet that could drift from it.
+     It runs along the bottom of the card rather than over the cover: the book
+     she was about to open must stay readable under a grown-up's finger. */
+  .shelf-card.holding::after {
+    content: '';
+    position: absolute;
+    left: 0; bottom: 0;
+    height: 6px;
+    width: 0;
+    border-radius: 0 0 20px 20px;
+    background: var(--brand-coral);
+    animation: shelf-hold var(--hold-ms, 1600ms) linear forwards;
+    pointer-events: none;
+    z-index: 3;
+  }
+  @keyframes shelf-hold { from { width: 0; } to { width: 100%; } }
+  @media (prefers-reduced-motion: reduce) {
+    .shelf-card.holding::after { animation: none; width: 100%; opacity: 0.35; }
+  }
+
+  /* THE STRIP (spec §5.1), at the bar's RIGHT end. `margin-left:auto` is the
+     whole anchoring: the 🚪 is the bar's first flex item and the 💬 is out of
+     the flow altogether (doorbar.css positions it absolutely, centred), so
+     neither door moves when this appears — which is the law doorbar.js's header
+     states and reader-strip.test.mjs measures. The height tracks the bar's own
+     --bar-inner, published by sizeBar(), instead of restating 9% of anything. */
+  #readerStrip {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .stripbtn {
+    height: var(--bar-inner, 44px);
+    padding: 0 18px;
+    border: none;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.16);
+    color: var(--bar-ink, #fff);
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .stripbtn:active { background: rgba(255, 255, 255, 0.28); }
+  .stripbtn:disabled { opacity: 0.45; }
+  /* SHELF SCREEN ONLY (spec §5.1). reader.js stamps `reading` on the body for
+     the book page, so the rule is read off the state the app already keeps —
+     while a book is open the bar belongs to 🚪 and 💬. */
+  body.reading #readerStrip { display: none; }
+
+  /* THE TWO GROWN-UP SHEETS. A full-screen backdrop hides NOTHING from
+     dwell.js's targetAt() — it walks the elementsFromPoint stack for the first
+     .dwell without [data-dwell-disabled] — so the darkness here is for the
+     grown-up's eyes only and the real work is reader.js's freeze. */
+  .grown-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgba(31, 43, 44, 0.55);
+    backdrop-filter: blur(3px);
+  }
+  .share-card, .add-card {
+    display: grid;
+    gap: 14px;
+    justify-items: center;
+    width: min(520px, 100%);
+    max-height: 100%;
+    overflow-y: auto;
+    padding: 22px;
+    border-radius: 22px;
+    background: #fff;
+    border: 1px solid var(--line);
+    box-shadow: 0 18px 44px rgba(31, 43, 44, 0.28);
+    text-align: center;
+  }
+  .share-cover, .add-cover { display: grid; place-items: center; }
+  .share-cover img, .add-cover img {
+    width: 140px; height: 140px;
+    object-fit: cover;
+    border-radius: 14px;
+    background: #f0ece0;
+  }
+  .share-title, .add-title { font-size: 1.4rem; font-weight: 700; line-height: 1.25; }
+  .share-outs, .add-sources { display: grid; gap: 12px; width: 100%; }
+  /* Real buttons, sized for a grown-up's finger at arm's length — and no
+     .dwell, so her gaze walks straight over every one of them. */
+  .share-out, .add-source, .share-btn, .add-btn {
+    min-height: 58px;
+    padding: 12px 18px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #fff;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 1.08rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .share-out, .add-source { width: 100%; }
+  .share-out.primary { background: #2E7D5B; border-color: #27694c; color: #fff; }
+  .share-out:disabled, .add-source:disabled { opacity: 0.45; cursor: default; }
+  /* A sentence a parent can act on — hidden until there is one to say. */
+  .share-msg, .add-msg { display: none; font-size: 1.05rem; line-height: 1.4; color: var(--ink); }
+  .share-msg.show, .add-msg.show { display: block; }
+  .add-link {
+    display: inline-block;
+    padding: 12px 18px;
+    border-radius: 14px;
+    background: #2E7D5B;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .share-foot, .add-foot { display: flex; justify-content: center; width: 100%; }
+  .share-btn, .add-btn { min-width: 140px; border-radius: 999px; }
+
   /* Personalized ("Ellie's story") books: a warm coral rim so the card reads
      as special from across the room, without changing its shape or size. */
   .shelf-card.is-authored .shelf-card-button.dwell-button {
@@ -602,5 +740,12 @@
   window.EllieContract = { CONTRACT, holdFor, holdForExit };
 </script>
 <script src="reader.js" defer></script>
+<!-- Book sharing (spec 2026-09-22), and AFTER reader.js on purpose: both are
+     classic scripts, deferred scripts run in document order, and each of these
+     borrows reader.js's freeze off window.Reader. Neither is a gaze target and
+     neither speaks — they are the two grown-up doors on this screen, the finger
+     hold that sends a book and the strip button that takes one in. -->
+<script src="reader-share.js" defer></script>
+<script src="reader-strip.js" defer></script>
 </body>
 </html>

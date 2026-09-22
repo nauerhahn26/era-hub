@@ -471,6 +471,11 @@ function renderShelf() {
   for (const b of S.index) {
     const card = document.createElement("div");
     card.className = b.authored === true ? "shelf-card is-authored" : "shelf-card";
+    // The slug on the CARD, the way notYetCard() already stamps its own. A
+    // grown-up's finger hold (reader-share.js) starts at the card and has to
+    // know which book it is holding without a second lookup — and the add
+    // sheet finds the book it just imported by the same key.
+    card.dataset.slug = b.slug;
     const btn = document.createElement("div");
     btn.className = "dwell dwell-button shelf-card-button";
     btn.setAttribute("data-dwell-say", b.title);
@@ -1092,4 +1097,27 @@ window.Reader = {
     drive: S.drive,
   }),
   open: openBook,
+
+  // ---- LENT TO THE GROWN-UPS' SHEETS (reader-share.js, reader-strip.js) ----
+  // Book sharing added two more sheets over this same shelf, and both need
+  // exactly what the Build ask needs: everything asleep while they are up. They
+  // borrow THIS switch rather than growing one each, because three switches
+  // over one list of nodes means the last one to close wakes what the other two
+  // put to sleep (board-edit.js learned that on the board, the hard way). The
+  // list, the doors' exemption-that-isn't, and the thaw all stay here.
+  freezeShelf, thawShelf,
+  // …and the two questions a sheet has to be able to ask before it opens or
+  // after it lands: is the Build ask already up (its own freeze is in flight),
+  // and would the shelf please repaint NOW — an imported book is on disk and
+  // mirrored, and waiting a minute for the poll to notice is not "arrive on
+  // their bookshelf ready to read". `painted` is updated with it so the next
+  // tick does not draw the same shelf a second time under an open sheet.
+  isAsking: () => !!S.asking,
+  repaintShelf: async () => {
+    await refreshShelf();
+    painted = shelfSig();
+    if (S.slug) return;                          // she is inside a book; goLibrary() repaints
+    renderShelf();
+    suppress();
+  },
 };

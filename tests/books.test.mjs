@@ -129,6 +129,31 @@ before(async () => {
   // slug must never take it. luna-the-fox is already its own slug, so it keeps
   // its URL (and the reader keeps its saved position); the newcomer is suffixed.
   named("Luna The Fox", "Luna The Fox (copy)");
+  // TWO packages with the SAME manifest, one of them sent here by another
+  // family. `authored: true` is the coral rim and the "…'s story" badge — "this
+  // family made this book about this child" — and a book somebody else made
+  // about THEIR child carries the flag honestly and must not wear the badge
+  // here. What tells them apart is the share envelope .erabook.json, which
+  // books-share.js unpacks beside the manifest and which no package built on
+  // this computer has. It is the marker because it is a FACT about the package,
+  // not a rewrite of the manifest: the manifest travels byte for byte and a
+  // re-export has to be faithful (books-share.js law 3).
+  const authoredPkg = (dir, envelope) => {
+    const b = path.join(TMP, "books", dir);
+    fs.mkdirSync(b, { recursive: true });
+    fs.writeFileSync(path.join(b, "cover.jpg"), JPEG);
+    fs.writeFileSync(path.join(b, "manifest.json"), JSON.stringify({
+      schemaVersion: 1, slug: dir, title: dir, exportedAt: "2026-09-22T00:00:00Z",
+      authored: true, cover: "cover.jpg",
+      pages: [{ index: 0, image: "cover.jpg", text: dir }],
+    }, null, 2));
+    if (envelope) fs.writeFileSync(path.join(b, ".erabook.json"), JSON.stringify({
+      v: 1, title: dir, slug: dir, pages: 1, exportedAt: "2026-09-22T00:00:00Z",
+      from: { app: "New ERA", build: "20260922.1200" },
+    }));
+  };
+  authoredPkg("their-book", true);    // came from another family's hub
+  authoredPkg("our-book", false);     // made here, about this child
   // an incomplete package (mid-export: media present, NO manifest) — must be skipped
   const partial = path.join(TMP, "books", "half-exported");
   fs.mkdirSync(partial, { recursive: true });
@@ -169,11 +194,36 @@ test("GET /books/index.json lists the complete package ONLY, spec shape, no-cach
   const { cover: _c, v: _v, ...rest } = luna;
   assert.deepEqual(rest, {
     slug: "luna-the-fox", title: "Luna the Fox", pages: 2, hasVideo: false,
-    authored: false,   // manifest `authored: true` passes through (coral-rim shelf card)
+    authored: false,   // no `authored` in this manifest -> no coral rim, no badge
   });
   // and the versioned URL actually serves (query must not break the jail)
   const cv = await fetch(`${BASE}${luna.cover}`);
   assert.equal(cv.status, 200);
+});
+
+// The bug the two-hub journey caught (9/22): a book another family made about
+// THEIR child arrived on this shelf wearing the coral rim and the badge that
+// says "<her name>'s story" — announced to a non-verbal six-year-old as her own.
+//
+// The flag is not a lie and is not ours to clear: the book WAS authored, and
+// the manifest travels byte for byte so a re-export stays faithful. So the
+// SHELF decides. An imported package carries the share envelope beside its
+// manifest; a package built on this computer never does; and that is the one
+// durable, honest difference between the two directories below, whose
+// manifests are otherwise the same file.
+test("an imported package is not this family's story, whatever its manifest says", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const theirs = idx.find(e => e.slug === "their-book");
+  const ours = idx.find(e => e.slug === "our-book");
+  assert.ok(theirs && ours, "both packages are on the shelf: " + JSON.stringify(idx.map(e => e.slug)));
+  assert.equal(theirs.authored, false,
+    "a book sent here from another hub wears this child's 'story' badge");
+  assert.equal(ours.authored, true,
+    "the family's OWN book lost its rim — the envelope is the only difference");
+  // The flag the shelf declined to repeat is still in the file on disk, because
+  // nothing rewrote it: books-share.js law 3, from the serving side.
+  const m = await (await fetch(`${BASE}/books/their-book/manifest.json`)).json();
+  assert.equal(m.authored, true, "the import's manifest was rewritten");
 });
 
 test("manifest.json serves 200 with no-cache", async () => {
