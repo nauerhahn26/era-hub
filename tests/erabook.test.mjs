@@ -341,6 +341,40 @@ test("an extension off the allowlist is refused", () => {
   }
 });
 
+// The hazard the Linux box this suite runs on cannot feel, and the hub mostly
+// runs on the one that can. CON, PRN, AUX, NUL, COM1-9 and LPT1-9 are DEVICES
+// on Windows, in every directory, whatever extension you hang off them: opening
+// "pages\con.json" for writing opens the console, "nul.jpg" the bit bucket. The
+// path jail is about where a name points; this is about a name that points at
+// no file at all. Nothing escapes the destination — the hub just writes a book
+// into a device and the family gets a shelf entry that opens onto a 404, or a
+// wedged process, which on this tablet is a child with no voice.
+//
+// books-share.js refuses these as the book's DIRECTORY name already. Inside the
+// archive nobody was checking, which is the half an attacker chooses.
+test("a Windows device name is refused as any segment, and writes nothing", () => {
+  const dest = scratch("dest");
+  for (const name of [
+    "con.json", "nul.jpg", "aux.png", "prn.wav", "com1.mp3", "lpt9.mp4",
+    "CON.json", "NuL.jpg",                 // the device does not care about case
+    "pages/con.json", "audio/aux.wav",     // any directory, not just the root
+    "con/001.jpg", "nul/001.jpg",          // and as a directory of its own
+    "con.a.jpg",                           // CON.txt opens the console; so does this
+    "con .jpg", "con..jpg",                // Windows drops trailing dots and spaces
+  ]) {
+    const f = attack({ name, data: JPEG(1) });
+    assert.throws(() => erabook.unpack(f, dest), refusal("bad-name"), JSON.stringify(name));
+  }
+  assert.deepEqual(fs.readdirSync(dest), [], "not one byte landed in the destination");
+  // …and the names a book actually holds are still names a book may hold. A
+  // check that ate "cover.jpg" would be worse than the hole it closed.
+  for (const name of ["cover.jpg", "pages/001.jpg", "audio/001.wav", "video/002.mp4",
+                      "console.json", "nulls.jpg", "com10.mp3", "com0.mp3", "aux-2.wav"]) {
+    const d = scratch("dest");
+    assert.ok(erabook.unpack(attack({ name, data: JPEG(1) }), d).files.includes(name), name);
+  }
+});
+
 test("a directory entry is refused, never created", () => {
   assert.throws(() => erabook.unpack(attack({ name: "pages/" }), scratch("dest")), refusal("bad-name"));
   // …and one that says "directory" only in its unix mode

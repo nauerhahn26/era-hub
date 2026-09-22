@@ -44,7 +44,12 @@
 //     against the destination after path.normalize, exactly the way
 //     serveMediaJail does — belt and braces, because the day a name slips past
 //     the first check is the day the second one is the only thing standing
-//     between a stranger's file and C:\Windows. Extensions are an allowlist.
+//     between a stranger's file and C:\Windows. Nor may any segment be a
+//     WINDOWS DEVICE NAME (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with or without
+//     an extension): those two checks both ask where a name points, and a
+//     device name points at no file at all — it opens the console instead, in
+//     any directory, on the machine this hub mostly runs on and never on the
+//     Linux box the tests run on. Extensions are an allowlist.
 //     Declared sizes are checked against the bytes actually written and CRCs
 //     against the bytes actually read — a header is a claim, not a fact.
 //     Directory and symlink entries are refused rather than followed, and
@@ -143,6 +148,31 @@ const refuse = (code, message) => new RefusalError(code, message);
 // manifest whose title and paths came from a parent's keyboard, and the day one
 // of those holds "../" is the day we would otherwise have written the attack
 // ourselves and signed it.
+//
+// A NAME THAT POINTS AT NO FILE AT ALL. CON, PRN, AUX, NUL, COM1-9 and LPT1-9
+// are DEVICES on Windows — in every directory, whatever extension is hung off
+// them, because the device is matched before the extension is even looked at.
+// "pages/con.json" opens the console; "nul.jpg" is the bit bucket. The rest of
+// this jail is about where a name POINTS, and one of these points nowhere the
+// jail can see: the write does not escape the destination, it just never
+// becomes a file, and the family gets a shelf entry that opens onto a 404 or a
+// hub wedged on a console handle. Checked per SEGMENT, so a DIRECTORY called
+// con is refused too, and with trailing dots and spaces dropped first, because
+// Windows drops them before it resolves the name. Linux, where this suite runs,
+// cannot feel any of it; the tablet can (9/22 review). books-share.js has
+// always refused these as the book's own directory name — inside the archive
+// nobody was checking, which is the half an attacker picks.
+//
+// Matched the way WINDOWS matches it, which is not "the whole name": everything
+// from the first dot is dropped, then trailing dots and spaces, and what is
+// left is the device. So "con.json", "con.a.b", "con." and "con .jpg" are all
+// the console, while "console.json", "com0.mp3" and "aux-2.wav" are files.
+// Exported because books-share.js needs the same answer for the book's own
+// directory name, and one rule stated twice is a rule that drifts.
+const DEVICES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const isReservedDevice = (s) =>
+  DEVICES.test(String(s).split(".")[0].replace(/[. ]+$/, ""));
+
 function segmentsOf(name) {
   if (typeof name !== "string" || name === "")
     throw refuse(CODES.badName, "an entry with no name");
@@ -167,6 +197,8 @@ function segmentsOf(name) {
     // one; `.` and `..` are the traversal itself.
     if (s === "" || s === "." || s === "..")
       throw refuse(CODES.badName, "entry name is not a plain relative path: " + name);
+    if (isReservedDevice(s))
+      throw refuse(CODES.badName, "entry name holds a Windows device name: " + name);
   }
   const ext = path.extname(name).toLowerCase();
   if (name !== ENVELOPE && !EXTS.includes(ext))
@@ -589,6 +621,6 @@ function unpack(file, destDir) {
 }
 
 module.exports = {
-  pack, unpack, readEnvelope,
+  pack, unpack, readEnvelope, isReservedDevice,
   RefusalError, CODES, LIMITS, EXTS, ENVELOPE, MANIFEST, ENVELOPE_VERSION,
 };
