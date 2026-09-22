@@ -237,10 +237,19 @@ through is not.
 ### 5.3 Where it lands
 
 `<folderPath>/books/<dir>/` — the family's Drive content folder, the same place their own
-builder writes (§2's law). Then the import **nudges the mirror** (`drive.sync()`, the same
-call `POST /integrations/drive/sync` makes) so the book is in `<DATA>/books/` and on the
-shelf in seconds rather than at the next ten-minute tick. Dad's "should land arrive on
-their bookshelf ready to read" is this sentence.
+builder writes (§2's law). Then the import calls **`drive.mirrorBook(<dir>)`** so the book
+is in `<DATA>/books/` and on the shelf in seconds rather than at the next ten-minute tick.
+Dad's "should land arrive on their bookshelf ready to read" is this sentence.
+
+**`mirrorBook`, not `sync()`** (preflight, 9/22). `drive.js:679` already exists for
+precisely this: one finished book folder carried across, manifest **last**, `.part`-atomic,
+no prune, ledger updated so a later deletion in Drive still takes the book away.
+`drive.sync()` would have been the wrong call and the spec asked for it until preflight
+read the module — `sync()` ends in `onSynced`, whose fan-out in `server.js` starts
+`clothing.regenerate(true)`: **a vision spend, on every imported book, for photos nobody
+touched.** `mirrorBook` was written to avoid exactly that, for exactly this shape of
+caller. Its `{blocked:"needs-local-drive"}` is also the refusal the import reuses for "no
+content folder on this computer" rather than inventing a second word for it.
 
 `<dir>` is made from the manifest's title, and the title came from **another family's
 computer**, so cleaning it is a jail and not a nicety: strip every path separator, colon
