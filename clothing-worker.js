@@ -1147,15 +1147,32 @@ function itemRef(it) {
   return { id: it.id, name: it.name, category: it.category, occasion: it.occasion || "everyday" };
 }
 
-// 3x4 browse pages per ux-contract: Back top-left [1,1], up to 6 items in
-// fixed slots, More bottom-LEFT [3,1]; empties become center/bottom rest cells.
+// The cells a 3x4 page leaves for CONTENT, in reading order: everything but
+// Back/weather [1,1], More [3,1], the bottom-right corner [3,4] and the two
+// CENTER rest cells [2,2][2,3] (lib contract restCells: "center"). Today pages
+// and browse pages share it, which is why it lives above both of them.
+const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,2],[3,3]];
+
+// 3x4 browse pages per ux-contract: Back top-left [1,1], More bottom-LEFT
+// [3,1], the two CENTER cells [2,2][2,3] left black (lib contract restCells:
+// "center"), and a garment in EVERY cell that is left — the today page's own
+// slot list plus [3,4], which is the original generator's item_slots
+// (outfit_set.py:839) garment for garment. Any cell a short page does not
+// reach stays black; the slots never move, so one layout serves every page.
 // `extra` (optional) is one button repeated on EVERY page at [3,4] — the
 // corner today pages give Build my own — because she can be standing on page 3
-// of the tops when she wants a jacket (spec §4.1).
+// of the tops when she wants a jacket (spec §4.1); it costs that page its
+// eighth garment, never a centre cell. Dad's 9/3 ruling below ("fill the black
+// 2 bottom tiles and the middle-right tile ... when enough available",
+// overruling the 9/1 six-per-page cap) reached the today pages and stopped
+// there: until 9/22 these grids still dealt the 9/1 six, into the centre pair
+// and nowhere near the edges — every cat_* and every acc_* page, inverted.
+// Eight tiles + Back + More = ten targets, the same as a today page and under
+// the contract's comfortable 12.
 function gridPages(id, name, items, backLoad, extra) {
   const pages = [];
-  const per = 6;
-  const CELLS = [[1,2],[1,3],[1,4],[2,1],[2,2],[2,3]];
+  const CELLS = extra ? SLOTS : [...SLOTS, [3,4]];
+  const per = CELLS.length;
   for (let p = 0; p * per < items.length || p === 0; p++) {
     const pid = p === 0 ? id : id + "_" + (p + 1);
     const buttons = [{ label: "Back", type: "back", glyph: "\u2190",
@@ -1174,12 +1191,10 @@ function gridPages(id, name, items, backLoad, extra) {
   return pages;
 }
 
-// today pages: the 3x4 grid minus weather/Back [1,1], More [3,1], Build [3,4]
-// and the two CENTER rest cells [2,2][2,3] (lib contract restCells: "center").
-// [3,3] is LAST on purpose: it is the cell the accessories door takes when the
-// family has any (dad 9/17), so a page with accessories is this list minus its
-// tail — six looks — and a page without one is all seven, unchanged.
-const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,2],[3,3]];
+// today pages take those same slots, with Build my own in the corner [3,4].
+// SLOTS' [3,3] is LAST on purpose: it is the cell the accessories door takes
+// when the family has any (dad 9/17), so a page with accessories is that list
+// minus its tail — six looks — and a page without one is all seven, unchanged.
 const ACC_CELL = [3,3];
 const todaySlots = (present) =>
   present.length ? SLOTS.filter(([r, c]) => !(r === ACC_CELL[0] && c === ACC_CELL[1])) : SLOTS;
