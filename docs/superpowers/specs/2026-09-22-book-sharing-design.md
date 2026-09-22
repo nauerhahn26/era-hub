@@ -109,12 +109,16 @@ A shared book is **one file**, named `<Title>.erabook`, which **is a zip** — r
 import door can recognise what it is given, and a double-click does not open a folder of
 JPEGs that looks like something to tidy up.
 
-**Entries**, all at the root of the archive, no nesting beyond the package's own shape:
+**Entries** mirror the package's own shape, which is **nested** — corrected 9/22 against
+the real fixture (`tests/reader-ui.test.mjs:93`), where a manifest names `pages/001.jpg`,
+`audio/001.wav` and `video/002.mp4`:
 
 ```
 manifest.json          the package's own, byte for byte
 cover.jpg              (whatever `manifest.cover` names)
-p01.jpg, p01.mp3, …    exactly the files the manifest's pages name
+pages/001.jpg …        exactly the files the manifest's pages name
+audio/001.wav …
+video/002.mp4 …
 .erabook.json          {v:1, title, slug, pages, exportedAt, from}
 ```
 
@@ -301,10 +305,17 @@ is removed on every path, success or failure.
 The import is the first thing in this hub that takes a file from outside the family and
 writes it to disk. Every one of these is a test:
 
-- **Path jail.** An entry name containing `..`, a leading `/` or `\`, a drive letter, a
-  NUL, or any path separator at all is refused — **entries are flat by construction (§3),
-  so a name with a separator in it is already a lie.** The resolved path is re-checked
-  against the destination directory after `path.normalize`, the way `serveMediaJail` does.
+- **Path jail.** Entry names are **relative POSIX paths**, `/` the only separator.
+  Refused: any backslash (in a zip name that is either a Windows-authored lie or an escape
+  attempt), a leading `/`, a drive letter, a NUL, and any segment that is `.` or `..`.
+  Depth is capped at 4 segments — generous for `pages/001.jpg`, and a pathological name
+  cannot dig 500 directories. The resolved path is **still** re-checked against the
+  destination after `path.normalize`, the way `serveMediaJail` does. Intermediate
+  directories are created only as implied by a name that already passed; an **explicit**
+  directory entry in the archive stays refused. (This clause said "entries are flat, so a
+  separator is already a lie" until 9/22. The fixture says otherwise, and a flat archive
+  would have broken every book — the belt-and-braces resolve check is now doing real work
+  rather than guarding a tautology.)
 - **Extension allowlist** — `BOOK_EXTS` plus `.erabook.json`, imported from the one place
   `server.js` already keeps it. No `.exe`, no `.lnk`, no `.html`, no `.js`.
 - **Zip bomb.** Caps on the compressed file (**200 MB**), the uncompressed total
