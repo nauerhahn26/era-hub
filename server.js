@@ -21,6 +21,9 @@ const musicAdd = require("./music-add.js");
 const moviesAdd = require("./movies-add.js");
 const moviesLookup = require("./movies-lookup.js");
 const booksIndex_ = require("./books-index.js");
+// Book sharing (spec §6): it owns the policy AND the one books allowlist, so
+// export, import and serving cannot drift into three different lists.
+const booksShare = require("./books-share.js");
 const aiConfig = require("./ai-config.js");
 // For baseFor alone: the provider's real base, or the ERA_AI_URL stand-in.
 const contentProviders = require("./content-providers.js");
@@ -565,7 +568,12 @@ function booksIndex() {
 // GET's headers and no body (9/5: a probe like `curl -I` got 404 from a route
 // that only knew GET, which read as "the audio is missing").
 const BOOK_AV_EXTS = [".mp3", ".mp4", ".wav"];
-const BOOK_EXTS = [".json", ".jpg", ".jpeg", ".png", ...BOOK_AV_EXTS];
+// ONE list (spec §7). It used to be spelled here; sharing added two more
+// readers of it — the export that walks a package into an archive and the
+// import that decides what a stranger's archive may hold — and one rule stated
+// three times is a rule that drifts. books-share.js owns it now and this is
+// the serve side reading the same one.
+const BOOK_EXTS = booksShare.BOOK_EXTS;
 const MUSIC_AV_EXTS = [".m4a", ".mp3", ".wav", ".webm", ".opus"];
 const MUSIC_EXTS = [".json", ".jpg", ".jpeg", ".png", ".webp", ...MUSIC_AV_EXTS];
 // movies jail: images + json ONLY — the hub NEVER serves video for this
@@ -576,8 +584,10 @@ const MOVIE_EXTS = [".json", ".jpg", ".webp", ".png"];
 // text.json) — would be public .jpg/.json under it. They live INSIDE the
 // package on purpose (Drive mirrors them between devices), so the serve side
 // denies them by name. Books only: music/movies have no such folders and must
-// not inherit the restriction.
-const BOOK_DENY_DIRS = ["sources", ".build"];
+// not inherit the restriction. Kept with BOOK_EXTS in books-share.js, which
+// refuses to EXPORT a manifest that names anything under one of them — the
+// same two directories, hidden by the same list, on both doors.
+const BOOK_DENY_DIRS = booksShare.BOOK_DENY_DIRS;
 function serveBook(req, res, rest) {
   serveMediaJail(req, res, BOOKS_DIR, rest, BOOK_EXTS, BOOK_AV_EXTS, BOOK_DENY_DIRS,
     // Books only: the first segment is a SLUG, not a directory name. An unknown
@@ -1415,6 +1425,59 @@ function ownDoor(req, res) {
   return false;
 }
 
+// readBinaryBody(req, cap, cb) — the hub's FIRST binary request body (spec
+// §6.2), and the only one. Every other POST here accumulates a STRING with a
+// 4-64 KB cap; an archive must never be one, on two counts: a string decodes
+// the bytes and hands the import a corrupted zip, and forty megabytes of it
+// sits in this process's memory while the board is trying to be answered.
+//
+// So the body goes STRAIGHT TO A TEMP FILE, counted as it goes, and the request
+// is destroyed the moment it is larger than a book may be — the count is the
+// bytes that actually arrived, never a Content-Length a sender can lie about.
+// Backpressure is handled by hand (pause on a full sink, resume on drain)
+// because a pipe() cannot report which of the two ends stopped.
+//
+// cb(err, tmpPath). THE CALLER REMOVES THE FILE ON EVERY PATH — success,
+// refusal and crash — and this removes it itself on the paths where the caller
+// never learns the name.
+function readBinaryBody(req, cap, cb) {
+  const os = require("os");
+  const tmp = path.join(os.tmpdir(), "era-import-" + process.pid + "-" +
+    Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8));
+  let sink;
+  try { sink = fs.createWriteStream(tmp); }
+  catch { cb({ error: "write-failed" }, null); return; }
+  let got = 0, done = false;
+  // Unlinked once the handle is really closed, not the instant destroy() is
+  // called: Windows refuses to unlink a file something still has open, and
+  // silently leaving forty megabytes of somebody else's book in %TEMP% is the
+  // exact failure this whole function exists to avoid.
+  const discard = () => { sink.destroy(); sink.once("close", () => fs.unlink(tmp, () => {})); };
+  const stop = (err) => {
+    if (done) return;
+    done = true;
+    // A body over the cap is NOT hung up on here. A parent who picked the
+    // wrong file has earned the sentence that says so, and a destroyed
+    // request can carry no response at all — so the reading stops, the rest
+    // of the upload is discarded by the pause, and the caller answers 413 and
+    // closes. Every other way out has nobody left to talk to.
+    if (err.error === "too-big") req.pause(); else { try { req.destroy(); } catch {} }
+    discard();
+    cb(err, null);
+  };
+  req.on("data", (c) => {
+    if (done) return;
+    got += c.length;
+    if (got > cap) { stop({ error: "too-big" }); return; }
+    if (!sink.write(c)) { req.pause(); sink.once("drain", () => req.resume()); }
+  });
+  req.on("error", () => stop({ error: "aborted" }));
+  req.on("aborted", () => stop({ error: "aborted" }));
+  req.on("end", () => { if (!done) sink.end(); });
+  sink.on("error", () => stop({ error: "write-failed" }));
+  sink.on("finish", () => { if (!done) { done = true; cb(null, tmp); } });
+}
+
 const server = http.createServer((req, res) => {
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
@@ -2086,6 +2149,129 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/books/index.json") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
     res.end(JSON.stringify(booksIndex()));
+    return;
+  }
+  // ---- book sharing: one book, one file, person to person (spec §6) ----
+  //
+  // ALL THREE MUST BE MATCHED BEFORE the /books/ static route below. A
+  // <slug>.erabook that fell into serveMediaJail would 404 on its extension —
+  // which is the media jail doing its job, and exactly the wrong answer here.
+  if ((req.method === "GET" || req.method === "HEAD") &&
+      urlPath.startsWith("/books/") && urlPath.endsWith(booksShare.EXT)) {
+    const out = booksShare.exportBook(
+      urlPath.slice("/books/".length, -booksShare.EXT.length));
+    if (out.error) {
+      // A slug nobody owns is 404, serveBook's rule; a book that exists and
+      // cannot travel (still being built, a manifest pointing out of itself)
+      // is 409 with the sentence the send sheet shows.
+      res.writeHead(out.error === "no-such-book" ? 404 : 409, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: out.error, message: out.message }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/octet-stream",
+                         "Content-Disposition": out.disposition,
+                         "Cache-Control": "no-store" });
+    // HEAD answers with GET's headers and no body (the 9/5 rule): the stream
+    // is dropped unread, so nothing is packed for a probe.
+    if (req.method === "HEAD") { out.stream.destroy(); res.end(); return; }
+    // STREAMED. pack() is a stream for this one reason: a forty-megabyte book
+    // must never be a Buffer in the process that is also answering the board.
+    // A refusal mid-stream (a page that changed underneath us) cannot become a
+    // sentence any more — the response has already begun — so the connection
+    // is dropped and the sheet's fetch fails, which is the honest outcome.
+    out.stream.on("error", (e) => {
+      console.error("[books] export " + urlPath + ": " + e.message);
+      try { res.destroy(); } catch {}
+    });
+    out.stream.pipe(res);
+    return;
+  }
+  // "Put it in my Drive" (spec §4.2): the same bytes, into the family's own
+  // folder, which Google Drive for Windows uploads on its own. ownDoor because
+  // it writes into that folder: this hub's own pages only.
+  if (req.method === "POST" && /^\/books\/[^/]+\/share-to-drive$/.test(urlPath)) {
+    if (!ownDoor(req, res)) return;
+    const slug = urlPath.split("/")[2];
+    // The slug IS the request; the body is drained with the same small cap
+    // every other POST keeps so the socket stays reusable.
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      booksShare.shareToDrive(slug).then(out => {
+        if (out.error) {
+          res.writeHead(out.error === "no-such-book" ? 404 : 409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(out));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      }).catch(e => {
+        console.error("[books] share-to-drive: " + e.message);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed",
+                                 message: booksShare.messageFor("write-failed") }));
+      });
+    });
+    return;
+  }
+  // "+ Add a book" (spec §6.2). The browser sends the chosen File as the RAW
+  // BODY (fetch(url,{method:"POST",body:file})), so there is no multipart
+  // parser here and there must never be one.
+  if (req.method === "POST" && urlPath === "/books/import") {
+    // ownDoor() cannot guard this one: it insists on application/json, and this
+    // body is an archive. The half of its check that matters here is the
+    // browser's own sec-fetch-site, and that is kept — a page on another site
+    // may not post a book into this family's shelf. A request with no such
+    // header (curl, the e2e) is not a browser and is not what that guard is for.
+    const site = req.headers["sec-fetch-site"];
+    if (site && site !== "same-origin" && site !== "none") {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "That came from somewhere else, so New ERA did not do it." }));
+      return;
+    }
+    // §9's only seam: one source today, and a second one is a new row in the
+    // sheet and a new word here — not a redesign. Nothing is stubbed for it.
+    const q = (req.url || "").split("?")[1] || "";
+    const source = new URLSearchParams(q).get("source") || "file";
+    if (source !== "file") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "bad-source", message: booksShare.messageFor("bad-source") }));
+      return;
+    }
+    readBinaryBody(req, booksShare.MAX_UPLOAD, (err, tmp) => {
+      if (err) {
+        // The sender hung up: there is nobody left to answer.
+        if (err.error === "aborted") { try { res.destroy(); } catch {} return; }
+        const big = err.error === "too-big";
+        res.writeHead(big ? 413 : 500,
+          { "Content-Type": "application/json", ...(big ? { Connection: "close" } : {}) });
+        res.end(JSON.stringify({ error: err.error, message: booksShare.messageFor(err.error) }),
+          // The rest of an over-cap upload is still on its way; the sentence is
+          // out, so the socket goes now rather than carrying another 200 MB.
+          () => { if (big) { try { req.destroy(); } catch {} } });
+        return;
+      }
+      let out;
+      try { out = booksShare.importBook(tmp, { source }); }
+      catch (e) {
+        console.error("[books] import: " + e.message);
+        out = { error: "write-failed", message: booksShare.messageFor("write-failed") };
+      } finally {
+        // ON EVERY PATH. A temp file left behind after a failed import is forty
+        // megabytes of somebody else's book sitting in %TEMP% for ever.
+        fs.unlink(tmp, () => {});
+      }
+      if (out.error) {
+        // 400 = the file is wrong; 409 = the file is fine and this computer
+        // cannot take it yet (no content folder, nowhere to write).
+        const cannotYet = ["needs-local-drive", "write-failed"].includes(out.error);
+        res.writeHead(cannotYet ? 409 : 400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out));
+    });
     return;
   }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/books/")) {
@@ -3070,6 +3256,9 @@ server.on("listening", () => {
   // Set BEFORE start(), which adopts.
   drive.onAdopted = () => openClothingLog();
   drive.start(DATA);     // Google Drive content mirror (no-op until connected)
+  // Book sharing: it reads the shelf (<DATA>/books) and writes the family's
+  // Drive folder, so it needs the data dir the same way drive.js does.
+  booksShare.start(DATA);
   // A finished sync feeds BOTH pipelines. onSynced is one property, so the
   // fan-out lives here rather than in either module: whoever is added next
   // adds a line, and neither clothing.js nor content.js has to know the other
