@@ -646,7 +646,49 @@ test("an unexpected fault while sending is a sentence, not a stack", () => {
   fs.rmSync(path.join(SHELF, "Faulty Book"), { recursive: true, force: true });
 });
 
-// ================================================= 8. the one shared list
+// ========================== 8. the manifest travels, and keeps travelling
+
+// The law this feature's `authored` fix exists to protect (law 3). A book that
+// arrived here and is then passed on to a THIRD family must leave carrying the
+// manifest its author published — down to the key order, the whitespace and
+// `authored: true` — because the manifest is the book's own record of itself
+// and this hub is a courier, not an editor. The shelf's refusal to repeat that
+// flag as "<this child>'s story" is a decision about a BADGE, made where the
+// badge is made; nothing about it may reach the bytes.
+test("a re-export of an imported book carries the sender's manifest byte for byte", async () => {
+  const f = await erabookOf("Faithful Book", { title: "Faithful Book", slug: "faithful-book" });
+  const sentDir = scratch("sent");
+  erabook.unpack(f, sentDir);                       // the manifest as it crossed
+  const sent = fs.readFileSync(path.join(sentDir, "manifest.json"));
+  assert.equal(JSON.parse(sent).authored, true, "the fixture was supposed to be authored");
+
+  const got = share.importBook(f);
+  assert.equal(got.error, undefined, "refused: " + got.message);
+  // The mark the shelf reads is beside the manifest on BOTH copies: the
+  // family's Drive folder, and the <DATA> shelf the mirror filled from it. A
+  // marker that did not survive the mirror would be no marker at all.
+  for (const root of [DRIVE_BOOKS, SHELF])
+    assert.equal(fs.existsSync(path.join(root, got.dir, ".erabook.json")), true,
+      "no envelope beside the manifest in " + root);
+
+  const out = share.exportBook(got.slug);
+  assert.equal(out.error, undefined, "re-export refused: " + out.message);
+  const againDir = scratch("again");
+  const again = path.join(scratch("out"), "again.erabook");
+  fs.writeFileSync(again, await drain(out.stream));
+  erabook.unpack(again, againDir);
+  const rebroadcast = fs.readFileSync(path.join(againDir, "manifest.json"));
+  assert.ok(rebroadcast.equals(sent),
+    "the manifest was edited in transit:\n" + sent.toString() + "\n---\n" + rebroadcast.toString());
+  assert.equal(JSON.parse(rebroadcast).authored, true,
+    "the flag was cleared on the way out — the third family loses the truth");
+  // The old envelope is NOT one of the entries: every export writes its own,
+  // from this hub, so the last sender is the one the next hub reads.
+  const names = erabook.unpack(again, scratch("peek")).files;
+  assert.equal(names.filter(n2 => n2 === ".erabook.json").length, 1);
+});
+
+// ================================================= 9. the one shared list
 
 test("BOOK_EXTS and BOOK_DENY_DIRS are one list, and the format reads the same one", () => {
   assert.deepEqual(share.BOOK_EXTS, erabook.EXTS,

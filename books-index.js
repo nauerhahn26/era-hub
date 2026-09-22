@@ -27,6 +27,7 @@
 const fs = require("fs");
 const path = require("path");
 const { slugify } = require("./slug.js");
+const erabook = require("./erabook.js");
 
 const SLUGS_FILE = ".slugs.json";
 
@@ -112,4 +113,32 @@ function slugFor(root, name) {
   return found ? found.slug : null;
 }
 
-module.exports = { bookDirs, dirFor, slugFor, SLUGS_FILE };
+// Did this package come from ANOTHER FAMILY'S HUB? (9/22)
+//
+// The share envelope is unpacked beside the manifest and left there
+// (books-share.js), and nothing that builds a book on this computer writes one
+// — content-publish.js publishes a manifest and a cover and no envelope at all
+// — so its presence is the package's own durable record of having been
+// imported. It survives the Drive mirror (dotfiles copy like anything else), it
+// survives a re-publish of the book here, and it needs no second file and no
+// state anywhere else to be true.
+//
+// The one caller today is the shelf's `authored`, which means "this family made
+// this book about this child" — the coral rim and the "…'s story" badge the
+// reader paints. An imported book's manifest says `authored: true` HONESTLY:
+// the other family did author it, about their own child. So the flag is not
+// rewritten — the manifest travels byte for byte and a re-export has to be
+// faithful (books-share.js law 3) — and it is not false. It simply is not this
+// shelf's to repeat, and the shelf is where that is decided.
+//
+// Here rather than in books-share.js because this module already owns what a
+// package IS to the two readers that ask (server.js's shelf, content.js's
+// builder), and books-share.js is the door a book comes through, not the
+// register of what came through it. One rule, one place: nothing else is
+// allowed to spell ".erabook.json" and mean this.
+function isImported(root, name) {
+  if (!root || !name) return false;
+  return fs.existsSync(path.join(root, String(name), erabook.ENVELOPE));
+}
+
+module.exports = { bookDirs, dirFor, slugFor, isImported, SLUGS_FILE };

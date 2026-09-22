@@ -552,10 +552,16 @@ function booksIndex() {
       // must change its URLs (manifest mtime = the package version; the CSS
       // stale-cache law generalized — clients cache the bare URL hard)
       const v = Math.floor(fs.statSync(mPath).mtimeMs / 1000).toString(36);
+      // `authored` is the coral rim and the "…'s story" badge — "this family
+      // made this book about THIS child". A book another family sent us carries
+      // `authored: true` honestly (they made it, about their child) and the
+      // manifest travels byte for byte, so the flag is neither ours to clear nor
+      // false. The SHELF is what must not repeat it: an imported package is one
+      // books-index.js can recognise, and it is the only place that rule lives.
       out.push({ slug, title: String(m.title || dir),
                  cover: "/books/" + slug + "/" + (m.cover || "cover.jpg") + "?v=" + v,
                  pages: pages.length, hasVideo: pages.some(p => p && p.video),
-                 authored: m.authored === true, v });
+                 authored: m.authored === true && !booksIndex_.isImported(BOOKS_DIR, dir), v });
     } catch {}   // incomplete package: skip silently
   }
   return out;
