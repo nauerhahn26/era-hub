@@ -34,6 +34,15 @@
   button.sel{background:var(--teal); border-color:var(--teal-deep); color:#fff}
   button.big{font-size:22px; padding:16px 26px}
   button.play{border-color:var(--teal); color:var(--teal-deep)}
+  /* A button that sits INSIDE a sentence (Change, Find, one geocoder match):
+     full height would push the words it belongs to apart. */
+  button.small{font-size:17px; padding:10px 16px}
+  /* No town stored is not a blank, it is the state that made every reading
+     cold for eleven days without saying so (dad 9/23) — so it is coloured like
+     the warning it is. Scoped to this row on purpose: `class="bad"` is used a
+     dozen other places on this page and has never had a rule, and giving them
+     all one is a look nobody has reviewed. */
+  #wxPlaceName.bad{color:var(--coral); font-weight:650}
   .voice{display:flex; align-items:center; gap:10px; border:2px solid var(--line);
          border-radius:14px; padding:12px 16px; background:#fff}
   .voice.sel{border-color:var(--teal); background:var(--teal-wash)}
@@ -169,11 +178,26 @@
       <button id="dlOpenFolder">📂 Open the folder</button>
     </div>
     <div class="status" id="driveStatus"></div>
+    <!-- WHERE the weather is read (dad 9/23: "either city or town or zip —
+         that's how people think"). The point used to be an IP guess, which on
+         both devices was a city centroid a microclimate away and read colder
+         than the sky eleven days running, never saying so. Mouse/touch, for a
+         grown-up. -->
+    <div class="row" id="wxPlace" style="margin-top:16px; border-top:2px dashed var(--line); padding-top:16px">
+      <span>Weather for</span>
+      <span id="wxPlaceName"></span>
+      <button id="wxPlaceEdit" class="small">Change</button>
+      <input id="wxPlaceBox" type="text" placeholder="Town or ZIP" hidden
+             aria-label="Town or ZIP code" autocomplete="off"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;width:220px">
+      <button id="wxPlaceFind" class="small" hidden>Find</button>
+    </div>
+    <div id="wxPlaceHits" class="desc"></div>
     <!-- Which hours the outfits are sorted for (dad 9/5: she dresses for the
          hours she is out — a morning at school — and the day's high comes
          hours later). Mouse/touch, for a grown-up. -->
-    <div class="row" id="wxWindow" style="margin-top:16px; border-top:2px dashed var(--line); padding-top:16px">
-      <span>Dress for the weather between</span>
+    <div class="row" id="wxWindow" style="margin-top:12px">
+      <span id="wxBetween">Dress for the weather between</span>
       <select id="wxFrom" aria-label="First hour to dress for"></select>
       <span id="wxAnd">and</span>
       <select id="wxTo" aria-label="Last hour to dress for"></select>
@@ -1643,10 +1667,19 @@ $("dlSyncNow").onclick=async()=>{ toast("Sync started"); await fetch("/integrati
 $("dlOutfitsNow").onclick=async()=>{ toast("Looking for new clothing photos — the Clothing Picker shows the progress"); await fetch("/clothing/regenerate",{method:"POST"}); };
 
 // ---- The hours the outfits are dressed for (dad 9/5) ----
-// One window, every day. "All day" (unset) is what a family starts with and is
-// exactly the old behaviour: the day's high. Saving re-sorts TODAY's board on
-// the hub — no photos are read and no AI request is spent, so this is safe to
-// tap as often as a parent likes.
+// One window, every day. Saving re-sorts TODAY's board on the hub — no photos
+// are read and no AI request is spent, so this is safe to tap as often as a
+// parent likes.
+//
+// "All day" used to POST null, which DELETED the key — and since 9/23 an
+// absent window means 10 AM-2 PM on the board, so the page said "All day"
+// while the outfits were sorted for the middle of the day and the toast said
+// "the whole day" on top of it. The whole day is now stored as the window it
+// is, and the 10-2 default belongs to a family that has never touched the row,
+// which is what a default should mean.
+const WX_ALL_DAY={from:0,to:23};
+const WX_DEFAULT={from:10,to:14};          // what clothing-worker.js reads with nothing stored
+const wxIsAllDay=(w)=>!!w && w.from===0 && w.to===23;
 function wxLabel(h){ return (h%12===0?12:h%12)+(h<12?" AM":" PM"); }
 function wxFill(){
   const f=$("wxFrom"), t=$("wxTo");
@@ -1659,23 +1692,28 @@ function wxFill(){
   }
 }
 function wxPaint(w){
+  // nothing stored shows the hours the BOARD will use, never "All day"
+  const win = w || WX_DEFAULT, all = wxIsAllDay(win);
   const f=$("wxFrom"), t=$("wxTo");
-  f.value = w ? String(w.from) : "";
-  if(w) t.value = String(w.to);
-  // "All day" has no second hour to pick, so the rest of the row steps aside
-  t.disabled = !w; t.style.display = w ? "" : "none"; $("wxAnd").style.display = w ? "" : "none";
+  f.value = all ? "" : String(win.from);
+  if(!all) t.value = String(win.to);
+  // "All day" has no second hour to pick, so the rest of the row steps aside —
+  // and the label loses its "between", which otherwise leaves the row reading
+  // "Dress for the weather between All day".
+  t.disabled = all; t.style.display = all ? "none" : ""; $("wxAnd").style.display = all ? "none" : "";
+  $("wxBetween").textContent = all ? "Dress for the weather" : "Dress for the weather between";
 }
 async function wxSave(w){
   wxPaint(w);
   const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({weatherWindow:w})});
   if(!r.ok){ toast("Could not save",false); return; }
-  toast(w ? "Outfits re-sorted for "+wxLabel(w.from)+"-"+wxLabel(w.to)
-          : "Outfits re-sorted for the whole day");
+  toast(wxIsAllDay(w) ? "Outfits re-sorted for the whole day"
+                      : "Outfits re-sorted for "+wxLabel(w.from)+"-"+wxLabel(w.to));
 }
 function wxRead(){
   const f=$("wxFrom").value;
-  if(f==="") return null;
+  if(f==="") return {...WX_ALL_DAY};
   let to=+$("wxTo").value;
   if(!(to>+f)) to=Math.min(23,+f+1);        // the window always runs forwards
   return {from:+f, to:to};
@@ -1683,6 +1721,60 @@ function wxRead(){
 wxFill();
 $("wxFrom").onchange=()=>wxSave(wxRead());
 $("wxTo").onchange=()=>wxSave(wxRead());
+
+// ---- Where the weather is read FOR (dad 9/23) ----
+// A typed town or ZIP, resolved by the hub (GET /weather/search) rather than
+// by this page, so one place owns the seam and the wording. With nothing
+// stored the hub falls back to an IP guess — the state that made every reading
+// cold, invisibly, for eleven days — so the row SAYS so instead of showing a
+// blank. Pressed by a parent, never on the build path: a geocoder that is down
+// costs a lookup, never a board.
+let wxPlace=null;
+function wxPlacePaint(loc){
+  wxPlace = loc || null;
+  const n=$("wxPlaceName");
+  if(wxPlace){ n.textContent=[wxPlace.name,wxPlace.admin1].filter(Boolean).join(", "); n.className=""; }
+  else { n.textContent="guessing from the network"; n.className="bad"; }
+  $("wxPlaceBox").hidden=true; $("wxPlaceFind").hidden=true;
+  $("wxPlaceEdit").hidden=false; $("wxPlaceHits").textContent="";
+}
+function wxPlaceEditing(){
+  $("wxPlaceEdit").hidden=true;
+  const b=$("wxPlaceBox"); b.hidden=false; b.value=(wxPlace&&wxPlace.q)||"";
+  $("wxPlaceFind").hidden=false; b.focus();
+}
+async function wxPlaceFind(){
+  const q=$("wxPlaceBox").value.trim();
+  const hits=$("wxPlaceHits");
+  if(!q){ hits.textContent=""; return; }
+  hits.textContent="Looking…";
+  let r;
+  try{ r=await fetch("/weather/search?q="+encodeURIComponent(q)); }catch(e){ r=null; }
+  // nothing matched is an empty list and a 200, so the two are tellable apart
+  if(!r||!r.ok){ hits.textContent="Could not reach the lookup — check the connection."; return; }
+  const {results}=await r.json();
+  if(!results.length){ hits.textContent="No town by that name — try a ZIP code."; return; }
+  hits.textContent="";
+  for(const h of results){
+    const b=document.createElement("button");
+    b.className="small"; b.style.margin="0 6px 6px 0";
+    // state and country too: one name is a dozen towns, and picking the wrong
+    // one is the same silent wrong number this row exists to end
+    b.textContent=[h.name,h.admin1,h.country].filter(Boolean).join(", ");
+    b.onclick=()=>wxPlaceSave({...h, q});
+    hits.appendChild(b);
+  }
+}
+async function wxPlaceSave(loc){
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({location:loc})});
+  if(!r.ok){ toast("Could not save",false); return; }
+  wxPlacePaint(loc);
+  toast("Weather now read for "+loc.name);
+}
+$("wxPlaceEdit").onclick=wxPlaceEditing;
+$("wxPlaceFind").onclick=wxPlaceFind;
+$("wxPlaceBox").onkeydown=(e)=>{ if(e.key==="Enter") wxPlaceFind(); };
 
 // ---- Updates: what is running, and a "look now" that shows the outcome ----
 // (dad 9/3: the boot check only runs 90 s after the hub STARTS, so a hub that
@@ -1747,7 +1839,8 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
        }
        lockPassPaint(!!s.lockPasscodeHash);
        exitPaint(s.exitTo==="home"?"home":"tdsnap");
-       wxPaint(s.weatherWindow||null); }catch(e){ exitPaint("tdsnap"); wxPaint(null); }
+       wxPaint(s.weatherWindow||null); wxPlacePaint(s.location||null); }
+  catch(e){ exitPaint("tdsnap"); wxPaint(null); wxPlacePaint(null); }
   dwellDesc(); settleDesc(); mvolDesc(); lockDesc();
   try{
     const c=await (await fetch(ENGINE+"/config")).json();

@@ -1053,10 +1053,17 @@ function locationOf() {
   return null;
 }
 // Both ends INCLUSIVE: "2 PM-5 PM" is the hours 14, 15, 16 and 17.
+// `!win` is defence with NO live caller: weatherWindow() answers with a window
+// every time — the stored one, or DEFAULT_WINDOW — so a missing window cannot
+// reach here, not even from a hand-edited settings file.
 function inWindow(hour, win) { return !win || (hour >= win.from && hour <= win.to); }
 async function weather() {
   const win = weatherWindow();
   const loc = locationOf();
+  // `"all"` is unreachable on the write side for the same reason inWindow's
+  // `!win` is; on the READ side below it is what a record written before 9/23
+  // carries, and such a record can never match a key, so it is thrown away —
+  // which is the right answer for an answer computed for the whole day.
   const key = win ? win.from + "-" + win.to : "all";
   // The PLACE is part of the key too: moving the point makes a stored answer an
   // answer to a different question, exactly as moving the window does. Three
@@ -1355,12 +1362,19 @@ async function buildCataloged(cat) {
       if (w) {
         // With a window the tile has to say WHICH hours it is talking about,
         // or a parent reads "72\u00b0" as the whole day again (dad 9/5).
-        const span = w.window ? hourLabel(w.window.from) + "-" + hourLabel(w.window.to) : null;
+        // A family that really does want the whole day stores 0-23 (Settings
+        // no longer deletes the key for "All day"), and the whole day is
+        // called the whole day: "for 12 AM-11 PM" is accurate and nobody says
+        // it. `w.window` absent is DEFENCE with no live caller \u2014 weatherWindow()
+        // has answered with a window, default or stored, since 9/23.
+        const span = !w.window ? null
+          : w.window.from === 0 && w.window.to === 23 ? "all day"
+          : hourLabel(w.window.from) + "-" + hourLabel(w.window.to);
+        const lead = span === "all day" ? "All day"
+          : span ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to)
+          : "Today";                      // ...and so is this one
         buttons.push({ label: w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
-          say: span
-            ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to) +
-              " it is " + w.band + ", about " + w.t + " degrees."
-            : "Today it is " + w.band + ", about " + w.t + " degrees.",
+          say: lead + " it is " + w.band + ", about " + w.t + " degrees.",
           // The PLACE leads the footnote: a forecast for the wrong town is
           // what read cold every day for eleven days, invisibly, and the only
           // way that is ever caught is if the board says where it is reading.

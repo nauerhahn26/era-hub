@@ -206,9 +206,9 @@ test("the tile says the hours out loud, and the footnote names them", async () =
 // before", 80° and hot off the 4 PM peak. The whole day is exactly what read
 // warm while the hours she was actually outside did not, so the default is now
 // 10 AM-2 PM: a child dresses for the middle of her day, not for the afternoon
-// high. The all-day wording is no longer reachable from Settings, and hour 9's
-// rain now falls OUTSIDE the default window, so the symbol is the clear sky of
-// the hours that are read.
+// high. An unset window no longer means the whole day at all (a family that
+// wants it stores 0-23, the test below), and hour 9's rain now falls OUTSIDE
+// the default window, so the symbol is the clear sky of the hours that are read.
 test("no window = 10 AM-2 PM, the middle of her day", async () => {
   setWindow(null);
   const t = await rebuild();
@@ -227,6 +227,18 @@ test("an afternoon window gets the afternoon's sun", async () => {
   assert.equal(t.symbol, "sun");
   assert.match(t.say, /Between 2 PM and 5 PM/);
   assert.match(t.footnote, /^approximate location · for 2 PM-5 PM · /, t.footnote);
+});
+
+// A family that really does want the whole day now says so: Settings stores
+// 0-23 rather than deleting the key (plan T5.0), because a deleted key is
+// 10 AM-2 PM. The hours are then read out as "all day" — "for 12 AM-11 PM" is
+// accurate and nobody says it.
+test("the whole day is called the whole day, not 12 AM-11 PM", async () => {
+  setWindow({ from: 0, to: 23 });
+  const t = await rebuild();
+  assert.match(t.label, /^80°/, "every hour is read, so the 4 PM peak wins again");
+  assert.equal(t.say, "All day it is hot, about 80 degrees.");
+  assert.match(t.footnote, /^approximate location · for all day · updated /, t.footnote);
 });
 
 test("a cache stamped for another window is stale — the forecast is re-read", async () => {

@@ -707,7 +707,7 @@ test("the weather-window row loads the saved hours and saves a change", async ()
     await page.waitForFunction(() => document.getElementById("wxFrom").value === "10");
     assert.equal(await page.$eval("#wxTo", s => s.value), "13");
     assert.equal(await page.$eval("#wxFrom option", o => o.textContent), "All day",
-      "the first choice is the whole day, which is what a family starts with");
+      "the whole day is still a family's to choose — it is no longer what they START with");
     const hint = await page.$eval("#wxHint", e => e.textContent);
     assert.match(hint, /afternoon/i, hint);
 
@@ -716,12 +716,174 @@ test("the weather-window row loads the saved hours and saves a change", async ()
     await page.waitForFunction(() => /Outfits re-sorted for 9 AM-12 PM/.test(document.getElementById("toast").textContent));
     assert.deepEqual(await saved(), { from: 9, to: 12 });
 
-    // back to the whole day: the second select has nothing left to say
+    // back to the whole day: the second select has nothing left to say, and
+    // the window is STORED as 0-23. UPDATED 9/23 (plan T5.0): this used to
+    // assert the key was deleted, which stopped being the whole day the moment
+    // an absent window came to mean 10 AM-2 PM.
     await page.selectOption("#wxFrom", "");
     await page.waitForFunction(() => /whole day/.test(document.getElementById("toast").textContent));
-    assert.equal(await saved(), undefined);
+    assert.deepEqual(await saved(), { from: 0, to: 23 });
     assert.equal(await page.$eval("#wxTo", s => s.disabled), true);
+    // ...and the label drops its "between": with the second select gone the row
+    // would otherwise read "Dress for the weather between All day".
+    assert.equal(await page.$eval("#wxBetween", e => e.textContent), "Dress for the weather");
+    await page.selectOption("#wxFrom", "9");
+    await page.waitForFunction(() => /between$/.test(document.getElementById("wxBetween").textContent));
   } finally { await ctx.close(); await post(null); }
+});
+
+// ---- Where the weather is read FOR (weather unit A, plan T5.0-T5.4) -------
+//
+// The point used to come from an IP lookup. On both family devices that was a
+// city centroid a microclimate away, and the tile read colder than the sky 11
+// days out of 11 without ever saying why (dad 9/23: "either city or town or
+// zip — that's how people think"). So the row NAMES the place, and with
+// nothing stored it says out loud that the point is a guess rather than
+// showing a blank — that silence is the whole bug.
+//
+// Mouse/touch, a grown-up's row: no dwell targets and no gaze path.
+// Every town, county, country code and coordinate below is invented.
+const TOWN = { q: "Bramblewick", name: "Bramblewick", admin1: "Aldershire",
+               country: "ZZ", lat: 12.5, lon: -34.25 };
+const OTHER = { name: "Quillhaven", admin1: "Marrowdown", country: "ZZ",
+                lat: -8.75, lon: 101.5 };
+const postSettings = (body) => fetch(`${BASE}/settings`, { method: "POST",
+  headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const settingsOnDisk = async () => (await (await fetch(`${BASE}/settings`)).json());
+// The row is painted inside the page's one GET /settings, so "the page has
+// read its settings" is "the place has a name on it" — empty until then.
+const placed = (page) => page.waitForFunction(
+  () => /\S/.test(document.getElementById("wxPlaceName").textContent), null, { timeout: 8000 });
+// A geocoder answer shaped like server.js's /weather/search, which hands the
+// page name/admin1/country/lat/lon and nothing else.
+const hit = (p) => ({ name: p.name, admin1: p.admin1, country: p.country, lat: p.lat, lon: p.lon });
+
+test("the weather row names the town a parent typed", async () => {
+  await postSettings({ location: TOWN });
+  const { ctx, page } = await settingsPage();
+  try {
+    await placed(page);
+    assert.equal(await page.$eval("#wxPlaceName", e => e.textContent), "Bramblewick, Aldershire");
+    assert.equal(await page.$eval("#wxPlaceName", e => e.className), "",
+      "a place that is set is not a warning");
+    assert.equal(await page.isVisible("#wxPlaceBox"), false, "the box only opens on Change");
+  } finally { await ctx.close(); await postSettings({ location: null }); }
+});
+
+test("with no town stored the row says the point is a guess, and warns", async () => {
+  await postSettings({ location: null });
+  const { ctx, page } = await settingsPage();
+  try {
+    await placed(page);
+    assert.equal(await page.$eval("#wxPlaceName", e => e.textContent), "guessing from the network");
+    assert.equal(await page.$eval("#wxPlaceName", e => e.className), "bad",
+      "the state that made every reading cold is the one the row has to flag");
+  } finally { await ctx.close(); }
+});
+
+test("Find, then a tap on one of the matches, stores that place", async () => {
+  await postSettings({ location: null });
+  const { ctx, page } = await settingsPage();
+  try {
+    // the geocoder is never reached from this suite: the seam is the route
+    await ctx.route("**/weather/search**", r => r.fulfill({ status: 200,
+      contentType: "application/json", body: JSON.stringify({ results: [hit(OTHER), hit(TOWN)] }) }));
+    await placed(page);
+    await page.click("#wxPlaceEdit");
+    await page.fill("#wxPlaceBox", "brambl");
+    await page.click("#wxPlaceFind");
+    const hits = page.locator("#wxPlaceHits button");
+    await hits.first().waitFor({ timeout: 8000 });
+    assert.equal(await hits.count(), 2);
+    assert.equal(await hits.nth(0).textContent(), "Quillhaven, Marrowdown, ZZ",
+      "state and country are how a parent tells two same-named towns apart");
+
+    await hits.nth(1).click();
+    await page.waitForFunction(
+      () => /Bramblewick/.test(document.getElementById("toast").textContent), null, { timeout: 8000 });
+    const loc = (await settingsOnDisk()).location;
+    assert.equal(loc.name, "Bramblewick");
+    assert.equal(loc.lat, TOWN.lat);
+    assert.equal(loc.lon, TOWN.lon);
+    assert.equal(loc.q, "brambl", "what was typed travels, so Change reopens on it");
+    assert.equal(await page.$eval("#wxPlaceName", e => e.textContent), "Bramblewick, Aldershire");
+    assert.equal(await page.isVisible("#wxPlaceBox"), false, "the box closes behind the choice");
+    assert.equal(await page.$eval("#wxPlaceHits", e => e.textContent), "",
+      "and the list it was chosen from is gone");
+  } finally { await ctx.close(); await postSettings({ location: null }); }
+});
+
+test("the two things that can go wrong say two different sentences", async () => {
+  await postSettings({ location: TOWN });
+  const { ctx, page } = await settingsPage();
+  try {
+    // The first lookup is PARKED so the in-flight state is reachable: a parent
+    // on a slow link must see the row working, not an unchanged screen.
+    let release = null, dead = false;
+    await ctx.route("**/weather/search**", async r => {
+      if (!dead) await new Promise(go => { release = go; });
+      await r.fulfill(dead
+        ? { status: 503, contentType: "application/json", body: '{"error":"offline"}' }
+        : { status: 200, contentType: "application/json", body: '{"results":[]}' });
+    });
+    await placed(page);
+    await page.click("#wxPlaceEdit");
+    await page.fill("#wxPlaceBox", "zzzzzzzz");
+    await page.click("#wxPlaceFind");
+    await page.waitForFunction(
+      () => /Looking/.test(document.getElementById("wxPlaceHits").textContent), null, { timeout: 8000 });
+    release();
+    await page.waitForFunction(
+      () => /try a ZIP/.test(document.getElementById("wxPlaceHits").textContent), null, { timeout: 8000 });
+    assert.equal(await page.$eval("#wxPlaceHits", e => e.textContent),
+      "No town by that name — try a ZIP code.");
+
+    dead = true;
+    await page.click("#wxPlaceFind");
+    await page.waitForFunction(
+      () => /connection/.test(document.getElementById("wxPlaceHits").textContent), null, { timeout: 8000 });
+    assert.equal(await page.$eval("#wxPlaceHits", e => e.textContent),
+      "Could not reach the lookup — check the connection.");
+    assert.equal(await page.$eval("#wxPlaceName", e => e.textContent), "Bramblewick, Aldershire",
+      "a lookup that fails never costs a parent the town they already picked");
+  } finally { await ctx.close(); await postSettings({ location: null }); }
+});
+
+// T5.0. "All day" POSTed `weatherWindow: null`, which DELETES the key — and an
+// absent window has meant 10 AM-2 PM since 9/23, so the page said "All day"
+// while the board read 10-2 and the toast said "the whole day", which was a
+// lie. 0-23 is a window the validator already accepts.
+test('"All day" stores the whole day, it does not delete the window', async () => {
+  await postSettings({ weatherWindow: { from: 9, to: 12 } });
+  const { ctx, page } = await settingsPage();
+  const sent = [];
+  page.on("request", r => {
+    if (r.method() === "POST" && r.url().endsWith("/settings")) sent.push(JSON.parse(r.postData() || "{}"));
+  });
+  try {
+    await page.waitForFunction(() => document.getElementById("wxFrom").value === "9", null, { timeout: 8000 });
+    await page.selectOption("#wxFrom", "");
+    await page.waitForFunction(
+      () => /whole day/.test(document.getElementById("toast").textContent), null, { timeout: 8000 });
+    assert.deepEqual(sent.at(-1), { weatherWindow: { from: 0, to: 23 } },
+      "null would delete the key, and a deleted key is 10 AM-2 PM, not the whole day");
+    assert.deepEqual((await settingsOnDisk()).weatherWindow, { from: 0, to: 23 });
+  } finally { await ctx.close(); await postSettings({ weatherWindow: null }); }
+});
+
+// ...and the other half of the same lie: with nothing ever chosen the row used
+// to sit on "All day" while the worker read 10 AM-2 PM. A default is only a
+// default if the page shows it.
+test("an untouched install shows the 10 AM-2 PM the board actually reads", async () => {
+  await postSettings({ weatherWindow: null });
+  assert.equal((await settingsOnDisk()).weatherWindow, undefined, "nothing stored, as a fresh hub has");
+  const { ctx, page } = await settingsPage();
+  try {
+    await page.waitForFunction(() => document.getElementById("wxFrom").value !== "", null, { timeout: 8000 });
+    assert.equal(await page.$eval("#wxFrom", s => s.value), "10");
+    assert.equal(await page.$eval("#wxTo", s => s.value), "14");
+    assert.equal(await page.$eval("#wxTo", s => s.disabled), false);
+  } finally { await ctx.close(); }
 });
 
 // ---- "Her picks": the Clothing Picker read-out (spec §4, plan T5.2) --------
