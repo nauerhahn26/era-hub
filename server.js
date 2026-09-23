@@ -1524,6 +1524,51 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // The town lookup behind Settings' "Change", proxied instead of called from
+  // the page: one place owns the seam, the timeout and the wording. Open-
+  // Meteo's own geocoder — same provider as the forecast, no key — and it
+  // resolves a ZIP as well as a name, which is how people think ("either city
+  // or town or zip", dad 9/23). Pressed by a parent, never on the build path:
+  // a geocoder that is down costs a lookup, never a board.
+  //
+  // No ownDoor: it is a read that reveals nothing this device does not already
+  // send to the same host.
+  if (req.method === "GET" && (req.url === "/weather/search" || req.url.startsWith("/weather/search?"))) {
+    const say = (code, o) => {
+      res.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify(o));
+    };
+    const q = String(new URL(req.url, "http://x").searchParams.get("q") || "").trim().slice(0, 80);
+    if (!q) { say(200, { results: [] }); return; }
+    const base = process.env.ERA_GEOCODE_URL || "https://geocoding-api.open-meteo.com";
+    (async () => {
+      // 6 s, the same patience the forecast and the IP lookups are given.
+      const r = await fetch(base + "/v1/search?name=" + encodeURIComponent(q) +
+        "&count=5&language=en&format=json", { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) throw new Error("geocoder said " + r.status);
+      // A ceiling counted as the bytes arrive, not after: an answer that will
+      // not stop is not an answer, and this process has a board to build.
+      let n = 0;
+      const parts = [];
+      if (r.body) for await (const chunk of r.body) {
+        n += chunk.length;
+        if (n > 4096) throw new Error("geocoder answer past the ceiling");
+        parts.push(chunk);
+      }
+      const data = JSON.parse(Buffer.concat(parts).toString("utf8"));
+      // Nothing matched is an empty list and a 200 — the page has two different
+      // things to say ("no town by that name" and "could not reach the
+      // lookup") and could not tell them apart from a 404 that means both.
+      say(200, { results: (Array.isArray(data.results) ? data.results : [])
+        .filter(h => h && Number.isFinite(h.latitude) && Number.isFinite(h.longitude))
+        .slice(0, 5)
+        .map(h => ({ name: String(h.name || "").slice(0, 64),
+                     admin1: String(h.admin1 || "").slice(0, 64),
+                     country: String(h.country_code || "").slice(0, 8),
+                     lat: h.latitude, lon: h.longitude })) });
+    })().catch(() => { try { say(503, { error: "offline" }); } catch {} });
+    return;
+  }
   if (req.method === "POST" && req.url === "/settings") {
     let body = "";
     req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
@@ -1559,12 +1604,37 @@ const server = http.createServer((req, res) => {
         if (iw === null) delete s.weatherWindow;
         else if (iw && typeof iw === "object" && Number.isInteger(iw.from) && Number.isInteger(iw.to) &&
                  iw.from >= 0 && iw.to <= 23 && iw.from < iw.to) s.weatherWindow = { from: iw.from, to: iw.to };
+        // The place a parent typed (dad 9/23: "either city or town or zip —
+        // that's how people think"). Taken FIELD BY FIELD: a field that is not
+        // what it should be costs that field and nothing else. lat/lon are the
+        // place, so a body with no usable point is not a location at all and
+        // the one already stored is left exactly as it was — a slip in the box
+        // must never lose a parent the town they picked. null clears it, back
+        // to the IP guess. Compared without `at`, so re-saving the same town
+        // is not a change and costs no rebuild.
+        const locSig = (l) => l ? [l.lat, l.lon, l.name || "", l.admin1 || "", l.country || ""].join("|") : "";
+        const wasLoc = locSig(s.location);
+        const il = inc.location;
+        const coord = (v, lim) => Number.isFinite(v) && Math.abs(v) <= lim ? v : null;
+        const text = (v, n) => typeof v === "string" && v.trim() && v.trim().length <= n ? v.trim() : null;
+        if (il === null) delete s.location;
+        else if (il && typeof il === "object") {
+          const lat = coord(il.lat, 90), lon = coord(il.lon, 180);
+          if (lat !== null && lon !== null) {
+            const loc = {};
+            for (const [k, v] of [["q", text(il.q, 80)], ["name", text(il.name, 64)],
+                                  ["admin1", text(il.admin1, 64)], ["country", text(il.country, 8)]])
+              if (v) loc[k] = v;
+            s.location = { ...loc, lat, lon, at: new Date().toISOString() };
+          }
+        }
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // A new window makes the cached weather an answer to the old question,
         // and today's board a board for the wrong hours: throw the cache away
         // and re-sort the wardrobe she already has. Never an ingest, never an
         // AI request — that is what "New outfits from new photos" is for.
-        if (JSON.stringify(s.weatherWindow || null) !== wasWindow) {
+        // A new PLACE is the same fact about the other half of that key.
+        if (JSON.stringify(s.weatherWindow || null) !== wasWindow || locSig(s.location) !== wasLoc) {
           try { fs.rmSync(path.join(DATA, ".weather-cache.json"), { force: true }); } catch {}
           clothing.rebuildToday().catch(() => {});
         }

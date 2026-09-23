@@ -111,6 +111,23 @@ wording against the house rule that a malformed field costs that field, not the 
 about, the warning styling for "guessing from the network" is a visual decision, and the
 standing-footer measurement rule (9/14) has bitten before. Surface choices, do not guess.
 
+**T5.0 — "All day" is now a lie and must be fixed here.** `public/settings/index.html:1653`
+offers **All day**, which POSTs `weatherWindow: null` and *deletes* the key. Since phase 2
+an absent window means 10 AM-2 PM, so the page would show "All day" while the board read
+10-2 — and `wxSave`'s toast literally says *"Outfits re-sorted for the whole day"*.
+**Fix: "All day" stores `{from:0, to:23}` explicitly instead of deleting.** `from < to`
+already accepts it, so no validator moves; a family that genuinely wants the whole day
+keeps it honestly; and the 10-2 default then applies only to someone who has never
+touched the row, which is what a default should mean. Dad's call on one detail: with 0-23
+stored the footnote reads `for 12 AM-11 PM`, which is accurate and ugly — recommend
+special-casing it to `all day`.
+
+**T5.0b — dead branches, now unreachable.** `weatherWindow()` can no longer return null,
+so `inWindow`'s `!win`, the cache key's `: "all"` and the tile's `span ?` fallback
+("Today it is …") cannot be reached from anywhere, including a hand-edited settings file
+(a malformed window normalises to the default). Either delete them or say in a comment
+that they are defence with no live caller — do not leave a reader thinking they fire.
+
 19. **T5.1** The location row above the two hour selects: label, Change button, text box
     ("Town or ZIP"), tap list of `Name, Admin1, Country`.
 20. **T5.2** The three states: stored (town shown), none (warning styling, "Guessing

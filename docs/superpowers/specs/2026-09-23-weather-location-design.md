@@ -173,7 +173,12 @@ Three changes to the tile built at `:1293-1305`:
    When the location came from the IP guess it says `"approximate location"` instead of
    a town — so the state that caused this whole investigation is visible on the board
    rather than invisible in a cache file.
-2. The `say` line is unchanged in shape; it gains the town only if one is set.
+2. The `say` line is unchanged, and **deliberately does not name the place.**
+   (Amended 9/23, during implementation: an earlier draft of this spec said it should
+   gain the town. That was wrong. `say` is what the board speaks *to her*, every
+   morning; the footnote is what a parent reads. A town name is parent information, and
+   lengthening a line she hears daily buys her nothing. Left here so a later reader does
+   not "finish" it.)
 3. The symbol mapping at `:1078` is wrong above code 67 and is fixed here because it is
    two lines and it is a lie on the tile today:
 

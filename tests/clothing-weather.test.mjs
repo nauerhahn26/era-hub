@@ -166,7 +166,10 @@ test("a window reads the hours she is out, not the day's high", async () => {
   const t = await rebuild();
   assert.match(t.label, /^67°/, "67°F is the peak of 9-12, not the 80° at 4 PM");
   assert.match(t.label, /warm/);
-  assert.equal(t.symbol, "cloud", "the worst code over those hours (61 = rain) picks the symbol");
+  // UPDATED 9/23 (weather unit A, spec §3.6): code 61 IS rain, and the symbol
+  // map used to call everything from drizzle to a thunderstorm cloud or cold.
+  // Which hour wins is unchanged — that is still max(weather_code).
+  assert.equal(t.symbol, "rain", "the worst code over those hours (61 = rain) picks the symbol");
 });
 
 // The two ends of the window, pinned separately: 67° lives at hour 12 (the last
@@ -175,7 +178,7 @@ test("a window reads the hours she is out, not the day's high", async () => {
 test("both ends of the window are inclusive", async () => {
   const t = tile();
   assert.match(t.label, /^67°/, "hour 12 is INSIDE 9-12: its 67° is the peak read");
-  assert.equal(t.symbol, "cloud", "hour 9 is INSIDE 9-12: its rain code picks the symbol");
+  assert.equal(t.symbol, "rain", "hour 9 is INSIDE 9-12: its rain code picks the symbol");
   assert.match(t.say, /about 67 degrees/);
 });
 
@@ -192,20 +195,28 @@ test("the query is the hourly forecast at the family's coordinates", async () =>
 test("the tile says the hours out loud, and the footnote names them", async () => {
   const t = tile();
   assert.match(t.say, /Between 9 AM and 12 PM it is warm, about 67 degrees\./);
-  assert.match(t.footnote, /^for 9 AM-12 PM · updated /);
+  // UPDATED 9/23 (weather unit A, spec §3.6): the footnote leads with the
+  // PLACE. Nothing typed here, so it says the point is the network's guess —
+  // which is the state that made every reading cold for eleven days running.
+  assert.match(t.footnote, /^approximate location · for 9 AM-12 PM · updated /, t.footnote);
 });
 
-test("no window = the whole day, worded as before", async () => {
+// UPDATED 9/23 (weather unit A, spec §3.5): an unset window used to mean the
+// WHOLE DAY, and this case pinned that — "no window = the whole day, worded as
+// before", 80° and hot off the 4 PM peak. The whole day is exactly what read
+// warm while the hours she was actually outside did not, so the default is now
+// 10 AM-2 PM: a child dresses for the middle of her day, not for the afternoon
+// high. The all-day wording is no longer reachable from Settings, and hour 9's
+// rain now falls OUTSIDE the default window, so the symbol is the clear sky of
+// the hours that are read.
+test("no window = 10 AM-2 PM, the middle of her day", async () => {
   setWindow(null);
   const t = await rebuild();
-  assert.match(t.label, /^80°/, "the whole day peaks at 80°F");
-  assert.match(t.label, /hot/);
-  // Adaptation from the task's sketch: the whole day CONTAINS the rainy
-  // morning, and the symbol is the worst code over the hours read — so the
-  // all-day symbol is cloud here. The sunny case is the 2-5 PM test below.
-  assert.equal(t.symbol, "cloud");
-  assert.equal(t.say, "Today it is hot, about 80 degrees.");
-  assert.match(t.footnote, /^updated /, "no window, no 'for ...' prefix: " + t.footnote);
+  assert.match(t.label, /^70°/, "10-14 peaks at 70°F, not the 80° at 4 PM");
+  assert.match(t.label, /warm/);
+  assert.equal(t.symbol, "sun", "the 61 at hour 9 is outside the default window");
+  assert.equal(t.say, "Between 10 AM and 2 PM it is warm, about 70 degrees.");
+  assert.match(t.footnote, /^approximate location · for 10 AM-2 PM · updated /, t.footnote);
 });
 
 test("an afternoon window gets the afternoon's sun", async () => {
@@ -215,7 +226,7 @@ test("an afternoon window gets the afternoon's sun", async () => {
   assert.match(t.label, /hot/);
   assert.equal(t.symbol, "sun");
   assert.match(t.say, /Between 2 PM and 5 PM/);
-  assert.match(t.footnote, /^for 2 PM-5 PM · /);
+  assert.match(t.footnote, /^approximate location · for 2 PM-5 PM · /, t.footnote);
 });
 
 test("a cache stamped for another window is stale — the forecast is re-read", async () => {
