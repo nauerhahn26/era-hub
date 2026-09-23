@@ -151,6 +151,7 @@ grep -rlZ "8377" "$GATE" 2>/dev/null | xargs -0 -r sed -i "s/8377/$PORT/g"
 # content-providers.js and suites test that shape); the shared hub plugs it.
 export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
   ERA_GEO_URL="http://127.0.0.1:1/geo" ERA_WEATHER_URL="http://127.0.0.1:1" \
+  ERA_GEOCODE_URL="http://127.0.0.1:1/geocode" \
   ERA_RESEND_URL="http://127.0.0.1:1" ERA_TMDB_URL="http://127.0.0.1:1" \
   ERA_STREAMING_URL="http://127.0.0.1:1"
 

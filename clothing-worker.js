@@ -1021,10 +1021,14 @@ function applyManual(cat) {
 // The HOURS she is out, not the day's peak (dad 9/5: she dresses for a
 // morning at school, and the afternoon high we used to show is hours away —
 // "so it's not perfectly useful"). One
-// window applies every day; unset = the whole day, which is what the daily
-// maximum used to give. Settings writes it, the worker reads it from the same
-// app-settings.json every other knob lives in.
+// window applies every day. Settings writes it, the worker reads it from the
+// same app-settings.json every other knob lives in.
 const WCACHE = () => path.join(DATA, ".weather-cache.json");
+// Unset is no longer the whole day: a child dresses for the middle of her day,
+// not for the afternoon high, and the whole day was what read warm while the
+// hours she was actually outside did not. A DEFAULT, never a migration —
+// hours a parent chose are honoured exactly as they are written.
+const DEFAULT_WINDOW = { from: 10, to: 14 };
 function weatherWindow() {
   try {
     const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
@@ -1032,32 +1036,81 @@ function weatherWindow() {
     if (w && Number.isInteger(w.from) && Number.isInteger(w.to) &&
         w.from >= 0 && w.to <= 23 && w.from < w.to) return { from: w.from, to: w.to };
   } catch {}
+  return { ...DEFAULT_WINDOW };
+}
+// The place a parent TYPED into Settings, if there is one. Read defensively
+// out of the same file and with the same posture as the window above —
+// malformed is ABSENT, which falls back to the IP guess rather than aiming the
+// forecast at something that is not a point.
+function locationOf() {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
+    const l = s && s.location;
+    if (l && Number.isFinite(l.lat) && Number.isFinite(l.lon) &&
+        Math.abs(l.lat) <= 90 && Math.abs(l.lon) <= 180)
+      return { name: typeof l.name === "string" ? l.name : "", lat: l.lat, lon: l.lon };
+  } catch {}
   return null;
 }
 // Both ends INCLUSIVE: "2 PM-5 PM" is the hours 14, 15, 16 and 17.
+// `!win` is defence with NO live caller: weatherWindow() answers with a window
+// every time — the stored one, or DEFAULT_WINDOW — so a missing window cannot
+// reach here, not even from a hand-edited settings file.
 function inWindow(hour, win) { return !win || (hour >= win.from && hour <= win.to); }
 async function weather() {
   const win = weatherWindow();
+  const loc = locationOf();
+  // `"all"` is unreachable on the write side for the same reason inWindow's
+  // `!win` is; on the READ side below it is what a record written before 9/23
+  // carries, and such a record can never match a key, so it is thrown away —
+  // which is the right answer for an answer computed for the whole day.
   const key = win ? win.from + "-" + win.to : "all";
+  // The PLACE is part of the key too: moving the point makes a stored answer an
+  // answer to a different question, exactly as moving the window does. Three
+  // decimals is ~100 m, finer than any town a parent picks.
+  const place = loc ? loc.lat.toFixed(3) + "," + loc.lon.toFixed(3) : "ip";
+  // The DAY is half the key, not just the clock. The record holds for 3 h and
+  // `forecast_days=1` always means TODAY, so without this a build between local
+  // midnight and ~3 AM that follows an evening build serves YESTERDAY's window
+  // — a board sorted for a day that has already ended. The 5 AM cutoff
+  // (clothing.js boardIsFresh) makes the ordinary morning build a fresh fetch,
+  // which is why this went unseen; a photo change or a restart in that gap
+  // reaches it. A record written before this change carries no `day` and can
+  // never be shown to be today's, so it is re-read once — the right answer.
+  const day = todayKey();
   try {
     const c = JSON.parse(fs.readFileSync(WCACHE(), "utf8"));
-    // a record computed for OTHER hours answers a different question
-    if (Date.now() - c.at < 3 * 3600e3 && (c.window || "all") === key) return c.w;
+    // a record computed for OTHER hours, for another place, or on another day,
+    // answers a different question
+    if (Date.now() - c.at < 3 * 3600e3 && (c.window || "all") === key &&
+        c.place === place && c.day === day) return c.w;
   } catch {}
   try {
-    let geo = null;
-    const lookups = process.env.ERA_GEO_URL
-      ? [process.env.ERA_GEO_URL] : ["https://ipapi.co/json/", "https://ipwho.is/"];
-    for (const u of lookups) {
-      try {
-        const g = await (await fetch(u, { signal: AbortSignal.timeout(6000) })).json();
-        if (g && typeof g.latitude === "number") { geo = g; break; }
-      } catch {}
+    let point = loc ? { latitude: loc.lat, longitude: loc.lon } : null;
+    // The IP guess is reached ONLY when no place has been typed. It answers
+    // with the ISP's idea of where the family is — a city centroid, which on
+    // both devices sat a microclimate away and read cold eleven days out of
+    // eleven (dad 9/23). The ladder is a LIST so a provider that is rate
+    // limited costs nothing but the next try.
+    if (!point) {
+      const lookups = (process.env.ERA_GEO_URL || "https://ipapi.co/json/,https://ipwho.is/")
+        .split(",").map(u => u.trim()).filter(Boolean);
+      for (const u of lookups) {
+        try {
+          const g = await (await fetch(u, { signal: AbortSignal.timeout(6000) })).json();
+          // BOTH halves or neither: a latitude on its own used to be taken, and
+          // the forecast was then asked for `longitude=undefined`.
+          if (g && Number.isFinite(g.latitude) && Number.isFinite(g.longitude)) {
+            point = { latitude: g.latitude, longitude: g.longitude };
+            break;
+          }
+        } catch {}
+      }
     }
-    if (!geo) return null;
+    if (!point) return null;
     // hourly, not daily: timezone=auto makes the hourly stamps local to those
     // coordinates, so hour 10 in the answer is 10 AM where the family lives.
-    const q = `latitude=${geo.latitude}&longitude=${geo.longitude}` +
+    const q = `latitude=${point.latitude}&longitude=${point.longitude}` +
       "&hourly=temperature_2m,weather_code&temperature_unit=fahrenheit&forecast_days=1&timezone=auto";
     const base = process.env.ERA_WEATHER_URL || "https://api.open-meteo.com";
     const wr = await (await fetch(base + "/v1/forecast?" + q,
@@ -1075,10 +1128,26 @@ async function weather() {
     if (t === null) return null;
     t = Math.round(t);
     const band = t >= 78 ? "hot" : t >= 66 ? "warm" : t >= 54 ? "cool" : "cold";
-    const w = { t, band, symbol: code <= 1 ? "sun" : code <= 67 ? "cloud" : "cold", window: win };
-    try { fs.writeFileSync(WCACHE(), JSON.stringify({ at: Date.now(), window: key, w })); } catch {}
+    const w = { t, band, symbol: weatherSymbol(code), window: win,
+                place: (loc && loc.name) || null };
+    try { fs.writeFileSync(WCACHE(), JSON.stringify({ at: Date.now(), window: key, place, day, w })); } catch {}
     return w;
   } catch { return null; }
+}
+// WMO weather codes -> the picture on the tile. Above 67 the old map called
+// everything cold, so a rain shower and a thunderstorm both put a snowflake on
+// the board — a lie a parent reads every rainy day. Snow is what is cold.
+// (Which HOUR wins is untouched: max(weather_code) is not a severity ordering
+// — fog 45 beats drizzle 51, showers 80 beat snow 71 — and fixing that belongs
+// with the warmth model, where precipitation may earn a place in the deal.)
+function weatherSymbol(code) {
+  if (code <= 1) return "sun";
+  if (code <= 48) return "cloud";       // cloud, fog
+  if (code <= 67) return "rain";        // drizzle, rain, freezing rain
+  if (code <= 79) return "cold";        // snow, snow grains, ice pellets
+  if (code <= 82) return "rain";        // rain showers
+  if (code <= 86) return "cold";        // snow showers
+  return "rain";                        // thunderstorms
 }
 // 0 -> "12 AM", 12 -> "12 PM", 13 -> "1 PM" — how a parent says an hour.
 function hourLabel(h) {
@@ -1293,13 +1362,25 @@ async function buildCataloged(cat) {
       if (w) {
         // With a window the tile has to say WHICH hours it is talking about,
         // or a parent reads "72\u00b0" as the whole day again (dad 9/5).
-        const span = w.window ? hourLabel(w.window.from) + "-" + hourLabel(w.window.to) : null;
+        // A family that really does want the whole day stores 0-23 (Settings
+        // no longer deletes the key for "All day"), and the whole day is
+        // called the whole day: "for 12 AM-11 PM" is accurate and nobody says
+        // it. `w.window` absent is DEFENCE with no live caller \u2014 weatherWindow()
+        // has answered with a window, default or stored, since 9/23.
+        const span = !w.window ? null
+          : w.window.from === 0 && w.window.to === 23 ? "all day"
+          : hourLabel(w.window.from) + "-" + hourLabel(w.window.to);
+        const lead = span === "all day" ? "All day"
+          : span ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to)
+          : "Today";                      // ...and so is this one
         buttons.push({ label: w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
-          say: span
-            ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to) +
-              " it is " + w.band + ", about " + w.t + " degrees."
-            : "Today it is " + w.band + ", about " + w.t + " degrees.",
-          footnote: (span ? "for " + span + " \u00b7 " : "") + "updated " +
+          say: lead + " it is " + w.band + ", about " + w.t + " degrees.",
+          // The PLACE leads the footnote: a forecast for the wrong town is
+          // what read cold every day for eleven days, invisibly, and the only
+          // way that is ever caught is if the board says where it is reading.
+          // No town stored means the ISP's guess, and the tile says so.
+          footnote: (w.place || "approximate location") + " \u00b7 " +
+            (span ? "for " + span + " \u00b7 " : "") + "updated " +
             new Date().toLocaleString("en-US",
               { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
           row: 1, col: 1 });
