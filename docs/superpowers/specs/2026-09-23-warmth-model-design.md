@@ -26,7 +26,10 @@ without C both devices spend it and diverge, which is the 9/21 incident all over
 
 `clothing-rank.js` gates on one word per garment, `warmth ∈ {hot, warm, cool, cold, any}`,
 mapped to three levels (`WORD_LEVELS`, `:75`) and admitted per band by `BAND_WARMTH`
-(`:69`). Measured against her real 57 garments on 9/23:
+(`:69`). Measured on 9/23 against her real wardrobe — **57 items, of which 51 are
+garments**; the other six are jackets, which are accessories and never pooled into a
+look (`buildCandidates` drops them at its one door). Every count below is out of those
+51, and the three role totals sum to 51:
 
 | Day | Tops admitted | Bottoms | Dresses + sets |
 |---|---|---|---|
@@ -82,7 +85,7 @@ lives. Where GSM prediction does work it is from handheld microscopy, not a phot
 So the design assumes the model is **wrong a meaningful fraction of the time on weight**
 and is built to survive that:
 
-- Ask for weight on ~14 garments, not 57, so the blast radius is small.
+- Ask for weight on ~14 garments, not all 51, so the blast radius is small.
 - `temperature: 0` on the call (a measured +6-7 pp).
 - Offer `unsure` as an explicit first-class option — models are specifically bad at
   volunteering it (NA-detection F1 ≈ 34 %) and their verbalised confidence is
@@ -204,7 +207,8 @@ with the same shape as the 9/5 needs-attributes pass (`clothing-worker.js:593-75
 one call per garment from the tile already on disk, at most once a garment a day,
 consulting the shared log **first** so a family pays once, not once per device.
 
-Roughly 51 garments, one call each, inside the free daily allowance. **This is the
+Roughly 51 garments (the 57 items less the six jackets), one call each, inside the
+free daily allowance. **This is the
 step that requires unit C.** Without ownership, both devices run this pass, spend 102
 calls between them, and produce two different wardrobes — precisely what happened on
 2026-09-21 at 00:53, where the two devices described the same twelve garments two
