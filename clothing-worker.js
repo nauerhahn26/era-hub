@@ -1039,10 +1039,20 @@ function inWindow(hour, win) { return !win || (hour >= win.from && hour <= win.t
 async function weather() {
   const win = weatherWindow();
   const key = win ? win.from + "-" + win.to : "all";
+  // The DAY is half the key, not just the clock. The record holds for 3 h and
+  // `forecast_days=1` always means TODAY, so without this a build between local
+  // midnight and ~3 AM that follows an evening build serves YESTERDAY's window
+  // — a board sorted for a day that has already ended. The 5 AM cutoff
+  // (clothing.js boardIsFresh) makes the ordinary morning build a fresh fetch,
+  // which is why this went unseen; a photo change or a restart in that gap
+  // reaches it. A record written before this change carries no `day` and can
+  // never be shown to be today's, so it is re-read once — the right answer.
+  const day = todayKey();
   try {
     const c = JSON.parse(fs.readFileSync(WCACHE(), "utf8"));
-    // a record computed for OTHER hours answers a different question
-    if (Date.now() - c.at < 3 * 3600e3 && (c.window || "all") === key) return c.w;
+    // a record computed for OTHER hours, or on another day, answers a
+    // different question
+    if (Date.now() - c.at < 3 * 3600e3 && (c.window || "all") === key && c.day === day) return c.w;
   } catch {}
   try {
     let geo = null;
@@ -1076,7 +1086,7 @@ async function weather() {
     t = Math.round(t);
     const band = t >= 78 ? "hot" : t >= 66 ? "warm" : t >= 54 ? "cool" : "cold";
     const w = { t, band, symbol: code <= 1 ? "sun" : code <= 67 ? "cloud" : "cold", window: win };
-    try { fs.writeFileSync(WCACHE(), JSON.stringify({ at: Date.now(), window: key, w })); } catch {}
+    try { fs.writeFileSync(WCACHE(), JSON.stringify({ at: Date.now(), window: key, day, w })); } catch {}
     return w;
   } catch { return null; }
 }
