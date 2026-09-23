@@ -75,9 +75,42 @@ It does not transfer, for two reasons:
 No negotiation, so no race:
 
 ```
-roster = sorted(device ids that have a tags/<id>.jsonl, plus this device)
+roster = sorted(device ids SEEN IN THE LAST 7 DAYS, plus this device)
 owner(photo) = roster[ bigintFromHex(photo.sha256) mod roster.length ]
 ```
+
+### "Seen" needs no new machinery
+
+Dad, 9/23: *"if the device is, if it can know which devices are online, that would be
+nice. It may not though. I don't know. Because they don't know about each other."*
+
+They can, near enough, and for free. Every device already appends an **offer** line to
+the shared folder on every build (`clothing-log.js appendOffer`), and a build happens
+every morning. So the newest dated line under a device's name *is* a daily heartbeat
+that already exists — no new file, no new timer, no ping.
+
+```
+lastSeen(device) = newest t across its offers/, picks/ and tags/ lines
+roster           = devices with lastSeen within SEEN_DAYS = 7
+```
+
+This is strictly better than the "every device that ever wrote" roster, for three
+reasons:
+
+1. **Nothing waits on a machine that is not there.** A device off for a week stops
+   owning photos altogether, so the takeover below is the rare path rather than the
+   normal one — which is dad's concern, answered at the root instead of by a timer.
+2. **It fixes the wipe orphan.** A device id is `slug(hostname) + 4 hex`
+   (`device-id.js:65-66`) and a wipe regenerates the tail, so the tablet's 9/14 wipe
+   left a dead name behind. Under a 7-day window the orphan ages out by itself, and
+   "Shared with: N devices" stops inflating (§6 was going to carry this as a known
+   defect; it does not have to).
+3. **A single-device family is a roster of one** and owns everything, which is the
+   no-regression case.
+
+The school device is the one to sanity-check: it builds on school days, so it stays in
+the roster across a weekend and drops out over a long holiday. That is the behaviour we
+want — over a holiday it genuinely is not coming.
 
 Every device computes the same answer at the same instant from data it already has —
 the hash is already on the entry (`clothing-worker.js:802`, before any branch) and the
@@ -89,16 +122,21 @@ instead of one paying for all or both paying for all.
 
 ### The takeover, which is dad's timestamp rule
 
-A non-owner may take a photo when it has been undescribed for `TAKEOVER = 45 min` of
-*this device's own uptime* since it first saw the photo. First-seen is recorded locally
-beside the existing photo-set memory (`.clothing-photoset`, I23) — no new shared file.
+With the roster already excluding absent devices, takeover is the narrow case: the owner
+is present but wedged, or died mid-build. A non-owner may take a photo when it has been
+undescribed for `TAKEOVER = 45 min` of *this device's own uptime* since it first saw the
+photo. First-seen is recorded locally beside the existing photo-set memory
+(`.clothing-photoset`, I23) — no new shared file.
 
 Uptime, not wall clock, so a device that was asleep for a day does not wake up and
 immediately seize every photo its partner legitimately owns.
 
 45 minutes is comfortably longer than a full mirror round trip and shorter than a school
-day. It covers the cases dad named: the owner is at school, powered off, or wedged
-mid-process.
+day. **Nobody is waiting on it**, which is what makes a generous timeout affordable
+here: an undescribed garment is simply not on the board yet, out of 57 that already are.
+This is the asymmetry that makes clothing and books want different answers — a stalled
+book is half of a one-hour job the family is watching for; a stalled garment is one tile
+nobody has missed.
 
 ### One more cheap win
 
@@ -159,12 +197,13 @@ against a folder the mirror has not filled. Add the sync.
 
 ## 6. Known, documented, not fixed here
 
-**The device id changes on a wipe.** It is `slug(hostname) + "-" + 4 hex`
-(`device-id.js:65-66`) stored in `<DATA>/device-id`; a wipe regenerates the tail. The
-tablet's 9/14 wipe gave it a new writer name. Consequences: its orphaned `picks/`
-directory is read back as a stranger's and double-counts its own history
-(`clothing-log.js:305`), and "Shared with: N devices" inflates permanently because
-nothing garbage-collects `.era`. Worth a follow-up; not on the path to the 9/21 bug.
+**The device id changes on a wipe**, and its orphaned `picks/` directory is read back
+as a stranger's, double-counting its own history (`clothing-log.js:305`). The 7-day
+roster in §3 retires the dead *name* from ownership and from the "Shared with: N
+devices" count, but it does not un-double-count those old picks. The effect is small
+(a few weeks of one device's history counted twice in the favourites weighting, ageing
+out of the 60-day window on its own) and the fix — writing the device id somewhere
+that survives a wipe — is a bigger change than it earns. Documented, not fixed.
 
 **Reads and writes use different roots.** Reads come from `<DATA>/clothing/.era`
 (`clothing-log.js:177`), writes go to `<Drive folder>/clothing/.era` (`:147`), and
@@ -177,6 +216,10 @@ startup warning when a tags file exists in DATA with no counterpart upstream.
 New `tests/clothing-ownership.test.mjs`:
 
 1. Two devices, same roster, same photo hash → the same owner. Deterministic across runs.
+1b. The roster holds only devices seen within `SEEN_DAYS`; a device whose newest line is
+    8 days old owns nothing, and a device seen yesterday does.
+1c. An orphaned writer name left by a wipe ages out of the roster and out of the
+    "Shared with: N devices" count.
 2. A non-owner does not call the model and writes no tag line.
 3. Ownership splits a set of photos roughly evenly across two devices.
 4. A non-owner takes a photo after `TAKEOVER` of its own uptime, not before.
