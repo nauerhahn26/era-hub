@@ -195,6 +195,7 @@ test("GET /books/index.json lists the complete package ONLY, spec shape, no-cach
   assert.deepEqual(rest, {
     slug: "luna-the-fox", title: "Luna the Fox", pages: 2, hasVideo: false,
     authored: false,   // no `authored` in this manifest -> no coral rim, no badge
+    shared: false,     // and nobody sent it here -> no "From a friend" badge
   });
   // and the versioned URL actually serves (query must not break the jail)
   const cv = await fetch(`${BASE}${luna.cover}`);
@@ -224,6 +225,24 @@ test("an imported package is not this family's story, whatever its manifest says
   // nothing rewrote it: books-share.js law 3, from the serving side.
   const m = await (await fetch(`${BASE}/books/their-book/manifest.json`)).json();
   assert.equal(m.authored, true, "the import's manifest was rewritten");
+});
+
+// Saying "not her story" was the first half. Dad, 9/23, on what the card
+// should say instead: "From a friend is cool." The shelf cannot invent that
+// fact — the hub has to publish it — and it is the SAME fact the line above
+// suppresses the badge with: the share envelope beside the manifest, asked for
+// through books-index.js's isImported(). One question, one answer, two uses.
+// `authored` keeps its own meaning and stays false for an import.
+test("the row says a book came from another family: shared: true", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const theirs = idx.find(e => e.slug === "their-book");
+  const ours = idx.find(e => e.slug === "our-book");
+  assert.equal(theirs.shared, true, "the imported package does not report itself as shared");
+  assert.equal(ours.shared, false, "a book made on this computer is claiming it came from a friend");
+  // every row carries the flag, the way every row carries `authored` — a shelf
+  // that has to tell `false` from `undefined` is a shelf with two rules.
+  for (const row of idx) assert.equal(typeof row.shared, "boolean",
+    "row without a `shared` boolean: " + JSON.stringify(row));
 });
 
 test("manifest.json serves 200 with no-cache", async () => {

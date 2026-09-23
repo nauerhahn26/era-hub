@@ -1355,3 +1355,75 @@ test("an authored manifest paints the rim", async () => {
     .evaluate(el => el.classList.contains("is-authored")), true);
   await ctx.close();
 });
+
+// Three books, three honest cards — this is the assertion that catches a
+// regression in EITHER direction, which is why the three sit in one grid and
+// are read with one pass. Dad, 9/23: "From a friend is cool."
+//   authored  -> ★ My story, coral rim, "… — My story"       (hers)
+//   shared    -> From a friend, NO coral rim, "… — from a friend"
+//   neither   -> no badge at all, "Read <title>"
+// The badge is decoration and nothing else: it is aria-hidden (the label is
+// where the shelf's voice reads it from) and it is NOT a gaze target — no
+// .dwell, no data-dwell-*, and pointer-events are off it, because the only
+// thing on a card a finger or a gaze may land on is the card.
+test("a book from a friend says so, and does not say it is her story", async () => {
+  const { ctx, page } = await shelfWith(contentStatus({}),
+    JSON.stringify([
+      { slug: "luna-the-fox", title: "Luna the Fox", cover: "/books/luna-the-fox/cover.jpg",
+        pages: 4, hasVideo: false, authored: true, shared: false },
+      { slug: "gift-book", title: "Gift Book", cover: "/books/gift-book/cover.jpg",
+        pages: 4, hasVideo: false, authored: false, shared: true },
+      { slug: "plain-book", title: "Plain Book", cover: "/books/plain-book/cover.jpg",
+        pages: 4, hasVideo: false, authored: false, shared: false },
+    ]));
+  await page.waitForFunction(() => window.Reader.state().shelfCount === 3);
+  // …and then for the CARDS. shelfCount is the state the shelf was told about,
+  // which reaches 3 a paint before the grid holds three nodes — read it alone
+  // and this test flakes on an empty querySelectorAll (it did, 9/23). The file's
+  // own idiom, two lines apart at :759 — count, then the DOM.
+  await page.waitForFunction(() =>
+    document.querySelectorAll("#shelfGrid .shelf-card").length === 3);
+  const cards = await page.evaluate(() =>
+    [...document.querySelectorAll("#shelfGrid .shelf-card")].map(card => {
+      const btn = card.querySelector(".shelf-card-button");
+      const mine = card.querySelector(".shelf-authored-badge");
+      const friend = card.querySelector(".shelf-shared-badge");
+      return {
+        slug: card.dataset.slug,
+        label: btn.getAttribute("aria-label"),
+        rim: card.classList.contains("is-authored"),
+        mine: mine ? mine.textContent.trim() : null,
+        friend: friend ? friend.textContent.trim() : null,
+        friendHidden: friend ? friend.getAttribute("aria-hidden") : null,
+        friendDwell: friend ? (friend.classList.contains("dwell") ||
+          !!friend.querySelector("[class*=dwell]") ||
+          !!Object.keys(friend.dataset).find(k => k.startsWith("dwell"))) : null,
+        friendPointer: friend ? getComputedStyle(friend).pointerEvents : null,
+        friendColor: friend ? getComputedStyle(friend).color : null,
+      };
+    }));
+  const [hers, gift, plain] = cards;
+
+  // her name comes from Settings and an earlier test in this file has already
+  // given one, so the badge is matched by SHAPE, not by a hardcoded "My"
+  assert.match(hers.mine || "", /\bstory$/, "her own book lost its badge: " + JSON.stringify(hers));
+  assert.equal(hers.friend, null, "her own book claims it came from a friend");
+  assert.equal(hers.rim, true);
+  assert.equal(hers.label, "Read Luna the Fox — " + hers.mine);
+
+  assert.equal(gift.friend, "From a friend", "the imported card: " + JSON.stringify(gift));
+  assert.equal(gift.mine, null, "an imported book is wearing the 'My story' badge");
+  assert.equal(gift.rim, false, "the coral rim is hers alone — it is the same claim in paint");
+  assert.equal(gift.label, "Read Gift Book — from a friend");
+  assert.equal(gift.friendHidden, "true", "the badge is read out twice");
+  assert.equal(gift.friendDwell, false, "the badge became a gaze target");
+  assert.equal(gift.friendPointer, "none", "the badge takes presses off the card");
+  // the share rail's green (#2E7D5B), NOT the coral that means "her story"
+  assert.match(gift.friendColor, /46,\s*125,\s*91/, "the friend badge's colour: " + gift.friendColor);
+
+  assert.equal(plain.mine, null, "a plain book grew a badge: " + JSON.stringify(plain));
+  assert.equal(plain.friend, null);
+  assert.equal(plain.rim, false);
+  assert.equal(plain.label, "Read Plain Book");
+  await ctx.close();
+});

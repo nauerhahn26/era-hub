@@ -558,10 +558,18 @@ function booksIndex() {
       // manifest travels byte for byte, so the flag is neither ours to clear nor
       // false. The SHELF is what must not repeat it: an imported package is one
       // books-index.js can recognise, and it is the only place that rule lives.
+      //
+      // `shared` is that same one answer, published rather than only subtracted
+      // (dad, 9/23: "From a friend is cool."). Suppressing the wrong badge left
+      // the card saying nothing; the true thing it can say is where the book
+      // came from, and the shelf cannot know that unless the row carries it.
+      // ONE call to isImported(), two uses — `authored` keeps its meaning and
+      // stays false for an import, `shared` is the new fact beside it.
+      const shared = booksIndex_.isImported(BOOKS_DIR, dir);
       out.push({ slug, title: String(m.title || dir),
                  cover: "/books/" + slug + "/" + (m.cover || "cover.jpg") + "?v=" + v,
                  pages: pages.length, hasVideo: pages.some(p => p && p.video),
-                 authored: m.authored === true && !booksIndex_.isImported(BOOKS_DIR, dir), v });
+                 authored: m.authored === true && !shared, shared, v });
     } catch {}   // incomplete package: skip silently
   }
   return out;
