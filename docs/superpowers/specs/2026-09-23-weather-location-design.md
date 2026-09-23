@@ -213,8 +213,14 @@ measured per the 9/14 rule.
 ## 4. Testing
 
 New suite `tests/weather-location.test.mjs`, with `ERA_GEOCODE_URL` and the existing
-`ERA_WEATHER_URL` / `ERA_GEO_URL` seams pointed at a local stub. A free port from
-8380-8389, checked with `ss -ltn` first.
+`ERA_WEATHER_URL` / `ERA_GEO_URL` seams pointed at one local stub server, the way
+`clothing-weather.test.mjs` serves both seams off a single fake.
+
+**Port 8401.** Not 8380-8389 — that band is for *manual* hubs (`docs/dev-flow.md:24`),
+not suites, and an earlier draft of this spec had it wrong. Surveyed 9/23 across all
+five repos' `tests/`: 8390-8451 is otherwise solid, and the forbidden set is
+8377/8378/8425/8427/8450-8462. Free and unclaimed anywhere in any repo: **8401** and
+8426. Taking 8401; 8426 is the spare if unit B or C needs one.
 
 1. A stored location is what the forecast is asked for — the IP lookup is never called.
 2. No stored location falls back to the IP lookup, both providers in order.
