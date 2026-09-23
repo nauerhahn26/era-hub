@@ -355,11 +355,15 @@ async function shelfCard(hub, title) {
     const card = page.locator("#shelfGrid .shelf-card", { hasText: title });
     const badges = card.locator(".shelf-authored-badge");
     const n = await badges.count();
+    const friends = card.locator(".shelf-shared-badge");
+    const f = await friends.count();
     return {
       label: await btn.getAttribute("aria-label"),
       rim: await card.evaluate(el => el.classList.contains("is-authored")),
       badges: n,
       badge: n ? (await badges.first().textContent()).trim() : null,
+      friends: f,
+      friend: f ? (await friends.first().textContent()).trim() : null,
       text: await page.evaluate(() => document.body.innerText),
     };
   } finally { await ctx.close(); }
@@ -376,10 +380,24 @@ test("hub A wears the badge for its own book; hub B's copy never claims it", asy
   assert.equal(b.badges, 0,
     "hub B's shelf badges somebody else's book as this child's story: " + JSON.stringify(b));
   assert.equal(b.rim, false, "the coral rim is the same claim in paint");
-  assert.equal(b.label, "Read " + TITLE,
-    "the shelf reads another family's book out as her own story");
+  assert.doesNotMatch(b.label, /story/,
+    "the shelf reads another family's book out as her own story: " + b.label);
   assert.doesNotMatch(b.text, /My story/,
     "'My story' is still somewhere on the receiving shelf: " + b.text);
+
+  // …and now it says the true thing instead (dad, 9/23: "From a friend is
+  // cool"). The whole journey stands behind this one word: these bytes were
+  // packed on hub A, carried as a file, and unpacked on hub B, and the ONLY
+  // reason B's shelf can say where the book came from is the share envelope
+  // that travelled inside the archive.
+  assert.equal(b.friends, 1, "hub B's card does not say where the book came from: " + JSON.stringify(b));
+  assert.equal(b.friend, "From a friend");
+  assert.equal(b.label, "Read " + TITLE + " — from a friend");
+  assert.match(b.text, /From a friend/, "the receiving shelf never says it: " + b.text);
+
+  // and hub A, holding its OWN book, must never say a friend sent it
+  assert.equal(a.friends, 0, "the family that MADE the book is told a friend sent it");
+  assert.doesNotMatch(a.text, /From a friend/, "'From a friend' on the sender's shelf: " + a.text);
 });
 
 // =================================================== and hub A is untouched

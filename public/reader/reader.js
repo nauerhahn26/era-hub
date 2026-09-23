@@ -480,7 +480,9 @@ function renderShelf() {
     btn.className = "dwell dwell-button shelf-card-button";
     btn.setAttribute("data-dwell-say", b.title);
     btn.setAttribute("aria-label",
-      b.authored === true ? "Read " + b.title + " — " + whose() + " story" : "Read " + b.title);
+      b.authored === true ? "Read " + b.title + " — " + whose() + " story"
+      : b.shared === true ? "Read " + b.title + " — from a friend"
+      : "Read " + b.title);
     const cover = document.createElement("span");
     cover.className = "shelf-cover";
     const img = document.createElement("img");
@@ -517,6 +519,25 @@ function renderShelf() {
         '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
         '<path d="M12 2.5l2.1 5.6 5.9.3-4.6 3.7 1.6 5.7L12 14.6 6.9 17.8l1.6-5.7L3.9 8.4l5.9-.3Z"/></svg>' +
         whose() + " story";   // her name from Settings, not ours (QA 9/2)
+      card.appendChild(badge);
+    } else if (b.shared === true) {
+      // A book another family sent (dad, 9/23: "From a friend is cool."). Same
+      // pill, same corner, same geometry as the story badge — only the hue and
+      // the mark differ, so the two are told apart across a room without either
+      // card changing shape. Her own story keeps the coral and keeps the rim;
+      // this one is the share rail's green and wears no rim, because the rim is
+      // the same claim in paint. `else if`: the two are never both true (the
+      // hub clears `authored` on an import), and the shelf says ONE thing.
+      // aria-hidden like its twin — the sentence is already in the aria-label —
+      // and no .dwell/data-dwell-*: it is decoration, never a gaze target.
+      const badge = document.createElement("span");
+      badge.className = "shelf-shared-badge";
+      badge.setAttribute("aria-hidden", "true");
+      badge.innerHTML =
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+        '<path d="M12 20.3l-1.5-1.36C5.4 14.36 2.5 11.72 2.5 8.5A4.5 4.5 0 0 1 7 4c1.74 0 3.41.81 4.5 2.09' +
+        'A5.98 5.98 0 0 1 16 4a4.5 4.5 0 0 1 4.5 4.5c0 3.22-2.9 5.86-8 10.44Z"/></svg>' +
+        "From a friend";
       card.appendChild(badge);
     }
     grid.appendChild(card);

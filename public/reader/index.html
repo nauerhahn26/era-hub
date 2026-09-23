@@ -385,7 +385,12 @@
     border-color: rgba(222, 110, 75, 0.55);
     box-shadow: 0 8px 18px rgba(222, 110, 75, 0.18);
   }
-  .shelf-authored-badge {
+  /* The two badges are ONE pill in two colours. Every measurement below is
+     shared, so a card cannot move depending on which badge it wears (and
+     reader-sizing.test.mjs cannot be told them apart); only the hue and the
+     little mark change. */
+  .shelf-authored-badge,
+  .shelf-shared-badge {
     position: absolute;
     top: 22px;
     left: 22px;
@@ -406,6 +411,20 @@
     pointer-events: none;
     z-index: 2;
   }
+  /* "From a friend" — a book another family sent (dad, 9/23). The colour is
+     #2E7D5B, the green this app already spends on the sharing rail: the "Send
+     it now" button in the hold sheet, the "+ Add a book" button that took this
+     very book in, and the Settings link. So the badge is the same colour as
+     the door the book came through, and no new colour enters the palette.
+     Against the coral it is unmistakable at shelf distance (opposite side of
+     the wheel), and it is the QUIETER of the two — darker, less saturated, a
+     receding hue against coral's advancing one — so her OWN story is still the
+     card that stands out. No `.is-shared` rim to go with it, deliberately: the
+     coral rim means "this is her story" and two rims would blunt it. */
+  .shelf-shared-badge {
+    border-color: rgba(46, 125, 91, 0.32);
+    color: #2E7D5B;
+  }
 
   /* The shelf's "Back to TD Snap" tile is GONE (9/17): the door is the shared
      bar's 🚪 now, one door per screen, in the corner every other app puts it
@@ -414,7 +433,8 @@
   @media (max-width: 680px) {
     .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 23px; }
     .shelf-title { font-size: 1.1rem; }
-    .shelf-authored-badge { top: 18px; left: 18px; font-size: 0.72rem; }
+    .shelf-authored-badge,
+    .shelf-shared-badge { top: 18px; left: 18px; font-size: 0.72rem; }
   }
 
   /* ===== Reading screen — ported verbatim from the old reader ===== */
