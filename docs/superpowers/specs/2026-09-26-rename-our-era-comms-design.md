@@ -37,24 +37,39 @@ era-board: `app/board-partner.js` (17 spoken prompts), `board.js`,
 Companion". era-making-words: `app/studio.js` start-screen string (and its
 domain). Docs, tests and CI names follow in the same commits.
 
-## What stays, on purpose (installed devices depend on it)
+## Paths and identifiers: renamed in phases, not skipped (dad, 9/26)
 
-- `InstallDir` `%LOCALAPPDATA%\New ERA` and everything under it (`data\`,
-  node runtime, `packs.js` paths). Self-update overlays in place; a new folder
-  would strand settings, the PIN hash and keys on every device.
-- Uninstall registry key `NewERA` (a new key = duplicate Apps entries).
-- Tarball top folder `new-era-suite/` (`server.js:172,179` pack installs) and
-  the feed asset names `new-era-suite.tar.gz` / `.zip` / `latest.json`; the
-  `installer` field in latest.json simply names the new exe.
-- GitHub repo names (`new-era-releases` and the six `era-*` repos) and the
-  update feed default in `update.js`. A repo rename is a later, separate act;
-  GitHub redirects renamed repos, but installed hubs on today's builds are not
-  worth the risk right now.
-- The Startup shortcut `$SMSTARTUP\New ERA.lnk` on devices that already have
-  it: it points at `start-hub.bat`, whose path does not change. A fresh install
-  writes `Our Era Comms.lnk`. Self-update never touches Startup.
-- School Tailscale task `NewERA-TailscalePin`, `C:\ProgramData\NewERA`, hosts
-  markers, cron tag: infrastructure, invisible, left alone.
+Dad: "Why can't we change all paths and just reroute TD Snap links, we have the
+tools." We can. What matters is ORDER, because a board tile that points at a
+folder which does not exist yet is a dead tile on her board (9/16 lesson).
+
+Phase R1 (this signed release): every user-visible name (section above).
+Engine default BaseDir becomes `C:\Users\Public\ERAgaze`; on first run it
+migrates `ERAgaze.json`, the tile launchers and logs from `RaeGaze` if present
+and leaves a directory junction `RaeGaze → ERAgaze` so old tiles still work.
+Installer InstallDir becomes `%LOCALAPPDATA%\Our Era Comms`; self-update on an
+existing device moves the tree (with `data\`) and leaves a junction at the old
+path for the Startup shortcut; the uninstall key becomes `OurEraComms` and the
+installer deletes the `NewERA` key so Apps & features shows one entry. The
+tarball's top folder becomes `our-era-comms/`; pack installs accept either
+name for one release. Old shortcuts (Desktop, Start Menu, Startup) are
+replaced by `Our Era Comms.lnk` at first boot of the new build.
+
+Phase R2 (board job, after all three devices report the R1 build): the
+Dashboard tiles are re-pointed from `RaeGaze\<App>.bat` to `ERAgaze\<App>.bat`
+through the editor via the QA harness (Law 1: prompt dad, cloud checkpoint
+first, `tools/board-sync/board-sync-all.sh` after; school i13 via the school
+runbook and its queue). Verify in the DB, not by eye.
+
+Phase R3 (patch release, after R2 is confirmed on all three devices): remove
+the junctions; school Tailscale task/folder/markers → `OurEraComms` with the
+old task removed in the same script run.
+
+Waiting, on purpose, for now: the Drive folder name (adopt either name,
+rename inside Drive later by hand; splitting the family library is the risk)
+and the GitHub repo names + update feed default (feed continuity for every
+installed hub; GitHub redirects renamed repos, but it goes in its own step
+once R1 is on every device). Neither is visible to a person using the app.
 
 ## Shortcuts on existing devices
 
