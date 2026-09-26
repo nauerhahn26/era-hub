@@ -206,7 +206,7 @@ test("a stray photo dropped beside a finished book leaves it a book, not an inbo
 // A MANIFEST WITH NO job.json BESIDE IT IS STILL A FINISHED BOOK (review 9/10).
 // Drive mirrors .build/ in whatever order it likes, so the latch that says
 // `done` often lands minutes after the book itself — and "no job" was read as
-// `state:"inbox"`, which the Reader's shelf turns into "Getting ready… New ERA
+// `state:"inbox"`, which the Reader's shelf turns into "Getting ready… Our Era Comms
 // has started on this book." over a book that is already made, and the Settings
 // card into "Getting the photos ready…". The manifest is the answer both
 // screens needed, and `done` is what every other finished book on the shelf

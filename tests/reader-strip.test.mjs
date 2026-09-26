@@ -328,15 +328,15 @@ test("choosing a file adds the book: raw body, source=file, and the shelf repain
 // A parent is standing at a tablet holding a file somebody sent them. They get
 // ONE line they can act on — never a code, never a stack, never a 500. The hub
 // writes the sentence (books-share.js MESSAGES); the sheet only shows it.
-test("a file that is not a New ERA book is refused in one sentence, and the sheet stays open", async () => {
+test("a file that is not an Our Era Comms book is refused in one sentence, and the sheet stays open", async () => {
   const { ctx, page } = await makePage();
   await openSheet(page);
   await page.locator("#addFile").setInputFiles(NOT_A_BOOK);
   await page.waitForFunction(
-    () => /isn't a New ERA book/.test((document.querySelector("#addSheet .add-msg") || {}).textContent || ""),
+    () => /isn't an Our Era Comms book/.test((document.querySelector("#addSheet .add-msg") || {}).textContent || ""),
     null, { timeout: 15000 });
   assert.equal((await page.locator("#addSheet .add-msg").textContent()).trim(),
-    "That file isn't a New ERA book.");
+    "That file isn't an Our Era Comms book.");
   assert.equal(await page.locator("#addSheet").count(), 1, "the sheet stayed open");
   assert.equal(await page.locator("#addSheet .add-source").count(), 1,
     "…and they can pick another file");
@@ -350,7 +350,7 @@ test("no content folder on this computer: the sentence, and the way to fix it", 
   const { ctx, page } = await makePage({ routes: (c) =>
     c.route("**/books/import**", r => r.fulfill({ status: 409, contentType: "application/json",
       body: JSON.stringify({ error: "needs-local-drive", settings: "/settings/#integrations",
-        message: "New ERA keeps books in the family's content folder in Google Drive, so every device gets them. Set up your content folder first." }) })) });
+        message: "Our Era Comms keeps books in the family's content folder in Google Drive, so every device gets them. Set up your content folder first." }) })) });
   await openSheet(page);
   await page.locator("#addFile").setInputFiles(ERABOOK);
   await page.waitForFunction(

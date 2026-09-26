@@ -346,7 +346,7 @@ test("yt-dlp stopping non-zero surfaces a human message and leaves the manifest 
 });
 
 // Bug 5 (VM QA 9/5). From a datacenter IP YouTube answers with its bot check,
-// and the board sheet showed the whole of it — "New ERA could not add that
+// and the board sheet showed the whole of it — "Our Era Comms could not add that
 // song. ERROR: [youtube] XqZsoesa55w: Sign in to confirm you're not a bot. Use
 // --cookies-from-browser or --cookies for the authentication. See https://…" —
 // truncated mid-word, at a family. The hub still keeps that line, because
@@ -363,7 +363,7 @@ test("yt-dlp's bot check reaches the family as one sentence, and the raw line st
 
   assert.match(last.error, /Sign in to confirm/, "the operator's copy keeps yt-dlp's own words");
   assert.equal(last.message,
-    "YouTube would not let New ERA fetch that one from here. Try another link, or add the song from an MP3 in the family's music folder.",
+    "YouTube would not let Our Era Comms fetch that one from here. Try another link, or add the song from an MP3 in the family's music folder.",
     "and the family gets the sentence for THIS failure, not the generic one");
   assert.ok(!/http/i.test(last.message), "no address in what a family reads");
   assert.ok(!last.message.includes("--"), "no command-line flag either");
@@ -396,11 +396,11 @@ test("every yt-dlp failure has a family sentence, and an unknown one still says 
      "This video is available in Sweden.\n" +
      "You might want to use a VPN or a proxy server (with --proxy) to workaround.", COUNTRY],
     ["ERROR: unable to download webpage: <urlopen error [Errno -2] Name or service not known (getaddrinfo failed)>",
-     "New ERA could not reach the internet to fetch it. Check the connection and try again."],
+     "Our Era Comms could not reach the internet to fetch it. Check the connection and try again."],
     ["ERROR: Unsupported URL: https://example.com/not/a/video",
-     "New ERA does not know how to fetch a song from that link. Paste the video's own address."],
+     "Our Era Comms does not know how to fetch a song from that link. Paste the video's own address."],
     ["ERROR: [youtube] abc: something nobody has ever seen before",
-     "New ERA could not add that song. Try again, or try another link."],
+     "Our Era Comms could not add that song. Try again, or try another link."],
   ];
   for (const [stderr, want] of cases) {
     ctl({ mode: "fail-resolve", id: "nope", title: "Nope", duration: 1, stderr });
@@ -432,7 +432,7 @@ test("the hub's own refusals reach the sheet in the hub's own words, not flatten
     [{ mode: "no-audio", id: "own1", title: "Own Words", duration: 9 }, { url },
      "the download finished but left no audio file"],
     [{ mode: "corrupt-manifest", id: "own1", title: "Own Words", duration: 9 }, { url },
-     "New ERA could not read the list of songs just now. Try again in a minute."],
+     "Our Era Comms could not read the list of songs just now. Try again in a minute."],
   ];
   for (const [state, body, want] of cases) {
     ctl(state);
@@ -475,7 +475,7 @@ test("a re-add whose download fails leaves the song the family already had", asy
 // swallowed as "no songs yet", and the next add wrote the file back with one
 // song in it. A half-synced file (Google Drive for Desktop) or a Windows
 // EBUSY/EPERM is exactly that shape.
-test("a song list New ERA cannot read is refused, never rewritten", async () => {
+test("a song list Our Era Comms cannot read is refused, never rewritten", async () => {
   const file = path.join(MUSIC, "manifest.json");
   const good = fs.readFileSync(file);
   const half = '{"schemaVersion":1,"songs":[{"id":"let-it-go"';

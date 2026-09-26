@@ -849,7 +849,7 @@ test("a page opened while the run is going does not hand back the money button",
   book("Mid Run", ["one", "two"]);
   const { ctx, page } = await review("mid-run", { hook: midRun("mid-run", { building: true, done: 1 }) });
   // The book is quotable and the price is on the button — and it is still dead,
-  // because New ERA is spending on this very book right now. A reload is the
+  // because Our Era Comms is spending on this very book right now. A reload is the
   // one way back to an enabled button, and it must not be a way to pay twice.
   await page.waitForFunction(() => /\$/.test(document.getElementById("animate").textContent));
   assert.equal(await page.locator("#animate").isDisabled(), true);
@@ -1196,8 +1196,8 @@ test("every provider call the whole suite made went to the stand-in, and to noth
 
 // Spec §12: "every sentence that promised an automatic start goes, and a test
 // asserts no card promises one." This page kept the last two of them — "Waiting
-// to start — New ERA looks for new photos every few minutes" under a book on
-// its way in, and "Set that up there and New ERA starts on its own" on the card
+// to start — Our Era Comms looks for new photos every few minutes" under a book on
+// its way in, and "Set that up there and Our Era Comms starts on its own" on the card
 // a hub with no Drive folder shows. Nothing in the hub starts a book on a clock
 // any more (the scan claims no inbox, gathers no pile), so both were promises
 // only a grown-up's tap could keep. Read off the page as served, so the copy is

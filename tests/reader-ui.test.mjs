@@ -238,7 +238,7 @@ test("the bar is the same strip on the shelf and inside a book, and the app sits
 // where it goes at the moment she uses it and the tile that carried the promise
 // is gone. What is pinned is the behaviour — it POSTs /kiosk/exit exactly once
 // and follows the hub's answer: "closed" = ERAgaze took the screen, stay put;
-// anything else (or no hub) = New ERA's home.
+// anything else (or no hub) = the Our Era Comms home.
 test("🚪: silent chrome that POSTs /kiosk/exit and follows the answer (closed stays, home navigates)", async () => {
   const setExit = (v) => fetch(`${BASE}/settings`, { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ exitTo: v }) });
@@ -1308,7 +1308,7 @@ test("a book queued behind another on this computer offers nothing to press", as
 
 // EVERY SENTENCE THAT PROMISED AN AUTOMATIC START GOES (spec §12). The scan
 // claims nothing now, so "this book starts in about 10 minutes", "building
-// starts about 10 minutes after the last photo arrives" and "New ERA makes the
+// starts about 10 minutes after the last photo arrives" and "Our Era Comms makes the
 // book by itself" were all the hub promising something it had stopped doing.
 test("no card on this shelf promises a book that starts by itself", async () => {
   // The three sentences by name, not "any mention of time": a book that is

@@ -189,7 +189,7 @@ test("a second check is a no-op: up-to-date", async () => {
 
 // Settings has a "Check for updates now" button (dad 9/3: a hub that has been
 // up since morning only notices an afternoon release at its 6-hour tick, and
-// closing/reopening New ERA does not restart the hub). The button POSTs the
+// closing/reopening Our Era Comms does not restart the hub). The button POSTs the
 // same route as the timer and must have a plain-English line for every
 // status the route can answer — an unknown status falls into the generic
 // "couldn't fetch" line, never a blank card.

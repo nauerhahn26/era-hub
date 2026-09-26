@@ -1,4 +1,4 @@
-// pool.js — the family data pool (New ERA shared-data contract, v1).
+// pool.js — the family data pool (Our Era Comms shared-data contract, v1).
 // A directory laid out so ANY folder-syncer (Google Drive for desktop,
 // Dropbox, Syncthing, rsync) can carry it safely:
 //   pool/

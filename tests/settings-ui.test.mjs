@@ -1495,7 +1495,7 @@ test("a book waiting on a person can be started by hand", async () => {
   await ctx.close();
 });
 
-test("a book New ERA named itself offers the rename, and says how to split it", async () => {
+test("a book Our Era Comms named itself offers the rename, and says how to split it", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
     jobs: [bookJob({ title: "New book 2026-09-07", autoTitle: true })] }));
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
@@ -1519,7 +1519,7 @@ test("the rename box posts the new name and shows the hub's own refusal", async 
   await page.route("**/content/rename", (r) => {
     sent = JSON.parse(r.request().postData());
     r.fulfill({ status: 400, contentType: "application/json",
-                body: JSON.stringify({ error: "New ERA is working on this book right now — try again in a minute." }) });
+                body: JSON.stringify({ error: "Our Era Comms is working on this book right now — try again in a minute." }) });
   });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');

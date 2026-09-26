@@ -1,4 +1,4 @@
-// era-hub server — serves the New ERA app modules + local APIs (settings, TTS
+// era-hub server — serves the Our Era Comms app modules + local APIs (settings, TTS
 // proxy/cache, prediction, logging, board recipes). Local-first: binds
 // 127.0.0.1 unless ERA_BIND says otherwise.
 //   node server.js [port]     (default 8377)
@@ -487,7 +487,7 @@ function appShortcut(app, enabled) {
 }
 // The boot pass (rename spec R1): every link the hub owns — the home door,
 // each enabled app, the engine's Startup link when it is installed — is
-// rewritten with the current folder and titles, and the old "New ERA.lnk"
+// rewritten with the current folder and titles, and the old-name home link
 // goes. After an installer or runbook folder move this is what repoints them.
 function reconcileBootShortcuts() {
   const enabled = loadEnabledApps();
@@ -1324,7 +1324,7 @@ function pushReaderDwell(ms) {
 }
 
 // Where an app's door goes (Settings): "tdsnap" hands the screen to the
-// engine's ForegroundApp (TD Snap on Ellie's device); "home" stays in New ERA.
+// engine's ForegroundApp (TD Snap on Ellie's device); "home" stays in Our Era Comms.
 function exitTarget() {
   try {
     const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
@@ -1441,7 +1441,7 @@ function ownDoor(req, res) {
   if (type.startsWith("application/json") && (!site || site === "same-origin" || site === "none"))
     return true;
   res.writeHead(403, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: "That came from somewhere else, so New ERA did not do it." }));
+  res.end(JSON.stringify({ error: "That came from somewhere else, so Our Era Comms did not do it." }));
   return false;
 }
 
@@ -1588,7 +1588,7 @@ const server = http.createServer((req, res) => {
         // music loudness cap, % of speaker volume (Songs Board; dad 8/24)
         if (typeof inc.musicVolCap === "number")
           s.musicVolCap = Math.max(1, Math.min(100, Math.round(inc.musicVolCap)));
-        // where every app's door goes (dad 9/3): her talker, or New ERA's home
+        // where every app's door goes (dad 9/3): her talker, or the Our Era Comms home
         if (inc.exitTo === "tdsnap" || inc.exitTo === "home") s.exitTo = inc.exitTo;
         // how long the board's 🔒 stops music and movies for (dad 9/14), and
         // the passcode that ends it early. 0 = until a grown-up unlocks it.
@@ -1968,7 +1968,7 @@ const server = http.createServer((req, res) => {
       try { out = musicAdd.add(JSON.parse(body)); }
       catch {
         res.writeHead(400, { "Content-Type": "application/json" })
-           .end(JSON.stringify({ error: "bad-request", message: "New ERA could not read that request." }));
+           .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
         return;
       }
       if (out.error) {
@@ -2000,7 +2000,7 @@ const server = http.createServer((req, res) => {
       try { parsed = JSON.parse(body); }
       catch {
         res.writeHead(400, { "Content-Type": "application/json" })
-           .end(JSON.stringify({ error: "bad-request", message: "New ERA could not read that request." }));
+           .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
         return;
       }
       musicAdd.order(parsed).then(out => {
@@ -2020,7 +2020,7 @@ const server = http.createServer((req, res) => {
         // the target), so say so rather than leaving a spinner turning.
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "write-failed",
-                                 message: "New ERA could not save the new order. Try again." }));
+                                 message: "Our Era Comms could not save the new order. Try again." }));
       });
     });
     return;
@@ -2052,7 +2052,7 @@ const server = http.createServer((req, res) => {
       try { parsed = JSON.parse(body); }
       catch {
         res.writeHead(400, { "Content-Type": "application/json" })
-           .end(JSON.stringify({ error: "bad-request", message: "New ERA could not read that request." }));
+           .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
         return;
       }
       moviesAdd.add(parsed).then(out => {
@@ -2072,7 +2072,7 @@ const server = http.createServer((req, res) => {
         // The catalog keeps whatever it had: writeAtomic never opens the target.
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "write-failed",
-                                 message: "New ERA could not save that film. Try again." }));
+                                 message: "Our Era Comms could not save that film. Try again." }));
       });
     });
     return;
@@ -2116,14 +2116,14 @@ const server = http.createServer((req, res) => {
         if (!e || e.code !== "ENOENT") {
           res.writeHead(409, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "config-unreadable",
-            message: "New ERA could not read the saved keys just now. Try again in a minute." }));
+            message: "Our Era Comms could not read the saved keys just now. Try again in a minute." }));
           return;
         }
       }
       if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) {
         res.writeHead(409, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "config-unreadable",
-          message: "New ERA could not read the saved keys just now. Try again in a minute." }));
+          message: "Our Era Comms could not read the saved keys just now. Try again in a minute." }));
         return;
       }
       try {
@@ -2150,7 +2150,7 @@ const server = http.createServer((req, res) => {
       } catch {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "write-failed",
-                                 message: "New ERA could not save that key. Try again." }));
+                                 message: "Our Era Comms could not save that key. Try again." }));
         return;
       }
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -2177,7 +2177,7 @@ const server = http.createServer((req, res) => {
       try { parsed = JSON.parse(body); }
       catch {
         res.writeHead(400, { "Content-Type": "application/json" })
-           .end(JSON.stringify({ error: "bad-request", message: "New ERA could not read that request." }));
+           .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
         return;
       }
       const b = parsed && typeof parsed === "object" ? parsed : {};
@@ -2316,7 +2316,7 @@ const server = http.createServer((req, res) => {
     const site = req.headers["sec-fetch-site"];
     if (site && site !== "same-origin" && site !== "none") {
       res.writeHead(403, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "That came from somewhere else, so New ERA did not do it." }));
+      res.end(JSON.stringify({ error: "That came from somewhere else, so Our Era Comms did not do it." }));
       return;
     }
     // §9's only seam: one source today, and a second one is a new row in the
@@ -2436,7 +2436,7 @@ const server = http.createServer((req, res) => {
       if (typeof pack !== "string" || !Object.prototype.hasOwnProperty.call(packs.PACKS, pack)) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "unknown-pack",
-                                 message: "New ERA does not know that add-on." }));
+                                 message: "Our Era Comms does not know that add-on." }));
         return;
       }
       if (packs.packInstalled(__dirname, pack)) {
@@ -2603,7 +2603,7 @@ const server = http.createServer((req, res) => {
       if (!cfg) {
         res.writeHead(409, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "config-unreadable",
-          message: "New ERA could not read the saved keys just now. Try again in a minute." }));
+          message: "Our Era Comms could not read the saved keys just now. Try again in a minute." }));
         return;
       }
       const price = aiConfig.DEFAULT_CLIP_PRICE;
@@ -2614,7 +2614,7 @@ const server = http.createServer((req, res) => {
       const failedWrite = () => {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "write-failed",
-                                 message: "New ERA could not save that key. Try again." }));
+                                 message: "Our Era Comms could not save that key. Try again." }));
       };
       // An empty box is a parent taking the key back out: the role goes away
       // whole, so nothing downstream can read a blank key as half a key.
@@ -2655,7 +2655,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   // ---- the door, decided in one place (dad 9/3: "configure where you
-  // return to when an app closes — TD Snap or New ERA"). Every app's door
+  // return to when an app closes — TD Snap or Our Era Comms"). Every app's door
   // POSTs here and follows the answer: "closed" = the engine took the screen
   // (kiosk closing, TD Snap coming forward); "home" = navigate to /home/ in
   // this window. Settings > exitTo: "tdsnap" (default) | "home"; with no
@@ -2864,7 +2864,7 @@ const server = http.createServer((req, res) => {
       // words — the sheet prints whatever comes back, so a code word here is a
       // code word on the board.
       const no = (sentence) => say(400, { error: sentence });
-      const UNKNOWN = "New ERA does not know which piece of clothing that is.";
+      const UNKNOWN = "Our Era Comms does not know which piece of clothing that is.";
       let b;
       try { b = JSON.parse(body); } catch { return no("That edit did not arrive in one piece — try again."); }
       if (!b || typeof b !== "object" || Array.isArray(b)) return no("That edit did not say what to change.");
@@ -2875,7 +2875,7 @@ const server = http.createServer((req, res) => {
       const fields = {};
       if ("category" in b) {
         if (typeof b.category !== "string" || !CATEGORIES.has(b.category))
-          return no("That is not a kind of clothing New ERA knows about.");
+          return no("That is not a kind of clothing Our Era Comms knows about.");
         fields.category = b.category;
       }
       if ("occasion" in b) {
@@ -3334,7 +3334,7 @@ server.on("listening", () => {
   // welcome wizard: the timers wait for a profile (leg B, 9/3)
   updater.start(PORT, () => HAS_PROFILE);
   // THE THIRD DOOR onto the family's Drive folder, and the only one with no
-  // tap behind it: drive.js adopts a "New ERA Content" a mount already holds
+  // tap behind it: drive.js adopts a content folder a mount already holds
   // (dad's tablet 9/15 — Drive signed in, the folder fully synced down, every
   // app empty because folderPath was only ever written by a tap in Settings and
   // that was the family's SECOND device). The two Settings doors re-open the

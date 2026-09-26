@@ -103,7 +103,7 @@ test("POST /kiosk/close answers ok and never throws", async () => {
 });
 
 // The door, decided in one place (dad 9/3: "configure where you return to
-// when an app closes — TD Snap or New ERA"). Every app POSTs /kiosk/exit and
+// when an app closes — TD Snap or Our Era Comms"). Every app POSTs /kiosk/exit and
 // follows the answer; the setting round-trips through /settings.
 test("Settings exitTo round-trips and rejects junk", async () => {
   const s0 = await (await fetch(`${BASE}/settings`)).json();
@@ -126,7 +126,7 @@ test("POST /kiosk/exit → home when no engine answers (TD Snap chosen but unrea
   assert.equal((await (await fetch(`${BASE}/settings`)).json()).doorGoes, "home", "no engine on the bus: doorGoes=home even though exitTo=tdsnap");
 });
 
-test("POST /kiosk/exit → closed when the engine takes the screen; → home when Settings says New ERA", async () => {
+test("POST /kiosk/exit → closed when the engine takes the screen; → home when Settings says Our Era Comms", async () => {
   // a stand-in ERAgaze on its fixed port; skip (not fail) if a real one holds it
   const http = await import("node:http");
   const hits = [];
@@ -150,7 +150,7 @@ test("POST /kiosk/exit → closed when the engine takes the screen; → home whe
     const r2 = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
     assert.deepEqual(await r2.json(), { action: "home" });
     await new Promise((res) => setTimeout(res, 200));
-    assert.deepEqual(hits, ["/app/park"], "New ERA: no hand-over, only the park override is cleared");
+    assert.deepEqual(hits, ["/app/park"], "Our Era Comms: no hand-over, only the park override is cleared");
   } finally {
     engine.close();
     await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },

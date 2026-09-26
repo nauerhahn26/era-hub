@@ -155,9 +155,9 @@ function chooseAdapter(cfg, held) {
 // sentence, in the words a parent reads, naming where to fix it and naming the
 // thing that already works.
 const HINTS = {
-  none: "New ERA can look films up by name once a grown-up adds a TMDB key in Settings. " +
+  none: "Our Era Comms can look films up by name once a grown-up adds a TMDB key in Settings. " +
         "Until then, paste the film's link and the tile still goes up.",
-  tmdb: "New ERA can say where a film streams, but not open it directly. Add the optional " +
+  tmdb: "Our Era Comms can say where a film streams, but not open it directly. Add the optional " +
         "Watchmode key in Settings for a tile that plays, or paste the film's link.",
   watchmode: "",
 };
@@ -281,7 +281,7 @@ async function getJson(href, headers, deadline) {
   const timer = setTimeout(() => ctl.abort(), left);
   try {
     const r = await fetch(href, { signal: ctl.signal, redirect: "manual",
-                                  headers: { "User-Agent": "New ERA hub (family use)",
+                                  headers: { "User-Agent": "Our Era Comms hub (family use)",
                                              Accept: "application/json", ...(headers || {}) } });
     if (!r.ok) { if (r.body) r.body.cancel().catch(() => {}); return null; }
     const claimed = Number(r.headers.get("content-length"));

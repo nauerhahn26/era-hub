@@ -220,7 +220,7 @@ function buildingWords(j) {
   // ("Building starts about ten minutes after the last photo arrives") was the
   // hub promising a start it stopped making: the scan claims nothing now.
   if (j.state === "inbox")
-    return { head: "Getting ready…", note: "New ERA has started on this book." };
+    return { head: "Getting ready…", note: "Our Era Comms has started on this book." };
   if (j.state === "published" || j.state === "animating" || j.state === "done")
     return { head: "Nearly ready", note: "This book is on its way to the shelf." };
   const p = j.progress || {};
@@ -312,7 +312,7 @@ function paintEmpty() {
   $("shelfEmpty").hidden = !nothing;
   if (!nothing) return;
   const set = S.drive === true;
-  // …and the second half of that sentence is no longer "New ERA makes the book
+  // …and the second half of that sentence is no longer "Our Era Comms makes the book
   // by itself", because it does not: a pile of photos waits on this shelf until
   // a grown-up taps Build on the computer that will do the work (spec §12).
   $("shelfEmptyLine").textContent = set

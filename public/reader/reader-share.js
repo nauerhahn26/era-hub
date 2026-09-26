@@ -82,8 +82,8 @@
   // The sentences. Every refusal a parent reads comes from the HUB (books-share.js
   // owns them, and it knows why better than we do); these two are for the states
   // the hub never hears about.
-  var OFFLINE = "Couldn't reach New ERA — try again in a moment.";
-  var UNKNOWN = "Something went wrong with that book, so New ERA did not send it.";
+  var OFFLINE = "Couldn't reach Our Era Comms — try again in a moment.";
+  var UNKNOWN = "Something went wrong with that book, so Our Era Comms did not send it.";
   // books-share.js's own words for a book with no manifest to walk. Said here
   // rather than fetched because there is nothing to ask the hub about: the card
   // itself is the answer, and a grown-up should not wait on a round trip to be

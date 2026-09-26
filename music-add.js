@@ -118,7 +118,7 @@ function run(bin, args) {
 function why(what, r) {
   // KILL_MS fired: there is no last line worth having, and the close code is
   // null. Say the thing that actually happened.
-  if (r.killed) return what + ": it took too long, so New ERA stopped it";
+  if (r.killed) return what + ": it took too long, so Our Era Comms stopped it";
   const line = String(r.stderr || "").split("\n").map(s => s.trim())
     .filter(Boolean).pop() || "";
   const tail = redact(line).replace(/\s+/g, " ").slice(0, 200);
@@ -126,7 +126,7 @@ function why(what, r) {
 }
 
 // The same failure said again, for the FAMILY. VM QA 9/5 added a YouTube link
-// from a datacenter IP and the board sheet showed the lot: "New ERA could not
+// from a datacenter IP and the board sheet showed the lot: "Our Era Comms could not
 // add that song. ERROR: [youtube] XqZsoesa55w: Sign in to confirm you're not a
 // bot. Use --cookies-from-browser or --cookies for the authentication. See
 // https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-t" — cut off
@@ -153,7 +153,7 @@ function why(what, r) {
 // an OwnWords so the catch in add() hands it over untouched (see below).
 const PLAIN = [
   [/Sign in to confirm you.re not a bot|confirm your age|login required/i,
-   "YouTube would not let New ERA fetch that one from here. Try another link, or add the song from an MP3 in the family's music folder."],
+   "YouTube would not let Our Era Comms fetch that one from here. Try another link, or add the song from an MP3 in the family's music folder."],
   // The two real country lines (yt_dlp/extractor/youtube/_video.py): "…who
   // has blocked it in your country on copyright grounds" arrives on one line
   // with its "Video unavailable." prefix, and "The uploader has not made this
@@ -167,13 +167,13 @@ const PLAIN = [
   [/Video unavailable|Private video|This video is not available|removed/i,
    "That video is not available any more. Try another link."],
   [/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|Unable to download|network|offline/i,
-   "New ERA could not reach the internet to fetch it. Check the connection and try again."],
+   "Our Era Comms could not reach the internet to fetch it. Check the connection and try again."],
   [/Unsupported URL|is not a valid URL|No video formats/i,
-   "New ERA does not know how to fetch a song from that link. Paste the video's own address."],
+   "Our Era Comms does not know how to fetch a song from that link. Paste the video's own address."],
   [/timed out|took too long/i,
    "That took too long to download. Try again, or try a shorter video."],
 ];
-const PLAIN_LAST = "New ERA could not add that song. Try again, or try another link.";
+const PLAIN_LAST = "Our Era Comms could not add that song. Try again, or try another link.";
 function plainly(raw) {
   const s = String(raw == null ? "" : raw);
   for (const [re, sentence] of PLAIN) if (re.test(s)) return sentence;
@@ -287,7 +287,7 @@ function readManifest(dir) {
 
 // The one refusal both doors give for it, in a parent's words.
 const UNREADABLE = { error: "manifest-unreadable",
-  message: "New ERA could not read the list of songs just now. Try again in a minute." };
+  message: "Our Era Comms could not read the list of songs just now. Try again in a minute." };
 
 // Upsert by id, atomically (content-store's tmp + rename, so a device never
 // mirrors half a manifest). A song added twice KEEPS the rank it has: its tile
@@ -403,7 +403,7 @@ function add(body) {
   const dir = musicDir();
   if (!dir)
     return { error: "needs-local-drive",
-             message: "New ERA saves new songs into the family's Drive folder, so every device gets them. Choose that folder in Settings first." };
+             message: "Our Era Comms saves new songs into the family's Drive folder, so every device gets them. Choose that folder in Settings first." };
   // Refuse BEFORE the 202: a library we cannot read is not a library we may
   // write a single song over (see readManifest).
   if (readManifest(dir).unreadable) return UNREADABLE;
@@ -454,11 +454,11 @@ async function order(body) {
   // ever spelled into a path, but an id that could not be a slug cannot be one
   // of ours either, so it is refused before the manifest is even read.
   if (!ids || !ids.every(id => typeof id === "string" && SLUG_RE.test(id)))
-    return { error: "bad-ids", message: "New ERA could not read that new order. Reload the board and try again." };
+    return { error: "bad-ids", message: "Our Era Comms could not read that new order. Reload the board and try again." };
   const dir = musicDir();
   if (!dir)
     return { error: "needs-local-drive",
-             message: "New ERA keeps the songs in the family's Drive folder, so every device gets the same order. Choose that folder in Settings first." };
+             message: "Our Era Comms keeps the songs in the family's Drive folder, so every device gets the same order. Choose that folder in Settings first." };
   // An add in flight is about to rewrite this same file: let it land first
   // rather than race it and lose one of the two writes.
   if (running)
@@ -478,7 +478,7 @@ async function order(body) {
     // which tile it dragged, and a reload is the whole fix.
     if (!s)
       return { error: "unknown-song",
-               message: "That order names a song New ERA does not have. Reload the board and try again." };
+               message: "That order names a song Our Era Comms does not have. Reload the board and try again." };
     if (seen.has(id))
       return { error: "bad-ids", message: "That order names the same song twice. Reload the board and try again." };
     seen.add(id);
@@ -486,7 +486,7 @@ async function order(body) {
   }
   if (ordered.length !== songs.length)
     return { error: "incomplete",
-             message: "That order left songs out, so New ERA changed nothing. Reload the board and try again." };
+             message: "That order left songs out, so Our Era Comms changed nothing. Reload the board and try again." };
 
   const next = ordered.map((s, i) => ({ ...s, rank: i + 1 }));
   writeAtomic(path.join(dir, "manifest.json"), { ...m, schemaVersion: 1, songs: next });

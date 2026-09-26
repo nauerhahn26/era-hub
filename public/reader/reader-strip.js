@@ -54,11 +54,11 @@
 (function () {
   "use strict";
 
-  var OFFLINE = "Couldn't reach New ERA — try again in a moment.";
+  var OFFLINE = "Couldn't reach Our Era Comms — try again in a moment.";
   // A refusal nobody wrote a sentence for must STILL be a sentence. An older
   // hub, a proxy, a bug: a parent gets a line they can act on, never an error
   // object on a six-year-old's bookshelf.
-  var UNKNOWN = "New ERA could not add that book. Ask them to send it again.";
+  var UNKNOWN = "Our Era Comms could not add that book. Ask them to send it again.";
 
   var sheet = null;
   var gridWatch = null;

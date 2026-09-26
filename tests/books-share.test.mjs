@@ -201,7 +201,7 @@ function rawZip(entries, opts) {
 
 const envelope = (over) => ({ name: ".erabook.json", data: Buffer.from(JSON.stringify({
   v: 1, title: "Luna the Fox", slug: "luna-the-fox", pages: 3,
-  exportedAt: "2026-08-24T00:00:00Z", from: { app: "New ERA", build: "20260922.1200" },
+  exportedAt: "2026-08-24T00:00:00Z", from: { app: "Our Era Comms", build: "20260922.1200" },
   ...(over || {}),
 })) });
 
@@ -265,7 +265,7 @@ test("a manifest that NAMES a file under sources/ is refused, not obeyed", () =>
   });
   const out = share.exportBook(slugOf("Leaky Book"));
   assert.equal(out.error, "private-file");
-  assert.match(out.message, /New ERA/);
+  assert.match(out.message, /Our Era Comms/);
   fs.rmSync(path.join(SHELF, "Leaky Book"), { recursive: true, force: true });
 });
 
@@ -453,27 +453,27 @@ function refused(file, code, sentence) {
   return r;
 }
 
-test("a file that is not a zip at all: \"That file isn't a New ERA book.\"", () => {
+test("a file that is not a zip at all: \"That file isn't an Our Era Comms book.\"", () => {
   const f = path.join(scratch("raw"), "holiday.jpg");
   fs.writeFileSync(f, JPEG(3));
-  refused(f, "not-a-zip", "That file isn't a New ERA book.");
+  refused(f, "not-a-zip", "That file isn't an Our Era Comms book.");
 });
 
-test("a zip with no envelope in it: \"That file isn't a New ERA book.\"", () => {
+test("a zip with no envelope in it: \"That file isn't an Our Era Comms book.\"", () => {
   const f = rawFile([
     { name: "manifest.json", data: Buffer.from("{}") },
     { name: "cover.jpg", data: JPEG(1) },
   ]);
-  refused(f, "no-envelope", "That file isn't a New ERA book.");
+  refused(f, "no-envelope", "That file isn't an Our Era Comms book.");
 });
 
-test("an envelope from a newer New ERA: update this computer", () => {
+test("an envelope from a newer version of Our Era Comms: update this computer", () => {
   const f = rawFile([
     envelope({ v: 2 }),
     { name: "manifest.json", data: Buffer.from("{}") },
   ]);
   refused(f, "future-version",
-    "That book was made by a newer New ERA. Update this computer and try again.");
+    "That book was made by a newer version of Our Era Comms. Update this computer and try again.");
 });
 
 test("a manifest that does not parse: \"That book's file is damaged\"", () => {
@@ -642,7 +642,7 @@ test("an unexpected fault while sending is a sentence, not a stack", () => {
   try { assert.doesNotThrow(() => { out = share.exportBook(slug); }); }
   finally { booksIndex.dirFor = real; }
   assert.equal(out.error, "send-failed");
-  assert.match(out.message, /New ERA did not send it\.$/);
+  assert.match(out.message, /Our Era Comms did not send it\.$/);
   fs.rmSync(path.join(SHELF, "Faulty Book"), { recursive: true, force: true });
 });
 
