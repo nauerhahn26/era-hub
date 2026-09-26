@@ -445,6 +445,7 @@ async function talkPage(opts = {}) {
     const answered = r.page.waitForResponse((res) => res.url().includes("/kiosk/pause"));
     await r.page.locator("#barTalk").click();
     await answered;
+    await r.page.waitForTimeout(100);   // the bar reads the reply's body a tick after it lands (9/26)
   };
   // TD Snap gives the screen back: the launcher's /kiosk/resume line
   // re-foregrounds this kiosk, and the page hears a visibilitychange.
