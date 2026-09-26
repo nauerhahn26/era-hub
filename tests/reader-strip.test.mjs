@@ -370,8 +370,11 @@ test("a refusal with no sentence in it still says something a parent can read", 
     c.route("**/books/import**", r => r.fulfill({ status: 500, contentType: "text/plain", body: "boom" })) });
   await openSheet(page);
   await page.locator("#addFile").setInputFiles(ERABOOK);
+  // wait past the "Adding Luna the Fox…" progress line: the refusal replaces
+  // it a beat after the 500 lands, and the gate read the progress line (9/26)
   await page.waitForFunction(
-    () => ((document.querySelector("#addSheet .add-msg") || {}).textContent || "").length > 10,
+    () => { const t = ((document.querySelector("#addSheet .add-msg") || {}).textContent || "").trim();
+            return t.length > 10 && !t.endsWith("…"); },
     null, { timeout: 15000 });
   const said = (await page.locator("#addSheet .add-msg").textContent()).trim();
   assert.doesNotMatch(said, /\[object|undefined|500|Error/, said);
