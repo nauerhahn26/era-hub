@@ -43,17 +43,40 @@ Dad: "Why can't we change all paths and just reroute TD Snap links, we have the
 tools." We can. What matters is ORDER, because a board tile that points at a
 folder which does not exist yet is a dead tile on her board (9/16 lesson).
 
-Phase R1 (this signed release): every user-visible name (section above).
-Engine default BaseDir becomes `C:\Users\Public\ERAgaze`; on first run it
-migrates `ERAgaze.json`, the tile launchers and logs from `RaeGaze` if present
-and leaves a directory junction `RaeGaze → ERAgaze` so old tiles still work.
-Installer InstallDir becomes `%LOCALAPPDATA%\Our Era Comms`; self-update on an
-existing device moves the tree (with `data\`) and leaves a junction at the old
-path for the Startup shortcut; the uninstall key becomes `OurEraComms` and the
-installer deletes the `NewERA` key so Apps & features shows one entry. The
-tarball's top folder becomes `our-era-comms/`; pack installs accept either
-name for one release. Old shortcuts (Desktop, Start Menu, Startup) are
-replaced by `Our Era Comms.lnk` at first boot of the new build.
+Phase R1 (this signed release, v0.36.0). Every user-visible name (section
+above). PREFLIGHT 9/26 (update.js:18,124,54): self-update is an IN-PROCESS
+overlay into `__dirname` by the running hub, which then re-spawns itself; a
+process cannot move the folder it runs from, and post-exit batch/PowerShell
+helpers have a Defender history here. So the install folder moves ONLY when
+nothing runs from it:
+  - fresh install: `InstallDir "$LOCALAPPDATA\Our Era Comms"`, uninstall key
+    `OurEraComms`, `Our Era Comms.lnk` on Desktop + Start Menu;
+  - the new installer run over an old install (`.onInit`): stop node.exe and
+    ERAgaze.exe, rename `New ERA` → `Our Era Comms`, junction old → new,
+    delete the `NewERA` key and the old-name .lnk files, then install into
+    the new folder (`data\` rides along; the wizard step is skipped as today);
+  - a device that only self-updates keeps its folder until the installer or
+    the device runbook (ssh: stop hub, move, junction, start from the new
+    start-hub.bat) touches it; the family's three devices get the runbook.
+  - Boot pass (new, server.js): on every boot rewrite every hub-written .lnk
+    (home door, per-app, Startup ERAgaze) with the current `__dirname` and the
+    current titles, and delete `New ERA.lnk` on Desktop/Start Menu/Startup.
+    This also self-heals links after a folder move.
+  - Tarball top folder stays `new-era-suite/` THIS release (installed hubs
+    hard-code it for pack installs, server.js:172,179); server.js learns to
+    accept `our-era-comms/` too, and the folder flips in R3. Asset names
+    (`new-era-suite.tar.gz`, `latest.json`) never change: feed continuity.
+  - latest.json gains `"installer_file"`; build-dist.sh's `--patch` reads it
+    (today it hard-codes New-ERA-Setup.exe, :165) so patches under the new
+    installer work.
+  - ERAgaze: default BaseDir `C:\Users\Public\ERAgaze`; at start, if it does
+    not exist and `Public\RaeGaze` does, move it (Directory.Move) and create a
+    junction `RaeGaze` → `ERAgaze` (`cmd /c mklink /J`, no admin needed); the
+    kiosk tag match (:1437-1445, :1534-1538) accepts both names. The .bat tile
+    launchers in aac-board-builder try `%LOCALAPPDATA%\Our Era Comms` first,
+    then `New ERA`; re-scp them in R2.
+  - start-hub.bat / UNINSTALL.bat: names only (paths are `%~dp0`-relative);
+    UNINSTALL.bat also removes the old-name links.
 
 Phase R2 (board job, after all three devices report the R1 build): the
 Dashboard tiles are re-pointed from `RaeGaze\<App>.bat` to `ERAgaze\<App>.bat`
