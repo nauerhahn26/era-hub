@@ -159,6 +159,8 @@ function reconcileApps() {
       .finally(() => { delete appInstalling[app.id]; });
   }
 }
+// Release tarball top folders a pack install accepts, the current name first.
+const SUITE_TOPS = ["new-era-suite", "our-era-comms"];
 async function installPack(app) {
   const os = require("os");
   const { spawnSync } = require("child_process");
@@ -169,15 +171,27 @@ async function installPack(app) {
     const tarball = path.join(stage, "suite.tar.gz");
     fs.writeFileSync(tarball, Buffer.from(await r.arrayBuffer()));
     const paths = packs.packPaths(app.pack);
-    const t = spawnSync("tar", ["-xzf", tarball, "-C", stage,
-      ...paths.map(p => "new-era-suite/" + p)], { windowsHide: true });
-    if (t.status !== 0) throw new Error("extract failed");
+    // The tarball's top folder: new-era-suite/ today, our-era-comms/ from R3
+    // of the rename (spec). tar extracts named members only, so try each name;
+    // then take the single top-level dir that landed, as update.js does.
+    const ex = path.join(stage, "x"); fs.mkdirSync(ex);
+    let t = null;
+    for (const top of SUITE_TOPS) {
+      t = spawnSync("tar", ["-xzf", tarball, "-C", ex,
+        ...paths.map(p => top + "/" + p)], { windowsHide: true });
+      if (t.status === 0) break;
+      fs.rmSync(ex, { recursive: true, force: true }); fs.mkdirSync(ex);
+    }
+    if (!t || t.status !== 0) throw new Error("extract failed");
+    const tops = fs.readdirSync(ex);
+    if (tops.length !== 1) throw new Error("extract: expected one top folder, got " + tops.length);
+    const root = path.join(ex, tops[0]);
     // presence marker (first path) last, so a half-landed pack never counts as installed
     for (const p of [...paths.slice(1), paths[0]]) {
       const parts = p.split("/");
       const dest = path.join(__dirname, ...parts);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.cpSync(path.join(stage, "new-era-suite", ...parts), dest, { recursive: true, force: true });
+      fs.cpSync(path.join(root, ...parts), dest, { recursive: true, force: true });
     }
     console.log("[apps] installed pack " + app.pack + " (" + paths.join(", ") + ")");
   } finally {

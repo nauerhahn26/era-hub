@@ -23,7 +23,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-rec-"));
 const INSTALL = path.join(TMP, "install");
 const DATA = path.join(TMP, "data");
 const READER = path.join(INSTALL, "public", "reader", "index.html");
-let feed, child, log = "";
+let feed, child, log = "", tarball;
 
 // The hub's own modules, read from build-payload.sh's copy list instead of
 // duplicated here. A hand-kept fourth copy of that list is a fourth way for a
@@ -79,7 +79,7 @@ before(async () => {
   fs.mkdirSync(path.join(rel, "public", "reader"), { recursive: true });
   fs.writeFileSync(path.join(rel, "public", "reader", "index.html"), "<p>reader</p>");
   execFileSync("tar", ["-czf", path.join(TMP, "suite.tar.gz"), "-C", path.join(TMP, "rel"), "new-era-suite"]);
-  const tarball = fs.readFileSync(path.join(TMP, "suite.tar.gz"));
+  tarball = fs.readFileSync(path.join(TMP, "suite.tar.gz"));
   feed = http.createServer((req, res) => {
     if (req.url === "/new-era-suite.tar.gz") { res.writeHead(200).end(tarball); return; }
     res.writeHead(404).end();
@@ -136,4 +136,21 @@ test("Settings: turning the engine off stops it", async () => {
     body: JSON.stringify({ id: "eragaze", enabled: false }) });
   assert.equal(r.status, 204);
   assert.match(log, /\[gaze\] turned off/, log);
+});
+
+// Rename spec R1: this release still ships new-era-suite/ as the tarball's top
+// folder, but R3 flips it to our-era-comms/ — and every installed hub pulls
+// packs from whatever the feed holds, so it must take either name.
+test("a pack installs from a tarball whose top folder is our-era-comms/", async () => {
+  await stop();
+  const rel = path.join(TMP, "rel2", "our-era-comms");
+  fs.mkdirSync(path.join(rel, "public", "reader"), { recursive: true });
+  fs.writeFileSync(path.join(rel, "public", "reader", "index.html"), "<p>reader, renamed</p>");
+  execFileSync("tar", ["-czf", path.join(TMP, "suite2.tar.gz"), "-C", path.join(TMP, "rel2"), "our-era-comms"]);
+  tarball = fs.readFileSync(path.join(TMP, "suite2.tar.gz"));
+  fs.writeFileSync(path.join(DATA, "apps.json"), JSON.stringify({ enabled: ["reader"] }));
+  fs.rmSync(path.dirname(READER), { recursive: true, force: true });
+  await boot();
+  assert.ok(await waitReader(true, 30000), "reader pack installed from the our-era-comms/ tarball — " + log);
+  assert.equal(fs.readFileSync(READER, "utf8"), "<p>reader, renamed</p>");
 });

@@ -269,9 +269,11 @@ test("a loopback POST with {feed} updates from THAT feed, not the default one", 
   const FEED2_PORT = 8412;   // free again: the checkout-hub case above is done
   const PUSHED = "21000101.0000";
   const rel2 = path.join(TMP, "rel2");
-  makeInstall(path.join(rel2, "new-era-suite"), PUSHED, "hello from the pushed build\n");
-  layPacks(path.join(rel2, "new-era-suite"), PUSHED);
-  execFileSync("tar", ["-czf", path.join(TMP, "pushed.tar.gz"), "-C", rel2, "new-era-suite"]);
+  // tar'd under the post-rename top folder (rename spec R1: the release flips
+  // to our-era-comms/ in R3) — the overlay takes whatever single top dir it finds
+  makeInstall(path.join(rel2, "our-era-comms"), PUSHED, "hello from the pushed build\n");
+  layPacks(path.join(rel2, "our-era-comms"), PUSHED);
+  execFileSync("tar", ["-czf", path.join(TMP, "pushed.tar.gz"), "-C", rel2, "our-era-comms"]);
   const tarball2 = fs.readFileSync(path.join(TMP, "pushed.tar.gz"));
   const latest2 = JSON.stringify({ version: "v99.0.1", build: PUSHED,
     sha256: crypto.createHash("sha256").update(tarball2).digest("hex") });
