@@ -302,8 +302,10 @@ test("💬 mid-letter: the prompt waiting behind the echo never speaks over TD S
   await page.locator("#seatA").click();
   await page.locator("#rowBottom .lcell", { hasText: /^b$/ }).first().click();
   await page.waitForFunction(() => window.__release, null, { timeout: 5000 });
+  const answered = page.waitForResponse((res) => res.url().includes("/kiosk/pause"));
   await page.locator("#barTalk").click();       // she reaches for the 💬 mid-echo
-  await page.waitForTimeout(200);
+  await answered;                               // the pause is hers once the hub has answered (9/26:
+  await page.waitForTimeout(200);               // a bare 200 ms lost this race under the gate)
   await page.evaluate(() => window.__release()); // the echo ends under TD Snap
   await page.waitForTimeout(300);
   const said = await page.evaluate(() => window.__said);
