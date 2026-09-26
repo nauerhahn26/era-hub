@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = 8423;       // never live 8377; 8391-8422 held by sibling suites
+const PORT = 8475;       // never live 8377; 8391-8422 held by sibling suites; 8423 was shared with update-boot (moved 9/26)
 const FAKE = 8424;       // stand-in for api.elevenlabs.io
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-settings-ui-"));
@@ -340,6 +340,8 @@ test("the films card takes both keys and never hands either one back (T5.3)", as
   assert.equal(st.deepLinks, true, "the optional key is what buys a tile that plays");
   assert.equal(st.watchmode, true);
   assert.ok(!JSON.stringify(st).includes("watchmode-typed-by-a-parent"));
+  // the status line lands before the save handler clears the box (gate, 9/26)
+  await page.waitForFunction(() => document.getElementById("wmKey").value === "", null, { timeout: 3000 });
   assert.equal(await page.$eval("#wmKey", i => i.value), "",
                "and the box is cleared, so the key is not left on screen");
   await ctx.close();
