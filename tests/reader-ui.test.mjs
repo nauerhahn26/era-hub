@@ -573,7 +573,11 @@ test("💬 while she is already paused hands her pause back, and Read carries on
   await openLuna(page);
   await page.waitForFunction(() => window.Reader.state().audioTime > 0.7, null, { timeout: 8000 });
   await page.locator("#btnRead").click();                    // her own Pause, mid-page
-  await page.waitForFunction(() => window.Reader.state().audio === "paused", null, { timeout: 3000 });
+  // the element pauses synchronously; the pill (and S.paused) follow on the
+  // audio "pause" EVENT a tick later — wait for the pill, or the 💬 below can
+  // land between the two and latch "she was reading" (gate, 9/26)
+  await page.waitForFunction(() => window.Reader.state().audio === "paused" &&
+    /Paused/.test(document.getElementById("pageMeta").textContent), null, { timeout: 3000 });
   const t0 = (await state(page)).audioTime;
   assert.ok(t0 > 0.6, `she stopped part-way through (t=${t0})`);
   assert.match(await page.locator("#pageMeta").textContent(), /Paused/);
