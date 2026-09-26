@@ -176,7 +176,7 @@ while (((Get-Date) - $t0).TotalSeconds -lt 240) {
   $ss = Find-TopWindow @('smartscreen') 'Windows protected your PC'
   if (-not $ss) { $ss = Find-WindowByText 'Windows protected your PC' }
   if ($ss) { break }
-  $inst = Find-TopWindow @() 'New ERA Setup'
+  $inst = Find-TopWindow @() '(Our Era Comms|New ERA) Setup'
   if ($inst) { break }
   Start-Sleep -Milliseconds 1500
 }
@@ -224,7 +224,7 @@ if ($uac) {
 
 $t1 = Get-Date
 while (((Get-Date) - $t1).TotalSeconds -lt 180) {
-  $inst = Find-TopWindow @() 'New ERA Setup'
+  $inst = Find-TopWindow @() '(Our Era Comms|New ERA) Setup'
   if ($inst) { break }
   Start-Sleep -Milliseconds 1500
 }

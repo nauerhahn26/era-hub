@@ -20,16 +20,17 @@ import { execFileSync } from "node:child_process";
 
 const SH = fs.readFileSync(new URL("../tools/vm-e2e.sh", import.meta.url), "utf8");
 const lines = SH.split("\n");
-// the patch pair, which runs before the picker: a patch release re-attaches an
-// older signed installer, so $DIST's own Setup.exe IS what the family runs and
-// leg B starts from it. It also defines PATCH_INSTALLER, which the picker's
-// successors read under `set -u`.
-const patchDetect = lines.findIndex((l) => l.trim().startsWith("PATCH_INSTALLER="));
-const patchPick = lines.findIndex((l) => l.trim().startsWith('if [ -z "$PREV" ] && [ -n "$PATCH_INSTALLER" ]'));
-const patch = [lines[patchDetect], lines[patchPick]].join("\n");
-// the picker: from `if [ -z "$PREV" ]; then` to the `fi` before the file check
-const start = lines.findIndex((l) => l.startsWith('if [ -z "$PREV" ]; then'));
-const end = lines.findIndex((l, i) => i > start && l === "fi");
+// exe_of: an installer is found by the name its own dist's latest.json records
+// (`installer_file`, 9/26 rename: New-ERA-Setup.exe -> Our-Era-Comms-Setup.exe);
+// a dist that predates the field is a New-ERA-Setup.exe cut.
+const exeOf = lines.find((l) => l.startsWith("exe_of() {"));
+// the picker block, between its two marker comments: the candidate's installer
+// name, the patch pair (a patch release re-attaches an older signed installer,
+// so $DIST's own Setup.exe IS what the family runs and leg B starts from it),
+// the live installer release.sh downloaded into $DIST/prev/, and the scan of
+// the other tagged dist dirs.
+const start = lines.findIndex((l) => l.startsWith("# ---- leg B's starting installer"));
+const end = lines.findIndex((l, i) => i > start && l.startsWith("# ---- end of leg B's starting installer"));
 const picker = lines.slice(start, end + 1).join("\n");
 // the banner sits indented in the non---post-publish branch, and the UNTAGGED
 // mark it carries is assembled on the line immediately above it (PREV_NOTE), so
@@ -39,8 +40,10 @@ const noteAt = bannerAt - 1;
 const banner = [lines[noteAt], lines[bannerAt]].map((l) => l.trim()).join("\n");
 
 test("the picker and banner are where this test thinks they are", () => {
-  assert.ok(start > 0 && end > start, "the PREV picker block was found");
-  assert.ok(patchDetect > 0 && patchPick > patchDetect, "the PATCH_INSTALLER pair was found");
+  assert.ok(start > 0 && end > start, "the PREV picker block was found (between its marker comments)");
+  assert.ok(exeOf, "exe_of() is a one-line function the test can lift");
+  assert.match(picker, /^PATCH_INSTALLER=/m, "the patch detection sits inside the block");
+  assert.match(picker, /^CAND_EXE="\$\(exe_of "\$DIST"\)"$/m, "the candidate's installer is named by its own latest.json");
   assert.ok(bannerAt > 0, "the one-line banner naming candidate and previous was found");
   // a reshuffle that moves PREV_NOTE away from the banner must fail here, not
   // as a mystifying empty mark in the run-the-bash tests below
@@ -62,11 +65,14 @@ test("the untagged fallback says so out loud, and the banner never reads like th
 });
 
 // A scratch ROOT with HUB=ROOT/era-hub (a git repo with one tag) and the dist
-// dirs given: each entry is [dirname, tagged]. `latest`, when given, is written
-// into the candidate dir (with a stand-in installer beside it) so the patch pair
-// has something to read. Returns what the picker printed and the PREV it
-// settled on.
-function pick(dists, latest) {
+// dirs given: each entry is [dirname, tagged, installer_file?] — with a third
+// element the dir gets a latest.json naming it and the exe is written under
+// that name. `latest`, when given, is written into the candidate dir (with a
+// stand-in installer beside it, under its installer_file or the old name) so
+// the patch pair has something to read. `prev` puts that file name in
+// $DIST/prev/, where release.sh leaves the live installer. Returns what the
+// picker printed and the PREV it settled on.
+function pick(dists, latest, { prev } = {}) {
   const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "era-vm-e2e-"));
   const HUB = path.join(ROOT, "era-hub");
   fs.mkdirSync(HUB);
@@ -77,19 +83,24 @@ function pick(dists, latest) {
   fs.mkdirSync(DIST, { recursive: true });
   if (latest) {
     fs.writeFileSync(path.join(DIST, "latest.json"), JSON.stringify(latest));
-    fs.writeFileSync(path.join(DIST, "New-ERA-Setup.exe"), "stand-in");
+    fs.writeFileSync(path.join(DIST, latest.installer_file || "New-ERA-Setup.exe"), "stand-in");
+  }
+  if (prev) {
+    fs.mkdirSync(path.join(DIST, "prev"));
+    fs.writeFileSync(path.join(DIST, "prev", prev), "stand-in");
   }
   let t = Date.now() - 60_000 * dists.length;
-  for (const [name, tagged] of dists) {
+  for (const [name, tagged, file] of dists) {
     const d = path.join(ROOT, "dist", "release-" + name);
     fs.mkdirSync(d, { recursive: true });
-    const exe = path.join(d, "New-ERA-Setup.exe");
+    if (file) fs.writeFileSync(path.join(d, "latest.json"), JSON.stringify({ version: name, installer_file: file }));
+    const exe = path.join(d, file || "New-ERA-Setup.exe");
     fs.writeFileSync(exe, "stand-in");
     // oldest first: the script's `ls -dt` sorts the .exe files, not the dirs
     t += 60_000; fs.utimesSync(exe, new Date(t), new Date(t));
     if (tagged) git("tag", name);
   }
-  const script = `set -uo pipefail\nHUB=${JSON.stringify(HUB)}\nROOT=${JSON.stringify(ROOT)}\nDIST=${JSON.stringify(DIST)}\nPREV="" PREV_UNTAGGED=""\nVER=v9 BUILD=b9\n${patch}\n${picker}\n${banner}\n`;
+  const script = `set -uo pipefail\nHUB=${JSON.stringify(HUB)}\nROOT=${JSON.stringify(ROOT)}\nDIST=${JSON.stringify(DIST)}\nPREV="" PREV_UNTAGGED="" PREV_LIVE=""\nVER=v9 BUILD=b9\n${exeOf}\n${picker}\necho "CAND_EXE=$CAND_EXE"\n${banner}\n`;
   const out = execFileSync("bash", ["-c", script], { encoding: "utf8", stdio: "pipe" });
   return { out, ROOT, DIST };
 }
@@ -121,4 +132,54 @@ test("a patch dist starts leg B from its own re-attached installer, and says who
   assert.ok(b.includes("(installer v0.2.0 re-attached)"),
     "and the banner names the cut it was re-attached from: " + b);
   assert.doesNotMatch(out, /WARNING|UNTAGGED/, "nothing fell back: " + out);
+});
+
+// ---- the rename (9/26): installers are found by the name latest.json records ----
+test("a cut whose latest.json names Our-Era-Comms-Setup.exe is found under that name", () => {
+  const { out, ROOT } = pick([["v0.35.0", true], ["v0.36.0", true, "Our-Era-Comms-Setup.exe"]]);
+  assert.match(out, new RegExp("previous = " + ROOT + "/dist/release-v0\\.36\\.0/Our-Era-Comms-Setup\\.exe"), out);
+});
+
+test("a cut that predates installer_file is still found as New-ERA-Setup.exe", () => {
+  const { out, ROOT } = pick([["v0.35.0", true], ["v0.36.0", false, "Our-Era-Comms-Setup.exe"]]);
+  assert.match(out, new RegExp("previous = " + ROOT + "/dist/release-v0\\.35\\.0/New-ERA-Setup\\.exe"), out);
+});
+
+test("the candidate's own installer is the one its latest.json names", () => {
+  const { out } = pick([["v0.35.0", true]], { version: "v0.36.0", build: "b9", installer: "v0.36.0", installer_file: "Our-Era-Comms-Setup.exe" });
+  assert.match(out, /^CAND_EXE=Our-Era-Comms-Setup\.exe$/m, out);
+  const old = pick([["v0.35.0", true]], { version: "v0.35.1", build: "b9", installer: "v0.35.0" });
+  assert.match(old.out, /^CAND_EXE=New-ERA-Setup\.exe$/m, "a feed without the field is an old-name cut: " + old.out);
+});
+
+test("the live installer release.sh left in $DIST/prev/ is leg B's start, and the banner says so", () => {
+  const { out, DIST } = pick([["v0.35.0", true]], { version: "v0.36.0", build: "b9", installer: "v0.36.0", installer_file: "Our-Era-Comms-Setup.exe" },
+    { prev: "New-ERA-Setup.exe" });
+  const b = out.split("\n").find((l) => l.startsWith("== vm-e2e: candidate"));
+  assert.ok(b && b.includes("previous = " + path.join(DIST, "prev", "New-ERA-Setup.exe")), "leg B starts from the live installer: " + b);
+  assert.match(b, /live/i, "and the banner says where it came from: " + b);
+  assert.doesNotMatch(out, /WARNING|UNTAGGED/, "nothing fell back: " + out);
+});
+
+test("a patch dist under a renamed installer re-attaches it by ITS name", () => {
+  const { out, DIST } = pick([["v0.36.0", true]], { version: "v0.36.1", build: "b9", installer: "v0.36.0", installer_file: "Our-Era-Comms-Setup.exe" });
+  const b = out.split("\n").find((l) => l.startsWith("== vm-e2e: candidate"));
+  assert.ok(b && b.includes("previous = " + path.join(DIST, "Our-Era-Comms-Setup.exe")), b);
+});
+
+// leg A's upgrade-over-old step: the rename path only exists for an install
+// made by the OLD installer, so it runs only when release.sh left that exact
+// file in $DIST/prev/, and says plainly when it does not.
+test("the upgrade-over-old step is wired to $DIST/prev/New-ERA-Setup.exe and skips out loud", () => {
+  assert.match(SH, /if \[ -f "\$DIST\/prev\/New-ERA-Setup\.exe" \]/, "gated on that exact file (never a loose *Setup.exe match)");
+  assert.match(SH, /"\$DIST\/prev\/New-ERA-Setup\.exe" root@\$VM_DROPLET:\/root\/qa\/old\.exe/, "shipped to the QA host as old.exe");
+  assert.match(SH, /VM_UPGRADE_OLD/, "leg A is told through VM_UPGRADE_OLD");
+  assert.match(SH, /echo "vm-e2e: [^"]*upgrade-over-old[^"]*skip/i, "and the skip is a log line of its own");
+});
+
+test("no installer name is matched loosely (the 9/9 OneDriveSetup.exe lesson)", () => {
+  const code = lines.filter((l) => !/^\s*#/.test(l)).join("\n");   // the header's prose may say it
+  assert.doesNotMatch(code, /\*Setup\*?\.exe|Setup\*\.exe/, "no glob around Setup.exe");
+  assert.doesNotMatch(SH, /New-ERA-Setup\.exe missing/, "the candidate check names the installer by variable, not the old literal");
+  assert.match(SH, /"\$DIST\/\$CAND_EXE" root@\$VM_DROPLET:\/root\/qa\/candidate\.exe/, "leg A installs the candidate by its recorded name");
 });

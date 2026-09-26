@@ -19,7 +19,39 @@ export const HUB_URL = "http://127.0.0.1:8377";
 export const CDP_URL = process.env.VM_CDP || "http://127.0.0.1:9222";
 export const GUEST_USER = process.env.VM_GUEST_USER || "family";
 export const GUEST_HOME = "C:\\Users\\" + GUEST_USER;
-export const INSTDIR = GUEST_HOME + "\\AppData\\Local\\New ERA";
+// The install folder moved with the 9/26 rename. A fresh candidate install
+// lands in Our Era Comms; leg B's PREVIOUS installer (and a device that only
+// self-updated) is in New ERA, and after the new installer ran over an old
+// install New ERA is a junction to Our Era Comms. INSTDIR is therefore a live
+// binding, re-derived from what the guest really has (resolveInstdir) after a
+// revert, an install, and before a launch: always read it as vm.INSTDIR, never
+// destructure it (a destructured copy never sees the update).
+export const NEW_INSTDIR = GUEST_HOME + "\\AppData\\Local\\Our Era Comms";
+export const OLD_INSTDIR = GUEST_HOME + "\\AppData\\Local\\New ERA";
+export let INSTDIR = NEW_INSTDIR;
+/** point INSTDIR at the folder the guest's install really lives in: the new
+ *  one first (it is also what the old path resolves to through the junction),
+ *  then the old; the new one when neither exists yet */
+export function resolveInstdir() {
+  INSTDIR = exists(NEW_INSTDIR + "\\start-hub.bat") ? NEW_INSTDIR
+    : exists(OLD_INSTDIR + "\\start-hub.bat") ? OLD_INSTDIR : NEW_INSTDIR;
+  return INSTDIR;
+}
+// The home shortcut on the Desktop: the installer and the hub's boot pass write
+// "Our Era Comms.lnk"; "New ERA.lnk" is only ever legitimate on an install made
+// by a PREVIOUS installer, before the candidate has touched it (leg B).
+export const HOME_LINK = "Our Era Comms.lnk";
+export const OLD_HOME_LINK = "New ERA.lnk";
+/** the home shortcut's name on the Desktop, or null. allowOld only for an
+ *  install the candidate has not touched yet */
+export function desktopLink({ allowOld = false } = {}) {
+  if (exists(GUEST_HOME + "\\Desktop\\" + HOME_LINK)) return HOME_LINK;
+  if (allowOld && exists(GUEST_HOME + "\\Desktop\\" + OLD_HOME_LINK)) return OLD_HOME_LINK;
+  return null;
+}
+// A window title that is one of ours: the kiosk's pages (home says Our Era; a
+// previous release's still says New ERA) and Settings, titled ERAgaze Settings.
+export const KIOSK_TITLE = /Our Era|New ERA|ERAgaze/;
 fs.mkdirSync(OUT, { recursive: true });
 
 let shotN = Number(process.env.VM_SHOT_START || 0);
@@ -75,13 +107,13 @@ export const host = (cmd, opts) => sh(["vm.sh", "host", cmd], opts);
 export const wake = () => sh(["vm.sh", "wake"], { soft: true });
 /** roll the VM back to the pristine snapshot, wait for the guest's ssh, and
  *  take the VM's own noise out of the run (prepGuest) */
-export function revert() { const out = sh(["revert.sh"], { timeout: 400000 }); prepped = false; prepGuest(); return out; }
+export function revert() { const out = sh(["revert.sh"], { timeout: 400000 }); prepped = false; INSTDIR = NEW_INSTDIR; prepGuest(); return out; }
 /** the pristine snapshot (8/31) is a disk image cold-booted on every revert:
  *  Windows Update wants its backlog straight away and TrustedInstaller/TiWorker
  *  then own the emulated disk for the better part of an hour — Edge crawled
  *  for 12 min without a window and the Pencil never painted its door (9/3).
- *  The display also goes dark after 10 idle minutes. Neither is a New ERA
- *  property, so the run switches both off; Defender (quiet()) stays real. */
+ *  The display also goes dark after 10 idle minutes. Neither is an Our Era
+ *  Comms property, so the run switches both off; Defender (quiet()) stays real. */
 let prepped = false;
 export function prepGuest() {
   if (prepped) return;
@@ -93,10 +125,12 @@ export function prepGuest() {
 }
 
 /** silent-install an installer already pushed as <exe> in the guest's home;
- *  resolves when start-hub.bat exists and no setup process is left */
+ *  resolves when start-hub.bat exists (in either folder: a previous installer
+ *  still writes New ERA) and no setup process is left, with INSTDIR pointing at
+ *  the folder it landed in */
 export async function installSilently(exe) {
   const out = bat("install", [`start /wait "" ${GUEST_HOME}\\${exe} /S`, `echo INSTALL_EXIT=%ERRORLEVEL%`]);
-  await waitFor(() => exists(INSTDIR + "\\start-hub.bat") && { ok: 1 },
+  await waitFor(() => (exists(NEW_INSTDIR + "\\start-hub.bat") || exists(OLD_INSTDIR + "\\start-hub.bat")) && { ok: 1 },
     { timeout: 180000, every: 5000, what: "start-hub.bat after silent install" });
   // the shared board pack extracts AFTER start-hub.bat lands: on a cold guest that
   // took >60 s (9/5 leg B, previous installer), and on a starved one (9/6, the QA
@@ -104,6 +138,8 @@ export async function installSilently(exe) {
   // step ends as soon as the setup process is gone
   await waitFor(() => !processRunning(exe) && { ok: 1 },
     { timeout: 600000, every: 3000, what: "installer process to exit" });
+  resolveInstdir();
+  console.log("# installed into " + INSTDIR);
   return out;
 }
 /** does a path exist in the guest? (quotes survive only inside a shipped .bat) */
@@ -135,6 +171,7 @@ export const processRunning = (exe) =>
  *  with its own stderr (9/3: v0.31.4-qa shipped without packs.js). */
 export async function launchKiosk({ feedPort = Number(process.env.VM_FEED_PORT || 8427) } = {}) {
   prepGuest();
+  resolveInstdir();
   await quiet();
   warmEdge();
   // wake a display Windows turned off (an Edge launched onto it sat as a
@@ -153,18 +190,18 @@ export async function launchKiosk({ feedPort = Number(process.env.VM_FEED_PORT |
     ...(hooked
       ? [`call "${INSTDIR}\\start-hub.bat" 8377 /home/`]
       : [`cd /d "${INSTDIR}"`, `set ERA_DATA_DIR=${INSTDIR}\\data`,
-         `start "New ERA hub" /min "${INSTDIR}\\node\\node.exe" server.js 8377`,
+         `start "Our Era Comms hub" /min "${INSTDIR}\\node\\node.exe" server.js 8377`,
          "ping -n 4 127.0.0.1 >nul", `start "" "${EDGE}" ${kioskFlags}`]),
   ]);
   let launched = false;
   if (hooked) {
-    // The family's own gesture: a double-click on the Desktop "New ERA" icon.
+    // The family's own gesture: a double-click on the Desktop home icon.
     // Explorer starts start-hub.bat with the right to put its window in
     // FRONT — a scheduled task never has that right, so a kiosk launched
     // that way always measured "Program Manager" as the foreground (runs 7-8,
     // 9/3) and the in-front test could never pass. setx makes the QA
     // environment Explorer's (it takes the change broadcast at once); the
-    // icon sits third down the pristine desktop (Recycle Bin, Edge, New ERA).
+    // icon sits third down the pristine desktop (Recycle Bin, Edge, ours).
     interactive("qa-env", env.map((e) => `setx ${e.replace("=", " ")} >nul`));
     // the task's console sits over the icon until setx is done (3 s was not
     // enough on the emulated disk — the double-click landed on the console)
@@ -192,6 +229,22 @@ export async function launchKiosk({ feedPort = Number(process.env.VM_FEED_PORT |
   await cdpForward(600000);
   console.log(`# kiosk DevTools up ${((Date.now() - t0) / 1000).toFixed(0)} s after launch`);
 }
+/** start the hub in <dir> alone (no kiosk) in the desktop session, the way
+ *  start-hub.bat does, and wait until it answers /version. A process started in
+ *  the ssh session dies with it; a scheduled task's does not. */
+export async function startHubOnly(dir, what = "the hub") {
+  interactive("hub-only", [`cd /d "${dir}"`, `set ERA_DATA_DIR=${dir}\\data`,
+    `start "Our Era Comms hub" /min "${dir}\\node\\node.exe" server.js 8377`]);
+  return waitFor(() => hubGet("/version"), { timeout: 300000, every: 3000, what });
+}
+/** is <p> a reparse point (a junction) in the guest? */
+export const isJunction = (p) => /ReparsePoint/.test(bat("junction", [
+  `powershell -NoProfile -Command "(Get-Item -Force -LiteralPath '${p}').Attributes.ToString()"`], { soft: true }));
+/** does HKCU carry this uninstall key (the ssh user's hive: the same user the
+ *  silent installs ran as) */
+export const uninstallKey = (name) => /KEY=1/.test(bat("regkey", [
+  `reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${name}" >nul 2>&1 && (echo KEY=1) || (echo KEY=0)`], { soft: true }));
+
 /** (re)make the QA-host-side forward to the kiosk's DevTools port */
 export const cdpForward = (timeout = 60000) =>
   waitFor(() => sh(["vm.sh", "cdp-forward"], { soft: true, timeout: 30000 }).includes("cdp forwarded") && { ok: 1 },
@@ -316,7 +369,7 @@ export async function closeSiteWindow() {
   sh(["vm.sh", "click", process.env.VM_KIOSK_TASKBAR_X || "686", "748"], { soft: true });
   await new Promise((r) => setTimeout(r, 4000));
   const front = await frontTitle();
-  if (/New ERA|ERAgaze/.test(front)) { console.log("# taskbar click restored the kiosk: " + JSON.stringify(front)); return; }
+  if (KIOSK_TITLE.test(front)) { console.log("# taskbar click restored the kiosk: " + JSON.stringify(front)); return; }
   console.log("# WARNING: the taskbar click left " + JSON.stringify(front) + " in front — restoring the kiosk by script (expect the taskbar over it)");
   // shipped as .txt (ship.sh RUNS a .ps1 in the ssh session, where no window
   // handle is visible and its 'done' would land first), renamed in the guest

@@ -3,12 +3,17 @@
 # session (no window is needed here); the dialogs themselves are
 # smartscreen-probe.ps1's job. ASCII only, PowerShell 5.1.
 # Prints KEY=value lines; the leg parses them. No secrets, no PII.
+# -Installer: the exact file name the published latest.json names (leg C passes
+# it; Our-Era-Comms-Setup.exe since the 9/26 rename). The fallback below is that
+# same name with Edge's " (1)" suffix, never a looser pattern.
+param([string]$Installer = 'New-ERA-Setup.exe')
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
-$f = Join-Path $env:USERPROFILE 'Downloads\New-ERA-Setup.exe'
+$f = Join-Path $env:USERPROFILE ('Downloads\' + $Installer)
 if (-not (Test-Path $f)) {
-  $alt = Get-ChildItem (Join-Path $env:USERPROFILE 'Downloads') -Filter 'New-ERA-Setup*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+  $stem = [IO.Path]::GetFileNameWithoutExtension($Installer)
+  $alt = Get-ChildItem (Join-Path $env:USERPROFILE 'Downloads') -Filter ($stem + ' (*).exe') -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($alt) { $f = $alt.FullName }
 }
 "FILE=" + $f

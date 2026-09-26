@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# release.sh <version> [--patch] [--prerelease] [--dry-run] [--skip-gate] [--resume-sign] — cut a New ERA suite release.
+# release.sh <version> [--patch] [--prerelease] [--dry-run] [--skip-gate] [--resume-sign] — cut an Our Era Comms suite release.
 # Two shapes (docs/superpowers/specs/2026-09-15-dev-flow-worktrees-and-patch-releases-design.md §4):
 #
 #   SIGNED (default, normally vX.Y.0 — a new installer)
 #     1/5 gate       era-gate fully green (no release on a red gate, ever)
 #     2/5 build      build-dist.sh --unsigned: payload WITH bundled node, tarball,
 #                    zip, checksums, latest.json, and an UNSIGNED Setup.exe
-#     3/5 VM e2e     legs A+B on those very files, pristine Windows 10 (vm-e2e.sh)
+#     3/5 VM e2e     legs A+B on those very files, pristine Windows 10 (vm-e2e.sh);
+#                    the LIVE installer (the published latest.json's installer_file)
+#                    is downloaded into $DIST/prev/ first: leg B starts from it, and
+#                    when it is the old New-ERA-Setup.exe leg A also runs the
+#                    candidate over an install it made (the 9/26 rename's .onInit)
 #     4/5 sign       ONLY now is the SimplySign code wanted: sign-installer.sh --check
 #                    then build-dist.sh --sign-only (makensis again WITH -DSIGN over the
 #                    same payload — signing lives inside makensis, so the uninstaller
@@ -201,7 +205,7 @@ fi
 if [ "$GATECHECK" = 1 ]; then exit 0; fi
 
 # the app list is server.js APPS — keep the two in step
-APPS="New ERA suite $V — free eye-gaze apps for a child on a Tobii device, all running on the family's own PC: Making Words, The Pencil, Clothing Picker, Music, Movies, Book Reader, plus the ERAgaze engine for PCs without one. Bundled Node runtime; nothing about your child leaves the machine."
+APPS="Our Era Comms suite $V — free eye-gaze apps for a child on a Tobii device, all running on the family's own PC: Making Words, The Pencil, Clothing Picker, Music, Movies, Book Reader, plus the ERAgaze engine for PCs without one. Bundled Node runtime; nothing about your child leaves the machine."
 TAIL="Every release is installed and driven end to end on a clean Windows 10 before it is published. sha256 in checksums.txt."
 
 if [ "$PATCH" = 1 ]; then
@@ -226,6 +230,21 @@ else
     echo "== 2/5 build (payload, zip, checksums, latest.json, UNSIGNED installer — it is signed after the VM) =="
     bash "$HUB/tools/build-dist.sh" "$V" "$DIST" --unsigned
 
+    # The installer a family downloads TODAY, by the name the live latest.json
+    # records (installer_file; a feed without it serves New-ERA-Setup.exe).
+    # vm-e2e.sh starts leg B from it, and runs leg A's upgrade-over-old step
+    # when it is the old-name installer. Best effort: without it leg B falls
+    # back to the newest tagged dist/release-* and the upgrade step says it skipped.
+    rm -rf "$DIST/prev"; mkdir -p "$DIST/prev"
+    read -r PTAG PFILE <<<"$(curl -sL --fail "https://github.com/$REPO/releases/latest/download/latest.json" 2>/dev/null \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("installer") or d["version"], d.get("installer_file") or "New-ERA-Setup.exe")' 2>/dev/null)"
+    if [ -n "${PTAG:-}" ] && [ -n "${PFILE:-}" ] && gh release download "$PTAG" -p "$PFILE" --repo "$REPO" -D "$DIST/prev" 2>/dev/null; then
+      echo "previous installer: $PTAG's $PFILE in $DIST/prev/"
+    else
+      echo "note: could not fetch the live installer (${PTAG:-?} ${PFILE:-?}) into $DIST/prev/ — leg B falls back to the newest tagged dist, leg A's upgrade step skips"
+      rm -rf "$DIST/prev"
+    fi
+
     echo "== 3/5 VM e2e (the candidate installed and driven on a pristine Windows 10; the previous release self-updating to it) =="
     bash "$HUB/tools/vm-e2e.sh" "$DIST" | tee /tmp/era-release-vm-e2e.txt | tail -20
     grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
@@ -248,7 +267,7 @@ else
 
   echo "== 5/5 tag + release =="
   NOTES="$APPS
-Install: download New-ERA-Setup.exe and double-click it, then pick your apps on the welcome screen. The installer is code-signed (Certum; right-click › Properties › Digital Signatures shows the publisher) — Windows may still ask once while the new signature earns its reputation: choose More info, then Run anyway. The portable .zip works too. Installed copies update themselves; Uninstall never touches your data.
+Install: download Our-Era-Comms-Setup.exe and double-click it, then pick your apps on the welcome screen. The installer is code-signed (Certum; right-click › Properties › Digital Signatures shows the publisher) — Windows may still ask once while the new signature earns its reputation: choose More info, then Run anyway. The portable .zip works too. Installed copies update themselves; Uninstall never touches your data.
 $TAIL"
 fi
 
@@ -261,15 +280,20 @@ fi
 #    latest.json's sha256 is the contract; assert the bytes keep it.
 if [ "$PATCH" = 1 ]; then WANT=b; else WANT=a,b; fi
 vm_green "$WANT" || { echo "NO GREEN VM RUN FOR THIS DIST — no release. Evidence would be $HUB/gate/vm-e2e/."; exit 1; }
+# the installer asset, by the name this dist's latest.json records: a signed cut
+# made Our-Era-Comms-Setup.exe; a patch re-attached whatever the live release
+# serves (New-ERA-Setup.exe under a pre-rename installer)
+INST="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('installer_file') or 'New-ERA-Setup.exe')")"
+[ -s "$DIST/$INST" ] || { echo "$DIST/$INST (the installer latest.json names) is missing — no release."; exit 1; }
 STABLE_SHA="$(sha256sum "$DIST/new-era-suite.tar.gz" | cut -d' ' -f1)"
 FEED_SHA="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('sha256',''))")"
 [ "$STABLE_SHA" = "$FEED_SHA" ] || { echo "new-era-suite.tar.gz (the stable name every device fetches) is $STABLE_SHA but latest.json names ${FEED_SHA:-<none>} — devices would download bytes whose sha the updater rejects; no release."; exit 1; }
 
 git -C "$HUB" tag -f "$V"
 git -C "$HUB" push -q origin "refs/tags/$V" --force
-gh release create "$V" --repo "$REPO" --title "New ERA suite $V" \
+gh release create "$V" --repo "$REPO" --title "Our Era Comms suite $V" \
   --notes "$NOTES" ${PRE:+--prerelease} \
-  "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/new-era-suite.zip" "$DIST/New-ERA-Setup.exe" "$DIST/checksums.txt" "$DIST/latest.json"
+  "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/new-era-suite.zip" "$DIST/$INST" "$DIST/checksums.txt" "$DIST/latest.json"
 echo "RELEASED: $V"
 
 if [ "$PATCH" = 0 ]; then
