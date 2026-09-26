@@ -71,6 +71,27 @@ an existing folder over creating one. Renaming the folder inside Drive is then
 a later, manual, zero-code act. Reader-share copy stops naming the folder and
 says "in your content folder › shared".
 
+## Rae → ERA (dad, 9/26: "make sure all uses of rae are era")
+
+The superseded codename survives in code comments and a few strings, never on
+the website (0 hits). In scope here: era-gaze `device/ERAgaze.cs` (header
+comment "RaeGaze v2", the build comment's `/out:RaeGaze.exe`, the startup log
+line "RaeGaze 2.0 start", the `_doc` string in the default tuning file, the
+kiosk-chrome comments, the `SIG` comment) and `device/RunAsUser.cs`; era-core
+`dwell.js` comments and the `lib-contract` twin test (RaeGaze.cs no longer
+exists; the test is rewritten to assert on ERAgaze.cs alone); Making Words
+`app/index.html` comment; era-hub `erabook.js` / `books-share.js` example
+titles ("Rae's Día" → "Ellie's Día"); the `RaeGaze.json` → `ERAgaze.json`
+migration branch stays (it is what renames old files on devices).
+
+Out of scope, on purpose: the device folder `C:\Users\Public\RaeGaze`
+(default BaseDir). Her TD Snap Dashboard tiles target `RaeGaze\<App>.bat` by
+path on every device, and the school runbook says replace files, never the
+page set. Renaming the folder is a board edit under Law 1 (editor + QA harness
++ board-sync), logged as its own job in aac-board-builder status.md. The
+tile-launcher comments in aac-board-builder say so too. "rae-flow" in old plan
+files is the name of the planning tooling, not the codename; untouched.
+
 ## Release shape
 
 The installer's file name and product name change, so this is a **signed
