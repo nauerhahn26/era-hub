@@ -133,6 +133,7 @@ const APPS = [
 // packs; enabling later REALLY installs the pack (dad 8/29: never
 // install-everything-and-hide) by pulling it from the release tarball.
 const packs = require("./packs.js");
+const shortcuts = require("./shortcuts.js");
 function appInstalled(app) {
   if (app.engine) return gazeCompiled();
   return !app.pack || packs.packInstalled(__dirname, app.pack);
@@ -467,33 +468,24 @@ function appIcon(app, ext) {
 }
 
 function appShortcut(app, enabled) {
-  if (process.platform !== "win32") return;
-  const { spawn } = require("child_process");
-  const target = app.exe || path.join(__dirname, "start-hub.bat");
-  const icon = appIcon(app, "ico") || path.join(__dirname, "public", "favicon.ico");
-  const dirs = app.exe
-    ? `@([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'), [Environment]::GetFolderPath('Startup'))`
-    : `@([Environment]::GetFolderPath('Desktop'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))`;
-  const script = enabled
-    ? `$w = New-Object -ComObject WScript.Shell;` +
-      `foreach ($d in ${dirs}) {` +
-      `$l = $w.CreateShortcut((Join-Path $d '${app.title}.lnk'));` +
-      `$l.TargetPath = '${target}';` +
-      (app.exe ? `` : `$l.Arguments = '${PORT} "${app.path}"';`) +
-      `$l.WorkingDirectory = '${__dirname}';` +
-      // every shortcut wore a generic gear (QA 9/1) — carry an icon so a
-      // parent can find the app on a crowded desktop
-      `$l.IconLocation = '${icon},0';` +
-      `$l.WindowStyle = 7; $l.Save() }` +   // 7 = minimized: the launcher console never pops up
-      ``
-    : `foreach ($d in ${dirs}) {` +
-      `Remove-Item (Join-Path $d '${app.title}.lnk') -Force -ErrorAction SilentlyContinue }`;
-  try {
-    // windowsHide: dad watched PowerShell windows appear for every shortcut
-    spawn("powershell.exe", ["-NoProfile", "-Command", script],
-      { stdio: "ignore", windowsHide: true })
-      .on("error", (e) => console.error("[apps] shortcut: " + e.message));
-  } catch (e) { console.error("[apps] shortcut: " + e.message); }
+  // the PowerShell lives in shortcuts.js, shared with the boot pass
+  shortcuts.applyShortcut(app, enabled, { dir: __dirname, port: PORT, iconFor: (a) => appIcon(a, "ico") });
+}
+// The boot pass (rename spec R1): every link the hub owns — the home door,
+// each enabled app, the engine's Startup link when it is installed — is
+// rewritten with the current folder and titles, and the old "New ERA.lnk"
+// goes. After an installer or runbook folder move this is what repoints them.
+function reconcileBootShortcuts() {
+  const enabled = loadEnabledApps();
+  const owned = [];
+  for (const a of APPS) {
+    if (!enabled.includes(a.id)) continue;
+    if (a.engine) { if (gazeCompiled()) owned.push({ ...a, exe: path.join(GAZE_DIR, "ERAgaze.exe") }); continue; }
+    if (appInstalled(a)) owned.push(a);
+  }
+  const plan = shortcuts.reconcileShortcuts({ apps: owned, dir: __dirname, port: PORT,
+    iconFor: (a) => appIcon(a, "ico") });
+  if (process.platform === "win32") console.log("[apps] shortcuts reconciled (" + plan.length + " links)");
 }
 
 // ARASAAC lookup ported from packages/generator/aac_board_designer.py
@@ -1681,7 +1673,7 @@ const server = http.createServer((req, res) => {
           fs.writeFileSync(path.join(DATA, "apps.json"),
             JSON.stringify({ enabled: chosen.map(a => a.id) }, null, 2));
           for (const a of APPS) appShortcut(a, chosen.some(c => c.id === a.id));
-          appShortcut({ title: "New ERA", path: "/home/" }, true);   // the home door
+          appShortcut({ title: shortcuts.HOME_TITLE, path: "/home/" }, true);   // the home door
           if (!chosen.some(a => a.engine)) stopGaze();   // unticked: an engine already up must go
           reconcileApps();   // chosen-but-missing apps (the gaze engine) install now
         }
@@ -3403,6 +3395,7 @@ server.on("listening", () => {
   setTimeout(() => {
     if (!HAS_PROFILE) { console.log("[apps] reconcile deferred until the wizard is answered"); return; }
     reconcileApps();
+    reconcileBootShortcuts();
   }, 5000).unref();
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
