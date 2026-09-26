@@ -408,7 +408,9 @@ test("'Put it in my Drive' writes the file and says where to find it", async () 
     () => /Google Drive/.test(document.querySelector("#shareSheet .share-msg").textContent),
     null, { timeout: 15000 });
   const said = await page.locator("#shareSheet .share-msg").textContent();
-  assert.match(said, /New ERA Content/, said);
+  // the folder is not named (rename spec: it may be "New ERA Content" or
+  // "Our Era Comms Content", drive.js CONTENT_FOLDER_NAMES)
+  assert.match(said, /in your content folder › shared/, said);
   assert.match(said, /shared/, said);
   assert.ok(fs.existsSync(path.join(FOLDER, "shared", "Luna the Fox.erabook")),
     "the bytes are where the sheet says they are");

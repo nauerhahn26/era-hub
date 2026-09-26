@@ -1604,7 +1604,7 @@ async function drivePaint(){
       // step ticks with nobody's hand on it — the title has to be a state, not
       // an instruction, and the hint has to say so.
       { done:!!s.folderPath, title:"3. Your content folder",
-        hint:"Found by itself when New ERA Content already exists in your Drive (another computer made it). Otherwise one tap makes it, with books, music, movies, content, and clothing folders inside — or pick a folder below.",
+        hint:"Found by itself when your content folder already exists in your Drive (another computer made it). Otherwise one tap makes it, with books, music, movies, content, and clothing folders inside — or pick a folder below.",
         btn:"✨ Create it for me", fn:async()=>{
           const r=await (await fetch("/integrations/drive/create-folder",{method:"POST"})).json();
           // The same tap, two true sentences: the hub says which one it did
@@ -1633,7 +1633,7 @@ async function drivePaint(){
     }
     const allDone = steps.every(x=>x.done);
     let msg="";
-    if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open New ERA Content, and upload straight into those folders). Everything lands here within 10 minutes, or press Sync now.<br>';
+    if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open your content folder, and upload straight into those folders). Everything lands here within 10 minutes, or press Sync now.<br>';
     if(s.folderPath) msg+="<b>Watching:</b> "+s.folderPath;
     if(s.syncing) msg+=" · <b>Syncing…</b>";
     else if(s.lastSync) msg += s.lastSync.error ? ' · <span class="bad">Last sync failed: '+s.lastSync.error+'</span>'

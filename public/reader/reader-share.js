@@ -89,11 +89,11 @@
   // itself is the answer, and a grown-up should not wait on a round trip to be
   // told a pile of photos is a pile of photos.
   var NOT_FINISHED = "This book isn't finished yet.";
-  // Spec §4.2, in a parent's words. "New ERA Content" is drive.js's own name for
-  // the folder its one-tap setup makes (drive.js CONTENT_FOLDER); the literal
-  // path is in the hub's answer if anyone ever needs it, but a path is not a
+  // Spec §4.2, in a parent's words. The folder is not named: since the rename
+  // it may carry either name (drive.js CONTENT_FOLDER_NAMES); the literal path
+  // is in the hub's answer if anyone ever needs it, but a path is not a
   // sentence somebody can follow on their phone.
-  var IN_DRIVE = "It's in your Google Drive, in New ERA Content › shared. " +
+  var IN_DRIVE = "It's in your Google Drive, in your content folder › shared. " +
                  "Open Drive on your phone and send it to them.";
   var READYING = "Getting the book ready…";
 

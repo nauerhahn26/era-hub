@@ -36,6 +36,12 @@ const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing"];
 // the name adoptLocal() goes looking for in a mount somebody else's computer
 // already filled. One constant so the two can never drift.
 const CONTENT_FOLDER = "New ERA Content";
+// Rename spec (9/26): the software is Our Era Comms, but the family's Drive
+// library is not split this release — creation keeps CONTENT_FOLDER, while
+// adoption (and "create it for me" finding one already there) takes either
+// name, the new one first, so renaming the folder inside Drive by hand later
+// is a zero-code act.
+const CONTENT_FOLDER_NAMES = ["Our Era Comms Content", CONTENT_FOLDER];
 
 let DATA = null;
 let pendingDevice = null;   // {device_code, user_code, verification_url, interval, expires}
@@ -564,11 +570,11 @@ function adoptLocal() {
   const c = loadCfg();
   if (c.folderPath || c.token || c.mode === "api") return null;
   for (const root of detectLocal().roots) {
-    const base = path.join(root, CONTENT_FOLDER);
-    const hasLibrary = MIRROR_SUBDIRS.some(sub => {
-      try { return fs.statSync(path.join(base, sub)).isDirectory(); } catch { return false; }
-    });
-    if (!hasLibrary) continue;
+    // per root, the first name whose folder already holds a library wins
+    const base = CONTENT_FOLDER_NAMES.map(n => path.join(root, n)).find(b => MIRROR_SUBDIRS.some(sub => {
+      try { return fs.statSync(path.join(b, sub)).isDirectory(); } catch { return false; }
+    }));
+    if (!base) continue;
     c.mode = "local"; c.folderPath = base;
     saveCfg(c);                                 // on disk BEFORE anyone is told
     console.log("[drive] adopted " + base);
@@ -729,9 +735,11 @@ async function listFolders() {
 function createContentFolder() {
   const { roots } = detectLocal();
   if (!roots.length) return { error: "no-mount" };
-  const base = path.join(roots[0], CONTENT_FOLDER);
-  let existed = false;
-  try { existed = fs.statSync(base).isDirectory(); } catch {}
+  // an existing folder under either name beats creating a second one beside it
+  const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+  const found = CONTENT_FOLDER_NAMES.map(n => path.join(roots[0], n)).find(isDir);
+  const base = found || path.join(roots[0], CONTENT_FOLDER);
+  const existed = !!found;
   try {
     for (const sub of MIRROR_SUBDIRS) fs.mkdirSync(path.join(base, sub), { recursive: true });
   } catch (e) { return { error: String(e.message) }; }
@@ -770,4 +778,5 @@ function start(dataDir) {
   }
 }
 
-module.exports = { start, status, connect, sync, mirrorBook, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed };
+module.exports = { start, status, connect, sync, mirrorBook, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed,
+  CONTENT_FOLDER, CONTENT_FOLDER_NAMES };
