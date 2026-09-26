@@ -269,7 +269,7 @@ function freeDirName(root, title, slug) {
 // otherwise split the response and let a book name write headers of its own.
 // The plain filename= is ASCII (a byte over 0x7f is not portable through every
 // proxy and browser, and Node refuses one over 0xff outright); the real name
-// rides in RFC 5987's filename*, since "Rae's Día" is a normal book here.
+// rides in RFC 5987's filename*, since "Ellie's Día" is a normal book here.
 //
 // PERCENT-ENCODED FROM A BUFFER, not with encodeURIComponent, and that is the
 // whole point of the rewrite rather than a style preference. encodeURIComponent

@@ -228,7 +228,7 @@ function insideJail(destDir, segs) {
 const DOS_TIME = 0, DOS_DATE = 33;
 const SIG_LOCAL = 0x04034b50, SIG_CENTRAL = 0x02014b50, SIG_EOCD = 0x06054b50;
 const LOCAL_LEN = 30, CENTRAL_LEN = 46, EOCD_LEN = 22;
-// Bit 11 says the name is UTF-8. Book folders are named by parents, so "Rae's
+// Bit 11 says the name is UTF-8. Book folders are named by parents, so "Ellie's
 // Día" is a normal thing to find in one.
 const FLAG_UTF8 = 0x0800;
 

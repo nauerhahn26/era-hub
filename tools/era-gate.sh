@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# era-gate.sh — the L0/L1 parity gate for the New ERA workspace.
+# era-gate.sh — the L0/L1 parity gate for the Our Era Comms workspace.
 # Collects every sibling repo's test suite into gate/ (copies, port re-pointed
 # to the test instance), starts the hub server on $ERA_TEST_PORT (default 8378,
 # NEVER the live 8377), runs the suites, reports.
