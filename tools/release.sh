@@ -285,6 +285,30 @@ vm_green "$WANT" || { echo "NO GREEN VM RUN FOR THIS DIST — no release. Eviden
 # serves (New-ERA-Setup.exe under a pre-rename installer)
 INST="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('installer_file') or 'New-ERA-Setup.exe')")"
 [ -s "$DIST/$INST" ] || { echo "$DIST/$INST (the installer latest.json names) is missing — no release."; exit 1; }
+# ONE-RELEASE ALIAS (signed shape only, the 9/26 rename). Old links — the
+# website before its follow-up, bookmarks, forum posts — fetch
+# releases/latest/download/<the live installer's name>. When the LIVE feed names
+# a different installer_file (a feed without the field: New-ERA-Setup.exe), the
+# same signed bytes ride along once more under that old name, so nothing 404s
+# for one release. latest.json keeps naming only the new file; checksums.txt
+# lists both. A patch never needs it: it re-attaches the live name itself.
+ALIAS=""
+if [ "$PATCH" = 0 ]; then
+  LIVEJSON="$(curl -sL --fail "https://github.com/$REPO/releases/latest/download/latest.json")" \
+    || { echo "cannot read the live latest.json — cannot tell whether the old installer name needs an alias; no release."; exit 1; }
+  LIVE_FILE="$(printf '%s' "$LIVEJSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("installer_file") or "New-ERA-Setup.exe")')"
+  if [ -n "$LIVE_FILE" ] && [ "$LIVE_FILE" != "$INST" ]; then
+    ALIAS="$LIVE_FILE"
+    cp -f "$DIST/$INST" "$DIST/$ALIAS"
+    # idempotent on a re-entry: drop any earlier line for the alias, then add it
+    grep -v "  $ALIAS\$" "$DIST/checksums.txt" > "$DIST/checksums.txt.new" || true
+    ( cd "$DIST" && sha256sum "$ALIAS" ) >> "$DIST/checksums.txt.new"
+    mv -f "$DIST/checksums.txt.new" "$DIST/checksums.txt"
+    NOTES="$NOTES
+$ALIAS is the same installer under its previous name, kept for one release so old links keep working."
+    echo "alias: $ALIAS = $INST (same signed bytes, one release)"
+  fi
+fi
 STABLE_SHA="$(sha256sum "$DIST/new-era-suite.tar.gz" | cut -d' ' -f1)"
 FEED_SHA="$(python3 -c "import json;print(json.load(open('$DIST/latest.json')).get('sha256',''))")"
 [ "$STABLE_SHA" = "$FEED_SHA" ] || { echo "new-era-suite.tar.gz (the stable name every device fetches) is $STABLE_SHA but latest.json names ${FEED_SHA:-<none>} — devices would download bytes whose sha the updater rejects; no release."; exit 1; }
@@ -293,7 +317,7 @@ git -C "$HUB" tag -f "$V"
 git -C "$HUB" push -q origin "refs/tags/$V" --force
 gh release create "$V" --repo "$REPO" --title "Our Era Comms suite $V" \
   --notes "$NOTES" ${PRE:+--prerelease} \
-  "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/new-era-suite.zip" "$DIST/$INST" "$DIST/checksums.txt" "$DIST/latest.json"
+  "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz" "$DIST/new-era-suite.zip" "$DIST/$INST" ${ALIAS:+"$DIST/$ALIAS"} "$DIST/checksums.txt" "$DIST/latest.json"
 echo "RELEASED: $V"
 
 if [ "$PATCH" = 0 ]; then

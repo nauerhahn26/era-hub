@@ -97,7 +97,12 @@ A latest.json without the field predates the rename and means
 `$DIST/prev/`: leg B starts from it, and while it is the old `New-ERA-Setup.exe`
 leg A installs it and runs the candidate over it (the `.onInit` folder move to
 `%LOCALAPPDATA%\Our Era Comms`, a junction left at `New ERA`, one Apps entry).
-The website's download buttons must name the new exe the day it publishes.
+The website's download buttons must name the new exe the day it publishes; for
+that one release the old name keeps working anyway: when the live feed's
+`installer_file` (absent: `New-ERA-Setup.exe`) differs from the cut's, release.sh
+(signed shape) attaches the same signed exe a second time under the old name,
+lists both in checksums.txt and says so in the notes, while latest.json names
+only the new file.
 
 ### Flags
 
