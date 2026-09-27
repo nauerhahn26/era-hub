@@ -217,8 +217,10 @@ test("a voice key ElevenLabs rejects never shows 'Premium voices active' (bug 14
   const { ctx, page } = await settingsPage();
   await page.fill("#ttsKey", "sk_typo_missing_char");
   await page.click("#ttsKeySave");
-  await page.waitForFunction(() => /not working|rejected|recognise/i.test(
-    document.getElementById("voiceStatus").textContent + document.getElementById("ttsKeyStatus").textContent));
+  // wait for the refusal itself, not "Checking the key with ElevenLabs…" or a
+  // line left from the page's first paint (gate, 9/27)
+  await page.waitForFunction(() => /missing character/.test(
+    document.getElementById("ttsKeyStatus").textContent));
   assert.doesNotMatch(await page.$eval("#voiceStatus", e => e.textContent), /Premium voices active/);
   assert.match(await page.$eval("#ttsKeyStatus", e => e.textContent), /missing character/);
   let v = await (await fetch(`${BASE}/voices`)).json();
@@ -320,7 +322,9 @@ test("the films card takes both keys and never hands either one back (T5.3)", as
 
   await page.fill("#tmdbKey", "tmdb-typed-by-a-parent");
   await page.click("#moviesKeySave");
-  await page.waitForFunction(() => /saved|working|✓/i.test(
+  // the exact line this save earns, so the /movies/keys read below comes after
+  // the POST landed (gate, 9/27)
+  await page.waitForFunction(() => /TMDB key saved ✓/.test(
     document.getElementById("moviesKeyStatus").textContent));
   // the search is on now, and it says what this key does and does not buy
   let st = await (await fetch(`${BASE}/movies/keys`)).json();
@@ -333,7 +337,9 @@ test("the films card takes both keys and never hands either one back (T5.3)", as
 
   await page.fill("#wmKey", "watchmode-typed-by-a-parent");
   await page.click("#moviesKeySave");
-  await page.waitForFunction(() => /tile that plays|links|✓/i.test(
+  // NOT /links|✓/: the TMDB-only line above already says both, so that wait
+  // passed before the second POST landed (gate, 9/27)
+  await page.waitForFunction(() => /Both keys saved ✓/.test(
     document.getElementById("moviesKeyStatus").textContent));
   st = await (await fetch(`${BASE}/movies/keys`)).json();
   assert.equal(st.provider, "watchmode");
@@ -368,7 +374,9 @@ test("the fal card checks the key and quotes what a clip costs (T6.1)", async ()
   // a key fal refuses never shows as working (the Voice card's bug 14, here)
   await page.fill("#falKey", "fal-typo-missing-char");
   await page.click("#falKeySave");
-  await page.waitForFunction(() => /\S/.test(document.getElementById("falKeyStatus").textContent));
+  // /\S/ matched "Checking the key with fal…" and the first paint's "No key
+  // yet" alike (gate, 9/26): wait for the refusal the assertion reads
+  await page.waitForFunction(() => /missing character/i.test(document.getElementById("falKeyStatus").textContent));
   let s = await page.$eval("#falKeyStatus", e => e.textContent);
   assert.match(s, /missing character/i, s);
   assert.doesNotMatch(s, /working/i, "a refused key is never 'working'");
@@ -1269,7 +1277,9 @@ test("a refused Build shows the hub's own sentence", async () => {
   await page.waitForFunction(() => /again/i.test(
     document.querySelector('#contentBooks [data-slug="tabby-mctat"] button[data-build]').textContent));
   await btn.click();
-  await page.waitForFunction(() => /Another computer in the family/i.test(document.body.textContent));
+  // the toast, not body.textContent: the body includes the page's <script>,
+  // whose comments carry this very sentence (gate audit, 9/27)
+  await page.waitForFunction(() => /Another computer in the family/i.test(document.getElementById("toast").textContent));
   await ctx.close();
 });
 
@@ -1285,7 +1295,9 @@ test("a run this hub may not make says why, in the hub's own words", async () =>
     contentType: "application/json", body: JSON.stringify({ refused: "elsewhere",
       error: "Another computer in the family is making this book." }) }));
   await page.click('#contentBooks [data-slug="tabby-mctat"] button[data-run]');
-  await page.waitForFunction(() => /Another computer in the family/i.test(document.body.textContent));
+  // the toast, not body.textContent: the body includes the page's <script>,
+  // whose comments carry this very sentence (gate audit, 9/27)
+  await page.waitForFunction(() => /Another computer in the family/i.test(document.getElementById("toast").textContent));
   await ctx.close();
 });
 
@@ -1492,7 +1504,9 @@ test("a book waiting on a person can be started by hand", async () => {
     r.fulfill({ status: 200, contentType: "application/json", body: "{}" });
   });
   await row.locator("button[data-run]").click();
-  await page.waitForFunction(() => /Starting/i.test(document.body.textContent));
+  // the toast, not body.textContent: the page's <script> source says "Starting"
+  // too, so the old wait passed before the press went out (gate audit, 9/27)
+  await page.waitForFunction(() => /Starting/i.test(document.getElementById("toast").textContent));
   assert.deepEqual(sent, { kind: "books", slug: "tabby-mctat", step: null, retry: true });
   await ctx.close();
 });
@@ -1528,7 +1542,7 @@ test("the rename box posts the new name and shows the hub's own refusal", async 
   await row.locator("button[data-rename]").click();
   await row.locator(".ct-rename input").fill("Sunny Pond");
   await row.locator(".ct-rename-save").click();
-  await page.waitForFunction(() => /working on this book/i.test(document.body.textContent));
+  await page.waitForFunction(() => /working on this book/i.test(document.getElementById("toast").textContent));
   assert.deepEqual(sent, { kind: "books", slug: "tabby-mctat", title: "Sunny Pond" });
   await ctx.close();
 });
