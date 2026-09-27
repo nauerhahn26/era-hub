@@ -151,7 +151,14 @@ function reconcileApps() {
     // — and in Startup — after the self-update; the first door would hand
     // the kiosk to it (leg B, 9/3). Stop it and its autostart at every boot.
     if (app.engine && !enabled.includes(app.id) && appInstalled(app)) { stopGaze(); continue; }
-    if (!enabled.includes(app.id) || appInstalled(app) || appInstalling[app.id]) continue;
+    // An installed engine whose shipped source changed recompiles too: the
+    // self-update restarts the hub, so this boot pass is where a new
+    // ERAgaze.cs reaches the exe (9/27: v0.36.0's source never did — both home
+    // devices ran the 9/14 binary because "installed" ended the check).
+    const stale = app.engine && appInstalled(app) && gazeCanCompile() && gazeNeedsCompile();
+    if (stale && enabled.includes(app.id) && !appInstalling[app.id])
+      console.log("[gaze] shipped source changed — recompiling");
+    if (!enabled.includes(app.id) || (appInstalled(app) && !stale) || appInstalling[app.id]) continue;
     appInstalling[app.id] = true;
     (app.engine ? installGaze() : installPack(app))
       .then(() => console.log("[apps] reconciled " + app.id))
@@ -220,19 +227,29 @@ function gazeBusAlive() {
 }
 const GAZE_DIR = path.join(__dirname, "gaze");
 // The engine is compiled ON the device, so a source fix shipped by the updater
-// only lands if we notice the .cs is newer than the .exe (dad 9/1: the exit-door
-// fix could never have reached an installed machine otherwise).
-function gazeNeedsCompile() {
-  const exe = path.join(GAZE_DIR, "ERAgaze.exe");
-  const src = path.join(GAZE_DIR, "ERAgaze.cs");
-  try {
-    if (!fs.existsSync(exe)) return true;
-    return fs.statSync(src).mtimeMs > fs.statSync(exe).mtimeMs;
-  } catch { return !fs.existsSync(exe); }
+// only lands if we notice the shipped .cs differs from the one the .exe was
+// built from (dad 9/1: the exit-door fix could never have reached an installed
+// machine otherwise). By CONTENT, not mtime (9/27): update.js overlays with
+// fs.cpSync, which stamps every file with the copy time (a same-source update
+// would rebuild each time) while an installer may keep the build machine's
+// older times (a changed source would be skipped). An exe with no hash beside
+// it was built by an older hub and rebuilds once.
+const GAZE_HASH = path.join(GAZE_DIR, "ERAgaze.exe.src-sha256");
+function gazeSourceHash() {
+  return require("crypto").createHash("sha256")
+    .update(fs.readFileSync(path.join(GAZE_DIR, "ERAgaze.cs"))).digest("hex");
 }
+function gazeNeedsCompile() {
+  if (!fs.existsSync(path.join(GAZE_DIR, "ERAgaze.exe"))) return true;
+  try { return fs.readFileSync(GAZE_HASH, "utf8").trim() !== gazeSourceHash(); }
+  catch { return true; }
+}
+// csc is Windows' own; ERA_GAZE_CSC is the tests' stub compiler. Elsewhere the
+// stale check is a quiet no-op.
+const gazeCanCompile = () => process.platform === "win32" || !!process.env.ERA_GAZE_CSC;
 function gazeCompiled() { return fs.existsSync(path.join(GAZE_DIR, "ERAgaze.exe")); }
 async function installGaze() {
-  if (process.platform !== "win32") throw new Error("windows only");
+  if (!gazeCanCompile()) throw new Error("windows only");
   const { spawnSync, spawn } = require("child_process");
   // 1. the Tobii runtime: prefer the copy already on this (Tobii) device
   const dllDest = path.join(GAZE_DIR, "tobii_stream_engine.dll");
@@ -273,27 +290,41 @@ async function installGaze() {
   if (gazeNeedsCompile()) {
     const exePath = path.join(GAZE_DIR, "ERAgaze.exe");
     const fresh = !fs.existsSync(exePath);
+    const srcHash = gazeSourceHash();   // the source as compiled, not as it may be after
     // keep the working build so a bad compile is one rename from recovery
     if (!fresh) { try { fs.copyFileSync(exePath, path.join(GAZE_DIR, "ERAgaze.prev.exe")); } catch {} }
-    const csc = "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe";
+    const csc = process.env.ERA_GAZE_CSC || "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe";
     const out = fresh ? exePath : path.join(GAZE_DIR, "ERAgaze.new.exe");
     const c = spawnSync(csc, ["/nologo", "/target:winexe", "/platform:x64",
       "/out:" + out,
       "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll",
       "/r:System.Web.Extensions.dll", "/r:System.Management.dll",
       path.join(GAZE_DIR, "ERAgaze.cs")], { windowsHide: true });
-    if (c.status !== 0) throw new Error("compile failed: " + String(c.stderr || c.stdout));
-    if (!fresh) {
-      // A running engine holds its exe open; swap when we can, otherwise leave
-      // the new build staged and let the next logon pick it up.
-      try { fs.renameSync(out, exePath); console.log("[gaze] recompiled from updated source"); }
-      catch { console.log("[gaze] new engine staged (running build is locked); it starts at next logon"); }
+    // a failed compile throws BEFORE anything is stopped or swapped: the old
+    // exe keeps running and the missing hash retries at the next boot
+    if (c.status !== 0) {
+      try { if (!fresh) fs.rmSync(out, { force: true }); } catch {}
+      // csc reports on STDOUT; stderr is an empty (truthy) Buffer, which
+      // used to swallow the reason
+      const why = (String(c.stdout || "") + String(c.stderr || "")).trim() || (c.error && c.error.message) || "status " + c.status;
+      throw new Error("compile failed: " + why.replace(/\s+/g, " ").slice(0, 400));
     }
+    let swapped = fresh;
+    if (!fresh) {
+      // A running engine holds its exe open, so stop OUR build (by path) and
+      // swap; step 3 starts the new one. Were the swap still refused, the old
+      // exe stays and — no hash written — the next boot tries again.
+      stopGazeProcess();
+      try { fs.renameSync(out, exePath); swapped = true; console.log("[gaze] recompiled from updated source"); }
+      catch (e) { console.log("[gaze] recompiled build could not replace the running one (" + e.code + "); retrying next boot"); }
+    }
+    if (swapped) fs.writeFileSync(GAZE_HASH, srcHash + "\n");
   }
   // 3. shortcuts + autostart + start it (skip start when another engine runs)
   appShortcut({ id: "eragaze", title: "ERAgaze", path: null, exe: path.join(GAZE_DIR, "ERAgaze.exe") }, true);
   if (!(await gazeBusAlive())) {
-    spawn(path.join(GAZE_DIR, "ERAgaze.exe"), [], { cwd: GAZE_DIR, detached: true, stdio: "ignore", windowsHide: true }).unref();
+    spawn(path.join(GAZE_DIR, "ERAgaze.exe"), [], { cwd: GAZE_DIR, detached: true, stdio: "ignore", windowsHide: true })
+      .on("error", (e) => console.error("[gaze] start: " + e.message)).unref();
   }
   console.log("[gaze] installed");
 }
@@ -309,11 +340,19 @@ function stopGaze() {
   if (process.platform !== "win32") return;
   const { spawn } = require("child_process");
   try {
-    spawn("powershell.exe", ["-NoProfile", "-Command",
-      `Get-Process ERAgaze -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq '${exe}' } | Stop-Process -Force`],
+    spawn("powershell.exe", ["-NoProfile", "-Command", gazeStopScript()],
       { stdio: "ignore", windowsHide: true })
       .on("error", (e) => console.error("[gaze] stop: " + e.message));
   } catch (e) { console.error("[gaze] stop: " + e.message); }
+}
+const gazeStopScript = () => `Get-Process ERAgaze -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq '${path.join(GAZE_DIR, "ERAgaze.exe")}' } | Stop-Process -Force`;
+// The recompile's stop: only the process, not the autostart, and waited for —
+// the exe must be released before the swap.
+function stopGazeProcess() {
+  if (process.platform !== "win32") return;
+  const r = require("child_process").spawnSync("powershell.exe", ["-NoProfile", "-Command", gazeStopScript()],
+    { stdio: "ignore", windowsHide: true, timeout: 20000 });
+  if (r.error) console.error("[gaze] stop: " + r.error.message);
 }
 // Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
 // best-effort — the home tile is the source of truth, the .lnk a convenience).
