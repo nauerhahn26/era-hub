@@ -251,8 +251,13 @@
 
   /* THE HOLD (spec §4.1). Windows' press-and-hold wants to put a right-click
      menu and a selection on her shelf; reader-share.js refuses the contextmenu
-     and these two refuse the rest. `manipulation` keeps the shelf scrolling
-     and kills only the double-tap zoom. */
+     and these two refuse the rest. `manipulation` here kills only the
+     double-tap zoom on the card's frame. Under the finger is the card's .dwell
+     button, which carries dwell.js's `touch-action: none` (7/28): that is what
+     lets a firm held finger roll without becoming a pan (dad 9/27), and it also
+     means a drag that starts ON a cover has never scrolled the shelf — a parent
+     scrolls from the gaps and padding. Never give a hold target `manipulation`
+     or `pan-y` back in a more specific rule: that is how the board tile broke. */
   .shelf-card { -webkit-touch-callout: none; touch-action: manipulation; }
   /* The fill, timed off ONE custom property that reader-share.js publishes from
      its own HOLD_MS — so the 1.6 s a grown-up has learned is stated once, in
