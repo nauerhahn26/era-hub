@@ -82,18 +82,18 @@
   // The sentences. Every refusal a parent reads comes from the HUB (books-share.js
   // owns them, and it knows why better than we do); these two are for the states
   // the hub never hears about.
-  var OFFLINE = "Couldn't reach New ERA — try again in a moment.";
-  var UNKNOWN = "Something went wrong with that book, so New ERA did not send it.";
+  var OFFLINE = "Couldn't reach Our Era Comms — try again in a moment.";
+  var UNKNOWN = "Something went wrong with that book, so Our Era Comms did not send it.";
   // books-share.js's own words for a book with no manifest to walk. Said here
   // rather than fetched because there is nothing to ask the hub about: the card
   // itself is the answer, and a grown-up should not wait on a round trip to be
   // told a pile of photos is a pile of photos.
   var NOT_FINISHED = "This book isn't finished yet.";
-  // Spec §4.2, in a parent's words. "New ERA Content" is drive.js's own name for
-  // the folder its one-tap setup makes (drive.js CONTENT_FOLDER); the literal
-  // path is in the hub's answer if anyone ever needs it, but a path is not a
+  // Spec §4.2, in a parent's words. The folder is not named: since the rename
+  // it may carry either name (drive.js CONTENT_FOLDER_NAMES); the literal path
+  // is in the hub's answer if anyone ever needs it, but a path is not a
   // sentence somebody can follow on their phone.
-  var IN_DRIVE = "It's in your Google Drive, in New ERA Content › shared. " +
+  var IN_DRIVE = "It's in your Google Drive, in your content folder › shared. " +
                  "Open Drive on your phone and send it to them.";
   var READYING = "Getting the book ready…";
 

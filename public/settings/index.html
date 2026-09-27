@@ -107,7 +107,7 @@
 
   <div class="card" id="updates">
     <h2>⬆️ Updates</h2>
-    <p class="hint">New ERA looks for a newer version by itself — shortly after it starts and every 6 hours after that — and installs it quietly. Press the button to look right now instead of waiting.</p>
+    <p class="hint">Our Era Comms looks for a newer version by itself — shortly after it starts and every 6 hours after that — and installs it quietly. Press the button to look right now instead of waiting.</p>
     <div class="row">
       <button id="updCheck">⬆️ Check for updates now</button>
     </div>
@@ -207,8 +207,8 @@
 
   <div class="card" id="ai">
     <h2>🤖 AI helper</h2>
-    <p class="hint">An AI key lets New ERA prepare content for your child — clothing photos get trimmed, straightened, named and paired into daily outfits automatically. Pick the AI you already use; the key stays on this computer and is only used for your own photos.</p>
-    <p class="hint" style="font-size:15px">Why a key and not a login? The AI companies don&rsquo;t allow signing in with your Claude or ChatGPT account inside apps like New ERA &mdash; your own key is their official way. Getting one takes about a minute, and Google&rsquo;s is free (no card needed).</p>
+    <p class="hint">An AI key lets Our Era Comms prepare content for your child — clothing photos get trimmed, straightened, named and paired into daily outfits automatically. Pick the AI you already use; the key stays on this computer and is only used for your own photos.</p>
+    <p class="hint" style="font-size:15px">Why a key and not a login? The AI companies don&rsquo;t allow signing in with your Claude or ChatGPT account inside apps like Our Era Comms &mdash; your own key is their official way. Getting one takes about a minute, and Google&rsquo;s is free (no card needed).</p>
     <div class="seg" id="aiProv" style="margin-bottom:10px">
       <button data-prov="anthropic">Claude</button>
       <button data-prov="openai">ChatGPT (OpenAI)</button>
@@ -248,7 +248,7 @@
          and the computer they pressed it on is the one that does the work. The
          hint says so, because the sentence it used to carry — photos in, book
          out, no press named — is the promise the whole rule removes. -->
-    <p class="hint">Photograph the pages of one of her picture books, put the photos in <b>books</b> in your Google Drive, and press <b>Build</b> &mdash; here or on her shelf. New ERA takes a pile of loose photos to be <b>one book</b>, makes the folder, names it from the cover, reads the words off the photos and records the narration, and the book turns up in <b>Book Reader</b> on every device in the family. Only the computer you pressed Build on does the work, so no book is ever made &mdash; or paid for &mdash; twice. (Two books at once? Make a folder for each, named after the book, and put its photos in that.) You only pay for it once, and nothing ever leaves your own Drive.</p>
+    <p class="hint">Photograph the pages of one of her picture books, put the photos in <b>books</b> in your Google Drive, and press <b>Build</b> &mdash; here or on her shelf. Our Era Comms takes a pile of loose photos to be <b>one book</b>, makes the folder, names it from the cover, reads the words off the photos and records the narration, and the book turns up in <b>Book Reader</b> on every device in the family. Only the computer you pressed Build on does the work, so no book is ever made &mdash; or paid for &mdash; twice. (Two books at once? Make a folder for each, named after the book, and put its photos in that.) You only pay for it once, and nothing ever leaves your own Drive.</p>
     <div class="row" id="contentActions" style="display:none; margin-bottom:10px">
       <button id="ctLook">📚 Look for new books now</button>
     </div>
@@ -261,7 +261,7 @@
     </div>
   </div>
 
-  <!-- Moving pages (T6.1). The fal key: the ONE thing in New ERA that spends
+  <!-- Moving pages (T6.1). The fal key: the ONE thing in Our Era Comms that spends
        real money per press, so the card is a clone of the Voice card's key row
        (the one a parent has already used) and, like it, proves the key with one
        real call before it says "working" — a wrong key here is otherwise found
@@ -271,7 +271,7 @@
        animate step is off until a parent presses that button. -->
   <div class="card" id="fal">
     <h2>🎞 Moving pages</h2>
-    <p class="hint">Optional, and the only thing in New ERA that costs real <b>money</b>. With a <b>fal</b> key, the pages of a finished book can become a few seconds of moving picture each. Nothing is animated on its own &mdash; you open a book&rsquo;s review page, see what that whole book will cost, and press the button yourself.</p>
+    <p class="hint">Optional, and the only thing in Our Era Comms that costs real <b>money</b>. With a <b>fal</b> key, the pages of a finished book can become a few seconds of moving picture each. Nothing is animated on its own &mdash; you open a book&rsquo;s review page, see what that whole book will cost, and press the button yourself.</p>
     <div class="row" style="margin-bottom:10px">
       <button id="falOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my fal API keys page</button>
     </div>
@@ -321,7 +321,7 @@
     <p class="hint">Every app has a door in its corner. Choose what she lands on when she looks at it.</p>
     <div class="seg" id="exitTo">
       <button data-exit="tdsnap" class="sel">💬 TD Snap</button>
-      <button data-exit="home">🏠 New ERA home</button>
+      <button data-exit="home">🏠 Our Era Comms home</button>
     </div>
     <div class="desc" id="exitDesc"></div>
   </div>
@@ -413,7 +413,7 @@
   <!-- The board's lock (dad 9/14): in class, or when a sibling is poking the
        tablet and the music has to stop. Deterrence, not security — the
        passcode only stops someone repeating what they watched a grown-up do,
-       so it is hashed in this page and the digits never go to New ERA or
+       so it is hashed in this page and the digits never go to Our Era Comms or
        onto the disk. Four digits, to match the board's keypad. The box is a
        text input masked in CSS, NOT type="password": on the tablet the
        password input scope beats inputmode and brings up the whole keyboard
@@ -600,7 +600,7 @@ $("lockUp").onclick=()=>lockStep(1);
 $("lockDown").onclick=()=>lockStep(-1);
 lockDesc();
 
-// The digits stay in this page: what New ERA keeps is their SHA-256, and the
+// The digits stay in this page: what Our Era Comms keeps is their SHA-256, and the
 // board compares against that with nobody to ask. So there is nothing to hand
 // back and nothing to read off the disk — only "there is one" or "there isn't".
 async function lockHash(digits){
@@ -653,11 +653,11 @@ function seg(id, attr, fn){
 }
 // Where the door goes (dad 9/3): the hub's /kiosk/exit reads this setting.
 // "tdsnap" closes the app and hands the screen back to TD Snap (needs
-// ERAgaze; without it the door falls back to home); "home" stays in New ERA.
+// ERAgaze; without it the door falls back to home); "home" stays in Our Era Comms.
 function exitDesc(v){
   $("exitDesc").textContent = v==="home"
-    ? "The door closes the app and shows New ERA's home page, ready for the next app."
-    : "The door closes the app and brings TD Snap back to the front. On a computer without ERAgaze it shows New ERA's home instead.";
+    ? "The door closes the app and shows the Our Era Comms home page, ready for the next app."
+    : "The door closes the app and brings TD Snap back to the front. On a computer without ERAgaze it shows the Our Era Comms home instead.";
 }
 function exitPaint(v){
   document.querySelectorAll("#exitTo button").forEach(x=>x.classList.toggle("sel", x.dataset.exit===v));
@@ -666,7 +666,7 @@ function exitPaint(v){
 seg("exitTo","exit", async v=>{
   const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({exitTo:v})});
   exitDesc(v);
-  toast(r.ok ? (v==="home" ? "Door goes to New ERA home" : "Door goes to TD Snap") : "Could not save", r.ok);
+  toast(r.ok ? (v==="home" ? "Door goes to Our Era Comms home" : "Door goes to TD Snap") : "Could not save", r.ok);
 });
 seg("feel","feel", async v=>{ if(await postEngine(FEEL[v])) toast("Cursor feel: "+v); });
 seg("grace","grace", async v=>{ if(await postEngine({graceMs:+v})) toast("Forgiveness updated"); });
@@ -846,7 +846,7 @@ function falPaint(st){
   else if(st.saved && st.keyOk===false)
     $("falKeyStatus").innerHTML='<span class="bad">'+(st.error||"fal did not recognise that key")+'</span>';
   else if(st.saved)
-    $("falKeyStatus").innerHTML='Key saved. New ERA has not been able to check it with fal yet.';
+    $("falKeyStatus").innerHTML='Key saved. Our Era Comms has not been able to check it with fal yet.';
   else
     $("falKeyStatus").innerHTML='No key yet &mdash; her books stay still pictures, which costs nothing.'+each;
 }
@@ -1159,12 +1159,12 @@ const CT_PROVIDER={ google:"Google AI Studio", elevenlabs:"ElevenLabs" };
 // folder a parent has just started filling.
 const CT_WAITING={
   "no-ai-key":'This book is waiting for an <b>AI helper key</b> &mdash; add one in the card above and it starts by itself.',
-  "retry":'A page did not come back last time. New ERA tries that page again on its next look; every page already read is kept.',
+  "retry":'A page did not come back last time. Our Era Comms tries that page again on its next look; every page already read is kept.',
   "needs-title":'Reading the cover to find out what this book is called&hellip;',
-  // The 9/7 dead end, said out loud. iPhones write HEIC, New ERA opens HEIC
+  // The 9/7 dead end, said out loud. iPhones write HEIC, Our Era Comms opens HEIC
   // with the file that ships alongside the Clothing Picker, and a hub that has
   // Book Reader on its own does not have it. Nothing is lost while it waits.
-  "needs-photo-decoder":'These are <b>iPhone photos (HEIC)</b>. New ERA opens those with the file that comes with the '
+  "needs-photo-decoder":'These are <b>iPhone photos (HEIC)</b>. Our Era Comms opens those with the file that comes with the '
     +'<b>Clothing Picker</b> app &mdash; tick it in <b>Apps</b> above and this book carries on by itself. '
     +'(Or save the photos as <b>JPEG</b> and put them back in the folder.) Every photo is kept either way.',
   "unreadable-photos":'None of these files can be made into pages. A page has to be a <b>JPEG</b> photo or an '
@@ -1397,7 +1397,7 @@ function ctRow(j){
   // Said plainly, because the guess can be wrong in two different ways and the
   // fix is different for each: a wrong NAME is the button below; a pile that was
   // really two books is a folder the parent makes in Drive.
-  if(j.autoTitle) h+='<div class="status">New ERA gathered these loose photos into one book and gave it this name. '
+  if(j.autoTitle) h+='<div class="status">Our Era Comms gathered these loose photos into one book and gave it this name. '
     +'Press <b>Rename</b> if that is wrong &mdash; or if these were really two books, move one book&rsquo;s photos '
     +'into their own folder inside <b>books</b>.</div>';
   // A flag count on its own tells a parent nothing to do with it, and the two
@@ -1547,11 +1547,11 @@ async function contentPaint(){
   // `quietMs` still travels on the status for older readers, but no scan gathers
   // this pile any more, so a card promising a start "about 10 minutes after the
   // last one lands" would be promising something nothing does.
-  const ctLoose=loose?'<b>'+loose+' photo'+(loose===1?'':'s')+'</b> just arrived in <b>books</b> — New ERA takes them '
+  const ctLoose=loose?'<b>'+loose+' photo'+(loose===1?'':'s')+'</b> just arrived in <b>books</b> — Our Era Comms takes them '
     +'to be <b>one book</b>, waiting for a grown-up to tap <b>Build</b>. '
     +ctBuildBtn(CT_LOOSE,'data-build-loose'):'';
   if(!jobs.length){
-    st.innerHTML=ctLoose||'No books yet — drop the page photos of one book into <b>books</b> in your Google Drive, then press <b>Build</b>. New ERA makes the folder and names it for you.';
+    st.innerHTML=ctLoose||'No books yet — drop the page photos of one book into <b>books</b> in your Google Drive, then press <b>Build</b>. Our Era Comms makes the folder and names it for you.';
     list.innerHTML=""; ctWireBuild(st,CT_LOOSE,{kind:"books",loose:true},"the new book"); return;
   }
   st.innerHTML='<b>'+jobs.length+' book'+(jobs.length===1?'':'s')+'</b> in your Drive folder.'+(ctLoose?' '+ctLoose:'');
@@ -1604,7 +1604,7 @@ async function drivePaint(){
       // step ticks with nobody's hand on it — the title has to be a state, not
       // an instruction, and the hint has to say so.
       { done:!!s.folderPath, title:"3. Your content folder",
-        hint:"Found by itself when New ERA Content already exists in your Drive (another computer made it). Otherwise one tap makes it, with books, music, movies, content, and clothing folders inside — or pick a folder below.",
+        hint:"Found by itself when your content folder already exists in your Drive (another computer made it). Otherwise one tap makes it, with books, music, movies, content, and clothing folders inside — or pick a folder below.",
         btn:"✨ Create it for me", fn:async()=>{
           const r=await (await fetch("/integrations/drive/create-folder",{method:"POST"})).json();
           // The same tap, two true sentences: the hub says which one it did
@@ -1633,7 +1633,7 @@ async function drivePaint(){
     }
     const allDone = steps.every(x=>x.done);
     let msg="";
-    if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open New ERA Content, and upload straight into those folders). Everything lands here within 10 minutes, or press Sync now.<br>';
+    if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open your content folder, and upload straight into those folders). Everything lands here within 10 minutes, or press Sync now.<br>';
     if(s.folderPath) msg+="<b>Watching:</b> "+s.folderPath;
     if(s.syncing) msg+=" · <b>Syncing…</b>";
     else if(s.lastSync) msg += s.lastSync.error ? ' · <span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
@@ -1786,7 +1786,7 @@ async function paintVersion(){
     const v=await (await fetch("/version",{cache:"no-store"})).json();
     updDisabled=!v.updater;
     $("updStatus").innerHTML = v.updater
-      ? "Running build <b>"+v.build+"</b>"+(v.disk&&v.disk!==v.build?" — build <b>"+v.disk+"</b> is installed and starts next time New ERA opens":"")
+      ? "Running build <b>"+v.build+"</b>"+(v.disk&&v.disk!==v.build?" — build <b>"+v.disk+"</b> is installed and starts next time Our Era Comms opens":"")
       : "Running build <b>"+v.build+"</b> · this copy does not update itself (a developer checkout)";
     return v;
   }catch(e){ $("updStatus").textContent="Can't read the version right now."; return null; }
@@ -1798,7 +1798,7 @@ $("updCheck").onclick=async()=>{
     const r=await (await fetch("/update/check",{method:"POST"})).json();
     if(r.status==="up-to-date"){ $("updStatus").innerHTML="<b>You're on the latest</b> — build "+r.build+(r.latest?" ("+r.latest+")":""); toast("Up to date ✓"); }
     else if(r.status==="updated"){
-      $("updStatus").innerHTML="<b>Updated to build "+r.to+"</b>"+(r.version?" ("+r.version+")":"")+" — New ERA restarts itself in a moment; this page follows.";
+      $("updStatus").innerHTML="<b>Updated to build "+r.to+"</b>"+(r.version?" ("+r.version+")":"")+" — Our Era Comms restarts itself in a moment; this page follows.";
       toast("Updated ✓");
       // the hub restarts: wait for the new build to answer, then reload here
       const was=r.from; let tries=0;
@@ -1811,8 +1811,8 @@ $("updCheck").onclick=async()=>{
     }
     else if(r.status==="busy"){ $("updStatus").textContent="Already checking — give it a moment."; }
     else if(r.status==="disabled"){ $("updStatus").textContent="This copy does not update itself (a developer checkout)."; }
-    else { $("updStatus").innerHTML="<b>Couldn't fetch an update</b> ("+r.status+(r.code?" "+r.code:"")+(r.message?": "+r.message:"")+"). Check the internet connection and try again; New ERA keeps trying by itself every 6 hours."; toast("Update check failed", false); }
-  }catch(e){ $("updStatus").textContent="Couldn't reach New ERA to check."; toast("Update check failed", false); }
+    else { $("updStatus").innerHTML="<b>Couldn't fetch an update</b> ("+r.status+(r.code?" "+r.code:"")+(r.message?": "+r.message:"")+"). Check the internet connection and try again; Our Era Comms keeps trying by itself every 6 hours."; toast("Update check failed", false); }
+  }catch(e){ $("updStatus").textContent="Couldn't reach Our Era Comms to check."; toast("Update check failed", false); }
   b.disabled=false;
 };
 paintVersion();

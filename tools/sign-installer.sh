@@ -59,7 +59,10 @@ set -a; . "$ENV"; set +a
 [ "$CHECK" = 1 ] && [ -n "${SIGN_PFX:-}" ] && { echo "sign: ready (PFX)"; exit 0; }
 
 TSA="${SIGN_TSA:-http://time.certum.pl}"
-COMMON=(-n "New ERA" -i "https://neweracommunications.org" -h sha256 -ts "$TSA")
+# -n is the description a signature dialog shows, -i its "more info" link: the
+# product's names (9/26 rename). The certificate itself names the maintainer
+# and never changed, so SmartScreen reputation carries over.
+COMMON=(-n "Our Era Comms" -i "https://ourerafoundation.org/communications/" -h sha256 -ts "$TSA")
 TMP="$EXE.signed"
 if [ -n "${SIGN_PFX:-}" ]; then
   "$OSSL" sign -pkcs12 "$SIGN_PFX" -pass "$SIGN_PFX_PASS" "${COMMON[@]}" -in "$EXE" -out "$TMP"

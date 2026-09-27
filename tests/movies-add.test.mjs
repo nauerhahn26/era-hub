@@ -360,7 +360,7 @@ test("a name with no link is written pending: counted for a grown-up, drawn nowh
 
 // ------------------------------------------------------------ the write rules
 
-test("a catalog New ERA cannot read is refused, never rewritten", async () => {
+test("a catalog Our Era Comms cannot read is refused, never rewritten", async () => {
   const file = path.join(MOVIES, "catalog.json");
   const good = fs.readFileSync(file);
   const half = '{"schemaVersion":1,"titles":[{"id":"the-gruffalo"';

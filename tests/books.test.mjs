@@ -149,7 +149,7 @@ before(async () => {
     }, null, 2));
     if (envelope) fs.writeFileSync(path.join(b, ".erabook.json"), JSON.stringify({
       v: 1, title: dir, slug: dir, pages: 1, exportedAt: "2026-09-22T00:00:00Z",
-      from: { app: "New ERA", build: "20260922.1200" },
+      from: { app: "Our Era Comms", build: "20260922.1200" },
     }));
   };
   authoredPkg("their-book", true);    // came from another family's hub

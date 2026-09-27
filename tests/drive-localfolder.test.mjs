@@ -166,6 +166,36 @@ test("a folder that turns up after boot is adopted on the next status paint, no 
   assert.equal(JSON.parse(fs.readFileSync(path.join(data, "drive.json"), "utf8")).folderPath, LATE);
 });
 
+// The rename (spec, "Drive folder"): the software is Our Era Comms now, and a
+// family may rename the folder inside Drive by hand. Adoption takes either
+// name, per root the new name first — but only a folder with a library in it
+// counts, so a bare new-name folder never hides the family's real shelf.
+test("adoption takes \"Our Era Comms Content\" too, and prefers it when both hold a library", async () => {
+  const both = path.join(TMP, "Both Drive");
+  for (const name of ["Our Era Comms Content", "New ERA Content"])
+    fs.mkdirSync(path.join(both, name, "books"), { recursive: true });
+  const onlyNew = path.join(TMP, "Renamed Drive");
+  fs.mkdirSync(path.join(onlyNew, "Our Era Comms Content", "music"), { recursive: true });
+  // a bare new-name folder beside the family's real (old-name) library
+  const bareNew = path.join(TMP, "Bare Drive");
+  fs.mkdirSync(path.join(bareNew, "Our Era Comms Content"), { recursive: true });
+  fs.mkdirSync(path.join(bareNew, "New ERA Content", "movies"), { recursive: true });
+
+  for (const [root, want] of [[onlyNew, path.join(onlyNew, "Our Era Comms Content")],
+                              [both, path.join(both, "Our Era Comms Content")],
+                              [bareNew, path.join(bareNew, "New ERA Content")]]) {
+    await stopHub();
+    await startHub({ ERA_DRIVE_LOCAL_ROOTS: root });
+    assert.equal((await driveStatus()).folderPath, want, root);
+  }
+});
+
+test("CONTENT_FOLDER_NAMES: new name first; creation keeps the old name this release", () => {
+  const drive = require("./drive.js");
+  assert.deepEqual(drive.CONTENT_FOLDER_NAMES, ["Our Era Comms Content", "New ERA Content"]);
+  assert.equal(drive.CONTENT_FOLDER, "New ERA Content");
+});
+
 // The seam is read on every call, not captured at require time: the Settings
 // checklist re-reads detect() live, and a root that appeared after boot (or a
 // test that sets the variable after loading the module) has to be seen.
@@ -229,6 +259,25 @@ test("'create it for me' on a folder that is already there connects it instead o
     const again = drive.createContentFolder();
     assert.equal(again.ok, true);
     assert.equal(again.existed, true, "…and a second tap connects what is already there");
+  } finally { delete process.env.ERA_DRIVE_LOCAL_ROOTS; }
+});
+
+// Rename spec: creation keeps "New ERA Content" (the family library is not
+// split this release) — but a folder the family already renamed by hand is
+// the existing one, and existing beats creating a second beside it.
+test("'create it for me' beside a renamed \"Our Era Comms Content\" connects that one, makes no second", () => {
+  const drive = require("./drive.js");
+  const data = fs.mkdtempSync(path.join(TMP, "renamed-data-"));
+  const root = path.join(TMP, "Renamed Made Drive");
+  fs.mkdirSync(path.join(root, "Our Era Comms Content"), { recursive: true });   // bare: not adopted
+  process.env.ERA_DRIVE_LOCAL_ROOTS = root;
+  try {
+    drive.start(data);
+    const r = drive.createContentFolder();
+    assert.equal(r.ok, true);
+    assert.equal(r.folderPath, path.join(root, "Our Era Comms Content"));
+    assert.equal(r.existed, true);
+    assert.ok(!fs.existsSync(path.join(root, "New ERA Content")), "no second folder");
   } finally { delete process.env.ERA_DRIVE_LOCAL_ROOTS; }
 });
 

@@ -27,8 +27,10 @@
 //     nothing consumed, nothing moved, not one byte of the sender's shelf
 //     different afterwards.
 //
-// Ports 8470 and 8471, claimed for this suite by the plan's sweep across all
-// five repos' tests/ and every open worktree. 8377 is the live family hub,
+// Ports 8473 and 8474, claimed for this suite by a sweep across all five
+// repos' tests/ and every open worktree (9/26: moved off 8470/8471 — the
+// ellie-repository web + MCP servers took 8471/8472 on this box on 9/25, and
+// their 401 answered hub B's port in the gate). 8377 is the live family hub,
 // 8378 the gate's, 8469 the reader-share/reader-strip suites'.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -135,8 +137,8 @@ function tree(dir, rel = "", out = []) {
   return out;
 }
 
-const A = makeHub("a", 8470);          // the family that has the book
-const B = makeHub("b", 8471);          // the family that is sent it
+const A = makeHub("a", 8473);          // the family that has the book
+const B = makeHub("b", 8474);          // the family that is sent it
 let browser;
 // Filled in by the journey test below; the shelf assertions read them.
 let ERABOOK = null, imported = null, aShelfBefore = null;

@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# vm-e2e.sh <candidate dist dir> [<previous New-ERA-Setup.exe>] [--only a|b] [--post-publish]
+# vm-e2e.sh <candidate dist dir> [<previous installer .exe>] [--only a|b] [--post-publish]
 # Tier 2 of the deploy gate (docs/e2e-deploy-gate-plan.md, dad 9/3): the
 # candidate release installed on a pristine Windows 10 VM and driven through
 # the REAL kiosk window — install, welcome wizard, apps, door, settings,
 # packs-later, open-url (leg A); the previous release self-updating to the
 # candidate without a reinstall (leg B). Unattended; release.sh runs it after
 # the payload is built and refuses to publish on anything but 0 failed.
-#   candidate dist dir = tools/release.sh's $DIST: New-ERA-Setup.exe,
-#                        latest.json, new-era-suite.tar.gz
+#   candidate dist dir = tools/release.sh's $DIST: latest.json, the installer it
+#                        names (`installer_file`: Our-Era-Comms-Setup.exe since
+#                        the 9/26 rename; a latest.json without the field is a
+#                        New-ERA-Setup.exe cut), new-era-suite.tar.gz
 #   previous installer = the release the family already has (leg B's start);
-#                        default: the newest dist/release-*/ whose version is
+#                        default: the LIVE installer release.sh downloaded into
+#                        $DIST/prev/ (by the live latest.json's installer_file);
+#                        else the newest dist/release-*/ whose version is
 #                        TAGGED here (release.sh tags only when it publishes,
 #                        so a dry-run artefact is never "what the family has" —
 #                        9/5: v0.32.1's leg B picked the unpublished v0.32.0
@@ -22,7 +26,15 @@
 #                        checkout without its tags, is how it happens);
 #                        in PATCH mode (latest.json's `installer` names another
 #                        release's exe) the default is $DIST's own Setup.exe —
-#                        the re-attached one IS what the family already has
+#                        the re-attached one IS what the family already has.
+#                        Every dist's installer is found by the name ITS OWN
+#                        latest.json records, never by a loose *Setup.exe glob
+#                        (9/9: OneDriveSetup.exe contains "setup.exe")
+#   $DIST/prev/New-ERA-Setup.exe, when present: leg A also installs that OLD
+#                        installer on a fresh snapshot and runs the candidate
+#                        over it — the rename's upgrade path (.onInit moves the
+#                        folder, leaves a junction, one Apps entry). Absent: that
+#                        step skips and says so.
 #   --post-publish     leg C only (the published download fetched in Edge on the
 #                      guest and opened by the shell): run AFTER gh release create
 # Needs era-family/data/vm.env (QA host + guest credentials) and the driver
@@ -42,7 +54,7 @@ HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 VMT="$ROOT/era-family/tools/vm"
 DIST="${1:?usage: vm-e2e.sh <candidate dist dir> [prev Setup.exe] [--only a|b] [--post-publish]}"; shift
-PREV=""; ONLY=""; PREV_UNTAGGED=""; POST=0
+PREV=""; ONLY=""; PREV_UNTAGGED=""; PREV_LIVE=""; POST=0
 while [ $# -gt 0 ]; do case "$1" in --only) ONLY="${2:?--only needs a|b|c}"; shift 2;; --post-publish) POST=1; ONLY=c; shift;; *) PREV="$1"; shift;; esac; done
 FEED_PORT=8427
 OUT="$HUB/gate/vm-e2e"; rm -rf "$OUT"; mkdir -p "$OUT"
@@ -51,6 +63,9 @@ OUT="$HUB/gate/vm-e2e"; rm -rf "$OUT"; mkdir -p "$OUT"
 # this run is replacing. (--post-publish drives the PUBLISHED download; it neither
 # proves nor disproves the dist, so it leaves the marker alone.)
 [ "$POST" = 1 ] || rm -f "$DIST/VM-GREEN"
+# The installer a dist carries, by the name its own latest.json records; a feed
+# that predates the field (before the 9/26 rename) is a New-ERA-Setup.exe cut.
+exe_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("installer_file") or "New-ERA-Setup.exe")' "$1/latest.json" 2>/dev/null || echo New-ERA-Setup.exe; }
 
 # machine-wide: one VM, one run at a time (the 8/24 two-session lesson)
 exec 9>/tmp/era-vm-e2e.lock
@@ -61,26 +76,44 @@ if [ "$POST" = 1 ]; then
   # $DIST is the sha256 it must match (checksums.txt, read by the leg itself).
   [ -f "$DIST/checksums.txt" ] || { echo "vm-e2e: $DIST/checksums.txt missing — leg C has nothing to compare the bytes against"; exit 2; }
 else
-for f in New-ERA-Setup.exe latest.json new-era-suite.tar.gz; do
+for f in latest.json new-era-suite.tar.gz; do
   [ -f "$DIST/$f" ] || { echo "vm-e2e: $DIST/$f missing"; exit 2; }
 done
+# ---- leg B's starting installer (tests/vm-e2e.test.mjs runs this block as bash) ----
+CAND_EXE="$(exe_of "$DIST")"
 # A patch release re-attaches a previous cut's signed installer, and $DIST's own
 # Setup.exe IS therefore the one the family already runs — leg B starts from it.
 PATCH_INSTALLER="$(python3 -c "import json;d=json.load(open('$DIST/latest.json'));i=d.get('installer');print(i if i and i!=d['version'] else '')" 2>/dev/null || true)"
-if [ -z "$PREV" ] && [ -n "$PATCH_INSTALLER" ]; then PREV="$DIST/New-ERA-Setup.exe"; fi
+if [ -z "$PREV" ] && [ -n "$PATCH_INSTALLER" ]; then PREV="$DIST/$CAND_EXE"; fi
+# A signed cut: release.sh downloaded the LIVE installer (whatever the published
+# latest.json's installer_file names) into $DIST/prev/ — that is exactly what a
+# family downloads today, so it beats any local dist dir.
 if [ -z "$PREV" ]; then
-  for p in $(ls -dt "$ROOT"/dist/release-*/New-ERA-Setup.exe 2>/dev/null | grep -v "^$DIST/"); do
+  for p in "$DIST"/prev/*.exe; do [ -f "$p" ] && { PREV="$p"; PREV_LIVE=1; break; }; done
+fi
+if [ -z "$PREV" ]; then
+  # every other cut's installer under the name its own latest.json records, newest first
+  prev_exes() {
+    local d e
+    for d in "$ROOT"/dist/release-*; do
+      [ "$d" = "${DIST%/}" ] && continue
+      e="$d/$(exe_of "$d")"; [ -f "$e" ] && printf '%s\n' "$e"
+    done | xargs -r -d '\n' ls -dt 2>/dev/null
+  }
+  while IFS= read -r p; do
     v="$(basename "$(dirname "$p")")"; v="${v#release-}"
     if git -C "$HUB" tag -l "$v" | grep -qx "$v"; then PREV="$p"; break; fi
-  done
+  done < <(prev_exes)
   if [ -z "$PREV" ]; then
     # the pre-9/5 pick, and it says so: the "previous" banner line alone did
     # not catch the v0.32.0 mistake, so the fallback gets a line of its own
-    PREV="$(ls -dt "$ROOT"/dist/release-*/New-ERA-Setup.exe 2>/dev/null | grep -v "^$DIST/" | head -1)"
+    PREV="$(prev_exes | head -1)"
     [ -n "$PREV" ] && { PREV_UNTAGGED=1; echo "vm-e2e: WARNING no TAGGED dist/release-* under $ROOT/dist - falling back to the UNTAGGED $PREV; leg B self-updates from a build no family has (pass the family's installer as the 2nd argument)"; }
   fi
   [ -n "$PREV" ] || { echo "vm-e2e: no previous installer found under $ROOT/dist"; exit 2; }
 fi
+# ---- end of leg B's starting installer ----
+[ -f "$DIST/$CAND_EXE" ] || { echo "vm-e2e: $DIST/$CAND_EXE missing (the installer $DIST/latest.json names)"; exit 2; }
 [ -f "$PREV" ] || { echo "vm-e2e: previous installer $PREV missing"; exit 2; }
 fi
 
@@ -93,13 +126,27 @@ else
   # the VM-GREEN marker names this exact file, so refuse now rather than after
   # twenty minutes of VM driving with nothing to record the run against
   [ -f "$DIST/new-era-suite-$VER.tar.gz" ] || { echo "vm-e2e: $DIST/new-era-suite-$VER.tar.gz missing — the VM-GREEN marker names the versioned tarball the legs drove"; exit 2; }
-  if [ -n "$PATCH_INSTALLER" ]; then PREV_NOTE=" (installer $PATCH_INSTALLER re-attached)"; else PREV_NOTE="${PREV_UNTAGGED:+ (UNTAGGED - not a published release)}"; fi
+  if [ -n "$PATCH_INSTALLER" ]; then PREV_NOTE=" (installer $PATCH_INSTALLER re-attached)"; else PREV_NOTE="${PREV_UNTAGGED:+ (UNTAGGED - not a published release)}${PREV_LIVE:+ (the live published installer)}"; fi
   echo "== vm-e2e: candidate $VER ($BUILD) from $DIST; previous = $PREV$PREV_NOTE =="
 
   echo "-- assets -> QA host"
   $DROP "mkdir -p /root/qa/feed && rm -f /root/qa/feed/hits.log /root/qa/feed/hold" || exit 3
-  rsync -q -e "ssh -i $VM_SSH_KEY" "$DIST/New-ERA-Setup.exe" root@$VM_DROPLET:/root/qa/candidate.exe || exit 3
+  rsync -q -e "ssh -i $VM_SSH_KEY" "$DIST/$CAND_EXE" root@$VM_DROPLET:/root/qa/candidate.exe || exit 3
   rsync -q -e "ssh -i $VM_SSH_KEY" "$PREV" root@$VM_DROPLET:/root/qa/prev.exe || exit 3
+  # leg A's upgrade-over-old step: an install made by the OLD-name installer,
+  # then the candidate over it (the .onInit folder move). Only that exact file
+  # makes the step meaningful — a same-name previous installer never takes the
+  # rename path.
+  VM_UPGRADE_OLD=""
+  if [ "$ONLY" != "b" ]; then
+    if [ -f "$DIST/prev/New-ERA-Setup.exe" ]; then
+      rsync -q -e "ssh -i $VM_SSH_KEY" "$DIST/prev/New-ERA-Setup.exe" root@$VM_DROPLET:/root/qa/old.exe || exit 3
+      VM_UPGRADE_OLD=1
+      echo "-- leg A will also run the candidate over an old New ERA install ($DIST/prev/New-ERA-Setup.exe)"
+    else
+      echo "vm-e2e: no $DIST/prev/New-ERA-Setup.exe - leg A's upgrade-over-old step will skip (release.sh downloads it on a signed cut)"
+    fi
+  fi
   rsync -q -e "ssh -i $VM_SSH_KEY" "$DIST/latest.json" "$DIST/new-era-suite.tar.gz" root@$VM_DROPLET:/root/qa/feed/ || exit 3
   rsync -q -e "ssh -i $VM_SSH_KEY" "$VMT/feed.py" root@$VM_DROPLET:/root/qa/feed.py || exit 3
 
@@ -118,6 +165,9 @@ trap cleanup EXIT
 
 export VM_OUT="$OUT" VM_GUEST_USER VM_CANDIDATE_VERSION="${VER:-}" VM_CANDIDATE_BUILD="${BUILD:-}" VM_FEED_PORT="$FEED_PORT"
 export VM_DIST="$DIST"   # leg C reads the expected sha256 out of $DIST/checksums.txt
+# leg C: the file name the published latest.json names (the site's button must
+# point at exactly it); leg A: whether $DIST/prev/ holds an old-name installer
+export VM_INSTALLER_FILE="$(exe_of "$DIST")" VM_UPGRADE_OLD="${VM_UPGRADE_OLD:-}"
 pass=0; fail=0; RAN=""
 run_leg() {
   local name="$1" file="$2"

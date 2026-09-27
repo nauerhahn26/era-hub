@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-payload.sh - assemble a self-contained, no-symlink New ERA payload from
+# build-payload.sh - assemble a self-contained, no-symlink Our Era Comms payload from
 # the sibling module repos: everything a machine with Node 18+ needs to run the
 # hub + apps locally. This is the precursor of the Windows installer (which
 # adds a bundled Node runtime + shortcuts + tray).
@@ -27,7 +27,7 @@ RELEASE=0
 if [ "${1:-}" = "--with-node" ] || [ "${2:-}" = "--with-node" ]; then RELEASE=1; fi
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/predict-model.json" "$OUT/"
 # every local require of the hub's modules must resolve INSIDE the payload —
 # a module added to the repo but not to the list above shipped a hub that
 # died on its first line (packs.js, caught by the VM e2e 9/3, never by the
@@ -134,10 +134,10 @@ fi
 
 cat > "$OUT/start-hub.bat" <<'BAT'
 @echo off
-rem New ERA hub - local-first: binds 127.0.0.1, state lives in .\data
+rem Our Era Comms hub - local-first: binds 127.0.0.1, state lives in .\data
 rem   start-hub.bat [port] [path]   path = which app page to open (default /home/)
-title New ERA
-echo Starting New ERA...
+title Our Era Comms
+echo Starting Our Era Comms...
 cd /d %~dp0
 if "%1"=="" (set PORT=8377) else (set PORT=%1)
 rem The page arrives quoted from the shortcut ("/board/?recipe=songs"), so the
@@ -153,7 +153,7 @@ curl.exe -s -o NUL --max-time 2 http://127.0.0.1:%PORT%/settings
 if not errorlevel 1 goto open
 set NODE=node
 if exist "%~dp0node\node.exe" set NODE=%~dp0node\node.exe
-start "New ERA hub" /min "%NODE%" server.js %PORT%
+start "Our Era Comms hub" /min "%NODE%" server.js %PORT%
 timeout /t 2 /nobreak >nul
 :open
 rem Paused app? (talk door, 9/17) Leaving an app by the talk door does NOT close
@@ -235,15 +235,17 @@ chmod +x "$OUT/start-hub.sh"
 # writes the .lnk files itself. Uninstall is plain batch.
 cat > "$OUT/INSTALL.bat" <<'BAT'
 @echo off
-rem Starts New ERA and opens the welcome screen - pick your apps there.
+rem Starts Our Era Comms and opens the welcome screen - pick your apps there.
 call "%~dp0start-hub.bat"
 BAT
 cat > "$OUT/UNINSTALL.bat" <<'BAT'
 @echo off
-rem Removes the shortcuts and stops New ERA. Your data folder stays yours.
+rem Removes the shortcuts and stops Our Era Comms. Your data folder stays yours.
+rem Both names: a PC that ran the old installer still has New ERA shortcuts.
 taskkill /IM node.exe /F >nul 2>&1
+taskkill /IM ERAgaze.exe /F >nul 2>&1
 for %%d in ("%USERPROFILE%\Desktop" "%APPDATA%\Microsoft\Windows\Start Menu\Programs" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup") do (
-  for %%n in ("New ERA" "Making Words" "The Pencil" "Board" "Music" "Movies" "Book Reader") do (
+  for %%n in ("Our Era Comms" "New ERA" "Making Words" "The Pencil" "Board" "Clothing Picker" "Music" "Movies" "Book Reader" "ERAgaze" "ERAgaze eye-gaze engine") do (
     del /q "%%~d\%%~n.lnk" >nul 2>&1
   )
 )

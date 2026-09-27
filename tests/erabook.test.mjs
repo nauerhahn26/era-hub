@@ -101,7 +101,7 @@ function fixture(opts) {
   return { dir, manifest };
 }
 
-const FROM = { app: "New ERA", build: "20260922.1200" };
+const FROM = { app: "Our Era Comms", build: "20260922.1200" };
 
 async function packToBuffer(dir, manifest, opts) {
   const chunks = [];
@@ -245,6 +245,24 @@ test("the envelope carries the book's shape and no child's name", async () => {
     v: 1, title: "Luna the Fox", slug: "luna-the-fox", pages: 4,
     exportedAt: "2026-08-24T00:00:00Z", from: FROM,
   });
+});
+
+// The rename (9/26): a hub stamps "Our Era Comms" on what it sends, and a book
+// a not-yet-updated hub sent ("New ERA") still opens — the family's devices
+// update days apart, and a book in flight between them must not bounce.
+test("the envelope's from.app is Our Era Comms by default", async () => {
+  const { dir, manifest } = fixture();
+  const file = await packedFile(dir, manifest, {});
+  assert.deepEqual(erabook.readEnvelope(file).from, { app: "Our Era Comms", build: null });
+});
+
+test("a book from a hub before the rename (from.app \"New ERA\") still opens", async () => {
+  const { dir, manifest } = fixture();
+  const file = await packedFile(dir, manifest, { from: { app: "New ERA", build: "20260922.1200" } });
+  assert.equal(erabook.readEnvelope(file).from.app, "New ERA");
+  const out = erabook.unpack(file, scratch("dest"));
+  assert.equal(out.title, "Luna the Fox");
+  assert.equal(out.envelope.from.app, "New ERA");
 });
 
 // The whole point of the envelope: a wrong file is refused after ~200 bytes,
@@ -453,7 +471,7 @@ test("two entries with one name are refused: the second would overwrite the firs
 
 // ----------------------------------------------------------- the envelope
 
-test("a zip with no envelope is not a New ERA book", () => {
+test("a zip with no envelope is not an Our Era Comms book", () => {
   const f = path.join(scratch("raw"), "holiday.zip");
   fs.writeFileSync(f, rawZip([{ name: "a.jpg", data: JPEG(1) }]));
   assert.throws(() => erabook.unpack(f, scratch("dest")), refusal("no-envelope"));
@@ -463,7 +481,7 @@ test("a zip with no envelope is not a New ERA book", () => {
   assert.throws(() => erabook.unpack(g, scratch("dest")), refusal("no-envelope"));
 });
 
-test("a book from a newer New ERA says so before anything is unpacked", () => {
+test("a book from a newer version of Our Era Comms says so before anything is unpacked", () => {
   const dest = scratch("dest");
   const f = path.join(scratch("raw"), "newer.erabook");
   fs.writeFileSync(f, rawZip([envelopeEntry({ v: 2 }), { name: "cover.jpg", data: JPEG(1) }]));

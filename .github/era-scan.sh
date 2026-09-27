@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# era-scan.sh <dir> — release-QC scanner (New ERA Communications, L3 gate).
+# era-scan.sh <dir> — release-QC scanner (Our Era Communication Tools, L3 gate).
 # Scans every non-binary file under <dir> (skipping .git/, node_modules/, data/)
 # for (a) generic secret patterns, (b) BLOCK-tier private terms, (c) WARN-tier
 # family terms. Exit 1 on any (a)/(b) hit; exit 0 with a report for (c).

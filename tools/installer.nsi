@@ -3,12 +3,19 @@
 ; before anything installs; the same choices stay editable in Settings and
 ; on the home screen). Signing: tools/sign-installer.sh runs on the uninstaller
 ; stub and on the finished Setup.exe (no-op until the Certum cert lands).
-; Per-user everything: no admin prompt, %LOCALAPPDATA%\New ERA, uninstall
-; entry in Settings > Apps.
+; Per-user everything: no admin prompt, %LOCALAPPDATA%\Our Era Comms, uninstall
+; entry in Settings > Apps. Renamed from New ERA on 9/26 (docs/superpowers/specs/
+; 2026-09-26-rename-our-era-comms-design.md, R1): .onInit moves an old install's
+; folder over and leaves a junction behind; the old names below are that path.
 ; Built by release.sh:  makensis -DPAYLOAD=<dir> -DOUTFILE=<exe> -DVERSION=<v>
 Unicode true
-!define APPNAME "New ERA"
-!define REGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\NewERA"
+!define APPNAME "Our Era Comms"
+!define FULLNAME "Our Era Communication Tools"
+!define PUBLISHER "Our Era Foundation"
+!define REGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\OurEraComms"
+; the pre-rename install (R1 keep-list): only .onInit and the uninstaller use these
+!define OLDNAME "New ERA"
+!define OLDREGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\NewERA"
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
@@ -16,7 +23,7 @@ OutFile "${OUTFILE}"
   !uninstfinalize '"${SIGN}" "%1"'
   !finalize '"${SIGN}" "%1"'
 !endif
-InstallDir "$LOCALAPPDATA\New ERA"
+InstallDir "$LOCALAPPDATA\${APPNAME}"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 SetCompressorDictSize 16   ; modest dictionary: the default crashed makensis (bus error) on the build box
@@ -39,7 +46,7 @@ SetCompressorDictSize 16   ; modest dictionary: the default crashed makensis (bu
 !endif
 !define MUI_COMPONENTSPAGE_TEXT_TOP "Choose the apps for this computer - only what you tick is installed. Add or remove apps any time from the home screen or Settings. Most of the space is the engine (${SZ_CORE} MB); the apps themselves are small."
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Open New ERA now"
+!define MUI_FINISHPAGE_RUN_TEXT "Open ${APPNAME} now"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchHub
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
@@ -51,7 +58,44 @@ Function LaunchHub
   ExecShell "open" "$INSTDIR\start-hub.bat" "" SW_SHOWMINIMIZED   ; no black console at first launch
 FunctionEnd
 
-Section "New ERA engine (required)" SecCore
+; Upgrade over a New ERA install (R1). Self-update cannot move the folder it runs
+; from (it is an in-process overlay), so the move happens HERE, before a single
+; file is written, while nothing runs from it: stop the hub, the gaze engine and
+; our own kiosk (its Edge profile lives in data\ and holds files open), rename
+; the whole folder (data\ rides along untouched), and leave a junction at the old
+; path so every TD Snap tile, Startup entry and per-app shortcut that still names
+; it keeps working until the boot pass rewrites them. Then the old uninstall
+; entry and the old-name shortcuts go, so Apps & features shows ONE entry. If the
+; rename fails (a window open on that folder, a file in use) nothing has moved:
+; say so and stop - never half an install in each folder. /SD keeps a silent
+; install from waiting on the box. wmic, never a scripted shell (Defender, 8/29);
+; nsExec runs it without cmd, so the LIKE wildcard is one plain percent sign.
+Function .onInit
+  ${If} ${FileExists} "$LOCALAPPDATA\${OLDNAME}\start-hub.bat"
+  ${AndIfNot} ${FileExists} "$LOCALAPPDATA\${APPNAME}\*.*"
+    nsExec::ExecToLog 'taskkill /IM node.exe /F'
+    Pop $0
+    nsExec::ExecToLog 'taskkill /IM ERAgaze.exe /F'
+    Pop $0
+    nsExec::ExecToLog `wmic process where "(name='msedge.exe' or name='chrome.exe') and commandline like '%kiosk-profile%'" call terminate`
+    Pop $0
+    Sleep 1500
+    ClearErrors
+    Rename "$LOCALAPPDATA\${OLDNAME}" "$LOCALAPPDATA\${APPNAME}"
+    ${If} ${Errors}
+      MessageBox MB_OK|MB_ICONSTOP "${APPNAME} could not move your ${OLDNAME} folder to its new name, because something still has it open (an app window, or a folder window showing it).$\r$\n$\r$\nClose everything, then run this installer again. Nothing was moved and your data is safe." /SD IDOK
+      Abort
+    ${EndIf}
+    nsExec::ExecToLog 'cmd /c mklink /J "$LOCALAPPDATA\${OLDNAME}" "$LOCALAPPDATA\${APPNAME}"'
+    Pop $0
+    DeleteRegKey HKCU "${OLDREGKEY}"
+    Delete "$DESKTOP\${OLDNAME}.lnk"
+    Delete "$SMPROGRAMS\${OLDNAME}.lnk"
+    Delete "$SMSTARTUP\${OLDNAME}.lnk"
+  ${EndIf}
+FunctionEnd
+
+Section "${APPNAME} engine (required)" SecCore
   SectionIn RO
   SetOutPath "$INSTDIR"
   ; everything except the per-app packs (their names are unique in the tree;
@@ -60,9 +104,9 @@ Section "New ERA engine (required)" SecCore
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\start-hub.bat" "" "$INSTDIR\public\favicon.ico"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "${REGKEY}" "DisplayName" "New ERA Communications"
+  WriteRegStr HKCU "${REGKEY}" "DisplayName" "${FULLNAME}"
   WriteRegStr HKCU "${REGKEY}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKCU "${REGKEY}" "Publisher" "New ERA Communications"
+  WriteRegStr HKCU "${REGKEY}" "Publisher" "${PUBLISHER}"
   WriteRegStr HKCU "${REGKEY}" "DisplayIcon" "$INSTDIR\public\favicon.ico"
   WriteRegStr HKCU "${REGKEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKCU "${REGKEY}" "InstallLocation" "$INSTDIR"
@@ -116,7 +160,7 @@ SectionEnd
 ; Hover text on the components page: what each tick costs, and why the
 ; total barely moves for most of them.
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} "The New ERA hub with its own bundled runtime - ${SZ_CORE} MB, and the only big part. Every app runs on it."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} "The ${APPNAME} hub with its own bundled runtime - ${SZ_CORE} MB, and the only big part. Every app runs on it."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecGaze} "ERAgaze: a steady, gentle eye-gaze cursor tuned for kids. For PCs without their own gaze software. Under 1 MB."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMW} "Making Words: the daily letter lesson. Part of the engine - no extra space."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecPencil} "The Pencil: free writing with word prediction. Under 1 MB."
@@ -185,6 +229,17 @@ SectionEnd
 Section "Uninstall"
   ExecWait 'taskkill /IM node.exe /F'
   ExecWait 'taskkill /IM ERAgaze.exe /F'
+  ; The junction .onInit left at the old path (New ERA -> Our Era Comms). Decided
+  ; BEFORE the files go, while start-hub.bat still resolves through it: the old
+  ; path answers with our start-hub.bat only when it leads here. Removed below
+  ; with a plain RMDir, which on a junction removes the link and never follows
+  ; it, and on a real folder with anything in it does nothing at all.
+  StrCpy $R9 0
+  ${If} "$INSTDIR" == "$LOCALAPPDATA\${APPNAME}"
+  ${AndIf} ${FileExists} "$LOCALAPPDATA\${OLDNAME}\start-hub.bat"
+  ${AndIf} ${FileExists} "$LOCALAPPDATA\${APPNAME}\start-hub.bat"
+    StrCpy $R9 1
+  ${EndIf}
   ; everything but data\ — the family's content, settings, and history stay
   Delete "$INSTDIR\*.*"
   RMDir /r "$INSTDIR\node"
@@ -198,6 +253,9 @@ Section "Uninstall"
   Delete "$DESKTOP\${APPNAME}.lnk"
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   Delete "$SMSTARTUP\${APPNAME}.lnk"
+  Delete "$DESKTOP\${OLDNAME}.lnk"      ; the pre-rename names, on a PC the
+  Delete "$SMPROGRAMS\${OLDNAME}.lnk"   ; boot pass never reached
+  Delete "$SMSTARTUP\${OLDNAME}.lnk"
   ; per-app shortcuts the hub created from the wizard/toggles
   Delete "$DESKTOP\Making Words.lnk"
   Delete "$DESKTOP\The Pencil.lnk"
@@ -214,5 +272,9 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\Movies.lnk"
   Delete "$SMPROGRAMS\Book Reader.lnk"
   DeleteRegKey HKCU "${REGKEY}"
+  DeleteRegKey HKCU "${OLDREGKEY}"
+  ${If} $R9 == 1
+    RMDir "$LOCALAPPDATA\${OLDNAME}"   ; the junction only (see the top of this section)
+  ${EndIf}
   RMDir "$INSTDIR"   ; removes only if empty (data kept = dir stays, by design)
 SectionEnd

@@ -61,8 +61,8 @@
 //      the sheet switches on; `message` is the only thing anyone reads.
 //
 // TWO DEPARTURES FROM §5.2'S DRAFT TABLE, both because Phase 1 split codes the
-// spec had lumped: "envelope missing" gets "That file isn't a New ERA book."
-// rather than "made by a newer New ERA" — a zip of somebody's holiday photos
+// spec had lumped: "envelope missing" gets "That file isn't an Our Era Comms book."
+// rather than "made by a newer version of Our Era Comms" — a zip of somebody's holiday photos
 // has no envelope and is not from the future — and `future-version` keeps the
 // update sentence on its own. The plan calls that table "the draft, not the
 // law"; the routing is one line of MESSAGES to put back.
@@ -120,31 +120,31 @@ function contentFolder() {
 // erabook.js's contract (its header lists them) plus this file's own.
 const MESSAGES = {
   // §5.2 row 1 — and `no-envelope`, which the draft table lumped with row 2.
-  "not-a-zip": "That file isn't a New ERA book.",
-  "no-envelope": "That file isn't a New ERA book.",
+  "not-a-zip": "That file isn't an Our Era Comms book.",
+  "no-envelope": "That file isn't an Our Era Comms book.",
   // row 2
-  "future-version": "That book was made by a newer New ERA. Update this computer and try again.",
+  "future-version": "That book was made by a newer version of Our Era Comms. Update this computer and try again.",
   // row 3 — every structural disagreement a stranger's file can have. A parent
   // cannot repair any of them, and the only useful next step is the same one.
   "damaged": "That book's file is damaged - ask them to send it again.",
   // row 4
   "too-big": "That file is too big to be a book.",
   // row 5 — drive.mirrorBook's own word for this state (law 2).
-  "needs-local-drive": "New ERA keeps books in the family's content folder in Google Drive, so every device gets them. Set up your content folder first.",
+  "needs-local-drive": "Our Era Comms keeps books in the family's content folder in Google Drive, so every device gets them. Set up your content folder first.",
   // row 6
   "write-failed": "There wasn't room to save the book.",
   // The sending half. These are read by the grown-up who is holding a finger
   // on their OWN book, so they say what is wrong with that book.
-  "no-such-book": "New ERA could not find that book.",
+  "no-such-book": "Our Era Comms could not find that book.",
   "not-finished": "This book isn't finished yet.",
-  "missing-file": "Some of this book's files are missing, so New ERA did not send it.",
-  "private-file": "This book's list of pages points outside the book, so New ERA did not send it.",
-  "bad-source": "New ERA does not know how to add a book from there.",
+  "missing-file": "Some of this book's files are missing, so Our Era Comms did not send it.",
+  "private-file": "This book's list of pages points outside the book, so Our Era Comms did not send it.",
+  "bad-source": "Our Era Comms does not know how to add a book from there.",
   // Not a row in §5.2's table, because §5.2 lists what we predicted. This is
   // the one for what we did not: the catch-all the send half returns when
   // something in there throws rather than refusing. It says only what a parent
   // can act on, which is "it didn't go" — the stack goes to the log.
-  "send-failed": "Something went wrong with that book, so New ERA did not send it.",
+  "send-failed": "Something went wrong with that book, so Our Era Comms did not send it.",
 };
 // Everything erabook.js can refuse with that is not one of the rows above is a
 // structural fault in somebody else's file, and row 3 is what a parent can do
@@ -269,7 +269,7 @@ function freeDirName(root, title, slug) {
 // otherwise split the response and let a book name write headers of its own.
 // The plain filename= is ASCII (a byte over 0x7f is not portable through every
 // proxy and browser, and Node refuses one over 0xff outright); the real name
-// rides in RFC 5987's filename*, since "Rae's Día" is a normal book here.
+// rides in RFC 5987's filename*, since "Ellie's Día" is a normal book here.
 //
 // PERCENT-ENCODED FROM A BUFFER, not with encodeURIComponent, and that is the
 // whole point of the rewrite rather than a style preference. encodeURIComponent
@@ -342,11 +342,11 @@ function packageFor(slug) {
   let stream;
   try {
     // The REAL build stamp, not the module's {build:null} default: a receiving
-    // hub that has to tell a family "that came from a newer New ERA" can only
+    // hub that has to tell a family "that came from a newer version of Our Era Comms" can only
     // do it if the envelope says which one it came from. update.js is the one
     // place that knows (it reads the VERSION file beside server.js); in a
     // checkout it answers "dev", which is the honest answer there.
-    stream = erabook.pack(pkg, manifest, { from: { app: "New ERA", build: update.currentBuild() } });
+    stream = erabook.pack(pkg, manifest, { from: { app: "Our Era Comms", build: update.currentBuild() } });
   } catch (e) {
     // missing-file is its own sentence: the sender can rebuild the book, which
     // is a different act from asking somebody to send a file again.
@@ -461,8 +461,8 @@ function importBook(file, opts) {
   if (!folder) return refuse("needs-local-drive");
 
   // The envelope first, from a couple of hundred bytes: a file that is not a
-  // New ERA book at all is refused without unpacking forty megabytes of
-  // somebody's holiday video, and "that came from a newer New ERA" survives as
+  // Our Era Comms book at all is refused without unpacking forty megabytes of
+  // somebody's holiday video, and "that came from a newer version of Our Era Comms" survives as
   // its own sentence instead of being lost as some later entry's damage.
   try { erabook.readEnvelope(file); }
   catch (e) { return refuse(codeOf(e)); }

@@ -287,6 +287,11 @@ test("💬 mid-letter: the prompt waiting behind the echo never speaks over TD S
     contentType: "application/json", body: '{"action":"paused"}' }));
   await page.waitForFunction(() => window.Speech && window.Speech.mode() === "test");
   await writeLetter(page, "a");                 // one letter: nothing chained yet
+  // …but its echo is still in flight (test-mode say ≈ 60 + 4/char ms), and the
+  // chained prompt it resolves into reads the partial AS IT STANDS THEN. Let it
+  // finish before the held-echo experiment starts, or "a" speaks "ah, buh" on
+  // its own 11 ms after "b" is echoed (the gate saw exactly that, 9/26).
+  await page.waitForTimeout(400);
   // spy on the shared voice layer, and hold the letter echo open so the 💬 lands
   // while pickLetter is still awaiting it — her real timing, made deterministic
   await page.evaluate(() => {
@@ -302,7 +307,13 @@ test("💬 mid-letter: the prompt waiting behind the echo never speaks over TD S
   await page.locator("#seatA").click();
   await page.locator("#rowBottom .lcell", { hasText: /^b$/ }).first().click();
   await page.waitForFunction(() => window.__release, null, { timeout: 5000 });
+  // the Pencil logs "talk" the instant it hears the 💬 (onPause), and the hub
+  // answers the pause a beat later: wait for BOTH before ending the echo. A
+  // bare 200 ms lost this race under the gate on 9/26.
+  const heard = page.waitForRequest((r) => r.url().includes("/log") && /"event":"talk"/.test(r.postData() || ""));
+  const answered = page.waitForResponse((res) => res.url().includes("/kiosk/pause"));
   await page.locator("#barTalk").click();       // she reaches for the 💬 mid-echo
+  await heard; await answered;
   await page.waitForTimeout(200);
   await page.evaluate(() => window.__release()); // the echo ends under TD Snap
   await page.waitForTimeout(300);

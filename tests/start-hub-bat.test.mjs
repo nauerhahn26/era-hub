@@ -101,7 +101,7 @@ test("the sweep closes our kiosks and nothing else (real command lines)", () => 
   // ours, built FROM the launcher's own kiosk line: rename the profile dir
   // there and forget the WQL here, and this fixture stops matching.
   const ours = kioskLine.replace(/^start "" /, "").replace(/%B%/g, EDGE)
-    .replace(/%~dp0/g, "C:\\Users\\Family\\AppData\\Local\\New ERA\\")
+    .replace(/%~dp0/g, "C:\\Users\\Family\\AppData\\Local\\Our Era Comms\\")
     .replace(/%PORT%/g, "8377").replace(/%OPEN%/g, "/home/").replace(/%CDP%/g, "").trim();
   const gazeKiosk = "--force-device-scale-factor=1 --no-first-run --disable-pinch " +
     "--overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required --kiosk";
@@ -253,6 +253,34 @@ test("no comment in a generated launcher carries a percent sign (T7.6b: the fix'
   const rems = launchers.split("\n").filter((l) => /^\s*rem(\s|$)/i.test(l));
   assert.ok(rems.length > 5, "the launcher is commented");
   for (const l of rems) assert.ok(!l.includes("%"), "no % in a rem line: " + l);
+});
+
+// ---- the rename (9/26): New ERA -> Our Era Comms ----------------------------
+// Every name a person sees in these launchers is the new one. The old name
+// survives in exactly one place: UNINSTALL.bat's shortcut list, because a PC
+// that ran the old installer (or an old hub) still has "New ERA.lnk" files.
+const uninstall = (() => {
+  const m = /cat > "\$OUT\/UNINSTALL\.bat" <<'BAT'\n([\s\S]*?)\nBAT\n/.exec(SH);
+  return m ? m[1] : "";
+})();
+
+test("start-hub.bat wears the new name: window title, first line, hub window", () => {
+  assert.ok(/^title Our Era Comms$/m.test(bat), "the console title is Our Era Comms");
+  assert.ok(/^echo Starting Our Era Comms\.\.\.$/m.test(bat), "the first line it prints names Our Era Comms");
+  assert.ok(/^start "Our Era Comms hub" \/min "%NODE%" server\.js %PORT%$/m.test(bat),
+    "the minimized hub window is called Our Era Comms hub");
+  const live = bat.split("\n").filter((l) => !/^\s*rem(\s|$)/i.test(l)).join("\n");
+  assert.ok(!/New ERA/.test(live), "no command line in start-hub.bat says New ERA");
+});
+
+test("UNINSTALL.bat removes both names' shortcuts and stops the engine too", () => {
+  assert.ok(uninstall, "UNINSTALL.bat found");
+  const names = /for %%n in \(([^)]*)\) do/.exec(uninstall)?.[1] || "";
+  for (const n of ["Our Era Comms", "New ERA", "Making Words", "The Pencil", "Board", "Clothing Picker", "Music", "Movies", "Book Reader", "ERAgaze"])
+    assert.ok(names.includes('"' + n + '"'), "the shortcut list names " + n + ": " + names);
+  assert.ok(/^taskkill \/IM node\.exe \/F >nul 2>&1$/m.test(uninstall), "the hub is stopped");
+  assert.ok(/^taskkill \/IM ERAgaze\.exe \/F >nul 2>&1$/m.test(uninstall), "the gaze engine is stopped too");
+  assert.ok(/^echo UNINSTALL-OK: /m.test(uninstall), "the success line stays (scripts look for it)");
 });
 
 test("build-payload.sh still parses (the heredoc is closed)", () => {

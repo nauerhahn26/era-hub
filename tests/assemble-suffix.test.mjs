@@ -124,8 +124,13 @@ test("the gate re-assembles public/ when the farm points at the wrong siblings",
   // "already there" is not "already right": a worktree assembled before the
   // suffix existed keeps a public/pencil -> ../../era-pencil/app, and the gate
   // would serve master's apps to every browser suite.
-  assert.match(GATE, /readlink "\$HUB\/public\/pencil"/, "the gate compares the existing link");
-  assert.ok(GATE.includes('basename "$(sib era-pencil)"'), "…against the sibling sib() picked");
+  // 9/26: every farm link is compared, not pencil alone — a feature with
+  // worktrees for board/core/making-words but not pencil matched master's
+  // farm and served master's board to the board suites (the rename gate).
+  assert.match(GATE, /readlink "\$HUB\/public\/\$link"/, "the gate compares each existing link");
+  assert.ok(GATE.includes('basename "$(sib "$repo")"'), "…against the sibling sib() picked");
+  for (const pair of ["pencil:era-pencil", "board:era-board", "lib:era-core", "studio.js:era-making-words"])
+    assert.ok(GATE.includes(`"${pair}"`), `the farm check covers ${pair}`);
 });
 
 test("no module repo is read from the main checkout any more", () => {

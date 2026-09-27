@@ -8,10 +8,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as vm from "./lib/vm.mjs";
 
-const { INSTDIR, GUEST_HOME } = vm;
+// vm.INSTDIR is live (the folder the guest's install really is in): never destructured
+const { GUEST_HOME } = vm;
 // the hub's logs live under its DATA dir (server.js: LOGS = DATA\logs), not
 // INSTDIR\logs — run 8 waited 30 s on a file that never existed
-const STEPASIDE = INSTDIR + "\\data\\logs\\stepaside.log";
+const stepaside = () => vm.INSTDIR + "\\data\\logs\\stepaside.log";
 const VER = process.env.VM_CANDIDATE_VERSION || "";
 const BUILD = process.env.VM_CANDIDATE_BUILD || "";
 let browser, page;
@@ -25,7 +26,8 @@ test("VM: pristine snapshot, candidate installer in the guest", { timeout: 60000
   vm.revert();
   vm.push("qa/candidate.exe", "setup.exe");
   assert.ok(vm.exists(GUEST_HOME + "\\setup.exe"), "setup.exe landed");
-  assert.ok(!vm.exists(INSTDIR + "\\start-hub.bat"), "pristine: no New ERA installed");
+  assert.ok(!vm.exists(vm.NEW_INSTDIR + "\\start-hub.bat") && !vm.exists(vm.OLD_INSTDIR + "\\start-hub.bat"),
+    "pristine: nothing installed under either name");
 });
 
 // 600 s like leg B's same step: installSilently alone budgets 2 × 180 s, and on
@@ -34,9 +36,12 @@ test("VM: pristine snapshot, candidate installer in the guest", { timeout: 60000
 test("silent install (/S): core + node + shortcuts land, the hub does NOT auto-launch", { timeout: 600000, skip: RESUME }, async () => {
   await vm.installSilently("setup.exe");
   for (const f of ["start-hub.bat", "server.js", "node\\node.exe", "VERSION", "public\\favicon.ico", "Uninstall.exe", "data\\apps.json"])
-    assert.ok(vm.exists(INSTDIR + "\\" + f), f + " installed");
-  assert.equal(vm.guestFile(INSTDIR + "\\VERSION").trim(), BUILD, "VERSION = the candidate build");
-  assert.ok(vm.exists(GUEST_HOME + "\\Desktop\\New ERA.lnk"), "desktop shortcut");
+    assert.ok(vm.exists(vm.INSTDIR + "\\" + f), f + " installed");
+  assert.equal(vm.guestFile(vm.INSTDIR + "\\VERSION").trim(), BUILD, "VERSION = the candidate build");
+  assert.equal(vm.INSTDIR, vm.NEW_INSTDIR, "the candidate installs into Our Era Comms");
+  assert.equal(vm.desktopLink(), vm.HOME_LINK, "desktop shortcut, under the new name");
+  assert.ok(!vm.exists(GUEST_HOME + "\\Desktop\\" + vm.OLD_HOME_LINK), "and no old-name shortcut");
+  assert.ok(vm.uninstallKey("OurEraComms") && !vm.uninstallKey("NewERA"), "one Apps & features entry, OurEraComms");
   // /S must never start the hub (the finish page's tick does that) — nothing listens on 8377
   assert.equal(vm.hubGet("/settings"), null, "no hub running after a silent install");
   assert.ok(!vm.processRunning("node.exe"), "no node.exe running");   // exact image name, never a substring (9/8)
@@ -59,14 +64,16 @@ test("first launch: the kiosk opens on the welcome wizard, in front", { timeout:
   // sometimes lands at (10,10) under the taskbar, unfocused — 9/3); its
   // PowerShell can take minutes cold on the emulated guest, so wait for its
   // verdict in the log rather than a fixed 11 s
-  const settle = await vm.waitFor(() => { const l = vm.guestFile(STEPASIDE) || ""; return /settle front|settle: no/.test(l) && l; },
+  const settle = await vm.waitFor(() => { const l = vm.guestFile(stepaside()) || ""; return /settle front|settle: no/.test(l) && l; },
     { timeout: 300000, every: 5000, what: "the first-launch settle to report (stepaside.log)" });
   console.log("# stepaside.log: " + settle.replace(/\s+/g, " ").trim());
   assert.match(settle, /settle \d+ pos True/, "the settle found the kiosk window");
   const { fullscreen, win: after } = await vm.geometry(page);
   assert.ok(fullscreen, "the kiosk window fills the screen after the settle — " + JSON.stringify(after));
   const front = await vm.frontTitle();
-  assert.match(front, /New ERA/, "the kiosk is the window in front (dad 9/1: it opened BEHIND the browser) — got " + JSON.stringify(front));
+  assert.match(front, vm.KIOSK_TITLE, "the kiosk is the window in front (dad 9/1: it opened BEHIND the browser) — got " + JSON.stringify(front));
+  // the rename reached the page the family sees first (spec Verification)
+  assert.match(await page.title(), /Our Era/, "the hub's home page is titled Our Era — got " + JSON.stringify(await page.title()));
   vm.shot("welcome-wizard");
 });
 
@@ -98,7 +105,7 @@ test("wizard: name + dwell + Making Words & The Pencil only → the launcher gre
   const icons = vm.guestText("lnk-icons.txt");
   assert.match(icons, /Making Words=.*\\public\\icons\\making-words\.ico,0/, "Making Words shortcut icon — got " + JSON.stringify(icons));
   assert.match(icons, /The Pencil=.*\\public\\icons\\pencil\.ico,0/, "The Pencil shortcut icon — got " + JSON.stringify(icons));
-  assert.ok(vm.exists(INSTDIR + "\\public\\icons\\pencil.ico"), "the icon file the shortcut points at is installed");
+  assert.ok(vm.exists(vm.INSTDIR + "\\public\\icons\\pencil.ico"), "the icon file the shortcut points at is installed");
   vm.shot("launcher");
 });
 
@@ -134,10 +141,10 @@ test("Settings: 'Where the door goes' persists; a site opens in its OWN window, 
 
   // dad 9/2: Drive / ElevenLabs / Resend / AI Studio must all open the same
   // way — a normal browser window that comes to the FRONT of the kiosk
-  const before = vm.guestFile(STEPASIDE);
+  const before = vm.guestFile(stepaside());
   const r = await vm.api(page, "/open-url", "POST", { url: "https://elevenlabs.io/app/settings/api-keys" });
   assert.equal(r.json?.opened, true, "/open-url answered opened:true — " + r.text);
-  await vm.waitFor(() => /step-aside/.test(vm.guestFile(STEPASIDE).slice(before.length)) && { ok: 1 },
+  await vm.waitFor(() => /step-aside/.test(vm.guestFile(stepaside()).slice(before.length)) && { ok: 1 },
     { timeout: 30000, what: "stepAsideFromKiosk log line" });
   await new Promise((r) => setTimeout(r, 8000));
   const w = await vm.windows();
@@ -147,15 +154,15 @@ test("Settings: 'Where the door goes' persists; a site opens in its OWN window, 
   // behind ONE click of "Start without your data" — Edge's doing, not ours
   // (run 9, 9/3); a used Edge shows the site itself
   assert.equal(w.topExe, "msedge", "a browser window is in front — " + JSON.stringify(w));
-  assert.ok(!/New ERA|ERAgaze Settings/.test(w.top), "…and it is not the kiosk — in front: " + JSON.stringify(w.top));
-  const log = vm.guestFile(STEPASIDE).slice(before.length);
+  assert.ok(!vm.KIOSK_TITLE.test(w.top), "…and it is not the kiosk — in front: " + JSON.stringify(w.top));
+  const log = vm.guestFile(stepaside()).slice(before.length);
   assert.match(log, /minimized \d+/, "the kiosk stepped aside — " + log);
   // the family is done with the site: its window closed, the kiosk back
   await vm.closeSiteWindow();
   // the kiosk is still on Settings, whose document title is "ERAgaze Settings"
-  // (run 12 failed on /New ERA/ alone while the product had done the right thing)
+  // (run 12 failed on the product name alone while the product had done the right thing)
   const back = await vm.frontTitle();
-  assert.match(back, /New ERA|ERAgaze Settings/, "the kiosk is back in front once the site's window is closed — got " + JSON.stringify(back));
+  assert.match(back, vm.KIOSK_TITLE, "the kiosk is back in front once the site's window is closed — got " + JSON.stringify(back));
   vm.shot("kiosk-back-after-site");
 });
 
@@ -165,7 +172,7 @@ test("apps later: an app's pack is removed, then re-added from the feed by the l
   await home();
   const del = await vm.api(page, "/apps/delete", "POST", { id: "reader" });
   assert.equal(del.status, 204, "reader pack removed");
-  assert.ok(!vm.exists(INSTDIR + "\\public\\reader\\index.html"), "public\\reader gone");
+  assert.ok(!vm.exists(vm.INSTDIR + "\\public\\reader\\index.html"), "public\\reader gone");
   // ...and ticking it in the launcher's manager pulls it back from the release feed
   await home();
   await page.locator("#appMgr summary").click();
@@ -178,10 +185,56 @@ test("apps later: an app's pack is removed, then re-added from the feed by the l
     { timeout: 60000, what: "Book Reader tile" });
   await vm.openTile(page, "Book Reader", /\/reader\//);
   vm.shot("reader-added-later");
-  assert.ok(vm.exists(INSTDIR + "\\public\\reader\\index.html"), "public\\reader is back");
+  assert.ok(vm.exists(vm.INSTDIR + "\\public\\reader\\index.html"), "public\\reader is back");
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {
   try { await browser?.close(); } catch {}
   vm.bat("stop", ["taskkill /IM msedge.exe /F >nul 2>&1", "taskkill /IM node.exe /F >nul 2>&1", "echo stopped"]);
+});
+
+// ---- upgrade over an old install (the 9/26 rename, R1) ----------------------
+// A family PC that ran the OLD installer: New ERA\ with its hub running, the
+// NewERA Apps entry, "New ERA.lnk" on the Desktop. The candidate installer run
+// over it must move the whole folder (data\ included) to Our Era Comms in
+// .onInit, leave a junction at the old path so every tile and shortcut that
+// names it still works, and leave ONE Apps entry and only the new shortcut.
+// Needs the old installer: tools/vm-e2e.sh ships $DIST/prev/New-ERA-Setup.exe
+// (release.sh downloads it on a signed cut) as qa/old.exe and sets VM_UPGRADE_OLD.
+const UPGRADE = process.env.VM_UPGRADE_OLD ? false
+  : "no $DIST/prev/New-ERA-Setup.exe - the upgrade-over-old step needs the old-name installer";
+const MARKER = "qa-upgrade-marker.txt";
+
+test("upgrade: pristine snapshot, the OLD installer installed, its hub running", { timeout: 1800000, skip: UPGRADE }, async () => {
+  vm.revert();
+  vm.push("qa/old.exe", "old-setup.exe");
+  await vm.installSilently("old-setup.exe");
+  assert.equal(vm.INSTDIR, vm.OLD_INSTDIR, "the old installer installs into New ERA");
+  assert.ok(vm.uninstallKey("NewERA"), "the old Apps entry exists");
+  // something of the family's in data\, to find again after the move
+  vm.bat("marker", [`echo upgrade-marker> "${vm.OLD_INSTDIR}\\data\\${MARKER}"`]);
+  const v = await vm.startHubOnly(vm.OLD_INSTDIR, "the old hub");
+  console.log("# old hub up: " + JSON.stringify(v));
+  assert.ok(vm.processRunning("node.exe"), "the old hub is running when the new installer starts");
+  vm.shot("upgrade-old-installed");
+});
+
+test("upgrade: the candidate installed silently over it moves the folder and leaves a junction", { timeout: 1200000, skip: UPGRADE }, async () => {
+  vm.push("qa/candidate.exe", "setup.exe");
+  await vm.installSilently("setup.exe");
+  const NEW = vm.NEW_INSTDIR, OLD = vm.OLD_INSTDIR;
+  assert.equal(vm.INSTDIR, NEW, "the install now lives in Our Era Comms");
+  assert.ok(vm.exists(NEW + "\\start-hub.bat"), "Our Era Comms\\start-hub.bat exists");
+  assert.equal(vm.guestFile(NEW + "\\VERSION").trim(), BUILD, "…and it is the candidate's");
+  assert.ok(vm.exists(NEW + "\\data\\" + MARKER), "data\\ rode along with the folder");
+  assert.ok(vm.isJunction(OLD), "New ERA is a junction (ReparsePoint) now");
+  assert.ok(vm.exists(OLD + "\\start-hub.bat"), "…and the old path still reaches start-hub.bat through it");
+  assert.ok(vm.uninstallKey("OurEraComms"), "the OurEraComms Apps entry exists");
+  assert.ok(!vm.uninstallKey("NewERA"), "the NewERA Apps entry is gone: ONE entry");
+  assert.equal(vm.desktopLink(), vm.HOME_LINK, "Our Era Comms.lnk on the Desktop");
+  assert.ok(!vm.exists(GUEST_HOME + "\\Desktop\\" + vm.OLD_HOME_LINK), "New ERA.lnk is gone");
+  const v = await vm.startHubOnly(NEW, "the upgraded hub");
+  assert.equal(v.build, BUILD, "the hub in the moved folder answers /version with the candidate build");
+  vm.shot("upgrade-over-old");
+  vm.bat("stop", ["taskkill /IM node.exe /F >nul 2>&1", "echo stopped"]);
 });

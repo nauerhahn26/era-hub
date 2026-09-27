@@ -216,7 +216,7 @@
       <!-- What it costs and what it does NOT touch. The narration is the
            expensive half of a book and it is not re-bought here, so a parent
            pressing this is spending pennies on reading, not pounds on a voice. -->
-      <p class="status">New ERA looks at every photo again and writes down the words it sees.
+      <p class="status">Our Era Comms looks at every photo again and writes down the words it sees.
       The narration already recorded is kept — only the words change.</p>
 
       <!-- The one button in the suite that spends real money (spec §5, T6.2).
@@ -234,7 +234,7 @@
       <div class="danger">
         <button id="remove" type="button">🗑 Remove this book</button>
         <p class="status">This deletes the book&rsquo;s folder from your Google Drive folder,
-        on every computer in the family. New ERA cannot put it back.</p>
+        on every computer in the family. Our Era Comms cannot put it back.</p>
         <!-- Asked, never assumed: the question names the book, and the answer
              is a different button in a different place, so the press that
              removes a book can never be the second half of a double-tap. -->
@@ -420,11 +420,11 @@ $("pausedRetry").addEventListener("click", async () => {
     r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: null, retry: true });
     out = await r.json().catch(() => null);
   } catch (e) {
-    bookNote("New ERA is not answering — nothing was started.", true);
+    bookNote("Our Era Comms is not answering — nothing was started.", true);
     $("pausedRetry").disabled = false; return;
   }
   if (!r.ok) {
-    bookNote((out && out.error) || "New ERA could not start this book again.", true);
+    bookNote((out && out.error) || "Our Era Comms could not start this book again.", true);
     $("pausedRetry").disabled = false; return;
   }
   // The pause is lifted and the book is on the walk; the card follows the run
@@ -444,7 +444,7 @@ $("pausedRetry").addEventListener("click", async () => {
 // button nobody should be able to lean on, so the number goes ON the button and
 // the button is disabled without it.
 let QUOTE = null;
-// Is New ERA working on THIS book right now? /content/status names the job in
+// Is Our Era Comms working on THIS book right now? /content/status names the job in
 // flight and the ones queued behind it. The money button is dead while it is
 // true, so a page opened in the middle of a half-hour run cannot start a second
 // run on top of the first (review 9/5).
@@ -469,20 +469,20 @@ function paintAnimate(j) {
   // family's losses quiet (review 9/5).
   const clips = a.clips || 0, lost = clips - (a.done || 0);
   const paid = lost > 0
-    ? "New ERA has paid fal for " + clips + " clip" + (clips === 1 ? "" : "s")
+    ? "Our Era Comms has paid fal for " + clips + " clip" + (clips === 1 ? "" : "s")
       + (a.spent == null ? "" : " (≈ $" + a.spent.toFixed(2) + ")")
       + ", and " + lost + " of them never arrived. "
     : "";
   $("animateHint").textContent = a.ready
     ? (RUNNING
-        ? made + paid + "New ERA is working on this book right now — each clip lands in it as "
+        ? made + paid + "Our Era Comms is working on this book right now — each clip lands in it as "
                + "it is finished, and this page follows along."
-        : made + paid + "Every page gets a five-second moving picture. New ERA only pays for the "
+        : made + paid + "Every page gets a five-second moving picture. Our Era Comms only pays for the "
                + "ones it still has to make, and Ellie sees them at the next sync.")
     : (j.published
         ? "Moving pictures need a fal key — add one to the “Moving pages” card in Settings. "
           + "This button will say what a book costs before it spends anything."
-        : "New ERA makes the moving pictures once a book is finished — this one is still being built.");
+        : "Our Era Comms makes the moving pictures once a book is finished — this one is still being built.");
 }
 
 // ============================================================ the page strip
@@ -692,8 +692,8 @@ function paintStrip(book) {
   renumber();
   $("stripHint").textContent = PAGES.length
     ? "Drag a page by its ⠿ handle to put the book in the right order, and tap ☆ to choose the cover. "
-      + "Words New ERA was not sure of are marked — fix them, or say they are right."
-    : "No pages yet — New ERA makes them from the photos in this book's folder.";
+      + "Words Our Era Comms was not sure of are marked — fix them, or say they are right."
+    : "No pages yet — Our Era Comms makes them from the photos in this book's folder.";
 }
 
 const JSONPOST = (path, body) => fetch(path, {
@@ -720,9 +720,9 @@ async function write(body) {
   try {
     r = await JSONPOST("/content/text", body);
     out = await r.json();
-  } catch (e) { note("New ERA is not answering — nothing was saved.", true); return null; }
+  } catch (e) { note("Our Era Comms is not answering — nothing was saved.", true); return null; }
   if (!r.ok) {
-    note("That change was not saved: " + ((out && out.error) || "New ERA said no."), true);
+    note("That change was not saved: " + ((out && out.error) || "Our Era Comms said no."), true);
     return null;
   }
   note("Saved ✓", false);
@@ -776,13 +776,13 @@ async function renarrate(li, p, button) {
     r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "narrate", page: p.index });
     out = await r.json().catch(() => null);
   } catch (e) {
-    note("New ERA is not answering — nothing was recorded.", true);
+    note("Our Era Comms is not answering — nothing was recorded.", true);
     button.disabled = false; return;
   }
   // A refusal is already a sentence a parent can act on (no voice set up yet,
   // a page that is not there any more) — it is shown as it came, not decorated.
   if (!r.ok) {
-    note((out && out.error) || "New ERA could not record that page.", true);
+    note((out && out.error) || "Our Era Comms could not record that page.", true);
     button.disabled = false; return;
   }
   // 202: the recording runs behind the answer. The worker is spawned before the
@@ -910,13 +910,13 @@ async function rebuild() {
                                          rebuild: true, keepEdits: $("keepEdits").checked });
     out = await r.json().catch(() => null);
   } catch (e) {
-    bookNote("New ERA is not answering — nothing was read.", true);
+    bookNote("Our Era Comms is not answering — nothing was read.", true);
     button.disabled = false; return;
   }
   // A refusal is already a sentence (no AI key yet, every page is one you typed
   // and you asked to keep those) — shown as it came, not decorated.
   if (!r.ok) {
-    bookNote((out && out.error) || "New ERA could not read this book again.", true);
+    bookNote((out && out.error) || "Our Era Comms could not read this book again.", true);
     button.disabled = false; return;
   }
   const s = await settled();
@@ -948,13 +948,13 @@ async function animateBook() {
     r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "animate" });
     out = await r.json().catch(() => null);
   } catch (e) {
-    bookNote("New ERA is not answering — nothing was made and nothing was spent.", true);
+    bookNote("Our Era Comms is not answering — nothing was made and nothing was spent.", true);
     button.disabled = false; return;
   }
   // A refusal is already a sentence (no fal key, a book still being built) —
   // shown as it came, not decorated.
   if (!r.ok) {
-    bookNote((out && out.error) || "New ERA could not make the moving pictures.", true);
+    bookNote((out && out.error) || "Our Era Comms could not make the moving pictures.", true);
     button.disabled = false; return;
   }
   const j = await followRun();
@@ -962,7 +962,7 @@ async function animateBook() {
   // nothing was spent": fal may well be rendering (and billing) this book still,
   // and this page has no way of knowing from here.
   if (!j) {
-    bookNote("New ERA stopped answering. The moving pictures may still be being made — "
+    bookNote("Our Era Comms stopped answering. The moving pictures may still be being made — "
            + "open this page again in a few minutes to see how many landed.", true);
     return;
   }
@@ -1017,7 +1017,7 @@ $("removeYes").addEventListener("click", async () => {
     r = await JSONPOST("/content/remove", { kind: "books", slug: SLUG });
     out = await r.json().catch(() => null);
   } catch (e) {
-    bookNote("New ERA is not answering — nothing was removed.", true);
+    bookNote("Our Era Comms is not answering — nothing was removed.", true);
     $("removeYes").disabled = false; return;
   }
   if (!r.ok) {
@@ -1040,17 +1040,17 @@ async function loadStrip() {
   try {
     r = await fetch("/content/text?slug=" + encodeURIComponent(SLUG), { cache: "no-store" });
     book = await r.json();
-  } catch (e) { $("stripHint").textContent = "New ERA is not answering."; return; }
+  } catch (e) { $("stripHint").textContent = "Our Era Comms is not answering."; return; }
   if (!r.ok) { $("stripHint").textContent = book && book.error === "needs-local-drive"
     ? "This computer does not build books."
-    : "These pages could not be read: " + ((book && book.error) || "New ERA said no."); return; }
+    : "These pages could not be read: " + ((book && book.error) || "Our Era Comms said no."); return; }
   paintStrip(book);
 }
 
 async function paint() {
   let s;
   try { s = await (await fetch("/content/status", { cache: "no-store" })).json(); }
-  catch (e) { $("sub").textContent = "New ERA is not answering."; return; }
+  catch (e) { $("sub").textContent = "Our Era Comms is not answering."; return; }
   $("sub").textContent = "";
   if (!s.local) { show("notLocal", true); return; }
   // Before anything is painted: a book being worked on RIGHT NOW must not be

@@ -29,7 +29,7 @@
 //
 //  3. THE ENVELOPE IS READABLE WITHOUT THE BOOK. `.erabook.json` is found
 //     through the central directory and read on its own, so a file that is not
-//     a New ERA book, or is one from a NEWER New ERA, is refused after a couple
+//     an Our Era Comms book, or is one from a NEWER version of it, is refused after a couple
 //     of hundred bytes instead of after forty megabytes of somebody's holiday
 //     video. It carries {v, title, slug, pages, exportedAt, from} and nothing
 //     else — in particular no child's name, because an envelope that carried
@@ -228,7 +228,7 @@ function insideJail(destDir, segs) {
 const DOS_TIME = 0, DOS_DATE = 33;
 const SIG_LOCAL = 0x04034b50, SIG_CENTRAL = 0x02014b50, SIG_EOCD = 0x06054b50;
 const LOCAL_LEN = 30, CENTRAL_LEN = 46, EOCD_LEN = 22;
-// Bit 11 says the name is UTF-8. Book folders are named by parents, so "Rae's
+// Bit 11 says the name is UTF-8. Book folders are named by parents, so "Ellie's
 // Día" is a normal thing to find in one.
 const FLAG_UTF8 = 0x0800;
 
@@ -283,8 +283,10 @@ function planEntries(dir, manifest, opts) {
     slug: typeof manifest.slug === "string" ? manifest.slug : "",
     pages: manifest.pages.length,
     exportedAt: manifest.exportedAt || null,
-    // The sending hub, never the sending child: {app, build}.
-    from: o.from || { app: "New ERA", build: null },
+    // The sending hub, never the sending child: {app, build}. Import reads
+    // from.app for nobody's decision, so a book stamped "New ERA" by a hub
+    // before the rename (9/26) opens exactly like an "Our Era Comms" one.
+    from: o.from || { app: "Our Era Comms", build: null },
   }));
 
   const entries = [{ name: ENVELOPE, bytes: envelope }];
@@ -529,7 +531,7 @@ function entryData(fd, size, e, sink) {
 
 function envelopeOf(fd, size, entries) {
   const e = entries.find(x => x.name === ENVELOPE);
-  if (!e) throw refuse(CODES.noEnvelope, "no " + ENVELOPE + ": this is not a New ERA book");
+  if (!e) throw refuse(CODES.noEnvelope, "no " + ENVELOPE + ": this is not an Our Era Comms book");
   if (e.method !== 0 || e.usize > LIMITS.maxEnvelopeBytes)
     throw refuse(CODES.noEnvelope, ENVELOPE + " is not one we can read");
   const parts = [];
@@ -541,7 +543,7 @@ function envelopeOf(fd, size, entries) {
     throw refuse(CODES.noEnvelope, ENVELOPE + " is not an envelope");
   if (env.v !== ENVELOPE_VERSION) {
     if (typeof env.v === "number" && env.v > ENVELOPE_VERSION)
-      throw refuse(CODES.futureVersion, "this book was made by a newer New ERA (v" + env.v + ")");
+      throw refuse(CODES.futureVersion, "this book was made by a newer version of Our Era Comms (v" + env.v + ")");
     throw refuse(CODES.noEnvelope, ENVELOPE + " does not say which version it is");
   }
   return env;
@@ -589,7 +591,7 @@ function unpack(file, destDir) {
   try {
     const entries = centralDirectory(fd, size);
     // The envelope first, before anything else is trusted: "that book was made
-    // by a newer New ERA" is a sentence a parent can act on, and we would lose
+    // by a newer version of Our Era Comms" is a sentence a parent can act on, and we would lose
     // it by refusing some entry of a future format as damaged.
     const env = envelopeOf(fd, size, entries);
     validate(entries, size);

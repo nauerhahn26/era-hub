@@ -1,6 +1,6 @@
 # era-hub
 
-The local runtime of the New ERA Communications family: one dependency-free
+The local runtime of Our Era Communication Tools (Our Era Comms): one dependency-free
 Node server (Node 18+, stdlib only) that serves the installed app modules and
 their shared local APIs — settings, TTS proxy with disk cache (optional
 ElevenLabs key, system-voice fallback), word prediction, session logging,

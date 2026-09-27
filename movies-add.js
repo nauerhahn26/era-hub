@@ -338,7 +338,7 @@ async function getCapped(href, maxBytes, deadline) {
     const timer = setTimeout(() => ctl.abort(), Math.max(1, deadline - Date.now()));
     try {
       const r = await fetch(target, { signal: ctl.signal, redirect: "manual",
-                                      headers: { "User-Agent": "New ERA hub (family use)" } });
+                                      headers: { "User-Agent": "Our Era Comms hub (family use)" } });
       if (r.status >= 300 && r.status < 400) {
         const loc = r.headers.get("location");
         if (r.body) r.body.cancel().catch(() => {});
@@ -485,7 +485,7 @@ function readCatalog(dir) {
 }
 
 const UNREADABLE = { error: "catalog-unreadable",
-  message: "New ERA could not read the list of films just now. Try again in a minute." };
+  message: "Our Era Comms could not read the list of films just now. Try again in a minute." };
 
 // The next tile nobody is standing on. Ranks run per tier in the recipe, but
 // one number past the highest is free in either of them, and a rank collision
@@ -626,7 +626,7 @@ async function add(body) {
   // decided further down, where the catalog is open — a re-add that says
   // nothing about it must not turn the family's show back into a film.
   if (b.kind != null && !KINDS.includes(b.kind))
-    return { error: "bad-kind", message: "New ERA can add a film or a show, and that was neither." };
+    return { error: "bad-kind", message: "Our Era Comms can add a film or a show, and that was neither." };
 
   const title = asked || (u ? titleFromUrl(u) : "");
   if (!title)
@@ -652,7 +652,7 @@ async function add(body) {
   const dir = moviesDir();
   if (!dir)
     return { error: "needs-local-drive",
-             message: "New ERA saves new films into the family's Drive folder, so every device gets them. Choose that folder in Settings first." };
+             message: "Our Era Comms saves new films into the family's Drive folder, so every device gets them. Choose that folder in Settings first." };
   // Refuse BEFORE anything is written: a catalog we cannot read is not a
   // catalog we may write a single title over (Law 3).
   const shelf = readCatalog(dir);

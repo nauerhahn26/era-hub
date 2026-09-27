@@ -857,7 +857,7 @@ function jobFor(name, dir, slug, perClip) {
   // that says `done` often lands minutes after the book it belongs to — and "no
   // job" was read here as `inbox`, which is the state a book is in on the way
   // IN. So a book that is already made announced itself as one about to start:
-  // "Getting ready… New ERA has started on this book." on the shelf, "Getting
+  // "Getting ready… Our Era Comms has started on this book." on the shelf, "Getting
   // the photos ready…" on the Settings card. The manifest is the answer to both,
   // and `done` is what every other finished book on the shelf says. Nothing owes
   // a step on a book that is made, either.
@@ -990,21 +990,21 @@ function jobs() {
 // The sentence a parent meets when they press "Re-narrate this page" on a hub
 // that has never been given a voice. Words, not a status code and not a step
 // name: the Voice card is where the fix is, so the message points at it.
-const NO_VOICE = "New ERA has no voice yet — add an ElevenLabs key to the Voice card in Settings, then ask for this page again.";
+const NO_VOICE = "Our Era Comms has no voice yet — add an ElevenLabs key to the Voice card in Settings, then ask for this page again.";
 // The same deal for "Read the photos again": reading a page costs a vision
 // call, and a hub with no AI helper key would simply hold and change nothing.
-const NO_VISION = "New ERA cannot read pages yet — add a key to the AI helper card in Settings, then ask for this book again.";
+const NO_VISION = "Our Era Comms cannot read pages yet — add a key to the AI helper card in Settings, then ask for this book again.";
 // And the one case where the button is right to do nothing: every page of the
 // book is a page a grown-up typed, and they asked us to keep those.
 const ALL_EDITED = "Every page of this book has words you typed yourself, and you asked to keep them — so there is nothing to read again.";
 // The one button in the product that spends dollars, pressed on a hub that has
 // no fal card. Said before a thread is spawned, because after that the family
 // is billed — and said in words that name where the fix is.
-const NO_FAL = "New ERA cannot make moving pictures yet — add a fal key to the Moving pages card in Settings, then ask for this book again.";
+const NO_FAL = "Our Era Comms cannot make moving pictures yet — add a fal key to the Moving pages card in Settings, then ask for this book again.";
 // And the one case where the press is right to do nothing: animating a book
 // that has not published would write a manifest over a half-built book and put
 // it on Ellie's shelf before it is ready (content-worker.js's republish law).
-const NOT_FINISHED = "New ERA makes the moving pictures once a book is finished — this one is still being built.";
+const NOT_FINISHED = "Our Era Comms makes the moving pictures once a book is finished — this one is still being built.";
 
 // WHICH PAGES "Read the photos again" ASKS FOR (spec §5 "Rebuild text", T3.4).
 // The transcriber never re-reads a page that already has words — that rule is
@@ -1155,7 +1155,7 @@ function runStep(o) {
 // {error} became 400 and {skipped} became 409 with nothing to render).
 const ELSEWHERE = "Another computer in the family is making this book. It will "
   + "appear here when it is finished.";
-const CHECKING = "New ERA is checking whether another computer has already "
+const CHECKING = "Our Era Comms is checking whether another computer has already "
   + "started this book. Try again in a minute.";
 const BUILT = "This book is already made — you can read it in Book Reader.";
 // The tap landed while the photos were still being copied onto this computer
@@ -1358,9 +1358,9 @@ function build(o) {
 function busyWith(dir) {
   const at = path.resolve(dir);
   if (running && path.resolve(running.dir) === at)
-    return { error: "New ERA is working on this book right now — try again in a minute." };
+    return { error: "Our Era Comms is working on this book right now — try again in a minute." };
   if (queue.some(q => path.resolve(q.job.dir) === at))
-    return { error: "New ERA is about to work on this book — try again in a minute." };
+    return { error: "Our Era Comms is about to work on this book — try again in a minute." };
   return null;
 }
 

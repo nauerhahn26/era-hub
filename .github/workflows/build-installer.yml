@@ -1,4 +1,4 @@
-# Builds New-ERA-Setup.exe from the public repos — the artifact SignPath
+# Builds Our-Era-Comms-Setup.exe from the public repos — the artifact SignPath
 # Foundation signs (their policy requires CI provenance; the signing step is
 # added to this workflow once the project is approved).
 name: build-installer
@@ -44,17 +44,17 @@ jobs:
         run: bash era-hub/tools/build-payload.sh "$PWD/dist/new-era-suite" --with-node
       - name: Install NSIS
         run: sudo apt-get update -qq && sudo apt-get install -y nsis
-      - name: Build New-ERA-Setup.exe
+      - name: Build Our-Era-Comms-Setup.exe
         run: |
           VERSION="${GITHUB_REF_NAME:-dev}"
           makensis -DPAYLOAD="$PWD/dist/new-era-suite" \
-                   -DOUTFILE="$PWD/dist/New-ERA-Setup.exe" \
+                   -DOUTFILE="$PWD/dist/Our-Era-Comms-Setup.exe" \
                    -DVERSION="$VERSION" era-hub/tools/installer.nsi
-          sha256sum dist/New-ERA-Setup.exe
+          sha256sum dist/Our-Era-Comms-Setup.exe
       # SignPath signing step lands here after Foundation approval:
       #   uses: signpath/github-action-submit-signing-request
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: New-ERA-Setup
-          path: dist/New-ERA-Setup.exe
+          name: Our-Era-Comms-Setup
+          path: dist/Our-Era-Comms-Setup.exe

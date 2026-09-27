@@ -9,10 +9,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as vm from "./lib/vm.mjs";
 
-const { INSTDIR, GUEST_HOME } = vm;
+// vm.INSTDIR is live: the previous installer may be a New ERA one, and a
+// self-update never moves the folder (only the new installer's .onInit does)
+const { GUEST_HOME } = vm;
 const VER = process.env.VM_CANDIDATE_VERSION || "";
 const BUILD = process.env.VM_CANDIDATE_BUILD || "";
-let browser, page, prevBuild;
+let browser, page, prevBuild, prevLink;
 // the packs law (an update never lays down a pack the family did not choose)
 // is enforced by the updater that RUNS the update — the previous release's.
 // Releases before v0.31.4 predate it; the law is asserted only once the
@@ -33,9 +35,13 @@ test("VM: pristine snapshot, PREVIOUS release installed silently", { timeout: 12
   vm.revert();
   vm.push("qa/prev.exe", "setup.exe");
   await vm.installSilently("setup.exe");
-  prevBuild = vm.guestFile(INSTDIR + "\\VERSION").trim();
-  prevHasPacksLaw = /packOf/.test(vm.guestFile(INSTDIR + "\\update.js"));
-  console.log(`# previous build ${prevBuild}; packs law in its updater: ${prevHasPacksLaw}`);
+  prevBuild = vm.guestFile(vm.INSTDIR + "\\VERSION").trim();
+  prevHasPacksLaw = /packOf/.test(vm.guestFile(vm.INSTDIR + "\\update.js"));
+  console.log(`# previous build ${prevBuild}; packs law in its updater: ${prevHasPacksLaw}; installed into ${vm.INSTDIR}`);
+  // the previous release's home shortcut: the old name is legitimate HERE only,
+  // before the candidate has touched this install
+  prevLink = vm.desktopLink({ allowOld: true });
+  assert.ok(prevLink, "the previous installer put a home shortcut on the Desktop (" + vm.HOME_LINK + " or " + vm.OLD_HOME_LINK + ")");
   assert.ok(prevBuild && prevBuild < BUILD, `previous build ${prevBuild} is older than the candidate ${BUILD}`);
 });
 
@@ -52,8 +58,8 @@ test("previous release: wizard → launcher, the board pack removed (the family 
   await page.locator("#launcher").waitFor({ state: "visible", timeout: 60000 });
   const del = await vm.api(page, "/apps/delete", "POST", { id: "board" });
   assert.equal(del.status, 204, "board pack removed — " + del.text);
-  assert.ok(!vm.exists(INSTDIR + "\\public\\board\\index.html"), "public\\board gone");
-  if (prevHasPacksLaw) assert.ok(!vm.exists(INSTDIR + "\\vendor\\models"), "the 21 MB cut-out runtime gone with it");
+  assert.ok(!vm.exists(vm.INSTDIR + "\\public\\board\\index.html"), "public\\board gone");
+  if (prevHasPacksLaw) assert.ok(!vm.exists(vm.INSTDIR + "\\vendor\\models"), "the 21 MB cut-out runtime gone with it");
   const v = vm.hubGet("/version");
   assert.equal(v.build, prevBuild); assert.equal(v.updater, true, "the updater is armed on an installed hub");
   vm.shot("prev-launcher");
@@ -81,12 +87,15 @@ test("after the update: profile intact, removed pack still absent, chosen packs 
   assert.equal(vm.hubGet("/settings").hasProfile, true);
   assert.equal(await page.locator("#hello").innerText(), "Hi, Ellie's family!");
   if (prevHasPacksLaw) {
-    assert.ok(!vm.exists(INSTDIR + "\\public\\board\\index.html"), "an update never lays down a pack the family did not choose (dad 9/3)");
-    assert.ok(!vm.exists(INSTDIR + "\\vendor\\models"), "…nor its runtime");
-  } else console.log("# previous updater predates the packs law — board pack after update: " + vm.exists(INSTDIR + "\\public\\board\\index.html"));
-  assert.ok(vm.exists(INSTDIR + "\\public\\pencil\\index.html") && vm.exists(INSTDIR + "\\public\\reader\\index.html"), "chosen packs present");
-  assert.equal(vm.guestFile(INSTDIR + "\\VERSION").trim(), BUILD);
-  const apps = vm.hubGet("/apps").apps;
+    assert.ok(!vm.exists(vm.INSTDIR + "\\public\\board\\index.html"), "an update never lays down a pack the family did not choose (dad 9/3)");
+    assert.ok(!vm.exists(vm.INSTDIR + "\\vendor\\models"), "…nor its runtime");
+  } else console.log("# previous updater predates the packs law — board pack after update: " + vm.exists(vm.INSTDIR + "\\public\\board\\index.html"));
+  assert.ok(vm.exists(vm.INSTDIR + "\\public\\pencil\\index.html") && vm.exists(vm.INSTDIR + "\\public\\reader\\index.html"), "chosen packs present");
+  assert.equal(vm.guestFile(vm.INSTDIR + "\\VERSION").trim(), BUILD);
+  // the candidate's boot pass rewrites the home shortcut under the new name and
+  // deletes the old one (spec R1: Desktop shows only Our Era Comms.lnk)
+  await vm.waitFor(() => vm.desktopLink() === vm.HOME_LINK && !vm.exists(GUEST_HOME + "\\Desktop\\" + vm.OLD_HOME_LINK) && { ok: 1 },
+    { timeout: 120000, every: 5000, what: "the Desktop to show " + vm.HOME_LINK + " only (it had " + prevLink + ")" });  const apps = vm.hubGet("/apps").apps;
   assert.deepEqual(apps.filter((a) => a.enabled).map((a) => a.id), ["making-words", "pencil", "reader"]);
   for (const [tile, url] of [["The Pencil", /\/pencil\//], ["Book Reader", /\/reader\//]]) {
     await vm.home(page);

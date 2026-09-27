@@ -47,8 +47,12 @@
 // result means pull the release. Wiring (tools/ is out of scope for this
 // branch — one line):   run_leg c leg-c-smartscreen.e2e.mjs
 // Env: VM_EXPECTED_SHA256 (or VM_DIST holding checksums.txt) — required;
-//      VM_SITE_URL (default https://neweracommunications.org/),
-//      VM_DOWNLOAD_SELECTOR (default a.dl-all).
+//      VM_INSTALLER_FILE (default: VM_DIST/latest.json's installer_file, which
+//        is the file the PUBLISHED feed names; New-ERA-Setup.exe for a feed
+//        that predates the 9/26 rename) — matched by EXACT name everywhere
+//        (never a loose *Setup.exe: OneDriveSetup.exe, 9/9);
+//      VM_SITE_URL (default https://ourerafoundation.org/communications/;
+//        the old domain 301s there), VM_DOWNLOAD_SELECTOR (default a.dl-all).
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -59,10 +63,17 @@ import * as vm from "./lib/vm.mjs";
 
 const LIB = path.join(path.dirname(fileURLToPath(import.meta.url)), "lib");
 const { GUEST_HOME } = vm;
-const SITE = process.env.VM_SITE_URL || "https://neweracommunications.org/";
+const SITE = process.env.VM_SITE_URL || "https://ourerafoundation.org/communications/";
 const SELECTOR = process.env.VM_DOWNLOAD_SELECTOR || "a.dl-all";
 const DOWNLOADS = GUEST_HOME + "\\Downloads";
-const EXE = DOWNLOADS + "\\New-ERA-Setup.exe";
+function installerFile() {
+  if (process.env.VM_INSTALLER_FILE) return process.env.VM_INSTALLER_FILE.trim();
+  try { return JSON.parse(fs.readFileSync(path.join(process.env.VM_DIST || "", "latest.json"), "utf8")).installer_file || "New-ERA-Setup.exe"; }
+  catch { return "New-ERA-Setup.exe"; }
+}
+const FILE = installerFile();
+const FILE_RE = FILE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const EXE = DOWNLOADS + "\\" + FILE;
 const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const PROFILE = GUEST_HOME + "\\smartscreen-profile";
 
@@ -71,14 +82,14 @@ function expectedSha() {
   const dist = process.env.VM_DIST;
   if (!dist) return "";
   const line = (fs.readFileSync(path.join(dist, "checksums.txt"), "utf8").split("\n")
-    .find((l) => /New-ERA-Setup\.exe\s*$/.test(l)) || "").trim();
+    .find((l) => new RegExp("\\s\\*?" + FILE_RE + "\\s*$").test(l)) || "").trim();   // exact name, after sha256sum's separator
   return (line.split(/\s+/)[0] || "").toLowerCase();
 }
 const SHA = expectedSha();
 
 /** KEY=value lines from smartscreen-facts.ps1 (last value wins) */
 function facts() {
-  const out = vm.ship(path.join(LIB, "smartscreen-facts.ps1"));
+  const out = vm.ship(path.join(LIB, "smartscreen-facts.ps1"), "-Installer", FILE);
   assert.match(out, /FACTS_DONE/, "smartscreen-facts.ps1 ran to the end — got:\n" + out);
   const f = {};
   for (const l of out.split(/\r?\n/)) { const m = l.match(/^([A-Z0-9_]+)=(.*)$/); if (m) f[m[1]] = m[2].trim(); }
@@ -118,13 +129,13 @@ test("the family's download: the website's own button, in a browser", { timeout:
     try { return await chromium.connectOverCDP(vm.CDP_URL, { timeout: 5000 }); } catch { return null; }
   }, { timeout: 300000, every: 3000, what: "CDP on " + vm.CDP_URL });
   const page = await vm.waitFor(() => {
-    for (const c of browser.contexts()) for (const p of c.pages()) if (/neweracommunications/.test(p.url())) return p;
+    for (const c of browser.contexts()) for (const p of c.pages()) if (/ourerafoundation|neweracommunications/.test(p.url())) return p;
     return null;
   }, { timeout: 300000, every: 3000, what: "the site's tab (" + SITE + ")" });
   await page.locator(SELECTOR).first().waitFor({ state: "visible", timeout: 120000 });
   const href = await page.locator(SELECTOR).first().getAttribute("href");
   console.log("# the site's download button points at " + href);
-  assert.match(href, /New-ERA-Setup\.exe$/, "the site hands the family the one-file installer");
+  assert.match(href, new RegExp("/" + FILE_RE + "$"), "the site hands the family the one-file installer the published latest.json names (" + FILE + ")");
   vm.shot("site-download-button");
   // connectOverCDP pointed Edge's downloads at a Playwright directory on THIS
   // machine (Browser.setDownloadBehavior allowAndName): the guest's Edge cannot
@@ -148,7 +159,7 @@ test("the family's download: the website's own button, in a browser", { timeout:
     console.log(vm.guestText("smartscreen-probe.log").split(/\r?\n/).map((l) => "# keep: " + l).join("\n"));
     landed = await vm.waitFor(() => vm.exists(EXE) && { ok: 1 }, { timeout: 300000, every: 5000, what: "the download to land after Keep" });
   }
-  assert.ok(landed, "New-ERA-Setup.exe is in the family's Downloads folder");
+  assert.ok(landed, FILE + " is in the family's Downloads folder");
   vm.shot("downloaded");
   // hands off the browser before the double-click, so nothing of ours is in front
   vm.guest("taskkill /IM msedge.exe /F", { soft: true });
@@ -206,8 +217,13 @@ test("the family's gesture: a double-click, unelevated — and what Windows says
     const pub = val("PUBLISHER");
     assert.notEqual(pub, "not-shown", "the interstitial names a publisher — a blank one is what UNSIGNED looks like");
     assert.doesNotMatch(pub, /unknown/i, "the publisher is a name, not 'Unknown publisher' — the signature reached the family");
-    assert.ok(dl.SIG_SUBJECT.includes(pub) || pub.includes("New ERA") || dl.SIG_SUBJECT.includes("CN=" + pub),
-      `the name Windows shows (${JSON.stringify(pub)}) is the certificate's (${JSON.stringify(dl.SIG_SUBJECT)})`);
+    // Compared with the certificate's own subject (smartscreen-facts.ps1 reads
+    // it from the downloaded file), never with a product name: the cert is in
+    // the maintainer's name and outlived the 9/26 rename untouched.
+    const cn = subjectCN(dl.SIG_SUBJECT);
+    assert.ok(cn, "the signer's subject has a CN — " + JSON.stringify(dl.SIG_SUBJECT));
+    assert.ok(pub === cn || (pub.length > 3 && (cn.includes(pub) || pub.includes(cn))),
+      `the name Windows shows (${JSON.stringify(pub)}) is the certificate's CN (${JSON.stringify(cn)} from ${JSON.stringify(dl.SIG_SUBJECT)})`);
     assert.equal(val("RUNANYWAY"), "clicked", "the interstitial offered More info -> Run anyway (an enterprise policy that removes it locks the family out)");
   }
   assert.equal(val("INSTALLER"), "up", "the installer's own window came up — the family got through to Choose Components");
@@ -222,6 +238,13 @@ test("Defender recorded nothing against the published installer", { timeout: 300
 });
 
 after(async () => { try { await browser?.close(); } catch {} });
+
+/** the CN out of an X.500 subject as .NET prints it: `CN="A, B", O=…` (quoted
+ *  when it holds a comma) or `CN=A, O=…` */
+function subjectCN(subject) {
+  const m = /(?:^|,\s*)CN=(?:"((?:[^"]|"")*)"|([^,]*))/.exec(subject || "");
+  return m ? (m[1] !== undefined ? m[1].replace(/""/g, '"') : m[2]).trim() : "";
+}
 
 /** ship the UIA probe as .txt and rename it in the guest: ship.sh RUNS a .ps1
  *  in the ssh session, where session 0 has no desktop and no dialog exists */

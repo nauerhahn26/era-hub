@@ -238,7 +238,7 @@ test("the bar is the same strip on the shelf and inside a book, and the app sits
 // where it goes at the moment she uses it and the tile that carried the promise
 // is gone. What is pinned is the behaviour — it POSTs /kiosk/exit exactly once
 // and follows the hub's answer: "closed" = ERAgaze took the screen, stay put;
-// anything else (or no hub) = New ERA's home.
+// anything else (or no hub) = the Our Era Comms home.
 test("🚪: silent chrome that POSTs /kiosk/exit and follows the answer (closed stays, home navigates)", async () => {
   const setExit = (v) => fetch(`${BASE}/settings`, { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ exitTo: v }) });
@@ -445,6 +445,7 @@ async function talkPage(opts = {}) {
     const answered = r.page.waitForResponse((res) => res.url().includes("/kiosk/pause"));
     await r.page.locator("#barTalk").click();
     await answered;
+    await r.page.waitForTimeout(100);   // the bar reads the reply's body a tick after it lands (9/26)
   };
   // TD Snap gives the screen back: the launcher's /kiosk/resume line
   // re-foregrounds this kiosk, and the page hears a visibilitychange.
@@ -572,7 +573,11 @@ test("💬 while she is already paused hands her pause back, and Read carries on
   await openLuna(page);
   await page.waitForFunction(() => window.Reader.state().audioTime > 0.7, null, { timeout: 8000 });
   await page.locator("#btnRead").click();                    // her own Pause, mid-page
-  await page.waitForFunction(() => window.Reader.state().audio === "paused", null, { timeout: 3000 });
+  // the element pauses synchronously; the pill (and S.paused) follow on the
+  // audio "pause" EVENT a tick later — wait for the pill, or the 💬 below can
+  // land between the two and latch "she was reading" (gate, 9/26)
+  await page.waitForFunction(() => window.Reader.state().audio === "paused" &&
+    /Paused/.test(document.getElementById("pageMeta").textContent), null, { timeout: 3000 });
   const t0 = (await state(page)).audioTime;
   assert.ok(t0 > 0.6, `she stopped part-way through (t=${t0})`);
   assert.match(await page.locator("#pageMeta").textContent(), /Paused/);
@@ -1308,7 +1313,7 @@ test("a book queued behind another on this computer offers nothing to press", as
 
 // EVERY SENTENCE THAT PROMISED AN AUTOMATIC START GOES (spec §12). The scan
 // claims nothing now, so "this book starts in about 10 minutes", "building
-// starts about 10 minutes after the last photo arrives" and "New ERA makes the
+// starts about 10 minutes after the last photo arrives" and "Our Era Comms makes the
 // book by itself" were all the hub promising something it had stopped doing.
 test("no card on this shelf promises a book that starts by itself", async () => {
   // The three sentences by name, not "any mention of time": a book that is

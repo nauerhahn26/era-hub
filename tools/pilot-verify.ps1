@@ -1,4 +1,4 @@
-# pilot-verify.ps1 — on-device proof for the New ERA payload (staging device).
+# pilot-verify.ps1 — on-device proof for the Our Era Comms payload (staging device).
 # Pulls the payload tarball from the family hub, extracts, starts the bundled-Node
 # hub on a local test port, probes the apps, stops it. Leaves the folder in place
 # (inert — nothing autostarts) so a human can double-click start-hub.bat later.

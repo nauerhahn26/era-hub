@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # build-dist.sh <version> <dist dir> [--patch|--unsigned|--sign-only] — everything a
 # release publishes, built into <dist dir>: payload with bundled node, tarball, zip,
-# New-ERA-Setup.exe, checksums, latest.json (which now names the installer's tag).
+# Our-Era-Comms-Setup.exe, checksums, latest.json (which names the installer's tag
+# AND its file name, `installer_file` — New-ERA-Setup.exe before the 9/26 rename).
 #   (no flag)     full cut, installer built by makensis WITH -DSIGN and verified
 #   --unsigned    same, installer built WITHOUT -DSIGN (release.sh's step 2: the VM
 #                 drives an unsigned exe, then --sign-only re-cuts it signed)
 #   --sign-only   ONLY the installer (makensis with -DSIGN) + checksums + latest.json
 #                 over an existing <dist dir>; asserts the tarball's sha is unchanged
 #   --patch       no makensis at all: the signed installer named by the live
-#                 latest.json is downloaded from its release and re-attached
+#                 latest.json (`installer` tag + `installer_file` name; a feed
+#                 without the field means New-ERA-Setup.exe) is downloaded from
+#                 its release and re-attached under that same name
 # The VM e2e (tools/vm-e2e.sh) takes the same <dist dir> as its candidate, so what
 # is tested is byte-for-byte what is published (the signed exe of a signed cut is
 # re-made after the VM — that is leg C's job).
@@ -27,6 +30,11 @@ ROOT="$(dirname "$HUB")"
 REPO="nauerhahn26/new-era-releases"
 OSSL="$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode"
 NSIS="$ROOT/era-family/cache/nsis"
+# The installer this build makes. Asset names the feed and installed hubs depend
+# on (new-era-suite*.tar.gz, .zip, latest.json, checksums.txt) never change; the
+# installer's did (9/26), so latest.json records it for the next --patch.
+INSTALLER="Our-Era-Comms-Setup.exe"
+OLD_INSTALLER="New-ERA-Setup.exe"   # what a latest.json without installer_file means
 
 # A full disk makes makensis die with SIGBUS and no message (9/3: 46 MB free,
 # rc=1 after "== installer =="). A cut needs ~300 MB; insist on 2 GB headroom.
@@ -70,9 +78,9 @@ build_installer() {   # [--sign]
   local sign=0
   if [ "${1:-}" = "--sign" ]; then sign=1; fi
   if [ "$sign" = 1 ]; then
-    echo "== installer (New-ERA-Setup.exe, signed inside makensis) =="
+    echo "== installer ($INSTALLER, signed inside makensis) =="
   else
-    echo "== installer (New-ERA-Setup.exe, UNSIGNED by request) =="
+    echo "== installer ($INSTALLER, UNSIGNED by request) =="
   fi
   # Whole-MB sizes for the components page's hover text (installer.nsi): the
   # engine (everything but the app packs), the shared board pack, and the
@@ -85,7 +93,7 @@ build_installer() {   # [--sign]
   SZ_BOARD="$(mb "$P/public/board" "$P/vendor/onnxruntime-web" "$P/vendor/models" "$P/vendor/libheif.js")"
   SZ_MEDIA="$(mb "$P/vendor/yt-dlp")"
   SZ_CORE=$(( $(mb "$P") - SZ_BOARD - SZ_MEDIA - $(mb "$P/public/pencil" "$P/public/reader") ))
-  local args=( -DPAYLOAD="$P" -DOUTFILE="$DIST/New-ERA-Setup.exe" -DVERSION="$V"
+  local args=( -DPAYLOAD="$P" -DOUTFILE="$DIST/$INSTALLER" -DVERSION="$V"
                -DSZ_CORE="$SZ_CORE" -DSZ_BOARD="$SZ_BOARD" -DSZ_MEDIA="$SZ_MEDIA" )
   if [ "$sign" = 1 ]; then args+=( -DSIGN="$HUB/tools/sign-installer.sh" ); fi
   # Full output goes to makensis.log; the console gets the interesting lines, and
@@ -98,7 +106,7 @@ build_installer() {   # [--sign]
     echo "makensis failed (rc=$RC) — tail of $DIST/makensis.log:"; tail -n 20 "$DIST/makensis.log"
     exit 1
   fi
-  [ -s "$DIST/New-ERA-Setup.exe" ] || { echo "New-ERA-Setup.exe missing or empty — no release."; exit 1; }
+  [ -s "$DIST/$INSTALLER" ] || { echo "$INSTALLER missing or empty — no release."; exit 1; }
   if [ "$sign" = 1 ]; then
     # HALF-SIGNED IS THE DANGEROUS CASE (P4/P5 review, 9/15). makensis swallows
     # the exit code of its !uninstfinalize / !finalize commands, so a
@@ -115,37 +123,40 @@ build_installer() {   # [--sign]
       echo "installer: SIGNING INCOMPLETE (${n:-0}/2 signed) — no release."
       echo "-- sign lines in $DIST/makensis.log:"; grep -E '^sign:' "$DIST/makensis.log" || echo "(none)"
       exit 1; }
-    verify_signature "$DIST/New-ERA-Setup.exe" \
-      || { echo "installer: SIGNING WAS REQUESTED BUT Setup.exe DID NOT VERIFY — no release."; exit 1; }
+    verify_signature "$DIST/$INSTALLER" \
+      || { echo "installer: SIGNING WAS REQUESTED BUT $INSTALLER DID NOT VERIFY — no release."; exit 1; }
     echo "installer: signed and verified (uninstaller stub + Setup.exe, 2/2)"
   else
     echo "installer: UNSIGNED (by request)"
   fi
 }
 
-# The tag whose Setup.exe the published release currently serves. Today's live
-# latest.json predates the field — fall back to its version.
-installer_tag_from_feed() {
+# The tag whose installer the published release currently serves, and that
+# installer's file name, as "<tag> <file>". A live latest.json without
+# `installer` means its own version; without `installer_file` it predates the
+# 9/26 rename, so the file is New-ERA-Setup.exe.
+installer_from_feed() {
   local json
   json="$(curl -sL --fail "https://github.com/$REPO/releases/latest/download/latest.json")" \
     || { echo "cannot read the live latest.json — no patch." >&2; return 1; }
-  printf '%s' "$json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("installer") or d["version"])'
+  printf '%s' "$json" | OLD="$OLD_INSTALLER" python3 -c 'import json,os,sys; d=json.load(sys.stdin); print(d.get("installer") or d["version"], d.get("installer_file") or os.environ["OLD"])'
 }
 
-write_checksums() {
+write_checksums() {   # <installer file>
   echo "== checksums =="
-  ( cd "$DIST" && sha256sum "new-era-suite-$V.tar.gz" "new-era-suite.zip" "New-ERA-Setup.exe" > checksums.txt && cat checksums.txt )
+  ( cd "$DIST" && sha256sum "new-era-suite-$V.tar.gz" "new-era-suite.zip" "$1" > checksums.txt && cat checksums.txt )
 }
 
 # latest.json = the self-update feed: installed hubs poll releases/latest/
 # download/latest.json and update themselves when `build` is newer. `installer`
-# is the tag whose Setup.exe this release serves — the website's download, and
-# what the next --patch re-attaches.
-write_latest() {   # <installer tag>
+# is the tag whose installer this release serves and `installer_file` its file
+# name — the website's download, and what the next --patch re-attaches (by
+# that name: a patch under the old installer keeps recording New-ERA-Setup.exe).
+write_latest() {   # <installer tag> <installer file>
   local build sha
   build="$(cat "$DIST/new-era-suite/VERSION")"
   sha="$(head -1 "$DIST/checksums.txt" | cut -d' ' -f1)"   # tarball line = the updater's asset
-  printf '{"version":"%s","build":"%s","sha256":"%s","installer":"%s"}\n' "$V" "$build" "$sha" "$1" > "$DIST/latest.json"
+  printf '{"version":"%s","build":"%s","sha256":"%s","installer":"%s","installer_file":"%s"}\n' "$V" "$build" "$sha" "$1" "$2" > "$DIST/latest.json"
   cat "$DIST/latest.json"
 }
 
@@ -153,34 +164,35 @@ case "$MODE" in
   patch)
     # Resolve and refuse BEFORE anything is written: a refused patch must not
     # leave half a build behind.
-    TAG="$(installer_tag_from_feed)"
+    read -r TAG FILE <<<"$(installer_from_feed)"
+    [ -n "${TAG:-}" ] && [ -n "${FILE:-}" ] || { echo "the live latest.json named no installer — no patch."; exit 1; }
     if [ "${V%.*}" != "${TAG%.*}" ]; then
       echo "patch $V cannot carry installer $TAG — cut a signed ${V%.*}.0 first"
       exit 1
     fi
     build_payload
-    echo "== installer ($TAG's signed Setup.exe re-attached; NO makensis) =="
-    rm -f "$DIST/New-ERA-Setup.exe"
-    gh release download "$TAG" -p New-ERA-Setup.exe --repo "$REPO" -D "$DIST" \
-      || { echo "could not download New-ERA-Setup.exe from $TAG — no patch."; exit 1; }
-    [ -s "$DIST/New-ERA-Setup.exe" ] || { echo "downloaded New-ERA-Setup.exe is empty — no patch."; exit 1; }
-    verify_signature "$DIST/New-ERA-Setup.exe" \
-      || { echo "installer: $TAG's Setup.exe DID NOT VERIFY — a patch never re-attaches an unsigned exe."; exit 1; }
-    echo "installer: $TAG re-attached, signature ok"
-    write_checksums
-    write_latest "$TAG"
+    echo "== installer ($TAG's signed $FILE re-attached; NO makensis) =="
+    rm -f "$DIST/$INSTALLER" "$DIST/$OLD_INSTALLER" "$DIST/$FILE"
+    gh release download "$TAG" -p "$FILE" --repo "$REPO" -D "$DIST" \
+      || { echo "could not download $FILE from $TAG — no patch."; exit 1; }
+    [ -s "$DIST/$FILE" ] || { echo "downloaded $FILE is empty — no patch."; exit 1; }
+    verify_signature "$DIST/$FILE" \
+      || { echo "installer: $TAG's $FILE DID NOT VERIFY — a patch never re-attaches an unsigned exe."; exit 1; }
+    echo "installer: $TAG ($FILE) re-attached, signature ok"
+    write_checksums "$FILE"
+    write_latest "$TAG" "$FILE"
     ;;
   unsigned)
     build_payload
     build_installer
-    write_checksums
-    write_latest "$V"
+    write_checksums "$INSTALLER"
+    write_latest "$V" "$INSTALLER"
     ;;
   signed)
     build_payload
     build_installer --sign
-    write_checksums
-    write_latest "$V"
+    write_checksums "$INSTALLER"
+    write_latest "$V" "$INSTALLER"
     ;;
   sign-only)
     # The payload and the tarball are already here and must not move: the tarball
@@ -197,8 +209,8 @@ case "$MODE" in
     # the unsigned cut (this mode is the only one that skipped the cp below).
     cp "$DIST/new-era-suite-$V.tar.gz" "$DIST/new-era-suite.tar.gz"
     build_installer --sign
-    write_checksums
-    write_latest "$V"
+    write_checksums "$INSTALLER"
+    write_latest "$V" "$INSTALLER"
     ;;
 esac
 

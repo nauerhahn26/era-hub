@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# era-gate.sh — the L0/L1 parity gate for the New ERA workspace.
+# era-gate.sh — the L0/L1 parity gate for the Our Era Comms workspace.
 # Collects every sibling repo's test suite into gate/ (copies, port re-pointed
 # to the test instance), starts the hub server on $ERA_TEST_PORT (default 8378,
 # NEVER the live 8377), runs the suites, reports.
@@ -112,9 +112,19 @@ write_green_stamp() {
 # ERA_WT_SUFFIX set, a public/ left behind by an earlier unsuffixed run still
 # exists, so the old "is it there?" test alone would serve MASTER's apps to
 # every browser suite while the collector below read the worktrees' (9/17).
-want="../../$(basename "$(sib era-pencil)")/app"
-if [ ! -e "$HUB/public/pencil" ] ||
-   { [ -L "$HUB/public/pencil" ] && [ "$(readlink "$HUB/public/pencil")" != "$want" ]; }; then
+# 9/26: the pencil link alone was the sentinel — a feature with worktrees for
+# board/core/making-words but NOT pencil matched master's farm and served
+# master's board to the board suites (the rename gate failed on text the
+# worktree's board had already changed). Now every farm link is checked.
+farm_stale=0
+for pair in "pencil:era-pencil" "board:era-board" "lib:era-core" "studio.js:era-making-words"; do
+  link="${pair%%:*}"; repo="${pair#*:}"
+  want="../../$(basename "$(sib "$repo")")"
+  case "$link" in pencil|board) want="$want/app" ;; lib) want="$want/lib" ;; studio.js) want="$want/app/studio.js" ;; esac
+  if [ ! -e "$HUB/public/$link" ] ||
+     { [ -L "$HUB/public/$link" ] && [ "$(readlink "$HUB/public/$link")" != "$want" ]; }; then farm_stale=1; fi
+done
+if [ "$farm_stale" = 1 ]; then
   ERA_DATA_DIR="$DATA" bash "$HUB/tools/assemble.sh"
 fi
 

@@ -47,9 +47,10 @@ No SimplySign, nothing for dad to type. Four steps:
 ```
 1/4 gate     era-gate fully green
 2/4 build    build-dist.sh --patch: payload, tarball, zip, checksums, latest.json.
-             NO makensis — the signed New-ERA-Setup.exe named by the LIVE
-             latest.json's `installer` field is downloaded and re-attached, its
-             Authenticode signature verified with osslsigncode first.
+             NO makensis — the signed installer named by the LIVE latest.json
+             (`installer` = its tag, `installer_file` = its file name) is
+             downloaded and re-attached under that name, its Authenticode
+             signature verified with osslsigncode first.
              X.Y must match that installer's ("patch $V cannot carry installer
              $TAG — cut a signed ${V%.*}.0 first").
 3/4 VM e2e   vm-e2e.sh $DIST --only b — that installer fresh on the VM, self-
@@ -79,6 +80,29 @@ A red leg C prints `LEG C RED — PULL THE RELEASE: gh release delete $V --repo
 $REPO --yes` (re-attach the previous installer first if the website must stay
 up) and exits 1. It deletes nothing itself — a pulled release 404s the website,
 so a human decides.
+
+### The installer's name (9/26 rename)
+
+A signed cut builds `Our-Era-Comms-Setup.exe` (it was `New-ERA-Setup.exe` up to
+v0.35.x); every other asset name — `new-era-suite.tar.gz`,
+`new-era-suite-$V.tar.gz`, `new-era-suite.zip`, `latest.json`, `checksums.txt`
+and the tarball's `new-era-suite/` top folder — never changes, because installed
+hubs fetch them by name. So `latest.json` records the installer's file name as
+`installer_file` next to its tag (`installer`), and everything that needs the
+installer reads it from there: `--patch` downloads and re-attaches it by that
+name, release.sh attaches it, vm-e2e.sh installs the candidate and finds each
+previous cut's exe by it, and leg C expects the website to hand out exactly it.
+A latest.json without the field predates the rename and means
+`New-ERA-Setup.exe`. A signed cut also downloads the live installer into
+`$DIST/prev/`: leg B starts from it, and while it is the old `New-ERA-Setup.exe`
+leg A installs it and runs the candidate over it (the `.onInit` folder move to
+`%LOCALAPPDATA%\Our Era Comms`, a junction left at `New ERA`, one Apps entry).
+The website's download buttons must name the new exe the day it publishes; for
+that one release the old name keeps working anyway: when the live feed's
+`installer_file` (absent: `New-ERA-Setup.exe`) differs from the cut's, release.sh
+(signed shape) attaches the same signed exe a second time under the old name,
+lists both in checksums.txt and says so in the notes, while latest.json names
+only the new file.
 
 ### Flags
 
