@@ -156,7 +156,7 @@ async function hold(page, selector, ms, midway) {
   const cdp = await page.context().newCDPSession(page);
   try {
     await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
-    if (midway) { await page.waitForTimeout(Math.min(400, ms)); await midway(); await page.waitForTimeout(Math.max(0, ms - 400)); }
+    if (midway) { await page.waitForTimeout(Math.min(400, ms)); await midway({ cdp, x, y }); await page.waitForTimeout(Math.max(0, ms - 400)); }
     else await page.waitForTimeout(ms);
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   } finally { await cdp.detach().catch(() => {}); }
@@ -274,6 +274,26 @@ test("the card's button leaves `.dwell` while the finger is down and has it back
   }));
   assert.deepEqual(after, { dwell: true, disabled: false, holding: false },
     "the card came back to her exactly as it was");
+  await ctx.close();
+});
+
+// Dad, 9/27: the clothing tile's and the lock's holds died when a finger rolled
+// past the slop under `touch-action: manipulation`. This hold already survives:
+// the finger lands on the card's inner `.dwell`, which has dwell.js's `none` (7/28).
+// Pinned so a more specific rule — what broke the board tile — fails here first.
+test("a finger that drifts 30px during the hold still opens the sheet — a firm press rolls, and rolling is not a pan (dad 9/27)", async () => {
+  const { ctx, page } = await makePage({ init: CAN_SHARE });
+  await page.locator(CARD).waitFor();
+  await hold(page, CARD, 2000, async ({ cdp, x, y }) => {
+    for (const dy of [10, 20, 30]) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y - dy }] });
+      await page.waitForTimeout(60);
+    }
+  });
+  const sheet = page.locator("#shareSheet");
+  await sheet.waitFor({ timeout: 3000 });
+  assert.equal(await sheet.locator(".share-title").textContent(), "Luna the Fox");
+  assert.equal((await shelfState(page)).screen, "sShelf", "the hold did not open the book");
   await ctx.close();
 });
 
