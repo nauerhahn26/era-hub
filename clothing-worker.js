@@ -1418,6 +1418,21 @@ const PAGES = 3;   // how many "More" pages a day gets at most
 // kinds outgrow it. "accessories" is an ARASAAC bestsearch word (25634, the
 // fashion-accessories pictogram — checked 9/17), the worker's own convention
 // for a category tile.
+// Dress up (warmth coherence spec 2026-09-29 D3; dad 9/29: "fancy should be in
+// accessories and should not be eligible for the daily offerings"). A VIRTUAL
+// kind, deliberately not in clothing-rank's ACCESSORY_KINDS: nothing is FILED
+// under it — a fancy garment stays a dress or a top, a fancy accessory stays
+// shoes — and ACCESSORY_KINDS is the category list the prompt, the whitelist
+// and the chips read (and the "six kinds" its suite asserts). It lives here,
+// where `present` is made, and joins it exactly like a real kind, so the door,
+// the seventh-slot arithmetic, Build my own's overflow and the menu cells
+// follow it with no rule of their own. "party" is an ARASAAC bestsearch word:
+// 7099, balloons and bunting (checked 9/29; "dress up" = 5986, a costume
+// being put on, the spec's second choice).
+const DRESS_UP = { id: "fancy", label: "Dress up", symbol: "party" };
+// Case-folded like clothing-rank's own isFancy: the deal's door and this page
+// must agree on every garment.
+const isFancy = i => typeof i.occasion === "string" && i.occasion.trim().toLowerCase() === "fancy";
 const accDoor = (row, col) =>
   ({ label: "Accessories", type: "category", symbol: "accessories", load: "acc", row, col });
 
@@ -1447,6 +1462,9 @@ async function buildCataloged(cat) {
   // cannot produce an empty grid (spec §7). T5 draws the entry tile, the `acc`
   // menu and the `acc_<kind>` grids from exactly this list.
   const present = ACCESSORY_KINDS.map(k => k.id).filter(id => items.some(i => i.category === id));
+  // …and Dress up, the virtual kind, last: `items` is already ok, un-hidden
+  // and tiled, so one fancy piece she can really see is what it takes.
+  if (items.some(isFancy)) present.push(DRESS_UP.id);
   // While she has accessories the seventh outfit slot IS the door, so the
   // whole build — the deal's cap, the page size, the lineup the memory keeps
   // and the "More" arithmetic — follows this one number and never a constant.
@@ -1581,7 +1599,7 @@ async function buildCataloged(cat) {
   // her when a jacket arrives. Ten edge cells, filled clockwise from the
   // contract's back anchor: Back, Tops, Bottoms, Dresses, Outfits, then the
   // present kinds. Empty edge cells stay black, like every other rest cell.
-  const kinds = ACCESSORY_KINDS.filter(k => present.includes(k.id));
+  const kinds = [...ACCESSORY_KINDS, DRESS_UP].filter(k => present.includes(k.id));
   const KIND_CELLS = [[2,4],[3,1],[3,2],[3,3],[3,4]];
   const kindTile = (k, row, col) =>
     ({ label: k.label, type: "category", symbol: k.symbol, load: "acc_" + k.id, row, col });
@@ -1601,8 +1619,8 @@ async function buildCataloged(cat) {
   });
   boards.push({ id: "build", name: "Build my own", rows: 3, columns: 4, buttons: buildButtons });
   // The menu behind the door: the same shape, Back top-left, one tile per
-  // present kind over the nine remaining edge cells. Six kinds is the most
-  // there can ever be (ACCESSORY_KINDS), so it always fits on one page.
+  // present kind over the nine remaining edge cells. Seven kinds is the most
+  // there can ever be (ACCESSORY_KINDS + Dress up), so it always fits on one page.
   if (kinds.length) {
     const MENU_CELLS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,1],[3,2],[3,3],[3,4]];
     boards.push({ id: "acc", name: "Accessories", rows: 3, columns: 4, buttons: [
@@ -1619,12 +1637,14 @@ async function buildCataloged(cat) {
   ]});
   // Every browse page carries the door at [3,4] — she can be on page 3 of the
   // tops when she decides she wants a jacket (spec §4.1).
+  // A fancy garment is in none of them (spec 2026-09-29 D3): it lives on Dress up.
   const door = present.length ? accDoor(3, 4) : null;
-  boards.push(...gridPages("cat_top", "Tops", items.filter(i => i.category === "top"), "today", door));
-  boards.push(...gridPages("cat_pants", "Pants", items.filter(i => i.category === "pants"), "choose_bottom", door));
-  boards.push(...gridPages("cat_shorts", "Shorts", items.filter(i => i.category === "shorts"), "choose_bottom", door));
-  boards.push(...gridPages("cat_dress", "Dresses", items.filter(i => i.category === "dress"), "build", door));
-  boards.push(...gridPages("cat_outfit", "Outfits", items.filter(i => i.category === "set"), "build", door));
+  const browse = cat => items.filter(i => i.category === cat && !isFancy(i));
+  boards.push(...gridPages("cat_top", "Tops", browse("top"), "today", door));
+  boards.push(...gridPages("cat_pants", "Pants", browse("pants"), "choose_bottom", door));
+  boards.push(...gridPages("cat_shorts", "Shorts", browse("shorts"), "choose_bottom", door));
+  boards.push(...gridPages("cat_dress", "Dresses", browse("dress"), "build", door));
+  boards.push(...gridPages("cat_outfit", "Outfits", browse("set"), "build", door));
   // Every browse grid above asks for a GARMENT word, so an accessory falls
   // into none of them (preflight 2): each present kind gets its own pages.
   // Back goes to `today` — the door can be entered from anywhere, so the one
@@ -1632,9 +1652,13 @@ async function buildCataloged(cat) {
   // these pages (accessoryOrder): on a cold morning the coats lead, but no
   // accessory is ever weather-hidden (spec §4.1). No door on these pages: she
   // is already behind it.
+  // Dress up is every fancy piece — garments and accessories — in id order
+  // (a fancy accessory stays on its own kind's page too; it was never dealt
+  // anyway), `type: "clothing"` tiles exactly like a browse page.
   for (const k of kinds)
-    boards.push(...gridPages("acc_" + k.id, k.label,
-      accessoryOrder(items.filter(i => i.category === k.id), band), "today"));
+    boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
+      ? items.filter(isFancy).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      : accessoryOrder(items.filter(i => i.category === k.id), band), "today"));
   return { boards, present };
 }
 
