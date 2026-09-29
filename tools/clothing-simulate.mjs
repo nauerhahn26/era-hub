@@ -8,8 +8,13 @@
 // pants, a spectrum … should handle every #."
 //
 //   node tools/clothing-simulate.mjs --wardrobe <path/to/wardrobe.json>
-//        [--temps 45,58,65,72,79,85,95|offline] [--seed YYYY-MM-DD] [--days N]
-//        [--strip-fit]
+//        [--temps 45,58,65,72,79,85,95|45-95|offline] [--seed YYYY-MM-DD]
+//        [--days N] [--strip-fit] [--table]
+//
+// The deploy check: `--temps 45-95 --days 7 --table` (and again with
+// --strip-fit) prints one row per °F — the curve's share beside the dealt
+// share for shorts-side, long sleeve, sleeveless and short sleeve, page 1's
+// legs split, and the verdicts. Without --table every look is listed too.
 //
 // The wardrobe is a hub's clothing/wardrobe.json ({items: {file: entry}}) —
 // copy the device's down over ssh and run this before a push — or the
@@ -294,10 +299,34 @@ function tag(p) {
   const legs = a.role === "single" ? ", legs " + a.legs : "";
   return `${p.name || p.id} [${a.coverage}${w}${legs}]`;
 }
-function report(run, out = console.log) {
-  let failed = 0;
-  out(`mode: ${run.mode === "legacy" ? "legacy fallback (coverage/weight/legs stripped)" : "fit (coverage/weight/legs as catalogued)"} · ${run.perPage} a page, ${run.cap} looks`);
+// The deploy check's table (spec §7.3): one row per °F, for every kind the
+// curve's share (after the 5 % floor, over the kinds the wardrobe holds)
+// beside the share the board dealt — the whole deal, averaged over the days
+// run — then page 1's legs split and the verdicts' tally. A DRY row names the
+// kind her wardrobe could not fill; a FAIL row is a push to stop.
+const COLUMNS = [["legs", "shorts", "shorts-side"], ["top", "long", "long sleeve"], ["top", "sleeveless", "sleeveless"], ["top", "short", "short sleeve"]];
+function table(run, out = console.log) {
+  const cell = (a, b) => `${pct(a).padStart(4)} ${pct(b).padStart(5)}`;
+  out(`  °F │ ${COLUMNS.map(c => c[2].padEnd(12)).join(" │ ")} │ page 1  │ verdicts`);
+  out(`     │ ${COLUMNS.map(() => "curve dealt ").join(" │ ")} │ sh/pa   │`);
   for (const r of run.results) {
+    if (r.temp == null) { out(`  offline — the port's deal, no curve`); continue; }
+    const looks = r.days.reduce((a, d) => a + d.looks.length, 0) || 1;
+    const dealt = (dim, k) => r.days.reduce((a, d) => a + d.deal[dim][k], 0) / looks;
+    const p1 = r.days.map(d => `${d.page1.legs.shorts}/${d.page1.legs.pants}`);
+    const splits = [...new Set(p1)].join(",");
+    const vs = r.days.flatMap(d => d.verdicts);
+    const fails = vs.filter(v => !v.pass).length, dry = [...new Set(vs.filter(v => v.dry).flatMap(v => v.dry))];
+    const tally = fails ? `FAIL ${fails}` : dry.length ? `DRY ${dry.join(",")}` : "ok";
+    out(`${String(r.temp).padStart(4)} │ ${COLUMNS.map(([dim, k]) => cell(r.want[dim][k], dealt(dim, k)).padEnd(12)).join(" │ ")} │ ${splits.padEnd(7)} │ ${tally}`);
+  }
+}
+function report(run, out = console.log, { tableOnly = false } = {}) {
+  let failed = 0;
+  out(`mode: ${run.mode === "legacy" ? "legacy fallback (coverage/weight/legs stripped)" : "fit (coverage/weight/legs as catalogued)"} · ${run.perPage} a page, ${run.cap} looks · ${run.results[0] ? run.results[0].days.length : 0} day(s)`);
+  for (const r of run.results) {
+    for (const d of r.days) for (const v of d.verdicts) if (!v.pass) failed += 1;
+    if (tableOnly) continue;
     out("");
     out(`== ${r.temp} °F${r.want ? ` — curve: top ${fmt(Object.fromEntries(TOP_KINDS.map(k => [k, pct(r.want.top[k])])))} · legs ${fmt(Object.fromEntries(LEG_KINDS.map(k => [k, pct(r.want.legs[k])])))}` : " — weather offline: the port's deal"} ==`);
     for (const d of r.days) {
@@ -306,12 +335,11 @@ function report(run, out = console.log) {
         const page = Math.floor(i / run.perPage) + 1;
         out(`  p${page} ${String(i + 1).padStart(2)}  ${l.pieces.map(tag).join(" + ")}`);
       });
-      for (const v of d.verdicts) {
-        if (!v.pass) failed += 1;
-        out(`  ${v.pass ? (v.dry ? "DRY " : "PASS") : "FAIL"}  ${v.rule} — ${v.detail}`);
-      }
+      for (const v of d.verdicts) out(`  ${v.pass ? (v.dry ? "DRY " : "PASS") : "FAIL"}  ${v.rule} — ${v.detail}`);
     }
   }
+  out("");
+  table(run, out);
   out("");
   out(failed ? `== ${failed} verdict(s) FAILED ==` : "== every verdict passed ==");
   return failed;
@@ -322,22 +350,37 @@ function main(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--wardrobe") args.wardrobe = argv[++i];
-    else if (a === "--temps") args.temps = String(argv[++i]).split(",").map(x => (x === "offline" ? null : Number(x)));
+    else if (a === "--temps") args.temps = temps(String(argv[++i]));
+    else if (a === "--table") args.table = true;
     else if (a === "--seed") args.seed = argv[++i];
     else if (a === "--days") args.days = Number(argv[++i]);
     else if (a === "--strip-fit") args.stripFit = true;
     else { process.stderr.write(`unknown argument: ${a}\n`); return 2; }
   }
   if (!args.wardrobe) {
-    process.stderr.write("usage: node tools/clothing-simulate.mjs --wardrobe <wardrobe.json> [--temps 45,58,65,72,79,85,95] [--seed YYYY-MM-DD] [--days N] [--strip-fit]\n");
+    process.stderr.write("usage: node tools/clothing-simulate.mjs --wardrobe <wardrobe.json> [--temps 45,58,65,72,79,85,95|45-95|offline] [--seed YYYY-MM-DD] [--days N] [--strip-fit] [--table]\n");
     return 2;
   }
-  if (args.temps.some(t => t !== null && !Number.isFinite(t)) || !(args.days >= 1)) { process.stderr.write("--temps takes numbers, --days a count ≥ 1\n"); return 2; }
+  if (!args.temps || args.temps.some(t => t !== null && !Number.isFinite(t)) || !(args.days >= 1)) { process.stderr.write("--temps takes numbers, rising ranges (45-95) or offline; --days a count ≥ 1\n"); return 2; }
   const items = loadWardrobe(args.wardrobe);
   const run = simulate({ items, temps: args.temps, seed: args.seed, days: args.days, stripFit: args.stripFit });
-  return report(run) ? 1 : 0;
+  return report(run, console.log, { tableOnly: args.table }) ? 1 : 0;
+}
+// "45,58,72" · "45-95" (every integer °F, rising) · "offline" · any mix; null
+// for a range that runs downhill, so a typo is a usage error, not an empty run.
+function temps(spec) {
+  const out = [];
+  for (const part of spec.split(",")) {
+    const m = /^(\d+)-(\d+)$/.exec(part.trim());
+    if (m) {
+      const [lo, hi] = [Number(m[1]), Number(m[2])];
+      if (hi < lo) return null;
+      for (let t = lo; t <= hi; t++) out.push(t);
+    } else out.push(part.trim() === "offline" ? null : Number(part));
+  }
+  return out;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));
 
-export { simulate, loadWardrobe, itemsOf, VERDICTS, report, curve, wantAt, stock, apportion, cellOf, K, CROSS, FLOOR };
+export { simulate, loadWardrobe, itemsOf, VERDICTS, report, table, curve, wantAt, stock, apportion, cellOf, K, CROSS, FLOOR };

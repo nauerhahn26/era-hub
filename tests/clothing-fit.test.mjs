@@ -274,6 +274,21 @@ describe("tools/clothing-simulate.mjs — the deploy check dad asked for", () =>
       assert.match(s.stdout, /legacy/);
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
+  test("the deploy check's table: --temps 45-95 --table prints one row per °F, the curve's share beside the dealt share for every kind", () => {
+    const r = spawnSync(process.execPath, [TOOL, "--wardrobe", FIXTURE, "--temps", "45-95", "--days", "7", "--seed", SEED, "--table"], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /°F.*shorts-side.*long sleeve.*sleeveless.*short sleeve/);
+    const rows = r.stdout.split("\n").filter(l => /^\s*\d+ │/.test(l));
+    assert.equal(rows.length, 51, "45 through 95");
+    // 70 °F: the curve's 50 % beside the deal's, and the verdicts' tally
+    const at70 = rows.find(l => /^\s*70 │/.test(l));
+    assert.match(at70, /50% +50%/, at70);
+    assert.match(at70, /ok$/);
+    assert.doesNotMatch(r.stdout, /\[(sleeveless|short|long)/, "--table leaves out the per-look listing");
+    // a range and a list mix; a bad range is a usage error
+    const bad = spawnSync(process.execPath, [TOOL, "--wardrobe", FIXTURE, "--temps", "95-45"], { encoding: "utf8" });
+    assert.equal(bad.status, 2);
+  });
   test("the CLI exits non-zero on a verdict that fails, and on a missing --wardrobe", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "era-clo-sim-"));
     try {
