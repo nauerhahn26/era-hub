@@ -426,88 +426,60 @@ const bottom = (id, over = {}) => g(id, { category: "pants", colors: ["navy"], p
 const keysOf = list => list.map(c => c.key);
 const idsIn = list => new Set(list.flatMap(c => c.pieces.map(p => p.id)));
 
-// ---- the fit gate (spec 2026-09-29 §2 D1/D2, amending 2026-09-23 §2-§3) ----
+// ---- the spectrum (spec 2026-09-29 §7, which replaced the §2 fit gate) -----
 //
 // Until 9/29 this block asserted the ported band gate: tops never gated,
 // bottoms and singles by BAND_WARMTH level with a neighbour-band widen. Dad
 // (9/23, 9/29): "all clothing should be gated by the weather, including tops"
-// — the receipt was 7 long sleeves and 11 leggings in an 81 °F deal. Every
-// test below whose intent survived was rewritten to the new contract: the
-// deal gates by the planning °F (`temp`), each garment by a comfort range
-// from (role, coverage, weight), with an edge on the cold side only.
+// — the receipt was 7 long sleeves and 11 leggings in an 81 °F deal. That
+// afternoon's §2 gate (a °F comfort range per garment, a cold-side EDGE, a
+// widen) was then overruled the same evening (spec §7, dad: "the code
+// shouldn't be all or nothing logic … a spectrum … should handle every #").
+// Every test below whose intent survived both was rewritten to §7: the
+// weather refuses no garment; the day's curve sets each KIND of look's share
+// (top-half coverage × legs side), a kind under 5 % is zero, and each page's
+// slots are apportioned. FIT is now only the centres the within-kind rank
+// reads. The deal's coherence at every °F is tests/clothing-fit.test.mjs.
 
 // The fixture: her wardrobe's shape (63 items, generic names), with the
 // coverage/weight/legs a person would assign — the harness's input too.
 const FIXTURE = Object.values(JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "wardrobe-shape.json"), "utf8")).items);
 
-describe("FIT / fitOf — (role, coverage, weight) → a comfort range in °F (spec 2026-09-29 §2 D1, 9/23 §3)", () => {
+describe("FIT — the °F each (role, coverage, weight) is best at; since §7 it only ranks inside a kind", () => {
   const COVER = { top: ["sleeveless", "short", "long"], bottom: ["short", "long"] };
-  const WEIGHTS = ["light", "mid", "heavy", "unsure", undefined, "banana"];
-  const range = r => r && typeof r.lo === "number" && typeof r.hi === "number" && typeof r.centre === "number" && r.lo < r.hi;
-  test("the table is total: every coverage × weight a model or a parent can write, for every garment kind, maps to a range", () => {
-    for (const category of ["top", "dress", "set"])
-      for (const coverage of COVER.top)
-        for (const weight of WEIGHTS)
+  test("the table is total: every coverage × weight is a real °F, and every word a model or a parent can write resolves to a row", () => {
+    for (const role of ["top", "bottom"])
+      for (const coverage of COVER[role])
+        for (const weight of ["light", "mid", "heavy"])
+          assert.ok(Number.isFinite(R.FIT[role][coverage][weight]), `${role} ${coverage} ${weight}`);
+    for (const category of ["top", "dress", "set", "pants", "shorts"])
+      for (const coverage of [...COVER.top, "long", undefined, "banana"])
+        for (const weight of ["light", "mid", "heavy", "unsure", undefined, "banana"])
           for (const legs of ["bare", "covered", undefined]) {
-            const f = R.fitOf({ id: "x", category, coverage, weight, legs });
-            assert.ok(range(f), `${category} ${coverage} ${weight} ${legs}: ${JSON.stringify(f)}`);
-            assert.ok(Number.isFinite(f.centre), "a centre is always a real °F");
+            const a = R.fitAttrs({ id: "x", category, coverage, weight, legs });
+            const row = a.role === "single" ? "top" : a.role;
+            assert.ok(Number.isFinite(R.FIT[row][a.coverage][a.weight]), `${category} ${coverage} ${weight} ${legs}: ${JSON.stringify(a)}`);
           }
-    for (const category of ["pants", "shorts"])
-      for (const coverage of COVER.bottom)
-        for (const weight of WEIGHTS)
-          assert.ok(range(R.fitOf({ id: "x", category, coverage, weight })), `${category} ${coverage} ${weight}`);
   });
-  test("the table is total over the fixture: every garment has a range; an accessory has none (never gated, accessories spec §4.1)", () => {
+  test("the table is total over the fixture: every garment resolves to a row; an accessory has none (never weather-sorted, accessories spec §4.1)", () => {
     assert.equal(FIXTURE.length, 63);
     for (const i of FIXTURE) {
-      const f = R.fitOf(i);
-      if (R.isAccessory(i)) assert.equal(f, null, i.name);
-      else assert.ok(range(f), `${i.name}: ${JSON.stringify(f)}`);
+      const a = R.fitAttrs(i);
+      if (R.isAccessory(i)) assert.equal(a, null, i.name);
+      else assert.ok(Number.isFinite(R.FIT[a.role === "single" ? "top" : a.role][a.coverage][a.weight]), i.name);
     }
   });
-  test("open ends are ±Infinity and the centre sits 10 °F inside the closed end; a closed range's centre is its midpoint", () => {
-    const sleeveless = R.fitOf({ id: "x", category: "top", coverage: "sleeveless" });
-    assert.equal(sleeveless.hi, Infinity);
-    assert.equal(sleeveless.centre, sleeveless.lo + 10);
-    const heavy = R.fitOf({ id: "x", category: "top", coverage: "long", weight: "heavy" });
-    assert.equal(heavy.lo, -Infinity);
-    assert.equal(heavy.centre, heavy.hi - 10);
-    const pants = R.fitOf({ id: "x", category: "pants", coverage: "long", weight: "light" });
-    assert.ok(Number.isFinite(pants.lo) && Number.isFinite(pants.hi));
-    assert.equal(pants.centre, (pants.lo + pants.hi) / 2);
-  });
-  test("the ladder runs the right way: sleeveless ≥ short ≥ long light ≥ long mid ≥ long heavy, by both ends; shorts sit above long pants", () => {
-    const t = (coverage, weight) => R.fitOf({ id: "x", category: "top", coverage, weight });
-    const ladder = [t("sleeveless"), t("short", "light"), t("long", "light"), t("long", "mid"), t("long", "heavy")];
-    for (let k = 1; k < ladder.length; k++) {
-      assert.ok(ladder[k].lo <= ladder[k - 1].lo, `lo step ${k}`);
-      assert.ok(ladder[k].hi <= ladder[k - 1].hi, `hi step ${k}`);
-      assert.ok(ladder[k].centre < ladder[k - 1].centre, `centre step ${k}`);
-    }
-    const b = (coverage, weight) => R.fitOf({ id: "x", category: "pants", coverage, weight });
-    assert.ok(R.fitOf({ id: "x", category: "shorts" }).centre > b("long", "light").centre);
-    assert.ok(b("long", "light").centre > b("long", "mid").centre && b("long", "mid").centre > b("long", "heavy").centre);
-  });
-  test("a single is its top half AND its legs: the range is where both halves are comfortable", () => {
-    const top = R.fitOf({ id: "x", category: "top", coverage: "sleeveless" });
-    const shorts = R.fitOf({ id: "x", category: "shorts" });
-    const dress = R.fitOf({ id: "x", category: "dress", coverage: "sleeveless", legs: "bare" });
-    assert.equal(dress.lo, Math.max(top.lo, shorts.lo));
-    assert.equal(dress.hi, Math.min(top.hi, shorts.hi));
-    const longTop = R.fitOf({ id: "x", category: "top", coverage: "long", weight: "light" });
-    const pants = R.fitOf({ id: "x", category: "pants", coverage: "long", weight: "light" });
-    const set = R.fitOf({ id: "x", category: "set", coverage: "long", weight: "light", legs: "covered" });
-    assert.equal(set.lo, Math.max(longTop.lo, pants.lo));
-    assert.equal(set.hi, Math.min(longTop.hi, pants.hi));
+  test("the ladder runs the right way: sleeveless > short > long light > long mid > long heavy; shorts > light pants > mid > heavy", () => {
+    const t = R.FIT.top, b = R.FIT.bottom;
+    const ladder = [t.sleeveless.light, t.short.light, t.long.light, t.long.mid, t.long.heavy];
+    for (let k = 1; k < ladder.length; k++) assert.ok(ladder[k] < ladder[k - 1], `step ${k}: ${ladder}`);
+    assert.ok(b.short.light > b.long.light && b.long.light > b.long.mid && b.long.mid > b.long.heavy);
   });
   test("`unsure`, a missing or a garbage weight is the row's modal weight, biased light — never `mid` blindly (9/23 §2)", () => {
-    const light = R.fitOf({ id: "x", category: "top", coverage: "long", weight: "light" });
-    for (const weight of ["unsure", undefined, "", "banana", 2, "constructor"])
-      assert.deepEqual(R.fitOf({ id: "x", category: "top", coverage: "long", weight }), light, String(weight));
-    const pants = R.fitOf({ id: "x", category: "pants", coverage: "long", weight: "light" });
-    assert.deepEqual(R.fitOf({ id: "x", category: "pants", coverage: "long", weight: "unsure" }), pants);
-    assert.deepEqual(R.fitAttrs({ id: "x", category: "top", coverage: "long", weight: "unsure" }).weight, "light");
+    for (const weight of ["unsure", undefined, "", "banana", 2, "constructor"]) {
+      assert.equal(R.fitAttrs({ id: "x", category: "top", coverage: "long", weight }).weight, "light", String(weight));
+      assert.equal(R.fitAttrs({ id: "x", category: "pants", coverage: "long", weight }).weight, "light", String(weight));
+    }
   });
   test("legacy fallback (spec 2026-09-29 §2 D1) — no coverage yet: top hot → sleeveless, warm → short, cool|cold → long light; pants long light; shorts short; dress/set as a top, legs bare unless cold", () => {
     const a = over => R.fitAttrs({ id: "x", ...over });
@@ -542,68 +514,80 @@ describe("FIT / fitOf — (role, coverage, weight) → a comfort range in °F (s
   });
 });
 
-describe("eligible — the fit gate by temp (spec 2026-09-29 §2 D2): every role gated, the edge on the cold side only", () => {
-  const long = (id, weight = "light", over = {}) => top(id, { coverage: "long", weight, ...over });
-  test("tops are gated now (dad 9/23, 9/29 — a deliberate break from outfit_set.py, which never gated them)", () => {
-    const items = [top("item_t1", { warmth: "hot" }), top("item_t2", { warmth: "cool" }), top("item_t3", { warmth: "warm" }), bottom("item_b1")];
-    assert.deepEqual(R.eligible(items, "top", 85).map(i => i.id), ["item_t1", "item_t3"], "no long sleeve at 85");
-    assert.deepEqual(R.eligible(items, "top", 52).map(i => i.id), ["item_t2"], "no tank, no tee at 52");
+describe("sharesAt / lookCell — the day's curve and the kind of a look (spec 2026-09-29 §7.1, §7.2)", () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  test("the constants are the spec's: K = 10 / ln 9, legs cross at 70 (dad), long sleeve at 63, sleeveless at 80 (9/23 consensus), floor 5 %", () => {
+    assert.ok(near(R.SPECTRUM_K, 10 / Math.log(9)));
+    assert.equal(R.LEGS_CROSSOVER_F, 70);
+    assert.equal(R.LONG_SLEEVE_CROSSOVER_F, 63);
+    assert.equal(R.SLEEVELESS_CROSSOVER_F, 80);
+    assert.equal(R.SHARE_FLOOR, 0.05);
   });
-  test("inside the range is admitted; ONE degree above hi is out — there is no warm-side edge (the error she cannot undo)", () => {
-    const f = R.fitOf(long("item_l"));
-    assert.deepEqual(R.eligible([long("item_l")], "top", f.hi).map(i => i.id), ["item_l"]);
-    assert.deepEqual(R.eligible([long("item_l")], "top", f.hi + 1), []);
-    assert.deepEqual(R.eligible([long("item_l")], "top", f.lo).map(i => i.id), ["item_l"]);
+  test("dad's numbers: shorts-side 10 % at 60, 50 % at 70, 90 % at 80; each dimension sums to 1, raw and floored", () => {
+    assert.ok(near(R.sharesAt(60).raw.legs.shorts, 0.1));
+    assert.ok(near(R.sharesAt(70).raw.legs.shorts, 0.5));
+    assert.ok(near(R.sharesAt(80).raw.legs.shorts, 0.9));
+    for (let t = 30; t <= 110; t += 0.5) {
+      const s = R.sharesAt(t);
+      for (const part of [s.raw.top, s.raw.legs, s.top, s.legs]) {
+        const sum = Object.values(part).reduce((a, b) => a + b, 0);
+        assert.ok(near(sum, 1), `${t}: ${JSON.stringify(part)}`);
+        for (const v of Object.values(part)) assert.ok(v >= 0);
+      }
+    }
   });
-  test("EDGE degrees below lo is still admitted (too light is nothing a jacket cannot fix); EDGE + 1 below is out", () => {
-    assert.equal(R.EDGE, 8);
-    const tee = top("item_s", { coverage: "short" });
-    const f = R.fitOf(tee);
-    assert.deepEqual(R.eligible([tee], "top", f.lo - R.EDGE).map(i => i.id), ["item_s"]);
-    assert.deepEqual(R.eligible([tee], "top", f.lo - R.EDGE - 1), []);
+  test("a spectrum for every number: shorts and sleeveless only grow with the °F, long sleeve only shrinks — no step anywhere", () => {
+    let prev = R.sharesAt(30).raw;
+    for (let t = 30.5; t <= 110; t += 0.5) {
+      const s = R.sharesAt(t).raw;
+      assert.ok(s.legs.shorts > prev.legs.shorts, `shorts at ${t}`);
+      assert.ok(s.top.sleeveless > prev.top.sleeveless, `sleeveless at ${t}`);
+      assert.ok(s.top.long < prev.top.long, `long at ${t}`);
+      // the curve's steepest slope is 1 / (4K) ≈ 5.5 points a degree, so no
+      // half-degree step moves the legs split by more than 6 points
+      assert.ok(Math.abs(s.legs.shorts - prev.legs.shorts) < 0.06, `no cliff at ${t}`);
+      prev = s;
+    }
   });
-  test("the edge argument widens the cold side only: a garment too warm for the day never comes in, however wide", () => {
-    const items = [top("item_s", { coverage: "short" }), long("item_h", "heavy")];
-    assert.deepEqual(R.eligible(items, "top", 30, Infinity).map(i => i.id), ["item_s", "item_h"]);
-    assert.deepEqual(R.eligible(items, "top", 80, Infinity).map(i => i.id), ["item_s"]);
+  test("the 5 % floor zeroes a kind and renormalises the rest: no long sleeve at 78 (3.6 %), no shorts at 54 (2.9 %)", () => {
+    const at78 = R.sharesAt(78), at54 = R.sharesAt(54);
+    assert.ok(at78.raw.top.long > 0.03 && at78.raw.top.long < R.SHARE_FLOOR);
+    assert.equal(at78.top.long, 0);
+    assert.ok(near(at78.top.sleeveless / at78.top.short, at78.raw.top.sleeveless / at78.raw.top.short), "the rest keep their ratio");
+    assert.ok(at54.raw.legs.shorts > 0.02 && at54.raw.legs.shorts < R.SHARE_FLOOR);
+    assert.equal(at54.legs.shorts, 0);
+    assert.equal(at54.legs.pants, 1);
   });
-  test("bottoms: shorts are out on a cool day, long pants on a hot one; pants and shorts are one role", () => {
-    const items = [bottom("item_p1"), bottom("item_s1", { category: "shorts" }), bottom("item_p2", { coverage: "long", weight: "heavy" })];
-    assert.deepEqual(R.eligible(items, "bottom", 58).map(i => i.id), ["item_p1", "item_p2"]);
-    assert.deepEqual(R.eligible(items, "bottom", 95).map(i => i.id), ["item_s1"]);
-    assert.deepEqual(R.eligible(items, "bottom", 74).map(i => i.id), ["item_p1", "item_s1"]);
+  test("lookCell: a pair is its top's sleeves over its bottom's side; a single its own top half and legs", () => {
+    const tee = top("item_t", { coverage: "short" }), tank = top("item_k", { coverage: "sleeveless" });
+    const long = top("item_l", { coverage: "long", weight: "mid" });
+    const pants = bottom("item_p"), shorts = bottom("item_s", { category: "shorts" });
+    assert.deepEqual(R.lookCell([tee, shorts]), { top: "short", legs: "shorts" });
+    assert.deepEqual(R.lookCell([long, pants]), { top: "long", legs: "pants" });
+    assert.deepEqual(R.lookCell([tank, pants]), { top: "sleeveless", legs: "pants" });
+    assert.deepEqual(R.lookCell([g("item_d", { category: "dress", coverage: "sleeveless", legs: "bare" })]), { top: "sleeveless", legs: "shorts" });
+    assert.deepEqual(R.lookCell([g("item_e", { category: "set", coverage: "long", legs: "covered" })]), { top: "long", legs: "pants" });
   });
-  test("singles gate by top half AND legs: a bare-legged sundress is out on a cool day, a long covered set on a hot one", () => {
-    const sun = g("item_d1", { category: "dress", coverage: "sleeveless", legs: "bare" });
-    const set = g("item_e1", { category: "set", coverage: "long", weight: "light", legs: "covered" });
-    assert.deepEqual(R.eligible([sun, set], "single", 60).map(i => i.id), ["item_e1"]);
-    assert.deepEqual(R.eligible([sun, set], "single", 88).map(i => i.id), ["item_d1"]);
-  });
-  test("the legacy fallback gates a catalogue refit has not reached: a cool-tagged top is out at 80, a hot-tagged dress at 60", () => {
-    const items = [top("item_t1", { warmth: "cool" }), top("item_t2", { warmth: "warm" }), g("item_d1", { category: "dress", warmth: "hot" })];
-    assert.deepEqual(R.eligible(items, "top", 80).map(i => i.id), ["item_t2"]);
-    assert.deepEqual(R.eligible(items, "single", 60), []);
-  });
-  test("temp null / undefined / NaN (weather offline) gates nothing; a band WORD is not a temperature and gates nothing either", () => {
-    const items = [long("item_h", "heavy"), top("item_t", { warmth: "hot" })];
-    for (const temp of [null, undefined, NaN, Infinity, "hot", "81", {}])
-      assert.deepEqual(R.eligible(items, "top", temp).map(i => i.id), ["item_h", "item_t"], String(temp));
+  test("…and a catalogue refit has not reached is placed by the legacy fallback: a cool-tagged top is a long sleeve, a hot-tagged dress a bare-legged sleeveless", () => {
+    assert.deepEqual(R.lookCell([top("item_t", { warmth: "cool" }), bottom("item_p")]), { top: "long", legs: "pants" });
+    assert.deepEqual(R.lookCell([g("item_d", { category: "dress", warmth: "hot" })]), { top: "sleeveless", legs: "shorts" });
+    assert.deepEqual(R.lookCell([g("item_e", { category: "set", warmth: "cold" })]), { top: "long", legs: "pants" });
   });
   test("a prototype-key word (constructor / toString / __proto__) as coverage, weight, legs, warmth or category behaves like any unknown word — never a throw (review r2)", () => {
     for (const w of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
-      const f = R.fitOf({ id: "x", category: "top", coverage: w, weight: w, warmth: w });
-      assert.deepEqual(f, R.fitOf({ id: "x", category: "top", coverage: "short" }), w);
-      assert.ok(R.fitOf({ id: "x", category: "dress", coverage: w, legs: w, warmth: w }), w);
+      assert.deepEqual(R.fitAttrs({ id: "x", category: "top", coverage: w, weight: w, warmth: w }), { role: "top", coverage: "short", weight: "light" }, w);
+      assert.ok(R.fitAttrs({ id: "x", category: "dress", coverage: w, legs: w, warmth: w }), w);
       assert.equal(R.categoryOf({ category: w }), null, "category " + w);
-      assert.equal(R.fitOf({ id: "x", category: w }), null, "no role, no range: " + w);
+      assert.equal(R.fitAttrs({ id: "x", category: w }), null, "no role, no row: " + w);
     }
-    assert.deepEqual(R.eligible([g("item_x", { category: "constructor" })], "top", 70), []);
+    assert.deepEqual(R.buildCandidates({ items: [g("item_x", { category: "constructor" })], temp: 70, cap: 21, seed: SEED, history: {}, perPage: 7 }), []);
   });
   test("categories: pants|shorts → bottom, dress|set → single, top → top", () => {
-    const items = [top("item_t1"), bottom("item_p1"), bottom("item_s1", { category: "shorts" }), g("item_d1", { category: "dress" }), g("item_e1", { category: "set" })];
-    assert.deepEqual(R.eligible(items, "bottom", null).map(i => i.id), ["item_p1", "item_s1"]);
-    assert.deepEqual(R.eligible(items, "single", null).map(i => i.id), ["item_d1", "item_e1"]);
-    assert.deepEqual(R.eligible(items, "top", null).map(i => i.id), ["item_t1"]);
+    assert.equal(R.categoryOf({ category: "pants" }), "bottom");
+    assert.equal(R.categoryOf({ category: "shorts" }), "bottom");
+    assert.equal(R.categoryOf({ category: "dress" }), "single");
+    assert.equal(R.categoryOf({ category: "set" }), "single");
+    assert.equal(R.categoryOf({ category: "top" }), "top");
   });
 });
 
@@ -721,7 +705,7 @@ describe("buildCandidates — the pool (outfit_set.py:393-410)", () => {
   });
 });
 
-describe("rankOf — the fit term (spec 2026-09-29 §2 D2): weather is a preference, not only a door", () => {
+describe("rankOf — the fit term (spec 2026-09-29 §2 D2, kept by §7.2 to rank inside a kind)", () => {
   const ctx = over => ({ seed: SEED, pairing: pairing(), favorites: new Set(), picks: {}, lastP1: {}, ...over });
   const tee = top("item_t", { coverage: "short" });
   const pants = bottom("item_p");
@@ -730,9 +714,9 @@ describe("rankOf — the fit term (spec 2026-09-29 §2 D2): weather is a prefere
     assert.equal(R.rankOf([tee, pants], ctx()), R.rankOf([tee, pants], ctx({ temp: null })));
     assert.equal(R.rankOf([tee, pants], ctx()), 55 + 48 + R.hmod(SEED, R.JITTER_PTS, "item_t+item_p"));
   });
-  test("fit = −FIT_PTS_PER_DEG × (top half's distance + bottom half's distance) from their centres, rounded (the sort stays integer)", () => {
+  test("fit = −FIT_PTS_PER_DEG × (top half's distance + bottom half's distance) from their FIT centres, rounded (the sort stays integer)", () => {
     const t = 70;
-    const d = Math.abs(t - R.fitOf(tee).centre) + Math.abs(t - R.fitOf(pants).centre);
+    const d = Math.abs(t - R.FIT.top.short.light) + Math.abs(t - R.FIT.bottom.long.light);
     assert.equal(R.rankOf([tee, pants], ctx({ temp: t })), R.rankOf([tee, pants], ctx()) - Math.round(R.FIT_PTS_PER_DEG * d));
     assert.ok(Number.isInteger(R.rankOf([tee, pants], ctx({ temp: 71 }))));
   });
@@ -758,11 +742,18 @@ describe("rankOf — the fit term (spec 2026-09-29 §2 D2): weather is a prefere
     assert.ok(R.rankOf([tee, shorts], hot) > R.rankOf([tee, pants], hot));
     assert.ok(R.rankOf([tee, pants], cool) > R.rankOf([tee, shorts], cool));
   });
+  test("inside a kind the weight decides (spec §7.2): a mid long sleeve leads a light one at 50, the light one leads at 70; heavy pants lead light ones at 50", () => {
+    const light = top("item_l1", { coverage: "long", weight: "light" }), mid = top("item_l2", { coverage: "long", weight: "mid" });
+    assert.ok(R.rankOf([mid, pants], ctx({ temp: 50 })) > R.rankOf([light, pants], ctx({ temp: 50 })));
+    assert.ok(R.rankOf([light, pants], ctx({ temp: 70 })) > R.rankOf([mid, pants], ctx({ temp: 70 })));
+    const heavy = bottom("item_h", { coverage: "long", weight: "heavy" });
+    assert.ok(R.rankOf([mid, heavy], ctx({ temp: 50 })) > R.rankOf([mid, pants], ctx({ temp: 50 })));
+  });
 });
 
-describe("buildCandidates — the fit gate end to end (spec 2026-09-29 §2 D2, §3)", () => {
+describe("buildCandidates — the spectrum end to end (spec 2026-09-29 §7.2)", () => {
   // Seven short-sleeve tops over four long pants, four shorts, one long
-  // sleeve and a heavy pair of pants: enough on every day below for a page.
+  // sleeve and a heavy pair of pants.
   const wardrobe = () => {
     const items = [];
     for (let i = 1; i <= 7; i++) items.push(top("item_t" + i, { coverage: "short" }));
@@ -773,56 +764,109 @@ describe("buildCandidates — the fit gate end to end (spec 2026-09-29 §2 D2, �
     return items;
   };
   const deal = (temp, items = wardrobe(), over = {}) => R.buildCandidates({ items, temp, cap: 21, seed: SEED, history: {}, perPage: 7, ...over });
-  test("the deal decides by temp: at 88 no long sleeve and no long bottom in any look; at 60 no shorts", () => {
+  const shortsLooks = list => list.filter(c => c.pieces.some(p => p.category === "shorts")).length;
+  // enough of every kind for a page of it (eight tees, three long sleeves,
+  // seven pants, seven shorts), so a count below is the quota and never a
+  // kind running dry — the thin wardrobe above runs its five long bottoms dry
+  // on a six-pants page, and the spill rightly hands the sixth to shorts
+  const roomy = () => {
+    const items = [];
+    for (let i = 1; i <= 8; i++) items.push(top("item_t" + i, { coverage: "short" }));
+    for (let i = 1; i <= 3; i++) items.push(top("item_l" + i, { coverage: "long", weight: "mid" }));
+    for (let i = 1; i <= 7; i++) items.push(bottom("item_p" + i));
+    for (let i = 1; i <= 7; i++) items.push(bottom("item_s" + i, { category: "shorts" }));
+    return items;
+  };
+  // MEANING CHANGED (spec §7 supersedes the §2 table's "< 62: no shorts"):
+  // 88 °F still deals no long sleeve and no long bottom — the 5 % floor, not a
+  // gate — but 60 °F now deals shorts at their share, one look of seven, where
+  // the gate dealt none. 54 °F is under the floor: none.
+  test("the deal follows the curve: at 88 no long sleeve and no long bottom (the floor); at 60 one shorts look of seven on page 1; at 54 none", () => {
     const hot = idsIn(deal(88));
     for (const id of ["item_long", "item_p1", "item_p2", "item_p3", "item_p4", "item_heavy"]) assert.ok(!hot.has(id), id);
     assert.ok(hot.has("item_s1"));
-    const cool = idsIn(deal(60));
-    for (const id of ["item_s1", "item_s2", "item_s3", "item_s4"]) assert.ok(!cool.has(id), id);
-    assert.ok(cool.has("item_long") && cool.has("item_p1"));
+    assert.equal(shortsLooks(deal(60, roomy()).slice(0, 7)), 1, "60 °F: 10 % of seven rounds to one");
+    assert.equal(shortsLooks(deal(54, roomy())), 0, "54 °F: 2.9 %, under the floor");
+    assert.ok(idsIn(deal(60)).has("item_long") && idsIn(deal(60)).has("item_p1"));
+  });
+  test("at 70 page 1 is 3/4 or 4/3 — and which side gets the odd slot is the day's hash, not always the same side", () => {
+    const splits = new Set();
+    for (let d = 1; d <= 14; d++) {
+      const day = `2026-09-${String(d).padStart(2, "0")}`;
+      splits.add(shortsLooks(deal(70, wardrobe(), { seed: day }).slice(0, 7)));
+    }
+    assert.deepEqual([...splits].sort(), [3, 4]);
   });
   test("`band` is accepted for the offer record and decides nothing: any band word with the same temp deals the same list", () => {
     const base = keysOf(deal(76));
     for (const band of ["hot", "cold", null, undefined, "nope"]) assert.deepEqual(keysOf(deal(76, wardrobe(), { band })), base, String(band));
-    // …and with temp null a band word still gates nothing (weather offline)
+    // …and with temp null a band word still decides nothing (weather offline)
     assert.deepEqual(keysOf(deal(null, wardrobe(), { band: "hot" })), keysOf(deal(null)));
     assert.ok(idsIn(deal(null, wardrobe(), { band: "hot" })).has("item_heavy"));
   });
-  test("a look 8 °F under its range is dealt, and ranked below every look inside its range", () => {
-    // At 64 every pair of shorts is exactly EDGE under its lo (72): admitted,
-    // and the fit term sinks all four below the long-pants looks.
-    assert.equal(R.fitOf(bottom("item_s", { category: "shorts" })).lo - R.EDGE, 64);
-    const out = deal(64, wardrobe(), { cap: 60 });
-    const keys = keysOf(out);
-    const firstShorts = keys.findIndex(k => /item_s\d/.test(k));
-    assert.ok(firstShorts > 0, "shorts are admitted");
-    const lastPants = keys.map((k, i) => (/item_p\d/.test(k) ? i : -1)).reduce((a, b) => Math.max(a, b));
-    // garment-once pages interleave, so compare the ranks, not the positions
-    const ctx = { seed: SEED, pairing: pairing(), favorites: new Set(), picks: {}, lastP1: {}, temp: 64 };
-    const rank = c => R.rankOf(c.pieces, ctx);
-    const shortsBest = Math.max(...out.filter(c => /item_s\d/.test(c.key)).map(rank));
-    const pantsWorst = Math.min(...out.filter(c => /item_p\d/.test(c.key)).map(rank));
-    assert.ok(shortsBest < pantsWorst, `the edge looks rank last (${shortsBest} < ${pantsWorst}; last pants at ${lastPants})`);
+  test("temp null / undefined / NaN / ±Infinity / a band WORD / a numeric string is the weather offline: the port's deal, exactly", () => {
+    const offline = keysOf(deal(null));
+    for (const temp of [undefined, NaN, Infinity, -Infinity, "hot", "81", {}]) assert.deepEqual(keysOf(deal(temp)), offline, String(temp));
+  });
+  // SUPERSEDES "a look 8 °F under its range is dealt, and ranked below every
+  // look inside its range": there is no range and no edge any more. At 64 the
+  // shorts are not an edge case ranked last and cut by the cap; they are 21 %
+  // of the day and take their slots on page 1 like any kind.
+  test("at 64 shorts are a kind with a share (21 %), not an edge ranked last: one of seven on page 1", () => {
+    const share = R.sharesAt(64).legs.shorts;
+    assert.ok(share > 0.2 && share < 0.22, String(share));
+    const out = deal(64, roomy());
+    assert.equal(shortsLooks(out.slice(0, 7)), 1, "7 × 0.21 = 1.5 → 1 (the pants' remainder is larger)");
+    assert.ok(shortsLooks(out) >= 4 && shortsLooks(out) <= 5, `the deal tracks the curve: ${shortsLooks(out)} of 21`);
   });
   test("the board is never emptied: one garment per role still deals at 40 and at 100 (9/23 §8 item 6)", () => {
     const items = [top("item_t1", { coverage: "short" }), bottom("item_p1"), g("item_d1", { category: "dress", coverage: "sleeveless", legs: "bare" })];
     for (const temp of [40, 55, 70, 85, 100]) assert.ok(deal(temp, items).length >= 1, String(temp));
   });
-  test("fewer than a page widens the COLD side first: at 44 the too-light tees and pants come in before anything else", () => {
-    // Nothing here is within EDGE of 44 except the heavy pants. The floor
-    // widens the cold edge until a page fills: tees and light pants join.
+  // SUPERSEDES "fewer than a page widens the COLD side first": the §2 floor
+  // widened the edge until a page filled. §7 has no edge to widen — a kind the
+  // curve zeroes stays zero while ANY look of an allowed kind exists (never
+  // empty, §7.2, is about empty, not short). At 44 this wardrobe has one long
+  // sleeve: its looks over the five pants are the deal, one to a page
+  // (garment-once), and no tee borrows a 1.5 % share to pad page 1.
+  test("a thin kind is not padded from a zeroed one: at 44 the one long sleeve over each pair of pants is the whole deal, no tee", () => {
     const out = deal(44);
-    assert.ok(out.length >= 7, `a full page (${out.length})`);
-    const ids = idsIn(out);
-    assert.ok(ids.has("item_p1") && ids.has("item_t1"));
-    assert.ok(!ids.has("item_s1"), "shorts are 28 °F too light at 44 — the widen stops before them");
+    assert.equal(out.length, 5);
+    for (const c of out) assert.equal(c.pieces[0].id, "item_long");
+    assert.ok(!idsIn(out).has("item_t1"));
+    assert.ok(!idsIn(out).has("item_s1"));
   });
-  test("the whole category is dealt only before dealing nothing: a wardrobe with nothing cool enough for 100 °F still deals", () => {
+  test("never empty (§7.2): with nothing but too-warm garments at 100 °F the floor is dropped and they deal; one honest look keeps them out", () => {
     const items = [top("item_l1", { coverage: "long", weight: "heavy" }), top("item_l2", { coverage: "long", weight: "mid" }), bottom("item_h1", { coverage: "long", weight: "heavy" })];
     assert.equal(deal(100, items).length, 2);
-    // …but one honest look is enough to keep the too-warm ones out
     const withShorts = [...items, top("item_t1", { coverage: "sleeveless" }), bottom("item_s1", { category: "shorts" })];
     assert.deepEqual(keysOf(deal(100, withShorts)), ["item_t1+item_s1"]);
+  });
+  test("a staple takes a page-1 slot only from its own kind's quota: a much-picked pants look sits out of page 1 at 88", () => {
+    // eight tees over eight shorts and four pants: enough of each for a page
+    // of either side, so every count below is the quota, not a dry kind
+    const wardrobe = () => {
+      const items = [];
+      for (let i = 1; i <= 8; i++) items.push(top("item_t" + i, { coverage: "short" }));
+      for (let i = 1; i <= 4; i++) items.push(bottom("item_p" + i));
+      for (let i = 1; i <= 8; i++) items.push(bottom("item_s" + i, { category: "shorts" }));
+      return items;
+    };
+    const history = { days: {}, events: { "2026-09-01": [{ kind: "yes", combo: ["item_t1", "item_p1"] }], "2026-09-02": [{ kind: "yes", combo: ["item_t1", "item_p1"] }] } };
+    const cool = deal(66, wardrobe(), { history });
+    assert.equal(cool[0].key, "item_t1+item_p1", "at 66 pants have slots: the staple leads");
+    const hot = deal(88, wardrobe(), { history });
+    assert.ok(!keysOf(hot).includes("item_t1+item_p1"), "at 88 pants have no share: the staple is not dealt");
+    const warm = deal(80, wardrobe(), { history });
+    const p1 = keysOf(warm.slice(0, 7));
+    assert.equal(p1.filter(k => /item_p/.test(k)).length, 1, "at 80 pants hold one slot of seven, staple or not");
+    assert.ok(p1.includes("item_t1+item_p1"), "…and the staple is the look that holds it");
+  });
+  test("pure: the same inputs deal the same list, and item order does not matter (W1)", () => {
+    for (const t of [52, 66, 71, 83]) {
+      assert.deepEqual(keysOf(deal(t)), keysOf(deal(t)));
+      assert.deepEqual(keysOf(deal(t, wardrobe().reverse())), keysOf(deal(t)), String(t));
+    }
   });
 });
 
@@ -1181,9 +1225,14 @@ describe("buildCandidates — accessories and hidden items never pool (accessori
     const items = [top("item_t1", { hidden: false }), bottom("item_b1", { hidden: "yes" })];
     assert.deepEqual(keysOf(deal(items)), ["item_t1+item_b1"]);
   });
-  test("an accessory is never eligible as top / bottom / single either", () => {
-    for (const cat of ["top", "bottom", "single"])
-      assert.deepEqual(R.eligible(jackets, cat, null), [], cat);
+  // Was `R.eligible(jackets, cat, null)` until spec 2026-09-29 §7 retired the
+  // gate: the same claim, asked of what replaced it — an accessory has no
+  // role among the garment roles and no fit words, so no look can hold one.
+  test("an accessory is never a top / bottom / single either: no garment role, no fit words", () => {
+    for (const j of jackets) {
+      assert.equal(R.categoryOf(j), "accessory");
+      assert.equal(R.fitAttrs(j), null);
+    }
   });
 });
 
