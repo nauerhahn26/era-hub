@@ -2,10 +2,10 @@
 // 2026-09-29 §2 D1, §3; plan phase 3 step 4).
 //
 // The family's 63 garments were catalogued before the ingest prompt asked how
-// a garment is CUT. Until something tells the hub, the fit gate reads the
-// legacy fallback from each warmth word. The refit pass is how the words
-// arrive — and it is an OPERATOR's pass, run on ONE device: `POST
-// /clothing/refit`. It consults the family's shared log first (by id, then by
+// a garment is CUT. Until something tells the hub, the deal places each
+// garment's kind by the legacy fallback from its warmth word (spec §7.3).
+// The refit pass is how the words arrive — and it is an OPERATOR's pass, run
+// on ONE device: `POST /clothing/refit`. It consults the family's shared log first (by id, then by
 // hash), calls the model only for a garment nobody has described, stamps
 // `fitAt` (one-way) and `fitTriedAt` (daily, before the answer), publishes
 // every real answer as a shared tag line, stops after two misses in a row,

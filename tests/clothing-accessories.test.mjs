@@ -341,7 +341,7 @@ test("a garment another device described arrives with its occasion and costs no 
 // The same one call that names and files a new photo now says how it is CUT:
 // `coverage` (sleeves, or a bottom's length), `legs` (a dress or set's), and
 // `weight` for a long sleeve or a jacket — so a new garment costs nothing
-// extra and the fit gate reads real words instead of the legacy fallback.
+// extra and the deal reads real words instead of the legacy fallback.
 
 test("the ingest prompt asks for coverage, legs and weight — weight only for a long sleeve or a jacket", async () => {
   const D = dataDir("fitingest"), DRIVE = path.join(TMP, "fitingest-drive");
