@@ -1185,10 +1185,10 @@ function hourLabel(h) {
 }
 
 // ---- the daily board: her exact graph ----
-// Which garments the band admits, and the order of the day's 21, is the
-// original's deal (clothing-rank.js, ported from outfit_set.py): tops never
-// gated, bottoms widened to the neighbouring band when the exact one leaves
-// fewer than two, band null (weather offline) gates nothing.
+// The order of the day's 21 is the original's deal (clothing-rank.js, ported
+// from outfit_set.py); which garments it may deal is the fit gate since 9/29
+// (spec 2026-09-29 §2): every role — tops too — by the planning °F, weather
+// offline gates nothing.
 // Button plates are small by design (the PHOTO is the message) — a long name
 // clipped mid-word on the board (QA 9/1). Keep names to ~3 words / 22 chars,
 // dropping leading adjectives rather than truncating a word.
@@ -1242,8 +1242,14 @@ function comboLabel(top, bottom) {
 // fields, nothing of the deal's private business (colours, warmth, hashes) —
 // and `occasion` is answered even for a garment described before the word
 // existed, because a chip with no value selected is a sheet that cannot save.
+// The fit words are the opposite (warmth coherence spec 2026-09-29 D4): the
+// sheet's Sleeves / Legs / Weight rows show what the ENTRY says, so each rides
+// only when the entry has it — a garment refit has not reached shows nothing
+// selected rather than the legacy fallback's guess dressed up as a fact.
 function itemRef(it) {
-  return { id: it.id, name: it.name, category: it.category, occasion: it.occasion || "everyday" };
+  const ref = { id: it.id, name: it.name, category: it.category, occasion: it.occasion || "everyday" };
+  for (const k of ["coverage", "legs", "weight"]) if (typeof it[k] === "string" && it[k]) ref[k] = it[k];
+  return ref;
 }
 
 // The cells a 3x4 page leaves for CONTENT, in reading order: everything but
@@ -1350,8 +1356,14 @@ async function buildCataloged(cat) {
   // family's; there is no UI for them this cut).
   const seed = dayKey(Date.now(), workerData.tz);
   const m = shared();
+  // The deal is gated and ranked by the planning °F itself — the warmest hour
+  // of the window she is out (9/23 §4) — never the band word, which is four
+  // buckets wide and let an 81 °F morning deal 7 long sleeves and 11 leggings
+  // (spec 2026-09-29 §1-§2). No weather = null = nothing gated, as band null
+  // was. The band still names the tile, orders the accessories and goes on
+  // the offer record.
   const today = buildCandidates({
-    items, band, cap: per * PAGES, seed,
+    items, band, temp: w ? w.t : null, cap: per * PAGES, seed,
     pairing: m.pairing, favorites: m.favorites,
     history: mergeHistory(readHistory(), m), perPage: per,
   }).map(toWorkerShape);

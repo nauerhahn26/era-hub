@@ -813,6 +813,33 @@ test("every garment and outfit tile carries the items it is made of", async () =
   assert.deepEqual(confirm.buttons[0].items, pair.items, "and the same two rows on This one?");
 });
 
+// The hold sheet's Sleeves / Legs / Weight rows (era-board, spec 2026-09-29
+// D4) show what the garment says today: the fit words ride on the tile's items
+// when the entry has them, and are simply absent when it does not (the sheet
+// then shows nothing selected rather than a guess).
+test("a tile's items carry coverage, legs and weight when the garment has them, and nothing when it does not", async () => {
+  const D = dataDir("tilefit");
+  const items = materialize({ dataDir: D, n: 12 });
+  const [t1, t2] = items.filter(i => i.category === "top");
+  const dress = items.find(i => i.category === "dress");
+  const cat = JSON.parse(fs.readFileSync(path.join(D, "wardrobe.json"), "utf8"));
+  for (const it of Object.values(cat.items)) {
+    if (it.id === t1.id) Object.assign(it, { coverage: "long", weight: "unsure" });
+    if (it.id === dress.id) Object.assign(it, { coverage: "sleeveless", legs: "bare" });
+  }
+  fs.writeFileSync(path.join(D, "wardrobe.json"), JSON.stringify(cat, null, 1));
+  await build(D, "dev-tilefit");
+
+  const refOf = (grid, id) => pagesOf(D, grid).flatMap(b => b.buttons)
+    .find(b => b.type === "clothing" && b.image.includes(id)).items[0];
+  assert.deepEqual(refOf("cat_top", t1.id),
+    { id: t1.id, name: t1.name, category: "top", occasion: "everyday", coverage: "long", weight: "unsure" });
+  assert.deepEqual(refOf("cat_dress", dress.id),
+    { id: dress.id, name: dress.name, category: "dress", occasion: "everyday", coverage: "sleeveless", legs: "bare" });
+  assert.deepEqual(Object.keys(refOf("cat_top", t2.id)).sort(), ["category", "id", "name", "occasion"],
+    "a garment refit has not reached says nothing about its cut");
+});
+
 // The chips in the hold sheet are named from the recipe, so the board keeps no
 // list of its own to drift (spec §4.2).
 test("the recipe names every category the family can file a garment under", async () => {

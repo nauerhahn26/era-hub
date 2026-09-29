@@ -109,15 +109,15 @@ before(async () => {
   makeJpg(path.join(TMP, "clothing", "waiting.jpg"), 200, 200, 60);
   makeJpg(path.join(TMP, "wardrobe-items", "item_top.jpg"), 220, 60, 90);
   makeJpg(path.join(TMP, "wardrobe-items", "item_bot.jpg"), 60, 90, 220);
-  // ...and four garments the band gate has an opinion about (spec §3.4):
-  // a cold top (tops are never gated), a hot bottom, a cold bottom — and a
-  // SECOND top the warm band admits exactly. Without that second warm top the
-  // "tops never gated" assertion under the warm band could not fail: a gated
-  // top pool would hold one exact match, the widen rule (clothing-rank.js
-  // eligible, "< 2 exact takes the neighbour bands too") would re-admit the
-  // cold top anyway, and the test would pass whether tops were gated or not
-  // (review r1). With two exact warm tops the widen never runs, so the cold
-  // top is on the board only because tops are ungated.
+  // ...and four garments the fit gate has an opinion about (warmth coherence
+  // spec 2026-09-29 §2, which replaced the band gate): a heavy long-sleeve top,
+  // hot shorts, heavy long pants — and a SECOND top every window here admits.
+  // The two cold pieces carry their fit words (a wool sweater is `long heavy`,
+  // fleece pants `heavy`), because the legacy fallback reads a `cold` top as a
+  // LIGHT long sleeve (spec §2 D1) — fair at 67 °F — and would make "the cold
+  // top is gated at 67" a claim about the fallback, not about tops. With two
+  // everyday tops always admitted, the page never runs short enough for the
+  // floor to widen, so a cold piece is off the board only because it is gated.
   makeJpg(path.join(TMP, "clothing", "coldtop.jpg"), 120, 40, 160);
   makeJpg(path.join(TMP, "clothing", "warmtop.jpg"), 80, 180, 100);
   makeJpg(path.join(TMP, "clothing", "hotbot.jpg"), 240, 200, 40);
@@ -134,10 +134,12 @@ before(async () => {
   fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
     "top.jpg": { id: "item_top", ok: true, name: "Heart print tee", category: "top", warmth: "any", attrsAt: DESCRIBED },
     "bot.jpg": { id: "item_bot", ok: true, name: "Pink leggings", category: "pants", warmth: "any", attrsAt: DESCRIBED },
-    "coldtop.jpg": { id: "item_coldtop", ok: true, name: "Wool sweater", category: "top", warmth: "cold", attrsAt: DESCRIBED },
+    "coldtop.jpg": { id: "item_coldtop", ok: true, name: "Wool sweater", category: "top", warmth: "cold",
+                     coverage: "long", weight: "heavy", attrsAt: DESCRIBED },
     "warmtop.jpg": { id: "item_warmtop", ok: true, name: "Sunny tee", category: "top", warmth: "warm", attrsAt: DESCRIBED },
     "hotbot.jpg": { id: "item_hotbot", ok: true, name: "Linen shorts", category: "shorts", warmth: "hot", attrsAt: DESCRIBED },
-    "coldbot.jpg": { id: "item_coldbot", ok: true, name: "Fleece pants", category: "pants", warmth: "cold", attrsAt: DESCRIBED },
+    "coldbot.jpg": { id: "item_coldbot", ok: true, name: "Fleece pants", category: "pants", warmth: "cold",
+                     weight: "heavy", attrsAt: DESCRIBED },
   } }, null, 1));
   // a key IS configured — the point is that the rebuild door still never calls it
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
@@ -285,32 +287,35 @@ test("the rebuild door never wakes the AI (photos wait for a real run)", async (
   assert.ok(!cat.items["waiting.jpg"], "the uncatalogued photo is still waiting");
 });
 
-// The band gate is the original's (outfit_set.py:397-402, spec §3.4): bottoms
-// and singles are gated by the hours she is out, TOPS NEVER ARE — a sweater
-// on a hot day is her call, a fleece pant on a hot day is not dealt.
-test("a hot window: tops never gated (the cold top is dealt), the hot bottom is dealt, cold bottom absent from every page", async () => {
+// INVERTED 9/29 — a deliberate break from the outfit_set.py port (dad 9/23:
+// "all clothing should be gated by the weather, including tops"; 9/29, after
+// an 81 °F board dealt 7 long sleeves in 18 looks — warmth coherence spec
+// 2026-09-29 §2, amending 2026-09-23 §2-§3). These two used to pin "tops are
+// never gated": the wool sweater WAS dealt on the hot afternoon. Every role is
+// gated now, by the planning °F the build hands the deal (`w.t`), and a
+// garment too warm for the hours she is out has no edge to come back in by.
+test("a hot window: tops ARE gated (the cold top is absent), the hot bottom is dealt, cold bottom absent from every page", async () => {
   setWindow({ from: 14, to: 17 });
   const t = await rebuild();
   assert.ok(t.label.includes("hot"), "the 2-5 PM window really is hot: " + t.label);
   const ids = dealtIds();
-  assert.ok(ids.includes("item_coldtop"), "the cold top is still on the board");
+  assert.ok(!ids.includes("item_coldtop"), "a wool sweater at 80 °F is on no look of any page");
   assert.ok(ids.includes("item_hotbot"), "the hot bottom is dealt");
   assert.ok(!ids.includes("item_coldbot"), "the cold bottom is absent from every look of every page");
   assert.equal(aiCalls, 0);
 });
 
-// The warm band admits levels {1,2}: the plain top and the warm top are two
-// EXACT matches, so a gated top pool would stop at those two and the cold top
-// (level 3) could not be widened back in. The cold top is on the board only
-// because tops are never gated (review r1).
-test("a warm window: tops never gated (the cold top is dealt), cold bottom absent", async () => {
+// 67 °F: both everyday tops are dealt (so no floor ever widens the pool), and
+// a heavy sweater — comfortable below 58 °F, with no warm-side edge (spec §2
+// D2) — is not.
+test("a warm window: tops ARE gated (the cold top is absent), cold bottom absent", async () => {
   setWindow({ from: 9, to: 12 });
   const t = await rebuild();
   assert.match(t.label, /^67°/, "the 9-12 window is warm, not hot");
   const ids = dealtIds();
-  assert.ok(ids.includes("item_warmtop"), "the two warm-eligible tops are dealt: no widening is possible");
+  assert.ok(ids.includes("item_warmtop"), "the two everyday tops are dealt");
   assert.ok(ids.includes("item_top"));
-  assert.ok(ids.includes("item_coldtop"), "the cold top is still on the board");
+  assert.ok(!ids.includes("item_coldtop"), "a heavy sweater is not for a 67 °F morning");
   assert.ok(!ids.includes("item_coldbot"), "a cold bottom is not for a warm day");
   assert.equal(aiCalls, 0);
 });
