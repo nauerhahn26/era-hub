@@ -752,7 +752,7 @@ function quotasFor(spec, slots, dealt, page, seed) {
     return largestRemainder(slots, exact, seed, dim, String(page));
   };
   const T = marginal("top", TOP_KINDS), L = marginal("legs", LEG_SIDES);
-  const quota = {}, exact = {};
+  const quota = {}, exact = {}, margin = { top: T, legs: L };
   const shortsExact = {};
   for (const r of TOP_KINDS) {
     shortsExact[r] = slots > 0 ? (T[r] * L.shorts) / slots : 0;
@@ -764,7 +764,7 @@ function quotasFor(spec, slots, dealt, page, seed) {
     quota[r + "|shorts"] = Math.min(shorts[r], T[r]);
     quota[r + "|pants"] = T[r] - quota[r + "|shorts"];
   }
-  return { quota, exact };
+  return { quota, exact, margin };
 }
 
 // ---- buildCandidates (outfit_set.py:376-557) --------------------------------
@@ -852,7 +852,7 @@ function buildCandidates(opts) {
   const dealt = { top: Object.fromEntries(TOP_KINDS.map(k => [k, 0])), legs: Object.fromEntries(LEG_SIDES.map(k => [k, 0])) };
   let page = null;
   const openPage = (n, index) => {
-    page = spec ? { ...quotasFor(spec, n, dealt, index, seed), taken: {} } : null;
+    page = spec ? { ...quotasFor(spec, n, dealt, index, seed), taken: {}, row: {}, col: {} } : null;
   };
   const room = o => {
     if (!page) return true;
@@ -866,10 +866,16 @@ function buildCandidates(opts) {
     const cell = lookCell(o);
     dealt.top[cell.top] += 1;
     dealt.legs[cell.legs] += 1;
+    page.row[cell.top] = (page.row[cell.top] || 0) + 1;
+    page.col[cell.legs] = (page.col[cell.legs] || 0) + 1;
   };
   // A kind that ran dry gives its slots away (§7.2): one at a time, to the
-  // kind furthest below its exact share for this page that still has a look
-  // it can take — ties by the day's hash, like every other tie here.
+  // cell that still has a look it can take and is furthest below the page's
+  // apportionment — first by its sleeve row's and legs side's shortfall
+  // together, so a dry row's slot stays on its own legs side (one long sleeve
+  // in the wardrobe at 60 °F must not turn the page's pants slots into
+  // shorts: the legs are not dry), then by the cell's own exact share, then
+  // by the day's hash, like every other tie here.
   const spill = (order, takeable, take, full) => {
     if (!page) return;
     while (!full()) {
@@ -880,9 +886,13 @@ function buildCandidates(opts) {
         if (!best.has(c)) best.set(c, o);
       }
       if (!best.size) return;
+      const short = c => {
+        const [r, l] = c.split("|");
+        return (page.margin.top[r] - (page.row[r] || 0)) + (page.margin.legs[l] - (page.col[l] || 0));
+      };
       const need = c => (page.exact[c] || 0) - (page.taken[c] || 0);
-      const cells = [...best.keys()].sort((a, b) => (Math.abs(need(b) - need(a)) > EPS ? need(b) - need(a)
-        : cmpHash(h(seed, "cell", "spill", b), h(seed, "cell", "spill", a))));
+      const cells = [...best.keys()].sort((a, b) => short(b) - short(a)
+        || (Math.abs(need(b) - need(a)) > EPS ? need(b) - need(a) : cmpHash(h(seed, "cell", "spill", b), h(seed, "cell", "spill", a))));
       page.quota[cells[0]] = (page.quota[cells[0]] || 0) + 1;
       take(best.get(cells[0]));
     }
