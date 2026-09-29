@@ -377,7 +377,30 @@ function byId(a, b) {
 //
 // Starting point: the 9/23 §3 table, itself the published consensus (tank ≥ 80,
 // tee + shorts 72-80, short sleeve + pants 60-66, long sleeve + pants 50-60,
-// jacket + warm pants 40-50). Open ends are ±Infinity.
+// jacket + warm pants 40-50). Open ends are ±Infinity. Rows moved 9/29 by
+// the harness sweep (40-100 °F, seven days running, seven start weeks), each
+// for one threshold and each inside the charts' own spread:
+//   top sleeveless   78 → ∞   →  80 → ∞   the consensus number itself (tank ≥ 80
+//                                          ±2); at 78 the cold edge reached 70
+//                                          and a sundress took page 1 at 70-71
+//                                          ("62-71: no sleeveless on page 1").
+//   top long light   55 → 75  →  58 → 77  hi: a thin long sleeve is still fair at
+//                                          76-77 ("72-77" forbids only mid/heavy);
+//                                          lo: its centre moves up and away from
+//                                          the mid row's (below).
+//   top long mid     48 → 68  →  42 → 62  "long sleeve + pants 50-60" is the thin
+//                                          one's rung; a sweatshirt is the rung
+//                                          under it ("jacket + warm pants 40-50"
+//                                          ±3). The 15 °F between the two centres
+//                                          is what lets "< 54: mid/heavy before
+//                                          light" beat a day's freshness (42 pts).
+//   bottom long light 58 → 85 → 58 → 77  "tee + shorts 72-80": light pants are
+//                                          the 60-76 bottom. At 85 they dealt 4-9
+//                                          pants looks at 78-84 (freshness floods
+//                                          back yesterday's unseen pants); dad
+//                                          9/29: at 79 "maybe one pant outfit".
+// Unchanged: short (the 66-72 rung stays interpolated, 9/23 §9), long heavy,
+// shorts 72 → ∞, pants mid/heavy.
 const COVERAGES = {
   top: new Set(["sleeveless", "short", "long"]),
   bottom: new Set(["short", "long"]),
@@ -391,13 +414,13 @@ const FIT = {
     // weight is never asked of a sleeveless or short-sleeve top (9/23 §2: a
     // light vs heavy tee is ~0.5 °F, beneath the forecast's own noise); the
     // mid/heavy cells exist so the table is total over anything a model writes
-    sleeveless: { light: [78, INF], mid: [78, INF], heavy: [78, INF] },
+    sleeveless: { light: [80, INF], mid: [80, INF], heavy: [80, INF] },
     short: { light: [66, INF], mid: [62, 88], heavy: [62, 88] },
-    long: { light: [55, 75], mid: [48, 68], heavy: [-INF, 58] },
+    long: { light: [58, 77], mid: [42, 62], heavy: [-INF, 58] },
   },
   bottom: {
     short: { light: [72, INF], mid: [72, INF], heavy: [72, INF] },
-    long: { light: [58, 85], mid: [48, 72], heavy: [-INF, 60] },
+    long: { light: [58, 77], mid: [48, 72], heavy: [-INF, 60] },
   },
 };
 // How far BELOW its range a garment is still admitted (9/23 §3: the largest
@@ -407,9 +430,14 @@ const FIT = {
 // too warm, and that is the error she cannot undo. No warm-side edge at all.
 const EDGE = 8;
 // The fit term's weight in rankOf, per °F of distance from the range's centre.
-// Spec §2 D2: large enough that the better-suited looks fill the pages BEFORE
-// freshness (0-48) and jitter (0-15) decide among them.
-const FIT_PTS_PER_DEG = 6;
+// Spec §2 D2 asks it to be large enough that the better-suited looks fill the
+// pages before freshness (0-48) and jitter (0-15) decide. Swept 2-12 on 9/29:
+// the "72-77: shorts and pants both present" row needs the pants/shorts gap
+// SMALL (that gap swings 2 °F per °F across the band), the "< 54" row needs
+// the mid/light gap LARGE; 3 is where the two meet best. OPEN (9/29): at every
+// k swept, the first day with no memory deals one kind only at 72 / 77; every
+// later day passes. Reported to the lead, not papered over here.
+const FIT_PTS_PER_DEG = 3;
 
 const isTemp = t => typeof t === "number" && Number.isFinite(t);
 const fitWord = (v, allowed) => {
@@ -457,20 +485,20 @@ function fitAttrs(item) {
 // meet in the gap between them — the compromise zone, still ordered on the
 // ladder. The centre is the midpoint, or 10 °F inside an open range's closed
 // end (spec §2 D2).
+// The FIT rows a garment is made of: one for a top or a bottom, two for a
+// single (its top half, then its legs as the bottom row they stand for).
+function rowsOf(a) {
+  if (a.role !== "single") return [FIT[a.role][a.coverage][a.weight]];
+  return [FIT.top[a.coverage][a.weight], a.legs === "covered" ? FIT.bottom.long[a.weight] : FIT.bottom.short[a.weight]];
+}
+const centreOf = ([lo, hi]) => (lo === -INF ? hi - 10 : hi === INF ? lo + 10 : (lo + hi) / 2);
 function fitOf(item) {
   const a = fitAttrs(item);
   if (!a) return null;
-  let lo, hi;
-  if (a.role === "single") {
-    const up = FIT.top[a.coverage][a.weight];
-    const down = a.legs === "covered" ? FIT.bottom.long[a.weight] : FIT.bottom.short[a.weight];
-    lo = Math.max(up[0], down[0]); hi = Math.min(up[1], down[1]);
-    if (lo >= hi) [lo, hi] = [hi, lo];
-  } else {
-    [lo, hi] = FIT[a.role][a.coverage][a.weight];
-  }
-  const centre = lo === -INF ? hi - 10 : hi === INF ? lo + 10 : (lo + hi) / 2;
-  return { lo, hi, centre };
+  const rows = rowsOf(a);
+  let lo = Math.max(...rows.map(r => r[0])), hi = Math.min(...rows.map(r => r[1]));
+  if (lo >= hi) [lo, hi] = [hi, lo];
+  return { lo, hi, centre: centreOf([lo, hi]) };
 }
 
 // eligible(items, cat, temp, edge = EDGE): the items of `cat` ("top" |
@@ -492,18 +520,22 @@ function eligible(items, cat, temp, edge = EDGE) {
 // ctx = {seed, pairing (normalised), favorites (Set of ids), picks, lastP1,
 // temp}. fresh: the look is as fresh as its LEAST fresh piece; a piece never
 // on page 1 counts as FRESH_CAP_DAYS + 1 days old. fit (9/29, no original —
-// spec 2026-09-29 §2 D2): the look is as suited as its LEAST suited piece,
-// −FIT_PTS_PER_DEG per °F that piece sits from its range's centre, rounded;
-// no temp (weather offline) is no fit term, so every rank is the port's.
-// Every term is an integer, so the sort below is exact.
+// spec 2026-09-29 §2 D2): −FIT_PTS_PER_DEG per °F the look's two halves sit
+// from their rows' centres, summed, rounded. Every look is a top half and a
+// bottom half — a pair's two pieces, a single's two rows — so a sundress and
+// the tank-and-shorts it stands for rank alike. (The worst piece alone, like
+// fresh, was tried and failed the sweep: on a cold day the light pants' 20 °F
+// hid the difference between a sweatshirt and a thin long sleeve.) No temp
+// (weather offline) is no fit term, so every rank is the port's. Every term
+// is an integer, so the sort below is exact.
 function fitPts(pieces, temp) {
   if (!isTemp(temp)) return 0;
-  let worst = 0;
+  let d = 0;
   for (const p of pieces) {
-    const f = fitOf(p);
-    if (f) worst = Math.max(worst, Math.abs(temp - f.centre));
+    const a = fitAttrs(p);
+    if (a) for (const r of rowsOf(a)) d += Math.abs(temp - centreOf(r));
   }
-  return -Math.round(FIT_PTS_PER_DEG * worst);
+  return -Math.round(FIT_PTS_PER_DEG * d);
 }
 function rankOf(pieces, ctx) {
   const style = pieces.length === 2 ? styleScore(pieces[0], pieces[1], ctx.pairing) : SINGLE_STYLE;

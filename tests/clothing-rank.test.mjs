@@ -730,13 +730,26 @@ describe("rankOf — the fit term (spec 2026-09-29 §2 D2): weather is a prefere
     assert.equal(R.rankOf([tee, pants], ctx()), R.rankOf([tee, pants], ctx({ temp: null })));
     assert.equal(R.rankOf([tee, pants], ctx()), 55 + 48 + R.hmod(SEED, R.JITTER_PTS, "item_t+item_p"));
   });
-  test("fit = −FIT_PTS_PER_DEG × the distance of the look's LEAST suited piece from its centre, rounded (the sort stays integer)", () => {
+  test("fit = −FIT_PTS_PER_DEG × (top half's distance + bottom half's distance) from their centres, rounded (the sort stays integer)", () => {
     const t = 70;
-    const d = Math.max(Math.abs(t - R.fitOf(tee).centre), Math.abs(t - R.fitOf(pants).centre));
+    const d = Math.abs(t - R.fitOf(tee).centre) + Math.abs(t - R.fitOf(pants).centre);
     assert.equal(R.rankOf([tee, pants], ctx({ temp: t })), R.rankOf([tee, pants], ctx()) - Math.round(R.FIT_PTS_PER_DEG * d));
     assert.ok(Number.isInteger(R.rankOf([tee, pants], ctx({ temp: 71 }))));
-    const dress = g("item_d", { category: "dress", coverage: "sleeveless", legs: "bare" });
-    assert.equal(R.rankOf([dress], ctx({ temp: t })), R.rankOf([dress], ctx()) - Math.round(R.FIT_PTS_PER_DEG * Math.abs(t - R.fitOf(dress).centre)));
+  });
+  test("a single is two halves too: its top row's distance plus its legs row's — so a dress and the pair it stands for rank alike", () => {
+    // A sleeveless dress with bare legs is a tank over shorts; a long light
+    // set with covered legs is a long light top over light pants. Scored as
+    // one piece it would carry half a pair's distance and outrank every pair
+    // on a day that suits neither (the 9/29 sweep: set over sweatshirts at 50).
+    const t = 66;
+    const tank = top("item_k", { coverage: "sleeveless" });
+    const sun = g("item_d", { category: "dress", coverage: "sleeveless", legs: "bare" });
+    const shortsB = bottom("item_s", { category: "shorts" });
+    const fitOnly = (pieces, temp) => R.rankOf(pieces, ctx({ temp })) - R.rankOf(pieces, ctx());
+    assert.equal(fitOnly([sun], t), fitOnly([tank, shortsB], t));
+    const longTop = top("item_l", { coverage: "long", weight: "light" });
+    const set = g("item_e", { category: "set", coverage: "long", weight: "light", legs: "covered" });
+    assert.equal(fitOnly([set], 50), fitOnly([longTop, pants], 50));
   });
   test("two looks equal on freshness order by fit: shorts lead at 84, pants lead at 64", () => {
     // Jitter is the only other term that differs between the two looks; the
