@@ -8,12 +8,13 @@
 // rebuild stability (spec §3.3), same board from any item order (§5 / W1),
 // deep pages garment-once (§1 V3), and the labelled I5 deviation.
 //
-// DRIVEN BY TEMPERATURE since 9/29 (warmth coherence spec 2026-09-29 §2, §3):
-// buildCandidates gates and ranks by the planning °F and ignores the band, so
-// "band warm" and "band hot" are now a warm and a hot morning — 74 °F and
-// 82 °F. Every intent below is the original's; only the knob moved. The
-// synthetic wardrobe carries no coverage/weight/legs, so the deal reads the
-// legacy fallback from each garment's warmth word (spec §2 D1).
+// DRIVEN BY TEMPERATURE since 9/29 (warmth coherence spec 2026-09-29 §2, §3,
+// and §7 the same evening): buildCandidates apportions each page across the
+// kinds of look by the planning °F's curve and ignores the band, so "band
+// warm" and "band hot" are now a warm and a hot morning — 74 °F and 82 °F.
+// Every intent below is the original's; only the knob moved. The synthetic
+// wardrobe carries no coverage/weight/legs, so the deal reads the legacy
+// fallback from each garment's warmth word (spec §2 D1).
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -56,14 +57,18 @@ const PAIRING = makePairing(ITEMS);
 // bottoms down to a handful, which is exactly where a board can come up short
 // (review r3). One temperature per old band: hot 82, warm 74, cool 60, cold 48.
 const ALL_TEMPS = [82, 74, 60, 48, null];
-// At 60 °F the fit gate leaves this wardrobe 11 tops, the 6 pants and no
-// dress (16/6/4 at 82, all 35 at 74 and null); at 48 it admits nothing at all
-// — no garment here is made for 48 — and the floor widens the cold-side edge
-// until the page fills. Either way page 1 runs out of garment-distinct looks
-// and finishes through the tiny-pool relaxation (outfit_set.py:527-533) — a
-// repeat there is the port working, not a variety failure, so only the roomy
-// mornings assert page-1 distinctness.
-const TIGHT_TEMPS = new Set([60, 48]);
+// At 48 °F the curve (spec §7.1) gives long sleeves 96 % and short sleeves
+// 4 % — under the 5 % floor — and pants 100 %; this wardrobe holds ONE long-
+// sleeve top (its two long singles are bare-legged, a shorts-side look). So
+// the day's only kind is that one top over the six pants: SIX looks, one to
+// a page (garment-once), and no tee borrows a zeroed share to pad them (spec
+// §7.2: never empty is about empty). A dry kind, named, not bent — the §2 gate
+// widened its edge here until 21 filled. Page 1 then repeats the top through
+// the deep pages' spill, so only the other mornings assert page-1
+// distinctness; 60 °F, tight under the §2 gate, is roomy on the curve.
+const TIGHT_TEMPS = new Set([48]);
+const DRY_AT_48 = 6;
+const boardLength = temp => (temp === 48 ? DRY_AT_48 : CAP);
 
 function build(items, temp, seed, history, pairing = PAIRING, perPage = PER_PAGE) {
   return R.buildCandidates({ items, temp, cap: CAP, seed, pairing, favorites: new Set(), history, perPage });
@@ -121,13 +126,15 @@ for (const band of BANDS) {
     const { lineups } = SIM[band];
     const temp = TEMP[band];
     // The set to cover comes from the FIXTURE, not from the module under
-    // test (review r2), read through spec 2026-09-29 §2 by hand: with no
-    // coverage words a `cool` top or dress is a light long sleeve (58-77 °F)
-    // and every pair of pants is long and light (58-77), shorts are 72 and up
-    // and a hot/warm top is sleeveless or short. So at 74 everything is in —
-    // 35, the old warm gate's number — and at 82 the long sleeves and every
-    // pair of pants are out: 16 tops + 6 shorts + 4 singles = 26. (Tops ARE
-    // gated now — dad 9/23, 9/29 — which is why hot is no longer 17 + 8 + 4.)
+    // test (review r2), read through spec 2026-09-29 §7 by hand: with no
+    // coverage words a `cool` top or dress is a long sleeve, a hot/warm top
+    // sleeveless or short, pants long, shorts short, and every single here is
+    // bare-legged (shorts-side). At 74 every kind has a page-1 slot (long
+    // sleeve 8 % of seven rounds to one) — all 35, the old warm gate's
+    // number. At 82 long sleeve is 1.5 %, under the floor, and pants are
+    // 6.7 % — 0.47 of a seven-slot page, which the shorts' 0.53 remainder
+    // outranks every day — so pants are dealt on the deeper pages and never
+    // on page 1: 16 tops + 6 shorts + 4 singles = 26 reach page 1.
     const ADMITS = {
       warm: () => true,
       hot: g => g.category === "shorts" || (g.category !== "pants" && g.warmth !== "cool"),
@@ -146,8 +153,10 @@ for (const band of BANDS) {
       const missing = [...eligibleIds].filter(id => !onP1.has(id)).sort();
       assert.deepEqual(missing, [], `${eligibleIds.size} eligible; missing ${missing.join(",")}`);
       assert.equal(eligibleIds.size, band === "hot" ? 26 : 35, "the fixture's per-morning count (16/17 tops + 6/12 bottoms + 4/6 singles)");
-      // and the module's gate agrees with the fixture's reading of spec 2026-09-29 §2
-      assert.deepEqual(new Set(["top", "bottom", "single"].flatMap(cat => R.eligible(ITEMS, cat, temp).map(g => g.id))), eligibleIds);
+      // …and nothing else does: at 82 the pants sit on the deeper pages (the
+      // §2 gate's R.eligible cross-check, retired with the gate by spec §7)
+      const extra = [...onP1].filter(id => !eligibleIds.has(id)).sort();
+      assert.deepEqual(extra, [], `outside the page-1 kinds: ${extra.join(",")}`);
     });
     test("no combo on page 1 two consecutive days (zero overlap)", () => {
       const p1 = lineups.map(day => new Set(keysOf(day.slice(0, PER_PAGE))));
@@ -223,16 +232,29 @@ describe("same-day rebuild is stable (spec §3.3)", () => {
   });
 });
 
-describe("yesterday's page 1 leads page 2 (outfit_set.py:538-556)", () => {
-  test("indices 7-13 are yesterday's page-1 combos in today's ranked order", () => {
+// MEANING CHANGED (spec 2026-09-29 §7.2): page 2 has its own slots per kind,
+// apportioned over what is left so the whole deal tracks the curve. It still
+// OPENS with yesterday's page 1 in today's ranked order — demotion, never
+// exclusion — but only as many of them as page 2's kinds hold; the page's
+// catch-up moves at most one slot per dimension off page 1's mix (at 82 °F
+// the pants' deferred 6.7 % takes a page-2 slot yesterday's page 1 never
+// had), so at least five of the seven lead it, and every one of the seven
+// is still dealt today (measured 9/29: 5 at 74 °F, 6 at 82 °F, every day).
+describe("yesterday's page 1 leads page 2 (outfit_set.py:538-556, apportioned by spec §7.2)", () => {
+  test("page 2 opens with yesterday's page-1 combos in today's ranked order, at least five of seven; the rest are still dealt today", () => {
     for (const band of BANDS) {
       const { lineups, seen } = SIM[band];
       for (let i = 1; i < DAYS; i++) {
-        const yKeys = keysOf(lineups[i - 1].slice(0, PER_PAGE));
+        const yKeys = new Set(keysOf(lineups[i - 1].slice(0, PER_PAGE)));
         const page2 = lineups[i].slice(PER_PAGE, 2 * PER_PAGE);
-        assert.deepEqual(new Set(keysOf(page2)), new Set(yKeys), `${band} ${DATES[i]}`);
+        const lead = page2.findIndex(c => !yKeys.has(c.key));
+        const run = lead < 0 ? page2.length : lead;
+        assert.ok(run >= PER_PAGE - 2, `${band} ${DATES[i]}: ${run} of yesterday's page 1 lead page 2`);
+        assert.equal(page2.filter(c => yKeys.has(c.key)).length, run, `${band} ${DATES[i]}: yesterday's looks come first, none after a fresh one`);
+        const today = new Set(keysOf(lineups[i]));
+        for (const k of yKeys) assert.ok(today.has(k), `${band} ${DATES[i]}: ${k} is still dealt`);
         const ctx = { seed: DATES[i], pairing: R.normalizePairing(PAIRING), favorites: new Set(), picks: R.derivePicks(seen[i].events, DATES[i]), lastP1: R.lastPage1(seen[i], DATES[i]), temp: TEMP[band] };
-        const scores = page2.map(c => R.rankOf(c.pieces, ctx));
+        const scores = page2.slice(0, run).map(c => R.rankOf(c.pieces, ctx));
         for (let k = 1; k < scores.length; k++) assert.ok(scores[k - 1] >= scores[k], `${band} ${DATES[i]}: page 2 in ranked order`);
       }
     }
@@ -244,15 +266,10 @@ describe("deep pages (spec §1 V3 / §3.2, outfit_set.py:543-556)", () => {
     for (const band of BANDS)
       SIM[band].lineups.forEach((day, i) => {
         assert.ok(distinct(day.slice(PER_PAGE, 2 * PER_PAGE)), `${band} ${DATES[i]}: page 2 repeats a garment`);
-        // 82 °F leaves this wardrobe six bottoms (the shorts) and four singles,
-        // and a single is dealt once a DAY, not once a page — so by page 3 at
-        // most six garment-distinct looks are left, the algorithmic page runs
-        // one short and the rendered seventh spills into the next one, where a
-        // pair of shorts may return (the I11 spill clothing-attrs.test.mjs
-        // names; the old hot band admitted eight bottoms and never met it).
-        // The rule itself is what the next test pins, on every page.
-        if (band !== "hot")
-          assert.ok(distinct(day.slice(2 * PER_PAGE, 3 * PER_PAGE)), `${band} ${DATES[i]}: page 3 repeats a garment`);
+        // Under the §2 gate 82 °F left six bottoms and page 3 ran one short
+        // (the I11 spill); on the curve the pants' 6.7 % is back in the deal
+        // and page 3 is garment-distinct at both temperatures again.
+        assert.ok(distinct(day.slice(2 * PER_PAGE, 3 * PER_PAGE)), `${band} ${DATES[i]}: page 3 repeats a garment`);
       });
   });
   test("…and at 82 °F, a repeat on page 3 is only ever that spill: the algorithm's own pages are garment-distinct", () => {
@@ -300,7 +317,7 @@ describe("hub deviation (I5, spec §3.1 item 4): a wardrobe with no attributes s
     }
     for (const temp of ALL_TEMPS) {
       const out = build(bare, temp, "2026-08-05", { days: {}, events: {} }, empty);
-      assert.equal(out.length, CAP, String(temp));
+      assert.equal(out.length, boardLength(temp), String(temp));
       if (!TIGHT_TEMPS.has(temp))
         assert.ok(distinct(out.slice(0, PER_PAGE)), `${temp}: page 1 garment-distinct`);
     }
@@ -324,7 +341,7 @@ describe("taste floor (spec §3.4's rule, §3.1 item 4): a wardrobe described as
       assert.equal(R.harmonizes(t, b), false, `${t.id}+${b.id}: two loud pieces never harmonize`);
     for (const temp of ALL_TEMPS) {
       const out = build(loud, temp, "2026-08-05", { days: {}, events: {} }, empty);
-      assert.equal(out.length, CAP, String(temp));
+      assert.equal(out.length, boardLength(temp), String(temp));
       if (!TIGHT_TEMPS.has(temp))
         assert.ok(distinct(out.slice(0, PER_PAGE)), `${temp}: page 1 garment-distinct`);
     }
@@ -344,30 +361,39 @@ describe("taste floor (spec §3.4's rule, §3.1 item 4): a wardrobe described as
   });
   // The same rule from the other side, and the answer to "the worst wardrobe
   // deals a longer board than a slightly better one" (review r2 nit, re-measured
-  // across all five bands in r3, and across the five mornings on 9/29). One
-  // plain TOP gives every pair the same top, so page 1 fills garment-distinct
-  // and stops short (A4-11) and each deeper page carries one pair. Where the
-  // honest deal still fills a page — 82 °F 10 (the six shorts and four
+  // across all five bands in r3, across the five mornings on 9/29, and again
+  // on the curve, spec §7, that evening). One plain TOP — a sleeveless one in
+  // this wardrobe — gives every pair the same top, so page 1 fills garment-
+  // distinct and stops short (A4-11) and each deeper page carries one pair.
+  // Where the honest deal still fills a page — 82 °F 16 (the plain tank over
+  // the shorts, and over the pants at their 6.7 %, plus the bare-legged
   // singles), 74 °F and weather-offline 18 — that shorter board is the
   // garment-once-per-page rule and the floor must stay SHUT, or a board with
-  // honest pairs is padded with loud-on-loud ones. Where the gate leaves the
-  // plain top six loud pants and no dress — 60 °F, six pairs — or nothing at
-  // all — 48 °F — the honest deal is less than one page, and the floor opens
-  // (A4-12).
+  // honest pairs is padded with loud-on-loud ones. At 60 °F the curve gives
+  // sleeveless under 5 %, the plain tank is out of the day, every pair left is
+  // loud-on-loud and the floor opens (A4-12): 21. At 48 °F the floor opens
+  // too, onto the one kind the curve leaves — the wardrobe's ONE long sleeve
+  // over the six pants — and that is six looks, not a page: a dry kind, named
+  // (DRY_AT_48 above), where the §2 gate widened into tees.
   //
   // The lengths are pinned per morning, not asserted `> 0`: a six-look cold
   // morning walks straight through a `> 0` row, and that is the regression
-  // this test exists to catch.
-  const PLAIN_TOP_BOARD = { 82: 10, 74: 18, 60: CAP, 48: CAP, null: 18 };
+  // this test exists to catch — which is why 48's six is pinned as exactly the
+  // one long sleeve's six looks, not waved through.
+  const PLAIN_TOP_BOARD = { 82: 16, 74: 18, 60: CAP, 48: DRY_AT_48, null: 18 };
   const FLOOR_SHUT = new Set(["82", "74", "null"]);
-  test("one plain top: never fewer than a page, and no loud-on-loud pair while the deal fills one", () => {
+  test("one plain top: never fewer than a page but where the day's one kind runs dry, and no loud-on-loud pair while the deal fills one", () => {
     const loud = ITEMS.map(g => ({ ...g, statement: true, pattern: "graphic", colors: ["magenta"] }));
     const quietId = loud.find(g => g.category === "top").id;
     const oneQuiet = loud.map(g => g.id === quietId ? { ...g, statement: false, pattern: "solid" } : g);
+    const longTops = oneQuiet.filter(g => g.category === "top" && R.fitAttrs(g).coverage === "long");
     for (const temp of ALL_TEMPS) {
       const out = build(oneQuiet, temp, "2026-08-05", { days: {}, events: {} }, { great: [], avoid: [] });
-      assert.ok(out.length >= PER_PAGE, `${temp}: a full page at least, dealt ${out.length}`);
       assert.equal(out.length, PLAIN_TOP_BOARD[String(temp)], `${temp}: board length`);
+      if (temp === 48) {
+        assert.equal(longTops.length, 1, "the fixture holds one long sleeve");
+        for (const c of out) assert.equal(c.pieces[0].id, longTops[0].id, `48 ${c.key}: the dry kind's own looks, no tee`);
+      } else assert.ok(out.length >= PER_PAGE, `${temp}: a full page at least, dealt ${out.length}`);
       if (!FLOOR_SHUT.has(String(temp))) continue;
       for (const c of out.filter(x => x.pieces.length === 2))
         assert.ok(c.pieces.some(p => p.id === quietId),

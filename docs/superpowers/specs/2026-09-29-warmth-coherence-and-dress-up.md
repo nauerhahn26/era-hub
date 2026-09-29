@@ -151,3 +151,69 @@ like `band null` today.
   the pass stops after two misses; a device that never posts `/clothing/refit` never spends.
 - era-board: the sheet's new rows, shown for the right kinds only, post the right body.
 - Ports for any new server suite: 8452 / 8453 (surveyed free across all five repos 9/29).
+
+## 7. Amendment (9/29 PM) — a spectrum, not a gate
+
+Dad, 9/29, after §2 was built: *"the code shouldn't be all or nothing logic. At 70 should be an even
+mix of shorts and pants for instance. by 80 it should be 90% shorts, by 60 should be 90% pants, a
+spectrum is the logic/probabilities. This is just an example, but should handle every #."*
+
+§2's model is a gate: every garment has a range, is in or out, and `fit` orders the survivors. That is
+all-or-nothing by construction, and two harness rows enforced cliffs dad has now overruled ("< 62: no
+shorts", "≥ 78: no long-sleeve top"). **This section supersedes the §2 gate, the one-sided EDGE, the
+FLOOR_EDGES ladder and the §2 threshold table.** Everything else in §2-§6 stands (fancy/Dress up,
+refit, the ingest words, the legacy fallback, the hold sheet).
+
+### 7.1 Shares, from one curve
+
+`σ(x) = 1 / (1 + e^(−x))`, steepness `K = 10 / ln 9 ≈ 4.55 °F` — so 10 °F from a crossover is exactly
+90 / 10, dad's own numbers. For the planning °F `t` (the window's max, unchanged):
+
+| dimension | kinds | share |
+|---|---|---|
+| legs | shorts-side (shorts, bare-legged single) | `σ((t − 70) / K)` |
+|      | pants-side (long bottoms, covered single) | `1 − ` the above |
+| top half | sleeveless | `σ((t − 80) / K)` |
+|          | long sleeve | `1 − σ((t − 63) / K)` |
+|          | short sleeve | `1 − sleeveless − long`, clamped at 0 |
+
+Crossovers: 70 is dad's; 63 and 80 are the 9/23 published consensus (short sleeve + pants 60-66 vs
+long sleeve + pants 50-60; tank ≥ 80). All three and `K` are named constants — tuning is moving a number.
+
+**The 5 % floor** (dad 9/29, "go"): a kind whose share is under 5 % is zero for the day and the rest
+are renormalised. It is what keeps a long sleeve out of a 78 °F deal (share 3.6 %) and a lone pair of
+shorts out of a 54 °F one (3 %) — she cannot take a layer off.
+
+### 7.2 Looks are apportioned, not drawn
+
+Deterministic, not random (dad 9/29): the day's mix IS the curve, every day. A look's kind is the cell
+`(top half coverage, legs side)` — a pair from its two pieces, a single from its top half and its legs.
+A cell's share is `top share × legs share`. Each page's slots are split across the cells that hold a
+look, largest-remainder, renormalised over the non-empty cells; a remainder tie is broken by
+`h(seed, "cell", …)`, so 70 °F alternates 4/3 and 3/4 across days rather than always favouring one.
+A cell that runs dry on a page gives its slots to the next-largest remainder. Deeper pages are
+apportioned the same way over what is left.
+
+Within a cell the existing rank decides which looks: staples, the coverage slot, freshness, loved,
+style, and `fit` — which no longer gates anything but still ranks, so a heavy legging leads a thin one
+on a cold morning and the thin one leads on a warm one. A staple or the coverage slot takes a page-1
+slot only from its own cell's quota.
+
+Weather offline (`t` null): no shares, no apportionment — the port's deal, exactly as today.
+Never empty: if every cell is empty after the floor, drop the floor; if still empty, deal the whole
+wardrobe. Never fancy, never hidden, never an accessory — the door in `buildCandidates` is unchanged.
+
+### 7.3 Acceptance — dad's numbers are the harness
+
+`tests/clothing-fit.test.mjs` over `tests/fixtures/wardrobe-shape.json`, every integer °F from 45 to 95:
+
+- **Page 1 counts equal the apportionment** for each dimension, ±1 where her wardrobe runs a cell dry
+  (say so in the failure message, naming the cell).
+- **Across the whole deal each dimension's share is within ±10 points** of the curve.
+- Anchors, asserted by name: shorts-side ≈ 10 % at 60, 50 % at 70, 90 % at 80 (page 1: 1/7, 3-4/7, 6/7).
+- Zero long sleeve at ≥ 78; zero shorts-side at ≤ 54 (both from the 5 % floor).
+- 70 °F on consecutive days alternates which kind gets the odd slot.
+- Never empty, never fancy, offline = the port's deal — carried over from §2.
+
+The legacy-fallback run (fit words stripped) must hold the same curve, since coverage falls back from
+the warmth word.

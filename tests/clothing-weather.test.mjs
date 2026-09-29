@@ -109,15 +109,13 @@ before(async () => {
   makeJpg(path.join(TMP, "clothing", "waiting.jpg"), 200, 200, 60);
   makeJpg(path.join(TMP, "wardrobe-items", "item_top.jpg"), 220, 60, 90);
   makeJpg(path.join(TMP, "wardrobe-items", "item_bot.jpg"), 60, 90, 220);
-  // ...and four garments the fit gate has an opinion about (warmth coherence
-  // spec 2026-09-29 §2, which replaced the band gate): a heavy long-sleeve top,
-  // hot shorts, heavy long pants — and a SECOND top every window here admits.
-  // The two cold pieces carry their fit words (a wool sweater is `long heavy`,
-  // fleece pants `heavy`), because the legacy fallback reads a `cold` top as a
-  // LIGHT long sleeve (spec §2 D1) — fair at 67 °F — and would make "the cold
-  // top is gated at 67" a claim about the fallback, not about tops. With two
-  // everyday tops always admitted, the page never runs short enough for the
-  // floor to widen, so a cold piece is off the board only because it is gated.
+  // ...and four garments the weather has an opinion about (warmth coherence
+  // spec 2026-09-29 §7, which replaced the §2 gate, which replaced the band
+  // gate): a heavy long-sleeve top, hot shorts, heavy long pants — and a
+  // SECOND everyday top. The two cold pieces carry their fit words (a wool
+  // sweater is `long heavy`, fleece pants `heavy`), so the sweater is a long
+  // sleeve by its own words, not the legacy fallback's, and the fleece ranks
+  // below the leggings inside the pants kind by its weight.
   makeJpg(path.join(TMP, "clothing", "coldtop.jpg"), 120, 40, 160);
   makeJpg(path.join(TMP, "clothing", "warmtop.jpg"), 80, 180, 100);
   makeJpg(path.join(TMP, "clothing", "hotbot.jpg"), 240, 200, 40);
@@ -291,32 +289,50 @@ test("the rebuild door never wakes the AI (photos wait for a real run)", async (
 // "all clothing should be gated by the weather, including tops"; 9/29, after
 // an 81 °F board dealt 7 long sleeves in 18 looks — warmth coherence spec
 // 2026-09-29 §2, amending 2026-09-23 §2-§3). These two used to pin "tops are
-// never gated": the wool sweater WAS dealt on the hot afternoon. Every role is
-// gated now, by the planning °F the build hands the deal (`w.t`), and a
-// garment too warm for the hours she is out has no edge to come back in by.
-test("a hot window: tops ARE gated (the cold top is absent), the hot bottom is dealt, cold bottom absent from every page", async () => {
+// never gated": the wool sweater WAS dealt on the hot afternoon.
+//
+// MEANING CHANGED AGAIN 9/29 PM (spec §7, dad: "a spectrum … should handle
+// every #"): the weather no longer gates a garment; the planning °F the build
+// hands the deal (`w.t`) sets each kind of look's share. What these two now
+// prove through the rebuild door is that the curve reaches the board, tops
+// included: at 80 °F a long sleeve is 2.3 % of the day — under the 5 % floor,
+// so the sweater is on no page — while at 67 °F it is 29 % and the sweater,
+// this wardrobe's only long sleeve, IS dealt, beside the shorts (34 %). The
+// old "cold bottom absent" is gone with the gate: pants are 10 % of an 80 °F
+// day and this wardrobe's one pair of shorts makes one look a page, so the
+// pants side fills the rest (a dry kind). What weight still decides is the
+// order inside a kind (§7.2): the light leggings lead the fleece pants.
+function dealtLooks() {
+  const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  return r.boards.filter(b => /^today(_\d)?$/.test(b.id))
+    .sort((a, b) => (a.id === "today" ? 0 : Number(a.id.split("_")[1])) - (b.id === "today" ? 0 : Number(b.id.split("_")[1])))
+    .flatMap(b => b.buttons.filter(x => x.type === "outfit").map(x => x.combo));
+}
+const firstLook = (looks, id) => looks.findIndex(c => c.includes(id));
+test("a hot window: the curve reaches tops too (the sweater is under the 5 % floor at 80 °F), the hot bottom is dealt, light pants lead fleece", async () => {
   setWindow({ from: 14, to: 17 });
   const t = await rebuild();
   assert.ok(t.label.includes("hot"), "the 2-5 PM window really is hot: " + t.label);
   const ids = dealtIds();
   assert.ok(!ids.includes("item_coldtop"), "a wool sweater at 80 °F is on no look of any page");
   assert.ok(ids.includes("item_hotbot"), "the hot bottom is dealt");
-  assert.ok(!ids.includes("item_coldbot"), "the cold bottom is absent from every look of every page");
+  const looks = dealtLooks();
+  assert.ok(firstLook(looks, "item_bot") >= 0 && firstLook(looks, "item_bot") < firstLook(looks, "item_coldbot"),
+    "inside the pants kind the light leggings lead the fleece on a hot day");
   assert.equal(aiCalls, 0);
 });
 
-// 67 °F: both everyday tops are dealt (so no floor ever widens the pool), and
-// a heavy sweater — comfortable below 58 °F, with no warm-side edge (spec §2
-// D2) — is not.
-test("a warm window: tops ARE gated (the cold top is absent), cold bottom absent", async () => {
+test("a warm window: every kind at its share — the long sleeve (29 % at 67 °F) and the shorts (34 %) are both dealt; light pants still lead fleece", async () => {
   setWindow({ from: 9, to: 12 });
   const t = await rebuild();
   assert.match(t.label, /^67°/, "the 9-12 window is warm, not hot");
   const ids = dealtIds();
   assert.ok(ids.includes("item_warmtop"), "the two everyday tops are dealt");
   assert.ok(ids.includes("item_top"));
-  assert.ok(!ids.includes("item_coldtop"), "a heavy sweater is not for a 67 °F morning");
-  assert.ok(!ids.includes("item_coldbot"), "a cold bottom is not for a warm day");
+  assert.ok(ids.includes("item_coldtop"), "at 67 °F long sleeves are 29 % of the day: the only one here is dealt");
+  assert.ok(ids.includes("item_hotbot"), "…and so are the shorts, at 34 %");
+  const looks = dealtLooks();
+  assert.ok(firstLook(looks, "item_bot") < firstLook(looks, "item_coldbot"), "light pants lead fleece at 67 °F");
   assert.equal(aiCalls, 0);
 });
 

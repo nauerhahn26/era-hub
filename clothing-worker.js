@@ -437,9 +437,9 @@ const CATEGORY_ASK =
   '"set" is a matching top and bottom; "hair" is a hair accessory (clip, band, bow); ' +
   '"jewelry" is a necklace, bracelet, ring or earrings, ' +
   '"occasion": "fancy" only if it is party, holiday or dress-up wear, else "everyday", ';
-// How the garment is CUT (warmth coherence spec 2026-09-29 §2 D1, §3): the fit
-// gate reads sleeve and leg length and, where it matters, how thick the piece
-// is. Asked in the SAME call that names a new photo, so a new garment costs
+// How the garment is CUT (warmth coherence spec 2026-09-29 §2 D1, §3, §7): the
+// deal reads sleeve and leg length for a look's kind and, where it matters,
+// how thick the piece is for its rank inside the kind. Asked in the SAME call that names a new photo, so a new garment costs
 // nothing extra and rides the shared-tag dedup like every other word; the
 // catalogue a refit has not reached yet reads the legacy fallback. Weight is
 // asked of a long sleeve and a jacket only (9/23 §2: a heavy tee is half a
@@ -1294,9 +1294,9 @@ function hourLabel(h) {
 
 // ---- the daily board: her exact graph ----
 // The order of the day's 21 is the original's deal (clothing-rank.js, ported
-// from outfit_set.py); which garments it may deal is the fit gate since 9/29
-// (spec 2026-09-29 §2): every role — tops too — by the planning °F, weather
-// offline gates nothing.
+// from outfit_set.py); how many looks of each kind it deals is dad's curve
+// since 9/29 PM (spec 2026-09-29 §7): every page apportioned by the planning
+// °F across sleeve × legs, tops too; weather offline is the port's deal.
 // Button plates are small by design (the PHOTO is the message) — a long name
 // clipped mid-word on the board (QA 9/1). Keep names to ~3 words / 22 chars,
 // dropping leading adjectives rather than truncating a word.
@@ -1482,11 +1482,11 @@ async function buildCataloged(cat) {
   // family's; there is no UI for them this cut).
   const seed = dayKey(Date.now(), workerData.tz);
   const m = shared();
-  // The deal is gated and ranked by the planning °F itself — the warmest hour
-  // of the window she is out (9/23 §4) — never the band word, which is four
-  // buckets wide and let an 81 °F morning deal 7 long sleeves and 11 leggings
-  // (spec 2026-09-29 §1-§2). No weather = null = nothing gated, as band null
-  // was. The band still names the tile, orders the accessories and goes on
+  // The deal is apportioned and ranked by the planning °F itself — the
+  // warmest hour of the window she is out (9/23 §4) — never the band word,
+  // which is four buckets wide and let an 81 °F morning deal 7 long sleeves
+  // and 11 leggings (spec 2026-09-29 §1-§2, §7). No weather = null = the
+  // port's deal, as band null was. The band still names the tile, orders the accessories and goes on
   // the offer record.
   const today = buildCandidates({
     items, band, temp: w ? w.t : null, cap: per * PAGES, seed,
