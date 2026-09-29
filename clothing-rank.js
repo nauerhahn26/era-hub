@@ -434,9 +434,11 @@ const EDGE = 8;
 // pages before freshness (0-48) and jitter (0-15) decide. Swept 2-12 on 9/29:
 // the "72-77: shorts and pants both present" row needs the pants/shorts gap
 // SMALL (that gap swings 2 °F per °F across the band), the "< 54" row needs
-// the mid/light gap LARGE; 3 is where the two meet best. OPEN (9/29): at every
-// k swept, the first day with no memory deals one kind only at 72 / 77; every
-// later day passes. Reported to the lead, not papered over here.
+// the mid/light gap LARGE; 3 is where the two meet best. At every k swept the
+// first day with no memory deals one bottom kind only at 72 / 77 (freshness is
+// equal for every look, so fit alone decides); every later day passes. Ruled
+// 9/29 (spec §2 †): that row is a VARIETY verdict, judged on days with a
+// memory — every real morning — rather than a page-1 slot dad never asked for.
 const FIT_PTS_PER_DEG = 3;
 
 const isTemp = t => typeof t === "number" && Number.isFinite(t);

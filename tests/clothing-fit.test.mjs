@@ -12,6 +12,10 @@
 // the deal the way they do on the tablet, and no lucky jitter can pass it),
 // twice: as refit leaves it (coverage/weight/legs) and stripped, the way a
 // catalogue refit has not reached yet (the legacy fallback, §2 D1).
+// "72-77: shorts and pants both present" is a VARIETY verdict (spec §2 †,
+// ruled 9/29): judged from day 2, when a memory exists — the first day of a
+// run has none, and the fit term there legitimately sweeps one bottom kind.
+// Every other verdict (coherence) is judged on all seven days, day 1 included.
 //
 // The engine is tools/clothing-simulate.mjs — the same one the CLI runs over
 // a device's real wardrobe.json before a push. No server, no port, no network.
@@ -62,6 +66,28 @@ describe("the §2 threshold table over her wardrobe's shape, 40-100 °F, seven c
       assert.deepEqual(bad, [], `\n${bad.join("\n")}`);
     });
   }
+});
+
+describe("spec §2 (†): the variety verdict waits for a memory; coherence never does", () => {
+  test("day 1 skips only 'shorts and pants both present'; days 2-7 judge it; every coherence verdict is judged on day 1", () => {
+    const run = simulate({ items: ITEMS, temps: [72, 81], seed: SEED, days: 3 });
+    for (const r of run.results) {
+      const [d1, d2, d3] = r.days;
+      assert.equal(d1.memory, false);
+      assert.equal(d2.memory, true);
+      assert.equal(d3.memory, true);
+      for (const v of d1.verdicts) assert.equal(v.skipped === true, /shorts and pants/.test(v.rule), `${r.temp} day 1: ${v.rule}`);
+      for (const d of [d2, d3]) for (const v of d.verdicts) assert.notEqual(v.skipped, true, `${r.temp} ${d.seed}: ${v.rule} judged`);
+    }
+    // the variety row applies at 72 only; at 81 nothing is ever skipped
+    assert.ok(run.results[0].days[0].verdicts.some(v => v.skipped));
+    assert.ok(!run.results[1].days[0].verdicts.some(v => v.skipped));
+  });
+  test("a one-day CLI run says SKIP for the variety verdict, never PASS", () => {
+    const r = spawnSync(process.execPath, [TOOL, "--wardrobe", FIXTURE, "--temps", "74", "--seed", SEED], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stdout);
+    assert.match(r.stdout, /SKIP {2}72-77: shorts and pants both present/);
+  });
 });
 
 describe("the harness checks what it claims (a verdict that cannot fail proves nothing)", () => {

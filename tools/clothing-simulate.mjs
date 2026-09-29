@@ -14,7 +14,9 @@
 // fixture tests/fixtures/wardrobe-shape.json. --strip-fit drops coverage /
 // weight / legs first: the board a catalogue refit has not reached, judged by
 // the weaker legacy set (§2). --days runs N consecutive days from --seed with
-// the page-1 memory carried between them, as the tablet does. Exit 0 when
+// the page-1 memory carried between them, as the tablet does; the one
+// variety verdict (spec §2 †, "shorts and pants both present") is judged only
+// from day 2, every coherence verdict on every day. Exit 0 when
 // every verdict passes, 1 when one fails, 2 on a usage error.
 //
 // Pure engine, shared with tests/clothing-fit.test.mjs (the acceptance test):
@@ -85,7 +87,12 @@ const THRESHOLDS = [
     } },
   { mode: "fit", rule: "72-77: no mid/heavy long sleeve", applies: t => t >= 72 && t <= 77,
     check: ({ looks }) => none(pieces(looks), heavier, "mid/heavy long sleeve") },
-  { mode: "fit", rule: "72-77: shorts and pants both present", applies: t => t >= 72 && t <= 77,
+  // (†) a VARIETY verdict (spec §2, ruled 9/29): judged only on a day that
+  // carries a memory. On a memoryless first day freshness is equal for every
+  // look and the fit term legitimately sweeps one bottom kind (72 °F → all
+  // leggings, 77 °F → all shorts); every real morning has a memory. Every
+  // other row is a COHERENCE verdict and holds on day 1 too.
+  { mode: "fit", rule: "72-77: shorts and pants both present", variety: true, applies: t => t >= 72 && t <= 77,
     check: ({ looks }) => {
       const s = countLooks(looks, isShorts), p = countLooks(looks, isPants);
       return { pass: s > 0 && p > 0, detail: `${s} shorts looks, ${p} pants looks` };
@@ -167,12 +174,15 @@ function simulate({ items, temps, seed, days = 1, stripFit = false }) {
     const out = [];
     for (let d = 0; d < days; d++) {
       const day = plus(seed, d);
+      // a memory = any page 1 recorded before this day (what freshness reads)
+      const memory = Object.keys(history.days).some(k => k < day);
       const dealt = R.buildCandidates({ items: pool, temp, band: null, cap, seed: day, history, perPage });
       history = R.recordOffer(history, day, dealt, perPage, null);
       const looks = dealt.map(c => ({ key: c.key, pieces: c.pieces, ...wordsOf(c.pieces) }));
-      const verdicts = rules.filter(th => th.applies(temp))
-        .map(th => ({ rule: th.rule, ...th.check({ temp, looks, perPage }) }));
-      out.push({ seed: day, looks, verdicts });
+      const verdicts = rules.filter(th => th.applies(temp)).map(th => (th.variety && !memory
+        ? { rule: th.rule, pass: true, skipped: true, detail: "not judged: a variety verdict on a day with no memory (spec §2 †)" }
+        : { rule: th.rule, ...th.check({ temp, looks, perPage }) }));
+      out.push({ seed: day, memory, looks, verdicts });
     }
     results.push({ temp, admitted, looks: out[0].looks, verdicts: out[0].verdicts, days: out });
   }
@@ -209,7 +219,7 @@ function report(run, out = console.log) {
       });
       for (const v of d.verdicts) {
         if (!v.pass) failed += 1;
-        out(`  ${v.pass ? "PASS" : "FAIL"}  ${v.rule} — ${v.detail}`);
+        out(`  ${v.skipped ? "SKIP" : v.pass ? "PASS" : "FAIL"}  ${v.rule} — ${v.detail}`);
       }
     }
   }
