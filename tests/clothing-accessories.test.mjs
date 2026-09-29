@@ -484,6 +484,45 @@ test("a manual line from one tablet moves the garment on the other", async () =>
   assert.deepEqual(r.accessories, ["jacket"]);
 });
 
+// Warmth coherence spec 2026-09-29 D4 — and the 9/23 §7 bug it names:
+// manualFields admitted category/occasion/hidden only, so a parent's sleeve or
+// weight posted fine, went out to the family, and was then dropped on the
+// floor by every build on every device.
+test("a parent's sleeves, weight and legs reach the catalogue — from this tablet's edits and from another's line", async () => {
+  const D = dataDir("fitedits");
+  const items = materialize({ dataDir: D, n: 10 });
+  const [top, other] = items.filter(i => i.category === "top");
+  const dress = items.find(i => i.category === "dress");
+  writeEdits(D, {
+    [top.id]: { coverage: "long", weight: "heavy", t: iso(Date.now()) },
+    // a weight with no long sleeve under it, and a parent's `unsure`, are
+    // words the sheet never sends: dropped, the rest of the edit stands
+    [other.id]: { coverage: "short", weight: "heavy", t: iso(Date.now()) },
+  });
+  putTag(D, "dev-other", { t: iso(Date.now() - HOUR), id: dress.id, name: dress.name, category: "dress",
+    coverage: "long", legs: "covered", weight: "unsure", manual: true });
+  await build(D, "dev-fitedits", { rebuildOnly: true });
+
+  const t = entryFor(D, top.id);
+  assert.equal(t.coverage, "long");
+  assert.equal(t.weight, "heavy", "the weight a parent set is the weight the deal reads");
+  const o = entryFor(D, other.id);
+  assert.equal(o.coverage, "short");
+  assert.equal("weight" in o, false, "a heavy tee is not a word the sheet can send");
+  const d = entryFor(D, dress.id);
+  assert.equal(d.coverage, "long");
+  assert.equal(d.legs, "covered");
+  assert.equal("weight" in d, false, "a parent never says unsure, whoever wrote the line");
+  assert.ok(d.manualAt, "and it is the family's own word from now on");
+
+  // A weight edit on its own, a day later, for the long sleeve set above: the
+  // entry's own coverage is what admits it.
+  writeEdits(D, { [top.id]: { weight: "mid", t: iso(Date.now() + 1000) } });
+  await build(D, "dev-fitedits", { rebuildOnly: true });
+  assert.equal(entryFor(D, top.id).weight, "mid");
+  assert.equal(entryFor(D, top.id).coverage, "long", "the sleeve set before is untouched");
+});
+
 test("the newest parent wins, and a correction from another day never reverts them", async () => {
   const D = dataDir("newest");
   const items = materialize({ dataDir: D, n: 8 });

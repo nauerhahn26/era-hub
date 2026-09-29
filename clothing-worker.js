@@ -1009,11 +1009,19 @@ function readEdits() {
 // (clothing-log normalizeTag): a malformed field is DROPPED and the rest of
 // the correction stands, so `hidden: "yes"` costs that writer its hide and not
 // the family its category.
-function manualFields(src) {
+// The fit words (warmth coherence spec 2026-09-29 D4) are the fix for the
+// 9/23 §7 bug: a parent's sleeve or weight posted, went out to the family —
+// and was dropped here by every build, because this list stopped at three.
+// They pass through fitFields for the category the garment will HAVE (the
+// edit's own, else the entry's) and with the entry's coverage behind a
+// weight-only edit, and `parent` refuses `unsure` from any writer: the sheet
+// has no such chip, so a line carrying one was not written by a parent's hand.
+function manualFields(src, it = {}) {
   const out = {};
   if (CATEGORIES.has(src.category)) out.category = src.category;
   if (OCCASIONS.includes(src.occasion)) out.occasion = src.occasion;
   if (typeof src.hidden === "boolean") out.hidden = src.hidden;
+  Object.assign(out, fitFields(src, out.category || it.category, { parent: true, coverage: it.coverage }));
   return out;
 }
 function applyManual(cat) {
@@ -1033,7 +1041,7 @@ function applyManual(cat) {
     const win = cands.reduce((a, b) => (b.t > a.t ? b : a));
     if (it.manualAt && win.t <= it.manualAt) continue;
     if (!Number.isFinite(Date.parse(win.t))) continue;   // a stamp nobody can read is not a clock
-    const fields = manualFields(win);
+    const fields = manualFields(win, it);
     if (!Object.keys(fields).length) continue;    // nothing usable was said
     fields.manualAt = win.t;
     let touched = false;
