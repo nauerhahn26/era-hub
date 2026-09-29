@@ -41,12 +41,21 @@
 // specs/2026-09-29-warmth-coherence-and-dress-up.md §1-§2, amending
 // 2026-09-23-warmth-model-design.md §2-§3): the band gate (outfit_set.py
 // :181, :394-402 — tops never gated, bottoms/singles by BAND_WARMTH level, the
-// hub's neighbour-band widen, and the old (D2) unknown-band rule). The deal
-// now gates EVERY role by the planning °F against a comfort range derived
-// from each garment's (role, coverage, weight) — FIT / fitOf / eligible below
-// — with the edge on the cold side only, ranks by fit, and drops `occasion
-// "fancy"` at its door (spec §2 D3). BAND_WARMTH stays: accessoryOrder reads
-// it; buildCandidates accepts `band` and ignores it.
+// hub's neighbour-band widen, and the old (D2) unknown-band rule).
+//
+// REPLACED AGAIN 9/29 PM (spec §7, dad: "the code shouldn't be all or nothing
+// logic … a spectrum … should handle every #"): the §2 replacement was itself
+// a gate — a °F comfort range per garment, a one-sided EDGE, a FLOOR_EDGES
+// widen — and dealt cliffs (no pants at 78, no shorts at 63). With a planning
+// °F the deal now refuses no garment by weather; one logistic curve per
+// boundary gives each KIND of look (top-half coverage × legs side) its share
+// of the day, kinds under 5 % are zero, and each page's slots are apportioned
+// across the kinds by largest remainder (sharesAt / quotasFor below). Inside a
+// kind the port's rank decides — staples, the coverage slot, freshness, loved,
+// style — plus a fit term that orders weights. Weather offline (temp null) is
+// the port's deal exactly. `occasion "fancy"` is dropped at the door (§2 D3).
+// BAND_WARMTH stays: accessoryOrder reads it; buildCandidates accepts `band`
+// and ignores it.
 //
 // Added 9/17 with no counterpart in the original (accessories spec
 // docs/superpowers/specs/2026-09-17-accessories-design.md §3.1, §4.1): the
@@ -76,7 +85,7 @@ const INFERRED_WEIGHT = 0.5;   // no Yes that day: her last-selected outfit, inf
 const SINGLE_STYLE = 55;       // a dress/set's style score (outfit_set.py:435, :465)
 
 // allowed warmth LEVEL per band (outfit_set.py:181). Since 9/29 the deal no
-// longer reads it (the fit gate below replaced it); accessoryOrder does.
+// longer reads it (the spectrum below replaced it); accessoryOrder does.
 const BAND_WARMTH = {
   hot: new Set([1]), warm: new Set([1, 2]), cool: new Set([2, 3]), cold: new Set([3]),
 };
@@ -364,43 +373,14 @@ function byId(a, b) {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-// ---- the fit gate (spec 2026-09-29 §2 D1/D2, amending 2026-09-23 §2-§3) ----
+// ---- the fit words (spec 2026-09-29 §2 D1, 9/23 §2) -------------------------
 //
 // A garment's warmth is how much it covers times how thick it is (9/23 §2),
 // so each garment carries `coverage` (sleeve or leg length — shape, which
-// vision reads well) and, on the rungs where it matters, `weight`. FIT turns
-// (role, coverage, weight) into a comfort range in °F. The table lives HERE:
-// dad tunes garments on the hold sheet, never the table (9/23). What is fixed
-// is not these numbers but what the board may deal at each temperature — the
-// threshold table in spec 2026-09-29 §2 D2, asserted over her wardrobe's shape
-// by tests/clothing-fit.test.mjs. Move a row, run the harness.
-//
-// Starting point: the 9/23 §3 table, itself the published consensus (tank ≥ 80,
-// tee + shorts 72-80, short sleeve + pants 60-66, long sleeve + pants 50-60,
-// jacket + warm pants 40-50). Open ends are ±Infinity. Rows moved 9/29 by
-// the harness sweep (40-100 °F, seven days running, seven start weeks), each
-// for one threshold and each inside the charts' own spread:
-//   top sleeveless   78 → ∞   →  80 → ∞   the consensus number itself (tank ≥ 80
-//                                          ±2); at 78 the cold edge reached 70
-//                                          and a sundress took page 1 at 70-71
-//                                          ("62-71: no sleeveless on page 1").
-//   top long light   55 → 75  →  58 → 77  hi: a thin long sleeve is still fair at
-//                                          76-77 ("72-77" forbids only mid/heavy);
-//                                          lo: its centre moves up and away from
-//                                          the mid row's (below).
-//   top long mid     48 → 68  →  42 → 62  "long sleeve + pants 50-60" is the thin
-//                                          one's rung; a sweatshirt is the rung
-//                                          under it ("jacket + warm pants 40-50"
-//                                          ±3). The 15 °F between the two centres
-//                                          is what lets "< 54: mid/heavy before
-//                                          light" beat a day's freshness (42 pts).
-//   bottom long light 58 → 85 → 58 → 77  "tee + shorts 72-80": light pants are
-//                                          the 60-76 bottom. At 85 they dealt 4-9
-//                                          pants looks at 78-84 (freshness floods
-//                                          back yesterday's unseen pants); dad
-//                                          9/29: at 79 "maybe one pant outfit".
-// Unchanged: short (the 66-72 rung stays interpolated, 9/23 §9), long heavy,
-// shorts 72 → ∞, pants mid/heavy.
+// vision reads well) and, on the rungs where it matters, `weight`. Since the
+// 9/29 PM amendment (spec §7) coverage decides which KIND of look a garment
+// makes — its cell — and the day's curve decides how many looks of each kind
+// the board deals. Weight only ranks, inside a kind.
 const COVERAGES = {
   top: new Set(["sleeveless", "short", "long"]),
   bottom: new Set(["short", "long"]),
@@ -408,37 +388,116 @@ const COVERAGES = {
 };
 const WEIGHTS = new Set(["light", "mid", "heavy"]);   // `unsure` is not one: it resolves to light
 const LEGS = new Set(["bare", "covered"]);
-const INF = Infinity;
+
+// ---- the spectrum (spec 2026-09-29 §7, dad 9/29 PM) -------------------------
+//
+// Dad, 9/29, after the §2 gate was built: "the code shouldn't be all or
+// nothing logic. At 70 should be an even mix of shorts and pants for instance.
+// by 80 it should be 90% shorts, by 60 should be 90% pants, a spectrum is the
+// logic/probabilities … should handle every #." The gate it replaces admitted
+// or refused each garment by a °F range, which is a cliff by construction: no
+// pants at all at 78, no shorts at all at 63. Now nothing is refused by the
+// weather except a whole kind the curve gives under 5 %; the day's °F sets the
+// SHARE of each kind of look, and each page's slots are split to match.
+//
+// One logistic curve, σ((t − crossover) / K), per boundary between kinds:
+//   legs         shorts-side σ((t − 70) / K), pants-side the rest   (dad's 70)
+//   top half     sleeveless  σ((t − 80) / K)                         (9/23 consensus: tank ≥ 80)
+//                long sleeve 1 − σ((t − 63) / K)                     (9/23: short sleeve + pants 60-66
+//                                                                    vs long sleeve + pants 50-60)
+//                short sleeve what is left, clamped at 0
+// K = 10 / ln 9 puts 10 °F from a crossover at exactly 90 / 10 — dad's own
+// numbers. Tuning is moving one of these, and tests/clothing-fit.test.mjs
+// (dad's 60 / 70 / 80, every °F 45-95) is what a move must keep green.
+const SPECTRUM_K = 10 / Math.log(9);
+const LEGS_CROSSOVER_F = 70;
+const LONG_SLEEVE_CROSSOVER_F = 63;
+const SLEEVELESS_CROSSOVER_F = 80;
+// A kind whose share is under 5 % is zero for the day and the rest are
+// renormalised (dad 9/29, "go"). It is what keeps a long sleeve out of a 78 °F
+// deal (3.6 %) and a lone pair of shorts out of a 54 °F one (2.9 %): she
+// cannot take a layer off, and one look in 18 is not a share, it is a mistake.
+const SHARE_FLOOR = 0.05;
+const TOP_KINDS = ["sleeveless", "short", "long"];
+const LEG_SIDES = ["shorts", "pants"];
+const sigmoid = x => 1 / (1 + Math.exp(-x));
+
+// sharesAt(t) → {raw, top, legs}: the curve's shares at the planning °F, raw
+// and with the floor applied (each dimension renormalised to 1). A dimension
+// the floor would empty — it cannot, the curve always leaves one kind above
+// 5 % — keeps its raw shares rather than deal nothing.
+function sharesAt(t) {
+  const shorts = sigmoid((t - LEGS_CROSSOVER_F) / SPECTRUM_K);
+  const sleeveless = sigmoid((t - SLEEVELESS_CROSSOVER_F) / SPECTRUM_K);
+  const long = 1 - sigmoid((t - LONG_SLEEVE_CROSSOVER_F) / SPECTRUM_K);
+  const raw = {
+    top: { sleeveless, short: Math.max(0, 1 - sleeveless - long), long },
+    legs: { shorts, pants: 1 - shorts },
+  };
+  return { raw, top: floored(raw.top, TOP_KINDS), legs: floored(raw.legs, LEG_SIDES) };
+}
+// The floor and the renormalisation, over the kinds in `present` (all of them
+// unless a wardrobe lacks some: spec §7.2, "renormalised over the non-empty
+// cells"). `floor` 0 is the never-empty retry.
+function floored(raw, kinds, present = null, floor = SHARE_FLOOR) {
+  const out = {};
+  let sum = 0;
+  for (const k of kinds) {
+    out[k] = (!present || present.has(k)) && raw[k] >= floor ? raw[k] : 0;
+    sum += out[k];
+  }
+  for (const k of kinds) out[k] = sum > 0 ? out[k] / sum : 0;
+  return out;
+}
+
+// lookCell(pieces) → {top, legs}: the kind of look, spec §7.2. A pair is its
+// top's sleeves over its bottom's legs (short → shorts-side, long → pants-
+// side); a single is its own top half and its legs (bare → shorts-side,
+// covered → pants-side). Read through fitAttrs, so a garment refit has not
+// reached yet is placed by the legacy fallback (§2 D1) — the curve holds for
+// it too (§7.3).
+function lookCell(pieces) {
+  if (pieces.length === 1) {
+    const a = fitAttrs(pieces[0]);
+    return { top: a.coverage, legs: a.legs === "covered" ? "pants" : "shorts" };
+  }
+  let top = null, legs = null;
+  for (const p of pieces) {
+    const a = fitAttrs(p);
+    if (a && a.role === "top") top = a.coverage;
+    else if (a && a.role === "bottom") legs = a.coverage === "short" ? "shorts" : "pants";
+  }
+  return { top, legs };
+}
+const cellKey = c => c.top + "|" + c.legs;
+
+// ---- fit: the rank inside a kind (spec §2 D2, kept by §7.2) -----------------
+//
+// FIT holds the °F each (role, coverage, weight) is best at. Since §7 it
+// gates nothing — the curve decides the kinds — and only orders looks of the
+// same kind: a mid long sleeve leads a light one on a cold morning and the
+// light one leads on a warm one (§7.2). The numbers are the centres of the
+// 9/29 §2 comfort ranges they replace (an open range's centre 10 °F inside its
+// closed end), so the ladder the harness tuned that afternoon still orders a
+// kind the same way. The sleeveless / short / shorts cells hold one weight in
+// practice (weight is asked only of long sleeves and jackets, 9/23 §2); their
+// mid/heavy cells exist so the table is total over anything a model writes.
 const FIT = {
   top: {
-    // weight is never asked of a sleeveless or short-sleeve top (9/23 §2: a
-    // light vs heavy tee is ~0.5 °F, beneath the forecast's own noise); the
-    // mid/heavy cells exist so the table is total over anything a model writes
-    sleeveless: { light: [80, INF], mid: [80, INF], heavy: [80, INF] },
-    short: { light: [66, INF], mid: [62, 88], heavy: [62, 88] },
-    long: { light: [58, 77], mid: [42, 62], heavy: [-INF, 58] },
+    sleeveless: { light: 90, mid: 90, heavy: 90 },
+    short: { light: 76, mid: 75, heavy: 75 },
+    long: { light: 67.5, mid: 52, heavy: 48 },
   },
   bottom: {
-    short: { light: [72, INF], mid: [72, INF], heavy: [72, INF] },
-    long: { light: [58, 77], mid: [48, 72], heavy: [-INF, 60] },
+    short: { light: 82, mid: 82, heavy: 82 },
+    long: { light: 67.5, mid: 60, heavy: 50 },
   },
 };
-// How far BELOW its range a garment is still admitted (9/23 §3: the largest
-// published disagreement between the charts, so the gate is never more sure
-// than the evidence). One-sided since 9/29 (spec §2 D2): below its range a
-// garment is merely too light — nothing a jacket cannot fix; above it, it is
-// too warm, and that is the error she cannot undo. No warm-side edge at all.
-const EDGE = 8;
-// The fit term's weight in rankOf, per °F of distance from the range's centre.
-// Spec §2 D2 asks it to be large enough that the better-suited looks fill the
-// pages before freshness (0-48) and jitter (0-15) decide. Swept 2-12 on 9/29:
-// the "72-77: shorts and pants both present" row needs the pants/shorts gap
-// SMALL (that gap swings 2 °F per °F across the band), the "< 54" row needs
-// the mid/light gap LARGE; 3 is where the two meet best. At every k swept the
-// first day with no memory deals one bottom kind only at 72 / 77 (freshness is
-// equal for every look, so fit alone decides); every later day passes. Ruled
-// 9/29 (spec §2 †): that row is a VARIETY verdict, judged on days with a
-// memory — every real morning — rather than a page-1 slot dad never asked for.
+// The fit term's weight in rankOf, per °F a look's two halves sit from their
+// centres. 3 (swept 2-12 on 9/29 for the §2 table) keeps the mid/light gap of
+// 15.5 °F worth ~46 points — more than a day's freshness (6) or the jitter
+// (0-15) — so the right weight leads its kind; within a kind of one weight
+// the term is equal for every look and freshness decides, as in the port.
 const FIT_PTS_PER_DEG = 3;
 
 const isTemp = t => typeof t === "number" && Number.isFinite(t);
@@ -461,7 +520,7 @@ function legacyCoverage(warmth) {
 }
 const isColdWord = w => w === 3 || (typeof w === "string" && w.trim().toLowerCase() === "cold");
 
-// fitAttrs(item) → {role, coverage, weight[, legs]} — the words the gate
+// fitAttrs(item) → {role, coverage, weight[, legs]} — the words the deal
 // reads, each one resolved: a real value when the item carries one that fits
 // its role, the fallback otherwise. null for anything that is not a garment
 // (an accessory is never weather-gated, accessories spec §4.1).
@@ -480,48 +539,20 @@ function fitAttrs(item) {
   return out;
 }
 
-// fitOf(item) → {lo, hi, centre} in °F, or null for a non-garment. A single
-// is its top half AND its legs (bare = shorts, covered = long pants of its
-// weight): comfortable where both halves are, so its range is the overlap.
-// Two halves that never overlap (a heavy long-sleeve dress with bare legs)
-// meet in the gap between them — the compromise zone, still ordered on the
-// ladder. The centre is the midpoint, or 10 °F inside an open range's closed
-// end (spec §2 D2).
 // The FIT rows a garment is made of: one for a top or a bottom, two for a
-// single (its top half, then its legs as the bottom row they stand for).
+// single (its top half, then its legs as the bottom row they stand for: bare =
+// shorts, covered = long pants of its weight) — so a sundress and the
+// tank-and-shorts it stands for rank alike.
 function rowsOf(a) {
   if (a.role !== "single") return [FIT[a.role][a.coverage][a.weight]];
   return [FIT.top[a.coverage][a.weight], a.legs === "covered" ? FIT.bottom.long[a.weight] : FIT.bottom.short[a.weight]];
-}
-const centreOf = ([lo, hi]) => (lo === -INF ? hi - 10 : hi === INF ? lo + 10 : (lo + hi) / 2);
-function fitOf(item) {
-  const a = fitAttrs(item);
-  if (!a) return null;
-  const rows = rowsOf(a);
-  let lo = Math.max(...rows.map(r => r[0])), hi = Math.min(...rows.map(r => r[1]));
-  if (lo >= hi) [lo, hi] = [hi, lo];
-  return { lo, hi, centre: centreOf([lo, hi]) };
-}
-
-// eligible(items, cat, temp, edge = EDGE): the items of `cat` ("top" |
-// "bottom" | "single") whose range admits the planning °F, in the order
-// given: inside [lo, hi], or up to `edge` degrees below lo — never above hi,
-// however wide the edge. temp null / not a finite number (weather offline; a
-// band word is not a temperature) gates nothing, as band null did. The floor
-// that keeps the board from emptying is the deal's, not a category's (a
-// category with nothing suitable is fine while the others fill a page) — it
-// lives in buildCandidates and widens `edge`.
-function eligible(items, cat, temp, edge = EDGE) {
-  const ofCat = items.filter(i => categoryOf(i) === cat);
-  if (!isTemp(temp)) return ofCat;
-  return ofCat.filter(i => { const f = fitOf(i); return temp <= f.hi && temp >= f.lo - edge; });
 }
 
 // fitFields(meta, category, {parent}) → the subset of {coverage, weight, legs}
 // a catalogue entry, a shared tag line or a manual edit may carry for a garment
 // of `category` (spec 2026-09-29 §3). The ingest prompt, the refit pass and the
-// hold sheet's route all go through it, so the words the gate reads can only
-// ever be words the gate knows — the same rule attributes() keeps for taste
+// hold sheet's route all go through it, so the words the deal reads can only
+// ever be words the deal knows — the same rule attributes() keeps for taste
 // (which deliberately stays taste-only: a refit must never re-open a colour).
 // Each field is a word from its own list, folded like every other whitelist;
 // anything else is ABSENT, never guessed, and the legacy fallback (D1) covers
@@ -535,7 +566,8 @@ function eligible(items, cat, temp, edge = EDGE) {
 //             garment whose coverage is long (pants are long unless told
 //             otherwise). A heavy TEE is a word nobody asked for — 9/23 §2
 //             measured the difference at half a degree — and in FIT it would
-//             close a tee's hot end, so it is dropped rather than obeyed.
+//             rank a tee a notch colder than its kind, so it is dropped rather
+//             than obeyed.
 // opts.coverage is the entry's stored coverage, for an edit that sends a
 // weight alone. Returns {} for anything that is neither a garment nor a jacket.
 const FIT_COVERAGE = {
@@ -577,8 +609,9 @@ const FIT_WORDS = {
 // ctx = {seed, pairing (normalised), favorites (Set of ids), picks, lastP1,
 // temp}. fresh: the look is as fresh as its LEAST fresh piece; a piece never
 // on page 1 counts as FRESH_CAP_DAYS + 1 days old. fit (9/29, no original —
-// spec 2026-09-29 §2 D2): −FIT_PTS_PER_DEG per °F the look's two halves sit
-// from their rows' centres, summed, rounded. Every look is a top half and a
+// spec 2026-09-29 §2 D2; since §7 it ranks inside a kind and gates nothing):
+// −FIT_PTS_PER_DEG per °F the look's two halves sit from their FIT centres,
+// summed, rounded. Every look is a top half and a
 // bottom half — a pair's two pieces, a single's two rows — so a sundress and
 // the tank-and-shorts it stands for rank alike. (The worst piece alone, like
 // fresh, was tried and failed the sweep: on a cold day the light pants' 20 °F
@@ -590,7 +623,7 @@ function fitPts(pieces, temp) {
   let d = 0;
   for (const p of pieces) {
     const a = fitAttrs(p);
-    if (a) for (const r of rowsOf(a)) d += Math.abs(temp - centreOf(r));
+    if (a) for (const c of rowsOf(a)) d += Math.abs(temp - c);
   }
   return -Math.round(FIT_PTS_PER_DEG * d);
 }
@@ -614,22 +647,24 @@ function cmpHash(a, b) {   // I4: BigInt comparison, never subtraction
 
 // ---- the pool (outfit_set.py:397-410) ----------------------------------------
 //
-// singles (standalone) then tops × bottoms, every role through the fit gate at
-// `edge`. buildCandidates calls this once per step of its floor.
-const FLOOR_EDGES = [EDGE, 2 * EDGE, 3 * EDGE, 4 * EDGE, Infinity];
+// singles (standalone) then tops × bottoms. The weather refuses no garment
+// here since §7: `keep` (from the day's shares) drops only the looks of a kind
+// the curve zeroed — under the 5 % floor — so the floor below counts what
+// the day can actually deal.
 // Case-folded like every other word the hub reads off a catalogue entry: a
 // shared line from another device is the same fancy as the hold sheet's.
 const isFancy = i => typeof i.occasion === "string" && i.occasion.trim().toLowerCase() === "fancy";
-function poolAt(items, temp, edge, pairing, pageCap) {
-  const tops = eligible(items, "top", temp, edge);
-  const bottoms = eligible(items, "bottom", temp, edge);
-  const singles = eligible(items, "single", temp, edge).map(g => [g]);
+const ofRole = (items, role) => items.filter(i => categoryOf(i) === role);
+function poolOf(items, pairing, pageCap, keep = () => true) {
+  const tops = ofRole(items, "top");
+  const bottoms = ofRole(items, "bottom");
+  const singles = ofRole(items, "single").map(g => [g]).filter(keep);
   const pairs = [];
   for (const t of tops)
     for (const b of bottoms)
-      if (harmonizes(t, b) && styleScore(t, b, pairing) > 0) pairs.push([t, b]);
+      if (harmonizes(t, b) && styleScore(t, b, pairing) > 0 && keep([t, b])) pairs.push([t, b]);
   // HUB DEVIATION (spec §3.4's rule, §3.1 item 4): the taste gate has the same
-  // floor the weather gate has — "a wardrobe must never empty the board". A
+  // floor the weather has — "a wardrobe must never empty the board". A
   // model that calls EVERY garment a statement piece leaves no harmonizing
   // pair at all (a loud piece only goes with a plain partner), and the board
   // would deal nothing but the dresses. When that happens the harmony rule
@@ -643,16 +678,93 @@ function poolAt(items, temp, edge, pairing, pageCap) {
   // among 34 loud ones: `cool`/`cold` gate the bottoms to four, all loud, so
   // the honest deal was 4 pairs + 2 dresses = SIX looks — fewer than the
   // all-loud wardrobe's full 21, for a wardrobe described one garment better.
-  // Above the page the floor stays shut (`hot` 12, `warm`/band-null 18 are
-  // unchanged), so a board that already holds a page of harmonizing looks is
-  // never padded with loud-on-loud ones.
+  // Above the page the floor stays shut, so a board that already holds a page
+  // of harmonizing looks is never padded with loud-on-loud ones.
   if (pairs.length + singles.length < pageCap && tops.length && bottoms.length) {
     const already = new Set(pairs.map(comboKey));   // a harmonizing pair is not dealt twice
     for (const t of tops)
       for (const b of bottoms)
-        if (!already.has(comboKey([t, b])) && styleScore(t, b, pairing) > 0) pairs.push([t, b]);
+        if (!already.has(comboKey([t, b])) && styleScore(t, b, pairing) > 0 && keep([t, b])) pairs.push([t, b]);
   }
   return singles.concat(pairs);
+}
+
+// ---- the day's shares over her wardrobe (spec §7.1, §7.2) -------------------
+//
+// spectrumOf(items, temp, pairing, pageCap) → {pool, top, legs, cellOf} or
+// null. The kinds are renormalised over the ones her wardrobe can make at all
+// (a wardrobe with no sleeveless top gives its sleeveless share to the other
+// sleeves, not to nothing). Never empty (§7.2): if the floor leaves no look,
+// the floor is dropped; if there is still none, null — the caller deals the
+// whole wardrobe as the port did.
+function spectrumOf(items, temp, pairing, pageCap) {
+  const all = poolOf(items, pairing, pageCap);
+  const cells = new Map(all.map(o => [comboKey(o), lookCell(o)]));
+  const present = { top: new Set(), legs: new Set() };
+  for (const c of cells.values()) { present.top.add(c.top); present.legs.add(c.legs); }
+  const { raw } = sharesAt(temp);
+  for (const floor of [SHARE_FLOOR, 0]) {
+    const top = floored(raw.top, TOP_KINDS, present.top, floor);
+    const legs = floored(raw.legs, LEG_SIDES, present.legs, floor);
+    const keep = o => { const c = lookCell(o); return top[c.top] > 0 && legs[c.legs] > 0; };
+    const pool = poolOf(items, pairing, pageCap, keep);
+    if (pool.length) return { pool, top, legs, cellOf: o => cellKey(lookCell(o)) };
+  }
+  return null;
+}
+
+// Largest remainder of `slots` over `exact` (a {kind: fractional seats} map
+// summing to `slots`): every kind its floor, the seats left to the largest
+// remainders. A remainder tie breaks by h(seed, "cell", …, page) so 70 °F,
+// seven slots, gives the odd one to shorts on some days and to pants on
+// others rather than always to one side (spec §7.2).
+const EPS = 1e-9;
+function largestRemainder(slots, exact, seed, ...tag) {
+  const kinds = Object.keys(exact);
+  const out = {};
+  let left = slots;
+  for (const k of kinds) { out[k] = Math.floor(exact[k] + EPS); left -= out[k]; }
+  const rem = k => exact[k] - out[k];
+  const tie = new Map(kinds.map(k => [k, h(seed, "cell", ...tag, k)]));
+  const order = kinds.filter(k => exact[k] > EPS)
+    .sort((a, b) => (Math.abs(rem(b) - rem(a)) > EPS ? rem(b) - rem(a) : cmpHash(tie.get(b), tie.get(a))));
+  for (let i = 0; left > 0 && order.length; i = (i + 1) % order.length, left--) out[order[i]] += 1;
+  return out;
+}
+
+// quotasFor(spec, slots, dealt, page, seed) → {quota, exact} per cell key.
+// Each dimension is apportioned on its own — legs over shorts / pants, the top
+// half over sleeveless / short / long — so page 1's counts ARE the
+// apportionment of dad's curve in both (the harness asserts exactly that);
+// then each sleeve row's seats are split between the two legs sides in the
+// legs' proportion, largest remainder down each column, which meets both sets
+// of totals. Deeper pages are apportioned the same way over what is left:
+// each kind's target is its share of every slot dealt so far, less what it
+// already has, so the whole deal tracks the curve rather than drifting a
+// page's rounding at a time (§7.3: ±10 points across the deal).
+function quotasFor(spec, slots, dealt, page, seed) {
+  const done = Object.values(dealt.top).reduce((a, b) => a + b, 0);
+  const marginal = (dim, kinds) => {
+    const exact = {};
+    let sum = 0;
+    for (const k of kinds) { exact[k] = spec[dim][k] > 0 ? Math.max(0, (done + slots) * spec[dim][k] - dealt[dim][k]) : 0; sum += exact[k]; }
+    for (const k of kinds) exact[k] = sum > 0 ? exact[k] * slots / sum : slots * spec[dim][k];
+    return largestRemainder(slots, exact, seed, dim, String(page));
+  };
+  const T = marginal("top", TOP_KINDS), L = marginal("legs", LEG_SIDES);
+  const quota = {}, exact = {};
+  const shortsExact = {};
+  for (const r of TOP_KINDS) {
+    shortsExact[r] = slots > 0 ? (T[r] * L.shorts) / slots : 0;
+    exact[r + "|shorts"] = shortsExact[r];
+    exact[r + "|pants"] = T[r] - shortsExact[r];
+  }
+  const shorts = largestRemainder(L.shorts, shortsExact, seed, "column", String(page));
+  for (const r of TOP_KINDS) {
+    quota[r + "|shorts"] = Math.min(shorts[r], T[r]);
+    quota[r + "|pants"] = T[r] - quota[r + "|shorts"];
+  }
+  return { quota, exact };
 }
 
 // ---- buildCandidates (outfit_set.py:376-557) --------------------------------
@@ -662,9 +774,17 @@ function poolAt(items, temp, edge, pairing, pageCap) {
 // the deeper pages. Pure: same inputs → same list.
 //
 // opts.temp is the planning °F (the window's maximum, 9/23 §4 — the worker's
-// `w.t`); null means the weather is offline and nothing is gated. opts.band is
-// still accepted — the worker's offer record carries it — and decides nothing
-// here since 9/29 (spec 2026-09-29 §3).
+// `w.t`); null means the weather is offline, and the deal is the port's,
+// exactly: no shares, no apportionment (spec §7.2). opts.band is still
+// accepted — the worker's offer record carries it — and decides nothing here
+// since 9/29 (spec 2026-09-29 §3).
+//
+// With a temp, each page's slots are apportioned across the kinds of look
+// (quotasFor), and every step of the port's page assembly takes a look only
+// while its kind has a slot left: a staple or the coverage slot takes a
+// page-1 slot only from its own kind's quota (§7.2). Inside a kind the port's
+// rank decides, as it always did. A kind that runs dry on a page gives its
+// slots to the kind furthest below its exact share that can still take one.
 function buildCandidates(opts) {
   const seed = opts.seed;
   // The seed is the family's day key and nothing else: a Date, a timestamp or
@@ -684,27 +804,14 @@ function buildCandidates(opts) {
   // exactly what it dealt before (the variety gate's 35 garments).
   // Since 9/29 a garment a parent marked fancy goes the same way (spec
   // 2026-09-29 §2 D3): it lives on the Dress up page and is never dealt — not
-  // even by the never-empty floor, which only ever reads `items`.
+  // even by the never-empty rule, which only ever reads `items`.
   const items = [...(opts.items || [])]
     .filter(i => i.hidden !== true && categoryOf(i) !== "accessory" && !isFancy(i))
     .sort(byId);
   const pageCap = Math.min(perPage, cap);
 
-  // The floor (9/23 §3, kept in spirit 9/29): "never empty the board". A day
-  // whose honest pool cannot fill ONE page widens the cold-side edge a step at
-  // a time — a garment too light for the day is nothing a jacket cannot fix —
-  // until a page fills or nothing colder is left to admit. Only a pool that
-  // is still EMPTY then deals the whole category, too-warm garments and all:
-  // one honest look beats any number of garments she cannot take off. The
-  // widen is deal-wide on purpose: a role with nothing suitable is fine while
-  // the others fill a page (no sundress at 45 °F just because singles are
-  // empty).
-  let pool = [];
-  for (const edge of temp == null ? [0] : FLOOR_EDGES) {
-    pool = poolAt(items, temp, edge, pairing, pageCap);
-    if (pool.length >= pageCap) break;
-  }
-  if (!pool.length && temp != null) pool = poolAt(items, null, 0, pairing, pageCap);
+  const spec = temp == null ? null : spectrumOf(items, temp, pairing, pageCap);
+  const pool = spec ? spec.pool : poolOf(items, pairing, pageCap);
 
   // :412-427 — memory as of today (today's own entries ignored: same-date reruns stay stable).
   const picks = derivePicks(eventsOf(history), seed);
@@ -740,19 +847,63 @@ function buildCandidates(opts) {
 
   const chosen = [];
   const chosenKeys = new Set();
+  // The page's quotas (spec §7.2). Offline there are none and `room` is always
+  // true, so every loop below is the port's, look for look.
+  const dealt = { top: Object.fromEntries(TOP_KINDS.map(k => [k, 0])), legs: Object.fromEntries(LEG_SIDES.map(k => [k, 0])) };
+  let page = null;
+  const openPage = (n, index) => {
+    page = spec ? { ...quotasFor(spec, n, dealt, index, seed), taken: {} } : null;
+  };
+  const room = o => {
+    if (!page) return true;
+    const c = spec.cellOf(o);
+    return (page.taken[c] || 0) < (page.quota[c] || 0);
+  };
+  const count = o => {
+    if (!page) return;
+    const c = spec.cellOf(o);
+    page.taken[c] = (page.taken[c] || 0) + 1;
+    const cell = lookCell(o);
+    dealt.top[cell.top] += 1;
+    dealt.legs[cell.legs] += 1;
+  };
+  // A kind that ran dry gives its slots away (§7.2): one at a time, to the
+  // kind furthest below its exact share for this page that still has a look
+  // it can take — ties by the day's hash, like every other tie here.
+  const spill = (order, takeable, take, full) => {
+    if (!page) return;
+    while (!full()) {
+      const best = new Map();
+      for (const o of order) {
+        if (!takeable(o)) continue;
+        const c = spec.cellOf(o);
+        if (!best.has(c)) best.set(c, o);
+      }
+      if (!best.size) return;
+      const need = c => (page.exact[c] || 0) - (page.taken[c] || 0);
+      const cells = [...best.keys()].sort((a, b) => (Math.abs(need(b) - need(a)) > EPS ? need(b) - need(a)
+        : cmpHash(h(seed, "cell", "spill", b), h(seed, "cell", "spill", a))));
+      page.quota[cells[0]] = (page.quota[cells[0]] || 0) + 1;
+      take(best.get(cells[0]));
+    }
+  };
+
   const used = new Set();
   const take = o => {
     chosen.push(o);
     chosenKeys.add(key(o));
     for (const p of o) used.add(p.id);
+    count(o);
   };
+  openPage(pageCap, 1);
   for (const o of top) {                                   // :483-492
     if (chosen.length >= STAPLE_SLOTS) break;
     if (yP1.has(key(o))) continue;
-    if (!o.some(p => used.has(p.id))) take(o);
+    if (!o.some(p => used.has(p.id)) && room(o)) take(o);
   }
 
-  // :497-518 — coverage: the single longest-unseen garment, in its best look.
+  // :497-518 — coverage: the single longest-unseen garment, in its best look
+  // (with a temp: its best look of a kind with a slot left).
   const age = g => (g.id in lastP1 ? daysBetween(lastP1[g.id], seed) : 1e6);
   const bandIds = new Set();
   for (const o of pool) for (const p of o) bandIds.add(p.id);
@@ -762,34 +913,46 @@ function buildCandidates(opts) {
   aged.sort((a, b) => age(b) - age(a) || cmpHash(agedHash.get(a.id), agedHash.get(b.id)));
   if (aged.length && chosen.length < pageCap) {
     const want = aged[0].id;
-    const best = ranked.find(o => o.some(p => p.id === want) && !chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id)));
+    const best = ranked.find(o => o.some(p => p.id === want) && !chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id)) && room(o));
     if (best) take(best);
   }
 
   // :522-533 — fill page 1 (yesterday's looks sit out), then tiny-pool relaxation.
   for (const o of ranked) {
     if (chosen.length >= pageCap) break;
-    if (!chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id))) take(o);
+    if (!chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id)) && room(o)) take(o);
   }
   for (const o of ranked) {
     if (chosen.length >= pageCap) break;
-    if (!chosenKeys.has(key(o)) && !o.some(p => used.has(p.id))) take(o);
+    if (!chosenKeys.has(key(o)) && !o.some(p => used.has(p.id)) && room(o)) take(o);
   }
+  const free1 = o => !chosenKeys.has(key(o)) && !o.some(p => used.has(p.id));
+  spill(ranked.filter(o => !yP1.has(key(o))).concat(ranked.filter(o => yP1.has(key(o)))), free1, take, () => chosen.length >= pageCap);
 
   // :538-556 — deeper pages: yesterday's page 1 leads page 2; a garment once per page.
   const demoted = ranked.filter(o => yP1.has(key(o)));
   const deepOrder = demoted.concat(ranked.filter(o => !yP1.has(key(o))));
+  let index = 1;
   while (chosen.length < Math.min(cap, pool.length)) {
     const pageUsed = new Set();
     let pageCount = 0;
-    for (const o of deepOrder) {
-      if (pageCount >= perPage || chosen.length >= cap) break;
-      if (chosenKeys.has(key(o)) || o.some(p => pageUsed.has(p.id))) continue;
+    index += 1;
+    const slots = Math.min(perPage, cap - chosen.length);
+    openPage(slots, index);
+    const put = o => {
       chosen.push(o);
       chosenKeys.add(key(o));
       for (const p of o) pageUsed.add(p.id);
       pageCount += 1;
+      count(o);
+    };
+    for (const o of deepOrder) {
+      if (pageCount >= perPage || chosen.length >= cap) break;
+      if (chosenKeys.has(key(o)) || o.some(p => pageUsed.has(p.id)) || !room(o)) continue;
+      put(o);
     }
+    spill(deepOrder, o => !chosenKeys.has(key(o)) && !o.some(p => pageUsed.has(p.id)), put,
+      () => pageCount >= slots || chosen.length >= cap);
     if (pageCount === 0) break;
   }
   return chosen.slice(0, cap).map(pieces => ({ key: key(pieces), pieces }));
@@ -805,7 +968,7 @@ function buildCandidates(opts) {
 // devices lay the grid out the same way. No band (weather offline) or a band
 // word the hub does not know (D2): catalogue order, i.e. by id.
 //
-// Unlike `eligible` this NEVER drops an item: an accessory is never weather-
+// Like the deal since §7, this NEVER drops an item: an accessory is never weather-
 // hidden (spec §4.1), the weather only reorders the page.
 function accessoryOrder(items, band) {
   const list = [...(items || [])];
@@ -830,10 +993,11 @@ function toWorkerShape(combo) {
 module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
-  BAND_WARMTH, WARMTH_LEVELS, FIT, EDGE, FIT_PTS_PER_DEG, fitAttrs, fitOf, fitFields, fitTarget, FIT_WORDS,
+  BAND_WARMTH, WARMTH_LEVELS, FIT, FIT_PTS_PER_DEG, fitAttrs, fitFields, fitTarget, FIT_WORDS,
+  SPECTRUM_K, LEGS_CROSSOVER_F, LONG_SLEEVE_CROSSOVER_F, SLEEVELESS_CROSSOVER_F, SHARE_FLOOR, sharesAt, lookCell,
   GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder,
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
   derivePicks, recordOffer, pruneEvents, lastPage1, yesterdayPage1,
-  categoryOf, eligible, rankOf, buildCandidates, toWorkerShape,
+  categoryOf, rankOf, buildCandidates, toWorkerShape,
 };
