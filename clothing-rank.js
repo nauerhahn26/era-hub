@@ -912,11 +912,15 @@ function buildCandidates(opts) {
     if (!o.some(p => used.has(p.id)) && room(o)) take(o);
   }
 
-  // :497-518 — coverage: the single longest-unseen garment, in its best look
-  // (with a temp: its best look of a kind with a slot left).
+  // :497-518 — coverage: the single longest-unseen garment, in its best look.
+  // With a temp, only a garment page 1 can seat is a candidate — one with a
+  // look of a kind that has page-1 slots (§7.2). Without that, a kind whose
+  // share rounds to no page-1 slot (pants at 82 °F: 0.47 of seven) holds the
+  // longest-unseen garment every morning, finds no room and wastes the slot
+  // — measured 9/29, two tees never reached page 1 in ten days.
   const age = g => (g.id in lastP1 ? daysBetween(lastP1[g.id], seed) : 1e6);
   const bandIds = new Set();
-  for (const o of pool) for (const p of o) bandIds.add(p.id);
+  for (const o of pool) if (!page || (page.quota[spec.cellOf(o)] || 0) > 0) for (const p of o) bandIds.add(p.id);
   const agedHash = new Map();
   const aged = items.filter(g => bandIds.has(g.id) && !used.has(g.id));
   for (const g of aged) agedHash.set(g.id, h(seed, "aged", g.id));
