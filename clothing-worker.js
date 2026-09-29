@@ -55,7 +55,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder,
+const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder, fitFields,
         GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
@@ -437,11 +437,25 @@ const CATEGORY_ASK =
   '"set" is a matching top and bottom; "hair" is a hair accessory (clip, band, bow); ' +
   '"jewelry" is a necklace, bracelet, ring or earrings, ' +
   '"occasion": "fancy" only if it is party, holiday or dress-up wear, else "everyday", ';
+// How the garment is CUT (warmth coherence spec 2026-09-29 §2 D1, §3): the fit
+// gate reads sleeve and leg length and, where it matters, how thick the piece
+// is. Asked in the SAME call that names a new photo, so a new garment costs
+// nothing extra and rides the shared-tag dedup like every other word; the
+// catalogue a refit has not reached yet reads the legacy fallback. Weight is
+// asked of a long sleeve and a jacket only (9/23 §2: a heavy tee is half a
+// degree) and `unsure` is offered on purpose — a forced guess between "light"
+// and "mid" is worse than an honest shrug the table resolves to light.
+// Validated by clothing-rank.fitFields, list by list, like category/occasion.
+const FIT_ASK =
+  '"coverage": for a top, dress or set its sleeves, one of "sleeveless","short","long"; for pants or shorts its length, one of "short","long", ' +
+  '"legs": ONLY for a dress or set, one of "bare","covered" (covered = it reaches the ankle or comes with long pants), ' +
+  '"weight": ONLY for a long-sleeve top or a jacket, how warm the fabric is, one of "light","mid","heavy","unsure" (thin knit = light, sweatshirt or fleece = mid, wool or puffy = heavy), ';
 const INGEST_PROMPT =
   'This photo shows one clothing item, accessory or matching set laid flat. Reply with ONLY a JSON object, no prose: ' +
   '{"name": a SHORT name, 2-3 words max, like "Pink leggings" or "Daisy tee" (a child picks by picture; long names do not fit the button), ' +
   CATEGORY_ASK +
   '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
+  FIT_ASK +
   '"top_side": which EDGE of this photo the garment\'s top is nearest - the neckline/shoulders of a top or dress, the WAISTBAND of pants or shorts - one of "top","bottom","left","right", ' +
   '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the image bounding the garment - exclude floor, table, carpet, but never cut into the garment, ' +
   ATTRS_ASK + '}';
@@ -648,7 +662,11 @@ function shareTag(it) {
   log().appendTag({ id: it.id, hash: it.hash, name: it.name, category: it.category,
     occasion: it.occasion,
     warmth: it.warmth, colors: it.colors, pattern: it.pattern, statement: it.statement,
-    palette: it.palette, vibe: it.vibe, rotate_deg: it.rotate_deg || 0, crop: it.crop || {} });
+    palette: it.palette, vibe: it.vibe, rotate_deg: it.rotate_deg || 0, crop: it.crop || {},
+    // the fit words (spec 2026-09-29 §3), when the entry has them: an absent
+    // one is dropped by JSON.stringify, so a garment described before 9/29
+    // shares exactly the line it always did
+    coverage: it.coverage, weight: it.weight, legs: it.legs });
 }
 // The picture the pass sends: the 640 tile, scaled to the same 384 px single
 // billing tile the photo probe uses. The photo itself is never opened again.
@@ -828,7 +846,8 @@ async function namePhotos(cfg, cat, todo) {
                    occasion: known.occasion,
                    rotate_deg: legacy ? 0 : known.rotate_deg || 0, crop: known.crop || {},
                    colors: known.colors, pattern: known.pattern, statement: known.statement,
-                   palette: known.palette, vibe: known.vibe };
+                   palette: known.palette, vibe: known.vibe,
+                   coverage: known.coverage, weight: known.weight, legs: known.legs };
         } else if ((sharedTag = tagsFor(id, hash))) {
           // Another device in the family already asked about this garment —
           // by id (same filename) or by content hash (the same photo saved
@@ -840,7 +859,8 @@ async function namePhotos(cfg, cat, todo) {
                    occasion: sharedTag.occasion,
                    rotate_deg: sharedTag.rotate_deg || 0, crop: sharedTag.crop || {},
                    colors: sharedTag.colors, pattern: sharedTag.pattern, statement: sharedTag.statement,
-                   palette: sharedTag.palette, vibe: sharedTag.vibe };
+                   palette: sharedTag.palette, vibe: sharedTag.vibe,
+                   coverage: sharedTag.coverage, weight: sharedTag.weight, legs: sharedTag.legs };
           console.log("[clothing] " + f + " was already described by another device — no AI call");
         } else {
           const probe = path.join(ITEMS(), "_probe.jpg");
@@ -887,12 +907,22 @@ async function namePhotos(cfg, cat, todo) {
         // `category` and `occasion` are rewritten from `meta`, which on a
         // redraw is the entry's own word (so a parent's "jacket" survives a
         // tile repair) and on a shared tag is the family's.
+        // The fit words (spec 2026-09-29 §3) go through fitFields for the
+        // category the entry ENDS UP with, so a redraw of a parent's jacket
+        // keeps a jacket's words. `fitAt` is the refit pass's one-way marker:
+        // a model that looked at this photo today has answered the refit's
+        // question too, and so has a shared line that says how it is cut; a
+        // line written before 9/29 has not, and leaves the garment to refit.
+        const category = CATEGORIES.has(meta.category) ? meta.category : "top";
+        const fit = fitFields(meta, category);
+        const fitKnown = usedAi || (sharedTag && (sharedTag.coverage || sharedTag.weight || sharedTag.legs));
         cat.items[f] = { ...(known || {}), id, ok: true, name: shortLabel(meta.name),
           rotate_deg: rot, crop: hint || {}, exif: orient,
-          category: CATEGORIES.has(meta.category) ? meta.category : "top",
+          category,
           occasion: OCCASIONS.includes(meta.occasion) ? meta.occasion : "everyday",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any",
-          ...attributes(meta), hash, ...(usedAi || sharedTag ? { attrsAt: todayKey() } : {}) };
+          ...attributes(meta), ...fit, hash, ...(usedAi || sharedTag ? { attrsAt: todayKey() } : {}),
+          ...(fitKnown ? { fitAt: todayKey() } : {}) };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
         // Only a real answer is worth sharing: a garment described FROM the
         // shared log is already in it, and a tile repair learned nothing new.

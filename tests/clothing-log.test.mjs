@@ -446,6 +446,31 @@ test("a shared tag carries the occasion the model gave it and the hide a parent 
   assert.equal("manual" in plain, false);
 });
 
+// Warmth coherence (spec 2026-09-29 §2 D4, §3): the fit words ride the shared
+// line like occasion does — carried when the line really has them, through
+// their lists, and absent otherwise, so a pre-9/29 line normalizes to exactly
+// what it always did (the snapshot below is untouched).
+test("a shared tag carries coverage, weight and legs when it has them — and only valid ones", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-29T09:00:00Z", id: "item_fleece", category: "top", coverage: "long", weight: "heavy", colors: ["gray"] },
+    { t: "2026-09-29T09:00:01Z", id: "item_sun", category: "dress", coverage: "sleeveless", legs: "bare", colors: ["red"] },
+    { t: "2026-09-29T09:00:02Z", id: "item_guess", category: "top", coverage: "long", weight: "unsure", colors: ["navy"] },
+    { t: "2026-09-29T09:00:03Z", id: "item_junk", category: "top", coverage: "elbow", weight: 3, legs: "yes", colors: ["navy"] },
+    { t: "2026-09-29T09:00:04Z", id: "item_plain", category: "top", colors: ["blue"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const fleece = log.tagsFor(m, "item_fleece");
+  assert.equal(fleece.coverage, "long");
+  assert.equal(fleece.weight, "heavy");
+  assert.equal(log.tagsFor(m, "item_sun").legs, "bare");
+  assert.equal(log.tagsFor(m, "item_guess").weight, "unsure", "the model's own unsure travels as it was said");
+  const junk = log.tagsFor(m, "item_junk");
+  for (const k of ["coverage", "weight", "legs"]) assert.equal(k in junk, false, "a bad " + k + " is dropped, the line stands");
+  assert.equal(junk.category, "top");
+  const plain = log.tagsFor(m, "item_plain");
+  for (const k of ["coverage", "weight", "legs"]) assert.equal(k in plain, false, "a line without them says nothing");
+});
+
 // The file's rule for a bad OPTIONAL field is already settled by normalizeTag:
 // a warmth that is neither a word nor a level, a rotate_deg that is not a
 // number, a crop that is not an object — the FIELD is dropped and the line

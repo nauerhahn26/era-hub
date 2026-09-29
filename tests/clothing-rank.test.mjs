@@ -1254,6 +1254,38 @@ describe("the manual fields ride through the pure module (accessories spec §3.2
   });
 });
 
+describe("fitFields — the three fit words through their lists (spec 2026-09-29 §3, D1/D4)", () => {
+  test("coverage by the garment's own list; legs on a dress or set only; weight only where it is asked", () => {
+    assert.deepEqual(R.fitFields({ coverage: "Long", weight: " MID ", legs: "bare" }, "top"),
+      { coverage: "long", weight: "mid" }, "a top has no legs; words fold like every other whitelist");
+    assert.deepEqual(R.fitFields({ coverage: "sleeveless", legs: "covered", weight: "heavy" }, "dress"),
+      { coverage: "sleeveless", legs: "covered" }, "weight is asked only of a long sleeve or a jacket");
+    assert.deepEqual(R.fitFields({ coverage: "long", legs: "covered", weight: "unsure" }, "set"),
+      { coverage: "long", legs: "covered", weight: "unsure" }, "the model may say unsure; the deal reads it light");
+    assert.deepEqual(R.fitFields({ coverage: "short" }, "shorts"), { coverage: "short" });
+    assert.deepEqual(R.fitFields({ coverage: "sleeveless" }, "pants"), {}, "pants have no sleeves to lack");
+    assert.deepEqual(R.fitFields({ weight: "heavy", coverage: "long" }, "jacket"), { coverage: "long", weight: "heavy" });
+    assert.deepEqual(R.fitFields({ weight: "heavy" }, "jacket"), { weight: "heavy" }, "a jacket's weight stands on its own");
+    assert.deepEqual(R.fitFields({ coverage: "long", weight: "heavy", legs: "bare" }, "shoes"), {},
+      "an accessory that is not a jacket carries none of them");
+    assert.deepEqual(R.fitFields({ coverage: "short", weight: "heavy" }, "top"), { coverage: "short" },
+      "a heavy tee is a word the prompt never asked for (9/23 §2: half a degree)");
+    assert.deepEqual(R.fitFields({ coverage: ["long"], weight: 2, legs: true }, "dress"), {}, "a word is a string");
+    assert.deepEqual(R.fitFields(null, "top"), {});
+  });
+  test("a parent's word never says unsure", () => {
+    assert.deepEqual(R.fitFields({ coverage: "long", weight: "unsure" }, "top", { parent: true }), { coverage: "long" });
+    assert.deepEqual(R.fitFields({ coverage: "long", weight: "mid" }, "top", { parent: true }), { coverage: "long", weight: "mid" });
+    assert.deepEqual(R.fitFields({ weight: "heavy" }, "top", { parent: true, coverage: "long" }), { weight: "heavy" },
+      "the sheet sends the one row a parent changed: the entry's own long sleeve is what admits the weight");
+    assert.deepEqual(R.fitFields({ weight: "heavy" }, "top", { parent: true, coverage: "short" }), {});
+  });
+  test("attributes() stays the taste whitelist: the fit words are not its business", () => {
+    assert.deepEqual(Object.keys(R.attributes({ colors: ["navy"], coverage: "long", weight: "mid", legs: "bare" })).sort(),
+      ["colors", "statement"]);
+  });
+});
+
 describe("hub deviation (W1, A4-4): items are sorted by id before pooling", () => {
   test("a shuffled item list deals the identical key list", () => {
     const items = [];

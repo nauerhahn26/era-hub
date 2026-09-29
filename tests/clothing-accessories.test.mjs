@@ -336,6 +336,86 @@ test("a garment another device described arrives with its occasion and costs no 
   assert.equal(it.occasion, "fancy", "the occasion rides along, or this device asks for it again");
 });
 
+// ---- the fit words at ingest (warmth coherence spec 2026-09-29 §2 D1, §3) --
+//
+// The same one call that names and files a new photo now says how it is CUT:
+// `coverage` (sleeves, or a bottom's length), `legs` (a dress or set's), and
+// `weight` for a long sleeve or a jacket — so a new garment costs nothing
+// extra and the fit gate reads real words instead of the legacy fallback.
+
+test("the ingest prompt asks for coverage, legs and weight — weight only for a long sleeve or a jacket", async () => {
+  const D = dataDir("fitingest"), DRIVE = path.join(TMP, "fitingest-drive");
+  fs.mkdirSync(path.join(DRIVE, "clothing"), { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: DRIVE }));
+  photo(D, "a-cardigan.jpg");
+  photo(D, "b-sundress.jpg");
+  photo(D, "c-tee.jpg");
+  withKey(D);
+  const before = asks.length;
+  queue.push(
+    { ...ANSWER, name: "Grey sweatshirt", category: "top", coverage: "long", weight: "mid", legs: "bare" },
+    { ...ANSWER, name: "Star sundress", category: "dress", coverage: "Sleeveless", legs: "bare", weight: "heavy" },
+    { ...ANSWER, name: "Clover tee", category: "top", coverage: "elbow", weight: "unsure" },
+  );
+  await build(D, "dev-fitingest");
+
+  const ask = asks[before];
+  assert.match(ask, /"coverage": /, "the prompt asks how the garment is cut");
+  assert.match(ask, /"sleeveless","short","long"/, "…in the three sleeve words");
+  assert.match(ask, /"legs": /);
+  assert.match(ask, /"bare","covered"/);
+  assert.match(ask, /"weight": /);
+  assert.match(ask, /"light","mid","heavy","unsure"/, "unsure is allowed: a guess is worse than no answer");
+  assert.match(ask, /ONLY for a long-sleeve top or a jacket/, "and it says whose weight it wants");
+
+  const items = catalogOf(D);
+  const a = items["a-cardigan.jpg"], b = items["b-sundress.jpg"], c = items["c-tee.jpg"];
+  assert.equal(a.coverage, "long");
+  assert.equal(a.weight, "mid");
+  assert.equal("legs" in a, false, "a top has no legs to be bare");
+  assert.equal(b.coverage, "sleeveless", "words fold like every other whitelist");
+  assert.equal(b.legs, "bare");
+  assert.equal("weight" in b, false, "a dress is not asked its weight, so it keeps none");
+  assert.equal("coverage" in c, false, "a word outside the list is absent — the legacy fallback covers it");
+  assert.equal("weight" in c, false, "…and a weight with no long sleeve under it is dropped");
+  for (const it of [a, b, c]) assert.equal(it.fitAt, today(), it.name + ": a real answer is the refit's marker too");
+
+  // …and the family gets the words, so the other tablet never asks.
+  const f = path.join(DRIVE, "clothing", ".era", "tags", "dev-fitingest.jsonl");
+  const lines = fs.readFileSync(f, "utf8").trim().split("\n").map(JSON.parse);
+  const line = lines.find(l => l.name === "Grey sweatshirt");
+  assert.equal(line.coverage, "long");
+  assert.equal(line.weight, "mid");
+  assert.equal(lines.find(l => l.name === "Star sundress").legs, "bare");
+  assert.equal("coverage" in lines.find(l => l.name === "Clover tee"), false, "nothing is invented on the way out");
+});
+
+test("a garment another device described arrives with its coverage, weight and legs, and costs no call", async () => {
+  const D = dataDir("fitfromtag");
+  const rel = photo(D, "fleece.jpg"), rel2 = photo(D, "old.jpg");
+  withKey(D);
+  const f = path.join(D, "clothing", ".era", "tags", "dev-other.jsonl");
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, [
+    { t: "2026-09-29T10:00:00.000Z", id: idFor(rel), name: "Fleece", category: "top", warmth: "cool",
+      coverage: "long", weight: "heavy", colors: ["gray"], rotate_deg: 0, crop: {} },
+    // a line written before 9/29: no fit words at all
+    { t: "2026-09-16T10:00:00.000Z", id: idFor(rel2), name: "Old tee", category: "top", warmth: "warm",
+      colors: ["red"], rotate_deg: 0, crop: {} },
+  ].map(l => JSON.stringify(l) + "\n").join(""));
+  const before = asks.length;
+  await build(D, "dev-fitfromtag");
+
+  assert.equal(asks.length, before, "the family had already paid for both");
+  const it = catalogOf(D)[rel];
+  assert.equal(it.coverage, "long");
+  assert.equal(it.weight, "heavy");
+  assert.equal(it.fitAt, today(), "a line that says how it is cut is as good as asking");
+  const old = catalogOf(D)[rel2];
+  assert.equal("coverage" in old, false, "an old line says nothing about the cut");
+  assert.equal("fitAt" in old, false, "…so the refit pass still owes it a look");
+});
+
 // ---- T4: the manual sweep (spec §3.4) --------------------------------------
 
 test("a parent's own edit outranks the model on the very next re-sort", async () => {

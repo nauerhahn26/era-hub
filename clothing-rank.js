@@ -517,6 +517,56 @@ function eligible(items, cat, temp, edge = EDGE) {
   return ofCat.filter(i => { const f = fitOf(i); return temp <= f.hi && temp >= f.lo - edge; });
 }
 
+// fitFields(meta, category, {parent}) → the subset of {coverage, weight, legs}
+// a catalogue entry, a shared tag line or a manual edit may carry for a garment
+// of `category` (spec 2026-09-29 §3). The ingest prompt, the refit pass and the
+// hold sheet's route all go through it, so the words the gate reads can only
+// ever be words the gate knows — the same rule attributes() keeps for taste
+// (which deliberately stays taste-only: a refit must never re-open a colour).
+// Each field is a word from its own list, folded like every other whitelist;
+// anything else is ABSENT, never guessed, and the legacy fallback (D1) covers
+// the gap:
+//   coverage  top / dress / set / jacket: sleeveless|short|long;
+//             pants / shorts: short|long (a capri is a short pant).
+//   legs      a dress or a set only: bare|covered.
+//   weight    light|mid|heavy, or the model's `unsure` (→ light in fitAttrs,
+//             9/23 §2) — never from a parent ({parent: true}, the sheet has no
+//             such chip, D4). Kept only where the prompt asks it: a jacket, or a
+//             garment whose coverage is long (pants are long unless told
+//             otherwise). A heavy TEE is a word nobody asked for — 9/23 §2
+//             measured the difference at half a degree — and in FIT it would
+//             close a tee's hot end, so it is dropped rather than obeyed.
+// opts.coverage is the entry's stored coverage, for an edit that sends a
+// weight alone. Returns {} for anything that is neither a garment nor a jacket.
+const FIT_COVERAGE = {
+  top: COVERAGES.top, dress: COVERAGES.single, set: COVERAGES.single, jacket: COVERAGES.top,
+  pants: COVERAGES.bottom, shorts: COVERAGES.bottom,
+};
+const MODEL_WEIGHTS = new Set([...WEIGHTS, "unsure"]);
+function fitFields(meta, category, opts = {}) {
+  const m = meta && typeof meta === "object" ? meta : {};
+  const cat = String(category || "").toLowerCase();
+  const allowed = lookup(FIT_COVERAGE, cat);
+  if (!allowed) return {};
+  const out = {};
+  const coverage = fitWord(m.coverage, allowed);
+  if (coverage) out.coverage = coverage;
+  // opts.coverage: the entry's stored word, for an edit that names the weight
+  // alone (the sheet sends only the rows a parent changed, D4).
+  const cov = coverage || fitWord(opts.coverage, allowed) || (cat === "pants" ? "long" : "");
+  const long = cat === "jacket" || cov === "long";
+  const weight = fitWord(m.weight, opts.parent ? WEIGHTS : MODEL_WEIGHTS);
+  if (weight && long) out.weight = weight;
+  if (cat === "dress" || cat === "set") { const legs = fitWord(m.legs, LEGS); if (legs) out.legs = legs; }
+  return out;
+}
+// The words themselves, for a door that has to name them back to a parent
+// (server.js /clothing/item) — the lists above, never a copy.
+const FIT_WORDS = {
+  coverage: cat => (lookup(FIT_COVERAGE, String(cat || "").toLowerCase()) ? [...lookup(FIT_COVERAGE, String(cat).toLowerCase())] : []),
+  weight: [...WEIGHTS], legs: [...LEGS],
+};
+
 // ---- the rank (outfit_set.py:434-451, minus dress_bonus — no "dressy" here) --
 //
 // ctx = {seed, pairing (normalised), favorites (Set of ids), picks, lastP1,
@@ -775,7 +825,7 @@ function toWorkerShape(combo) {
 module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
-  BAND_WARMTH, WARMTH_LEVELS, FIT, EDGE, FIT_PTS_PER_DEG, fitAttrs, fitOf,
+  BAND_WARMTH, WARMTH_LEVELS, FIT, EDGE, FIT_PTS_PER_DEG, fitAttrs, fitOf, fitFields, FIT_WORDS,
   GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder,
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
