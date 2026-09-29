@@ -6,7 +6,7 @@
 // migration-design.md).
 //
 // Pure: no file access, no clock reads, no randomness. Everything the deal
-// depends on comes in as an argument — the items, the weather band, the seed (the
+// depends on comes in as an argument — the items, the planning °F, the seed (the
 // family's calendar day) and the history — so a same-day rebuild on any
 // device reproduces the same 21, and the variety gate runs in memory.
 //
@@ -28,14 +28,25 @@
 //         the same way on every device (the original's ties break by catalogue
 //         order, which the hub does not share between devices).
 //
-// Two more places take a hub-side default where the original's input cannot
-// occur here (the hub tags warmth with a word and only emits the four bands);
-// unreachable on hub data today, but a parity audit should know them:
-//   (D1)  WARMTH_LEVELS: an unknown or missing warmth word is level {1,2,3} —
-//         never gated out (spec §3.1 item 4). The original (:397, :402) tags
-//         an untagged bottom level 2 and an untagged dress/set level 1.
-//   (D2)  eligible: an unknown band word gates nothing, like band null. The
-//         original (:394) defaults an unknown band to levels {1,2}.
+// One place takes a hub-side default where the original's input cannot occur
+// here (the hub tags warmth with a word); a parity audit should know it:
+//   (D1)  WARMTH_LEVELS: an unknown or missing warmth word is level {1,2,3}
+//         (spec §3.1 item 4). The original (:397, :402) tags an untagged
+//         bottom level 2 and an untagged dress/set level 1. Since 9/29 only
+//         accessoryOrder reads levels; the deal does not.
+//
+// REPLACED 9/29, a deliberate break from the port (dad 9/23: "all clothing
+// should be gated by the weather, including tops"; 9/29, after an 81 °F board
+// dealt 7 long sleeves and 11 leggings in 18 looks — spec docs/superpowers/
+// specs/2026-09-29-warmth-coherence-and-dress-up.md §1-§2, amending
+// 2026-09-23-warmth-model-design.md §2-§3): the band gate (outfit_set.py
+// :181, :394-402 — tops never gated, bottoms/singles by BAND_WARMTH level, the
+// hub's neighbour-band widen, and the old (D2) unknown-band rule). The deal
+// now gates EVERY role by the planning °F against a comfort range derived
+// from each garment's (role, coverage, weight) — FIT / fitOf / eligible below
+// — with the edge on the cold side only, ranks by fit, and drops `occasion
+// "fancy"` at its door (spec §2 D3). BAND_WARMTH stays: accessoryOrder reads
+// it; buildCandidates accepts `band` and ignores it.
 //
 // Added 9/17 with no counterpart in the original (accessories spec
 // docs/superpowers/specs/2026-09-17-accessories-design.md §3.1, §4.1): the
@@ -64,8 +75,8 @@ const YES_WEIGHT = 1.0;        // she gazed Yes on the confirm page: a confirmed
 const INFERRED_WEIGHT = 0.5;   // no Yes that day: her last-selected outfit, inferred
 const SINGLE_STYLE = 55;       // a dress/set's style score (outfit_set.py:435, :465)
 
-// allowed warmth LEVEL of the bottom/dress per band (outfit_set.py:181);
-// tops are never gated
+// allowed warmth LEVEL per band (outfit_set.py:181). Since 9/29 the deal no
+// longer reads it (the fit gate below replaced it); accessoryOrder does.
 const BAND_WARMTH = {
   hot: new Set([1]), warm: new Set([1, 2]), cool: new Set([2, 3]), cold: new Set([3]),
 };
@@ -311,16 +322,6 @@ function yesterdayPage1(history, day) {
   return new Set(page1.filter(Array.isArray).map(ids => ids.join("+")));
 }
 
-// ---- the band gate (spec §3.4, plan W3) ------------------------------------
-//
-// outfit_set.py:397-402 gates bottoms and singles by BAND_WARMTH and never
-// gates tops. The hub composes that with its own "widen when < 2" rule
-// (clothing-worker.js forBand): a gated category with fewer than two exact
-// matches takes the neighbour band's levels too, and if that is still empty
-// the whole category is dealt — the board is never emptied by the weather.
-
-const BANDS = ["hot", "warm", "cool", "cold"];
-
 // ---- the eleven kinds (accessories spec §3.1, 9/17 — no original) -----------
 //
 // Five GARMENT kinds are pooled into looks exactly as outfit_set.py pooled
@@ -363,33 +364,147 @@ function byId(a, b) {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-function levelsMeet(item, allowed) {
-  for (const l of WARMTH_LEVELS(item.warmth)) if (allowed.has(l)) return true;
-  return false;
+// ---- the fit gate (spec 2026-09-29 §2 D1/D2, amending 2026-09-23 §2-§3) ----
+//
+// A garment's warmth is how much it covers times how thick it is (9/23 §2),
+// so each garment carries `coverage` (sleeve or leg length — shape, which
+// vision reads well) and, on the rungs where it matters, `weight`. FIT turns
+// (role, coverage, weight) into a comfort range in °F. The table lives HERE:
+// dad tunes garments on the hold sheet, never the table (9/23). What is fixed
+// is not these numbers but what the board may deal at each temperature — the
+// threshold table in spec 2026-09-29 §2 D2, asserted over her wardrobe's shape
+// by tests/clothing-fit.test.mjs. Move a row, run the harness.
+//
+// Starting point: the 9/23 §3 table, itself the published consensus (tank ≥ 80,
+// tee + shorts 72-80, short sleeve + pants 60-66, long sleeve + pants 50-60,
+// jacket + warm pants 40-50). Open ends are ±Infinity.
+const COVERAGES = {
+  top: new Set(["sleeveless", "short", "long"]),
+  bottom: new Set(["short", "long"]),
+  single: new Set(["sleeveless", "short", "long"]),   // its top half
+};
+const WEIGHTS = new Set(["light", "mid", "heavy"]);   // `unsure` is not one: it resolves to light
+const LEGS = new Set(["bare", "covered"]);
+const INF = Infinity;
+const FIT = {
+  top: {
+    // weight is never asked of a sleeveless or short-sleeve top (9/23 §2: a
+    // light vs heavy tee is ~0.5 °F, beneath the forecast's own noise); the
+    // mid/heavy cells exist so the table is total over anything a model writes
+    sleeveless: { light: [78, INF], mid: [78, INF], heavy: [78, INF] },
+    short: { light: [66, INF], mid: [62, 88], heavy: [62, 88] },
+    long: { light: [55, 75], mid: [48, 68], heavy: [-INF, 58] },
+  },
+  bottom: {
+    short: { light: [72, INF], mid: [72, INF], heavy: [72, INF] },
+    long: { light: [58, 85], mid: [48, 72], heavy: [-INF, 60] },
+  },
+};
+// How far BELOW its range a garment is still admitted (9/23 §3: the largest
+// published disagreement between the charts, so the gate is never more sure
+// than the evidence). One-sided since 9/29 (spec §2 D2): below its range a
+// garment is merely too light — nothing a jacket cannot fix; above it, it is
+// too warm, and that is the error she cannot undo. No warm-side edge at all.
+const EDGE = 8;
+// The fit term's weight in rankOf, per °F of distance from the range's centre.
+// Spec §2 D2: large enough that the better-suited looks fill the pages BEFORE
+// freshness (0-48) and jitter (0-15) decide among them.
+const FIT_PTS_PER_DEG = 6;
+
+const isTemp = t => typeof t === "number" && Number.isFinite(t);
+const fitWord = (v, allowed) => {
+  if (typeof v !== "string") return undefined;
+  const w = v.trim().toLowerCase();
+  return allowed.has(w) ? w : undefined;
+};
+// The legacy fallback (spec §2 D1): until refit reaches a garment the deal
+// reads its old warmth word — measured right for 59 of her 63 on 9/29. A word
+// the hub does not know ("any", missing, junk) is the modal top, a short
+// sleeve: degrade, never exclude by a guess (the spirit of D1 above). A
+// migrated int tag (W3): 1 is the hot/warm level → short, 2 and 3 → long.
+function legacyCoverage(warmth) {
+  if (warmth === 2 || warmth === 3) return "long";
+  const w = typeof warmth === "string" ? warmth.trim().toLowerCase() : "";
+  if (w === "hot") return "sleeveless";
+  if (w === "cool" || w === "cold") return "long";
+  return "short";
+}
+const isColdWord = w => w === 3 || (typeof w === "string" && w.trim().toLowerCase() === "cold");
+
+// fitAttrs(item) → {role, coverage, weight[, legs]} — the words the gate
+// reads, each one resolved: a real value when the item carries one that fits
+// its role, the fallback otherwise. null for anything that is not a garment
+// (an accessory is never weather-gated, accessories spec §4.1).
+//   coverage  top/single: the item's, else by warmth word (D1);
+//             pants → long, shorts → short (the category IS the coverage).
+//   weight    light|mid|heavy, else light — `unsure` is the row's modal
+//             weight biased light, never `mid` blindly (9/23 §2).
+//   legs      single only: bare|covered, else bare unless tagged cold (D1).
+function fitAttrs(item) {
+  const role = categoryOf(item);
+  if (role !== "top" && role !== "bottom" && role !== "single") return null;
+  const coverage = fitWord(item.coverage, COVERAGES[role])
+    || (role === "bottom" ? (String(item.category).toLowerCase() === "shorts" ? "short" : "long") : legacyCoverage(item.warmth));
+  const out = { role, coverage, weight: fitWord(item.weight, WEIGHTS) || "light" };
+  if (role === "single") out.legs = fitWord(item.legs, LEGS) || (isColdWord(item.warmth) ? "covered" : "bare");
+  return out;
 }
 
-// eligible(items, cat, band): the items of `cat` ("top" | "bottom" | "single")
-// that the band admits, in the order given. Tops are never gated; band null
-// (weather offline) or an unknown band word (D2) gates nothing.
-function eligible(items, cat, band) {
+// fitOf(item) → {lo, hi, centre} in °F, or null for a non-garment. A single
+// is its top half AND its legs (bare = shorts, covered = long pants of its
+// weight): comfortable where both halves are, so its range is the overlap.
+// Two halves that never overlap (a heavy long-sleeve dress with bare legs)
+// meet in the gap between them — the compromise zone, still ordered on the
+// ladder. The centre is the midpoint, or 10 °F inside an open range's closed
+// end (spec §2 D2).
+function fitOf(item) {
+  const a = fitAttrs(item);
+  if (!a) return null;
+  let lo, hi;
+  if (a.role === "single") {
+    const up = FIT.top[a.coverage][a.weight];
+    const down = a.legs === "covered" ? FIT.bottom.long[a.weight] : FIT.bottom.short[a.weight];
+    lo = Math.max(up[0], down[0]); hi = Math.min(up[1], down[1]);
+    if (lo >= hi) [lo, hi] = [hi, lo];
+  } else {
+    [lo, hi] = FIT[a.role][a.coverage][a.weight];
+  }
+  const centre = lo === -INF ? hi - 10 : hi === INF ? lo + 10 : (lo + hi) / 2;
+  return { lo, hi, centre };
+}
+
+// eligible(items, cat, temp, edge = EDGE): the items of `cat` ("top" |
+// "bottom" | "single") whose range admits the planning °F, in the order
+// given: inside [lo, hi], or up to `edge` degrees below lo — never above hi,
+// however wide the edge. temp null / not a finite number (weather offline; a
+// band word is not a temperature) gates nothing, as band null did. The floor
+// that keeps the board from emptying is the deal's, not a category's (a
+// category with nothing suitable is fine while the others fill a page) — it
+// lives in buildCandidates and widens `edge`.
+function eligible(items, cat, temp, edge = EDGE) {
   const ofCat = items.filter(i => categoryOf(i) === cat);
-  const levels = band == null ? undefined : lookup(BAND_WARMTH, band);
-  if (cat === "top" || !levels) return ofCat;
-  const exact = ofCat.filter(i => levelsMeet(i, levels));
-  if (exact.length >= 2) return exact;
-  const idx = BANDS.indexOf(band);
-  const wide = new Set(levels);
-  for (const nb of [BANDS[idx - 1], BANDS[idx + 1]]) if (nb) for (const l of BAND_WARMTH[nb]) wide.add(l);
-  const near = ofCat.filter(i => levelsMeet(i, wide));
-  return near.length ? near : ofCat;
+  if (!isTemp(temp)) return ofCat;
+  return ofCat.filter(i => { const f = fitOf(i); return temp <= f.hi && temp >= f.lo - edge; });
 }
 
 // ---- the rank (outfit_set.py:434-451, minus dress_bonus — no "dressy" here) --
 //
-// ctx = {seed, pairing (normalised), favorites (Set of ids), picks, lastP1}.
-// fresh: the look is as fresh as its LEAST fresh piece; a piece never on page
-// 1 counts as FRESH_CAP_DAYS + 1 days old. Every term is an integer, so the
-// sort below is exact.
+// ctx = {seed, pairing (normalised), favorites (Set of ids), picks, lastP1,
+// temp}. fresh: the look is as fresh as its LEAST fresh piece; a piece never
+// on page 1 counts as FRESH_CAP_DAYS + 1 days old. fit (9/29, no original —
+// spec 2026-09-29 §2 D2): the look is as suited as its LEAST suited piece,
+// −FIT_PTS_PER_DEG per °F that piece sits from its range's centre, rounded;
+// no temp (weather offline) is no fit term, so every rank is the port's.
+// Every term is an integer, so the sort below is exact.
+function fitPts(pieces, temp) {
+  if (!isTemp(temp)) return 0;
+  let worst = 0;
+  for (const p of pieces) {
+    const f = fitOf(p);
+    if (f) worst = Math.max(worst, Math.abs(temp - f.centre));
+  }
+  return -Math.round(FIT_PTS_PER_DEG * worst);
+}
 function rankOf(pieces, ctx) {
   const style = pieces.length === 2 ? styleScore(pieces[0], pieces[1], ctx.pairing) : SINGLE_STYLE;
   const fav = pieces.some(p => ctx.favorites.has(p.id)) ? 10 : 0;   // W2: favourites Set
@@ -401,44 +516,25 @@ function rankOf(pieces, ctx) {
   const fresh = Math.min(gap, FRESH_CAP_DAYS) * FRESH_PTS_PER_DAY;
   const key = comboKey(pieces);
   const loved = (ctx.picks[key] || 0) >= 2 ? LOVED_PTS : 0;
-  return style + fav + fresh + loved + hmod(ctx.seed, JITTER_PTS, key);
+  return style + fav + fresh + loved + fitPts(pieces, ctx.temp) + hmod(ctx.seed, JITTER_PTS, key);
 }
 
 function cmpHash(a, b) {   // I4: BigInt comparison, never subtraction
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-// ---- buildCandidates (outfit_set.py:376-557) --------------------------------
+// ---- the pool (outfit_set.py:397-410) ----------------------------------------
 //
-// Returns the flat ordered list of {key, pieces} for the day: page 1 first
-// (staples, the coverage slot, the freshest fill — garment-distinct), then
-// the deeper pages. Pure: same inputs → same list.
-function buildCandidates(opts) {
-  const seed = opts.seed;
-  // The seed is the family's day key and nothing else: a Date, a timestamp or
-  // a number would hash to a different deal than the day's on another device.
-  if (typeof seed !== "string" || !DATE_KEY.test(seed)) throw new TypeError("buildCandidates: seed must be a YYYY-MM-DD day key");
-  const band = opts.band == null ? null : opts.band;
-  const cap = opts.cap == null ? 21 : opts.cap;
-  const perPage = opts.perPage == null ? 7 : opts.perPage;
-  const pairing = normalizePairing(opts.pairing || { great: [], avoid: [] });
-  const favorites = opts.favorites instanceof Set ? opts.favorites : new Set(opts.favorites || []);
-  const history = opts.history || {};
-  // W1: catalogue order = id order. This is also the one door the wardrobe
-  // comes through, so it is where the two kinds of non-garment are dropped
-  // (accessories spec §4.1): an accessory is never pooled into a look, and a
-  // hidden item is out of the deal entirely. Everything below reads `items`
-  // and nothing else, so no pool can hold one. A wardrobe with neither deals
-  // exactly what it dealt before (the variety gate's 35 garments).
-  const items = [...(opts.items || [])]
-    .filter(i => i.hidden !== true && categoryOf(i) !== "accessory")
-    .sort(byId);
-  const pageCap = Math.min(perPage, cap);
-
-  // :397-410 — the pool: singles (standalone) then tops × bottoms.
-  const tops = eligible(items, "top", band);
-  const bottoms = eligible(items, "bottom", band);
-  const singles = eligible(items, "single", band).map(g => [g]);
+// singles (standalone) then tops × bottoms, every role through the fit gate at
+// `edge`. buildCandidates calls this once per step of its floor.
+const FLOOR_EDGES = [EDGE, 2 * EDGE, 3 * EDGE, 4 * EDGE, Infinity];
+// Case-folded like every other word the hub reads off a catalogue entry: a
+// shared line from another device is the same fancy as the hold sheet's.
+const isFancy = i => typeof i.occasion === "string" && i.occasion.trim().toLowerCase() === "fancy";
+function poolAt(items, temp, edge, pairing, pageCap) {
+  const tops = eligible(items, "top", temp, edge);
+  const bottoms = eligible(items, "bottom", temp, edge);
+  const singles = eligible(items, "single", temp, edge).map(g => [g]);
   const pairs = [];
   for (const t of tops)
     for (const b of bottoms)
@@ -467,13 +563,65 @@ function buildCandidates(opts) {
       for (const b of bottoms)
         if (!already.has(comboKey([t, b])) && styleScore(t, b, pairing) > 0) pairs.push([t, b]);
   }
-  const pool = singles.concat(pairs);
+  return singles.concat(pairs);
+}
+
+// ---- buildCandidates (outfit_set.py:376-557) --------------------------------
+//
+// Returns the flat ordered list of {key, pieces} for the day: page 1 first
+// (staples, the coverage slot, the freshest fill — garment-distinct), then
+// the deeper pages. Pure: same inputs → same list.
+//
+// opts.temp is the planning °F (the window's maximum, 9/23 §4 — the worker's
+// `w.t`); null means the weather is offline and nothing is gated. opts.band is
+// still accepted — the worker's offer record carries it — and decides nothing
+// here since 9/29 (spec 2026-09-29 §3).
+function buildCandidates(opts) {
+  const seed = opts.seed;
+  // The seed is the family's day key and nothing else: a Date, a timestamp or
+  // a number would hash to a different deal than the day's on another device.
+  if (typeof seed !== "string" || !DATE_KEY.test(seed)) throw new TypeError("buildCandidates: seed must be a YYYY-MM-DD day key");
+  const temp = isTemp(opts.temp) ? opts.temp : null;
+  const cap = opts.cap == null ? 21 : opts.cap;
+  const perPage = opts.perPage == null ? 7 : opts.perPage;
+  const pairing = normalizePairing(opts.pairing || { great: [], avoid: [] });
+  const favorites = opts.favorites instanceof Set ? opts.favorites : new Set(opts.favorites || []);
+  const history = opts.history || {};
+  // W1: catalogue order = id order. This is also the one door the wardrobe
+  // comes through, so it is where the two kinds of non-garment are dropped
+  // (accessories spec §4.1): an accessory is never pooled into a look, and a
+  // hidden item is out of the deal entirely. Everything below reads `items`
+  // and nothing else, so no pool can hold one. A wardrobe with neither deals
+  // exactly what it dealt before (the variety gate's 35 garments).
+  // Since 9/29 a garment a parent marked fancy goes the same way (spec
+  // 2026-09-29 §2 D3): it lives on the Dress up page and is never dealt — not
+  // even by the never-empty floor, which only ever reads `items`.
+  const items = [...(opts.items || [])]
+    .filter(i => i.hidden !== true && categoryOf(i) !== "accessory" && !isFancy(i))
+    .sort(byId);
+  const pageCap = Math.min(perPage, cap);
+
+  // The floor (9/23 §3, kept in spirit 9/29): "never empty the board". A day
+  // whose honest pool cannot fill ONE page widens the cold-side edge a step at
+  // a time — a garment too light for the day is nothing a jacket cannot fix —
+  // until a page fills or nothing colder is left to admit. Only a pool that
+  // is still EMPTY then deals the whole category, too-warm garments and all:
+  // one honest look beats any number of garments she cannot take off. The
+  // widen is deal-wide on purpose: a role with nothing suitable is fine while
+  // the others fill a page (no sundress at 45 °F just because singles are
+  // empty).
+  let pool = [];
+  for (const edge of temp == null ? [0] : FLOOR_EDGES) {
+    pool = poolAt(items, temp, edge, pairing, pageCap);
+    if (pool.length >= pageCap) break;
+  }
+  if (!pool.length && temp != null) pool = poolAt(items, null, 0, pairing, pageCap);
 
   // :412-427 — memory as of today (today's own entries ignored: same-date reruns stay stable).
   const picks = derivePicks(eventsOf(history), seed);
   const lastP1 = lastPage1(history, seed);
   const yP1 = yesterdayPage1(history, seed);
-  const ctx = { seed, pairing, favorites, picks, lastP1 };
+  const ctx = { seed, pairing, favorites, picks, lastP1, temp };
 
   // :434-453 — rank every look once; stable sort, descending.
   const key = comboKey;
@@ -593,7 +741,7 @@ function toWorkerShape(combo) {
 module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
-  BAND_WARMTH, WARMTH_LEVELS,
+  BAND_WARMTH, WARMTH_LEVELS, FIT, EDGE, FIT_PTS_PER_DEG, fitAttrs, fitOf,
   GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder,
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
