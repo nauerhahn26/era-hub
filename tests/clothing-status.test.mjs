@@ -313,3 +313,28 @@ test("a poll never sets the memory aside — quarantine belongs to the doors tha
   fs.writeFileSync(HISTORY, good);                 // the copy finishes
   assert.ok((await status()).picks.days > 0, "and the finished copy is read on the next poll");
 });
+
+// The refit pass's progress (warmth coherence spec 2026-09-29 §2 D1): every ok
+// garment or jacket the fit words describe, counted by its one-way `fitAt` —
+// the number an operator watches fall to zero after POST /clothing/refit
+// (plan phase 5). Accessories other than jackets are not counted: nothing
+// about a shoe's cut reaches the deal. Read off the catalogue on every poll,
+// like the accessories block.
+test("refit counts the garments still owed their cut, and the ones that have it", async () => {
+  const file = path.join(DATA, "wardrobe.json");
+  const cat = JSON.parse(fs.readFileSync(file, "utf8"));
+  const entries = Object.values(cat.items).filter(i => i.ok);
+  for (const it of entries) delete it.fitAt;
+  fs.writeFileSync(file, JSON.stringify(cat, null, 1));
+  let s = await status();
+  assert.deepEqual(s.refit, { pending: entries.length, done: 0 }, "nothing refit yet: every garment is owed");
+
+  entries[0].fitAt = TODAY;
+  entries[1].fitAt = TODAY;
+  entries[2].category = "shoes";                 // a shoe is not the fit words' business
+  delete entries[2].fitAt;
+  fs.writeFileSync(file, JSON.stringify(cat, null, 1));
+  s = await status();
+  assert.deepEqual(s.refit, { pending: entries.length - 3, done: 2 });
+  assert.equal(JSON.stringify(s.refit).includes("item_"), false, "counts, never ids");
+});

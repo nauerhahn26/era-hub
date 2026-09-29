@@ -560,6 +560,11 @@ function fitFields(meta, category, opts = {}) {
   if (cat === "dress" || cat === "set") { const legs = fitWord(m.legs, LEGS); if (legs) out.legs = legs; }
   return out;
 }
+// Is this a piece the fit words describe at all — a garment, or a jacket (its
+// weight)? The refit pass asks about these and nothing else, and
+// /clothing/status counts them, so the two can never disagree about what
+// "pending" means.
+const fitTarget = item => !!(item && lookup(FIT_COVERAGE, String(item.category || "").toLowerCase()));
 // The words themselves, for a door that has to name them back to a parent
 // (server.js /clothing/item) — the lists above, never a copy.
 const FIT_WORDS = {
@@ -825,7 +830,7 @@ function toWorkerShape(combo) {
 module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
-  BAND_WARMTH, WARMTH_LEVELS, FIT, EDGE, FIT_PTS_PER_DEG, fitAttrs, fitOf, fitFields, FIT_WORDS,
+  BAND_WARMTH, WARMTH_LEVELS, FIT, EDGE, FIT_PTS_PER_DEG, fitAttrs, fitOf, fitFields, fitTarget, FIT_WORDS,
   GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder,
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,

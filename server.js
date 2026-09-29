@@ -2871,6 +2871,21 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ started: true }));
     return;
   }
+  // POST /clothing/refit — the one-time refit pass (warmth coherence spec
+  // 2026-09-29 §2 D1): ask the cut of every garment catalogued before the
+  // ingest prompt did. An OPERATOR's door, run on one device: it spends the
+  // family's key, so this hub's own pages only; 202 and it runs behind like
+  // /clothing/regenerate, pulling Drive first so the other device's lines are
+  // read before anything is asked. /clothing/status's `refit` counts it down.
+  // Nothing else in the hub ever starts this pass.
+  if (req.method === "POST" && urlPath === "/clothing/refit") {
+    if (!ownDoor(req, res)) return;
+    Promise.resolve().then(() => drive.sync()).catch(() => {})
+      .then(() => clothing.refit()).catch(() => {});
+    res.writeHead(202, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ started: true }));
+    return;
+  }
   if (req.method === "GET" && urlPath === "/clothing/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(clothing.status()));

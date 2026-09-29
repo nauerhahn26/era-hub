@@ -55,7 +55,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder, fitFields,
+const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder, fitFields, fitTarget,
         GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
@@ -465,6 +465,12 @@ const INGEST_PROMPT =
 const ATTRS_PROMPT =
   'This picture shows one clothing item (or a matching set) on a white background. ' +
   'Reply with ONLY a JSON object, no prose: {' + ATTRS_ASK + '}';
+// The refit pass's one question (spec 2026-09-29 §2 D1): the cut of a garment
+// the hub already knows by name, from the tile on disk. The same words the
+// ingest prompt asks, and nothing the hub already has.
+const REFIT_PROMPT =
+  'This picture shows one clothing item (or a matching set) on a white background. ' +
+  'Reply with ONLY a JSON object, no prose: {' + FIT_ASK.replace(/,\s*$/, "") + '}';
 // clockwise turn that brings that edge to the top
 const SIDE_DEG = { top: 0, left: 90, bottom: 180, right: 270 };
 function turnFor(meta) {
@@ -774,6 +780,105 @@ async function describeCatalogued(cfg, cat) {
   return { attrsDone: done, attrsLeft: todo.length - done };
 }
 
+// ---- the refit pass (warmth coherence spec 2026-09-29 §2 D1, §3) ----------
+// The garments catalogued before the ingest prompt asked how a garment is
+// CUT. Modelled on the needs-attributes pass above, rule for rule — the same
+// ladder, ATTRS_SPACING_MS between calls, ATTRS_MAX_MISSES in a row and the
+// pass stops, `fitTriedAt` stamped BEFORE the answer is known, `fitAt` a
+// one-way door stamped only on a real answer or a shared-line adoption — with
+// ONE difference that is the whole point of it: nothing runs it but POST
+// /clothing/refit (workerData.refit). Not boot, not the morning tick, not a
+// regenerate, not a sync. Dad runs it on ONE device; the other adopts the
+// lines it publishes on its next sync (ingest's shared-tag path, or this pass
+// consulting the log first if it is ever run there too) and spends nothing.
+// That is the 9/21 hole — both devices describing the same twelve garments two
+// minutes apart — closed by procedure for this one pass (spec §2 D1).
+//
+// The model never overrules a parent: a fit word the family's own manual edit
+// set (this device's edits.json or another's manual line) is kept, and the
+// merged words go back through fitFields so a kept short sleeve drops the
+// model's weight with it.
+function manualWinner(it, edits) {
+  const own = edits[it.id];
+  const tag = tagsFor(it.id, it.hash);          // by id, else by hash (spec §3.1 item 1)
+  const cands = [];
+  if (own && typeof own === "object" && typeof own.t === "string") cands.push(own);
+  // Only a MANUAL winner: an ordinary tag line is the model talking.
+  if (tag && tag.manual === true && typeof tag.t === "string") cands.push(tag);
+  if (!cands.length) return null;
+  return cands.reduce((a, b) => (b.t > a.t ? b : a));
+}
+const FIT_KEYS = ["coverage", "weight", "legs"];
+function refitWords(it, said, edits) {
+  const win = manualWinner(it, edits);
+  const parent = {};
+  if (win) { const m = manualFields(win, it); for (const k of FIT_KEYS) if (k in m) parent[k] = m[k]; }
+  return fitFields({ ...fitFields(said, it.category), ...parent }, it.category, { coverage: parent.coverage });
+}
+async function refitCatalogued(cfg, cat) {
+  const day = todayKey();
+  const edits = readEdits();
+  const sweepProbe = () => { try { fs.rmSync(path.join(ITEMS(), "_attrs.jpg"), { force: true }); } catch {} };
+  const todo = Object.entries(cat.items).filter(([, it]) =>
+    it && it.ok && it.id && fitTarget(it) && hasTile(it.id) && !it.fitAt && it.fitTriedAt !== day);
+  let done = 0, misses = 0;
+  const post = () => { if (parentPort) parentPort.postMessage({ refit: { done, total: todo.length } }); };
+  post();
+  const giveUp = (i) => {
+    for (const [, rest] of todo.slice(i + 1)) rest.fitTriedAt = day;
+    saveCatalog(cat);
+  };
+  try {
+    for (let i = 0; i < todo.length; i++) {
+      const [file, it] = todo[i];
+      // the same once-ever hash backfill as the attrs pass: without it the
+      // "else by hash" half of the shared-log match is dead for exactly the
+      // wardrobe this pass exists to serve
+      if (!it.hash) {
+        try { it.hash = crypto.createHash("sha256").update(fs.readFileSync(path.join(CLOTHING(), file))).digest("hex"); }
+        catch {}
+      }
+      // The family paid for this garment's cut already: adopt, no call, no
+      // spacing, and publish nothing — the line is already in the log. A line
+      // written before 9/29 says nothing about the cut and is no answer.
+      const shared = tagsFor(it.id, it.hash);
+      if (shared && FIT_KEYS.some(k => shared[k])) {
+        Object.assign(it, refitWords(it, shared, edits), { fitAt: day });
+        saveCatalog(cat); done++; post();
+        continue;
+      }
+      if (!cfg) continue;              // no key: adopt what the family has, ask nothing
+      it.fitTriedAt = day;             // stamped before the outcome is known
+      saveCatalog(cat);
+      let meta = null, calledModel = false;
+      try {
+        const probe = attrsProbe(it.id);
+        calledModel = true;
+        meta = await askModel(cfg, probe, REFIT_PROMPT);
+        misses = 0;
+      } catch (e) {
+        console.error("[clothing] refit " + it.id + ": " + e.message);
+        if (calledModel) misses++;
+        const spent = /\bpermanent\b/.test(e.message) || /allowance spent/.test(e.message);
+        if (spent || misses >= ATTRS_MAX_MISSES) { giveUp(i); break; }
+      }
+      if (meta) {
+        Object.assign(it, refitWords(it, meta, edits), { fitAt: day });
+        done++;
+        saveCatalog(cat);
+        shareTag(it);                  // a real answer: the other device reads it instead of buying it
+      }
+      if (calledModel) await new Promise(r => setTimeout(r, ATTRS_SPACING_MS));
+      post();
+    }
+  } finally {
+    sweepProbe();
+    if (parentPort) parentPort.postMessage({ refit: null });
+  }
+  if (done) console.log("[clothing] refit " + done + " garment(s): the deal now reads how each is cut");
+  return { refitDone: done, refitLeft: todo.length - done };
+}
+
 // Ingest is TWO loops (W7). The first names the photos nobody has named; the
 // second describes the garments nobody has described (spec §3.1 item 3) — the
 // family's own wardrobe on the morning of the upgrade has no new photos at
@@ -1029,16 +1134,11 @@ function applyManual(cat) {
   let changed = 0;
   for (const it of Object.values(cat.items)) {
     if (!it || !it.ok || !it.id) continue;
-    const own = edits[it.id];
-    const tag = tagsFor(it.id, it.hash);          // by id, else by hash (spec §3.1 item 1)
-    const cands = [];
-    if (own && typeof own === "object" && typeof own.t === "string") cands.push(own);
     // Only a MANUAL winner: an ordinary tag line is the model talking, and the
     // model does not get to stamp manualAt (clothing-log carries `manual`/`t`
-    // on a manual winner alone).
-    if (tag && tag.manual === true && typeof tag.t === "string") cands.push(tag);
-    if (!cands.length) continue;
-    const win = cands.reduce((a, b) => (b.t > a.t ? b : a));
+    // on a manual winner alone). Shared with the refit pass (manualWinner).
+    const win = manualWinner(it, edits);
+    if (!win) continue;
     if (it.manualAt && win.t <= it.manualAt) continue;
     if (!Number.isFinite(Date.parse(win.t))) continue;   // a stamp nobody can read is not a clock
     const fields = manualFields(win, it);
@@ -1580,6 +1680,14 @@ async function regenerate(force) {
   // the wardrobe): never look at a new photo, never spend an AI request.
   const ing = workerData.rebuildOnly ? null
             : await ingest(); // no-op without a key or when everything is already cataloged
+  // The refit pass runs ONLY when POST /clothing/refit asked for this build
+  // (spec 2026-09-29 §2 D1) — see refitCatalogued. It needs the catalogue on
+  // disk, so a family with none has nothing to refit.
+  let refit = null;
+  if (workerData.refit) {
+    const rc = loadCatalog();
+    if (Object.values(rc.items).some(i => i && i.ok)) refit = await refitCatalogued(aiCfg(), rc);
+  }
   const busy = !!(ing && ing.busy);
   const quota = !!(ing && ing.quota);
   // What the shell needs to decide on a same-day retry: how many photos are
@@ -1589,7 +1697,9 @@ async function regenerate(force) {
     // are reported, never acted on: `left`/`quotaHit` above are the PHOTO
     // counters the shell's holdDay and the board's coaching read, and the pass
     // has no say over either (A4-8).
-    attrsDone: (ing && ing.attrsDone) || 0, attrsLeft: (ing && ing.attrsLeft) || 0 };
+    attrsDone: (ing && ing.attrsDone) || 0, attrsLeft: (ing && ing.attrsLeft) || 0,
+    // …and so does the refit pass, only on the build that ran it
+    ...(refit || {}) };
   const cat = loadCatalog();
   // The family's own word, re-applied before anything is dealt — on BOTH build
   // paths, because the one the route asks for is the re-sort (preflight 3).
