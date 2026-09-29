@@ -65,10 +65,17 @@ exact shape of her wardrobe (`tests/fixtures/wardrobe-shape.json`, generic names
 | any | at least one full page of looks; **no fancy garment, ever** |
 | ≥ 86 | no long-sleeve top; no long bottom |
 | ≥ 78 | **no long-sleeve top**; long bottoms ≤ 1 on page 1 and ≤ 3 in the deal (a staple or the coverage slot may carry one) |
-| 72–77 | no `mid`/`heavy` long sleeve; shorts and pants both present |
+| 72–77 | no `mid`/`heavy` long sleeve; shorts and pants both present (†) |
 | 62–71 | no sleeveless top on page 1; no `heavy` |
 | < 62 | no shorts, no bare-legged single, no sleeveless top |
 | < 54 | no short-sleeve top on page 1 (long sleeves lead); `mid`/`heavy` before `light` |
+
+(†) A **variety** verdict, judged on days that have a memory — every real morning. On a memoryless first
+day freshness is equal for every look and the fit term legitimately sweeps one bottom kind (measured 9/29:
+72 °F → all leggings, 77 °F → all shorts, both green from day 2, and dresses reach page 1 at 81 °F from
+day 2). The **coherence** verdicts (every other row) hold on every day including the first. Ruled 9/29 rather
+than invent a page-1 slot for the less-favoured kind: a rule dad never asked for, to fix a day the devices
+never have.
 
 Same fixture with `coverage`/`weight`/`legs` stripped (a catalogue refit has not reached) must hold the
 weaker legacy set: never empty, no `cool`/`cold`-tagged top at ≥ 78, no `hot`-tagged garment below 54,
