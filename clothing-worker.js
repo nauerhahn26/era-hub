@@ -55,7 +55,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder,
+const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder, fitFields, fitTarget,
         GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
@@ -437,11 +437,25 @@ const CATEGORY_ASK =
   '"set" is a matching top and bottom; "hair" is a hair accessory (clip, band, bow); ' +
   '"jewelry" is a necklace, bracelet, ring or earrings, ' +
   '"occasion": "fancy" only if it is party, holiday or dress-up wear, else "everyday", ';
+// How the garment is CUT (warmth coherence spec 2026-09-29 §2 D1, §3): the fit
+// gate reads sleeve and leg length and, where it matters, how thick the piece
+// is. Asked in the SAME call that names a new photo, so a new garment costs
+// nothing extra and rides the shared-tag dedup like every other word; the
+// catalogue a refit has not reached yet reads the legacy fallback. Weight is
+// asked of a long sleeve and a jacket only (9/23 §2: a heavy tee is half a
+// degree) and `unsure` is offered on purpose — a forced guess between "light"
+// and "mid" is worse than an honest shrug the table resolves to light.
+// Validated by clothing-rank.fitFields, list by list, like category/occasion.
+const FIT_ASK =
+  '"coverage": for a top, dress or set its sleeves, one of "sleeveless","short","long"; for pants or shorts its length, one of "short","long", ' +
+  '"legs": ONLY for a dress or set, one of "bare","covered" (covered = it reaches the ankle or comes with long pants), ' +
+  '"weight": ONLY for a long-sleeve top or a jacket, how warm the fabric is, one of "light","mid","heavy","unsure" (thin knit = light, sweatshirt or fleece = mid, wool or puffy = heavy), ';
 const INGEST_PROMPT =
   'This photo shows one clothing item, accessory or matching set laid flat. Reply with ONLY a JSON object, no prose: ' +
   '{"name": a SHORT name, 2-3 words max, like "Pink leggings" or "Daisy tee" (a child picks by picture; long names do not fit the button), ' +
   CATEGORY_ASK +
   '"warmth": which daytime weather suits it best, one of "hot","warm","cool","cold","any", ' +
+  FIT_ASK +
   '"top_side": which EDGE of this photo the garment\'s top is nearest - the neckline/shoulders of a top or dress, the WAISTBAND of pants or shorts - one of "top","bottom","left","right", ' +
   '"crop": {"x":0-1,"y":0-1,"w":0-1,"h":0-1} fractions of the image bounding the garment - exclude floor, table, carpet, but never cut into the garment, ' +
   ATTRS_ASK + '}';
@@ -451,6 +465,12 @@ const INGEST_PROMPT =
 const ATTRS_PROMPT =
   'This picture shows one clothing item (or a matching set) on a white background. ' +
   'Reply with ONLY a JSON object, no prose: {' + ATTRS_ASK + '}';
+// The refit pass's one question (spec 2026-09-29 §2 D1): the cut of a garment
+// the hub already knows by name, from the tile on disk. The same words the
+// ingest prompt asks, and nothing the hub already has.
+const REFIT_PROMPT =
+  'This picture shows one clothing item (or a matching set) on a white background. ' +
+  'Reply with ONLY a JSON object, no prose: {' + FIT_ASK.replace(/,\s*$/, "") + '}';
 // clockwise turn that brings that edge to the top
 const SIDE_DEG = { top: 0, left: 90, bottom: 180, right: 270 };
 function turnFor(meta) {
@@ -648,7 +668,11 @@ function shareTag(it) {
   log().appendTag({ id: it.id, hash: it.hash, name: it.name, category: it.category,
     occasion: it.occasion,
     warmth: it.warmth, colors: it.colors, pattern: it.pattern, statement: it.statement,
-    palette: it.palette, vibe: it.vibe, rotate_deg: it.rotate_deg || 0, crop: it.crop || {} });
+    palette: it.palette, vibe: it.vibe, rotate_deg: it.rotate_deg || 0, crop: it.crop || {},
+    // the fit words (spec 2026-09-29 §3), when the entry has them: an absent
+    // one is dropped by JSON.stringify, so a garment described before 9/29
+    // shares exactly the line it always did
+    coverage: it.coverage, weight: it.weight, legs: it.legs });
 }
 // The picture the pass sends: the 640 tile, scaled to the same 384 px single
 // billing tile the photo probe uses. The photo itself is never opened again.
@@ -756,6 +780,105 @@ async function describeCatalogued(cfg, cat) {
   return { attrsDone: done, attrsLeft: todo.length - done };
 }
 
+// ---- the refit pass (warmth coherence spec 2026-09-29 §2 D1, §3) ----------
+// The garments catalogued before the ingest prompt asked how a garment is
+// CUT. Modelled on the needs-attributes pass above, rule for rule — the same
+// ladder, ATTRS_SPACING_MS between calls, ATTRS_MAX_MISSES in a row and the
+// pass stops, `fitTriedAt` stamped BEFORE the answer is known, `fitAt` a
+// one-way door stamped only on a real answer or a shared-line adoption — with
+// ONE difference that is the whole point of it: nothing runs it but POST
+// /clothing/refit (workerData.refit). Not boot, not the morning tick, not a
+// regenerate, not a sync. Dad runs it on ONE device; the other adopts the
+// lines it publishes on its next sync (ingest's shared-tag path, or this pass
+// consulting the log first if it is ever run there too) and spends nothing.
+// That is the 9/21 hole — both devices describing the same twelve garments two
+// minutes apart — closed by procedure for this one pass (spec §2 D1).
+//
+// The model never overrules a parent: a fit word the family's own manual edit
+// set (this device's edits.json or another's manual line) is kept, and the
+// merged words go back through fitFields so a kept short sleeve drops the
+// model's weight with it.
+function manualWinner(it, edits) {
+  const own = edits[it.id];
+  const tag = tagsFor(it.id, it.hash);          // by id, else by hash (spec §3.1 item 1)
+  const cands = [];
+  if (own && typeof own === "object" && typeof own.t === "string") cands.push(own);
+  // Only a MANUAL winner: an ordinary tag line is the model talking.
+  if (tag && tag.manual === true && typeof tag.t === "string") cands.push(tag);
+  if (!cands.length) return null;
+  return cands.reduce((a, b) => (b.t > a.t ? b : a));
+}
+const FIT_KEYS = ["coverage", "weight", "legs"];
+function refitWords(it, said, edits) {
+  const win = manualWinner(it, edits);
+  const parent = {};
+  if (win) { const m = manualFields(win, it); for (const k of FIT_KEYS) if (k in m) parent[k] = m[k]; }
+  return fitFields({ ...fitFields(said, it.category), ...parent }, it.category, { coverage: parent.coverage });
+}
+async function refitCatalogued(cfg, cat) {
+  const day = todayKey();
+  const edits = readEdits();
+  const sweepProbe = () => { try { fs.rmSync(path.join(ITEMS(), "_attrs.jpg"), { force: true }); } catch {} };
+  const todo = Object.entries(cat.items).filter(([, it]) =>
+    it && it.ok && it.id && fitTarget(it) && hasTile(it.id) && !it.fitAt && it.fitTriedAt !== day);
+  let done = 0, misses = 0;
+  const post = () => { if (parentPort) parentPort.postMessage({ refit: { done, total: todo.length } }); };
+  post();
+  const giveUp = (i) => {
+    for (const [, rest] of todo.slice(i + 1)) rest.fitTriedAt = day;
+    saveCatalog(cat);
+  };
+  try {
+    for (let i = 0; i < todo.length; i++) {
+      const [file, it] = todo[i];
+      // the same once-ever hash backfill as the attrs pass: without it the
+      // "else by hash" half of the shared-log match is dead for exactly the
+      // wardrobe this pass exists to serve
+      if (!it.hash) {
+        try { it.hash = crypto.createHash("sha256").update(fs.readFileSync(path.join(CLOTHING(), file))).digest("hex"); }
+        catch {}
+      }
+      // The family paid for this garment's cut already: adopt, no call, no
+      // spacing, and publish nothing — the line is already in the log. A line
+      // written before 9/29 says nothing about the cut and is no answer.
+      const shared = tagsFor(it.id, it.hash);
+      if (shared && FIT_KEYS.some(k => shared[k])) {
+        Object.assign(it, refitWords(it, shared, edits), { fitAt: day });
+        saveCatalog(cat); done++; post();
+        continue;
+      }
+      if (!cfg) continue;              // no key: adopt what the family has, ask nothing
+      it.fitTriedAt = day;             // stamped before the outcome is known
+      saveCatalog(cat);
+      let meta = null, calledModel = false;
+      try {
+        const probe = attrsProbe(it.id);
+        calledModel = true;
+        meta = await askModel(cfg, probe, REFIT_PROMPT);
+        misses = 0;
+      } catch (e) {
+        console.error("[clothing] refit " + it.id + ": " + e.message);
+        if (calledModel) misses++;
+        const spent = /\bpermanent\b/.test(e.message) || /allowance spent/.test(e.message);
+        if (spent || misses >= ATTRS_MAX_MISSES) { giveUp(i); break; }
+      }
+      if (meta) {
+        Object.assign(it, refitWords(it, meta, edits), { fitAt: day });
+        done++;
+        saveCatalog(cat);
+        shareTag(it);                  // a real answer: the other device reads it instead of buying it
+      }
+      if (calledModel) await new Promise(r => setTimeout(r, ATTRS_SPACING_MS));
+      post();
+    }
+  } finally {
+    sweepProbe();
+    if (parentPort) parentPort.postMessage({ refit: null });
+  }
+  if (done) console.log("[clothing] refit " + done + " garment(s): the deal now reads how each is cut");
+  return { refitDone: done, refitLeft: todo.length - done };
+}
+
 // Ingest is TWO loops (W7). The first names the photos nobody has named; the
 // second describes the garments nobody has described (spec §3.1 item 3) — the
 // family's own wardrobe on the morning of the upgrade has no new photos at
@@ -828,7 +951,8 @@ async function namePhotos(cfg, cat, todo) {
                    occasion: known.occasion,
                    rotate_deg: legacy ? 0 : known.rotate_deg || 0, crop: known.crop || {},
                    colors: known.colors, pattern: known.pattern, statement: known.statement,
-                   palette: known.palette, vibe: known.vibe };
+                   palette: known.palette, vibe: known.vibe,
+                   coverage: known.coverage, weight: known.weight, legs: known.legs };
         } else if ((sharedTag = tagsFor(id, hash))) {
           // Another device in the family already asked about this garment —
           // by id (same filename) or by content hash (the same photo saved
@@ -840,7 +964,8 @@ async function namePhotos(cfg, cat, todo) {
                    occasion: sharedTag.occasion,
                    rotate_deg: sharedTag.rotate_deg || 0, crop: sharedTag.crop || {},
                    colors: sharedTag.colors, pattern: sharedTag.pattern, statement: sharedTag.statement,
-                   palette: sharedTag.palette, vibe: sharedTag.vibe };
+                   palette: sharedTag.palette, vibe: sharedTag.vibe,
+                   coverage: sharedTag.coverage, weight: sharedTag.weight, legs: sharedTag.legs };
           console.log("[clothing] " + f + " was already described by another device — no AI call");
         } else {
           const probe = path.join(ITEMS(), "_probe.jpg");
@@ -887,12 +1012,22 @@ async function namePhotos(cfg, cat, todo) {
         // `category` and `occasion` are rewritten from `meta`, which on a
         // redraw is the entry's own word (so a parent's "jacket" survives a
         // tile repair) and on a shared tag is the family's.
+        // The fit words (spec 2026-09-29 §3) go through fitFields for the
+        // category the entry ENDS UP with, so a redraw of a parent's jacket
+        // keeps a jacket's words. `fitAt` is the refit pass's one-way marker:
+        // a model that looked at this photo today has answered the refit's
+        // question too, and so has a shared line that says how it is cut; a
+        // line written before 9/29 has not, and leaves the garment to refit.
+        const category = CATEGORIES.has(meta.category) ? meta.category : "top";
+        const fit = fitFields(meta, category);
+        const fitKnown = usedAi || (sharedTag && (sharedTag.coverage || sharedTag.weight || sharedTag.legs));
         cat.items[f] = { ...(known || {}), id, ok: true, name: shortLabel(meta.name),
           rotate_deg: rot, crop: hint || {}, exif: orient,
-          category: CATEGORIES.has(meta.category) ? meta.category : "top",
+          category,
           occasion: OCCASIONS.includes(meta.occasion) ? meta.occasion : "everyday",
           warmth: ["hot", "warm", "cool", "cold", "any"].includes(meta.warmth) ? meta.warmth : "any",
-          ...attributes(meta), hash, ...(usedAi || sharedTag ? { attrsAt: todayKey() } : {}) };
+          ...attributes(meta), ...fit, hash, ...(usedAi || sharedTag ? { attrsAt: todayKey() } : {}),
+          ...(fitKnown ? { fitAt: todayKey() } : {}) };
         saveCatalog(cat);   // survive a crash mid-batch: each item lands as it finishes
         // Only a real answer is worth sharing: a garment described FROM the
         // shared log is already in it, and a tile repair learned nothing new.
@@ -979,11 +1114,19 @@ function readEdits() {
 // (clothing-log normalizeTag): a malformed field is DROPPED and the rest of
 // the correction stands, so `hidden: "yes"` costs that writer its hide and not
 // the family its category.
-function manualFields(src) {
+// The fit words (warmth coherence spec 2026-09-29 D4) are the fix for the
+// 9/23 §7 bug: a parent's sleeve or weight posted, went out to the family —
+// and was dropped here by every build, because this list stopped at three.
+// They pass through fitFields for the category the garment will HAVE (the
+// edit's own, else the entry's) and with the entry's coverage behind a
+// weight-only edit, and `parent` refuses `unsure` from any writer: the sheet
+// has no such chip, so a line carrying one was not written by a parent's hand.
+function manualFields(src, it = {}) {
   const out = {};
   if (CATEGORIES.has(src.category)) out.category = src.category;
   if (OCCASIONS.includes(src.occasion)) out.occasion = src.occasion;
   if (typeof src.hidden === "boolean") out.hidden = src.hidden;
+  Object.assign(out, fitFields(src, out.category || it.category, { parent: true, coverage: it.coverage }));
   return out;
 }
 function applyManual(cat) {
@@ -991,19 +1134,14 @@ function applyManual(cat) {
   let changed = 0;
   for (const it of Object.values(cat.items)) {
     if (!it || !it.ok || !it.id) continue;
-    const own = edits[it.id];
-    const tag = tagsFor(it.id, it.hash);          // by id, else by hash (spec §3.1 item 1)
-    const cands = [];
-    if (own && typeof own === "object" && typeof own.t === "string") cands.push(own);
     // Only a MANUAL winner: an ordinary tag line is the model talking, and the
     // model does not get to stamp manualAt (clothing-log carries `manual`/`t`
-    // on a manual winner alone).
-    if (tag && tag.manual === true && typeof tag.t === "string") cands.push(tag);
-    if (!cands.length) continue;
-    const win = cands.reduce((a, b) => (b.t > a.t ? b : a));
+    // on a manual winner alone). Shared with the refit pass (manualWinner).
+    const win = manualWinner(it, edits);
+    if (!win) continue;
     if (it.manualAt && win.t <= it.manualAt) continue;
     if (!Number.isFinite(Date.parse(win.t))) continue;   // a stamp nobody can read is not a clock
-    const fields = manualFields(win);
+    const fields = manualFields(win, it);
     if (!Object.keys(fields).length) continue;    // nothing usable was said
     fields.manualAt = win.t;
     let touched = false;
@@ -1155,10 +1293,10 @@ function hourLabel(h) {
 }
 
 // ---- the daily board: her exact graph ----
-// Which garments the band admits, and the order of the day's 21, is the
-// original's deal (clothing-rank.js, ported from outfit_set.py): tops never
-// gated, bottoms widened to the neighbouring band when the exact one leaves
-// fewer than two, band null (weather offline) gates nothing.
+// The order of the day's 21 is the original's deal (clothing-rank.js, ported
+// from outfit_set.py); which garments it may deal is the fit gate since 9/29
+// (spec 2026-09-29 §2): every role — tops too — by the planning °F, weather
+// offline gates nothing.
 // Button plates are small by design (the PHOTO is the message) — a long name
 // clipped mid-word on the board (QA 9/1). Keep names to ~3 words / 22 chars,
 // dropping leading adjectives rather than truncating a word.
@@ -1212,8 +1350,14 @@ function comboLabel(top, bottom) {
 // fields, nothing of the deal's private business (colours, warmth, hashes) —
 // and `occasion` is answered even for a garment described before the word
 // existed, because a chip with no value selected is a sheet that cannot save.
+// The fit words are the opposite (warmth coherence spec 2026-09-29 D4): the
+// sheet's Sleeves / Legs / Weight rows show what the ENTRY says, so each rides
+// only when the entry has it — a garment refit has not reached shows nothing
+// selected rather than the legacy fallback's guess dressed up as a fact.
 function itemRef(it) {
-  return { id: it.id, name: it.name, category: it.category, occasion: it.occasion || "everyday" };
+  const ref = { id: it.id, name: it.name, category: it.category, occasion: it.occasion || "everyday" };
+  for (const k of ["coverage", "legs", "weight"]) if (typeof it[k] === "string" && it[k]) ref[k] = it[k];
+  return ref;
 }
 
 // The cells a 3x4 page leaves for CONTENT, in reading order: everything but
@@ -1274,6 +1418,21 @@ const PAGES = 3;   // how many "More" pages a day gets at most
 // kinds outgrow it. "accessories" is an ARASAAC bestsearch word (25634, the
 // fashion-accessories pictogram — checked 9/17), the worker's own convention
 // for a category tile.
+// Dress up (warmth coherence spec 2026-09-29 D3; dad 9/29: "fancy should be in
+// accessories and should not be eligible for the daily offerings"). A VIRTUAL
+// kind, deliberately not in clothing-rank's ACCESSORY_KINDS: nothing is FILED
+// under it — a fancy garment stays a dress or a top, a fancy accessory stays
+// shoes — and ACCESSORY_KINDS is the category list the prompt, the whitelist
+// and the chips read (and the "six kinds" its suite asserts). It lives here,
+// where `present` is made, and joins it exactly like a real kind, so the door,
+// the seventh-slot arithmetic, Build my own's overflow and the menu cells
+// follow it with no rule of their own. "party" is an ARASAAC bestsearch word:
+// 7099, balloons and bunting (checked 9/29; "dress up" = 5986, a costume
+// being put on, the spec's second choice).
+const DRESS_UP = { id: "fancy", label: "Dress up", symbol: "party" };
+// Case-folded like clothing-rank's own isFancy: the deal's door and this page
+// must agree on every garment.
+const isFancy = i => typeof i.occasion === "string" && i.occasion.trim().toLowerCase() === "fancy";
 const accDoor = (row, col) =>
   ({ label: "Accessories", type: "category", symbol: "accessories", load: "acc", row, col });
 
@@ -1303,6 +1462,9 @@ async function buildCataloged(cat) {
   // cannot produce an empty grid (spec §7). T5 draws the entry tile, the `acc`
   // menu and the `acc_<kind>` grids from exactly this list.
   const present = ACCESSORY_KINDS.map(k => k.id).filter(id => items.some(i => i.category === id));
+  // …and Dress up, the virtual kind, last: `items` is already ok, un-hidden
+  // and tiled, so one fancy piece she can really see is what it takes.
+  if (items.some(isFancy)) present.push(DRESS_UP.id);
   // While she has accessories the seventh outfit slot IS the door, so the
   // whole build — the deal's cap, the page size, the lineup the memory keeps
   // and the "More" arithmetic — follows this one number and never a constant.
@@ -1320,8 +1482,14 @@ async function buildCataloged(cat) {
   // family's; there is no UI for them this cut).
   const seed = dayKey(Date.now(), workerData.tz);
   const m = shared();
+  // The deal is gated and ranked by the planning °F itself — the warmest hour
+  // of the window she is out (9/23 §4) — never the band word, which is four
+  // buckets wide and let an 81 °F morning deal 7 long sleeves and 11 leggings
+  // (spec 2026-09-29 §1-§2). No weather = null = nothing gated, as band null
+  // was. The band still names the tile, orders the accessories and goes on
+  // the offer record.
   const today = buildCandidates({
-    items, band, cap: per * PAGES, seed,
+    items, band, temp: w ? w.t : null, cap: per * PAGES, seed,
     pairing: m.pairing, favorites: m.favorites,
     history: mergeHistory(readHistory(), m), perPage: per,
   }).map(toWorkerShape);
@@ -1431,7 +1599,7 @@ async function buildCataloged(cat) {
   // her when a jacket arrives. Ten edge cells, filled clockwise from the
   // contract's back anchor: Back, Tops, Bottoms, Dresses, Outfits, then the
   // present kinds. Empty edge cells stay black, like every other rest cell.
-  const kinds = ACCESSORY_KINDS.filter(k => present.includes(k.id));
+  const kinds = [...ACCESSORY_KINDS, DRESS_UP].filter(k => present.includes(k.id));
   const KIND_CELLS = [[2,4],[3,1],[3,2],[3,3],[3,4]];
   const kindTile = (k, row, col) =>
     ({ label: k.label, type: "category", symbol: k.symbol, load: "acc_" + k.id, row, col });
@@ -1451,8 +1619,8 @@ async function buildCataloged(cat) {
   });
   boards.push({ id: "build", name: "Build my own", rows: 3, columns: 4, buttons: buildButtons });
   // The menu behind the door: the same shape, Back top-left, one tile per
-  // present kind over the nine remaining edge cells. Six kinds is the most
-  // there can ever be (ACCESSORY_KINDS), so it always fits on one page.
+  // present kind over the nine remaining edge cells. Seven kinds is the most
+  // there can ever be (ACCESSORY_KINDS + Dress up), so it always fits on one page.
   if (kinds.length) {
     const MENU_CELLS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,1],[3,2],[3,3],[3,4]];
     boards.push({ id: "acc", name: "Accessories", rows: 3, columns: 4, buttons: [
@@ -1469,12 +1637,14 @@ async function buildCataloged(cat) {
   ]});
   // Every browse page carries the door at [3,4] — she can be on page 3 of the
   // tops when she decides she wants a jacket (spec §4.1).
+  // A fancy garment is in none of them (spec 2026-09-29 D3): it lives on Dress up.
   const door = present.length ? accDoor(3, 4) : null;
-  boards.push(...gridPages("cat_top", "Tops", items.filter(i => i.category === "top"), "today", door));
-  boards.push(...gridPages("cat_pants", "Pants", items.filter(i => i.category === "pants"), "choose_bottom", door));
-  boards.push(...gridPages("cat_shorts", "Shorts", items.filter(i => i.category === "shorts"), "choose_bottom", door));
-  boards.push(...gridPages("cat_dress", "Dresses", items.filter(i => i.category === "dress"), "build", door));
-  boards.push(...gridPages("cat_outfit", "Outfits", items.filter(i => i.category === "set"), "build", door));
+  const browse = cat => items.filter(i => i.category === cat && !isFancy(i));
+  boards.push(...gridPages("cat_top", "Tops", browse("top"), "today", door));
+  boards.push(...gridPages("cat_pants", "Pants", browse("pants"), "choose_bottom", door));
+  boards.push(...gridPages("cat_shorts", "Shorts", browse("shorts"), "choose_bottom", door));
+  boards.push(...gridPages("cat_dress", "Dresses", browse("dress"), "build", door));
+  boards.push(...gridPages("cat_outfit", "Outfits", browse("set"), "build", door));
   // Every browse grid above asks for a GARMENT word, so an accessory falls
   // into none of them (preflight 2): each present kind gets its own pages.
   // Back goes to `today` — the door can be entered from anywhere, so the one
@@ -1482,9 +1652,13 @@ async function buildCataloged(cat) {
   // these pages (accessoryOrder): on a cold morning the coats lead, but no
   // accessory is ever weather-hidden (spec §4.1). No door on these pages: she
   // is already behind it.
+  // Dress up is every fancy piece — garments and accessories — in id order
+  // (a fancy accessory stays on its own kind's page too; it was never dealt
+  // anyway), `type: "clothing"` tiles exactly like a browse page.
   for (const k of kinds)
-    boards.push(...gridPages("acc_" + k.id, k.label,
-      accessoryOrder(items.filter(i => i.category === k.id), band), "today"));
+    boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
+      ? items.filter(isFancy).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      : accessoryOrder(items.filter(i => i.category === k.id), band), "today"));
   return { boards, present };
 }
 
@@ -1530,6 +1704,14 @@ async function regenerate(force) {
   // the wardrobe): never look at a new photo, never spend an AI request.
   const ing = workerData.rebuildOnly ? null
             : await ingest(); // no-op without a key or when everything is already cataloged
+  // The refit pass runs ONLY when POST /clothing/refit asked for this build
+  // (spec 2026-09-29 §2 D1) — see refitCatalogued. It needs the catalogue on
+  // disk, so a family with none has nothing to refit.
+  let refit = null;
+  if (workerData.refit) {
+    const rc = loadCatalog();
+    if (Object.values(rc.items).some(i => i && i.ok)) refit = await refitCatalogued(aiCfg(), rc);
+  }
   const busy = !!(ing && ing.busy);
   const quota = !!(ing && ing.quota);
   // What the shell needs to decide on a same-day retry: how many photos are
@@ -1539,7 +1721,9 @@ async function regenerate(force) {
     // are reported, never acted on: `left`/`quotaHit` above are the PHOTO
     // counters the shell's holdDay and the board's coaching read, and the pass
     // has no say over either (A4-8).
-    attrsDone: (ing && ing.attrsDone) || 0, attrsLeft: (ing && ing.attrsLeft) || 0 };
+    attrsDone: (ing && ing.attrsDone) || 0, attrsLeft: (ing && ing.attrsLeft) || 0,
+    // …and so does the refit pass, only on the build that ran it
+    ...(refit || {}) };
   const cat = loadCatalog();
   // The family's own word, re-applied before anything is dealt — on BOTH build
   // paths, because the one the route asks for is the re-sort (preflight 3).

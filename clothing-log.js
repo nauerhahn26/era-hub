@@ -8,7 +8,8 @@
 //                                             warmth, colors, pattern,
 //                                             statement, palette, vibe,
 //                                             rotate_deg?, crop?,
-//                                             occasion?, hidden?, manual?}
+//                                             occasion?, hidden?, manual?,
+//                                             coverage?, weight?, legs?}
 //     pairs/<writer>.jsonl                   {t, kind: great|avoid|favorite|none,
 //                                             combo:[ids]}
 //
@@ -40,7 +41,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const { dayKey, pairKey, HISTORY_DAYS_KEPT, OCCASIONS: OCCASION_WORDS } = require("./clothing-rank.js");
+const { dayKey, pairKey, HISTORY_DAYS_KEPT, OCCASIONS: OCCASION_WORDS, FIT_WORDS } = require("./clothing-rank.js");
 const { slug } = require("./device-id.js");
 
 const ERA = ".era";
@@ -77,6 +78,12 @@ const strings = v => Array.isArray(v) && v.length > 0 && v.every(s => typeof s =
 // that writer its hide, not the whole family its category. The three live in
 // the tags row alone: picks, offers and pairs are unchanged and unloosened.
 const OCCASIONS = new Set(OCCASION_WORDS);   // the one list, clothing-rank.js (spec §3.2)
+// The fit words (warmth coherence spec 2026-09-29 §3), from clothing-rank's
+// lists: every sleeve/length word any garment may carry, the model's weights
+// (its `unsure` included — the reader resolves it), and the two leg words.
+// Which word fits which category is the worker's fitFields' business.
+const FIT = { coverage: new Set(FIT_WORDS.coverage("top")), weight: new Set([...FIT_WORDS.weight, "unsure"]),
+  legs: new Set(FIT_WORDS.legs) };
 const VALID = {
   picks: l => strings(l.combo),
   offers: l => Array.isArray(l.page1) && l.page1.length > 0,
@@ -282,6 +289,11 @@ function openLog({ dataDir, driveFolder, deviceId, tz } = {}) {
     // line carries neither, which is what every line in the folder today is.
     if (OCCASIONS.has(l.occasion)) out.occasion = l.occasion;
     if (typeof l.hidden === "boolean") out.hidden = l.hidden;
+    // The fit words (spec 2026-09-29 §3, D4), by the same rule: carried only
+    // when the line really has a word from the list, so every line written
+    // before 9/29 normalizes to the object it always did (snapshot below in
+    // the suite), and a bad one costs the writer that word, not the line.
+    for (const k of ["coverage", "weight", "legs"]) if (FIT[k].has(l[k])) out[k] = l[k];
     if (manualLine(l)) {
       out.manual = true;
       if (stamp(l)) out.t = stamp(l);

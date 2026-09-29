@@ -162,6 +162,60 @@ test("an edit for a second garment sits beside the first, and neither disturbs t
   await idle();
 });
 
+// The fit rows of the hold sheet (warmth coherence spec 2026-09-29 D4): the
+// model can be wrong about a sleeve exactly as it was about the hoodie, and a
+// grown-up's word goes the same way — edits.json, a complete manual line out to
+// the family, a rebuild. Each through its own list; weight only where it means
+// something, and never "unsure" from a parent.
+test("sleeves, weight and legs are accepted like the other three fields, and go out to the family", async () => {
+  const r = await post({ id: TOP(), coverage: "long", weight: "heavy" });
+  assert.equal(r.status, 200);
+  const e = edits();
+  assert.deepEqual({ coverage: e[TOP()].coverage, weight: e[TOP()].weight }, { coverage: "long", weight: "heavy" });
+  const last = tagLines().at(-1);
+  assert.equal(last.manual, true);
+  assert.equal(last.coverage, "long");
+  assert.equal(last.weight, "heavy");
+  assert.equal(last.name, items[0].name, "…a complete line, not a fragment");
+  await idle();
+  // A jacket's weight stands on its own; the sheet sends just the row it changed.
+  const j = await post({ id: JACKET(), weight: "mid" });
+  assert.equal(j.status, 200);
+  assert.equal(edits()[JACKET()].weight, "mid");
+  await idle();
+  // …and a dress-shaped edit: the category moves in the same breath as the legs.
+  const d = await post({ id: TOP(), category: "dress", coverage: "sleeveless", legs: "bare" });
+  assert.equal(d.status, 200);
+  assert.deepEqual(edits()[TOP()].legs, "bare");
+  await idle();
+});
+
+test("a fit word the sheet never offers is refused with one plain sentence", async () => {
+  const before = JSON.stringify(edits());
+  const cases = [
+    ["a sleeve that is not a sleeve", { id: TOP(), category: "top", coverage: "elbow" }],
+    ["a weight a parent never says", { id: TOP(), category: "top", coverage: "long", weight: "unsure" }],
+    ["a weight that is not a weight", { id: TOP(), category: "top", coverage: "long", weight: 3 }],
+    ["a weight on a short sleeve", { id: TOP(), category: "top", coverage: "short", weight: "heavy" }],
+    ["legs on a top", { id: TOP(), category: "top", legs: "bare" }],
+    ["legs that are neither bare nor covered", { id: TOP(), category: "dress", legs: "maybe" }],
+    ["sleeves on a pair of shoes", { id: TOP(), category: "shoes", coverage: "long" }],
+  ];
+  const seen = new Set();
+  for (const [why, body] of cases) {
+    const r = await post(body);
+    assert.equal(r.status, 400, why);
+    const out = await r.json();
+    assert.equal(typeof out.error, "string", why);
+    assert.ok(out.error.length > 8 && /^[A-Z]/.test(out.error) && /\.$/.test(out.error), why + ": one sentence — " + out.error);
+    assert.equal(/item_[0-9a-f]|\/\^|regex|undefined|unsure|coverage/i.test(out.error), false,
+      "a parent reads this sentence, not the code that wrote it: " + out.error);
+    seen.add(out.error);
+  }
+  assert.ok(seen.size >= 4, "each kind of mistake says what is wrong with it, not one catch-all");
+  assert.equal(JSON.stringify(edits()), before, "a refused edit changes nothing on disk");
+});
+
 test("a body the route cannot act on is refused with one plain sentence", async () => {
   const before = JSON.stringify(edits());
   const cases = [

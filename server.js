@@ -15,7 +15,7 @@ const clothing = require("./clothing");
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
 // the worker's whitelist, the pools and this hub's edit door all read it, so a
 // word cannot be a category here and a stranger three files away.
-const { dayKey, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
+const { dayKey, CATEGORIES, OCCASIONS, FIT_WORDS } = require("./clothing-rank.js");
 const content = require("./content.js");
 const musicAdd = require("./music-add.js");
 const moviesAdd = require("./movies-add.js");
@@ -2871,13 +2871,29 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ started: true }));
     return;
   }
+  // POST /clothing/refit — the one-time refit pass (warmth coherence spec
+  // 2026-09-29 §2 D1): ask the cut of every garment catalogued before the
+  // ingest prompt did. An OPERATOR's door, run on one device: it spends the
+  // family's key, so this hub's own pages only; 202 and it runs behind like
+  // /clothing/regenerate, pulling Drive first so the other device's lines are
+  // read before anything is asked. /clothing/status's `refit` counts it down.
+  // Nothing else in the hub ever starts this pass.
+  if (req.method === "POST" && urlPath === "/clothing/refit") {
+    if (!ownDoor(req, res)) return;
+    Promise.resolve().then(() => drive.sync()).catch(() => {})
+      .then(() => clothing.refit()).catch(() => {});
+    res.writeHead(202, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ started: true }));
+    return;
+  }
   if (req.method === "GET" && urlPath === "/clothing/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(clothing.status()));
     return;
   }
 
-  // POST /clothing/item {id, category?, occasion?, hidden?} — the board's
+  // POST /clothing/item {id, category?, occasion?, hidden?, coverage?, weight?,
+  // legs?} — the board's
   // hold-to-edit sheet (accessories spec §5.1, dad 9/17: "can there be a user
   // override without too many changes to UX"). The model files a hoodie as a
   // top; a grown-up holds the tile for 1.6 s and says otherwise, and that word
@@ -2925,6 +2941,23 @@ const server = http.createServer((req, res) => {
         if (typeof b.hidden !== "boolean") return no("Hiding a piece of clothing is a yes or a no.");
         fields.hidden = b.hidden;
       }
+      // The fit words (warmth coherence spec 2026-09-29 D4), each through its
+      // own list first — a word the sheet never offers is one sentence, like
+      // the three above. Which garment a word APPLIES to needs the entry (its
+      // category, its stored sleeve), so that half waits for the catalogue.
+      if ("coverage" in b) {
+        if (!FIT_WORDS.coverage("top").includes(b.coverage)) return no("Sleeves are sleeveless, short or long.");
+        fields.coverage = b.coverage;
+      }
+      if ("weight" in b) {
+        // never `unsure`: that is the model's shrug, not a parent's answer (§3)
+        if (!FIT_WORDS.weight.includes(b.weight)) return no("A long sleeve is light, medium or heavy.");
+        fields.weight = b.weight;
+      }
+      if ("legs" in b) {
+        if (!FIT_WORDS.legs.includes(b.legs)) return no("Legs are either bare or covered.");
+        fields.legs = b.legs;
+      }
       if (!Object.keys(fields).length) return no("That edit did not change anything.");
 
       // The catalogue, read-only. A file that is not there yet is a family
@@ -2941,6 +2974,17 @@ const server = http.createServer((req, res) => {
       // clothing/ and the board only ever knows the id.
       const item = Object.values(items).find(i => i && i.id === b.id);
       if (!item) return no(UNKNOWN);
+      // …and whether each fit word fits THIS garment, as it will be filed
+      // after the edit: the same rule clothing-rank.fitFields applies at every
+      // build, said to the parent here instead of silently dropped there.
+      const kind = fields.category || item.category;
+      if ("coverage" in fields && !FIT_WORDS.coverage(kind).includes(fields.coverage))
+        return no(FIT_WORDS.coverage(kind).length ? "Pants and shorts are either short or long."
+          : "That piece has no sleeves or length to set.");
+      if ("weight" in fields && kind !== "jacket" && (fields.coverage || item.coverage) !== "long")
+        return no("Only a long-sleeve top or a jacket has a weight to set.");
+      if ("legs" in fields && kind !== "dress" && kind !== "set")
+        return no("Only a dress or a set has legs to set.");
 
       // 1. the queue the next build reads. One writer (this route), through
       // writeAtomic, so a build reading it never sees half a file.
@@ -2993,6 +3037,7 @@ const server = http.createServer((req, res) => {
             palette: item.palette, vibe: item.vibe,
             rotate_deg: item.rotate_deg || 0, crop: item.crop || {},
             occasion: item.occasion, hidden: item.hidden,
+            coverage: item.coverage, weight: item.weight, legs: item.legs,
             ...fields, manual: true, id: item.id, hash: item.hash });
         } catch (e) { console.error("[clothing] the manual tag was not shared: " + e.message); }
       }

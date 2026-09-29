@@ -79,6 +79,7 @@ const MEMORY_REDEALS = 1;
 let offerUnrecorded = false;    // the running build's {offer} did not land
 let queued = false;     // a regenerate asked for while one was running
 let queuedFull = false; // ...and at least one of those callers wanted a FULL build
+let queuedRefit = false; // ...and at least one of them was POST /clothing/refit
 let waiters = [];       // callers that arrived mid-build, awaiting the queued run
 
 // The shell only ever needs to SAY which provider is configured (/clothing/status
@@ -325,6 +326,19 @@ function accessoriesOf(items) {
                     .map(k => ({ kind: k.id, count: counts.get(k.id) })), hidden };
 }
 
+// How far the refit pass has got (spec 2026-09-29 §2 D1): every ok garment or
+// jacket the fit words describe, counted by the one-way marker — `pending`
+// lacks `fitAt`, `done` has it. Phase 5's "wait for pending = 0" reads this.
+// READ-ONLY, out of the catalogue status() already opened.
+function refitOf(items) {
+  let pending = 0, done = 0;
+  for (const it of Object.values(items)) {
+    if (!it || !it.ok || !rank.fitTarget(it)) continue;
+    if (it.fitAt) done++; else pending++;
+  }
+  return { pending, done };
+}
+
 function status() {
   const cfg = aiCfg();
   let cataloged = 0, photos = 0, items = {};
@@ -336,6 +350,7 @@ function status() {
   photos = listPhotos(path.join(DATA, "clothing")).length;
   return { building: !!worker, ingesting, attrs, cataloged, photos,
     accessories: accessoriesOf(items),
+    refit: refitOf(items),
     ...readOutFor(items),
     aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null,
     // whether the provider recognised the key when it was saved (null = unchecked)
@@ -357,6 +372,7 @@ function regenerate(force, opts = {}) {
   if (worker) {
     queued = true;
     if (!opts.rebuildOnly) queuedFull = true;
+    if (opts.refit) queuedRefit = true;
     return new Promise((resolve) => { waiters.push(resolve); });
   }
   return new Promise((resolve) => {
@@ -373,7 +389,7 @@ function regenerate(force, opts = {}) {
       // them yet (they are consumed in T4.3), the zone it seeds the deal with
       // is live from this build on.
       { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly,
-                      tz: zone(), deviceId, driveFolder } });
+                      refit: !!opts.refit, tz: zone(), deviceId, driveFolder } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
       if ("attrs" in m) attrs = m.attrs;
@@ -428,10 +444,10 @@ function regenerate(force, opts = {}) {
       const result = done || lastResult || {};
       resolve(result);
       if (queued) {
-        const full = queuedFull;
-        queued = false; queuedFull = false;
+        const full = queuedFull, refit = queuedRefit;
+        queued = false; queuedFull = false; queuedRefit = false;
         const pending = waiters; waiters = [];
-        regenerate(true, { rebuildOnly: !full }).then(r => pending.forEach(w => w(r)),
+        regenerate(true, { rebuildOnly: !full, refit }).then(r => pending.forEach(w => w(r)),
                               () => pending.forEach(w => w({})));
       } else if (waiters.length) {
         const pending = waiters; waiters = [];
@@ -566,9 +582,17 @@ function start(dataDir, opts = {}) {
 // cannot be slowed down by a folder full of new photos.
 function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
 
+// The refit pass (warmth coherence spec 2026-09-29 §2 D1): a re-sort that
+// first asks the cut of every garment catalogued before the ingest prompt did
+// — the shared log first, the model only for what nobody has described. An
+// OPERATOR's door, POST /clothing/refit, and the ONLY caller: no timer, no
+// tick, no sync and no other build ever sets `refit`, so a device nobody runs
+// it on never spends a request on it.
+function refit() { return regenerate(true, { rebuildOnly: true, refit: true }); }
+
 // recordOffer is not exported: the worker's {offer} message is its only caller
 // (server.js uses historyPath/readHistory/zone for POST /outfit-event).
-module.exports = { start, regenerate, rebuildToday, isBuilding, status, boardIsFresh, tick,
+module.exports = { start, regenerate, rebuildToday, refit, isBuilding, status, boardIsFresh, tick,
   historyPath, readHistory, zone,
   _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false;
     memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false; } };

@@ -336,6 +336,86 @@ test("a garment another device described arrives with its occasion and costs no 
   assert.equal(it.occasion, "fancy", "the occasion rides along, or this device asks for it again");
 });
 
+// ---- the fit words at ingest (warmth coherence spec 2026-09-29 §2 D1, §3) --
+//
+// The same one call that names and files a new photo now says how it is CUT:
+// `coverage` (sleeves, or a bottom's length), `legs` (a dress or set's), and
+// `weight` for a long sleeve or a jacket — so a new garment costs nothing
+// extra and the fit gate reads real words instead of the legacy fallback.
+
+test("the ingest prompt asks for coverage, legs and weight — weight only for a long sleeve or a jacket", async () => {
+  const D = dataDir("fitingest"), DRIVE = path.join(TMP, "fitingest-drive");
+  fs.mkdirSync(path.join(DRIVE, "clothing"), { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: DRIVE }));
+  photo(D, "a-cardigan.jpg");
+  photo(D, "b-sundress.jpg");
+  photo(D, "c-tee.jpg");
+  withKey(D);
+  const before = asks.length;
+  queue.push(
+    { ...ANSWER, name: "Grey sweatshirt", category: "top", coverage: "long", weight: "mid", legs: "bare" },
+    { ...ANSWER, name: "Star sundress", category: "dress", coverage: "Sleeveless", legs: "bare", weight: "heavy" },
+    { ...ANSWER, name: "Clover tee", category: "top", coverage: "elbow", weight: "unsure" },
+  );
+  await build(D, "dev-fitingest");
+
+  const ask = asks[before];
+  assert.match(ask, /"coverage": /, "the prompt asks how the garment is cut");
+  assert.match(ask, /"sleeveless","short","long"/, "…in the three sleeve words");
+  assert.match(ask, /"legs": /);
+  assert.match(ask, /"bare","covered"/);
+  assert.match(ask, /"weight": /);
+  assert.match(ask, /"light","mid","heavy","unsure"/, "unsure is allowed: a guess is worse than no answer");
+  assert.match(ask, /ONLY for a long-sleeve top or a jacket/, "and it says whose weight it wants");
+
+  const items = catalogOf(D);
+  const a = items["a-cardigan.jpg"], b = items["b-sundress.jpg"], c = items["c-tee.jpg"];
+  assert.equal(a.coverage, "long");
+  assert.equal(a.weight, "mid");
+  assert.equal("legs" in a, false, "a top has no legs to be bare");
+  assert.equal(b.coverage, "sleeveless", "words fold like every other whitelist");
+  assert.equal(b.legs, "bare");
+  assert.equal("weight" in b, false, "a dress is not asked its weight, so it keeps none");
+  assert.equal("coverage" in c, false, "a word outside the list is absent — the legacy fallback covers it");
+  assert.equal("weight" in c, false, "…and a weight with no long sleeve under it is dropped");
+  for (const it of [a, b, c]) assert.equal(it.fitAt, today(), it.name + ": a real answer is the refit's marker too");
+
+  // …and the family gets the words, so the other tablet never asks.
+  const f = path.join(DRIVE, "clothing", ".era", "tags", "dev-fitingest.jsonl");
+  const lines = fs.readFileSync(f, "utf8").trim().split("\n").map(JSON.parse);
+  const line = lines.find(l => l.name === "Grey sweatshirt");
+  assert.equal(line.coverage, "long");
+  assert.equal(line.weight, "mid");
+  assert.equal(lines.find(l => l.name === "Star sundress").legs, "bare");
+  assert.equal("coverage" in lines.find(l => l.name === "Clover tee"), false, "nothing is invented on the way out");
+});
+
+test("a garment another device described arrives with its coverage, weight and legs, and costs no call", async () => {
+  const D = dataDir("fitfromtag");
+  const rel = photo(D, "fleece.jpg"), rel2 = photo(D, "old.jpg");
+  withKey(D);
+  const f = path.join(D, "clothing", ".era", "tags", "dev-other.jsonl");
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, [
+    { t: "2026-09-29T10:00:00.000Z", id: idFor(rel), name: "Fleece", category: "top", warmth: "cool",
+      coverage: "long", weight: "heavy", colors: ["gray"], rotate_deg: 0, crop: {} },
+    // a line written before 9/29: no fit words at all
+    { t: "2026-09-16T10:00:00.000Z", id: idFor(rel2), name: "Old tee", category: "top", warmth: "warm",
+      colors: ["red"], rotate_deg: 0, crop: {} },
+  ].map(l => JSON.stringify(l) + "\n").join(""));
+  const before = asks.length;
+  await build(D, "dev-fitfromtag");
+
+  assert.equal(asks.length, before, "the family had already paid for both");
+  const it = catalogOf(D)[rel];
+  assert.equal(it.coverage, "long");
+  assert.equal(it.weight, "heavy");
+  assert.equal(it.fitAt, today(), "a line that says how it is cut is as good as asking");
+  const old = catalogOf(D)[rel2];
+  assert.equal("coverage" in old, false, "an old line says nothing about the cut");
+  assert.equal("fitAt" in old, false, "…so the refit pass still owes it a look");
+});
+
 // ---- T4: the manual sweep (spec §3.4) --------------------------------------
 
 test("a parent's own edit outranks the model on the very next re-sort", async () => {
@@ -356,7 +436,9 @@ test("a parent's own edit outranks the model on the very next re-sort", async ()
   assert.equal(it.category, "jacket", "the parent's word, on the next build, with no AI anywhere");
   assert.equal(it.occasion, "fancy");
   assert.equal(it.manualAt, t, "…stamped with the parent's own clock, exactly (T4)");
-  assert.deepEqual(r.accessories, ["jacket"], "and the build knows a jacket kind is present now");
+  // …and, since 9/29, Dress up: the parent called it fancy, so it is on that
+  // page as well (warmth coherence spec 2026-09-29 D3).
+  assert.deepEqual(r.accessories, ["jacket", "fancy"], "and the build knows a jacket kind is present now");
 
   // An accessory is never pooled and never sits in a garment grid: the deal
   // drops it (clothing-rank), and the browse grids ask for a garment WORD, so
@@ -402,6 +484,45 @@ test("a manual line from one tablet moves the garment on the other", async () =>
   assert.equal(it.category, "jacket", "the device nobody touched agrees with the parent");
   assert.equal(it.manualAt, t, "…and stamps the parent's own clock, not its own build's");
   assert.deepEqual(r.accessories, ["jacket"]);
+});
+
+// Warmth coherence spec 2026-09-29 D4 — and the 9/23 §7 bug it names:
+// manualFields admitted category/occasion/hidden only, so a parent's sleeve or
+// weight posted fine, went out to the family, and was then dropped on the
+// floor by every build on every device.
+test("a parent's sleeves, weight and legs reach the catalogue — from this tablet's edits and from another's line", async () => {
+  const D = dataDir("fitedits");
+  const items = materialize({ dataDir: D, n: 10 });
+  const [top, other] = items.filter(i => i.category === "top");
+  const dress = items.find(i => i.category === "dress");
+  writeEdits(D, {
+    [top.id]: { coverage: "long", weight: "heavy", t: iso(Date.now()) },
+    // a weight with no long sleeve under it, and a parent's `unsure`, are
+    // words the sheet never sends: dropped, the rest of the edit stands
+    [other.id]: { coverage: "short", weight: "heavy", t: iso(Date.now()) },
+  });
+  putTag(D, "dev-other", { t: iso(Date.now() - HOUR), id: dress.id, name: dress.name, category: "dress",
+    coverage: "long", legs: "covered", weight: "unsure", manual: true });
+  await build(D, "dev-fitedits", { rebuildOnly: true });
+
+  const t = entryFor(D, top.id);
+  assert.equal(t.coverage, "long");
+  assert.equal(t.weight, "heavy", "the weight a parent set is the weight the deal reads");
+  const o = entryFor(D, other.id);
+  assert.equal(o.coverage, "short");
+  assert.equal("weight" in o, false, "a heavy tee is not a word the sheet can send");
+  const d = entryFor(D, dress.id);
+  assert.equal(d.coverage, "long");
+  assert.equal(d.legs, "covered");
+  assert.equal("weight" in d, false, "a parent never says unsure, whoever wrote the line");
+  assert.ok(d.manualAt, "and it is the family's own word from now on");
+
+  // A weight edit on its own, a day later, for the long sleeve set above: the
+  // entry's own coverage is what admits it.
+  writeEdits(D, { [top.id]: { weight: "mid", t: iso(Date.now() + 1000) } });
+  await build(D, "dev-fitedits", { rebuildOnly: true });
+  assert.equal(entryFor(D, top.id).weight, "mid");
+  assert.equal(entryFor(D, top.id).coverage, "long", "the sleeve set before is untouched");
 });
 
 test("the newest parent wins, and a correction from another day never reverts them", async () => {
@@ -713,7 +834,9 @@ test("every garment and outfit tile carries the items it is made of", async () =
   fs.writeFileSync(path.join(D, "wardrobe.json"), JSON.stringify(cat, null, 1));
   await build(D, "dev-tileitems");
 
-  const garment = boardOf(D, "cat_top").buttons
+  // Since 9/29 a fancy garment lives on the Dress up page and in no cat_*
+  // grid (warmth coherence spec 2026-09-29 D3) — it is read from there.
+  const garment = boardOf(D, "acc_fancy").buttons
     .find(b => b.type === "clothing" && b.image.includes(top.id));
   assert.deepEqual(garment.items, [{ id: top.id, name: top.name, category: "top", occasion: "fancy" }],
     "one row, the whole garment, exactly as the sheet will show it");
@@ -731,6 +854,33 @@ test("every garment and outfit tile carries the items it is made of", async () =
     "the names on the tile are the names the tile speaks");
   const confirm = boardOf(D, pair.load);
   assert.deepEqual(confirm.buttons[0].items, pair.items, "and the same two rows on This one?");
+});
+
+// The hold sheet's Sleeves / Legs / Weight rows (era-board, spec 2026-09-29
+// D4) show what the garment says today: the fit words ride on the tile's items
+// when the entry has them, and are simply absent when it does not (the sheet
+// then shows nothing selected rather than a guess).
+test("a tile's items carry coverage, legs and weight when the garment has them, and nothing when it does not", async () => {
+  const D = dataDir("tilefit");
+  const items = materialize({ dataDir: D, n: 12 });
+  const [t1, t2] = items.filter(i => i.category === "top");
+  const dress = items.find(i => i.category === "dress");
+  const cat = JSON.parse(fs.readFileSync(path.join(D, "wardrobe.json"), "utf8"));
+  for (const it of Object.values(cat.items)) {
+    if (it.id === t1.id) Object.assign(it, { coverage: "long", weight: "unsure" });
+    if (it.id === dress.id) Object.assign(it, { coverage: "sleeveless", legs: "bare" });
+  }
+  fs.writeFileSync(path.join(D, "wardrobe.json"), JSON.stringify(cat, null, 1));
+  await build(D, "dev-tilefit");
+
+  const refOf = (grid, id) => pagesOf(D, grid).flatMap(b => b.buttons)
+    .find(b => b.type === "clothing" && b.image.includes(id)).items[0];
+  assert.deepEqual(refOf("cat_top", t1.id),
+    { id: t1.id, name: t1.name, category: "top", occasion: "everyday", coverage: "long", weight: "unsure" });
+  assert.deepEqual(refOf("cat_dress", dress.id),
+    { id: dress.id, name: dress.name, category: "dress", occasion: "everyday", coverage: "sleeveless", legs: "bare" });
+  assert.deepEqual(Object.keys(refOf("cat_top", t2.id)).sort(), ["category", "id", "name", "occasion"],
+    "a garment refit has not reached says nothing about its cut");
 });
 
 // The chips in the hold sheet are named from the recipe, so the board keeps no
@@ -842,4 +992,105 @@ test("hiding the only jacket takes the door down with it", async () => {
   assert.ok(!recipe.boards.some(b => String(b.id).startsWith("acc")), "so are its boards");
   assert.ok(!JSON.stringify(recipe).includes("Accessories"), "and every door on every page");
   assert.equal(outfitsOn(boardOf(D, "today")).length, 7, "and the seventh slot is a look again");
+});
+
+// ---- Dress up (warmth coherence spec 2026-09-29 D3) -------------------------
+//
+// Dad, 9/29: "fancy should be in accessories and should not be eligible for
+// the daily offerings." A garment a parent marked fancy is never dealt (the
+// door in clothing-rank) and sits in no cat_* browse grid; it lives on ONE
+// page, Dress up, reached through the accessories menu like a real kind. It is
+// a VIRTUAL kind — not in ACCESSORY_KINDS, because a garment is not filed
+// under it: it joins `present` when at least one ok, un-hidden fancy item with
+// a tile exists, so the door, the seventh-slot arithmetic, Build my own's
+// overflow and the menu cells follow it with no rule of their own.
+const markFancy = (dir, ids, over = {}) => {
+  const cat = JSON.parse(fs.readFileSync(path.join(dir, "wardrobe.json"), "utf8"));
+  for (const it of Object.values(cat.items)) if (ids.includes(it.id)) Object.assign(it, { occasion: "fancy" }, over);
+  fs.writeFileSync(path.join(dir, "wardrobe.json"), JSON.stringify(cat, null, 1));
+};
+
+test("Dress up holds every fancy item — garments and accessories, in id order — and no browse grid or look holds a fancy garment", async () => {
+  const D = dataDir("dressup");
+  const items = materialize({ dataDir: D, n: 12, accessories: { jacket: 1, shoes: 1 } });
+  const top = items.find(i => i.category === "top");
+  const dress = items.find(i => i.category === "dress");
+  const shoes = items.find(i => i.category === "shoes");
+  const fancy = [top.id, dress.id, shoes.id];
+  markFancy(D, fancy);
+  const r = await build(D, "dev-dressup");
+
+  assert.deepEqual(r.accessories, ["jacket", "shoes", "fancy"], "Dress up follows the real kinds");
+  const menu = boardOf(D, "acc");
+  const tile = menu.buttons.find(b => b.load === "acc_fancy");
+  assert.ok(tile, "the accessories menu has a Dress up tile");
+  assert.equal(tile.label, "Dress up");
+  assert.equal(tile.type, "category");
+  assert.equal(tile.symbol, "party", "ARASAAC bestsearch 'party' = 7099, a party (checked 9/29)");
+  assert.equal(cellOf(menu, "Dress up"), "1,4", "the next menu cell after Jackets and Shoes");
+
+  const page = boardOf(D, "acc_fancy");
+  assert.equal(page.name, "Dress up");
+  assert.deepEqual(tileIds(page), [...fancy].sort(), "every fancy item, garment or accessory, in id order");
+  for (const b of page.buttons.filter(x => x.type === "clothing")) assert.equal(b.items[0].occasion, "fancy");
+  assert.equal(at(page, 1, 1).load, "today", "Back goes home, like every page behind the door");
+
+  for (const id of ["cat_top", "cat_pants", "cat_shorts", "cat_dress", "cat_outfit"])
+    for (const p of pagesOf(D, id))
+      for (const g of [top.id, dress.id]) assert.ok(!tileIds(p).includes(g), p.id + " holds no fancy garment");
+  assert.ok(tileIds(boardOf(D, "acc_shoes")).includes(shoes.id), "a fancy accessory stays on its own kind's page too");
+  const dealt = recipeOf(D).boards.filter(b => /^today(_\d)?$/.test(b.id))
+    .flatMap(b => outfitsOn(b).flatMap(o => o.combo));
+  for (const g of [top.id, dress.id]) assert.ok(!dealt.includes(g), "a fancy garment is never dealt");
+});
+
+test("a family whose only 'accessory' is a fancy dress gets the door, six looks a page and Dress up on Build my own", async () => {
+  const D = dataDir("onlyfancy");
+  const items = materialize({ dataDir: D, n: 35 });
+  const dress = items.find(i => i.category === "dress");
+  markFancy(D, [dress.id]);
+  const r = await build(D, "dev-onlyfancy");
+  assert.deepEqual(r.accessories, ["fancy"]);
+  for (const pid of ["today", "today_2", "today_3"]) {
+    assertEntryTile(at(boardOf(D, pid), 3, 3), pid + " [3,3]");
+    assert.equal(outfitsOn(boardOf(D, pid)).length, 6, pid + ": the door takes the seventh slot");
+  }
+  assertEntryTile(at(boardOf(D, "confirm_0"), 3, 2), "confirm_0 [3,2]");
+  for (const p of pagesOf(D, "cat_top")) assertEntryTile(at(p, 3, 4), p.id + " [3,4]");
+  const b = boardOf(D, "build");
+  assert.equal(cellOf(b, "Dress up"), "2,4", "the first present kind's cell");
+  assert.equal(at(b, 2, 4).load, "acc_fancy");
+  assert.deepEqual(boardOf(D, "acc").buttons.map(x => x.label), ["Back", "Dress up"]);
+  assert.deepEqual(tileIds(boardOf(D, "acc_fancy")), [dress.id]);
+});
+
+test("six real kinds and Dress up: Build my own's last cell is the door, and the menu holds all seven", async () => {
+  const D = dataDir("sevenkinds");
+  const items = materialize({ dataDir: D, n: 12,
+    accessories: { jacket: 1, shoes: 1, jewelry: 1, hat: 1, hair: 1, makeup: 1 } });
+  markFancy(D, [items.find(i => i.category === "dress").id]);
+  const r = await build(D, "dev-sevenkinds");
+  assert.equal(r.accessories.length, 7);
+  const b = boardOf(D, "build");
+  assertEntryTile(at(b, 3, 4), "build [3,4] — the overflow door");
+  const menu = boardOf(D, "acc");
+  assert.equal(menu.buttons.length, 8, "Back and seven kinds on nine edge cells");
+  assert.equal(cellOf(menu, "Dress up"), "3,2", "the seventh kind's cell");
+  assert.equal(at(menu, 2, 2), undefined, "the centre stays black");
+});
+
+test("no Dress up without a fancy item she can reach: hidden, or with no tile, is none", async () => {
+  const D = dataDir("nofancy");
+  const items = materialize({ dataDir: D, n: 12 });
+  const [d1] = items.filter(i => i.category === "dress");
+  const top = items.find(i => i.category === "top");
+  markFancy(D, [d1.id], { hidden: true });
+  markFancy(D, [top.id]);
+  // a tile gone missing (the QA 9/2 case); a re-sort does not repair tiles
+  fs.rmSync(path.join(D, "wardrobe-items", top.id + ".jpg"));
+  const r = await build(D, "dev-nofancy", { rebuildOnly: true });
+  assert.deepEqual(r.accessories, [], "a hidden fancy dress and one with no picture offer nothing");
+  const recipe = recipeOf(D);
+  assert.ok(!recipe.boards.some(b => String(b.id).startsWith("acc")), "no menu, no Dress up page");
+  assert.ok(!JSON.stringify(recipe).includes("Dress up"));
 });
