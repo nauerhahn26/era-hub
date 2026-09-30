@@ -479,3 +479,71 @@ test("a picture another device made shows up on the open shelf without a relaunc
   assert.deepEqual((await st(page)).shelfIds.slice(0, 2), ["2026-09-30-140000-other-dev", "2026-09-30-120000-test-dev"]);
   await ctx.close();
 });
+
+// ================================================================ T11 — Done
+test("Done: a 1600x900 PNG goes to the hub, she hears what she made (never \"sent\"), and the shelf opens with it first", async () => {
+  seedShelf(3, Date.now() - 3600e3);                      // older pictures already on the shelf
+  const { ctx, page, id } = await openRing();
+  for (const t of ["horse", "house", "star", "star"]) await page.locator("#tile-" + t).click();
+  const req = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith(`/drawings/${id}/done`));
+  await page.locator("#btnDone").click();
+  const png = (await req).postDataBuffer();
+  assert.equal(png.readUInt32BE(0), 0x89504e47);
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1600, 900]);
+  await page.waitForFunction(() => window.Drawing.state().screen === "shelf");
+  let s = await st(page);
+  assert.ok(s.said.includes("You made a picture with a horse, a house and two stars!"), JSON.stringify(s.said));
+  assert.ok(!s.said.some((t) => /sent/i.test(t)), "the mail is never spoken");
+  assert.equal(s.shelfIds[0], id, "her picture is the first cell");
+  await page.waitForFunction(() => window.Drawing.state().lastMail);
+  assert.deepEqual((await st(page)).lastMail, { id, saved: true, mail: "no-email" });
+  assert.ok(fs.existsSync(path.join(PICS, id, "picture.png")));
+  await ctx.close();
+});
+
+test("Done on a blank picture: \"You made a picture!\", saved, never mailed, not on the shelf", async () => {
+  seedShelf(0);
+  const { ctx, page, id } = await openRing();
+  await page.locator("#btnDone").click();
+  await page.waitForFunction(() => window.Drawing.state().screen === "shelf" && window.Drawing.state().lastMail);
+  const s = await st(page);
+  assert.ok(s.said.includes("You made a picture!"));
+  assert.deepEqual(s.lastMail, { id, saved: true, mail: "empty" });
+  assert.deepEqual(s.shelfIds, []);
+  assert.ok(fs.existsSync(path.join(PICS, id, "picture.png")), "saved all the same");
+  await ctx.close();
+});
+
+test("the partner line tells the mail truth, one line per answer", async () => {
+  for (const [answer, line] of [
+    [{ saved: true, mail: "sent" }, "Sent to your family"],
+    [{ saved: true, mail: "no-email" }, "Saved — no family email set up yet"],
+    [{ saved: true, mail: "failed", reason: "x" }, "Saved — mail failed, will not retry"],
+    [{ saved: true, mail: "unchanged" }, "Saved — already sent, nothing new to send"],
+    [{ saved: true, mail: "empty" }, "Saved — the picture is empty, nothing sent"],
+    [null, "Not saved — the hub did not answer"],
+  ]) {
+    const { ctx, page } = await openRing({ routes: (c) => c.route("**/drawings/*/done", (r) => (answer
+      ? r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answer) }) : r.abort())) });
+    await page.locator("#tile-sun").click();
+    await page.locator("#btnDone").click();
+    await page.waitForFunction(() => window.Drawing.state().screen === "shelf" && window.Drawing.state().lastMail);
+    await page.locator("#partnerTab").click();
+    assert.equal(await page.textContent("#pMail"), line, JSON.stringify(answer));
+    assert.equal(await page.isVisible("#pClearRow"), false, "Clear lives on the ring only");
+    await ctx.close();
+  }
+});
+
+test("the celebration does not wait for the mail (deviation 9)", async () => {
+  let release;
+  const held = new Promise((r) => (release = r));
+  const { ctx, page } = await openRing({ routes: (c) => c.route("**/drawings/*/done", async (r) => { await held; await r.continue(); }) });
+  await page.locator("#tile-tree").click();
+  await page.locator("#btnDone").click();
+  await page.waitForFunction(() => window.Drawing.state().said.some((t) => t.startsWith("You made a picture")), null, { timeout: 3000 });
+  assert.equal((await st(page)).lastMail, null, "the mail has not answered yet");
+  release();
+  await page.waitForFunction(() => window.Drawing.state().lastMail, null, { timeout: 5000 });
+  await ctx.close();
+});

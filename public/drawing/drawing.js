@@ -428,8 +428,35 @@ async function newPicture() {
 }
 
 // ---------- Done (spec §2.3) — T11 ----------
-// T11 replaces this section.
-async function done() {}
+async function exportPng(scene) {
+  await Promise.all(Object.values(S.images).map((im) => (im.decode ? im.decode().catch(() => {}) : null)));
+  const c = document.createElement("canvas");
+  c.width = 1600; c.height = 900;
+  SC.renderScene(c.getContext("2d"), scene, { table: S.table, images: S.images });
+  return new Promise((res) => c.toBlob(res, "image/png"));
+}
+async function done() {
+  if (S.screen !== "ring" || !S.scene || S.finishing) return;
+  S.finishing = true;
+  hush();
+  const id = S.id, scene = JSON.parse(JSON.stringify(S.scene));
+  const saved = save();                                  // her last sticker first
+  // The PNG and the mail run alongside the celebration (deviation 9); the answer goes to the
+  // partner line only — never spoken (the Pencil's truth rule).
+  const posted = saved.then(() => exportPng(scene))
+    .then((blob) => fetch("/drawings/" + encodeURIComponent(id) + "/done",
+      { method: "POST", headers: { "Content-Type": "image/png" }, body: blob }))
+    .then((r) => (r.ok ? r.json() : { saved: false, mail: "failed", reason: "hub " + r.status }))
+    .catch(() => ({ saved: false, mail: "failed", reason: "no answer" }))
+    .then((res) => { setMail({ id, ...res }); log("done", { id, mail: res.mail }); return res; });
+  confetti(24);
+  try {
+    await say(SC.describe(scene.items, S.table));        // what she DID
+    await saved;
+  } finally { S.finishing = false; }                     // Done can never stay latched
+  go(null);                                               // the shelf, this picture first (newest change)
+  return posted;
+}
 
 // ---------- the page's own surface: tests, partner.js, field debugging ----------
 window.Drawing = {
