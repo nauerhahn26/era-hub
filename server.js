@@ -1286,14 +1286,19 @@ function mailErrorFor(status, text) {
   if (status === 429) return "Resend says too many emails for now — try again in a minute";
   return "Resend answered " + status + " — try again in a minute";
 }
-async function resendSend(key, to, subject, html) {
+async function resendSend(key, to, subject, html, attachments) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 8000);
+  // Drawing's picture (spec 2026-09-30 §5) rides as a 1-2 MB base64 attachment; 8 s is a text
+  // email's budget and a slow home link needs more. The Pencil's body and timeout are unchanged.
+  const withFiles = Array.isArray(attachments) && attachments.length > 0;
+  const timer = setTimeout(() => ctl.abort(), withFiles ? 30000 : 8000);
   try {
+    const payload = { from: "The Pencil <onboarding@resend.dev>", to: [to], subject, html };
+    if (withFiles) payload.attachments = attachments;
     const r = await fetch(RESEND_URL, {
       method: "POST", signal: ctl.signal,
       headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: "The Pencil <onboarding@resend.dev>", to: [to], subject, html })
+      body: JSON.stringify(payload)
     });
     if (!r.ok) { const t = (await r.text()).slice(0, 200); return { ok: false, error: mailErrorFor(r.status, t), detail: t }; }
     return { ok: true };
@@ -1301,6 +1306,14 @@ async function resendSend(key, to, subject, html) {
     return { ok: false, error: "could not reach Resend (" + (e.name === "AbortError" ? "timed out" : "no connection") + ")" };
   } finally { clearTimeout(timer); }
 }
+// Drawing's Done mails through the Pencil's own door — same key, same family address, same sender.
+// drawings.js decides WHETHER (changed since the last mail, email set up); this says HOW.
+const DRAWING_MAIL = {
+  configured: () => mailConfigured(),
+  who: () => PROFILE.childName || "Your artist",
+  when: () => new Date().toLocaleString("en-US", { timeZone: TZ }),
+  send: (subject, html, attachments) => resendSend(resendKey(), PROFILE.publishEmail, subject, html, attachments),
+};
 function writingHtml(rec, who, when) {
   const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
   return "<div style=\"font-family:Georgia,serif\">" +
@@ -2507,6 +2520,37 @@ const server = http.createServer((req, res) => {
       const r = drawings.writeScene(id, obj);
       res.writeHead(r.ok ? 200 : r.error === "write-failed" ? 500 : 400, { "Content-Type": "application/json" });
       res.end(JSON.stringify(r.ok ? { ok: true, updated: r.scene.updated } : { error: r.error, why: r.why }));
+    });
+    return;
+  }
+  if (drawingPath && req.method === "POST" && drawingPath[2] === "done") {
+    // ownDoor() insists on JSON and this body is a PNG, so keep the half that matters: the
+    // browser's own Sec-Fetch-Site (the /books/import precedent). curl and the suites send none.
+    const site = req.headers["sec-fetch-site"];
+    if (site && site !== "same-origin" && site !== "none") {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "That came from somewhere else, so Our Era Comms did not do it." }));
+      return;
+    }
+    const id = drawingPath[1];
+    if (!drawings.isId(id)) { res.writeHead(404, { "Content-Type": "application/json" }).end('{"error":"bad-id"}'); return; }
+    readBinaryBody(req, drawings.LIMITS.pngBytes, (err, tmp) => {
+      if (err) {
+        if (err.error === "aborted") { try { res.destroy(); } catch {} return; }
+        const big = err.error === "too-big";
+        res.writeHead(big ? 413 : 500, { "Content-Type": "application/json", ...(big ? { Connection: "close" } : {}) });
+        res.end(JSON.stringify({ error: err.error }), () => { if (big) { try { req.destroy(); } catch {} } });
+        return;
+      }
+      let png = null;
+      try { png = fs.readFileSync(tmp); } catch {} finally { fs.unlink(tmp, () => {}); }   // ON EVERY PATH
+      drawings.done(id, png, DRAWING_MAIL).then((r) => {
+        res.writeHead(r.error ? r.status : 200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(r.error ? { error: r.error } : r));
+      }).catch((e) => {
+        console.error("[drawings] done " + id + ": " + e.message);
+        try { res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"write-failed"}'); } catch {}
+      });
     });
     return;
   }

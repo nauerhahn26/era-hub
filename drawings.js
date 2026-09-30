@@ -214,5 +214,49 @@ function cleanupEmpty({ olderThanMs = DAY } = {}) {
   return { removed };
 }
 
+// ---------------------------------------------------------------- Done (spec §2.3, §5)
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+function pictureHtml(who, when) {
+  return "<div style=\"font-family:Georgia,serif\">" +
+    "<p style=\"font-size:26px;line-height:1.4\">🎨 " + esc(who) + " made a picture.</p>" +
+    "<p style=\"color:#777\">It is attached" + (when ? " · " + esc(when) : "") + ".</p>" +
+    "<p style=\"color:#999;font-size:13px\">Made with Drawing, in Our Era Comms.</p></div>";
+}
+// Only mailedHash moves: a PUT that landed while the mail was in flight keeps its items, and the
+// next Done then sees a changed picture and mails it again — which is the truth.
+function setMailedHash(id, hash) {
+  const cur = readScene(id);
+  if (!cur) return false;
+  cur.mailedHash = hash;
+  return writeFile(id, "scene.json", sceneBytes(cur)).ok;
+}
+// The PNG is saved first and whatever happens to the mail the save stands. The answer's `mail`
+// is for the partner line only — the page never speaks it (the Pencil's truth rule).
+async function done(id, png, mail) {
+  if (!isId(id)) return { error: "bad-id", status: 404 };
+  const scene = readScene(id);
+  if (!scene) return { error: "no-such-picture", status: 404 };
+  if (!Buffer.isBuffer(png) || png.length < 8 || !png.subarray(0, 8).equals(PNG_SIG)) return { error: "not-png", status: 400 };
+  if (!writeFile(id, "picture.png", png).ok) return { error: "write-failed", status: 500 };
+  const items = Array.isArray(scene.items) ? scene.items : [];
+  if (!items.length) return { saved: true, mail: "empty" };          // a blank meadow is never mailed
+  const hash = itemsHash(items);
+  if (hash === scene.mailedHash) return { saved: true, mail: "unchanged" };
+  if (!mail || !mail.configured()) return { saved: true, mail: "no-email" };
+  const who = (mail.who && mail.who()) || "Your artist";
+  let v;
+  try {
+    v = await mail.send("🎨 " + who + " made a picture", pictureHtml(who, mail.when ? mail.when() : ""),
+                        [{ filename: id + ".png", content: png.toString("base64") }]);
+  } catch (e) { v = { ok: false, error: String((e && e.message) || e) }; }
+  if (!v || !v.ok) {
+    console.error("[drawings] " + id + " saved; mail failed: " + ((v && v.error) || "unknown"));
+    return { saved: true, mail: "failed", reason: (v && v.error) || "failed" };
+  }
+  setMailedHash(id, hash);
+  return { saved: true, mail: "sent" };
+}
+
 module.exports = { ID_RE, LIMITS, start, isId, shortDevice, stickerTable, newId, validateScene, itemsHash,
-                   mountRoot, readScene, create, writeScene, list, cleanupEmpty };
+                   mountRoot, readScene, create, writeScene, list, cleanupEmpty, done };

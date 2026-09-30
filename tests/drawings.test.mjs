@@ -326,3 +326,79 @@ test("GET is path-jailed: an id's scene.json and picture.png, nothing beside or 
                      "/drawings/..%2fdrive.json/scene.json", "/drawings/%2e%2e/scene.json"])
     assert.ok([403, 404].includes((await fetch(BASE + bad)).status), bad);
 });
+
+// ---- §5 Done: save the PNG, mail it only when it changed --------------------------
+const PNG_1x1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+const finish = (id, body = PNG_1x1, headers = {}) => fetch(`${BASE}/drawings/${id}/done`,
+  { method: "POST", headers: { "Content-Type": "image/png", ...headers }, body });
+async function pictureWith(items) {
+  const id = await newPic();
+  if (items) assert.equal((await call("PUT", `/drawings/${id}/scene.json`, sceneOf(items))).status, 200);
+  return id;
+}
+
+test("Done saves the PNG where the scene lives and says no-email while no family email is set up", async () => {
+  const id = await pictureWith([H]);
+  const r = await finish(id);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { saved: true, mail: "no-email" });
+  assert.ok(fs.readFileSync(path.join(RT_MOUNT, "drawings", id, "picture.png")).equals(PNG_1x1), "in the family's Drive folder");
+  assert.ok(fs.existsSync(path.join(RT, "drawings", id, "picture.png")), "and on this device's shelf");
+  const g = await fetch(`${BASE}/drawings/${id}/picture.png`);
+  assert.equal(g.status, 200);
+  assert.match(g.headers.get("content-type") || "", /image\/png/);
+  assert.equal(got.length, 0, "nothing was mailed");
+});
+
+test("Done refuses what is not a PNG, what is too big, a picture that does not exist, and another site", async () => {
+  const id = await pictureWith([H]);
+  let r = await finish(id, Buffer.from("GIF89a, not a png"));
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, "not-png");
+  // readBinaryBody pauses (never resets) an over-cap body so this 413 is readable (server.js:1512-1545)
+  r = await finish(id, Buffer.concat([PNG_1x1, Buffer.alloc(4 * 1024 * 1024)]));
+  assert.equal(r.status, 413);
+  assert.equal((await finish("2026-01-01-000000-nobody")).status, 404);
+  assert.equal((await finish(id, PNG_1x1, { "Sec-Fetch-Site": "cross-site" })).status, 403);
+});
+
+test("a blank picture is saved and never mailed", async () => {
+  const id = await pictureWith(null);
+  assert.deepEqual(await (await finish(id)).json(), { saved: true, mail: "empty" });
+  assert.ok(fs.existsSync(path.join(RT_MOUNT, "drawings", id, "picture.png")));
+});
+
+test("with a family email: sent with the PNG attached; unchanged on a second Done; sent again after a change", async () => {
+  const cfg = await call("POST", "/mail-config", { email: "family@example.com", apiKey: "re_test_key" });
+  assert.equal((await cfg.json()).ok, true, "the fake provider took the test email");
+  const before = got.length;
+  const id = await pictureWith([H]);
+  assert.deepEqual(await (await finish(id)).json(), { saved: true, mail: "sent" });
+  assert.equal(got.length, before + 1);
+  const m = got[got.length - 1];
+  assert.equal(m.subject, "🎨 Maya made a picture");
+  assert.equal(m.from, "The Pencil <onboarding@resend.dev>");
+  assert.deepEqual(m.to, ["family@example.com"]);
+  assert.deepEqual(m.attachments, [{ filename: id + ".png", content: PNG_1x1.toString("base64") }]);
+  assert.match(m.html, /Maya made a picture/);
+  const stored = JSON.parse(fs.readFileSync(path.join(RT_MOUNT, "drawings", id, "scene.json"), "utf8"));
+  assert.match(stored.mailedHash, /^[0-9a-f]{40}$/);
+  assert.deepEqual(await (await finish(id)).json(), { saved: true, mail: "unchanged" });
+  assert.equal(got.length, before + 1, "the same picture is not mailed twice");
+  await call("PUT", `/drawings/${id}/scene.json`, sceneOf([H, { s: "star", x: 0.5, y: 0.17, w: 0.1, by: "ellie" }]));
+  assert.deepEqual(await (await finish(id)).json(), { saved: true, mail: "sent" });
+  assert.equal(got.length, before + 2);
+});
+
+test("a send that fails still saves, says failed with the reason, and the next Done tries again", async () => {
+  const id = await pictureWith([H]);
+  fakeMode = "down";
+  try {
+    const r = await (await finish(id)).json();
+    assert.equal(r.saved, true);
+    assert.equal(r.mail, "failed");
+    assert.match(r.reason, /Resend answered 500/);
+  } finally { fakeMode = "ok"; }
+  assert.ok(fs.existsSync(path.join(RT_MOUNT, "drawings", id, "picture.png")));
+  assert.deepEqual(await (await finish(id)).json(), { saved: true, mail: "sent" }, "a failed mail recorded no mailedHash");
+});
