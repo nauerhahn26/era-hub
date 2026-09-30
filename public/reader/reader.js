@@ -30,6 +30,18 @@
 // 🚪 leave, 💬 pause to talk. The bar owns the holds (2 x her dwell on both
 // doors) and the coming-back listener; this file owns only what PAUSING means
 // to a book: stop the sound where it is, and pick the page up again.
+// THE SHELF IS A TD SNAP PAGE (dad 9/30, docs/superpowers/specs/
+// 2026-09-30-book-shelf-layout-design.md): a left rail — Back, This Week,
+// Favorites, Storybooks, All, fixed — and the books in the 3x4 grid her
+// clothing pages use. [2,2] and [2,3] are black and inert on every page; More
+// is [3,1] only, only when a section has more than one page, and loops; books
+// fill [1,1] [1,2] [1,3] [1,4] [2,1] [2,4] [3,2] [3,3] [3,4], nine a page, and
+// every unfilled cell is black — cells never move. This Week sorts by the hub's
+// first-seen record (exportedAt moves on every re-publish), the rest by plain
+// case-insensitive title. ♥ Favorites are the hub's (POST /books/<slug>/
+// favorite), given by the grown-up's finger hold in reader-share.js — never a
+// gaze target. Library returns to the section+page the book was opened from;
+// a RELOAD keeps them (localStorage), a fresh open starts on This Week.
 // Missing index/manifest degrades to an empty shelf / page 1 — never a dead
 // app (8/19 law). Every page render suppresses dwell for the settle window
 // (D51) — a fresh page never inherits her gaze.
@@ -64,6 +76,10 @@ const S = {
   renderGen: 0,       // bumps per render — stale async media outcomes are ignored
   talkResume: null,   // what 💬 interrupted, decided while it was still true:
                       // "video" | "narration" | null (see onTalkPause)
+  section: "week",    // the rail's lit section: "week" | "fav" | "story" | "all"
+  shelfPage: 0,       // the page of it on screen (0-based)
+  shelfPages: 1,      // how many pages it has, as last painted
+  sectionPicked: false, // she (or a reload) chose where she is — see renderShelf
 };
 
 // her dwell out of /settings, in the hub's own band (the board's clampDwell).
@@ -127,8 +143,9 @@ function loadPos(slug, maxPage) {
 }
 function clearPos(slug) { try { localStorage.removeItem(posKey(slug)); } catch {} }
 
-// ---------- shelf (old library-client structure: shelf-card grid, coral rim
-// on authored books; the exit affordance is the bar's 🚪 since 9/17) ---------
+// ---------- shelf (the old library-client CARD — cover over title, coral rim
+// on authored books — laid out since 9/30 as a TD Snap page: rail + 3x4
+// centre-black grid, see renderShelf; the exit is the bar's 🚪 since 9/17) ----
 // ---------- books that are still being made (dad 9/7) ----------
 // A pile of photos dropped into the Drive folder is a book minutes later, and
 // until then the shelf said "No books yet — set up Google Drive" at a family
@@ -374,6 +391,9 @@ function thawShelf() {
     el.removeAttribute("data-dwell-disabled");
   }
   frozen = [];
+  // The rail's Back was woken with the rest; if a repaint under the sheet
+  // landed her on page 1 meanwhile, it has to go back to sleep.
+  if ($("railBack")) paintRail();
 }
 
 // The question names the number, because that is the one thing a grown-up
@@ -464,88 +484,261 @@ async function startBuild(j) {
   suppress();
 }
 
+// ---------- the TD Snap page (spec 2026-09-30) ----------
+// The nine book cells in reading order. [2,2] [2,3] are the black centre and
+// [3,1] is More's; nothing else is ever placed anywhere.
+const BOOK_CELLS = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
+const PER_PAGE = BOOK_CELLS.length;
+const SECTIONS = { week: "railWeek", fav: "railFav", story: "railStory", all: "railAll" };
+
+// Plain case-insensitive title order ("2 Owls" before "10 Ducks"); the slug
+// breaks a tie so two books with one title never swap places between polls.
+function byTitle(a, b) {
+  return String(a.title || "").localeCompare(String(b.title || ""), undefined,
+    { sensitivity: "base", numeric: true }) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+}
+// This Week's key: a maker's explicit week when the manifest carries one, else
+// the hub's first-seen record — never exportedAt, which every re-publish bumps.
+function weekOf(b) {
+  const t = Date.parse(b.weekOf || b.firstSeen || "");
+  return isFinite(t) ? t : 0;
+}
+
+// What a section holds, in order: {b} a book she can open, {j} a card that is
+// not a book yet (a pile, a book being made — Storybooks only).
+function sectionItems(sec) {
+  const books = (f) => S.index.filter(f).map(b => ({ b, title: b.title, slug: b.slug }));
+  if (sec === "week")
+    return books(b => b.authored === true)
+      .sort((x, y) => weekOf(y.b) - weekOf(x.b) || byTitle(x, y));
+  if (sec === "fav") return books(b => b.favorite === true).sort(byTitle);
+  if (sec === "all") return books(() => true).sort(byTitle);
+  // Storybooks: everything that is not a weekly book — scanned and hub-built
+  // books, books from a friend (`authored` is already false for an import), and
+  // the cards still being made, all in one title order.
+  return books(b => b.authored !== true)
+    .concat(S.building.map(j => ({ j, title: j.title || "A new book", slug: j.slug })))
+    .sort(byTitle);
+}
+const pagesFor = (n) => Math.max(1, Math.ceil(n / PER_PAGE));
+
+// Where she is, across a RELOAD (the kiosk reloads under her; she must land
+// where she was). A fresh open is not a reload and starts on This Week.
+const SHELF_KEY = "era-reader:shelf";
+function saveShelfPos() {
+  try { localStorage.setItem(SHELF_KEY, JSON.stringify({ section: S.section, page: S.shelfPage })); } catch {}
+}
+function loadShelfPos() {
+  try {
+    const j = JSON.parse(localStorage.getItem(SHELF_KEY));
+    if (j && SECTIONS[j.section] && Number.isInteger(j.page) && j.page >= 0) return j;
+  } catch {}
+  return null;
+}
+function wasReload() {
+  try {
+    const nav = performance.getEntriesByType("navigation")[0];
+    return !!nav && nav.type === "reload";
+  } catch { return false; }
+}
+// This Week, page 1 — the newest weekly book at [1,1]. No weekly books: Storybooks.
+const defaultSection = () => (S.index.some(b => b.authored === true) ? "week" : "story");
+function openingSection() {
+  if (wasReload()) { const at = loadShelfPos(); if (at) return { ...at, picked: true }; }
+  return { section: defaultSection(), page: 0, picked: false };
+}
+
+function bookCard(b) {
+  const card = document.createElement("div");
+  card.className = b.authored === true ? "shelf-card is-authored" : "shelf-card";
+  // The slug on the CARD, the way notYetCard() already stamps its own. A
+  // grown-up's finger hold (reader-share.js) starts at the card and has to
+  // know which book it is holding without a second lookup — and whether it is
+  // a favourite, which is what the hold sheet's first button offers to change.
+  card.dataset.slug = b.slug;
+  if (b.favorite === true) card.dataset.favorite = "1";
+  const btn = document.createElement("div");
+  btn.className = "dwell dwell-button shelf-card-button";
+  btn.setAttribute("data-dwell-say", b.title);
+  btn.setAttribute("aria-label",
+    b.authored === true ? "Read " + b.title + " — " + whose() + " story"
+    : b.shared === true ? "Read " + b.title + " — from a friend"
+    : "Read " + b.title);
+  const cover = document.createElement("span");
+  cover.className = "shelf-cover";
+  const img = document.createElement("img");
+  img.alt = "";
+  img.onerror = () => {
+    img.remove();
+    const fb = document.createElement("span");
+    fb.className = "shelf-cover-fallback muted";
+    fb.textContent = "No cover";
+    cover.appendChild(fb);
+  };
+  img.src = b.cover;
+  cover.appendChild(img);
+  const name = document.createElement("span");
+  name.className = "shelf-title";
+  name.textContent = b.title;
+  // The old DwellButton wrapped its children in <span class="dwell-label">;
+  // the card grid therefore holds ONE stretched item and the title stays an
+  // inline box. Appending cover+title straight to the button made them two
+  // blockified grid items and grew every card by ~14px. Keep the wrapper — it
+  // is load-bearing (and index.html lays the cover and title out inside it).
+  const label = document.createElement("span");
+  label.className = "dwell-label";
+  label.appendChild(cover);
+  label.appendChild(name);
+  btn.appendChild(label);
+  btn.addEventListener("click", () => openBook(b.slug));
+  card.appendChild(btn);
+  if (b.authored === true) {
+    const badge = document.createElement("span");
+    badge.className = "shelf-authored-badge";
+    badge.setAttribute("aria-hidden", "true");
+    badge.innerHTML =
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+      '<path d="M12 2.5l2.1 5.6 5.9.3-4.6 3.7 1.6 5.7L12 14.6 6.9 17.8l1.6-5.7L3.9 8.4l5.9-.3Z"/></svg>' +
+      whose() + " story";   // her name from Settings, not ours (QA 9/2)
+    card.appendChild(badge);
+  } else if (b.shared === true) {
+    // A book another family sent (dad, 9/23: "From a friend is cool."). Same
+    // pill, same corner, same geometry as the story badge — only the hue and
+    // the mark differ, so the two are told apart across a room without either
+    // card changing shape. Her own story keeps the coral and keeps the rim;
+    // this one is the share rail's green and wears no rim, because the rim is
+    // the same claim in paint. `else if`: the two are never both true (the
+    // hub clears `authored` on an import), and the shelf says ONE thing.
+    // aria-hidden like its twin — the sentence is already in the aria-label —
+    // and no .dwell/data-dwell-*: it is decoration, never a gaze target.
+    const badge = document.createElement("span");
+    badge.className = "shelf-shared-badge";
+    badge.setAttribute("aria-hidden", "true");
+    badge.innerHTML =
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+      '<path d="M12 20.3l-1.5-1.36C5.4 14.36 2.5 11.72 2.5 8.5A4.5 4.5 0 0 1 7 4c1.74 0 3.41.81 4.5 2.09' +
+      'A5.98 5.98 0 0 1 16 4a4.5 4.5 0 0 1 4.5 4.5c0 3.22-2.9 5.86-8 10.44Z"/></svg>' +
+      "From a friend";
+    card.appendChild(badge);
+  }
+  if (b.favorite === true) {
+    // ♥ in the top-RIGHT corner, which no other badge uses. Decoration, like
+    // the two pills: aria-hidden, no .dwell, no data-dwell-*.
+    const heart = document.createElement("span");
+    heart.className = "shelf-fav-badge";
+    heart.setAttribute("aria-hidden", "true");
+    heart.textContent = "♥";
+    card.appendChild(heart);
+  }
+  return card;
+}
+
+// A black cell: inert. No text, no .dwell, no data-dwell-*, no handler — her
+// gaze rests on it and nothing happens, which is the whole point (board law).
+function blackCell() {
+  const d = document.createElement("div");
+  d.className = "shelf-black";
+  d.setAttribute("aria-hidden", "true");
+  return d;
+}
+
+function moreTile(pages) {
+  const more = document.createElement("div");
+  more.id = "shelfMore";
+  more.className = "dwell dwell-button shelf-more";
+  more.setAttribute("data-dwell-say", "more");
+  more.setAttribute("aria-label", "More books");
+  const label = document.createElement("span");
+  label.className = "dwell-label";
+  label.textContent = "More ▶";
+  more.appendChild(label);
+  // On the last page More loops to page 1 — there is always a way on.
+  more.addEventListener("click", () => turnShelf((S.shelfPage + 1) % pages));
+  return more;
+}
+
+function turnShelf(page) {
+  S.shelfPage = page;
+  S.sectionPicked = true;
+  log("shelf-page", { section: S.section, page });
+  renderShelf();
+  suppress();                                    // a fresh page never inherits her gaze (D51)
+}
+
+function chooseSection(sec) {
+  if (!SECTIONS[sec]) return;
+  S.section = sec;
+  S.shelfPage = 0;                               // a section always opens on its page 1
+  S.sectionPicked = true;
+  log("shelf-section", { section: sec });
+  renderShelf();
+  suppress();
+}
+
+// The rail is drawn once in index.html; a repaint only lights the section and
+// wakes or dims Back. setDisabled() is the reader's own idiom: dimmed and
+// [data-dwell-disabled], which dwell.js's targetAt() steps over — but a frozen
+// tile (a grown-up's sheet is up) is left to the freeze, which owns it.
+function paintRail() {
+  for (const [sec, id] of Object.entries(SECTIONS)) {
+    const el = $(id);
+    if (el) el.classList.toggle("is-current", sec === S.section);
+  }
+  const back = $("railBack");
+  if (back && !frozen.includes(back)) setDisabled(back, S.shelfPage === 0);
+}
+
+// Favorites' how-to, only on an empty Favorites, outside the cells.
+function paintNote(n) {
+  const note = $("shelfNote");
+  if (note) note.hidden = !(S.section === "fav" && n === 0);
+}
+
 function renderShelf() {
   const grid = $("shelfGrid");
   grid.innerHTML = "";
   paintEmpty();
-  for (const b of S.index) {
-    const card = document.createElement("div");
-    card.className = b.authored === true ? "shelf-card is-authored" : "shelf-card";
-    // The slug on the CARD, the way notYetCard() already stamps its own. A
-    // grown-up's finger hold (reader-share.js) starts at the card and has to
-    // know which book it is holding without a second lookup — and the add
-    // sheet finds the book it just imported by the same key.
-    card.dataset.slug = b.slug;
-    const btn = document.createElement("div");
-    btn.className = "dwell dwell-button shelf-card-button";
-    btn.setAttribute("data-dwell-say", b.title);
-    btn.setAttribute("aria-label",
-      b.authored === true ? "Read " + b.title + " — " + whose() + " story"
-      : b.shared === true ? "Read " + b.title + " — from a friend"
-      : "Read " + b.title);
-    const cover = document.createElement("span");
-    cover.className = "shelf-cover";
-    const img = document.createElement("img");
-    img.alt = "";
-    img.onerror = () => {
-      img.remove();
-      const fb = document.createElement("span");
-      fb.className = "shelf-cover-fallback muted";
-      fb.textContent = "No cover";
-      cover.appendChild(fb);
-    };
-    img.src = b.cover;
-    cover.appendChild(img);
-    const name = document.createElement("span");
-    name.className = "shelf-title";
-    name.textContent = b.title;
-    // The old DwellButton wrapped its children in <span class="dwell-label">;
-    // the card grid therefore holds ONE stretched item and the title stays an
-    // inline box (no 10px grid gap under the cover, 30px line box). Appending
-    // cover+title straight to the button made them two blockified grid items
-    // and grew every card by ~14px. Keep the wrapper — it is load-bearing.
-    const label = document.createElement("span");
-    label.className = "dwell-label";
-    label.appendChild(cover);
-    label.appendChild(name);
-    btn.appendChild(label);
-    btn.addEventListener("click", () => openBook(b.slug));
-    card.appendChild(btn);
-    if (b.authored === true) {
-      const badge = document.createElement("span");
-      badge.className = "shelf-authored-badge";
-      badge.setAttribute("aria-hidden", "true");
-      badge.innerHTML =
-        '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
-        '<path d="M12 2.5l2.1 5.6 5.9.3-4.6 3.7 1.6 5.7L12 14.6 6.9 17.8l1.6-5.7L3.9 8.4l5.9-.3Z"/></svg>' +
-        whose() + " story";   // her name from Settings, not ours (QA 9/2)
-      card.appendChild(badge);
-    } else if (b.shared === true) {
-      // A book another family sent (dad, 9/23: "From a friend is cool."). Same
-      // pill, same corner, same geometry as the story badge — only the hue and
-      // the mark differ, so the two are told apart across a room without either
-      // card changing shape. Her own story keeps the coral and keeps the rim;
-      // this one is the share rail's green and wears no rim, because the rim is
-      // the same claim in paint. `else if`: the two are never both true (the
-      // hub clears `authored` on an import), and the shelf says ONE thing.
-      // aria-hidden like its twin — the sentence is already in the aria-label —
-      // and no .dwell/data-dwell-*: it is decoration, never a gaze target.
-      const badge = document.createElement("span");
-      badge.className = "shelf-shared-badge";
-      badge.setAttribute("aria-hidden", "true");
-      badge.innerHTML =
-        '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
-        '<path d="M12 20.3l-1.5-1.36C5.4 14.36 2.5 11.72 2.5 8.5A4.5 4.5 0 0 1 7 4c1.74 0 3.41.81 4.5 2.09' +
-        'A5.98 5.98 0 0 1 16 4a4.5 4.5 0 0 1 4.5 4.5c0 3.22-2.9 5.86-8 10.44Z"/></svg>' +
-        "From a friend";
-      card.appendChild(badge);
-    }
-    grid.appendChild(card);
+  // THE OPENING CHOICE IS RE-MADE while it is still only ours and has nothing
+  // on it (bug 31's shelf, 9/2): an empty shelf opens on Storybooks, and when
+  // the first weekly book lands she must SEE it, not an all-black page with
+  // the book one rail tile away. Once she has touched the rail or More (or a
+  // reload put her back where she was) the section is hers and never moves.
+  if (!S.sectionPicked && !sectionItems(S.section).length && defaultSection() !== S.section) {
+    S.section = defaultSection();
+    S.shelfPage = 0;
   }
-  // …then the ones that are not books yet — a pile waiting for a tap, a book
-  // being made — after the ones she can actually read.
-  const notYet = S.building.map(notYetCard);
-  for (const c of notYet) grid.appendChild(c.card);
+  const items = sectionItems(S.section);
+  const pages = pagesFor(items.length);
+  if (S.shelfPage >= pages) S.shelfPage = pages - 1;   // a book left: never a page past the end
+  if (S.shelfPage < 0) S.shelfPage = 0;
+  S.shelfPages = pages;
+  const slice = items.slice(S.shelfPage * PER_PAGE, (S.shelfPage + 1) * PER_PAGE);
+
+  // every one of the twelve cells, by [row,col] — a cell is never left to
+  // flow, so nothing on this page can ever move to another position
+  const at = new Map();
+  const notYet = [];
+  BOOK_CELLS.forEach(([r, c], i) => {
+    const it = slice[i];
+    if (!it) { at.set(r + "," + c, blackCell()); return; }
+    if (it.b) { at.set(r + "," + c, bookCard(it.b)); return; }
+    const ny = notYetCard(it.j);
+    notYet.push(ny);
+    at.set(r + "," + c, ny.card);
+  });
+  at.set("2,2", blackCell());
+  at.set("2,3", blackCell());
+  at.set("3,1", pages > 1 ? moreTile(pages) : blackCell());
+  for (let r = 1; r <= 3; r++) for (let c = 1; c <= 4; c++) {
+    const el = at.get(r + "," + c);
+    el.dataset.cell = r + "," + c;
+    el.style.gridRow = String(r);
+    el.style.gridColumn = String(c);
+    grid.appendChild(el);
+  }
+  paintRail();
+  paintNote(items.length);
+  saveShelfPos();
   // NO exit tile on the shelf any more (9/17): the 🚪 lives in the bar above,
   // where every other app of hers keeps it, and it is never rebuilt under her
   // gaze by a poll the way a grid tile was.
@@ -561,22 +754,29 @@ function renderShelf() {
   // Its fifteen seconds keep running; a repaint is not an answer.
   if (S.asking) {
     const hit = notYet.find(c => c.j.slug === S.asking.slug);
-    // …keeping the nodes that SURVIVED the repaint (the bar's two doors) on the
-    // frozen list: they are still asleep, the second freeze cannot find them
-    // again, and the thaw that ends the question has to wake them.
+    // …keeping the nodes that SURVIVED the repaint (the bar's two doors, and
+    // since 9/30 the rail) on the frozen list: they are still asleep, the
+    // second freeze cannot find them again, and the thaw that ends the
+    // question has to wake them.
     if (hit) { frozen = frozen.filter(el => el.isConnected); paintAsk(hit.j, hit.card, hit.box); }
-    // The pile became a book, or another computer took it: the question has no
-    // card left to stand on. It has to be CLOSED, not merely forgotten —
-    // closeAsk() is the only thing that THAWS. Dropping S.asking on the floor
-    // was invisible while every frozen node was a shelf node the repaint
-    // destroyed; since the bar (9/17) the two doors survive the repaint frozen,
-    // and a build finishing under an open ask left 🚪 and 💬 stamped
-    // data-dwell-disabled with .dwell gone FOR EVER — she is on the shelf with
-    // no way off it and no way to ask to talk. closeAsk() clears askTimer,
-    // clears S.asking, takes the (already destroyed) ask node out, thaws and
-    // re-suppresses.
+    // The pile became a book, another computer took it, or its card is no
+    // longer on this page: the question has no card left to stand on. It has
+    // to be CLOSED, not merely forgotten — closeAsk() is the only thing that
+    // THAWS. Dropping S.asking on the floor was invisible while every frozen
+    // node was a shelf node the repaint destroyed; since the bar (9/17) the
+    // two doors survive the repaint frozen, and a build finishing under an
+    // open ask left 🚪 and 💬 stamped data-dwell-disabled with .dwell gone FOR
+    // EVER — she is on the shelf with no way off it and no way to ask to talk.
+    // closeAsk() clears askTimer, clears S.asking, takes the (already
+    // destroyed) ask node out, thaws and re-suppresses.
     else closeAsk();
   }
+}
+
+// The page a slug sits on in a section, or -1.
+function pageOf(sec, slug) {
+  const i = sectionItems(sec).findIndex(it => it.slug === slug);
+  return i < 0 ? -1 : Math.floor(i / PER_PAGE);
 }
 
 // Everything the shelf PAINTS, in one string — the covers she can open, the
@@ -587,7 +787,7 @@ function renderShelf() {
 function shelfSig() {
   return JSON.stringify([
     S.drive, S.childName,
-    S.index.map(b => [b.slug, b.title, b.cover, b.authored]),
+    S.index.map(b => [b.slug, b.title, b.cover, b.authored, b.shared, b.favorite, b.firstSeen, b.weekOf]),
     S.building.map(j => {
       const w = isPile(j) ? pileWords(j) : buildingWords(j);
       return [j.slug, j.title, w.head, w.note, isPile(j), offersBuild(j)];
@@ -1075,6 +1275,10 @@ async function boot() {
   } catch { /* defaults stand — never block the shelf on settings */ }
 
   await refreshShelf();
+  const opening = openingSection();
+  S.section = opening.section;
+  S.shelfPage = opening.page;                    // clamped by renderShelf
+  S.sectionPicked = opening.picked;
   renderShelf();
   suppress();
   // The shelf keeps looking, and now it never stops. An empty one has to notice
@@ -1092,6 +1296,11 @@ async function boot() {
   $("btnPrev").addEventListener("click", goPrev);
   $("btnRead").addEventListener("click", toggleRead);
   $("btnLibrary").addEventListener("click", goLibrary);
+  // THE RAIL. A finger's tap reaches a dimmed Back too (only gaze skips a
+  // [data-dwell-disabled] tile), so the handler checks the page itself.
+  $("railBack").addEventListener("click", () => { if (S.shelfPage > 0) turnShelf(S.shelfPage - 1); });
+  for (const [sec, id] of Object.entries(SECTIONS))
+    $(id).addEventListener("click", () => chooseSection(sec));
 
   log("boot", { books: S.index.length });
 }
@@ -1116,6 +1325,9 @@ window.Reader = {
     asking: S.asking ? S.asking.slug : null,
     pollMs,                                                   // 20 s in flight, 60 s idle
     drive: S.drive,
+    section: S.section,                                       // the rail's lit section
+    shelfPage: S.shelfPage,                                   // 0-based page of it
+    shelfPages: S.shelfPages,
   }),
   open: openBook,
 
@@ -1134,9 +1346,21 @@ window.Reader = {
   // their bookshelf ready to read". `painted` is updated with it so the next
   // tick does not draw the same shelf a second time under an open sheet.
   isAsking: () => !!S.asking,
-  repaintShelf: async () => {
+  // `show` (a slug, optional): the book a grown-up just added is on screen when
+  // the sheet says "is on the shelf" — its own section and page if the one up
+  // does not hold it (an import is a Storybook; spec 2026-09-30).
+  repaintShelf: async (show) => {
     await refreshShelf();
     painted = shelfSig();
+    if (show && S.index.some(b => b.slug === show)) {
+      let p = pageOf(S.section, show);
+      if (p < 0) {
+        const b = S.index.find(x => x.slug === show);
+        S.section = b.authored === true ? "week" : "story";
+        p = pageOf(S.section, show);
+      }
+      if (p >= 0) S.shelfPage = p;
+    }
     if (S.slug) return;                          // she is inside a book; goLibrary() repaints
     renderShelf();
     suppress();

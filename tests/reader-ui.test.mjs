@@ -2,9 +2,10 @@
 // the local package data layer; dad: "I like my old layout. Please match.").
 // Spawns the REAL server.js on a scratch port with a throwaway ERA_DATA_DIR and
 // the SYNTHETIC "Luna the Fox" fixture package (never real book content), then
-// drives /reader/ with Playwright. Proves: the shelf renders the OLD layout
-// (shelf-card grid, square covers, NO in-grid black rest cell — generous
-// gutters are the drift protection — under the shared door bar, era-core's
+// drives /reader/ with Playwright. Proves: the shelf renders the OLD card
+// (cover over title, square covers) on the 9/30 TD Snap page — rail + 3x4
+// grid with the two black centre cells (reader-shelf.test.mjs owns that
+// page's laws) — under the shared door bar, era-core's
 // lib/doorbar.js: 🚪 leave and 💬 pause to talk, both holding 2x her dwell), a
 // tap opens the book and narration PLAYS, word-sync highlights >=1 token with
 // a monotonically non-decreasing active index (manifest words AND the
@@ -182,15 +183,24 @@ const openLuna = async (page) => {
   await page.waitForFunction(() => window.Reader.state().screen === "sRead");
 };
 
-test("shelf: OLD layout — shelf-card grid, square cover, NO in-grid rest cell, and the shared door bar above it", async () => {
+test("shelf: the OLD card on the TD Snap page — square cover, the black centre, and the shared door bar above it", async () => {
   const { ctx, page } = await makePage();
   const tile = page.locator("#shelfGrid .shelf-card-button.dwell").first();
   await tile.waitFor();
   assert.equal(await tile.locator(".shelf-title").textContent(), "Luna the Fox");
   assert.match(await tile.locator(".shelf-cover img").getAttribute("src"),
     /\/books\/luna-the-fox\/cover\.jpg\?v=[a-z0-9]+$/);   // ?v= cache-bust (8/25)
-  // the OLD shelf's drift protection is its generous gutters — no black cells
-  assert.equal(await page.locator("#shelfGrid .restCell").count(), 0, "no in-grid rest cell (old layout)");
+  // 9/30: the shelf is a TD Snap page — its drift protection is the board's two
+  // black CENTRE cells now, not the old single shelf's gutters (spec
+  // 2026-09-30; the full law is reader-shelf.test.mjs's). The READING page
+  // still has no rest area (dad 8/25).
+  for (const k of ["2,2", "2,3"]) {
+    const cell = page.locator(`#shelfGrid > [data-cell="${k}"]`);
+    assert.equal(await cell.evaluate(el => el.classList.contains("shelf-black")), true, `[${k}] is black`);
+    assert.equal(await cell.evaluate(el => el.textContent + (el.className.includes("dwell") ? "dwell" : "")), "",
+      `[${k}] is inert`);
+  }
+  assert.equal(await page.locator("#shelfGrid .restCell").count(), 0, "no stray old rest-cell class");
   assert.equal(await page.locator("#rest").count(), 0, "no rest area anywhere (dad 8/25)");
   // THE EXIT TILE IS GONE (9/17): the door is the shared bar's 🚪, in the same
   // corner as every other app of hers, and it costs the shelf no slot.
@@ -825,6 +835,14 @@ async function shelfWith(status, index = "[]", opts = {}) {
   const page = await ctx.newPage();
   await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
   await page.waitForFunction(() => window.Reader && typeof window.Reader.state === "function");
+  // `opts.section` — a rail tile to press first (spec 2026-09-30). Her weekly
+  // book opens on This Week, and the cards still being made live in
+  // Storybooks, so a pile test over a shelf that has her story goes there.
+  if (opts.section) {
+    await page.locator("#" + opts.section).click();
+    await page.waitForFunction((id) => document.getElementById(id).classList.contains("is-current"),
+      opts.section);
+  }
   // turn every poll interval the page has armed, whichever clock it chose
   const tick = () => page.evaluate(async () => {
     for (const t of window.__timers.filter(x => x.ms === 20000 || x.ms === 60000)) await t.fn();
@@ -1068,13 +1086,17 @@ test("while the ask is open the shelf is asleep — no live dwell target, BOTH d
   const { ctx, page } = await shelfWith(contentStatus({ jobs: [pileRow()] }),
     JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
       cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]),
-    { settings: { pauseGoes: "tdsnap" } });                // …with the 💬 up too
+    { settings: { pauseGoes: "tdsnap" }, section: "railStory" });  // …with the 💬 up too
   await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
   await page.locator("#barTalk").waitFor();
   await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
   await page.locator("#shelfAsk").waitFor();
   assert.equal(await page.locator("#sShelf .dwell:not([data-dwell-disabled])").count(), 0,
     "a parked gaze could still fire the shelf behind the question");
+  // …the rail included (9/30): it is on the shelf screen, and it sleeps too
+  assert.equal(await page.locator("#shelfRail > *").count(), 5);
+  assert.equal(await page.locator("#shelfRail .dwell:not([data-dwell-disabled])").count(), 0,
+    "a rail tile is still a live gaze target under the question");
   // the two doors are the highest-consequence holds in the app, and unlike the
   // board's door they are NOT kept awake under this one
   assert.equal(await page.locator(".msgbar .dwell:not([data-dwell-disabled])").count(), 0,
@@ -1092,7 +1114,8 @@ test("while the ask is open the shelf is asleep — no live dwell target, BOTH d
 test("Not now closes the ask, thaws with a settle window, and wakes nothing that was born asleep", async () => {
   const { ctx, page, posts } = await shelfWith(contentStatus({ jobs: [pileRow()] }),
     JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
-      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]));
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]),
+    { section: "railStory" });
   await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
   await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
   await page.locator("#shelfAsk").waitFor();
@@ -1109,6 +1132,12 @@ test("Not now closes the ask, thaws with a settle window, and wakes nothing that
   // …and the pile card, which was asleep BEFORE the ask, is still asleep: a
   // thaw that woke everything it found would hand her gaze the Build button.
   assert.equal(await page.locator("#shelfGrid .shelf-card.is-pile .dwell:not([data-dwell-disabled])").count(), 0);
+  // the rail is handed back too — and Back, asleep on page 1 before the ask,
+  // is asleep after it
+  assert.equal(await page.locator("#railStory").evaluate(el => el.classList.contains("dwell") &&
+    !el.hasAttribute("data-dwell-disabled")), true, "the rail is hers again");
+  assert.equal(await page.locator("#railBack").getAttribute("data-dwell-disabled"), "",
+    "the thaw woke Back on page 1");
   await ctx.close();
 });
 
@@ -1160,9 +1189,11 @@ test("the loose pile posts loose:true — its sentinel slug never leaves this pa
 
 test("the ask survives a repaint: S.asking is outside the signature, and the fresh cards are asleep again", async () => {
   let st = contentStatus({ jobs: [pileRow()] });
+  // a plain (not weekly) book, so it and the pile share one Storybooks page
+  // (spec 2026-09-30) and the repaint can be seen replacing the book's card
   const { ctx, page, tick } = await shelfWith(() => st,
     JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
-      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]));
+      cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: false }]));
   await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
   await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
   await page.locator("#shelfAsk").waitFor();
@@ -1198,7 +1229,7 @@ test("a build that finishes under the ask closes it — and never leaves her doo
   const { ctx, page, tick } = await shelfWith(() => st,
     JSON.stringify([{ slug: "luna-the-fox", title: "Luna the Fox",
       cover: "/books/luna-the-fox/cover.jpg", pages: 4, hasVideo: false, authored: true }]),
-    { settings: { pauseGoes: "tdsnap" } });                  // …with the 💬 up too
+    { settings: { pauseGoes: "tdsnap" }, section: "railStory" });  // …with the 💬 up too
   await page.waitForFunction(() => window.Reader.state().buildingCount === 1);
   await page.locator("#barTalk").waitFor();
   await page.locator("#shelfGrid .shelf-card.is-pile .shelf-build-button").click();
@@ -1239,6 +1270,8 @@ test("the poll runs on a shelf that already has books — a pile dropped on a fu
   assert.equal(await page.evaluate(() => window.Reader.state().pollMs), 60000);
   st = contentStatus({ jobs: [pileRow()] });
   await tick();
+  // her weekly book holds This Week; the pile is a Storybook (spec 2026-09-30)
+  await page.locator("#railStory").click();
   await page.locator("#shelfGrid .shelf-card.is-pile").waitFor();
   // …and a book actually being made moves it to the faster one
   st = contentStatus({ jobs: [{ kind: "books", slug: "sunny-pond", title: "Sunny Pond",
@@ -1351,6 +1384,9 @@ test("an authored manifest paints the rim", async () => {
         pages: 4, hasVideo: false, authored: false },
     ]));
   await page.waitForFunction(() => window.Reader.state().shelfCount === 2);
+  // All: both books on one page, in title order (spec 2026-09-30)
+  await page.locator("#railAll").click();
+  await page.waitForFunction(() => document.querySelectorAll("#shelfGrid .shelf-card").length === 2);
   assert.equal(await page.locator("#shelfGrid .shelf-card.is-authored").count(), 1);
   const rims = await page.evaluate(() => [...document.querySelectorAll("#shelfGrid .shelf-card-button")]
     .map(el => getComputedStyle(el).borderColor));
@@ -1382,6 +1418,9 @@ test("a book from a friend says so, and does not say it is her story", async () 
         pages: 4, hasVideo: false, authored: false, shared: false },
     ]));
   await page.waitForFunction(() => window.Reader.state().shelfCount === 3);
+  // All: the three books on one page (spec 2026-09-30 — her story is a weekly
+  // book, the other two are Storybooks)
+  await page.locator("#railAll").click();
   // …and then for the CARDS. shelfCount is the state the shelf was told about,
   // which reaches 3 a paint before the grid holds three nodes — read it alone
   // and this test flakes on an empty querySelectorAll (it did, 9/23). The file's
@@ -1407,7 +1446,8 @@ test("a book from a friend says so, and does not say it is her story", async () 
         friendColor: friend ? getComputedStyle(friend).color : null,
       };
     }));
-  const [hers, gift, plain] = cards;
+  const bySlug = (slug) => cards.find(c => c.slug === slug);
+  const [hers, gift, plain] = [bySlug("luna-the-fox"), bySlug("gift-book"), bySlug("plain-book")];
 
   // her name comes from Settings and an earlier test in this file has already
   // given one, so the badge is matched by SHAPE, not by a hardcoded "My"

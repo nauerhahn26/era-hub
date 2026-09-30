@@ -1,6 +1,16 @@
 # Book shelf layout — sidebar sections + 3×4 centre-black grid (dad, 2026-09-30)
 
 Status: **approved by dad 9/30** ("This is good … proceed to build. Story books is good.")
+**Built 9/30 on feat/book-layout** — hub: `books-shelf.js` (first-seen + favorites
+stores in the data dir), `POST /books/<slug>/favorite`, `favorite`/`firstSeen`/`weekOf`
+on `/books/index.json`; reader: `public/reader/reader.js` renderShelf (header comment),
+`index.html` rail + grid, `reader-share.js` two-choice hold sheet; tests:
+`tests/reader-shelf.test.mjs` (the page's laws) + updated reader-ui/sizing/share/strip/books.
+Interpretations: "alphabetical" = plain `localeCompare(…, {sensitivity:"base", numeric:true})`,
+no article stripping; "remember across a reload" = a navigation of type `reload` restores
+section+page, a fresh open lands on This Week (Storybooks when This Week is empty, re-made
+while the shelf is untouched and the shown section is empty); All lists books only (cards
+still being built live in Storybooks); an import jumps the shelf to its Storybooks page.
 Scope: the SHELF screen of the Book Reader (`public/reader/`) plus the small hub
 support it needs. The READING screen does not change.
 
