@@ -21,13 +21,16 @@
 </head>
 <body>
 <!-- THE SHELF (spec §3): the Reader's TD Snap page — a rail (New picture) and the 3x4
-     centre-black grid, More at [3,1]. drawing.js fills #shelfGrid by [row,col]. -->
+     centre-black grid, More at [3,1]. drawing.js fills #shelfGrid by [row,col]. The rail's two
+     rows below New picture are black rest boxes like every empty cell (board law): inert, no text. -->
 <section id="sShelf" class="screen" aria-label="My pictures">
   <nav id="shelfRail" aria-label="Pictures">
     <button type="button" id="railNew" class="cell photo dwell" aria-label="New picture">
       <span class="thumbBox"><span class="scene thumb" id="newThumb"></span></span>
       <span class="plate">New picture</span>
     </button>
+    <div class="shelf-black" aria-hidden="true"></div>
+    <div class="shelf-black" aria-hidden="true"></div>
   </nav>
   <div id="shelfGrid"></div>
 </section>

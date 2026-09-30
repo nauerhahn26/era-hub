@@ -421,6 +421,18 @@ test("the shelf: New picture in the rail, the centre two black, newest first, Mo
   assert.deepEqual(PIC_CELLS.map((k) => c[k].id), ids.slice(0, 9));
   assert.equal((await st(page)).shelfPages, 2);
   assert.equal(await page.locator("#railNew.dwell").count(), 1);
+  // the rail's rows below New picture are black rest boxes like every empty cell (board law; overseer 9/30)
+  const rail = await page.evaluate(() => [...document.querySelectorAll("#shelfRail > *")].map((el) => {
+    const r = el.getBoundingClientRect();
+    return { id: el.id, black: el.classList.contains("shelf-black"), bg: getComputedStyle(el).backgroundColor,
+      dwell: el.classList.contains("dwell"), text: el.textContent.trim(), top: r.top, bottom: r.bottom, h: r.height,
+      attrs: [...el.attributes].some((a) => a.name.startsWith("data-dwell")) };
+  }));
+  assert.deepEqual(rail.map((x) => x.id || (x.black ? "black" : "other")), ["railNew", "black", "black"]);
+  for (const b of rail.slice(1)) {
+    assert.deepEqual([b.bg, b.dwell, b.text, b.attrs], ["rgb(0, 0, 0)", false, "", false], "an inert black rail cell");
+    assert.ok(Math.abs(b.h - rail[0].h) < 2 && b.top > rail[0].bottom, "a whole rail row below New picture: " + JSON.stringify(rail));
+  }
   await page.locator("#shelfMore").click();
   const c2 = await cellsOf(page);
   assert.deepEqual(PIC_CELLS.map((k) => c2[k].id), [ids[9], ids[10], null, null, null, null, null, null, null]);
