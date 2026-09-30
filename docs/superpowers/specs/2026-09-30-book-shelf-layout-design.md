@@ -89,6 +89,22 @@ on `/books/index.json` as a field (e.g. `firstSeen`). If a manifest ever carries
 an explicit `weekOf`, prefer it (forward-compatible; the maker may add it later —
 not in this feature's scope).
 
+### publishedAt (dad 9/30)
+
+Every manifest, of any type, carries `publishedAt` (ISO 8601 UTC): when the book
+was FIRST published. `content-publish.js` writes it once and never rewrites it
+(`exportedAt`, by contrast, moves on every re-publish). It is read back from the
+manifest being replaced; a manifest from before the field seeds it from its own
+`exportedAt`; only a book with no history is dated by the publish itself.
+`weekOf` (optional "YYYY-MM-DD") is written by the weekly maker only; the hub
+carries it through a re-publish and never invents it. Imported `.erabook`
+manifests travel byte for byte, so the sender's values ride along.
+
+`/books/index.json` rows carry `publishedAt` (null when absent). **This Week
+sorts by `weekOf` desc, then `publishedAt` desc, then the hub's `firstSeen` desc
+(old manifests with neither), ties alphabetical.** The first-seen store stays as
+that fallback.
+
 Default on opening the reader: **This Week, page 1** — the newest weekly book
 at [1,1]. If This Week is empty, open Storybooks.
 

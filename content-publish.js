@@ -30,6 +30,10 @@
 //     book's `id` is the opposite: read back from the manifest we are replacing,
 //     so a package keeps one identity for life. So is `authored` — the rim on a
 //     book written for her — which this step keeps but never awards.
+//  5. `publishedAt` IS THE OTHER HALF OF LAW 4: when the book was FIRST
+//     published, and never again. exportedAt moves on every publish, so it
+//     cannot say "which week is this book from"; publishedAt can (dad, 9/30).
+//     Read back, never invented, like `id` — see the block beside the manifest.
 //
 // No network, no key, no clock beyond the one the caller passes. The narration
 // credit (provider/model/voice) is read from .build/narration.json, which
@@ -186,9 +190,37 @@ function publishBook(dir, opts) {
   const authored = (!!job && job.authored === true) ||
                    (!!previous && previous.authored === true);
 
+  // WHEN THE BOOK WAS FIRST PUBLISHED IS NOT THIS PUBLISH'S TO RESTATE.
+  // `exportedAt` is bumped by every publish (law 4: a review edit, a rename,
+  // every Animate clip), so on its own it cannot date a book: the week's book
+  // would look a day old the moment anyone pressed a button on it. `publishedAt`
+  // is the stamp that stays put, and the shelf sorts This Week by it (spec
+  // 2026-09-30, books-shelf.js).
+  //
+  // So, like `id` and `authored` above, it is read, never invented: from the
+  // manifest we are replacing when that holds a real date. A manifest from
+  // before the field has no publishedAt but did have an exportedAt, and that is
+  // the nearest honest answer to "when did this first go out" — better than
+  // today, which would make every old book on the shelf brand new. Only a book
+  // with no usable history at all is dated by this publish. A garbage value
+  // (a foreign file may hold anything) is treated as absent.
+  //
+  // `weekOf` ("YYYY-MM-DD") belongs to the weekly maker alone, which knows
+  // which week it wrote the book for and the hub does not. It is carried
+  // through unchanged when it is that shape, and left out otherwise — never
+  // guessed from a date that is merely nearby.
+  const dateOk = (v) => typeof v === "string" && v !== "" && Number.isFinite(Date.parse(v));
+  const publishedAt = previous && dateOk(previous.publishedAt) ? previous.publishedAt
+    : previous && dateOk(previous.exportedAt) ? previous.exportedAt
+    : exportedAt;
+  const weekOf = previous && typeof previous.weekOf === "string" &&
+                 /^\d{4}-\d{2}-\d{2}$/.test(previous.weekOf) &&
+                 Number.isFinite(Date.parse(previous.weekOf)) ? previous.weekOf : null;
+
   const manifest = {
     schemaVersion: SCHEMA_VERSION,
-    id, slug, title, exportedAt,
+    id, slug, title, exportedAt, publishedAt,
+    ...(weekOf ? { weekOf } : {}),
     narration: narrationOf(narration, pages.some(p => p.audio)),
     // Omitted rather than guessed at: booksIndex() falls back to cover.jpg and
     // the reader shows its own "No cover" card, so a bad path helps nobody.

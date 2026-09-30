@@ -625,7 +625,11 @@ function booksIndex() {
                  // week when the manifest carries one, else the hub's own
                  // first-seen record (filled in below). exportedAt is NOT a
                  // week — every re-publish moves it.
-                 weekOf: booksShelf.weekOfOf(m.weekOf) });
+                 weekOf: booksShelf.weekOfOf(m.weekOf),
+                 // when the book was FIRST published (content-publish.js law 5);
+                 // null for a manifest from before the field, which the shelf
+                 // then sorts by its own first-seen record.
+                 publishedAt: booksShelf.isoOf(m.publishedAt) });
       dates.push({ slug, exportedAt: m.exportedAt });
     } catch {}   // incomplete package: skip silently
   }

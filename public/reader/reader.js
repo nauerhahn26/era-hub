@@ -497,11 +497,15 @@ function byTitle(a, b) {
   return String(a.title || "").localeCompare(String(b.title || ""), undefined,
     { sensitivity: "base", numeric: true }) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
 }
-// This Week's key: a maker's explicit week when the manifest carries one, else
-// the hub's first-seen record — never exportedAt, which every re-publish bumps.
-function weekOf(b) {
-  const t = Date.parse(b.weekOf || b.firstSeen || "");
-  return isFinite(t) ? t : 0;
+// This Week's keys, newest first, in dad's order (9/30): a maker's explicit
+// week, then when the book was FIRST published, then the hub's first-seen record
+// (old manifests without publishedAt) — never exportedAt, which every
+// re-publish bumps. Ties fall to title.
+function stamp(v) { const t = Date.parse(v || ""); return isFinite(t) ? t : 0; }
+function weekOrder(x, y) {
+  return stamp(y.b.weekOf) - stamp(x.b.weekOf)
+      || stamp(y.b.publishedAt) - stamp(x.b.publishedAt)
+      || stamp(y.b.firstSeen) - stamp(x.b.firstSeen);
 }
 
 // What a section holds, in order: {b} a book she can open, {j} a card that is
@@ -510,7 +514,7 @@ function sectionItems(sec) {
   const books = (f) => S.index.filter(f).map(b => ({ b, title: b.title, slug: b.slug }));
   if (sec === "week")
     return books(b => b.authored === true)
-      .sort((x, y) => weekOf(y.b) - weekOf(x.b) || byTitle(x, y));
+      .sort((x, y) => weekOrder(x, y) || byTitle(x, y));
   if (sec === "fav") return books(b => b.favorite === true).sort(byTitle);
   if (sec === "all") return books(() => true).sort(byTitle);
   // Storybooks: everything that is not a weekly book — scanned and hub-built
@@ -787,7 +791,7 @@ function pageOf(sec, slug) {
 function shelfSig() {
   return JSON.stringify([
     S.drive, S.childName,
-    S.index.map(b => [b.slug, b.title, b.cover, b.authored, b.shared, b.favorite, b.firstSeen, b.weekOf]),
+    S.index.map(b => [b.slug, b.title, b.cover, b.authored, b.shared, b.favorite, b.firstSeen, b.weekOf, b.publishedAt]),
     S.building.map(j => {
       const w = isPile(j) ? pileWords(j) : buildingWords(j);
       return [j.slug, j.title, w.head, w.note, isPile(j), offersBuild(j)];

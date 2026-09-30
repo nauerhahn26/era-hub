@@ -347,6 +347,33 @@ test("This Week keeps its order when a re-publish bumps exportedAt (first-seen i
   } finally { fs.writeFileSync(m, was); }
 });
 
+test("This Week order: weekOf, then publishedAt, then first-seen; ties alphabetical (dad 9/30)", async () => {
+  const W = (n, extra) => { writeBook(n, { authored: true, ...extra }); return n; };
+  const names = [
+    // weekOf beats everything, even a newer publishedAt on a book with none
+    W("Sort Wk Early", { weekOf: "2030-01-05", publishedAt: "2030-01-01T00:00:00Z" }),
+    W("Sort Wk Late", { weekOf: "2030-01-12", publishedAt: "2029-12-01T00:00:00Z" }),
+    // no weekOf: publishedAt newest first, and it beats an exportedAt that re-publishes bumped
+    W("Sort Pub New", { publishedAt: "2029-11-02T00:00:00Z", exportedAt: "2020-01-01T00:00:00Z" }),
+    W("Sort Pub Old", { publishedAt: "2029-11-01T00:00:00Z", exportedAt: "2029-12-31T00:00:00Z" }),
+    // identical keys: alphabetical
+    W("Sort Tie B", { publishedAt: "2029-09-01T00:00:00Z" }),
+    W("Sort Tie A", { publishedAt: "2029-09-01T00:00:00Z" }),
+    // neither field (an old manifest): the hub's first-seen, seeded from exportedAt
+    W("Sort Old Z", { exportedAt: "2029-10-02T00:00:00Z" }),
+    W("Sort Old A", { exportedAt: "2029-10-01T00:00:00Z" }),
+  ];
+  try {
+    const { ctx, page } = await makePage();
+    assert.deepEqual((await pageTitles(page)).slice(0, 8), [
+      "Sort Wk Late", "Sort Wk Early", "Sort Pub New", "Sort Pub Old",
+      "Sort Tie A", "Sort Tie B", "Sort Old Z", "Sort Old A"]);
+    await ctx.close();
+  } finally {
+    for (const n of names) fs.rmSync(path.join(TMP, "books", n), { recursive: true, force: true });
+  }
+});
+
 // ============================================================ favorites
 
 test("empty Favorites: every cell black, and one inert note OUTSIDE the grid says how", async () => {

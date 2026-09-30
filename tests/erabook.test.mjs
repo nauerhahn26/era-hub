@@ -226,6 +226,18 @@ test("a book with nested pages, audio and video comes back byte for byte", async
   assert.ok(!fs.existsSync(path.join(dest, "audio", "003.wav")));
 });
 
+test("a manifest with publishedAt and weekOf travels untouched (unknown keys are not refused)", async () => {
+  const { dir, manifest } = fixture({ manifest: { publishedAt: "2026-09-01T12:00:00.000Z", weekOf: "2026-09-28" } });
+  const file = await packedFile(dir, manifest);
+  const dest = scratch("dest");
+  erabook.unpack(file, dest);
+  const got = JSON.parse(fs.readFileSync(path.join(dest, "manifest.json"), "utf8"));
+  assert.equal(got.publishedAt, "2026-09-01T12:00:00.000Z", "the sender's first-publish date rides along");
+  assert.equal(got.weekOf, "2026-09-28");
+  assert.ok(fs.readFileSync(path.join(dest, "manifest.json"))
+    .equals(fs.readFileSync(path.join(dir, "manifest.json"))), "byte for byte, never rewritten");
+});
+
 test("only what the manifest names travels: no sources/, no .build/, no strays", async () => {
   const { dir, manifest } = fixture();
   const file = await packedFile(dir, manifest);

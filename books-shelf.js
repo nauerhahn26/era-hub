@@ -5,17 +5,20 @@
 // Storybooks, All) over a 3×4 centre-black grid. Two of those sections need a
 // fact no manifest carries, and both facts are THIS HUB'S, not the book's:
 //
-//   FIRST SEEN  This Week is "newest week first", and a manifest cannot say
-//               which week a book belongs to. `exportedAt` moves every time the
-//               hub re-publishes a book (a review edit, a rename, every Animate
-//               clip — content-publish.js law 4), and the weekly maker writes no
-//               week field. So the hub writes down, per slug, the first moment
-//               its shelf index saw the package: seeded from the manifest's
-//               exportedAt when there is one (so books already on a shelf the
-//               day this ships sort sensibly), otherwise now — and NEVER
-//               rewritten afterwards. A manifest that one day carries an
-//               explicit `weekOf` beats it on the reader's side; that field is
-//               published beside this one, not merged into it.
+//   THIS WEEK'S ORDER (dad 9/30). Newest first, by the first of these a book
+//               has:  `weekOf` (the weekly maker's own week, "YYYY-MM-DD"),
+//               then `publishedAt` (when the book was FIRST published — the
+//               hub writes it once in content-publish.js and never moves it),
+//               then the hub's FIRST SEEN record below. Ties fall to title.
+//               `exportedAt` is never a sort key: every re-publish bumps it
+//               (a review edit, a rename, every Animate clip).
+//
+//   FIRST SEEN  The fallback for a manifest that predates `publishedAt`: per
+//               slug, the first moment this hub's shelf index saw the package,
+//               seeded from the manifest's exportedAt when there is one (so
+//               books already on a shelf the day this shipped sort sensibly),
+//               otherwise now — and NEVER rewritten afterwards. Old books need
+//               it, so it stays; it is now only the last tiebreak before title.
 //
 //   FAVORITES   A grown-up's finger hold on a cover gives a book her ♥. It lives
 //               on the hub so a browser reset does not lose it, keyed by slug
@@ -116,4 +119,4 @@ function create(dataDir) {
   return { firstSeen, favorites, setFavorite };
 }
 
-module.exports = { create, weekOfOf, FAVORITES_FILE, FIRST_SEEN_FILE };
+module.exports = { create, weekOfOf, isoOf, FAVORITES_FILE, FIRST_SEEN_FILE };

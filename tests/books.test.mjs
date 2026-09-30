@@ -168,7 +168,7 @@ before(async () => {
     }, null, 2));
   };
   dated("undated-week", {});
-  dated("week-with-weekof", { exportedAt: "2026-09-01T00:00:00Z", weekOf: "2026-09-28" });
+  dated("week-with-weekof", { exportedAt: "2026-09-01T00:00:00Z", weekOf: "2026-09-28", publishedAt: "2026-09-01T00:00:00.000Z" });
   // an incomplete package (mid-export: media present, NO manifest) — must be skipped
   const partial = path.join(TMP, "books", "half-exported");
   fs.mkdirSync(partial, { recursive: true });
@@ -214,6 +214,7 @@ test("GET /books/index.json lists the complete package ONLY, spec shape, no-cach
     // the shelf layout's three (spec 2026-09-30): nobody has given it a ♥, the
     // shelf first saw it at its own exportedAt, and no maker wrote a weekOf
     favorite: false, firstSeen: "2026-08-24T00:00:00.000Z", weekOf: null,
+    publishedAt: null,   // this manifest predates the field; the row never invents one
   });
   // and the versioned URL actually serves (query must not break the jail)
   const cv = await fetch(`${BASE}${luna.cover}`);
@@ -597,6 +598,12 @@ test("first-seen survives a re-publish that bumps exportedAt", async () => {
       .find(e => e.slug === "our-book").firstSeen;
     assert.equal(after, before, "a re-publish moved the book to a newer week");
   } finally { fs.writeFileSync(mPath, JSON.stringify(m, null, 2)); }
+});
+
+test("publishedAt rides on the index row as the manifest wrote it, null when it has none", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "week-with-weekof").publishedAt, "2026-09-01T00:00:00.000Z");
+  assert.equal(idx.find(e => e.slug === "our-book").publishedAt, null);
 });
 
 test("an explicit weekOf in the manifest is published beside first-seen", async () => {
