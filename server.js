@@ -24,6 +24,7 @@ const booksIndex_ = require("./books-index.js");
 // Book sharing (spec §6): it owns the policy AND the one books allowlist, so
 // export, import and serving cannot drift into three different lists.
 const booksShare = require("./books-share.js");
+const booksShelf = require("./books-shelf.js");
 const aiConfig = require("./ai-config.js");
 // For baseFor alone: the provider's real base, or the ERA_AI_URL stand-in.
 const contentProviders = require("./content-providers.js");
@@ -586,8 +587,13 @@ function bookDirs(force) { return booksIndex_.bookDirs(BOOKS_DIR, force); }
 // A package is complete iff manifest.json exists and parses (manifest written
 // LAST by the exporter); manifest-less/unparseable dirs are skipped silently.
 // Degraded law: missing books dir -> [] — never a crash.
+// The shelf's two stores (spec 2026-09-30) — favourites and first-seen — live in
+// the hub's data dir, NEVER under BOOKS_DIR (the Drive mirror's). books-shelf.js.
+const shelfStore = booksShelf.create(DATA);
+
 function booksIndex() {
   const out = [];
+  const dates = [];   // [{slug, exportedAt}] for the first-seen record, one write
   for (const { slug, dir } of bookDirs().list) {
     try {
       const mPath = path.join(BOOKS_DIR, dir, "manifest.json");
@@ -614,8 +620,23 @@ function booksIndex() {
       out.push({ slug, title: String(m.title || dir),
                  cover: "/books/" + slug + "/" + (m.cover || "cover.jpg") + "?v=" + v,
                  pages: pages.length, hasVideo: pages.some(p => p && p.video),
-                 authored: m.authored === true && !shared, shared, v });
+                 authored: m.authored === true && !shared, shared, v,
+                 // This Week's sort key (spec 2026-09-30): a maker's explicit
+                 // week when the manifest carries one, else the hub's own
+                 // first-seen record (filled in below). exportedAt is NOT a
+                 // week — every re-publish moves it.
+                 weekOf: booksShelf.weekOfOf(m.weekOf) });
+      dates.push({ slug, exportedAt: m.exportedAt });
     } catch {}   // incomplete package: skip silently
+  }
+  // ♥ and first-seen, from the hub's own stores. A favourite whose book is gone
+  // has no row to land on and is simply ignored.
+  let seen = new Map(), favs = new Set();
+  try { seen = shelfStore.firstSeen(dates); } catch {}
+  try { favs = shelfStore.favorites(); } catch {}
+  for (const row of out) {
+    row.favorite = favs.has(row.slug);
+    row.firstSeen = seen.get(row.slug) || null;
   }
   return out;
 }
@@ -2340,6 +2361,41 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: "write-failed",
                                  message: booksShare.messageFor("write-failed") }));
       });
+    });
+    return;
+  }
+  // ♥ Favorites (book shelf layout, spec 2026-09-30). A grown-up's finger hold
+  // on a cover opens a sheet whose first button toggles this. ownDoor, like
+  // every book door that changes something: it rewrites her shelf, so this
+  // hub's own pages only. Body {favorite: true|false}; the answer is the state
+  // the hub now holds. The store is the hub's (books-shelf.js), never books/.
+  if (req.method === "POST" && /^\/books\/[^/]+\/favorite$/.test(urlPath)) {
+    if (!ownDoor(req, res)) return;
+    const slug = safeDecode(urlPath.split("/")[2]) || "";
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let want;
+      try { want = JSON.parse(body || "{}").favorite; } catch { want = undefined; }
+      if (typeof want !== "boolean") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "bad-favorite" }));
+        return;
+      }
+      // A ♥ belongs on a book the shelf can show: a package with a manifest.
+      const dir = slug ? booksIndex_.dirFor(BOOKS_DIR, slug) : null;
+      if (!dir || !fs.existsSync(path.join(BOOKS_DIR, dir, "manifest.json"))) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "no-such-book" }));
+        return;
+      }
+      if (!shelfStore.setFavorite(slug, want)) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ slug, favorite: want }));
     });
     return;
   }

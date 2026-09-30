@@ -391,7 +391,7 @@ test("every worker the hub spawns is in build-payload.sh's copy list", () => {
   assert.ok(targets.has("clothing-worker.js"));
   for (const t of targets) assert.ok(copied.has(t), t + " is spawned by the hub but not copied into the payload");
   for (const m of ["content.js", "content-store.js", "content-ingest.js", "content-narrate.js",
-                   "content-providers.js", "books-index.js", "slug.js", "words.js"])
+                   "content-providers.js", "books-index.js", "books-shelf.js", "slug.js", "words.js"])
     assert.ok(copied.has(m), m + " is required by the hub but not copied into the payload");
 });
 
