@@ -384,3 +384,98 @@ test("a grown-up's finger drags a sticker (one move in her history, saved, undoa
   assert.deepEqual((await st(page)).items[0], { s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" }, "Undo puts it back");
   await ctx.close();
 });
+
+// ================================================================ T10 — the shelf
+const PIC_CELLS = ["1,1", "1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3", "3,4"];
+const ALL_CELLS = ["1,1", "1,2", "1,3", "1,4", "2,1", "2,2", "2,3", "2,4", "3,1", "3,2", "3,3", "3,4"];
+const cellsOf = (page) => page.evaluate(() => {
+  const out = {};
+  for (const el of document.querySelectorAll("#shelfGrid > [data-cell]")) out[el.dataset.cell] = {
+    kind: el.classList.contains("shelf-black") ? "black" : el.id === "shelfMore" ? "more" : el.dataset.id ? "pic" : "other",
+    id: el.dataset.id || null, dwell: el.classList.contains("dwell"), text: el.textContent.trim(),
+    attrs: [...el.attributes].some((a) => a.name.startsWith("data-dwell")),
+  };
+  return out;
+});
+// n pictures, newest first, an hour apart back from `base`; returns their ids newest first
+function seedShelf(n, base = Date.UTC(2026, 8, 30, 12, 0, 0)) {
+  fs.rmSync(PICS, { recursive: true, force: true });
+  const ids = [];
+  for (let k = 0; k < n; k++) {
+    const d = new Date(base - k * 3600e3), s = d.toISOString();
+    const id = s.slice(0, 10) + "-" + s.slice(11, 19).replace(/:/g, "") + "-test-dev";
+    seed(id, [H(), { s: "sun", x: 0.5, y: 0.17, w: 0.16, by: "ellie" }], s);
+    ids.push(id);
+  }
+  return ids;
+}
+
+test("the shelf: New picture in the rail, the centre two black, newest first, More at [3,1] past nine; blank pictures never listed", async () => {
+  const ids = seedShelf(11);
+  seed("2026-09-30-130000-test-dev", [], "2026-09-30T13:00:00Z");          // blank (and newest): not listed
+  const { ctx, page } = await makePage();
+  const c = await cellsOf(page);
+  assert.deepEqual(Object.keys(c).sort(), [...ALL_CELLS].sort());
+  for (const k of ["2,2", "2,3"]) assert.deepEqual([c[k].kind, c[k].dwell, c[k].text, c[k].attrs], ["black", false, "", false], k);
+  assert.deepEqual([c["3,1"].kind, c["3,1"].dwell], ["more", true]);
+  assert.deepEqual(PIC_CELLS.map((k) => c[k].id), ids.slice(0, 9));
+  assert.equal((await st(page)).shelfPages, 2);
+  assert.equal(await page.locator("#railNew.dwell").count(), 1);
+  await page.locator("#shelfMore").click();
+  const c2 = await cellsOf(page);
+  assert.deepEqual(PIC_CELLS.map((k) => c2[k].id), [ids[9], ids[10], null, null, null, null, null, null, null]);
+  for (const k of PIC_CELLS.slice(2)) assert.equal(c2[k].kind, "black", k);
+  await page.locator("#shelfMore").click();
+  assert.equal((await st(page)).shelfPage, 0, "More loops back to page 1");
+  await ctx.close();
+});
+
+test("a shelf cell is her picture drawn from scene.json by the same renderer, with a date plate", async () => {
+  const [id] = seedShelf(1);
+  const { ctx, page } = await makePage();
+  const t = await page.evaluate((id) => {
+    const el = document.querySelector(`#shelfGrid [data-id="${id}"]`), th = el.querySelector(".thumb"), r = th.getBoundingClientRect();
+    return { items: th.querySelectorAll(".item").length, img: th.querySelector("img.item").getAttribute("src"),
+             bg: th.style.background, plate: el.querySelector(".plate").textContent, ratio: r.width / r.height };
+  }, id);
+  assert.deepEqual([t.items, t.img, t.plate], [2, "stickers/horse.png", "Wed 30 Sep"]);
+  assert.match(t.bg, /linear-gradient/);
+  assert.ok(Math.abs(t.ratio - 16 / 9) < 0.02, String(t.ratio));
+  assert.equal((await cellsOf(page))["3,1"].kind, "black", "one page: [3,1] stays black");
+  await ctx.close();
+});
+
+test("a picture on the shelf opens the ring on it, and she keeps adding", async () => {
+  const [id] = seedShelf(1);
+  const { ctx, page } = await makePage();
+  await page.locator(`#shelfGrid [data-id="${id}"]`).click();
+  await page.waitForFunction(() => window.Drawing.state().screen === "ring");
+  assert.deepEqual([(await st(page)).id, (await st(page)).items.length], [id, 2]);
+  await page.locator("#tile-star").click();
+  assert.equal((await st(page)).items.length, 3);
+  await ctx.close();
+});
+
+test("New picture: the hub gives it an id, the ring opens empty, and the shelf does not list it yet", async () => {
+  seedShelf(0);
+  const { ctx, page } = await makePage();
+  await page.locator("#railNew").click();
+  await page.waitForFunction(() => window.Drawing.state().screen === "ring");
+  const s = await st(page);
+  assert.match(s.id, /^\d{4}-\d{2}-\d{2}-\d{6}-test-dev(-\d+)?$/);
+  assert.equal(s.items.length, 0);
+  assert.equal(await page.evaluate(() => location.hash), "#p=" + s.id);
+  assert.deepEqual(await (await fetch(`${BASE}/drawings/index.json`)).json(), []);
+  assert.ok(fs.existsSync(path.join(PICS, s.id, ".local")), "no Drive folder here: kept on this device, marked .local");
+  await ctx.close();
+});
+
+test("a picture another device made shows up on the open shelf without a relaunch", async () => {
+  seedShelf(1);
+  const { ctx, page } = await makePage();
+  assert.equal((await st(page)).shelfIds.length, 1);
+  seed("2026-09-30-140000-other-dev", [H()], "2026-09-30T14:00:00Z");     // the mirror just carried it in
+  await page.evaluate(() => window.Drawing.pollShelf());
+  assert.deepEqual((await st(page)).shelfIds.slice(0, 2), ["2026-09-30-140000-other-dev", "2026-09-30-120000-test-dev"]);
+  await ctx.close();
+});

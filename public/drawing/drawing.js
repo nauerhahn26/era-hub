@@ -313,11 +313,119 @@ function setMail(res) {
 }
 
 // ---------- the shelf (spec §3) — T10 ----------
-// T10 replaces this section. Until then the shelf is an empty screen the router can land on.
-async function openShelf() { S.id = null; S.scene = null; S.history = []; S.dirty = false; show("shelf"); suppress(); tellPark(); }
-function stopPoll() {}
-async function pollShelf() {}
-async function newPicture() {}
+async function refreshIndex() {
+  try {
+    const j = await (await fetch("/drawings/index.json", { cache: "no-store" })).json();
+    S.index = Array.isArray(j) ? j : [];
+  } catch { S.index = []; }
+}
+const shelfSig = () => JSON.stringify(S.index.map((p) => [p.id, p.updated, p.items]));
+function plate(when) {
+  const d = new Date(when);
+  if (!Number.isFinite(d.getTime())) return "";
+  return DAYS[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()];
+}
+function blackCell() {
+  const d = document.createElement("div");
+  d.className = "shelf-black";
+  d.setAttribute("aria-hidden", "true");
+  return d;
+}
+function picCell(p) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "cell shelf-pic photo dwell";
+  b.dataset.id = p.id;
+  const when = plate(p.created);
+  b.setAttribute("aria-label", "Picture " + when);
+  const box = document.createElement("span");
+  box.className = "thumbBox";
+  const th = document.createElement("span");
+  th.className = "scene thumb";
+  SC.renderScene(th, p.scene, { table: S.table });      // the same renderer as the ring
+  box.appendChild(th);
+  const pl = document.createElement("span");
+  pl.className = "plate";
+  pl.textContent = when;
+  b.append(box, pl);
+  b.addEventListener("click", () => { hush(); go(p.id); });
+  return b;
+}
+function moreCell(pages) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.id = "shelfMore";
+  b.className = "cell text dwell";
+  b.setAttribute("aria-label", "More pictures");
+  const w = document.createElement("span");
+  w.className = "word";
+  w.textContent = "More ▶";
+  b.appendChild(w);
+  b.addEventListener("click", () => turnShelf((S.shelfPage + 1) % pages));   // the last page loops
+  return b;
+}
+function renderShelf() {
+  const pages = Math.max(1, Math.ceil(S.index.length / PER_PAGE));
+  if (S.shelfPage >= pages) S.shelfPage = pages - 1;
+  if (S.shelfPage < 0) S.shelfPage = 0;
+  S.shelfPages = pages;
+  const slice = S.index.slice(S.shelfPage * PER_PAGE, (S.shelfPage + 1) * PER_PAGE);
+  const at = new Map();
+  BOOK_CELLS.forEach(([r, c], i) => at.set(r + "," + c, slice[i] ? picCell(slice[i]) : blackCell()));
+  at.set("2,2", blackCell());
+  at.set("2,3", blackCell());
+  at.set("3,1", pages > 1 ? moreCell(pages) : blackCell());
+  const kids = [];
+  for (let r = 1; r <= 3; r++) for (let c = 1; c <= 4; c++) {
+    const el = at.get(r + "," + c);
+    el.dataset.cell = r + "," + c;
+    el.style.gridRow = String(r);
+    el.style.gridColumn = String(c);
+    kids.push(el);
+  }
+  $("shelfGrid").replaceChildren(...kids);
+  S.shelfIds = slice.map((p) => p.id);
+  S.painted = shelfSig();
+}
+function turnShelf(page) {
+  hush();
+  S.shelfPage = page;
+  renderShelf();
+  suppress();
+  log("shelf-page", { page });
+}
+async function openShelf() {
+  const fresh = S.screen !== "shelf";
+  S.id = null; S.scene = null; S.history = []; S.dirty = false;
+  await refreshIndex();
+  if (fresh) S.shelfPage = 0;                           // every return lands on page 1: newest first
+  show("shelf");
+  renderShelf();
+  suppress();
+  tellPark();
+  startPoll();
+}
+function startPoll() { stopPoll(); S.pollTimer = setInterval(pollShelf, POLL_MS); }
+function stopPoll() { if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; } }
+// Repaint ONLY when something changed (a rebuild throws away an in-flight dwell — reader.js's
+// lesson), and never under a grown-up's open sheet.
+async function pollShelf() {
+  if (S.screen !== "shelf" || frozen.length) return;
+  await refreshIndex();
+  if (shelfSig() === S.painted) return;
+  renderShelf();
+  suppress();
+  tellPark();
+}
+async function newPicture() {
+  hush();
+  try {
+    const r = await fetch("/drawings", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const j = await r.json();
+    if (r.ok && j && ID_RE.test(j.id)) { log("new", { id: j.id }); go(j.id); return; }
+  } catch {}
+  log("new_failed", {});             // the hub did not answer: she stays on her shelf, nothing is said
+}
 
 // ---------- Done (spec §2.3) — T11 ----------
 // T11 replaces this section.
