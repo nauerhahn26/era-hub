@@ -284,3 +284,103 @@ test("the 200th sticker is the last: a 201st dwell says its word, places nothing
   assert.equal(seen.length, 0);
   await ctx.close();
 });
+
+// ================================================================ T9 — the grown-up
+async function finger(page, from, to, steps = 6) {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: from.x, y: from.y }] });
+    for (let k = 1; k <= steps; k++)
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove",
+        touchPoints: [{ x: from.x + ((to.x - from.x) * k) / steps, y: from.y + ((to.y - from.y) * k) / steps }] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  } finally { await cdp.detach().catch(() => {}); }
+}
+const centreOf = async (page, sel) => { const b = await page.locator(sel).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+
+test("the grown-up's tab sits in the door bar and is never a gaze target", async () => {
+  const { ctx, page } = await openRing();
+  const t = await page.evaluate(() => {
+    const el = document.getElementById("partnerTab");
+    return { inBar: !!el.closest(".msgbar"), dwell: el.matches(".dwell"),
+             attrs: [...el.attributes].map((a) => a.name).filter((n) => n.startsWith("data-dwell")) };
+  });
+  assert.deepEqual(t, { inBar: true, dwell: false, attrs: [] });
+  await ctx.close();
+});
+
+test("the sheet puts every target to sleep but the two doors, says no picture is finished yet, and wakes them on close", async () => {
+  const { ctx, page } = await openRing();
+  await page.locator("#partnerTab").click();
+  let r = await page.evaluate(() => ({ live: [...document.querySelectorAll(".dwell")].map((e) => e.id).sort(),
+    asleep: document.querySelectorAll("#sRing [data-dwell-disabled]").length }));
+  assert.deepEqual(r, { live: ["barDoor", "barTalk"], asleep: 10 });
+  assert.equal(await page.textContent("#pMail"), "No picture finished yet");
+  await page.locator("#pClose").click();
+  r = await page.evaluate(() => ({ live: document.querySelectorAll("#sRing .dwell").length,
+    asleep: document.querySelectorAll("[data-dwell-disabled]").length }));
+  assert.deepEqual(r, { live: 10, asleep: 0 });
+  await ctx.close();
+});
+
+test("dwell tune: 200 ms a tap, clamped 800-3000, and the doors follow at 2x", async () => {
+  const { ctx, page } = await openRing();
+  await page.locator("#partnerTab").click();
+  await page.locator("#pSlower").click();
+  assert.equal(await page.evaluate(() => window.Dwell.config.ms), 1400);
+  assert.equal(await page.getAttribute("#barDoor", "data-dwell-ms"), "2800");
+  assert.equal(await page.textContent("#pDwell"), "1400 ms");
+  for (let k = 0; k < 12; k++) await page.locator("#pSlower").click();
+  assert.equal(await page.evaluate(() => window.Dwell.config.ms), 3000);
+  for (let k = 0; k < 20; k++) await page.locator("#pFaster").click();
+  assert.equal(await page.evaluate(() => window.Dwell.config.ms), 800);
+  assert.equal(await page.getAttribute("#barDoor", "data-dwell-ms"), "1600");
+  await ctx.close();
+});
+
+test("Clear picture: two stages, spoken, the same picture stays open, and the blank picture leaves the shelf", async () => {
+  const { ctx, page, id } = await openRing();
+  const first = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok());
+  await page.locator("#tile-horse").click();
+  await page.locator("#tile-sun").click();
+  await first;
+  assert.ok((await (await fetch(`${BASE}/drawings/index.json`)).json()).some((p) => p.id === id), "listed while it has stickers");
+  await page.locator("#partnerTab").click();
+  await page.locator("#pClear").click();
+  let s = await st(page);
+  assert.equal(s.items.length, 2, "one tap never clears");
+  assert.equal(s.said.at(-1), "Clear the whole picture?");
+  assert.equal(await page.isVisible("#pClearYes"), true);
+  const cleared = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok());
+  await page.locator("#pClearYes").click();
+  s = await st(page);
+  assert.deepEqual([s.items.length, s.id, s.screen, s.history], [0, id, "ring", 0]);
+  assert.equal(s.said.at(-1), "All clear! A fresh picture.");
+  await cleared;
+  assert.ok(!(await (await fetch(`${BASE}/drawings/index.json`)).json()).some((p) => p.id === id), "a blank picture is not listed");
+  await ctx.close();
+});
+
+test("a grown-up's finger drags a sticker (one move in her history, saved, undoable); a mouse drag never moves it", async () => {
+  const { ctx, page } = await openRing();
+  await page.locator("#tile-horse").click();
+  await page.waitForFunction(() => !document.querySelector(".flyer"));
+  const sw = await page.evaluate(() => document.getElementById("scene").getBoundingClientRect().width);
+  const from = await centreOf(page, '#scene [data-i="0"]');
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x - 200, from.y - 50, { steps: 6 });
+  await page.mouse.up();
+  let s = await st(page);
+  assert.deepEqual([s.items[0], s.history], [{ s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" }, 1], "a mouse is her gaze: nothing moves");
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok() && r.request().postData().includes('"partner"'));
+  await finger(page, from, { x: from.x - 200, y: from.y - 50 });
+  s = await st(page);
+  assert.ok(Math.abs(s.items[0].x - (0.5 - 200 / sw)) < 0.01, JSON.stringify(s.items[0]));
+  assert.equal(s.items[0].by, "partner");
+  assert.equal(s.history, 2);
+  await saved;
+  await page.locator("#btnUndo").click();
+  assert.deepEqual((await st(page)).items[0], { s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" }, "Undo puts it back");
+  await ctx.close();
+});

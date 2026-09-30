@@ -259,15 +259,58 @@ async function save(opts = {}) {
 }
 
 // ---------- the grown-up's hands (partner.js calls these; spec §2.4) — T9 ----------
-// T9 replaces this section.
-function itemAt() { return null; }
-function moveItem() {}
-async function clearPicture() {}
-function tuneDwell() { return window.Dwell ? Dwell.config.ms : EC.holds.content; }
-function freeze() {}
-function thaw() {}
-function mailLine() { return ""; }
-function setMail(res) { S.lastMail = res; }
+function itemAt(i) { const it = S.scene && S.scene.items[i]; return it ? { ...it } : null; }
+function moveItem(i, x, y) {
+  const it = S.scene && S.scene.items[i];
+  if (!it) return;
+  const c = SC.clampItem({ x, y, w: it.w });
+  push({ t: "move", i, from: { x: it.x, y: it.y, by: it.by } });
+  it.x = c.x; it.y = c.y; it.by = "partner";
+  paintScene();
+  log("partner", { action: "move", s: it.s });
+  changed();
+}
+async function clearPicture() {
+  if (S.screen !== "ring" || !S.scene) return;
+  S.scene.items = [];
+  S.history = [];                     // not undoable: it had its own two-stage confirm
+  paintScene();
+  log("partner", { action: "clear" });
+  changed();
+  hush();
+  await say("All clear! A fresh picture.");
+}
+function tuneDwell(d) {
+  const cur = window.Dwell ? Dwell.config.ms : EC.holds.content;
+  const ms = Math.max(EC.holds.floor, Math.min(EC.holds.tuneMax, cur + d));
+  if (window.Dwell) Dwell.setMs(ms);
+  if (BAR) BAR.setDwell(ms);          // the doors stay 2 x the dwell she is actually on
+  log("partner", { action: "dwell", ms });
+  return ms;
+}
+// A full-screen sheet hides nothing from dwell.js (board-partner.js:53-71): every target but the
+// two doors loses .dwell and gains data-dwell-disabled while it is up.
+function freeze() {
+  const live = [...document.querySelectorAll(".dwell")].filter((el) => !BAR_DOORS.has(el.id));
+  for (const el of live) { el.classList.remove("dwell"); el.setAttribute("data-dwell-disabled", ""); }
+  frozen = frozen.concat(live);
+}
+function thaw() {
+  for (const el of frozen) { el.classList.add("dwell"); el.removeAttribute("data-dwell-disabled"); }
+  frozen = [];
+  suppress(600);
+}
+function mailLine() {
+  const m = S.lastMail;
+  if (!m) return "No picture finished yet";
+  if (m.saved === false) return "Not saved — the hub did not answer";
+  return MAIL_LINES[m.mail] || "Saved";
+}
+function setMail(res) {
+  S.lastMail = res;
+  try { localStorage.setItem("drawing_mail_last", JSON.stringify(res)); } catch {}
+  for (const cb of mailWatchers) { try { cb(mailLine()); } catch {} }
+}
 
 // ---------- the shelf (spec §3) — T10 ----------
 // T10 replaces this section. Until then the shelf is an empty screen the router can land on.

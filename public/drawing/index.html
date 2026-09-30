@@ -44,6 +44,23 @@
     <span class="glyph" aria-hidden="true">✔</span><span class="word">Done</span></button>
 </section>
 
+<!-- THE GROWN-UP'S SHEET (spec §2.4): opened by the tab partner.js puts in the door bar.
+     Touch/click only — nothing here is .dwell or carries a data-dwell-*. -->
+<div id="partnerSheet" hidden>
+  <div class="sheet-card" role="dialog" aria-label="Grown-ups">
+    <h2>Grown-ups</h2>
+    <div class="sheet-row">Dwell
+      <button type="button" id="pSlower" class="sheet-btn">🐢 +200</button>
+      <b id="pDwell"></b>
+      <button type="button" id="pFaster" class="sheet-btn">🐇 −200</button></div>
+    <div class="sheet-row" id="pClearRow">
+      <button type="button" id="pClear" class="sheet-btn">🗑 Clear picture</button>
+      <button type="button" id="pClearYes" class="sheet-btn warn" hidden>Yes, clear</button></div>
+    <p class="sheet-say" id="pMail"></p>
+    <div class="sheet-row"><button type="button" id="pClose" class="sheet-btn">Close</button></div>
+  </div>
+</div>
+
 <script src="../dwell.js"></script>
 <script src="../speech.js"></script>
 <script type="module">
@@ -59,5 +76,6 @@
   window.DrawingScene = DrawingScene;
 </script>
 <script src="drawing.js" defer></script>
+<script src="partner.js" defer></script>
 </body>
 </html>
