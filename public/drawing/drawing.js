@@ -184,12 +184,79 @@ async function openRing(id) {
 }
 
 // ---------- placing, undo, autosave (spec §2.1, §2.2, §4) — T8 ----------
-// T8 replaces this section.
-function place() {}
-function undo() {}
-function changed() {}
-function scheduleSave() {}
-async function save() { return true; }
+function push(ev) { S.history.push(ev); if (S.history.length > HISTORY_MAX) S.history.shift(); }
+function place(id, tile) {
+  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  const st = S.stickers.get(id);
+  if (!st) return;
+  hush();
+  say(st.word);
+  if (S.scene.items.length >= MAX_ITEMS) { log("place_full", { s: id }); return; }   // the hub's cap
+  const spot = SC.landing(id, S.scene.items, S.table);
+  if (!spot) return;
+  const item = { s: id, x: spot.x, y: spot.y, w: spot.w, by: "ellie" };
+  if (id === "splat") { item.c = spot.c; item.seed = spot.seed; }
+  S.scene.items.push(item);
+  push({ t: "place" });
+  paintScene();
+  flyIn(tile, S.scene.items.length - 1);
+  log("place", { s: id, n: S.scene.items.length });
+  changed();
+}
+// The sticker appears at its tile and flies into its slot (~450 ms, ease-out); reduced motion:
+// it simply appears. A fixed-position copy flies; the real one waits hidden, so the scene's clip
+// never swallows the start of the flight.
+function flyIn(tile, index) {
+  try {
+    if (!tile || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const target = document.querySelector('#scene [data-i="' + index + '"]');
+    const from = tile.querySelector(".pic");
+    if (!target || !from || !target.animate) return;
+    const a = from.getBoundingClientRect(), b = target.getBoundingClientRect();
+    if (!a.width || !b.width) return;
+    const fly = target.cloneNode(true);
+    fly.removeAttribute("data-i");
+    fly.setAttribute("class", "flyer");
+    Object.assign(fly.style, { left: b.left + "px", top: b.top + "px", width: b.width + "px", height: b.height + "px" });
+    document.body.appendChild(fly);
+    target.style.visibility = "hidden";
+    const s = Math.min(a.width / b.width, a.height / b.height);
+    fly.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px) scale(${s})` }, { transform: "none" }],
+                { duration: 450, easing: "ease-out" })
+      .finished.catch(() => {}).then(() => { fly.remove(); target.style.visibility = ""; });
+  } catch {}
+}
+function undo() {
+  if (S.screen !== "ring" || !S.scene || !S.history.length) return;   // nothing, and silence (§2.2)
+  hush();
+  say("Undo");
+  const ev = S.history.pop();
+  if (ev.t === "place") S.scene.items.pop();
+  else if (ev.t === "move" && S.scene.items[ev.i]) Object.assign(S.scene.items[ev.i], ev.from);
+  paintScene();
+  log("undo", { t: ev.t });
+  changed();
+}
+function changed() { S.dirty = true; stash(); scheduleSave(); }
+function scheduleSave() { clearTimeout(S.saveTimer); S.saveTimer = setTimeout(() => { save(); }, SAVE_MS); }
+// Last write wins. A failed save logs one line and keeps the picture (memory + localStorage,
+// dirty); the next change — or the next open of this picture — tries again.
+async function save(opts = {}) {
+  clearTimeout(S.saveTimer);
+  S.saveTimer = null;
+  if (!S.dirty || !S.id || !S.scene) return true;
+  const id = S.id, body = JSON.stringify(S.scene);
+  try {
+    const r = await fetch("/drawings/" + encodeURIComponent(id) + "/scene.json", { method: "PUT",
+      headers: { "Content-Type": "application/json" }, body, keepalive: !!opts.keepalive });
+    if (!r.ok) throw new Error("PUT " + r.status);
+    if (S.id === id && JSON.stringify(S.scene) === body) { S.dirty = false; stash(); }
+    return true;
+  } catch (e) {
+    log("save_failed", { id, why: String(e && e.message) });
+    return false;
+  }
+}
 
 // ---------- the grown-up's hands (partner.js calls these; spec §2.4) — T9 ----------
 // T9 replaces this section.

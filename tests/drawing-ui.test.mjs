@@ -165,3 +165,122 @@ test("at 1280x720 every ring tile is still at least 60px", async () => {
   for (const m of mins) assert.ok(m >= 60, String(m));
   await ctx.close();
 });
+
+// ================================================================ T8 — placing, undo, autosave
+test("a dwell on Horse says \"Horse\" (after Speech.stop) and the horse lands at the first centre-out ground slot", async () => {
+  const { ctx, page } = await openRing();
+  await page.locator("#tile-horse").click();
+  let s = await st(page);
+  assert.deepEqual(s.items, [{ s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" }]);
+  assert.equal(s.said.at(-1), "Horse");
+  assert.ok(await page.evaluate(() => (window.__speechEngineLog || []).some((e) => e.ev === "stop")), "Speech.stop() first");
+  await page.locator("#tile-sun").click();
+  s = await st(page);
+  assert.deepEqual(s.items[1], { s: "sun", x: 0.5, y: 0.17, w: 0.16, by: "ellie" });
+  await ctx.close();
+});
+
+test("Undo takes the last sticker away and says so; on an empty history it does nothing and says nothing", async () => {
+  const { ctx, page } = await openRing();
+  await page.locator("#btnUndo").click();
+  let s = await st(page);
+  assert.equal(s.items.length, 0);
+  assert.deepEqual(s.said, [], "silence — never \"wrong\"");
+  await page.locator("#tile-tree").click();
+  await page.locator("#tile-star").click();
+  await page.locator("#btnUndo").click();
+  s = await st(page);
+  assert.deepEqual(s.items.map((i) => i.s), ["tree"]);
+  assert.equal(s.said.at(-1), "Undo");
+  await ctx.close();
+});
+
+test("a sticker flies from its tile into its slot; with reduced motion it simply appears", async () => {
+  let { ctx, page } = await openRing();
+  await page.locator("#tile-cloud").click();
+  assert.equal(await page.locator(".flyer").count(), 1, "in flight");
+  await page.waitForFunction(() => !document.querySelector(".flyer"), null, { timeout: 2000 });
+  assert.equal(await page.evaluate(() => document.querySelector('#scene [data-i="0"]').style.visibility), "");
+  await ctx.close();
+  ({ ctx, page } = await openRing({ reducedMotion: "reduce" }));
+  await page.locator("#tile-cloud").click();
+  assert.equal(await page.locator(".flyer").count(), 0);
+  await ctx.close();
+});
+
+test("her picture is saved as she goes: a reload shows it exactly", async () => {
+  const { ctx, page, id } = await openRing();
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith(`/drawings/${id}/scene.json`) && r.ok());
+  await page.locator("#tile-house").click();
+  await saved;
+  assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["house"]);
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => window.Drawing && window.Drawing.state().ready);
+  const s = await st(page);
+  assert.deepEqual([s.screen, s.id, s.items.map((i) => i.s)], ["ring", id, ["house"]]);
+  assert.equal(await page.locator("#scene .item").count(), 1);
+  await ctx.close();
+});
+
+test("five quick dwells on one tile: five horses in five slots, one coalesced save, one Undo takes one (Review Focus 1)", async () => {
+  const { ctx, page, id } = await openRing();
+  const seen = puts(page);
+  await page.evaluate(() => { for (let k = 0; k < 5; k++) document.getElementById("tile-horse").click(); });  // dwell.js's el.click()
+  assert.deepEqual((await st(page)).items.map((i) => i.x), [0.5, 0.35, 0.65, 0.2, 0.8]);
+  await page.waitForTimeout(1500);
+  assert.equal(seen.length, 1, "the debounce coalesced five changes into one PUT");
+  assert.equal((await hubScene(id)).items.length, 5);
+  await page.locator("#btnUndo").click();
+  assert.equal((await st(page)).items.length, 4);
+  await ctx.close();
+});
+
+test("a save the hub does not take keeps the picture safe, survives a reload and goes on the next change (Review Focus 2)", async () => {
+  let fail = true;
+  const { ctx, page, id } = await openRing({ routes: (c) => c.route("**/drawings/*/scene.json",
+    (r) => (fail && r.request().method() === "PUT" ? r.abort() : r.continue())) });
+  await page.locator("#tile-horse").click();
+  await page.waitForTimeout(1200);
+  assert.equal((await st(page)).dirty, true);
+  const stashed = await page.evaluate((id) => JSON.parse(localStorage.getItem("drawing_scene_" + id)), id);
+  assert.equal(stashed.dirty, true);
+  assert.equal(stashed.scene.items.length, 1);
+  assert.deepEqual((await hubScene(id)).items, [], "the hub never got it");
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => window.Drawing && window.Drawing.state().ready);
+  assert.equal((await st(page)).items.length, 1, "a reload before the retry still shows it");
+  await page.waitForTimeout(1200);                    // the reload's own retry fails too
+  fail = false;
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok() && r.request().postData().includes('"star"'));
+  await page.locator("#tile-star").click();
+  await saved;
+  assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["horse", "star"]);
+  assert.equal((await st(page)).dirty, false);
+  await ctx.close();
+});
+
+test("leaving within the debounce still saves the last sticker (Review Focus 3)", async () => {
+  const { ctx, page, id } = await openRing({ routes: (c) => c.route("**/kiosk/exit",
+    (r) => r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' })) });
+  const put = page.waitForRequest((r) => r.method() === "PUT" && r.url().endsWith(`/drawings/${id}/scene.json`));
+  await page.locator("#tile-person").click();
+  await page.locator("#barDoor").click();                // well inside the 800 ms
+  assert.deepEqual(JSON.parse((await put).postData()).items.map((i) => i.s), ["person"]);
+  await page.waitForTimeout(300);
+  assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["person"]);
+  await ctx.close();
+});
+
+test("the 200th sticker is the last: a 201st dwell says its word, places nothing, sends nothing (Review Focus 5)", async () => {
+  const id = "2026-09-30-120000-cap-dev";
+  seed(id, Array.from({ length: 200 }, () => ({ s: "star", x: 0.5, y: 0.2, w: 0.1, by: "ellie" })), "2026-09-30T12:00:00Z");
+  const { ctx, page } = await openRing({ id });
+  const seen = puts(page);
+  await page.locator("#tile-star").click();
+  const s = await st(page);
+  assert.equal(s.items.length, 200);
+  assert.equal(s.said.at(-1), "Star");
+  await page.waitForTimeout(1200);
+  assert.equal(seen.length, 0);
+  await ctx.close();
+});
