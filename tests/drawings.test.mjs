@@ -3,9 +3,10 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
@@ -13,7 +14,6 @@ const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DRAW = path.join(HUB, "public", "drawing");
 const TABLE = JSON.parse(fs.readFileSync(path.join(DRAW, "stickers.json"), "utf8"));
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-drawings-"));
-after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
 // ---- §6 the stickers ---------------------------------------------------------
 test("the eight stickers sit in their fixed seats: ground things left, sky things then the splat right", () => {
@@ -223,4 +223,106 @@ test("cleanup: empty pictures older than a day go from both places; new, non-emp
   assert.ok(!fs.existsSync(path.join(mine, "2026-09-28-080000-dev-a")));
   for (const id of ["2026-09-30-170000-dev-a", "2026-09-20-080000-dev-a", "2026-09-21-080000-dev-a"])
     assert.ok(fs.existsSync(path.join(drv, id)), id + " stayed");
+});
+
+// ---- §5 the routes: the REAL server.js on a scratch port ------------------------
+// 8477 (hub) + 8479 (fake Resend, used by T5): swept free 9/30 across all five repos' tests/ and
+// every open worktree, and not listening (ss -ltn). The hub's Drive folder is a temp dir.
+const PORT = Number(process.env.ERA_TEST_DRAWINGS_PORT) || 8477;
+const FAKE = 8479;
+const BASE = `http://127.0.0.1:${PORT}`;
+const RT = path.join(TMP, "routes");
+const RT_MOUNT = path.join(TMP, "Route Drive", "New ERA Content");
+const SEAMS = {
+  ERA_AI_URL: "http://127.0.0.1:1", ERA_ELEVEN_URL: "http://127.0.0.1:1", ERA_FAL_URL: "http://127.0.0.1:1",
+  ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1",
+  ERA_GEOCODE_URL: "http://127.0.0.1:1/geocode", ERA_TMDB_URL: "http://127.0.0.1:1",
+  ERA_STREAMING_URL: "http://127.0.0.1:1",
+};
+const got = [];            // every email the fake provider accepted
+let fakeMode = "ok";       // ok | down
+let child, fake;
+
+before(async () => {
+  fake = http.createServer((req, res) => {
+    let b = ""; req.on("data", (c) => (b += c));
+    req.on("end", () => {
+      if (fakeMode === "down") { res.writeHead(500).end("boom"); return; }
+      got.push(JSON.parse(b));
+      res.writeHead(200, { "Content-Type": "application/json" }).end('{"id":"x"}');
+    });
+  });
+  await new Promise((r) => fake.listen(FAKE, "127.0.0.1", r));
+  fs.mkdirSync(RT, { recursive: true });
+  fs.mkdirSync(RT_MOUNT, { recursive: true });
+  fs.writeFileSync(path.join(RT, "profile.json"), JSON.stringify({ childName: "Maya" }));
+  fs.writeFileSync(path.join(RT, "drive.json"), JSON.stringify({ mode: "local", folderPath: RT_MOUNT }));
+  child = spawn("node", ["server.js", String(PORT)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env, ERA_DATA_DIR: RT, ERA_BIND: "127.0.0.1", ERA_DEVICE_ID: "test-dev", ERA_NO_UPDATE: "1",
+           ...SEAMS, ERA_RESEND_URL: `http://127.0.0.1:${FAKE}/emails` },
+  });
+  for (let i = 0; i < 100; i++) {
+    try { await fetch(`${BASE}/settings`); return; } catch {}
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error("server never came up");
+});
+after(() => {
+  if (child) child.kill("SIGKILL");
+  if (fake) fake.close();
+  fs.rmSync(TMP, { recursive: true, force: true });
+});
+
+const call = (method, url, body, headers = {}) => fetch(BASE + url, { method,
+  headers: { "Content-Type": "application/json", ...headers },
+  body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body) });
+const sceneOf = (items) => ({ v: 1, backdrop: "meadow", items });
+const newPic = async () => (await (await call("POST", "/drawings", {})).json()).id;
+
+test("POST /drawings allocates a picture in the family's Drive folder; a blank one is not on the shelf", async () => {
+  const r = await call("POST", "/drawings", {});
+  assert.equal(r.status, 200);
+  const { id } = await r.json();
+  assert.match(id, /^\d{4}-\d{2}-\d{2}-\d{6}-test-dev(-\d+)?$/);
+  assert.ok(fs.existsSync(path.join(RT_MOUNT, "drawings", id, "scene.json")), "canonical = the Drive folder");
+  assert.deepEqual(await (await fetch(BASE + "/drawings/index.json")).json(), []);
+  const sc = await (await fetch(`${BASE}/drawings/${id}/scene.json`)).json();
+  assert.deepEqual(sc.items, []);
+  assert.equal(sc.device, "test-dev");
+});
+
+test("PUT scene.json validates and saves, and the shelf lists the picture with its scene inline", async () => {
+  const id = await newPic();
+  let r = await call("PUT", `/drawings/${id}/scene.json`, sceneOf([H]));
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.ok, true);
+  assert.match(j.updated, /^\d{4}-\d{2}-\d{2}T/);
+  const row = (await (await fetch(BASE + "/drawings/index.json")).json()).find((p) => p.id === id);
+  assert.equal(row.items, 1);
+  assert.deepEqual(row.scene.items, [H]);
+  r = await call("PUT", `/drawings/${id}/scene.json`, sceneOf([{ ...H, s: "dragon" }]));
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, "bad-scene");
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, "{not json")).status, 400);
+  assert.equal((await call("PUT", "/drawings/not-an-id/scene.json", sceneOf([H]))).status, 404);
+  const big = JSON.stringify(sceneOf([H])) + " ".repeat(66 * 1024);
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, big)).status, 413);
+});
+
+test("the doors: a page on another site, or a body that is not JSON, cannot create or overwrite a picture", async () => {
+  const id = await newPic();
+  assert.equal((await call("POST", "/drawings", {}, { "Sec-Fetch-Site": "cross-site" })).status, 403);
+  assert.equal((await fetch(BASE + "/drawings", { method: "POST", headers: { "Content-Type": "text/plain" }, body: "{}" })).status, 403);
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, sceneOf([H]), { "Sec-Fetch-Site": "cross-site" })).status, 403);
+});
+
+test("GET is path-jailed: an id's scene.json and picture.png, nothing beside or above them", async () => {
+  const id = await newPic();
+  assert.equal((await fetch(`${BASE}/drawings/${id}/scene.json`)).status, 200);
+  assert.equal((await fetch(`${BASE}/drawings/${id}/picture.png`)).status, 404, "no Done yet");
+  for (const bad of [`/drawings/${id}/.local`, `/drawings/${id}/scene.json.part`, "/drawings/notes/scene.json",
+                     "/drawings/..%2fdrive.json/scene.json", "/drawings/%2e%2e/scene.json"])
+    assert.ok([403, 404].includes((await fetch(BASE + bad)).status), bad);
 });

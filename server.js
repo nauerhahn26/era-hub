@@ -25,6 +25,7 @@ const booksIndex_ = require("./books-index.js");
 // export, import and serving cannot drift into three different lists.
 const booksShare = require("./books-share.js");
 const booksShelf = require("./books-shelf.js");
+const drawings = require("./drawings.js");   // Drawing's pictures (spec 2026-09-30 §4-§5)
 const aiConfig = require("./ai-config.js");
 // For baseFor alone: the provider's real base, or the ERA_AI_URL stand-in.
 const contentProviders = require("./content-providers.js");
@@ -2463,6 +2464,57 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // ---- Drawing (spec 2026-09-30 §5): the pictures, their scenes, the Done door. drawings.js does
+  // the work — every write goes to the family's Drive folder, or .local when there is none.
+  if (req.method === "GET" && urlPath === "/drawings/index.json") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(drawings.list()));
+    return;
+  }
+  if (req.method === "POST" && urlPath === "/drawings") {
+    if (!ownDoor(req, res)) return;                 // a page on another site may not make pictures
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      const r = drawings.create();
+      res.writeHead(r.error ? 500 : 200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r.error ? { error: r.error } : { id: r.id }));
+    });
+    return;
+  }
+  const drawingPath = /^\/drawings\/([^/]+)\/(scene\.json|picture\.png|done)$/.exec(urlPath);
+  if (drawingPath && req.method === "PUT" && drawingPath[2] === "scene.json") {
+    if (!ownDoor(req, res)) return;                 // …nor overwrite hers
+    const id = drawingPath[1];
+    if (!drawings.isId(id)) { res.writeHead(404, { "Content-Type": "application/json" }).end('{"error":"bad-id"}'); return; }
+    const chunks = [];
+    let size = 0, over = false;
+    req.on("data", (c) => {
+      if (over) return;
+      size += c.length;
+      if (size > drawings.LIMITS.sceneBytes) {
+        over = true;
+        res.writeHead(413, { "Content-Type": "application/json", Connection: "close" });
+        res.end('{"error":"too-big"}', () => { try { req.destroy(); } catch {} });
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (over) return;
+      let obj = null;
+      try { obj = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {}
+      const r = drawings.writeScene(id, obj);
+      res.writeHead(r.ok ? 200 : r.error === "write-failed" ? 500 : 400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r.ok ? { ok: true, updated: r.scene.updated } : { error: r.error, why: r.why }));
+    });
+    return;
+  }
+  if (drawingPath && (req.method === "GET" || req.method === "HEAD") && drawingPath[2] !== "done") {
+    serveMediaJail(req, res, path.join(DATA, "drawings"), drawingPath[1] + "/" + drawingPath[2],
+      [".json", ".png"], [], [], (id) => (drawings.isId(id) ? id : null));
+    return;
+  }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/books/")) {
     serveBook(req, res, urlPath.slice("/books/".length));
     return;
@@ -3493,6 +3545,9 @@ server.on("listening", () => {
   // Book sharing: it reads the shelf (<DATA>/books) and writes the family's
   // Drive folder, so it needs the data dir the same way drive.js does.
   booksShare.start(DATA);
+  // Drawing (spec 2026-09-30 §4): the device that signs new picture ids, the family's clock for them,
+  // and the one-day sweep of blank pictures. After drive.start: it reads drive.json.
+  drawings.start(DATA, { deviceId: DEVICE_ID, tz: () => TZ });
   // A finished sync feeds BOTH pipelines. onSynced is one property, so the
   // fan-out lives here rather than in either module: whoever is added next
   // adds a line, and neither clothing.js nor content.js has to know the other
