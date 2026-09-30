@@ -559,3 +559,21 @@ test("the celebration does not wait for the mail (deviation 9)", async () => {
   await page.waitForFunction(() => window.Drawing.state().lastMail, null, { timeout: 5000 });
   await ctx.close();
 });
+
+// ================================================================ T13 — the contract audit, seeded
+test("the contract audit is clean on a full shelf and a full ring, at both gate viewports", async () => {
+  seedShelf(12);
+  const full = "2026-09-30-150000-test-dev";
+  seed(full, [H(), { s: "house", x: 0.35, y: 0.75, w: 0.26, by: "ellie" }, { s: "tree", x: 0.65, y: 0.74, w: 0.28, by: "ellie" },
+    { s: "person", x: 0.2, y: 0.82, w: 0.22, by: "ellie" }, { s: "sun", x: 0.5, y: 0.17, w: 0.16, by: "ellie" },
+    { s: "cloud", x: 0.33, y: 0.25, w: 0.14, by: "ellie" }, { s: "star", x: 0.67, y: 0.25, w: 0.1, by: "ellie" },
+    { s: "splat", x: 0.45, y: 0.33, w: 0.15, by: "ellie", c: "#DE7B52", seed: 7 }], "2026-09-30T15:00:00Z");
+  process.env.INVARIANTS_BASE = BASE;                    // read when invariants.mjs is first imported
+  const { auditPath } = await import("./invariants.mjs");
+  for (const state of [{ id: "/drawing/ (12 pictures)", path: "/drawing/" },
+                       { id: "/drawing/#ring (every sticker)", path: "/drawing/#p=" + full }]) {
+    const r = await auditPath(browser, state);
+    for (const v of r.viewports) assert.ok(v.nTargets >= 11, `${state.id} @${v.vp.w}: only ${v.nTargets} targets`);
+    assert.deepEqual(r.violations, [], state.id + ":\n" + r.violations.join("\n"));
+  }
+});

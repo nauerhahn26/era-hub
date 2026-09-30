@@ -308,6 +308,10 @@ export const STATES = [
       await new Promise((r) => setTimeout(r, 500));
     } },
   { id: "/board/", path: "/board/" },
+  // Drawing (spec 2026-09-30 §8): the shelf, and the ring on a never-saved id — the ring opens
+  // empty and nothing is written to the gate hub's data dir (a PUT only follows a change).
+  { id: "/drawing/", path: "/drawing/" },
+  { id: "/drawing/#ring", path: "/drawing/#p=2026-01-01-000000-fixture" },
 ];
 
 async function measureAt(browser, path, vp, setup, dwellMs) {
