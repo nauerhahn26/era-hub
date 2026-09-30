@@ -270,6 +270,56 @@ test("a second publish bumps exportedAt and keeps the book's id", async () => {
   assert.equal(after.id, before.id, "the same book, so the same id");
 });
 
+// ------------------------------------------------------ publishedAt, and kept
+//
+// `publishedAt` is when the book was FIRST published and never moves; exportedAt
+// moves on every publish. `weekOf` is the weekly maker's and is only carried.
+test("the first publish stamps publishedAt = exportedAt; a re-publish keeps it", async () => {
+  const dir = book("Dated One", [{ text: "A day." }]);
+  await publish.publishBook(dir, { slug: "dated-one", now: "2026-09-10T08:00:00.000Z" });
+  assert.equal(read(dir).publishedAt, "2026-09-10T08:00:00.000Z");
+  assert.equal(read(dir).exportedAt, "2026-09-10T08:00:00.000Z");
+  await publish.publishBook(dir, { slug: "dated-one", now: "2026-09-12T09:00:00.000Z" });
+  const m = read(dir);
+  assert.equal(m.exportedAt, "2026-09-12T09:00:00.000Z", "exportedAt still moves");
+  assert.equal(m.publishedAt, "2026-09-10T08:00:00.000Z", "publishedAt never does");
+});
+
+test("a manifest from before the field seeds publishedAt from its exportedAt", async () => {
+  const dir = book("Dated Old", [{ text: "Long ago." }]);
+  await publish.publishBook(dir, { slug: "dated-old", now: "2026-09-10T08:00:00.000Z" });
+  const was = read(dir);
+  const { publishedAt: _p, ...old } = was;
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...old, exportedAt: "2026-08-01T00:00:00.000Z" });
+  await publish.publishBook(dir, { slug: "dated-old", now: "2026-09-15T08:00:00.000Z" });
+  assert.equal(read(dir).publishedAt, "2026-08-01T00:00:00.000Z");
+  assert.equal(read(dir).exportedAt, "2026-09-15T08:00:00.000Z");
+});
+
+test("a garbage publishedAt is not trusted: it falls back to exportedAt, then to now", async () => {
+  const dir = book("Dated Junk", [{ text: "Hm." }]);
+  await publish.publishBook(dir, { slug: "dated-junk", now: "2026-09-10T08:00:00.000Z" });
+  const was = read(dir);
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...was, publishedAt: "not a date", exportedAt: "2026-08-02T00:00:00.000Z" });
+  await publish.publishBook(dir, { slug: "dated-junk", now: "2026-09-16T08:00:00.000Z" });
+  assert.equal(read(dir).publishedAt, "2026-08-02T00:00:00.000Z");
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...read(dir), publishedAt: "", exportedAt: "nope" });
+  await publish.publishBook(dir, { slug: "dated-junk", now: "2026-09-17T08:00:00.000Z" });
+  assert.equal(read(dir).publishedAt, "2026-09-17T08:00:00.000Z");
+});
+
+test("weekOf is carried through a re-publish, never invented", async () => {
+  const dir = book("Dated Week", [{ text: "A week." }]);
+  await publish.publishBook(dir, { slug: "dated-week", now: "2026-09-10T08:00:00.000Z" });
+  assert.ok(!("weekOf" in read(dir)), "a book with no weekOf does not get one");
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...read(dir), weekOf: "2026-09-28" });
+  await publish.publishBook(dir, { slug: "dated-week", now: "2026-09-11T08:00:00.000Z" });
+  assert.equal(read(dir).weekOf, "2026-09-28");
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...read(dir), weekOf: "last tuesday" });
+  await publish.publishBook(dir, { slug: "dated-week", now: "2026-09-12T08:00:00.000Z" });
+  assert.ok(!("weekOf" in read(dir)), "a weekOf that is not YYYY-MM-DD is dropped");
+});
+
 // ------------------------------------------------------ authored, and kept
 //
 // `authored: true` is the coral rim and the "…'s story" badge on the shelf

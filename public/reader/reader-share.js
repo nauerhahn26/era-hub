@@ -59,6 +59,16 @@
 // growing a second list over the same nodes: two switches over one list means
 // the last one to close wakes what the other put to sleep.
 //
+// ONE HOLD, ONE SHEET, TWO CHOICES (book shelf layout, dad 9/30, spec
+// 2026-09-30). The shelf grew a Favorites section, and the ♥ is given by this
+// same grown-up's hold — touch-only for exactly the reasons above, never a gaze
+// target, never a dwell element. So a finished book's sheet opens on two
+// finger buttons: "♥ Add to Favorites" (or "♥ Remove from Favorites") and
+// "Send to a friend", which continues into the three outs below unchanged.
+// The ♥ is the HUB's (POST /books/<slug>/favorite — a browser reset must not
+// lose it); the card says whether it has one (data-favorite, reader.js), and
+// after the change the sheet closes and the shelf repaints with the badge.
+//
 // A classic script (reader.js is one, and the suites reach its globals), so
 // everything is inside an IIFE: two classic scripts share one global scope and
 // a bare `const sheet` here would be a name collision waiting for its turn.
@@ -96,6 +106,7 @@
   var IN_DRIVE = "It's in your Google Drive, in your content folder › shared. " +
                  "Open Drive on your phone and send it to them.";
   var READYING = "Getting the book ready…";
+  var FAV_FAILED = "Couldn't change Favorites — try again in a moment.";
 
   var press = null;        // the finger we are tracking
   var holdTimer = null;
@@ -127,6 +138,7 @@
     return {
       slug: card.dataset.slug || "",
       title: title,
+      favorite: card.dataset.favorite === "1",
       cover: (img && img.getAttribute("src")) || "",
       // Only ever the label on a download and the name in the canShare probe.
       // The bytes on disk are named by books-share.js's cleanName(), which is
@@ -283,7 +295,7 @@
 
   function enable(on) {
     if (!sheet) return;
-    var bs = sheet.querySelectorAll(".share-out");
+    var bs = sheet.querySelectorAll(".share-out, .share-choice");
     for (var i = 0; i < bs.length; i++) bs[i].disabled = !on;
   }
 
@@ -329,23 +341,21 @@
       }
       // textContent, never innerHTML: a book's title is family text.
       card.append(cover, mk("div", "share-title", book.title));
-      var outs = mk("div", "share-outs");
-      // SPEC §4.2's ORDER, which is the order of how well the hardware actually
-      // delivers them — not an alphabet and not a preference.
-      if (canShareFile(book.filename)) {
-        var send = mk("button", "share-out", "Send it now");
-        send.id = "shareSend";
-        send.addEventListener("click", function () { sendNow(book); });
-        outs.append(send);
-      }
-      var drive = mk("button", "share-out primary", "Put it in my Drive");
-      drive.id = "shareDrive";
-      drive.addEventListener("click", function () { putInDrive(book); });
-      var save = mk("button", "share-out", "Save a copy");
-      save.id = "shareSave";
-      save.addEventListener("click", function () { saveCopy(book); });
-      outs.append(drive, save);
-      card.append(outs);
+      // THE TWO CHOICES (spec 2026-09-30): the ♥, then sending. Finger buttons,
+      // no .dwell — like everything else on this sheet.
+      var choices = mk("div", "share-outs share-choices");
+      var fav = mk("button", "share-choice fav",
+        book.favorite ? "♥ Remove from Favorites" : "♥ Add to Favorites");
+      fav.id = "shareFav";
+      fav.addEventListener("click", function () { toggleFavorite(book); });
+      var friend = mk("button", "share-choice", "Send to a friend");
+      friend.id = "shareFriend";
+      friend.addEventListener("click", function () {
+        choices.replaceWith(outsFor(book));
+        setMsg("");
+      });
+      choices.append(fav, friend);
+      card.append(choices);
     }
     // …and on a card that is not a finished book, NOTHING ELSE: no heading, no
     // cover, no buttons that would all refuse. Dad 9/19 — one sentence and a
@@ -373,6 +383,51 @@
       gridWatch = new MutationObserver(function () { if (sheet) freeze(); });
       gridWatch.observe(grid, { childList: true });
     }
+  }
+
+  // "Send to a friend" — the three outs of spec 2026-09-22 §4.2, unchanged.
+  function outsFor(book) {
+    var outs = mk("div", "share-outs");
+    // SPEC §4.2's ORDER, which is the order of how well the hardware actually
+    // delivers them — not an alphabet and not a preference.
+    if (canShareFile(book.filename)) {
+      var send = mk("button", "share-out", "Send it now");
+      send.id = "shareSend";
+      send.addEventListener("click", function () { sendNow(book); });
+      outs.append(send);
+    }
+    var drive = mk("button", "share-out primary", "Put it in my Drive");
+    drive.id = "shareDrive";
+    drive.addEventListener("click", function () { putInDrive(book); });
+    var save = mk("button", "share-out", "Save a copy");
+    save.id = "shareSave";
+    save.addEventListener("click", function () { saveCopy(book); });
+    outs.append(drive, save);
+    return outs;
+  }
+
+  // ♥ on or off, on the hub. application/json because the door is ownDoor-
+  // guarded like every book door that changes something. The sheet closes on
+  // success and the shelf repaints (badge on, or the book gone from an open
+  // Favorites); a failure stays on the sheet as one sentence.
+  function toggleFavorite(book) {
+    enable(false);
+    setMsg("");
+    fetch("/books/" + encodeURIComponent(book.slug) + "/favorite", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ favorite: !book.favorite }),
+    }).then(function (res) {
+      if (!res.ok) throw new Error("favorite " + res.status);
+      return res.json().catch(function () { return {}; });
+    }).then(function () {
+      closeSheet();
+      try { if (window.Reader && window.Reader.repaintShelf) window.Reader.repaintShelf(); }
+      catch (e) { /* the next poll paints it */ }
+    }, function () {
+      if (!sheet) return;
+      setMsg(FAV_FAILED);
+      enable(true);
+    });
   }
 
   function freeze() {

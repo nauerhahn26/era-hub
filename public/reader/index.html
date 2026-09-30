@@ -46,7 +46,9 @@
      onto <html> by reader.js (the screens are the bar's SIBLINGS, and a custom
      property only travels downwards). 0px until the bar mounts — a screen must
      never wait on a fetch to be the right size. */
-  #sShelf.show { position: fixed; inset: 0; top: var(--bar-h, 0px); overflow-y: auto; padding: 18px 14px; }
+  /* The shelf never scrolls (9/30): it is one TD Snap page — rail + 3x4 grid —
+     and the rail's sections and the grid's More are the only way through it. */
+  #sShelf.show { position: fixed; inset: 0; top: var(--bar-h, 0px); overflow: hidden; padding: 12px 14px 14px; }
   #sRead.show { position: fixed; inset: 0; top: var(--bar-h, 0px); }
 
   /* ==== dwell targets: era-core dwell.js ENGINE + the old DwellButton LOOK.
@@ -95,52 +97,134 @@
   }
   .dwell-label { position: relative; z-index: 1; }
 
-  /* ===== Ellie's Bookshelf (gaze-first library) — ported verbatim ===== */
-  .shelf { display: grid; gap: 18px; }
+  /* ===== Her Bookshelf — a TD Snap page (dad 9/30, spec 2026-09-30) =====
+     She had too many books for the old single scrolling shelf, so the shelf
+     took her board's idiom: a left RAIL of sections and the books in the same
+     3x4 grid her clothing pages use, with the two CENTRE cells black (board
+     law) and More at [3,1] (bottom-LEFT, ux-contract anchors). The old shelf's
+     drift protection was 36px gutters; this one has the black centre and a
+     gap, like every board. The card LOOK (white rounded card, cover over
+     title, coral rim, the two badge pills) is the old app's, kept. */
+  .shelf { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
   .shelf-header {
+    flex: none;
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 16px;
+    align-items: center;
+    gap: 18px;
+    min-height: 2.4rem;
+    overflow: hidden;
   }
-  .shelf-heading { margin: 0; font-size: 2rem; }
-  .shelf-status { font-size: 1.1rem; }
-
-  /* Generous gutters so gaze drift between cards lands on dead space,
-     not on the neighbouring card's dwell target. (The old shelf's drift
-     protection — it has NO black rest cells.) */
+  .shelf-heading { margin: 0; font-size: 1.6rem; white-space: nowrap; }
+  .shelf-note { margin: 0; font-size: 1.15rem; }
+  .shelf-status { display: flex; align-items: center; gap: 14px; font-size: 1.05rem; }
+  .shelf-empty-line { margin: 0; font-size: 1.1rem; }
+  .shelf-empty-link {
+    display: inline-block; background: #2E7D5B; color: #fff; border-radius: 12px;
+    padding: 8px 14px; text-decoration: none; font-size: 1rem; white-space: nowrap;
+  }
+  .shelf-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: clamp(120px, 13vw, 250px) minmax(0, 1fr);
+    gap: 18px;
+  }
+  /* THE RAIL. Five tiles fill the grid's height and never move; they are
+     smaller than a book tile, like TD Snap's rail. Plain `dwell` (§C). */
+  .shelf-rail {
+    display: grid;
+    grid-template-rows: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    min-height: 0;
+  }
+  .shelf-rail-tile.dwell-button {
+    min-height: 0;
+    padding: 6px 10px;
+    border-radius: 16px;
+    font-size: clamp(0.95rem, 1.35vw, 1.45rem);
+    line-height: 1.15;
+    text-align: center;
+    color: var(--ink);
+    box-shadow: 0 4px 10px rgba(31, 43, 44, 0.06);
+  }
+  .shelf-rail-tile .dwell-label { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .shelf-rail-tile .rail-icon { font-size: 1.25em; line-height: 1; }
+  /* the section she is in, lit — the coral this app already spends on "hers" */
+  .shelf-rail-tile.is-current.dwell-button {
+    background: var(--brand-coral);
+    border-color: #c75a39;
+    color: #fff;
+  }
+  /* THE GRID: 4 columns x 3 rows right of the rail. reader.js places every one
+     of the twelve children by its [row,col] (grid-row/grid-column), so a cell
+     can never drift to another position. */
   .shelf-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-    gap: 36px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    min-height: 0;
   }
-  .shelf-card { position: relative; }
+  /* A black cell: [2,2] and [2,3] on every page, [3,1] when there is no More,
+     and every book cell a short page leaves empty. Inert: no text, no class a
+     gaze engine looks for, no handler. */
+  .shelf-black { background: #000; border-radius: 20px; }
+  /* MORE, at [3,1] only (ux-contract: "More bottom-LEFT"; the outfit pages'
+     cell). The category/back/more slate of the contract's palette. */
+  .shelf-more.dwell-button {
+    min-height: 0;
+    border-radius: 20px;
+    background: #6B7B82;
+    border-color: #5d6b71;
+    color: #fff;
+    font-size: clamp(1.2rem, 2.1vw, 2.2rem);
+  }
+  .shelf-card { position: relative; min-width: 0; min-height: 0; }
   .shelf-card-button.dwell-button,
   .shelf-card-box.dwell-button {
     display: grid;
     /* The old app's card is a <button>, so the grid ran on the initial
-       alignment: one stretched column, cover at the card's full inner width
-       (5 identical 320px squares a row on the I-13). .dwell-button's flex
-       centring above sized the column to the TITLE's max-content instead —
-       covers came out 113–271px, ragged, card heights 263–344px (dad 9/7:
-       "a lot of sizing on the book reader is off"). Keep these resets. */
+       alignment: one stretched column. .dwell-button's flex centring above
+       sized the column to the TITLE's max-content instead — covers came out
+       ragged (dad 9/7: "a lot of sizing on the book reader is off"). Keep
+       these resets. */
     align-items: normal;
     justify-content: normal;
-    gap: 10px;
+    grid-template-rows: minmax(0, 1fr);
     width: 100%;
-    padding: 14px;
+    height: 100%;
+    min-height: 0;
+    padding: 10px;
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.92);
     border: 1px solid var(--line);
     box-shadow: 0 8px 18px rgba(31, 43, 44, 0.08);
     text-align: center;
   }
+  /* The old DwellButton wrapper, load-bearing (reader.js renderShelf): ONE
+     grid item in the card, holding the cover (the row that takes the height
+     left over) and the title and note under it. */
+  .shelf-card .dwell-label {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    grid-auto-rows: auto;
+    justify-items: center;
+    gap: 6px;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+  }
+  /* A SQUARE cover, sized by the cell's height (cells are wider than tall on
+     every screen she has), centred in the card. */
   .shelf-cover {
     position: relative;      /* the "Build a book" tag is laid over its bottom */
     display: grid;
     place-items: center;
-    width: 100%;
+    height: 100%;
+    width: auto;
+    max-width: 100%;
     aspect-ratio: 1 / 1;
+    min-height: 0;
     overflow: hidden;
     border-radius: 14px;
     background: #f0ece0;
@@ -154,11 +238,15 @@
   }
   .shelf-cover-fallback { font-size: 1rem; }
   .shelf-title {
-    font-size: 1.48rem;
+    display: block;
+    width: 100%;
+    font-size: clamp(0.95rem, 1.25vw, 1.4rem);
     font-weight: 700;
     color: var(--ink);
     line-height: 1.25;
-    padding-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* A BOOK THAT IS NOT A BOOK YET (dad 9/7; spec §13). Two of them: a PILE of
@@ -204,12 +292,20 @@
     display: grid;
     place-items: center;
     width: 100%;
-    aspect-ratio: 1 / 1;
+    height: 100%;
     border-radius: 14px;
     background: #f0ece0;
     font-size: 3rem;
   }
-  .shelf-waiting-note { font-size: 1rem; line-height: 1.35; }
+  /* two lines at most — a cell is a fixed box now, not a growing card */
+  .shelf-waiting-note {
+    font-size: 0.92rem;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
 
   /* THE ASK (spec §13). Pressing Build does not build: the card turns into the
      review page's question shape, in this shelf's own idiom rather than that
@@ -219,20 +315,23 @@
      grid around it does not move under her while a grown-up reads it. */
   .shelf-ask {
     display: grid;
-    gap: 16px;
+    align-content: center;
+    gap: 10px;
     width: 100%;
-    padding: 20px 16px;
+    height: 100%;
+    overflow: auto;
+    padding: 12px;
     border-radius: 20px;
     background: #fff;
     border: 1px solid rgba(222, 110, 75, 0.55);
     box-shadow: 0 8px 18px rgba(222, 110, 75, 0.18);
     text-align: center;
   }
-  .shelf-ask-q { margin: 0; font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
-  .shelf-ask-actions { display: flex; gap: 18px; justify-content: space-between; }
+  .shelf-ask-q { margin: 0; font-size: 1.05rem; font-weight: 700; line-height: 1.3; }
+  .shelf-ask-actions { display: flex; gap: 14px; justify-content: space-between; }
   .shelf-ask-yes.dwell-button, .shelf-ask-no.dwell-button {
     flex: 1 1 0;
-    min-height: 66px;
+    min-height: 52px;
     border-radius: 999px;
   }
   .shelf-ask-yes.dwell-button {
@@ -353,7 +452,7 @@
   .share-outs, .add-sources { display: grid; gap: 12px; width: 100%; }
   /* Real buttons, sized for a grown-up's finger at arm's length — and no
      .dwell, so her gaze walks straight over every one of them. */
-  .share-out, .add-source, .share-btn, .add-btn {
+  .share-out, .share-choice, .add-source, .share-btn, .add-btn {
     min-height: 58px;
     padding: 12px 18px;
     border: 1px solid var(--line);
@@ -365,7 +464,10 @@
     font-weight: 700;
     cursor: pointer;
   }
-  .share-out, .add-source { width: 100%; }
+  .share-out, .share-choice, .add-source { width: 100%; }
+  /* the ♥ choice (spec 2026-09-30) — the heart's own rose, a grown-up's button */
+  .share-choice.fav { color: #b8285a; border-color: rgba(214, 51, 108, 0.45); }
+  .share-choice:disabled { opacity: 0.45; cursor: default; }
   .share-out.primary { background: #2E7D5B; border-color: #27694c; color: #fff; }
   .share-out:disabled, .add-source:disabled { opacity: 0.45; cursor: default; }
   /* A sentence a parent can act on — hidden until there is one to say. */
@@ -397,8 +499,8 @@
   .shelf-authored-badge,
   .shelf-shared-badge {
     position: absolute;
-    top: 22px;
-    left: 22px;
+    top: 14px;
+    left: 14px;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -431,15 +533,41 @@
     color: #2E7D5B;
   }
 
+  /* ♥ — a book a grown-up's finger hold gave to Favorites (spec 2026-09-30).
+     The TOP-RIGHT corner, which no other badge uses (the story / friend pills
+     sit top-left), so a favourite of her own story wears both. Decoration
+     only: aria-hidden, no .dwell, no data-dwell-*, never a target. */
+  .shelf-fav-badge {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.94);
+    color: #d6336c;
+    font-size: 1.05rem;
+    line-height: 1;
+    box-shadow: 0 2px 8px rgba(31, 43, 44, 0.14);
+    pointer-events: none;
+    z-index: 2;
+  }
+
   /* The shelf's "Back to TD Snap" tile is GONE (9/17): the door is the shared
      bar's 🚪 now, one door per screen, in the corner every other app puts it
      in. Its .shelf-tdsnap-button / .shelf-tdsnap-icon rules went with it. */
 
+  /* a phone-width window: same page, same cells — only tighter */
   @media (max-width: 680px) {
-    .shelf-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 23px; }
-    .shelf-title { font-size: 1.1rem; }
+    .shelf-body { gap: 10px; }
+    .shelf-grid { gap: 8px; }
+    .shelf-rail { gap: 8px; }
+    .shelf-heading { font-size: 1.2rem; }
     .shelf-authored-badge,
-    .shelf-shared-badge { top: 18px; left: 18px; font-size: 0.72rem; }
+    .shelf-shared-badge { top: 8px; left: 8px; font-size: 0.72rem; }
+    .shelf-fav-badge { top: 8px; right: 8px; }
   }
 
   /* ===== Reading screen — ported verbatim from the old reader ===== */
@@ -676,11 +804,11 @@
     .reader-status-row { align-items: flex-start; flex-direction: column; }
   }
 
-  /* black rest area — READING page only (contract; the old reading page had
-     none in-frame and the old shelf's drift protection is its gutters).
-     READER HAS NO BLACK REST SPOT (dad's ruling 8/25, deviates from the
-     board UX contract deliberately: dead margins + the text panel are the
-     park space here; "I don't think necessary for this app"). */
+  /* black rest area — the READING page has none (dad's ruling 8/25, deviates
+     from the board UX contract deliberately: dead margins + the text panel
+     are the park space there; "I don't think necessary for this app"). The
+     SHELF has had the board's two black centre cells since 9/30 (the TD Snap
+     page, .shelf-black above). */
 </style>
 </head>
 <body>
@@ -694,20 +822,43 @@
   <section class="shelf">
     <header class="shelf-header">
       <h2 class="shelf-heading" id="shelfTitle">My Bookshelf</h2>
+      <!-- Favorites' how-to (spec 2026-09-30): muted, inert, never a dwell
+           target, and OUTSIDE the grid's cells — never in the black centre.
+           reader.js shows it only on an empty Favorites. -->
+      <p class="shelf-note muted" id="shelfNote" hidden>Hold a book's cover to add it to Favorites.</p>
+      <!-- THE EMPTY SHELF SAYS ONE OF TWO THINGS, and until 9/7 it always said
+           the first: "set up Google Drive", shown to a family whose Drive was set
+           up perfectly and whose photos were sitting in it. The link is the right
+           answer only when this computer has no Drive folder; when it HAS one the
+           honest sentence is where to put the photos. reader.js picks. -->
+      <div class="shelf-status" id="shelfEmpty" hidden>
+        <p class="muted shelf-empty-line" id="shelfEmptyLine">No books yet.</p>
+        <a href="/settings/#integrations" id="shelfEmptyLink" class="shelf-empty-link">📚 Add books with Google Drive —
+           set it up in Settings</a>
+      </div>
     </header>
-    <!-- THE EMPTY SHELF SAYS ONE OF TWO THINGS, and until 9/7 it always said
-         the first: "set up Google Drive", shown to a family whose Drive was set
-         up perfectly and whose photos were sitting in it. The link is the right
-         answer only when this computer has no Drive folder; when it HAS one the
-         honest sentence is where to put the photos. reader.js picks. -->
-    <div class="shelf-status" id="shelfEmpty" hidden style="text-align:center">
-      <p class="muted" style="font-size:22px" id="shelfEmptyLine">No books yet.</p>
-      <a href="/settings/#integrations" id="shelfEmptyLink"
-         style="display:inline-block;background:#2E7D5B;color:#fff;border-radius:14px;
-         padding:16px 22px;text-decoration:none;font-size:19px;margin-top:6px">📚 Add books with Google Drive —
-         set it up in Settings</a>
+    <!-- THE SHELF IS A TD SNAP PAGE (dad 9/30, spec 2026-09-30): a rail of
+         sections on the left — Back, This Week, Favorites, Storybooks, All, top
+         to bottom and never moving — and the books in the 3x4 centre-black grid
+         her clothing pages use. The rail is drawn ONCE, here, so a poll's
+         repaint never rebuilds a tile under her gaze; reader.js only lights the
+         current section and dims Back on page 1. The grid's twelve cells are
+         reader.js's renderShelf(). -->
+    <div class="shelf-body">
+      <nav class="shelf-rail" id="shelfRail" aria-label="Book sections">
+        <div class="dwell dwell-button shelf-rail-tile" id="railBack" data-dwell-say="back"
+             aria-label="Back one page"><span class="dwell-label"><span class="rail-icon" aria-hidden="true">◀</span><span class="rail-word">Back</span></span></div>
+        <div class="dwell dwell-button shelf-rail-tile" id="railWeek" data-dwell-say="this week"
+             data-section="week" aria-label="This Week"><span class="dwell-label"><span class="rail-icon" aria-hidden="true">⭐</span><span class="rail-word">This Week</span></span></div>
+        <div class="dwell dwell-button shelf-rail-tile" id="railFav" data-dwell-say="favorites"
+             data-section="fav" aria-label="Favorites"><span class="dwell-label"><span class="rail-icon" aria-hidden="true">♥</span><span class="rail-word">Favorites</span></span></div>
+        <div class="dwell dwell-button shelf-rail-tile" id="railStory" data-dwell-say="storybooks"
+             data-section="story" aria-label="Storybooks"><span class="dwell-label"><span class="rail-icon" aria-hidden="true">📚</span><span class="rail-word">Storybooks</span></span></div>
+        <div class="dwell dwell-button shelf-rail-tile" id="railAll" data-dwell-say="all books"
+             data-section="all" aria-label="All books"><span class="dwell-label"><span class="rail-word">All</span></span></div>
+      </nav>
+      <div class="shelf-grid" id="shelfGrid"></div>
     </div>
-    <div class="shelf-grid" id="shelfGrid"></div>
   </section>
 </div>
 

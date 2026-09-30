@@ -319,6 +319,19 @@ test("choosing a file adds the book: raw body, source=file, and the shelf repain
     "the book landed in the family's Drive folder (books-share law 1)");
   assert.ok(fs.existsSync(path.join(TMP, "books", "Luna the Fox", "manifest.json")),
     "…and was mirrored onto this device's shelf");
+  // Since the shelf layout (spec 2026-09-30) an import is a Storybook and the
+  // repaint shows the page that holds it — the cover on the sheet is that card's
+  const imported = await page.evaluate(() => {
+    const idx = [...document.querySelectorAll("#shelfGrid .shelf-card")].map(c => c.dataset.slug);
+    return { section: window.Reader.state().section, idx };
+  });
+  assert.equal(imported.section, "story", "the shelf went to the section the new book is in");
+  assert.ok(imported.idx.some(s => s && s !== "luna-the-fox"),
+    "the new book's card is on screen: " + JSON.stringify(imported));
+  // …and every book is on the shelf: All holds the one that was there plus it
+  await page.evaluate(() => window.__addTest.close());
+  await page.locator("#railAll").click();
+  await page.waitForFunction(() => window.Reader.state().section === "all");
   assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), before + 1);
   await ctx.close();
 });

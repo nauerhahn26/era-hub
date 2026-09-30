@@ -154,6 +154,21 @@ before(async () => {
   };
   authoredPkg("their-book", true);    // came from another family's hub
   authoredPkg("our-book", false);     // made here, about this child
+  // THE SHELF'S TWO STORES (book shelf layout, spec 2026-09-30): a package
+  // with no exportedAt at all (first-seen seeds with "now"), and one whose
+  // maker wrote an explicit weekOf (the forward-compatible field the shelf
+  // prefers over its own first-seen record when it sorts This Week).
+  const dated = (dir, extra) => {
+    const b = path.join(TMP, "books", dir);
+    fs.mkdirSync(b, { recursive: true });
+    fs.writeFileSync(path.join(b, "cover.jpg"), JPEG);
+    fs.writeFileSync(path.join(b, "manifest.json"), JSON.stringify({
+      schemaVersion: 1, slug: dir, title: dir, authored: true, cover: "cover.jpg",
+      pages: [{ index: 0, image: "cover.jpg", text: dir }], ...extra,
+    }, null, 2));
+  };
+  dated("undated-week", {});
+  dated("week-with-weekof", { exportedAt: "2026-09-01T00:00:00Z", weekOf: "2026-09-28", publishedAt: "2026-09-01T00:00:00.000Z" });
   // an incomplete package (mid-export: media present, NO manifest) — must be skipped
   const partial = path.join(TMP, "books", "half-exported");
   fs.mkdirSync(partial, { recursive: true });
@@ -196,6 +211,10 @@ test("GET /books/index.json lists the complete package ONLY, spec shape, no-cach
     slug: "luna-the-fox", title: "Luna the Fox", pages: 2, hasVideo: false,
     authored: false,   // no `authored` in this manifest -> no coral rim, no badge
     shared: false,     // and nobody sent it here -> no "From a friend" badge
+    // the shelf layout's three (spec 2026-09-30): nobody has given it a ♥, the
+    // shelf first saw it at its own exportedAt, and no maker wrote a weekOf
+    favorite: false, firstSeen: "2026-08-24T00:00:00.000Z", weekOf: null,
+    publishedAt: null,   // this manifest predates the field; the row never invents one
   });
   // and the versioned URL actually serves (query must not break the jail)
   const cv = await fetch(`${BASE}${luna.cover}`);
@@ -534,6 +553,131 @@ test("a slug belongs to the package that got it first, not to a later slug-named
   assert.equal(m.title, "Tabby McTat", "and /books/tabby-mctat/ still serves the same book");
   assert.equal((await (await fetch(`${BASE}/books/tabby-mctat-2/manifest.json`)).json()).title,
     "A Different Book", "the newcomer is reachable, not lost");
+});
+
+// ================================= the shelf's own two stores (spec 2026-09-30)
+//
+// This Week sorts newest week first, and a manifest's exportedAt cannot say
+// which week a book belongs to: every re-publish bumps it (a review edit, a
+// rename, every Animate clip — content-publish.js). So the hub keeps a
+// FIRST-SEEN record of its own, in the hub's data dir (never under books/, the
+// Drive mirror's), seeded from exportedAt on first sight and never rewritten.
+
+test("first-seen is seeded from exportedAt, stored in the hub's data dir, and never under books/", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  for (const row of idx) {
+    assert.equal(typeof row.firstSeen, "string", "row without firstSeen: " + JSON.stringify(row));
+    assert.ok(Number.isFinite(Date.parse(row.firstSeen)), row.firstSeen);
+    assert.equal(typeof row.favorite, "boolean", "row without a favorite boolean: " + JSON.stringify(row));
+  }
+  assert.equal(idx.find(e => e.slug === "our-book").firstSeen, "2026-09-22T00:00:00.000Z");
+  const store = JSON.parse(fs.readFileSync(path.join(TMP, "book-first-seen.json"), "utf8"));
+  assert.equal(store["luna-the-fox"], "2026-08-24T00:00:00.000Z");
+  assert.ok(!fs.existsSync(path.join(TMP, "books", "book-first-seen.json")),
+    "the store must not live in the Drive-mirrored books dir");
+});
+
+test("a package with no exportedAt is first seen NOW", async () => {
+  const t0 = Date.now();
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const row = idx.find(e => e.slug === "undated-week");
+  const at = Date.parse(row.firstSeen);
+  // seeded by whichever index call saw it first — before() or this one — so
+  // "now" is anywhere since the suite began
+  assert.ok(at <= Date.now() && t0 - at < 120000, row.firstSeen);
+});
+
+test("first-seen survives a re-publish that bumps exportedAt", async () => {
+  const mPath = path.join(TMP, "books", "our-book", "manifest.json");
+  const before = (await (await fetch(`${BASE}/books/index.json`)).json())
+    .find(e => e.slug === "our-book").firstSeen;
+  const m = JSON.parse(fs.readFileSync(mPath, "utf8"));
+  fs.writeFileSync(mPath, JSON.stringify({ ...m, exportedAt: "2026-09-29T12:00:00Z" }, null, 2));
+  try {
+    const after = (await (await fetch(`${BASE}/books/index.json`)).json())
+      .find(e => e.slug === "our-book").firstSeen;
+    assert.equal(after, before, "a re-publish moved the book to a newer week");
+  } finally { fs.writeFileSync(mPath, JSON.stringify(m, null, 2)); }
+});
+
+test("publishedAt rides on the index row as the manifest wrote it, null when it has none", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "week-with-weekof").publishedAt, "2026-09-01T00:00:00.000Z");
+  assert.equal(idx.find(e => e.slug === "our-book").publishedAt, null);
+});
+
+test("an explicit weekOf in the manifest is published beside first-seen", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "week-with-weekof").weekOf, "2026-09-28");
+  assert.equal(idx.find(e => e.slug === "our-book").weekOf, null);
+});
+
+// ♥ Favorites: a grown-up's finger hold toggles them; the hub keeps them (a
+// browser reset must not lose her favourites), keyed by slug, in the data dir.
+const fav = (slug, body, headers = {}) => fetch(`${BASE}/books/${slug}/favorite`, {
+  method: "POST", headers: { "Content-Type": "application/json", ...headers },
+  body: typeof body === "string" ? body : JSON.stringify(body) });
+
+test("POST /books/<slug>/favorite sets and clears the ♥, and the index carries it", async () => {
+  let r = await fav("luna-the-fox", { favorite: true });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { slug: "luna-the-fox", favorite: true });
+  let idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "luna-the-fox").favorite, true);
+  assert.equal(idx.find(e => e.slug === "our-book").favorite, false);
+  const store = JSON.parse(fs.readFileSync(path.join(TMP, "book-favorites.json"), "utf8"));
+  assert.ok(store["luna-the-fox"], "stored on the hub, keyed by slug: " + JSON.stringify(store));
+  assert.ok(!fs.existsSync(path.join(TMP, "books", "book-favorites.json")),
+    "the store must not live in the Drive-mirrored books dir");
+
+  r = await fav("luna-the-fox", { favorite: false });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { slug: "luna-the-fox", favorite: false });
+  idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "luna-the-fox").favorite, false);
+});
+
+test("the favorite door keeps the book routes' guards", async () => {
+  // a page on another site may not change her shelf (ownDoor)
+  let r = await fav("luna-the-fox", { favorite: true }, { "Sec-Fetch-Site": "cross-site" });
+  assert.equal(r.status, 403);
+  r = await fetch(`${BASE}/books/luna-the-fox/favorite`, { method: "POST",
+    headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ favorite: true }) });
+  assert.equal(r.status, 403, "a simple (preflight-free) content type is refused");
+  // a book nobody has
+  r = await fav("no-such-book", { favorite: true });
+  assert.equal(r.status, 404);
+  // a body that is not a yes or a no
+  r = await fav("luna-the-fox", { favorite: "yes" });
+  assert.equal(r.status, 400);
+  r = await fav("luna-the-fox", "{not json");
+  assert.equal(r.status, 400);
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "luna-the-fox").favorite, false, "no refusal changed anything");
+});
+
+test("a favorite whose book is gone is simply ignored", async () => {
+  const file = path.join(TMP, "book-favorites.json");
+  const had = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  fs.writeFileSync(file, JSON.stringify({ "long-gone-book": "2026-09-01T00:00:00.000Z" }));
+  try {
+    const r = await fetch(`${BASE}/books/index.json`);
+    assert.equal(r.status, 200);
+    const idx = await r.json();
+    assert.ok(!idx.some(e => e.slug === "long-gone-book"), "a ghost row appeared");
+    assert.ok(idx.every(e => e.favorite === false));
+  } finally { if (had == null) fs.rmSync(file, { force: true }); else fs.writeFileSync(file, had); }
+});
+
+test("an unreadable favorites store is an empty one, never a dead shelf", async () => {
+  const file = path.join(TMP, "book-favorites.json");
+  const had = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  fs.writeFileSync(file, "{broken");
+  try {
+    const r = await fetch(`${BASE}/books/index.json`);
+    assert.equal(r.status, 200);
+    assert.ok((await r.json()).every(e => e.favorite === false));
+  } finally { if (had == null) fs.rmSync(file, { force: true }); else fs.writeFileSync(file, had); }
 });
 
 test("LAW: missing books dir -> index [] and the server stays alive", async () => {
