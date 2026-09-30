@@ -122,6 +122,9 @@ cp -r "$HUB/public/reader" "$OUT/public/reader"
 # its pages in the wrong order needs it on the machine that built the book. No
 # /x in installer.nsi: every /x there belongs to a pack (tests/packs.test.mjs).
 cp -r "$HUB/public/book-review" "$OUT/public/book-review"
+# Drawing (spec 2026-09-30 §1) — CORE like book-review: its page, scene module, sticker table
+# and the vendored Fluent Emoji (MIT, LICENSE beside them). No /x in installer.nsi.
+cp -r "$HUB/public/drawing" "$OUT/public/drawing"
 cp "$HUB/public/favicon.ico" "$OUT/public/favicon.ico"
 cp -r "$HUB/public/icons" "$OUT/public/icons"   # per-app icons (tiles + shortcuts)
 

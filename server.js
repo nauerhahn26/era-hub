@@ -124,6 +124,9 @@ const APPS = [
   { id: "music", title: "Music", sub: "favorite songs, audio only", path: "/board/?recipe=songs", pack: "board" },
   { id: "movies", title: "Movies", sub: "shows & movies, her picks", path: "/board/?recipe=movies", pack: "board" },
   { id: "reader", title: "Book Reader", sub: "picture books, read aloud", path: "/reader/", pack: "reader" },
+  // Drawing (spec 2026-09-30 §1): a CORE app — its files ride with the engine (build-payload.sh
+  // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
+  { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
   // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
   // on-device (Windows' built-in csc) and pairs it with the Tobii runtime
   // already on Tobii devices (official NuGet as fallback for other PCs)

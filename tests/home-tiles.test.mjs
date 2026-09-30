@@ -94,3 +94,19 @@ test("an app switched OFF has no tile, empty or not", async () => {
   assert.ok(t.find(x => x.href === "/board/?recipe=songs"), "Music stays");
   await ctx.close();
 });
+
+test("Drawing switched on has a tile of its own, with its icon", async () => {
+  const r = await fetch(`${BASE}/apps`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: "drawing", enabled: true }) });
+  assert.ok(r.ok);
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  const t = await tiles(page);
+  const d = t.find(x => x.href === "/drawing/");
+  assert.ok(d, "Drawing has a tile: " + JSON.stringify(t));
+  assert.match(d.sub, /make a picture with stickers/);
+  const img = await page.$eval('a.app[href="/drawing/"] img', i => ({ src: i.getAttribute("src"), w: i.naturalWidth }));
+  assert.equal(img.src, "/icons/drawing.png");
+  assert.ok(img.w > 0, "the icon loaded");
+  await ctx.close();
+});
