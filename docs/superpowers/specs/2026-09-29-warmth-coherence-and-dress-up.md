@@ -211,7 +211,10 @@ wardrobe. Never fancy, never hidden, never an accessory — the door in `buildCa
   (say so in the failure message, naming the cell).
 - **Across the whole deal each dimension's share is within ±10 points** of the curve.
 - Anchors, asserted by name: shorts-side ≈ 10 % at 60, 50 % at 70, 90 % at 80 (page 1: 1/7, 3-4/7, 6/7).
-- Zero long sleeve at ≥ 78; zero shorts-side at ≤ 54 (both from the 5 % floor).
+- Zero long sleeve at ≥ 78; zero shorts-side at ≤ 54 (both from the 5 % floor). These are test
+  points two degrees inside the floor, not its edges: the curve itself crosses 5 % at about 76/77 °F
+  for long sleeves (4.4 % at 77) and 56/57 °F for shorts (4.4 % at 56) — as built, no long sleeve
+  from 77 up and no shorts from 56 down.
 - 70 °F on consecutive days alternates which kind gets the odd slot.
 - Never empty, never fancy, offline = the port's deal — carried over from §2.
 
