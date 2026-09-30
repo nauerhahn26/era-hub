@@ -200,7 +200,7 @@ test("movies mirrors, catalog and posters, and the Settings checklist can see it
   // contentReady(), createContentFolder() and syncLocal() all walk the one
   // MIRROR_SUBDIRS list, so pinning what the checklist reports pins all three.
   assert.deepEqual(Object.keys(drive.status().content),
-    ["books", "music", "movies", "content", "clothing"]);
+    ["books", "music", "movies", "content", "clothing", "drawings"]);
   assert.equal(drive.status().content.movies, true, "the checklist ticks for movies");
 
   fs.rmSync(path.join(SRC, "movies", "posters", "moana.jpg"));
@@ -562,4 +562,143 @@ test("a job.json rewritten to the same length still reaches the other computer",
   await drive.sync();
   assert.equal(fs.readFileSync(dest, "utf8"), later,
     "the bytes, not the byte count, decide whether the latch is re-copied");
+});
+
+// ---- drawings (spec 2026-09-30 §4): a picture made on one device is on every device's shelf,
+// a parent deleting its folder in Drive removes it everywhere, and a picture made with no Drive
+// folder (.local) is never pruned and goes UP the moment a folder is there.
+const PIC = (root, id) => path.join(root, "drawings", id);
+const sceneOf = (id, s) => JSON.stringify({ v: 1, id, items: [{ s, x: 0.5, y: 0.5, w: 0.2, by: "ellie" }] });
+
+test("drawings mirror in, a same-length scene.json rewrite still crosses, and a picture deleted in Drive leaves", async () => {
+  const D = path.join(TMP, "data-drawings"), S = path.join(TMP, "My Drive", "Drawings Content");
+  const id = "2026-09-30-101500-dev-b";
+  fs.mkdirSync(PIC(S, id), { recursive: true });
+  fs.writeFileSync(path.join(PIC(S, id), "scene.json"), sceneOf(id, "horse"));
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+
+  await drive.sync();
+  const got = path.join(PIC(D, id), "scene.json");
+  assert.ok(fs.existsSync(got), "another device's picture reached this shelf");
+
+  fs.writeFileSync(path.join(PIC(S, id), "scene.json"), sceneOf(id, "house"));   // horse -> house: same length
+  await drive.sync();
+  assert.match(fs.readFileSync(got, "utf8"), /"house"/, "scene.json is compared by content, not by size");
+
+  fs.rmSync(PIC(S, id), { recursive: true });
+  const r = await drive.sync();
+  assert.equal(r.removed, 1);
+  assert.ok(!fs.existsSync(PIC(D, id)), "a picture folder deleted in Drive is deleted here");
+});
+
+test("drawings adopt what is already there (it all came through the mirror); a .local picture stays hers", async () => {
+  const D = path.join(TMP, "data-drawings-adopt"), S = path.join(TMP, "My Drive", "Adopt Content");
+  const old = "2026-09-01-080000-dev-b", mine = "2026-09-02-090000-dev-a";
+  fs.mkdirSync(PIC(D, old), { recursive: true });
+  fs.writeFileSync(path.join(PIC(D, old), "scene.json"), sceneOf(old, "star"));   // mirrored by an earlier sync, no ledger yet
+  fs.mkdirSync(PIC(D, mine), { recursive: true });
+  fs.writeFileSync(path.join(PIC(D, mine), "scene.json"), sceneOf(mine, "tree"));
+  fs.writeFileSync(path.join(PIC(D, mine), ".local"), "{}");
+  fs.mkdirSync(path.join(S, "drawings"), { recursive: true });     // a folder that no longer holds `old`
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+
+  await drive.sync();
+  assert.ok(!fs.existsSync(PIC(D, old)), "adopted as the mirror's, then pruned: Drive does not have it");
+  assert.ok(fs.existsSync(path.join(PIC(D, mine), "scene.json")), "the .local picture is hers, not the mirror's");
+});
+
+test("a .local picture is copied up on the next sync (creating <folder>/drawings is allowed) and loses its marker", async () => {
+  const D = path.join(TMP, "data-drawings-up"), S = path.join(TMP, "My Drive", "Up Content");
+  const owned = "2026-09-29-090000-dev-b", mine = "2026-09-30-120000-dev-a";
+  fs.mkdirSync(PIC(D, owned), { recursive: true });
+  fs.writeFileSync(path.join(PIC(D, owned), "scene.json"), "{}");
+  fs.writeFileSync(path.join(D, "drawings", ".mirrored.json"), JSON.stringify([owned + "/scene.json"]));
+  fs.mkdirSync(PIC(D, mine), { recursive: true });
+  fs.writeFileSync(path.join(PIC(D, mine), "scene.json"), '{"v":1}');
+  fs.writeFileSync(path.join(PIC(D, mine), "picture.png"), "png");
+  fs.writeFileSync(path.join(PIC(D, mine), "scene.json.part"), "crash leftover");
+  fs.writeFileSync(path.join(PIC(D, mine), ".local"), "{}");
+  fs.mkdirSync(S, { recursive: true });                            // the family folder exists; drawings/ does not yet
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+
+  const r = await drive.sync();
+  assert.deepEqual(r.errors, []);
+  assert.equal(fs.readFileSync(path.join(PIC(S, mine), "scene.json"), "utf8"), '{"v":1}', "her picture went up");
+  assert.ok(fs.existsSync(path.join(PIC(S, mine), "picture.png")));
+  assert.ok(!fs.existsSync(path.join(PIC(S, mine), ".local")), "the marker never travels");
+  assert.ok(!fs.existsSync(path.join(PIC(S, mine), "scene.json.part")), "nor does a .part leftover");
+  assert.ok(!fs.existsSync(path.join(PIC(D, mine), ".local")), "the mirror owns it now");
+  assert.ok(fs.existsSync(path.join(PIC(D, mine), "scene.json")), "and it is still on this shelf");
+  assert.ok(!fs.existsSync(PIC(D, owned)), "the mirror's copy of a picture Drive no longer has went");
+});
+
+test("a .local picture the copy-up could not carry keeps its marker and is never pruned, even if a ledger claims it", async () => {
+  const D = path.join(TMP, "data-drawings-stuck"), S = path.join(TMP, "My Drive", "Stuck Content");
+  const mine = "2026-09-30-130000-dev-a";
+  fs.mkdirSync(PIC(D, mine), { recursive: true });
+  fs.writeFileSync(path.join(PIC(D, mine), "scene.json"), '{"v":1}');
+  fs.writeFileSync(path.join(PIC(D, mine), ".local"), "{}");
+  fs.writeFileSync(path.join(D, "drawings", ".mirrored.json"), JSON.stringify([mine + "/scene.json"]));
+  fs.mkdirSync(path.join(S, "drawings"), { recursive: true });
+  fs.chmodSync(path.join(S, "drawings"), 0o555);                   // a read-only Drive folder: the copy-up fails
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+  try {
+    const r = await drive.sync();
+    assert.ok(r.errors.some(e => e.includes(mine)), "the failed copy-up is reported, not swallowed: " + JSON.stringify(r.errors));
+    assert.ok(fs.existsSync(path.join(PIC(D, mine), "scene.json")), "provenance loses to the marker");
+    assert.ok(fs.existsSync(path.join(PIC(D, mine), ".local")), "and the marker stays until a copy-up succeeds");
+  } finally { fs.chmodSync(path.join(S, "drawings"), 0o755); }
+});
+
+test("mirrorDrawing: one picture onto this shelf now, ledger merged not replaced, blocked without a local folder", () => {
+  const D = path.join(TMP, "data-drawings-one"), S = path.join(TMP, "My Drive", "One Content");
+  const id = "2026-09-30-140000-dev-a", other = "2026-09-01-080000-dev-b";
+  fs.mkdirSync(PIC(S, id), { recursive: true });
+  fs.writeFileSync(path.join(PIC(S, id), "scene.json"), sceneOf(id, "sun"));
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "off" }));
+  drive.start(D);
+  assert.equal(drive.mirrorDrawing(id).blocked, "needs-local-drive");
+
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  fs.mkdirSync(path.join(D, "drawings"), { recursive: true });
+  fs.writeFileSync(path.join(D, "drawings", ".mirrored.json"), JSON.stringify([other + "/scene.json"]));
+  const r = drive.mirrorDrawing(id);
+  assert.equal(r.picture, id);
+  assert.equal(r.files, 1);
+  assert.deepEqual(r.errors, []);
+  assert.ok(fs.existsSync(path.join(PIC(D, id), "scene.json")));
+  const ledger = JSON.parse(fs.readFileSync(path.join(D, "drawings", ".mirrored.json"), "utf8"));
+  assert.ok(ledger.includes(id + "/scene.json"), "this picture is the mirror's now");
+  assert.ok(ledger.includes(other + "/scene.json"), "merged, never replaced");
+  assert.equal(drive.mirrorDrawing("../books").error, "unknown picture");
+  assert.equal(drive.mirrorDrawing(".local").error, "unknown picture");
+  assert.equal(drive.mirrorDrawing("2026-09-30-999999-nope").error, "unknown picture");
+  assert.equal(drive.LOCAL_MARKER, ".local");
+  assert.equal(typeof drive.atomically, "function");
+});
+
+// The skip in listTree is only visible where an ADOPTED set is persisted: mirrorDrawing writes the
+// ledger it loaded (sync writes the source's files instead). Without the skip her .local picture
+// would be recorded as the mirror's, and pruned the day it left the source.
+test("adoption never claims a .local picture: the first ledger a mirrorDrawing writes names only what the mirror owns", () => {
+  const D = path.join(TMP, "data-drawings-ledger"), S = path.join(TMP, "My Drive", "Ledger Content");
+  const old = "2026-09-01-080000-dev-b", mine = "2026-09-02-090000-dev-a", id = "2026-09-30-150000-dev-a";
+  fs.mkdirSync(PIC(D, old), { recursive: true });
+  fs.writeFileSync(path.join(PIC(D, old), "scene.json"), sceneOf(old, "star"));      // came through the mirror, no ledger yet
+  fs.mkdirSync(PIC(D, mine), { recursive: true });
+  fs.writeFileSync(path.join(PIC(D, mine), "scene.json"), sceneOf(mine, "tree"));
+  fs.writeFileSync(path.join(PIC(D, mine), ".local"), "{}");                      // made here with no folder
+  fs.mkdirSync(PIC(S, id), { recursive: true });
+  fs.writeFileSync(path.join(PIC(S, id), "scene.json"), sceneOf(id, "sun"));
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+  assert.deepEqual(drive.mirrorDrawing(id).errors, []);
+  const ledger = JSON.parse(fs.readFileSync(path.join(D, "drawings", ".mirrored.json"), "utf8")).sort();
+  assert.deepEqual(ledger, [old + "/scene.json", id + "/scene.json"].sort(), "her .local picture is not the mirror's to prune later");
 });
