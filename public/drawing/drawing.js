@@ -43,6 +43,7 @@ const S = {
 };
 let BAR = null;
 let frozen = [];                 // the .dwell targets the grown-up's sheet put to sleep
+let sheetUp = false;             // the sheet is open: every newly drawn target is put to sleep too
 const mailWatchers = [];
 
 // ---------- small things ----------
@@ -109,16 +110,7 @@ function onPause() { log("talk", {}); hush(); S.wasPaused = S.paused; S.paused =
 function onResume() { S.paused = S.wasPaused; log("talk_resume", {}); tellPark(); }
 
 // ---------- the ring's tiles, from stickers.json (seats fixed forever) ----------
-function splatSample() {
-  const NS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", "-1 -1 2 2");
-  const p = document.createElementNS(NS, "path");
-  p.setAttribute("d", SC.splatPath(7));
-  p.setAttribute("fill", SC.SPLAT_COLOURS[0]);
-  svg.appendChild(p);
-  return svg;
-}
+const splatSample = () => SC.splatSvg(SC.splatPath(7), SC.SPLAT_COLOURS[0]);   // scene.js's one splat
 function buildTiles() {
   const ring = $("sRing");
   for (const st of S.table.stickers) {
@@ -143,6 +135,7 @@ function buildTiles() {
     ring.appendChild(b);
     if (st.src) { const im = new Image(); im.src = st.src; S.images[st.id] = im; }   // for the PNG
   }
+  refreeze();
 }
 function paintScene() { SC.renderScene($("scene"), S.scene, { table: S.table }); }
 
@@ -158,14 +151,18 @@ function go(id) {
   history.replaceState(null, "", location.pathname + location.search);
   route();
 }
+// Unsaved work here wins (rule 4) — but only when it is newer than the hub's copy: another device or
+// another tab may have changed the picture since (review 9/30 #8). No hub copy: it is all there is.
 async function loadScene(id) {
   const local = readStash(id);
-  if (local && local.dirty) { S.dirty = true; return local.scene; }       // unsaved work wins (rule 4)
-  S.dirty = false;
+  let hub = null;
   try {
     const r = await fetch("/drawings/" + encodeURIComponent(id) + "/scene.json", { cache: "no-store" });
-    if (r.ok) { const sc = await r.json(); if (sc && Array.isArray(sc.items)) return sc; }
+    if (r.ok) { const sc = await r.json(); if (sc && Array.isArray(sc.items)) hub = sc; }
   } catch {}
+  if (local && local.dirty && (!hub || local.at > (Date.parse(hub.updated) || 0))) { S.dirty = true; return local.scene; }
+  S.dirty = false;
+  if (hub) return hub;
   if (local) return local.scene;
   return { v: 1, id, backdrop: "meadow", items: [] };
 }
@@ -291,15 +288,20 @@ function tuneDwell(d) {
 // A full-screen sheet hides nothing from dwell.js (board-partner.js:53-71): every target but the
 // two doors loses .dwell and gains data-dwell-disabled while it is up.
 function freeze() {
+  sheetUp = true;
   const live = [...document.querySelectorAll(".dwell")].filter((el) => !BAR_DOORS.has(el.id));
   for (const el of live) { el.classList.remove("dwell"); el.setAttribute("data-dwell-disabled", ""); }
   frozen = frozen.concat(live);
 }
 function thaw() {
+  sheetUp = false;
   for (const el of frozen) { el.classList.add("dwell"); el.removeAttribute("data-dwell-disabled"); }
   frozen = [];
   suppress(600);
 }
+// Every render of targets while the sheet is up sweeps again: the freeze is not a one-time sweep
+// (Done -> the shelf under an open sheet drew live cells beneath it; review 9/30 #4).
+function refreeze() { if (sheetUp) freeze(); }
 function mailLine() {
   const m = S.lastMail;
   if (!m) return "No picture finished yet";
@@ -386,6 +388,7 @@ function renderShelf() {
   $("shelfGrid").replaceChildren(...kids);
   S.shelfIds = slice.map((p) => p.id);
   S.painted = shelfSig();
+  refreeze();
 }
 function turnShelf(page) {
   hush();
@@ -396,6 +399,10 @@ function turnShelf(page) {
 }
 async function openShelf() {
   const fresh = S.screen !== "shelf";
+  // A sticker placed in the last moments (her gaze drifting from Done to Splat mid-celebration) goes
+  // to the hub before the ring forgets it; if the hub does not take it, localStorage still holds it
+  // dirty and the next open of this picture retries (review 9/30 #3).
+  if (S.dirty) await save();
   S.id = null; S.scene = null; S.history = []; S.dirty = false;
   await refreshIndex();
   if (fresh) S.shelfPage = 0;                           // every return lands on page 1: newest first
@@ -442,11 +449,14 @@ async function done() {
   const id = S.id, scene = JSON.parse(JSON.stringify(S.scene));
   const saved = save();                                  // her last sticker first
   // The PNG and the mail run alongside the celebration (deviation 9); the answer goes to the
-  // partner line only — never spoken (the Pencil's truth rule).
-  const posted = saved.then(() => exportPng(scene))
-    .then((blob) => fetch("/drawings/" + encodeURIComponent(id) + "/done",
-      { method: "POST", headers: { "Content-Type": "image/png" }, body: blob }))
-    .then((r) => (r.ok ? r.json() : { saved: false, mail: "failed", reason: "hub " + r.status }))
+  // partner line only — never spoken (the Pencil's truth rule). Only once her scene is on the hub:
+  // the hub judges the mail from ITS scene, so a PNG after a failed save would be mailed (or called
+  // "already sent") against a picture she has since changed (review 9/30 #9). She is celebrated anyway.
+  const posted = saved.then((ok) => (!ok ? { saved: false, mail: "failed", reason: "scene not saved" }
+    : exportPng(scene)
+      .then((blob) => fetch("/drawings/" + encodeURIComponent(id) + "/done",
+        { method: "POST", headers: { "Content-Type": "image/png" }, body: blob }))
+      .then((r) => (r.ok ? r.json() : { saved: false, mail: "failed", reason: "hub " + r.status }))))
     .catch(() => ({ saved: false, mail: "failed", reason: "no answer" }))
     .then((res) => { setMail({ id, ...res }); log("done", { id, mail: res.mail }); return res; });
   confetti(24);
@@ -454,7 +464,7 @@ async function done() {
     await say(SC.describe(scene.items, S.table));        // what she DID
     await saved;
   } finally { S.finishing = false; }                     // Done can never stay latched
-  go(null);                                               // the shelf, this picture first (newest change)
+  go(null);                                               // the shelf: this picture first once the hub has its change
   return posted;
 }
 

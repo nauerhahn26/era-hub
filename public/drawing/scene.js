@@ -89,7 +89,7 @@ export function describe(items, table) {
     const st = stickerById(table, id), n = count.get(id);
     const word = st ? st.word.toLowerCase() : id;
     return n === 1 ? "a " + word : (NUMBER[n] || String(n)) + " " + (st ? st.plural : id + "s");
-  }).filter(Boolean);
+  });
   if (!parts.length) return "You made a picture!";
   const list = parts.length === 1 ? parts[0] : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
   return "You made a picture with " + list + "!";
@@ -115,6 +115,17 @@ export function sceneOps(scene, table) {
 }
 
 const SVGNS = "http://www.w3.org/2000/svg";
+// One splat as DOM: the ring's and the thumbnails' splats (renderScene) and the Splat tile's sample
+// (drawing.js) are all this element. d = splatPath(seed), in the box -1..1.
+export function splatSvg(d, fill) {
+  const el = document.createElementNS(SVGNS, "svg");
+  el.setAttribute("viewBox", "-1 -1 2 2");
+  const p = document.createElementNS(SVGNS, "path");
+  p.setAttribute("d", d);
+  p.setAttribute("fill", fill);
+  el.appendChild(p);
+  return el;
+}
 // THE renderer. target = a CanvasRenderingContext2D (the PNG) or an element (the ring's #scene, a
 // shelf thumbnail, the New picture tile). opts.images = { stickerId: loaded HTMLImageElement } for
 // the canvas. Returns target.
@@ -145,12 +156,7 @@ export function renderScene(target, scene, { table, images } = {}) {
   const kids = ops.map((op) => {
     let el;
     if (op.kind === "splat") {
-      el = document.createElementNS(SVGNS, "svg");
-      el.setAttribute("viewBox", "-1 -1 2 2");
-      const p = document.createElementNS(SVGNS, "path");
-      p.setAttribute("d", op.d);
-      p.setAttribute("fill", op.fill);
-      el.appendChild(p);
+      el = splatSvg(op.d, op.fill);
     } else {
       el = document.createElement("img");
       el.src = op.src;

@@ -166,6 +166,26 @@ test("at 1280x720 every ring tile is still at least 60px", async () => {
   await ctx.close();
 });
 
+// review 9/30 #11c: one splat drawing, in scene.js — the Splat tile's sample and every splat in her
+// picture are built by the same helper, so they cannot drift apart.
+test("the Splat tile and a splat in her picture are drawn by scene.js's one splat helper", async () => {
+  const { ctx, page } = await openRing();
+  const r = await page.evaluate(() => {
+    const SC = window.DrawingScene;
+    const ref = SC.splatSvg(SC.splatPath(7), SC.SPLAT_COLOURS[0]);
+    ref.classList.add("pic");
+    const box = document.createElement("div");
+    SC.renderScene(box, { v: 1, backdrop: "meadow", items: [{ s: "splat", x: 0.5, y: 0.5, w: 0.15, by: "ellie", c: "#DE7B52", seed: 9 }] },
+      { table: { stickers: [{ id: "splat" }] } });
+    const item = box.firstElementChild.cloneNode(true);
+    for (const a of ["class", "data-i", "style"]) item.removeAttribute(a);
+    return { tile: document.querySelector("#tile-splat .pic").outerHTML === ref.outerHTML,
+             item: item.outerHTML === SC.splatSvg(SC.splatPath(9), "#DE7B52").outerHTML };
+  });
+  assert.deepEqual(r, { tile: true, item: true });
+  await ctx.close();
+});
+
 // ================================================================ T8 — placing, undo, autosave
 test("a dwell on Horse says \"Horse\" (after Speech.stop) and the horse lands at the first centre-out ground slot", async () => {
   const { ctx, page } = await openRing();
@@ -259,6 +279,36 @@ test("a save the hub does not take keeps the picture safe, survives a reload and
   await ctx.close();
 });
 
+// review 9/30 #8: the dirty copy in this browser wins only when it is NEWER than the hub's (another
+// device, or a grown-up on another tab, may have changed the picture since); no hub copy: it wins.
+test("a dirty copy in this browser wins only when it is newer than the hub's, or the hub has none", async () => {
+  const id = await newId();
+  await fetch(`${BASE}/drawings/${id}/scene.json`, { method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ v: 1, backdrop: "meadow", items: [H()] }) });
+  const star = { s: "star", x: 0.5, y: 0.17, w: 0.1, by: "ellie" };
+  const missing = "2026-09-30-235959-gone-dev";                     // an id the hub has never had
+  const { ctx, page } = await makePage();
+  // openRing logs "open" once the picture is loaded and painted (S.id is set before the load finishes)
+  const opened = (pid) => page.waitForRequest((r) => r.url().endsWith("/log") &&
+    /"event":"open"/.test(r.postData() || "") && (r.postData() || "").includes(pid));
+  let open = opened(id);
+  await page.evaluate(([id, missing, star]) => {
+    const stale = { scene: { v: 1, id, backdrop: "meadow", items: [star] }, dirty: true, at: Date.now() - 3600e3 };
+    localStorage.setItem("drawing_scene_" + id, JSON.stringify(stale));
+    localStorage.setItem("drawing_scene_" + missing, JSON.stringify({ ...stale, scene: { ...stale.scene, id: missing } }));
+    location.hash = "p=" + id;
+  }, [id, missing, star]);
+  await open;
+  let s = await st(page);
+  assert.deepEqual([s.screen, s.items.map((i) => i.s), s.dirty], ["ring", ["horse"], false], "an hour-old local copy loses to the hub's newer save");
+  open = opened(missing);
+  await page.evaluate((m) => { location.hash = "p=" + m; }, missing);
+  await open;
+  s = await st(page);
+  assert.deepEqual([s.items.map((i) => i.s), s.dirty], [["star"], true], "no hub copy: the local one is all there is");
+  await ctx.close();
+});
+
 test("leaving within the debounce still saves the last sticker (Review Focus 3)", async () => {
   const { ctx, page, id } = await openRing({ routes: (c) => c.route("**/kiosk/exit",
     (r) => r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' })) });
@@ -320,6 +370,27 @@ test("the sheet puts every target to sleep but the two doors, says no picture is
   r = await page.evaluate(() => ({ live: document.querySelectorAll("#sRing .dwell").length,
     asleep: document.querySelectorAll("[data-dwell-disabled]").length }));
   assert.deepEqual(r, { live: 10, asleep: 0 });
+  await ctx.close();
+});
+
+// review 9/30 #4: the sheet's freeze was one sweep; a shelf drawn AFTER it opened (Done -> the shelf,
+// while the grown-up already had the sheet up) was live under it, and dwell.js hit-tests through it.
+test("a shelf drawn while the sheet is open is asleep under it too, and wakes when it closes", async () => {
+  const { ctx, page, id } = await openRing();
+  await page.locator("#tile-horse").click();
+  await page.waitForFunction(() => !window.Drawing.state().dirty, null, { timeout: 5000 });
+  await page.evaluate(() => {
+    document.getElementById("btnDone").click();
+    setTimeout(() => document.getElementById("partnerTab").click(), 20);   // the grown-up, mid-celebration
+  });
+  await page.waitForFunction((id) => window.Drawing.state().screen === "shelf" && window.Drawing.state().shelfIds.includes(id), id);
+  const live = () => page.evaluate(() => [...document.querySelectorAll(".dwell:not([data-dwell-disabled])")]
+    .map((e) => e.id || e.className).filter((n) => n !== "barDoor" && n !== "barTalk"));
+  assert.equal(await page.isVisible("#partnerSheet"), true);
+  assert.deepEqual(await live(), [], "nothing but the two doors is live under the open sheet");
+  await page.locator("#pClose").click();
+  assert.ok((await page.locator(`#shelfGrid [data-id="${id}"].dwell:not([data-dwell-disabled])`).count()) === 1, "her picture wakes");
+  assert.equal(await page.locator("#railNew.dwell").count(), 1);
   await ctx.close();
 });
 
@@ -557,6 +628,48 @@ test("the celebration does not wait for the mail (deviation 9)", async () => {
   assert.equal((await st(page)).lastMail, null, "the mail has not answered yet");
   release();
   await page.waitForFunction(() => window.Drawing.state().lastMail, null, { timeout: 5000 });
+  await ctx.close();
+});
+
+// review 9/30 #3: her gaze drifts from Done to Splat during the celebration — that sticker is hers
+// and reaches the hub, not only this browser's localStorage.
+test("a sticker placed during Done's celebration still reaches the hub", async () => {
+  const { ctx, page, id } = await openRing();
+  await page.locator("#tile-horse").click();
+  await page.waitForFunction(() => !window.Drawing.state().dirty, null, { timeout: 5000 });
+  await page.evaluate(() => {
+    document.getElementById("btnDone").click();
+    setTimeout(() => document.getElementById("tile-star").click(), 40);
+  });
+  await page.waitForFunction(() => window.Drawing.state().screen === "shelf");
+  assert.ok((await st(page)).said.includes("Star"), "the star was placed mid-celebration");
+  let items = [];
+  for (let k = 0; k < 30 && items.length < 2; k++) {
+    items = (await hubScene(id)).items.map((i) => i.s);
+    if (items.length < 2) await page.waitForTimeout(100);
+  }
+  assert.deepEqual(items, ["horse", "star"]);
+  const stash = await page.evaluate((id) => JSON.parse(localStorage.getItem("drawing_scene_" + id)), id);
+  assert.equal(stash.dirty, false, "and this browser knows the hub has it");
+  await ctx.close();
+});
+
+// review 9/30 #9: a Done whose own save failed must not POST the PNG — the hub would judge the mail
+// from its stale scene. She is still celebrated; the partner line says the truth.
+test("Done after a save the hub did not take: no PNG is posted, she is celebrated, the line says not saved", async () => {
+  const { ctx, page, id } = await openRing({ routes: (c) => c.route("**/drawings/*/scene.json",
+    (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, body: '{"error":"write-failed"}' }) : r.continue())) });
+  const posts = [];
+  page.on("request", (r) => { if (r.method() === "POST" && r.url().endsWith("/done")) posts.push(r.url()); });
+  await page.locator("#tile-horse").click();
+  await page.locator("#btnDone").click();
+  await page.waitForFunction(() => window.Drawing.state().screen === "shelf" && window.Drawing.state().lastMail);
+  const s = await st(page);
+  assert.deepEqual(posts, [], "no PNG went to the hub");
+  assert.ok(s.said.includes("You made a picture with a horse!"), JSON.stringify(s.said));
+  assert.deepEqual([s.lastMail.id, s.lastMail.saved], [id, false]);
+  assert.equal(await page.evaluate(() => window.Drawing.mailLine()), "Not saved — the hub did not answer");
+  assert.equal(fs.existsSync(path.join(PICS, id, "picture.png")), false);
   await ctx.close();
 });
 
