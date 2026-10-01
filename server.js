@@ -683,7 +683,9 @@ function serveBook(req, res, rest) {
     // package has exactly one URL and the parent's folder name is not a second.
     (s) => booksIndex_.dirFor(BOOKS_DIR, s));
 }
-function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, resolveDir) {
+// cacheControl: for a jail whose images are REWRITTEN in place (Drawing's picture.png, rewritten by
+// every Done); everything else keeps the day-long immutable cache.
+function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, resolveDir, cacheControl) {
   const head = req.method === "HEAD";           // same headers, no body, no stream
   if (rest.includes("\0")) { res.writeHead(400).end(); return; }
   if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(403).end(); return; }
@@ -721,7 +723,7 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
       });
       return;
     }
-    const headers = { "Content-Type": type, "Cache-Control": "max-age=86400, immutable" };
+    const headers = { "Content-Type": type, "Cache-Control": cacheControl || "max-age=86400, immutable" };
     if (!avExts.includes(ext)) {                 // images: full streamed 200
       headers["Content-Length"] = st.size;
       res.writeHead(200, headers);
@@ -2559,7 +2561,7 @@ const server = http.createServer((req, res) => {
   }
   if (drawingPath && (req.method === "GET" || req.method === "HEAD") && drawingPath[2] !== "done") {
     serveMediaJail(req, res, path.join(DATA, "drawings"), drawingPath[1] + "/" + drawingPath[2],
-      [".json", ".png"], [], [], (id) => (drawings.isId(id) ? id : null));
+      [".json", ".png"], [], [], (id) => (drawings.isId(id) ? id : null), "no-cache");   // Done rewrites picture.png (review 9/30 #11a)
     return;
   }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/books/")) {

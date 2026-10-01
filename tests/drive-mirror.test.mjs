@@ -633,7 +633,33 @@ test("a .local picture is copied up on the next sync (creating <folder>/drawings
   assert.ok(!fs.existsSync(path.join(PIC(S, mine), "scene.json.part")), "nor does a .part leftover");
   assert.ok(!fs.existsSync(path.join(PIC(D, mine), ".local")), "the mirror owns it now");
   assert.ok(fs.existsSync(path.join(PIC(D, mine), "scene.json")), "and it is still on this shelf");
-  assert.ok(!fs.existsSync(PIC(D, owned)), "the mirror's copy of a picture Drive no longer has went");
+  // review 9/30 #5: drawings/ was ABSENT when this pass began (absent = leave ours alone); the copy-up
+  // made it, and a folder this pass made is not yet Drive's word on what the family has.
+  assert.ok(fs.existsSync(PIC(D, owned)), "nothing is pruned against a drawings/ folder this very pass created");
+  const r2 = await drive.sync();
+  assert.deepEqual(r2.errors, []);
+  assert.ok(!fs.existsSync(PIC(D, owned)), "the mirror's copy of a picture Drive no longer has went — on the next pass");
+  assert.ok(fs.existsSync(path.join(PIC(D, mine), "scene.json")), "hers stays");
+});
+
+// review 9/30 #6: a .local marker inside a picture folder IN DRIVE (a folder copied by hand) must never
+// come down: here it would make the picture "made with no folder", so every pass would copy it up again
+// and rewrite scene.json in the family's folder.
+test("a .local marker in the Drive folder never comes down, so nothing ping-pongs back up", async () => {
+  const D = path.join(TMP, "data-drawings-marker"), S = path.join(TMP, "My Drive", "Marker Content");
+  const id = "2026-09-30-160000-dev-c";
+  fs.mkdirSync(PIC(S, id), { recursive: true });
+  fs.writeFileSync(path.join(PIC(S, id), "scene.json"), sceneOf(id, "cloud"));
+  fs.writeFileSync(path.join(PIC(S, id), ".local"), "{}");
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+  await drive.sync();
+  assert.ok(fs.existsSync(path.join(PIC(D, id), "scene.json")), "the picture came down");
+  assert.ok(!fs.existsSync(path.join(PIC(D, id), ".local")), "its marker did not");
+  const r = await drive.sync();
+  assert.deepEqual([r.files, r.errors], [0, []], "an unchanged picture is copied neither up nor down");
+  assert.ok(!fs.existsSync(path.join(PIC(D, id), ".local")));
 });
 
 test("a .local picture the copy-up could not carry keeps its marker and is never pruned, even if a ledger claims it", async () => {
@@ -653,6 +679,30 @@ test("a .local picture the copy-up could not carry keeps its marker and is never
     assert.ok(fs.existsSync(path.join(PIC(D, mine), "scene.json")), "provenance loses to the marker");
     assert.ok(fs.existsSync(path.join(PIC(D, mine), ".local")), "and the marker stays until a copy-up succeeds");
   } finally { fs.chmodSync(path.join(S, "drawings"), 0o755); }
+});
+
+// review 9/30 #7: a rewrite the Drive folder refused waits here, .local, for a copy-up. While it waits,
+// the Drive folder's OLDER copy of the same picture must never be copied down over it.
+test("a picture waiting to go up (.local) is never overwritten by the older copy in the Drive folder", async () => {
+  const D = path.join(TMP, "data-drawings-waiting"), S = path.join(TMP, "My Drive", "Waiting Content");
+  const id = "2026-09-30-170000-dev-a";
+  fs.mkdirSync(PIC(S, id), { recursive: true });
+  fs.writeFileSync(path.join(PIC(S, id), "scene.json"), sceneOf(id, "horse"));       // what Drive has
+  fs.mkdirSync(PIC(D, id), { recursive: true });
+  fs.writeFileSync(path.join(PIC(D, id), "scene.json"), sceneOf(id, "house"));       // her newer rewrite
+  fs.writeFileSync(path.join(PIC(D, id), ".local"), "{}");
+  fs.chmodSync(PIC(S, id), 0o555);                                                   // and Drive still refuses it
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+  try {
+    const r = await drive.sync();
+    assert.ok(r.errors.some((e) => e.includes(id)), "the copy-up failed: " + JSON.stringify(r.errors));
+    assert.match(fs.readFileSync(path.join(PIC(D, id), "scene.json"), "utf8"), /"house"/, "her rewrite stands");
+    assert.ok(fs.existsSync(path.join(PIC(D, id), ".local")));
+  } finally { fs.chmodSync(PIC(S, id), 0o755); }
+  await drive.sync();
+  assert.match(fs.readFileSync(path.join(PIC(S, id), "scene.json"), "utf8"), /"house"/, "and goes up once Drive takes it");
+  assert.ok(!fs.existsSync(path.join(PIC(D, id), ".local")));
 });
 
 test("mirrorDrawing: one picture onto this shelf now, ledger merged not replaced, blocked without a local folder", () => {

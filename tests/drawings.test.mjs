@@ -206,9 +206,10 @@ test("list: non-empty pictures only, newest change first; Drive conflict copies,
 
 test("cleanup: empty pictures older than a day go from both places; new, non-empty and unreadable ones stay", () => {
   freshUnit("mount");
+  // every picture here is this device's own (review 9/30 #2: cleanup judges no other device's)
   const mk = (root, id, items, created, raw) => {
     fs.mkdirSync(path.join(root, id), { recursive: true });
-    fs.writeFileSync(path.join(root, id, "scene.json"), raw || JSON.stringify({ v: 1, id, created, items }));
+    fs.writeFileSync(path.join(root, id, "scene.json"), raw || JSON.stringify({ v: 1, id, created, device: "kitchen-pc-3f9a", items }));
   };
   const drv = path.join(MOUNT, "drawings"), mine = path.join(UNIT, "drawings");
   mk(drv, "2026-09-28-080000-dev-a", [], "2026-09-28T08:00:00Z");       // empty, two days old: goes
@@ -223,6 +224,53 @@ test("cleanup: empty pictures older than a day go from both places; new, non-emp
   assert.ok(!fs.existsSync(path.join(mine, "2026-09-28-080000-dev-a")));
   for (const id of ["2026-09-30-170000-dev-a", "2026-09-20-080000-dev-a", "2026-09-21-080000-dev-a"])
     assert.ok(fs.existsSync(path.join(drv, id)), id + " stayed");
+});
+
+// review 9/30 #2: this device's copy of the Drive folder may be stale, so it never deletes another
+// device's picture there; and a blank is aged by its last change, so a picture the partner Cleared a
+// minute ago (born days ago) is not taken at the next boot.
+test("cleanup: only this device's own blanks, aged by their last change — another device's and a fresh Clear stay", () => {
+  freshUnit("mount");
+  const mk = (root, id, sc) => {
+    fs.mkdirSync(path.join(root, id), { recursive: true });
+    fs.writeFileSync(path.join(root, id, "scene.json"), JSON.stringify({ v: 1, id, items: [], ...sc }));
+  };
+  const drv = path.join(MOUNT, "drawings"), mine = path.join(UNIT, "drawings");
+  const theirs = "2026-09-27-080000-dev-b", cleared = "2026-09-27-090000-kitchen-pc-3f9a", old = "2026-09-27-100000-kitchen-pc-3f9a";
+  const t = { created: "2026-09-27T08:00:00Z", updated: "2026-09-27T08:00:00Z", device: "dev-b" };
+  mk(drv, theirs, t);                                                     // another device's, old: not ours to judge
+  mk(mine, theirs, t);                                                    // …nor its mirror copy here
+  mk(drv, cleared, { created: "2026-09-27T09:00:00Z", updated: "2026-09-30T17:14:00Z", device: "kitchen-pc-3f9a" });
+  mk(drv, old, { created: "2026-09-27T10:00:00Z", updated: "2026-09-28T10:00:00Z", device: "kitchen-pc-3f9a" });
+  const r = drawings.cleanupEmpty();
+  assert.deepEqual(r.removed, [old], "only this device's own blank, untouched for over a day");
+  assert.ok(fs.existsSync(path.join(drv, theirs)), "another device's blank stays in the family's folder");
+  assert.ok(fs.existsSync(path.join(mine, theirs)), "and on this shelf");
+  assert.ok(fs.existsSync(path.join(drv, cleared)), "cleared a minute ago: its last change is fresh");
+  assert.ok(!fs.existsSync(path.join(drv, old)));
+});
+
+// review 9/30 #10: drive.status() scans every drive letter and lists folders; a save asked it twice
+// and a Done four times. Where a picture lives is one read of drive.json and one stat.
+test("where a picture lives is drive.json plus one stat: drawings never calls drive.status", () => {
+  const real = drive.status;
+  drive.status = () => { throw new Error("drawings.js called drive.status"); };
+  try {
+    freshUnit("mount");
+    assert.equal(drive.localFolder(), MOUNT);
+    const { id } = drawings.create();
+    assert.ok(drawings.isId(id));
+    const w = drawings.writeScene(id, { v: 1, backdrop: "meadow", items: [H] });
+    assert.deepEqual([w.ok, w.mount], [true, true]);
+    assert.deepEqual(drawings.readScene(id).items, [H]);
+    assert.ok(fs.existsSync(path.join(inDrive(id), "scene.json")));
+    drawings.cleanupEmpty();
+    freshUnit("offline");
+    assert.equal(drive.localFolder(), null, "a folder that is not there is no mount");
+    assert.equal(drawings.create().id.endsWith("kitchen-pc-3f9a"), true);
+    freshUnit("none");
+    assert.equal(drive.localFolder(), null);
+  } finally { drive.status = real; }
 });
 
 // ---- §5 the routes: the REAL server.js on a scratch port ------------------------
@@ -328,6 +376,7 @@ test("GET is path-jailed: an id's scene.json and picture.png, nothing beside or 
 });
 
 // ---- §5 Done: save the PNG, mail it only when it changed --------------------------
+
 const PNG_1x1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 const finish = (id, body = PNG_1x1, headers = {}) => fetch(`${BASE}/drawings/${id}/done`,
   { method: "POST", headers: { "Content-Type": "image/png", ...headers }, body });
@@ -336,6 +385,63 @@ async function pictureWith(items) {
   if (items) assert.equal((await call("PUT", `/drawings/${id}/scene.json`, sceneOf(items))).status, 200);
   return id;
 }
+
+// review 9/30 #1: the write to the Drive folder landed; copying it onto this shelf threw (ENOTDIR,
+// EACCES, EIO). That is one console line, never an exception out of the route: the hub has no
+// uncaughtException handler, so a throw there was the whole hub going down.
+test("a save whose copy onto this shelf throws still answers 200, and the hub stays up", async () => {
+  const id = await newPic();
+  const shelf = path.join(RT, "drawings"), aside = shelf + ".aside";
+  fs.renameSync(shelf, aside);
+  fs.writeFileSync(shelf, "a file where the shelf folder should be");      // every copy onto this shelf: ENOTDIR
+  try {
+    const r = await call("PUT", `/drawings/${id}/scene.json`, sceneOf([H]));
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).ok, true);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(RT_MOUNT, "drawings", id, "scene.json"), "utf8")).items, [H],
+      "the family's folder has it");
+    assert.equal((await call("POST", "/drawings", {})).status, 200, "a new picture too");
+    assert.equal((await fetch(BASE + "/drawings/index.json")).status, 200, "and the hub is still answering");
+  } finally { fs.rmSync(shelf, { force: true }); fs.renameSync(aside, shelf); }
+  assert.equal((await fetch(`${BASE}/drawings/${id}/scene.json`)).status, 200);
+});
+
+// review 9/30 #7: a Drive folder this device may not write (a view-only share; Windows refusing a
+// rename over a file Drive holds open) must not make New picture silently do nothing. The write
+// falls back to this device (.local, carried up later), and the hub reads that newer copy first.
+test("a Drive folder that refuses the write: the picture is kept on this device, marked .local, and Done reads it", async () => {
+  const drv = path.join(RT_MOUNT, "drawings");
+  fs.mkdirSync(drv, { recursive: true });
+  fs.chmodSync(drv, 0o555);
+  let id;
+  try {
+    const r = await call("POST", "/drawings", {});
+    assert.equal(r.status, 200, "New picture still opens");
+    id = (await r.json()).id;
+    assert.ok(fs.existsSync(path.join(RT, "drawings", id, "scene.json")), "kept on this device");
+    assert.ok(fs.existsSync(path.join(RT, "drawings", id, ".local")), "marked as this device's own, to go up later");
+    assert.equal((await call("PUT", `/drawings/${id}/scene.json`, sceneOf([H]))).status, 200);
+  } finally { fs.chmodSync(drv, 0o755); }
+  // the picture is in the family's folder, then its own folder there refuses a rewrite
+  const pic = await pictureWith(null);
+  fs.chmodSync(path.join(drv, pic), 0o555);
+  try {
+    assert.equal((await call("PUT", `/drawings/${pic}/scene.json`, sceneOf([H]))).status, 200);
+    assert.ok(fs.existsSync(path.join(RT, "drawings", pic, ".local")));
+    assert.deepEqual(await (await finish(pic)).json(), { saved: true, mail: "no-email" },
+      "Done judges the copy she just made, not the stale blank in the Drive folder");
+  } finally { fs.chmodSync(path.join(drv, pic), 0o755); }
+});
+
+// review 9/30 #11a: every Done rewrites picture.png, so it is never served as immutable.
+test("picture.png is revalidated, never cached as immutable (Done rewrites it)", async () => {
+  const id = await pictureWith([H]);
+  assert.equal((await finish(id)).status, 200);
+  const g = await fetch(`${BASE}/drawings/${id}/picture.png`);
+  assert.equal(g.status, 200);
+  assert.doesNotMatch(g.headers.get("cache-control") || "", /immutable|max-age=[1-9]/);
+  assert.match(g.headers.get("cache-control") || "", /no-cache/);
+});
 
 test("Done saves the PNG where the scene lives and says no-email while no family email is set up", async () => {
   const id = await pictureWith([H]);

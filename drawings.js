@@ -11,8 +11,9 @@
 //     shelf at once. <DATA>/drawings is the mirror's destination.
 //  2. CREATING <folderPath>/drawings/ IS ALLOWED (unlike clothing): nothing family-only ever lives
 //     under <DATA>/drawings, so an empty source can only remove mirror-owned copies (drive.js).
-//  3. NO MOUNT (Drive off, a fresh install, an offline mount): write <DATA>/drawings/<id>/ and mark
-//     it .local. drive.js never prunes that folder and copies it up once a mount appears.
+//  3. NO MOUNT (Drive off, a fresh install, an offline mount) — or a mount that refuses the write:
+//     write <DATA>/drawings/<id>/ and mark it .local. drive.js never prunes that folder, never copies
+//     Drive's older copy down over it, and copies it up once the mount takes it.
 //  4. NOTHING HERE THROWS TO HER: a failed write is one console line and an {error} word; the
 //     ring keeps the picture in memory + localStorage and retries on the next change.
 "use strict";
@@ -59,13 +60,14 @@ const stamp = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) 
 const iso = () => NOW().toISOString();
 
 // ---------------------------------------------------------------- where it lives
+// drive.localFolder(), never drive.status(): status() adopts, checks every drive letter and lists
+// folders, and this runs on every save (review 9/30 #10).
 function mountRoot() {
-  const st = drive.status();
-  if (st.mode !== "local" || !st.folderPath) return null;
-  try { if (!fs.statSync(st.folderPath).isDirectory()) return null; } catch { return null; }
-  return path.join(st.folderPath, "drawings");
+  const f = drive.localFolder();
+  return f ? path.join(f, "drawings") : null;
 }
 const shelfRoot = () => path.join(DATA, "drawings");
+const hasLocal = (id) => fs.existsSync(path.join(shelfRoot(), id, drive.LOCAL_MARKER));
 function taken(id) {
   return [mountRoot(), shelfRoot()].filter(Boolean).some((r) => fs.existsSync(path.join(r, id)));
 }
@@ -88,32 +90,57 @@ function free(base) {
 }
 
 // Rule 1 / rule 3 in one place. Never throws (rule 4).
+// A Drive folder that refuses the write (a view-only share; Windows refusing a rename over a file
+// Drive holds open) is rule 3 for this write: this device, marked .local, carried up by the first
+// sync that can (review 9/30 #7). One console line when the folder starts refusing, not one a save.
+let refusing = false;
+function writeHere(id, name, buf) {
+  const dir = path.join(shelfRoot(), id);
+  fs.mkdirSync(dir, { recursive: true });
+  const mk = path.join(dir, drive.LOCAL_MARKER);
+  if (!fs.existsSync(mk)) fs.writeFileSync(mk, JSON.stringify({ device: DEVICE, since: iso() }) + "\n");
+  drive.atomically(path.join(dir, name), (tmp) => fs.writeFileSync(tmp, buf));
+}
 function writeFile(id, name, buf) {
   const m = mountRoot();
-  const dir = path.join(m || shelfRoot(), id);
-  try {
-    fs.mkdirSync(dir, { recursive: true });                  // rule 2: <folderPath>/drawings may be created
-    if (!m) {
-      const mk = path.join(dir, drive.LOCAL_MARKER);
-      if (!fs.existsSync(mk)) fs.writeFileSync(mk, JSON.stringify({ device: DEVICE, since: iso() }) + "\n");
+  if (m) {
+    let landed = false;
+    try {
+      const dir = path.join(m, id);
+      fs.mkdirSync(dir, { recursive: true });                // rule 2: <folderPath>/drawings may be created
+      drive.atomically(path.join(dir, name), (tmp) => fs.writeFileSync(tmp, buf));
+      landed = true;
+    } catch (e) {
+      if (!refusing) console.error("[drawings] the Drive folder refused " + id + "/" + name + " (" + e.message + "): kept on this device until a sync can carry it up");
+      refusing = true;
     }
-    drive.atomically(path.join(dir, name), (tmp) => fs.writeFileSync(tmp, buf));
-  } catch (e) {
+    if (landed) {
+      refusing = false;
+      // The write already landed; a copy onto this shelf that THROWS (ENOTDIR, EACCES, EIO) is one line,
+      // never an exception out of the route — the hub has no uncaughtException handler (books-share.js
+      // wraps mirrorBook for the same reason). The next sync carries it here. (review 9/30 #1)
+      let r;
+      try { r = drive.mirrorDrawing(id) || {}; } catch (e) { r = { error: e.message }; }
+      if (r.error || r.blocked || (r.errors || []).length)
+        console.error("[drawings] " + id + " is in Drive but not on this shelf yet: " + (r.error || r.blocked || r.errors.join("; ")));
+      return { ok: true, mount: true };
+    }
+  }
+  try { writeHere(id, name, buf); }
+  catch (e) {
     console.error("[drawings] " + id + "/" + name + " not written: " + e.message);
     return { ok: false };
   }
-  if (m) {
-    const r = drive.mirrorDrawing(id) || {};
-    if (r.error || r.blocked || (r.errors || []).length)
-      console.error("[drawings] " + id + " is in Drive but not on this shelf yet: " + (r.error || r.blocked || r.errors.join("; ")));
-  }
-  return { ok: true, mount: !!m };
+  return { ok: true, mount: false };
 }
 const sceneBytes = (scene) => Buffer.from(JSON.stringify(scene, null, 1) + "\n");
 
+// A .local copy here is this device's own newest work, not yet carried up (rule 3, or a write the
+// Drive folder refused): it is read before the Drive folder's older one (review 9/30 #7).
 function readScene(id) {
   if (!isId(id) || !DATA) return null;
-  for (const root of [mountRoot(), shelfRoot()].filter(Boolean)) {
+  const roots = hasLocal(id) ? [shelfRoot(), mountRoot()] : [mountRoot(), shelfRoot()];
+  for (const root of roots.filter(Boolean)) {
     try {
       const sc = JSON.parse(fs.readFileSync(path.join(root, id, "scene.json"), "utf8"));
       if (sc && typeof sc === "object" && !Array.isArray(sc)) return sc;
@@ -189,8 +216,10 @@ function list() {
                           || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
 }
 
-// A "New picture" she left blank never clutters any shelf: at boot, an EMPTY picture older than a
-// day goes from the Drive folder and from this device. Anything unreadable is left alone.
+// A "New picture" she left blank never clutters any shelf: at boot, an EMPTY picture of THIS
+// device's, untouched for a day (aged by its last change, so a picture Cleared a minute ago stays),
+// goes from the Drive folder and from this device. Never another device's: this device's copy of the
+// Drive folder may be stale, and that hub judges its own (review 9/30 #2). Anything unreadable stays.
 function cleanupEmpty({ olderThanMs = DAY } = {}) {
   const removed = [];
   if (!DATA) return { removed };
@@ -203,10 +232,10 @@ function cleanupEmpty({ olderThanMs = DAY } = {}) {
       const dir = path.join(root, id);
       let sc;
       try { sc = JSON.parse(fs.readFileSync(path.join(dir, "scene.json"), "utf8")); } catch { continue; }
-      if (!sc || !Array.isArray(sc.items) || sc.items.length) continue;
-      let born = stamp(sc.created);
-      if (!born) { try { born = fs.statSync(dir).mtimeMs; } catch { continue; } }
-      if (now - born < olderThanMs) continue;
+      if (!sc || !Array.isArray(sc.items) || sc.items.length || sc.device !== DEVICE) continue;
+      let last = stamp(sc.updated) || stamp(sc.created);
+      if (!last) { try { last = fs.statSync(dir).mtimeMs; } catch { continue; } }
+      if (now - last < olderThanMs) continue;
       try { fs.rmSync(dir, { recursive: true, force: true }); removed.push(id); }
       catch (e) { console.error("[drawings] could not clear " + id + ": " + e.message); }
     }
