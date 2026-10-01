@@ -205,3 +205,23 @@ test("Drawing is core: no pack owns public/drawing, no /x, and the cut copies th
   assert.match(payload, /cp -r "\$HUB\/public\/drawing" "\$OUT\/public\/drawing"/);
   assert.match(payload, /"\$HUB\/drawings\.js"/);
 });
+
+// A core app with no component section starts UNTICKED on a fresh install: -writeApps only
+// names the apps whose section is selected (plan 9/30 risk 6). Drawing gets the SecMW shape —
+// a ticked section with no File lines (its files ride in the core), hover text, and a
+// writeApps line in the same order as the APPS registry.
+test("Drawing is a ticked installer component, described, and seeds apps.json", () => {
+  const sec = NSI.match(/^Section (\/o )?"Drawing" SecDrawing\r?\n([\s\S]*?)^SectionEnd/m);
+  assert.ok(sec, 'a Section "Drawing" SecDrawing exists');
+  assert.equal(sec[1], undefined, "and is ticked by default (no /o)");
+  assert.doesNotMatch(sec[2], /\bFile\b/, "core: it lays down no files of its own");
+  assert.match(NSI, /MUI_DESCRIPTION_TEXT \$\{SecDrawing\} "Drawing: [^"]+"/, "it has hover text");
+  const write = NSI.match(/Section "-writeApps"[\s\S]*?SectionEnd/)[0];
+  assert.match(write, /\$\{If\} \$\{SectionIsSelected\} \$\{SecDrawing\}\s+FileWrite \$0 '\$1"drawing"'\s+StrCpy \$1 ","/,
+               "writeApps emits \"drawing\" when it is selected");
+  // writeApps lists apps in APPS order, so apps.json reads like the registry
+  const order = [...SERVER.matchAll(/^\s*\{ id: "([a-z-]+)",/gm)].map(m => m[1]);
+  const written = [...write.matchAll(/'\$?1?"([a-z-]+)"'/g)].map(m => m[1]);
+  const reg = order.filter(id => written.includes(id));
+  assert.deepEqual(written, reg, "writeApps follows the APPS registry order");
+});
