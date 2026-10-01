@@ -16,8 +16,14 @@ Spec: `docs/superpowers/specs/2026-09-30-drawing-design.md`. Plan: `docs/superpo
 
 ## Where a picture lives
 `<folderPath>/drawings/<id>/{scene.json, picture.png}` when the hub has the family's Drive folder;
-otherwise `<DATA>/drawings/<id>/` with a `.local` marker, copied up (and unmarked) on the first sync
-after a folder appears. The shelf and the GET routes read `<DATA>/drawings`.
+otherwise — or when that folder refuses the write (a view-only share, a file Drive holds open) —
+`<DATA>/drawings/<id>/` with a `.local` marker, copied up (and unmarked) on the first sync that can.
+The shelf and the GET routes read `<DATA>/drawings`.
+
+The `.local` checks in drive.js are not drawings-only: `listTree` and `pruneTree` skip a folder
+holding `.local` in EVERY library, and `copyTreeLocal` never brings a `.local` file down nor copies
+onto a folder holding one. That is safe because only drawings.js ever writes the marker, and each
+check can only prevent a delete or an overwrite, never cause one (review 9/30).
 `drawings` is in drive.js's `MIRROR_SUBDIRS`, so "✨ Create it for me" now also makes a `drawings/`
 subfolder, the Settings checklist's `content` gains a `drawings` key (its hint and `hasContent` still
 name only the five libraries — deliberate: pictures are not "content" to set up), and `adoptLocal`
