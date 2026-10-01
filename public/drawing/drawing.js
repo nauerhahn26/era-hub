@@ -1,0 +1,515 @@
+/*
+ * Drawing — make a picture with your eyes (spec docs/superpowers/specs/2026-09-30-drawing-design.md).
+ *
+ * Two screens: THE SHELF (/drawing/) — her pictures newest first, a New picture tile — and THE RING
+ * (/drawing/#p=<id>) — eight sticker tiles down both sides, her picture in the middle, Undo and
+ * Done either side of a black rest tile. One dwell on a sticker speaks its word and the sticker
+ * flies into a sensible place by itself ("pick and it lands"). Her picture is inert: looking at
+ * it does nothing (EyeDraw's Midas-touch lesson). A grown-up's finger may move a sticker.
+ *
+ * Laws (spec §7): one dwell per user, only the two doors are 2x; Speech.stop() before every
+ * action of hers; never "wrong", never "sent"; nothing times out; zero layout shift; a picture is
+ * never lost (memory + localStorage until the hub has it).
+ */
+"use strict";
+const EC = window.EllieContract.CONTRACT;
+const SC = window.DrawingScene;
+const $ = (id) => document.getElementById(id);
+
+const ID_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-[a-z0-9][a-z0-9-]{0,39}$/;   // drawings.js ID_RE, the same
+const MAX_ITEMS = 200;          // drawings.js LIMITS.items: the hub refuses more
+const HISTORY_MAX = 60;         // spec §2.2
+const SAVE_MS = 800;            // spec §4: autosave debounce
+const POLL_MS = 60000;          // the shelf notices a picture another device made
+const BOOK_CELLS = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];   // reader.js:489
+const PER_PAGE = BOOK_CELLS.length;
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MAIL_LINES = {
+  sent: "Sent to your family",
+  "no-email": "Saved — no family email set up yet",
+  failed: "Saved — mail failed, will not retry",
+  unchanged: "Saved — already sent, nothing new to send",
+  empty: "Saved — the picture is empty, nothing sent",
+};
+const BAR_DOORS = new Set(["barDoor", "barTalk"]);
+
+const S = {
+  ready: false, table: { stickers: [], zones: {} }, stickers: new Map(), images: {},
+  screen: null, id: null, scene: null, history: [], dirty: false, saveTimer: null, finishing: false,
+  paused: false, wasPaused: false,
+  index: [], shelfPage: 0, shelfPages: 1, shelfIds: [], painted: "", pollTimer: null,
+  lastMail: null, said: [], park: null, session: "s" + Date.now(),
+};
+let BAR = null;
+let frozen = [];                 // the .dwell targets the grown-up's sheet put to sleep
+let sheetUp = false;             // the sheet is open: every newly drawn target is put to sleep too
+const mailWatchers = [];
+
+// ---------- small things ----------
+function log(event, detail) {
+  fetch("/log", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ t: Date.now(), session: S.session, app: "drawing", event, ...detail }) }).catch(() => {});
+}
+function hush() { try { if (window.Speech) Speech.stop(); } catch {} }
+// every voice the app has goes through here; S.said is the tests' (and a grown-up's) record
+function say(text) {
+  S.said.push(text);
+  if (S.said.length > 20) S.said.shift();
+  if (S.paused || !window.Speech) return Promise.resolve();
+  return Speech.say(text, "long");
+}
+function suppress(ms) { try { if (window.Dwell && Dwell.suppress) Dwell.suppress(ms); } catch {} }
+function confetti(n) { try { window.EllieCelebrate.confetti(n); } catch {} }
+
+// ---------- local safety net (spec §4 rule 4) ----------
+const stashKey = (id) => "drawing_scene_" + id;
+function stash() {
+  if (!S.id || !S.scene) return;
+  try { localStorage.setItem(stashKey(S.id), JSON.stringify({ scene: S.scene, dirty: S.dirty, at: Date.now() })); } catch {}
+}
+function readStash(id) {
+  try {
+    const j = JSON.parse(localStorage.getItem(stashKey(id)) || "null");
+    return j && j.scene && Array.isArray(j.scene.items) ? j : null;
+  } catch { return null; }
+}
+
+// ---------- screens ----------
+function show(which) {
+  S.screen = which;
+  $("sShelf").classList.toggle("show", which === "shelf");
+  $("sRing").classList.toggle("show", which === "ring");
+  document.body.dataset.screen = which;
+}
+
+// ---------- the gaze park (spec §2; deviation 6: the shelf's rest is its black centre) ----------
+function tellPark() {
+  try {
+    let r = null;
+    if (S.screen === "ring") r = $("restTile").getBoundingClientRect();
+    else {
+      const a = document.querySelector('#shelfGrid [data-cell="2,2"]'), b = document.querySelector('#shelfGrid [data-cell="2,3"]');
+      if (a && b) {
+        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+        r = { left: ra.left, top: ra.top, width: rb.right - ra.left, height: rb.bottom - ra.top };
+      }
+    }
+    if (!r || !r.width) return;
+    const x = +((r.left + r.width / 2) / innerWidth).toFixed(3);
+    const y = +((r.top + r.height / 2) / innerHeight).toFixed(3);
+    S.park = { x, y };
+    fetch(EC.parkOverride.endpoint, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x, y }) }).catch(() => {});
+  } catch {}
+}
+
+// ---------- the shared bar: 🚪 leave and 💬 pause to talk ----------
+function onLeave() { log("door", {}); hush(); save({ keepalive: true }); }
+function onPause() { log("talk", {}); hush(); S.wasPaused = S.paused; S.paused = true; save({ keepalive: true }); }
+function onResume() { S.paused = S.wasPaused; log("talk_resume", {}); tellPark(); }
+
+// ---------- the ring's tiles, from stickers.json (seats fixed forever) ----------
+const splatSample = () => SC.splatSvg(SC.splatPath(7), SC.SPLAT_COLOURS[0]);   // scene.js's one splat
+function buildTiles() {
+  const ring = $("sRing");
+  for (const st of S.table.stickers) {
+    S.stickers.set(st.id, st);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.id = "tile-" + st.id;
+    b.className = "cell tile photo dwell";
+    b.dataset.s = st.id;
+    b.setAttribute("aria-label", st.word);
+    b.style.gridRow = String(st.at[0]);
+    b.style.gridColumn = String(st.at[1]);
+    let pic;
+    if (st.src) { pic = document.createElement("img"); pic.src = st.src; pic.alt = ""; pic.draggable = false; }
+    else pic = splatSample();
+    pic.classList.add("pic");
+    const word = document.createElement("span");
+    word.className = "word plate";
+    word.textContent = st.word;
+    b.append(pic, word);
+    b.addEventListener("click", () => place(st.id, b));
+    ring.appendChild(b);
+    if (st.src) { const im = new Image(); im.src = st.src; S.images[st.id] = im; }   // for the PNG
+  }
+  refreeze();
+}
+function paintScene() { SC.renderScene($("scene"), S.scene, { table: S.table }); }
+
+// ---------- routing ----------
+async function route() {
+  const m = /^#p=([^&]+)$/.exec(location.hash || "");
+  let id = null;
+  try { id = m ? decodeURIComponent(m[1]) : null; } catch {}
+  if (id && ID_RE.test(id)) await openRing(id); else await openShelf();
+}
+function go(id) {
+  if (id) { location.hash = "p=" + encodeURIComponent(id); return; }     // hashchange -> route()
+  history.replaceState(null, "", location.pathname + location.search);
+  route();
+}
+// Unsaved work here wins (rule 4) — but only when it is newer than the hub's copy: another device or
+// another tab may have changed the picture since (review 9/30 #8). No hub copy: it is all there is.
+async function loadScene(id) {
+  const local = readStash(id);
+  let hub = null;
+  try {
+    const r = await fetch("/drawings/" + encodeURIComponent(id) + "/scene.json", { cache: "no-store" });
+    if (r.ok) { const sc = await r.json(); if (sc && Array.isArray(sc.items)) hub = sc; }
+  } catch {}
+  if (local && local.dirty && (!hub || local.at > (Date.parse(hub.updated) || 0))) { S.dirty = true; return local.scene; }
+  S.dirty = false;
+  if (hub) return hub;
+  if (local) return local.scene;
+  return { v: 1, id, backdrop: "meadow", items: [] };
+}
+async function openRing(id) {
+  if (S.screen === "ring" && S.id && S.id !== id && S.dirty) await save();
+  stopPoll();
+  S.id = id;
+  S.history = [];
+  S.scene = await loadScene(id);
+  show("ring");
+  paintScene();
+  suppress();
+  tellPark();
+  if (S.dirty) scheduleSave();
+  log("open", { id, items: S.scene.items.length });
+}
+
+// ---------- placing, undo, autosave (spec §2.1, §2.2, §4) — T8 ----------
+function push(ev) { S.history.push(ev); if (S.history.length > HISTORY_MAX) S.history.shift(); }
+function place(id, tile) {
+  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  const st = S.stickers.get(id);
+  if (!st) return;
+  hush();
+  say(st.word);
+  if (S.scene.items.length >= MAX_ITEMS) { log("place_full", { s: id }); return; }   // the hub's cap
+  const spot = SC.landing(id, S.scene.items, S.table);
+  if (!spot) return;
+  const item = { s: id, x: spot.x, y: spot.y, w: spot.w, by: "ellie" };
+  if (id === "splat") { item.c = spot.c; item.seed = spot.seed; }
+  S.scene.items.push(item);
+  push({ t: "place" });
+  paintScene();
+  flyIn(tile, S.scene.items.length - 1);
+  log("place", { s: id, n: S.scene.items.length });
+  changed();
+}
+// The sticker appears at its tile and flies into its slot (~450 ms, ease-out); reduced motion:
+// it simply appears. A fixed-position copy flies; the real one waits hidden, so the scene's clip
+// never swallows the start of the flight.
+function flyIn(tile, index) {
+  try {
+    if (!tile || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const target = document.querySelector('#scene [data-i="' + index + '"]');
+    const from = tile.querySelector(".pic");
+    if (!target || !from || !target.animate) return;
+    const a = from.getBoundingClientRect(), b = target.getBoundingClientRect();
+    if (!a.width || !b.width) return;
+    const fly = target.cloneNode(true);
+    fly.removeAttribute("data-i");
+    fly.setAttribute("class", "flyer");
+    Object.assign(fly.style, { left: b.left + "px", top: b.top + "px", width: b.width + "px", height: b.height + "px" });
+    document.body.appendChild(fly);
+    target.style.visibility = "hidden";
+    const s = Math.min(a.width / b.width, a.height / b.height);
+    fly.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px) scale(${s})` }, { transform: "none" }],
+                { duration: 450, easing: "ease-out" })
+      .finished.catch(() => {}).then(() => { fly.remove(); target.style.visibility = ""; });
+  } catch {}
+}
+function undo() {
+  if (S.screen !== "ring" || !S.scene || !S.history.length) return;   // nothing, and silence (§2.2)
+  hush();
+  say("Undo");
+  const ev = S.history.pop();
+  if (ev.t === "place") S.scene.items.pop();
+  else if (ev.t === "move" && S.scene.items[ev.i]) Object.assign(S.scene.items[ev.i], ev.from);
+  paintScene();
+  log("undo", { t: ev.t });
+  changed();
+}
+function changed() { S.dirty = true; stash(); scheduleSave(); }
+function scheduleSave() { clearTimeout(S.saveTimer); S.saveTimer = setTimeout(() => { save(); }, SAVE_MS); }
+// Last write wins. A failed save logs one line and keeps the picture (memory + localStorage,
+// dirty); the next change — or the next open of this picture — tries again.
+async function save(opts = {}) {
+  clearTimeout(S.saveTimer);
+  S.saveTimer = null;
+  if (!S.dirty || !S.id || !S.scene) return true;
+  const id = S.id, body = JSON.stringify(S.scene);
+  try {
+    const r = await fetch("/drawings/" + encodeURIComponent(id) + "/scene.json", { method: "PUT",
+      headers: { "Content-Type": "application/json" }, body, keepalive: !!opts.keepalive });
+    if (!r.ok) throw new Error("PUT " + r.status);
+    if (S.id === id && JSON.stringify(S.scene) === body) { S.dirty = false; stash(); }
+    return true;
+  } catch (e) {
+    log("save_failed", { id, why: String(e && e.message) });
+    return false;
+  }
+}
+
+// ---------- the grown-up's hands (partner.js calls these; spec §2.4) — T9 ----------
+function itemAt(i) { const it = S.scene && S.scene.items[i]; return it ? { ...it } : null; }
+function moveItem(i, x, y) {
+  const it = S.scene && S.scene.items[i];
+  if (!it) return;
+  const c = SC.clampItem({ x, y, w: it.w });
+  push({ t: "move", i, from: { x: it.x, y: it.y, by: it.by } });
+  it.x = c.x; it.y = c.y; it.by = "partner";
+  paintScene();
+  log("partner", { action: "move", s: it.s });
+  changed();
+}
+async function clearPicture() {
+  if (S.screen !== "ring" || !S.scene) return;
+  S.scene.items = [];
+  S.history = [];                     // not undoable: it had its own two-stage confirm
+  paintScene();
+  log("partner", { action: "clear" });
+  changed();
+  hush();
+  await say("All clear! A fresh picture.");
+}
+function tuneDwell(d) {
+  const cur = window.Dwell ? Dwell.config.ms : EC.holds.content;
+  const ms = Math.max(EC.holds.floor, Math.min(EC.holds.tuneMax, cur + d));
+  if (window.Dwell) Dwell.setMs(ms);
+  if (BAR) BAR.setDwell(ms);          // the doors stay 2 x the dwell she is actually on
+  log("partner", { action: "dwell", ms });
+  return ms;
+}
+// A full-screen sheet hides nothing from dwell.js (board-partner.js:53-71): every target but the
+// two doors loses .dwell and gains data-dwell-disabled while it is up.
+function freeze() {
+  sheetUp = true;
+  const live = [...document.querySelectorAll(".dwell")].filter((el) => !BAR_DOORS.has(el.id));
+  for (const el of live) { el.classList.remove("dwell"); el.setAttribute("data-dwell-disabled", ""); }
+  frozen = frozen.concat(live);
+}
+function thaw() {
+  sheetUp = false;
+  for (const el of frozen) { el.classList.add("dwell"); el.removeAttribute("data-dwell-disabled"); }
+  frozen = [];
+  suppress(600);
+}
+// Every render of targets while the sheet is up sweeps again: the freeze is not a one-time sweep
+// (Done -> the shelf under an open sheet drew live cells beneath it; review 9/30 #4).
+function refreeze() { if (sheetUp) freeze(); }
+function mailLine() {
+  const m = S.lastMail;
+  if (!m) return "No picture finished yet";
+  if (m.saved === false) return "Not saved — the hub did not answer";
+  return MAIL_LINES[m.mail] || "Saved";
+}
+function setMail(res) {
+  S.lastMail = res;
+  try { localStorage.setItem("drawing_mail_last", JSON.stringify(res)); } catch {}
+  for (const cb of mailWatchers) { try { cb(mailLine()); } catch {} }
+}
+
+// ---------- the shelf (spec §3) — T10 ----------
+async function refreshIndex() {
+  try {
+    const j = await (await fetch("/drawings/index.json", { cache: "no-store" })).json();
+    S.index = Array.isArray(j) ? j : [];
+  } catch { S.index = []; }
+}
+const shelfSig = () => JSON.stringify(S.index.map((p) => [p.id, p.updated, p.items]));
+function plate(when) {
+  const d = new Date(when);
+  if (!Number.isFinite(d.getTime())) return "";
+  return DAYS[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()];
+}
+function blackCell() {
+  const d = document.createElement("div");
+  d.className = "shelf-black";
+  d.setAttribute("aria-hidden", "true");
+  return d;
+}
+function picCell(p) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "cell shelf-pic photo dwell";
+  b.dataset.id = p.id;
+  const when = plate(p.created);
+  b.setAttribute("aria-label", "Picture " + when);
+  const box = document.createElement("span");
+  box.className = "thumbBox";
+  const th = document.createElement("span");
+  th.className = "scene thumb";
+  SC.renderScene(th, p.scene, { table: S.table });      // the same renderer as the ring
+  box.appendChild(th);
+  const pl = document.createElement("span");
+  pl.className = "plate";
+  pl.textContent = when;
+  b.append(box, pl);
+  b.addEventListener("click", () => { hush(); go(p.id); });
+  return b;
+}
+function moreCell(pages) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.id = "shelfMore";
+  b.className = "cell text dwell";
+  b.setAttribute("aria-label", "More pictures");
+  const w = document.createElement("span");
+  w.className = "word";
+  w.textContent = "More ▶";
+  b.appendChild(w);
+  b.addEventListener("click", () => turnShelf((S.shelfPage + 1) % pages));   // the last page loops
+  return b;
+}
+function renderShelf() {
+  const pages = Math.max(1, Math.ceil(S.index.length / PER_PAGE));
+  if (S.shelfPage >= pages) S.shelfPage = pages - 1;
+  if (S.shelfPage < 0) S.shelfPage = 0;
+  S.shelfPages = pages;
+  const slice = S.index.slice(S.shelfPage * PER_PAGE, (S.shelfPage + 1) * PER_PAGE);
+  const at = new Map();
+  BOOK_CELLS.forEach(([r, c], i) => at.set(r + "," + c, slice[i] ? picCell(slice[i]) : blackCell()));
+  at.set("2,2", blackCell());
+  at.set("2,3", blackCell());
+  at.set("3,1", pages > 1 ? moreCell(pages) : blackCell());
+  const kids = [];
+  for (let r = 1; r <= 3; r++) for (let c = 1; c <= 4; c++) {
+    const el = at.get(r + "," + c);
+    el.dataset.cell = r + "," + c;
+    el.style.gridRow = String(r);
+    el.style.gridColumn = String(c);
+    kids.push(el);
+  }
+  $("shelfGrid").replaceChildren(...kids);
+  S.shelfIds = slice.map((p) => p.id);
+  S.painted = shelfSig();
+  refreeze();
+}
+function turnShelf(page) {
+  hush();
+  S.shelfPage = page;
+  renderShelf();
+  suppress();
+  log("shelf-page", { page });
+}
+async function openShelf() {
+  const fresh = S.screen !== "shelf";
+  // A sticker placed in the last moments (her gaze drifting from Done to Splat mid-celebration) goes
+  // to the hub before the ring forgets it; if the hub does not take it, localStorage still holds it
+  // dirty and the next open of this picture retries (review 9/30 #3).
+  if (S.dirty) await save();
+  S.id = null; S.scene = null; S.history = []; S.dirty = false;
+  await refreshIndex();
+  if (fresh) S.shelfPage = 0;                           // every return lands on page 1: newest first
+  show("shelf");
+  renderShelf();
+  suppress();
+  tellPark();
+  startPoll();
+}
+function startPoll() { stopPoll(); S.pollTimer = setInterval(pollShelf, POLL_MS); }
+function stopPoll() { if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; } }
+// Repaint ONLY when something changed (a rebuild throws away an in-flight dwell — reader.js's
+// lesson), and never under a grown-up's open sheet.
+async function pollShelf() {
+  if (S.screen !== "shelf" || frozen.length) return;
+  await refreshIndex();
+  if (shelfSig() === S.painted) return;
+  renderShelf();
+  suppress();
+  tellPark();
+}
+async function newPicture() {
+  hush();
+  try {
+    const r = await fetch("/drawings", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const j = await r.json();
+    if (r.ok && j && ID_RE.test(j.id)) { log("new", { id: j.id }); go(j.id); return; }
+  } catch {}
+  log("new_failed", {});             // the hub did not answer: she stays on her shelf, nothing is said
+}
+
+// ---------- Done (spec §2.3) — T11 ----------
+async function exportPng(scene) {
+  await Promise.all(Object.values(S.images).map((im) => (im.decode ? im.decode().catch(() => {}) : null)));
+  const c = document.createElement("canvas");
+  c.width = 1600; c.height = 900;
+  SC.renderScene(c.getContext("2d"), scene, { table: S.table, images: S.images });
+  return new Promise((res) => c.toBlob(res, "image/png"));
+}
+async function done() {
+  if (S.screen !== "ring" || !S.scene || S.finishing) return;
+  S.finishing = true;
+  hush();
+  const id = S.id, scene = JSON.parse(JSON.stringify(S.scene));
+  const saved = save();                                  // her last sticker first
+  // The PNG and the mail run alongside the celebration (deviation 9); the answer goes to the
+  // partner line only — never spoken (the Pencil's truth rule). Only once her scene is on the hub:
+  // the hub judges the mail from ITS scene, so a PNG after a failed save would be mailed (or called
+  // "already sent") against a picture she has since changed (review 9/30 #9). She is celebrated anyway.
+  const posted = saved.then((ok) => (!ok ? { saved: false, mail: "failed", reason: "scene not saved" }
+    : exportPng(scene)
+      .then((blob) => fetch("/drawings/" + encodeURIComponent(id) + "/done",
+        { method: "POST", headers: { "Content-Type": "image/png" }, body: blob }))
+      .then((r) => (r.ok ? r.json() : { saved: false, mail: "failed", reason: "hub " + r.status }))))
+    .catch(() => ({ saved: false, mail: "failed", reason: "no answer" }))
+    .then((res) => { setMail({ id, ...res }); log("done", { id, mail: res.mail }); return res; });
+  confetti(24);
+  try {
+    await say(SC.describe(scene.items, S.table));        // what she DID
+    await saved;
+  } finally { S.finishing = false; }                     // Done can never stay latched
+  go(null);                                               // the shelf: this picture first once the hub has its change
+  return posted;
+}
+
+// ---------- the page's own surface: tests, partner.js, field debugging ----------
+window.Drawing = {
+  state: () => ({
+    ready: S.ready, screen: S.screen, id: S.id,
+    items: S.scene ? S.scene.items.map((i) => ({ ...i })) : [],
+    history: S.history.length, dirty: S.dirty, lastMail: S.lastMail,
+    shelfPage: S.shelfPage, shelfPages: S.shelfPages, shelfIds: S.shelfIds.slice(),
+    said: S.said.slice(), park: S.park, paused: S.paused,
+  }),
+  itemAt, moveItem, clamp: (o) => SC.clampItem(o), clearPicture, repaint: () => { if (S.scene) paintScene(); },
+  tuneDwell, dwellMs: () => (window.Dwell ? Dwell.config.ms : EC.holds.content),
+  freeze, thaw, say: (t) => { hush(); return say(t); },
+  mailLine, onMail: (cb) => { mailWatchers.push(cb); },
+  pollShelf, flush: () => save(),
+};
+
+// ---------- boot ----------
+async function boot() {
+  // THE DOOR IS UP BEFORE ANY FETCH (the board's 9/3 rule): a hub that will not answer never
+  // leaves her on a screen she cannot leave. partner.js finds the bar the moment it runs.
+  BAR = window.DoorBar.mountDoorBar(document.body, { onLeave, onPause, onResume });
+  try { if (window.Speech) Speech.init("Let's make a picture!"); } catch {}
+  try { S.lastMail = JSON.parse(localStorage.getItem("drawing_mail_last") || "null"); } catch {}
+  try { S.table = await (await fetch("stickers.json")).json(); } catch { S.table = { stickers: [], zones: {} }; }
+  buildTiles();
+  SC.renderScene($("newThumb"), { v: 1, backdrop: "meadow", items: [] }, { table: S.table });
+  try {
+    const st = await (await fetch("/settings")).json();
+    if (Number.isFinite(st.dwellMs) && st.dwellMs > 0) { if (window.Dwell) Dwell.setMs(st.dwellMs); BAR.setDwell(st.dwellMs); }
+    if (window.Dwell && Number.isFinite(st.settleMs)) Dwell.set({ settleMs: Math.max(0, Math.min(2000, st.settleMs)) });
+    BAR.setPause(st.pauseGoes === "tdsnap");
+    if (st.childName) window.ERA_CHILD_NAME = st.childName;
+  } catch { /* defaults stand — never block her on settings */ }
+  $("btnUndo").addEventListener("click", () => undo());
+  $("btnDone").addEventListener("click", () => { done(); });
+  $("railNew").addEventListener("click", () => { newPicture(); });
+  addEventListener("hashchange", () => { route(); });
+  addEventListener("resize", () => { if (BAR) BAR.sizeBar(); tellPark(); });
+  addEventListener("pagehide", () => { save({ keepalive: true }); });
+  await route();
+  S.ready = true;
+  try { if (window.Speech) Speech.preload(S.table.stickers.map((s) => s.word).concat(["Undo"])); } catch {}
+  log("boot", {});
+}
+boot();

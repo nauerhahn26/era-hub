@@ -90,3 +90,22 @@ test("unknown app id or bad body is refused", async () => {
     body: JSON.stringify({ id: "pencil", enabled: "yes" }) })).status, 400);
   assert.equal((await fetch(`${BASE}/apps`, { method: "POST", body: "{" })).status, 400);
 });
+
+// Drawing (spec 2026-09-30 §1): a CORE app — registered, on wherever no apps.json says otherwise,
+// always installed (its files ride with the engine), and never offered a "remove files" button,
+// because /apps/delete refuses a core app (plan deviation 1).
+test("Drawing is a core app: registered as the spec says, always installed, never removable", async () => {
+  const { apps } = await (await fetch(`${BASE}/apps`)).json();
+  const d = apps.find(a => a.id === "drawing");
+  assert.ok(d, "Drawing is in the registry");
+  assert.deepEqual({ title: d.title, sub: d.sub, path: d.path, engine: d.engine, installed: d.installed, icon: d.icon },
+    { title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", engine: false, installed: true, icon: "/icons/drawing.png" });
+  if (d.enabled) assert.equal((await fetch(`${BASE}/apps`, { method: "POST", body: JSON.stringify({ id: "drawing", enabled: false }) })).status, 204);
+  const r = await fetch(`${BASE}/apps/delete`, { method: "POST", body: JSON.stringify({ id: "drawing" }) });
+  assert.equal(r.status, 400);
+  assert.equal(await r.text(), "core app");
+  const settings = fs.readFileSync(path.join(HUB, "public", "settings", "index.html"), "utf8");
+  const removable = settings.match(/\(a\.engine \|\| (\[[^\]]*\])\.includes\(a\.id\)\)/);
+  assert.ok(removable, "Settings' remove-files list is where it was");
+  assert.ok(!JSON.parse(removable[1]).includes("drawing"), "no remove-files button for a core app");
+});

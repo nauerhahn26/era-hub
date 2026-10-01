@@ -194,3 +194,14 @@ test("yt-dlp is pointed at the Node the hub is running on", () => {
   assert.ok(!win.args[1].includes('"'), "the runtime path is never quoted");
   assert.equal(ytDlp("/opt/era", "linux").bin, "/opt/era/vendor/yt-dlp/yt-dlp");
 });
+
+// Drawing (spec 2026-09-30 §1) is CORE: no pack owns its files, the installer's core section ships
+// them with no /x, and the cut copies both the page and its hub module.
+test("Drawing is core: no pack owns public/drawing, no /x, and the cut copies the page and drawings.js", () => {
+  assert.equal(packOf("public/drawing/index.html"), null);
+  assert.equal(packOf("public/drawing/stickers/horse.png"), null);
+  assert.doesNotMatch(NSI, /\/x drawing\b/);
+  const payload = fs.readFileSync(new URL("../tools/build-payload.sh", import.meta.url), "utf8");
+  assert.match(payload, /cp -r "\$HUB\/public\/drawing" "\$OUT\/public\/drawing"/);
+  assert.match(payload, /"\$HUB\/drawings\.js"/);
+});

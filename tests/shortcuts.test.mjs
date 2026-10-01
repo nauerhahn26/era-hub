@@ -97,3 +97,12 @@ test("server.js calls the boot pass after reconcileApps and appShortcut reuses t
   assert.match(src, /function appShortcut\(app, enabled\) \{\s*(\/\/.*\n\s*)?shortcuts\.applyShortcut\(/);
   assert.ok(!/CreateShortcut/.test(src), "the .lnk script lives in shortcuts.js only");
 });
+
+test("a Drawing shortcut opens /drawing/ and wears its own icon, not the generic one", () => {
+  const { plan, script } = reconcileShortcuts({ apps: [{ id: "drawing", title: "Drawing", path: "/drawing/" }],
+    dryRun: true, dir: DIR, port: 8377, returnScript: true });
+  assert.deepEqual(plan.filter(p => p.action === "write" && p.path.endsWith("\\Drawing.lnk")).map(p => p.path).sort(),
+    ["Desktop\\Drawing.lnk", "StartMenu\\Programs\\Drawing.lnk"]);
+  assert.match(script, /'8377 "\/drawing\/"'/);
+  assert.match(script, /drawing\.ico,0'/);
+});

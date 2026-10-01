@@ -7,7 +7,10 @@
 //   <folder>/music/...  -> <DATA>/music/...   (songs + manifest)
 //   <folder>/movies/... -> <DATA>/movies/...  (catalog + posters)
 //   <folder>/content/... -> <DATA>/content/... (lessons overrides)
-// Read-only scope; nothing is ever uploaded. Config in <DATA>/drive.json:
+//   <folder>/drawings/... -> <DATA>/drawings/... (Drawing's pictures; .local = made with no folder)
+// Read-only Google scope (API mode uploads nothing). In local mode the one thing
+// this mirror ever writes into the family's folder is a .local Drawing picture
+// going up (uploadLocal). Config in <DATA>/drive.json:
 //   { clientId, clientSecret, folderId, token:{...} } — clientId/secret come
 // from the family's own Google Cloud OAuth client (Settings explains).
 // The default family path is LOCAL mode, not that OAuth client — see the
@@ -31,7 +34,8 @@ const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 // parent added lived on one device and vanished on the next reinstall.
 // This ONE list is the mirror set: syncLocal(), sync()'s subfolder filter,
 // createContentFolder()'s one-tap setup and the Settings checklist all walk it.
-const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing"];
+// drawings: added 9/30 - Drawing's pictures, made on any device and shown on every shelf (spec 2026-09-30 §4).
+const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing", "drawings"];
 // The name "✨ Create it for me" gives the family's folder — and, since 9/15,
 // the name adoptLocal() goes looking for in a mount somebody else's computer
 // already filled. One constant so the two can never drift.
@@ -79,6 +83,17 @@ function status() {
     lastSync,
     syncing,
   };
+}
+
+// Where the family's folder is mounted, for a caller that writes into it on every save (drawings.js):
+// the folderPath when drive.json is local mode (status()'s reading of it) and that path is a folder,
+// else null. One read of drive.json and one stat — status() also adopts, checks every drive letter
+// and lists folders, which is a Settings repaint's cost, not a save's (review 9/30 #10).
+function localFolder() {
+  if (!DATA) return null;
+  const c = loadCfg();
+  if ((c.mode || (c.token ? "api" : "local")) !== "local" || !c.folderPath) return null;
+  try { return fs.statSync(c.folderPath).isDirectory() ? c.folderPath : null; } catch { return null; }
 }
 
 // Start the device-code flow; background-polls the token endpoint until the
@@ -168,7 +183,8 @@ async function listChildren(tok, folderId) {
 // package's .build/ claim alive mid-build), only a listing that SUCCEEDED may
 // prune, and — the one the 9/4 audit added — a mirror may only delete what a
 // MIRROR PUT THERE (the ledger below).
-const MIRROR_DELETES = ["clothing", "books", "music", "movies"];
+// drawings joins 9/30: a parent deleting a picture folder in Drive removes it everywhere (spec 2026-09-30 §4).
+const MIRROR_DELETES = ["clothing", "books", "music", "movies", "drawings"];
 
 // PROVENANCE LEDGER. <DATA>/<sub>/.mirrored.json lists, one relative path per
 // entry, the files this mirror has actually mirrored into that library. It is a
@@ -192,7 +208,9 @@ const LEDGER_NAME = ".mirrored.json";
 // this mirror: starting its ledger empty would make a photo deleted in Drive
 // while the hub was down an orphan forever. books/music/movies get no such
 // adoption — that content predates the mirror by weeks.
-const ADOPT_ON_FIRST_SYNC = ["clothing"];
+// drawings (spec 2026-09-30 §4): everything under <DATA>/drawings arrived through this mirror or is
+// this device's own .local work (never pruned, see LOCAL_MARKER), so the ledger may own it from day one.
+const ADOPT_ON_FIRST_SYNC = ["clothing", "drawings"];
 const relKey = (base, abs) => path.relative(base, abs).split(path.sep).join("/");
 function loadLedger(dest, sub) {
   try {
@@ -208,7 +226,7 @@ function listTree(dir, rel = "", out = new Set()) {
   for (const e of ents) {
     if (e.name.startsWith(".")) continue;
     const r = rel ? rel + "/" + e.name : e.name;
-    if (e.isDirectory()) listTree(dir, r, out);
+    if (e.isDirectory()) { if (!hasLocalMarker(path.join(dir, r))) listTree(dir, r, out); }
     else if (e.isFile()) out.add(r);
   }
   return out;
@@ -218,6 +236,16 @@ function saveLedger(dest, rels) {
     fs.mkdirSync(dest, { recursive: true });
     fs.writeFileSync(path.join(dest, LEDGER_NAME), JSON.stringify([...rels].sort()));
   } catch { /* read-only data dir: worst case we adopt again next sync */ }
+}
+// A folder holding LOCAL_MARKER is this device's own work made while it had no Drive folder
+// (drawings.js rule 3). It is never the mirror's to judge: listTree skips it (so adoption never
+// claims it), pruneTree never enters it (so a ledger that somehow names it cannot delete it) and
+// copyTreeLocal never copies Drive's older copy onto it, nor a marker down from Drive (review 9/30).
+// syncLocal copies it UP first (uploadLocal) and only a folder that went up whole loses the marker.
+const LOCAL_MARKER = ".local";
+const UPLOAD_LOCAL = ["drawings"];
+function hasLocalMarker(dir) {
+  try { return fs.statSync(path.join(dir, LOCAL_MARKER)).isFile(); } catch { return false; }
 }
 
 // Remove from dest what the source no longer has. keep(rel, isDir) says whether
@@ -233,6 +261,7 @@ function pruneTree(dest, keep, stats, rel = "") {
     const r = rel ? rel + "/" + e.name : e.name;
     const abs = path.join(dest, r);
     if (e.isDirectory()) {
+      if (hasLocalMarker(abs)) continue;          // this device's own work, never the mirror's (LOCAL_MARKER)
       pruneTree(dest, keep, stats, r);
       try {
         const left = fs.readdirSync(abs);
@@ -273,7 +302,9 @@ function manifestsLast(entries) {
 // wrote it and two devices disagree about who owns a book. It must NOT wait for
 // the end of its directory though: the sooner the other computers can read the
 // claim, the smaller the window in which two of them build the same pile.
-const BYTE_COMPARE = MANIFEST_NAMES.concat(["job.json"]);
+// scene.json (Drawing): a sticker swapped for one with an id of the same length ("horse" -> "house")
+// or a moved sticker is a same-size rewrite; under the size skip the other devices would never see it.
+const BYTE_COMPARE = MANIFEST_NAMES.concat(["job.json", "scene.json"]);
 const byteCompared = (name) => BYTE_COMPARE.includes(String(name).toLowerCase());
 const md5 = (p) => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex");
 
@@ -608,8 +639,14 @@ function copyTreeLocal(src, dest, stats, have, rel = "") {
     const s = path.join(src, e.name), d = path.join(dest, e.name);
     const r = rel ? rel + "/" + e.name : e.name;
     try {
-      if (e.isDirectory()) { have.dirs.add(r); copyTreeLocal(s, d, stats, have, r); continue; }
+      // A folder holding LOCAL_MARKER here is this device's newest work waiting to go up (a write the
+      // Drive folder refused, drawings.js rule 3): Drive's older copy never lands on it. Kept (have.dirs);
+      // pruneTree never enters it either.
+      if (e.isDirectory()) { have.dirs.add(r); if (!hasLocalMarker(d)) copyTreeLocal(s, d, stats, have, r); continue; }
       if (!e.isFile()) continue;
+      // …and the marker itself never comes down: a hand-copied folder in Drive holding one would be
+      // "made with no folder" here, copied up again every pass, rewriting scene.json (review 9/30 #6).
+      if (e.name === LOCAL_MARKER) continue;
       // In have.files BEFORE the wait below, and that order is load-bearing:
       // have.files is what the prune keeps, so a manifest we are declining to
       // copy this pass must still read as "the source has it". Left out, a
@@ -638,13 +675,24 @@ function copyTreeLocal(src, dest, stats, have, rel = "") {
 
 function syncLocal(cfg) {
   const stats = { files: 0, skipped: 0, removed: 0, errors: [] };
+  let mounted = false;
+  try { mounted = fs.statSync(cfg.folderPath).isDirectory(); } catch {}
   for (const sub of MIRROR_SUBDIRS) {
     const src = path.join(cfg.folderPath, sub);
+    // Absent when the pass BEGAN is absent for the whole pass: the copy-up below may create it, and a
+    // folder this pass made is not Drive's word on what the family has — no prune, no ledger rewrite
+    // until a later pass finds it there (review 9/30 #5).
+    let existed = false;
+    try { existed = fs.statSync(src).isDirectory(); } catch {}
+    // .local work goes UP before anything comes down or is pruned (spec §4 rule 3). Never when the
+    // family folder itself is missing: an offline mount is not an empty one, and the family folder
+    // is never ours to create.
+    if (mounted && UPLOAD_LOCAL.includes(sub)) uploadLocal(cfg.folderPath, sub, stats);
     try { if (!fs.statSync(src).isDirectory()) continue; } catch { continue; }   // absent/offline: leave ours alone
     const dest = path.join(DATA, sub);
     const have = { files: new Set(), dirs: new Set() };
     copyTreeLocal(src, dest, stats, have);
-    if (!MIRROR_DELETES.includes(sub)) continue;
+    if (!existed || !MIRROR_DELETES.includes(sub)) continue;
     const owned = loadLedger(dest, sub);
     pruneTree(dest, (r, isDir) =>
       isDir ? have.dirs.has(r) : (have.files.has(r) || !owned.has(r)), stats);
@@ -705,6 +753,56 @@ function mirrorBook(name) {
   for (const r of have.files) owned.add(safe + "/" + r);
   saveLedger(lib, owned);
   return { book: safe, ...stats };
+}
+
+// uploadLocal — carry every LOCAL_MARKER folder of <DATA>/<sub> up to <folderPath>/<sub>/<name>.
+// Files only (a picture folder has no subfolders), never dotfiles and never a .part leftover, each
+// .part-atomic. Creating <folderPath>/<sub> is allowed here (spec §4 rule 2: nothing family-only
+// lives under <DATA>/drawings, so an empty source can only ever remove mirror-owned copies).
+function uploadLocal(folderPath, sub, stats) {
+  const root = path.join(DATA, sub);
+  let ents = [];
+  try { ents = fs.readdirSync(root, { withFileTypes: true }); } catch { return; }
+  for (const e of ents) {
+    if (!e.isDirectory() || e.name.startsWith(".")) continue;
+    const from = path.join(root, e.name);
+    if (!hasLocalMarker(from)) continue;
+    const to = path.join(folderPath, sub, e.name);
+    let ok = true;
+    try {
+      fs.mkdirSync(to, { recursive: true });
+      for (const f of fs.readdirSync(from, { withFileTypes: true })) {
+        if (!f.isFile() || f.name.startsWith(".") || f.name.endsWith(".part")) continue;
+        atomically(path.join(to, f.name), (tmp) => fs.copyFileSync(path.join(from, f.name), tmp));
+        stats.files++;
+      }
+    } catch (err) { ok = false; stats.errors.push(e.name + " (up): " + err.message); }
+    if (ok) { try { fs.rmSync(path.join(from, LOCAL_MARKER)); } catch {} }
+  }
+}
+
+// mirrorDrawing(id) — ONE picture from the family's Drive folder onto this device's shelf, now
+// (the mirrorBook shape, spec §4): an own write lands in <folderPath>/drawings/<id>, and without
+// this the shelf would wait up to ten minutes for it. One folder, copyTreeLocal (.part-atomic,
+// scene.json byte-compared), ledger MERGED, no prune, no onSynced.
+function mirrorDrawing(id) {
+  if (!DATA) return { error: "not-started" };
+  const c = loadCfg();
+  if (c.mode !== "local" || !c.folderPath) return { blocked: "needs-local-drive" };
+  const safe = path.basename(String(id || ""));          // a NAME, never a path
+  if (!safe || safe.startsWith(".")) return { error: "unknown picture" };
+  const src = path.join(c.folderPath, "drawings", safe);
+  try { if (!fs.statSync(src).isDirectory()) return { error: "unknown picture" }; }
+  catch { return { error: "unknown picture" }; }
+  const dest = path.join(DATA, "drawings", safe);
+  const stats = { files: 0, skipped: 0, removed: 0, errors: [] };
+  const have = { files: new Set(), dirs: new Set() };
+  copyTreeLocal(src, dest, stats, have);
+  const lib = path.join(DATA, "drawings");
+  const owned = loadLedger(lib, "drawings");
+  for (const r of have.files) owned.add(safe + "/" + r);
+  saveLedger(lib, owned);
+  return { picture: safe, ...stats };
 }
 
 // Folders the person can pick in Settings (no ID pasting): own + shared,
@@ -778,5 +876,5 @@ function start(dataDir) {
   }
 }
 
-module.exports = { start, status, connect, sync, mirrorBook, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed,
+module.exports = { start, status, localFolder, connect, sync, mirrorBook, mirrorDrawing, atomically, LOCAL_MARKER, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed,
   CONTENT_FOLDER, CONTENT_FOLDER_NAMES };
