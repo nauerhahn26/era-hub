@@ -2564,6 +2564,19 @@ const server = http.createServer((req, res) => {
       [".json", ".png"], [], [], (id) => (drawings.isId(id) ? id : null), "no-cache");   // Done rewrites picture.png (review 9/30 #11a)
     return;
   }
+  // ---- People (spec 2026-10-02 §4): the private library the mirror carries in from the family's
+  // Drive folder. index.json never 500s (drawings.characters() reads defensively); files are
+  // path-jailed to one flat folder, slugs only.
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/characters/index.json") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(req.method === "HEAD" ? undefined : JSON.stringify(drawings.characters()));
+    return;
+  }
+  const charPath = /^\/characters\/([a-z0-9][a-z0-9-]{0,39}\.png|characters\.json)$/.exec(urlPath);
+  if (charPath && (req.method === "GET" || req.method === "HEAD")) {
+    serveMediaJail(req, res, path.join(DATA, "characters"), charPath[1], [".png", ".json"], [], [], null, "no-cache");
+    return;
+  }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/books/")) {
     serveBook(req, res, urlPath.slice("/books/".length));
     return;

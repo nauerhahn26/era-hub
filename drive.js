@@ -8,6 +8,7 @@
 //   <folder>/movies/... -> <DATA>/movies/...  (catalog + posters)
 //   <folder>/content/... -> <DATA>/content/... (lessons overrides)
 //   <folder>/drawings/... -> <DATA>/drawings/... (Drawing's pictures; .local = made with no folder)
+//   <folder>/characters/... -> <DATA>/characters/... (Drawing's People: cut-outs + characters.json)
 // Read-only Google scope (API mode uploads nothing). In local mode the one thing
 // this mirror ever writes into the family's folder is a .local Drawing picture
 // going up (uploadLocal). Config in <DATA>/drive.json:
@@ -35,7 +36,8 @@ const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 // This ONE list is the mirror set: syncLocal(), sync()'s subfolder filter,
 // createContentFolder()'s one-tap setup and the Settings checklist all walk it.
 // drawings: added 9/30 - Drawing's pictures, made on any device and shown on every shelf (spec 2026-09-30 §4).
-const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing", "drawings"];
+// characters: added 10/2 — Drawing's People library (spec 2026-10-02 §4); like drawings, everything under <DATA>/characters arrived through this mirror.
+const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing", "drawings", "characters"];
 // The name "✨ Create it for me" gives the family's folder — and, since 9/15,
 // the name adoptLocal() goes looking for in a mount somebody else's computer
 // already filled. One constant so the two can never drift.
@@ -184,7 +186,8 @@ async function listChildren(tok, folderId) {
 // prune, and — the one the 9/4 audit added — a mirror may only delete what a
 // MIRROR PUT THERE (the ledger below).
 // drawings joins 9/30: a parent deleting a picture folder in Drive removes it everywhere (spec 2026-09-30 §4).
-const MIRROR_DELETES = ["clothing", "books", "music", "movies", "drawings"];
+// characters: added 10/2 — Drawing's People library (spec 2026-10-02 §4); like drawings, everything under <DATA>/characters arrived through this mirror.
+const MIRROR_DELETES = ["clothing", "books", "music", "movies", "drawings", "characters"];
 
 // PROVENANCE LEDGER. <DATA>/<sub>/.mirrored.json lists, one relative path per
 // entry, the files this mirror has actually mirrored into that library. It is a
@@ -210,7 +213,8 @@ const LEDGER_NAME = ".mirrored.json";
 // adoption — that content predates the mirror by weeks.
 // drawings (spec 2026-09-30 §4): everything under <DATA>/drawings arrived through this mirror or is
 // this device's own .local work (never pruned, see LOCAL_MARKER), so the ledger may own it from day one.
-const ADOPT_ON_FIRST_SYNC = ["clothing", "drawings"];
+// characters: added 10/2 — Drawing's People library (spec 2026-10-02 §4); like drawings, everything under <DATA>/characters arrived through this mirror.
+const ADOPT_ON_FIRST_SYNC = ["clothing", "drawings", "characters"];
 const relKey = (base, abs) => path.relative(base, abs).split(path.sep).join("/");
 function loadLedger(dest, sub) {
   try {
@@ -304,7 +308,8 @@ function manifestsLast(entries) {
 // claim, the smaller the window in which two of them build the same pile.
 // scene.json (Drawing): a sticker swapped for one with an id of the same length ("horse" -> "house")
 // or a moved sticker is a same-size rewrite; under the size skip the other devices would never see it.
-const BYTE_COMPARE = MANIFEST_NAMES.concat(["job.json", "scene.json"]);
+// characters.json (People): dad renames "Sam" to "Kai" — a same-size rewrite.
+const BYTE_COMPARE = MANIFEST_NAMES.concat(["job.json", "scene.json", "characters.json"]);
 const byteCompared = (name) => BYTE_COMPARE.includes(String(name).toLowerCase());
 const md5 = (p) => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex");
 

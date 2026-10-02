@@ -200,7 +200,7 @@ test("movies mirrors, catalog and posters, and the Settings checklist can see it
   // contentReady(), createContentFolder() and syncLocal() all walk the one
   // MIRROR_SUBDIRS list, so pinning what the checklist reports pins all three.
   assert.deepEqual(Object.keys(drive.status().content),
-    ["books", "music", "movies", "content", "clothing", "drawings"]);
+    ["books", "music", "movies", "content", "clothing", "drawings", "characters"]);
   assert.equal(drive.status().content.movies, true, "the checklist ticks for movies");
 
   fs.rmSync(path.join(SRC, "movies", "posters", "moana.jpg"));
@@ -751,4 +751,33 @@ test("adoption never claims a .local picture: the first ledger a mirrorDrawing w
   assert.deepEqual(drive.mirrorDrawing(id).errors, []);
   const ledger = JSON.parse(fs.readFileSync(path.join(D, "drawings", ".mirrored.json"), "utf8")).sort();
   assert.deepEqual(ledger, [old + "/scene.json", id + "/scene.json"].sort(), "her .local picture is not the mirror's to prune later");
+});
+
+// ---- characters (spec 2026-10-02 §4): Drawing's People library rides the mirror like drawings —
+// it all arrives through the mirror (adopted on the first sync), a person removed in Drive leaves
+// every device, and characters.json is compared by its bytes (dad edits words of the same length).
+test("characters mirror in, adopt what is there, follow deletions, and a same-length characters.json edit still crosses", async () => {
+  const D = path.join(TMP, "data-characters"), S = path.join(TMP, "My Drive", "Characters Content");
+  const src = (f) => path.join(S, "characters", f), here = (f) => path.join(D, "characters", f);
+  fs.mkdirSync(path.join(S, "characters"), { recursive: true });
+  fs.writeFileSync(src("maya.png"), "png-a");
+  fs.writeFileSync(src("sam.png"), "png-b");
+  const j1 = JSON.stringify({ v: 1, people: [{ slug: "maya", word: "Maya" }, { slug: "sam", word: "Sam" }] });
+  fs.writeFileSync(src("characters.json"), j1);
+  fs.mkdirSync(path.join(D, "characters"), { recursive: true });
+  fs.writeFileSync(here("old.png"), "an earlier sync's copy");       // no ledger yet: adopted, so it follows Drive
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+  await drive.sync();
+  assert.ok(fs.existsSync(here("maya.png")) && fs.existsSync(here("sam.png")), "the library reached this device");
+  assert.ok(!fs.existsSync(here("old.png")), "adopted on the first sync");
+  const j2 = j1.replace('"Sam"', '"Kai"');
+  assert.equal(j2.length, j1.length);
+  fs.writeFileSync(src("characters.json"), j2);
+  await drive.sync();
+  assert.equal(fs.readFileSync(here("characters.json"), "utf8"), j2, "compared by content, not by size");
+  fs.rmSync(src("sam.png"));
+  await drive.sync();
+  assert.ok(!fs.existsSync(here("sam.png")), "a person removed in Drive leaves this device");
+  assert.ok(fs.existsSync(here("maya.png")));
 });

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -145,7 +146,7 @@ test("validation: unknown stickers, out-of-range numbers, bad splats, too many i
   assert.equal(drawings.validateScene({ v: 1, backdrop: "meadow", items: many }).ok, false, "201 items");
   assert.equal(drawings.validateScene({ v: 1, backdrop: "meadow", items: many.slice(1) }).ok, true, "200 is the cap, not over it");
   assert.equal(drawings.validateScene({ v: 2, backdrop: "meadow", items: [] }).ok, false, "v2");
-  assert.equal(drawings.validateScene({ v: 1, backdrop: "beach", items: [] }).ok, false, "one backdrop in v1");
+  assert.equal(drawings.validateScene({ v: 1, backdrop: "beach", items: [] }).scene.backdrop, "beach", "eight places in v2");
   assert.equal(drawings.validateScene([]).ok, false);
   assert.equal(drawings.validateScene(null).ok, false);
   const norm = drawings.validateScene({ v: 1, backdrop: "meadow",
@@ -303,6 +304,92 @@ test("where a picture lives is drive.json plus one stat: drawings never calls dr
   } finally { drive.status = real; }
 });
 
+// ---- v2 (spec 2026-10-02 §3-§5, §7): strokes, crayons, places, people -------------------
+// A tiny real PNG (RGBA, one colour) — family images never enter this repo (spec §4).
+function tinyPng(w, h, rgba = [51, 102, 204, 255]) {
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 4).fill(Buffer.from(rgba))]);
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]), crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(td));
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(Array.from({ length: h }, () => row)))), chunk("IEND", Buffer.alloc(0))]);
+}
+const CH = () => path.join(UNIT, "characters");
+function library(people, pngs = people.map((p) => p.slug)) {
+  fs.mkdirSync(CH(), { recursive: true });
+  for (const s of pngs) fs.writeFileSync(path.join(CH(), s + ".png"), tinyPng(16, 32));
+  fs.writeFileSync(path.join(CH(), "characters.json"), JSON.stringify({ v: 1, people }));
+}
+const S1 = { s: "stroke", c: "#d96fa6", w: 0.014, pts: [[0.1, 0.2], [0.3, 0.4]], by: "ellie" };
+const P = (slug) => ({ s: "person:" + slug, x: 0.5, y: 0.77, w: 0.3, by: "ellie" });
+
+test("v2 validation: strokes, crayons and places; unknown place → meadow, unknown crayon → Blue", () => {
+  freshUnit("none");
+  const v = drawings.validateScene({ v: 1, backdrop: "city", crayon: "#d96fa6", items: [S1, H] });
+  assert.deepEqual(v, { ok: true, scene: { v: 1, backdrop: "city", crayon: "#d96fa6", items: [S1, H] } });
+  assert.equal(drawings.validateScene({ v: 1, backdrop: "volcano", items: [] }).scene.backdrop, "meadow");
+  assert.equal(drawings.validateScene({ v: 1, crayon: "#B23A48", items: [] }).scene.crayon, "#0F7C8A", "partner red is never a crayon");
+  assert.equal(drawings.validateScene({ v: 1, items: [] }).scene.crayon, "#0F7C8A");
+  for (const [why, it] of [
+    ["one point", { ...S1, pts: [[0.1, 0.2]] }], ["401 points", { ...S1, pts: Array.from({ length: 401 }, () => [0.5, 0.5]) }],
+    ["a point outside", { ...S1, pts: [[0.1, 0.2], [1.2, 0.4]] }], ["a point not a pair", { ...S1, pts: [[0.1, 0.2], [0.3]] }],
+    ["not a crayon", { ...S1, c: "#B23A48" }], ["too thin", { ...S1, w: 0.004 }], ["too thick", { ...S1, w: 0.06 }],
+    ["pts not a list", { ...S1, pts: "M0 0" }], ["by a robot", { ...S1, by: "robot" }],
+  ]) assert.equal(drawings.validateScene({ v: 1, items: [it] }).ok, false, why);
+  assert.equal(drawings.validateScene({ v: 1, items: [{ ...S1, c: "#D96FA6" }] }).ok, true, "hex compared case-insensitively");
+  assert.equal(drawings.validateScene({ v: 1, items: Array(201).fill(S1) }).ok, false, "a stroke is one item toward the 200");
+  assert.equal(drawings.validateScene({ v: 1, items: [P("maya")] }).ok, true, "shape only when no library is given");
+  assert.equal(drawings.validateScene({ v: 1, items: [P("maya")] }, { people: new Set(["sam"]) }).ok, false, "not in the library");
+  assert.equal(drawings.validateScene({ v: 1, items: [P("maya")] }, { people: new Set(["maya"]) }).ok, true);
+  assert.equal(drawings.validateScene({ v: 1, items: [{ ...P("maya"), s: "person:Maya!" }] }).ok, false, "a slug is a-z0-9-");
+  assert.equal(drawings.validateScene({ v: 1, items: [{ ...P("maya"), x: 2 }] }).ok, false, "a person is placed like a sticker");
+});
+
+test("the characters library: dad's order, only with a PNG, junk skipped; absent or broken → []", () => {
+  freshUnit("none");
+  assert.deepEqual(drawings.characters(), [], "no folder");
+  library([{ slug: "sam", word: "Sam" }, { slug: "maya", word: " Maya ", scale: 0.25 }, { slug: "nopic", word: "No pic" },
+    { slug: "Bad Slug", word: "x" }, { slug: "maya", word: "Again" }, { slug: "tall", word: "Tall", scale: 0.9 },
+    { slug: "noword" }, 7, { slug: "long", word: "x".repeat(25) }], ["sam", "maya", "tall", "noword", "long"]);
+  assert.deepEqual(drawings.characters(), [{ slug: "sam", word: "Sam", scale: 0.3 }, { slug: "maya", word: "Maya", scale: 0.25 },
+    { slug: "tall", word: "Tall", scale: 0.3 }]);
+  fs.writeFileSync(path.join(CH(), "characters.json"), "{ not json");
+  assert.deepEqual(drawings.characters(), []);
+  fs.writeFileSync(path.join(CH(), "characters.json"), JSON.stringify({ v: 1, people: "nope" }));
+  assert.deepEqual(drawings.characters(), []);
+});
+
+test("a person who left the library: a picture that already holds them still saves; a new unknown person is refused (deviation 8)", () => {
+  freshUnit("none");
+  library([{ slug: "maya", word: "Maya" }, { slug: "sam", word: "Sam" }]);
+  const { id } = drawings.create();
+  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam")] }).ok, true);
+  fs.rmSync(path.join(CH(), "sam.png"));
+  library([{ slug: "maya", word: "Maya" }], ["maya"]);
+  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam"), H] }).ok, true, "sam is already in this picture");
+  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam"), P("kai")] }).error, "bad-scene");
+});
+
+test("the shelf keeps a picture's place and crayon, thins strokes to 60 points, and never hides another device's people", () => {
+  freshUnit("none");
+  const { id } = drawings.create();
+  const pts = Array.from({ length: 400 }, (_, k) => [0.1, +(0.1 + k / 1000).toFixed(3)]);
+  drawings.writeScene(id, { v: 1, backdrop: "night", crayon: "#f7f7f7", items: [{ s: "stroke", c: "#f7f7f7", w: 0.014, pts, by: "ellie" }] });
+  const row = drawings.list().find((p) => p.id === id);
+  assert.deepEqual([row.items, row.scene.backdrop, row.scene.crayon], [1, "night", "#f7f7f7"]);
+  const th = row.scene.items[0].pts;
+  assert.equal(th.length, 60);
+  assert.deepEqual([th[0], th.at(-1)], [pts[0], pts[399]]);
+  assert.equal(drawings.readScene(id).items[0].pts.length, 400, "the picture itself stays whole");
+  const other = "2026-10-02-100000-other-dev";
+  fs.mkdirSync(onShelf(other), { recursive: true });
+  fs.writeFileSync(path.join(onShelf(other), "scene.json"), JSON.stringify({ v: 1, id: other, items: [P("gone")] }));
+  assert.ok(drawings.list().some((p) => p.id === other), "a person this device lacks never hides the picture");
+});
+
 // ---- §5 the routes: the REAL server.js on a scratch port ------------------------
 // 8477 (hub) + 8479 (fake Resend, used by T5): swept free 9/30 across all five repos' tests/ and
 // every open worktree, and not listening (ss -ltn). The hub's Drive folder is a temp dir.
@@ -385,7 +472,7 @@ test("PUT scene.json validates and saves, and the shelf lists the picture with i
   assert.equal((await r.json()).error, "bad-scene");
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, "{not json")).status, 400);
   assert.equal((await call("PUT", "/drawings/not-an-id/scene.json", sceneOf([H]))).status, 404);
-  const big = JSON.stringify(sceneOf([H])) + " ".repeat(66 * 1024);
+  const big = JSON.stringify(sceneOf([H])) + " ".repeat(257 * 1024);
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, big)).status, 413);
 });
 
@@ -394,6 +481,37 @@ test("the doors: a page on another site, or a body that is not JSON, cannot crea
   assert.equal((await call("POST", "/drawings", {}, { "Sec-Fetch-Site": "cross-site" })).status, 403);
   assert.equal((await fetch(BASE + "/drawings", { method: "POST", headers: { "Content-Type": "text/plain" }, body: "{}" })).status, 403);
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, sceneOf([H]), { "Sec-Fetch-Site": "cross-site" })).status, 403);
+});
+
+test("PUT takes a scene up to 256 KB and refuses a bigger body with 413", async () => {
+  const id = await newPic();
+  const pts = Array.from({ length: 400 }, (_, k) => [0.123, +(0.1 + k / 1000).toFixed(3)]);
+  const S = { s: "stroke", c: "#0F7C8A", w: 0.014, pts, by: "ellie" };
+  const ok = JSON.stringify({ v: 1, items: Array(44).fill(S) });
+  assert.ok(ok.length > 64 * 1024 && ok.length < 256 * 1024, String(ok.length));
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, ok)).status, 200);
+  const big = JSON.stringify({ v: 1, items: Array(50).fill(S) });
+  assert.ok(big.length > 256 * 1024, String(big.length));
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, big)).status, 413);
+});
+
+test("GET /characters/index.json lists the library ([] with none), PNGs are path-jailed, and a PUT checks people against it", async () => {
+  const CHR = path.join(RT, "characters");
+  fs.rmSync(CHR, { recursive: true, force: true });
+  let r = await fetch(BASE + "/characters/index.json");
+  assert.deepEqual([r.status, await r.json()], [200, []]);
+  fs.mkdirSync(CHR, { recursive: true });
+  fs.writeFileSync(path.join(CHR, "maya.png"), tinyPng(16, 32));
+  fs.writeFileSync(path.join(CHR, "characters.json"), JSON.stringify({ v: 1, people: [{ slug: "maya", word: "Maya" }] }));
+  assert.deepEqual(await (await fetch(BASE + "/characters/index.json")).json(), [{ slug: "maya", word: "Maya", scale: 0.3 }]);
+  r = await fetch(BASE + "/characters/maya.png");
+  assert.deepEqual([r.status, r.headers.get("content-type"), r.headers.get("cache-control")], [200, "image/png", "no-cache"]);
+  assert.equal((await fetch(BASE + "/characters/characters.json")).status, 200);
+  for (const bad of ["/characters/Maya.png", "/characters/maya.txt", "/characters/sub/maya.png", "/characters/..%2Fdrive.json"])
+    assert.notEqual((await fetch(BASE + bad)).status, 200, bad);
+  const id = await newPic();
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [P("maya")] })).status, 200);
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [P("maya"), P("kai")] })).status, 400);
 });
 
 test("GET is path-jailed: an id's scene.json and picture.png, nothing beside or above them", async () => {
