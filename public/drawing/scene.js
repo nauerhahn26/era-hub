@@ -26,9 +26,20 @@ export function clampItem({ x, y, w }) {
   return { x: fit(x, hx), y: fit(y, hy) };
 }
 
-// "Pick and it lands" (spec §2.1). Sky/ground: the n-th sticker of a zone takes slot n % 7,
+// Horizon-relative slots (spec 2026-10-02 §5): stickers.json's slot numbers are written against the
+// reference horizon table.horizon (0.58, the meadow). A place with another horizon h carries them:
+// a ground base keeps its share of the ground band [h,1], a sky y its share of the sky band [0,h], a
+// splat ("any") goes anywhere. At h = ref this is v1 exactly.
+export function slotY(zone, slot, w, h, ref) {
+  if (zone === "ground") return h + (slot.base - ref) * (1 - h) / (1 - ref) - w / 2;
+  if (zone === "sky") return slot.y * h / ref;
+  return slot.y;
+}
+
+// "Pick and it lands" (spec 2026-09-30 §2.1). Sky/ground: the n-th sticker of a zone takes slot n % 7,
 // one lap later everything shifts +lapOffset in x and y. Any (the splat): a random slot.
-export function landing(id, items, table, rand = Math.random) {
+// horizon: the current place's (backdrops.js horizonOf); omitted = the reference horizon.
+export function landing(id, items, table, rand = Math.random, horizon) {
   const st = stickerById(table, id);
   if (!st || !table.zones || !table.zones[st.zone]) return null;
   const slots = table.zones[st.zone].slots;
@@ -40,12 +51,13 @@ export function landing(id, items, table, rand = Math.random) {
     const seed = Math.floor(rand() * 2147483647);
     return { ...clampItem({ x: slot.x, y: slot.y, w }), w, c, seed };
   }
+  const ref = table.horizon || 0.58;
+  const h = Number.isFinite(horizon) ? horizon : ref;
   const n = items.filter((it) => { const s = stickerById(table, it.s); return s && s.zone === st.zone; }).length;
   const slot = slots[n % slots.length];
   const off = Math.floor(n / slots.length) * (table.lapOffset || 0);
   const w = st.scale;
-  const y = st.zone === "ground" ? slot.base - w / 2 : slot.y;
-  return { ...clampItem({ x: slot.x + off, y: y + off, w }), w };
+  return { ...clampItem({ x: slot.x + off, y: slotY(st.zone, slot, w, h, ref) + off, w }), w };
 }
 
 // A procedural paint splat (spec §2.1): 8-12 control points at random radii from a seeded PRNG,

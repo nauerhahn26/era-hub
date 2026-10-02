@@ -2,6 +2,7 @@
 // the vendored stickers (§6), the drawings.js module (§4) and its routes (§5). Synthetic fixtures only.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -56,6 +57,35 @@ test("zones: 0-1 slots, sky above the horizon, ground bases on the grass, centre
   assert.equal(TABLE.zones.sky.slots[0].x, 0.5, "sky fills centre-out");
   const scale = Object.fromEntries(TABLE.stickers.map(s => [s.id, s.scale]));
   assert.deepEqual(scale, { house: 0.26, horse: 0.20, tree: 0.28, person: 0.22, sun: 0.16, cloud: 0.14, star: 0.10, splat: [0.12, 0.18] });
+});
+
+// ---- v2 (spec 2026-10-02 §1-§5): the mode row, the crayons, the places --------------
+const SEAT_KEYS = ["1,1", "2,1", "3,1", "4,1", "1,3", "2,3", "3,3", "4,3"];
+test("v2 tables: four modes in their row-5 seats, eight crayons and eight places in fixed seats, no partner red", () => {
+  assert.deepEqual(TABLE.modes.map(m => [m.id, m.word, m.seat]),
+    [["draw", "Draw", 1], ["people", "People", 2], ["stickers", "Stickers", 4], ["places", "Places", 5]]);
+  assert.deepEqual(TABLE.crayons.map(c => c.at.join(",")), SEAT_KEYS);
+  assert.deepEqual(TABLE.crayons.map(c => [c.word, c.hex]), [["Black", "#1b1b1b"], ["Blue", "#0F7C8A"], ["Green", "#2E7D5B"],
+    ["Yellow", "#B7822B"], ["Red-orange", "#DE7B52"], ["Purple", "#6a4fb3"], ["Pink", "#d96fa6"], ["White", "#f7f7f7"]]);
+  assert.equal(TABLE.crayonDefault, "#0F7C8A", "Blue first");
+  assert.ok(!TABLE.crayons.some(c => c.hex.toLowerCase() === "#b23a48"), "partner red is never a crayon");
+  assert.deepEqual(TABLE.backdrops.map(b => [b.id, b.word]), [["meadow", "Meadow"], ["beach", "Beach"], ["night", "Night"],
+    ["snow", "Snow"], ["sunset", "Sunset"], ["forest", "Forest"], ["city", "City"], ["rainbow", "Rainbow"]]);
+  assert.deepEqual(TABLE.backdrops.map(b => b.at.join(",")), SEAT_KEYS);
+  assert.deepEqual(TABLE.stickers.map(s => s.at.join(",")), SEAT_KEYS, "the stickers already sit in the same seats");
+  assert.equal(TABLE.horizon, 0.58, "the slot tables are written against the meadow's horizon");
+});
+
+test("every mode glyph is vendored and pinned like the stickers; Stickers reuses the star", () => {
+  execFileSync(process.execPath, [path.join(HUB, "tools", "drawing-fetch-stickers.mjs"), "--check"], { stdio: "pipe" });
+  for (const m of TABLE.modes) {
+    const b = fs.readFileSync(path.join(DRAW, m.src));
+    assert.equal(b.readUInt32BE(0), 0x89504e47, m.id + " is a PNG");
+    assert.ok(b.readUInt32BE(16) >= 256 && b.readUInt32BE(20) >= 256, m.id + " is at least 256 px");
+    assert.match(m.source, /^https:\/\/raw\.githubusercontent\.com\/microsoft\/fluentui-emoji\/[0-9a-f]{40}\/assets\//);
+    assert.equal(crypto.createHash("sha256").update(b).digest("hex"), m.sha256, m.id + " matches its pin");
+  }
+  assert.equal(TABLE.modes.find(m => m.id === "stickers").src, TABLE.stickers.find(s => s.id === "star").src);
 });
 
 // ---- §4 the module ------------------------------------------------------------

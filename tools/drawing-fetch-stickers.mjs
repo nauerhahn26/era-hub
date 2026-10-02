@@ -5,6 +5,7 @@
 //   node tools/drawing-fetch-stickers.mjs          download, verify, write public/drawing/stickers/*
 //   node tools/drawing-fetch-stickers.mjs --check  verify what is vendored, offline (the test uses this)
 // Re-pick a sticker = change its `source` + `sha256` in stickers.json, then run without --check.
+// v2 (spec 2026-10-02 §1): also the mode glyphs (modes[] — Pencil, People hugging, National park).
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -17,8 +18,12 @@ const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const pngSize = (b) => (b.length >= 24 && b.readUInt32BE(0) === 0x89504e47)
   ? { w: b.readUInt32BE(16), h: b.readUInt32BE(20) } : null;
 
+// A mode glyph that is also a sticker (Stickers = the star) is one file with one pin: fetched once.
+const stickerDests = new Set(table.stickers.filter(s => s.src).map(s => s.src));
 const files = [
   ...table.stickers.filter(s => s.src).map(s => ({ what: s.id, url: s.source, pin: s.sha256, dest: s.src, png: true })),
+  ...(table.modes || []).filter(m => !stickerDests.has(m.src))
+    .map(m => ({ what: "mode " + m.id, url: m.source, pin: m.sha256, dest: m.src, png: true })),
   { what: "LICENSE", url: table.source.licenseUrl, pin: table.source.licenseSha256, dest: table.source.licenseFile, png: false },
 ];
 function verify(f, buf) {

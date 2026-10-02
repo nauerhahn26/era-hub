@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ASPECT, MEADOW, SPLAT_COLOURS, clampItem, landing, splatPath, describe, meadowCss, sceneOps }
+import { ASPECT, MEADOW, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, meadowCss, sceneOps }
   from "../public/drawing/scene.js";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -97,4 +97,20 @@ test("one geometry for the ring, the thumbnails and the PNG: boxes in scene frac
 test("the meadow: sky over grass, the horizon at 0.58, the same stops for CSS and canvas", () => {
   assert.equal(MEADOW.find(([at, c]) => c === "#A9D69A")[0], 0.58);
   assert.equal(meadowCss(), "linear-gradient(to bottom, #BFE3F2 0%, #E4F3F7 57.5%, #A9D69A 58%, #78BD6E 100%)");
+});
+
+// ---- v2 (spec 2026-10-02 §5): slots move with the place's horizon -------------------
+test("slots are horizon-relative: the meadow's horizon keeps v1's landings, a higher horizon moves both bands", () => {
+  assert.deepEqual(landing("horse", [], T, Math.random, 0.58), { x: 0.5, y: 0.82, w: 0.2 }, "v1 exactly");
+  assert.deepEqual(landing("sun", [], T, Math.random, 0.58), { x: 0.5, y: 0.17, w: 0.16 }, "v1 exactly");
+  near(landing("horse", [], T, Math.random, 0.72).y, 0.8467, "ground base keeps its share of [h,1]");   // 0.72 + 0.34*0.28/0.42 - 0.1
+  near(landing("sun", [], T, Math.random, 0.72).y, 0.211, "sky y keeps its share of [0,h]");          // 0.17 * 0.72 / 0.58
+  for (const h of [0.58, 0.6, 0.62, 0.64, 0.66, 0.7, 0.72]) {
+    for (const s of T.zones.ground.slots) { const y = slotY("ground", s, 0, h, T.horizon); assert.ok(y > h && y <= 1, `${h} ground ${y}`); }
+    for (const s of T.zones.sky.slots) { const y = slotY("sky", s, 0, h, T.horizon); assert.ok(y > 0 && y < h, `${h} sky ${y}`); }
+  }
+  assert.equal(slotY("any", { x: 0.3, y: 0.85 }, 0.15, 0.72, 0.58), 0.85, "a splat goes anywhere, whatever the place");
+  const items = [];
+  for (let k = 0; k < 8; k++) { const at = landing("tree", items, T, Math.random, 0.72); items.push({ s: "tree", ...at, by: "ellie" }); }
+  near(items[7].x, 0.54, "the lap offset still applies after the mapping");
 });
