@@ -850,3 +850,219 @@ test("the shelf shows each picture on its own place", async () => {
   assert.equal(await page.locator(`#shelfGrid [data-id="${id}"] svg.backdrop[data-backdrop="snow"]`).count(), 1);
   await ctx.close();
 });
+
+// ================================================================ v2 T7 — Draw
+// The suites click for her dwell (dwell.js fires el.click()); a 30 s dwell keeps dwell.js itself from
+// firing while the mouse rests between steps. The "real dwell" tests set a short one instead.
+const slowDwell = (page) => page.evaluate(() => window.Dwell.setMs(30000));
+async function scenePt(page, fx, fy) { const b = await page.locator("#scene").boundingBox(); return { x: b.x + fx * b.width, y: b.y + fy * b.height }; }
+async function pngPixels(page, pts) {
+  return page.evaluate(async (pts) => {
+    const bmp = await createImageBitmap(await window.Drawing.exportPng());
+    const c = document.createElement("canvas"); c.width = 1600; c.height = 900;
+    const g = c.getContext("2d"); g.drawImage(bmp, 0, 0);
+    return pts.map(([x, y]) => [...g.getImageData(x, y, 1, 1).data.slice(0, 3)]);
+  }, pts);
+}
+async function drawLine(page, x0, x1, y = 0.4, steps = 20) {      // her dwell on the picture, then her gaze moving
+  const a = await scenePt(page, x0, y), b = await scenePt(page, x1, y);
+  await page.mouse.click(a.x, a.y);
+  await page.mouse.move(b.x, b.y, { steps });
+}
+
+test("Draw: eight crayons in fixed seats, round swatches, Blue first; a dwell picks one, says it, glows, and the picture keeps it", async () => {
+  const { ctx, page, id } = await openRing();
+  await page.locator("#mode-draw").click();
+  const pal = await paletteOf(page);
+  assert.deepEqual(pal.map((c) => c.id), ["crayon-black", "crayon-blue", "crayon-green", "crayon-yellow",
+    "crayon-red-orange", "crayon-purple", "crayon-pink", "crayon-white"]);
+  assert.deepEqual(pal.map((c) => c.word), ["Black", "Blue", "Green", "Yellow", "Red-orange", "Purple", "Pink", "White"]);
+  assert.deepEqual(pal.filter((c) => c.on).map((c) => c.id), ["crayon-blue"]);
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#sRing > .crayon .swatch")].map((e) => getComputedStyle(e).backgroundColor)),
+    ["rgb(27, 27, 27)", "rgb(15, 124, 138)", "rgb(46, 125, 91)", "rgb(183, 130, 43)", "rgb(222, 123, 82)", "rgb(106, 79, 179)",
+     "rgb(217, 111, 166)", "rgb(247, 247, 247)"]);
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok() && r.request().postData().includes('"crayon":"#d96fa6"'));
+  await page.locator("#crayon-pink").click();
+  const s = await st(page);
+  assert.deepEqual([s.crayon, s.said.at(-1)], ["#d96fa6", "Pink"]);
+  assert.deepEqual((await paletteOf(page)).filter((c) => c.on).map((c) => c.id), ["crayon-pink"]);
+  await saved;
+  assert.equal((await hubScene(id)).crayon, "#d96fa6");
+  await ctx.close();
+});
+
+test("Draw: a dwell on the picture starts a stroke (silently), her gaze draws it, a dwell on the spot ends it there", async () => {
+  const { ctx, page, id } = await openRing();
+  await slowDwell(page);
+  await page.locator("#mode-draw").click();
+  assert.equal(await page.evaluate(() => document.getElementById("scene").matches(".dwell")), true, "in Draw mode the picture is her target");
+  const said = (await st(page)).said.length;
+  const a = await scenePt(page, 0.2, 0.5);
+  await page.mouse.click(a.x, a.y);
+  let s = await st(page);
+  assert.deepEqual([s.pen && s.pen.n, s.said.length], [1, said], "a stroke is live; nothing was said");
+  assert.equal(await page.evaluate(() => document.getElementById("scene").matches(".dwell")), false);
+  assert.equal(await page.locator("#scene > #spot.dwell").count(), 1, "the landing spot is the target now");
+  const b = await scenePt(page, 0.7, 0.5);
+  await page.mouse.move(b.x, b.y, { steps: 40 });
+  s = await st(page);
+  assert.ok(s.pen.n > 10, "points follow her gaze: " + s.pen.n);
+  assert.equal(await page.locator("#pen svg path").count(), 1, "drawn live");
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok() && r.request().postData().includes('"stroke"'));
+  await page.locator("#spot").click();
+  s = await st(page);
+  assert.equal(s.pen, null);
+  const k = s.items[0];
+  assert.deepEqual([s.items.length, k.s, k.c, k.w, k.by], [1, "stroke", "#0F7C8A", 0.014, "ellie"]);
+  assert.deepEqual(k.pts[0], [0.2, 0.5]);
+  assert.ok(Math.abs(k.pts.at(-1)[0] - 0.7) < 0.04 && Math.abs(k.pts.at(-1)[1] - 0.5) < 0.07, "it ends at the dwell dot: " + k.pts.at(-1));
+  for (let i = 1; i < k.pts.length; i++)
+    assert.ok(Math.hypot(k.pts[i][0] - k.pts[i - 1][0], (k.pts[i][1] - k.pts[i - 1][1]) * 9 / 16) >= 0.005, "spaced " + i);
+  assert.equal(await page.locator("#art svg.item.stroke").count(), 1, "the stroke is in her picture");
+  assert.deepEqual([await page.locator("#scene > #spot").count(), await page.locator("#pen *").count()], [0, 0]);
+  assert.equal(await page.evaluate(() => document.getElementById("scene").matches(".dwell")), true, "ready for the next stroke");
+  await saved;
+  assert.equal((await hubScene(id)).items[0].s, "stroke");
+  await ctx.close();
+});
+
+test("no ink without a live stroke: looking around in Draw mode lays nothing; in the other modes the picture is never a target", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#mode-draw").click();
+  for (const [x, y] of [[0.1, 0.1], [0.9, 0.9], [0.5, 0.5]]) { const p = await scenePt(page, x, y); await page.mouse.move(p.x, p.y, { steps: 10 }); }
+  await page.mouse.move(5, 500, { steps: 10 });
+  const s = await st(page);
+  assert.deepEqual([s.pen, s.items.length, await page.locator("#pen *").count()], [null, 0, 0]);
+  for (const m of ["stickers", "places", "people"]) {
+    await page.locator("#mode-" + m).click();
+    assert.equal(await page.evaluate(() => document.getElementById("scene").matches(".dwell")), false, m);
+    const p = await scenePt(page, 0.5, 0.5);
+    await page.mouse.click(p.x, p.y);
+    assert.equal((await st(page)).pen, null, m + ": no stroke");
+  }
+  await ctx.close();
+});
+
+test("a stroke ends when her gaze leaves the picture for grace + 600 ms, and on any other dwell — which then acts", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#mode-draw").click();
+  await drawLine(page, 0.1, 0.3);
+  await page.mouse.move(5, 300);                                    // off the picture
+  await page.waitForTimeout(700);
+  assert.notEqual((await st(page)).pen, null, "still live inside the grace");
+  await page.waitForTimeout(600);
+  let s = await st(page);
+  assert.deepEqual([s.pen, s.items.length], [null, 1], "ended after graceMs (400) + 600 ms");
+  await drawLine(page, 0.4, 0.6);
+  await page.locator("#crayon-green").click();
+  s = await st(page);
+  assert.deepEqual([s.pen, s.items.length, s.items[1].c, s.crayon, s.said.at(-1)], [null, 2, "#0F7C8A", "#2E7D5B", "Green"],
+    "the stroke kept its colour; then the crayon switched");
+  await drawLine(page, 0.2, 0.8);
+  await page.locator("#mode-stickers").click();
+  s = await st(page);
+  assert.deepEqual([s.pen, s.items.length, s.items[2].c, s.mode], [null, 3, "#2E7D5B", "stickers"]);
+  await page.locator("#mode-draw").click();
+  await drawLine(page, 0.3, 0.5);
+  await page.locator("#btnUndo").click();
+  s = await st(page);
+  assert.deepEqual([s.pen, s.items.length, s.said.at(-1)], [null, 3, "Undo"], "Undo mid-stroke: it ends, then Undo takes it away");
+  await ctx.close();
+});
+
+test("a glance off the picture shorter than the grace keeps the stroke; a crayon dwell ends it, then switches (Review Focus 1)", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#mode-draw").click();
+  await drawLine(page, 0.1, 0.4);
+  const n = (await st(page)).pen.n;
+  const pink = await centreOf(page, "#crayon-pink");
+  await page.mouse.move(pink.x, pink.y, { steps: 4 });               // a glance at Pink…
+  await page.waitForTimeout(500);
+  const back = await scenePt(page, 0.6, 0.4);
+  await page.mouse.move(back.x, back.y, { steps: 10 });              // …and back to her line
+  let s = await st(page);
+  assert.ok(s.pen && s.pen.n > n, "the same stroke goes on: " + JSON.stringify(s.pen));
+  assert.equal(s.items.length, 0, "nothing committed, nothing lost");
+  await page.locator("#crayon-pink").click();
+  s = await st(page);
+  assert.deepEqual([s.pen, s.items.length, s.items[0].c, s.crayon], [null, 1, "#0F7C8A", "#d96fa6"]);
+  await ctx.close();
+});
+
+test("Undo takes the last stroke away; Clear takes ink too; a stroke drawn after a sticker lies on top; a finger never drags ink", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await page.locator("#mode-draw").click();
+  await drawLine(page, 0.1, 0.9, 0.82);                              // across the horse
+  await page.locator("#spot").click();
+  const s = await st(page);
+  assert.deepEqual(s.items.map((i) => i.s), ["horse", "stroke"]);
+  assert.equal(await page.evaluate(() => document.getElementById("art").lastElementChild.matches("svg.item.stroke")), true, "on top");
+  await page.locator("#mode-stickers").click();
+  const ink = await scenePt(page, 0.3, 0.82);                        // on the ink, off the horse
+  await finger(page, ink, { x: ink.x + 100, y: ink.y - 100 });
+  assert.deepEqual((await st(page)).items[1].pts, s.items[1].pts, "ink never moves under a finger");
+  await page.locator("#btnUndo").click();
+  assert.deepEqual((await st(page)).items.map((i) => i.s), ["horse"]);
+  await page.locator("#mode-draw").click();
+  await drawLine(page, 0.2, 0.6);
+  await page.locator("#spot").click();
+  await page.locator("#partnerTab").click();
+  await page.locator("#pClear").click();
+  await page.locator("#pClearYes").click();
+  assert.deepEqual((await st(page)).items, []);
+  await ctx.close();
+});
+
+test("the PNG has her stroke in its crayon, 1.4% of the height thick", async () => {
+  const id = "2026-10-02-120000-test-dev";
+  seed(id, [{ s: "stroke", c: "#6a4fb3", w: 0.014, pts: [[0.2, 0.5], [0.8, 0.5]], by: "ellie" }], "2026-10-02T12:00:00Z");
+  const { ctx, page } = await openRing({ id });
+  const [on, off] = await pngPixels(page, [[800, 450], [800, 470]]);
+  assert.ok(close(on, [106, 79, 179], 6), "the line is purple: " + on);
+  assert.ok(!close(off, [106, 79, 179], 40), "and only ~13 px thick: " + off);
+  await ctx.close();
+});
+
+test("ink budget: a nearly full picture refuses a new stroke and never sends a body over the cap (Review Focus 4)", async () => {
+  const id = "2026-10-02-130000-test-dev";
+  const pts = Array.from({ length: 400 }, (_, k) => [0.123, +(0.1 + k / 1000).toFixed(3)]);
+  seed(id, Array(44).fill({ s: "stroke", c: "#0F7C8A", w: 0.014, pts, by: "ellie" }), "2026-10-02T13:00:00Z");   // ≈ 242 KB
+  const { ctx, page } = await openRing({ id });
+  await slowDwell(page);
+  const bodies = [];
+  page.on("request", (r) => { if (r.method() === "PUT") bodies.push(r.postData().length); });
+  await page.locator("#mode-draw").click();
+  const a = await scenePt(page, 0.5, 0.8);
+  await page.mouse.click(a.x, a.y);
+  assert.equal((await st(page)).pen, null, "no room: no stroke, nothing said");
+  await page.locator("#crayon-pink").click();                       // a change she can still make
+  await page.waitForTimeout(1200);
+  assert.ok(bodies.length >= 1 && bodies.every((n) => n < 256 * 1024), JSON.stringify(bodies));
+  await ctx.close();
+});
+
+test("with her real dwell: rest on the picture to start, keep moving to draw (never an end), rest to finish", async () => {
+  const { ctx, page } = await openRing();
+  await page.locator("#mode-draw").click();
+  await page.evaluate(() => window.Dwell.setMs(800));
+  await page.waitForFunction(() => !window.Dwell.state().suppressedMs);   // the mode switch's page-settle is over
+  const a = await scenePt(page, 0.25, 0.45);
+  await page.mouse.move(a.x, a.y, { steps: 5 });
+  await page.waitForFunction(() => window.Drawing.state().pen, null, { timeout: 4000 });
+  for (let k = 1; k <= 30; k++) {                                    // ~1.5 s of steady movement
+    const p = await scenePt(page, 0.25 + k * 0.015, 0.45 + Math.sin(k / 3) * 0.05);
+    await page.mouse.move(p.x, p.y, { steps: 2 });
+    await page.waitForTimeout(50);
+  }
+  assert.notEqual((await st(page)).pen, null, "moving is drawing, never a landing");
+  await page.waitForFunction(() => !window.Drawing.state().pen, null, { timeout: 4000 });   // she rests: the spot fills
+  const s = await st(page);
+  assert.deepEqual([s.items.length, s.items[0].s], [1, "stroke"]);
+  assert.ok(s.items[0].pts.length > 10, String(s.items[0].pts.length));
+  await ctx.close();
+});

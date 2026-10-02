@@ -112,8 +112,8 @@ function tellPark() {
 }
 
 // ---------- the shared bar: 🚪 leave and 💬 pause to talk ----------
-function onLeave() { log("door", {}); hush(); save({ keepalive: true }); }
-function onPause() { log("talk", {}); hush(); S.wasPaused = S.paused; S.paused = true; save({ keepalive: true }); }
+function onLeave() { settle(); log("door", {}); hush(); save({ keepalive: true }); }
+function onPause() { settle(); log("talk", {}); hush(); S.wasPaused = S.paused; S.paused = true; save({ keepalive: true }); }
 function onResume() { S.paused = S.wasPaused; log("talk_resume", {}); tellPark(); }
 
 // ---------- the ring's tiles, from stickers.json (seats fixed forever) ----------
@@ -192,6 +192,7 @@ function blackPal() {
 function paletteCells() {
   if (S.mode === "stickers") return S.table.stickers.map(stickerTile);
   if (S.mode === "places") return placeCells();
+  if (S.mode === "draw") return crayonCells();
   return SEATS.map(blackPal);                 // T6 places, T7 draw, T8 people
 }
 function renderPalette() {
@@ -245,17 +246,173 @@ function pickPlace(id) {
   changed();
   log("backdrop", { id });
 }
+// ---------- Draw (spec 2026-10-02 §3) ----------
+function crayonCells() {
+  return S.table.crayons.map((cr) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.id = "crayon-" + cr.id;
+    el.className = "cell crayon photo dwell";
+    el.dataset.hex = cr.hex;
+    el.setAttribute("aria-label", cr.word);
+    const pic = document.createElement("span");
+    pic.className = "pic";
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.setProperty("--sw", cr.hex);
+    pic.appendChild(sw);
+    const word = document.createElement("span");
+    word.className = "word plate";
+    word.textContent = cr.word;
+    el.append(pic, word);
+    el.addEventListener("click", () => pickCrayon(cr));
+    return el;
+  });
+}
+// A dwell picks the crayon for her next line, says its word and glows; the picture remembers it.
+function pickCrayon(cr) {
+  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  settle();
+  hush();
+  say(cr.word);
+  if ((S.scene.crayon || "").toLowerCase() === cr.hex.toLowerCase()) return;
+  S.scene.crayon = cr.hex;
+  markOn();
+  changed();
+  log("crayon", { id: cr.id });
+}
+
+// ---------- her gaze (spec 2026-10-02 §3, §6) ----------
+// dwell.js keeps the gaze point to itself (dwell.js:380-384), so the page follows the pointer too.
+// ERAgaze moves the OS cursor — a "mouse" pointer. A finger is "touch": its taps land (touch
+// parity), its moves never ink (deviation 17).
+const LEAVE_EXTRA_MS = 600;
+const floorPx = () => Math.ceil(90 * innerWidth / 1920) + 1;     // above invariants' 90 x vw/1920 at every width
+const leaveMs = () => ((window.Dwell && Dwell.config.graceMs) || 400) + LEAVE_EXTRA_MS;
+const restMs = () => (window.Dwell ? Dwell.config.ms : EC.holds.content);
+function toScene(cx, cy) {
+  const r = $("scene").getBoundingClientRect();
+  return { x: Math.min(1, Math.max(0, (cx - r.left) / r.width)), y: Math.min(1, Math.max(0, (cy - r.top) / r.height)),
+           inside: cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom };
+}
+function onPointer(e) {
+  S.gaze = { cx: e.clientX, cy: e.clientY, type: e.pointerType || "mouse" };
+  if (e.type !== "pointermove" || e.pointerType === "touch") return;
+  if (S.pen) { penFollow(); if (S.pen) restWatch(); }
+}
+// THE LANDING SPOT (deviation 1): a fresh element whenever her gaze leaves its square, so dwell.js
+// starts a new dwell (dwell.js:259) — only a real REST fills it. Its centre is where the line ends.
+function placeSpot(cx, cy) {
+  const r = $("scene").getBoundingClientRect(), F = floorPx();
+  const x = Math.min(r.width - F / 2, Math.max(F / 2, cx - r.left)), y = Math.min(r.height - F / 2, Math.max(F / 2, cy - r.top));
+  removeSpot();
+  const el = document.createElement("div");
+  el.id = "spot";
+  el.className = "spot dwell";
+  el.setAttribute("aria-label", "Here");
+  Object.assign(el.style, { left: x - F / 2 + "px", top: y - F / 2 + "px", width: F + "px", height: F + "px" });
+  const at = { x: x / r.width, y: y / r.height };
+  el.addEventListener("click", (e) => { e.stopPropagation(); land(at); });
+  // dwell.js's document-capture mouseleave (dwell.js:331-333) hears ANY element's mouseleave as her
+  // gaze leaving: a fresh spot under a STILL cursor makes the browser's hover update send #art one,
+  // and with no further movement the spot would never fill. Once the hover has settled on the new
+  // spot, hand dwell.js her current point again (its own scroll handler does the same).
+  el.addEventListener("mouseenter", () => {
+    if (S.gaze && S.spot) document.dispatchEvent(new MouseEvent("mousemove", { clientX: S.gaze.cx, clientY: S.gaze.cy }));
+  });
+  $("scene").appendChild(el);
+  S.spot = { cx: r.left + x, cy: r.top + y, F };
+  refreeze();
+}
+function removeSpot() { const s = $("spot"); if (s) s.remove(); S.spot = null; }
+function followSpot(cx, cy) {
+  const s = S.spot;
+  if (!s || Math.abs(cx - s.cx) > s.F / 2 || Math.abs(cy - s.cy) > s.F / 2) placeSpot(cx, cy);
+}
+function land(at) { if (S.pen) endStroke(at); }
+// The rest tile is inert (no .dwell, ever): resting on it is watched here, for her dwell (deviation 5).
+function restWatch() {
+  const r = $("restTile").getBoundingClientRect(), g = S.gaze;
+  if (!(g.cx >= r.left && g.cx <= r.right && g.cy >= r.top && g.cy <= r.bottom)) { stopRestWatch(); return; }
+  if (!S.restTimer) S.restTimer = setTimeout(() => { S.restTimer = null; log("rest", {}); settle(); }, restMs());
+}
+function stopRestWatch() { clearTimeout(S.restTimer); S.restTimer = null; }
+
+// A dwell (or a tap) on her picture. Draw idle: a stroke starts where she looks. While a stroke is
+// live or something is carried, only a FINGER tap lands here — her own landing is the spot.
+function onSceneClick() {
+  if (Date.now() < S.swallowUntil || !S.gaze || S.screen !== "ring" || !S.scene) return;
+  const p = toScene(S.gaze.cx, S.gaze.cy);
+  if (!p.inside) return;
+  if (S.pen || S.carry) { if (S.gaze.type === "touch") land(p); return; }
+  if (S.mode === "draw") startStroke(p);
+}
+function startStroke(p) {
+  if (S.paused || S.scene.items.length >= MAX_ITEMS) return;
+  const room = SC.penRoom(JSON.stringify(S.scene).length);
+  if (room < 2) { log("ink_full", {}); return; }                  // deviation 11: silent, like the 200 cap
+  hush();
+  S.pen = SC.penStart(p.x, p.y, room);
+  S.pen.c = S.scene.crayon || S.table.crayonDefault;
+  drawPen();
+  applyTargets();
+  placeSpot(S.gaze.cx, S.gaze.cy);
+  log("stroke_start", {});
+}
+function drawPen() {
+  const box = $("pen");
+  if (!S.pen) { box.replaceChildren(); return; }
+  const pts = S.pen.pts.length > 1 ? S.pen.pts : S.pen.pts.concat(S.pen.pts);      // a dot until she moves
+  box.replaceChildren(SC.strokeSvg(SC.strokePath(pts), S.pen.c, SC.PEN.width));
+}
+function penFollow() {
+  const g = S.gaze, p = toScene(g.cx, g.cy);
+  if (!p.inside) {
+    removeSpot();
+    if (!S.leaveTimer) S.leaveTimer = setTimeout(() => { S.leaveTimer = null; endStroke(null); }, leaveMs());
+    return;
+  }
+  clearTimeout(S.leaveTimer); S.leaveTimer = null;
+  if (SC.penMove(S.pen, p.x, p.y)) drawPen();
+  if (S.pen.pts.length >= S.pen.room) { endStroke(null); return; }   // 400 points (or the ink budget)
+  followSpot(g.cx, g.cy);
+}
+// One stroke = one item = one Undo. Fewer than two points is not a line: dropped silently.
+function endStroke(landing) {
+  if (!S.pen) return;
+  clearTimeout(S.leaveTimer); S.leaveTimer = null;
+  stopRestWatch();
+  const pen = S.pen;
+  S.pen = null;
+  const pts = SC.penEnd(pen, landing);
+  drawPen();
+  removeSpot();
+  if (pts.length >= 2) {
+    S.scene.items.push({ s: "stroke", c: pen.c, w: SC.PEN.width, pts, by: "ellie" });
+    push({ t: "place" });
+    paintScene();
+    changed();
+    log("stroke", { n: pts.length });
+  }
+  applyTargets();
+}
+
 // The glow: the active mode (T6 adds the current place, T7 the current crayon).
 function markOn() {
   for (const el of document.querySelectorAll("#modeRow .mode")) el.classList.toggle("on", el.dataset.mode === S.mode);
+  for (const el of document.querySelectorAll("#sRing > .crayon")) el.classList.toggle("on", !!S.scene && el.dataset.hex.toLowerCase() === (S.scene.crayon || "").toLowerCase());
   for (const el of document.querySelectorAll("#sRing > .place")) el.classList.toggle("on", !!S.scene && el.dataset.place === (S.scene.backdrop || "meadow"));
 }
-// Which parts of her picture are dwell targets right now (T7: the picture itself in Draw mode;
-// T9: the item hit boxes). Stickers mode in this task: none — v1's inert picture.
-function applyTargets() { refreeze(); }
-// End whatever her gaze is in the middle of before another control acts (T7: a live stroke ends;
-// T9: a carried item goes back). Nothing is live yet in this task.
-function settle() {}
+// In Draw mode, idle, her picture itself is the dwell target (spec §3). Never while a stroke is live
+// (the spot is) and never in the other modes.
+function applyTargets() {
+  const sc = $("scene");
+  const want = S.screen === "ring" && !!S.scene && S.mode === "draw" && !S.pen && !S.carry;
+  if (!want) { sc.classList.remove("dwell"); sc.removeAttribute("data-dwell-disabled"); frozen = frozen.filter((el) => el !== sc); }
+  else if (!sc.hasAttribute("data-dwell-disabled")) sc.classList.add("dwell");
+  refreeze();
+}
+function settle() { if (S.pen) endStroke(null); }
 function paintScene() { SC.renderScene($("art"), S.scene, { table: S.table }); }
 
 // ---------- routing ----------
@@ -309,6 +466,7 @@ async function openRing(id) {
 // ---------- placing, undo, autosave (spec §2.1, §2.2, §4) — T8 ----------
 function push(ev) { S.history.push(ev); if (S.history.length > HISTORY_MAX) S.history.shift(); }
 function place(id, tile) {
+  settle();
   if (S.screen !== "ring" || !S.scene || S.paused) return;
   const st = S.stickers.get(id);
   if (!st) return;
@@ -350,6 +508,7 @@ function flyIn(tile, index) {
   } catch {}
 }
 function undo() {
+  settle();
   if (S.screen !== "ring" || !S.scene || !S.history.length) return;   // nothing, and silence (§2.2)
   hush();
   say("Undo");
@@ -526,6 +685,7 @@ function turnShelf(page) {
   log("shelf-page", { page });
 }
 async function openShelf() {
+  settle();
   const fresh = S.screen !== "shelf";
   // A sticker placed in the last moments (her gaze drifting from Done to Splat mid-celebration) goes
   // to the hub before the ring forgets it; if the hub does not take it, localStorage still holds it
@@ -535,6 +695,7 @@ async function openShelf() {
   await refreshIndex();
   if (fresh) S.shelfPage = 0;                           // every return lands on page 1: newest first
   show("shelf");
+  applyTargets();                                       // the hidden ring keeps no live targets
   renderShelf();
   suppress();
   tellPark();
@@ -572,6 +733,7 @@ async function exportPng(scene) {
 }
 async function done() {
   if (S.screen !== "ring" || !S.scene || S.finishing) return;
+  settle();
   S.finishing = true;
   hush();
   const id = S.id, scene = JSON.parse(JSON.stringify(S.scene));
@@ -604,6 +766,7 @@ window.Drawing = {
     history: S.history.length, dirty: S.dirty, lastMail: S.lastMail,
     shelfPage: S.shelfPage, shelfPages: S.shelfPages, shelfIds: S.shelfIds.slice(),
     said: S.said.slice(), park: S.park, paused: S.paused,
+    crayon: S.scene ? S.scene.crayon || null : null, pen: S.pen ? { n: S.pen.pts.length, c: S.pen.c } : null,
     mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null,
   }),
   setMode, settle,
@@ -636,12 +799,16 @@ async function boot() {
   $("btnDone").addEventListener("click", () => { done(); });
   $("railNew").addEventListener("click", () => { newPicture(); });
   addEventListener("hashchange", () => { route(); });
-  addEventListener("resize", () => { if (BAR) BAR.sizeBar(); tellPark(); });
-  addEventListener("pagehide", () => { save({ keepalive: true }); });
+  addEventListener("resize", () => { if (BAR) BAR.sizeBar(); tellPark(); if (S.spot && S.gaze) placeSpot(S.gaze.cx, S.gaze.cy); });
+  addEventListener("pagehide", () => { settle(); save({ keepalive: true }); });
+  document.addEventListener("pointermove", onPointer, true);
+  document.addEventListener("pointerdown", onPointer, true);
+  $("scene").addEventListener("click", onSceneClick);
   await route();
   S.ready = true;
   try { if (window.Speech) Speech.preload(S.table.stickers.map((s) => s.word)
     .concat((S.table.modes || []).map((m) => m.word), (S.table.backdrops || []).map((b) => b.word),
+      (S.table.crayons || []).map((c) => c.word),
       ["Undo", "No people yet"])); } catch {}
   log("boot", {});
 }
