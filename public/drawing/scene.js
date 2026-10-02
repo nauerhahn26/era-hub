@@ -1,15 +1,15 @@
 // scene.js — Drawing's scene: where a sticker lands, what a splat looks like, what the celebration
 // says, and THE scene renderer (spec 2026-09-30 §2.1, §2.3, §3). ONE renderScene() draws the ring,
 // every shelf thumbnail and the 1600x900 PNG that is mailed, from one geometry (sceneOps), one
-// meadow (MEADOW) and one splat (splatPath) — so what she sees, what the shelf shows and what her
+// place (backdrops.js) and one splat (splatPath) — so what she sees, what the shelf shows and what her
 // family receives can never drift apart. Plain ES module, no DOM at import time: node tests import
 // it; the page puts it on window.DrawingScene through the module shim in index.html.
 // Coordinates: x of the scene WIDTH, y of the scene HEIGHT, both the item's CENTRE; w = its square
 // box as a fraction of the scene HEIGHT.
+import { backdropSvg, paintBackdrop } from "./backdrops.js";
+export { horizonOf } from "./backdrops.js";
 
 export const ASPECT = 16 / 9;
-// The only backdrop in v1 (spec §2.1): sky over grass, horizon at 0.58, a calm palette, no asset.
-export const MEADOW = [[0, "#BFE3F2"], [0.575, "#E4F3F7"], [0.58, "#A9D69A"], [1, "#78BD6E"]];
 // tokens.css: --c-teal, --c-vowel, --c-good-literacy, --c-confetti-gold. Never red (palette law).
 export const SPLAT_COLOURS = ["#0F7C8A", "#DE7B52", "#2E7D5B", "#B7822B"];
 const NUMBER = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
@@ -107,9 +107,6 @@ export function describe(items, table) {
   return "You made a picture with " + list + "!";
 }
 
-export const meadowCss = () =>
-  "linear-gradient(to bottom, " + MEADOW.map(([at, c]) => c + " " + round(at * 100, 2) + "%").join(", ") + ")";
-
 // The one geometry: every item's box as fractions of the scene's width (left, width) and height
 // (top, height). Unknown stickers (a newer version's) are skipped, never thrown on.
 export function sceneOps(scene, table) {
@@ -145,10 +142,7 @@ export function renderScene(target, scene, { table, images } = {}) {
   const ops = sceneOps(scene, table);
   if (target && typeof target.drawImage === "function") {
     const W = target.canvas.width, H = target.canvas.height;
-    const g = target.createLinearGradient(0, 0, 0, H);
-    for (const [at, c] of MEADOW) g.addColorStop(at, c);
-    target.fillStyle = g;
-    target.fillRect(0, 0, W, H);
+    paintBackdrop(target, (scene && scene.backdrop) || "meadow", W, H);
     for (const op of ops) {
       const x = op.left * W, y = op.top * H, w = op.width * W, h = op.height * H;
       if (op.kind === "splat") {
@@ -164,7 +158,7 @@ export function renderScene(target, scene, { table, images } = {}) {
     }
     return target;
   }
-  target.style.background = meadowCss();
+  target.style.background = "";
   const kids = ops.map((op) => {
     let el;
     if (op.kind === "splat") {
@@ -183,6 +177,6 @@ export function renderScene(target, scene, { table, images } = {}) {
     el.style.height = op.height * 100 + "%";
     return el;
   });
-  target.replaceChildren(...kids);
+  target.replaceChildren(backdropSvg((scene && scene.backdrop) || "meadow"), ...kids);
   return target;
 }

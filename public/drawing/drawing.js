@@ -482,6 +482,7 @@ window.Drawing = {
   freeze, thaw, say: (t) => { hush(); return say(t); },
   mailLine, onMail: (cb) => { mailWatchers.push(cb); },
   pollShelf, flush: () => save(),
+  exportPng: () => exportPng(S.scene),
 };
 
 // ---------- boot ----------

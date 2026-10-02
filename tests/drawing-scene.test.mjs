@@ -6,13 +6,29 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ASPECT, MEADOW, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, meadowCss, sceneOps }
+import { ASPECT, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene }
   from "../public/drawing/scene.js";
+import { BACKDROPS, backdropById, horizonOf, backdropMarkup, paintBackdrop } from "../public/drawing/backdrops.js";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const T = JSON.parse(fs.readFileSync(path.join(HUB, "public", "drawing", "stickers.json"), "utf8"));
 const put = (items, id) => { const at = landing(id, items, T); items.push({ s: id, ...at, by: "ellie" }); return at; };
 const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} != ${b}`);
+
+// A canvas that records what it was asked to draw (node has no canvas). Path2D is the browser's; a
+// stand-in that keeps its path string is all the painters need.
+globalThis.Path2D ??= class { constructor(d) { this.d = d; } };
+function fakeCtx(calls, W = 1600, H = 900) {
+  return { canvas: { width: W, height: H }, fillStyle: null, strokeStyle: null, lineWidth: 1, lineCap: "butt", lineJoin: "miter",
+    save() {}, restore() {}, translate() {}, beginPath() {},
+    scale(sx, sy) { calls.push(["scale", sx, sy]); },
+    createLinearGradient(x0, y0, x1, y1) { const g = { stops: [] }; g.addColorStop = (at, c) => g.stops.push([at, c]); return g; },
+    fillRect(x, y, w, h) { calls.push(["band", y, y + h, JSON.stringify(this.fillStyle.stops)]); },
+    arc(cx, cy, r) { this._arc = [cx, cy, r]; },
+    fill(p) { calls.push(p ? ["path", p.d, this.fillStyle] : ["circle", ...this._arc, this.fillStyle]); },
+    stroke(p) { calls.push(["line", p.d, this.strokeStyle, this.lineWidth, this.lineCap]); },
+    drawImage(im, x, y, w, h) { calls.push(["img", x, y, w, h]); } };
+}
 
 test("the first ground sticker lands in the first centre-out slot, its bottom edge on the grass", () => {
   const at = landing("horse", [], T);
@@ -94,9 +110,63 @@ test("one geometry for the ring, the thumbnails and the PNG: boxes in scene frac
   assert.equal(sp.kind, "splat"); assert.equal(sp.fill, "#DE7B52"); assert.equal(sp.d, splatPath(5)); assert.equal(sp.i, 1);
 });
 
-test("the meadow: sky over grass, the horizon at 0.58, the same stops for CSS and canvas", () => {
-  assert.equal(MEADOW.find(([at, c]) => c === "#A9D69A")[0], 0.58);
-  assert.equal(meadowCss(), "linear-gradient(to bottom, #BFE3F2 0%, #E4F3F7 57.5%, #A9D69A 58%, #78BD6E 100%)");
+// ---- v2 (spec 2026-10-02 §5): the eight places --------------------------------------
+test("eight places with stickers.json's ids, each horizon where its ground band starts; unknown is the meadow", () => {
+  assert.deepEqual(BACKDROPS.map(b => b.id), T.backdrops.map(b => b.id));
+  for (const b of BACKDROPS) {
+    const ground = b.shapes.filter(s => s.k === "band").at(-1);
+    assert.equal(ground.y1, 900, b.id + ": the ground band reaches the bottom");
+    near(ground.y0 / 900, b.horizon, b.id + ": horizon");
+  }
+  assert.equal(backdropById("volcano").id, "meadow");
+  assert.equal(horizonOf("city"), 0.72);
+  assert.equal(horizonOf(undefined), 0.58);
+});
+
+test("no red in any place: every colour is calm (no saturated hue within 15 degrees of red), never partner red", () => {
+  const hues = [];
+  for (const b of BACKDROPS) for (const s of b.shapes)
+    for (const c of [s.fill, s.stroke, ...(s.stops || []).map(([, c]) => c)].filter(Boolean)) hues.push([b.id, c]);
+  for (const [id, c] of hues) {
+    const [r, g, bl] = [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16) / 255);
+    const mx = Math.max(r, g, bl), mn = Math.min(r, g, bl), d = mx - mn, l = (mx + mn) / 2;
+    const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+    let hue = d === 0 ? 0 : mx === r ? 60 * (((g - bl) / d) % 6) : mx === g ? 60 * ((bl - r) / d + 2) : 60 * ((r - g) / d + 4);
+    if (hue < 0) hue += 360;
+    assert.ok(!(sat > 0.4 && (hue >= 345 || hue < 15)), `${id} ${c}: hue ${hue.toFixed(0)}`);
+    assert.notEqual(c.toLowerCase(), "#b23a48");
+  }
+});
+
+test("one geometry: the SVG markup and the canvas paint the same shapes with the same numbers", () => {
+  for (const b of BACKDROPS) {
+    const m = backdropMarkup(b.id);
+    const grads = [...m.matchAll(/<linearGradient[^>]*>(.*?)<\/linearGradient>/g)]
+      .map(([, inner]) => JSON.stringify([...inner.matchAll(/offset="([^"]+)" stop-color="([^"]+)"/g)].map(([, at, c]) => [+at, c])));
+    let gi = 0;
+    const fromSvg = [...m.matchAll(/<(rect|circle|path)([^>]*)\/>/g)].map(([, tag, a]) => {
+      const at = (n) => (new RegExp(` ${n}="([^"]*)"`).exec(a) || [])[1];
+      if (tag === "rect") return ["band", +at("y"), +at("y") + +at("height"), grads[gi++]];
+      if (tag === "circle") return ["circle", +at("cx"), +at("cy"), +at("r"), at("fill")];
+      return at("fill") === "none" ? ["line", at("d"), at("stroke"), +at("stroke-width"), "butt"] : ["path", at("d"), at("fill")];
+    });
+    const calls = [];
+    paintBackdrop(fakeCtx(calls), b.id, 800, 450);
+    assert.deepEqual(calls[0], ["scale", 0.5, 0.5], b.id + ": the canvas paints in 1600x900 units");
+    assert.deepEqual(calls.slice(1), fromSvg, b.id);
+    assert.equal(fromSvg.length, b.shapes.length, b.id + ": every shape drawn once");
+  }
+  const a = backdropMarkup("meadow"), z = backdropMarkup("meadow");
+  assert.notEqual(a.match(/id="([^"]+)"/)[1], z.match(/id="([^"]+)"/)[1], "gradient ids never repeat in one page");
+});
+
+test("the PNG paints the picture's place first, then the items over it", () => {
+  const calls = [];
+  renderScene(fakeCtx(calls), { v: 1, backdrop: "city", items: [{ s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" }] },
+    { table: T, images: { horse: { complete: true, naturalWidth: 256, naturalHeight: 256 } } });
+  assert.deepEqual(calls[0], ["scale", 1, 1]);
+  assert.equal(calls.filter(c => c[0] === "band").length, BACKDROPS.find(b => b.id === "city").shapes.filter(s => s.k === "band").length);
+  assert.equal(calls.at(-1)[0], "img", "the horse is painted last");
 });
 
 // ---- v2 (spec 2026-10-02 §5): slots move with the place's horizon -------------------

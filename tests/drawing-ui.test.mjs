@@ -71,10 +71,10 @@ async function openRing(opts = {}) {
   return { ...p, id };
 }
 // a picture another device made, straight into the data dir (what the mirror would carry in)
-function seed(id, items, when) {
+function seed(id, items, when, extra = {}) {
   fs.mkdirSync(path.join(PICS, id), { recursive: true });
   fs.writeFileSync(path.join(PICS, id, "scene.json"), JSON.stringify(
-    { v: 1, id, created: when, updated: when, device: "test-dev", backdrop: "meadow", items, mailedHash: null }));
+    { v: 1, id, created: when, updated: when, device: "test-dev", backdrop: "meadow", items, mailedHash: null, ...extra }));
 }
 const H = (x = 0.5, y = 0.82) => ({ s: "horse", x, y, w: 0.2, by: "ellie" });
 const puts = (page) => {
@@ -177,7 +177,7 @@ test("the Splat tile and a splat in her picture are drawn by scene.js's one spla
     const box = document.createElement("div");
     SC.renderScene(box, { v: 1, backdrop: "meadow", items: [{ s: "splat", x: 0.5, y: 0.5, w: 0.15, by: "ellie", c: "#DE7B52", seed: 9 }] },
       { table: { stickers: [{ id: "splat" }] } });
-    const item = box.firstElementChild.cloneNode(true);
+    const item = box.querySelector(".item").cloneNode(true);
     for (const a of ["class", "data-i", "style"]) item.removeAttribute(a);
     return { tile: document.querySelector("#tile-splat .pic").outerHTML === ref.outerHTML,
              item: item.outerHTML === SC.splatSvg(SC.splatPath(9), "#DE7B52").outerHTML };
@@ -519,10 +519,10 @@ test("a shelf cell is her picture drawn from scene.json by the same renderer, wi
   const t = await page.evaluate((id) => {
     const el = document.querySelector(`#shelfGrid [data-id="${id}"]`), th = el.querySelector(".thumb"), r = th.getBoundingClientRect();
     return { items: th.querySelectorAll(".item").length, img: th.querySelector("img.item").getAttribute("src"),
-             bg: th.style.background, plate: el.querySelector(".plate").textContent, ratio: r.width / r.height };
+             bd: th.querySelector("svg.backdrop") && th.querySelector("svg.backdrop").dataset.backdrop, plate: el.querySelector(".plate").textContent, ratio: r.width / r.height };
   }, id);
   assert.deepEqual([t.items, t.img, t.plate], [2, "stickers/horse.png", "Wed 30 Sep"]);
-  assert.match(t.bg, /linear-gradient/);
+  assert.equal(t.bd, "meadow", "the thumbnail draws its place");
   assert.ok(Math.abs(t.ratio - 16 / 9) < 0.02, String(t.ratio));
   assert.equal((await cellsOf(page))["3,1"].kind, "black", "one page: [3,1] stays black");
   await ctx.close();
@@ -689,4 +689,26 @@ test("the contract audit is clean on a full shelf and a full ring, at both gate 
     for (const v of r.viewports) assert.ok(v.nTargets >= 11, `${state.id} @${v.vp.w}: only ${v.nTargets} targets`);
     assert.deepEqual(r.violations, [], state.id + ":\n" + r.violations.join("\n"));
   }
+});
+
+// ================================================================ v2 T2 — the place is part of the picture
+const close = (got, want, tol = 14) => got.every((v, k) => Math.abs(v - want[k]) <= tol);
+test("the ring draws the picture's place, and the exported PNG paints the same place", async () => {
+  const id = "2026-10-02-090000-test-dev";
+  seed(id, [H()], "2026-10-02T09:00:00Z", { backdrop: "beach" });
+  const { ctx, page, errors } = await openRing({ id });
+  assert.equal(await page.locator('#scene svg.backdrop[data-backdrop="beach"]').count(), 1);
+  const px = await page.evaluate(async () => {
+    const bmp = await createImageBitmap(await window.Drawing.exportPng());
+    const c = document.createElement("canvas"); c.width = 1600; c.height = 900;
+    const g = c.getContext("2d"); g.drawImage(bmp, 0, 0);
+    const at = (x, y) => [...g.getImageData(x, y, 1, 1).data.slice(0, 3)];
+    return { size: [bmp.width, bmp.height], sky: at(40, 40), sea: at(40, 520), sand: at(40, 880) };
+  });
+  assert.deepEqual(px.size, [1600, 900]);
+  assert.ok(close(px.sky, [164, 218, 241]), "beach sky " + px.sky);
+  assert.ok(close(px.sea, [103, 181, 210]), "beach sea " + px.sea);
+  assert.ok(close(px.sand, [227, 198, 139]), "beach sand " + px.sand);
+  assert.deepEqual(errors, []);
+  await ctx.close();
 });
