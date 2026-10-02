@@ -142,6 +142,28 @@ before(async () => {
   // a key IS configured — the point is that the rebuild door still never calls it
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
     JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
+  // A page-1 memory, so the deal's COVERAGE slot (the single longest-unseen
+  // garment, dealt in its best look ahead of the rank's fill — spec 2026-09-29
+  // §7.2) is a known top and never a day's coin toss. With no history every
+  // garment ties at "never seen" and h(seed, "aged", id) picked one by the
+  // date: on 10/1 and 10/2 that was the fleece, its look took page 1's first
+  // slot, and "light pants lead fleece" failed with no code change (it passed
+  // 9/30 and passes again 10/3). Every day here is 10+ days back, so each
+  // garment's freshness is saturated (FRESH_CAP_DAYS 8) exactly as if never
+  // seen and no look sits out as yesterday's: the rank is untouched, only the
+  // coverage pick is pinned (the Sunny tee, oldest by ten days). Days are
+  // counted back from the family's day key in the zone the build seeds with.
+  {
+    const rank = require("./clothing-rank.js");
+    const today = rank.dayKey(Date.now(), "America/Los_Angeles");
+    const back = n => { const [y, m, d] = today.split("-").map(Number);
+      return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10); };
+    fs.mkdirSync(path.join(TMP, "wardrobe"), { recursive: true });
+    fs.writeFileSync(path.join(TMP, "wardrobe", "history.json"), JSON.stringify({ days: {
+      [back(20)]: { band: "warm", page1: [["item_warmtop"]] },
+      [back(10)]: { band: "warm", page1: [["item_top", "item_bot"], ["item_coldtop", "item_coldbot"], ["item_hotbot"]] },
+    }, events: {} }, null, 1));
+  }
   clothing = require("./clothing.js");
   // No schedule: this suite drives the rebuild door itself, and the scheduler's
   // 20 s startup tick would fire a FULL build (ingest + AI) if the suite ever
