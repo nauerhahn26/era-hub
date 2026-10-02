@@ -798,3 +798,55 @@ test("&mode=<id> in the hash opens that mode under the test hooks only, and is n
   assert.equal((await st(p.page)).mode, "stickers", "a real device ignores it");
   await p.ctx.close();
 });
+
+// ================================================================ v2 T6 — Places
+test("Places: a dwell swaps the picture's place and speaks it, every item stays put, the place glows, Undo brings the old one back", async () => {
+  const { ctx, page, id } = await openRing();
+  await page.locator("#tile-horse").click();
+  await page.locator("#mode-places").click();
+  const pal = await paletteOf(page);
+  assert.deepEqual(pal.map((c) => c.id), ["place-meadow", "place-beach", "place-night", "place-snow",
+    "place-sunset", "place-forest", "place-city", "place-rainbow"]);
+  assert.deepEqual(pal.map((c) => c.word), ["Meadow", "Beach", "Night", "Snow", "Sunset", "Forest", "City", "Rainbow"]);
+  assert.deepEqual(pal.filter((c) => c.on).map((c) => c.id), ["place-meadow"]);
+  assert.equal(await page.locator('#place-night svg.backdrop[data-backdrop="night"]').count(), 1, "each tile shows its place");
+  const horse = (await st(page)).items[0];
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok() && r.request().postData().includes('"backdrop":"night"'));
+  await page.locator("#place-night").click();
+  let s = await st(page);
+  assert.deepEqual([s.backdrop, s.said.at(-1), s.items[0]], ["night", "Night", horse], "the horse stays exactly where it was");
+  assert.equal(await page.locator('#scene svg.backdrop[data-backdrop="night"]').count(), 1);
+  assert.deepEqual((await paletteOf(page)).filter((c) => c.on).map((c) => c.id), ["place-night"]);
+  await saved;
+  assert.equal((await hubScene(id)).backdrop, "night");
+  const n = s.history;
+  await page.locator("#place-night").click();
+  s = await st(page);
+  assert.deepEqual([s.history, s.said.at(-1)], [n, "Night"], "the current place: its word, nothing else");
+  await page.locator("#btnUndo").click();
+  s = await st(page);
+  assert.deepEqual([s.backdrop, s.items.length], ["meadow", 1], "Undo restores the old place and leaves the horse");
+  await ctx.close();
+});
+
+test("a sticker lands on the current place's ground: slots follow the horizon", async () => {
+  const { ctx, page } = await openRing();
+  await page.locator("#mode-places").click();
+  await page.locator("#place-city").click();
+  await page.locator("#mode-stickers").click();
+  await page.locator("#tile-horse").click();
+  await page.locator("#tile-sun").click();
+  const [h, s] = (await st(page)).items;
+  assert.ok(Math.abs(h.y - 0.8467) < 1e-9, JSON.stringify(h));
+  assert.ok(Math.abs(s.y - 0.211) < 1e-9, JSON.stringify(s));
+  await ctx.close();
+});
+
+test("the shelf shows each picture on its own place", async () => {
+  seedShelf(0);
+  const id = "2026-10-02-110000-test-dev";
+  seed(id, [H()], "2026-10-02T11:00:00Z", { backdrop: "snow" });
+  const { ctx, page } = await makePage();
+  assert.equal(await page.locator(`#shelfGrid [data-id="${id}"] svg.backdrop[data-backdrop="snow"]`).count(), 1);
+  await ctx.close();
+});

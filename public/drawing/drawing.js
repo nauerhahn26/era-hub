@@ -191,6 +191,7 @@ function blackPal() {
 // setMode suppresses), and each lands in SEATS[k] — positions never move.
 function paletteCells() {
   if (S.mode === "stickers") return S.table.stickers.map(stickerTile);
+  if (S.mode === "places") return placeCells();
   return SEATS.map(blackPal);                 // T6 places, T7 draw, T8 people
 }
 function renderPalette() {
@@ -207,9 +208,47 @@ function renderPalette() {
   markOn();
   refreeze();
 }
+// ---------- Places (spec 2026-10-02 §5) ----------
+function placeCells() {
+  return S.table.backdrops.map((b) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.id = "place-" + b.id;
+    el.className = "cell place photo dwell";
+    el.dataset.place = b.id;
+    el.setAttribute("aria-label", b.word);
+    const pic = document.createElement("span");
+    pic.className = "pic";
+    pic.appendChild(window.DrawingBackdrops.backdropSvg(b.id));      // backdrops.js's one painter
+    const word = document.createElement("span");
+    word.className = "word plate";
+    word.textContent = b.word;
+    el.append(pic, word);
+    el.addEventListener("click", () => pickPlace(b.id));
+    return el;
+  });
+}
+// A dwell swaps her picture's place and keeps every item where it is (a horse in the sea is hers to
+// move). Undo restores the previous place. The current place: its word, nothing else.
+function pickPlace(id) {
+  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  settle();
+  const b = S.table.backdrops.find((x) => x.id === id);
+  if (!b) return;
+  hush();
+  say(b.word);
+  if ((S.scene.backdrop || "meadow") === id) return;
+  push({ t: "backdrop", from: S.scene.backdrop || "meadow" });
+  S.scene.backdrop = id;
+  paintScene();
+  markOn();
+  changed();
+  log("backdrop", { id });
+}
 // The glow: the active mode (T6 adds the current place, T7 the current crayon).
 function markOn() {
   for (const el of document.querySelectorAll("#modeRow .mode")) el.classList.toggle("on", el.dataset.mode === S.mode);
+  for (const el of document.querySelectorAll("#sRing > .place")) el.classList.toggle("on", !!S.scene && el.dataset.place === (S.scene.backdrop || "meadow"));
 }
 // Which parts of her picture are dwell targets right now (T7: the picture itself in Draw mode;
 // T9: the item hit boxes). Stickers mode in this task: none — v1's inert picture.
@@ -276,7 +315,7 @@ function place(id, tile) {
   hush();
   say(st.word);
   if (S.scene.items.length >= MAX_ITEMS) { log("place_full", { s: id }); return; }   // the hub's cap
-  const spot = SC.landing(id, S.scene.items, S.table);
+  const spot = SC.landing(id, S.scene.items, S.table, Math.random, SC.horizonOf(S.scene.backdrop));
   if (!spot) return;
   const item = { s: id, x: spot.x, y: spot.y, w: spot.w, by: "ellie" };
   if (id === "splat") { item.c = spot.c; item.seed = spot.seed; }
@@ -317,6 +356,7 @@ function undo() {
   const ev = S.history.pop();
   if (ev.t === "place") S.scene.items.pop();
   else if (ev.t === "move" && S.scene.items[ev.i]) Object.assign(S.scene.items[ev.i], ev.from);
+  else if (ev.t === "backdrop") { S.scene.backdrop = ev.from; markOn(); }
   paintScene();
   log("undo", { t: ev.t });
   changed();
@@ -564,7 +604,7 @@ window.Drawing = {
     history: S.history.length, dirty: S.dirty, lastMail: S.lastMail,
     shelfPage: S.shelfPage, shelfPages: S.shelfPages, shelfIds: S.shelfIds.slice(),
     said: S.said.slice(), park: S.park, paused: S.paused,
-    mode: S.mode,
+    mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null,
   }),
   setMode, settle,
   itemAt, moveItem, clamp: (o) => SC.clampItem(o), clearPicture, repaint: () => { if (S.scene) paintScene(); },
@@ -601,7 +641,8 @@ async function boot() {
   await route();
   S.ready = true;
   try { if (window.Speech) Speech.preload(S.table.stickers.map((s) => s.word)
-    .concat((S.table.modes || []).map((m) => m.word), ["Undo", "No people yet"])); } catch {}
+    .concat((S.table.modes || []).map((m) => m.word), (S.table.backdrops || []).map((b) => b.word),
+      ["Undo", "No people yet"])); } catch {}
   log("boot", {});
 }
 boot();
