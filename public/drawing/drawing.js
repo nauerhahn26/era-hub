@@ -33,6 +33,11 @@ const MAIL_LINES = {
   empty: "Saved — the picture is empty, nothing sent",
 };
 const BAR_DOORS = new Set(["barDoor", "barTalk"]);
+// v2 (spec 2026-10-02 §1): four modes, fixed forever; each palette fills the same eight seats.
+const MODES = ["draw", "people", "stickers", "places"];
+const SEATS = [[1, 1], [2, 1], [3, 1], [4, 1], [1, 3], [2, 3], [3, 3], [4, 3]];
+const MODE_KEY = "drawing_mode";
+const ROUTE_RE = /^#p=([^&]+)(?:&mode=([a-z]+))?$/;
 
 const S = {
   ready: false, table: { stickers: [], zones: {} }, stickers: new Map(), images: {},
@@ -40,6 +45,8 @@ const S = {
   paused: false, wasPaused: false,
   index: [], shelfPage: 0, shelfPages: 1, shelfIds: [], painted: "", pollTimer: null,
   lastMail: null, said: [], park: null, session: "s" + Date.now(),
+  mode: "stickers", people: [], gaze: null, pen: null, carry: null, cool: null, spot: null, swallowUntil: 0,
+  leaveTimer: null, restTimer: null,
 };
 let BAR = null;
 let frozen = [];                 // the .dwell targets the grown-up's sheet put to sleep
@@ -111,39 +118,114 @@ function onResume() { S.paused = S.wasPaused; log("talk_resume", {}); tellPark()
 
 // ---------- the ring's tiles, from stickers.json (seats fixed forever) ----------
 const splatSample = () => SC.splatSvg(SC.splatPath(7), SC.SPLAT_COLOURS[0]);   // scene.js's one splat
-function buildTiles() {
-  const ring = $("sRing");
+function stickerTile(st) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.id = "tile-" + st.id;
+  b.className = "cell tile photo dwell";
+  b.dataset.s = st.id;
+  b.setAttribute("aria-label", st.word);
+  let pic;
+  if (st.src) { pic = document.createElement("img"); pic.src = st.src; pic.alt = ""; pic.draggable = false; }
+  else pic = splatSample();
+  pic.classList.add("pic");
+  const word = document.createElement("span");
+  word.className = "word plate";
+  word.textContent = st.word;
+  b.append(pic, word);
+  b.addEventListener("click", () => place(st.id, b));
+  return b;
+}
+function loadStickers() {
   for (const st of S.table.stickers) {
     S.stickers.set(st.id, st);
-    const b = document.createElement("button");
-    b.type = "button";
-    b.id = "tile-" + st.id;
-    b.className = "cell tile photo dwell";
-    b.dataset.s = st.id;
-    b.setAttribute("aria-label", st.word);
-    b.style.gridRow = String(st.at[0]);
-    b.style.gridColumn = String(st.at[1]);
-    let pic;
-    if (st.src) { pic = document.createElement("img"); pic.src = st.src; pic.alt = ""; pic.draggable = false; }
-    else pic = splatSample();
-    pic.classList.add("pic");
-    const word = document.createElement("span");
-    word.className = "word plate";
-    word.textContent = st.word;
-    b.append(pic, word);
-    b.addEventListener("click", () => place(st.id, b));
-    ring.appendChild(b);
     if (st.src) { const im = new Image(); im.src = st.src; S.images[st.id] = im; }   // for the PNG
   }
+}
+
+// ---------- the mode row (spec 2026-10-02 §1) ----------
+function readMode() { try { const m = localStorage.getItem(MODE_KEY); return MODES.includes(m) ? m : "stickers"; } catch { return "stickers"; } }
+function buildModes() {
+  const row = $("modeRow");
+  for (const m of S.table.modes || []) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.id = "mode-" + m.id;
+    b.className = "cell mode photo dwell";
+    b.dataset.mode = m.id;
+    b.setAttribute("aria-label", m.word);
+    b.style.gridColumn = String(m.seat);
+    const pic = document.createElement("img");
+    pic.className = "pic"; pic.src = m.src; pic.alt = ""; pic.draggable = false;
+    const word = document.createElement("span");
+    word.className = "word plate";
+    word.textContent = m.word;
+    b.append(pic, word);
+    b.addEventListener("click", () => setMode(m.id));
+    row.appendChild(b);
+  }
+}
+// A mode tile is her dwell. The active one does nothing; a switch speaks the mode word, swaps the
+// palette in its fixed seats and is remembered. A live stroke ends / a carried item goes back first.
+function setMode(m) {
+  if (!MODES.includes(m) || S.screen !== "ring" || !S.scene) return;
+  settle();
+  if (m === S.mode) return;
+  hush();
+  S.mode = m;
+  try { localStorage.setItem(MODE_KEY, m); } catch {}
+  const mo = (S.table.modes || []).find((x) => x.id === m);
+  say(m === "people" && !S.people.length ? "No people yet" : (mo ? mo.word : m));
+  renderPalette();
+  applyTargets();
+  suppress();
+  log("mode", { mode: m });
+}
+function blackPal() {
+  const d = document.createElement("div");
+  d.className = "pal-black";
+  d.setAttribute("aria-hidden", "true");
+  return d;
+}
+// The eight seats of the current mode. Every cell is rebuilt (a mode switch is a page change for her:
+// setMode suppresses), and each lands in SEATS[k] — positions never move.
+function paletteCells() {
+  if (S.mode === "stickers") return S.table.stickers.map(stickerTile);
+  return SEATS.map(blackPal);                 // T6 places, T7 draw, T8 people
+}
+function renderPalette() {
+  const ring = $("sRing");
+  for (const el of [...ring.querySelectorAll(":scope > .pal")]) el.remove();
+  paletteCells().forEach((el, k) => {
+    const [r, c] = SEATS[k];
+    el.classList.add("pal");
+    el.dataset.seat = r + "," + c;
+    el.style.gridRow = String(r);
+    el.style.gridColumn = String(c);
+    ring.appendChild(el);
+  });
+  markOn();
   refreeze();
 }
-function paintScene() { SC.renderScene($("scene"), S.scene, { table: S.table }); }
+// The glow: the active mode (T6 adds the current place, T7 the current crayon).
+function markOn() {
+  for (const el of document.querySelectorAll("#modeRow .mode")) el.classList.toggle("on", el.dataset.mode === S.mode);
+}
+// Which parts of her picture are dwell targets right now (T7: the picture itself in Draw mode;
+// T9: the item hit boxes). Stickers mode in this task: none — v1's inert picture.
+function applyTargets() { refreeze(); }
+// End whatever her gaze is in the middle of before another control acts (T7: a live stroke ends;
+// T9: a carried item goes back). Nothing is live yet in this task.
+function settle() {}
+function paintScene() { SC.renderScene($("art"), S.scene, { table: S.table }); }
 
 // ---------- routing ----------
 async function route() {
-  const m = /^#p=([^&]+)$/.exec(location.hash || "");
+  const m = ROUTE_RE.exec(location.hash || "");
   let id = null;
   try { id = m ? decodeURIComponent(m[1]) : null; } catch {}
+  // test-only (spec 2026-10-02 §9): invariants and the suites open a mode directly; a device never does
+  if (m && m[2] && window.__testHooks && MODES.includes(m[2])) S.mode = m[2];
   if (id && ID_RE.test(id)) await openRing(id); else await openShelf();
 }
 function go(id) {
@@ -167,13 +249,18 @@ async function loadScene(id) {
   return { v: 1, id, backdrop: "meadow", items: [] };
 }
 async function openRing(id) {
+  settle();                               // whatever her gaze was doing on the previous picture ends there
   if (S.screen === "ring" && S.id && S.id !== id && S.dirty) await save();
   stopPoll();
   S.id = id;
   S.history = [];
   S.scene = await loadScene(id);
+  S.scene.backdrop = S.scene.backdrop || "meadow";
+  S.scene.crayon = S.scene.crayon || S.table.crayonDefault || "#0F7C8A";
   show("ring");
+  renderPalette();
   paintScene();
+  applyTargets();
   suppress();
   tellPark();
   if (S.dirty) scheduleSave();
@@ -288,6 +375,7 @@ function tuneDwell(d) {
 // A full-screen sheet hides nothing from dwell.js (board-partner.js:53-71): every target but the
 // two doors loses .dwell and gains data-dwell-disabled while it is up.
 function freeze() {
+  settle();
   sheetUp = true;
   const live = [...document.querySelectorAll(".dwell")].filter((el) => !BAR_DOORS.has(el.id));
   for (const el of live) { el.classList.remove("dwell"); el.setAttribute("data-dwell-disabled", ""); }
@@ -476,7 +564,9 @@ window.Drawing = {
     history: S.history.length, dirty: S.dirty, lastMail: S.lastMail,
     shelfPage: S.shelfPage, shelfPages: S.shelfPages, shelfIds: S.shelfIds.slice(),
     said: S.said.slice(), park: S.park, paused: S.paused,
+    mode: S.mode,
   }),
+  setMode, settle,
   itemAt, moveItem, clamp: (o) => SC.clampItem(o), clearPicture, repaint: () => { if (S.scene) paintScene(); },
   tuneDwell, dwellMs: () => (window.Dwell ? Dwell.config.ms : EC.holds.content),
   freeze, thaw, say: (t) => { hush(); return say(t); },
@@ -493,7 +583,7 @@ async function boot() {
   try { if (window.Speech) Speech.init("Let's make a picture!"); } catch {}
   try { S.lastMail = JSON.parse(localStorage.getItem("drawing_mail_last") || "null"); } catch {}
   try { S.table = await (await fetch("stickers.json")).json(); } catch { S.table = { stickers: [], zones: {} }; }
-  buildTiles();
+  S.mode = readMode(); loadStickers(); buildModes();
   SC.renderScene($("newThumb"), { v: 1, backdrop: "meadow", items: [] }, { table: S.table });
   try {
     const st = await (await fetch("/settings")).json();
@@ -510,7 +600,8 @@ async function boot() {
   addEventListener("pagehide", () => { save({ keepalive: true }); });
   await route();
   S.ready = true;
-  try { if (window.Speech) Speech.preload(S.table.stickers.map((s) => s.word).concat(["Undo"])); } catch {}
+  try { if (window.Speech) Speech.preload(S.table.stickers.map((s) => s.word)
+    .concat((S.table.modes || []).map((m) => m.word), ["Undo", "No people yet"])); } catch {}
   log("boot", {});
 }
 boot();

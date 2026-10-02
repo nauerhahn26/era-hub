@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { CONTRACT } from "../public/lib/contract.js";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // 8478 — swept free 9/30 across all five repos' tests/ and every open worktree; ss -ltn clean.
@@ -48,7 +49,7 @@ after(async () => {
 async function makePage(opts = {}) {
   const ctx = await browser.newContext({ viewport: opts.viewport || { width: 1920, height: 1080 }, hasTouch: true,
     deviceScaleFactor: 1, timezoneId: "UTC", reducedMotion: opts.reducedMotion || "no-preference" });
-  await ctx.addInitScript(() => { window.__testHooks = true; });
+  if (opts.hooks !== false) await ctx.addInitScript(() => { window.__testHooks = true; });
   await ctx.route("http://127.0.0.1:49155/**", (r) => r.abort());   // ERAgaze's port on her PC; nothing answers here
   await ctx.route("**/tts*", (r) => r.fulfill({ status: 503, body: "" }));
   await ctx.route("**/log", (r) => r.fulfill({ status: 204, body: "" }));
@@ -125,13 +126,14 @@ test("her picture and the rest tile are inert, and the only holds on the page ar
     rest: document.getElementById("restTile").matches(".dwell") ||
       [...document.getElementById("restTile").attributes].some((a) => a.name.startsWith("data-dwell")),
     holds: [...document.querySelectorAll("[data-dwell-ms]")].map((el) => el.id + "=" + el.dataset.dwellMs).sort(),
-    ringTargets: document.querySelectorAll("#sRing .dwell").length,
+    ringTargets: document.querySelectorAll("#sRing .cell.dwell").length,
     items: document.querySelectorAll("#scene .item").length,
   }));
   assert.equal(r.sceneAttrs, false, "no .dwell and no data-dwell-* anywhere in her picture");
   assert.equal(r.rest, false);
   assert.deepEqual(r.holds, ["barDoor=2400", "barTalk=2400"]);
-  assert.equal(r.ringTargets, 10, "8 stickers + Undo + Done");
+  assert.equal(r.ringTargets, 14, "8 palette + 4 modes + Undo + Done");
+  assert.ok(r.ringTargets <= CONTRACT.maxChoices.cap, "inside the contract's cap of 16 (spec 2026-10-02 §8)");
   assert.equal(r.items, 1);
   await ctx.close();
 });
@@ -159,9 +161,9 @@ test("a hash that is not a picture id opens the shelf, never a broken ring", asy
 
 test("at 1280x720 every ring tile is still at least 60px", async () => {
   const { ctx, page } = await openRing({ viewport: { width: 1280, height: 720 } });
-  const mins = await page.evaluate(() => [...document.querySelectorAll("#sRing .dwell")].map((el) => {
+  const mins = await page.evaluate(() => [...document.querySelectorAll("#sRing .cell.dwell")].map((el) => {
     const r = el.getBoundingClientRect(); return Math.min(r.width, r.height); }));
-  assert.equal(mins.length, 10);
+  assert.equal(mins.length, 14);
   for (const m of mins) assert.ok(m >= 60, String(m));
   await ctx.close();
 });
@@ -364,12 +366,13 @@ test("the sheet puts every target to sleep but the two doors, says no picture is
   await page.locator("#partnerTab").click();
   let r = await page.evaluate(() => ({ live: [...document.querySelectorAll(".dwell")].map((e) => e.id).sort(),
     asleep: document.querySelectorAll("#sRing [data-dwell-disabled]").length }));
-  assert.deepEqual(r, { live: ["barDoor", "barTalk"], asleep: 10 });
+  assert.deepEqual(r, { live: ["barDoor", "barTalk"], asleep: 14 });
   assert.equal(await page.textContent("#pMail"), "No picture finished yet");
+  assert.equal(await page.evaluate(() => document.getElementById("mode-draw").hasAttribute("data-dwell-disabled")), true, "the mode tiles sleep too");
   await page.locator("#pClose").click();
   r = await page.evaluate(() => ({ live: document.querySelectorAll("#sRing .dwell").length,
     asleep: document.querySelectorAll("[data-dwell-disabled]").length }));
-  assert.deepEqual(r, { live: 10, asleep: 0 });
+  assert.deepEqual(r, { live: 14, asleep: 0 });
   await ctx.close();
 });
 
@@ -711,4 +714,87 @@ test("the ring draws the picture's place, and the exported PNG paints the same p
   assert.ok(close(px.sand, [227, 198, 139]), "beach sand " + px.sand);
   assert.deepEqual(errors, []);
   await ctx.close();
+});
+
+// ================================================================ v2 T5 — row 5 and the modes
+const SEAT_KEYS = ["1,1", "2,1", "3,1", "4,1", "1,3", "2,3", "3,3", "4,3"];
+const paletteOf = (page) => page.evaluate(() => [...document.querySelectorAll("#sRing > .pal")].map((el) => ({
+  seat: el.dataset.seat, id: el.id || null, black: el.classList.contains("pal-black"), dwell: el.classList.contains("dwell"),
+  on: el.classList.contains("on"), word: el.textContent.trim() })));
+const rects = (page, sel) => page.evaluate((sel) => [...document.querySelectorAll(sel)].map((e) => {
+  const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map(Math.round).join(","); }), sel);
+
+test("row 5: Undo, Draw, People, the black rest tile, Stickers, Places, Done — five equal cells under the picture", async () => {
+  const { ctx, page, errors } = await openRing();
+  const g = await page.evaluate(() => {
+    const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
+    return { row: [...document.querySelectorAll("#modeRow > *")].map((el) => ({ id: el.id, ...box(el), word: el.textContent.trim(),
+               dwell: el.classList.contains("dwell"), bg: getComputedStyle(el).backgroundColor,
+               attrs: [...el.attributes].some((a) => a.name.startsWith("data-dwell")) })),
+             undo: box(document.getElementById("btnUndo")), done: box(document.getElementById("btnDone")),
+             scene: box(document.getElementById("scene")) };
+  });
+  const byX = [...g.row].sort((a, b) => a.x - b.x);
+  assert.deepEqual(byX.map((c) => c.id), ["mode-draw", "mode-people", "restTile", "mode-stickers", "mode-places"]);
+  assert.deepEqual(byX.map((c) => c.word), ["Draw", "People", "", "Stickers", "Places"]);
+  assert.deepEqual([byX[2].bg, byX[2].dwell, byX[2].attrs], ["rgb(0, 0, 0)", false, false], "the rest tile: black and inert");
+  for (const c of byX) {
+    assert.ok(Math.abs(c.w - byX[0].w) < 1 && Math.abs(c.h - byX[0].h) < 1, "equal cells: " + c.id);
+    assert.ok(Math.abs(c.y - g.undo.y) < 1 && Math.abs(c.h - g.undo.h) < 1, "on row 5: " + c.id);
+    assert.ok(Math.min(c.w, c.h) >= 90, c.id + " is at least 90 px");
+  }
+  for (let k = 1; k < 5; k++) assert.ok(byX[k].x - (byX[k - 1].x + byX[k - 1].w) >= 13.5, "14 px gaps");
+  assert.ok(byX[0].x > g.undo.x + g.undo.w && byX[4].x + byX[4].w < g.done.x, "between Undo and Done");
+  assert.ok(Math.abs(byX[2].x + byX[2].w / 2 - (g.scene.x + g.scene.w / 2)) < 2, "the rest tile is centred under the picture");
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("modes: Stickers first and glowing teal; a switch speaks its word, moves the glow and is remembered; the active mode does nothing", async () => {
+  const { ctx, page } = await openRing();
+  const on = () => page.evaluate(() => [...document.querySelectorAll("#modeRow .on")].map((e) => e.id));
+  assert.equal((await st(page)).mode, "stickers");
+  assert.deepEqual(await on(), ["mode-stickers"]);
+  assert.match(await page.evaluate(() => getComputedStyle(document.getElementById("mode-stickers")).boxShadow), /rgb\(15, 124, 138\)/);
+  await page.locator("#mode-places").click();
+  let s = await st(page);
+  assert.deepEqual([s.mode, s.said.at(-1)], ["places", "Places"]);
+  assert.deepEqual(await on(), ["mode-places"]);
+  assert.ok(await page.evaluate(() => (window.__speechEngineLog || []).some((e) => e.ev === "stop")), "Speech.stop() first");
+  const n = s.said.length;
+  await page.locator("#mode-places").click();
+  assert.equal((await st(page)).said.length, n, "the active mode: no toggle, no speech");
+  assert.equal(await page.evaluate(() => localStorage.getItem("drawing_mode")), "places");
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => window.Drawing && window.Drawing.state().ready);
+  assert.equal((await st(page)).mode, "places", "the ring remembers the last mode");
+  await ctx.close();
+});
+
+test("the side columns are the mode's palette: eight fixed seats whose contents swap; nothing on the ring moves", async () => {
+  const { ctx, page } = await openRing();
+  assert.deepEqual((await paletteOf(page)).map((c) => c.seat), SEAT_KEYS);
+  assert.deepEqual((await paletteOf(page)).map((c) => c.id),
+    ["tile-house", "tile-horse", "tile-tree", "tile-person", "tile-sun", "tile-cloud", "tile-star", "tile-splat"], "Stickers = v1");
+  const ring = "#sRing > .pal, #modeRow > *, #btnUndo, #btnDone, #scene";
+  const before = await rects(page, ring);
+  for (const m of ["draw", "people", "places", "stickers"]) {
+    await page.locator("#mode-" + m).click();
+    assert.deepEqual((await paletteOf(page)).map((c) => c.seat), SEAT_KEYS, m);
+    assert.deepEqual(await rects(page, ring), before, m + ": zero layout shift");
+  }
+  await ctx.close();
+});
+
+test("&mode=<id> in the hash opens that mode under the test hooks only, and is never remembered", async () => {
+  const id = await newId();
+  let p = await makePage({ hash: `#p=${id}&mode=draw` });
+  await p.page.waitForFunction(() => window.Drawing.state().screen === "ring");
+  assert.equal((await st(p.page)).mode, "draw");
+  assert.equal(await p.page.evaluate(() => localStorage.getItem("drawing_mode")), null);
+  await p.ctx.close();
+  p = await makePage({ hash: `#p=${id}&mode=draw`, hooks: false });
+  await p.page.waitForFunction(() => window.Drawing.state().screen === "ring");
+  assert.equal((await st(p.page)).mode, "stickers", "a real device ignores it");
+  await p.ctx.close();
 });
