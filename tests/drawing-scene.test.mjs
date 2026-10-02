@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ASPECT, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene }
+import { ASPECT, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene,
+  PEN, penStart, penMove, penEnd, penRoom, strokePath, withPeople, itemWord, stickerById }
   from "../public/drawing/scene.js";
 import { BACKDROPS, backdropById, horizonOf, backdropMarkup, paintBackdrop } from "../public/drawing/backdrops.js";
 
@@ -183,4 +184,87 @@ test("slots are horizon-relative: the meadow's horizon keeps v1's landings, a hi
   const items = [];
   for (let k = 0; k < 8; k++) { const at = landing("tree", items, T, Math.random, 0.72); items.push({ s: "tree", ...at, by: "ellie" }); }
   near(items[7].x, 0.54, "the lap offset still applies after the mapping");
+});
+
+// ---- v2 (spec 2026-10-02 §3): the pen ------------------------------------------------
+test("the pen: smoothing is deterministic, a point every 0.6% of the width, 3 decimals, never past its room", () => {
+  const pen = penStart(0.2, 0.5);
+  assert.deepEqual([pen.pts, pen.room], [[[0.2, 0.5]], 400]);
+  assert.equal(penMove(pen, 0.3, 0.5), true, "a jump is smoothed, not copied");
+  assert.deepEqual(pen.pts[1], [0.235, 0.5]);                       // 0.2 + 0.35 * 0.1
+  const still = penStart(0.5, 0.5);
+  assert.equal(penMove(still, 0.505, 0.5), false, "a wobble under the step adds nothing");
+  const run = () => { const p = penStart(0.1, 0.1); for (let k = 1; k <= 60; k++) penMove(p, 0.1 + k * 0.01, 0.1 + (k % 5) * 0.03); return p.pts; };
+  const a = run();
+  assert.deepEqual(a, run(), "the same gaze gives the same line");
+  for (let k = 0; k < a.length; k++) {
+    for (const v of a[k]) { assert.equal(v, Math.round(v * 1000) / 1000); assert.ok(v >= 0 && v <= 1); }
+    if (k) assert.ok(Math.hypot(a[k][0] - a[k - 1][0], (a[k][1] - a[k - 1][1]) / ASPECT) >= PEN.minStep - 0.001, "spaced " + k);
+  }
+  const full = penStart(0, 0, 3);
+  for (let k = 1; k < 100; k++) penMove(full, k / 100, 0);
+  assert.equal(full.pts.length, 3, "never past its room");
+  assert.equal(penStart(0, 0, 9999).room, 400, "never past 400");
+});
+
+test("penEnd lands on the dwell dot; penRoom keeps a scene under the soft cap", () => {
+  const p = penStart(0.1, 0.1);
+  penMove(p, 0.5, 0.1);
+  assert.deepEqual(penEnd(p, { x: 0.6, y: 0.4 }).at(-1), [0.6, 0.4]);
+  assert.equal(p.pts.length, 2, "penEnd does not touch the live pen");
+  assert.deepEqual(penEnd(penStart(0.1, 0.1), null), [[0.1, 0.1]], "a dwell without movement is one point (the page drops it)");
+  assert.deepEqual(penEnd(penStart(0.1, 0.1), { x: 0.1, y: 0.1 }), [[0.1, 0.1]], "a landing on the start adds nothing");
+  assert.equal(penRoom(1000), 400);
+  assert.equal(penRoom(PEN.byteSoft - 96 - 14 * 10), 10);
+  assert.ok(penRoom(PEN.byteSoft) < 2, "a full picture has no room for a stroke");
+});
+
+test("a stroke is one path in 1600x900 units — the same string for the ring and the PNG", () => {
+  assert.equal(strokePath([[0, 0], [0.5, 0.5], [1, 1]]), "M0 0L800 450L1600 900");
+  assert.equal(strokePath([[0.123, 0.456], [0.2, 0.2]]), "M196.8 410.4L320 180");
+  const S1 = { s: "stroke", c: "#d96fa6", w: 0.014, pts: [[0.1, 0.2], [0.3, 0.4]], by: "ellie" };
+  const ops = sceneOps({ v: 1, backdrop: "meadow", items: [{ s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" }, S1, { ...S1, pts: [[0.1, 0.1]] }] }, T);
+  assert.equal(ops.length, 2, "a one-point stroke is never drawn");
+  const op = ops[1];
+  assert.deepEqual([op.i, op.kind, op.d, op.stroke, op.left, op.top, op.width, op.height],
+    [1, "stroke", strokePath(S1.pts), "#d96fa6", 0, 0, 1, 1]);
+  near(op.lineWidth, 12.6, "1.4% of the height");
+  const calls = [];
+  renderScene(fakeCtx(calls), { v: 1, backdrop: "meadow", items: [S1] }, { table: T, images: {} });
+  assert.deepEqual(calls.at(-1), ["line", strokePath(S1.pts), "#d96fa6", op.lineWidth, "round"]);
+});
+
+// ---- v2 (spec 2026-10-02 §4): people --------------------------------------------------
+const PEOPLE = [{ slug: "maya", word: "Maya", scale: 0.3 }, { slug: "sam", word: "Sam", scale: 0.25 }];
+test("people are ground stickers named by their word, scaled from the library, drawn from /characters/", () => {
+  const TP = withPeople(T, PEOPLE);
+  assert.equal(TP.stickers, T.stickers, "the sticker table is untouched");
+  const m = stickerById(TP, "person:maya");
+  assert.deepEqual([m.zone, m.scale, m.word, m.src, m.person], ["ground", 0.3, "Maya", "/characters/maya.png", true]);
+  assert.deepEqual(landing("person:maya", [], TP), { x: 0.5, y: 0.77, w: 0.3 }, "the first ground slot, feet on the grass");
+  const items = [{ s: "horse", ...landing("horse", [], TP), by: "ellie" }];
+  assert.equal(landing("person:sam", items, TP).x, 0.35, "people and stickers share the ground slots");
+  assert.deepEqual([itemWord(TP, "person:sam"), itemWord(TP, "horse"), itemWord(TP, "person:gone")], ["Sam", "Horse", ""]);
+  const ops = sceneOps({ v: 1, items: [{ s: "person:maya", x: 0.5, y: 0.77, w: 0.3, by: "ellie" },
+                                        { s: "person:gone", x: 0.5, y: 0.5, w: 0.3, by: "ellie" }] }, TP);
+  assert.equal(ops.length, 1, "a person who left the library is drawn as nothing — never an error");
+  assert.deepEqual([ops[0].kind, ops[0].src, ops[0].s], ["img", "/characters/maya.png", "person:maya"]);
+});
+
+test("the PNG draws a person into its box without stretching: contain, bottom on the box's bottom", () => {
+  const calls = [];
+  renderScene(fakeCtx(calls), { v: 1, backdrop: "meadow", items: [{ s: "person:maya", x: 0.5, y: 0.5, w: 0.4, by: "ellie" }] },
+    { table: withPeople(T, PEOPLE), images: { "person:maya": { complete: true, naturalWidth: 64, naturalHeight: 128 } } });
+  const [, x, y, w, h] = calls.find((c) => c[0] === "img");
+  // the box: 0.4 x 900 = 360 px square centred at (800, 450); a 1:2 figure fills its height, 180 px wide
+  for (const [got, want, what] of [[x, 710, "x"], [y, 270, "y"], [w, 180, "w"], [h, 360, "h"]]) near(got, want, what);
+});
+
+test("the celebration names people by their word, once each, and never counts strokes", () => {
+  const TP = withPeople(T, PEOPLE);
+  const I = (...ids) => ids.map((s) => ({ s }));
+  assert.equal(describe(I("person:maya", "horse", "person:maya", "person:sam"), TP), "You made a picture with Maya, a horse and Sam!");
+  assert.equal(describe(I("stroke", "stroke"), TP), "You made a picture!");
+  assert.equal(describe(I("stroke", "star", "stroke", "star"), TP), "You made a picture with two stars!");
+  assert.equal(describe(I("person:gone", "sun"), TP), "You made a picture with a sun!", "a vanished person is not named");
 });

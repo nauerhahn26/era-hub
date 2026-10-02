@@ -15,7 +15,49 @@ export const SPLAT_COLOURS = ["#0F7C8A", "#DE7B52", "#2E7D5B", "#B7822B"];
 const NUMBER = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
 
-export const stickerById = (table, id) => (table && table.stickers || []).find((s) => s.id === id) || null;
+// A sticker from stickers.json, or a person from the library (withPeople): one lookup for both.
+export const stickerById = (table, id) => (table && table.stickers || []).find((s) => s.id === id)
+  || (table && table.people || []).find((p) => p.id === id) || null;
+export const itemWord = (table, s) => { const st = stickerById(table, s); return st ? st.word : ""; };
+
+// People (spec 2026-10-02 §4): her family, cut out, from the private library the hub serves at
+// /characters/. A person is a ground sticker whose scale and word come from characters.json.
+export function withPeople(table, people) {
+  return { ...table, people: (people || []).map((p) => ({ id: "person:" + p.slug, word: p.word, plural: p.word,
+    zone: "ground", scale: p.scale, src: "/characters/" + encodeURIComponent(p.slug) + ".png", person: true })) };
+}
+
+// The pen (spec 2026-10-02 §3, EyeDraw's look-look adapted): it follows her gaze through an
+// exponential smoother and keeps a point every minStep scene WIDTHS (dy is in heights, so it counts
+// 9/16). Points have 3 decimals — at most 14 bytes of JSON each ("[0.123,0.456],") — and byteSoft
+// keeps a whole scene under the hub's 256 KB, so her ink can never make a save fail (deviation 11).
+export const PEN = { alpha: 0.35, minStep: 0.006, maxPts: 400, width: 0.014, byteSoft: 240 * 1024, ptBytes: 14 };
+const r3 = (v) => Math.round(Math.min(1, Math.max(0, v)) * 1000) / 1000;
+export function penStart(x, y, room = PEN.maxPts) {
+  return { sx: x, sy: y, room: Math.min(PEN.maxPts, room), pts: [[r3(x), r3(y)]] };
+}
+export function penMove(pen, x, y) {
+  pen.sx += PEN.alpha * (x - pen.sx);
+  pen.sy += PEN.alpha * (y - pen.sy);
+  if (pen.pts.length >= pen.room) return false;
+  const last = pen.pts[pen.pts.length - 1];
+  if (Math.hypot(pen.sx - last[0], (pen.sy - last[1]) / ASPECT) < PEN.minStep) return false;
+  pen.pts.push([r3(pen.sx), r3(pen.sy)]);
+  return true;
+}
+export function penEnd(pen, landing) {
+  const pts = pen.pts.slice();
+  if (landing && pts.length < pen.room) {
+    const p = [r3(landing.x), r3(landing.y)], last = pts[pts.length - 1];
+    if (p[0] !== last[0] || p[1] !== last[1]) pts.push(p);
+  }
+  return pts;
+}
+export const penRoom = (jsonLength) => Math.min(PEN.maxPts, Math.floor((PEN.byteSoft - jsonLength - 96) / PEN.ptBytes));
+export function strokePath(pts) {
+  const f = (v) => String(Math.round(v * 10) / 10);
+  return pts.map(([x, y], k) => (k ? "L" : "M") + f(x * 1600) + " " + f(y * 900)).join("");
+}
 
 // Rounded to 4 decimals INWARD: a plain round could put an edge item 0.00005 outside (caught by
 // the "however many laps" test), and the hub refuses nothing inside 0-1 but the box must stay in.
@@ -90,17 +132,20 @@ export function splatPath(seed) {
   return d + "Z";
 }
 
-// What she DID (spec §2.3): counted, in the order she first placed each, "a, b and c".
+// What she DID (spec 2026-09-30 §2.3; 2026-10-02 §4): counted, in the order she first placed each,
+// "a, b and c". A person is named by their word, once. Strokes and ids this table does not know (a
+// person who left the library, a newer version's sticker) are not in the sentence.
 export function describe(items, table) {
   const order = [], count = new Map();
   for (const it of items || []) {
+    if (!it || it.s === "stroke" || !stickerById(table, it.s)) continue;
     if (!count.has(it.s)) order.push(it.s);
     count.set(it.s, (count.get(it.s) || 0) + 1);
   }
   const parts = order.map((id) => {
     const st = stickerById(table, id), n = count.get(id);
-    const word = st ? st.word.toLowerCase() : id;
-    return n === 1 ? "a " + word : (NUMBER[n] || String(n)) + " " + (st ? st.plural : id + "s");
+    if (st.person) return st.word;
+    return n === 1 ? "a " + st.word.toLowerCase() : (NUMBER[n] || String(n)) + " " + st.plural;
   });
   if (!parts.length) return "You made a picture!";
   const list = parts.length === 1 ? parts[0] : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
@@ -108,11 +153,18 @@ export function describe(items, table) {
 }
 
 // The one geometry: every item's box as fractions of the scene's width (left, width) and height
-// (top, height). Unknown stickers (a newer version's) are skipped, never thrown on.
+// (top, height). A stroke covers the whole picture and carries its path in 1600x900 units.
+// Unknown ids (a newer version's sticker, a person who left the library) are skipped, never thrown on.
 export function sceneOps(scene, table) {
   const out = [];
   (scene && scene.items || []).forEach((it, i) => {
-    const st = stickerById(table, it.s);
+    if (it && it.s === "stroke") {
+      if (!Array.isArray(it.pts) || it.pts.length < 2) return;
+      out.push({ i, s: "stroke", kind: "stroke", d: strokePath(it.pts), stroke: it.c, lineWidth: it.w * 900,
+                 left: 0, top: 0, width: 1, height: 1 });
+      return;
+    }
+    const st = stickerById(table, it && it.s);
     if (!st) return;
     const hx = it.w / ASPECT / 2, hy = it.w / 2;
     const splat = it.s === "splat";
@@ -135,6 +187,22 @@ export function splatSvg(d, fill) {
   el.appendChild(p);
   return el;
 }
+
+// One stroke as DOM: the ring's strokes (renderScene) and the live pen (drawing.js) are this element.
+export function strokeSvg(d, colour, w) {
+  const el = document.createElementNS(SVGNS, "svg");
+  el.setAttribute("viewBox", "0 0 1600 900");
+  el.setAttribute("preserveAspectRatio", "none");
+  const p = document.createElementNS(SVGNS, "path");
+  p.setAttribute("d", d);
+  p.setAttribute("fill", "none");
+  p.setAttribute("stroke", colour);
+  p.setAttribute("stroke-width", String(Math.round(w * 900 * 10) / 10));
+  p.setAttribute("stroke-linecap", "round");
+  p.setAttribute("stroke-linejoin", "round");
+  el.appendChild(p);
+  return el;
+}
 // THE renderer. target = a CanvasRenderingContext2D (the PNG) or an element (the ring's #scene, a
 // shelf thumbnail, the New picture tile). opts.images = { stickerId: loaded HTMLImageElement } for
 // the canvas. Returns target.
@@ -145,7 +213,16 @@ export function renderScene(target, scene, { table, images } = {}) {
     paintBackdrop(target, (scene && scene.backdrop) || "meadow", W, H);
     for (const op of ops) {
       const x = op.left * W, y = op.top * H, w = op.width * W, h = op.height * H;
-      if (op.kind === "splat") {
+      if (op.kind === "stroke") {
+        target.save();
+        target.scale(W / 1600, H / 900);
+        target.strokeStyle = op.stroke;
+        target.lineWidth = op.lineWidth;
+        target.lineCap = "round";
+        target.lineJoin = "round";
+        target.stroke(new Path2D(op.d));
+        target.restore();
+      } else if (op.kind === "splat") {
         target.save();
         target.translate(x + w / 2, y + h / 2);
         target.scale(w / 2, h / 2);
@@ -153,7 +230,9 @@ export function renderScene(target, scene, { table, images } = {}) {
         target.fill(new Path2D(op.d));
         target.restore();
       } else if (images && images[op.s] && images[op.s].complete && images[op.s].naturalWidth) {
-        target.drawImage(images[op.s], x, y, w, h);
+        const im = images[op.s];                     // contain, bottom-aligned: a figure is never stretched
+        const f = Math.min(w / im.naturalWidth, h / im.naturalHeight), dw = im.naturalWidth * f, dh = im.naturalHeight * f;
+        target.drawImage(im, x + (w - dw) / 2, y + h - dh, dw, dh);
       }
     }
     return target;
@@ -161,7 +240,9 @@ export function renderScene(target, scene, { table, images } = {}) {
   target.style.background = "";
   const kids = ops.map((op) => {
     let el;
-    if (op.kind === "splat") {
+    if (op.kind === "stroke") {
+      el = strokeSvg(op.d, op.stroke, op.lineWidth / 900);
+    } else if (op.kind === "splat") {
       el = splatSvg(op.d, op.fill);
     } else {
       el = document.createElement("img");
@@ -169,7 +250,7 @@ export function renderScene(target, scene, { table, images } = {}) {
       el.alt = "";
       el.draggable = false;
     }
-    el.setAttribute("class", "item");
+    el.setAttribute("class", op.kind === "stroke" ? "item stroke" : "item");
     el.setAttribute("data-i", String(op.i));
     el.style.left = op.left * 100 + "%";
     el.style.top = op.top * 100 + "%";

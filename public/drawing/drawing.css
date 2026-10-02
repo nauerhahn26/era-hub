@@ -49,6 +49,8 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
 .scene .backdrop{position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none}
 .scene .item{position:absolute; display:block; pointer-events:none; overflow:visible}
 #scene .item{pointer-events:auto; touch-action:none; -webkit-user-drag:none}   /* the partner's finger */
+.scene img.item{object-fit:contain; object-position:50% 100%}         /* a person is never stretched */
+#scene .item.stroke{pointer-events:none}                                /* ink is never a finger target */
 .flyer{position:fixed; z-index:50; pointer-events:none; transform-origin:0 0}
 
 /* ---- the shelf: the Reader's rail + 3x4 grid (public/reader/index.html) ---- */
