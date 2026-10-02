@@ -30,7 +30,7 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
 /* text tiles: glyph + word, the word on the 74px floor at 1920 */
 .text .glyph{font-size:clamp(28px, 2.9vw, 56px); line-height:1}
 .text .word{font-size:clamp(44px, 3.86vw, 74px); font-weight:750; line-height:1.1}
-#btnUndo, #shelfMore{background:var(--nav); color:#fff}
+#btnUndo, #shelfMore, #peopleMore{background:var(--nav); color:#fff}
 #btnDone{background:var(--teal); color:#fff}
 
 /* ---- the ring: 3 x 5 under the bar; the picture in the middle, never moving ---- */

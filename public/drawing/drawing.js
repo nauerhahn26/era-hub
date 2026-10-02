@@ -46,7 +46,7 @@ const S = {
   index: [], shelfPage: 0, shelfPages: 1, shelfIds: [], painted: "", pollTimer: null,
   lastMail: null, said: [], park: null, session: "s" + Date.now(),
   mode: "stickers", people: [], gaze: null, pen: null, carry: null, cool: null, spot: null, swallowUntil: 0,
-  leaveTimer: null, restTimer: null,
+  leaveTimer: null, restTimer: null, peoplePage: 0, peoplePages: 1,
 };
 let BAR = null;
 let frozen = [];                 // the .dwell targets the grown-up's sheet put to sleep
@@ -193,6 +193,7 @@ function paletteCells() {
   if (S.mode === "stickers") return S.table.stickers.map(stickerTile);
   if (S.mode === "places") return placeCells();
   if (S.mode === "draw") return crayonCells();
+  if (S.mode === "people") return peopleCells();
   return SEATS.map(blackPal);                 // T6 places, T7 draw, T8 people
 }
 function renderPalette() {
@@ -209,6 +210,67 @@ function renderPalette() {
   markOn();
   refreeze();
 }
+// ---------- People (spec 2026-10-02 §4) ----------
+// The private library the hub serves from the family's Drive folder. No library (Drive off on this
+// device, nothing cut out yet): People shows black seats and says so — the picture never errors.
+async function loadPeople() {
+  try {
+    const j = await (await fetch("/characters/index.json", { cache: "no-store" })).json();
+    S.people = Array.isArray(j) ? j : [];
+  } catch { S.people = []; }
+  S.table = SC.withPeople(S.table, S.people);
+  for (const p of S.people) {
+    const im = new Image();
+    im.src = "/characters/" + encodeURIComponent(p.slug) + ".png";
+    S.images["person:" + p.slug] = im;                                // for the PNG (same origin: exportable)
+  }
+}
+function personTile(p) {
+  const id = "person:" + p.slug, st = SC.stickerById(S.table, id);
+  const b = document.createElement("button");
+  b.type = "button";
+  b.id = "person-" + p.slug;
+  b.className = "cell person photo dwell";
+  b.dataset.s = id;
+  b.setAttribute("aria-label", p.word);
+  const pic = document.createElement("img");
+  pic.className = "pic"; pic.src = st.src; pic.alt = ""; pic.draggable = false;
+  const word = document.createElement("span");
+  word.className = "word plate";
+  word.textContent = p.word;
+  b.append(pic, word);
+  b.addEventListener("click", () => place(id, b));
+  return b;
+}
+// The Reader's More rule: past eight people, seven a page and More in the last seat; it loops.
+function peopleMoreTile() {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.id = "peopleMore";
+  b.className = "cell text dwell";
+  b.setAttribute("aria-label", "More people");
+  const g = document.createElement("span"); g.className = "glyph"; g.setAttribute("aria-hidden", "true"); g.textContent = "▶";
+  const w = document.createElement("span"); w.className = "word"; w.textContent = "More";
+  b.append(g, w);
+  b.addEventListener("click", () => {
+    settle(); hush();
+    S.peoplePage = (S.peoplePage + 1) % S.peoplePages;
+    renderPalette(); suppress();
+    log("people-page", { page: S.peoplePage });
+  });
+  return b;
+}
+function peopleCells() {
+  const n = S.people.length, seats = SEATS.length;
+  S.peoplePages = n > seats ? Math.ceil(n / (seats - 1)) : 1;
+  if (S.peoplePage >= S.peoplePages) S.peoplePage = 0;
+  const per = S.peoplePages > 1 ? seats - 1 : seats;
+  const slice = S.people.slice(S.peoplePage * per, S.peoplePage * per + per);
+  const cells = SEATS.map((_, k) => (slice[k] ? personTile(slice[k]) : blackPal()));
+  if (S.peoplePages > 1) cells[seats - 1] = peopleMoreTile();
+  return cells;
+}
+
 // ---------- Places (spec 2026-10-02 §5) ----------
 function placeCells() {
   return S.table.backdrops.map((b) => {
@@ -468,7 +530,7 @@ function push(ev) { S.history.push(ev); if (S.history.length > HISTORY_MAX) S.hi
 function place(id, tile) {
   settle();
   if (S.screen !== "ring" || !S.scene || S.paused) return;
-  const st = S.stickers.get(id);
+  const st = SC.stickerById(S.table, id);
   if (!st) return;
   hush();
   say(st.word);
@@ -767,6 +829,7 @@ window.Drawing = {
     shelfPage: S.shelfPage, shelfPages: S.shelfPages, shelfIds: S.shelfIds.slice(),
     said: S.said.slice(), park: S.park, paused: S.paused,
     crayon: S.scene ? S.scene.crayon || null : null, pen: S.pen ? { n: S.pen.pts.length, c: S.pen.c } : null,
+    people: S.people.map((p) => p.slug), peoplePage: S.peoplePage, peoplePages: S.peoplePages,
     mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null,
   }),
   setMode, settle,
@@ -786,7 +849,7 @@ async function boot() {
   try { if (window.Speech) Speech.init("Let's make a picture!"); } catch {}
   try { S.lastMail = JSON.parse(localStorage.getItem("drawing_mail_last") || "null"); } catch {}
   try { S.table = await (await fetch("stickers.json")).json(); } catch { S.table = { stickers: [], zones: {} }; }
-  S.mode = readMode(); loadStickers(); buildModes();
+  S.mode = readMode(); loadStickers(); await loadPeople(); buildModes();
   SC.renderScene($("newThumb"), { v: 1, backdrop: "meadow", items: [] }, { table: S.table });
   try {
     const st = await (await fetch("/settings")).json();
@@ -808,7 +871,7 @@ async function boot() {
   S.ready = true;
   try { if (window.Speech) Speech.preload(S.table.stickers.map((s) => s.word)
     .concat((S.table.modes || []).map((m) => m.word), (S.table.backdrops || []).map((b) => b.word),
-      (S.table.crayons || []).map((c) => c.word),
+      (S.table.crayons || []).map((c) => c.word), S.people.map((p) => p.word),
       ["Undo", "No people yet"])); } catch {}
   log("boot", {});
 }

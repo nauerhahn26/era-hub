@@ -27,6 +27,7 @@
     $("pClearRow").hidden = D.state().screen !== "ring";
     $("pClear").textContent = clearArmed ? "Clear the whole picture?" : "🗑 Clear picture";
     $("pClearYes").hidden = !clearArmed;
+    $("pPeople").hidden = !(D.state().screen === "ring" && D.state().people.length === 0);
   }
   function open() { if (!sheet.hidden) return; clearArmed = false; D.freeze(); sheet.hidden = false; paint(); }
   function close() { if (sheet.hidden) return; sheet.hidden = true; clearArmed = false; D.thaw(); }

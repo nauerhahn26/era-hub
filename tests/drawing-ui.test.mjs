@@ -6,6 +6,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import zlib from "node:zlib";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1064,5 +1065,125 @@ test("with her real dwell: rest on the picture to start, keep moving to draw (ne
   const s = await st(page);
   assert.deepEqual([s.items.length, s.items[0].s], [1, "stroke"]);
   assert.ok(s.items[0].pts.length > 10, String(s.items[0].pts.length));
+  await ctx.close();
+});
+
+// ================================================================ v2 T8 — People
+// Two neutral synthetic people (spec §4: family images never enter this repo), solid colours so the
+// PNG test can find them. The hub reads <DATA>/characters — what the Drive mirror would carry in.
+function tinyPng(w, h, rgba) {
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 4).fill(Buffer.from(rgba))]);
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]), crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(td));
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(Array.from({ length: h }, () => row)))), chunk("IEND", Buffer.alloc(0))]);
+}
+const CHARS = path.join(TMP, "characters");
+const MAYA = { slug: "maya", word: "Maya", scale: 0.3, rgba: [51, 102, 204, 255] };
+const SAM = { slug: "sam", word: "Sam", scale: 0.25, rgba: [138, 90, 43, 255] };
+function seedPeople(people) {
+  fs.rmSync(CHARS, { recursive: true, force: true });
+  if (!people) return;
+  fs.mkdirSync(CHARS, { recursive: true });
+  for (const p of people) fs.writeFileSync(path.join(CHARS, p.slug + ".png"), tinyPng(64, 128, p.rgba || [51, 102, 204, 255]));
+  fs.writeFileSync(path.join(CHARS, "characters.json"),
+    JSON.stringify({ v: 1, people: people.map(({ slug, word, scale }) => ({ slug, word, scale })) }));
+}
+
+test("People: the library in dad's order, the other seats black; a dwell says the name and they land on the grass", async () => {
+  seedPeople([MAYA, SAM]);
+  const { ctx, page, id } = await openRing();
+  await page.locator("#mode-people").click();
+  assert.equal((await st(page)).said.at(-1), "People");
+  const pal = await paletteOf(page);
+  assert.deepEqual(pal.map((c) => c.id), ["person-maya", "person-sam", null, null, null, null, null, null]);
+  assert.deepEqual(pal.slice(2).map((c) => [c.black, c.dwell]), Array(6).fill([true, false]), "empty seats: black and inert");
+  assert.deepEqual(pal.slice(0, 2).map((c) => c.word), ["Maya", "Sam"]);
+  assert.equal(await page.getAttribute("#person-maya img", "src"), "/characters/maya.png");
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok() && r.request().postData().includes("person:sam"));
+  await page.locator("#person-maya").click();
+  await page.locator("#person-sam").click();
+  const s = await st(page);
+  assert.deepEqual(s.said.slice(-2), ["Maya", "Sam"]);
+  assert.deepEqual(s.items, [{ s: "person:maya", x: 0.5, y: 0.77, w: 0.3, by: "ellie" },
+                             { s: "person:sam", x: 0.35, y: 0.755, w: 0.25, by: "ellie" }], "centre-out on the grass, scaled from the library");
+  await saved;
+  assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["person:maya", "person:sam"], "the hub took them: they are in the library");
+  assert.equal(await page.locator('#art img.item[src="/characters/sam.png"]').count(), 1);
+  seedPeople(null);
+  await ctx.close();
+});
+
+test("People: past eight, seven a page with More in the last seat; More turns the page silently and loops", async () => {
+  seedPeople(Array.from({ length: 10 }, (_, k) => ({ slug: "p" + k, word: "P" + k, scale: 0.3 })));
+  const { ctx, page } = await openRing();
+  await page.locator("#mode-people").click();
+  assert.deepEqual((await paletteOf(page)).map((c) => c.id),
+    ["person-p0", "person-p1", "person-p2", "person-p3", "person-p4", "person-p5", "person-p6", "peopleMore"]);
+  let s = await st(page);
+  assert.deepEqual([s.peoplePage, s.peoplePages], [0, 2]);
+  const n = s.said.length;
+  await page.locator("#peopleMore").click();
+  assert.deepEqual((await paletteOf(page)).map((c) => c.id), ["person-p7", "person-p8", "person-p9", null, null, null, null, "peopleMore"]);
+  assert.equal((await st(page)).said.length, n, "More is silent (v1's More)");
+  await page.locator("#peopleMore").click();
+  assert.equal((await st(page)).peoplePage, 0, "More loops back");
+  seedPeople(null);
+  await ctx.close();
+});
+
+test("People with no library: eight black inert seats, \"No people yet\", and the grown-ups' sheet says where to add them", async () => {
+  seedPeople(null);
+  let { ctx, page } = await openRing();
+  await page.locator("#mode-people").click();
+  assert.equal((await st(page)).said.at(-1), "No people yet");
+  const pal = await paletteOf(page);
+  assert.deepEqual([pal.length, pal.every((c) => c.black && !c.dwell)], [8, true]);
+  assert.equal(await page.evaluate(() => document.querySelectorAll("#sRing .cell.dwell").length), 6, "4 modes + Undo + Done");
+  await page.locator("#partnerTab").click();
+  assert.equal(await page.textContent("#pPeople"), "Add people: Drive folder → characters");
+  assert.equal(await page.isVisible("#pPeople"), true);
+  await ctx.close();
+  seedPeople([MAYA]);
+  ({ ctx, page } = await openRing());
+  await page.locator("#partnerTab").click();
+  assert.equal(await page.isVisible("#pPeople"), false, "with a library the line is gone");
+  seedPeople(null);
+  await ctx.close();
+});
+
+test("a person who left the library: drawn as nothing, kept, and the picture still saves (Review Focus 3)", async () => {
+  seedPeople([MAYA]);
+  const id = "2026-10-02-140000-test-dev";
+  seed(id, [{ s: "person:sam", x: 0.35, y: 0.755, w: 0.25, by: "ellie" }], "2026-10-02T14:00:00Z");   // sam is not in this library
+  const { ctx, page, errors } = await openRing({ id });
+  assert.equal(await page.locator("#art .item").count(), 0, "drawn as nothing — never an error");
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith(`/drawings/${id}/scene.json`));
+  await page.locator("#tile-horse").click();
+  assert.equal((await saved).status(), 200, "grandfathered by the hub (deviation 8)");
+  assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["person:sam", "horse"], "kept");
+  assert.deepEqual(errors, []);
+  seedPeople(null);
+  await ctx.close();
+});
+
+test("Done names her people, and the PNG has them in it", async () => {
+  seedPeople([MAYA]);
+  const { ctx, page } = await openRing();
+  await page.locator("#mode-people").click();
+  await page.locator("#person-maya").click();
+  await page.locator("#mode-stickers").click();
+  await page.locator("#tile-horse").click();
+  // Maya: a 270 px box centred at (800, 693) in the PNG; the 1:2 figure fills its height, 135 px wide
+  const [px] = await pngPixels(page, [[800, 640]]);
+  assert.ok(close(px, MAYA.rgba.slice(0, 3), 6), "Maya is in the PNG: " + px);
+  await page.locator("#btnDone").click();
+  await page.waitForFunction(() => window.Drawing.state().screen === "shelf");
+  assert.ok((await st(page)).said.includes("You made a picture with Maya and a horse!"), JSON.stringify((await st(page)).said));
+  seedPeople(null);
   await ctx.close();
 });
