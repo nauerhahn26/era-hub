@@ -118,11 +118,14 @@ SectionEnd
 ; install what is chosen, never install-everything-and-hide). The selection
 ; also seeds data\apps.json (tiles + shortcuts). Enabling later downloads
 ; the missing pack from the release. Making Words rides with the core (its
-; lesson engine is part of the hub root). Board, Music, and Movies share
+; lesson engine is part of the hub root), and so does Drawing (public\drawing +
+; drawings.js are core, never excluded). Board, Music, and Movies share
 ; one pack, synced in .onSelChange.
 Section "ERA eye gaze (recommended)" SecGaze
 SectionEnd
 Section "Making Words" SecMW
+SectionEnd
+Section "Drawing" SecDrawing
 SectionEnd
 Section "The Pencil" SecPencil
   SetOutPath "$INSTDIR\public"
@@ -163,6 +166,7 @@ SectionEnd
   !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} "The ${APPNAME} hub with its own bundled runtime - ${SZ_CORE} MB, and the only big part. Every app runs on it."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecGaze} "ERAgaze: a steady, gentle eye-gaze cursor tuned for kids. For PCs without their own gaze software. Under 1 MB."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMW} "Making Words: the daily letter lesson. Part of the engine - no extra space."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecDrawing} "Drawing: make a picture with stickers, by eye gaze or touch. Part of the engine - no extra space."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecPencil} "The Pencil: free writing with word prediction. Under 1 MB."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecBoard} "Clothing Picker: today's outfit from the child's real wardrobe. Shares a ${SZ_BOARD} MB photo cut-out pack with Music and Movies - the pack is skipped only when all three are unticked."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMusic} "Music: favorite songs on big picture tiles. Shares the ${SZ_BOARD} MB pack with Clothing Picker and Movies."
@@ -216,6 +220,10 @@ Section "-writeApps"
   ${EndIf}
   ${If} ${SectionIsSelected} ${SecReader}
     FileWrite $0 '$1"reader"'
+    StrCpy $1 ","
+  ${EndIf}
+  ${If} ${SectionIsSelected} ${SecDrawing}
+    FileWrite $0 '$1"drawing"'
     StrCpy $1 ","
   ${EndIf}
   ${If} ${SectionIsSelected} ${SecGaze}
