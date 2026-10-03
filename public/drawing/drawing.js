@@ -4,8 +4,11 @@
  * Two screens: THE SHELF (/drawing/) — her pictures newest first, a New picture tile — and THE RING
  * (/drawing/#p=<id>) — eight sticker tiles down both sides, her picture in the middle, Undo and
  * Done either side of a black rest tile. One dwell on a sticker speaks its word and the sticker
- * flies into a sensible place by itself ("pick and it lands"). Her picture is inert: looking at
- * it does nothing (EyeDraw's Midas-touch lesson). A grown-up's finger may move a sticker.
+ * flies into a sensible place by itself ("pick and it lands"). Her picture is never a target by
+ * accident (EyeDraw's Midas-touch lesson): in Draw mode, idle, a dwell on it starts a line; in the
+ * other modes only placed items' hit boxes are targets (a dwell lifts one), and while she draws or
+ * carries, the landing spot is the only target on it (spec 2026-10-02 §3, §6). A grown-up's finger
+ * may move a sticker.
  *
  * Laws (spec §7): one dwell per user, only the two doors are 2x; Speech.stop() before every
  * action of hers; never "wrong", never "sent"; nothing times out; zero layout shift; a picture is
@@ -118,22 +121,26 @@ function onResume() { S.paused = S.wasPaused; log("talk_resume", {}); tellPark()
 
 // ---------- the ring's tiles, from stickers.json (seats fixed forever) ----------
 const splatSample = () => SC.splatSvg(SC.splatPath(7), SC.SPLAT_COLOURS[0]);   // scene.js's one splat
-function stickerTile(st) {
+// Every palette and mode tile: a photo cell — its picture, its word on a plate, her dwell's click.
+function photoTile(id, cls, word, pic, onClick) {
   const b = document.createElement("button");
   b.type = "button";
-  b.id = "tile-" + st.id;
-  b.className = "cell tile photo dwell";
-  b.dataset.s = st.id;
-  b.setAttribute("aria-label", st.word);
-  let pic;
-  if (st.src) { pic = document.createElement("img"); pic.src = st.src; pic.alt = ""; pic.draggable = false; }
-  else pic = splatSample();
+  b.id = id;
+  b.className = "cell " + cls + " photo dwell";
+  b.setAttribute("aria-label", word);
   pic.classList.add("pic");
-  const word = document.createElement("span");
-  word.className = "word plate";
-  word.textContent = st.word;
-  b.append(pic, word);
-  b.addEventListener("click", () => place(st.id, b));
+  const w = document.createElement("span");
+  w.className = "word plate";
+  w.textContent = word;
+  b.append(pic, w);
+  b.addEventListener("click", () => onClick(b));
+  return b;
+}
+function imgPic(src) { const im = document.createElement("img"); im.src = src; im.alt = ""; im.draggable = false; return im; }
+function spanPic(child) { const sp = document.createElement("span"); sp.appendChild(child); return sp; }
+function stickerTile(st) {
+  const b = photoTile("tile-" + st.id, "tile", st.word, st.src ? imgPic(st.src) : splatSample(), (el) => place(st.id, el));
+  b.dataset.s = st.id;
   return b;
 }
 function loadStickers() {
@@ -148,20 +155,9 @@ function readMode() { try { const m = localStorage.getItem(MODE_KEY); return MOD
 function buildModes() {
   const row = $("modeRow");
   for (const m of S.table.modes || []) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.id = "mode-" + m.id;
-    b.className = "cell mode photo dwell";
+    const b = photoTile("mode-" + m.id, "mode", m.word, imgPic(m.src), () => setMode(m.id));
     b.dataset.mode = m.id;
-    b.setAttribute("aria-label", m.word);
     b.style.gridColumn = String(m.seat);
-    const pic = document.createElement("img");
-    pic.className = "pic"; pic.src = m.src; pic.alt = ""; pic.draggable = false;
-    const word = document.createElement("span");
-    word.className = "word plate";
-    word.textContent = m.word;
-    b.append(pic, word);
-    b.addEventListener("click", () => setMode(m.id));
     row.appendChild(b);
   }
 }
@@ -193,8 +189,7 @@ function paletteCells() {
   if (S.mode === "stickers") return S.table.stickers.map(stickerTile);
   if (S.mode === "places") return placeCells();
   if (S.mode === "draw") return crayonCells();
-  if (S.mode === "people") return peopleCells();
-  return SEATS.map(blackPal);                 // T6 places, T7 draw, T8 people
+  return peopleCells();
 }
 function renderPalette() {
   const ring = $("sRing");
@@ -227,19 +222,8 @@ async function loadPeople() {
 }
 function personTile(p) {
   const id = "person:" + p.slug, st = SC.stickerById(S.table, id);
-  const b = document.createElement("button");
-  b.type = "button";
-  b.id = "person-" + p.slug;
-  b.className = "cell person photo dwell";
+  const b = photoTile("person-" + p.slug, "person", p.word, imgPic(st.src), (el) => place(id, el));
   b.dataset.s = id;
-  b.setAttribute("aria-label", p.word);
-  const pic = document.createElement("img");
-  pic.className = "pic"; pic.src = st.src; pic.alt = ""; pic.draggable = false;
-  const word = document.createElement("span");
-  word.className = "word plate";
-  word.textContent = p.word;
-  b.append(pic, word);
-  b.addEventListener("click", () => place(id, b));
   return b;
 }
 // The Reader's More rule: past eight people, seven a page and More in the last seat; it loops.
@@ -274,20 +258,9 @@ function peopleCells() {
 // ---------- Places (spec 2026-10-02 §5) ----------
 function placeCells() {
   return S.table.backdrops.map((b) => {
-    const el = document.createElement("button");
-    el.type = "button";
-    el.id = "place-" + b.id;
-    el.className = "cell place photo dwell";
+    const el = photoTile("place-" + b.id, "place", b.word,
+      spanPic(window.DrawingBackdrops.backdropSvg(b.id)), () => pickPlace(b.id));     // backdrops.js's one painter
     el.dataset.place = b.id;
-    el.setAttribute("aria-label", b.word);
-    const pic = document.createElement("span");
-    pic.className = "pic";
-    pic.appendChild(window.DrawingBackdrops.backdropSvg(b.id));      // backdrops.js's one painter
-    const word = document.createElement("span");
-    word.className = "word plate";
-    word.textContent = b.word;
-    el.append(pic, word);
-    el.addEventListener("click", () => pickPlace(b.id));
     return el;
   });
 }
@@ -311,23 +284,11 @@ function pickPlace(id) {
 // ---------- Draw (spec 2026-10-02 §3) ----------
 function crayonCells() {
   return S.table.crayons.map((cr) => {
-    const el = document.createElement("button");
-    el.type = "button";
-    el.id = "crayon-" + cr.id;
-    el.className = "cell crayon photo dwell";
-    el.dataset.hex = cr.hex;
-    el.setAttribute("aria-label", cr.word);
-    const pic = document.createElement("span");
-    pic.className = "pic";
     const sw = document.createElement("span");
     sw.className = "swatch";
     sw.style.setProperty("--sw", cr.hex);
-    pic.appendChild(sw);
-    const word = document.createElement("span");
-    word.className = "word plate";
-    word.textContent = cr.word;
-    el.append(pic, word);
-    el.addEventListener("click", () => pickCrayon(cr));
+    const el = photoTile("crayon-" + cr.id, "crayon", cr.word, spanPic(sw), () => pickCrayon(cr));
+    el.dataset.hex = cr.hex;
     return el;
   });
 }
@@ -359,8 +320,10 @@ function toScene(cx, cy) {
 }
 function onPointer(e) {
   S.gaze = { cx: e.clientX, cy: e.clientY, type: e.pointerType || "mouse" };
+  // a finger is not her gaze: it never ends the cool-down (nor rebuilds the hit boxes mid-drag)
+  if (e.pointerType === "touch") return;
   if (S.cool !== null && !S.carry && S.scene) coolCheck();
-  if (e.type !== "pointermove" || e.pointerType === "touch") return;
+  if (e.type !== "pointermove") return;
   if (S.pen) penFollow();
   else if (S.carry) carryFollow();
   if (S.pen || S.carry) restWatch();
@@ -462,7 +425,7 @@ function endStroke(landing) {
   applyTargets();
 }
 
-// The glow: the active mode (T6 adds the current place, T7 the current crayon).
+// The glow: the active mode, the picture's crayon and the picture's place.
 function markOn() {
   for (const el of document.querySelectorAll("#modeRow .mode")) el.classList.toggle("on", el.dataset.mode === S.mode);
   for (const el of document.querySelectorAll("#sRing > .crayon")) el.classList.toggle("on", !!S.scene && el.dataset.hex.toLowerCase() === (S.scene.crayon || "").toLowerCase());
@@ -479,21 +442,28 @@ function applyTargets() {
   refreeze();
 }
 function settle() { if (S.pen) endStroke(null); if (S.carry) putBack(); }
-function paintScene() { SC.renderScene($("art"), S.scene, { table: S.table }); paintHits(); }
+// A repaint while she carries something (a finger's move of ANOTHER item commits) keeps hers lifted.
+function paintScene() {
+  SC.renderScene($("art"), S.scene, { table: S.table });
+  if (S.carry) { const a = document.querySelector('#art [data-i="' + S.carry.i + '"]'); if (a) a.classList.add("carried"); }
+  paintHits();
+}
 
 // ---------- gaze-move (spec 2026-10-02 §6) ----------
 // In Stickers, People and Places every placed sticker or person has a hit box; Draw mode has none
 // (her picture is the target there), ink never has one, and while she carries something only the
-// spot is a target. The item she just dropped waits until her gaze has left it (deviation 13).
+// spot is a target. Until her gaze has left the item she just dropped there are no hit boxes at
+// all (deviation 13): dropped ON another item, that one's box would lie under her resting gaze and
+// lift it straight back (review 10/3 #3).
 function paintHits() {
   const box = $("hits");
-  const show = S.screen === "ring" && !!S.scene && S.mode !== "draw" && !S.carry && !S.pen;
+  const show = S.screen === "ring" && !!S.scene && S.mode !== "draw" && !S.carry && !S.pen && S.cool === null;
   if (!show) { box.replaceChildren(); return; }
   const r = $("scene").getBoundingClientRect();
   if (!r.width) return;
   const F = floorPx(), kids = [];
   for (const op of SC.sceneOps(S.scene, S.table)) {
-    if (op.kind === "stroke" || op.i === S.cool) continue;
+    if (op.kind === "stroke") continue;
     const b = SC.hitBox(op, r.width, r.height, F);
     const el = document.createElement("div");
     el.className = "hit dwell";
@@ -562,8 +532,10 @@ function releaseCarry() {
   S.carry = null;
   return { i: c.i, x: c.x, y: c.y };
 }
+// Per gaze sample: only the cooling item's own box (never every stroke's outline).
 function coolCheck() {
-  const op = SC.sceneOps(S.scene, S.table).find((o) => o.i === S.cool), r = $("scene").getBoundingClientRect();
+  const it = S.scene.items[S.cool], r = $("scene").getBoundingClientRect();
+  const op = it ? SC.sceneOps({ items: [it] }, S.table)[0] : null;
   if (!op || !r.width) { S.cool = null; paintHits(); return; }
   const b = SC.hitBox(op, r.width, r.height, floorPx()), x = S.gaze.cx - r.left, y = S.gaze.cy - r.top;
   if (x < b.left || x > b.left + b.width || y < b.top || y > b.top + b.height) { S.cool = null; paintHits(); }
@@ -680,7 +652,11 @@ function undo() {
 function changed() { S.dirty = true; stash(); scheduleSave(); }
 function scheduleSave() { clearTimeout(S.saveTimer); S.saveTimer = setTimeout(() => { save(); }, SAVE_MS); }
 // Last write wins. A failed save logs one line and keeps the picture (memory + localStorage,
-// dirty); the next change — or the next open of this picture — tries again.
+// dirty); the next change — or the next open of this picture — tries again. Once the hub has the
+// body the local copy goes: localStorage is one quota shared by every hub app (review 10/3 #2).
+// keepalive only under Chromium's ~64 KB keepalive cap — a heavier body ("Failed to fetch" with
+// keepalive) goes as a normal fetch, with the dirty local copy as its net (review 10/3 #1).
+const KEEPALIVE_MAX = 65000;
 async function save(opts = {}) {
   clearTimeout(S.saveTimer);
   S.saveTimer = null;
@@ -688,9 +664,12 @@ async function save(opts = {}) {
   const id = S.id, body = JSON.stringify(S.scene);
   try {
     const r = await fetch("/drawings/" + encodeURIComponent(id) + "/scene.json", { method: "PUT",
-      headers: { "Content-Type": "application/json" }, body, keepalive: !!opts.keepalive });
+      headers: { "Content-Type": "application/json" }, body, keepalive: !!opts.keepalive && body.length < KEEPALIVE_MAX });
     if (!r.ok) throw new Error("PUT " + r.status);
-    if (S.id === id && JSON.stringify(S.scene) === body) { S.dirty = false; stash(); }
+    if (S.id === id && JSON.stringify(S.scene) === body) {
+      S.dirty = false;
+      try { localStorage.removeItem(stashKey(id)); } catch {}
+    }
     return true;
   } catch (e) {
     log("save_failed", { id, why: String(e && e.message) });

@@ -326,6 +326,45 @@ test("leaving within the debounce still saves the last sticker (Review Focus 3)"
   await ctx.close();
 });
 
+// review 10/3 #1: Chromium refuses a keepalive fetch whose body is over ~64 KB ("Failed to fetch"),
+// and a v2 picture with ink reaches 256 KB — so the door's save must not ask for keepalive then.
+test("leaving a picture heavier than 64 KB within the debounce still saves the last sticker (review 10/3 #1)", async () => {
+  const id = "2026-10-03-090000-heavy-dev";
+  const ink = Array.from({ length: 13 }, (_, k) => ({ s: "stroke", c: "#0F7C8A", w: 0.014, by: "ellie",
+    pts: Array.from({ length: 400 }, (_, j) => [+(0.05 + j * 0.002).toFixed(4), +(0.05 + k * 0.06 + (j % 7) * 0.001).toFixed(4)]) }));
+  seed(id, ink, "2026-10-03T09:00:00Z");
+  assert.ok(JSON.stringify(ink).length > 70000, "the scene is over 70 KB");
+  const { ctx, page } = await openRing({ id, routes: (c) => c.route("**/kiosk/exit",
+    (r) => r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' })) });
+  const done = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith(`/drawings/${id}/scene.json`), { timeout: 3000 }).catch(() => null);
+  await page.locator("#tile-person").click();
+  await page.locator("#barDoor").click();                // well inside the 800 ms
+  const res = await done;
+  assert.ok(res && res.ok(), "the PUT reached the hub");
+  assert.deepEqual((await hubScene(id)).items.map((i) => i.s).slice(-1), ["person"]);
+  await ctx.close();
+});
+
+// review 10/3 #2: every picture's copy in localStorage shares one quota with every hub app (the
+// media lock's PIN too): a copy the hub already has is removed; a copy the hub refused stays, dirty.
+test("a picture the hub has leaves no copy in this browser; one the hub refused keeps its copy, dirty (review 10/3 #2)", async () => {
+  let fail = false;
+  const { ctx, page, id } = await openRing({ routes: (c) => c.route("**/drawings/*/scene.json",
+    (r) => (fail && r.request().method() === "PUT" ? r.abort() : r.continue())) });
+  const local = () => page.evaluate((id) => JSON.parse(localStorage.getItem("drawing_scene_" + id)), id);
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok());
+  await page.locator("#tile-house").click();
+  await saved;
+  await page.waitForFunction(() => !window.Drawing.state().dirty);
+  assert.equal(await local(), null, "the hub has it: no copy kept here");
+  fail = true;
+  await page.locator("#tile-star").click();
+  await page.waitForTimeout(1200);
+  const s = await local();
+  assert.deepEqual([s && s.dirty, s && s.scene.items.map((i) => i.s)], [true, ["house", "star"]]);
+  await ctx.close();
+});
+
 test("the 200th sticker is the last: a 201st dwell says its word, places nothing, sends nothing (Review Focus 5)", async () => {
   const id = "2026-09-30-120000-cap-dev";
   seed(id, Array.from({ length: 200 }, () => ({ s: "star", x: 0.5, y: 0.2, w: 0.1, by: "ellie" })), "2026-09-30T12:00:00Z");
@@ -656,7 +695,7 @@ test("a sticker placed during Done's celebration still reaches the hub", async (
   }
   assert.deepEqual(items, ["horse", "star"]);
   const stash = await page.evaluate((id) => JSON.parse(localStorage.getItem("drawing_scene_" + id)), id);
-  assert.equal(stash.dirty, false, "and this browser knows the hub has it");
+  assert.equal(stash, null, "and this browser knows the hub has it: no copy is left here (review 10/3 #2)");
   await ctx.close();
 });
 
@@ -1330,6 +1369,104 @@ test("a dropped item is not lifted again until her gaze has left it once (Review
   await page.mouse.move(away.x, away.y, { steps: 3 });
   assert.equal((await st(page)).cool, null);
   assert.equal(await page.locator('#hits > .hit[data-hit="0"]').count(), 1, "she looked away: it can be lifted again");
+  await ctx.close();
+});
+
+// review 10/3 #3: dropped ON another item, the other's hit box lay under her resting gaze — a
+// grab-back loop. While the dropped item cools there are no hit boxes at all.
+test("an item dropped on another: no hit box at all until her gaze has left the dropped one (review 10/3 #3)", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await page.locator("#tile-sun").click();
+  await liftAt(page, 1);
+  const horse = (await st(page)).items[0], p = await scenePt(page, horse.x, horse.y);
+  await page.mouse.move(p.x, p.y, { steps: 15 });
+  await page.locator("#spot").click();
+  assert.equal((await st(page)).cool, 1);
+  assert.equal(await page.locator("#hits > .hit").count(), 0, "no target under her resting gaze — not even the horse");
+  const away = await scenePt(page, 0.1, 0.15);
+  await page.mouse.move(away.x, away.y, { steps: 3 });
+  assert.equal((await st(page)).cool, null);
+  assert.equal(await page.locator("#hits > .hit").count(), 2, "she looked away: both can be lifted again");
+  await ctx.close();
+});
+
+// raw CDP touch, step by step (finger() is one whole gesture)
+async function touch(page) {
+  const cdp = await page.context().newCDPSession(page);
+  const send = (type, pts) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts });
+  return { start: (p) => send("touchStart", [p]), move: (p) => send("touchMove", [p]),
+           end: () => send("touchEnd", []), cancel: () => send("touchCancel", []), close: () => cdp.detach().catch(() => {}) };
+}
+
+// review 10/3 #4: Windows' press-and-hold cancels the touch stream; dwell.js's long-press rescue then
+// clicks the picture (a target in Draw mode) — that click must never start a stroke at the finger.
+test("a cancelled finger drag in Draw mode never starts a stroke (review 10/3 #4)", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await page.waitForFunction(() => !document.querySelector(".flyer"));
+  await page.locator("#mode-draw").click();
+  const from = await centreOf(page, '#art [data-i="0"]');
+  const t = await touch(page);
+  await t.start(from);
+  await t.move({ x: from.x - 20, y: from.y - 10 });
+  await t.cancel();
+  await t.close();
+  await page.waitForTimeout(500);                                      // past dwell.js's 150 ms rescue
+  const s = await st(page);
+  assert.deepEqual([s.pen, s.items.length, s.items[0].x, s.items[0].by], [null, 1, 0.5, "ellie"]);
+  await ctx.close();
+});
+
+// review 10/3 #6: a finger that took another item before her lift commits after it — the repaint
+// must keep the item she carries looking carried.
+test("a finger moving another item while she carries one: hers still looks carried (review 10/3 #6)", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await page.locator("#tile-sun").click();
+  await page.waitForFunction(() => !document.querySelector(".flyer"));
+  const sun = await centreOf(page, '#art [data-i="1"]');
+  const t = await touch(page);
+  await t.start(sun);
+  await t.move({ x: sun.x + 40, y: sun.y + 20 });
+  await page.evaluate(() => document.querySelector('#hits > .hit[data-hit="0"]').click());   // her dwell lifts the horse
+  assert.equal((await st(page)).carrying, 0);
+  await t.move({ x: sun.x + 80, y: sun.y + 40 });
+  await t.end();
+  await t.close();
+  await page.waitForFunction(() => window.Drawing.state().items[1].by === "partner");
+  assert.equal((await st(page)).carrying, 0);
+  assert.equal(await page.locator('#art [data-i="0"].carried').count(), 1, "the horse is still lifted");
+  await ctx.close();
+});
+
+// review 10/3 #7: a finger is not her gaze — its moves never end the cool-down, so a drag never has
+// its hit boxes rebuilt under it (which would drop the pointer capture mid-drag).
+test("a finger drag while a dropped item cools never repaints the hit boxes (review 10/3 #7)", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await page.locator("#tile-sun").click();
+  await liftAt(page, 1);
+  const p = await scenePt(page, 0.2, 0.3);
+  await page.mouse.move(p.x, p.y, { steps: 10 });
+  await page.locator("#spot").click();
+  assert.equal((await st(page)).cool, 1);
+  await page.evaluate(() => { window.__hitsMut = 0;
+    new MutationObserver((rs) => { window.__hitsMut += rs.length; }).observe(document.getElementById("hits"), { childList: true }); });
+  const from = await centreOf(page, '#art [data-i="0"]');
+  const t = await touch(page);
+  await t.start(from);
+  for (let k = 1; k <= 5; k++) await t.move({ x: from.x - 16 * k, y: from.y - 6 * k });
+  const during = await page.evaluate(() => window.__hitsMut);
+  await t.end();
+  await t.close();
+  assert.equal(during, 0, "the hit boxes were never rebuilt under the finger");
+  await page.waitForFunction(() => window.Drawing.state().items[0].by === "partner");
+  assert.equal((await st(page)).cool, 1, "only her gaze ends the cool-down");
   await ctx.close();
 });
 

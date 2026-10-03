@@ -91,9 +91,13 @@
     if (!drag || e.pointerId !== drag.id) return;
     const d = drag;
     drag = null;
-    // One "move" in her history. Swallow the click the finger's release may still produce: it must
-    // never lift the item again, start a stroke in Draw mode, or land something (spec 2026-10-02 §6).
-    if (commit && (d.moved || d.wasCarried)) { D.moveItem(d.i, d.nx, d.ny); D.swallowClicks(400); }
+    // One "move" in her history. Swallow the click a drag's release may still produce — a cancel's
+    // too (Windows' press-and-hold: dwell.js's long-press rescue clicks the picture): it must never
+    // lift the item again, start a stroke in Draw mode, or land something (spec 2026-10-02 §6;
+    // review 10/3 #4). A plain tap (up, unmoved) keeps its click: touch parity.
+    const moved = d.moved || d.wasCarried;
+    if (!commit || moved) D.swallowClicks(400);
+    if (commit && moved) D.moveItem(d.i, d.nx, d.ny);
     else D.repaint();
   };
   scene.addEventListener("pointerup", end(true));
