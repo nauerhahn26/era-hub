@@ -35,14 +35,19 @@
   <div id="shelfGrid"></div>
 </section>
 
-<!-- THE RING (spec §2): sticker tiles down both sides (drawing.js draws the eight from
-     stickers.json into their fixed seats), her picture in the middle — inert, no .dwell —
-     and the black rest tile between Undo and Done. -->
+<!-- THE RING (spec §2; 2026-10-02 §1): the side columns are the current mode's palette in eight
+     fixed seats (drawing.js fills them from stickers.json), her picture in the middle — a dwell
+     target only in Draw mode or while she carries something — and row 5 under it: Undo, the mode
+     row (Draw, People, the black rest tile, Stickers, Places) and Done. -->
 <section id="sRing" class="screen" aria-label="Your picture">
-  <div id="sceneCell"><div id="scene" class="scene" aria-label="Her picture"></div></div>
+  <div id="sceneCell"><div id="scene" class="scene" aria-label="Her picture">
+    <div id="art" class="scene"></div><div id="pen"></div><div id="hits"></div>
+  </div></div>
   <button type="button" id="btnUndo" class="cell text dwell" aria-label="Undo">
     <span class="glyph" aria-hidden="true">↩</span><span class="word">Undo</span></button>
-  <div id="restTile" aria-hidden="true"></div>
+  <!-- row 5 under the picture (spec 2026-10-02 §1): Draw, People, the rest tile, Stickers, Places;
+       drawing.js puts the four mode tiles in their columns from stickers.json modes[].seat -->
+  <div id="modeRow"><div id="restTile" aria-hidden="true"></div></div>
   <button type="button" id="btnDone" class="cell text dwell" aria-label="Done">
     <span class="glyph" aria-hidden="true">✔</span><span class="word">Done</span></button>
 </section>
@@ -60,6 +65,7 @@
       <button type="button" id="pClear" class="sheet-btn">🗑 Clear picture</button>
       <button type="button" id="pClearYes" class="sheet-btn warn" hidden>Yes, clear</button></div>
     <p class="sheet-say" id="pMail"></p>
+    <p class="sheet-say" id="pPeople" hidden>Add people: Drive folder → characters</p>
     <div class="sheet-row"><button type="button" id="pClose" class="sheet-btn">Close</button></div>
   </div>
 </div>
@@ -73,10 +79,12 @@
   import { mountDoorBar } from "../lib/doorbar.js";
   import { confetti } from "../lib/celebrate.js";
   import * as DrawingScene from "./scene.js";
+  import * as DrawingBackdrops from "./backdrops.js";
   window.EllieContract = { CONTRACT, holdFor, holdForExit };
   window.DoorBar = { mountDoorBar };
   window.EllieCelebrate = { confetti };
   window.DrawingScene = DrawingScene;
+  window.DrawingBackdrops = DrawingBackdrops;
 </script>
 <script src="drawing.js" defer></script>
 <script src="partner.js" defer></script>

@@ -2,10 +2,12 @@
 // the vendored stickers (§6), the drawings.js module (§4) and its routes (§5). Synthetic fixtures only.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -56,6 +58,35 @@ test("zones: 0-1 slots, sky above the horizon, ground bases on the grass, centre
   assert.equal(TABLE.zones.sky.slots[0].x, 0.5, "sky fills centre-out");
   const scale = Object.fromEntries(TABLE.stickers.map(s => [s.id, s.scale]));
   assert.deepEqual(scale, { house: 0.26, horse: 0.20, tree: 0.28, person: 0.22, sun: 0.16, cloud: 0.14, star: 0.10, splat: [0.12, 0.18] });
+});
+
+// ---- v2 (spec 2026-10-02 §1-§5): the mode row, the crayons, the places --------------
+const SEAT_KEYS = ["1,1", "2,1", "3,1", "4,1", "1,3", "2,3", "3,3", "4,3"];
+test("v2 tables: four modes in their row-5 seats, eight crayons and eight places in fixed seats, no partner red", () => {
+  assert.deepEqual(TABLE.modes.map(m => [m.id, m.word, m.seat]),
+    [["draw", "Draw", 1], ["people", "People", 2], ["stickers", "Stickers", 4], ["places", "Places", 5]]);
+  assert.deepEqual(TABLE.crayons.map(c => c.at.join(",")), SEAT_KEYS);
+  assert.deepEqual(TABLE.crayons.map(c => [c.word, c.hex]), [["Black", "#1b1b1b"], ["Blue", "#0F7C8A"], ["Green", "#2E7D5B"],
+    ["Yellow", "#B7822B"], ["Red-orange", "#DE7B52"], ["Purple", "#6a4fb3"], ["Pink", "#d96fa6"], ["White", "#f7f7f7"]]);
+  assert.equal(TABLE.crayonDefault, "#0F7C8A", "Blue first");
+  assert.ok(!TABLE.crayons.some(c => c.hex.toLowerCase() === "#b23a48"), "partner red is never a crayon");
+  assert.deepEqual(TABLE.backdrops.map(b => [b.id, b.word]), [["meadow", "Meadow"], ["beach", "Beach"], ["night", "Night"],
+    ["snow", "Snow"], ["sunset", "Sunset"], ["forest", "Forest"], ["city", "City"], ["rainbow", "Rainbow"]]);
+  assert.deepEqual(TABLE.backdrops.map(b => b.at.join(",")), SEAT_KEYS);
+  assert.deepEqual(TABLE.stickers.map(s => s.at.join(",")), SEAT_KEYS, "the stickers already sit in the same seats");
+  assert.equal(TABLE.horizon, 0.58, "the slot tables are written against the meadow's horizon");
+});
+
+test("every mode glyph is vendored and pinned like the stickers; Stickers reuses the star", () => {
+  execFileSync(process.execPath, [path.join(HUB, "tools", "drawing-fetch-stickers.mjs"), "--check"], { stdio: "pipe" });
+  for (const m of TABLE.modes) {
+    const b = fs.readFileSync(path.join(DRAW, m.src));
+    assert.equal(b.readUInt32BE(0), 0x89504e47, m.id + " is a PNG");
+    assert.ok(b.readUInt32BE(16) >= 256 && b.readUInt32BE(20) >= 256, m.id + " is at least 256 px");
+    assert.match(m.source, /^https:\/\/raw\.githubusercontent\.com\/microsoft\/fluentui-emoji\/[0-9a-f]{40}\/assets\//);
+    assert.equal(crypto.createHash("sha256").update(b).digest("hex"), m.sha256, m.id + " matches its pin");
+  }
+  assert.equal(TABLE.modes.find(m => m.id === "stickers").src, TABLE.stickers.find(s => s.id === "star").src);
 });
 
 // ---- §4 the module ------------------------------------------------------------
@@ -115,7 +146,7 @@ test("validation: unknown stickers, out-of-range numbers, bad splats, too many i
   assert.equal(drawings.validateScene({ v: 1, backdrop: "meadow", items: many }).ok, false, "201 items");
   assert.equal(drawings.validateScene({ v: 1, backdrop: "meadow", items: many.slice(1) }).ok, true, "200 is the cap, not over it");
   assert.equal(drawings.validateScene({ v: 2, backdrop: "meadow", items: [] }).ok, false, "v2");
-  assert.equal(drawings.validateScene({ v: 1, backdrop: "beach", items: [] }).ok, false, "one backdrop in v1");
+  assert.equal(drawings.validateScene({ v: 1, backdrop: "beach", items: [] }).scene.backdrop, "beach", "eight places in v2");
   assert.equal(drawings.validateScene([]).ok, false);
   assert.equal(drawings.validateScene(null).ok, false);
   const norm = drawings.validateScene({ v: 1, backdrop: "meadow",
@@ -273,6 +304,97 @@ test("where a picture lives is drive.json plus one stat: drawings never calls dr
   } finally { drive.status = real; }
 });
 
+// ---- v2 (spec 2026-10-02 §3-§5, §7): strokes, crayons, places, people -------------------
+// A tiny real PNG (RGBA, one colour) — family images never enter this repo (spec §4).
+function tinyPng(w, h, rgba = [51, 102, 204, 255]) {
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 4).fill(Buffer.from(rgba))]);
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]), crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(td));
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(Buffer.concat(Array.from({ length: h }, () => row)))), chunk("IEND", Buffer.alloc(0))]);
+}
+const CH = () => path.join(UNIT, "characters");
+function library(people, pngs = people.map((p) => p.slug)) {
+  fs.mkdirSync(CH(), { recursive: true });
+  for (const s of pngs) fs.writeFileSync(path.join(CH(), s + ".png"), tinyPng(16, 32));
+  fs.writeFileSync(path.join(CH(), "characters.json"), JSON.stringify({ v: 1, people }));
+}
+const S1 = { s: "stroke", c: "#d96fa6", w: 0.014, pts: [[0.1, 0.2], [0.3, 0.4]], by: "ellie" };
+const P = (slug) => ({ s: "person:" + slug, x: 0.5, y: 0.77, w: 0.3, by: "ellie" });
+
+test("v2 validation: strokes, crayons and places; unknown place → meadow, unknown crayon → Blue", () => {
+  freshUnit("none");
+  const v = drawings.validateScene({ v: 1, backdrop: "city", crayon: "#d96fa6", items: [S1, H] });
+  assert.deepEqual(v, { ok: true, scene: { v: 1, backdrop: "city", crayon: "#d96fa6", items: [S1, H] } });
+  assert.equal(drawings.validateScene({ v: 1, backdrop: "volcano", items: [] }).scene.backdrop, "meadow");
+  assert.equal(drawings.validateScene({ v: 1, crayon: "#B23A48", items: [] }).scene.crayon, "#0F7C8A", "partner red is never a crayon");
+  assert.equal(drawings.validateScene({ v: 1, items: [] }).scene.crayon, "#0F7C8A");
+  for (const [why, it] of [
+    ["one point", { ...S1, pts: [[0.1, 0.2]] }], ["401 points", { ...S1, pts: Array.from({ length: 401 }, () => [0.5, 0.5]) }],
+    ["a point outside", { ...S1, pts: [[0.1, 0.2], [1.2, 0.4]] }], ["a point not a pair", { ...S1, pts: [[0.1, 0.2], [0.3]] }],
+    ["not a crayon", { ...S1, c: "#B23A48" }], ["too thin", { ...S1, w: 0.004 }], ["too thick", { ...S1, w: 0.06 }],
+    ["pts not a list", { ...S1, pts: "M0 0" }], ["by a robot", { ...S1, by: "robot" }],
+  ]) assert.equal(drawings.validateScene({ v: 1, items: [it] }).ok, false, why);
+  assert.equal(drawings.validateScene({ v: 1, items: [{ ...S1, c: "#D96FA6" }] }).ok, true, "hex compared case-insensitively");
+  assert.equal(drawings.validateScene({ v: 1, items: Array(201).fill(S1) }).ok, false, "a stroke is one item toward the 200");
+  assert.equal(drawings.validateScene({ v: 1, items: [P("maya")] }).ok, true, "a person is checked by shape only (review 10/3 #5)");
+  assert.equal(drawings.validateScene({ v: 1, items: [{ ...P("maya"), s: "person:Maya!" }] }).ok, false, "a slug is a-z0-9-");
+  assert.equal(drawings.validateScene({ v: 1, items: [{ ...P("maya"), x: 2 }] }).ok, false, "a person is placed like a sticker");
+});
+
+test("the characters library: dad's order, only with a PNG, junk skipped; absent or broken → []", () => {
+  freshUnit("none");
+  assert.deepEqual(drawings.characters(), [], "no folder");
+  library([{ slug: "sam", word: "Sam" }, { slug: "maya", word: " Maya ", scale: 0.25 }, { slug: "nopic", word: "No pic" },
+    { slug: "Bad Slug", word: "x" }, { slug: "maya", word: "Again" }, { slug: "tall", word: "Tall", scale: 0.9 },
+    { slug: "noword" }, 7, { slug: "long", word: "x".repeat(25) }], ["sam", "maya", "tall", "noword", "long"]);
+  assert.deepEqual(drawings.characters(), [{ slug: "sam", word: "Sam", scale: 0.3 }, { slug: "maya", word: "Maya", scale: 0.25 },
+    { slug: "tall", word: "Tall", scale: 0.3 }]);
+  fs.writeFileSync(path.join(CH(), "characters.json"), "{ not json");
+  assert.deepEqual(drawings.characters(), []);
+  fs.writeFileSync(path.join(CH(), "characters.json"), JSON.stringify({ v: 1, people: "nope" }));
+  assert.deepEqual(drawings.characters(), []);
+});
+
+// review 10/3 #5: a library check made pictures unsaveable (a person removed while the page was open,
+// a browser-only copy naming a person this hub never had) and protected nothing — the renderer skips
+// unknown people and the slug's shape confines any path. A person is checked by shape only.
+test("a person the library lacks — left it, or never reached this device — never stops a picture saving; a bad slug does (review 10/3 #5)", () => {
+  freshUnit("none");
+  library([{ slug: "maya", word: "Maya" }, { slug: "sam", word: "Sam" }]);
+  const { id } = drawings.create();
+  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam")] }).ok, true);
+  fs.rmSync(path.join(CH(), "sam.png"));
+  library([{ slug: "maya", word: "Maya" }], ["maya"]);
+  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam"), H] }).ok, true, "sam left the library");
+  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam"), P("kai")] }).ok, true, "kai never reached this device");
+  assert.deepEqual(drawings.readScene(id).items.map((i) => i.s), ["person:maya", "person:sam", "person:kai"], "kept");
+  const fresh = drawings.create().id;
+  assert.equal(drawings.writeScene(fresh, { v: 1, items: [P("kai")] }).ok, true, "even on a picture that never held them");
+  assert.equal(drawings.writeScene(fresh, { v: 1, items: [{ ...P("kai"), s: "person:../kai" }] }).error, "bad-scene", "the shape still holds");
+});
+
+test("the shelf keeps a picture's place and crayon, thins strokes to 60 points, and never hides another device's people", () => {
+  freshUnit("none");
+  const { id } = drawings.create();
+  const pts = Array.from({ length: 400 }, (_, k) => [0.1, +(0.1 + k / 1000).toFixed(3)]);
+  drawings.writeScene(id, { v: 1, backdrop: "night", crayon: "#f7f7f7", items: [{ s: "stroke", c: "#f7f7f7", w: 0.014, pts, by: "ellie" }] });
+  const row = drawings.list().find((p) => p.id === id);
+  assert.deepEqual([row.items, row.scene.backdrop, row.scene.crayon], [1, "night", "#f7f7f7"]);
+  const th = row.scene.items[0].pts;
+  assert.equal(th.length, 60);
+  assert.deepEqual([th[0], th.at(-1)], [pts[0], pts[399]]);
+  assert.equal(drawings.readScene(id).items[0].pts.length, 400, "the picture itself stays whole");
+  const other = "2026-10-02-100000-other-dev";
+  fs.mkdirSync(onShelf(other), { recursive: true });
+  fs.writeFileSync(path.join(onShelf(other), "scene.json"), JSON.stringify({ v: 1, id: other, items: [P("gone")] }));
+  assert.ok(drawings.list().some((p) => p.id === other), "a person this device lacks never hides the picture");
+});
+
 // ---- §5 the routes: the REAL server.js on a scratch port ------------------------
 // 8477 (hub) + 8479 (fake Resend, used by T5): swept free 9/30 across all five repos' tests/ and
 // every open worktree, and not listening (ss -ltn). The hub's Drive folder is a temp dir.
@@ -355,7 +477,7 @@ test("PUT scene.json validates and saves, and the shelf lists the picture with i
   assert.equal((await r.json()).error, "bad-scene");
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, "{not json")).status, 400);
   assert.equal((await call("PUT", "/drawings/not-an-id/scene.json", sceneOf([H]))).status, 404);
-  const big = JSON.stringify(sceneOf([H])) + " ".repeat(66 * 1024);
+  const big = JSON.stringify(sceneOf([H])) + " ".repeat(257 * 1024);
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, big)).status, 413);
 });
 
@@ -364,6 +486,39 @@ test("the doors: a page on another site, or a body that is not JSON, cannot crea
   assert.equal((await call("POST", "/drawings", {}, { "Sec-Fetch-Site": "cross-site" })).status, 403);
   assert.equal((await fetch(BASE + "/drawings", { method: "POST", headers: { "Content-Type": "text/plain" }, body: "{}" })).status, 403);
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, sceneOf([H]), { "Sec-Fetch-Site": "cross-site" })).status, 403);
+});
+
+test("PUT takes a scene up to 256 KB and refuses a bigger body with 413", async () => {
+  const id = await newPic();
+  const pts = Array.from({ length: 400 }, (_, k) => [0.123, +(0.1 + k / 1000).toFixed(3)]);
+  const S = { s: "stroke", c: "#0F7C8A", w: 0.014, pts, by: "ellie" };
+  const ok = JSON.stringify({ v: 1, items: Array(44).fill(S) });
+  assert.ok(ok.length > 64 * 1024 && ok.length < 256 * 1024, String(ok.length));
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, ok)).status, 200);
+  const big = JSON.stringify({ v: 1, items: Array(50).fill(S) });
+  assert.ok(big.length > 256 * 1024, String(big.length));
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, big)).status, 413);
+});
+
+test("GET /characters/index.json lists the library ([] with none), PNGs are path-jailed, and a PUT checks people by shape only", async () => {
+  const CHR = path.join(RT, "characters");
+  fs.rmSync(CHR, { recursive: true, force: true });
+  let r = await fetch(BASE + "/characters/index.json");
+  assert.deepEqual([r.status, await r.json()], [200, []]);
+  fs.mkdirSync(CHR, { recursive: true });
+  fs.writeFileSync(path.join(CHR, "maya.png"), tinyPng(16, 32));
+  fs.writeFileSync(path.join(CHR, "characters.json"), JSON.stringify({ v: 1, people: [{ slug: "maya", word: "Maya" }] }));
+  assert.deepEqual(await (await fetch(BASE + "/characters/index.json")).json(), [{ slug: "maya", word: "Maya", scale: 0.3 }]);
+  r = await fetch(BASE + "/characters/maya.png");
+  assert.deepEqual([r.status, r.headers.get("content-type"), r.headers.get("cache-control")], [200, "image/png", "no-cache"]);
+  assert.equal((await fetch(BASE + "/characters/characters.json")).status, 200);
+  for (const bad of ["/characters/Maya.png", "/characters/maya.txt", "/characters/sub/maya.png", "/characters/..%2Fdrive.json"])
+    assert.notEqual((await fetch(BASE + bad)).status, 200, bad);
+  const id = await newPic();
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [P("maya")] })).status, 200);
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [P("maya"), P("kai")] })).status, 200,
+    "a person the library lacks still saves (review 10/3 #5)");
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [{ ...P("kai"), s: "person:Kai!" }] })).status, 400);
 });
 
 test("GET is path-jailed: an id's scene.json and picture.png, nothing beside or above them", async () => {
@@ -404,6 +559,28 @@ test("a save whose copy onto this shelf throws still answers 200, and the hub st
     assert.equal((await fetch(BASE + "/drawings/index.json")).status, 200, "and the hub is still answering");
   } finally { fs.rmSync(shelf, { force: true }); fs.renameSync(aside, shelf); }
   assert.equal((await fetch(`${BASE}/drawings/${id}/scene.json`)).status, 200);
+});
+
+// review 10/2: a file the Drive mirror prunes between the hub's stat and its open made the read stream
+// throw with no listener and took the whole hub down. A file that stats but cannot be opened (mode 000)
+// is the same race made deterministic: the hub answers an error status and keeps serving.
+test("a picture that vanishes between stat and open is answered with an error, and the hub stays up", async () => {
+  const CHR = path.join(RT, "characters");
+  fs.mkdirSync(CHR, { recursive: true });
+  const f = path.join(CHR, "vanish.png");
+  fs.writeFileSync(f, tinyPng(16, 32));
+  fs.chmodSync(f, 0o000);
+  try {
+    const r = await fetch(BASE + "/characters/vanish.png");
+    assert.ok([404, 500].includes(r.status), "an error status, not a 200 with no body: " + r.status);
+    await r.arrayBuffer();
+  } finally { fs.chmodSync(f, 0o644); fs.rmSync(f, { force: true }); }
+  assert.equal((await fetch(BASE + "/drawings/index.json")).status, 200, "the hub is still answering");
+  fs.writeFileSync(f, tinyPng(16, 32));
+  const g = await fetch(BASE + "/characters/vanish.png");
+  assert.equal(g.status, 200, "and a readable file serves again");
+  assert.equal(Buffer.from(await g.arrayBuffer()).readUInt32BE(0), 0x89504e47);
+  fs.rmSync(f, { force: true });
 });
 
 // review 9/30 #7: a Drive folder this device may not write (a view-only share; Windows refusing a

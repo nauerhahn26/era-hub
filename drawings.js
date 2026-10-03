@@ -1,4 +1,5 @@
-// drawings.js — Drawing's pictures on the hub (spec docs/superpowers/specs/2026-09-30-drawing-design.md §4-§5).
+// drawings.js — Drawing's pictures on the hub (spec docs/superpowers/specs/2026-09-30-drawing-design.md §4-§5;
+// docs/superpowers/specs/2026-10-02-drawing-modes-design.md §3-§5, §7).
 //
 // A picture is a folder drawings/<id>/ holding scene.json (the truth: backdrop + items) and, after
 // Done, picture.png (for the family's mail and for a parent opening the Drive folder; the app
@@ -23,7 +24,10 @@ const crypto = require("crypto");
 const drive = require("./drive.js");
 
 const ID_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-[a-z0-9][a-z0-9-]{0,39}$/;
-const LIMITS = { items: 200, sceneBytes: 64 * 1024, pngBytes: 4 * 1024 * 1024 };
+const LIMITS = { items: 200, sceneBytes: 256 * 1024, pngBytes: 4 * 1024 * 1024, strokePts: 400, strokeW: [0.005, 0.05] };
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const PERSON_RE = /^person:([a-z0-9][a-z0-9-]{0,39})$/;
+const WORD_MAX = 24, SCALE = { min: 0.1, max: 0.6, dflt: 0.30 };
 const DAY = 24 * 60 * 60 * 1000;
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const BY = ["ellie", "partner"];
@@ -55,6 +59,35 @@ function stickerTable() {
   try { TABLE = JSON.parse(fs.readFileSync(path.join(__dirname, "public", "drawing", "stickers.json"), "utf8")); }
   catch (e) { console.error("[drawings] stickers.json unreadable: " + e.message); return { stickers: [] }; }
   return TABLE;
+}
+
+// ---------------------------------------------------------------- People (spec 2026-10-02 §4)
+// The library the mirror carries in from the family's Drive folder: <DATA>/characters/characters.json
+// + <slug>.png. Read fresh on every call (a few hundred bytes; dad edits it by hand). An entry shows
+// only with its PNG beside it; anything malformed is skipped; an unreadable file is an empty library.
+const charactersRoot = () => path.join(DATA, "characters");
+function characters() {
+  if (!DATA) return [];
+  let j;
+  try { j = JSON.parse(fs.readFileSync(path.join(charactersRoot(), "characters.json"), "utf8")); } catch { return []; }
+  const out = [], seen = new Set();
+  for (const p of (j && Array.isArray(j.people)) ? j.people : []) {
+    if (!p || typeof p !== "object") continue;
+    const slug = p.slug, word = typeof p.word === "string" ? p.word.trim() : "";
+    if (typeof slug !== "string" || !SLUG_RE.test(slug) || seen.has(slug) || !word || word.length > WORD_MAX) continue;
+    if (!fs.existsSync(path.join(charactersRoot(), slug + ".png"))) continue;
+    const scale = typeof p.scale === "number" && Number.isFinite(p.scale) && p.scale >= SCALE.min && p.scale <= SCALE.max ? p.scale : SCALE.dflt;
+    seen.add(slug);
+    out.push({ slug, word, scale });
+  }
+  return out;
+}
+// The shelf's thumbnails need the shape of a stroke, not all 400 points (deviation 10).
+function thin(pts, n = 60) {
+  if (pts.length <= n) return pts;
+  const out = [];
+  for (let k = 0; k < n; k++) out.push(pts[Math.round(k * (pts.length - 1) / (n - 1))]);
+  return out;
 }
 const stamp = (v) => { const t = Date.parse(v || ""); return Number.isFinite(t) ? t : 0; };
 const iso = () => NOW().toISOString();
@@ -154,19 +187,34 @@ const num01 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v 
 function validateScene(obj) {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return { ok: false, why: "not an object" };
   if (obj.v !== 1) return { ok: false, why: "v must be 1" };
-  if (obj.backdrop !== undefined && obj.backdrop !== "meadow") return { ok: false, why: "unknown backdrop" };
   if (!Array.isArray(obj.items)) return { ok: false, why: "items must be a list" };
   if (obj.items.length > LIMITS.items) return { ok: false, why: "more than " + LIMITS.items + " items" };
-  const known = new Set(stickerTable().stickers.map((s) => s.id));
+  const T = stickerTable();
+  const known = new Set((T.stickers || []).map((s) => s.id));
+  const crayons = new Set((T.crayons || []).map((c) => c.hex.toLowerCase()));
+  const places = new Set((T.backdrops || []).map((b) => b.id));
+  const backdrop = places.has(obj.backdrop) ? obj.backdrop : "meadow";                 // spec §5
+  const crayon = typeof obj.crayon === "string" && crayons.has(obj.crayon.toLowerCase()) ? obj.crayon : (T.crayonDefault || "#0F7C8A");
   const items = [];
   for (let i = 0; i < obj.items.length; i++) {
     const it = obj.items[i];
     if (!it || typeof it !== "object" || Array.isArray(it)) return { ok: false, why: `item ${i} is not an object` };
-    if (!known.has(it.s)) return { ok: false, why: `item ${i}: unknown sticker` };
-    if (!num01(it.x) || !num01(it.y)) return { ok: false, why: `item ${i}: x/y outside 0-1` };
-    if (!num01(it.w) || it.w === 0) return { ok: false, why: `item ${i}: w outside (0,1]` };
     const by = it.by === undefined ? "ellie" : it.by;
     if (!BY.includes(by)) return { ok: false, why: `item ${i}: by` };
+    if (it.s === "stroke") {                                                             // spec §3
+      if (typeof it.c !== "string" || !crayons.has(it.c.toLowerCase())) return { ok: false, why: `item ${i}: stroke colour` };
+      if (typeof it.w !== "number" || !(it.w >= LIMITS.strokeW[0] && it.w <= LIMITS.strokeW[1])) return { ok: false, why: `item ${i}: stroke width` };
+      if (!Array.isArray(it.pts) || it.pts.length < 2 || it.pts.length > LIMITS.strokePts) return { ok: false, why: `item ${i}: stroke points` };
+      for (const p of it.pts) if (!Array.isArray(p) || p.length !== 2 || !num01(p[0]) || !num01(p[1])) return { ok: false, why: `item ${i}: a point` };
+      items.push({ s: "stroke", c: it.c, w: it.w, pts: it.pts.map((p) => [p[0], p[1]]), by });
+      continue;
+    }
+    // A person is checked by SHAPE only (review 10/3 #5): a library check made pictures unsaveable (a
+    // person removed while the page is open; a browser-only copy naming one this hub never had) and
+    // protected nothing — the renderer skips unknown people and the slug's shape confines any path.
+    if (!PERSON_RE.test(typeof it.s === "string" ? it.s : "") && !known.has(it.s)) return { ok: false, why: `item ${i}: unknown sticker` };
+    if (!num01(it.x) || !num01(it.y)) return { ok: false, why: `item ${i}: x/y outside 0-1` };
+    if (!num01(it.w) || it.w === 0) return { ok: false, why: `item ${i}: w outside (0,1]` };
     const out = { s: it.s, x: it.x, y: it.y, w: it.w, by };
     if (it.s === "splat") {
       if (typeof it.c !== "string" || !HEX.test(it.c)) return { ok: false, why: `item ${i}: splat colour` };
@@ -175,25 +223,25 @@ function validateScene(obj) {
     }
     items.push(out);
   }
-  return { ok: true, scene: { v: 1, backdrop: "meadow", items } };
+  return { ok: true, scene: { v: 1, backdrop, crayon, items } };
 }
 const itemsHash = (items) => crypto.createHash("sha1").update(JSON.stringify(items)).digest("hex");
 
 // ---------------------------------------------------------------- create / write
 function create() {
   const id = newId(), t = iso();
-  const scene = { v: 1, id, created: t, updated: t, device: DEVICE, backdrop: "meadow", items: [], mailedHash: null };
+  const scene = { v: 1, id, created: t, updated: t, device: DEVICE, backdrop: "meadow", crayon: stickerTable().crayonDefault || "#0F7C8A", items: [], mailedHash: null };
   return writeFile(id, "scene.json", sceneBytes(scene)).ok ? { id, scene } : { error: "write-failed" };
 }
 // The body brings backdrop + items; the hub owns id, created, device, updated and mailedHash.
 function writeScene(id, body) {
   if (!isId(id)) return { error: "bad-id" };
+  const prev = readScene(id);
   const v = validateScene(body);
   if (!v.ok) return { error: "bad-scene", why: v.why };
-  const prev = readScene(id);
   const scene = { v: 1, id, created: (prev && prev.created) || iso(), updated: iso(),
-                  device: (prev && prev.device) || DEVICE, backdrop: "meadow", items: v.scene.items,
-                  mailedHash: (prev && prev.mailedHash) || null };
+                  device: (prev && prev.device) || DEVICE, backdrop: v.scene.backdrop, crayon: v.scene.crayon,
+                  items: v.scene.items, mailedHash: (prev && prev.mailedHash) || null };
   const w = writeFile(id, "scene.json", sceneBytes(scene));
   return w.ok ? { ok: true, scene, mount: w.mount } : { error: "write-failed" };
 }
@@ -210,7 +258,9 @@ function list() {
     const v = validateScene(sc);
     if (!v.ok || !v.scene.items.length) continue;              // unreadable, foreign, or blank
     out.push({ id, created: sc.created || null, updated: sc.updated || sc.created || null,
-               device: sc.device || null, items: v.scene.items.length, scene: { ...sc, items: v.scene.items } });
+               device: sc.device || null, items: v.scene.items.length,
+               scene: { ...sc, backdrop: v.scene.backdrop, crayon: v.scene.crayon,
+                        items: v.scene.items.map((it) => (it.s === "stroke" ? { ...it, pts: thin(it.pts) } : it)) } });
   }
   return out.sort((a, b) => stamp(b.updated) - stamp(a.updated) || stamp(b.created) - stamp(a.created)
                           || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
@@ -287,5 +337,5 @@ async function done(id, png, mail) {
   return { saved: true, mail: "sent" };
 }
 
-module.exports = { ID_RE, LIMITS, start, isId, shortDevice, stickerTable, newId, validateScene, itemsHash,
+module.exports = { ID_RE, LIMITS, SLUG_RE, characters, start, isId, shortDevice, stickerTable, newId, validateScene, itemsHash,
                    mountRoot, readScene, create, writeScene, list, cleanupEmpty, done };

@@ -30,7 +30,7 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
 /* text tiles: glyph + word, the word on the 74px floor at 1920 */
 .text .glyph{font-size:clamp(28px, 2.9vw, 56px); line-height:1}
 .text .word{font-size:clamp(44px, 3.86vw, 74px); font-weight:750; line-height:1.1}
-#btnUndo, #shelfMore{background:var(--nav); color:#fff}
+#btnUndo, #shelfMore, #peopleMore{background:var(--nav); color:#fff}
 #btnDone{background:var(--teal); color:#fff}
 
 /* ---- the ring: 3 x 5 under the bar; the picture in the middle, never moving ---- */
@@ -38,17 +38,41 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
        grid-template-rows:repeat(5, minmax(0, 1fr)); gap:var(--gap); padding:12px 14px}
 #btnUndo{grid-row:5; grid-column:1}
 #btnDone{grid-row:5; grid-column:3}
-#restTile{grid-row:5; grid-column:2; justify-self:center; width:var(--side); height:100%;
-          background:#000; border-radius:16px}                  /* inert: no .dwell, ever */
+/* row 5 (spec 2026-10-02 §1): five equal cells under the picture — Draw, People, rest, Stickers, Places */
+#modeRow{grid-row:5; grid-column:2; display:grid; grid-template-columns:repeat(5, minmax(0, 1fr));
+         gap:var(--gap); min-width:0; min-height:0}
+#modeRow > *{grid-row:1}          /* one row: the rest tile comes first in the DOM, the modes take their columns */
+#restTile{grid-column:3; background:#000; border-radius:16px; min-width:0}   /* inert: no .dwell, ever */
 #sceneCell{grid-row:1 / 5; grid-column:2; container-type:size; min-width:0; min-height:0;
            display:flex; align-items:center; justify-content:center}
 /* the largest 16:9 box that fits (the PNG is 1600x900, so what she sees is what is mailed) */
 #scene{width:min(100cqw, calc(100cqh * 16 / 9)); height:min(100cqh, calc(100cqw * 9 / 16));
        border-radius:18px; touch-action:none}
 .scene{position:relative; overflow:hidden; display:block}
+.scene .backdrop{position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none}
 .scene .item{position:absolute; display:block; pointer-events:none; overflow:visible}
 #scene .item{pointer-events:auto; touch-action:none; -webkit-user-drag:none}   /* the partner's finger */
+.scene img.item{object-fit:contain; object-position:50% 100%}         /* a person is never stretched */
+#scene .item.stroke{pointer-events:none}                                /* ink is never a finger target */
+/* item hit boxes: transparent, id-qualified (dwell.js's .dwell{position:relative} is injected later) */
+#hits > .hit{position:absolute; pointer-events:auto; border-radius:12px; background:transparent}
+#art .item.carried{transform:scale(1.1); filter:drop-shadow(0 10px 12px rgba(0, 0, 0, .35)); z-index:2}
 .flyer{position:fixed; z-index:50; pointer-events:none; transform-origin:0 0}
+/* her picture's layers: #art (renderScene), the live pen, the item hit boxes, the landing spot */
+#art{position:absolute; inset:0}
+#pen, #hits{position:absolute; inset:0; pointer-events:none}
+#pen{z-index:3} #hits{z-index:4}
+/* the active mode, crayon and place: a teal glow outside the tile (never red, zero shift) */
+.cell.on{box-shadow:0 0 0 5px var(--teal), 0 0 22px 6px rgba(15, 124, 138, .55)}
+.pal-black{background:#000; border-radius:16px}                    /* an empty seat: inert, no text */
+.place .pic{display:flex; align-items:center; justify-content:center; padding:8px 8px 0}
+.place .pic svg{width:100%; height:100%; display:block; border-radius:10px}
+.crayon .pic{display:flex; align-items:center; justify-content:center; padding:10px 8px 0}
+.crayon .swatch{display:block; height:100%; aspect-ratio:1; max-width:100%; border-radius:50%;
+                background:var(--sw); border:3px solid #C9D3D6}            /* White shows on the white tile */
+/* the landing spot: id-qualified, because dwell.js's injected .dwell{position:relative} comes later */
+#scene > .spot{position:absolute; z-index:6; border-radius:50%; border:4px solid var(--teal);
+               background:rgba(15, 124, 138, .14); box-sizing:border-box}
 
 /* ---- the shelf: the Reader's rail + 3x4 grid (public/reader/index.html) ---- */
 #sShelf{grid-template-columns:clamp(120px, 13vw, 250px) minmax(0, 1fr); gap:18px; padding:12px 14px 14px}
