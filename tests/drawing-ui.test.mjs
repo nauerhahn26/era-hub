@@ -1352,3 +1352,27 @@ test("with her real dwell: rest on a sticker to lift it, look to carry it as lon
   assert.ok(s.x < 0.3 && s.y > 0.3, "dropped where she rested: " + JSON.stringify(s));
   await ctx.close();
 });
+
+// ================================================================ v2 T10 — the contract audit per mode
+test("the contract audit is clean in every mode — with a library, items, ink and a carried item — at both gate viewports", async () => {
+  seedPeople([MAYA, SAM]);
+  const id = "2026-10-02-160000-test-dev";
+  seed(id, SPACED, "2026-10-02T16:00:00Z");
+  process.env.INVARIANTS_BASE = BASE;
+  const { auditPath } = await import("./invariants.mjs");
+  for (const m of ["draw", "people", "places", "stickers"]) {
+    const r = await auditPath(browser, { id: "/drawing/#" + m, path: `/drawing/#p=${id}&mode=${m}` });
+    assert.deepEqual(r.violations, [], m + ":\n" + r.violations.join("\n"));
+    for (const v of r.viewports) assert.ok(v.nTargets >= 9, `${m} @${v.vp.w}: ${v.nTargets} targets`);
+  }
+  const r = await auditPath(browser, { id: "/drawing/#carried", path: `/drawing/#p=${id}&mode=stickers`,
+    setup: async () => {
+      window.Drawing.__lift(6); await new Promise((res) => setTimeout(res, 300));
+      if (!document.querySelector("#spot.dwell")) throw new Error("no landing spot while carrying");
+    } });
+  assert.deepEqual(r.violations, [], "carried:\n" + r.violations.join("\n"));
+  // 💬 talk stays hidden on a hub with no TD Snap to talk in (doorbar.js: until /settings says
+  // pauseGoes:"tdsnap"), so this hub has one door, not two.
+  for (const v of r.viewports) assert.ok(v.nTargets >= 16, "spot + 8 palette + 4 modes + Undo + Done + the door: " + v.nTargets);
+  seedPeople(null);
+});
