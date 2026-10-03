@@ -183,10 +183,8 @@ function readScene(id) {
 }
 
 // ---------------------------------------------------------------- validation
-// people: a Set of slugs a person item may name (writeScene: the library + the people this picture
-// already holds — deviation 8), or null = shape only (list(): never hide another device's picture).
 const num01 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
-function validateScene(obj, { people = null } = {}) {
+function validateScene(obj) {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return { ok: false, why: "not an object" };
   if (obj.v !== 1) return { ok: false, why: "v must be 1" };
   if (!Array.isArray(obj.items)) return { ok: false, why: "items must be a list" };
@@ -211,9 +209,10 @@ function validateScene(obj, { people = null } = {}) {
       items.push({ s: "stroke", c: it.c, w: it.w, pts: it.pts.map((p) => [p[0], p[1]]), by });
       continue;
     }
-    const person = PERSON_RE.exec(typeof it.s === "string" ? it.s : "");
-    if (person) { if (people && !people.has(person[1])) return { ok: false, why: `item ${i}: not in the library` }; }
-    else if (!known.has(it.s)) return { ok: false, why: `item ${i}: unknown sticker` };
+    // A person is checked by SHAPE only (review 10/3 #5): a library check made pictures unsaveable (a
+    // person removed while the page is open; a browser-only copy naming one this hub never had) and
+    // protected nothing — the renderer skips unknown people and the slug's shape confines any path.
+    if (!PERSON_RE.test(typeof it.s === "string" ? it.s : "") && !known.has(it.s)) return { ok: false, why: `item ${i}: unknown sticker` };
     if (!num01(it.x) || !num01(it.y)) return { ok: false, why: `item ${i}: x/y outside 0-1` };
     if (!num01(it.w) || it.w === 0) return { ok: false, why: `item ${i}: w outside (0,1]` };
     const out = { s: it.s, x: it.x, y: it.y, w: it.w, by };
@@ -238,12 +237,7 @@ function create() {
 function writeScene(id, body) {
   if (!isId(id)) return { error: "bad-id" };
   const prev = readScene(id);
-  const lib = new Set(characters().map((p) => p.slug));
-  for (const it of (prev && Array.isArray(prev.items)) ? prev.items : []) {
-    const m = PERSON_RE.exec(it && typeof it.s === "string" ? it.s : "");
-    if (m) lib.add(m[1]);                                   // grandfathered (deviation 8)
-  }
-  const v = validateScene(body, { people: lib });
+  const v = validateScene(body);
   if (!v.ok) return { error: "bad-scene", why: v.why };
   const scene = { v: 1, id, created: (prev && prev.created) || iso(), updated: iso(),
                   device: (prev && prev.device) || DEVICE, backdrop: v.scene.backdrop, crayon: v.scene.crayon,

@@ -1202,7 +1202,7 @@ test("a person who left the library: drawn as nothing, kept, and the picture sti
   assert.equal(await page.locator("#art .item").count(), 0, "drawn as nothing — never an error");
   const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith(`/drawings/${id}/scene.json`));
   await page.locator("#tile-horse").click();
-  assert.equal((await saved).status(), 200, "grandfathered by the hub (deviation 8)");
+  assert.equal((await saved).status(), 200, "the hub checks a person by shape only (review 10/3 #5)");
   assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["person:sam", "horse"], "kept");
   assert.deepEqual(errors, []);
   await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it

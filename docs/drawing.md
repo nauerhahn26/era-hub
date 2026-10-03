@@ -23,7 +23,8 @@ Plans: `docs/superpowers/plans/2026-09-30-drawing-plan.md` + `docs/superpowers/p
   the slot tables. `drawings.js` validates scenes against the same file.
   + `modes`, `crayons`, `backdrops`; slot tables are written against the reference horizon 0.58.
 - `drawings.js` (hub) — ids, validation, writes, list, one-day blank cleanup, Done + mail.
-  + v2 validation (strokes, crayons, places, people with grandfathering), 256 KB, `characters()`.
+  + v2 validation (strokes, crayons, places, people by shape only — a library check made pictures
+    unsaveable and protected nothing, review 10/3 #5), 256 KB, `characters()`.
 - `drive.js` — `drawings` in the mirror; `.local`; `mirrorDrawing(id)`.
   + `characters` mirrors like `drawings`.
 

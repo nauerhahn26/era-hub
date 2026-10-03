@@ -341,9 +341,7 @@ test("v2 validation: strokes, crayons and places; unknown place → meadow, unkn
   ]) assert.equal(drawings.validateScene({ v: 1, items: [it] }).ok, false, why);
   assert.equal(drawings.validateScene({ v: 1, items: [{ ...S1, c: "#D96FA6" }] }).ok, true, "hex compared case-insensitively");
   assert.equal(drawings.validateScene({ v: 1, items: Array(201).fill(S1) }).ok, false, "a stroke is one item toward the 200");
-  assert.equal(drawings.validateScene({ v: 1, items: [P("maya")] }).ok, true, "shape only when no library is given");
-  assert.equal(drawings.validateScene({ v: 1, items: [P("maya")] }, { people: new Set(["sam"]) }).ok, false, "not in the library");
-  assert.equal(drawings.validateScene({ v: 1, items: [P("maya")] }, { people: new Set(["maya"]) }).ok, true);
+  assert.equal(drawings.validateScene({ v: 1, items: [P("maya")] }).ok, true, "a person is checked by shape only (review 10/3 #5)");
   assert.equal(drawings.validateScene({ v: 1, items: [{ ...P("maya"), s: "person:Maya!" }] }).ok, false, "a slug is a-z0-9-");
   assert.equal(drawings.validateScene({ v: 1, items: [{ ...P("maya"), x: 2 }] }).ok, false, "a person is placed like a sticker");
 });
@@ -362,15 +360,22 @@ test("the characters library: dad's order, only with a PNG, junk skipped; absent
   assert.deepEqual(drawings.characters(), []);
 });
 
-test("a person who left the library: a picture that already holds them still saves; a new unknown person is refused (deviation 8)", () => {
+// review 10/3 #5: a library check made pictures unsaveable (a person removed while the page was open,
+// a browser-only copy naming a person this hub never had) and protected nothing — the renderer skips
+// unknown people and the slug's shape confines any path. A person is checked by shape only.
+test("a person the library lacks — left it, or never reached this device — never stops a picture saving; a bad slug does (review 10/3 #5)", () => {
   freshUnit("none");
   library([{ slug: "maya", word: "Maya" }, { slug: "sam", word: "Sam" }]);
   const { id } = drawings.create();
   assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam")] }).ok, true);
   fs.rmSync(path.join(CH(), "sam.png"));
   library([{ slug: "maya", word: "Maya" }], ["maya"]);
-  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam"), H] }).ok, true, "sam is already in this picture");
-  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam"), P("kai")] }).error, "bad-scene");
+  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam"), H] }).ok, true, "sam left the library");
+  assert.equal(drawings.writeScene(id, { v: 1, items: [P("maya"), P("sam"), P("kai")] }).ok, true, "kai never reached this device");
+  assert.deepEqual(drawings.readScene(id).items.map((i) => i.s), ["person:maya", "person:sam", "person:kai"], "kept");
+  const fresh = drawings.create().id;
+  assert.equal(drawings.writeScene(fresh, { v: 1, items: [P("kai")] }).ok, true, "even on a picture that never held them");
+  assert.equal(drawings.writeScene(fresh, { v: 1, items: [{ ...P("kai"), s: "person:../kai" }] }).error, "bad-scene", "the shape still holds");
 });
 
 test("the shelf keeps a picture's place and crayon, thins strokes to 60 points, and never hides another device's people", () => {
@@ -495,7 +500,7 @@ test("PUT takes a scene up to 256 KB and refuses a bigger body with 413", async 
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, big)).status, 413);
 });
 
-test("GET /characters/index.json lists the library ([] with none), PNGs are path-jailed, and a PUT checks people against it", async () => {
+test("GET /characters/index.json lists the library ([] with none), PNGs are path-jailed, and a PUT checks people by shape only", async () => {
   const CHR = path.join(RT, "characters");
   fs.rmSync(CHR, { recursive: true, force: true });
   let r = await fetch(BASE + "/characters/index.json");
@@ -511,7 +516,9 @@ test("GET /characters/index.json lists the library ([] with none), PNGs are path
     assert.notEqual((await fetch(BASE + bad)).status, 200, bad);
   const id = await newPic();
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [P("maya")] })).status, 200);
-  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [P("maya"), P("kai")] })).status, 400);
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [P("maya"), P("kai")] })).status, 200,
+    "a person the library lacks still saves (review 10/3 #5)");
+  assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [{ ...P("kai"), s: "person:Kai!" }] })).status, 400);
 });
 
 test("GET is path-jailed: an id's scene.json and picture.png, nothing beside or above them", async () => {
