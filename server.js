@@ -726,9 +726,8 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
     const headers = { "Content-Type": type, "Cache-Control": cacheControl || "max-age=86400, immutable" };
     if (!avExts.includes(ext)) {                 // images: full streamed 200
       headers["Content-Length"] = st.size;
-      res.writeHead(200, headers);
-      if (head) { res.end(); return; }
-      fs.createReadStream(file).pipe(res);
+      if (head) { res.writeHead(200, headers).end(); return; }
+      streamJailFile(res, file, undefined, 200, headers);
       return;
     }
     headers["Accept-Ranges"] = "bytes";
@@ -750,16 +749,27 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
       }
       headers["Content-Range"] = "bytes " + start + "-" + end + "/" + st.size;
       headers["Content-Length"] = end - start + 1;
-      res.writeHead(206, headers);
-      if (head) { res.end(); return; }
-      fs.createReadStream(file, { start, end }).pipe(res);
+      if (head) { res.writeHead(206, headers).end(); return; }
+      streamJailFile(res, file, { start, end }, 206, headers);
       return;
     }
     headers["Content-Length"] = st.size;
-    res.writeHead(200, headers);
-    if (head) { res.end(); return; }
-    fs.createReadStream(file).pipe(res);
+    if (head) { res.writeHead(200, headers).end(); return; }
+    streamJailFile(res, file, undefined, 200, headers);
   });
+}
+// The status line goes out only once the file is OPEN: a file the Drive mirror prunes between the
+// stat above and this open is a 404 (any other open error a 500), never an unhandled stream error
+// that takes the hub down (review 10/2). A read error after the headers left cuts the response.
+function streamJailFile(res, file, range, status, headers) {
+  const s = fs.createReadStream(file, range);
+  s.on("error", (e) => {
+    if (res.headersSent) { res.destroy(); return; }
+    if (e && e.code === "ENOENT") res.writeHead(404).end("not found");
+    else res.writeHead(500).end();
+  });
+  s.on("open", () => { res.writeHead(status, headers); s.pipe(res); });
+  res.on("close", () => s.destroy());
 }
 
 // Pick whichever recipe path exists with the newest mtime; serve with ETag/304.

@@ -554,6 +554,28 @@ test("a save whose copy onto this shelf throws still answers 200, and the hub st
   assert.equal((await fetch(`${BASE}/drawings/${id}/scene.json`)).status, 200);
 });
 
+// review 10/2: a file the Drive mirror prunes between the hub's stat and its open made the read stream
+// throw with no listener and took the whole hub down. A file that stats but cannot be opened (mode 000)
+// is the same race made deterministic: the hub answers an error status and keeps serving.
+test("a picture that vanishes between stat and open is answered with an error, and the hub stays up", async () => {
+  const CHR = path.join(RT, "characters");
+  fs.mkdirSync(CHR, { recursive: true });
+  const f = path.join(CHR, "vanish.png");
+  fs.writeFileSync(f, tinyPng(16, 32));
+  fs.chmodSync(f, 0o000);
+  try {
+    const r = await fetch(BASE + "/characters/vanish.png");
+    assert.ok([404, 500].includes(r.status), "an error status, not a 200 with no body: " + r.status);
+    await r.arrayBuffer();
+  } finally { fs.chmodSync(f, 0o644); fs.rmSync(f, { force: true }); }
+  assert.equal((await fetch(BASE + "/drawings/index.json")).status, 200, "the hub is still answering");
+  fs.writeFileSync(f, tinyPng(16, 32));
+  const g = await fetch(BASE + "/characters/vanish.png");
+  assert.equal(g.status, 200, "and a readable file serves again");
+  assert.equal(Buffer.from(await g.arrayBuffer()).readUInt32BE(0), 0x89504e47);
+  fs.rmSync(f, { force: true });
+});
+
 // review 9/30 #7: a Drive folder this device may not write (a view-only share; Windows refusing a
 // rename over a file Drive holds open) must not make New picture silently do nothing. The write
 // falls back to this device (.local, carried up later), and the hub reads that newer copy first.
