@@ -359,8 +359,11 @@ function toScene(cx, cy) {
 }
 function onPointer(e) {
   S.gaze = { cx: e.clientX, cy: e.clientY, type: e.pointerType || "mouse" };
+  if (S.cool !== null && !S.carry && S.scene) coolCheck();
   if (e.type !== "pointermove" || e.pointerType === "touch") return;
-  if (S.pen) { penFollow(); if (S.pen) restWatch(); }
+  if (S.pen) penFollow();
+  else if (S.carry) carryFollow();
+  if (S.pen || S.carry) restWatch();
 }
 // THE LANDING SPOT (deviation 1): a fresh element whenever her gaze leaves its square, so dwell.js
 // starts a new dwell (dwell.js:259) — only a real REST fills it. Its centre is where the line ends.
@@ -391,7 +394,7 @@ function followSpot(cx, cy) {
   const s = S.spot;
   if (!s || Math.abs(cx - s.cx) > s.F / 2 || Math.abs(cy - s.cy) > s.F / 2) placeSpot(cx, cy);
 }
-function land(at) { if (S.pen) endStroke(at); }
+function land(at) { if (S.pen) endStroke(at); else if (S.carry) drop(at, "ellie"); }
 // The rest tile is inert (no .dwell, ever): resting on it is watched here, for her dwell (deviation 5).
 function restWatch() {
   const r = $("restTile").getBoundingClientRect(), g = S.gaze;
@@ -472,10 +475,100 @@ function applyTargets() {
   const want = S.screen === "ring" && !!S.scene && S.mode === "draw" && !S.pen && !S.carry;
   if (!want) { sc.classList.remove("dwell"); sc.removeAttribute("data-dwell-disabled"); frozen = frozen.filter((el) => el !== sc); }
   else if (!sc.hasAttribute("data-dwell-disabled")) sc.classList.add("dwell");
+  paintHits();
   refreeze();
 }
-function settle() { if (S.pen) endStroke(null); }
-function paintScene() { SC.renderScene($("art"), S.scene, { table: S.table }); }
+function settle() { if (S.pen) endStroke(null); if (S.carry) putBack(); }
+function paintScene() { SC.renderScene($("art"), S.scene, { table: S.table }); paintHits(); }
+
+// ---------- gaze-move (spec 2026-10-02 §6) ----------
+// In Stickers, People and Places every placed sticker or person has a hit box; Draw mode has none
+// (her picture is the target there), ink never has one, and while she carries something only the
+// spot is a target. The item she just dropped waits until her gaze has left it (deviation 13).
+function paintHits() {
+  const box = $("hits");
+  const show = S.screen === "ring" && !!S.scene && S.mode !== "draw" && !S.carry && !S.pen;
+  if (!show) { box.replaceChildren(); return; }
+  const r = $("scene").getBoundingClientRect();
+  if (!r.width) return;
+  const F = floorPx(), kids = [];
+  for (const op of SC.sceneOps(S.scene, S.table)) {
+    if (op.kind === "stroke" || op.i === S.cool) continue;
+    const b = SC.hitBox(op, r.width, r.height, F);
+    const el = document.createElement("div");
+    el.className = "hit dwell";
+    el.dataset.hit = String(op.i);
+    el.setAttribute("aria-label", SC.itemWord(S.table, op.s) || "Picture");
+    Object.assign(el.style, { left: b.left + "px", top: b.top + "px", width: b.width + "px", height: b.height + "px" });
+    el.addEventListener("click", (e) => { e.stopPropagation(); lift(op.i); });
+    kids.push(el);                                   // item order: the latest is on top and wins
+  }
+  box.replaceChildren(...kids);
+  refreeze();
+}
+// LIFT: her full dwell on an item. It says its word, grows a little, and follows her gaze.
+function lift(i) {
+  if (Date.now() < S.swallowUntil) return;
+  if (S.screen !== "ring" || !S.scene || S.paused || S.mode === "draw" || S.pen || S.carry) return;
+  const it = S.scene.items[i];
+  if (!it || it.s === "stroke") return;
+  hush();
+  say(SC.itemWord(S.table, it.s));
+  S.carry = { i, sx: it.x, sy: it.y, x: it.x, y: it.y };
+  const art = document.querySelector('#art [data-i="' + i + '"]');
+  if (art) art.classList.add("carried");
+  applyTargets();
+  const g = S.gaze, r = $("scene").getBoundingClientRect();
+  if (g && toScene(g.cx, g.cy).inside) placeSpot(g.cx, g.cy);
+  else placeSpot(r.left + it.x * r.width, r.top + it.y * r.height);
+  log("lift", { s: it.s });
+}
+// CARRY: the centre tracks her gaze (smoothed like the pen), clamped so it never leaves the picture.
+// Nothing is stored until it lands. No timer — she can carry it as long as she likes.
+function carryFollow() {
+  const c = S.carry, it = S.scene.items[c.i], g = S.gaze, p = toScene(g.cx, g.cy);
+  c.sx += SC.PEN.alpha * (p.x - c.sx);
+  c.sy += SC.PEN.alpha * (p.y - c.sy);
+  const at = SC.clampItem({ x: c.sx, y: c.sy, w: it.w });
+  c.x = at.x; c.y = at.y;
+  const art = document.querySelector('#art [data-i="' + c.i + '"]');
+  if (art) { art.style.left = (at.x - it.w / SC.ASPECT / 2) * 100 + "%"; art.style.top = (at.y - it.w / 2) * 100 + "%"; }
+  if (p.inside) followSpot(g.cx, g.cy); else removeSpot();
+}
+function drop(at, by) {
+  const c = S.carry;
+  if (!c) return;
+  stopRestWatch(); removeSpot();
+  S.carry = null;
+  const it = S.scene.items[c.i], to = SC.clampItem({ x: at.x, y: at.y, w: it.w });
+  push({ t: "move", i: c.i, from: { x: it.x, y: it.y, by: it.by } });
+  it.x = to.x; it.y = to.y; it.by = by;
+  S.cool = c.i;
+  paintScene(); applyTargets(); changed();
+  log("drop", { s: it.s, by });
+}
+function putBack() {
+  if (!S.carry) return;
+  stopRestWatch(); removeSpot();
+  S.carry = null;
+  paintScene(); applyTargets();
+  log("put_back", {});
+}
+// partner.js: a finger took the carried item (touch wins). The art stays where it is; the drag commits.
+function releaseCarry() {
+  const c = S.carry;
+  if (!c) return null;
+  stopRestWatch(); removeSpot();
+  S.carry = null;
+  return { i: c.i, x: c.x, y: c.y };
+}
+function coolCheck() {
+  const op = SC.sceneOps(S.scene, S.table).find((o) => o.i === S.cool), r = $("scene").getBoundingClientRect();
+  if (!op || !r.width) { S.cool = null; paintHits(); return; }
+  const b = SC.hitBox(op, r.width, r.height, floorPx()), x = S.gaze.cx - r.left, y = S.gaze.cy - r.top;
+  if (x < b.left || x > b.left + b.width || y < b.top || y > b.top + b.height) { S.cool = null; paintHits(); }
+}
+function swallowClicks(ms) { S.swallowUntil = Date.now() + (ms || 400); }
 
 // ---------- routing ----------
 async function route() {
@@ -512,6 +605,7 @@ async function openRing(id) {
   stopPoll();
   S.id = id;
   S.history = [];
+  S.cool = null;
   S.scene = await loadScene(id);
   S.scene.backdrop = S.scene.backdrop || "meadow";
   S.scene.crayon = S.scene.crayon || S.table.crayonDefault || "#0F7C8A";
@@ -575,6 +669,7 @@ function undo() {
   hush();
   say("Undo");
   const ev = S.history.pop();
+  S.cool = null;                      // an index into the items that just changed
   if (ev.t === "place") S.scene.items.pop();
   else if (ev.t === "move" && S.scene.items[ev.i]) Object.assign(S.scene.items[ev.i], ev.from);
   else if (ev.t === "backdrop") { S.scene.backdrop = ev.from; markOn(); }
@@ -608,6 +703,7 @@ function itemAt(i) { const it = S.scene && S.scene.items[i]; return it ? { ...it
 function moveItem(i, x, y) {
   const it = S.scene && S.scene.items[i];
   if (!it) return;
+  if (S.carry && S.carry.i === i) releaseCarry();
   const c = SC.clampItem({ x, y, w: it.w });
   push({ t: "move", i, from: { x: it.x, y: it.y, by: it.by } });
   it.x = c.x; it.y = c.y; it.by = "partner";
@@ -619,6 +715,7 @@ async function clearPicture() {
   if (S.screen !== "ring" || !S.scene) return;
   S.scene.items = [];
   S.history = [];                     // not undoable: it had its own two-stage confirm
+  S.cool = null;
   paintScene();
   log("partner", { action: "clear" });
   changed();
@@ -830,9 +927,10 @@ window.Drawing = {
     said: S.said.slice(), park: S.park, paused: S.paused,
     crayon: S.scene ? S.scene.crayon || null : null, pen: S.pen ? { n: S.pen.pts.length, c: S.pen.c } : null,
     people: S.people.map((p) => p.slug), peoplePage: S.peoplePage, peoplePages: S.peoplePages,
+    carrying: S.carry ? S.carry.i : null, cool: S.cool,
     mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null,
   }),
-  setMode, settle,
+  setMode, settle, releaseCarry, swallowClicks,
   itemAt, moveItem, clamp: (o) => SC.clampItem(o), clearPicture, repaint: () => { if (S.scene) paintScene(); },
   tuneDwell, dwellMs: () => (window.Dwell ? Dwell.config.ms : EC.holds.content),
   freeze, thaw, say: (t) => { hush(); return say(t); },
@@ -840,6 +938,16 @@ window.Drawing = {
   pollShelf, flush: () => save(),
   exportPng: () => exportPng(S.scene),
 };
+// Test-only (spec 2026-10-02 §9): the contract audit paints a seeded scene on the gate hub's
+// never-saved ring WITHOUT a PUT (no changed(), so nothing reaches the gate's data dir) and lifts one.
+if (window.__testHooks) Object.assign(window.Drawing, {
+  __show(scene) {
+    S.scene = { v: 1, backdrop: "meadow", ...scene, items: (scene.items || []).map((i) => ({ ...i })) };
+    S.scene.crayon = S.scene.crayon || S.table.crayonDefault;
+    renderPalette(); paintScene(); applyTargets();
+  },
+  __lift: (i) => lift(i),
+});
 
 // ---------- boot ----------
 async function boot() {
@@ -862,7 +970,7 @@ async function boot() {
   $("btnDone").addEventListener("click", () => { done(); });
   $("railNew").addEventListener("click", () => { newPicture(); });
   addEventListener("hashchange", () => { route(); });
-  addEventListener("resize", () => { if (BAR) BAR.sizeBar(); tellPark(); if (S.spot && S.gaze) placeSpot(S.gaze.cx, S.gaze.cy); });
+  addEventListener("resize", () => { if (BAR) BAR.sizeBar(); tellPark(); if (S.spot && S.gaze) placeSpot(S.gaze.cx, S.gaze.cy); paintHits(); });
   addEventListener("pagehide", () => { settle(); save({ keepalive: true }); });
   document.addEventListener("pointermove", onPointer, true);
   document.addEventListener("pointerdown", onPointer, true);

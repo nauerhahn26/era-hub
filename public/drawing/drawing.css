@@ -54,6 +54,9 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
 #scene .item{pointer-events:auto; touch-action:none; -webkit-user-drag:none}   /* the partner's finger */
 .scene img.item{object-fit:contain; object-position:50% 100%}         /* a person is never stretched */
 #scene .item.stroke{pointer-events:none}                                /* ink is never a finger target */
+/* item hit boxes: transparent, id-qualified (dwell.js's .dwell{position:relative} is injected later) */
+#hits > .hit{position:absolute; pointer-events:auto; border-radius:12px; background:transparent}
+#art .item.carried{transform:scale(1.1); filter:drop-shadow(0 10px 12px rgba(0, 0, 0, .35)); z-index:2}
 .flyer{position:fixed; z-index:50; pointer-events:none; transform-origin:0 0}
 /* her picture's layers: #art (renderScene), the live pen, the item hit boxes, the landing spot */
 #art{position:absolute; inset:0}

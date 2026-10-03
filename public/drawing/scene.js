@@ -261,3 +261,12 @@ export function renderScene(target, scene, { table, images } = {}) {
   target.replaceChildren(backdropSvg((scene && scene.backdrop) || "meadow"), ...kids);
   return target;
 }
+
+// A dwell target for a placed item (spec 2026-10-02 §6, deviation 2): its art box in px, grown to
+// at least F x F about its centre, then SHIFTED — never shrunk — to lie inside the W x H picture.
+export function hitBox(op, W, H, F) {
+  const w = Math.max(op.width * W, F), h = Math.max(op.height * H, F);
+  const cx = (op.left + op.width / 2) * W, cy = (op.top + op.height / 2) * H;
+  const fit = (c, size, max) => Math.min(Math.max(0, c - size / 2), Math.max(0, max - size));
+  return { left: fit(cx, w, W), top: fit(cy, h, H), width: w, height: h };
+}

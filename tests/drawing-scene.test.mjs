@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ASPECT, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene,
+import { ASPECT, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene, hitBox,
   PEN, penStart, penMove, penEnd, penRoom, strokePath, withPeople, itemWord, stickerById }
   from "../public/drawing/scene.js";
 import { BACKDROPS, backdropById, horizonOf, backdropMarkup, paintBackdrop } from "../public/drawing/backdrops.js";
@@ -267,4 +267,19 @@ test("the celebration names people by their word, once each, and never counts st
   assert.equal(describe(I("stroke", "stroke"), TP), "You made a picture!");
   assert.equal(describe(I("stroke", "star", "stroke", "star"), TP), "You made a picture with two stars!");
   assert.equal(describe(I("person:gone", "sun"), TP), "You made a picture with a sun!", "a vanished person is not named");
+});
+
+// ---- v2 (spec 2026-10-02 §6): hit boxes ------------------------------------------------
+test("hit boxes: at least F px, centred on the item, shifted (never shrunk) inside the picture", () => {
+  const W = 1359, H = 764, F = 91;
+  const one = (it) => sceneOps({ v: 1, items: [{ by: "ellie", ...it }] }, T)[0];
+  let b = hitBox(one({ s: "star", x: 0.5, y: 0.5, w: 0.1 }), W, H, F);              // a 76 px star
+  assert.deepEqual([b.width, b.height], [F, F]);
+  near(b.left + b.width / 2, 0.5 * W, "centred x"); near(b.top + b.height / 2, 0.5 * H, "centred y");
+  b = hitBox(one({ s: "house", x: 0.5, y: 0.5, w: 0.26 }), W, H, F);
+  near(b.height, 0.26 * H, "a big item's hit box is its own box");
+  b = hitBox(one({ s: "star", x: 0.0282, y: 0.05, w: 0.1 }), W, H, F);
+  assert.deepEqual([b.left, b.top, b.width, b.height], [0, 0, F, F], "pushed inside, not shrunk");
+  b = hitBox(one({ s: "star", x: 0.9718, y: 0.95, w: 0.1 }), W, H, F);
+  near(b.left + b.width, W, "right edge"); near(b.top + b.height, H, "bottom edge");
 });

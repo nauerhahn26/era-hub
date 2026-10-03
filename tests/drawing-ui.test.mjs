@@ -122,15 +122,17 @@ test("her picture and the rest tile are inert, and the only holds on the page ar
     body: JSON.stringify({ v: 1, backdrop: "meadow", items: [H()] }) });
   const { ctx, page } = await openRing({ id });
   const r = await page.evaluate(() => ({
-    sceneAttrs: [...document.querySelectorAll("#scene, #scene *")].some((n) =>
+    sceneAttrs: [...document.querySelectorAll("#scene, #art, #art *")].some((n) =>
       n.matches(".dwell") || [...n.attributes].some((a) => a.name.startsWith("data-dwell"))),
+    hits: document.querySelectorAll("#hits > .hit.dwell").length,
     rest: document.getElementById("restTile").matches(".dwell") ||
       [...document.getElementById("restTile").attributes].some((a) => a.name.startsWith("data-dwell")),
     holds: [...document.querySelectorAll("[data-dwell-ms]")].map((el) => el.id + "=" + el.dataset.dwellMs).sort(),
     ringTargets: document.querySelectorAll("#sRing .cell.dwell").length,
     items: document.querySelectorAll("#scene .item").length,
   }));
-  assert.equal(r.sceneAttrs, false, "no .dwell and no data-dwell-* anywhere in her picture");
+  assert.equal(r.sceneAttrs, false, "no .dwell on the picture or its art in Stickers mode");
+  assert.equal(r.hits, 1, "the horse is liftable (spec 2026-10-02 §6); the picture itself is not a target");
   assert.equal(r.rest, false);
   assert.deepEqual(r.holds, ["barDoor=2400", "barTalk=2400"]);
   assert.equal(r.ringTargets, 14, "8 palette + 4 modes + Undo + Done");
@@ -681,10 +683,7 @@ test("Done after a save the hub did not take: no PNG is posted, she is celebrate
 test("the contract audit is clean on a full shelf and a full ring, at both gate viewports", async () => {
   seedShelf(12);
   const full = "2026-09-30-150000-test-dev";
-  seed(full, [H(), { s: "house", x: 0.35, y: 0.75, w: 0.26, by: "ellie" }, { s: "tree", x: 0.65, y: 0.74, w: 0.28, by: "ellie" },
-    { s: "person", x: 0.2, y: 0.82, w: 0.22, by: "ellie" }, { s: "sun", x: 0.5, y: 0.17, w: 0.16, by: "ellie" },
-    { s: "cloud", x: 0.33, y: 0.25, w: 0.14, by: "ellie" }, { s: "star", x: 0.67, y: 0.25, w: 0.1, by: "ellie" },
-    { s: "splat", x: 0.45, y: 0.33, w: 0.15, by: "ellie", c: "#DE7B52", seed: 7 }], "2026-09-30T15:00:00Z");
+  seed(full, SPACED, "2026-09-30T15:00:00Z");
   process.env.INVARIANTS_BASE = BASE;                    // read when invariants.mjs is first imported
   const { auditPath } = await import("./invariants.mjs");
   for (const state of [{ id: "/drawing/ (12 pictures)", path: "/drawing/" },
@@ -1114,8 +1113,8 @@ test("People: the library in dad's order, the other seats black; a dwell says th
   await saved;
   assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["person:maya", "person:sam"], "the hub took them: they are in the library");
   assert.equal(await page.locator('#art img.item[src="/characters/sam.png"]').count(), 1);
+  await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
   seedPeople(null);
-  await ctx.close();
 });
 
 test("People: past eight, seven a page with More in the last seat; More turns the page silently and loops", async () => {
@@ -1132,8 +1131,8 @@ test("People: past eight, seven a page with More in the last seat; More turns th
   assert.equal((await st(page)).said.length, n, "More is silent (v1's More)");
   await page.locator("#peopleMore").click();
   assert.equal((await st(page)).peoplePage, 0, "More loops back");
+  await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
   seedPeople(null);
-  await ctx.close();
 });
 
 test("People with no library: eight black inert seats, \"No people yet\", and the grown-ups' sheet says where to add them", async () => {
@@ -1152,8 +1151,8 @@ test("People with no library: eight black inert seats, \"No people yet\", and th
   ({ ctx, page } = await openRing());
   await page.locator("#partnerTab").click();
   assert.equal(await page.isVisible("#pPeople"), false, "with a library the line is gone");
+  await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
   seedPeople(null);
-  await ctx.close();
 });
 
 test("a person who left the library: drawn as nothing, kept, and the picture still saves (Review Focus 3)", async () => {
@@ -1167,8 +1166,8 @@ test("a person who left the library: drawn as nothing, kept, and the picture sti
   assert.equal((await saved).status(), 200, "grandfathered by the hub (deviation 8)");
   assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["person:sam", "horse"], "kept");
   assert.deepEqual(errors, []);
+  await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
   seedPeople(null);
-  await ctx.close();
 });
 
 test("Done names her people, and the PNG has them in it", async () => {
@@ -1184,6 +1183,172 @@ test("Done names her people, and the PNG has them in it", async () => {
   await page.locator("#btnDone").click();
   await page.waitForFunction(() => window.Drawing.state().screen === "shelf");
   assert.ok((await st(page)).said.includes("You made a picture with Maya and a horse!"), JSON.stringify((await st(page)).said));
+  await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
   seedPeople(null);
+});
+
+// ================================================================ v2 T9 — gaze-move
+// Eight stickers and a stroke, every hit box >= 100 px from the next at 1920 (>= 70 at 1280).
+const SPACED = [
+  { s: "house", x: 0.15, y: 0.70, w: 0.26, by: "ellie" }, { s: "horse", x: 0.42, y: 0.80, w: 0.20, by: "ellie" },
+  { s: "tree", x: 0.68, y: 0.70, w: 0.28, by: "ellie" }, { s: "person", x: 0.90, y: 0.80, w: 0.22, by: "ellie" },
+  { s: "sun", x: 0.12, y: 0.18, w: 0.16, by: "ellie" }, { s: "cloud", x: 0.40, y: 0.18, w: 0.14, by: "ellie" },
+  { s: "star", x: 0.62, y: 0.15, w: 0.10, by: "ellie" }, { s: "splat", x: 0.85, y: 0.22, w: 0.15, by: "ellie", c: "#DE7B52", seed: 7 },
+  { s: "stroke", c: "#6a4fb3", w: 0.014, pts: [[0.05, 0.45], [0.95, 0.45]], by: "ellie" },
+];
+const hitsOf = (page) => page.evaluate(() => [...document.querySelectorAll("#hits > .hit.dwell")].map((e) => {
+  const r = e.getBoundingClientRect(); return { i: e.dataset.hit, label: e.getAttribute("aria-label"), w: r.width, h: r.height }; }));
+async function liftAt(page, i) {
+  await page.waitForFunction(() => !document.querySelector(".flyer"));
+  await page.locator(`#hits > .hit[data-hit="${i}"]`).click();
+}
+
+test("gaze-move targets: a hit box ≥ the floor for every sticker and person in Stickers, People and Places — none in Draw, never ink", async () => {
+  const id = "2026-10-02-150000-test-dev";
+  seed(id, [{ s: "star", x: 0.3, y: 0.2, w: 0.1, by: "ellie" }, H(),
+            { s: "stroke", c: "#0F7C8A", w: 0.014, pts: [[0.1, 0.5], [0.9, 0.5]], by: "ellie" }], "2026-10-02T15:00:00Z");
+  const { ctx, page } = await openRing({ id });
+  for (const m of ["stickers", "people", "places"]) {
+    if (m !== "stickers") await page.locator("#mode-" + m).click();
+    const h = await hitsOf(page);
+    assert.deepEqual(h.map((x) => [x.i, x.label]), [["0", "Star"], ["1", "Horse"]], m + ": ink is never a target");
+    for (const x of h) assert.ok(Math.min(x.w, x.h) >= 90, `${m} ${x.label} ${x.w}x${x.h}`);
+    assert.equal(await page.evaluate(() => document.getElementById("scene").matches(".dwell")), false, m);
+  }
+  await page.locator("#mode-draw").click();
+  assert.deepEqual(await hitsOf(page), [], "Draw mode: items are not targets");
+  await ctx.close();
+});
+
+test("lift → carry → drop: a dwell lifts it (its word), her gaze carries it, a rest on the spot drops it there; Undo puts it back", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await liftAt(page, 0);
+  let s = await st(page);
+  assert.deepEqual([s.carrying, s.said.at(-1)], [0, "Horse"]);
+  assert.equal(await page.locator('#art [data-i="0"].carried').count(), 1, "lifted: bigger, with a soft shadow");
+  assert.deepEqual([await page.locator("#hits > .hit").count(), await page.locator("#scene > #spot.dwell").count()], [0, 1],
+    "one thing at a time: the spot is the only target on the picture");
+  const to = await scenePt(page, 0.25, 0.3);
+  await page.mouse.move(to.x, to.y, { steps: 15 });
+  const art = await page.evaluate(() => { const el = document.querySelector('#art [data-i="0"]'); return [parseFloat(el.style.left), parseFloat(el.style.top)]; });
+  assert.ok(art[0] < 30 && art[1] < 30, "the horse follows her gaze (left/top %): " + art);
+  assert.deepEqual(s.items[0], { s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" });
+  assert.deepEqual((await st(page)).items[0], s.items[0], "nothing is stored while she carries it");
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok());
+  await page.locator("#spot").click();
+  s = await st(page);
+  assert.equal(s.carrying, null);
+  assert.ok(Math.abs(s.items[0].x - 0.25) < 0.04 && Math.abs(s.items[0].y - 0.3) < 0.07, JSON.stringify(s.items[0]));
+  assert.deepEqual([s.items[0].by, s.history], ["ellie", 2], "one move in her history");
+  await saved;
+  await page.locator("#btnUndo").click();
+  assert.deepEqual((await st(page)).items[0], { s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" });
+  await ctx.close();
+});
+
+test("put it back: the rest tile, a mode tile, Undo and Done each drop it where it was — then act as usual", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await page.locator("#tile-sun").click();
+  const home = (await st(page)).items;
+  const liftAway = async (i) => {
+    await liftAt(page, i);
+    const p = await scenePt(page, 0.15, 0.5);
+    await page.mouse.move(p.x, p.y, { steps: 10 });
+  };
+  await page.evaluate(() => window.Dwell.setMs(600));                   // the rest watch uses her dwell
+  await liftAway(0);
+  const rest = await page.locator("#restTile").boundingBox();
+  await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2, { steps: 5 });
+  await page.waitForFunction(() => window.Drawing.state().carrying === null, null, { timeout: 3000 });
+  let s = await st(page);
+  assert.deepEqual([s.items, s.history], [home, 2], "the rest tile: back where it was, no history");
+  assert.equal(await page.evaluate(() => document.getElementById("restTile").matches(".dwell")), false, "and the rest tile stays inert");
+  await slowDwell(page);
+  await liftAway(1);
+  await page.locator("#mode-places").click();
+  s = await st(page);
+  assert.deepEqual([s.items, s.mode, s.carrying], [home, "places", null], "a mode tile: back, then the mode");
+  await liftAway(1);
+  await page.locator("#btnUndo").click();
+  assert.deepEqual((await st(page)).items, home.slice(0, 1), "Undo: back, then the previous event (the sun) is undone");
+  await liftAway(0);
+  await page.locator("#btnDone").click();
+  await page.waitForFunction(() => window.Drawing.state().screen === "shelf");
+  assert.ok((await st(page)).said.includes("You made a picture with a horse!"), "Done: back, then it saves and celebrates");
+  await ctx.close();
+});
+
+test("touch wins: a finger on the carried item drags it and drops it where the finger lets go", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await liftAt(page, 0);
+  const p = await scenePt(page, 0.3, 0.5);
+  await page.mouse.move(p.x, p.y, { steps: 10 });
+  const from = await centreOf(page, '#art [data-i="0"]');
+  await finger(page, from, { x: from.x + 150, y: from.y + 60 });
+  await page.waitForTimeout(300);                                       // past dwell.js's tap rescue
+  const s = await st(page);
+  const sw = (await page.locator("#scene").boundingBox()).width;
+  assert.deepEqual([s.carrying, s.items[0].by, s.history], [null, "partner", 2]);
+  assert.ok(Math.abs(s.items[0].x - (0.3 + 150 / sw)) < 0.05, JSON.stringify(s.items[0]));
+  await ctx.close();
+});
+
+test("a finger drag in Draw mode moves a sticker and never starts a stroke (Review Focus 2)", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await page.waitForFunction(() => !document.querySelector(".flyer"));
+  await page.locator("#mode-draw").click();
+  const from = await centreOf(page, '#art [data-i="0"]');
+  await finger(page, from, { x: from.x - 60, y: from.y - 20 });       // short: released inside the picture
+  await page.waitForTimeout(400);
+  const s = await st(page);
+  assert.deepEqual([s.pen, s.items.length, s.items[0].by], [null, 1, "partner"]);
+  await ctx.close();
+});
+
+test("a dropped item is not lifted again until her gaze has left it once (Review Focus 5)", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  await liftAt(page, 0);
+  const p = await scenePt(page, 0.3, 0.5);
+  await page.mouse.move(p.x, p.y, { steps: 10 });
+  await page.locator("#spot").click();
+  assert.equal((await st(page)).cool, 0);
+  assert.equal(await page.locator('#hits > .hit[data-hit="0"]').count(), 0, "no target under her resting gaze");
+  const near = await scenePt(page, 0.31, 0.51);
+  await page.mouse.move(near.x, near.y);
+  assert.equal(await page.locator('#hits > .hit[data-hit="0"]').count(), 0, "still on it");
+  const away = await scenePt(page, 0.8, 0.2);
+  await page.mouse.move(away.x, away.y, { steps: 3 });
+  assert.equal((await st(page)).cool, null);
+  assert.equal(await page.locator('#hits > .hit[data-hit="0"]').count(), 1, "she looked away: it can be lifted again");
+  await ctx.close();
+});
+
+test("with her real dwell: rest on a sticker to lift it, look to carry it as long as she likes, rest to drop it", async () => {
+  const { ctx, page } = await openRing();
+  await page.locator("#tile-sun").click();
+  await page.waitForFunction(() => !document.querySelector(".flyer"));
+  await page.evaluate(() => window.Dwell.setMs(800));
+  const sun = await centreOf(page, '#hits > .hit[data-hit="0"]');
+  await page.mouse.move(sun.x, sun.y, { steps: 5 });
+  await page.waitForFunction(() => window.Drawing.state().carrying === 0, null, { timeout: 4000 });
+  for (let k = 1; k <= 20; k++) {
+    const q = await scenePt(page, 0.5 - k * 0.015, 0.17 + k * 0.01);
+    await page.mouse.move(q.x, q.y, { steps: 2 });
+    await page.waitForTimeout(50);
+  }
+  assert.equal((await st(page)).carrying, 0, "still carried while she keeps looking");
+  await page.waitForFunction(() => window.Drawing.state().carrying === null, null, { timeout: 4000 });
+  const s = (await st(page)).items[0];
+  assert.ok(s.x < 0.3 && s.y > 0.3, "dropped where she rested: " + JSON.stringify(s));
   await ctx.close();
 });
