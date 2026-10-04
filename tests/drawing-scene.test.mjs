@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ASPECT, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene, hitBox,
+import { ASPECT, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene, hitBox, strokeBounds,
   PEN, penStart, penMove, penEnd, penRoom, strokePath, withPeople, itemWord, stickerById }
   from "../public/drawing/scene.js";
 import { BACKDROPS, backdropById, horizonOf, backdropMarkup, paintBackdrop } from "../public/drawing/backdrops.js";
@@ -281,5 +281,25 @@ test("hit boxes: at least F px, centred on the item, shifted (never shrunk) insi
   b = hitBox(one({ s: "star", x: 0.0282, y: 0.05, w: 0.1 }), W, H, F);
   assert.deepEqual([b.left, b.top, b.width, b.height], [0, 0, F, F], "pushed inside, not shrunk");
   b = hitBox(one({ s: "star", x: 0.9718, y: 0.95, w: 0.1 }), W, H, F);
+  near(b.left + b.width, W, "right edge"); near(b.top + b.height, H, "bottom edge");
+});
+
+// ---- trash mode (dad 10/4): a stroke is a target only while trash is on — its whole box -------
+test("a stroke's trash box: its points' bounds plus half its line, grown to F about its centre, shifted inside", () => {
+  const W = 1359, H = 764, F = 91;
+  const line = { s: "stroke", c: "#0F7C8A", w: 0.014, pts: [[0.2, 0.5], [0.8, 0.5]], by: "ellie" };
+  const o = strokeBounds(line), hx = 0.014 / ASPECT / 2;
+  near(o.left, 0.2 - hx, "left"); near(o.width, 0.6 + 2 * hx, "width");
+  near(o.top, 0.5 - 0.007, "top"); near(o.height, 0.014, "height");
+  let b = hitBox(o, W, H, F);
+  near(b.width, (0.6 + 2 * hx) * W, "a long line keeps its own length");
+  assert.equal(b.height, F, "a thin line grows to the floor");
+  near(b.top + b.height / 2, 0.5 * H, "about its centre");
+  const zig = strokeBounds({ ...line, pts: [[0.3, 0.2], [0.5, 0.6], [0.4, 0.3]] });
+  near(zig.left, 0.3 - hx, "zigzag left"); near(zig.top, 0.2 - 0.007, "zigzag top");
+  near(zig.left + zig.width, 0.5 + hx, "zigzag right"); near(zig.top + zig.height, 0.6 + 0.007, "zigzag bottom");
+  b = hitBox(strokeBounds({ ...line, pts: [[0, 0], [0.01, 0.01]] }), W, H, F);
+  assert.deepEqual([b.left, b.top, b.width, b.height], [0, 0, F, F], "a dot in the corner: F x F, pushed inside");
+  b = hitBox(strokeBounds({ ...line, pts: [[0.99, 0.99], [1, 1]] }), W, H, F);
   near(b.left + b.width, W, "right edge"); near(b.top + b.height, H, "bottom edge");
 });
