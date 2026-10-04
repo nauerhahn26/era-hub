@@ -85,11 +85,22 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
 .thumb{width:min(100cqw, calc(100cqh * 16 / 9)); height:min(100cqh, calc(100cqw * 9 / 16)); border-radius:12px}
 .thumb, .thumb *{pointer-events:none}
 
-/* ---- the grown-up's tab (in the bar, right end) and sheet ---- */
+/* ---- the grown-up's tab (in the bar, left of the 🗑 Trash tile) and sheet ---- */
 #partnerTab{margin-left:auto; flex:0 0 auto; height:var(--bar-inner, 40px); border:none; border-radius:10px;
             padding:0 14px; cursor:pointer; font-family:var(--font); line-height:1; white-space:nowrap;
             font-size:calc(var(--bar-inner, 40px) * 0.34); font-weight:700;
             background:rgba(255,255,255,.16); color:#fff}
+/* ---- the 🗑 Trash tile (dad 10/4): the bar's TOP-RIGHT corner, the grown-ups' tab 14px left of it ----
+   Her dwell, a photo tile laid on its side to fit the strip: the glyph fills the bar's inner height
+   (>= 4/5 of the tile), the plate beside it; at least twice as wide as tall (the bar's audit floor).
+   id-qualified: .photo img.pic / .plate are the ring's vertical tiles. The shelf hides it (.away). */
+#trashTile{flex:0 0 auto; flex-direction:row; gap:6px; height:var(--bar-inner, 40px);
+           min-width:calc(var(--bar-inner, 40px) * 2); margin-left:var(--gap); padding:0 14px 0 4px; border-radius:12px}
+#trashTile img.pic{flex:0 0 auto; width:auto; height:calc(100% - 4px); aspect-ratio:1; padding:0; object-fit:contain}
+#trashTile .plate{flex:0 0 auto; padding:0; white-space:nowrap; line-height:1.15;
+                  font-size:max(24px, calc(var(--bar-inner, 40px) * 0.4))}
+#trashTile.on{background:#D3EEF1}       /* + .cell.on's teal ring: the dark-teal bar swallows a ring alone */
+#trashTile.away{visibility:hidden}
 #partnerSheet{position:fixed; inset:0; top:var(--bar-h, 0px); z-index:90; display:flex;
               align-items:center; justify-content:center; background:rgba(0,0,0,.45)}
 .sheet-card{background:#fff; color:var(--ink); width:min(560px, 88vw); padding:22px 24px;

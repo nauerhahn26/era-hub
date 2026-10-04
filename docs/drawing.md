@@ -8,20 +8,22 @@ Plans: `docs/superpowers/plans/2026-09-30-drawing-plan.md` + `docs/superpowers/p
 - `public/drawing/scene.js` — pure scene logic and THE renderer (`renderScene`): the ring, every
   shelf thumbnail and the mailed PNG all draw through it. node tests import it directly.
   + the pen (`penStart/penMove/penEnd/penRoom`), strokes as one path string, people (`withPeople`),
-  horizon-relative slots (`slotY`), hit boxes (`hitBox`).
+  horizon-relative slots (`slotY`), hit boxes (`hitBox`), a stroke's trash box (`strokeBounds`).
 - `public/drawing/backdrops.js` — the eight places as data (shapes in 1600x900 units) and their two
   painters: `backdropSvg` (ring, thumbnails, the Places tiles) and `paintBackdrop` (the PNG).
 - `public/drawing/stickers/mode-*.png` — the mode glyphs (Fluent 3D, MIT, pinned in `stickers.json`
-  `modes[]`; ⭐ Stickers reuses `star.png`).
+  `modes[]`; ⭐ Stickers reuses `star.png`). `bar-trash.png` — the 🗑 Trash tile's Wastebasket (pinned in
+  `bar[]`, same Fluent commit).
 - `public/drawing/drawing.js` — the app: boot, router (`#p=<id>`), ring, placing, Undo, autosave,
   park, shelf, Done. `window.Drawing` is its test/partner surface.
   + the mode row, the per-mode palettes (`renderPalette`), the Draw and gaze-move state machines
-  (plan 2026-10-02 Definitions), the landing spot.
+  (plan 2026-10-02 Definitions), the landing spot. + trash mode (the 🗑 tile, removals, auto-off).
 - `public/drawing/partner.js` — the tab in the door bar, the sheet, the finger drag.
-  + touch wins over a carried item; ink is never dragged.
+  + touch wins over a carried item; ink is never dragged. The tab sits LEFT of the 🗑 Trash tile.
 - `public/drawing/stickers.json` — the eight stickers (seats, words, zones, scales, sha256 pins) and
   the slot tables. `drawings.js` validates scenes against the same file.
   + `modes`, `crayons`, `backdrops`; slot tables are written against the reference horizon 0.58.
+  + `bar` (the door bar's tiles: today only `trash`).
 - `drawings.js` (hub) — ids, validation, writes, list, one-day blank cleanup, Done + mail.
   + v2 validation (strokes, crayons, places, people by shape only — a library check made pictures
     unsaveable and protected nothing, review 10/3 #5), 256 KB, `characters()`.
@@ -55,6 +57,30 @@ of an armed target only, and the contract audit measures the box). Resting on th
 watched by the page (the tile itself stays inert). The test-only `&mode=<id>` hash and
 `Drawing.__show/__lift` exist only under `window.__testHooks`.
 
+## Trash mode (dad 10/3–10/4)
+This AMENDS the bar law "🚪 and 💬 are the bar's only dwell targets" on dad's word (10/4): a 🗑 **Trash**
+tile in the door bar's TOP-RIGHT corner is its third dwell target, and the grown-ups' tab moved left of
+it (14 px gap; partner.js inserts the tab before `#trashTile`). It holds HER dwell
+(`CONTRACT.holds.content`, no `data-dwell-ms` — it never takes her off the screen), is a photo tile laid
+on its side (glyph ≥ 4/5 of the tile, plate "Trash"), the bar's inner height like the doors, ≥ 2× as wide
+as tall (the bar's audit floor). drawing.js appends it to the bar mount once `stickers.json` lands —
+doorbar.js is untouched. The shelf hides it (`.away`, visibility only: zero shift).
+- One dwell: trash ON (teal ring + light-teal fill, "Trash on"); a live stroke ends and a carried item
+  goes back first. The next dwell: OFF ("Trash off"). Per session — never remembered.
+- While on, every sticker, person AND stroke has a `.hit` (a stroke's box = its points' bounds plus half
+  its line, grown to ≥ F×F about its centre and shifted inside — `strokeBounds` + `hitBox`; whole-line
+  deletion, no per-segment work). A dwell removes the item ("Bye, horse"; a person by name; ink "Bye,
+  line"), pushes `{t:"remove", i, item}` (Undo splices it back in place) and autosaves. No lifts; Draw's
+  `#scene` target is off; the backdrop does nothing (a finger tap there neither). Strokes have NO hit box
+  outside trash mode.
+- After a removal there are no hit boxes until her gaze leaves the removed item's box (`S.gone`, the
+  drop's cool-down rule): what lay under it never goes on the same resting gaze.
+- Off by itself, silently: Done, 🚪, 💬, a real mode switch, opening a picture or the shelf, the sheet
+  opening, pagehide. Undo, a palette tile and the active mode leave it on.
+- Ring dwell choices: 14 + the 🗑 = 15, inside `CONTRACT.maxChoices.cap` 16.
+- Known shape (dad's whole-line rule): a long diagonal line's box covers much of the picture, and a
+  later line lies over earlier items' boxes (topmost wins); Undo is the way back.
+
 ## People (the private library)
 `<family Drive folder>/characters/{characters.json, <slug>.png}` → mirrored to `<DATA>/characters/` →
 `GET /characters/index.json` and `/characters/<slug>.png`. `characters.json` =
@@ -64,7 +90,7 @@ nothing family-specific is ever committed here. With Drive off (the tablet today
 seats and "No people yet"; pictures holding people still open, save and shelve.
 
 ## Re-cutting assets
-- Stickers: edit a sticker's `source` + `sha256` in `stickers.json`, run
+- Stickers (and `modes[]`, `bar[]`): edit a sticker's `source` + `sha256` in `stickers.json`, run
   `node tools/drawing-fetch-stickers.mjs` (network), then `node tools/drawing-fetch-stickers.mjs --check`.
 - Icon: `node tools/drawing-icon.mjs` (sharp from `/home/claude/new-era/node_modules`, tool time only).
 
@@ -73,6 +99,8 @@ seats and "No people yet"; pictures holding people still open, save and shelve.
 `tests/drawing-scene.test.mjs` (no hub). `icons` and `invariants` run on the gate's shared hub.
 v2 added no suite and no port: `drawing-scene` (geometry), `drawings` (hub), `drive-mirror` (characters),
 `drawing-ui` (the app + per-mode audits) and `invariants.mjs` STATES (`#ring-draw/-people/-places/-items/-carried`).
+Trash mode added no suite and no port: `drawing-scene` (`strokeBounds`), `drawings` (the pinned glyph),
+`drawing-ui` (the tile, removals, auto-off, audits with trash on) and STATES `#ring-trash`.
 
 ## Later rungs (spec §10, dad's call)
 Resizing or recolouring stickers, stroke widths, an eraser (Undo is the eraser), backgrounds from her

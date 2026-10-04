@@ -1,8 +1,8 @@
 /*
  * partner.js — the grown-up's side of Drawing (spec 2026-09-30 §2.4).
  *
- * A tab at the RIGHT end of the shared door bar (the one slot doorbar.js lets a touch-only control
- * have — board-partner.js's strip) opens one sheet: dwell tune, Clear picture (two stages,
+ * A tab at the right of the shared door bar (the one slot doorbar.js lets a touch-only control
+ * have — board-partner.js's strip), just LEFT of her 🗑 Trash tile in the corner (dad 10/4), opens one sheet: dwell tune, Clear picture (two stages,
  * spoken), and the last Done's mail truth. And a FINGER may drag a sticker she placed to move it —
  * also one she is carrying with her gaze (touch wins, spec 2026-10-02 §6); ink is never dragged.
  * Nothing here is .dwell or carries a data-dwell-*: ERAgaze moves a MOUSE, so her gaze can never
@@ -19,7 +19,7 @@
   tab.id = "partnerTab";
   tab.textContent = "⚙ grown-ups";                 // deliberately NO .dwell, NO data-dwell-*
   const bar = document.querySelector(".msgbar");
-  if (bar) bar.appendChild(tab);
+  if (bar) bar.insertBefore(tab, document.getElementById("trashTile"));   // left of the 🗑 (null: the end)
 
   let clearArmed = false;
   function paint() {
