@@ -89,6 +89,20 @@ test("every mode glyph is vendored and pinned like the stickers; Stickers reuses
   assert.equal(TABLE.modes.find(m => m.id === "stickers").src, TABLE.stickers.find(s => s.id === "star").src);
 });
 
+// trash mode (dad 10/4): the 🗑 tile in the door bar's top-right corner wears Fluent's Wastebasket,
+// vendored and pinned at the same commit as every other glyph.
+test("the bar's Trash glyph is vendored and pinned like the stickers, at the same Fluent commit", () => {
+  execFileSync(process.execPath, [path.join(HUB, "tools", "drawing-fetch-stickers.mjs"), "--check"], { stdio: "pipe" });
+  assert.deepEqual((TABLE.bar || []).map(b => [b.id, b.word, b.src]), [["trash", "Trash", "stickers/bar-trash.png"]]);
+  for (const t of TABLE.bar) {
+    const b = fs.readFileSync(path.join(DRAW, t.src));
+    assert.equal(b.readUInt32BE(0), 0x89504e47, t.id + " is a PNG");
+    assert.ok(b.readUInt32BE(16) >= 256 && b.readUInt32BE(20) >= 256, t.id + " is at least 256 px");
+    assert.equal(t.source, `https://raw.githubusercontent.com/microsoft/fluentui-emoji/${TABLE.source.commit}/assets/Wastebasket/3D/wastebasket_3d.png`);
+    assert.equal(crypto.createHash("sha256").update(b).digest("hex"), t.sha256, t.id + " matches its pin");
+  }
+});
+
 // ---- §4 the module ------------------------------------------------------------
 const require = createRequire(path.join(HUB, "server.js"));
 const drive = require("./drive.js");

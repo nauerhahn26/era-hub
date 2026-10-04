@@ -8,7 +8,8 @@
  * accident (EyeDraw's Midas-touch lesson): in Draw mode, idle, a dwell on it starts a line; in the
  * other modes only placed items' hit boxes are targets (a dwell lifts one), and while she draws or
  * carries, the landing spot is the only target on it (spec 2026-10-02 §3, §6). A grown-up's finger
- * may move a sticker.
+ * may move a sticker. Trash mode (dad 10/4): the 🗑 tile in the door bar's top-right corner turns it on;
+ * then every sticker, person and stroke is a target and a dwell removes it, until the tile again.
  *
  * Laws (spec §7): one dwell per user, only the two doors are 2x; Speech.stop() before every
  * action of hers; never "wrong", never "sent"; nothing times out; zero layout shift; a picture is
@@ -50,6 +51,7 @@ const S = {
   lastMail: null, said: [], park: null, session: "s" + Date.now(),
   mode: "stickers", people: [], gaze: null, pen: null, carry: null, cool: null, spot: null, swallowUntil: 0,
   leaveTimer: null, restTimer: null, peoplePage: 0, peoplePages: 1,
+  trash: false, gone: null,
 };
 let BAR = null;
 let frozen = [];                 // the .dwell targets the grown-up's sheet put to sleep
@@ -91,6 +93,8 @@ function show(which) {
   $("sShelf").classList.toggle("show", which === "shelf");
   $("sRing").classList.toggle("show", which === "ring");
   document.body.dataset.screen = which;
+  const t = $("trashTile");
+  if (t) t.classList.toggle("away", which !== "ring");      // the shelf has nothing to throw away
 }
 
 // ---------- the gaze park (spec §2; deviation 6: the shelf's rest is its black centre) ----------
@@ -115,8 +119,8 @@ function tellPark() {
 }
 
 // ---------- the shared bar: 🚪 leave and 💬 pause to talk ----------
-function onLeave() { settle(); log("door", {}); hush(); save({ keepalive: true }); }
-function onPause() { settle(); log("talk", {}); hush(); S.wasPaused = S.paused; S.paused = true; save({ keepalive: true }); }
+function onLeave() { settle(); trashOff(); log("door", {}); hush(); save({ keepalive: true }); }
+function onPause() { settle(); trashOff(); log("talk", {}); hush(); S.wasPaused = S.paused; S.paused = true; save({ keepalive: true }); }
 function onResume() { S.paused = S.wasPaused; log("talk_resume", {}); tellPark(); }
 
 // ---------- the ring's tiles, from stickers.json (seats fixed forever) ----------
@@ -167,6 +171,7 @@ function setMode(m) {
   if (!MODES.includes(m) || S.screen !== "ring" || !S.scene) return;
   settle();
   if (m === S.mode) return;
+  trashOff();
   hush();
   S.mode = m;
   try { localStorage.setItem(MODE_KEY, m); } catch {}
@@ -322,7 +327,7 @@ function onPointer(e) {
   S.gaze = { cx: e.clientX, cy: e.clientY, type: e.pointerType || "mouse" };
   // a finger is not her gaze: it never ends the cool-down (nor rebuilds the hit boxes mid-drag)
   if (e.pointerType === "touch") return;
-  if (S.cool !== null && !S.carry && S.scene) coolCheck();
+  if ((S.cool !== null || S.gone) && !S.carry && S.scene) coolCheck();
   if (e.type !== "pointermove") return;
   if (S.pen) penFollow();
   else if (S.carry) carryFollow();
@@ -373,7 +378,7 @@ function onSceneClick() {
   const p = toScene(S.gaze.cx, S.gaze.cy);
   if (!p.inside) return;
   if (S.pen || S.carry) { if (S.gaze.type === "touch") land(p); return; }
-  if (S.mode === "draw") startStroke(p);
+  if (S.mode === "draw" && !S.trash) startStroke(p);                  // trash on: the backdrop does nothing
 }
 function startStroke(p) {
   if (S.paused || S.scene.items.length >= MAX_ITEMS) return;
@@ -435,7 +440,7 @@ function markOn() {
 // (the spot is) and never in the other modes.
 function applyTargets() {
   const sc = $("scene");
-  const want = S.screen === "ring" && !!S.scene && S.mode === "draw" && !S.pen && !S.carry;
+  const want = S.screen === "ring" && !!S.scene && S.mode === "draw" && !S.pen && !S.carry && !S.trash;
   if (!want) { sc.classList.remove("dwell"); sc.removeAttribute("data-dwell-disabled"); frozen = frozen.filter((el) => el !== sc); }
   else if (!sc.hasAttribute("data-dwell-disabled")) sc.classList.add("dwell");
   paintHits();
@@ -454,23 +459,27 @@ function paintScene() {
 // (her picture is the target there), ink never has one, and while she carries something only the
 // spot is a target. Until her gaze has left the item she just dropped there are no hit boxes at
 // all (deviation 13): dropped ON another item, that one's box would lie under her resting gaze and
-// lift it straight back (review 10/3 #3).
+// lift it straight back (review 10/3 #3). Trash mode (dad 10/4): the same boxes in EVERY mode, plus one
+// per stroke (its bounds grown to F, scene.js strokeBounds) — a dwell removes, never lifts — and the
+// same guard after a removal (S.gone): what lay under the item she just removed waits for her gaze to leave.
 function paintHits() {
   const box = $("hits");
-  const show = S.screen === "ring" && !!S.scene && S.mode !== "draw" && !S.carry && !S.pen && S.cool === null;
+  const show = S.screen === "ring" && !!S.scene && (S.trash || S.mode !== "draw") && !S.carry && !S.pen
+    && S.cool === null && !S.gone;
   if (!show) { box.replaceChildren(); return; }
   const r = $("scene").getBoundingClientRect();
   if (!r.width) return;
   const F = floorPx(), kids = [];
   for (const op of SC.sceneOps(S.scene, S.table)) {
-    if (op.kind === "stroke") continue;
-    const b = SC.hitBox(op, r.width, r.height, F);
+    const ink = op.kind === "stroke";
+    if (ink && !S.trash) continue;
+    const b = SC.hitBox(ink ? SC.strokeBounds(S.scene.items[op.i]) : op, r.width, r.height, F);
     const el = document.createElement("div");
     el.className = "hit dwell";
     el.dataset.hit = String(op.i);
-    el.setAttribute("aria-label", SC.itemWord(S.table, op.s) || "Picture");
+    el.setAttribute("aria-label", ink ? "Line" : SC.itemWord(S.table, op.s) || "Picture");
     Object.assign(el.style, { left: b.left + "px", top: b.top + "px", width: b.width + "px", height: b.height + "px" });
-    el.addEventListener("click", (e) => { e.stopPropagation(); lift(op.i); });
+    el.addEventListener("click", (e) => { e.stopPropagation(); if (S.trash) removeItem(op.i); else lift(op.i); });
     kids.push(el);                                   // item order: the latest is on top and wins
   }
   box.replaceChildren(...kids);
@@ -479,7 +488,7 @@ function paintHits() {
 // LIFT: her full dwell on an item. It says its word, grows a little, and follows her gaze.
 function lift(i) {
   if (Date.now() < S.swallowUntil) return;
-  if (S.screen !== "ring" || !S.scene || S.paused || S.mode === "draw" || S.pen || S.carry) return;
+  if (S.screen !== "ring" || !S.scene || S.paused || S.mode === "draw" || S.pen || S.carry || S.trash) return;
   const it = S.scene.items[i];
   if (!it || it.s === "stroke") return;
   hush();
@@ -532,15 +541,76 @@ function releaseCarry() {
   S.carry = null;
   return { i: c.i, x: c.x, y: c.y };
 }
-// Per gaze sample: only the cooling item's own box (never every stroke's outline).
+// Per gaze sample: only the cooling item's own box (never every stroke's outline) — the item she just
+// dropped, or the box of the one she just removed.
 function coolCheck() {
-  const it = S.scene.items[S.cool], r = $("scene").getBoundingClientRect();
-  const op = it ? SC.sceneOps({ items: [it] }, S.table)[0] : null;
-  if (!op || !r.width) { S.cool = null; paintHits(); return; }
+  const it = S.cool !== null ? S.scene.items[S.cool] : null, r = $("scene").getBoundingClientRect();
+  const op = S.cool === null ? S.gone : it ? SC.sceneOps({ items: [it] }, S.table)[0] : null;
+  const cooled = () => { S.cool = null; S.gone = null; paintHits(); };
+  if (!op || !r.width) { cooled(); return; }
   const b = SC.hitBox(op, r.width, r.height, floorPx()), x = S.gaze.cx - r.left, y = S.gaze.cy - r.top;
-  if (x < b.left || x > b.left + b.width || y < b.top || y > b.top + b.height) { S.cool = null; paintHits(); }
+  if (x < b.left || x > b.left + b.width || y < b.top || y > b.top + b.height) cooled();
 }
 function swallowClicks(ms) { S.swallowUntil = Date.now() + (ms || 400); }
+
+// ---------- trash mode (dad 10/3-10/4) ----------
+// A 🗑 Trash tile in the TOP-RIGHT CORNER of the door bar; the grown-ups' tab sits left of it. This
+// AMENDS the bar law "🚪 and 💬 are the bar's only dwell targets" on dad's word (10/4): the 🗑 is the
+// bar's third dwell target, and it holds HER dwell (CONTRACT.holds.content — no data-dwell-ms), because
+// it never takes her off the screen. A photo tile (glyph >= 4/5 of it, plate "Trash"), the bar's inner
+// height like the doors, at least twice as wide as tall (the bar's audit floor). Appended at the bar's
+// end once stickers.json lands — after partner.js's tab, which therefore sits left of it.
+function buildTrash() {
+  const b = (S.table.bar || []).find((x) => x.id === "trash");
+  if (!b || !BAR || $("trashTile")) return;
+  const el = photoTile("trashTile", "trash", b.word, imgPic(b.src), () => toggleTrash());
+  el.classList.toggle("away", S.screen !== "ring");
+  BAR.bar.appendChild(el);
+}
+// One dwell turns it on (teal glow, "Trash on") — a live stroke ends and a carried item goes back
+// first; the next turns it off ("Trash off"). Per session: never remembered.
+function toggleTrash() {
+  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  if (!S.trash) settle();
+  hush();
+  say(S.trash ? "Trash off" : "Trash on");
+  setTrash(!S.trash);
+  suppress();                       // the picture's targets just changed under her gaze: the page-settle guard
+  log("trash", { on: S.trash });
+}
+function setTrash(on) {
+  S.trash = on;
+  S.gone = null;
+  const t = $("trashTile");
+  if (t) t.classList.toggle("on", on);
+  applyTargets();
+}
+// Off by itself, silently, whenever she leaves what she was trashing: Done, 🚪, 💬, a mode switch,
+// opening a picture or the shelf, the sheet opening, pagehide. (Undo, a palette tile: trash stays on.)
+function trashOff() { if (S.trash) setTrash(false); }
+// A dwell on an item while trash is on: it goes ("Bye, horse"; a person by name; ink is "line"), as one
+// history event Undo brings back in place. She keeps going, item after item.
+function byeWord(it) {
+  if (it.s === "stroke") return "line";
+  const st = SC.stickerById(S.table, it.s);
+  return st ? (st.person ? st.word : st.word.toLowerCase()) : "";
+}
+function removeItem(i) {
+  if (Date.now() < S.swallowUntil) return;                 // a finger drag's release is not a tap
+  if (S.screen !== "ring" || !S.scene || S.paused || !S.trash || S.pen || S.carry) return;
+  const it = S.scene.items[i];
+  if (!it) return;
+  const op = it.s === "stroke" ? SC.strokeBounds(it) : SC.sceneOps({ items: [it] }, S.table)[0];
+  hush();
+  say("Bye, " + byeWord(it));
+  S.scene.items.splice(i, 1);
+  push({ t: "remove", i, item: it });
+  S.cool = null;
+  S.gone = op || null;
+  paintScene();
+  changed();
+  log("remove", { s: it.s, n: S.scene.items.length });
+}
 
 // ---------- routing ----------
 async function route() {
@@ -573,11 +643,12 @@ async function loadScene(id) {
 }
 async function openRing(id) {
   settle();                               // whatever her gaze was doing on the previous picture ends there
+  trashOff();
   if (S.screen === "ring" && S.id && S.id !== id && S.dirty) await save();
   stopPoll();
   S.id = id;
   S.history = [];
-  S.cool = null;
+  S.cool = null; S.gone = null;
   S.scene = await loadScene(id);
   S.scene.backdrop = S.scene.backdrop || "meadow";
   S.scene.crayon = S.scene.crayon || S.table.crayonDefault || "#0F7C8A";
@@ -641,8 +712,9 @@ function undo() {
   hush();
   say("Undo");
   const ev = S.history.pop();
-  S.cool = null;                      // an index into the items that just changed
+  S.cool = null; S.gone = null;       // an index into the items that just changed
   if (ev.t === "place") S.scene.items.pop();
+  else if (ev.t === "remove") S.scene.items.splice(Math.min(ev.i, S.scene.items.length), 0, ev.item);   // back in place
   else if (ev.t === "move" && S.scene.items[ev.i]) Object.assign(S.scene.items[ev.i], ev.from);
   else if (ev.t === "backdrop") { S.scene.backdrop = ev.from; markOn(); }
   paintScene();
@@ -694,7 +766,7 @@ async function clearPicture() {
   if (S.screen !== "ring" || !S.scene) return;
   S.scene.items = [];
   S.history = [];                     // not undoable: it had its own two-stage confirm
-  S.cool = null;
+  S.cool = null; S.gone = null;
   paintScene();
   log("partner", { action: "clear" });
   changed();
@@ -713,6 +785,7 @@ function tuneDwell(d) {
 // two doors loses .dwell and gains data-dwell-disabled while it is up.
 function freeze() {
   settle();
+  trashOff();
   sheetUp = true;
   const live = [...document.querySelectorAll(".dwell")].filter((el) => !BAR_DOORS.has(el.id));
   for (const el of live) { el.classList.remove("dwell"); el.setAttribute("data-dwell-disabled", ""); }
@@ -824,6 +897,7 @@ function turnShelf(page) {
 }
 async function openShelf() {
   settle();
+  trashOff();
   const fresh = S.screen !== "shelf";
   // A sticker placed in the last moments (her gaze drifting from Done to Splat mid-celebration) goes
   // to the hub before the ring forgets it; if the hub does not take it, localStorage still holds it
@@ -872,6 +946,7 @@ async function exportPng(scene) {
 async function done() {
   if (S.screen !== "ring" || !S.scene || S.finishing) return;
   settle();
+  trashOff();
   S.finishing = true;
   hush();
   const id = S.id, scene = JSON.parse(JSON.stringify(S.scene));
@@ -901,13 +976,13 @@ window.Drawing = {
   state: () => ({
     ready: S.ready, screen: S.screen, id: S.id,
     items: S.scene ? S.scene.items.map((i) => ({ ...i })) : [],
-    history: S.history.length, dirty: S.dirty, lastMail: S.lastMail,
+    history: S.history.length, events: S.history.map((e) => e.t), dirty: S.dirty, lastMail: S.lastMail,
     shelfPage: S.shelfPage, shelfPages: S.shelfPages, shelfIds: S.shelfIds.slice(),
     said: S.said.slice(), park: S.park, paused: S.paused,
     crayon: S.scene ? S.scene.crayon || null : null, pen: S.pen ? { n: S.pen.pts.length, c: S.pen.c } : null,
     people: S.people.map((p) => p.slug), peoplePage: S.peoplePage, peoplePages: S.peoplePages,
     carrying: S.carry ? S.carry.i : null, cool: S.cool,
-    mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null,
+    mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null, trash: S.trash, gone: !!S.gone,
   }),
   setMode, settle, releaseCarry, swallowClicks,
   itemAt, moveItem, clamp: (o) => SC.clampItem(o), clearPicture, repaint: () => { if (S.scene) paintScene(); },
@@ -936,7 +1011,7 @@ async function boot() {
   try { if (window.Speech) Speech.init("Let's make a picture!"); } catch {}
   try { S.lastMail = JSON.parse(localStorage.getItem("drawing_mail_last") || "null"); } catch {}
   try { S.table = await (await fetch("stickers.json")).json(); } catch { S.table = { stickers: [], zones: {} }; }
-  S.mode = readMode(); loadStickers(); await loadPeople(); buildModes();
+  S.mode = readMode(); loadStickers(); await loadPeople(); buildModes(); buildTrash();
   SC.renderScene($("newThumb"), { v: 1, backdrop: "meadow", items: [] }, { table: S.table });
   try {
     const st = await (await fetch("/settings")).json();
@@ -950,7 +1025,7 @@ async function boot() {
   $("railNew").addEventListener("click", () => { newPicture(); });
   addEventListener("hashchange", () => { route(); });
   addEventListener("resize", () => { if (BAR) BAR.sizeBar(); tellPark(); if (S.spot && S.gaze) placeSpot(S.gaze.cx, S.gaze.cy); paintHits(); });
-  addEventListener("pagehide", () => { settle(); save({ keepalive: true }); });
+  addEventListener("pagehide", () => { settle(); trashOff(); save({ keepalive: true }); });
   document.addEventListener("pointermove", onPointer, true);
   document.addEventListener("pointerdown", onPointer, true);
   $("scene").addEventListener("click", onSceneClick);
@@ -959,7 +1034,8 @@ async function boot() {
   try { if (window.Speech) Speech.preload(S.table.stickers.map((s) => s.word)
     .concat((S.table.modes || []).map((m) => m.word), (S.table.backdrops || []).map((b) => b.word),
       (S.table.crayons || []).map((c) => c.word), S.people.map((p) => p.word),
-      ["Undo", "No people yet"])); } catch {}
+      ["Undo", "No people yet", "Trash on", "Trash off", "Bye, line"],
+      S.table.stickers.map((s) => "Bye, " + s.word.toLowerCase()), S.people.map((p) => "Bye, " + p.word))); } catch {}
   log("boot", {});
 }
 boot();

@@ -270,3 +270,15 @@ export function hitBox(op, W, H, F) {
   const fit = (c, size, max) => Math.min(Math.max(0, c - size / 2), Math.max(0, max - size));
   return { left: fit(cx, w, W), top: fit(cy, h, H), width: w, height: h };
 }
+
+// A stroke's box for trash mode (dad 10/4): the bounds of its points plus half its line, as fractions
+// of the picture — what hitBox grows to F x F about its centre and shifts inside. Whole-line deletion:
+// no per-segment work. A stroke has no box outside trash mode (ink is never lifted or carried).
+export function strokeBounds(it) {
+  const pts = it && Array.isArray(it.pts) ? it.pts : [];
+  if (!pts.length) return { left: 0, top: 0, width: 0, height: 0 };
+  const hy = (Number(it.w) || PEN.width) / 2, hx = hy / ASPECT;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  return { left: x0 - hx, top: y0 - hy, width: x1 - x0 + 2 * hx, height: y1 - y0 + 2 * hy };
+}

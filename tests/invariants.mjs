@@ -335,6 +335,16 @@ export const STATES = [
       window.Drawing.__lift(1);
       await new Promise((r) => setTimeout(r, 400));
     } },
+  // Trash mode (dad 10/4): the 🗑 tile in the bar's top-right corner, on — every sticker AND stroke is
+  // a target (a stroke's box = its bounds grown to the floor). A click is her dwell; nothing is removed.
+  { id: "/drawing/#ring-trash", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", setup: async () => {
+      window.Drawing.__show({ items: [
+        { s: "house", x: 0.15, y: 0.70, w: 0.26, by: "ellie" }, { s: "horse", x: 0.50, y: 0.80, w: 0.20, by: "ellie" },
+        { s: "sun", x: 0.12, y: 0.18, w: 0.16, by: "ellie" },
+        { s: "stroke", c: "#6a4fb3", w: 0.014, pts: [[0.55, 0.2], [0.7, 0.3], [0.85, 0.35]], by: "ellie" }] });
+      document.getElementById("trashTile").click();
+      await new Promise((r) => setTimeout(r, 400));
+    } },
 ];
 
 async function measureAt(browser, path, vp, setup, dwellMs) {

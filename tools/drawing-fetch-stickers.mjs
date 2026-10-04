@@ -6,6 +6,7 @@
 //   node tools/drawing-fetch-stickers.mjs --check  verify what is vendored, offline (the test uses this)
 // Re-pick a sticker = change its `source` + `sha256` in stickers.json, then run without --check.
 // v2 (spec 2026-10-02 §1): also the mode glyphs (modes[] — Pencil, People hugging, National park).
+// Trash mode (dad 10/4): also the door bar's tiles (bar[] — Wastebasket for the 🗑 Trash tile).
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -24,6 +25,7 @@ const files = [
   ...table.stickers.filter(s => s.src).map(s => ({ what: s.id, url: s.source, pin: s.sha256, dest: s.src, png: true })),
   ...(table.modes || []).filter(m => !stickerDests.has(m.src))
     .map(m => ({ what: "mode " + m.id, url: m.source, pin: m.sha256, dest: m.src, png: true })),
+  ...(table.bar || []).map(b => ({ what: "bar " + b.id, url: b.source, pin: b.sha256, dest: b.src, png: true })),
   { what: "LICENSE", url: table.source.licenseUrl, pin: table.source.licenseSha256, dest: table.source.licenseFile, png: false },
 ];
 function verify(f, buf) {

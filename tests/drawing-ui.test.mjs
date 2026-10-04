@@ -1513,3 +1513,242 @@ test("the contract audit is clean in every mode — with a library, items, ink a
   for (const v of r.viewports) assert.ok(v.nTargets >= 16, "spot + 8 palette + 4 modes + Undo + Done + the door: " + v.nTargets);
   seedPeople(null);
 });
+
+// ================================================================ trash mode (dad 10/3–10/4)
+// A 🗑 Trash tile in the door bar's TOP-RIGHT corner, the grown-ups' tab moved left of it. One dwell turns
+// trash on (teal glow, "Trash on"); every sticker, person and stroke is then a target and a dwell
+// removes it ("Bye, horse"), item after item, until the tile again ("Trash off"). Each removal is a
+// history event: Undo brings it back. The backdrop does nothing.
+const TRASHY = [
+  { s: "house", x: 0.15, y: 0.70, w: 0.26, by: "ellie" }, { s: "horse", x: 0.50, y: 0.80, w: 0.20, by: "ellie" },
+  { s: "sun", x: 0.12, y: 0.18, w: 0.16, by: "ellie" },
+  { s: "stroke", c: "#6a4fb3", w: 0.014, pts: [[0.55, 0.2], [0.7, 0.3], [0.85, 0.35]], by: "ellie" },
+];
+const trashTap = (page) => page.locator("#trashTile").click();
+async function lookAway(page, fx = 0.35, fy = 0.4) {             // her gaze leaves what she just removed
+  const p = await scenePt(page, fx, fy);
+  await page.mouse.move(p.x, p.y, { steps: 3 });
+}
+const hitLabels = async (page) => (await hitsOf(page)).map((h) => h.label);
+
+test("trash: the 🗑 tile sits in the door bar's top-right corner, the grown-ups' tab left of it — her dwell, a photo tile", async () => {
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }]) {
+    const { ctx, page, errors } = await openRing({ viewport });
+    const g = await page.evaluate(() => {
+      const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, r: r.right }; };
+      const t = document.getElementById("trashTile"), bar = document.querySelector(".msgbar"), cs = getComputedStyle(bar);
+      const img = t.querySelector("img.pic"), plate = t.querySelector(".plate");
+      return { inBar: !!t.closest(".msgbar"), dwell: t.matches(".dwell.photo"), lastInBar: bar.lastElementChild === t,
+               holdAttrs: [...t.attributes].map((a) => a.name).filter((n) => n.startsWith("data-dwell")),
+               src: img.getAttribute("src"), word: plate.textContent.trim(), font: parseFloat(getComputedStyle(plate).fontSize),
+               t: box(t), img: box(img), tab: box(document.getElementById("partnerTab")), door: box(document.getElementById("barDoor")),
+               bar: box(bar), padR: parseFloat(cs.paddingRight), vw: innerWidth };
+    });
+    const tag = "@" + viewport.width;
+    assert.deepEqual([g.inBar, g.dwell, g.lastInBar, g.holdAttrs], [true, true, true, []], tag + ": her dwell (no hold of its own), last in the bar");
+    assert.deepEqual([g.src, g.word], ["stickers/bar-trash.png", "Trash"], tag);
+    assert.ok(Math.abs(g.t.r - (g.vw - g.padR)) < 1.5, tag + ": the top-right corner " + JSON.stringify(g.t));
+    assert.ok(Math.abs(g.t.y - g.door.y) < 1 && Math.abs(g.t.h - g.door.h) < 1, tag + ": the bar's inner height, like the doors");
+    assert.ok(g.t.w >= 2 * g.t.h - 1.5, tag + ": at least twice as wide as tall (the bar's audit floor)");
+    assert.ok(g.img.h >= 0.8 * g.t.h, tag + ": the glyph is at least 4/5 of the tile " + g.img.h + "/" + g.t.h);
+    assert.ok(g.font >= 24, tag + ": the plate is at least the photo floor " + g.font);
+    assert.ok(g.tab.r + 14 - 0.5 <= g.t.x, tag + ": the grown-ups' tab is left of it, 14 px away " + g.tab.r + " / " + g.t.x);
+    assert.ok(Math.abs(g.tab.y - g.t.y) < 1, tag + ": on the same strip");
+    assert.ok(g.tab.x > g.bar.x + g.bar.w / 2 + 2 * g.door.h / 2, tag + ": both stay right of the centred 💬");
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  }
+});
+
+test("trash: one dwell turns it on (teal glow, \"Trash on\"), the next turns it off (\"Trash off\"); it is never remembered", async () => {
+  const { ctx, page } = await openRing();
+  const glow = () => page.evaluate(() => { const t = document.getElementById("trashTile");
+    return [t.classList.contains("on"), getComputedStyle(t).boxShadow]; });
+  assert.equal((await st(page)).trash, false);
+  assert.equal((await glow())[0], false);
+  await trashTap(page);
+  let s = await st(page);
+  assert.deepEqual([s.trash, s.said.at(-1)], [true, "Trash on"]);
+  const [on, shadow] = await glow();
+  assert.equal(on, true);
+  assert.match(shadow, /rgb\(15, 124, 138\)/, "a teal glow, never red");
+  assert.ok(await page.evaluate(() => (window.__speechEngineLog || []).some((e) => e.ev === "stop")), "Speech.stop() first");
+  await trashTap(page);
+  s = await st(page);
+  assert.deepEqual([s.trash, s.said.at(-1)], [false, "Trash off"]);
+  assert.equal((await glow())[0], false);
+  await trashTap(page);
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => window.Drawing && window.Drawing.state().ready);
+  assert.equal((await st(page)).trash, false, "per session: a reload opens with trash off");
+  assert.equal(await page.evaluate(() => Object.keys(localStorage).some((k) => /trash/i.test(k))), false);
+  await ctx.close();
+});
+
+test("trash: every sticker and stroke is a target; three dwells remove three in a row, each a remove in her history; Undo brings the last back in place", async () => {
+  const id = "2026-10-04-090000-test-dev";
+  seed(id, TRASHY, "2026-10-04T09:00:00Z");
+  const { ctx, page } = await openRing({ id });
+  await slowDwell(page);
+  assert.deepEqual(await hitLabels(page), ["House", "Horse", "Sun"], "trash off: ink has no hit box");
+  await trashTap(page);
+  const h = await hitsOf(page);
+  assert.deepEqual(h.map((x) => x.label), ["House", "Horse", "Sun", "Line"], "trash on: the stroke too");
+  for (const x of h) assert.ok(Math.min(x.w, x.h) >= 90, `${x.label} ${x.w}x${x.h}`);
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok());
+  await page.locator('#hits > .hit[data-hit="1"]').click();                       // the horse
+  let s = await st(page);
+  assert.deepEqual([s.items.map((i) => i.s), s.said.at(-1), s.carrying, s.trash], [["house", "sun", "stroke"], "Bye, horse", null, true],
+    "removed, never carried; trash stays on");
+  await lookAway(page);
+  await page.locator('#hits > .hit[data-hit="2"]').click();                       // the stroke
+  s = await st(page);
+  assert.deepEqual([s.items.map((i) => i.s), s.said.at(-1)], [["house", "sun"], "Bye, line"]);
+  await lookAway(page, 0.6, 0.5);
+  await page.locator('#hits > .hit[data-hit="1"]').click();                       // the sun
+  s = await st(page);
+  assert.deepEqual([s.items.map((i) => i.s), s.said.at(-1), s.trash], [["house"], "Bye, sun", true], "no re-toggling between them");
+  assert.deepEqual(s.events, ["remove", "remove", "remove"]);
+  await saved;
+  await page.locator("#btnUndo").click();
+  s = await st(page);
+  assert.deepEqual(s.items, [TRASHY[0], TRASHY[2]], "the sun is back, in its place and in its order");
+  assert.deepEqual([s.said.at(-1), s.events, s.trash], ["Undo", ["remove", "remove"], true], "Undo never turns trash off");
+  await page.locator("#btnUndo").click();
+  await page.locator("#btnUndo").click();
+  assert.deepEqual((await st(page)).items, TRASHY, "every removal undoes, back to the picture she had");
+  await page.waitForFunction(() => !window.Drawing.state().dirty, null, { timeout: 5000 });
+  assert.deepEqual((await hubScene(id)).items, TRASHY, "and the hub has it");
+  await ctx.close();
+});
+
+test("trash: a person goes with her name; Draw mode's picture is no target while trash is on, and the backdrop does nothing", async () => {
+  seedPeople([MAYA]);
+  const id = "2026-10-04-091000-test-dev";
+  seed(id, [{ s: "person:maya", x: 0.3, y: 0.75, w: 0.3, by: "ellie" }, TRASHY[3]], "2026-10-04T09:10:00Z");
+  const { ctx, page } = await openRing({ id });
+  await slowDwell(page);
+  await page.locator("#mode-draw").click();
+  assert.deepEqual(await hitLabels(page), [], "Draw mode, trash off: no hit boxes");
+  await trashTap(page);
+  assert.deepEqual(await hitLabels(page), ["Maya", "Line"]);
+  assert.equal(await page.evaluate(() => document.getElementById("scene").matches(".dwell")), false, "Draw's picture target is off");
+  const n = (await st(page)).said.length;
+  const empty = await scenePt(page, 0.6, 0.85);                                     // grass, nothing on it
+  await page.mouse.click(empty.x, empty.y);
+  let s = await st(page);
+  assert.deepEqual([s.items.length, s.pen, s.said.length, s.events], [2, null, n, []], "the backdrop: no stroke, no word, nothing");
+  const t = await touch(page);
+  await t.start(empty); await t.end(); await t.close();                            // a finger tap there too
+  await page.waitForTimeout(300);
+  s = await st(page);
+  assert.deepEqual([s.items.length, s.pen, s.said.length, s.events], [2, null, n, []], "a finger on the backdrop: nothing either");
+  await page.locator('#hits > .hit[data-hit="0"]').click();
+  s = await st(page);
+  assert.deepEqual([s.items.map((i) => i.s), s.said.at(-1)], [["stroke"], "Bye, Maya"]);
+  await ctx.close();
+  seedPeople(null);
+});
+
+test("trash: what she just removed leaves no target under her resting gaze until she looks away", async () => {
+  const id = "2026-10-04-092000-test-dev";
+  seed(id, [{ s: "house", x: 0.5, y: 0.70, w: 0.26, by: "ellie" }, { s: "horse", x: 0.5, y: 0.78, w: 0.20, by: "ellie" }], "2026-10-04T09:20:00Z");
+  const { ctx, page } = await openRing({ id });
+  await slowDwell(page);
+  await trashTap(page);
+  await page.locator('#hits > .hit[data-hit="1"]').click();                       // the horse, on top of the house
+  assert.equal(await page.locator("#hits > .hit").count(), 0, "the house under her gaze is not a target yet");
+  const still = await scenePt(page, 0.51, 0.79);
+  await page.mouse.move(still.x, still.y);
+  assert.equal(await page.locator("#hits > .hit").count(), 0, "still where the horse was");
+  await lookAway(page, 0.1, 0.15);
+  assert.deepEqual(await hitLabels(page), ["House"], "she looked away: the house can go too");
+  await ctx.close();
+});
+
+test("trash: turning it on puts a carried item back and ends a live stroke; no lift ever happens while it is on", async () => {
+  const { ctx, page } = await openRing();
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  const home = (await st(page)).items;
+  await liftAt(page, 0);
+  await lookAway(page, 0.2, 0.3);
+  assert.equal((await st(page)).carrying, 0);
+  await trashTap(page);
+  let s = await st(page);
+  assert.deepEqual([s.trash, s.carrying, s.items, s.events], [true, null, home, ["place"]], "back where it was, no history");
+  assert.equal(await page.locator("#scene > #spot").count(), 0, "no landing spot");
+  await page.evaluate(() => window.Drawing.__lift(0));                             // even the test hook cannot lift
+  assert.equal((await st(page)).carrying, null);
+  await trashTap(page);                                                            // off
+  await page.locator("#mode-draw").click();
+  await drawLine(page, 0.2, 0.6, 0.3);
+  assert.ok((await st(page)).pen, "a live stroke");
+  await trashTap(page);
+  s = await st(page);
+  assert.deepEqual([s.trash, s.pen, s.items.map((i) => i.s), s.events], [true, null, ["horse", "stroke"], ["place", "place"]],
+    "the stroke is ended and kept, then trash is on");
+  await ctx.close();
+});
+
+test("trash switches itself off on a mode switch, the sheet, the 🚪, pagehide, Done, opening a picture and the 💬 — never on the active mode", async () => {
+  const exits = (c) => Promise.all([
+    c.route("**/kiosk/exit", (r) => r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' })),
+    c.route("**/kiosk/pause", (r) => r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"paused"}' }))]);
+  const { ctx, page } = await openRing({ routes: exits });
+  await slowDwell(page);
+  await page.locator("#tile-horse").click();
+  const on = async () => { await trashTap(page); assert.equal((await st(page)).trash, true); };
+  const lit = () => page.evaluate(() => document.getElementById("trashTile").classList.contains("on"));
+  await on();
+  await page.locator("#mode-stickers").click();
+  assert.equal((await st(page)).trash, true, "dwelling the active mode does nothing");
+  await page.locator("#mode-places").click();
+  let s = await st(page);
+  assert.deepEqual([s.trash, s.mode, s.said.at(-1), await lit()], [false, "places", "Places", false], "a mode switch: off, silently");
+  await on();
+  await page.locator("#partnerTab").click();
+  assert.deepEqual([(await st(page)).trash, await lit()], [false, false], "the sheet opening");
+  await page.locator("#pClose").click();
+  await on();
+  assert.equal(await page.evaluate(() => { document.getElementById("barDoor").click(); return window.Drawing.state().trash; }), false, "the 🚪");
+  await on();
+  assert.equal(await page.evaluate(() => { dispatchEvent(new PageTransitionEvent("pagehide")); return window.Drawing.state().trash; }), false, "pagehide");
+  await on();
+  await page.locator("#btnDone").click();
+  await page.waitForFunction(() => window.Drawing.state().screen === "shelf");
+  s = await st(page);
+  assert.deepEqual([s.trash, await lit()], [false, false], "Done");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("trashTile")).visibility), "hidden",
+    "on the shelf the tile is out of sight and out of her reach");
+  await page.locator(".shelf-pic").first().click();
+  await page.waitForFunction(() => window.Drawing.state().screen === "ring");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("trashTile")).visibility), "visible");
+  assert.equal((await st(page)).trash, false, "a picture opens with trash off");
+  await on();
+  const other = await newId();
+  await page.evaluate((o) => { location.hash = "#p=" + o; }, other);
+  await page.waitForFunction((o) => window.Drawing.state().id === o && window.Drawing.state().screen === "ring", other);
+  assert.deepEqual([(await st(page)).trash, await lit()], [false, false], "opening another picture");
+  await on();
+  assert.equal(await page.evaluate(() => { document.getElementById("barTalk").click(); return window.Drawing.state().trash; }), false, "the 💬");
+  await ctx.close();
+});
+
+test("the contract audit is clean with trash on — stickers, a person and a stroke as targets — at both gate viewports", async () => {
+  seedPeople([MAYA, SAM]);
+  const id = "2026-10-04-093000-test-dev";
+  seed(id, [...TRASHY, { s: "person:sam", x: 0.32, y: 0.78, w: 0.25, by: "ellie" }], "2026-10-04T09:30:00Z");
+  process.env.INVARIANTS_BASE = BASE;
+  const { auditPath } = await import("./invariants.mjs");
+  for (const m of ["stickers", "draw"]) {
+    const r = await auditPath(browser, { id: "/drawing/#trash-" + m, path: `/drawing/#p=${id}&mode=${m}`,
+      setup: async () => {
+        document.getElementById("trashTile").click(); await new Promise((res) => setTimeout(res, 300));
+        if (document.querySelectorAll("#hits > .hit.dwell").length !== 5) throw new Error("not five trash targets");
+      } });
+    assert.deepEqual(r.violations, [], m + ":\n" + r.violations.join("\n"));
+    for (const v of r.viewports) assert.ok(v.nTargets >= 19, `5 items + 8 palette + 4 modes + Undo + Done + the door + 🗑: ${m} @${v.vp.w} ${v.nTargets}`);
+  }
+  seedPeople(null);
+});

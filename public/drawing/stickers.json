@@ -25,6 +25,11 @@
       "source": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/National%20park/3D/national_park_3d.png",
       "sha256": "7923efeea75cd3ebfaf5589064b7ea5fd8c89d68d17555c5083f28483300fc48" }
   ],
+  "bar": [
+    { "id": "trash", "word": "Trash", "src": "stickers/bar-trash.png",
+      "source": "https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Wastebasket/3D/wastebasket_3d.png",
+      "sha256": "3aa2d93f1d14e504675da7952e3d10114036004f458d617f5f46b744235b328c" }
+  ],
   "crayons": [
     { "id": "black",      "word": "Black",      "hex": "#1b1b1b", "at": [1, 1] },
     { "id": "blue",       "word": "Blue",       "hex": "#0F7C8A", "at": [2, 1] },
