@@ -4,7 +4,7 @@ Specs: `docs/superpowers/specs/2026-09-30-drawing-design.md` + `docs/superpowers
 Plans: `docs/superpowers/plans/2026-09-30-drawing-plan.md` + `docs/superpowers/plans/2026-10-02-drawing-modes-plan.md`.
 
 ## Files
-- `public/drawing/index.html` — the two screens + the grown-up's sheet; the Pencil's module shim.
+- `public/drawing/index.html` — the two screens; the Pencil's module shim.
 - `public/drawing/scene.js` — pure scene logic and THE renderer (`renderScene`): the ring, every
   shelf thumbnail and the mailed PNG all draw through it. node tests import it directly.
   + the pen (`penStart/penMove/penEnd/penRoom`), strokes as one path string, people (`withPeople`),
@@ -18,8 +18,8 @@ Plans: `docs/superpowers/plans/2026-09-30-drawing-plan.md` + `docs/superpowers/p
   park, shelf, Done. `window.Drawing` is its test/partner surface.
   + the mode row, the per-mode palettes (`renderPalette`), the Draw and gaze-move state machines
   (plan 2026-10-02 Definitions), the landing spot. + trash mode (the 🗑 tile, removals, auto-off).
-- `public/drawing/partner.js` — the tab in the door bar, the sheet, the finger drag.
-  + touch wins over a carried item; ink is never dragged. The tab sits LEFT of the 🗑 Trash tile.
+- `public/drawing/partner.js` — the grown-up's finger drag, and nothing else (no tab, no sheet: dad 10/5).
+  + touch wins over a carried item; ink is never dragged; with trash on a finger never drags.
 - `public/drawing/stickers.json` — the eight stickers (seats, words, zones, scales, sha256 pins) and
   the slot tables. `drawings.js` validates scenes against the same file.
   + `modes`, `crayons`, `backdrops`; slot tables are written against the reference horizon 0.58.
@@ -59,14 +59,22 @@ watched by the page (the tile itself stays inert). The test-only `&mode=<id>` ha
 
 ## Trash mode (dad 10/3–10/4)
 This AMENDS the bar law "🚪 and 💬 are the bar's only dwell targets" on dad's word (10/4): a 🗑 **Trash**
-tile in the door bar's TOP-RIGHT corner is its third dwell target, and the grown-ups' tab moved left of
-it (14 px gap; partner.js inserts the tab before `#trashTile`). It holds HER dwell
+tile in the door bar's TOP-RIGHT corner (`margin-left:auto`) is its third dwell target. The bar holds
+🚪, 💬 and 🗑 — nothing else (the grown-ups' tab is gone, dad 10/5). It holds HER dwell
 (`CONTRACT.holds.content`, no `data-dwell-ms` — it never takes her off the screen), is a photo tile laid
 on its side (glyph ≥ 4/5 of the tile, plate "Trash"), the bar's inner height like the doors, ≥ 2× as wide
 as tall (the bar's audit floor). drawing.js appends it to the bar mount once `stickers.json` lands —
 doorbar.js is untouched. The shelf hides it (`.away`, visibility only: zero shift).
-- One dwell: trash ON (teal ring + light-teal fill, "Trash on"); a live stroke ends and a carried item
-  goes back first. The next dwell: OFF ("Trash off"). Per session — never remembered.
+- One dwell: trash ON ("Trash on"); a live stroke ends and a carried item goes back first. The next
+  dwell: OFF ("Trash off"). Per session — never remembered.
+- Unmistakable while on (dad 10/5): the tile is solid orange (`--c-vowel` #DE7B52, the strongest calm
+  colour — red stays partner-only) with white "Trash on" (+ the teal `.on` ring), its plate sized for
+  "Trash on" either way (a `::after` ghost) so the tile never changes size; her picture wears a 6 px
+  dashed orange frame (`#trashFrame`, an SVG rect marching slowly; still under reduced motion), a
+  "🗑 Trash is on" plate across its top (`#trashBanner`, ≥ 44 px, the tile's own Wastebasket image as its
+  🗑, `pointer-events:none`, never a target — a finger or her gaze reaches the item under it), and every
+  hit box is dashed orange. All of it lies inside the picture's box (zero layout shift) and goes when
+  trash goes off. Speech unchanged.
 - While on, every sticker, person AND stroke has a `.hit` (a stroke's box = its points' bounds plus half
   its line, grown to ≥ F×F about its centre and shifted inside — `strokeBounds` + `hitBox`; whole-line
   deletion, no per-segment work). A dwell removes the item ("Bye, horse"; a person by name; ink "Bye,
@@ -75,11 +83,26 @@ doorbar.js is untouched. The shelf hides it (`.away`, visibility only: zero shif
   outside trash mode.
 - After a removal there are no hit boxes until her gaze leaves the removed item's box (`S.gone`, the
   drop's cool-down rule): what lay under it never goes on the same resting gaze.
-- Off by itself, silently: Done, 🚪, 💬, a real mode switch, opening a picture or the shelf, the sheet
-  opening, pagehide. Undo, a palette tile and the active mode leave it on.
+- A FINGER (dad 10/5, "anything I touch should disappear"): a tap removes what it lands on — tap parity,
+  never a drag (partner.js starts no drag while trash is on; before, a roll of a pixel made the tap a
+  "move" and its drag-end swallowed the click). A finger's removal sets no `S.gone`, and where no hit box
+  is up (her guard after her own removal) the scene's click removes the topmost item whose trash box
+  holds the finger (`itemUnder`). Turning trash on or off clears a drop's cool-down too (`S.cool`): her
+  gaze is on the 🗑, so every target is up at once.
+- Off by itself, silently: Done, 🚪, 💬, a real mode switch, opening a picture or the shelf, pagehide.
+  Undo, a palette tile and the active mode leave it on.
 - Ring dwell choices: 14 + the 🗑 = 15, inside `CONTRACT.maxChoices.cap` 16.
 - Known shape (dad's whole-line rule): a long diagonal line's box covers much of the picture, and a
   later line lies over earlier items' boxes (topmost wins); Undo is the way back.
+
+## The grown-up's finger (no tab, no sheet — dad 10/5)
+Dad: "remove the grown-up settings — no utility". The `⚙ grown-ups` tab and its sheet (dwell tune, Clear
+picture, the last Done's mail line, the People hint) are gone, with the freeze that put her targets to
+sleep under it. What a grown-up keeps is silent: a FINGER drags a placed sticker or person (one `move`,
+undoable, `by: "partner"`), takes an item she carries (touch wins), never drags ink, and never drags at
+all while trash is on (its tap removes). Her dwell is set in Settings (`/settings` `dwellMs`); Undo and
+trash mode are how a picture gets emptier. Done's mail answer is shown nowhere — never spoken, never
+shown; `Drawing.state().lastMail` and the `done` log line keep it.
 
 ## People (the private library)
 `<family Drive folder>/characters/{characters.json, <slug>.png}` → mirrored to `<DATA>/characters/` →
