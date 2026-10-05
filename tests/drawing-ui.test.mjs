@@ -1736,6 +1736,77 @@ test("trash by her gaze: a real dwell on an item removes it; she looks away, and
   await ctx.close();
 });
 
+// dad 10/5: "It should also be abundantly clear that you are in trash mode."
+const trashLook = (page) => page.evaluate(() => {
+  const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
+  const f = document.getElementById("trashFrame"), b = document.getElementById("trashBanner"), t = document.getElementById("trashTile");
+  const rect = f && f.querySelector("rect"), fs = rect && getComputedStyle(rect), bs = b && getComputedStyle(b), ts = getComputedStyle(t);
+  const word = [...t.querySelectorAll(".plate *")].filter((n) => getComputedStyle(n).visibility === "visible").map((n) => n.textContent).join("");
+  return {
+    frame: f ? { inScene: f.parentElement && f.parentElement.id === "scene", stroke: fs.stroke, width: fs.strokeWidth, dash: fs.strokeDasharray,
+                 anim: fs.animationName, pe: getComputedStyle(f).pointerEvents, rect: box(rect) } : null,
+    banner: b ? { inScene: !!b.closest("#scene"), text: b.textContent.trim(), img: !!b.querySelector("img"), font: parseFloat(bs.fontSize),
+                  pe: bs.pointerEvents, dwell: b.matches(".dwell") || !!b.querySelector(".dwell") ||
+                    [...b.querySelectorAll("*"), b].some((n) => [...n.attributes].some((a) => a.name.startsWith("data-dwell"))),
+                  color: bs.color, bg: bs.backgroundColor, rect: box(b), nowrap: bs.whiteSpace } : null,
+    tile: { bg: ts.backgroundColor, color: getComputedStyle(t.querySelector(".plate")).color, word, rect: box(t) },
+    outlines: [...document.querySelectorAll("#hits > .hit")].map((h) => getComputedStyle(h).outlineStyle),
+    scene: box(document.getElementById("scene")),
+    // every target's centre still resolves to that target (the banner and frame never take a finger or her gaze)
+    blocked: [...document.querySelectorAll(".dwell")].filter((el) => {
+      const r = el.getBoundingClientRect(); if (!r.width) return false;
+      const top = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)[0];
+      return top && top !== el && !el.contains(top) && !top.contains(el);
+    }).map((el) => el.id || el.getAttribute("aria-label")),
+  };
+});
+
+test("trash on is unmistakable: a 6 px dashed orange frame and a \"Trash is on\" banner on the picture, dashed items, a solid orange \"Trash on\" tile — all gone when off, nothing moves (dad 10/5)", async () => {
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }]) {
+    const tag = "@" + viewport.width;
+    const id = "2026-10-05-10" + String(viewport.width).slice(0, 2) + "00-test-dev";
+    seed(id, TRASHY, "2026-10-05T10:00:00Z");
+    const { ctx, page, errors } = await openRing({ id, viewport });
+    const off = await trashLook(page);
+    assert.deepEqual([off.frame, off.banner, off.tile.word, off.tile.bg], [null, null, "Trash", "rgb(255, 255, 255)"], tag + " off");
+    assert.ok(off.outlines.every((o) => o === "none"), tag + ": no dashes on the items while off");
+    await trashTap(page);
+    const on = await trashLook(page);
+    assert.deepEqual(on.frame && [on.frame.inScene, on.frame.stroke, on.frame.width, on.frame.pe], [true, "rgb(222, 123, 82)", "6px", "none"],
+      tag + ": the frame " + JSON.stringify(on.frame));
+    assert.ok(on.frame.dash !== "none" && on.frame.anim !== "none", tag + ": dashed, marching slowly " + on.frame.dash + " " + on.frame.anim);
+    const fr = on.frame.rect;                                       // its line's centre 3 px in: the 6 px stroke meets the picture's edge
+    assert.ok(Math.abs(fr.x - (on.scene.x + 3)) < 1 && Math.abs(fr.y - (on.scene.y + 3)) < 1 &&
+              Math.abs(fr.w - (on.scene.w - 6)) < 1 && Math.abs(fr.h - (on.scene.h - 6)) < 1, tag + ": round the whole picture " + JSON.stringify(fr));
+    assert.ok(on.banner, tag + ": a banner");
+    assert.deepEqual([on.banner.inScene, on.banner.text, on.banner.img, on.banner.pe, on.banner.dwell, on.banner.nowrap],
+      [true, "Trash is on", true, "none", false, "nowrap"], tag + ": the banner, its 🗑 the tile's own wastebasket, never a target");
+    assert.ok(on.banner.font >= 44, tag + ": the banner reads at least 44 px " + on.banner.font);
+    const b = on.banner.rect, s = on.scene;
+    assert.ok(b.y >= s.y && b.y + b.h < s.y + s.h / 4 && Math.abs(b.x + b.w / 2 - (s.x + s.w / 2)) < 2, tag + ": across the top of the picture " + JSON.stringify(b));
+    assert.deepEqual([on.tile.bg, on.tile.color, on.tile.word], ["rgb(222, 123, 82)", "rgb(255, 255, 255)", "Trash on"], tag + ": the tile");
+    assert.deepEqual(on.outlines, ["dashed", "dashed", "dashed", "dashed"], tag + ": every item dashed");
+    assert.deepEqual(on.blocked, [], tag + ": nothing covers a target's centre");
+    assert.deepEqual([on.scene, on.tile.rect], [off.scene, off.tile.rect], tag + ": zero layout shift — the picture and the tile never move");
+    assert.equal((await st(page)).said.at(-1), "Trash on", "speech unchanged");
+    await trashTap(page);
+    const again = await trashLook(page);
+    assert.deepEqual([again.frame, again.banner, again.tile.word, again.tile.bg, again.scene, again.tile.rect],
+      [null, null, "Trash", "rgb(255, 255, 255)", off.scene, off.tile.rect], tag + ": off — all of it goes");
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  }
+});
+
+test("trash on with reduced motion: the frame stays dashed and still (dad 10/5)", async () => {
+  const { ctx, page } = await openRing({ reducedMotion: "reduce" });
+  await trashTap(page);
+  const on = await trashLook(page);
+  assert.ok(on.frame && on.frame.dash !== "none", "dashed");
+  assert.equal(on.frame.anim, "none", "no marching");
+  await ctx.close();
+});
+
 test("trash: a person goes with her name; Draw mode's picture is no target while trash is on, and the backdrop does nothing", async () => {
   seedPeople([MAYA]);
   const id = "2026-10-04-091000-test-dev";

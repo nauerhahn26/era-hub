@@ -5,6 +5,7 @@
   --page:#22343B;                 /* dark page: the rest tile's pure black reads as its own shape */
   --teal:var(--color-primary, #0F7C8A); --nav:var(--color-nav, #6B7B82);
   --warn:var(--color-warn-partner, #B23A48);   /* partner controls ONLY (palette law) */
+  --trash:var(--color-vowel, #DE7B52);          /* trash mode: the strongest calm colour (dad 10/5) */
   --side:13vw;                    /* tile columns: 250px @1920 (74px "Undo"/"Done" fit), 166px @1280 */
   --gap:var(--gap-floor, 14px);
   --font:"Segoe UI", system-ui, sans-serif;
@@ -99,8 +100,24 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
 #trashTile img.pic{flex:0 0 auto; width:auto; height:calc(100% - 4px); aspect-ratio:1; padding:0; object-fit:contain}
 #trashTile .plate{flex:0 0 auto; padding:0; white-space:nowrap; line-height:1.15;
                   font-size:max(24px, calc(var(--bar-inner, 40px) * 0.4))}
-#trashTile.on{background:#D3EEF1}       /* + .cell.on's teal ring: the dark-teal bar swallows a ring alone */
+/* the plate sized for "Trash on" either way (its ghost): the tile never changes size */
+#trashTile .plate{display:grid}
+#trashTile .plate > span, #trashTile .plate::after{grid-area:1 / 1}
+#trashTile .plate::after{content:attr(data-ghost); visibility:hidden}
+/* on (dad 10/5): solid orange, white words (+ .cell.on's teal ring) — orange is the strongest calm colour */
+#trashTile.on{background:var(--trash); color:#fff}
 #trashTile.away{visibility:hidden}
+/* trash on: her picture's frame and banner (inside the picture's box: zero shift; never a target) */
+#trashFrame{position:absolute; inset:0; width:100%; height:100%; z-index:5; pointer-events:none; overflow:visible}
+#trashFrame rect{x:3px; y:3px; width:calc(100% - 6px); height:calc(100% - 6px); rx:15px; fill:none;
+                 stroke:var(--trash); stroke-width:6px; stroke-dasharray:28px 16px; animation:trash-march 3s linear infinite}
+@keyframes trash-march{to{stroke-dashoffset:-44px}}
+#trashBanner{position:absolute; z-index:5; top:16px; left:50%; transform:translateX(-50%); pointer-events:none;
+             display:flex; align-items:center; gap:10px; padding:4px 22px 4px 12px; border-radius:14px;
+             background:rgba(255, 255, 255, .9); color:var(--ink); border:4px solid var(--trash);
+             font-size:clamp(44px, 3.3vw, 64px); font-weight:800; line-height:1.15; white-space:nowrap}
+#trashBanner img{height:1.15em; width:auto; display:block}
+#scene.trash-on #hits > .hit{outline:3px dashed var(--trash); outline-offset:-3px}
 #partnerSheet{position:fixed; inset:0; top:var(--bar-h, 0px); z-index:90; display:flex;
               align-items:center; justify-content:center; background:rgba(0,0,0,.45)}
 .sheet-card{background:#fff; color:var(--ink); width:min(560px, 88vw); padding:22px 24px;
@@ -112,4 +129,4 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
 .sheet-btn.warn{background:var(--warn); color:#fff}
 .sheet-say{margin:14px 0 0; font-size:19px; line-height:1.3; min-height:1.3em}
 
-@media (prefers-reduced-motion: reduce){ .flyer{display:none} }
+@media (prefers-reduced-motion: reduce){ .flyer{display:none} #trashFrame rect{animation:none} }

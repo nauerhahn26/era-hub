@@ -65,8 +65,16 @@ it (14 px gap; partner.js inserts the tab before `#trashTile`). It holds HER dwe
 on its side (glyph ≥ 4/5 of the tile, plate "Trash"), the bar's inner height like the doors, ≥ 2× as wide
 as tall (the bar's audit floor). drawing.js appends it to the bar mount once `stickers.json` lands —
 doorbar.js is untouched. The shelf hides it (`.away`, visibility only: zero shift).
-- One dwell: trash ON (teal ring + light-teal fill, "Trash on"); a live stroke ends and a carried item
-  goes back first. The next dwell: OFF ("Trash off"). Per session — never remembered.
+- One dwell: trash ON ("Trash on"); a live stroke ends and a carried item goes back first. The next
+  dwell: OFF ("Trash off"). Per session — never remembered.
+- Unmistakable while on (dad 10/5): the tile is solid orange (`--c-vowel` #DE7B52, the strongest calm
+  colour — red stays partner-only) with white "Trash on" (+ the teal `.on` ring), its plate sized for
+  "Trash on" either way (a `::after` ghost) so the tile never changes size; her picture wears a 6 px
+  dashed orange frame (`#trashFrame`, an SVG rect marching slowly; still under reduced motion), a
+  "🗑 Trash is on" plate across its top (`#trashBanner`, ≥ 44 px, the tile's own Wastebasket image as its
+  🗑, `pointer-events:none`, never a target — a finger or her gaze reaches the item under it), and every
+  hit box is dashed orange. All of it lies inside the picture's box (zero layout shift) and goes when
+  trash goes off. Speech unchanged.
 - While on, every sticker, person AND stroke has a `.hit` (a stroke's box = its points' bounds plus half
   its line, grown to ≥ F×F about its centre and shifted inside — `strokeBounds` + `hitBox`; whole-line
   deletion, no per-segment work). A dwell removes the item ("Bye, horse"; a person by name; ink "Bye,

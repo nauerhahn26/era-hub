@@ -582,6 +582,12 @@ function buildTrash() {
   if (!b || !BAR || $("trashTile")) return;
   const el = photoTile("trashTile", "trash", b.word, imgPic(b.src), () => toggleTrash());
   el.classList.toggle("away", S.screen !== "ring");
+  // The plate says "Trash" or "Trash on" (dad 10/5) in a box sized for the longer one (its ::after
+  // ghost): the tile never changes size under her gaze.
+  const plate = el.querySelector(".plate"), w = document.createElement("span");
+  w.textContent = b.word;
+  plate.replaceChildren(w);
+  plate.dataset.ghost = b.word + " on";
   BAR.bar.appendChild(el);
 }
 // One dwell turns it on (teal glow, "Trash on") — a live stroke ends and a carried item goes back
@@ -602,8 +608,36 @@ function setTrash(on) {
   S.gone = null;
   S.cool = null;
   const t = $("trashTile");
-  if (t) t.classList.toggle("on", on);
+  if (t) {
+    t.classList.toggle("on", on);
+    const w = t.querySelector(".plate > span");
+    if (w) w.textContent = on ? w.parentElement.dataset.ghost : t.getAttribute("aria-label");
+  }
+  trashMarks(on);
   applyTargets();
+}
+// Unmistakable while on (dad 10/5): her picture wears a 6 px dashed orange frame that marches slowly
+// (still under reduced motion) and a "🗑 Trash is on" plate across its top, and every item's box is
+// dashed (CSS: #scene.trash-on). None of it is a target or takes a finger (pointer-events:none); all
+// of it lies INSIDE the picture's box — zero layout shift. Orange (--c-vowel) is the strongest calm
+// colour: red stays partner-only.
+const SVG_NS = "http://www.w3.org/2000/svg";
+function trashMarks(on) {
+  const sc = $("scene");
+  sc.classList.toggle("trash-on", on);
+  for (const id of ["trashFrame", "trashBanner"]) { const el = $(id); if (el) el.remove(); }
+  if (!on) return;
+  const f = document.createElementNS(SVG_NS, "svg");
+  f.id = "trashFrame";
+  f.setAttribute("aria-hidden", "true");
+  f.appendChild(document.createElementNS(SVG_NS, "rect"));
+  const b = document.createElement("div");
+  b.id = "trashBanner";
+  b.setAttribute("aria-hidden", "true");
+  const bar = (S.table.bar || []).find((x) => x.id === "trash");
+  if (bar) b.appendChild(imgPic(bar.src));                    // the 🗑 tile's own Wastebasket
+  b.append("Trash is on");
+  sc.append(f, b);
 }
 // Off by itself, silently, whenever she leaves what she was trashing: Done, 🚪, 💬, a mode switch,
 // opening a picture or the shelf, the sheet opening, pagehide. (Undo, a palette tile: trash stays on.)
