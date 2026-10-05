@@ -8,8 +8,9 @@
  * accident (EyeDraw's Midas-touch lesson): in Draw mode, idle, a dwell on it starts a line; in the
  * other modes only placed items' hit boxes are targets (a dwell lifts one), and while she draws or
  * carries, the landing spot is the only target on it (spec 2026-10-02 §3, §6). A grown-up's finger
- * may move a sticker. Trash mode (dad 10/4): the 🗑 tile in the door bar's top-right corner turns it on;
- * then every sticker, person and stroke is a target and a dwell removes it, until the tile again.
+ * may move a sticker (partner.js) — silently: there is no grown-ups' tab or sheet (dad 10/5). Trash
+ * mode (dad 10/4): the 🗑 tile in the door bar's top-right corner turns it on; then every sticker,
+ * person and stroke is a target and a dwell (or a finger's tap) removes it, until the tile again.
  *
  * Laws (spec §7): one dwell per user, only the two doors are 2x; Speech.stop() before every
  * action of hers; never "wrong", never "sent"; nothing times out; zero layout shift; a picture is
@@ -29,14 +30,6 @@ const BOOK_CELLS = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 
 const PER_PAGE = BOOK_CELLS.length;
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MAIL_LINES = {
-  sent: "Sent to your family",
-  "no-email": "Saved — no family email set up yet",
-  failed: "Saved — mail failed, will not retry",
-  unchanged: "Saved — already sent, nothing new to send",
-  empty: "Saved — the picture is empty, nothing sent",
-};
-const BAR_DOORS = new Set(["barDoor", "barTalk"]);
 // v2 (spec 2026-10-02 §1): four modes, fixed forever; each palette fills the same eight seats.
 const MODES = ["draw", "people", "stickers", "places"];
 const SEATS = [[1, 1], [2, 1], [3, 1], [4, 1], [1, 3], [2, 3], [3, 3], [4, 3]];
@@ -54,9 +47,6 @@ const S = {
   trash: false, gone: null,
 };
 let BAR = null;
-let frozen = [];                 // the .dwell targets the grown-up's sheet put to sleep
-let sheetUp = false;             // the sheet is open: every newly drawn target is put to sleep too
-const mailWatchers = [];
 
 // ---------- small things ----------
 function log(event, detail) {
@@ -208,7 +198,6 @@ function renderPalette() {
     ring.appendChild(el);
   });
   markOn();
-  refreeze();
 }
 // ---------- People (spec 2026-10-02 §4) ----------
 // The private library the hub serves from the family's Drive folder. No library (Drive off on this
@@ -355,7 +344,6 @@ function placeSpot(cx, cy) {
   });
   $("scene").appendChild(el);
   S.spot = { cx: r.left + x, cy: r.top + y, F };
-  refreeze();
 }
 function removeSpot() { const s = $("spot"); if (s) s.remove(); S.spot = null; }
 function followSpot(cx, cy) {
@@ -444,10 +432,8 @@ function markOn() {
 function applyTargets() {
   const sc = $("scene");
   const want = S.screen === "ring" && !!S.scene && S.mode === "draw" && !S.pen && !S.carry && !S.trash;
-  if (!want) { sc.classList.remove("dwell"); sc.removeAttribute("data-dwell-disabled"); frozen = frozen.filter((el) => el !== sc); }
-  else if (!sc.hasAttribute("data-dwell-disabled")) sc.classList.add("dwell");
+  sc.classList.toggle("dwell", want);
   paintHits();
-  refreeze();
 }
 function settle() { if (S.pen) endStroke(null); if (S.carry) putBack(); }
 // A repaint while she carries something (a finger's move of ANOTHER item commits) keeps hers lifted.
@@ -500,7 +486,6 @@ function paintHits() {
     kids.push(el);                                   // item order: the latest is on top and wins
   }
   box.replaceChildren(...kids);
-  refreeze();
 }
 // LIFT: her full dwell on an item. It says its word, grows a little, and follows her gaze.
 function lift(i) {
@@ -571,12 +556,12 @@ function coolCheck() {
 function swallowClicks(ms) { S.swallowUntil = Date.now() + (ms || 400); }
 
 // ---------- trash mode (dad 10/3-10/4) ----------
-// A 🗑 Trash tile in the TOP-RIGHT CORNER of the door bar; the grown-ups' tab sits left of it. This
+// A 🗑 Trash tile in the TOP-RIGHT CORNER of the door bar. This
 // AMENDS the bar law "🚪 and 💬 are the bar's only dwell targets" on dad's word (10/4): the 🗑 is the
 // bar's third dwell target, and it holds HER dwell (CONTRACT.holds.content — no data-dwell-ms), because
 // it never takes her off the screen. A photo tile (glyph >= 4/5 of it, plate "Trash"), the bar's inner
 // height like the doors, at least twice as wide as tall (the bar's audit floor). Appended at the bar's
-// end once stickers.json lands — after partner.js's tab, which therefore sits left of it.
+// end once stickers.json lands (doorbar.js untouched).
 function buildTrash() {
   const b = (S.table.bar || []).find((x) => x.id === "trash");
   if (!b || !BAR || $("trashTile")) return;
@@ -640,7 +625,7 @@ function trashMarks(on) {
   sc.append(f, b);
 }
 // Off by itself, silently, whenever she leaves what she was trashing: Done, 🚪, 💬, a mode switch,
-// opening a picture or the shelf, the sheet opening, pagehide. (Undo, a palette tile: trash stays on.)
+// opening a picture or the shelf, pagehide. (Undo, a palette tile: trash stays on.)
 function trashOff() { if (S.trash) setTrash(false); }
 // A dwell on an item while trash is on: it goes ("Bye, horse"; a person by name; ink is "line"), as one
 // history event Undo brings back in place. She keeps going, item after item.
@@ -805,7 +790,7 @@ async function save(opts = {}) {
   }
 }
 
-// ---------- the grown-up's hands (partner.js calls these; spec §2.4) — T9 ----------
+// ---------- the grown-up's finger (partner.js calls these; spec §2.4) — T9 ----------
 function itemAt(i) { const it = S.scene && S.scene.items[i]; return it ? { ...it } : null; }
 function moveItem(i, x, y) {
   const it = S.scene && S.scene.items[i];
@@ -817,55 +802,6 @@ function moveItem(i, x, y) {
   paintScene();
   log("partner", { action: "move", s: it.s });
   changed();
-}
-async function clearPicture() {
-  if (S.screen !== "ring" || !S.scene) return;
-  S.scene.items = [];
-  S.history = [];                     // not undoable: it had its own two-stage confirm
-  S.cool = null; S.gone = null;
-  paintScene();
-  log("partner", { action: "clear" });
-  changed();
-  hush();
-  await say("All clear! A fresh picture.");
-}
-function tuneDwell(d) {
-  const cur = window.Dwell ? Dwell.config.ms : EC.holds.content;
-  const ms = Math.max(EC.holds.floor, Math.min(EC.holds.tuneMax, cur + d));
-  if (window.Dwell) Dwell.setMs(ms);
-  if (BAR) BAR.setDwell(ms);          // the doors stay 2 x the dwell she is actually on
-  log("partner", { action: "dwell", ms });
-  return ms;
-}
-// A full-screen sheet hides nothing from dwell.js (board-partner.js:53-71): every target but the
-// two doors loses .dwell and gains data-dwell-disabled while it is up.
-function freeze() {
-  settle();
-  trashOff();
-  sheetUp = true;
-  const live = [...document.querySelectorAll(".dwell")].filter((el) => !BAR_DOORS.has(el.id));
-  for (const el of live) { el.classList.remove("dwell"); el.setAttribute("data-dwell-disabled", ""); }
-  frozen = frozen.concat(live);
-}
-function thaw() {
-  sheetUp = false;
-  for (const el of frozen) { el.classList.add("dwell"); el.removeAttribute("data-dwell-disabled"); }
-  frozen = [];
-  suppress(600);
-}
-// Every render of targets while the sheet is up sweeps again: the freeze is not a one-time sweep
-// (Done -> the shelf under an open sheet drew live cells beneath it; review 9/30 #4).
-function refreeze() { if (sheetUp) freeze(); }
-function mailLine() {
-  const m = S.lastMail;
-  if (!m) return "No picture finished yet";
-  if (m.saved === false) return "Not saved — the hub did not answer";
-  return MAIL_LINES[m.mail] || "Saved";
-}
-function setMail(res) {
-  S.lastMail = res;
-  try { localStorage.setItem("drawing_mail_last", JSON.stringify(res)); } catch {}
-  for (const cb of mailWatchers) { try { cb(mailLine()); } catch {} }
 }
 
 // ---------- the shelf (spec §3) — T10 ----------
@@ -942,7 +878,6 @@ function renderShelf() {
   $("shelfGrid").replaceChildren(...kids);
   S.shelfIds = slice.map((p) => p.id);
   S.painted = shelfSig();
-  refreeze();
 }
 function turnShelf(page) {
   hush();
@@ -971,10 +906,9 @@ async function openShelf() {
 }
 function startPoll() { stopPoll(); S.pollTimer = setInterval(pollShelf, POLL_MS); }
 function stopPoll() { if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; } }
-// Repaint ONLY when something changed (a rebuild throws away an in-flight dwell — reader.js's
-// lesson), and never under a grown-up's open sheet.
+// Repaint ONLY when something changed (a rebuild throws away an in-flight dwell — reader.js's lesson).
 async function pollShelf() {
-  if (S.screen !== "shelf" || frozen.length) return;
+  if (S.screen !== "shelf") return;
   await refreshIndex();
   if (shelfSig() === S.painted) return;
   renderShelf();
@@ -1007,8 +941,9 @@ async function done() {
   hush();
   const id = S.id, scene = JSON.parse(JSON.stringify(S.scene));
   const saved = save();                                  // her last sticker first
-  // The PNG and the mail run alongside the celebration (deviation 9); the answer goes to the
-  // partner line only — never spoken (the Pencil's truth rule). Only once her scene is on the hub:
+  // The PNG and the mail run alongside the celebration (deviation 9); the answer is never spoken (the
+  // Pencil's truth rule) nor shown (dad 10/5: no grown-ups' sheet) — the log and state() keep it. Only
+  // once her scene is on the hub:
   // the hub judges the mail from ITS scene, so a PNG after a failed save would be mailed (or called
   // "already sent") against a picture she has since changed (review 9/30 #9). She is celebrated anyway.
   const posted = saved.then((ok) => (!ok ? { saved: false, mail: "failed", reason: "scene not saved" }
@@ -1017,7 +952,7 @@ async function done() {
         { method: "POST", headers: { "Content-Type": "image/png" }, body: blob }))
       .then((r) => (r.ok ? r.json() : { saved: false, mail: "failed", reason: "hub " + r.status }))))
     .catch(() => ({ saved: false, mail: "failed", reason: "no answer" }))
-    .then((res) => { setMail({ id, ...res }); log("done", { id, mail: res.mail }); return res; });
+    .then((res) => { S.lastMail = { id, ...res }; log("done", { id, mail: res.mail }); return res; });
   confetti(24);
   try {
     await say(SC.describe(scene.items, S.table));        // what she DID
@@ -1041,10 +976,7 @@ window.Drawing = {
     mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null, trash: S.trash, gone: !!S.gone,
   }),
   setMode, settle, releaseCarry, swallowClicks,
-  itemAt, moveItem, clamp: (o) => SC.clampItem(o), clearPicture, repaint: () => { if (S.scene) paintScene(); },
-  tuneDwell, dwellMs: () => (window.Dwell ? Dwell.config.ms : EC.holds.content),
-  freeze, thaw, say: (t) => { hush(); return say(t); },
-  mailLine, onMail: (cb) => { mailWatchers.push(cb); },
+  itemAt, moveItem, clamp: (o) => SC.clampItem(o), repaint: () => { if (S.scene) paintScene(); },
   pollShelf, flush: () => save(),
   exportPng: () => exportPng(S.scene),
 };
@@ -1062,10 +994,9 @@ if (window.__testHooks) Object.assign(window.Drawing, {
 // ---------- boot ----------
 async function boot() {
   // THE DOOR IS UP BEFORE ANY FETCH (the board's 9/3 rule): a hub that will not answer never
-  // leaves her on a screen she cannot leave. partner.js finds the bar the moment it runs.
+  // leaves her on a screen she cannot leave.
   BAR = window.DoorBar.mountDoorBar(document.body, { onLeave, onPause, onResume });
   try { if (window.Speech) Speech.init("Let's make a picture!"); } catch {}
-  try { S.lastMail = JSON.parse(localStorage.getItem("drawing_mail_last") || "null"); } catch {}
   try { S.table = await (await fetch("stickers.json")).json(); } catch { S.table = { stickers: [], zones: {} }; }
   S.mode = readMode(); loadStickers(); await loadPeople(); buildModes(); buildTrash();
   SC.renderScene($("newThumb"), { v: 1, backdrop: "meadow", items: [] }, { table: S.table });

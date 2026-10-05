@@ -392,88 +392,18 @@ async function finger(page, from, to, steps = 6) {
 }
 const centreOf = async (page, sel) => { const b = await page.locator(sel).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
 
-test("the grown-up's tab sits in the door bar and is never a gaze target", async () => {
+// dad 10/5: "remove the grown-up settings — no utility". No tab, no sheet: the bar holds 🚪, 💬 and 🗑.
+test("no grown-ups tab or sheet: the bar holds 🚪, 💬 and the 🗑 only, and nothing on the page is asleep (dad 10/5)", async () => {
   const { ctx, page } = await openRing();
-  const t = await page.evaluate(() => {
-    const el = document.getElementById("partnerTab");
-    return { inBar: !!el.closest(".msgbar"), dwell: el.matches(".dwell"),
-             attrs: [...el.attributes].map((a) => a.name).filter((n) => n.startsWith("data-dwell")) };
-  });
-  assert.deepEqual(t, { inBar: true, dwell: false, attrs: [] });
-  await ctx.close();
-});
-
-test("the sheet puts every target to sleep but the two doors, says no picture is finished yet, and wakes them on close", async () => {
-  const { ctx, page } = await openRing();
-  await page.locator("#partnerTab").click();
-  let r = await page.evaluate(() => ({ live: [...document.querySelectorAll(".dwell")].map((e) => e.id).sort(),
-    asleep: document.querySelectorAll("#sRing [data-dwell-disabled]").length }));
-  assert.deepEqual(r, { live: ["barDoor", "barTalk"], asleep: 14 });
-  assert.equal(await page.textContent("#pMail"), "No picture finished yet");
-  assert.equal(await page.evaluate(() => document.getElementById("mode-draw").hasAttribute("data-dwell-disabled")), true, "the mode tiles sleep too");
-  await page.locator("#pClose").click();
-  r = await page.evaluate(() => ({ live: document.querySelectorAll("#sRing .dwell").length,
-    asleep: document.querySelectorAll("[data-dwell-disabled]").length }));
-  assert.deepEqual(r, { live: 14, asleep: 0 });
-  await ctx.close();
-});
-
-// review 9/30 #4: the sheet's freeze was one sweep; a shelf drawn AFTER it opened (Done -> the shelf,
-// while the grown-up already had the sheet up) was live under it, and dwell.js hit-tests through it.
-test("a shelf drawn while the sheet is open is asleep under it too, and wakes when it closes", async () => {
-  const { ctx, page, id } = await openRing();
-  await page.locator("#tile-horse").click();
-  await page.waitForFunction(() => !window.Drawing.state().dirty, null, { timeout: 5000 });
-  await page.evaluate(() => {
-    document.getElementById("btnDone").click();
-    setTimeout(() => document.getElementById("partnerTab").click(), 20);   // the grown-up, mid-celebration
-  });
-  await page.waitForFunction((id) => window.Drawing.state().screen === "shelf" && window.Drawing.state().shelfIds.includes(id), id);
-  const live = () => page.evaluate(() => [...document.querySelectorAll(".dwell:not([data-dwell-disabled])")]
-    .map((e) => e.id || e.className).filter((n) => n !== "barDoor" && n !== "barTalk"));
-  assert.equal(await page.isVisible("#partnerSheet"), true);
-  assert.deepEqual(await live(), [], "nothing but the two doors is live under the open sheet");
-  await page.locator("#pClose").click();
-  assert.ok((await page.locator(`#shelfGrid [data-id="${id}"].dwell:not([data-dwell-disabled])`).count()) === 1, "her picture wakes");
-  assert.equal(await page.locator("#railNew.dwell").count(), 1);
-  await ctx.close();
-});
-
-test("dwell tune: 200 ms a tap, clamped 800-3000, and the doors follow at 2x", async () => {
-  const { ctx, page } = await openRing();
-  await page.locator("#partnerTab").click();
-  await page.locator("#pSlower").click();
-  assert.equal(await page.evaluate(() => window.Dwell.config.ms), 1400);
-  assert.equal(await page.getAttribute("#barDoor", "data-dwell-ms"), "2800");
-  assert.equal(await page.textContent("#pDwell"), "1400 ms");
-  for (let k = 0; k < 12; k++) await page.locator("#pSlower").click();
-  assert.equal(await page.evaluate(() => window.Dwell.config.ms), 3000);
-  for (let k = 0; k < 20; k++) await page.locator("#pFaster").click();
-  assert.equal(await page.evaluate(() => window.Dwell.config.ms), 800);
-  assert.equal(await page.getAttribute("#barDoor", "data-dwell-ms"), "1600");
-  await ctx.close();
-});
-
-test("Clear picture: two stages, spoken, the same picture stays open, and the blank picture leaves the shelf", async () => {
-  const { ctx, page, id } = await openRing();
-  const first = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok());
-  await page.locator("#tile-horse").click();
-  await page.locator("#tile-sun").click();
-  await first;
-  assert.ok((await (await fetch(`${BASE}/drawings/index.json`)).json()).some((p) => p.id === id), "listed while it has stickers");
-  await page.locator("#partnerTab").click();
-  await page.locator("#pClear").click();
-  let s = await st(page);
-  assert.equal(s.items.length, 2, "one tap never clears");
-  assert.equal(s.said.at(-1), "Clear the whole picture?");
-  assert.equal(await page.isVisible("#pClearYes"), true);
-  const cleared = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok());
-  await page.locator("#pClearYes").click();
-  s = await st(page);
-  assert.deepEqual([s.items.length, s.id, s.screen, s.history], [0, id, "ring", 0]);
-  assert.equal(s.said.at(-1), "All clear! A fresh picture.");
-  await cleared;
-  assert.ok(!(await (await fetch(`${BASE}/drawings/index.json`)).json()).some((p) => p.id === id), "a blank picture is not listed");
+  const r = await page.evaluate(() => ({
+    bar: [...document.querySelector(".msgbar").children].map((el) => el.id),
+    gone: ["partnerTab", "partnerSheet", "pSlower", "pFaster", "pClear", "pClearYes", "pMail", "pPeople", "pClose"]
+      .filter((id) => document.getElementById(id)),
+    words: /grown-?ups/i.test(document.body.innerText),
+    asleep: document.querySelectorAll("[data-dwell-disabled]").length,
+    api: ["freeze", "thaw", "tuneDwell", "clearPicture", "mailLine", "onMail"].filter((k) => k in window.Drawing),
+  }));
+  assert.deepEqual(r, { bar: ["barDoor", "barTalk", "trashTile"], gone: [], words: false, asleep: 0, api: [] });
   await ctx.close();
 });
 
@@ -642,27 +572,6 @@ test("Done on a blank picture: \"You made a picture!\", saved, never mailed, not
   await ctx.close();
 });
 
-test("the partner line tells the mail truth, one line per answer", async () => {
-  for (const [answer, line] of [
-    [{ saved: true, mail: "sent" }, "Sent to your family"],
-    [{ saved: true, mail: "no-email" }, "Saved — no family email set up yet"],
-    [{ saved: true, mail: "failed", reason: "x" }, "Saved — mail failed, will not retry"],
-    [{ saved: true, mail: "unchanged" }, "Saved — already sent, nothing new to send"],
-    [{ saved: true, mail: "empty" }, "Saved — the picture is empty, nothing sent"],
-    [null, "Not saved — the hub did not answer"],
-  ]) {
-    const { ctx, page } = await openRing({ routes: (c) => c.route("**/drawings/*/done", (r) => (answer
-      ? r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answer) }) : r.abort())) });
-    await page.locator("#tile-sun").click();
-    await page.locator("#btnDone").click();
-    await page.waitForFunction(() => window.Drawing.state().screen === "shelf" && window.Drawing.state().lastMail);
-    await page.locator("#partnerTab").click();
-    assert.equal(await page.textContent("#pMail"), line, JSON.stringify(answer));
-    assert.equal(await page.isVisible("#pClearRow"), false, "Clear lives on the ring only");
-    await ctx.close();
-  }
-});
-
 test("the celebration does not wait for the mail (deviation 9)", async () => {
   let release;
   const held = new Promise((r) => (release = r));
@@ -700,8 +609,8 @@ test("a sticker placed during Done's celebration still reaches the hub", async (
 });
 
 // review 9/30 #9: a Done whose own save failed must not POST the PNG — the hub would judge the mail
-// from its stale scene. She is still celebrated; the partner line says the truth.
-test("Done after a save the hub did not take: no PNG is posted, she is celebrated, the line says not saved", async () => {
+// from its stale scene. She is still celebrated.
+test("Done after a save the hub did not take: no PNG is posted, she is celebrated, the outcome is not saved", async () => {
   const { ctx, page, id } = await openRing({ routes: (c) => c.route("**/drawings/*/scene.json",
     (r) => (r.request().method() === "PUT" ? r.fulfill({ status: 500, body: '{"error":"write-failed"}' }) : r.continue())) });
   const posts = [];
@@ -713,7 +622,6 @@ test("Done after a save the hub did not take: no PNG is posted, she is celebrate
   assert.deepEqual(posts, [], "no PNG went to the hub");
   assert.ok(s.said.includes("You made a picture with a horse!"), JSON.stringify(s.said));
   assert.deepEqual([s.lastMail.id, s.lastMail.saved], [id, false]);
-  assert.equal(await page.evaluate(() => window.Drawing.mailLine()), "Not saved — the hub did not answer");
   assert.equal(fs.existsSync(path.join(PICS, id, "picture.png")), false);
   await ctx.close();
 });
@@ -1031,7 +939,7 @@ test("a glance off the picture shorter than the grace keeps the stroke; a crayon
   await ctx.close();
 });
 
-test("Undo takes the last stroke away; Clear takes ink too; a stroke drawn after a sticker lies on top; a finger never drags ink", async () => {
+test("Undo takes the last stroke away; a stroke drawn after a sticker lies on top; a finger never drags ink", async () => {
   const { ctx, page } = await openRing();
   await slowDwell(page);
   await page.locator("#tile-horse").click();
@@ -1047,13 +955,6 @@ test("Undo takes the last stroke away; Clear takes ink too; a stroke drawn after
   assert.deepEqual((await st(page)).items[1].pts, s.items[1].pts, "ink never moves under a finger");
   await page.locator("#btnUndo").click();
   assert.deepEqual((await st(page)).items.map((i) => i.s), ["horse"]);
-  await page.locator("#mode-draw").click();
-  await drawLine(page, 0.2, 0.6);
-  await page.locator("#spot").click();
-  await page.locator("#partnerTab").click();
-  await page.locator("#pClear").click();
-  await page.locator("#pClearYes").click();
-  assert.deepEqual((await st(page)).items, []);
   await ctx.close();
 });
 
@@ -1174,24 +1075,15 @@ test("People: past eight, seven a page with More in the last seat; More turns th
   seedPeople(null);
 });
 
-test("People with no library: eight black inert seats, \"No people yet\", and the grown-ups' sheet says where to add them", async () => {
+test("People with no library: eight black inert seats, \"No people yet\"", async () => {
   seedPeople(null);
-  let { ctx, page } = await openRing();
+  const { ctx, page } = await openRing();
   await page.locator("#mode-people").click();
   assert.equal((await st(page)).said.at(-1), "No people yet");
   const pal = await paletteOf(page);
   assert.deepEqual([pal.length, pal.every((c) => c.black && !c.dwell)], [8, true]);
   assert.equal(await page.evaluate(() => document.querySelectorAll("#sRing .cell.dwell").length), 6, "4 modes + Undo + Done");
-  await page.locator("#partnerTab").click();
-  assert.equal(await page.textContent("#pPeople"), "Add people: Drive folder → characters");
-  assert.equal(await page.isVisible("#pPeople"), true);
   await ctx.close();
-  seedPeople([MAYA]);
-  ({ ctx, page } = await openRing());
-  await page.locator("#partnerTab").click();
-  assert.equal(await page.isVisible("#pPeople"), false, "with a library the line is gone");
-  await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
-  seedPeople(null);
 });
 
 test("a person who left the library: drawn as nothing, kept, and the picture still saves (Review Focus 3)", async () => {
@@ -1515,7 +1407,7 @@ test("the contract audit is clean in every mode — with a library, items, ink a
 });
 
 // ================================================================ trash mode (dad 10/3–10/4)
-// A 🗑 Trash tile in the door bar's TOP-RIGHT corner, the grown-ups' tab moved left of it. One dwell turns
+// A 🗑 Trash tile in the door bar's TOP-RIGHT corner. One dwell turns
 // trash on (teal glow, "Trash on"); every sticker, person and stroke is then a target and a dwell
 // removes it ("Bye, horse"), item after item, until the tile again ("Trash off"). Each removal is a
 // history event: Undo brings it back. The backdrop does nothing.
@@ -1531,7 +1423,7 @@ async function lookAway(page, fx = 0.35, fy = 0.4) {             // her gaze lea
 }
 const hitLabels = async (page) => (await hitsOf(page)).map((h) => h.label);
 
-test("trash: the 🗑 tile sits in the door bar's top-right corner, the grown-ups' tab left of it — her dwell, a photo tile", async () => {
+test("trash: the 🗑 tile sits in the door bar's top-right corner — her dwell, a photo tile", async () => {
   for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }]) {
     const { ctx, page, errors } = await openRing({ viewport });
     const g = await page.evaluate(() => {
@@ -1541,7 +1433,7 @@ test("trash: the 🗑 tile sits in the door bar's top-right corner, the grown-up
       return { inBar: !!t.closest(".msgbar"), dwell: t.matches(".dwell.photo"), lastInBar: bar.lastElementChild === t,
                holdAttrs: [...t.attributes].map((a) => a.name).filter((n) => n.startsWith("data-dwell")),
                src: img.getAttribute("src"), word: plate.textContent.trim(), font: parseFloat(getComputedStyle(plate).fontSize),
-               t: box(t), img: box(img), tab: box(document.getElementById("partnerTab")), door: box(document.getElementById("barDoor")),
+               t: box(t), img: box(img), door: box(document.getElementById("barDoor")),
                bar: box(bar), padR: parseFloat(cs.paddingRight), vw: innerWidth };
     });
     const tag = "@" + viewport.width;
@@ -1552,9 +1444,7 @@ test("trash: the 🗑 tile sits in the door bar's top-right corner, the grown-up
     assert.ok(g.t.w >= 2 * g.t.h - 1.5, tag + ": at least twice as wide as tall (the bar's audit floor)");
     assert.ok(g.img.h >= 0.8 * g.t.h, tag + ": the glyph is at least 4/5 of the tile " + g.img.h + "/" + g.t.h);
     assert.ok(g.font >= 24, tag + ": the plate is at least the photo floor " + g.font);
-    assert.ok(g.tab.r + 14 - 0.5 <= g.t.x, tag + ": the grown-ups' tab is left of it, 14 px away " + g.tab.r + " / " + g.t.x);
-    assert.ok(Math.abs(g.tab.y - g.t.y) < 1, tag + ": on the same strip");
-    assert.ok(g.tab.x > g.bar.x + g.bar.w / 2 + 2 * g.door.h / 2, tag + ": both stay right of the centred 💬");
+    assert.ok(g.t.x > g.bar.x + g.bar.w / 2 + 2 * g.door.h / 2, tag + ": right of the centred 💬");
     assert.deepEqual(errors, []);
     await ctx.close();
   }
@@ -1876,7 +1766,7 @@ test("trash: turning it on puts a carried item back and ends a live stroke; no l
   await ctx.close();
 });
 
-test("trash switches itself off on a mode switch, the sheet, the 🚪, pagehide, Done, opening a picture and the 💬 — never on the active mode", async () => {
+test("trash switches itself off on a mode switch, the 🚪, pagehide, Done, opening a picture and the 💬 — never on the active mode", async () => {
   const exits = (c) => Promise.all([
     c.route("**/kiosk/exit", (r) => r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"closed"}' })),
     c.route("**/kiosk/pause", (r) => r.fulfill({ status: 200, contentType: "application/json", body: '{"action":"paused"}' }))]);
@@ -1891,10 +1781,6 @@ test("trash switches itself off on a mode switch, the sheet, the 🚪, pagehide,
   await page.locator("#mode-places").click();
   let s = await st(page);
   assert.deepEqual([s.trash, s.mode, s.said.at(-1), await lit()], [false, "places", "Places", false], "a mode switch: off, silently");
-  await on();
-  await page.locator("#partnerTab").click();
-  assert.deepEqual([(await st(page)).trash, await lit()], [false, false], "the sheet opening");
-  await page.locator("#pClose").click();
   await on();
   assert.equal(await page.evaluate(() => { document.getElementById("barDoor").click(); return window.Drawing.state().trash; }), false, "the 🚪");
   await on();

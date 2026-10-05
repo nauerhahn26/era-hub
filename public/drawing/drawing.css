@@ -1,10 +1,9 @@
-/* drawing.css — Drawing's two screens and the grown-up's sheet (spec 2026-09-30 §2-§3).
+/* drawing.css — Drawing's two screens and the 🗑 Trash tile in the door bar (spec 2026-09-30 §2-§3).
    Contract colours come from ../lib/tokens.css; the page keeps only its own derived shades. */
 :root{
   --ink:var(--color-ink, #17272E); --card:#FFFFFF;
   --page:#22343B;                 /* dark page: the rest tile's pure black reads as its own shape */
   --teal:var(--color-primary, #0F7C8A); --nav:var(--color-nav, #6B7B82);
-  --warn:var(--color-warn-partner, #B23A48);   /* partner controls ONLY (palette law) */
   --trash:var(--color-vowel, #DE7B52);          /* trash mode: the strongest calm colour (dad 10/5) */
   --side:13vw;                    /* tile columns: 250px @1920 (74px "Undo"/"Done" fit), 166px @1280 */
   --gap:var(--gap-floor, 14px);
@@ -86,17 +85,12 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
 .thumb{width:min(100cqw, calc(100cqh * 16 / 9)); height:min(100cqh, calc(100cqw * 9 / 16)); border-radius:12px}
 .thumb, .thumb *{pointer-events:none}
 
-/* ---- the grown-up's tab (in the bar, left of the 🗑 Trash tile) and sheet ---- */
-#partnerTab{margin-left:auto; flex:0 0 auto; height:var(--bar-inner, 40px); border:none; border-radius:10px;
-            padding:0 14px; cursor:pointer; font-family:var(--font); line-height:1; white-space:nowrap;
-            font-size:calc(var(--bar-inner, 40px) * 0.34); font-weight:700;
-            background:rgba(255,255,255,.16); color:#fff}
-/* ---- the 🗑 Trash tile (dad 10/4): the bar's TOP-RIGHT corner, the grown-ups' tab 14px left of it ----
+/* ---- the 🗑 Trash tile (dad 10/4): the bar's TOP-RIGHT corner (margin-left:auto; no grown-ups' tab, dad 10/5) ----
    Her dwell, a photo tile laid on its side to fit the strip: the glyph fills the bar's inner height
    (>= 4/5 of the tile), the plate beside it; at least twice as wide as tall (the bar's audit floor).
    id-qualified: .photo img.pic / .plate are the ring's vertical tiles. The shelf hides it (.away). */
 #trashTile{flex:0 0 auto; flex-direction:row; gap:6px; height:var(--bar-inner, 40px);
-           min-width:calc(var(--bar-inner, 40px) * 2); margin-left:var(--gap); padding:0 14px 0 4px; border-radius:12px}
+           min-width:calc(var(--bar-inner, 40px) * 2); margin-left:auto; padding:0 14px 0 4px; border-radius:12px}
 #trashTile img.pic{flex:0 0 auto; width:auto; height:calc(100% - 4px); aspect-ratio:1; padding:0; object-fit:contain}
 #trashTile .plate{flex:0 0 auto; padding:0; white-space:nowrap; line-height:1.15;
                   font-size:max(24px, calc(var(--bar-inner, 40px) * 0.4))}
@@ -118,15 +112,4 @@ body{background:var(--page); color:var(--ink); font-family:var(--font); overflow
              font-size:clamp(44px, 3.3vw, 64px); font-weight:800; line-height:1.15; white-space:nowrap}
 #trashBanner img{height:1.15em; width:auto; display:block}
 #scene.trash-on #hits > .hit{outline:3px dashed var(--trash); outline-offset:-3px}
-#partnerSheet{position:fixed; inset:0; top:var(--bar-h, 0px); z-index:90; display:flex;
-              align-items:center; justify-content:center; background:rgba(0,0,0,.45)}
-.sheet-card{background:#fff; color:var(--ink); width:min(560px, 88vw); padding:22px 24px;
-            border-radius:18px; box-shadow:0 12px 40px rgba(0,0,0,.35)}
-.sheet-card h2{margin:0 0 8px; font-size:28px}
-.sheet-row{display:flex; gap:12px; align-items:center; margin-top:14px; font-size:20px}
-.sheet-btn{border:none; border-radius:10px; padding:12px 20px; cursor:pointer; font-family:var(--font);
-           font-size:20px; font-weight:700; background:#E3EAEC; color:var(--ink)}
-.sheet-btn.warn{background:var(--warn); color:#fff}
-.sheet-say{margin:14px 0 0; font-size:19px; line-height:1.3; min-height:1.3em}
-
 @media (prefers-reduced-motion: reduce){ .flyer{display:none} #trashFrame rect{animation:none} }
