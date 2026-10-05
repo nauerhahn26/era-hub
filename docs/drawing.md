@@ -75,6 +75,12 @@ doorbar.js is untouched. The shelf hides it (`.away`, visibility only: zero shif
   outside trash mode.
 - After a removal there are no hit boxes until her gaze leaves the removed item's box (`S.gone`, the
   drop's cool-down rule): what lay under it never goes on the same resting gaze.
+- A FINGER (dad 10/5, "anything I touch should disappear"): a tap removes what it lands on — tap parity,
+  never a drag (partner.js starts no drag while trash is on; before, a roll of a pixel made the tap a
+  "move" and its drag-end swallowed the click). A finger's removal sets no `S.gone`, and where no hit box
+  is up (her guard after her own removal) the scene's click removes the topmost item whose trash box
+  holds the finger (`itemUnder`). Turning trash on or off clears a drop's cool-down too (`S.cool`): her
+  gaze is on the 🗑, so every target is up at once.
 - Off by itself, silently: Done, 🚪, 💬, a real mode switch, opening a picture or the shelf, the sheet
   opening, pagehide. Undo, a palette tile and the active mode leave it on.
 - Ring dwell choices: 14 + the 🗑 = 15, inside `CONTRACT.maxChoices.cap` 16.

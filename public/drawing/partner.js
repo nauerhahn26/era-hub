@@ -56,6 +56,9 @@
   let drag = null;
   scene.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "touch") return;
+    // Trash on (dad 10/5): a finger REMOVES what it touches — its click is her dwell (tap parity), so it
+    // never starts a drag here. A drag's end swallowed that click (a roll of a px or two is a "move").
+    if (D.state().trash) return;
     const carrying = D.state().carrying;
     let i;
     if (carrying !== null) {

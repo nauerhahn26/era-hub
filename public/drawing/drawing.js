@@ -378,7 +378,10 @@ function onSceneClick() {
   const p = toScene(S.gaze.cx, S.gaze.cy);
   if (!p.inside) return;
   if (S.pen || S.carry) { if (S.gaze.type === "touch") land(p); return; }
-  if (S.mode === "draw" && !S.trash) startStroke(p);                  // trash on: the backdrop does nothing
+  // Trash on, a FINGER (dad 10/5): what it touches goes even when no hit box is up (the guard after her
+  // own removal or drop waits for HER gaze to leave — a finger never ends it). Her gaze: the backdrop does nothing.
+  if (S.trash) { if (S.gaze.type === "touch") { const i = itemUnder(S.gaze.cx, S.gaze.cy); if (i !== null) removeItem(i); } return; }
+  if (S.mode === "draw") startStroke(p);
 }
 function startStroke(p) {
   if (S.paused || S.scene.items.length >= MAX_ITEMS) return;
@@ -462,6 +465,20 @@ function paintScene() {
 // lift it straight back (review 10/3 #3). Trash mode (dad 10/4): the same boxes in EVERY mode, plus one
 // per stroke (its bounds grown to F, scene.js strokeBounds) — a dwell removes, never lifts — and the
 // same guard after a removal (S.gone): what lay under the item she just removed waits for her gaze to leave.
+// A trash box: a stroke's is its bounds grown to F (scene.js strokeBounds), an item's its own.
+function trashBox(op, r, F) {
+  return SC.hitBox(op.kind === "stroke" ? SC.strokeBounds(S.scene.items[op.i]) : op, r.width, r.height, F);
+}
+// The topmost item whose trash box holds this point (the latest is on top and wins), or null.
+function itemUnder(cx, cy) {
+  const r = $("scene").getBoundingClientRect(), F = floorPx(), x = cx - r.left, y = cy - r.top;
+  const ops = SC.sceneOps(S.scene, S.table);
+  for (let k = ops.length - 1; k >= 0; k--) {
+    const b = trashBox(ops[k], r, F);
+    if (x >= b.left && x <= b.left + b.width && y >= b.top && y <= b.top + b.height) return ops[k].i;
+  }
+  return null;
+}
 function paintHits() {
   const box = $("hits");
   const show = S.screen === "ring" && !!S.scene && (S.trash || S.mode !== "draw") && !S.carry && !S.pen
@@ -473,7 +490,7 @@ function paintHits() {
   for (const op of SC.sceneOps(S.scene, S.table)) {
     const ink = op.kind === "stroke";
     if (ink && !S.trash) continue;
-    const b = SC.hitBox(ink ? SC.strokeBounds(S.scene.items[op.i]) : op, r.width, r.height, F);
+    const b = trashBox(op, r, F);
     const el = document.createElement("div");
     el.className = "hit dwell";
     el.dataset.hit = String(op.i);
@@ -578,9 +595,12 @@ function toggleTrash() {
   suppress();                       // the picture's targets just changed under her gaze: the page-settle guard
   log("trash", { on: S.trash });
 }
+// Either way her gaze is on the 🗑 (or a door, a mode tile, Done), not on her picture: no item's
+// cool-down guard still has anything to protect, and every target is up at once (dad 10/5).
 function setTrash(on) {
   S.trash = on;
   S.gone = null;
+  S.cool = null;
   const t = $("trashTile");
   if (t) t.classList.toggle("on", on);
   applyTargets();
@@ -606,7 +626,9 @@ function removeItem(i) {
   S.scene.items.splice(i, 1);
   push({ t: "remove", i, item: it });
   S.cool = null;
-  S.gone = op || null;
+  // Her gaze rests where the item was: what lay under it waits for her to look away. A finger is not her
+  // gaze — it lifts off, and the next tap is the next item (dad 10/5).
+  S.gone = (S.gaze && S.gaze.type === "touch") ? null : op || null;
   paintScene();
   changed();
   log("remove", { s: it.s, n: S.scene.items.length });
