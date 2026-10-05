@@ -117,6 +117,12 @@ fi
 [ -f "$PREV" ] || { echo "vm-e2e: previous installer $PREV missing"; exit 2; }
 fi
 
+# The Windows QA host is an on-demand server (10/5, era-family/tools/vm/qa.sh): bring it
+# up (reuses one that is already running) BEFORE env.sh reads its address, and destroy it
+# on any exit — unless the caller holds it (release.sh sets QA_KEEP=1 across its legs).
+bash "$VMT/qa.sh" up || { echo "vm-e2e: could not bring the QA host up (era-family/tools/vm/qa.sh)"; exit 3; }
+qa_release(){ bash "$VMT/qa.sh" down || true; }
+trap qa_release EXIT
 . "$VMT/env.sh" || exit 2
 if [ "$POST" = 1 ]; then
   echo "== vm-e2e: post-publish leg C only — the published download, fetched and opened on the guest; expected sha from $DIST/checksums.txt =="
@@ -160,7 +166,7 @@ fi
 echo "-- DevTools tunnel :9222 (local) -> QA host :9223"
 pkill -f "^ssh -f -N -L 9222:127.0.0.1:9223" 2>/dev/null; sleep 0.5
 ssh -f -N -L 9222:127.0.0.1:9223 -o ExitOnForwardFailure=yes -i "$VM_SSH_KEY" root@$VM_DROPLET || { echo "vm-e2e: tunnel failed"; exit 3; }
-cleanup() { pkill -f "^ssh -f -N -L 9222:127.0.0.1:9223" 2>/dev/null; $DROP "pkill -f '^python3 /root/qa/feed.py'; pkill -f '^ssh -p $VM_GUEST_SSH_PORT .*-L 9223:'" 2>/dev/null; }
+cleanup() { pkill -f "^ssh -f -N -L 9222:127.0.0.1:9223" 2>/dev/null; $DROP "pkill -f '^python3 /root/qa/feed.py'; pkill -f '^ssh -p $VM_GUEST_SSH_PORT .*-L 9223:'" 2>/dev/null; qa_release; }
 trap cleanup EXIT
 
 export VM_OUT="$OUT" VM_GUEST_USER VM_CANDIDATE_VERSION="${VER:-}" VM_CANDIDATE_BUILD="${BUILD:-}" VM_FEED_PORT="$FEED_PORT"

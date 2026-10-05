@@ -117,6 +117,15 @@ only the new file.
   latest.json's sha256).
 - `--prerelease` — hidden from the website and the updater; legal with `--patch`.
 
+## The VM legs run on an on-demand QA host
+
+Since 2026-10-05 the Windows QA host exists only while a VM leg runs:
+`vm-e2e.sh` brings it up from a template snapshot (`era-family/tools/vm/qa.sh up`)
+and destroys it on exit; `release.sh` holds one host across all of a cut's legs
+(`QA_KEEP=1`) and destroys it in its EXIT trap. Expect a few minutes of server
+creation before a VM leg starts. Details, the reaper cron and how to change the
+template: `aac-board-builder/docs/vm-e2e.md`.
+
 ## Push to one device
 
 ```
