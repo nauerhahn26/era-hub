@@ -1,14 +1,45 @@
 {
   "v": 1,
-  "about": "The built-in People library (dad 10/7): eight generic characters, no real people. Shown to a family whose Drive folder has no characters/ library of its own; a family library with any entry hides all of these. Format as docs/drawing.md 'People'. Check with: node tools/drawing-default-people.mjs --check",
   "people": [
-    { "slug": "mom", "word": "Mom", "scale": 0.36 },
-    { "slug": "dad", "word": "Dad", "scale": 0.38 },
-    { "slug": "girl", "word": "Girl", "scale": 0.28 },
-    { "slug": "boy", "word": "Boy", "scale": 0.28 },
-    { "slug": "grandma", "word": "Grandma", "scale": 0.34 },
-    { "slug": "grandpa", "word": "Grandpa", "scale": 0.36 },
-    { "slug": "baby", "word": "Baby", "scale": 0.18 },
-    { "slug": "friend", "word": "Friend", "scale": 0.28 }
+    {
+      "slug": "mom",
+      "word": "Mom",
+      "scale": 0.32
+    },
+    {
+      "slug": "dad",
+      "word": "Dad",
+      "scale": 0.32
+    },
+    {
+      "slug": "girl",
+      "word": "Girl",
+      "scale": 0.22
+    },
+    {
+      "slug": "boy",
+      "word": "Boy",
+      "scale": 0.22
+    },
+    {
+      "slug": "grandma",
+      "word": "Grandma",
+      "scale": 0.32
+    },
+    {
+      "slug": "grandpa",
+      "word": "Grandpa",
+      "scale": 0.32
+    },
+    {
+      "slug": "baby",
+      "word": "Baby",
+      "scale": 0.18
+    },
+    {
+      "slug": "friend",
+      "word": "Friend",
+      "scale": 0.22
+    }
   ]
 }
