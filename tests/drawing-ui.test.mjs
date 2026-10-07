@@ -1086,8 +1086,8 @@ test("People with no family library: the eight built-in people in their seats, e
   assert.deepEqual(pal.map((c) => c.id), ["mom", "dad", "girl", "boy", "grandma", "grandpa", "baby", "friend"].map((s) => "person-" + s));
   assert.deepEqual(pal.map((c) => c.word), ["Mom", "Dad", "Girl", "Boy", "Grandma", "Grandpa", "Baby", "Friend"]);
   assert.equal(await page.getAttribute("#person-mom img", "src"), "/characters/mom.png");
-  assert.ok(await page.evaluate(() => [...document.querySelectorAll("#sRing > .person img")].every((im) => im.complete && im.naturalWidth > 0)),
-    "every built-in cut-out loads");
+  // Every built-in cut-out must load (the real art is 200-330 KB, so wait rather than check instantly).
+  await page.waitForFunction(() => { const ims = [...document.querySelectorAll("#sRing > .person img")]; return ims.length === 8 && ims.every((im) => im.complete && im.naturalWidth > 0); }, null, { timeout: 15000 });
   await page.locator("#person-grandma").click();
   assert.deepEqual((await st(page)).items.map((i) => i.s), ["person:grandma"]);
   assert.equal(await page.locator('#art img.item[src="/characters/grandma.png"]').count(), 1);
