@@ -24,9 +24,12 @@ Plans: `docs/superpowers/plans/2026-09-30-drawing-plan.md` + `docs/superpowers/p
   the slot tables. `drawings.js` validates scenes against the same file.
   + `modes`, `crayons`, `backdrops`; slot tables are written against the reference horizon 0.58.
   + `bar` (the door bar's tiles: today only `trash`).
+- `public/drawing/people/` — the built-in People library (dad 10/7): `characters.json` + eight generic
+  `<slug>.png`; `tools/drawing-default-people.mjs` (`--check`, `--placeholders`).
 - `drawings.js` (hub) — ids, validation, writes, list, one-day blank cleanup, Done + mail.
   + v2 validation (strokes, crayons, places, people by shape only — a library check made pictures
     unsaveable and protected nothing, review 10/3 #5), 256 KB, `characters()`.
+  + `charactersLibrary()` — the family's library, or the built-in one (dad 10/7).
 - `drive.js` — `drawings` in the mirror; `.local`; `mirrorDrawing(id)`.
   + `characters` mirrors like `drawings`.
 
@@ -104,13 +107,38 @@ all while trash is on (its tap removes). Her dwell is set in Settings (`/setting
 trash mode are how a picture gets emptier. Done's mail answer is shown nowhere — never spoken, never
 shown; `Drawing.state().lastMail` and the `done` log line keep it.
 
-## People (the private library)
+## People (the family's library, or the built-in one)
 `<family Drive folder>/characters/{characters.json, <slug>.png}` → mirrored to `<DATA>/characters/` →
 `GET /characters/index.json` and `/characters/<slug>.png`. `characters.json` =
 `{ "v": 1, "people": [ { "slug", "word", "scale"? } ] }` in display order; an entry shows only with its
 PNG. Cut-outs are made and approved in the private pipeline (plan 2026-10-02 "Private pipeline task");
-nothing family-specific is ever committed here. With Drive off (the tablet today) People shows black
-seats and "No people yet"; pictures holding people still open, save and shelve.
+nothing family-specific is ever committed here.
+
+**The default library (dad 10/7).** A family without a library of its own sees eight built-in GENERIC
+characters — Mom, Dad, Girl, Boy, Grandma, Grandpa, Baby, Friend — from `public/drawing/people/`
+(`characters.json` in the same format + `<slug>.png`). The art is generic: no real people, no likeness of
+anyone in the family. `drawings.charactersLibrary()` decides per request: the FAMILY library when
+`<DATA>/characters/characters.json` has at least one entry that shows (its PNG present), else the DEFAULT
+one; the same two routes serve whichever it is (the index's `X-Characters-Source: family|default` header
+says which; its body is the same list either way), path-jailed to that one flat folder. Never merged: the
+family's first shown entry hides every default, and a picture holding a default person then draws it as
+nothing (kept, like a person who left the library). So a family overrides the defaults simply by putting
+its own `characters/` in its Drive folder. "No people yet" (black seats) now happens only when the
+built-in files are missing — a broken install. Pictures holding people always open, save and shelve.
+
+Re-cutting the default art: drop the eight PNGs at `public/drawing/people/<slug>.png` (person-shaped,
+transparent, feet on the bottom row — any aspect: a person's box takes the art's shape), tune `scale` in
+that `characters.json` if needed, then `node tools/drawing-default-people.mjs --check` (every entry has a
+PNG; says which are still synthetic placeholders). `--placeholders` rewrites only placeholders (never a
+real cut-out without `--force`). No sha256 pins: these are our files, not vendored ones.
+
+**Shape (dad 10/7).** Cut-outs are tall rectangles (288×768, 600×768). An item's `w` is its box's HEIGHT;
+the box is square unless its art is not: then it is the art's own shape — width `w × (naturalW/naturalH) ×
+9/16` scene widths, centred on `x`, bottom where the square's was (`scene.js artAspect` + `sceneOps`,
+from the loaded images). The ring, the flyer, a carried item, a finger's drag, the shelf, the PNG, the hit
+box, the clamp and the landing all use that box; the stored scene is unchanged. Square stickers are v1's
+to the bit. The page waits up to 1.5 s at boot for the people's PNGs, and repaints the ring if one lands
+later (the shelf keeps square boxes for it — contain draws the figure the same).
 
 ## Re-cutting assets
 - Stickers (and `modes[]`, `bar[]`): edit a sticker's `source` + `sha256` in `stickers.json`, run
