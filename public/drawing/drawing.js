@@ -34,6 +34,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const MODES = ["draw", "people", "stickers", "places"];
 const SEATS = [[1, 1], [2, 1], [3, 1], [4, 1], [1, 3], [2, 3], [3, 3], [4, 3]];
 const MODE_KEY = "drawing_mode";
+const ART_WAIT_MS = 1500;       // boot waits this long at most for the people's cut-outs (artAspect)
 const ROUTE_RE = /^#p=([^&]+)(?:&mode=([a-z]+))?$/;
 
 const S = {
@@ -208,12 +209,23 @@ async function loadPeople() {
     S.people = Array.isArray(j) ? j : [];
   } catch { S.people = []; }
   S.table = SC.withPeople(S.table, S.people);
+  const loads = [];
   for (const p of S.people) {
     const im = new Image();
     im.src = "/characters/" + encodeURIComponent(p.slug) + ".png";
     S.images["person:" + p.slug] = im;                                // for the PNG (same origin: exportable)
+    loads.push(im.decode ? im.decode().catch(() => {}) : null);
+    im.addEventListener("load", artLoaded);
   }
+  // A person's box is her cut-out's own shape, read from the loaded image (scene.js artAspect, dad
+  // 10/7): the first paint waits for them — a local hub answers in milliseconds — but never more than
+  // ART_WAIT_MS; one still loading then is drawn square (contain: never stretched) and repainted on load.
+  await Promise.race([Promise.all(loads), new Promise((r) => setTimeout(r, ART_WAIT_MS))]);
 }
+// A late cut-out: the ring's boxes take its shape now (never mid-line or mid-carry). The shelf keeps its
+// square boxes — contain draws the figure the same — rather than rebuilding under a dwell.
+function artLoaded() { if (S.screen === "ring" && S.scene && !S.pen && !S.carry) paintScene(); }
+const aspect = (s) => SC.artAspect(S.images, s);
 function personTile(p) {
   const id = "person:" + p.slug, st = SC.stickerById(S.table, id);
   const b = photoTile("person-" + p.slug, "person", p.word, imgPic(st.src), (el) => place(id, el));
@@ -438,7 +450,7 @@ function applyTargets() {
 function settle() { if (S.pen) endStroke(null); if (S.carry) putBack(); }
 // A repaint while she carries something (a finger's move of ANOTHER item commits) keeps hers lifted.
 function paintScene() {
-  SC.renderScene($("art"), S.scene, { table: S.table });
+  SC.renderScene($("art"), S.scene, { table: S.table, images: S.images });
   if (S.carry) { const a = document.querySelector('#art [data-i="' + S.carry.i + '"]'); if (a) a.classList.add("carried"); }
   paintHits();
 }
@@ -458,7 +470,7 @@ function trashBox(op, r, F) {
 // The topmost item whose trash box holds this point (the latest is on top and wins), or null.
 function itemUnder(cx, cy) {
   const r = $("scene").getBoundingClientRect(), F = floorPx(), x = cx - r.left, y = cy - r.top;
-  const ops = SC.sceneOps(S.scene, S.table);
+  const ops = SC.sceneOps(S.scene, S.table, S.images);
   for (let k = ops.length - 1; k >= 0; k--) {
     const b = trashBox(ops[k], r, F);
     if (x >= b.left && x <= b.left + b.width && y >= b.top && y <= b.top + b.height) return ops[k].i;
@@ -473,7 +485,7 @@ function paintHits() {
   const r = $("scene").getBoundingClientRect();
   if (!r.width) return;
   const F = floorPx(), kids = [];
-  for (const op of SC.sceneOps(S.scene, S.table)) {
+  for (const op of SC.sceneOps(S.scene, S.table, S.images)) {
     const ink = op.kind === "stroke";
     if (ink && !S.trash) continue;
     const b = trashBox(op, r, F);
@@ -510,10 +522,11 @@ function carryFollow() {
   const c = S.carry, it = S.scene.items[c.i], g = S.gaze, p = toScene(g.cx, g.cy);
   c.sx += SC.PEN.alpha * (p.x - c.sx);
   c.sy += SC.PEN.alpha * (p.y - c.sy);
-  const at = SC.clampItem({ x: c.sx, y: c.sy, w: it.w });
+  const at = SC.clampItem({ x: c.sx, y: c.sy, w: it.w }, aspect(it.s));
   c.x = at.x; c.y = at.y;
   const art = document.querySelector('#art [data-i="' + c.i + '"]');
-  if (art) { art.style.left = (at.x - it.w / SC.ASPECT / 2) * 100 + "%"; art.style.top = (at.y - it.w / 2) * 100 + "%"; }
+  const op = art && SC.sceneOps({ items: [{ ...it, x: at.x, y: at.y }] }, S.table, S.images)[0];   // its own box
+  if (op) { art.style.left = op.left * 100 + "%"; art.style.top = op.top * 100 + "%"; }
   if (p.inside) followSpot(g.cx, g.cy); else removeSpot();
 }
 function drop(at, by) {
@@ -521,7 +534,7 @@ function drop(at, by) {
   if (!c) return;
   stopRestWatch(); removeSpot();
   S.carry = null;
-  const it = S.scene.items[c.i], to = SC.clampItem({ x: at.x, y: at.y, w: it.w });
+  const it = S.scene.items[c.i], to = SC.clampItem({ x: at.x, y: at.y, w: it.w }, aspect(it.s));
   push({ t: "move", i: c.i, from: { x: it.x, y: it.y, by: it.by } });
   it.x = to.x; it.y = to.y; it.by = by;
   S.cool = c.i;
@@ -547,7 +560,7 @@ function releaseCarry() {
 // dropped, or the box of the one she just removed.
 function coolCheck() {
   const it = S.cool !== null ? S.scene.items[S.cool] : null, r = $("scene").getBoundingClientRect();
-  const op = S.cool === null ? S.gone : it ? SC.sceneOps({ items: [it] }, S.table)[0] : null;
+  const op = S.cool === null ? S.gone : it ? SC.sceneOps({ items: [it] }, S.table, S.images)[0] : null;
   const cooled = () => { S.cool = null; S.gone = null; paintHits(); };
   if (!op || !r.width) { cooled(); return; }
   const b = SC.hitBox(op, r.width, r.height, floorPx()), x = S.gaze.cx - r.left, y = S.gaze.cy - r.top;
@@ -639,7 +652,7 @@ function removeItem(i) {
   if (S.screen !== "ring" || !S.scene || S.paused || !S.trash || S.pen || S.carry) return;
   const it = S.scene.items[i];
   if (!it) return;
-  const op = it.s === "stroke" ? SC.strokeBounds(it) : SC.sceneOps({ items: [it] }, S.table)[0];
+  const op = it.s === "stroke" ? SC.strokeBounds(it) : SC.sceneOps({ items: [it] }, S.table, S.images)[0];
   hush();
   say("Bye, " + byeWord(it));
   S.scene.items.splice(i, 1);
@@ -713,7 +726,7 @@ function place(id, tile) {
   hush();
   say(st.word);
   if (S.scene.items.length >= MAX_ITEMS) { log("place_full", { s: id }); return; }   // the hub's cap
-  const spot = SC.landing(id, S.scene.items, S.table, Math.random, SC.horizonOf(S.scene.backdrop));
+  const spot = SC.landing(id, S.scene.items, S.table, Math.random, SC.horizonOf(S.scene.backdrop), aspect(id));
   if (!spot) return;
   const item = { s: id, x: spot.x, y: spot.y, w: spot.w, by: "ellie" };
   if (id === "splat") { item.c = spot.c; item.seed = spot.seed; }
@@ -796,7 +809,7 @@ function moveItem(i, x, y) {
   const it = S.scene && S.scene.items[i];
   if (!it) return;
   if (S.carry && S.carry.i === i) releaseCarry();
-  const c = SC.clampItem({ x, y, w: it.w });
+  const c = SC.clampItem({ x, y, w: it.w }, aspect(it.s));
   push({ t: "move", i, from: { x: it.x, y: it.y, by: it.by } });
   it.x = c.x; it.y = c.y; it.by = "partner";
   paintScene();
@@ -834,7 +847,7 @@ function picCell(p) {
   box.className = "thumbBox";
   const th = document.createElement("span");
   th.className = "scene thumb";
-  SC.renderScene(th, p.scene, { table: S.table });      // the same renderer as the ring
+  SC.renderScene(th, p.scene, { table: S.table, images: S.images });      // the same renderer as the ring
   box.appendChild(th);
   const pl = document.createElement("span");
   pl.className = "plate";
@@ -972,11 +985,11 @@ window.Drawing = {
     said: S.said.slice(), park: S.park, paused: S.paused,
     crayon: S.scene ? S.scene.crayon || null : null, pen: S.pen ? { n: S.pen.pts.length, c: S.pen.c } : null,
     people: S.people.map((p) => p.slug), peoplePage: S.peoplePage, peoplePages: S.peoplePages,
-    carrying: S.carry ? S.carry.i : null, cool: S.cool,
+    carrying: S.carry ? S.carry.i : null, carryAt: S.carry ? { x: S.carry.x, y: S.carry.y } : null, cool: S.cool,
     mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null, trash: S.trash, gone: !!S.gone,
   }),
   setMode, settle, releaseCarry, swallowClicks,
-  itemAt, moveItem, clamp: (o) => SC.clampItem(o), repaint: () => { if (S.scene) paintScene(); },
+  itemAt, moveItem, clamp: (o) => SC.clampItem(o, aspect(o.s)), repaint: () => { if (S.scene) paintScene(); },
   pollShelf, flush: () => save(),
   exportPng: () => exportPng(S.scene),
 };
