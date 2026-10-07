@@ -360,18 +360,52 @@ test("v2 validation: strokes, crayons and places; unknown place → meadow, unkn
   assert.equal(drawings.validateScene({ v: 1, items: [{ ...P("maya"), x: 2 }] }).ok, false, "a person is placed like a sticker");
 });
 
-test("the characters library: dad's order, only with a PNG, junk skipped; absent or broken → []", () => {
+// The built-in People library (dad 10/7): eight generic people shipped in public/drawing/people/, what
+// a family without its own characters/ sees. Never real people.
+const DEF_DIR = path.join(HUB, "public", "drawing", "people");
+const DEFAULTS = JSON.parse(fs.readFileSync(path.join(DEF_DIR, "characters.json"), "utf8")).people
+  .map(({ slug, word, scale }) => ({ slug, word, scale }));
+const DEFAULT_SLUGS = ["mom", "dad", "girl", "boy", "grandma", "grandpa", "baby", "friend"];
+
+test("the characters library: dad's order, only with a PNG, junk skipped; absent or broken → the default library", () => {
   freshUnit("none");
-  assert.deepEqual(drawings.characters(), [], "no folder");
+  assert.deepEqual(drawings.characters(), DEFAULTS, "no folder: the eight built-in people");
   library([{ slug: "sam", word: "Sam" }, { slug: "maya", word: " Maya ", scale: 0.25 }, { slug: "nopic", word: "No pic" },
     { slug: "Bad Slug", word: "x" }, { slug: "maya", word: "Again" }, { slug: "tall", word: "Tall", scale: 0.9 },
     { slug: "noword" }, 7, { slug: "long", word: "x".repeat(25) }], ["sam", "maya", "tall", "noword", "long"]);
   assert.deepEqual(drawings.characters(), [{ slug: "sam", word: "Sam", scale: 0.3 }, { slug: "maya", word: "Maya", scale: 0.25 },
     { slug: "tall", word: "Tall", scale: 0.3 }]);
   fs.writeFileSync(path.join(CH(), "characters.json"), "{ not json");
-  assert.deepEqual(drawings.characters(), []);
+  assert.deepEqual(drawings.characters(), DEFAULTS);
   fs.writeFileSync(path.join(CH(), "characters.json"), JSON.stringify({ v: 1, people: "nope" }));
+  assert.deepEqual(drawings.characters(), DEFAULTS);
+});
+
+test("the default People library: eight generic people, shown until the family has one of its own — never merged (dad 10/7)", () => {
+  freshUnit("none");
+  assert.deepEqual(DEFAULTS.map((p) => p.slug), DEFAULT_SLUGS, "mom, dad, girl, boy, grandma, grandpa, baby, friend — in that order");
+  for (const p of DEFAULTS) {
+    assert.ok(p.word && p.word.length <= 24 && p.scale >= 0.1 && p.scale <= 0.6, JSON.stringify(p));
+    const b = fs.readFileSync(path.join(DEF_DIR, p.slug + ".png"));
+    assert.equal(b.readUInt32BE(0), 0x89504e47, p.slug + ".png is a PNG");
+  }
+  assert.deepEqual(drawings.characters(), DEFAULTS, "every one shows: each has its PNG");
+  assert.deepEqual(drawings.charactersLibrary(), { source: "default", dir: DEF_DIR, people: DEFAULTS });
+  library([{ slug: "maya", word: "Maya" }]);
+  assert.deepEqual(drawings.characters(), [{ slug: "maya", word: "Maya", scale: 0.3 }], "the family's own library hides every default");
+  assert.deepEqual(drawings.charactersLibrary(), { source: "family", dir: CH(), people: drawings.characters() });
+  library([{ slug: "kai", word: "Kai" }], []);
+  assert.deepEqual(drawings.characters(), DEFAULTS, "a family library with nothing that shows (no PNG yet) keeps the defaults");
+  library([]);
+  assert.deepEqual(drawings.characters(), DEFAULTS, "an empty family library keeps the defaults");
+  // the default assets missing (a broken install): no people at all — the page's "No people yet"
+  const empty = path.join(TMP, "no-default-people");
+  fs.mkdirSync(empty, { recursive: true });
+  fs.rmSync(CH(), { recursive: true, force: true });
+  drawings.start(UNIT, { deviceId: "kitchen-pc-3f9a", now: () => clock, defaultPeopleDir: empty });
   assert.deepEqual(drawings.characters(), []);
+  freshUnit("none");
+  assert.deepEqual(drawings.characters(), DEFAULTS, "start() without the seam is the shipped library again");
 });
 
 // review 10/3 #5: a library check made pictures unsaveable (a person removed while the page was open,
@@ -514,15 +548,26 @@ test("PUT takes a scene up to 256 KB and refuses a bigger body with 413", async 
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, big)).status, 413);
 });
 
-test("GET /characters/index.json lists the library ([] with none), PNGs are path-jailed, and a PUT checks people by shape only", async () => {
+test("GET /characters/index.json lists the library (the default one with none), PNGs are path-jailed, and a PUT checks people by shape only", async () => {
   const CHR = path.join(RT, "characters");
   fs.rmSync(CHR, { recursive: true, force: true });
   let r = await fetch(BASE + "/characters/index.json");
-  assert.deepEqual([r.status, await r.json()], [200, []]);
+  assert.deepEqual([r.status, r.headers.get("x-characters-source"), await r.json()], [200, "default", DEFAULTS],
+    "no family library: the eight built-in people, the same shape of list");
+  r = await fetch(BASE + "/characters/mom.png");
+  assert.deepEqual([r.status, r.headers.get("content-type")], [200, "image/png"]);
+  assert.ok(Buffer.from(await r.arrayBuffer()).equals(fs.readFileSync(path.join(DEF_DIR, "mom.png"))), "served from public/drawing/people/");
+  assert.equal((await fetch(BASE + "/characters/characters.json")).status, 200);
+  for (const bad of ["/characters/Mom.png", "/characters/mom.txt", "/characters/people/mom.png", "/characters/..%2Fstickers.json",
+                     "/characters/..%2F..%2F..%2Fdrawings.js", "/characters/%2e%2e/stickers.json", "/characters/stickers.json"])
+    assert.notEqual((await fetch(BASE + bad)).status, 200, "jailed in the default library too: " + bad);
   fs.mkdirSync(CHR, { recursive: true });
   fs.writeFileSync(path.join(CHR, "maya.png"), tinyPng(16, 32));
   fs.writeFileSync(path.join(CHR, "characters.json"), JSON.stringify({ v: 1, people: [{ slug: "maya", word: "Maya" }] }));
-  assert.deepEqual(await (await fetch(BASE + "/characters/index.json")).json(), [{ slug: "maya", word: "Maya", scale: 0.3 }]);
+  r = await fetch(BASE + "/characters/index.json");
+  assert.deepEqual([r.headers.get("x-characters-source"), await r.json()], ["family", [{ slug: "maya", word: "Maya", scale: 0.3 }]],
+    "the family's own library hides the defaults");
+  assert.equal((await fetch(BASE + "/characters/mom.png")).status, 404, "never merged: a default is not served beside a family library");
   r = await fetch(BASE + "/characters/maya.png");
   assert.deepEqual([r.status, r.headers.get("content-type"), r.headers.get("cache-control")], [200, "image/png", "no-cache"]);
   assert.equal((await fetch(BASE + "/characters/characters.json")).status, 200);

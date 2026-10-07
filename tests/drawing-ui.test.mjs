@@ -1075,9 +1075,31 @@ test("People: past eight, seven a page with More in the last seat; More turns th
   seedPeople(null);
 });
 
-test("People with no library: eight black inert seats, \"No people yet\"", async () => {
+// dad 10/7: a family without its own characters/ sees the eight built-in generic people
+// (public/drawing/people/, served at the same /characters/ routes — the page needs no change).
+test("People with no family library: the eight built-in people in their seats, each one placeable (dad 10/7)", async () => {
   seedPeople(null);
-  const { ctx, page } = await openRing();
+  const { ctx, page, errors } = await openRing();
+  await page.locator("#mode-people").click();
+  assert.equal((await st(page)).said.at(-1), "People");
+  const pal = await paletteOf(page);
+  assert.deepEqual(pal.map((c) => c.id), ["mom", "dad", "girl", "boy", "grandma", "grandpa", "baby", "friend"].map((s) => "person-" + s));
+  assert.deepEqual(pal.map((c) => c.word), ["Mom", "Dad", "Girl", "Boy", "Grandma", "Grandpa", "Baby", "Friend"]);
+  assert.equal(await page.getAttribute("#person-mom img", "src"), "/characters/mom.png");
+  assert.ok(await page.evaluate(() => [...document.querySelectorAll("#sRing > .person img")].every((im) => im.complete && im.naturalWidth > 0)),
+    "every built-in cut-out loads");
+  await page.locator("#person-grandma").click();
+  assert.deepEqual((await st(page)).items.map((i) => i.s), ["person:grandma"]);
+  assert.equal(await page.locator('#art img.item[src="/characters/grandma.png"]').count(), 1);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+// Only a broken install (the built-in people's files missing) still has no people at all.
+test("People with no people at all: eight black inert seats, \"No people yet\"", async () => {
+  seedPeople(null);
+  const { ctx, page } = await openRing({ routes: (c) => c.route("**/characters/index.json", (r) => r.fulfill({ status: 200,
+    contentType: "application/json", body: "[]" })) });
   await page.locator("#mode-people").click();
   assert.equal((await st(page)).said.at(-1), "No people yet");
   const pal = await paletteOf(page);

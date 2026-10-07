@@ -37,9 +37,13 @@ let DEVICE = "hub";
 let TZ = () => "UTC";
 let NOW = () => new Date();
 let TABLE = null;
+// The built-in People library (dad 10/7): eight generic characters shipped with the page.
+const DEFAULT_PEOPLE = path.join(__dirname, "public", "drawing", "people");
+let DEFAULTS = DEFAULT_PEOPLE;
 
 function start(dataDir, opts = {}) {
   DATA = dataDir;
+  DEFAULTS = opts.defaultPeopleDir || DEFAULT_PEOPLE;          // a test's seam: the built-in files missing
   if (opts.deviceId) DEVICE = String(opts.deviceId);
   if (typeof opts.tz === "function") TZ = opts.tz;
   if (typeof opts.now === "function") NOW = opts.now;
@@ -62,20 +66,28 @@ function stickerTable() {
 }
 
 // ---------------------------------------------------------------- People (spec 2026-10-02 §4)
-// The library the mirror carries in from the family's Drive folder: <DATA>/characters/characters.json
-// + <slug>.png. Read fresh on every call (a few hundred bytes; dad edits it by hand). An entry shows
-// only with its PNG beside it; anything malformed is skipped; an unreadable file is an empty library.
+// The FAMILY's library, which the mirror carries in from their Drive folder: <DATA>/characters/
+// characters.json + <slug>.png. Read fresh on every call (a few hundred bytes; dad edits it by hand).
+// An entry shows only with its PNG beside it; anything malformed is skipped; an unreadable file is an
+// empty library. A family without one — or whose library shows nobody yet — gets the DEFAULT library
+// (dad 10/7): public/drawing/people/, the same format, eight generic people. Never merged: one shown
+// family entry hides every default. The same /characters/ routes serve whichever is in use.
 const charactersRoot = () => path.join(DATA, "characters");
-function characters() {
-  if (!DATA) return [];
+function charactersLibrary() {
+  const family = DATA ? readLibrary(charactersRoot()) : [];
+  if (family.length) return { source: "family", dir: charactersRoot(), people: family };
+  return { source: "default", dir: DEFAULTS, people: readLibrary(DEFAULTS) };
+}
+const characters = () => charactersLibrary().people;
+function readLibrary(dir) {
   let j;
-  try { j = JSON.parse(fs.readFileSync(path.join(charactersRoot(), "characters.json"), "utf8")); } catch { return []; }
+  try { j = JSON.parse(fs.readFileSync(path.join(dir, "characters.json"), "utf8")); } catch { return []; }
   const out = [], seen = new Set();
   for (const p of (j && Array.isArray(j.people)) ? j.people : []) {
     if (!p || typeof p !== "object") continue;
     const slug = p.slug, word = typeof p.word === "string" ? p.word.trim() : "";
     if (typeof slug !== "string" || !SLUG_RE.test(slug) || seen.has(slug) || !word || word.length > WORD_MAX) continue;
-    if (!fs.existsSync(path.join(charactersRoot(), slug + ".png"))) continue;
+    if (!fs.existsSync(path.join(dir, slug + ".png"))) continue;
     const scale = typeof p.scale === "number" && Number.isFinite(p.scale) && p.scale >= SCALE.min && p.scale <= SCALE.max ? p.scale : SCALE.dflt;
     seen.add(slug);
     out.push({ slug, word, scale });
@@ -337,5 +349,5 @@ async function done(id, png, mail) {
   return { saved: true, mail: "sent" };
 }
 
-module.exports = { ID_RE, LIMITS, SLUG_RE, characters, start, isId, shortDevice, stickerTable, newId, validateScene, itemsHash,
+module.exports = { ID_RE, LIMITS, SLUG_RE, characters, charactersLibrary, start, isId, shortDevice, stickerTable, newId, validateScene, itemsHash,
                    mountRoot, readScene, create, writeScene, list, cleanupEmpty, done };

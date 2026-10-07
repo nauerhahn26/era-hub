@@ -2575,16 +2575,18 @@ const server = http.createServer((req, res) => {
     return;
   }
   // ---- People (spec 2026-10-02 §4): the private library the mirror carries in from the family's
-  // Drive folder. index.json never 500s (drawings.characters() reads defensively); files are
-  // path-jailed to one flat folder, slugs only.
+  // Drive folder — or, while the family has none, the built-in generic one in public/drawing/people/
+  // (dad 10/7; drawings.charactersLibrary decides, never merged). index.json never 500s (it reads
+  // defensively) and names its source in a header; files are path-jailed to that ONE flat folder, slugs only.
   if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/characters/index.json") {
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(req.method === "HEAD" ? undefined : JSON.stringify(drawings.characters()));
+    const lib = drawings.charactersLibrary();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Characters-Source": lib.source });
+    res.end(req.method === "HEAD" ? undefined : JSON.stringify(lib.people));
     return;
   }
   const charPath = /^\/characters\/([a-z0-9][a-z0-9-]{0,39}\.png|characters\.json)$/.exec(urlPath);
   if (charPath && (req.method === "GET" || req.method === "HEAD")) {
-    serveMediaJail(req, res, path.join(DATA, "characters"), charPath[1], [".png", ".json"], [], [], null, "no-cache");
+    serveMediaJail(req, res, drawings.charactersLibrary().dir, charPath[1], [".png", ".json"], [], [], null, "no-cache");
     return;
   }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/books/")) {

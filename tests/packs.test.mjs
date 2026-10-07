@@ -200,6 +200,7 @@ test("yt-dlp is pointed at the Node the hub is running on", () => {
 test("Drawing is core: no pack owns public/drawing, no /x, and the cut copies the page and drawings.js", () => {
   assert.equal(packOf("public/drawing/index.html"), null);
   assert.equal(packOf("public/drawing/stickers/horse.png"), null);
+  assert.equal(packOf("public/drawing/people/mom.png"), null, "the default People library is core too (dad 10/7)");
   assert.doesNotMatch(NSI, /\/x drawing\b/);
   const payload = fs.readFileSync(new URL("../tools/build-payload.sh", import.meta.url), "utf8");
   assert.match(payload, /cp -r "\$HUB\/public\/drawing" "\$OUT\/public\/drawing"/);
