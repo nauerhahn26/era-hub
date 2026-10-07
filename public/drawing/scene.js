@@ -4,8 +4,9 @@
 // place (backdrops.js) and one splat (splatPath) — so what she sees, what the shelf shows and what her
 // family receives can never drift apart. Plain ES module, no DOM at import time: node tests import
 // it; the page puts it on window.DrawingScene through the module shim in index.html.
-// Coordinates: x of the scene WIDTH, y of the scene HEIGHT, both the item's CENTRE; w = its square
-// box as a fraction of the scene HEIGHT.
+// Coordinates: x of the scene WIDTH, y of the scene HEIGHT, both the item's CENTRE; w = its box's
+// HEIGHT as a fraction of the scene HEIGHT. The box is square unless its art is not (a person cut out
+// at 288x768): then it has the art's own shape (artAspect, dad 10/7) — so nothing is ever stretched.
 import { backdropSvg, paintBackdrop } from "./backdrops.js";
 export { horizonOf } from "./backdrops.js";
 
@@ -59,10 +60,22 @@ export function strokePath(pts) {
   return pts.map(([x, y], k) => (k ? "L" : "M") + f(x * 1600) + " " + f(y * 900)).join("");
 }
 
+// An item's art shape, width / height, from the LOADED image (renderScene's images map: the page's
+// S.images, a test's stand-ins). Not loaded yet, not in the map, or square: 1 — the square box every
+// Fluent sticker has (256x256), so a sticker's box is v1's to the bit. Only a person's PNG is not square
+// (dad 10/7: 288x768, 600x768 — the square box stretched them on the way in).
+export function artAspect(images, id) {
+  const im = images && images[id];
+  return im && im.naturalWidth > 0 && im.naturalHeight > 0 ? im.naturalWidth / im.naturalHeight : 1;
+}
+// An item's half box: hy = w/2 of the scene height; hx = the art's shape times that, in scene widths.
+const half = (w, a = 1) => ({ hx: w * a / ASPECT / 2, hy: w / 2 });
+
 // Rounded to 4 decimals INWARD: a plain round could put an edge item 0.00005 outside (caught by
 // the "however many laps" test), and the hub refuses nothing inside 0-1 but the box must stay in.
-export function clampItem({ x, y, w }) {
-  const hx = w / ASPECT / 2, hy = w / 2;
+// a = the art's shape (artAspect): the clamp keeps the REAL box inside.
+export function clampItem({ x, y, w }, a = 1) {
+  const { hx, hy } = half(w, a);
   const lo = (h) => Math.ceil(h * 1e4) / 1e4, hi = (h) => Math.floor((1 - h) * 1e4) / 1e4;
   const fit = (v, h) => Math.min(hi(h), Math.max(lo(h), round(v, 4)));
   return { x: fit(x, hx), y: fit(y, hy) };
@@ -81,7 +94,8 @@ export function slotY(zone, slot, w, h, ref) {
 // "Pick and it lands" (spec 2026-09-30 §2.1). Sky/ground: the n-th sticker of a zone takes slot n % 7,
 // one lap later everything shifts +lapOffset in x and y. Any (the splat): a random slot.
 // horizon: the current place's (backdrops.js horizonOf); omitted = the reference horizon.
-export function landing(id, items, table, rand = Math.random, horizon) {
+// aspect: the art's shape (artAspect) — a ground item's feet stay on its slot; its whole box lands inside.
+export function landing(id, items, table, rand = Math.random, horizon, aspect = 1) {
   const st = stickerById(table, id);
   if (!st || !table.zones || !table.zones[st.zone]) return null;
   const slots = table.zones[st.zone].slots;
@@ -99,7 +113,7 @@ export function landing(id, items, table, rand = Math.random, horizon) {
   const slot = slots[n % slots.length];
   const off = Math.floor(n / slots.length) * (table.lapOffset || 0);
   const w = st.scale;
-  return { ...clampItem({ x: slot.x + off, y: slotY(st.zone, slot, w, h, ref) + off, w }), w };
+  return { ...clampItem({ x: slot.x + off, y: slotY(st.zone, slot, w, h, ref) + off, w }, aspect), w };
 }
 
 // A procedural paint splat (spec §2.1): 8-12 control points at random radii from a seeded PRNG,
@@ -155,7 +169,10 @@ export function describe(items, table) {
 // The one geometry: every item's box as fractions of the scene's width (left, width) and height
 // (top, height). A stroke covers the whole picture and carries its path in 1600x900 units.
 // Unknown ids (a newer version's sticker, a person who left the library) are skipped, never thrown on.
-export function sceneOps(scene, table) {
+// images (optional, renderScene's map): a sticker or person whose loaded art is not square gets the
+// art's own box — height w, width w x aspect x 9/16, centred on x, its bottom where the square's was
+// (dad 10/7). Without images (or before they load) every box is square, as v1.
+export function sceneOps(scene, table, images) {
   const out = [];
   (scene && scene.items || []).forEach((it, i) => {
     if (it && it.s === "stroke") {
@@ -166,8 +183,8 @@ export function sceneOps(scene, table) {
     }
     const st = stickerById(table, it && it.s);
     if (!st) return;
-    const hx = it.w / ASPECT / 2, hy = it.w / 2;
     const splat = it.s === "splat";
+    const { hx, hy } = half(it.w, splat ? 1 : artAspect(images, it.s));
     out.push({ i, s: it.s, kind: splat ? "splat" : "img", src: splat ? null : st.src,
                d: splat ? splatPath(it.seed) : null, fill: splat ? it.c : null,
                left: it.x - hx, top: it.y - hy, width: 2 * hx, height: 2 * hy });
@@ -204,10 +221,10 @@ export function strokeSvg(d, colour, w) {
   return el;
 }
 // THE renderer. target = a CanvasRenderingContext2D (the PNG) or an element (the ring's #scene, a
-// shelf thumbnail, the New picture tile). opts.images = { stickerId: loaded HTMLImageElement } for
-// the canvas. Returns target.
+// shelf thumbnail, the New picture tile). opts.images = { stickerId: loaded HTMLImageElement }: the
+// canvas draws them, and both paths take each box's shape from them (sceneOps). Returns target.
 export function renderScene(target, scene, { table, images } = {}) {
-  const ops = sceneOps(scene, table);
+  const ops = sceneOps(scene, table, images);
   if (target && typeof target.drawImage === "function") {
     const W = target.canvas.width, H = target.canvas.height;
     paintBackdrop(target, (scene && scene.backdrop) || "meadow", W, H);

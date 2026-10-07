@@ -1028,7 +1028,7 @@ function seedPeople(people) {
   fs.rmSync(CHARS, { recursive: true, force: true });
   if (!people) return;
   fs.mkdirSync(CHARS, { recursive: true });
-  for (const p of people) fs.writeFileSync(path.join(CHARS, p.slug + ".png"), tinyPng(64, 128, p.rgba || [51, 102, 204, 255]));
+  for (const p of people) fs.writeFileSync(path.join(CHARS, p.slug + ".png"), tinyPng(...(p.size || [64, 128]), p.rgba || [51, 102, 204, 255]));
   fs.writeFileSync(path.join(CHARS, "characters.json"),
     JSON.stringify({ v: 1, people: people.map(({ slug, word, scale }) => ({ slug, word, scale })) }));
 }
@@ -1075,9 +1075,31 @@ test("People: past eight, seven a page with More in the last seat; More turns th
   seedPeople(null);
 });
 
-test("People with no library: eight black inert seats, \"No people yet\"", async () => {
+// dad 10/7: a family without its own characters/ sees the eight built-in generic people
+// (public/drawing/people/, served at the same /characters/ routes — the page needs no change).
+test("People with no family library: the eight built-in people in their seats, each one placeable (dad 10/7)", async () => {
   seedPeople(null);
-  const { ctx, page } = await openRing();
+  const { ctx, page, errors } = await openRing();
+  await page.locator("#mode-people").click();
+  assert.equal((await st(page)).said.at(-1), "People");
+  const pal = await paletteOf(page);
+  assert.deepEqual(pal.map((c) => c.id), ["mom", "dad", "girl", "boy", "grandma", "grandpa", "baby", "friend"].map((s) => "person-" + s));
+  assert.deepEqual(pal.map((c) => c.word), ["Mom", "Dad", "Girl", "Boy", "Grandma", "Grandpa", "Baby", "Friend"]);
+  assert.equal(await page.getAttribute("#person-mom img", "src"), "/characters/mom.png");
+  // Every built-in cut-out must load (the real art is 200-330 KB, so wait rather than check instantly).
+  await page.waitForFunction(() => { const ims = [...document.querySelectorAll("#sRing > .person img")]; return ims.length === 8 && ims.every((im) => im.complete && im.naturalWidth > 0); }, null, { timeout: 15000 });
+  await page.locator("#person-grandma").click();
+  assert.deepEqual((await st(page)).items.map((i) => i.s), ["person:grandma"]);
+  assert.equal(await page.locator('#art img.item[src="/characters/grandma.png"]').count(), 1);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+// Only a broken install (the built-in people's files missing) still has no people at all.
+test("People with no people at all: eight black inert seats, \"No people yet\"", async () => {
+  seedPeople(null);
+  const { ctx, page } = await openRing({ routes: (c) => c.route("**/characters/index.json", (r) => r.fulfill({ status: 200,
+    contentType: "application/json", body: "[]" })) });
   await page.locator("#mode-people").click();
   assert.equal((await st(page)).said.at(-1), "No people yet");
   const pal = await paletteOf(page);
@@ -1115,6 +1137,102 @@ test("Done names her people, and the PNG has them in it", async () => {
   await page.waitForFunction(() => window.Drawing.state().screen === "shelf");
   assert.ok((await st(page)).said.includes("You made a picture with Maya and a horse!"), JSON.stringify((await st(page)).said));
   await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
+  seedPeople(null);
+});
+
+// dad 10/7: "people cut-outs stretch". Real cut-outs are tall rectangles (288x768, 600x768) and the
+// item box was square: the flyer that brings a person in (a clone without the item's object-fit) drew it
+// squashed into that square, and every hit box was a square around a thin figure. A person now has ITS
+// OWN box (scene.js sceneOps): the art's shape wherever it is drawn — in flight, placed, carried, after
+// a finger's drag, on the shelf and in the PNG.
+const TALL = { slug: "tall", word: "Tall", scale: 0.4, size: [96, 256], rgba: [51, 102, 204, 255] };
+const WIDE = { slug: "wide", word: "Wide", scale: 0.2, size: [256, 96], rgba: [138, 90, 43, 255] };
+// what the eye sees of an <img>: its box, and the shape object-fit draws inside it (a flyer is a fresh
+// clone, maybe not decoded yet: the source's shape comes from the fixture, never from the element)
+const SHAPE = (el) => {
+  if (!el) return null;
+  const r = el.getBoundingClientRect(), fit = getComputedStyle(el).objectFit;
+  return { box: r.width / r.height, fit, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2, bottom: r.bottom };
+};
+const shapeOf = (page, sel) => page.evaluate(([sel, f]) => (0, eval)(f)(document.querySelector(sel)), [sel, SHAPE.toString()]);
+function keepsShape(sh, p, what) {
+  const nat = p.size[0] / p.size[1];
+  assert.ok(sh, what + ": drawn");
+  const shown = sh.fit === "fill" ? sh.box : nat;              // contain/cover/none/scale-down keep the art's own shape
+  assert.ok(Math.abs(shown / nat - 1) < 0.02, what + ": shown at the art's shape " + JSON.stringify(sh));
+  assert.ok(Math.abs(sh.box / nat - 1) < 0.02, what + ": its box is the art's shape " + JSON.stringify(sh));
+}
+
+test("people keep their shape: in flight, placed, carried, after a finger's drag, on the shelf and in the PNG (dad 10/7)", async () => {
+  seedPeople([TALL, WIDE]);
+  const { ctx, page, errors } = await openRing();
+  await slowDwell(page);
+  await page.locator("#mode-people").click();
+  const sc = await page.locator("#scene").boundingBox();
+  // in flight: the flyer that brings her in from the tile
+  const flying = await page.evaluate((f) => { document.getElementById("person-tall").click(); return (0, eval)(f)(document.querySelector(".flyer")); },
+    SHAPE.toString());
+  keepsShape(flying, TALL, "tall, flying in");
+  await page.waitForFunction(() => !document.querySelector(".flyer"));
+  const ART = '#art img.item[data-i="0"]';
+  let sh = await shapeOf(page, ART);
+  keepsShape(sh, TALL, "tall, placed");
+  let it = (await st(page)).items[0];
+  assert.deepEqual(it, { s: "person:tall", x: 0.5, y: 0.72, w: 0.4, by: "ellie" }, "w is still the stored height");
+  assert.ok(Math.abs(sh.h - 0.4 * sc.height) < 1, "height w: " + sh.h);
+  assert.ok(Math.abs(sh.cx - (sc.x + 0.5 * sc.width)) < 1 && Math.abs(sh.bottom - (sc.y + 0.92 * sc.height)) < 1, "centred on x, feet on the grass");
+  const F = Math.ceil(90 * 1920 / 1920) + 1, hit = (await hitsOf(page))[0];
+  assert.ok(Math.abs(hit.w - Math.max(F, sh.w)) < 1 && Math.abs(hit.h - sh.h) < 1, "her hit box hugs the figure: " + JSON.stringify(hit));
+  // carried: lifted (scale 1.1, uniform) and following her gaze — the box centred on where she is carrying it
+  await liftAt(page, 0);
+  keepsShape(await shapeOf(page, "#art img.item.carried"), TALL, "tall, lifted");
+  const to = await scenePt(page, 0.2, 0.5);
+  await page.mouse.move(to.x, to.y, { steps: 12 });
+  sh = await shapeOf(page, "#art img.item.carried");
+  keepsShape(sh, TALL, "tall, carried");
+  const at = (await st(page)).carryAt;
+  assert.ok(Math.abs(sh.cx - (sc.x + at.x * sc.width)) < 1.5 && Math.abs(sh.cy - (sc.y + at.y * sc.height)) < 1.5,
+    "the figure is centred where she carries it: " + JSON.stringify([sh.cx, sh.cy, at]));
+  await page.locator("#spot").click();
+  sh = await shapeOf(page, ART);
+  keepsShape(sh, TALL, "tall, dropped");
+  it = (await st(page)).items[0];
+  assert.ok(Math.abs(sh.cx - (sc.x + it.x * sc.width)) < 1, "it lands where it was carried: " + JSON.stringify([sh.cx, it]));
+  // a grown-up's finger drags her (partner.js → moveItem → paintScene)
+  const from = { x: sh.cx, y: sh.cy };
+  await finger(page, from, { x: from.x + 300, y: from.y });
+  it = (await st(page)).items[0];
+  assert.equal(it.by, "partner", "the finger moved her");
+  sh = await shapeOf(page, ART);
+  keepsShape(sh, TALL, "tall, after a finger's drag");
+  assert.ok(Math.abs(sh.cx - (sc.x + it.x * sc.width)) < 1, "where the finger left her");
+  // the wide one, placed
+  await page.evaluate(() => document.getElementById("person-wide").click());
+  await page.waitForFunction(() => !document.querySelector(".flyer"));
+  keepsShape(await shapeOf(page, '#art img.item[data-i="1"]'), WIDE, "wide, placed");
+  assert.deepEqual(errors, []);
+  await ctx.close();
+
+  // the PNG and the shelf, from one seeded picture: tall at (0.3, 0.7) w 0.4, wide at (0.7, 0.8) w 0.2
+  const id = "2099-01-01-000000-test-dev";
+  seed(id, [{ s: "person:tall", x: 0.3, y: 0.7, w: 0.4, by: "ellie" }, { s: "person:wide", x: 0.7, y: 0.8, w: 0.2, by: "ellie" }],
+    "2099-01-01T00:00:00Z");
+  const r = await openRing({ id });
+  // PNG 1600x900. Tall: 360 px high, 135 wide, centred at x 480, bottom 810. Wide: 180 px high, 480 wide
+  // (880-1360), bottom 810 — squashed into a 180 px square it was 180 x 67.5 at 1030-1210, 742.5-810.
+  const px = await pngPixels(r.page, [[480, 600], [480 + 80, 600], [1120, 650], [1340, 790], [900, 640], [1120, 620], [1372, 790]]);
+  assert.ok(close(px[0], TALL.rgba.slice(0, 3), 6), "tall in the PNG: " + px[0]);
+  assert.ok(!close(px[1], TALL.rgba.slice(0, 3), 40), "tall is not widened: " + px[1]);
+  for (const k of [2, 3, 4]) assert.ok(close(px[k], WIDE.rgba.slice(0, 3), 6), "wide fills its own box in the PNG: " + k + " " + px[k]);
+  for (const k of [5, 6]) assert.ok(!close(px[k], WIDE.rgba.slice(0, 3), 40), "and nothing outside it: " + k + " " + px[k]);
+  await r.ctx.close();
+  const shelf = await makePage();
+  const cell = `#shelfGrid [data-id="${id}"] .thumb`;
+  keepsShape(await shapeOf(shelf.page, cell + ' img[src="/characters/tall.png"]'), TALL, "tall, on the shelf");
+  keepsShape(await shapeOf(shelf.page, cell + ' img[src="/characters/wide.png"]'), WIDE, "wide, on the shelf");
+  assert.deepEqual(shelf.errors, []);
+  await shelf.ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
+  fs.rmSync(path.join(PICS, id), { recursive: true, force: true });
   seedPeople(null);
 });
 

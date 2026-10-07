@@ -47,7 +47,7 @@
   scene.addEventListener("pointermove", (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     const c = D.clamp({ x: drag.it.x + (e.clientX - drag.x0) / drag.r.width,
-                        y: drag.it.y + (e.clientY - drag.y0) / drag.r.height, w: drag.it.w });
+                        y: drag.it.y + (e.clientY - drag.y0) / drag.r.height, w: drag.it.w, s: drag.it.s });   // its own box (dad 10/7)
     drag.nx = c.x; drag.ny = c.y; drag.moved = true;
     drag.el.style.transform = `translate(${(c.x - drag.it.x) * drag.r.width}px, ${(c.y - drag.it.y) * drag.r.height}px)`;
   });

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ASPECT, SPLAT_COLOURS, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene, hitBox, strokeBounds,
+import { ASPECT, SPLAT_COLOURS, artAspect, clampItem, landing, slotY, splatPath, describe, sceneOps, renderScene, hitBox, strokeBounds,
   PEN, penStart, penMove, penEnd, penRoom, strokePath, withPeople, itemWord, stickerById }
   from "../public/drawing/scene.js";
 import { BACKDROPS, backdropById, horizonOf, backdropMarkup, paintBackdrop } from "../public/drawing/backdrops.js";
@@ -258,6 +258,77 @@ test("the PNG draws a person into its box without stretching: contain, bottom on
   const [, x, y, w, h] = calls.find((c) => c[0] === "img");
   // the box: 0.4 x 900 = 360 px square centred at (800, 450); a 1:2 figure fills its height, 180 px wide
   for (const [got, want, what] of [[x, 710, "x"], [y, 270, "y"], [w, 180, "w"], [h, 360, "h"]]) near(got, want, what);
+});
+
+// dad 10/7: real cut-outs are tall rectangles (288x768, 600x768) and the square box stretched them on
+// the way in (the flyer). A person — any art whose natural aspect is not 1 — gets ITS OWN box: height w
+// (the stored number, so old scenes are unchanged), width w x (naturalW/naturalH) x 9/16 in x units,
+// centred on x, its bottom where the square's was (feet on the ground). Sizes from the loaded images.
+const IM = (w, h) => ({ complete: true, naturalWidth: w, naturalHeight: h });
+const PPL = [{ slug: "tall", word: "Tall", scale: 0.4 }, { slug: "wide", word: "Wide", scale: 0.2 }];
+const IMGS = { "person:tall": IM(96, 256), "person:wide": IM(256, 96) };
+test("a person's box is its own shape: height w, width w·(nW/nH)·9/16, centred on x, bottom where the square's was (dad 10/7)", () => {
+  const TP = withPeople(T, PPL);
+  assert.equal(artAspect(IMGS, "person:tall"), 96 / 256);
+  assert.equal(artAspect(IMGS, "horse"), 1, "not loaded / not in the map: square");
+  assert.equal(artAspect({ "person:tall": IM(0, 0) }, "person:tall"), 1, "an image still loading: square");
+  const items = [{ s: "person:tall", x: 0.3, y: 0.7, w: 0.4, by: "ellie" }, { s: "person:wide", x: 0.7, y: 0.8, w: 0.2, by: "ellie" }];
+  const [t, w] = sceneOps({ v: 1, items }, TP, IMGS);
+  near(t.height, 0.4, "tall: height is w"); near(t.width, 0.4 * (96 / 256) / ASPECT, "tall: width from its aspect");
+  near(t.left + t.width / 2, 0.3, "tall: centred on x"); near(t.top + t.height, 0.7 + 0.2, "tall: feet where the square's were");
+  near((t.width * 1600) / (t.height * 900), 96 / 256, "tall: its box in px is the art's shape");
+  near(w.height, 0.2, "wide: height is w"); near((w.width * 1600) / (w.height * 900), 256 / 96, "wide: its box in px is the art's shape");
+  near(w.left + w.width / 2, 0.7, "wide: centred on x"); near(w.top + w.height, 0.8 + 0.1, "wide: feet on the ground");
+  const sq = sceneOps({ v: 1, items }, TP);
+  near(sq[0].width, 0.4 / ASPECT, "no images (before they load): the square box, as before");
+});
+
+test("the PNG draws a person at its own shape, the full height of its box, feet on the ground (dad 10/7)", () => {
+  const calls = [];
+  renderScene(fakeCtx(calls), { v: 1, backdrop: "meadow", items: [{ s: "person:tall", x: 0.3, y: 0.7, w: 0.4, by: "ellie" },
+    { s: "person:wide", x: 0.7, y: 0.8, w: 0.2, by: "ellie" }] }, { table: withPeople(T, PPL), images: IMGS });
+  const [t, w] = calls.filter((c) => c[0] === "img");
+  near(t[3] / t[4], 96 / 256, "tall: drawn at its source aspect"); near(t[4], 360, "tall: 0.4 x 900");
+  near(t[1] + t[3] / 2, 480, "tall: centred on x"); near(t[2] + t[4], 810, "tall: bottom at (0.7 + 0.2) x 900");
+  near(w[3] / w[4], 256 / 96, "wide: drawn at its source aspect"); near(w[4], 180, "wide: 0.2 x 900, never shrunk into a square");
+  near(w[1] + w[3] / 2, 1120, "wide: centred on x"); near(w[2] + w[4], 810, "wide: bottom at (0.8 + 0.1) x 900");
+});
+
+test("a square sticker's box, PNG and hit box are exactly what they were before people kept their shape (dad 10/7)", () => {
+  const items = [{ s: "horse", x: 0.5, y: 0.82, w: 0.2, by: "ellie" }, { s: "star", x: 0.0282, y: 0.05, w: 0.1, by: "ellie" }];
+  const loaded = { horse: IM(256, 256), star: IM(256, 256) };
+  const before = sceneOps({ v: 1, items }, T), after = sceneOps({ v: 1, items }, T, loaded);
+  assert.deepEqual(after, before);
+  for (const op of after) {                                    // the v1 formula, to the bit
+    const it = items[op.i], hx = it.w / ASPECT / 2, hy = it.w / 2;
+    assert.deepEqual([op.left, op.top, op.width, op.height], [it.x - hx, it.y - hy, 2 * hx, 2 * hy]);
+    assert.deepEqual(hitBox(op, 1359, 764, 91), hitBox(before[op.i], 1359, 764, 91));
+  }
+  const a = [];
+  renderScene(fakeCtx(a), { v: 1, backdrop: "meadow", items }, { table: T, images: loaded });
+  const v1 = (it, im, W = 1600, H = 900) => {                   // renderScene's canvas branch as v1 had it
+    const hx = it.w / ASPECT / 2, hy = it.w / 2, x = (it.x - hx) * W, y = (it.y - hy) * H, w = 2 * hx * W, h = 2 * hy * H;
+    const f = Math.min(w / im.naturalWidth, h / im.naturalHeight), dw = im.naturalWidth * f, dh = im.naturalHeight * f;
+    return ["img", x + (w - dw) / 2, y + h - dh, dw, dh];
+  };
+  assert.deepEqual(a.filter((c) => c[0] === "img"), items.map((it) => v1(it, loaded[it.s])), "pixel for pixel the v1 PNG");
+  assert.deepEqual(clampItem({ x: 0, y: 0, w: 0.2 }), clampItem({ x: 0, y: 0, w: 0.2 }, 1), "aspect 1 is the default");
+});
+
+test("the clamp, the landing and the hit box use a person's real box (dad 10/7)", () => {
+  const TP = withPeople(T, PPL), a = 96 / 256, W = 1359, H = 764, F = 91;
+  const hx = 0.4 * a / ASPECT / 2;
+  assert.deepEqual(clampItem({ x: 0, y: 0.5, w: 0.4 }, a), { x: Math.ceil(hx * 1e4) / 1e4, y: 0.5 }, "a thin person reaches the edge");
+  assert.deepEqual(clampItem({ x: 1, y: 0.5, w: 0.4 }, a), { x: Math.floor((1 - hx) * 1e4) / 1e4, y: 0.5 });
+  const wa = 256 / 96, whx = 0.2 * wa / ASPECT / 2;
+  const items = ["horse", "horse", "horse", "horse", "horse"].map((s) => ({ s, x: 0.5, y: 0.82, w: 0.2, by: "ellie" }));
+  const at = landing("person:wide", items, TP, Math.random, undefined, wa);            // the 6th ground slot: x 0.07
+  assert.equal(at.x, Math.ceil(whx * 1e4) / 1e4, "a wide person's whole box lands inside the picture");
+  assert.deepEqual(landing("person:tall", [], TP, Math.random, undefined, a), { x: 0.5, y: 0.72, w: 0.4 }, "feet on the grass, as before");
+  const [op] = sceneOps({ v: 1, items: [{ s: "person:tall", x: 0.5, y: 0.6, w: 0.4, by: "ellie" }] }, TP, IMGS);
+  const b = hitBox(op, W, H, F);
+  near(b.width, Math.max(F, op.width * W), "the hit box hugs a thin person"); near(b.height, 0.4 * H, "its own height");
+  assert.ok(b.width < 0.4 * H * 0.5, "not the old square: " + b.width);
 });
 
 test("the celebration names people by their word, once each, and never counts strokes", () => {
