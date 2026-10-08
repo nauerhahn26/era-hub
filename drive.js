@@ -21,6 +21,13 @@
 // Test seams: ERA_DRIVE_OAUTH / ERA_DRIVE_API point at fake servers, and
 // ERA_DRIVE_LOCAL_ROOTS names extra local mount roots (path.delimiter-
 // separated) so the local-mode door is drivable off Windows — see detectLocal().
+// ERA_DRIVE_FS_EXE / ERA_DRIVE_FS_ACCOUNTS / ERA_DRIVE_FS_RUNNING /
+// ERA_DRIVE_FS_LAUNCH_SPACING_MS drive the "Drive is installed and signed in
+// but not running — the hub starts it" path (school device 10/8) off Windows:
+// the program to launch (a .js/.mjs runs under this node), the folder holding
+// the digits-only account dir, a file whose existence means "running" (in place
+// of tasklist), and the spacing between launches — see maybeLaunchDrive().
+// All of them are read fresh on every call; unset, a family's hub is unchanged.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -84,6 +91,8 @@ function status() {
                                verification_url: pendingDevice.verification_url } : null,
     lastSync,
     syncing,
+    driveLaunched,          // maybeLaunchDrive(): ISO time of the hub's last start of Drive, or null
+    driveLaunches,
   };
 }
 
@@ -422,6 +431,10 @@ async function mirrorDir(tok, folderId, destDir, stats, have) {
 async function sync() {
   if (syncing) return { error: "busy" };
   const c = loadCfg();
+  // Every local pass first makes sure Drive for Desktop is up (school device
+  // 10/8, maybeLaunchDrive): fire-and-forget, so THIS pass still finds the
+  // folder absent and the next one copies.
+  if ((c.mode || (c.token ? "api" : "local")) === "local") maybeLaunchDrive();
   if (c.mode === "local" && c.folderPath) {
     syncing = true;
     try { return syncLocal(c); } finally { syncing = false; }
@@ -469,16 +482,26 @@ function detectLocal() {
   // the Drive app can be installed but not yet signed in (no mount yet) —
   // the Settings checklist shows those as two separate live checks
   let appInstalled = false;
+  let exe = null;     // the GoogleDriveFS.exe a launch would start (maybeLaunchDrive)
   for (const p of ["C:\\Program Files\\Google\\Drive File Stream",
                    "C:\\Program Files (x86)\\Google\\Drive File Stream"]) {
     // an uninstall leaves locked leftovers until reboot — only a version dir
-    // that still holds GoogleDriveFS.exe counts as installed
+    // that still holds GoogleDriveFS.exe counts as installed. An update leaves
+    // the old version dir beside the new one for a while; the version dirs are
+    // dotted numbers, so a numeric-aware sort puts the newest last and that is
+    // the one a launch starts.
     try {
-      for (const d of fs.readdirSync(p)) {
-        if (fs.existsSync(path.join(p, d, "GoogleDriveFS.exe"))) appInstalled = true;
+      const dirs = fs.readdirSync(p).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+      for (const d of dirs) {
+        const e = path.join(p, d, "GoogleDriveFS.exe");
+        if (fs.existsSync(e)) { appInstalled = true; exe = e; }
       }
     } catch {}
   }
+  // Test seam (header): the program a launch starts, off Windows. It exists, so
+  // it is "the installed app" exactly as a version dir holding the exe is.
+  const seamExe = process.env.ERA_DRIVE_FS_EXE;
+  if (seamExe && fs.existsSync(seamExe)) { appInstalled = true; exe = seamExe; }
   const roots = [];
   for (let c = 68; c <= 90; c++) {              // D:..Z:
     const p = String.fromCharCode(c) + ":\\My Drive";
@@ -510,7 +533,122 @@ function detectLocal() {
     try { if (fs.statSync(n).isDirectory() && !roots.includes(n)) roots.push(n); } catch {}
   }
   return { installed: roots.length > 0, appInstalled: appInstalled || roots.length > 0,
-           signedIn: roots.length > 0, roots };
+           signedIn: roots.length > 0, roots, exe };
+}
+
+// ---- DRIVE NOT RUNNING: THE HUB STARTS IT (the school device, 10/8).
+// The Drawing People strip there showed the eight built-in generic people, not
+// the family's. Google Drive for Desktop was installed AND signed in — its
+// account folder was sitting in %LOCALAPPDATA%\Google\DriveFS\<19 digits>, its
+// HKCU Run entry (GoogleDriveFS.exe --startup_mode) was present — it just had
+// not come up after the last two reboots. So no G:\My Drive, detectLocal() said
+// appInstalled:true signedIn:false roots:[], every ten-minute pass found the
+// family folder absent, reported files:0, and the hub sat there quietly for
+// days while the People library, the books shelf and the drawings mirror all
+// went stale. Nobody stands at Settings on that device to notice step 2 is
+// unticked, and nothing else on any screen said why.
+//
+// The hub's node.exe runs IN the person's interactive Windows session (checked
+// on that device: session 3, Console, as the user), so a program it starts
+// lands on their desktop exactly as the Run entry would have put it there.
+// That makes the fix the obvious one: when everything says "Drive should be
+// up" and it is not, start it, the same way its own Run entry does.
+//
+// ALL of these, or nothing:
+//   - Windows, or the test seams (ERA_DRIVE_FS_EXE) set — nowhere else is
+//     there a Drive for Desktop to start;
+//   - the app is installed (detectLocal's version dir holding GoogleDriveFS.exe);
+//   - there is NO mount root — a mounted Drive is running by definition;
+//   - an account folder exists: a digits-only dir under
+//     %LOCALAPPDATA%\Google\DriveFS. Without one the app was never signed in,
+//     and launching it would only pop a sign-in window over a gaze board that a
+//     person did not ask for — that is checklist step 2, a person's job;
+//   - no GoogleDriveFS.exe process (tasklist). Drive that is running but not
+//     mounted YET is signing in or syncing its first index; a second copy helps
+//     nothing. A tasklist that fails is "unknown", and unknown never launches.
+//
+// LIMITS. A Drive that crashes on launch must not be relaunched forever: one
+// launch per ten minutes per process at most, and after THREE launches in one
+// hub lifetime the hub says so once and stops trying until it is restarted.
+// The spacing is checked before tasklist runs, so the hub that is waiting on a
+// slow Drive pays one stat of the accounts folder per pass and nothing more.
+//
+// No timers of its own: it rides the passes the hub already makes — the start
+// of each local sync() (armLocal's ten minutes, plus "Sync now") and the 60 s
+// adoption poll start() runs for an unconfigured hub, so a fresh device whose
+// Drive never launched heals too. The spawn is detached, stdio ignored and
+// unref'd, and never awaited: the pass that launches finds nothing to copy, and
+// the NEXT one (or the next status paint, which adopts) sees the mount.
+//
+// Said out loud: one console line per launch, status().driveLaunched (ISO time
+// of the last launch, or null) and status().driveLaunches (the count), and the
+// Settings checklist's step 2 says "Drive was not running; started it at …"
+// while the mount has not appeared yet.
+const LAUNCH_SPACING_MS = 10 * 60 * 1000;
+const LAUNCH_MAX = 3;
+let driveLaunched = null;     // ISO time of the last launch, or null
+let driveLaunches = 0;
+let lastLaunchAt = 0;         // ms, for the spacing
+let launchGaveUp = false;
+
+function driveAccountPresent() {
+  const os = require("os");
+  const dir = process.env.ERA_DRIVE_FS_ACCOUNTS ||
+              path.join(os.homedir(), "AppData", "Local", "Google", "DriveFS");
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).some(d => d.isDirectory() && /^\d+$/.test(d.name));
+  } catch { return false; }
+}
+
+// true / false / null (unknown — never launch on unknown).
+function driveRunning() {
+  const marker = process.env.ERA_DRIVE_FS_RUNNING;
+  if (marker) return fs.existsSync(marker);
+  if (process.platform !== "win32") return null;
+  try {
+    const out = require("child_process").execFileSync("tasklist",
+      ["/fi", "imagename eq GoogleDriveFS.exe", "/fo", "csv", "/nh"],
+      { encoding: "utf8", timeout: 10000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    return /googledrivefs\.exe/i.test(out);
+  } catch { return null; }
+}
+
+// Returns true when it launched. Cheap checks first; tasklist last.
+function maybeLaunchDrive() {
+  if (process.platform !== "win32" && !process.env.ERA_DRIVE_FS_EXE) return false;
+  if (launchGaveUp) return false;
+  const raw = process.env.ERA_DRIVE_FS_LAUNCH_SPACING_MS;
+  const spacing = raw !== undefined && raw !== "" && Number.isFinite(Number(raw)) ? Number(raw) : LAUNCH_SPACING_MS;
+  if (lastLaunchAt && Date.now() - lastLaunchAt < spacing) return false;
+  const local = detectLocal();
+  if (!local.appInstalled || !local.exe || local.roots.length) return false;
+  if (!driveAccountPresent()) return false;
+  if (driveRunning() !== false) return false;
+  if (driveLaunches >= LAUNCH_MAX) {
+    launchGaveUp = true;
+    console.log("[drive] Google Drive for Desktop will not stay up — giving up until restart");
+    return false;
+  }
+  try {
+    const { spawn } = require("child_process");
+    const viaNode = /\.m?js$/i.test(local.exe);
+    const ch = spawn(viaNode ? process.execPath : local.exe,
+                     viaNode ? [local.exe, "--startup_mode"] : ["--startup_mode"],
+                     { detached: true, stdio: "ignore" });
+    // A spawn failure (ENOENT, EACCES) arrives as an event, not a throw: an
+    // unheard 'error' would take the whole hub down with it.
+    ch.on("error", (e) => console.log("[drive] could not start Google Drive for Desktop: " + e.message));
+    ch.unref();
+  } catch (e) {
+    console.log("[drive] could not start Google Drive for Desktop: " + e.message);
+  }
+  // Counted whether or not the spawn worked: a launch that fails every time is
+  // exactly the Drive that "will not stay up", and it gets the same three tries.
+  lastLaunchAt = Date.now();
+  driveLaunches++;
+  driveLaunched = new Date(lastLaunchAt).toISOString();
+  console.log("[drive] launched Google Drive for Desktop (installed, signed in, not running) — the mirror resumes when it mounts");
+  return true;
 }
 
 // Deep link: open Explorer at the mount root (create your folder there) or
@@ -876,10 +1014,12 @@ function start(dataDir) {
     // adopts) every 5 s, but nobody is standing at Settings; this is the poll
     // for the tablet propped on a kitchen counter. It clears itself the moment
     // it finds the folder, so an adopted hub runs no timer it does not need.
-    const iv = setInterval(() => { if (adoptLocal()) clearInterval(iv); }, 60 * 1000);
+    // The same poll starts a signed-in Drive that never launched (10/8,
+    // maybeLaunchDrive) — a fresh device's Drive is the mount it is waiting for.
+    const iv = setInterval(() => { maybeLaunchDrive(); if (adoptLocal()) clearInterval(iv); }, 60 * 1000);
     iv.unref();
   }
 }
 
-module.exports = { start, status, localFolder, connect, sync, mirrorBook, mirrorDrawing, atomically, LOCAL_MARKER, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed,
+module.exports = { start, status, localFolder, connect, sync, maybeLaunchDrive, mirrorBook, mirrorDrawing, atomically, LOCAL_MARKER, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed,
   CONTENT_FOLDER, CONTENT_FOLDER_NAMES };

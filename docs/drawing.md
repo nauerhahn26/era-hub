@@ -132,6 +132,26 @@ that `characters.json` if needed, then `node tools/drawing-default-people.mjs --
 PNG; says which are still synthetic placeholders). `--placeholders` rewrites only placeholders (never a
 real cut-out without `--force`). No sha256 pins: these are our files, not vendored ones.
 
+**Drive not running: the hub starts it (10/8).** The school device showed the built-in people because
+its family library was absent: Google Drive for Desktop was installed and signed in but had not launched
+after two reboots, so there was no mount, every ten-minute pass copied nothing, and `<DATA>/characters`
+(and the books and drawings mirrors) went stale with no screen saying why. `drive.js maybeLaunchDrive()`
+now starts it, in LOCAL mode only, when ALL hold: Windows (or the test seams set); `detectLocal()` finds
+the installed `GoogleDriveFS.exe`; there is no mount root; a digits-only account dir exists under
+`%LOCALAPPDATA%\Google\DriveFS` (never signed in = never launched — that is a person's step 2); and
+`tasklist` shows no `GoogleDriveFS.exe` (a tasklist failure = unknown = no launch). It spawns the exe
+detached with `--startup_mode` (what its own Run entry does), never awaited, riding existing passes only:
+the start of each local `sync()` and the unconfigured hub's 60 s adoption poll. Limits: one launch per ten
+minutes per process, three per hub lifetime, then one log line "will not stay up — giving up until
+restart". It says so: a `[drive] launched Google Drive for Desktop …` console line, `status().driveLaunched`
+(ISO time or null) + `driveLaunches` (count), and Settings' Drive checklist step 2 reads "Drive was not
+running; started it at HH:MM — waiting for it to mount" until the mount appears. Test seams (read fresh
+per call, unset = unchanged): `ERA_DRIVE_FS_EXE` (program to launch; `.js`/`.mjs` runs under node),
+`ERA_DRIVE_FS_ACCOUNTS` (the folder to find the account dir in), `ERA_DRIVE_FS_RUNNING` (a file whose
+existence means running, in place of tasklist), `ERA_DRIVE_FS_LAUNCH_SPACING_MS`. Suite:
+`tests/drive-launch.test.mjs` (hub 8455). The school 10/8 case — family People missing because Drive for
+Desktop was not running — is exactly this paragraph's case.
+
 **Shape (dad 10/7).** Cut-outs are tall rectangles (288×768, 600×768). An item's `w` is its box's HEIGHT;
 the box is square unless its art is not: then it is the art's own shape — width `w × (naturalW/naturalH) ×
 9/16` scene widths, centred on `x`, bottom where the square's was (`scene.js artAspect` + `sceneOps`,

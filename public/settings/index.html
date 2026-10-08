@@ -1595,8 +1595,14 @@ async function drivePaint(){
       { done:s.appInstalled, title:"1. Get the Google Drive app",
         hint:"Google's own app - it keeps your Drive on this computer.",
         btn:"⬇ Open download page", fn:()=>openSite("https://www.google.com/drive/download/") },
+      // The school device 10/8: installed and signed in, but Drive had not come
+      // up after a reboot, so this box sat unticked with the sign-in hint over
+      // it. The hub starts Drive itself now (drive.js maybeLaunchDrive) and the
+      // hint says that instead, until the mount appears and the box ticks.
       { done:s.signedIn, title:"2. Sign in to Google Drive",
-        hint:"Open the Drive app it installed and sign in with your Google account. This box ticks by itself." },
+        hint:(s.driveLaunched && !s.signedIn)
+          ? "Drive was not running; started it at "+new Date(s.driveLaunched).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})+" — waiting for it to mount."
+          : "Open the Drive app it installed and sign in with your Google account. This box ticks by itself." },
       // "Create your content folder" over a Drive that already HAS one is what
       // stopped dad on the tablet 9/15: it reads as "make a duplicate", so he
       // did not tap, and on that device nothing ever did. The hub finds an
