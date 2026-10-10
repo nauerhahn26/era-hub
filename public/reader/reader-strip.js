@@ -256,7 +256,9 @@
         // shelf behind the sheet is repainted NOW rather than at the next
         // ten-minute tick — and the grid watcher above puts the fresh cards
         // straight back to sleep under the open sheet.
-        return repaint().then(function () { return j; });
+        // …and on the PAGE that holds it (an import is a Storybook — spec
+        // 2026-09-30), so the cover below is the one the shelf just drew.
+        return repaint(j.slug).then(function () { return j; });
       })
       .then(function (j) {
         if (!sheet) return;
@@ -280,10 +282,10 @@
       });
   }
 
-  function repaint() {
+  function repaint(show) {
     try {
       if (window.Reader && window.Reader.repaintShelf)
-        return Promise.resolve(window.Reader.repaintShelf());
+        return Promise.resolve(window.Reader.repaintShelf(show));
     } catch (e) { /* the sentence matters more than the picture */ }
     return Promise.resolve();
   }

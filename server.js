@@ -24,6 +24,8 @@ const booksIndex_ = require("./books-index.js");
 // Book sharing (spec §6): it owns the policy AND the one books allowlist, so
 // export, import and serving cannot drift into three different lists.
 const booksShare = require("./books-share.js");
+const booksShelf = require("./books-shelf.js");
+const drawings = require("./drawings.js");   // Drawing's pictures (spec 2026-09-30 §4-§5)
 const aiConfig = require("./ai-config.js");
 // For baseFor alone: the provider's real base, or the ERA_AI_URL stand-in.
 const contentProviders = require("./content-providers.js");
@@ -122,6 +124,9 @@ const APPS = [
   { id: "music", title: "Music", sub: "favorite songs, audio only", path: "/board/?recipe=songs", pack: "board" },
   { id: "movies", title: "Movies", sub: "shows & movies, her picks", path: "/board/?recipe=movies", pack: "board" },
   { id: "reader", title: "Book Reader", sub: "picture books, read aloud", path: "/reader/", pack: "reader" },
+  // Drawing (spec 2026-09-30 §1): a CORE app — its files ride with the engine (build-payload.sh
+  // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
+  { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
   // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
   // on-device (Windows' built-in csc) and pairs it with the Tobii runtime
   // already on Tobii devices (official NuGet as fallback for other PCs)
@@ -586,8 +591,13 @@ function bookDirs(force) { return booksIndex_.bookDirs(BOOKS_DIR, force); }
 // A package is complete iff manifest.json exists and parses (manifest written
 // LAST by the exporter); manifest-less/unparseable dirs are skipped silently.
 // Degraded law: missing books dir -> [] — never a crash.
+// The shelf's two stores (spec 2026-09-30) — favourites and first-seen — live in
+// the hub's data dir, NEVER under BOOKS_DIR (the Drive mirror's). books-shelf.js.
+const shelfStore = booksShelf.create(DATA);
+
 function booksIndex() {
   const out = [];
+  const dates = [];   // [{slug, exportedAt}] for the first-seen record, one write
   for (const { slug, dir } of bookDirs().list) {
     try {
       const mPath = path.join(BOOKS_DIR, dir, "manifest.json");
@@ -614,8 +624,27 @@ function booksIndex() {
       out.push({ slug, title: String(m.title || dir),
                  cover: "/books/" + slug + "/" + (m.cover || "cover.jpg") + "?v=" + v,
                  pages: pages.length, hasVideo: pages.some(p => p && p.video),
-                 authored: m.authored === true && !shared, shared, v });
+                 authored: m.authored === true && !shared, shared, v,
+                 // This Week's sort key (spec 2026-09-30): a maker's explicit
+                 // week when the manifest carries one, else the hub's own
+                 // first-seen record (filled in below). exportedAt is NOT a
+                 // week — every re-publish moves it.
+                 weekOf: booksShelf.weekOfOf(m.weekOf),
+                 // when the book was FIRST published (content-publish.js law 5);
+                 // null for a manifest from before the field, which the shelf
+                 // then sorts by its own first-seen record.
+                 publishedAt: booksShelf.isoOf(m.publishedAt) });
+      dates.push({ slug, exportedAt: m.exportedAt });
     } catch {}   // incomplete package: skip silently
+  }
+  // ♥ and first-seen, from the hub's own stores. A favourite whose book is gone
+  // has no row to land on and is simply ignored.
+  let seen = new Map(), favs = new Set();
+  try { seen = shelfStore.firstSeen(dates); } catch {}
+  try { favs = shelfStore.favorites(); } catch {}
+  for (const row of out) {
+    row.favorite = favs.has(row.slug);
+    row.firstSeen = seen.get(row.slug) || null;
   }
   return out;
 }
@@ -654,7 +683,9 @@ function serveBook(req, res, rest) {
     // package has exactly one URL and the parent's folder name is not a second.
     (s) => booksIndex_.dirFor(BOOKS_DIR, s));
 }
-function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, resolveDir) {
+// cacheControl: for a jail whose images are REWRITTEN in place (Drawing's picture.png, rewritten by
+// every Done); everything else keeps the day-long immutable cache.
+function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, resolveDir, cacheControl) {
   const head = req.method === "HEAD";           // same headers, no body, no stream
   if (rest.includes("\0")) { res.writeHead(400).end(); return; }
   if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(403).end(); return; }
@@ -692,12 +723,11 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
       });
       return;
     }
-    const headers = { "Content-Type": type, "Cache-Control": "max-age=86400, immutable" };
+    const headers = { "Content-Type": type, "Cache-Control": cacheControl || "max-age=86400, immutable" };
     if (!avExts.includes(ext)) {                 // images: full streamed 200
       headers["Content-Length"] = st.size;
-      res.writeHead(200, headers);
-      if (head) { res.end(); return; }
-      fs.createReadStream(file).pipe(res);
+      if (head) { res.writeHead(200, headers).end(); return; }
+      streamJailFile(res, file, undefined, 200, headers);
       return;
     }
     headers["Accept-Ranges"] = "bytes";
@@ -719,16 +749,27 @@ function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, 
       }
       headers["Content-Range"] = "bytes " + start + "-" + end + "/" + st.size;
       headers["Content-Length"] = end - start + 1;
-      res.writeHead(206, headers);
-      if (head) { res.end(); return; }
-      fs.createReadStream(file, { start, end }).pipe(res);
+      if (head) { res.writeHead(206, headers).end(); return; }
+      streamJailFile(res, file, { start, end }, 206, headers);
       return;
     }
     headers["Content-Length"] = st.size;
-    res.writeHead(200, headers);
-    if (head) { res.end(); return; }
-    fs.createReadStream(file).pipe(res);
+    if (head) { res.writeHead(200, headers).end(); return; }
+    streamJailFile(res, file, undefined, 200, headers);
   });
+}
+// The status line goes out only once the file is OPEN: a file the Drive mirror prunes between the
+// stat above and this open is a 404 (any other open error a 500), never an unhandled stream error
+// that takes the hub down (review 10/2). A read error after the headers left cuts the response.
+function streamJailFile(res, file, range, status, headers) {
+  const s = fs.createReadStream(file, range);
+  s.on("error", (e) => {
+    if (res.headersSent) { res.destroy(); return; }
+    if (e && e.code === "ENOENT") res.writeHead(404).end("not found");
+    else res.writeHead(500).end();
+  });
+  s.on("open", () => { res.writeHead(status, headers); s.pipe(res); });
+  res.on("close", () => s.destroy());
 }
 
 // Pick whichever recipe path exists with the newest mtime; serve with ETag/304.
@@ -1260,14 +1301,19 @@ function mailErrorFor(status, text) {
   if (status === 429) return "Resend says too many emails for now — try again in a minute";
   return "Resend answered " + status + " — try again in a minute";
 }
-async function resendSend(key, to, subject, html) {
+async function resendSend(key, to, subject, html, attachments) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 8000);
+  // Drawing's picture (spec 2026-09-30 §5) rides as a 1-2 MB base64 attachment; 8 s is a text
+  // email's budget and a slow home link needs more. The Pencil's body and timeout are unchanged.
+  const withFiles = Array.isArray(attachments) && attachments.length > 0;
+  const timer = setTimeout(() => ctl.abort(), withFiles ? 30000 : 8000);
   try {
+    const payload = { from: "The Pencil <onboarding@resend.dev>", to: [to], subject, html };
+    if (withFiles) payload.attachments = attachments;
     const r = await fetch(RESEND_URL, {
       method: "POST", signal: ctl.signal,
       headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: "The Pencil <onboarding@resend.dev>", to: [to], subject, html })
+      body: JSON.stringify(payload)
     });
     if (!r.ok) { const t = (await r.text()).slice(0, 200); return { ok: false, error: mailErrorFor(r.status, t), detail: t }; }
     return { ok: true };
@@ -1275,6 +1321,14 @@ async function resendSend(key, to, subject, html) {
     return { ok: false, error: "could not reach Resend (" + (e.name === "AbortError" ? "timed out" : "no connection") + ")" };
   } finally { clearTimeout(timer); }
 }
+// Drawing's Done mails through the Pencil's own door — same key, same family address, same sender.
+// drawings.js decides WHETHER (changed since the last mail, email set up); this says HOW.
+const DRAWING_MAIL = {
+  configured: () => mailConfigured(),
+  who: () => PROFILE.childName || "Your artist",
+  when: () => new Date().toLocaleString("en-US", { timeZone: TZ }),
+  send: (subject, html, attachments) => resendSend(resendKey(), PROFILE.publishEmail, subject, html, attachments),
+};
 function writingHtml(rec, who, when) {
   const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
   return "<div style=\"font-family:Georgia,serif\">" +
@@ -2343,6 +2397,41 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // ♥ Favorites (book shelf layout, spec 2026-09-30). A grown-up's finger hold
+  // on a cover opens a sheet whose first button toggles this. ownDoor, like
+  // every book door that changes something: it rewrites her shelf, so this
+  // hub's own pages only. Body {favorite: true|false}; the answer is the state
+  // the hub now holds. The store is the hub's (books-shelf.js), never books/.
+  if (req.method === "POST" && /^\/books\/[^/]+\/favorite$/.test(urlPath)) {
+    if (!ownDoor(req, res)) return;
+    const slug = safeDecode(urlPath.split("/")[2]) || "";
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let want;
+      try { want = JSON.parse(body || "{}").favorite; } catch { want = undefined; }
+      if (typeof want !== "boolean") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "bad-favorite" }));
+        return;
+      }
+      // A ♥ belongs on a book the shelf can show: a package with a manifest.
+      const dir = slug ? booksIndex_.dirFor(BOOKS_DIR, slug) : null;
+      if (!dir || !fs.existsSync(path.join(BOOKS_DIR, dir, "manifest.json"))) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "no-such-book" }));
+        return;
+      }
+      if (!shelfStore.setFavorite(slug, want)) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ slug, favorite: want }));
+    });
+    return;
+  }
   // "+ Add a book" (spec §6.2). The browser sends the chosen File as the RAW
   // BODY (fetch(url,{method:"POST",body:file})), so there is no multipart
   // parser here and there must never be one.
@@ -2401,6 +2490,103 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(out));
     });
+    return;
+  }
+  // ---- Drawing (spec 2026-09-30 §5): the pictures, their scenes, the Done door. drawings.js does
+  // the work — every write goes to the family's Drive folder, or .local when there is none.
+  if (req.method === "GET" && urlPath === "/drawings/index.json") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(drawings.list()));
+    return;
+  }
+  if (req.method === "POST" && urlPath === "/drawings") {
+    if (!ownDoor(req, res)) return;                 // a page on another site may not make pictures
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      const r = drawings.create();
+      res.writeHead(r.error ? 500 : 200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r.error ? { error: r.error } : { id: r.id }));
+    });
+    return;
+  }
+  const drawingPath = /^\/drawings\/([^/]+)\/(scene\.json|picture\.png|done)$/.exec(urlPath);
+  if (drawingPath && req.method === "PUT" && drawingPath[2] === "scene.json") {
+    if (!ownDoor(req, res)) return;                 // …nor overwrite hers
+    const id = drawingPath[1];
+    if (!drawings.isId(id)) { res.writeHead(404, { "Content-Type": "application/json" }).end('{"error":"bad-id"}'); return; }
+    const chunks = [];
+    let size = 0, over = false;
+    req.on("data", (c) => {
+      if (over) return;
+      size += c.length;
+      if (size > drawings.LIMITS.sceneBytes) {
+        over = true;
+        res.writeHead(413, { "Content-Type": "application/json", Connection: "close" });
+        res.end('{"error":"too-big"}', () => { try { req.destroy(); } catch {} });
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (over) return;
+      let obj = null;
+      try { obj = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {}
+      const r = drawings.writeScene(id, obj);
+      res.writeHead(r.ok ? 200 : r.error === "write-failed" ? 500 : 400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r.ok ? { ok: true, updated: r.scene.updated } : { error: r.error, why: r.why }));
+    });
+    return;
+  }
+  if (drawingPath && req.method === "POST" && drawingPath[2] === "done") {
+    // ownDoor() insists on JSON and this body is a PNG, so keep the half that matters: the
+    // browser's own Sec-Fetch-Site (the /books/import precedent). curl and the suites send none.
+    const site = req.headers["sec-fetch-site"];
+    if (site && site !== "same-origin" && site !== "none") {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "That came from somewhere else, so Our Era Comms did not do it." }));
+      return;
+    }
+    const id = drawingPath[1];
+    if (!drawings.isId(id)) { res.writeHead(404, { "Content-Type": "application/json" }).end('{"error":"bad-id"}'); return; }
+    readBinaryBody(req, drawings.LIMITS.pngBytes, (err, tmp) => {
+      if (err) {
+        if (err.error === "aborted") { try { res.destroy(); } catch {} return; }
+        const big = err.error === "too-big";
+        res.writeHead(big ? 413 : 500, { "Content-Type": "application/json", ...(big ? { Connection: "close" } : {}) });
+        res.end(JSON.stringify({ error: err.error }), () => { if (big) { try { req.destroy(); } catch {} } });
+        return;
+      }
+      let png = null;
+      try { png = fs.readFileSync(tmp); } catch {} finally { fs.unlink(tmp, () => {}); }   // ON EVERY PATH
+      drawings.done(id, png, DRAWING_MAIL).then((r) => {
+        res.writeHead(r.error ? r.status : 200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(r.error ? { error: r.error } : r));
+      }).catch((e) => {
+        console.error("[drawings] done " + id + ": " + e.message);
+        try { res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"write-failed"}'); } catch {}
+      });
+    });
+    return;
+  }
+  if (drawingPath && (req.method === "GET" || req.method === "HEAD") && drawingPath[2] !== "done") {
+    serveMediaJail(req, res, path.join(DATA, "drawings"), drawingPath[1] + "/" + drawingPath[2],
+      [".json", ".png"], [], [], (id) => (drawings.isId(id) ? id : null), "no-cache");   // Done rewrites picture.png (review 9/30 #11a)
+    return;
+  }
+  // ---- People (spec 2026-10-02 §4): the private library the mirror carries in from the family's
+  // Drive folder — or, while the family has none, the built-in generic one in public/drawing/people/
+  // (dad 10/7; drawings.charactersLibrary decides, never merged). index.json never 500s (it reads
+  // defensively) and names its source in a header; files are path-jailed to that ONE flat folder, slugs only.
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/characters/index.json") {
+    const lib = drawings.charactersLibrary();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Characters-Source": lib.source });
+    res.end(req.method === "HEAD" ? undefined : JSON.stringify(lib.people));
+    return;
+  }
+  const charPath = /^\/characters\/([a-z0-9][a-z0-9-]{0,39}\.png|characters\.json)$/.exec(urlPath);
+  if (charPath && (req.method === "GET" || req.method === "HEAD")) {
+    serveMediaJail(req, res, drawings.charactersLibrary().dir, charPath[1], [".png", ".json"], [], [], null, "no-cache");
     return;
   }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/books/")) {
@@ -3433,6 +3619,9 @@ server.on("listening", () => {
   // Book sharing: it reads the shelf (<DATA>/books) and writes the family's
   // Drive folder, so it needs the data dir the same way drive.js does.
   booksShare.start(DATA);
+  // Drawing (spec 2026-09-30 §4): the device that signs new picture ids, the family's clock for them,
+  // and the one-day sweep of blank pictures. After drive.start: it reads drive.json.
+  drawings.start(DATA, { deviceId: DEVICE_ID, tz: () => TZ });
   // A finished sync feeds BOTH pipelines. onSynced is one property, so the
   // fan-out lives here rather than in either module: whoever is added next
   // adds a line, and neither clothing.js nor content.js has to know the other

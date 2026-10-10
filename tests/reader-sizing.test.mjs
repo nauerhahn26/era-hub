@@ -26,6 +26,18 @@
 //     which turned the title into a blockified grid item (+10px grid gap,
 //     taller line box) and grew every card by ~14px.
 //
+// 9/30: THE SHELF IS A TD SNAP PAGE NOW (dad, spec 2026-09-30) — a rail of
+// sections and a 3x4 centre-black grid, nine books a page, no scrolling. The
+// old app's "5 columns of 319.6px covers, 10 on the first screen" numbers
+// described the single scrolling shelf that page replaced, so the two shelf
+// tests below pin the NEW page's geometry instead: 4 columns x 3 rows, every
+// cell one size, every cover one size and square, the title still inside the
+// old DwellButton wrapper, all nine books wholly on screen under the bar. The
+// regression they were written against (a centred grid track sizing covers to
+// their TITLE — ragged covers) is still exactly what they catch. The reading
+// page's numbers below are unchanged and still the old app's.
+// (reader-shelf.test.mjs owns the page's laws: cells, rail, More, sections.)
+//
 // Reference numbers below are measured from the old app itself
 // (/home/claude/Book-Reader: app/globals.css + components/library-client.tsx
 // + components/reader-client.tsx) rendered at the same viewport.
@@ -128,17 +140,26 @@ async function shelfAt(width, height) {
   const page = await ctx.newPage();
   await page.goto(BASE + "/reader/", { waitUntil: "networkidle" });
   await page.waitForSelector("#shelfGrid .shelf-card-button");
+  // All: every one of the twelve fixture books, so page 1 is a FULL page of
+  // nine with titles of every length on it.
+  await page.locator("#railAll").click();
+  await page.waitForFunction(() => window.Reader.state().section === "all");
   const m = await page.evaluate(() => {
     const grid = document.querySelector(".shelf-grid");
     const gs = getComputedStyle(grid);
     const cards = [...document.querySelectorAll("#shelfGrid .shelf-card")]
       .filter(c => c.querySelector(".shelf-card-button"));
+    const cells = [...document.querySelectorAll("#shelfGrid > [data-cell]")];
     const rect = (e) => e.getBoundingClientRect();
     return {
       // the shared door bar takes its strip off the top of the shelf (9/17):
       // measured, never restated — doorbar.js owns the 9% rule.
       barH: +rect(document.querySelector(".msgbar")).height.toFixed(2),
       columns: gs.gridTemplateColumns.split(" ").length,
+      rows: gs.gridTemplateRows.split(" ").length,
+      cellWidths: cells.map(c => +rect(c).width.toFixed(2)),
+      cellHeights: cells.map(c => +rect(c).height.toFixed(2)),
+      titleHeights: cards.map(c => +rect(c.querySelector(".shelf-title")).height.toFixed(2)),
       gap: gs.gap,
       gridWidth: +rect(grid).width.toFixed(2),
       cardWidth: +rect(cards[0]).width.toFixed(2),
@@ -185,45 +206,42 @@ async function readerAt(width, height) {
 
 const spread = (a) => +(Math.max(...a) - Math.min(...a)).toFixed(2);
 
-test("shelf at 1920x1080 CSS: the old app's 5 columns of uniform 319.6px square covers", async () => {
+test("shelf at 1920x1080 CSS: a 4x3 page, nine books wholly on screen, uniform square covers", async () => {
   const m = await shelfAt(1920, 1080);
-  // /home/claude/Book-Reader at 1920x1080: 5 columns, grid 1892px, card
-  // 349.59x379.22, cover 319.59 square, 10 cards fully on the first screen.
-  assert.equal(m.columns, 5, "5 book columns a row, as on the I-13 with --force-device-scale-factor=1");
-  assert.equal(m.gap, "36px");
-  assert.equal(m.gridWidth, 1892, "grid spans the viewport minus the 14px page padding");
-  assert.ok(Math.abs(m.cardWidth - 349.59) < 1, `card width ${m.cardWidth}, expected ~349.59`);
+  assert.equal(m.columns, 4, "4 columns right of the rail (spec 2026-09-30)");
+  assert.equal(m.rows, 3, "3 rows");
+  assert.equal(m.cardHeights.length, 9, "nine books a page");
 
-  // THE regression guard, and it needs no font metrics: every cover is the
-  // same size and fills the card. A centred grid track makes them ragged.
-  // (0.1 = grid's subpixel rounding; the drift under test was 157px wide.)
-  assert.ok(spread(m.coverWidths) < 0.1, `covers must all be one width, got ${JSON.stringify(m.coverWidths)}`);
-  assert.ok(spread(m.cardHeights) < 0.1, `cards must all be one height, got ${JSON.stringify(m.cardHeights)}`);
-  const inner = m.cardWidth - 2 * 14 - 2 * 1;     // 14px padding + 1px border
-  assert.ok(Math.abs(m.coverWidths[0] - inner) < 0.5,
-    `cover ${m.coverWidths[0]} must fill the card's ${inner}px inner width (old app: 319.59)`);
-  assert.ok(Math.abs(m.coverWidths[0] - m.coverHeights[0]) < 0.5, "covers are square (aspect-ratio 1/1)");
-  assert.ok(Math.abs(m.cardHeights[0] - 379.22) < 2, `card height ${m.cardHeights[0]}, old app 379.22`);
+  // THE regression guard, and it needs no font metrics: every cell, every
+  // card and every cover is one size. A centred grid track makes them ragged.
+  assert.ok(spread(m.cellWidths) < 0.5 && spread(m.cellHeights) < 0.5,
+    `cells must all be one size, got ${JSON.stringify([m.cellWidths, m.cellHeights])}`);
+  assert.ok(spread(m.coverWidths) < 0.5, `covers must all be one width, got ${JSON.stringify(m.coverWidths)}`);
+  assert.ok(spread(m.cardHeights) < 0.5, `cards must all be one height, got ${JSON.stringify(m.cardHeights)}`);
+  for (let i = 0; i < m.coverWidths.length; i++)
+    assert.ok(Math.abs(m.coverWidths[i] - m.coverHeights[i]) < 0.5, "covers are square (aspect-ratio 1/1)");
+  // the cover takes the card's height: card = padding + cover + gap + title
+  const inner = m.cardHeights[0] - 2 * 10 - 2 * 1;       // 10px padding + 1px border
+  assert.ok(Math.abs(m.coverHeights[0] + 6 + m.titleHeights[0] - inner) < 1.5,
+    `cover ${m.coverHeights[0]} + title ${m.titleHeights[0]} must fill the card's ${inner}px`);
+  assert.ok(m.coverWidths[0] >= 200, `a cover she can see across a room: ${m.coverWidths[0]}px`);
   assert.ok(m.titleWrapped, "cover+title live inside the old DwellButton's .dwell-label wrapper");
-  // …AND STILL TEN WITH THE DOOR BAR ON (9/17). The shelf starts barH lower, so
-  // this is the number dad's "thin like the music board's header" ruling has to
-  // buy back: two rows of five still finish above the fold at 1080.
   assert.ok(m.barH > 0 && m.barH <= 124, `the bar is a slim strip, got ${m.barH}`);
-  console.log(`# bar ${m.barH}px — ${m.fullyVisible} books fully on the first screen at 1920x1080`);
-  assert.ok(m.fullyVisible >= 10,
-    `at least 10 books on the first screen (old app: 10), got ${m.fullyVisible} under a ${m.barH}px bar`);
+  console.log(`# bar ${m.barH}px — cover ${m.coverWidths[0]}px square at 1920x1080`);
+  assert.equal(m.fullyVisible, 9, `all nine books wholly on the page under a ${m.barH}px bar`);
 });
 
-test("shelf at 1280x720 CSS (no scale-factor flag): still uniform, just 3 columns", async () => {
+test("shelf at 1280x720 CSS (no scale-factor flag): the same page, still uniform", async () => {
   // Not the shipping geometry — this is what Windows' 150% scaling gives when
-  // the kiosk forgets --force-device-scale-factor=1. The old app degrades the
-  // same way (3 columns, 393.33x422.95 cards), so we only pin that the cards
-  // stay UNIFORM: the drift fixed here was viewport-independent.
+  // the kiosk forgets --force-device-scale-factor=1. The page is the same page
+  // (cells never move); only its size changes, and it must stay UNIFORM.
   const m = await shelfAt(1280, 720);
-  assert.equal(m.columns, 3);
-  assert.ok(spread(m.coverWidths) < 0.1, `covers uniform at 1280 too, got ${JSON.stringify(m.coverWidths)}`);
-  assert.ok(spread(m.cardHeights) < 0.1, `cards uniform at 1280 too, got ${JSON.stringify(m.cardHeights)}`);
-  assert.ok(Math.abs(m.coverWidths[0] - (m.cardWidth - 30)) < 0.5, "cover still fills the card");
+  assert.equal(m.columns, 4);
+  assert.equal(m.rows, 3);
+  assert.ok(spread(m.coverWidths) < 0.5, `covers uniform at 1280 too, got ${JSON.stringify(m.coverWidths)}`);
+  assert.ok(spread(m.cardHeights) < 0.5, `cards uniform at 1280 too, got ${JSON.stringify(m.cardHeights)}`);
+  assert.ok(Math.abs(m.coverWidths[0] - m.coverHeights[0]) < 0.5, "covers still square");
+  assert.equal(m.fullyVisible, 9, "nine books wholly on screen");
 });
 
 test("page arrows at 1920x1080 CSS: 3.2rem corner glyphs, 5.625x ready-arrow", async () => {

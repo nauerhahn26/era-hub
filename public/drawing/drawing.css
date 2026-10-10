@@ -1,0 +1,116 @@
+/* drawing.css — Drawing's two screens and the 🗑 Trash tile in the door bar (spec 2026-09-30 §2-§3).
+   Contract colours come from ../lib/tokens.css; the page keeps only its own derived shades. */
+:root{
+  --ink:var(--color-ink, #17272E); --card:#FFFFFF;
+  --page:#22343B;                 /* dark page: the rest tile's pure black reads as its own shape */
+  --teal:var(--color-primary, #0F7C8A); --nav:var(--color-nav, #6B7B82);
+  --trash:var(--color-vowel, #DE7B52);          /* trash mode: the strongest calm colour (dad 10/5) */
+  --side:13vw;                    /* tile columns: 250px @1920 (74px "Undo"/"Done" fit), 166px @1280 */
+  --gap:var(--gap-floor, 14px);
+  --font:"Segoe UI", system-ui, sans-serif;
+}
+*{box-sizing:border-box; user-select:none}
+[hidden]{display:none !important}
+html,body{height:100%; margin:0}
+body{background:var(--page); color:var(--ink); font-family:var(--font); overflow:hidden}
+
+/* both screens sit under the shared bar; --bar-h is published on <body> by doorbar.js */
+.screen{position:fixed; inset:0; top:var(--bar-h, 0px); display:none}
+.screen.show{display:grid}
+
+/* ---- tiles (both screens) ---- */
+.cell{appearance:none; border:0; margin:0; padding:0; border-radius:16px; background:var(--card);
+      color:var(--ink); font:inherit; min-width:0; min-height:0; overflow:hidden; cursor:pointer;
+      display:flex; flex-direction:column; align-items:center; justify-content:center}
+/* photo tiles (ux-contract §C): the picture keeps ~4/5, the whole-word plate 24-46px */
+.photo .pic, .photo .thumbBox{flex:1 1 auto; min-height:0; width:100%}
+.photo img.pic, .photo svg.pic{height:0; object-fit:contain; padding:8px 8px 0}
+.plate{flex:0 0 auto; font-size:clamp(24px, 1.5vw, 46px); font-weight:700; line-height:1.25;
+       padding:2px 6px 6px; text-align:center}
+/* text tiles: glyph + word, the word on the 74px floor at 1920 */
+.text .glyph{font-size:clamp(28px, 2.9vw, 56px); line-height:1}
+.text .word{font-size:clamp(44px, 3.86vw, 74px); font-weight:750; line-height:1.1}
+#btnUndo, #shelfMore, #peopleMore{background:var(--nav); color:#fff}
+#btnDone{background:var(--teal); color:#fff}
+
+/* ---- the ring: 3 x 5 under the bar; the picture in the middle, never moving ---- */
+#sRing{grid-template-columns:var(--side) minmax(0, 1fr) var(--side);
+       grid-template-rows:repeat(5, minmax(0, 1fr)); gap:var(--gap); padding:12px 14px}
+#btnUndo{grid-row:5; grid-column:1}
+#btnDone{grid-row:5; grid-column:3}
+/* row 5 (spec 2026-10-02 §1): five equal cells under the picture — Draw, People, rest, Stickers, Places */
+#modeRow{grid-row:5; grid-column:2; display:grid; grid-template-columns:repeat(5, minmax(0, 1fr));
+         gap:var(--gap); min-width:0; min-height:0}
+#modeRow > *{grid-row:1}          /* one row: the rest tile comes first in the DOM, the modes take their columns */
+#restTile{grid-column:3; background:#000; border-radius:16px; min-width:0}   /* inert: no .dwell, ever */
+#sceneCell{grid-row:1 / 5; grid-column:2; container-type:size; min-width:0; min-height:0;
+           display:flex; align-items:center; justify-content:center}
+/* the largest 16:9 box that fits (the PNG is 1600x900, so what she sees is what is mailed) */
+#scene{width:min(100cqw, calc(100cqh * 16 / 9)); height:min(100cqh, calc(100cqw * 9 / 16));
+       border-radius:18px; touch-action:none}
+.scene{position:relative; overflow:hidden; display:block}
+.scene .backdrop{position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none}
+.scene .item{position:absolute; display:block; pointer-events:none; overflow:visible}
+#scene .item{pointer-events:auto; touch-action:none; -webkit-user-drag:none}   /* the partner's finger */
+.scene img.item{object-fit:contain; object-position:50% 100%}         /* a person is never stretched */
+#scene .item.stroke{pointer-events:none}                                /* ink is never a finger target */
+/* item hit boxes: transparent, id-qualified (dwell.js's .dwell{position:relative} is injected later) */
+#hits > .hit{position:absolute; pointer-events:auto; border-radius:12px; background:transparent}
+#art .item.carried{transform:scale(1.1); filter:drop-shadow(0 10px 12px rgba(0, 0, 0, .35)); z-index:2}
+.flyer{position:fixed; z-index:50; pointer-events:none; transform-origin:0 0}
+img.flyer{object-fit:contain; object-position:50% 100%}               /* the flight never stretches her either (dad 10/7) */
+/* her picture's layers: #art (renderScene), the live pen, the item hit boxes, the landing spot */
+#art{position:absolute; inset:0}
+#pen, #hits{position:absolute; inset:0; pointer-events:none}
+#pen{z-index:3} #hits{z-index:4}
+/* the active mode, crayon and place: a teal glow outside the tile (never red, zero shift) */
+.cell.on{box-shadow:0 0 0 5px var(--teal), 0 0 22px 6px rgba(15, 124, 138, .55)}
+.pal-black{background:#000; border-radius:16px}                    /* an empty seat: inert, no text */
+.place .pic{display:flex; align-items:center; justify-content:center; padding:8px 8px 0}
+.place .pic svg{width:100%; height:100%; display:block; border-radius:10px}
+.crayon .pic{display:flex; align-items:center; justify-content:center; padding:10px 8px 0}
+.crayon .swatch{display:block; height:100%; aspect-ratio:1; max-width:100%; border-radius:50%;
+                background:var(--sw); border:3px solid #C9D3D6}            /* White shows on the white tile */
+/* the landing spot: id-qualified, because dwell.js's injected .dwell{position:relative} comes later */
+#scene > .spot{position:absolute; z-index:6; border-radius:50%; border:4px solid var(--teal);
+               background:rgba(15, 124, 138, .14); box-sizing:border-box}
+
+/* ---- the shelf: the Reader's rail + 3x4 grid (public/reader/index.html) ---- */
+#sShelf{grid-template-columns:clamp(120px, 13vw, 250px) minmax(0, 1fr); gap:18px; padding:12px 14px 14px}
+#shelfRail{display:grid; grid-template-rows:repeat(3, minmax(0, 1fr)); gap:16px; min-height:0}
+#shelfGrid{display:grid; grid-template-columns:repeat(4, minmax(0, 1fr));
+           grid-template-rows:repeat(3, minmax(0, 1fr)); gap:16px; min-height:0}
+.shelf-black{background:#000; border-radius:16px}               /* inert: no text, no .dwell */
+.shelf-pic, #railNew{padding:8px 8px 0}
+.thumbBox{display:flex; align-items:center; justify-content:center; container-type:size}
+.thumb{width:min(100cqw, calc(100cqh * 16 / 9)); height:min(100cqh, calc(100cqw * 9 / 16)); border-radius:12px}
+.thumb, .thumb *{pointer-events:none}
+
+/* ---- the 🗑 Trash tile (dad 10/4): the bar's TOP-RIGHT corner (margin-left:auto; no grown-ups' tab, dad 10/5) ----
+   Her dwell, a photo tile laid on its side to fit the strip: the glyph fills the bar's inner height
+   (>= 4/5 of the tile), the plate beside it; at least twice as wide as tall (the bar's audit floor).
+   id-qualified: .photo img.pic / .plate are the ring's vertical tiles. The shelf hides it (.away). */
+#trashTile{flex:0 0 auto; flex-direction:row; gap:6px; height:var(--bar-inner, 40px);
+           min-width:calc(var(--bar-inner, 40px) * 2); margin-left:auto; padding:0 14px 0 4px; border-radius:12px}
+#trashTile img.pic{flex:0 0 auto; width:auto; height:calc(100% - 4px); aspect-ratio:1; padding:0; object-fit:contain}
+#trashTile .plate{flex:0 0 auto; padding:0; white-space:nowrap; line-height:1.15;
+                  font-size:max(24px, calc(var(--bar-inner, 40px) * 0.4))}
+/* the plate sized for "Trash on" either way (its ghost): the tile never changes size */
+#trashTile .plate{display:grid}
+#trashTile .plate > span, #trashTile .plate::after{grid-area:1 / 1}
+#trashTile .plate::after{content:attr(data-ghost); visibility:hidden}
+/* on (dad 10/5): solid orange, white words (+ .cell.on's teal ring) — orange is the strongest calm colour */
+#trashTile.on{background:var(--trash); color:#fff}
+#trashTile.away{visibility:hidden}
+/* trash on: her picture's frame and banner (inside the picture's box: zero shift; never a target) */
+#trashFrame{position:absolute; inset:0; width:100%; height:100%; z-index:5; pointer-events:none; overflow:visible}
+#trashFrame rect{x:3px; y:3px; width:calc(100% - 6px); height:calc(100% - 6px); rx:15px; fill:none;
+                 stroke:var(--trash); stroke-width:6px; stroke-dasharray:28px 16px; animation:trash-march 3s linear infinite}
+@keyframes trash-march{to{stroke-dashoffset:-44px}}
+#trashBanner{position:absolute; z-index:5; top:16px; left:50%; transform:translateX(-50%); pointer-events:none;
+             display:flex; align-items:center; gap:10px; padding:4px 22px 4px 12px; border-radius:14px;
+             background:rgba(255, 255, 255, .9); color:var(--ink); border:4px solid var(--trash);
+             font-size:clamp(44px, 3.3vw, 64px); font-weight:800; line-height:1.15; white-space:nowrap}
+#trashBanner img{height:1.15em; width:auto; display:block}
+#scene.trash-on #hits > .hit{outline:3px dashed var(--trash); outline-offset:-3px}
+@media (prefers-reduced-motion: reduce){ .flyer{display:none} #trashFrame rect{animation:none} }

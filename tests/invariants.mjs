@@ -308,6 +308,43 @@ export const STATES = [
       await new Promise((r) => setTimeout(r, 500));
     } },
   { id: "/board/", path: "/board/" },
+  // Drawing (spec 2026-09-30 §8): the shelf, and the ring on a never-saved id — the ring opens
+  // empty and nothing is written to the gate hub's data dir (a PUT only follows a change).
+  { id: "/drawing/", path: "/drawing/" },
+  { id: "/drawing/#ring", path: "/drawing/#p=2026-01-01-000000-fixture" },
+  // Drawing v2 (spec 2026-10-02 §9): each mode's palette on the same never-saved id (&mode= is
+  // honoured only under __testHooks, which measureAt sets before any script), the item hit boxes and a
+  // carried item. __show paints a scene WITHOUT a PUT: the gate hub's data dir stays untouched.
+  // (Choices are not counted by this audit — the ring's 14 <= CONTRACT.maxChoices.cap is pinned in
+  // drawing-ui.test.mjs.)
+  { id: "/drawing/#ring-draw", path: "/drawing/#p=2026-01-01-000000-fixture&mode=draw" },
+  { id: "/drawing/#ring-people", path: "/drawing/#p=2026-01-01-000000-fixture&mode=people" },
+  { id: "/drawing/#ring-places", path: "/drawing/#p=2026-01-01-000000-fixture&mode=places" },
+  { id: "/drawing/#ring-items", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", setup: async () => {
+      window.Drawing.__show({ items: [
+        { s: "house", x: 0.15, y: 0.70, w: 0.26, by: "ellie" }, { s: "horse", x: 0.42, y: 0.80, w: 0.20, by: "ellie" },
+        { s: "tree", x: 0.68, y: 0.70, w: 0.28, by: "ellie" }, { s: "person", x: 0.90, y: 0.80, w: 0.22, by: "ellie" },
+        { s: "sun", x: 0.12, y: 0.18, w: 0.16, by: "ellie" }, { s: "cloud", x: 0.40, y: 0.18, w: 0.14, by: "ellie" },
+        { s: "star", x: 0.62, y: 0.15, w: 0.10, by: "ellie" }, { s: "splat", x: 0.85, y: 0.22, w: 0.15, by: "ellie", c: "#DE7B52", seed: 7 },
+        { s: "stroke", c: "#6a4fb3", w: 0.014, pts: [[0.05, 0.45], [0.95, 0.45]], by: "ellie" }] });
+      await new Promise((r) => setTimeout(r, 400));
+    } },
+  { id: "/drawing/#ring-carried", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", setup: async () => {
+      window.Drawing.__show({ items: [
+        { s: "horse", x: 0.42, y: 0.80, w: 0.20, by: "ellie" }, { s: "star", x: 0.62, y: 0.15, w: 0.10, by: "ellie" }] });
+      window.Drawing.__lift(1);
+      await new Promise((r) => setTimeout(r, 400));
+    } },
+  // Trash mode (dad 10/4): the 🗑 tile in the bar's top-right corner, on — every sticker AND stroke is
+  // a target (a stroke's box = its bounds grown to the floor). A click is her dwell; nothing is removed.
+  { id: "/drawing/#ring-trash", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", setup: async () => {
+      window.Drawing.__show({ items: [
+        { s: "house", x: 0.15, y: 0.70, w: 0.26, by: "ellie" }, { s: "horse", x: 0.50, y: 0.80, w: 0.20, by: "ellie" },
+        { s: "sun", x: 0.12, y: 0.18, w: 0.16, by: "ellie" },
+        { s: "stroke", c: "#6a4fb3", w: 0.014, pts: [[0.55, 0.2], [0.7, 0.3], [0.85, 0.35]], by: "ellie" }] });
+      document.getElementById("trashTile").click();
+      await new Promise((r) => setTimeout(r, 400));
+    } },
 ];
 
 async function measureAt(browser, path, vp, setup, dwellMs) {

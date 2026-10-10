@@ -1,7 +1,10 @@
 // reader-share.test.mjs — the SEND half of book sharing (spec §4, plan T3.1).
 //
 // A grown-up holds a finger on a finished book on Rae's own shelf for 1.6 s and
-// gets a sheet with three ways to send the file. Everything this suite pins is
+// gets a sheet with three ways to send the file. Since the shelf layout (dad
+// 9/30, spec 2026-09-30) that ONE hold opens ONE sheet with two choices first —
+// "♥ Add to Favorites" and "Send to a friend" — and "Send to a friend" is the
+// door to the three outs, unchanged (the ♥ itself: reader-shelf.test.mjs). Everything this suite pins is
 // about the one thing that makes that safe on THIS screen: it is the single
 // surface a non-verbal six-year-old drives with her eyes, and ERAgaze moves the
 // REAL mouse cursor — so gaze and mouse are the same pointer at the DOM.
@@ -163,6 +166,17 @@ async function hold(page, selector, ms, midway) {
 }
 
 const CARD = "#shelfGrid .shelf-card:not(.is-pile):not(.is-building)";
+// "Send to a friend": the sheet's second choice, the door to the three outs.
+const toFriend = async (page) => {
+  await page.locator("#shareFriend").click();
+  await page.locator("#shareSheet .share-out").first().waitFor({ timeout: 3000 });
+};
+// Luna is a weekly book (authored) and opens on This Week; a pile of photos
+// lives in Storybooks (spec 2026-09-30), so a pile test goes there first.
+const toStorybooks = async (page) => {
+  await page.locator("#railStory").click();
+  await page.waitForFunction(() => window.Reader.state().section === "story");
+};
 const PILE = "#shelfGrid .shelf-card.is-pile";
 const HOLD = 2200;                 // comfortably past the module's 1600 ms
 
@@ -177,6 +191,9 @@ const shelfState = (page) => page.evaluate(() => {
       el.hasAttribute("data-dwell-disabled")).length,
     doorsAwake: doors.filter(el => el.classList.contains("dwell")).length,
     doors: doors.length,
+    // the rail (spec 2026-09-30) is on the same screen and sleeps with it
+    railAwake: [...document.querySelectorAll("#shelfRail > *")]
+      .filter(el => el.classList.contains("dwell") && !el.hasAttribute("data-dwell-disabled")).length,
   };
 });
 
@@ -191,7 +208,7 @@ const NO_SHARE = () => {
 
 // ======================================================= who may open the sheet
 
-test("a FINGER held on a finished book opens the grown-up's sheet: cover, title, three outs in spec order", async () => {
+test("a FINGER held on a finished book opens the grown-up's sheet: cover, title, ♥ and Send to a friend, then three outs in spec order", async () => {
   const { ctx, page } = await makePage({ init: CAN_SHARE });
   await page.locator(CARD).waitFor();
   await hold(page, CARD, HOLD);
@@ -200,6 +217,12 @@ test("a FINGER held on a finished book opens the grown-up's sheet: cover, title,
   assert.equal(await sheet.locator(".share-title").textContent(), "Luna the Fox");
   assert.match(await sheet.locator(".share-cover img").getAttribute("src"),
     /\/books\/luna-the-fox\/cover\.jpg/, "the book's own cover, on the sheet");
+  // ONE hold, ONE sheet, two choices (spec 2026-09-30) — and no out yet
+  const choices = await sheet.locator(".share-choice").allTextContents();
+  assert.deepEqual(choices.map(s => s.trim()), ["♥ Add to Favorites", "Send to a friend"], choices.join(" | "));
+  assert.equal(await sheet.locator(".share-out").count(), 0, "the outs wait behind Send to a friend");
+  await toFriend(page);
+  assert.equal(await sheet.locator(".share-choice").count(), 0, "the choices give way to the outs");
   // SPEC §4.2's ORDER, which is the order of how well the hardware delivers
   // them — not an alphabet and not a preference.
   const outs = await sheet.locator(".share-out").allTextContents();
@@ -316,6 +339,7 @@ test("a hold let go early opens neither the sheet nor the book", async () => {
 // parent can act on rather than a fault.
 test("a hold on a card that is NOT a finished book says only that it isn't finished yet", async () => {
   const { ctx, page } = await makePage({ init: CAN_SHARE, status: pileStatus });
+  await toStorybooks(page);
   await page.locator(PILE).waitFor();
   await hold(page, PILE, HOLD);
   const sheet = page.locator("#shareSheet");
@@ -323,6 +347,7 @@ test("a hold on a card that is NOT a finished book says only that it isn't finis
   assert.equal((await sheet.locator(".share-msg").textContent()).trim(),
     "This book isn't finished yet.");
   assert.equal(await sheet.locator(".share-out").count(), 0, "nothing to press but the way out");
+  assert.equal(await sheet.locator(".share-choice").count(), 0, "…not even a ♥: it is not a book yet");
   assert.equal(await sheet.locator("#shareClose").count(), 1, "and there IS a way out");
   await ctx.close();
 });
@@ -334,6 +359,7 @@ test("a hold on a card that is NOT a finished book says only that it isn't finis
 // this, because a board tile is never born disabled.
 test("holding an unfinished card leaves it exactly as asleep as it was born", async () => {
   const { ctx, page } = await makePage({ init: CAN_SHARE, status: pileStatus });
+  await toStorybooks(page);
   const box = page.locator(PILE + " .shelf-card-box");
   await box.waitFor();
   await hold(page, PILE, HOLD);
@@ -364,12 +390,15 @@ test("while the sheet is open the shelf and BOTH of the bar's doors are asleep, 
   assert.equal(open.cardsAwake, 0, "a card is still a live gaze target under the sheet");
   assert.equal(open.cardsAsleep, before.cardsAwake, "…and every one of them was claimed");
   assert.equal(open.doorsAwake, 0, "the 🚪 and the 💬 sleep under a grown-up's sheet");
+  assert.ok(before.railAwake >= 4, "the rail's sections were live before");
+  assert.equal(open.railAwake, 0, "the rail sleeps under a grown-up's sheet");
 
   await page.evaluate(() => window.__shareTest.close());
   await page.waitForTimeout(100);
   const after = await shelfState(page);
   assert.equal(after.cardsAwake, before.cardsAwake, "her shelf came back");
   assert.equal(after.doorsAwake, before.doorsAwake, "…and so did both doors");
+  assert.equal(after.railAwake, before.railAwake, "…and the rail, Back still asleep on page 1");
   await ctx.close();
 });
 
@@ -385,6 +414,7 @@ test("'Send it now' is absent when navigator.canShare says no", async () => {
   await page.locator(CARD).waitFor();
   await hold(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
+  await toFriend(page);
   assert.equal(await page.locator("#shareSend").count(), 0,
     "a share button on a browser that cannot share");
   const outs = await page.locator("#shareSheet .share-out").allTextContents();
@@ -407,6 +437,7 @@ test("the canShare question is asked with a real .erabook File, never bare", asy
   await page.locator(CARD).waitFor();
   await hold(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
+  await toFriend(page);
   const args = await page.evaluate(() => window.__canShareArgs);
   assert.ok(args.length >= 1, "canShare was never asked");
   assert.equal(args[0] && args[0].length, 1, "asked with one file: " + JSON.stringify(args[0]));
@@ -423,6 +454,7 @@ test("'Put it in my Drive' writes the file and says where to find it", async () 
   await page.locator(CARD).waitFor();
   await hold(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
+  await toFriend(page);
   await page.locator("#shareDrive").click();
   await page.waitForFunction(
     () => /Google Drive/.test(document.querySelector("#shareSheet .share-msg").textContent),
@@ -446,6 +478,7 @@ test("a refusal from the hub stays on the sheet as its own sentence", async () =
   await page.locator(CARD).waitFor();
   await hold(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
+  await toFriend(page);
   await page.locator("#shareDrive").click();
   await page.waitForFunction(
     () => /room to save/.test(document.querySelector("#shareSheet .share-msg").textContent),
@@ -463,9 +496,13 @@ test("nothing on the send sheet is a dwell target or claims a hold", async () =>
   await page.locator(CARD).waitFor();
   await hold(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
-  assert.equal(await page.locator("#shareSheet .dwell").count(), 0, "a .dwell on the sheet");
-  assert.equal(await page.locator("#shareSheet [data-dwell-say]").count(), 0);
-  assert.equal(await page.locator("#shareSheet [data-dwell-ms]").count(), 0);
-  assert.equal(await page.locator("#shareSheet [data-dwell-disabled]").count(), 0);
+  // both faces of the sheet: the two choices, then the three outs
+  for (const face of ["choices", "outs"]) {
+    if (face === "outs") await toFriend(page);
+    assert.equal(await page.locator("#shareSheet .dwell").count(), 0, "a .dwell on the sheet: " + face);
+    assert.equal(await page.locator("#shareSheet [data-dwell-say]").count(), 0, face);
+    assert.equal(await page.locator("#shareSheet [data-dwell-ms]").count(), 0, face);
+    assert.equal(await page.locator("#shareSheet [data-dwell-disabled]").count(), 0, face);
+  }
   await ctx.close();
 });

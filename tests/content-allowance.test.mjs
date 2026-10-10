@@ -79,10 +79,14 @@ const FAKE_VISION_KEY = ["AIza", "S", "y", "0".repeat(30)].join("");
 const VOICE_KEYS = new Set([FAKE_VOICE_KEY, FAKE_VOICE_KEY_2]);
 const VOICE = "cgSgspJ2msm6clMCkdW9";
 
-// The month turns over at a fixed, obviously-not-now moment, so an assertion
-// can name it exactly.
-const RESET_UNIX = Math.floor(Date.parse("2026-10-01T00:00:00.000Z") / 1000);
 const DAY_MS = 24 * 60 * 60 * 1000;
+// The month turns over at a moment that is always in the FUTURE — the next UTC
+// midnight at least 20 days from now — so an assertion can still name it exactly.
+// (A fixed 2026-10-01 midnight rolled into the past on that day, the hub read
+// every pausedUntil built from it as a pause that was over, and the gate failed.)
+const _ahead = new Date(Date.now() + 20 * DAY_MS);
+const RESET_UNIX = Math.floor(Date.UTC(_ahead.getUTCFullYear(), _ahead.getUTCMonth(),
+                                       _ahead.getUTCDate() + 1) / 1000);
 const NOW = Date.parse("2026-09-05T18:20:00.000Z");
 
 let eleven, ai, child, narrate, providers, content, drive, notify;

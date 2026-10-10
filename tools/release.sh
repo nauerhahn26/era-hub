@@ -79,6 +79,11 @@ if [ "$RESUME" = 1 ] && [ "$DRY" = 1 ]; then
 fi
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
+# The Windows QA host is an on-demand server (10/5, era-family/tools/vm/qa.sh). Hold ONE
+# host across this cut's VM legs — including leg C after signing — and destroy it however
+# release.sh exits (green, red, dry-run or Ctrl-C), so a release never leaves it billing.
+export QA_KEEP=1
+trap 'QA_KEEP=0 bash "$ROOT/era-family/tools/vm/qa.sh" down || true' EXIT
 DIST="$ROOT/dist/release-$V"
 HEAD="$(git -C "$HUB" rev-parse HEAD)"
 TREE="$(git -C "$HUB" rev-parse 'HEAD^{tree}')"

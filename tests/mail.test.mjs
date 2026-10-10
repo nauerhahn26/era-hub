@@ -128,3 +128,12 @@ test("the mail sender escapes her words — a < in a message is not HTML", async
   assert.equal(j.mailed, true);
   assert.match(got[got.length - 1].html, /i &lt;3 you &amp; mum/);
 });
+
+// Drawing (spec 2026-09-30 §5) taught resendSend a fifth argument; the Pencil's own email must not change.
+test("the Pencil's email body is exactly what it was: no attachments key", async () => {
+  const j = await (await publish("a plain note")).json();
+  assert.equal(j.mailed, true);
+  const last = got[got.length - 1];
+  assert.equal("attachments" in last, false);
+  assert.deepEqual(Object.keys(last).sort(), ["from", "html", "subject", "to"]);
+});

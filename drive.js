@@ -7,7 +7,11 @@
 //   <folder>/music/...  -> <DATA>/music/...   (songs + manifest)
 //   <folder>/movies/... -> <DATA>/movies/...  (catalog + posters)
 //   <folder>/content/... -> <DATA>/content/... (lessons overrides)
-// Read-only scope; nothing is ever uploaded. Config in <DATA>/drive.json:
+//   <folder>/drawings/... -> <DATA>/drawings/... (Drawing's pictures; .local = made with no folder)
+//   <folder>/characters/... -> <DATA>/characters/... (Drawing's People: cut-outs + characters.json)
+// Read-only Google scope (API mode uploads nothing). In local mode the one thing
+// this mirror ever writes into the family's folder is a .local Drawing picture
+// going up (uploadLocal). Config in <DATA>/drive.json:
 //   { clientId, clientSecret, folderId, token:{...} } — clientId/secret come
 // from the family's own Google Cloud OAuth client (Settings explains).
 // The default family path is LOCAL mode, not that OAuth client — see the
@@ -17,6 +21,13 @@
 // Test seams: ERA_DRIVE_OAUTH / ERA_DRIVE_API point at fake servers, and
 // ERA_DRIVE_LOCAL_ROOTS names extra local mount roots (path.delimiter-
 // separated) so the local-mode door is drivable off Windows — see detectLocal().
+// ERA_DRIVE_FS_EXE / ERA_DRIVE_FS_ACCOUNTS / ERA_DRIVE_FS_RUNNING /
+// ERA_DRIVE_FS_LAUNCH_SPACING_MS drive the "Drive is installed and signed in
+// but not running — the hub starts it" path (school device 10/8) off Windows:
+// the program to launch (a .js/.mjs runs under this node), the folder holding
+// the digits-only account dir, a file whose existence means "running" (in place
+// of tasklist), and the spacing between launches — see maybeLaunchDrive().
+// All of them are read fresh on every call; unset, a family's hub is unchanged.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -31,7 +42,9 @@ const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 // parent added lived on one device and vanished on the next reinstall.
 // This ONE list is the mirror set: syncLocal(), sync()'s subfolder filter,
 // createContentFolder()'s one-tap setup and the Settings checklist all walk it.
-const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing"];
+// drawings: added 9/30 - Drawing's pictures, made on any device and shown on every shelf (spec 2026-09-30 §4).
+// characters: added 10/2 — Drawing's People library (spec 2026-10-02 §4); like drawings, everything under <DATA>/characters arrived through this mirror.
+const MIRROR_SUBDIRS = ["books", "music", "movies", "content", "clothing", "drawings", "characters"];
 // The name "✨ Create it for me" gives the family's folder — and, since 9/15,
 // the name adoptLocal() goes looking for in a mount somebody else's computer
 // already filled. One constant so the two can never drift.
@@ -78,7 +91,20 @@ function status() {
                                verification_url: pendingDevice.verification_url } : null,
     lastSync,
     syncing,
+    driveLaunched,          // maybeLaunchDrive(): ISO time of the hub's last start of Drive, or null
+    driveLaunches,
   };
+}
+
+// Where the family's folder is mounted, for a caller that writes into it on every save (drawings.js):
+// the folderPath when drive.json is local mode (status()'s reading of it) and that path is a folder,
+// else null. One read of drive.json and one stat — status() also adopts, checks every drive letter
+// and lists folders, which is a Settings repaint's cost, not a save's (review 9/30 #10).
+function localFolder() {
+  if (!DATA) return null;
+  const c = loadCfg();
+  if ((c.mode || (c.token ? "api" : "local")) !== "local" || !c.folderPath) return null;
+  try { return fs.statSync(c.folderPath).isDirectory() ? c.folderPath : null; } catch { return null; }
 }
 
 // Start the device-code flow; background-polls the token endpoint until the
@@ -168,7 +194,9 @@ async function listChildren(tok, folderId) {
 // package's .build/ claim alive mid-build), only a listing that SUCCEEDED may
 // prune, and — the one the 9/4 audit added — a mirror may only delete what a
 // MIRROR PUT THERE (the ledger below).
-const MIRROR_DELETES = ["clothing", "books", "music", "movies"];
+// drawings joins 9/30: a parent deleting a picture folder in Drive removes it everywhere (spec 2026-09-30 §4).
+// characters: added 10/2 — Drawing's People library (spec 2026-10-02 §4); like drawings, everything under <DATA>/characters arrived through this mirror.
+const MIRROR_DELETES = ["clothing", "books", "music", "movies", "drawings", "characters"];
 
 // PROVENANCE LEDGER. <DATA>/<sub>/.mirrored.json lists, one relative path per
 // entry, the files this mirror has actually mirrored into that library. It is a
@@ -192,7 +220,10 @@ const LEDGER_NAME = ".mirrored.json";
 // this mirror: starting its ledger empty would make a photo deleted in Drive
 // while the hub was down an orphan forever. books/music/movies get no such
 // adoption — that content predates the mirror by weeks.
-const ADOPT_ON_FIRST_SYNC = ["clothing"];
+// drawings (spec 2026-09-30 §4): everything under <DATA>/drawings arrived through this mirror or is
+// this device's own .local work (never pruned, see LOCAL_MARKER), so the ledger may own it from day one.
+// characters: added 10/2 — Drawing's People library (spec 2026-10-02 §4); like drawings, everything under <DATA>/characters arrived through this mirror.
+const ADOPT_ON_FIRST_SYNC = ["clothing", "drawings", "characters"];
 const relKey = (base, abs) => path.relative(base, abs).split(path.sep).join("/");
 function loadLedger(dest, sub) {
   try {
@@ -208,7 +239,7 @@ function listTree(dir, rel = "", out = new Set()) {
   for (const e of ents) {
     if (e.name.startsWith(".")) continue;
     const r = rel ? rel + "/" + e.name : e.name;
-    if (e.isDirectory()) listTree(dir, r, out);
+    if (e.isDirectory()) { if (!hasLocalMarker(path.join(dir, r))) listTree(dir, r, out); }
     else if (e.isFile()) out.add(r);
   }
   return out;
@@ -218,6 +249,16 @@ function saveLedger(dest, rels) {
     fs.mkdirSync(dest, { recursive: true });
     fs.writeFileSync(path.join(dest, LEDGER_NAME), JSON.stringify([...rels].sort()));
   } catch { /* read-only data dir: worst case we adopt again next sync */ }
+}
+// A folder holding LOCAL_MARKER is this device's own work made while it had no Drive folder
+// (drawings.js rule 3). It is never the mirror's to judge: listTree skips it (so adoption never
+// claims it), pruneTree never enters it (so a ledger that somehow names it cannot delete it) and
+// copyTreeLocal never copies Drive's older copy onto it, nor a marker down from Drive (review 9/30).
+// syncLocal copies it UP first (uploadLocal) and only a folder that went up whole loses the marker.
+const LOCAL_MARKER = ".local";
+const UPLOAD_LOCAL = ["drawings"];
+function hasLocalMarker(dir) {
+  try { return fs.statSync(path.join(dir, LOCAL_MARKER)).isFile(); } catch { return false; }
 }
 
 // Remove from dest what the source no longer has. keep(rel, isDir) says whether
@@ -233,6 +274,7 @@ function pruneTree(dest, keep, stats, rel = "") {
     const r = rel ? rel + "/" + e.name : e.name;
     const abs = path.join(dest, r);
     if (e.isDirectory()) {
+      if (hasLocalMarker(abs)) continue;          // this device's own work, never the mirror's (LOCAL_MARKER)
       pruneTree(dest, keep, stats, r);
       try {
         const left = fs.readdirSync(abs);
@@ -273,7 +315,10 @@ function manifestsLast(entries) {
 // wrote it and two devices disagree about who owns a book. It must NOT wait for
 // the end of its directory though: the sooner the other computers can read the
 // claim, the smaller the window in which two of them build the same pile.
-const BYTE_COMPARE = MANIFEST_NAMES.concat(["job.json"]);
+// scene.json (Drawing): a sticker swapped for one with an id of the same length ("horse" -> "house")
+// or a moved sticker is a same-size rewrite; under the size skip the other devices would never see it.
+// characters.json (People): dad renames "Sam" to "Kai" — a same-size rewrite.
+const BYTE_COMPARE = MANIFEST_NAMES.concat(["job.json", "scene.json", "characters.json"]);
 const byteCompared = (name) => BYTE_COMPARE.includes(String(name).toLowerCase());
 const md5 = (p) => crypto.createHash("md5").update(fs.readFileSync(p)).digest("hex");
 
@@ -386,6 +431,10 @@ async function mirrorDir(tok, folderId, destDir, stats, have) {
 async function sync() {
   if (syncing) return { error: "busy" };
   const c = loadCfg();
+  // Every local pass first makes sure Drive for Desktop is up (school device
+  // 10/8, maybeLaunchDrive): fire-and-forget, so THIS pass still finds the
+  // folder absent and the next one copies.
+  if ((c.mode || (c.token ? "api" : "local")) === "local") maybeLaunchDrive();
   if (c.mode === "local" && c.folderPath) {
     syncing = true;
     try { return syncLocal(c); } finally { syncing = false; }
@@ -433,16 +482,26 @@ function detectLocal() {
   // the Drive app can be installed but not yet signed in (no mount yet) —
   // the Settings checklist shows those as two separate live checks
   let appInstalled = false;
+  let exe = null;     // the GoogleDriveFS.exe a launch would start (maybeLaunchDrive)
   for (const p of ["C:\\Program Files\\Google\\Drive File Stream",
                    "C:\\Program Files (x86)\\Google\\Drive File Stream"]) {
     // an uninstall leaves locked leftovers until reboot — only a version dir
-    // that still holds GoogleDriveFS.exe counts as installed
+    // that still holds GoogleDriveFS.exe counts as installed. An update leaves
+    // the old version dir beside the new one for a while; the version dirs are
+    // dotted numbers, so a numeric-aware sort puts the newest last and that is
+    // the one a launch starts.
     try {
-      for (const d of fs.readdirSync(p)) {
-        if (fs.existsSync(path.join(p, d, "GoogleDriveFS.exe"))) appInstalled = true;
+      const dirs = fs.readdirSync(p).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+      for (const d of dirs) {
+        const e = path.join(p, d, "GoogleDriveFS.exe");
+        if (fs.existsSync(e)) { appInstalled = true; exe = e; }
       }
     } catch {}
   }
+  // Test seam (header): the program a launch starts, off Windows. It exists, so
+  // it is "the installed app" exactly as a version dir holding the exe is.
+  const seamExe = process.env.ERA_DRIVE_FS_EXE;
+  if (seamExe && fs.existsSync(seamExe)) { appInstalled = true; exe = seamExe; }
   const roots = [];
   for (let c = 68; c <= 90; c++) {              // D:..Z:
     const p = String.fromCharCode(c) + ":\\My Drive";
@@ -474,7 +533,122 @@ function detectLocal() {
     try { if (fs.statSync(n).isDirectory() && !roots.includes(n)) roots.push(n); } catch {}
   }
   return { installed: roots.length > 0, appInstalled: appInstalled || roots.length > 0,
-           signedIn: roots.length > 0, roots };
+           signedIn: roots.length > 0, roots, exe };
+}
+
+// ---- DRIVE NOT RUNNING: THE HUB STARTS IT (the school device, 10/8).
+// The Drawing People strip there showed the eight built-in generic people, not
+// the family's. Google Drive for Desktop was installed AND signed in — its
+// account folder was sitting in %LOCALAPPDATA%\Google\DriveFS\<19 digits>, its
+// HKCU Run entry (GoogleDriveFS.exe --startup_mode) was present — it just had
+// not come up after the last two reboots. So no G:\My Drive, detectLocal() said
+// appInstalled:true signedIn:false roots:[], every ten-minute pass found the
+// family folder absent, reported files:0, and the hub sat there quietly for
+// days while the People library, the books shelf and the drawings mirror all
+// went stale. Nobody stands at Settings on that device to notice step 2 is
+// unticked, and nothing else on any screen said why.
+//
+// The hub's node.exe runs IN the person's interactive Windows session (checked
+// on that device: session 3, Console, as the user), so a program it starts
+// lands on their desktop exactly as the Run entry would have put it there.
+// That makes the fix the obvious one: when everything says "Drive should be
+// up" and it is not, start it, the same way its own Run entry does.
+//
+// ALL of these, or nothing:
+//   - Windows, or the test seams (ERA_DRIVE_FS_EXE) set — nowhere else is
+//     there a Drive for Desktop to start;
+//   - the app is installed (detectLocal's version dir holding GoogleDriveFS.exe);
+//   - there is NO mount root — a mounted Drive is running by definition;
+//   - an account folder exists: a digits-only dir under
+//     %LOCALAPPDATA%\Google\DriveFS. Without one the app was never signed in,
+//     and launching it would only pop a sign-in window over a gaze board that a
+//     person did not ask for — that is checklist step 2, a person's job;
+//   - no GoogleDriveFS.exe process (tasklist). Drive that is running but not
+//     mounted YET is signing in or syncing its first index; a second copy helps
+//     nothing. A tasklist that fails is "unknown", and unknown never launches.
+//
+// LIMITS. A Drive that crashes on launch must not be relaunched forever: one
+// launch per ten minutes per process at most, and after THREE launches in one
+// hub lifetime the hub says so once and stops trying until it is restarted.
+// The spacing is checked before tasklist runs, so the hub that is waiting on a
+// slow Drive pays one stat of the accounts folder per pass and nothing more.
+//
+// No timers of its own: it rides the passes the hub already makes — the start
+// of each local sync() (armLocal's ten minutes, plus "Sync now") and the 60 s
+// adoption poll start() runs for an unconfigured hub, so a fresh device whose
+// Drive never launched heals too. The spawn is detached, stdio ignored and
+// unref'd, and never awaited: the pass that launches finds nothing to copy, and
+// the NEXT one (or the next status paint, which adopts) sees the mount.
+//
+// Said out loud: one console line per launch, status().driveLaunched (ISO time
+// of the last launch, or null) and status().driveLaunches (the count), and the
+// Settings checklist's step 2 says "Drive was not running; started it at …"
+// while the mount has not appeared yet.
+const LAUNCH_SPACING_MS = 10 * 60 * 1000;
+const LAUNCH_MAX = 3;
+let driveLaunched = null;     // ISO time of the last launch, or null
+let driveLaunches = 0;
+let lastLaunchAt = 0;         // ms, for the spacing
+let launchGaveUp = false;
+
+function driveAccountPresent() {
+  const os = require("os");
+  const dir = process.env.ERA_DRIVE_FS_ACCOUNTS ||
+              path.join(os.homedir(), "AppData", "Local", "Google", "DriveFS");
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).some(d => d.isDirectory() && /^\d+$/.test(d.name));
+  } catch { return false; }
+}
+
+// true / false / null (unknown — never launch on unknown).
+function driveRunning() {
+  const marker = process.env.ERA_DRIVE_FS_RUNNING;
+  if (marker) return fs.existsSync(marker);
+  if (process.platform !== "win32") return null;
+  try {
+    const out = require("child_process").execFileSync("tasklist",
+      ["/fi", "imagename eq GoogleDriveFS.exe", "/fo", "csv", "/nh"],
+      { encoding: "utf8", timeout: 10000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    return /googledrivefs\.exe/i.test(out);
+  } catch { return null; }
+}
+
+// Returns true when it launched. Cheap checks first; tasklist last.
+function maybeLaunchDrive() {
+  if (process.platform !== "win32" && !process.env.ERA_DRIVE_FS_EXE) return false;
+  if (launchGaveUp) return false;
+  const raw = process.env.ERA_DRIVE_FS_LAUNCH_SPACING_MS;
+  const spacing = raw !== undefined && raw !== "" && Number.isFinite(Number(raw)) ? Number(raw) : LAUNCH_SPACING_MS;
+  if (lastLaunchAt && Date.now() - lastLaunchAt < spacing) return false;
+  const local = detectLocal();
+  if (!local.appInstalled || !local.exe || local.roots.length) return false;
+  if (!driveAccountPresent()) return false;
+  if (driveRunning() !== false) return false;
+  if (driveLaunches >= LAUNCH_MAX) {
+    launchGaveUp = true;
+    console.log("[drive] Google Drive for Desktop will not stay up — giving up until restart");
+    return false;
+  }
+  try {
+    const { spawn } = require("child_process");
+    const viaNode = /\.m?js$/i.test(local.exe);
+    const ch = spawn(viaNode ? process.execPath : local.exe,
+                     viaNode ? [local.exe, "--startup_mode"] : ["--startup_mode"],
+                     { detached: true, stdio: "ignore" });
+    // A spawn failure (ENOENT, EACCES) arrives as an event, not a throw: an
+    // unheard 'error' would take the whole hub down with it.
+    ch.on("error", (e) => console.log("[drive] could not start Google Drive for Desktop: " + e.message));
+    ch.unref();
+  } catch (e) {
+    console.log("[drive] could not start Google Drive for Desktop: " + e.message);
+  }
+  // Counted whether or not the spawn worked: a launch that fails every time is
+  // exactly the Drive that "will not stay up", and it gets the same three tries.
+  lastLaunchAt = Date.now();
+  driveLaunches++;
+  driveLaunched = new Date(lastLaunchAt).toISOString();
+  console.log("[drive] launched Google Drive for Desktop (installed, signed in, not running) — the mirror resumes when it mounts");
+  return true;
 }
 
 // Deep link: open Explorer at the mount root (create your folder there) or
@@ -608,8 +782,14 @@ function copyTreeLocal(src, dest, stats, have, rel = "") {
     const s = path.join(src, e.name), d = path.join(dest, e.name);
     const r = rel ? rel + "/" + e.name : e.name;
     try {
-      if (e.isDirectory()) { have.dirs.add(r); copyTreeLocal(s, d, stats, have, r); continue; }
+      // A folder holding LOCAL_MARKER here is this device's newest work waiting to go up (a write the
+      // Drive folder refused, drawings.js rule 3): Drive's older copy never lands on it. Kept (have.dirs);
+      // pruneTree never enters it either.
+      if (e.isDirectory()) { have.dirs.add(r); if (!hasLocalMarker(d)) copyTreeLocal(s, d, stats, have, r); continue; }
       if (!e.isFile()) continue;
+      // …and the marker itself never comes down: a hand-copied folder in Drive holding one would be
+      // "made with no folder" here, copied up again every pass, rewriting scene.json (review 9/30 #6).
+      if (e.name === LOCAL_MARKER) continue;
       // In have.files BEFORE the wait below, and that order is load-bearing:
       // have.files is what the prune keeps, so a manifest we are declining to
       // copy this pass must still read as "the source has it". Left out, a
@@ -638,13 +818,24 @@ function copyTreeLocal(src, dest, stats, have, rel = "") {
 
 function syncLocal(cfg) {
   const stats = { files: 0, skipped: 0, removed: 0, errors: [] };
+  let mounted = false;
+  try { mounted = fs.statSync(cfg.folderPath).isDirectory(); } catch {}
   for (const sub of MIRROR_SUBDIRS) {
     const src = path.join(cfg.folderPath, sub);
+    // Absent when the pass BEGAN is absent for the whole pass: the copy-up below may create it, and a
+    // folder this pass made is not Drive's word on what the family has — no prune, no ledger rewrite
+    // until a later pass finds it there (review 9/30 #5).
+    let existed = false;
+    try { existed = fs.statSync(src).isDirectory(); } catch {}
+    // .local work goes UP before anything comes down or is pruned (spec §4 rule 3). Never when the
+    // family folder itself is missing: an offline mount is not an empty one, and the family folder
+    // is never ours to create.
+    if (mounted && UPLOAD_LOCAL.includes(sub)) uploadLocal(cfg.folderPath, sub, stats);
     try { if (!fs.statSync(src).isDirectory()) continue; } catch { continue; }   // absent/offline: leave ours alone
     const dest = path.join(DATA, sub);
     const have = { files: new Set(), dirs: new Set() };
     copyTreeLocal(src, dest, stats, have);
-    if (!MIRROR_DELETES.includes(sub)) continue;
+    if (!existed || !MIRROR_DELETES.includes(sub)) continue;
     const owned = loadLedger(dest, sub);
     pruneTree(dest, (r, isDir) =>
       isDir ? have.dirs.has(r) : (have.files.has(r) || !owned.has(r)), stats);
@@ -705,6 +896,56 @@ function mirrorBook(name) {
   for (const r of have.files) owned.add(safe + "/" + r);
   saveLedger(lib, owned);
   return { book: safe, ...stats };
+}
+
+// uploadLocal — carry every LOCAL_MARKER folder of <DATA>/<sub> up to <folderPath>/<sub>/<name>.
+// Files only (a picture folder has no subfolders), never dotfiles and never a .part leftover, each
+// .part-atomic. Creating <folderPath>/<sub> is allowed here (spec §4 rule 2: nothing family-only
+// lives under <DATA>/drawings, so an empty source can only ever remove mirror-owned copies).
+function uploadLocal(folderPath, sub, stats) {
+  const root = path.join(DATA, sub);
+  let ents = [];
+  try { ents = fs.readdirSync(root, { withFileTypes: true }); } catch { return; }
+  for (const e of ents) {
+    if (!e.isDirectory() || e.name.startsWith(".")) continue;
+    const from = path.join(root, e.name);
+    if (!hasLocalMarker(from)) continue;
+    const to = path.join(folderPath, sub, e.name);
+    let ok = true;
+    try {
+      fs.mkdirSync(to, { recursive: true });
+      for (const f of fs.readdirSync(from, { withFileTypes: true })) {
+        if (!f.isFile() || f.name.startsWith(".") || f.name.endsWith(".part")) continue;
+        atomically(path.join(to, f.name), (tmp) => fs.copyFileSync(path.join(from, f.name), tmp));
+        stats.files++;
+      }
+    } catch (err) { ok = false; stats.errors.push(e.name + " (up): " + err.message); }
+    if (ok) { try { fs.rmSync(path.join(from, LOCAL_MARKER)); } catch {} }
+  }
+}
+
+// mirrorDrawing(id) — ONE picture from the family's Drive folder onto this device's shelf, now
+// (the mirrorBook shape, spec §4): an own write lands in <folderPath>/drawings/<id>, and without
+// this the shelf would wait up to ten minutes for it. One folder, copyTreeLocal (.part-atomic,
+// scene.json byte-compared), ledger MERGED, no prune, no onSynced.
+function mirrorDrawing(id) {
+  if (!DATA) return { error: "not-started" };
+  const c = loadCfg();
+  if (c.mode !== "local" || !c.folderPath) return { blocked: "needs-local-drive" };
+  const safe = path.basename(String(id || ""));          // a NAME, never a path
+  if (!safe || safe.startsWith(".")) return { error: "unknown picture" };
+  const src = path.join(c.folderPath, "drawings", safe);
+  try { if (!fs.statSync(src).isDirectory()) return { error: "unknown picture" }; }
+  catch { return { error: "unknown picture" }; }
+  const dest = path.join(DATA, "drawings", safe);
+  const stats = { files: 0, skipped: 0, removed: 0, errors: [] };
+  const have = { files: new Set(), dirs: new Set() };
+  copyTreeLocal(src, dest, stats, have);
+  const lib = path.join(DATA, "drawings");
+  const owned = loadLedger(lib, "drawings");
+  for (const r of have.files) owned.add(safe + "/" + r);
+  saveLedger(lib, owned);
+  return { picture: safe, ...stats };
 }
 
 // Folders the person can pick in Settings (no ID pasting): own + shared,
@@ -773,10 +1014,12 @@ function start(dataDir) {
     // adopts) every 5 s, but nobody is standing at Settings; this is the poll
     // for the tablet propped on a kitchen counter. It clears itself the moment
     // it finds the folder, so an adopted hub runs no timer it does not need.
-    const iv = setInterval(() => { if (adoptLocal()) clearInterval(iv); }, 60 * 1000);
+    // The same poll starts a signed-in Drive that never launched (10/8,
+    // maybeLaunchDrive) — a fresh device's Drive is the mount it is waiting for.
+    const iv = setInterval(() => { maybeLaunchDrive(); if (adoptLocal()) clearInterval(iv); }, 60 * 1000);
     iv.unref();
   }
 }
 
-module.exports = { start, status, connect, sync, mirrorBook, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed,
+module.exports = { start, status, localFolder, connect, sync, maybeLaunchDrive, mirrorBook, mirrorDrawing, atomically, LOCAL_MARKER, setFolder, listFolders, detectLocal, browseLocal, setLocalFolder, openInExplorer, createContentFolder, manifestsLast, adoptLocal, timersArmed,
   CONTENT_FOLDER, CONTENT_FOLDER_NAMES };
