@@ -41,10 +41,15 @@ let aiCalls = 0;
 //     so an exclusive end would report 66° instead;
 //   * hour 9 (the FIRST) carries the only bad weather code of the day, so an
 //     exclusive start would report sun instead of cloud.
+//
+// The day is TODAY in the zone the build reads in (UPDATED 10/10, spec §7.1):
+// the window is read out of a stored week by date now, so the fixed 9/5 this
+// used to carry would be a day the build never reads.
 function hourly() {
   const time = [], temperature_2m = [], weather_code = [];
+  const day = require("./clothing-rank.js").dayKey(Date.now(), "America/Los_Angeles");
   for (let h = 0; h < 24; h++) {
-    time.push("2026-09-05T" + String(h).padStart(2, "0") + ":00");
+    time.push(day + "T" + String(h).padStart(2, "0") + ":00");
     temperature_2m.push(h === 9 ? 64 : h === 10 ? 66 : h === 11 ? 65 : h === 12 ? 67
                       : h === 16 ? 80 : h >= 13 ? 70 : 55);
     weather_code.push(h === 9 ? 61 : 0);
@@ -208,7 +213,9 @@ test("the query is the hourly forecast at the family's coordinates", async () =>
   const q = asks[asks.length - 1];
   assert.match(q, /hourly=temperature_2m,weather_code/);
   assert.ok(!/daily=/.test(q), "the daily afternoon peak is not asked for any more: " + q);
-  assert.match(q, /forecast_days=1/);
+  // UPDATED 10/10 (spec §7.1): the week, stored whole, so a day the provider
+  // refuses can still be read out of what it said before
+  assert.match(q, /forecast_days=7/);
   assert.match(q, /timezone=auto/, "hourly times must be local to the coordinates");
   assert.match(q, new RegExp("latitude=" + LAT));
   assert.match(q, new RegExp("longitude=" + String(LON).replace("-", "-")));
@@ -274,9 +281,11 @@ test("a cache stamped for another window is stale — the forecast is re-read", 
   assert.equal(r.mode, "cataloged");
   assert.equal(asks.length, before + 1, "the stale record was thrown away and Open-Meteo asked again");
   assert.match(tile().label, /^67°/);
-  // ...and the record now carries the window it was computed for
+  // ...and what replaces it is the series, not an answer for one window
+  // (UPDATED 10/10, spec §7.1: the window is applied when the store is READ,
+  // which is why the 67 above is still the 9-12 peak)
   const c = JSON.parse(fs.readFileSync(path.join(TMP, ".weather-cache.json"), "utf8"));
-  assert.equal(c.window, "9-12");
+  assert.ok(Array.isArray(c.hourly.time) && c.hourly.time.length >= 24, "the hourly series is stored");
 });
 
 test("the same window inside 3 hours is answered from the cache", async () => {

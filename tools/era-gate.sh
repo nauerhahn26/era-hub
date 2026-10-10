@@ -150,7 +150,8 @@ grep -rlZ "8377" "$GATE" 2>/dev/null | xargs -0 -r sed -i "s/8377/$PORT/g"
 # Every provider seam points at a closed port, gate-wide: the gate's data dir
 # holds a REAL ElevenLabs credential, and a hub reaches out on its own — the
 # /content/status poll asks ElevenLabs for the month's voice left (T6b.1), the
-# 20 s clothing tick asks ipapi/Open-Meteo for the weather, a Resend send is a
+# 20 s clothing tick asks ipapi/Open-Meteo (and weather.gov, its second rung
+# since 10/10) for the weather, a Resend send is a
 # real email, fal spends per press. Since 9/5 (Phase 7 review) that is true for
 # every hub a suite spawns with `...process.env`, not just the shared one —
 # the "no test spends a key" guarantee used to rest on the data dir happening
@@ -161,7 +162,7 @@ grep -rlZ "8377" "$GATE" 2>/dev/null | xargs -0 -r sed -i "s/8377/$PORT/g"
 # content-providers.js and suites test that shape); the shared hub plugs it.
 export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
   ERA_GEO_URL="http://127.0.0.1:1/geo" ERA_WEATHER_URL="http://127.0.0.1:1" \
-  ERA_GEOCODE_URL="http://127.0.0.1:1/geocode" \
+  ERA_GEOCODE_URL="http://127.0.0.1:1/geocode" ERA_NWS_URL="http://127.0.0.1:1" \
   ERA_RESEND_URL="http://127.0.0.1:1" ERA_TMDB_URL="http://127.0.0.1:1" \
   ERA_STREAMING_URL="http://127.0.0.1:1"
 

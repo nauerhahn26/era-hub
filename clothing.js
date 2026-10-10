@@ -77,6 +77,28 @@ let memoryRedeals = 0;          // re-deals already bought TODAY
 let redealDay = "";             // ...and the day they were bought on
 const MEMORY_REDEALS = 1;
 let offerUnrecorded = false;    // the running build's {offer} did not land
+// The last board was dealt with NO weather at all — Open-Meteo, weather.gov
+// and the stored week all failed (spec §7.3). On 10/10 the home device built
+// at 09:57 into a 403, the tile was gone and the outfits ungated for a 64 °F
+// day, and the tile stayed gone all day because the tick never retries a board
+// that exists. Shaped like memoryBlind and consumed the same way, inside the
+// freshness branch and as a RE-SORT (never an ingest), but with no daily
+// budget: a retry that still finds nothing costs three small requests and
+// redraws nothing (the worker's weatherRetry leaves the board alone), so every
+// tick while it stands tries again, and the first answer re-sorts. A board
+// served from the stored week is NOT blind — it has weather; its old `at`
+// makes the next build try a refresh anyway.
+// "Every tick" is every TICK, not every call of tick(): the build that went
+// blind walked the ladder itself a moment ago, so a retry waits out the tick
+// interval less a minute from the last walk. Without it, any door that calls
+// tick() back to back (a sync landing, a suite settling the photo memory) is a
+// weather call each time, and a re-sort stands in for "nothing to do".
+let weatherBlind = false;
+let weatherTriedAt = 0;
+const weatherRetryMs = () => {
+  const v = Number(process.env.ERA_WEATHER_RETRY_MS);
+  return process.env.ERA_WEATHER_RETRY_MS !== undefined && Number.isFinite(v) && v >= 0 ? v : 14 * 60 * 1000;
+};
 let queued = false;     // a regenerate asked for while one was running
 let queuedFull = false; // ...and at least one of those callers wanted a FULL build
 let queuedRefit = false; // ...and at least one of them was POST /clothing/refit
@@ -384,12 +406,13 @@ function regenerate(force, opts = {}) {
     const st = drive.status();
     const driveFolder = st.mode === "local" && st.folderPath ? st.folderPath : null;
     offerUnrecorded = false;   // this build's own verdict on the recorder
+    const weatherRetry = !!opts.weatherRetry;
     worker = new Worker(path.join(__dirname, "clothing-worker.js"),
       // deviceId and driveFolder are the sharing seam: the worker does not read
       // them yet (they are consumed in T4.3), the zone it seeds the deal with
       // is live from this build on.
       { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly,
-                      refit: !!opts.refit, tz: zone(), deviceId, driveFolder } });
+                      refit: !!opts.refit, weatherRetry, tz: zone(), deviceId, driveFolder } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
       if ("attrs" in m) attrs = m.attrs;
@@ -425,7 +448,14 @@ function regenerate(force, opts = {}) {
             if (!memoryBlind)
               console.error("[clothing] her memory is still not working — today's board stands as it is");
           } else { memoryBlind = false; memoryRedeals = 0; }
+          // Every build that reached the deal answers this, whichever door
+          // asked for it: weather now = the flag is spent.
+          weatherBlind = !!m.done.weatherless;
+          if (weatherBlind) weatherTriedAt = Date.now();
         }
+        // A weather retry that found nothing drew nothing and leaves the flag
+        // standing for the next tick — counted from this walk of the ladder.
+        if (m.done.retried) weatherTriedAt = Date.now();
         // A re-sort that found nothing catalogued has no ingest behind it, so
         // it knows nothing about the allowance or a busy provider: keeping the
         // old verdict leaves the board's "allowance used up" coaching standing
@@ -512,6 +542,7 @@ function tick(reason) {
   seenPhotos = now;
   let why = changed ? "photos changed, " : "";
   let rebuildOnly = false;
+  let weatherRetry = false;
   if (!changed) {
     // A board that predates this morning's cutoff falls through all of this to
     // the day's FULL build. The blind-memory door BORROWS the freshness door,
@@ -529,6 +560,12 @@ function tick(reason) {
         memoryRedeals++;
         why = "the last board was dealt without her memory, ";
         rebuildOnly = true;
+      } else if (weatherBlind && Date.now() - weatherTriedAt >= weatherRetryMs()) {
+        // Not spent here: the build's own verdict clears it (weather found)
+        // or leaves it for the next tick (still none) — see weatherBlind.
+        why = "the last board was dealt with no weather, ";
+        rebuildOnly = true;
+        weatherRetry = true;
       } else {
         const retry = aiCfg() && holdDay !== new Date().toDateString() &&
           Date.now() - lastRetry >= RETRY_EVERY && pendingPhotos(DATA) > 0;
@@ -540,7 +577,7 @@ function tick(reason) {
     }
   }
   console.log("[clothing] building today's board (" + why + reason + ")");
-  return regenerate(true, { rebuildOnly }).catch(e => console.error("[clothing] " + e.message));
+  return regenerate(true, { rebuildOnly, weatherRetry }).catch(e => console.error("[clothing] " + e.message));
 }
 
 // noTimers: point the module at a data dir WITHOUT arming the schedule — for a
@@ -571,6 +608,7 @@ function start(dataDir, opts = {}) {
   readOut = null; readOutKey = null;
   // a fresh start knows nothing about the last build's memory, either half
   memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false;
+  weatherBlind = false; weatherTriedAt = 0;
   if (opts.noTimers) return;
   setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
@@ -595,4 +633,5 @@ function refit() { return regenerate(true, { rebuildOnly: true, refit: true }); 
 module.exports = { start, regenerate, rebuildToday, refit, isBuilding, status, boardIsFresh, tick,
   historyPath, readHistory, zone,
   _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false;
-    memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false; } };
+    memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false;
+    weatherBlind = false; weatherTriedAt = 0; } };

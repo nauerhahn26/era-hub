@@ -264,3 +264,72 @@ The gate itself. With the correct location the band will be right, but on a warm
 the gate still admits every garment she owns, on a hot day it still offers a sweater
 because tops are never gated, and on a cool day it still leaves her two bottoms out of
 seventeen. That is unit B, and it is the larger half of the 9/23 review.
+
+## 7. Amendment (10/10) — three rungs: Open-Meteo, then weather.gov, then the stored week
+
+**Receipt, 10/10:** Open-Meteo answered the family's home address with `403 Forbidden` for every
+call (forecast and geocoder alike) from both devices, regardless of user agent, while the same
+request from the build box returned 200. The tablet fetched at 07:32 and has a tile; the home i13
+built at 09:57, got the 403, and dealt the day with **no weather at all** — tile absent, outfits
+ungated (5 shorts / 13 pants / 5 long sleeve for a 64 °F day). Our volume is ~8 calls a day per
+device against a 10,000/day limit; the block is not ours to explain, but it is ours to survive.
+Two things made it worse: `weather()` fails silently (`catch { return null; }`) and the 15-minute
+tick never retries a board that exists, so the tile stays gone all day even if the block lifts.
+
+Dad, 10/10: *"when you fetch the weather if it's single request try to fetch the next few days so you
+can store it … the secondary one I would say is to use another service … it's probably better to use
+the secondary service if the first one doesn't respond, and then if neither are responding, then use
+any stored weather for future dates."*
+
+### 7.1 The ladder
+
+For the stored point and today's `dayKey`:
+
+1. **Open-Meteo**, one call, `forecast_days=7` — the whole week's hourly `temperature_2m,weather_code`.
+2. **weather.gov** (NWS), when rung 1 does not answer with a usable series: `GET /points/{lat},{lon}`
+   then its `forecastHourly` URL. Keyless; needs a `User-Agent` naming the app and the site. Returns
+   °F and a `shortForecast` sentence; hours available ≈ 7 days. Verified 10/10 to answer 200 from the
+   family's address while Open-Meteo returned 403. US-only — a point it will not serve (404) simply
+   falls through to rung 3. (met.no is the global keyless equivalent; a later rung if a non-US family
+   ever needs it.)
+3. **The stored week.** Whatever rung last answered is written whole to `.weather-cache.json`:
+   `{at, place, source, hourly:{time[], temp[], code[]}}`. When rungs 1 and 2 both fail, today's
+   window is read out of that series if it covers today. A forecast fetched three days ago for today
+   beats no forecast at all.
+
+Nothing is stale by date any more — a stored series is used for ANY day it covers. What `at` still
+decides is **whether to try to refresh**: a series under 3 h old is served without a call (as today);
+older, rungs 1-2 are tried first and the store is the fallback, never the first answer.
+
+### 7.2 Symbols from NWS
+
+`shortForecast` → the existing symbol words: thunder/storm/rain/shower/drizzle → `rain`; snow/sleet/
+ice/flurr → `cold`; sunny/clear → `sun`; anything else → `cloud`. The "worst hour wins" rule stays.
+
+### 7.3 Say what happened, and keep trying
+
+- `w.fetchedAt` (the series' `at`) and `w.source` ride on the tile. The footnote's "updated …" becomes
+  the **fetch** time, not the build time — so a day served from the store reads "updated Thu, Oct 8,
+  7:31 AM" and a parent can see the number is three days old. One console line names the rung that
+  answered or that all three failed.
+- A board built with **no weather at all** (all three rungs failed) sets a `weatherBlind` flag in
+  clothing.js, beside `memoryBlind` and shaped like it: every tick while it stands tries the ladder
+  again, and the first success spends the flag on a RE-SORT (`rebuildOnly`, never an ingest). A board
+  served from the store is not blind — it has weather — but its `at` is old, so the ordinary 3 h
+  refresh retries rungs 1-2 on the next build anyway.
+
+### 7.4 Seams and tests
+
+`ERA_NWS_URL` joins the seam family; the gate closes it like the others, and `reader-sizing`'s parity
+table lists it. `tests/weather-location.test.mjs` grows:
+
+- rung 1 serves the day → one call, 7 days stored, `source: "open-meteo"`;
+- rung 1 answers 403 → rung 2 is asked (points, then hourly), the tile shows NWS's number and symbol;
+- both fail, store covers today → tile from the store, footnote carries the old fetch time, no tile
+  is absent;
+- both fail, store does not cover today → no tile, `weatherBlind` set, the next tick retries and the
+  first success re-sorts;
+- a series under 3 h old is served with no call; one older is refreshed and the store is replaced
+  only by a success (a failed refresh never truncates the week);
+- symbol mapping from `shortForecast` for the four words;
+- the geocoder is unchanged (it is only pressed by a parent); its own fallback is a follow-up.
