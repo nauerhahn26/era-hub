@@ -63,8 +63,8 @@ let child, browser;
 
 // No test may spend a real key, and a hub reaches out on its own the moment it
 // boots: server.js calls clothing.start() for every hub and the 20 s tick asks
-// ipapi/Open-Meteo for the weather (clothing-worker.js:926-939), /content/status
-// asks ElevenLabs for the month's voice left, a Resend send is a real email, fal
+// ipapi/Open-Meteo — then weather.gov, the second rung since 10/10 — for the
+// weather (clothing-worker.js weather()), /content/status asks ElevenLabs for the month's voice left, a Resend send is a real email, fal
 // spends per press. An UNSET seam means the provider's production base, and this
 // suite spawns with `...process.env`, so every one has to be named here — the
 // same list tools/era-gate.sh exports gate-wide (the last test pins the parity).
@@ -72,6 +72,7 @@ const SEAMS = {
   ERA_AI_URL: "http://127.0.0.1:1", ERA_ELEVEN_URL: "http://127.0.0.1:1",
   ERA_FAL_URL: "http://127.0.0.1:1", ERA_GEO_URL: "http://127.0.0.1:1/geo",
   ERA_WEATHER_URL: "http://127.0.0.1:1", ERA_GEOCODE_URL: "http://127.0.0.1:1/geocode",
+  ERA_NWS_URL: "http://127.0.0.1:1",
   ERA_TMDB_URL: "http://127.0.0.1:1",
   ERA_STREAMING_URL: "http://127.0.0.1:1", ERA_RESEND_URL: "http://127.0.0.1:1",
 };
