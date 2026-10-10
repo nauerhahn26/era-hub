@@ -1562,8 +1562,10 @@ const RECIPE_CATEGORIES = [
   ...ACCESSORY_KINDS.map(k => ({ id: k.id, label: k.label })),
 ];
 
-async function buildCataloged(cat) {
-  const w = await weather();
+async function buildCataloged(cat, known) {
+  // `known`: the weather a retry already read (spec §7.3) — asked once per
+  // build, so the console names one rung per build, never two
+  const w = known || await weather();
   const band = w ? w.band : null;
   // A catalogued item whose tile is gone cannot be drawn. Leave it out rather
   // than let one missing file empty the whole board (QA 9/2: every outfit died
@@ -1864,11 +1866,12 @@ async function regenerate(force) {
   // screen was dealt with no weather at all, and the tick is asking whether
   // the ladder answers yet. Still nothing = leave that board exactly as it is
   // and say so — redrawing every composite to put back the same blind board
-  // four times an hour buys her nothing. An answer is stored by weather()
-  // itself, so the build below reads it back from the store with no call.
-  if (workerData.weatherRetry && !(await weather()))
+  // four times an hour buys her nothing. An answer is handed to the build
+  // below, so the ladder is walked once per build.
+  const known = workerData.weatherRetry ? await weather() : null;
+  if (workerData.weatherRetry && !known)
     return { rebuildOnly: true, weatherless: true, retried: true, photos: photos.length };
-  const { boards, present, weatherless } = await buildCataloged(cat);
+  const { boards, present, weatherless } = await buildCataloged(cat, known);
   fs.mkdirSync(RECIPES(), { recursive: true });
   // `categories` is the whole filing cabinet, not this wardrobe's corner of
   // it: the board's hold sheet names its chips from here (spec §4.2), and a
