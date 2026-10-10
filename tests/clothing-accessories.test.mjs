@@ -78,10 +78,13 @@ let replyBytes = 0;     // the longest reply the fake has sent (the max_tokens m
 const GEO = { latitude: 41.5, longitude: -81.7 };
 let sky = null;
 // A whole day at one temperature — the band is all these cases care about.
+// The day is TODAY in the build's zone (UPDATED 10/10, weather spec §7.1): the
+// window is read out of a stored week by date now, and the fixed 9/17 this
+// used to carry was a day no build reads — every sky case went weatherless.
 function allDayAt(f) {
   const time = [], temperature_2m = [], weather_code = [];
   for (let h = 0; h < 24; h++) {
-    time.push("2026-09-17T" + String(h).padStart(2, "0") + ":00");
+    time.push(today() + "T" + String(h).padStart(2, "0") + ":00");
     temperature_2m.push(f);
     weather_code.push(0);
   }
