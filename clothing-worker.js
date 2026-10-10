@@ -1155,7 +1155,7 @@ function applyManual(cat) {
   return changed;
 }
 
-// ---- weather (keyless; cached 3h; null offline = board just has no tile) ----
+// ---- weather (keyless; three rungs and a stored week; null = board has no tile) ----
 // The HOURS she is out, not the day's peak (dad 9/5: she dresses for a
 // morning at school, and the afternoon high we used to show is hours away —
 // "so it's not perfectly useful"). One
@@ -1195,82 +1195,198 @@ function locationOf() {
 // every time — the stored one, or DEFAULT_WINDOW — so a missing window cannot
 // reach here, not even from a hand-edited settings file.
 function inWindow(hour, win) { return !win || (hour >= win.from && hour <= win.to); }
+// ---- three rungs (spec §7, dad 10/10) ----
+// 10/10: Open-Meteo answered the family's address with 403 for every call, the
+// home device built with NO weather (tile gone, outfits ungated for a 64 °F
+// day) and nothing retried it. Dad: fetch the next few days and store them; if
+// the first service does not respond use another; if neither does, use any
+// stored weather for future dates. So the store is the WHOLE series the last
+// rung that answered gave — {at, place, source, hourly:{time,temp,code}}, one
+// shape whichever rung it came from — and today's window is read out of it by
+// DATE. `at` decides only whether to try a refresh, never whether to use it.
+const REFRESH_MS = 3 * 3600e3;
+// weather.gov refuses a request that does not say who is asking.
+const NWS_UA = "OurEraComms (ourerafoundation.org)";
+// A series is usable only as parallel arrays of one length with at least one
+// hour in them: half a series read by index is a temperature from one hour
+// and a code from another.
+function seriesOf(h) {
+  if (!h || !Array.isArray(h.time) || !h.time.length || !Array.isArray(h.temp) ||
+      !Array.isArray(h.code) || h.temp.length !== h.time.length || h.code.length !== h.time.length) return null;
+  return { time: h.time.map(String), temp: h.temp, code: h.code };
+}
+function readStore() {
+  try {
+    const c = JSON.parse(fs.readFileSync(WCACHE(), "utf8"));
+    const hourly = seriesOf(c && c.hourly);
+    // A record in the 9/23 shape (one computed answer, no series) has nothing
+    // a window can be read out of, so it is no store at all.
+    if (hourly && Number.isFinite(c.at) && typeof c.place === "string")
+      return { at: c.at, place: c.place, source: String(c.source || ""), hourly };
+  } catch {}
+  return null;
+}
+// Today's window out of a series. Both ends INCLUSIVE and the band thresholds
+// as they were (clothing-weather pins them); what is new is the DATE: the
+// series is a week now, and an hour 10 from tomorrow is not today's hour 10.
+// Times are local to the point (Open-Meteo's timezone=auto; weather.gov's
+// offset stripped), so the first ten characters are the point's own date.
+function readWindow(hourly, day, win) {
+  let t = null, code = 0;
+  for (let i = 0; i < hourly.time.length; i++) {
+    if (hourly.time[i].slice(0, 10) !== day) continue;
+    const hour = Number(hourly.time[i].slice(11, 13));
+    if (!inWindow(hour, win)) continue;
+    const temp = hourly.temp[i];
+    if (typeof temp === "number" && (t === null || temp > t)) t = temp;   // the warmest hour she is out
+    const c = hourly.code[i];
+    if (typeof c === "number" && c > code) code = c;                      // ...dressed for the worst of them
+  }
+  if (t === null) return null;
+  t = Math.round(t);
+  const band = t >= 78 ? "hot" : t >= 66 ? "warm" : t >= 54 ? "cool" : "cold";
+  return { t, band, symbol: weatherSymbol(code) };
+}
+// Rung 1. The whole week in the one call we were already making (dad 10/10:
+// "if it's single request try to fetch the next few days so you can store it").
+async function openMeteo(point) {
+  const q = `latitude=${point.latitude}&longitude=${point.longitude}` +
+    "&hourly=temperature_2m,weather_code&temperature_unit=fahrenheit&forecast_days=7&timezone=auto";
+  const base = process.env.ERA_WEATHER_URL || "https://api.open-meteo.com";
+  const r = await fetch(base + "/v1/forecast?" + q, { signal: AbortSignal.timeout(6000) });
+  if (!r.ok) throw new Error("open-meteo " + r.status);
+  const h = (await r.json()).hourly || {};
+  const s = seriesOf({ time: h.time, temp: h.temperature_2m, code: h.weather_code });
+  if (!s) throw new Error("open-meteo: no series");
+  return s;
+}
+// Rung 2, weather.gov: /points names the grid's hourly URL, that URL answers
+// ~7 days of periods in °F with a sentence where Open-Meteo has a code.
+// Keyless and US-only — a point it will not serve (404) is simply the next
+// rung's turn. The hourly URL is followed only on the service's own origin:
+// the seam rewrites both, and an answer naming some other host is not one.
+async function weatherGov(point) {
+  const base = process.env.ERA_NWS_URL || "https://api.weather.gov";
+  const get = async (u) => {
+    const r = await fetch(u, { signal: AbortSignal.timeout(6000),
+      headers: { "User-Agent": NWS_UA, Accept: "application/geo+json" } });
+    if (!r.ok) throw new Error("weather.gov " + r.status);
+    return r.json();
+  };
+  // four decimals: weather.gov redirects anything finer
+  const lat = Number(point.latitude.toFixed(4)), lon = Number(point.longitude.toFixed(4));
+  const pt = await get(base + "/points/" + lat + "," + lon);
+  const hourlyUrl = pt && pt.properties && pt.properties.forecastHourly;
+  if (typeof hourlyUrl !== "string" || new URL(hourlyUrl).origin !== new URL(base).origin)
+    throw new Error("weather.gov: no hourly forecast for this point");
+  const periods = ((await get(hourlyUrl)).properties || {}).periods;
+  if (!Array.isArray(periods)) throw new Error("weather.gov: no periods");
+  const time = [], temp = [], code = [];
+  for (const p of periods) {
+    // "2026-10-10T10:00:00-07:00" -> "2026-10-10T10:00": the clock on the
+    // wall at the point, the same reading Open-Meteo's timezone=auto gives
+    if (!p || typeof p.startTime !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(p.startTime)) continue;
+    if (typeof p.temperature !== "number") continue;
+    time.push(p.startTime.slice(0, 16));
+    temp.push(p.temperatureUnit === "C" ? p.temperature * 9 / 5 + 32 : p.temperature);
+    code.push(nwsCode(p.shortForecast));
+  }
+  const s = seriesOf({ time, temp, code });
+  if (!s) throw new Error("weather.gov: no series");
+  return s;
+}
+// weather.gov's sentence -> a WMO-like code, so the store keeps ONE shape and
+// the "worst hour wins" rule (max code) and weatherSymbol() work on it
+// unchanged (spec §7.2): thunder 95 > snow 71 > rain 61 > cloud 3 > sun 0.
+// Wet is checked before cold, so "Rain And Snow" reads rain, as §7.2 orders.
+function nwsCode(sky) {
+  const s = String(sky || "").toLowerCase();
+  if (/thunder|storm/.test(s)) return 95;
+  if (/rain|shower|drizzle/.test(s)) return 61;
+  if (/snow|sleet|ice|flurr/.test(s)) return 71;
+  if (/sunny|clear/.test(s)) return 0;
+  return 3;
+}
+// The stored week and a fresh answer for the same place: the fresh one wins
+// every hour it covers. weather.gov starts at the CURRENT hour, so a midday
+// refresh from it would otherwise drop this morning's hours — the very hours
+// of her window. Hours before today are dropped; the store is the coming week.
+function mergeSeries(fresh, old, day) {
+  if (!old) return fresh;
+  const first = fresh.time[0];
+  const keep = old.time.map((t, i) => i).filter(i => old.time[i] < first && old.time[i].slice(0, 10) >= day);
+  return { time: [...keep.map(i => old.time[i]), ...fresh.time],
+           temp: [...keep.map(i => old.temp[i]), ...fresh.temp],
+           code: [...keep.map(i => old.code[i]), ...fresh.code] };
+}
 async function weather() {
   const win = weatherWindow();
   const loc = locationOf();
-  // `"all"` is unreachable on the write side for the same reason inWindow's
-  // `!win` is; on the READ side below it is what a record written before 9/23
-  // carries, and such a record can never match a key, so it is thrown away —
-  // which is the right answer for an answer computed for the whole day.
-  const key = win ? win.from + "-" + win.to : "all";
-  // The PLACE is part of the key too: moving the point makes a stored answer an
-  // answer to a different question, exactly as moving the window does. Three
-  // decimals is ~100 m, finer than any town a parent picks.
+  // The PLACE the store is for: moving the point makes a stored week a week
+  // somewhere else. Three decimals is ~100 m, finer than any town a parent
+  // picks. "ip" is the network's guess, which is only ever looked up when the
+  // store has to be refreshed.
   const place = loc ? loc.lat.toFixed(3) + "," + loc.lon.toFixed(3) : "ip";
-  // The DAY is half the key, not just the clock. The record holds for 3 h and
-  // `forecast_days=1` always means TODAY, so without this a build between local
-  // midnight and ~3 AM that follows an evening build serves YESTERDAY's window
-  // — a board sorted for a day that has already ended. The 5 AM cutoff
-  // (clothing.js boardIsFresh) makes the ordinary morning build a fresh fetch,
-  // which is why this went unseen; a photo change or a restart in that gap
-  // reaches it. A record written before this change carries no `day` and can
-  // never be shown to be today's, so it is re-read once — the right answer.
+  // The DAY is read out of the series, never assumed: a week fetched at 11 PM
+  // holds yesterday and today, and reading the first hour 10 in it would sort
+  // the board for a day that has ended (the §3.4 bug, in its §7 shape).
   const day = todayKey();
-  try {
-    const c = JSON.parse(fs.readFileSync(WCACHE(), "utf8"));
-    // a record computed for OTHER hours, for another place, or on another day,
-    // answers a different question
-    if (Date.now() - c.at < 3 * 3600e3 && (c.window || "all") === key &&
-        c.place === place && c.day === day) return c.w;
-  } catch {}
-  try {
-    let point = loc ? { latitude: loc.lat, longitude: loc.lon } : null;
-    // The IP guess is reached ONLY when no place has been typed. It answers
-    // with the ISP's idea of where the family is — a city centroid, which on
-    // both devices sat a microclimate away and read cold eleven days out of
-    // eleven (dad 9/23). The ladder is a LIST so a provider that is rate
-    // limited costs nothing but the next try.
-    if (!point) {
-      const lookups = (process.env.ERA_GEO_URL || "https://ipapi.co/json/,https://ipwho.is/")
-        .split(",").map(u => u.trim()).filter(Boolean);
-      for (const u of lookups) {
-        try {
-          const g = await (await fetch(u, { signal: AbortSignal.timeout(6000) })).json();
-          // BOTH halves or neither: a latitude on its own used to be taken, and
-          // the forecast was then asked for `longitude=undefined`.
-          if (g && Number.isFinite(g.latitude) && Number.isFinite(g.longitude)) {
-            point = { latitude: g.latitude, longitude: g.longitude };
-            break;
-          }
-        } catch {}
-      }
+  const stored = readStore();
+  const mine = stored && stored.place === place ? stored : null;
+  const answer = (s, how) => {
+    const r = readWindow(s.hourly, day, win);
+    console.log("[clothing] weather: " + how + (r ? "" : " — but nothing in it for today's hours"));
+    return r && { ...r, window: win, place: (loc && loc.name) || null,
+                  fetchedAt: s.at, source: s.source };
+  };
+  // Under 3 h old: served with no call, exactly as before.
+  if (mine && Date.now() - mine.at < REFRESH_MS && readWindow(mine.hourly, day, win))
+    return answer(mine, "the stored " + mine.source + " week, under 3 h old");
+  const why = [];
+  let point = loc ? { latitude: loc.lat, longitude: loc.lon } : null;
+  // The IP guess is reached ONLY when no place has been typed. It answers
+  // with the ISP's idea of where the family is — a city centroid, which on
+  // both devices sat a microclimate away and read cold eleven days out of
+  // eleven (dad 9/23). The ladder is a LIST so a provider that is rate
+  // limited costs nothing but the next try.
+  if (!point) {
+    const lookups = (process.env.ERA_GEO_URL || "https://ipapi.co/json/,https://ipwho.is/")
+      .split(",").map(u => u.trim()).filter(Boolean);
+    for (const u of lookups) {
+      try {
+        const g = await (await fetch(u, { signal: AbortSignal.timeout(6000) })).json();
+        // BOTH halves or neither: a latitude on its own used to be taken, and
+        // the forecast was then asked for `longitude=undefined`.
+        if (g && Number.isFinite(g.latitude) && Number.isFinite(g.longitude)) {
+          point = { latitude: g.latitude, longitude: g.longitude };
+          break;
+        }
+      } catch {}
     }
-    if (!point) return null;
-    // hourly, not daily: timezone=auto makes the hourly stamps local to those
-    // coordinates, so hour 10 in the answer is 10 AM where the family lives.
-    const q = `latitude=${point.latitude}&longitude=${point.longitude}` +
-      "&hourly=temperature_2m,weather_code&temperature_unit=fahrenheit&forecast_days=1&timezone=auto";
-    const base = process.env.ERA_WEATHER_URL || "https://api.open-meteo.com";
-    const wr = await (await fetch(base + "/v1/forecast?" + q,
-      { signal: AbortSignal.timeout(6000) })).json();
-    const h = wr.hourly;
-    let t = null, code = 0;
-    for (let i = 0; i < h.time.length; i++) {
-      const hour = Number(String(h.time[i]).slice(11, 13));
-      if (!inWindow(hour, win)) continue;
-      const temp = h.temperature_2m[i];
-      if (typeof temp === "number" && (t === null || temp > t)) t = temp;   // the warmest hour she is out
-      const c = h.weather_code[i];
-      if (typeof c === "number" && c > code) code = c;                      // ...dressed for the worst of them
+    if (!point) why.push("no location");
+  }
+  if (point) {
+    for (const [source, rung] of [["open-meteo", openMeteo], ["weather.gov", weatherGov]]) {
+      try {
+        const fresh = await rung(point);
+        const rec = { at: Date.now(), place, source,
+                      hourly: mergeSeries(fresh, mine && mine.hourly, day) };
+        // Only a SUCCESS is ever written: a failed refresh never truncates
+        // the week the store already holds.
+        try { fs.writeFileSync(WCACHE(), JSON.stringify(rec)); } catch {}
+        return answer(rec, source + " answered" + (why.length ? " (" + why.join("; ") + ")" : ""));
+      } catch (e) { why.push(e.message); }
     }
-    if (t === null) return null;
-    t = Math.round(t);
-    const band = t >= 78 ? "hot" : t >= 66 ? "warm" : t >= 54 ? "cool" : "cold";
-    const w = { t, band, symbol: weatherSymbol(code), window: win,
-                place: (loc && loc.name) || null };
-    try { fs.writeFileSync(WCACHE(), JSON.stringify({ at: Date.now(), window: key, place, day, w })); } catch {}
-    return w;
-  } catch { return null; }
+  }
+  // Rung 3: whatever answered last, for any day it covers. A forecast fetched
+  // three days ago for today beats no forecast at all — and the footnote
+  // carries its fetch time, so a parent can see how old it is.
+  if (mine && readWindow(mine.hourly, day, win))
+    return answer(mine, "the stored " + mine.source + " week fetched " +
+      new Date(mine.at).toISOString() + " (" + why.join("; ") + ")");
+  console.error("[clothing] weather: none — open-meteo, weather.gov and the stored week all failed (" +
+    why.join("; ") + ")");
+  return null;
 }
 // WMO weather codes -> the picture on the tile. Above 67 the old map called
 // everything cold, so a rain shower and a thunderstorm both put a snowflake on
@@ -1547,9 +1663,12 @@ async function buildCataloged(cat) {
           // what read cold every day for eleven days, invisibly, and the only
           // way that is ever caught is if the board says where it is reading.
           // No town stored means the ISP's guess, and the tile says so.
+          // "updated" is when the forecast was FETCHED, not when the board
+          // was built (spec §7.3): a day served from the stored week reads
+          // "updated Thu, Oct 8 …", so a parent can see the number is old.
           footnote: (w.place || "approximate location") + " \u00b7 " +
             (span ? "for " + span + " \u00b7 " : "") + "updated " +
-            new Date().toLocaleString("en-US",
+            new Date(Number.isFinite(w.fetchedAt) ? w.fetchedAt : Date.now()).toLocaleString("en-US",
               { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
           row: 1, col: 1 });
       }
