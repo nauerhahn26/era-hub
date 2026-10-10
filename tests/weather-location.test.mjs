@@ -666,6 +666,14 @@ test("both fail and the store does not cover today: no tile, and the next tick t
   await clothing.rebuildToday();
   assert.ok(!hasTile(), "no weather at all: no tile (there is nothing true to put on it)");
 
+  // The build that went blind walked the ladder a moment ago: a tick inside
+  // the retry spacing (the 15-minute tick interval, less a minute) does not
+  // walk it again — or every back-to-back tick would be a weather call.
+  process.env.ERA_WEATHER_RETRY_MS = String(10 * 60e3);
+  assert.equal(clothing.tick("test"), null, "the ladder was walked a moment ago: not again yet");
+  // ...and past the spacing, it does (the seam stands in for fifteen minutes)
+  process.env.ERA_WEATHER_RETRY_MS = "0";
+
   // still down: the tick tries the ladder, and a blind board is not redrawn
   // for nothing
   const board = path.join(TMP, "recipes", "today.json");
@@ -687,6 +695,7 @@ test("both fail and the store does not cover today: no tile, and the next tick t
   assert.ok(hasTile(), "the weather is back on the board");
   assert.match(tile().label, /^70°/);
   assert.equal(clothing.tick("test"), null, "and the flag is spent: nothing left to retry");
+  delete process.env.ERA_WEATHER_RETRY_MS;
 });
 
 test("under three hours the store is served with no call; older is refreshed, and only a success replaces it", async () => {
