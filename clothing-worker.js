@@ -1778,7 +1778,7 @@ async function buildCataloged(cat) {
     boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
       ? items.filter(isFancy).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       : accessoryOrder(items.filter(i => i.category === k.id), band), "today"));
-  return { boards, present };
+  return { boards, present, weatherless: !w };
 }
 
 // No catalog yet -> no board. Decide which coaching state the splash shows.
@@ -1860,7 +1860,15 @@ async function regenerate(force) {
     storeSig(sig);
     return { guidance, photos: photos.length, ...tally };
   }
-  const { boards, present } = await buildCataloged(cat);
+  // A weather RETRY (clothing.js weatherBlind, spec §7.3): the board on
+  // screen was dealt with no weather at all, and the tick is asking whether
+  // the ladder answers yet. Still nothing = leave that board exactly as it is
+  // and say so — redrawing every composite to put back the same blind board
+  // four times an hour buys her nothing. An answer is stored by weather()
+  // itself, so the build below reads it back from the store with no call.
+  if (workerData.weatherRetry && !(await weather()))
+    return { rebuildOnly: true, weatherless: true, retried: true, photos: photos.length };
+  const { boards, present, weatherless } = await buildCataloged(cat);
   fs.mkdirSync(RECIPES(), { recursive: true });
   // `categories` is the whole filing cabinet, not this wardrobe's corner of
   // it: the board's hold sheet names its chips from here (spec §4.2), and a
@@ -1879,6 +1887,9 @@ async function regenerate(force) {
   // the whole object back to whoever asked for the build.
   return { built: boards.length, mode: "cataloged", photos: photos.length, ...tally,
            accessories: present,
+           // weatherless only when it really happened: the shell reads it as
+           // "dealt with no weather at all, try the ladder again" (spec §7.3)
+           ...(weatherless ? { weatherless: true } : {}),
            ...(historyUnread ? { historyUnread: true } : {}) };
 }
 
