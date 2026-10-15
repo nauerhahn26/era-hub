@@ -348,6 +348,17 @@
   </div>
 
   <div class="card">
+    <h2>✏️ Alternative Pencil dwell time</h2>
+    <p class="hint">How long a gaze selects a letter or button in the Alternative Pencil. This setting affects only the Pencil. Its exit and talk buttons take twice this long.</p>
+    <div class="stepper">
+      <button id="pencilDwellDown" aria-label="Shorter Pencil dwell">−</button>
+      <div class="val"><span id="pencilDwellVal">1.5</span> s</div>
+      <button id="pencilDwellUp" aria-label="Longer Pencil dwell">+</button>
+    </div>
+    <div class="desc" id="pencilDwellDesc"></div>
+  </div>
+
+  <div class="card">
     <h2>🗺 Page-change pause</h2>
     <p class="hint">After a page changes, gaze buttons wait this long before they can start charging — so a fresh page never grabs the tile she happens to be looking at while she reorients. TD Snap on an I-13 has its own copy of this setting (&ldquo;Delay after page change&rdquo;, set to 0.25 s).</p>
     <div class="stepper">
@@ -537,6 +548,24 @@ async function saveDwell(){
 }
 $("dwellUp").onclick=()=>{ dwell=Math.min(3000,dwell+100); saveDwell(); };
 $("dwellDown").onclick=()=>{ dwell=Math.max(600,dwell-100); saveDwell(); };
+
+// ---- Alternative Pencil: a saved, independent dwell ----
+let pencilDwell=1500;
+function pencilDwellPaint(){
+  $("pencilDwellVal").textContent=(pencilDwell/1000).toFixed(1);
+  $("pencilDwellDesc").textContent="Applies when the Pencil is opened. Other apps keep their own dwell time.";
+}
+async function savePencilDwell(delta){
+  const next=Math.max(600,Math.min(3000,pencilDwell+delta));
+  try{
+    const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pencilDwellMs:next})});
+    if(!r.ok) throw new Error("save failed");
+    pencilDwell=next; pencilDwellPaint();
+    toast("Pencil dwell: "+(pencilDwell/1000).toFixed(1)+" s");
+  }catch(e){ toast("Could not save Pencil dwell. Please try again."); }
+}
+$("pencilDwellUp").onclick=()=>savePencilDwell(100);
+$("pencilDwellDown").onclick=()=>savePencilDwell(-100);
 
 // ---- Page-change pause (27P #5b; stored in ms, shown in seconds) ----
 let settle=250;
@@ -1862,6 +1891,7 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
   await loadFalKey();
   await drivePaint();
   try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
+       if(Number.isFinite(s.pencilDwellMs)) pencilDwell=Math.max(600,Math.min(3000,s.pencilDwellMs));
        if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));
        if(typeof s.musicVolCap==="number") mvol=Math.max(1,Math.min(100,Math.round(s.musicVolCap)));
        if(typeof s.lockMinutes==="number"){
@@ -1875,7 +1905,7 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
        weekVideosPaint(s.downloadWeekVideos===false?"no":"yes");
        wxPaint(s.weatherWindow||null); wxPlacePaint(s.location||null); }
   catch(e){ exitPaint("tdsnap"); weekVideosPaint("yes"); wxPaint(null); wxPlacePaint(null); }
-  dwellDesc(); settleDesc(); mvolDesc(); lockDesc();
+  dwellDesc(); pencilDwellPaint(); settleDesc(); mvolDesc(); lockDesc();
   try{
     const c=await (await fetch(ENGINE+"/config")).json();
     if(c.radius===0) document.querySelector('#ring button[data-ring="off"]').click();

@@ -213,7 +213,7 @@ async function makeBarPage({ pauseGoes = "tdsnap", dwellMs = 900, speech = false
   await ctx.route("**/voices", r => r.fulfill({ status: 200, contentType: "application/json",
     body: JSON.stringify({ enabled: false, current: "", voices: [] }) }));
   await ctx.route("**/settings", r => r.fulfill({ status: 200, contentType: "application/json",
-    body: JSON.stringify({ dwellMs, childName: "Maya", pauseGoes, doorGoes: pauseGoes }) }));
+    body: JSON.stringify({ dwellMs: 700, pencilDwellMs: dwellMs, childName: "Maya", pauseGoes, doorGoes: pauseGoes }) }));
   const page = await ctx.newPage();
   await page.goto(`${BASE}/pencil/`, { waitUntil: "load" });
   await page.waitForFunction(() => window.Pencil && window.Pencil.state().mailChecked);
@@ -445,5 +445,39 @@ test("no engine on the bus: no 💬 at all (the VM and a dev browser look like 9
   const { ctx, page } = await makeBarPage({ pauseGoes: "home" });
   assert.equal(await page.locator("#barDoor").isVisible(), true, "the 🚪 is always there");
   assert.equal(await page.locator("#barTalk").isVisible(), false, "nothing to talk to → no talk door");
+  await ctx.close();
+});
+
+
+test("Pencil dwell defaults to 1.5s and Settings saves it independently across reloads", async () => {
+  const initial = await (await fetch(`${BASE}/settings`)).json();
+  assert.equal(initial.pencilDwellMs, 1500);
+  const {ctx, page} = await makePage();
+  await page.waitForFunction(() => Dwell.config.ms === 1500);
+  const shared = initial.dwellMs;
+  await page.goto(`${BASE}/settings/`);
+  await page.waitForFunction(() => document.getElementById("pencilDwellUp").onclick);
+  const saved = page.waitForResponse(r => r.url().endsWith("/settings") && r.request().method() === "POST");
+  await page.locator("#pencilDwellUp").click();
+  await saved;
+  const settings = await (await fetch(`${BASE}/settings`)).json();
+  assert.equal(settings.pencilDwellMs, 1600);
+  assert.equal(settings.dwellMs, shared);
+  await page.reload();
+  await page.waitForFunction(() => document.getElementById("pencilDwellVal").textContent === "1.6");
+  await page.goto(`${BASE}/pencil/`);
+  await page.waitForFunction(() => window.Dwell && Dwell.config.ms === 1600);
+  assert.equal(await page.getAttribute("#barDoor", "data-dwell-ms"), "3200");
+  await page.locator("#partnerTab").click();
+  const tuned = page.waitForResponse(r => r.url().endsWith("/settings") && r.request().method() === "POST");
+  await page.locator("#pEasier").click();
+  await tuned;
+  await page.reload();
+  await page.waitForFunction(() => window.Dwell && Dwell.config.ms === 1800);
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).dwellMs, shared);
+  for (const [value, expected] of [[100,600],[9000,3000]]) {
+    await fetch(`${BASE}/settings`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pencilDwellMs:value})});
+    assert.equal((await (await fetch(`${BASE}/settings`)).json()).pencilDwellMs, expected);
+  }
   await ctx.close();
 });
