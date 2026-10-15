@@ -1,0 +1,1907 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ERAgaze Settings</title>
+<link rel="stylesheet" href="../lib/tokens.css">
+<style>
+  /* ERAgaze — the family gaze settings page. All click-driven, for the
+     grown-up. Talks to the local gaze engine (:49155/config) for cursor tuning
+     and to the app server for the shared voice + dwell time. */
+  :root{
+    --ink:var(--color-ink); --paper:#EEF2F1; --card:#FFFFFF; --line:#D3DCDA;
+    --teal:var(--color-primary); --teal-deep:#0B4E58; --teal-wash:#E4EFEF;
+    --coral:#DE7B52; --good:#2E7D5B; --good-wash:#E5F0EA;
+    --font:"Segoe UI", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--font);
+       font-size:19px; line-height:1.5}
+  .wrap{max-width:920px; margin:0 auto; padding:28px 24px 80px}
+  header{display:flex; align-items:baseline; gap:14px; margin-bottom:6px}
+  h1{font-size:40px; margin:0; font-weight:750}
+  .sub{color:#5A6A70; font-size:20px}
+  .tag{font-size:13px; color:#7A8A90; letter-spacing:.03em}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:16px;
+        padding:22px 24px; margin:18px 0}
+  .card h2{font-size:24px; margin:0 0 6px}
+  .card p.hint{color:#6B7A80; font-size:16px; margin:0 0 18px}
+  .row{display:flex; flex-wrap:wrap; gap:14px; align-items:center}
+  button{font-family:var(--font); font-size:19px; border-radius:12px; border:2px solid var(--line);
+         background:#fff; color:var(--ink); padding:14px 20px; cursor:pointer}
+  button:hover{border-color:var(--teal)}
+  button.sel{background:var(--teal); border-color:var(--teal-deep); color:#fff}
+  button.big{font-size:22px; padding:16px 26px}
+  button.play{border-color:var(--teal); color:var(--teal-deep)}
+  /* A button that sits INSIDE a sentence (Change, Find, one geocoder match):
+     full height would push the words it belongs to apart. */
+  button.small{font-size:17px; padding:10px 16px}
+  /* No town stored is not a blank, it is the state that made every reading
+     cold for eleven days without saying so (dad 9/23) — so it is coloured like
+     the warning it is. Scoped to this row on purpose: `class="bad"` is used a
+     dozen other places on this page and has never had a rule, and giving them
+     all one is a look nobody has reviewed. */
+  #wxPlaceName.bad{color:var(--coral); font-weight:650}
+  .voice{display:flex; align-items:center; gap:10px; border:2px solid var(--line);
+         border-radius:14px; padding:12px 16px; background:#fff}
+  .voice.sel{border-color:var(--teal); background:var(--teal-wash)}
+  .voice .nm{font-weight:650}
+  .val{font-size:32px; font-weight:750; color:var(--teal-deep); min-width:150px; text-align:center;
+       font-variant-numeric:tabular-nums}
+  .stepper{display:flex; align-items:center; gap:16px}
+  .stepper button{width:76px; height:76px; font-size:40px; border-radius:16px}
+  .desc{font-size:16px; color:#6B7A80; margin-top:8px}
+  .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+         background:var(--good); color:#fff; padding:14px 26px; border-radius:12px;
+         font-size:18px; opacity:0; transition:opacity .25s; z-index:20}
+  .toast.show{opacity:1}
+  .status{font-size:15px; color:#7A8A90; margin-top:4px}
+  .status b{color:var(--good)}
+  .status.bad b{color:var(--coral)}
+  select{font-family:var(--font); font-size:19px; border-radius:12px; border:2px solid var(--line);
+         background:#fff; color:var(--ink); padding:12px 14px; cursor:pointer}
+  select:disabled{color:#9AA8AD; background:#F4F7F6; cursor:default}
+  .seg{display:flex; gap:0; border:2px solid var(--line); border-radius:12px; overflow:hidden}
+  .seg button{border:0; border-right:2px solid var(--line); border-radius:0; margin:0}
+  .seg button:last-child{border-right:0}
+  /* Full-shutdown (partner-only) — visually separated, danger but CALM-colored */
+  .danger-zone{margin-top:24px; padding-top:20px; border-top:2px dashed var(--line)}
+  .danger-zone .hint{margin:0 0 12px}
+  button.stopbtn{border-color:#CE9C82; color:#8A4A2C; background:#FBF1EC; font-weight:650; text-align:left}
+  button.stopbtn:hover{border-color:#C0703F}
+  button.stopbtn.armed{background:var(--coral); border-color:#B85C34; color:#fff}
+  .stophint{font-size:15px; color:#8A7266; margin-top:8px}
+  .stophint.armed{color:#B85C34; font-weight:600}
+  /* The Build tap (spec §14). It borrows the shutdown button's armed colours
+     because it is the same gesture — tap to arm, tap again to act — and this is
+     the one press on a grown-up's page that spends the family's allowance. */
+  button.ctbuild.armed{background:var(--coral); border-color:#B85C34; color:#fff}
+  /* Persistent stopped state (also shown when the engine is offline on load) */
+  .stopped{display:flex; gap:16px; align-items:flex-start; background:#F5EEEA;
+           border:1px solid #E1CFC5; border-radius:14px; padding:20px 22px}
+  .stopped .ic{font-size:34px; line-height:1}
+  .stopped .ti{font-size:22px; font-weight:750; color:#8A4A2C; margin:0 0 4px}
+  .stopped .bd{font-size:18px; color:#5A6A70; margin:0}
+  .stopped .bd b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header style="justify-content:space-between; align-items:center">
+    <div style="display:flex; align-items:baseline; gap:14px">
+      <h1>ERAgaze</h1>
+      <span class="sub">settings</span>
+    </div>
+    <a href="/home/" onclick="location.href='/home/'; return false;"
+       style="font-size:21px; color:var(--teal-deep); text-decoration:none; font-weight:650;
+       border:2px solid var(--teal); border-radius:12px; padding:14px 22px; background:#fff; cursor:pointer">← Back to apps</a>
+  </header>
+  <p class="tag">Your eye-gaze system · changes apply within a couple of seconds</p>
+
+  <div class="card">
+    <h2>🧩 Apps</h2>
+    <p class="hint">Which apps this computer offers. Untick to hide an app and remove its shortcut; tick to add it. Same choices as at install.</p>
+    <div id="appsList"></div>
+  </div>
+
+  <div class="card" id="updates">
+    <h2>⬆️ Updates</h2>
+    <p class="hint">Our Era Comms looks for a newer version by itself — shortly after it starts and every 6 hours after that — and installs it quietly. Press the button to look right now instead of waiting.</p>
+    <div class="row">
+      <button id="updCheck">⬆️ Check for updates now</button>
+    </div>
+    <div class="status" id="updStatus"></div>
+  </div>
+
+  <div class="card" id="voice">
+    <h2>🎙 Voice</h2>
+    <p class="hint">The voice that talks to your child in Making Words and The Pencil. Tap any voice to hear it and choose it.</p>
+    <div class="row" id="voices"></div>
+    <div class="status" id="voiceStatus"></div>
+    <div style="margin-top:16px">
+      <p class="hint" style="margin-bottom:8px">Premium voices need a free ElevenLabs account. Without a key the built-in computer voice is used.</p>
+      <div class="row" style="margin-bottom:10px">
+        <button id="elevenOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my ElevenLabs API keys page</button>
+      </div>
+      <div class="row">
+        <input id="ttsKey" type="password" placeholder="ElevenLabs API key"
+               style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+        <button id="ttsKeyPaste">📋 Paste</button>
+        <button id="ttsKeySave">Save key</button>
+      </div>
+      <div class="status" id="ttsKeyStatus"></div>
+      <!-- HOW MUCH MONTH IS LEFT (T6b.2). ElevenLabs sells characters by the
+           month and a book is the only thing here that eats them in bulk, so
+           the card that holds the key is where a parent decides whether this
+           month can afford another book. Hidden until the hub actually knows:
+           a made-up allowance is worse than none. -->
+      <div class="status" id="voiceAllowance" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="card" id="writing">
+    <h2>✏️ Her writing from The Pencil</h2>
+    <p class="hint">When your child taps <b>Send</b> in The Pencil, her words are saved here — and emailed to you if you set that up. Email needs a free <b>Resend</b> account (no card). Its free sender only delivers to the address you sign up with, so use that one.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button id="resendOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Resend API keys page</button>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <input id="mailTo" type="email" placeholder="Your email address"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+    </div>
+    <div class="row">
+      <input id="mailKey" type="password" placeholder="Resend API key (re_...)"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="mailKeyPaste">📋 Paste</button>
+      <button id="mailSave">Save &amp; send a test email</button>
+    </div>
+    <div class="status" id="mailStatus"></div>
+    <div id="writings" style="margin-top:14px"></div>
+  </div>
+
+  <div class="card" id="integrations">
+    <h2>🔗 Add content with Google Drive</h2>
+    <p class="hint">Put things in your Google Drive and they appear here by themselves: photos of her clothes in a <b>clothing</b> folder, book packages in <b>books</b>, songs in <b>music</b>, lesson files in <b>content</b>. Checked every 10 minutes (every 6 hours without the Drive app).</p>
+    <div id="dlChecklist" style="margin-bottom:10px"></div>
+    <div id="dlPicker" style="display:none; border-top:2px dashed var(--line); padding-top:14px">
+      <div class="status" id="dlPath" style="margin-bottom:8px"></div>
+      <div class="row" id="dlDirs" style="margin-bottom:10px"></div>
+      <div class="row">
+        <button id="dlUp">⬆ Up one level</button>
+        <button id="dlUse" class="sel">✓ Use this folder</button>
+      </div>
+    </div>
+    <div class="row" id="dlAlways" style="display:none; margin-top:10px">
+      <button id="dlSyncNow">🔄 Sync now</button>
+      <button id="dlOutfitsNow">👕 New outfits from new photos</button>
+      <button id="dlOpenFolder">📂 Open the folder</button>
+    </div>
+    <div class="status" id="driveStatus"></div>
+    <!-- WHERE the weather is read (dad 9/23: "either city or town or zip —
+         that's how people think"). The point used to be an IP guess, which on
+         both devices was a city centroid a microclimate away and read colder
+         than the sky eleven days running, never saying so. Mouse/touch, for a
+         grown-up. -->
+    <div class="row" id="wxPlace" style="margin-top:16px; border-top:2px dashed var(--line); padding-top:16px">
+      <span>Weather for</span>
+      <span id="wxPlaceName"></span>
+      <button id="wxPlaceEdit" class="small">Change</button>
+      <input id="wxPlaceBox" type="text" placeholder="Town or ZIP" hidden
+             aria-label="Town or ZIP code" autocomplete="off"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;width:220px">
+      <button id="wxPlaceFind" class="small" hidden>Find</button>
+    </div>
+    <div id="wxPlaceHits" class="desc"></div>
+    <!-- Which hours the outfits are sorted for (dad 9/5: she dresses for the
+         hours she is out — a morning at school — and the day's high comes
+         hours later). Mouse/touch, for a grown-up. -->
+    <div class="row" id="wxWindow" style="margin-top:12px">
+      <span id="wxBetween">Dress for the weather between</span>
+      <select id="wxFrom" aria-label="First hour to dress for"></select>
+      <span id="wxAnd">and</span>
+      <select id="wxTo" aria-label="Last hour to dress for"></select>
+    </div>
+    <p class="desc" id="wxHint">Her school hours, for example &mdash; the outfits get sorted for the weather then, not for the afternoon high.</p>
+  </div>
+
+  <div class="card" id="ai">
+    <h2>🤖 AI helper</h2>
+    <p class="hint">An AI key lets Our Era Comms prepare content for your child — clothing photos get trimmed, straightened, named and paired into daily outfits automatically. Pick the AI you already use; the key stays on this computer and is only used for your own photos.</p>
+    <p class="hint" style="font-size:15px">Why a key and not a login? The AI companies don&rsquo;t allow signing in with your Claude or ChatGPT account inside apps like Our Era Comms &mdash; your own key is their official way. Getting one takes about a minute, and Google&rsquo;s is free (no card needed).</p>
+    <div class="seg" id="aiProv" style="margin-bottom:10px">
+      <button data-prov="anthropic">Claude</button>
+      <button data-prov="openai">ChatGPT (OpenAI)</button>
+      <button data-prov="google">Google — free (default)</button>
+    </div>
+    <!-- The free tier is the default, so the sentence about what it costs
+         belongs under the buttons that pick it, not below the Save key row a
+         parent has already walked past. aiProvPaint() shows it for Google only. -->
+    <div class="status" id="aiNote" style="display:none;margin-bottom:10px">Note: Google&rsquo;s <b>free</b> AI Studio tier may use what is sent to it &mdash; her clothing photos, the words on her book pages &mdash; to improve Google&rsquo;s products; that is in <b>Google&rsquo;s terms</b>. A pay-as-you-go Google key is not used that way, and neither are the other providers.</div>
+    <div class="row" style="margin-bottom:10px">
+      <button id="aiOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Claude API keys page</button>
+    </div>
+    <div class="row">
+      <input id="aiKey" type="password" placeholder="Claude API key (sk-ant-...)"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="aiKeyPaste">📋 Paste</button>
+      <button id="aiKeySave">Save key</button>
+    </div>
+    <div class="status" id="aiStatus"></div>
+    <!-- What the Clothing Picker has learned (spec §4 / §1 row O1). Its own
+         line, under #aiStatus: that one is overwritten wholesale by four
+         exclusive branches, so a read-out inside it would vanish the moment a
+         key went missing or a batch of photos started naming — exactly when a
+         parent goes looking. -->
+    <div class="status" id="picksStatus"></div>
+    <!-- …and what she can reach BESIDES the outfits (accessories spec §5.2):
+         the jackets, shoes and the rest the model has filed, plus anything a
+         grown-up has hidden from her board with the hold sheet. Its own line
+         under the picks read-out, and silent until there is something to say. -->
+    <div class="status" id="accStatus"></div>
+  </div>
+
+  <div class="card" id="content">
+    <h2>📚 Your books</h2>
+    <!-- WHO STARTS A BOOK (spec §12, "built here"). Nothing here begins on a
+         clock any more: a grown-up presses Build, on this card or on her shelf,
+         and the computer they pressed it on is the one that does the work. The
+         hint says so, because the sentence it used to carry — photos in, book
+         out, no press named — is the promise the whole rule removes. -->
+    <p class="hint">Photograph the pages of one of her picture books, put the photos in <b>books</b> in your Google Drive, and press <b>Build</b> &mdash; here or on her shelf. Our Era Comms takes a pile of loose photos to be <b>one book</b>, makes the folder, names it from the cover, reads the words off the photos and records the narration, and the book turns up in <b>Book Reader</b> on every device in the family. Only the computer you pressed Build on does the work, so no book is ever made &mdash; or paid for &mdash; twice. (Two books at once? Make a folder for each, named after the book, and put its photos in that.) You only pay for it once, and nothing ever leaves your own Drive.</p>
+    <div class="row" id="contentActions" style="display:none; margin-bottom:10px">
+      <button id="ctLook">📚 Look for new books now</button>
+    </div>
+    <div class="status" id="contentStatus"></div>
+    <div id="contentBooks" style="margin-top:6px"></div>
+    <div class="desc" id="contentTiers" style="margin-top:14px">
+      Books read best with a free <b>Google AI Studio</b> key &mdash; two free readers check every page, and the pages they disagree on are the ones marked for you to glance at.
+      With only that free key: the words, a few pages a day, and the reader turns the pages silently. Add an <b>ElevenLabs</b> voice key and she hears the book read to her, for a few cents.
+      <b>Recommended:</b> the free Google key plus ElevenLabs &mdash; every page read twice, the whole book read aloud, still only cents. A paid AI key (Claude, ChatGPT, or Google&rsquo;s paid tier) buys speed rather than words: a whole book the same day instead of a few pages a day. Nothing is locked: every setup builds books, the cheaper ones just take longer or stay silent.
+    </div>
+  </div>
+
+  <!-- Moving pages (T6.1). The fal key: the ONE thing in Our Era Comms that spends
+       real money per press, so the card is a clone of the Voice card's key row
+       (the one a parent has already used) and, like it, proves the key with one
+       real call before it says "working" — a wrong key here is otherwise found
+       halfway through a book they have already agreed to pay for. It quotes the
+       price of a single clip because the review page's "Animate this book"
+       button is quoted in the same money. Nothing animates on its own: the
+       animate step is off until a parent presses that button. -->
+  <div class="card" id="fal">
+    <h2>🎞 Moving pages</h2>
+    <p class="hint">Optional, and the only thing in Our Era Comms that costs real <b>money</b>. With a <b>fal</b> key, the pages of a finished book can become a few seconds of moving picture each. Nothing is animated on its own &mdash; you open a book&rsquo;s review page, see what that whole book will cost, and press the button yourself.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button id="falOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my fal API keys page</button>
+    </div>
+    <div class="row">
+      <input id="falKey" type="password" placeholder="fal API key"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="falKeyPaste">📋 Paste</button>
+      <button id="falKeySave">Save key</button>
+    </div>
+    <div class="status" id="falKeyStatus"></div>
+  </div>
+
+  <!-- Films and shows (T5.3). The search behind the board's "+ Add" sheet says
+       "add a TMDB key in Settings" when a family has none; for one review cycle
+       that sentence named nothing that existed, and the only way in was editing
+       a JSON file by hand (review 9/5). This is that card. Neither key is
+       checked against its provider on save — a check costs a request out of a
+       free monthly allowance, and the sheet tells the parent within a second
+       anyway. -->
+  <div class="card" id="movies">
+    <h2>🎬 Films and shows</h2>
+    <p class="hint">Films and shows go on her board as pictures she can press. <b>Paste a link</b> from Netflix, Disney+, Prime or YouTube and the tile goes up &mdash; that works with no key at all. Two free keys make it easier: <b>TMDB</b> lets you find a film by typing its name (and brings the poster), and the optional <b>Watchmode</b> key turns &ldquo;on Netflix&rdquo; into a tile that opens the film itself.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button id="tmdbOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my TMDB key page</button>
+      <button id="wmOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my Watchmode key page</button>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <input id="tmdbKey" type="password" placeholder="TMDB API key"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="tmdbKeyPaste">📋 Paste</button>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <input id="wmKey" type="password" placeholder="Watchmode API key (optional)"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px">
+      <button id="wmKeyPaste">📋 Paste</button>
+    </div>
+    <div class="row">
+      <input id="moviesRegion" placeholder="Country (US, GB)" maxlength="2"
+             style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;width:150px">
+      <button id="moviesKeySave">Save</button>
+    </div>
+    <div class="status" id="moviesKeyStatus"></div>
+  </div>
+
+  <div class="card" id="exit">
+    <h2>🚪 Where the door goes</h2>
+    <p class="hint">Every app has a door in its corner. Choose what she lands on when she looks at it.</p>
+    <div class="seg" id="exitTo">
+      <button data-exit="tdsnap" class="sel">💬 TD Snap</button>
+      <button data-exit="home">🏠 Our Era Comms home</button>
+    </div>
+    <div class="desc" id="exitDesc"></div>
+  </div>
+
+  <div class="card" id="weekVideos">
+    <h2>📅 This week's videos</h2>
+    <p class="hint">This device downloads the week's videos</p>
+    <div class="seg" id="downloadWeekVideos">
+      <button data-dl="yes" class="sel">Yes</button>
+      <button data-dl="no">No</button>
+    </div>
+    <div class="desc" id="weekVideosDesc"></div>
+  </div>
+
+  <div class="card">
+    <h2>⏱ Dwell time</h2>
+    <p class="hint">How long she holds her gaze on a button before it activates. Longer = calmer, fewer accidental picks. Shorter = faster once she&rsquo;s confident.</p>
+    <div class="stepper">
+      <button id="dwellDown">−</button>
+      <div class="val"><span id="dwellVal">1200</span> ms</div>
+      <button id="dwellUp">+</button>
+    </div>
+    <div class="desc" id="dwellDesc"></div>
+  </div>
+
+  <div class="card">
+    <h2>🗺 Page-change pause</h2>
+    <p class="hint">After a page changes, gaze buttons wait this long before they can start charging — so a fresh page never grabs the tile she happens to be looking at while she reorients. TD Snap on an I-13 has its own copy of this setting (&ldquo;Delay after page change&rdquo;, set to 0.25 s).</p>
+    <div class="stepper">
+      <button id="settleDown">−</button>
+      <div class="val"><span id="settleVal">0.25</span> s</div>
+      <button id="settleUp">+</button>
+    </div>
+    <div class="desc" id="settleDesc"></div>
+  </div>
+
+  <div class="card">
+    <h2>👁 Cursor feel</h2>
+    <p class="hint">How the gaze cursor moves and settles. If it feels jumpy, choose Calmer. If it feels laggy, choose Snappier.</p>
+    <div class="seg" id="feel">
+      <button data-feel="calm">🐢 Calmer</button>
+      <button data-feel="balanced" class="sel">⚖ Balanced</button>
+      <button data-feel="snappy">🐇 Snappier</button>
+    </div>
+    <div class="desc">Adjusts smoothing and how firmly the cursor locks onto what she&rsquo;s looking at.</div>
+    <div class="status" id="engineStatus"></div>
+  </div>
+
+  <div class="card">
+    <h2>🙈 Look-away forgiveness</h2>
+    <p class="hint">How long she can glance away mid-selection without losing her progress. Rett girls often look away right as they choose — more forgiveness helps.</p>
+    <div class="seg" id="grace">
+      <button data-grace="200">Short</button>
+      <button data-grace="400" class="sel">Normal</button>
+      <button data-grace="700">Generous</button>
+      <button data-grace="1000">Most</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🖱 Cursor visible?</h2>
+    <p class="hint">Show the soft ring where she&rsquo;s looking. On is best for most activities.</p>
+    <div class="seg" id="ring">
+      <button data-ring="on" class="sel">Show ring</button>
+      <button data-ring="off">Hide ring</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🔊 Volume cap</h2>
+    <p class="hint">Keeps the speaker from going louder than the cap — Ellie can still turn it down or mute. It starts by itself at boot and heals itself if it dies (back within 30 minutes). This switch is for <b>pushing it back on right now</b>, or pausing it briefly for testing.</p>
+    <div id="volcapControls" style="display:none">
+      <div class="seg" id="volcap">
+        <button data-volcap="on" class="sel">🔒 Capped</button>
+        <button data-volcap="off">🔓 Off (testing)</button>
+      </div>
+      <div class="desc" id="volcapDesc"></div>
+      <div class="status" id="volcapStatus"></div>
+    </div>
+    <div class="status" id="volcapMissing" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>🎵 Music volume cap</h2>
+    <p class="hint">How loud the Music board is allowed to play, as a share of the speaker&rsquo;s volume. One knob for every device — an open Music board follows within half a minute. Speech is not affected.</p>
+    <div class="seg" id="mvolPresets" style="margin-bottom:14px">
+      <button data-mvol="8">🏫 Classroom (8%)</button>
+      <button data-mvol="40">🏠 Quiet (40%)</button>
+      <button data-mvol="100">🔊 Full</button>
+    </div>
+    <div class="stepper">
+      <button id="mvolDown">−</button>
+      <div class="val"><span id="mvolVal">100</span>%</div>
+      <button id="mvolUp">+</button>
+    </div>
+    <div class="desc" id="mvolDesc"></div>
+  </div>
+
+  <!-- The board's lock (dad 9/14): in class, or when a sibling is poking the
+       tablet and the music has to stop. Deterrence, not security — the
+       passcode only stops someone repeating what they watched a grown-up do,
+       so it is hashed in this page and the digits never go to Our Era Comms or
+       onto the disk. Four digits, to match the board's keypad. The box is a
+       text input masked in CSS, NOT type="password": on the tablet the
+       password input scope beats inputmode and brings up the whole keyboard
+       when all we want are the numbers. -->
+  <div class="card" id="lock">
+    <h2>🔒 Lock</h2>
+    <p class="hint">Hold the 🔒 in the corner of the Music or Films board and the music and films stop. Everything else &mdash; her words, her books, her drawing &mdash; keeps working.</p>
+    <div class="stepper">
+      <button id="lockDown">−</button>
+      <div class="val" id="lockVal">45 minutes</div>
+      <button id="lockUp">+</button>
+    </div>
+    <div class="desc" id="lockDesc"></div>
+    <div style="margin-top:16px; border-top:2px dashed var(--line); padding-top:16px">
+      <p class="hint" style="margin-bottom:8px">With no passcode, holding the 🔒 again unlocks the board. Set one and unlocking asks for it instead, so a curious sibling can&rsquo;t simply copy what they saw you do.</p>
+      <div class="row">
+        <input id="lockPass" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="Passcode (4 digits)"
+               style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px;-webkit-text-security:disc">
+        <button id="lockPassSave">Save</button>
+        <button id="lockPassClear">Clear</button>
+      </div>
+      <div class="status" id="lockPassStatus">No passcode &mdash; holding the 🔒 again unlocks the board.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>⏸ Pause eye-gaze (testing)</h2>
+    <p class="hint">Temporarily stop ERAgaze from moving the cursor, so you can check whether another program behaves differently without it. The eye-gaze keeps running in the background and turns back on the moment you tap Running.</p>
+    <div id="pauseControls">
+      <div class="seg" id="paused">
+        <button data-paused="off" class="sel">▶ Running</button>
+        <button data-paused="on">⏸ Paused</button>
+      </div>
+      <div class="desc" id="pausedDesc">Eye-gaze is controlling the cursor normally.</div>
+      <div class="status" id="pausedStatus"></div>
+
+      <div class="danger-zone">
+        <p class="hint">Full stop <b>releases the eye-tracker completely</b> so you can test another eye-gaze app (like Aivota) with no interference. Pause above only holds the cursor still — the tracker connection stays open. Use this when you need ERAgaze fully out of the way.</p>
+        <button id="stopBtn" class="stopbtn">⏻ Stop ERAgaze completely (for testing other eye-gaze apps)</button>
+        <div class="stophint" id="stopHint">Tap once to arm, then tap again to confirm.</div>
+      </div>
+    </div>
+    <div class="stopped" id="stoppedBlock" style="display:none">
+      <div class="ic">⏻</div>
+      <div>
+        <p class="ti">ERAgaze stopped.</p>
+        <p class="bd">To restart: tap the <b>ERAgaze</b> icon on the desktop, or ask the AI assistant.</p>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast">Saved</div>
+
+<script>
+const ENGINE = "http://127.0.0.1:49155";     // ERAgaze on this machine
+const $ = id => document.getElementById(id);
+function toast(msg, ok=true){ const t=$("toast"); t.textContent=msg; t.style.background=ok?"#2E7D5B":"#B23A48"; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1600); }
+
+// ---- Voice ----
+async function loadVoices(){
+  try{
+    const v = await (await fetch("/voices")).json();
+    const box = $("voices"); box.innerHTML="";
+    if(v.enabled){
+      $("voiceStatus").innerHTML='<b>Premium voices active ✓</b>';
+      $("ttsKeyStatus").innerHTML='<b>Key checked and working ✓</b> Tap a voice above to hear it.';
+    } else if(v.keyPresent){
+      // a key is stored but ElevenLabs rejected it — say so plainly instead of
+      // claiming success and then going silent (QA 9/1)
+      $("voiceStatus").innerHTML='<span class="bad">The saved voice key is not working — using the built-in Windows voice.</span>';
+      $("ttsKeyStatus").innerHTML='<span class="bad">'+(v.keyError||"ElevenLabs rejected that key")+'. Copy it again from your ElevenLabs page and paste it here.</span>';
+    } else {
+      $("voiceStatus").innerHTML='<span class="bad">Voice key not set — using the built-in Windows voice.</span>';
+      $("ttsKeyStatus").innerHTML="";
+    }
+    for(const voice of v.voices){
+      const b=document.createElement("button");
+      b.className="voice"+(voice.id===v.current?" sel":"");
+      b.innerHTML='<span class="nm">'+voice.name.split(" — ")[0]+'</span> <span style="color:#7A8A90">'+(voice.name.split(" — ")[1]||"")+'</span>';
+      b.onclick=()=>chooseVoice(voice.id, voice.name, b);
+      box.appendChild(b);
+    }
+  }catch(e){ $("voiceStatus").textContent="Could not reach the app server."; }
+}
+let audio=null;
+async function chooseVoice(id, name, btn){
+  document.querySelectorAll("#voices .voice").forEach(x=>x.classList.remove("sel"));
+  btn.classList.add("sel");
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({voiceId:id})});
+  toast("Voice set: "+name.split(" — ")[0]);
+  // preview
+  try{
+    const r = await fetch("/tts",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:"Hi "+(window.ERA_CHILD_NAME||"friend")+"! I can be your helper voice."})});
+    if(r.ok){ if(audio) audio.pause(); audio=new Audio(URL.createObjectURL(await r.blob())); audio.play().catch(()=>{}); }
+  }catch(e){}
+}
+
+// ---- Dwell ----
+let dwell=1200;
+function dwellDesc(){
+  $("dwellVal").textContent=dwell;
+  $("dwellDesc").textContent = dwell>=1600?"Calm and deliberate — good for new activities."
+    : dwell>=1100?"A relaxed, comfortable hold." : dwell>=900?"Quicker — for when she's confident."
+    : "Fast — only if she's very steady.";
+}
+async function saveDwell(){
+  dwellDesc();
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dwellMs:dwell})});
+  toast("Dwell time: "+dwell+" ms");
+}
+$("dwellUp").onclick=()=>{ dwell=Math.min(3000,dwell+100); saveDwell(); };
+$("dwellDown").onclick=()=>{ dwell=Math.max(600,dwell-100); saveDwell(); };
+
+// ---- Page-change pause (27P #5b; stored in ms, shown in seconds) ----
+let settle=250;
+function settleDesc(){
+  $("settleVal").textContent=(settle/1000).toFixed(2).replace(/0$/,"");
+  $("settleDesc").textContent = settle===0?"Off — pages arm instantly."
+    : settle<=300?"A short breath while she reorients (recommended)."
+    : settle<=600?"A calmer, longer settle." : "Very long — only if pages still grab her gaze.";
+}
+async function saveSettle(){
+  settleDesc();
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({settleMs:settle})});
+  toast("Page-change pause: "+(settle/1000).toFixed(2)+" s");
+}
+
+// ---- Music volume cap (dad 8/24: quiet music for the classroom; the Music
+// board plays at this share of the speaker volume; boards re-read at boot) ----
+let mvol=100;
+function mvolDesc(){
+  mvolChips();
+  $("mvolVal").textContent=mvol;
+  $("mvolDesc").textContent = mvol>=100?"Full volume — the speaker cap alone rules."
+    : mvol>=40?"Softer music, everything else unchanged."
+    : mvol>=15?"Quiet — classroom friendly."
+    : "Very quiet — a whisper of music.";
+}
+async function saveMvol(){
+  mvolDesc();
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({musicVolCap:mvol})});
+  toast("Music volume cap: "+mvol+"%");
+}
+$("mvolDown").onclick=()=>{ mvol=Math.max(1,mvol-(mvol<=20?1:4)); saveMvol(); };
+$("mvolUp").onclick=()=>{ mvol=Math.min(100,mvol+(mvol<20?1:4)); saveMvol(); };
+function mvolChips(){
+  document.querySelectorAll("#mvolPresets button").forEach(b=>
+    b.classList.toggle("sel", parseInt(b.dataset.mvol,10)===mvol));
+}
+document.querySelectorAll("#mvolPresets button").forEach(b=>
+  b.onclick=()=>{ mvol=parseInt(b.dataset.mvol,10); saveMvol(); mvolChips(); });
+$("settleUp").onclick=()=>{ settle=Math.min(2000,settle+50); saveSettle(); };
+$("settleDown").onclick=()=>{ settle=Math.max(0,settle-50); saveSettle(); };
+
+// ---- Lock (dad 9/14) ----
+// A fixed list of stops rather than free minutes: a parent is choosing "the
+// rest of the lesson" or "the rest of the day", not a number. 0 sits at the
+// far end, past a day, because "until I say so" is the longest lock there is.
+const LOCKS=[5,10,15,30,45,60,90,120,180,240,480,720,1440,0];
+let lockMin=45;
+function lockLabel(m){
+  if(!m) return "Until unlocked";
+  if(m<60) return m+" minutes";
+  const h=m/60; return h===1?"1 hour":h+" hours";
+}
+function lockDesc(){
+  $("lockVal").textContent=lockLabel(lockMin);
+  $("lockDesc").textContent = lockMin
+    ? "Music and films stop for "+lockLabel(lockMin).toLowerCase()+", then come back by themselves."
+    : "Music and films stay stopped until a grown-up unlocks it.";
+}
+async function saveLock(){
+  lockDesc();
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({lockMinutes:lockMin})});
+  toast("Lock: "+lockLabel(lockMin).toLowerCase());
+}
+function lockStep(d){
+  const i=LOCKS.indexOf(lockMin);
+  lockMin=LOCKS[Math.max(0,Math.min(LOCKS.length-1,(i<0?LOCKS.indexOf(45):i)+d))];
+  saveLock();
+}
+$("lockUp").onclick=()=>lockStep(1);
+$("lockDown").onclick=()=>lockStep(-1);
+lockDesc();
+
+// The digits stay in this page: what Our Era Comms keeps is their SHA-256, and the
+// board compares against that with nobody to ask. So there is nothing to hand
+// back and nothing to read off the disk — only "there is one" or "there isn't".
+async function lockHash(digits){
+  const b=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(digits));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+function lockPassPaint(has){
+  $("lockPassStatus").innerHTML = has
+    ? "<b>Passcode set ✓</b> Unlocking the board asks for it."
+    : "No passcode &mdash; holding the 🔒 again unlocks the board.";
+}
+async function lockPassPost(hash){
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({lockPasscodeHash:hash})});
+  if(!r.ok){ toast("Could not save",false); return; }
+  $("lockPass").value="";
+  lockPassPaint(hash!=="");
+  toast(hash?"Passcode set ✓":"Passcode cleared");
+}
+$("lockPassSave").onclick=async()=>{
+  const d=$("lockPass").value.trim();
+  if(!/^[0-9]{4}$/.test(d)){ $("lockPassStatus").innerHTML='<span class="bad">A passcode is 4 digits.</span>'; return; }
+  await lockPassPost(await lockHash(d));
+};
+$("lockPassClear").onclick=()=>lockPassPost("");
+
+// ---- Engine (cursor feel / grace / ring) ----
+const FEEL = {
+  calm:     { minCutoff:0.6, beta:0.004, lockRadius:55, lockOnMs:300, breakRadius:120 },
+  balanced: { minCutoff:1.0, beta:0.007, lockRadius:40, lockOnMs:250, breakRadius:100 },
+  snappy:   { minCutoff:1.4, beta:0.012, lockRadius:32, lockOnMs:180, breakRadius:90 }
+};
+async function postEngine(obj){
+  try{
+    const r = await fetch(ENGINE+"/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)});
+    if(r.ok){ $("engineStatus").className="status"; $("engineStatus").innerHTML='<b>ERAgaze updated ✓</b>'; return true; }
+  }catch(e){}
+  $("engineStatus").className="status bad";
+  $("engineStatus").innerHTML='<b>Could not reach ERAgaze</b> — is the eye-gaze running? (It only works on Ellie&rsquo;s device.)';
+  return false;
+}
+function seg(id, attr, fn){
+  document.querySelectorAll("#"+id+" button").forEach(b=>{
+    b.onclick=async()=>{
+      document.querySelectorAll("#"+id+" button").forEach(x=>x.classList.remove("sel"));
+      b.classList.add("sel");
+      await fn(b.dataset[attr]);
+    };
+  });
+}
+// Where the door goes (dad 9/3): the hub's /kiosk/exit reads this setting.
+// "tdsnap" closes the app and hands the screen back to TD Snap (needs
+// ERAgaze; without it the door falls back to home); "home" stays in Our Era Comms.
+function exitDesc(v){
+  $("exitDesc").textContent = v==="home"
+    ? "The door closes the app and shows the Our Era Comms home page, ready for the next app."
+    : "The door closes the app and brings TD Snap back to the front. On a computer without ERAgaze it shows the Our Era Comms home instead.";
+}
+function exitPaint(v){
+  document.querySelectorAll("#exitTo button").forEach(x=>x.classList.toggle("sel", x.dataset.exit===v));
+  exitDesc(v);
+}
+seg("exitTo","exit", async v=>{
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({exitTo:v})});
+  exitDesc(v);
+  toast(r.ok ? (v==="home" ? "Door goes to Our Era Comms home" : "Door goes to TD Snap") : "Could not save", r.ok);
+});
+// This week's videos (spec 2026-10-12 §3.2): a per-device switch. Every device
+// plays what any device downloaded (the week folder rides the Drive mirror);
+// No just means THIS computer never fetches them itself.
+function weekVideosDesc(v){
+  $("weekVideosDesc").textContent = v==="no"
+    ? "This computer never downloads them. It still plays the ones another computer in the family downloaded."
+    : "This computer downloads the week's videos when a new week arrives, so she can watch them with no internet.";
+}
+function weekVideosPaint(v){
+  document.querySelectorAll("#downloadWeekVideos button").forEach(x=>x.classList.toggle("sel", x.dataset.dl===v));
+  weekVideosDesc(v);
+}
+seg("downloadWeekVideos","dl", async v=>{
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({downloadWeekVideos:v==="yes"})});
+  weekVideosDesc(v);
+  toast(r.ok ? (v==="yes" ? "This computer downloads the week's videos" : "This computer won't download the week's videos") : "Could not save", r.ok);
+});
+seg("feel","feel", async v=>{ if(await postEngine(FEEL[v])) toast("Cursor feel: "+v); });
+seg("grace","grace", async v=>{ if(await postEngine({graceMs:+v})) toast("Forgiveness updated"); });
+seg("ring","ring", async v=>{ if(await postEngine({radius: v==="off"?0:26})) toast(v==="off"?"Ring hidden":"Ring shown"); });
+
+// ---- Volume cap (VolCap watchdog — its own scheduled task on the gaze devices; ERAgaze relays) ----
+function volcapPaint(s){
+  const box=$("volcapControls"), miss=$("volcapMissing");
+  if(!s || !s.installed){
+    box.style.display="none"; miss.style.display="block";
+    miss.textContent = s ? "Volume cap isn’t installed on this device (it protects her eye-gaze devices, not tablets)."
+                         : "Volume cap status only shows on Ellie’s device while ERAgaze is running.";
+    return;
+  }
+  box.style.display="block"; miss.style.display="none";
+  document.querySelectorAll('#volcap button').forEach(x=>x.classList.remove('sel'));
+  const b=document.querySelector('#volcap button[data-volcap="'+(s.running?'on':'off')+'"]'); if(b) b.classList.add('sel');
+  $("volcapDesc").textContent = s.running
+    ? "Speaker can’t go above "+s.cap+"."
+    : "Cap is OFF — the speaker can reach full volume. It re-arms itself within 30 minutes.";
+  $("volcapStatus").className = "status"+(s.running?"":" bad");
+  $("volcapStatus").innerHTML = s.running ? "<b>Capped at "+s.cap+" ✓</b>" : "<b>Not running</b>";
+}
+async function volcapSet(on){
+  try{
+    const r=await fetch(ENGINE+"/volcap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({on:on})});
+    if(r.ok){ volcapPaint(await r.json()); toast(on?"Volume cap on":"Volume cap off (re-arms itself)"); return; }
+  }catch(e){}
+  toast("Could not reach ERAgaze", false);
+  volcapPaint(null);
+}
+seg("volcap","volcap", v=>volcapSet(v==="on"));
+
+// ---- Pause eye-gaze (testing) : self-contained so its status stays in this card ----
+async function setPaused(on){
+  try{
+    const r = await fetch(ENGINE+"/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paused:on})});
+    if(r.ok){
+      $("pausedDesc").textContent = on ? "Eye-gaze is paused — the cursor is not moving." : "Eye-gaze is controlling the cursor normally.";
+      $("pausedStatus").className="status";
+      $("pausedStatus").innerHTML = on ? '<b style="color:#DE7B52">Paused</b> — cursor is not moving (applies within ~2s)' : '<b>Running ✓</b>';
+      toast(on ? "Eye-gaze paused" : "Eye-gaze running");
+      return true;
+    }
+  }catch(e){}
+  $("pausedStatus").className="status bad";
+  $("pausedStatus").innerHTML='<b>Engine offline</b> — pause only works on Ellie&rsquo;s device while the eye-gaze is running.';
+  return false;
+}
+seg("paused","paused", v=>setPaused(v==="on"));
+
+// ---- Full shutdown (partner-only): two-tap arm, no confirm() dialog ----
+let stopArmed=false, stopTimer=null;
+const STOP_LABEL="⏻ Stop ERAgaze completely (for testing other eye-gaze apps)";
+function disarmStop(){
+  stopArmed=false; if(stopTimer){clearTimeout(stopTimer); stopTimer=null;}
+  const b=$("stopBtn"); b.classList.remove("armed"); b.textContent=STOP_LABEL;
+  const h=$("stopHint"); h.classList.remove("armed"); h.textContent="Tap once to arm, then tap again to confirm.";
+}
+function showStopped(){                       // persistent restart guidance, toggles hidden
+  $("pauseControls").style.display="none";
+  $("stoppedBlock").style.display="flex";
+}
+$("stopBtn").onclick=async()=>{
+  if(!stopArmed){                              // first tap: arm for 5s
+    stopArmed=true;
+    const b=$("stopBtn"); b.classList.add("armed"); b.textContent="⏻ Tap again to STOP ERAgaze completely";
+    const h=$("stopHint"); h.classList.add("armed"); h.textContent="Armed — tap again within 5 seconds to fully stop. (Or wait to cancel.)";
+    stopTimer=setTimeout(disarmStop,5000);
+    return;
+  }
+  if(stopTimer){clearTimeout(stopTimer); stopTimer=null;}   // second tap: fire
+  try{
+    const r=await fetch(ENGINE+"/shutdown",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    if(r.ok){ showStopped(); return; }
+    disarmStop(); $("stopHint").textContent="Could not stop ERAgaze — it answered but refused. Try again.";
+  }catch(e){
+    // The process exits right after replying, so the socket may drop mid-response.
+    // Either way ERAgaze is now gone — show the stopped state.
+    showStopped();
+  }
+};
+
+// ---- Apps (same registry as install + home) ----
+async function loadApps(){
+  try{
+    const { apps } = await (await fetch("/apps",{cache:"no-store"})).json();
+    const box=$("appsList"); box.innerHTML="";
+    for(const a of apps){
+      const row=document.createElement("label");
+      // width:max-content — a full-width label made the empty space to the
+      // right of "Making Words" a toggle; one stray click removed the app and
+      // its desktop shortcut (QA 9/2). Only the box and its words toggle now.
+      row.style.cssText="display:flex;gap:10px;align-items:center;margin:6px 0;font-size:18px;width:max-content;max-width:100%";
+      const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=a.enabled;
+      cb.onchange=async()=>{
+        cb.disabled=true;
+        try{
+          const r=await fetch("/apps",{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({id:a.id,enabled:cb.checked})});
+          let installing=false;
+          try{ installing=(await r.clone().json()).installing===true; }catch(e){}
+          if(installing){
+            toast("Installing "+a.title+"…");
+            prog.textContent=" installing…";
+            const iv=setInterval(async()=>{
+              const { apps }=await (await fetch("/apps",{cache:"no-store"})).json();
+              const cur=apps.find(x=>x.id===a.id);
+              if(cur && cur.installed){ clearInterval(iv); prog.textContent=""; toast(a.title+" installed ✓"); }
+            },3000);
+          } else toast((cb.checked?"Added ":"Removed ")+a.title);
+        }catch(e){ toast("Could not save",false); cb.checked=!cb.checked; }
+        cb.disabled=false;
+      };
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(a.title+" — "));
+      const sub=document.createElement("span"); sub.style.color="#6B7A80"; sub.textContent=a.sub;
+      row.appendChild(sub);
+      const prog=document.createElement("b"); prog.style.color="var(--teal-deep)";
+      if(a.installing) prog.textContent=" installing…";
+      else if(a.engine && a.installed) prog.textContent=" installed ✓";
+      row.appendChild(prog);
+      if(!a.enabled && a.installed && (a.engine || ["pencil","board","music","movies","reader"].includes(a.id))){
+        const del=document.createElement("button");
+        del.textContent="🗑 remove files"; del.style.fontSize="14px"; del.style.padding="6px 10px";
+        del.onclick=async(ev)=>{ ev.preventDefault();
+          const r=await fetch("/apps/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:a.id})});
+          if(r.ok){ toast(a.title+" files removed"); loadApps(); }
+          else toast(r.status===409?"Still used by another app — untick those first":"Could not remove",false);
+        };
+        row.appendChild(del);
+      }
+      box.appendChild(row);
+    }
+  }catch(e){ $("appsList").textContent="Could not reach the app server."; }
+}
+
+// ---- ElevenLabs key ----
+async function openSite(url){
+  try{ const r=await (await fetch("/open-url",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})})).json();
+       if(r.opened){ toast("Opened in a browser window — press Alt+Tab if you don't see it"); return; } }catch(e){}
+  window.open(url,"_blank");   // fallback: at least a new tab
+}
+$("elevenOpen").onclick=()=>openSite("https://elevenlabs.io/app/settings/api-keys");
+// Paste buttons: the FIRST tap makes Edge ask "wants to see text copied to the
+// clipboard" in the kiosk's top-left corner and the read waits on that answer
+// (VM QA 9/2 — the box looked dead until Allow was found). Say so while waiting.
+async function pasteInto(id){
+  let hint=setTimeout(()=>toast("If Edge asks at the top-left, choose Allow"),700);
+  try{ $(id).value = (await navigator.clipboard.readText()).trim(); clearTimeout(hint); $(id).focus(); }
+  catch(e){ clearTimeout(hint); toast("Tap the box and paste with the keyboard instead",false); }
+}
+$("ttsKeyPaste").onclick=()=>pasteInto("ttsKey");
+$("ttsKeySave").onclick=async()=>{
+  const k=$("ttsKey").value.trim();
+  if(!k){ toast("Paste a key first",false); return; }
+  $("ttsKeyStatus").innerHTML="Checking the key with ElevenLabs…";
+  const r=await fetch("/tts-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})});
+  if(!r.ok){ toast("Could not save the key",false); return; }
+  let v={}; try{ v=await r.json(); }catch(e){}
+  $("ttsKey").value="";
+  if(v.ok){ toast("Voice key saved and working"); }
+  else { toast(v.error||"That key did not work",false); }
+  loadVoices();
+};
+
+// ---- Moving pages: the fal key (T6.1). The card paints itself from what is
+// SAVED and what fal said about it — the key never comes back out of the hub.
+// The price of one clip comes back with it so the card and the review page's
+// "Animate this book" button quote the same money.
+function money(p){ return "$"+(Math.round(p*100)/100).toFixed(2); }
+function falPaint(st){
+  if(!st){ $("falKeyStatus").textContent="Could not reach the app server."; return; }
+  const each=" One moving page costs about "+money(st.perClipPrice)+", and a whole book is priced for you before anything is made.";
+  if(st.saved && st.keyOk===true)
+    $("falKeyStatus").innerHTML='<b>Key checked and working ✓</b>'+each;
+  else if(st.saved && st.keyOk===false)
+    $("falKeyStatus").innerHTML='<span class="bad">'+(st.error||"fal did not recognise that key")+'</span>';
+  else if(st.saved)
+    $("falKeyStatus").innerHTML='Key saved. Our Era Comms has not been able to check it with fal yet.';
+  else
+    $("falKeyStatus").innerHTML='No key yet &mdash; her books stay still pictures, which costs nothing.'+each;
+}
+async function loadFalKey(){
+  try{ falPaint(await (await fetch("/fal-key",{cache:"no-store"})).json()); }
+  catch(e){ falPaint(null); }
+}
+$("falOpen").onclick=()=>openSite("https://fal.ai/dashboard/keys");
+$("falKeyPaste").onclick=()=>pasteInto("falKey");
+$("falKeySave").onclick=async()=>{
+  const k=$("falKey").value.trim();
+  if(!k){ toast("Paste a key first",false); return; }
+  $("falKeyStatus").innerHTML="Checking the key with fal…";
+  const r=await fetch("/fal-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})});
+  if(!r.ok){ toast("Could not save the key",false); loadFalKey(); return; }
+  let v={}; try{ v=await r.json(); }catch(e){}
+  $("falKey").value="";
+  if(v.ok) toast("fal key saved and working"); else toast(v.error||"That key did not work",false);
+  falPaint(v.saved===undefined?null:v);
+};
+
+// ---- Her writing: family email for The Pencil (audit 9/2 — nothing wrote
+// these values before, so "Sent!" was never true on a public install) ----
+async function loadMail(){
+  try{
+    const m = await (await fetch("/mail-config")).json();
+    if(m.email && !$("mailTo").value) $("mailTo").value = m.email;
+    if(m.email && m.hasKey && m.ok) $("mailStatus").innerHTML='<b>Email working ✓</b> Her messages go to '+m.email+'.';
+    else if(m.email && m.hasKey) $("mailStatus").innerHTML='<span class="bad">Email is set up but the last test failed: '+(m.error||"unknown")+'</span>';
+    else $("mailStatus").innerHTML='No email set up yet — her messages are kept here in Settings.';
+    const box=$("writings"); box.innerHTML="";
+    if(!m.writings.length){ box.innerHTML='<div class="status">Nothing written yet.</div>'; return; }
+    for(const w of m.writings){
+      const d=document.createElement("div");
+      d.style.cssText="border-top:1px solid var(--line);padding:10px 0;font-size:20px";
+      const when=w.t?new Date(w.t).toLocaleString("en-US",{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"";
+      d.innerHTML='&ldquo;'+w.text.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))+'&rdquo; <span style="color:#7A8A90;font-size:15px">'+when+(w.mailed?" · emailed ✓":"")+'</span>';
+      box.appendChild(d);
+    }
+  }catch(e){ $("mailStatus").textContent="Could not reach the app server."; }
+}
+$("resendOpen").onclick=()=>openSite("https://resend.com/api-keys");
+$("mailKeyPaste").onclick=()=>pasteInto("mailKey");
+$("mailSave").onclick=async()=>{
+  const email=$("mailTo").value.trim(), k=$("mailKey").value.trim();
+  if(!email){ toast("Type your email address first",false); return; }
+  $("mailStatus").innerHTML="Sending a test email…";
+  const r=await fetch("/mail-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,apiKey:k})});
+  if(!r.ok){ toast(r.status===400?"Paste your Resend key too":"Could not save",false); $("mailStatus").innerHTML=""; return; }
+  let v={}; try{ v=await r.json(); }catch(e){}
+  $("mailKey").value="";
+  if(v.ok) toast("Test email sent — check your inbox"); else toast(v.error||"That did not work",false);
+  loadMail();
+};
+
+// ---- Films and shows: the two keys the "+ Add" sheet's search runs on
+// (T5.3). What comes back from the hub is what is SAVED and what that buys —
+// never a key. The card says the same three states movies-lookup.js chooses
+// between, in the words a parent reads: no key (paste still works), TMDB (found
+// by name, but the tile waits for a link), TMDB + Watchmode (a tile that
+// plays).
+$("tmdbOpen").onclick=()=>openSite("https://www.themoviedb.org/settings/api");
+$("wmOpen").onclick=()=>openSite("https://api.watchmode.com/requestApiKey/");
+$("tmdbKeyPaste").onclick=()=>pasteInto("tmdbKey");
+$("wmKeyPaste").onclick=()=>pasteInto("wmKey");
+function moviesPaint(st){
+  if(!st){ $("moviesKeyStatus").textContent="Could not reach the app server."; return; }
+  if(st.region && !$("moviesRegion").value) $("moviesRegion").value=st.region;
+  if(st.provider==="watchmode")
+    $("moviesKeyStatus").innerHTML='<b>Both keys saved ✓</b> Type a name in the &ldquo;+ Add&rdquo; sheet and pick from the pictures &mdash; each one becomes a tile that plays.';
+  else if(st.provider==="tmdb")
+    $("moviesKeyStatus").innerHTML='<b>TMDB key saved ✓</b> You can find films by name and they come with their poster. Add the optional Watchmode key for links that open the film, or paste the link yourself.';
+  else
+    $("moviesKeyStatus").innerHTML='No key yet &mdash; pasting a film&rsquo;s link still puts it on her board.';
+}
+async function loadMoviesKeys(){
+  try{ moviesPaint(await (await fetch("/movies/keys",{cache:"no-store"})).json()); }
+  catch(e){ moviesPaint(null); }
+}
+$("moviesKeySave").onclick=async()=>{
+  const body={};
+  const t=$("tmdbKey").value.trim(), w=$("wmKey").value.trim(), r=$("moviesRegion").value.trim();
+  if(t) body.tmdb=t;
+  if(w) body.watchmode=w;
+  if(r) body.region=r;
+  if(!Object.keys(body).length){ toast("Paste a key first",false); return; }
+  const res=await fetch("/movies-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!res.ok){ toast(res.status===409?"Could not read the saved keys - try again in a minute":"Could not save the key",false); return; }
+  // the boxes are emptied whatever the answer says: a key left on screen on a
+  // family PC is the one thing this card must not do
+  $("tmdbKey").value=""; $("wmKey").value="";
+  let st=null; try{ st=await res.json(); }catch(e){}
+  toast("Saved");
+  moviesPaint(st);
+};
+
+// ---- AI helper key (clothing ingest today; more helpers later). Three
+// providers, bring-your-own key; account login is not a thing the providers
+// permit for third-party apps, so the card explains that instead of faking it.
+const AI_PROVIDERS={
+  anthropic:{name:"Claude", url:"https://console.anthropic.com/settings/keys", ph:"Claude API key (sk-ant-...)"},
+  openai:{name:"OpenAI", url:"https://platform.openai.com/api-keys", ph:"OpenAI API key (sk-...)"},
+  google:{name:"Google AI Studio", url:"https://aistudio.google.com/apikey", ph:"Google AI Studio key (AQ.... or AIza...)"},   // new AI Studio keys start AQ. (dad's 9/2); older ones AIza
+};
+let aiProvSel="google", aiProvTouched=false;   // free tier is the default (dad 9/1: everything must work on free services)
+function aiProvPaint(){
+  const p=AI_PROVIDERS[aiProvSel];
+  document.querySelectorAll("#aiProv button").forEach(b=>b.classList.toggle("sel",b.dataset.prov===aiProvSel));
+  $("aiOpen").textContent="🔑 Open my "+p.name+" keys page";
+  $("aiKey").placeholder=p.ph;
+  $("aiNote").style.display = aiProvSel==="google" ? "" : "none";
+}
+document.querySelectorAll("#aiProv button").forEach(b=>b.onclick=()=>{ aiProvSel=b.dataset.prov; aiProvTouched=true; aiProvPaint(); });
+$("aiOpen").onclick=()=>openSite(AI_PROVIDERS[aiProvSel].url);
+$("aiKeyPaste").onclick=()=>pasteInto("aiKey");
+// The door asks the provider before it answers (a free question — it lists
+// models), which can take the whole 15-second probe on a black-holed link. So
+// Save goes dead and the card says who is being asked, the way the Voice and
+// fal cards do — a Save that looks ignored gets pressed again, and two probes
+// then race each other over the same file (review 9/5). aiChecking keeps the
+// 5-second repaint below from wiping the pending line while the answer is out.
+let aiChecking=false;
+$("aiKeySave").onclick=async()=>{
+  const k=$("aiKey").value.trim();
+  if(!k){ toast("Paste a key first",false); return; }
+  if(aiChecking) return;
+  aiChecking=true; $("aiKeySave").disabled=true;
+  $("aiStatus").innerHTML="Checking the key with "+AI_PROVIDERS[aiProvSel].name+"…";
+  try{
+    const r=await fetch("/ai-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvSel,apiKey:k})});
+    // "saved" and "working" are two different sentences here too
+    if(r.ok){
+      let v={}; try{ v=await r.json(); }catch(e){}
+      $("aiKey").value=""; aiProvTouched=false;
+      if(v.ok) toast("Key checked and working ✓ — preparing your photos");
+      else toast(v.error||"Key saved, but it could not be checked",false);
+    }
+    else toast("Could not save the key",false);
+  }catch(e){ toast("Could not save the key",false); }
+  finally{ aiChecking=false; $("aiKeySave").disabled=false; aiPaint(); }
+};
+// Family text — a garment name, a book title — is escaped before it is ever
+// put in innerHTML. Declared ABOVE its first caller (picksPaint, through
+// aiPaint): it used to sit with the books card 80 lines below, out of its
+// temporal dead zone only because every path to it crossed an await (r1).
+const CT_ESC = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+async function aiPaint(){
+  if(aiChecking) return;   // the pending line stands until the provider answers
+  try{
+    const s=await (await fetch("/clothing/status",{cache:"no-store"})).json();
+    if(s.aiProvider && !aiProvTouched && s.aiProvider!==aiProvSel){ aiProvSel=s.aiProvider; aiProvPaint(); }
+    // Painted from the SAME answer, and before the branch chain below: the
+    // read-out belongs to every one of those states, including "no key yet".
+    // Its own try: this line arrived years after #aiStatus and must not be able
+    // to blank it — a payload shape picksPaint cannot walk would otherwise
+    // abort aiPaint before the chain, on every five-second repaint (review r1).
+    try{ picksPaint(s); }catch(e){}
+    try{ accPaint(s); }catch(e){}
+    // no library-wide count here either: the batch total shifts as Drive keeps
+    // materialising files (dad 9/1)
+    if(s.ingesting) $("aiStatus").innerHTML="<b>Preparing clothing photos…</b> "+s.ingesting.done+" done so far.";
+    else if(s.aiConfigured && s.aiKeyOk===false){
+      // refused when it was saved: a paste-again, not a "saved ✓" that lies (VM QA 9/5)
+      $("aiStatus").innerHTML='<span class="bad"><b>'+(s.aiKeyError||"That key was not recognised")+'.</b> Copy it again from the keys page and paste it here.</span>';
+    }
+    else if(s.aiConfigured){
+      const name=(AI_PROVIDERS[s.aiProvider]||AI_PROVIDERS.google).name;
+      let m="<b>"+name+(s.aiKeyOk?" key checked and working ✓":" key saved ✓")+"</b>"+(s.cataloged?" "+s.cataloged+" clothing item"+(s.cataloged===1?"":"s")+" catalogued; the board builds itself.":"");
+      // a free key names about 20 photos a day per model (Google); say where the rest are
+      if(s.waiting) m+=" <b>"+s.waiting+" photo"+(s.waiting===1?"":"s")+" waiting</b> — "+(s.heldToday?"today's free allowance is used up; they will be named tomorrow morning by themselves.":"the next try is within the hour.");
+      $("aiStatus").innerHTML=m;
+    }
+    else $("aiStatus").innerHTML='<span class="bad">No key yet — the Clothing Picker waits for one (its screen walks you through this too).</span>';
+  }catch(e){}
+}
+// ---- "Her picks": what the Clothing Picker has learned (spec §4, T5.2) ----
+// Two sentences, from /clothing/status' picks/memory/sharing. Garment names
+// are the only family text on this page besides a book title, so they go
+// through CT_ESC exactly as those do. A payload without the block (an older
+// hub answering a newer page during an update) simply leaves the line empty.
+//
+// The day key is turned into a date with the three NUMBERS — new Date(y,m-1,d),
+// never new Date("2026-09-02"), which is midnight UTC and so the day before in
+// California, and would name the wrong weekday for half the family's day.
+function picksDay(key){
+  const p=String(key||"").split("-").map(Number);
+  if(p.length!==3||p.some(isNaN)) return "";
+  const then=new Date(p[0],p[1]-1,p[2]), now=new Date();
+  const days=Math.round((new Date(now.getFullYear(),now.getMonth(),now.getDate())-then)/86400000);
+  // The hub buckets the day in the FAMILY's zone and this page in the browser's,
+  // so a lastDay can be today or even tomorrow here (a profile zone ahead of the
+  // tablet's). Say nothing about when rather than the wrong word — the empty
+  // form renders as "Her picks: 3 days recorded." (review r1).
+  if(days<=0) return "";
+  if(days===1) return "last one yesterday";
+  // A weekday name only says which day it was inside the last week; past that
+  // "last Thursday" would be a lie a parent could act on, so name the date.
+  if(days<7) return "last "+then.toLocaleDateString(undefined,{weekday:"long"});
+  return "last on "+then.toLocaleDateString(undefined,{day:"numeric",month:"long"});
+}
+function picksPaint(s){
+  const el=$("picksStatus"); if(!el) return;
+  if(!(s&&s.picks&&s.memory)){ el.innerHTML=""; return; }
+  let h;
+  if(!s.picks.days){
+    h="No picks recorded yet — every Yes on the board is remembered from tomorrow.";
+  } else {
+    const when=picksDay(s.picks.lastDay);
+    h="<b>Her picks:</b> "+s.picks.days+" day"+(s.picks.days===1?"":"s")+" recorded"+(when?", "+when:"")+".";
+    const top=(s.picks.top||[]).map(c=>
+      CT_ESC((c.names||[]).join(" + "))+" (×"+(Math.round((c.weight||0)*10)/10)+")");
+    if(top.length) h+=" Favourites: "+top.join(", ")+".";
+  }
+  // "Shared with" only when the family really has a mirrored folder: drive.js
+  // calls its default mode "local" whether or not one was ever picked, so the
+  // hub says "drive" only when there is a folder (W13). One device is not a
+  // family — say what is true rather than "shared with 1 device".
+  if(s.sharing&&s.sharing.mode==="drive"){
+    const n=s.sharing.devices||1;
+    h+="<br>"+(n>1?"Shared with: <b>"+n+" devices</b>."
+                 :"Shared through your Google Drive folder — no other device has written to it yet.");
+  }
+  el.innerHTML=h;
+}
+// ---- Accessories: what else is on her board, and what is off it -----------
+// One sentence from /clothing/status' `accessories` block (accessories spec
+// §5.2): "Accessories: 4 jackets, 1 shoes · 2 hidden items". The KINDS come
+// from the hub in the order she meets the tiles in, and the words are the
+// hub's own — this page keeps no list of accessory kinds, so it cannot drift
+// from the worker's. They are text from the family's own data all the same, so
+// they go through CT_ESC like a garment name does.
+// Nothing at all when there is nothing to say: a parent with no accessories
+// and nothing hidden is owed silence, not "Accessories: 0".
+function accPaint(s){
+  const el=$("accStatus"); if(!el) return;
+  const a=s&&s.accessories;
+  const kinds=(a&&Array.isArray(a.kinds)?a.kinds:[]).filter(k=>k&&Number(k.count)>0);
+  const hidden=Number(a&&a.hidden)||0;
+  if(!kinds.length&&!hidden){ el.innerHTML=""; return; }
+  const parts=[];
+  // "shoes" is already plural; "jacket" is not, and one of it is a jacket. The
+  // hub's kind ids are the one list, so the page pluralises rather than
+  // carrying a second set of words.
+  if(kinds.length) parts.push("<b>Accessories:</b> "+kinds.map(k=>{
+    const word=String(k.kind), n=Number(k.count);
+    return CT_ESC(k.count)+" "+CT_ESC(n===1||/s$/.test(word)?word:word+"s");
+  }).join(", "));
+  if(hidden) parts.push(hidden+" hidden item"+(hidden===1?"":"s")+" (not on her board)");
+  el.innerHTML=parts.join(" &middot; ")+".";
+}
+aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
+
+// ---- Your books: /content/status turned into sentences (T2.10). The card
+// never shows a state name, a step name or a date stamp — a parent needs to
+// know what is happening to THEIR book and what, if anything, they must do.
+// A book title is the only family text in here, so it is escaped like The
+// Pencil's writings are.
+// state -> what the book is doing, in the parent's words. `reviewing` owes the
+// narration step, so it reads as "about to record" rather than "under review":
+// there is no human review in the middle of a build (the review page is for
+// afterwards).
+// `inbox` is no longer "waiting for a clock": since "built here" (spec §12) a
+// folder only reaches this state once a grown-up has tapped Build on THIS
+// computer, so it is the first minute of the walk — ingest, taking the photos in
+// — and not a promise that something will happen on its own. A pile nobody has
+// tapped never gets here: it has no job at all, and ctRow says so in its own
+// sentence instead.
+const CT_DOING = {
+  inbox: "Getting the photos ready…",
+  transcribing: "Reading the words off the photos…",
+  reviewing: "Words read — about to record the narration.",
+  narrating: "Recording the narration…",
+  published: "Ready to read in Book Reader ✓",
+  animating: "Ready to read ✓ — adding animation.",
+  done: "Ready to read in Book Reader ✓",
+  failed: "Stopped part-way.",
+};
+// A stopped book in the parent's words. The raw string is a provider's own
+// error — "ai(google/gemini-3-flash-preview) 500 boom" — which belongs in
+// log.jsonl and nowhere near this card: it names nothing a parent can act on
+// and reads like a crash. Matched loosest-last, so the specific cases win.
+function ctSorry(msg){
+  const m=String(msg||"");
+  if(/permanent:|\b(401|403)\b|not accept|invalid[_ ]api|refused/i.test(m))
+    return "One of the keys in the cards above was not accepted. Check it, then press the button below.";
+  if(/\b429\b|quota|allowance|RESOURCE_EXHAUSTED/i.test(m))
+    return "Today’s free AI allowance ran out part-way. It carries on tomorrow morning by itself.";
+  if(/\b5\d\d\b|timeout|timed out|network|fetch failed|ENOTFOUND|ECONNREFUSED/i.test(m))
+    return "The AI service could not be reached for some pages. This is usually temporary.";
+  if(/no pages|no photos|text\.json|manifest/i.test(m))
+    return "Some of this book’s files could not be read. Check the folder still has its photos.";
+  return "This book stopped part-way through.";
+}
+// ---- Out of allowance (T6b.2, spec §4 "Design target"). The family never adds
+// a card to Google and buys ElevenLabs by the month, so a book that stops for
+// the day is the NORMAL path and not a fault. Three things are owed here, and
+// they are the three the design target names: WHOSE allowance ran out (the two
+// are mended in different places), WHEN it comes back — in the clock on the
+// wall in front of them, never the ISO moment the payload carries — and the two
+// honest choices: wait, and it carries on by itself, or add credit and press
+// Try again now.
+const CT_PROVIDER={ google:"Google AI Studio", elevenlabs:"ElevenLabs" };
+// (content.js's quiet period used to be kept here, in minutes, so two sentences
+// could say when a pile would start building on its own. Since "built here"
+// (spec §12) no pile starts on its own, so there is no number to keep: the two
+// sentences say who presses Build instead.)
+// The holds content-worker.js parks a book on that are neither a pause nor a
+// failure. Each one names what is missing and where the fix is; a hold with no
+// sentence here simply shows nothing, which is what "no-pages" deserves on a
+// folder a parent has just started filling.
+const CT_WAITING={
+  "no-ai-key":'This book is waiting for an <b>AI helper key</b> &mdash; add one in the card above and it starts by itself.',
+  "retry":'A page did not come back last time. Our Era Comms tries that page again on its next look; every page already read is kept.',
+  "needs-title":'Reading the cover to find out what this book is called&hellip;',
+  // The 9/7 dead end, said out loud. iPhones write HEIC, Our Era Comms opens HEIC
+  // with the file that ships alongside the Clothing Picker, and a hub that has
+  // Book Reader on its own does not have it. Nothing is lost while it waits.
+  "needs-photo-decoder":'These are <b>iPhone photos (HEIC)</b>. Our Era Comms opens those with the file that comes with the '
+    +'<b>Clothing Picker</b> app &mdash; tick it in <b>Apps</b> above and this book carries on by itself. '
+    +'(Or save the photos as <b>JPEG</b> and put them back in the folder.) Every photo is kept either way.',
+  "unreadable-photos":'None of these files can be made into pages. A page has to be a <b>JPEG</b> photo or an '
+    +'<b>iPhone photo (HEIC)</b> &mdash; a PDF, a screenshot in another format or a document cannot be one.',
+};
+// The two of those that wait on a PERSON rather than on a clock (content.js
+// SLOW_HOLDS). They get the "Try this book again" button under their sentence,
+// because the fix for both is something a parent does — and having done it,
+// nobody should have to wait for the hub's next slow look.
+const CT_SLOW=["needs-photo-decoder","unreadable-photos"];
+// What pressing "add credit" actually gets a family, which is not the same
+// thing for the two: Google's free day comes back either way and the paid tier
+// buys SPEED; ElevenLabs' month is a top-up and buys the narration itself.
+const CT_ADD={
+  google:"open Google AI Studio and put that key on the paid tier — that buys a whole book the same day",
+  elevenlabs:"top up your ElevenLabs plan — that buys the rest of the narration",
+};
+// A moment in the family's own clock. Never the stamp: "2026-09-05T17:04:00Z"
+// is a machine talking to itself, and a parent reading it cannot tell whether
+// that is tonight or next week.
+function ctWhen(iso){
+  const t=Date.parse(iso); if(!Number.isFinite(t)) return null;
+  const d=new Date(t), now=new Date();
+  const sameDay=(a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();
+  const tom=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1);
+  const clock=d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+  if(sameDay(d,now)) return "today at "+clock;
+  if(sameDay(d,tom)) return "tomorrow at "+clock;
+  return d.toLocaleDateString([],{weekday:"long",day:"numeric",month:"long"})+" at "+clock;
+}
+// The pause, said in full. Returns "" when there is nothing to say, so a book
+// that is simply working gains no sentence at all.
+function ctPaused(j){
+  const p=j.paused; if(!p) return "";
+  const who=CT_PROVIDER[p.provider]||"the AI service";
+  const when=ctWhen(p.until);
+  return '<div class="status" data-paused="'+CT_ESC(p.provider)+'">'
+    +'This book is waiting for more <b>'+CT_ESC(who)+'</b> allowance'
+    +(when?' — it carries on <b>by itself</b> '+CT_ESC(when)+'.':' — it carries on <b>by itself</b> when the allowance comes back.')
+    +' Nothing is broken and nothing already made is lost.'
+    +' You can leave it, or '+CT_ESC(CT_ADD[p.provider]||"add more allowance")+', then press <b>Try again now</b>.'
+    +'</div>';
+}
+
+// ---- THE TAP THAT BUILDS (spec §12 "built here", §14) --------------------
+// "The 'build' for local button is simply to make sure that when users upload a
+// book multiple devices don't build the same book" (dad, 9/9). Nothing in the
+// hub starts a build by itself any more, so this button is the whole of how a
+// pile of photos becomes a book — and it builds it HERE, on the computer whose
+// Settings page was pressed.
+//
+// Settings' own two-tap arm (the shutdown button's idiom, :596): the first tap
+// arms, the second spends, and five seconds untouched cancels it. A grown-up's
+// page has no dwell and no confirm dialog, but this is the one press on it that
+// costs a family money, so it is not a single stray tap either.
+//
+// THE ARM LIVES OUT HERE, not on the button, because this card rebuilds every
+// row every five seconds: an arm kept in the DOM would be thrown away half a
+// second before the second tap. The paint reads it back, which is the reader's
+// rule for its ask (`S.asking`, spec §13) in this page's own shape.
+const CT_LOOSE="\u0000loose";     // the pile in books/ has no slug yet: JS only, never the DOM
+const CT_BUILD_LABEL="🔨 Build this book";
+const CT_BUILD_ARMED="🔨 Tap again to build";
+let CT_ARMED=null, CT_ARM_TIMER=null;
+// The books THIS hub has in hand right now — the one it is building and the ones
+// queued behind it (/content/status `job` + `queued`, which content.js's own
+// busyWith() answers in the same two sentences). Out here for the same reason
+// the arm is: ctRow() is handed one job row and this is a fact about the whole
+// payload. See ctCanBuild().
+let CT_HERE=[];
+// `attr` is what tells the two apart on the way back: a row's button carries the
+// book's slug, the loose pile's carries nothing at all — it has no slug until
+// the hub gathers it, and the NUL marker above must never reach an attribute
+// (an HTML parser turns it into U+FFFD).
+// DOES THIS ROW GET THE PRESS? (spec §14, B1.8 review.)
+//
+// A PILE always, refusable or not: a claim line that arrived ahead of its
+// job.json makes the door say no, and the sentence that comes back is truer than
+// any this card could guess from the payload.
+//
+// AND A JOB THE DOOR WOULD SAY YES TO. This used to be piles alone, and the
+// shelf has offered it on a cold claim since §13 — which left the parity exactly
+// backwards. A book stops half-built when the other laptop is closed, and the
+// grown-up who restarts it is not standing at a six-year-old's shelf; they are
+// on this page, which had nothing to press. `buildable` is the door's own
+// answer ("no manifest, no other computer's warm claim"), and the door stays the
+// authority: a press that goes stale between this paint and the tap comes back
+// as the 409 sentence ctBuild() already renders.
+//
+// MINUS THE BOOK THIS COMPUTER IS ALREADY MAKING. The door says yes to a job
+// that is ours precisely so run() can join the build in flight, so `buildable`
+// cannot tell "nobody is doing this" from "we are doing it" — and a row reading
+// "Reading the words off the photos… 3 of 12 pages read" beside a button
+// offering to start it is the same both-at-once oddity the shelf just lost.
+// The `done`/`published` guard is belt and braces: alreadyBuilt() already takes
+// `buildable` away from a finished book, and this card must never be the one
+// place that offers to make the week's book a second time.
+function ctCanBuild(j){
+  if(j.waiting==="pile") return true;
+  return j.buildable===true && j.state!=="done" && j.state!=="published"
+    && !CT_HERE.includes(j.slug);
+}
+function ctBuildBtn(key, attr){
+  const on=CT_ARMED===key;
+  return '<button class="ctbuild'+(on?' armed':'')+'" '+attr+'>'
+    +(on?CT_BUILD_ARMED:CT_BUILD_LABEL)+'</button>';
+}
+// The arm lives outside the paint (see above), so dropping it is not enough on
+// its own: the button that HAD it goes on saying "Tap again to build" until the
+// next five-second repaint comes round. With two piles on the card that is two
+// armed buttons and no way to tell which tap spends — so the label is put back
+// here, in the DOM, the moment the arm leaves. Every armed button, because the
+// arm is one at a time and this is the one place it ends.
+function ctDisarm(paint){
+  if(CT_ARM_TIMER){ clearTimeout(CT_ARM_TIMER); CT_ARM_TIMER=null; }
+  CT_ARMED=null;
+  for(const b of document.querySelectorAll("button.ctbuild.armed")){
+    b.classList.remove("armed"); b.textContent=CT_BUILD_LABEL;
+  }
+  if(paint) contentPaint();
+}
+function ctWireBuild(el, key, body, title){
+  const b=el.querySelector(key===CT_LOOSE?"button[data-build-loose]":"button[data-build]");
+  if(!b) return;
+  b.onclick=()=>{
+    if(CT_ARMED!==key){                          // first tap: arm this one, disarm any other
+      ctDisarm(false);
+      CT_ARMED=key; b.classList.add("armed"); b.textContent=CT_BUILD_ARMED;
+      CT_ARM_TIMER=setTimeout(()=>ctDisarm(true), 5000);
+      return;
+    }
+    ctDisarm(false);                             // second tap: fire, and let the answer repaint
+    ctBuild(body, title);
+  };
+}
+async function ctBuild(body, title){
+  let out={};
+  try{ out=await (await fetch("/content/build",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body)})).json(); }catch(e){ out={error:"That did not go through — try again."}; }
+  // The hub's own sentence, never a status code: "another computer in the family
+  // is making this book", "this book is already made", "those photos are still
+  // arriving". content.js wrote all three for a parent to read, and this card
+  // has nothing truer to say than the door that refused.
+  if(out.error) toast(out.error,false);
+  else toast("Building "+title+" — this card shows the progress");
+  contentPaint();
+}
+
+function ctRow(j){
+  const d=document.createElement("div");
+  d.dataset.slug=j.slug;
+  d.style.cssText="border-top:1px solid var(--line);padding:10px 0";
+  const p=j.progress||{pages:0,transcribed:0,narrated:0};
+  let h='<div style="font-size:20px;font-weight:650">'+CT_ESC(j.title||j.slug)+'</div>';
+  // WHAT THIS FOLDER IS, in three sentences and this order (spec §13, §14).
+  // A PILE is photos nobody has claimed: it says how many there are and who has
+  // to press the button, because until somebody does, nothing whatever happens
+  // to it. "Waiting to start — building begins about N minutes after the last
+  // photo arrives" used to sit here and was, from the day the scan stopped
+  // claiming, simply untrue.
+  // ELSEWHERE is another computer's warm claim — the one time this card says why
+  // there is no button. No device name and no folder: another computer is the
+  // whole of what the family is owed, and the payload carries nothing else.
+  // Everything else is a book on its walk, in the words it has always used.
+  const pile=j.waiting==="pile", canBuild=ctCanBuild(j);
+  h+='<div class="status" style="margin-top:2px">'+(pile
+    ? '<b>'+p.pages+' photo'+(p.pages===1?'':'s')+'</b> — waiting for a grown-up to tap <b>Build</b>.'
+    : j.elsewhere ? "Building on another computer."
+    : (CT_DOING[j.state]||"Working…"));
+  // Two counts, because they are the two things that cost money and time. The
+  // narration count only appears once there is one — "0 of 12 narrated" under a
+  // book that has not reached that step reads like a failure. And a pile that
+  // nobody has started gets neither: "0 of 17 pages read" under photos nothing
+  // has touched yet reads like a book that failed, when it is a book that has
+  // not been asked for.
+  // AND A BOOK THAT IS MADE GETS NEITHER (review 9/10). The weekly-book maker's
+  // package carries its words in manifest.json and brings no .build/text.json
+  // with it, so `transcribed` is zero for it however finished it is — and this
+  // row read "Ready to read in Book Reader ✓ 0 of 16 pages read", which is a
+  // book that failed, described. The counter belongs to a walk that is still
+  // running; when the book is on the shelf there is nothing left to count.
+  const ctDone=j.published===true||j.state==="done"||j.state==="published";
+  if(p.pages&&!pile&&!ctDone) h+=' <span style="color:#5A6A70">'+p.transcribed+' of '+p.pages+' pages read'
+    +(p.narrated?', '+p.narrated+' of '+p.pages+' narrated':'')+'.</span>';
+  h+='</div>';
+  // Out of allowance, with a name on it and both choices (T6b.2). A hub that
+  // has not been updated yet — or a job.json written before the pause carried a
+  // provider — sends `pausedUntil` and no `paused`; that is still worth the one
+  // sentence that was always true of it.
+  // The fallback says ONLY what an unnamed pause knows (review 9/5): naming
+  // Google, or tomorrow morning, under a book that is waiting on ElevenLabs'
+  // month sends the family to the wrong page for a month. And a moment that has
+  // already passed is not a wait at all — the book is queued for the next look,
+  // and a card still telling them to wait is a card nobody believes.
+  if(j.paused) h+=ctPaused(j);
+  else if(j.pausedUntil && Date.parse(j.pausedUntil)>Date.now())
+    h+='<div class="status">This book is waiting for more AI allowance — it carries on by itself.</div>';
+  // "Look for new books now" cannot restart THIS book: it asks Drive to sync,
+  // and the scan behind it leaves a claim alone until its heartbeat is half an
+  // hour cold. So a stopped book gets its own button, which asks the hub to run
+  // this one book (POST /content/run) and starts it there and then.
+  // WAITING IS NOT WORKING, and it is not failing either (dad 9/7). A book with
+  // no AI key sat on "Reading the words off the photos…" for ever, and a family
+  // reading that had nothing to press and nothing to fix. content.js now says
+  // which hold a book is parked on, and these are the five it can be.
+  //
+  // DECIDED BY THE HOLD, NOT BY THE ABSENCE OF AN ERROR (review 9/8). A book
+  // holding on "retry" ALWAYS carries an error — content-worker.js notes the
+  // page it lost and only then holds, and content.js publishes that last message
+  // as `error` for exactly this state — so "no error" could never be true of it
+  // and the one sentence written for it could never be shown. The red line is
+  // for a book that really stopped, which is the one content.js calls `failed`;
+  // a book that is holding is going to try again by itself, and saying so is
+  // the whole difference between a card a parent believes and one they do not.
+  // A book that FELL OVER keeps whatever hold it was under (content-store.fail
+  // does not clear it), so the failure has the last word and the two sentences
+  // never contradict each other on one card.
+  //
+  // AND NEVER UNDER "BUILDING ON ANOTHER COMPUTER" (review 9/10). Every sentence
+  // in CT_WAITING ends with the same offer — "add one in the card above and it
+  // starts by itself" — and every one of them is true of a book THIS hub is
+  // holding, because this hub's own scan picks its own job back up. Of another
+  // computer's book it is a promise nothing can keep: content.js never resumes a
+  // foreign job (spec §14), so a family who added the key here would sit waiting
+  // for a book that was never coming back on its own. An `elsewhere` row says
+  // where the work is and mirrors how far it has got, and stops there.
+  if(j.state!=="failed" && !j.paused && !j.elsewhere && CT_WAITING[j.held]) h+='<div class="status">'+CT_WAITING[j.held]+'</div>';
+  if(j.error&&j.state==="failed") h+='<div class="status bad">'+CT_ESC(ctSorry(j.error))+'</div>';
+  // A book NEW ERA named itself, off a pile of loose photos and its own cover.
+  // Said plainly, because the guess can be wrong in two different ways and the
+  // fix is different for each: a wrong NAME is the button below; a pile that was
+  // really two books is a folder the parent makes in Drive.
+  if(j.autoTitle) h+='<div class="status">Our Era Comms gathered these loose photos into one book and gave it this name. '
+    +'Press <b>Rename</b> if that is wrong &mdash; or if these were really two books, move one book&rsquo;s photos '
+    +'into their own folder inside <b>books</b>.</div>';
+  // A flag count on its own tells a parent nothing to do with it, and the two
+  // kinds of mark are not the same sentence: j.flags counts WORDS the readers
+  // were unsure of (the review page highlights those inside the page's own
+  // words), j.pageFlags counts whole PAGES nobody could check, which name no
+  // word at all. Counting the second as the first promised a parent thirty
+  // doubtful words and showed them a book with nothing highlighted in it (E2).
+  const ctMarks=[];
+  if(j.flags) ctMarks.push(j.flags+' word'+(j.flags===1?"":"s")+' the AI was unsure of');
+  if(j.pageFlags) ctMarks.push(j.pageFlags+' page'+(j.pageFlags===1?"":"s")+' nobody could check');
+  if(ctMarks.length) h+='<div class="status">'+ctMarks.join(", ")
+    +' &mdash; pages to glance at, and the review page fixes them.</div>';
+  // NOT a mark, and so not in that sentence (L6, the 16-page live run of 9/4).
+  // A page a grown-up retyped has no model named against it, which read from out
+  // here as a page nobody ever checked — the opposite of the truth. There is
+  // nothing to fix on it; the one thing worth saying is that the re-read leaves
+  // it alone, which is the tick a parent meets on the review page.
+  if(j.edited) h+='<div class="status">'+j.edited+' page'+(j.edited===1?' has':'s have')
+    +' words you typed yourself &mdash; &ldquo;Read the photos again&rdquo; keeps them.</div>';
+  // The review page is where a parent fixes words, reorders pages and picks the
+  // cover; it is worth offering for every book, not only flagged ones.
+  h+='<div class="row" style="margin-top:8px">'
+   // The press that starts this book, and the only one in the card that spends
+   // (spec §14): a pile of photos, or a book the door would take on — see
+   // ctCanBuild() for which rows those are and which are left button-free.
+   +(canBuild?ctBuildBtn(j.slug,'data-build="'+CT_ESC(j.slug)+'"'):'')
+   +'<a href="/book-review/?slug='+encodeURIComponent(j.slug)+'"'
+   +' style="font-size:17px;color:var(--teal-deep);text-decoration:none;font-weight:650;'
+   +'border:2px solid var(--teal);border-radius:12px;padding:10px 16px;background:#fff">📖 Review this book</a>'
+   // Choice two, made pressable: the page where allowance is added (the address
+   // travels with the status, so this card never guesses it), and the press
+   // that lifts the pause. A stopped book gets the same button under its own
+   // sentence — it has always been the one thing that restarts THIS book.
+   +(j.paused&&j.paused.addUrl?'<button data-add="'+CT_ESC(j.paused.addUrl)+'">💳 Open my '
+      +CT_ESC(CT_PROVIDER[j.paused.provider]||"AI")+' page</button>':'')
+   // …and a book parked on one of the two holds only a PERSON can lift gets it
+   // too (review 9/8). Those wait on a pack being ticked or the photos being
+   // saved again as JPEG, so the hub looks at them twice a day rather than every
+   // half hour (content.js SLOW_HOLDS) — this is the press that says "I have
+   // done it, look now" instead of waiting until the morning.
+   +(j.error||j.paused||CT_SLOW.includes(j.held)?'<button data-run="'+CT_ESC(j.slug)+'">🔄 '
+      +(j.paused?'Try again now':'Try this book again')+'</button>':'')
+   // "…and let me say otherwise" (dad 9/7). A plain button and a plain box —
+   // no dwell, no gaze, no confirm dialog: this page is a grown-up's, and the
+   // worst a wrong press can do is give a folder a different name.
+   +'<button data-rename="'+CT_ESC(j.slug)+'">✏️ Rename</button>'
+   +'</div>'
+   +'<div class="row ct-rename" style="margin-top:8px;display:none">'
+   +'<input class="ct-rename-box" type="text" maxlength="60" aria-label="What this book is called"'
+   +' value="'+CT_ESC(j.title||"")+'" style="flex:1;min-width:220px">'
+   +'<button class="ct-rename-save">Save name</button></div>';
+  d.innerHTML=h;
+  // ---- build (spec §14) -------------------------------------------------
+  // A folder has a slug already, so its tap sends one; only the pile in books/
+  // itself goes as `loose:true`, and that button lives on the line above the
+  // list rather than in a row.
+  if(canBuild) ctWireBuild(d, j.slug, {kind:"books",slug:j.slug}, j.title||j.slug);
+  // ---- rename ----------------------------------------------------------
+  const ren=d.querySelector("button[data-rename]"), box=d.querySelector(".ct-rename");
+  // display, not [hidden]: the page's own .row sets display:flex, which wins.
+  const shown=()=>box.style.display!=="none";
+  if(ren) ren.onclick=()=>{ box.style.display=shown()?"none":"flex"; if(shown()) box.querySelector("input").focus(); };
+  const saveName=async()=>{
+    const input=box.querySelector("input"), title=(input.value||"").trim();
+    if(!title) { toast("Type what the book is called",false); return; }
+    const btn=box.querySelector(".ct-rename-save"); btn.disabled=true;
+    let out={};
+    try{ out=await (await fetch("/content/rename",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({kind:"books",slug:j.slug,title})})).json(); }catch(e){ out={error:"That did not go through — try again."}; }
+    btn.disabled=false;
+    // The hub's own sentence, never a status code: a book being built right now
+    // refuses with "try again in a minute", and that is the whole answer.
+    if(out.error){ toast(out.error,false); return; }
+    box.style.display="none";
+    toast(out.renamed?("Renamed to "+out.title):"That is already its name");
+    contentPaint();
+  };
+  if(box){
+    box.querySelector(".ct-rename-save").onclick=saveName;
+    box.querySelector("input").addEventListener("keydown",e=>{ if(e.key==="Enter") saveName(); });
+  }
+  const add=d.querySelector("button[data-add]");
+  if(add) add.onclick=()=>openSite(add.dataset.add);
+  const again=d.querySelector("button[data-run]");
+  if(again) again.onclick=async()=>{
+    again.disabled=true;
+    // retry:true is what makes this press different from every other run: it is
+    // the one thing in the hub that lifts a PERMANENT failure (a key the
+    // provider refused) and puts the book back on the walk. content.js takes it
+    // from nobody else, so a save on the review page cannot do it by accident.
+    let out={};
+    try{ out=await (await fetch("/content/run",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({kind:"books",slug:j.slug,step:null,retry:true})})).json(); }
+    catch(e){ out={error:"That did not go through — try again."}; }
+    // …and since "built here" (spec §14) this door can refuse: a book another
+    // computer holds is not restarted from here, and it says so in the hub's own
+    // words. Swallowing that answer left a parent pressing a button that plainly
+    // did nothing.
+    toast(out.error?out.error:"Starting "+(j.title||j.slug)+" again", !out.error);
+    contentPaint();
+  };
+  return d;
+}
+// Roughly how much of a picture book one page's narration eats. A page of the
+// books this family photographs is a line or two, not a paragraph — and the
+// number is only ever used for the word "about", so a card that is out by a
+// dozen pages is still telling a parent the true thing: whether this month has
+// a book left in it.
+const CT_CHARS_PER_PAGE=120;
+async function contentPaint(){
+  let s; try{ s=await (await fetch("/content/status",{cache:"no-store"})).json(); }catch(e){ return; }
+  // Read before any row is painted: ctCanBuild() asks it of every one of them.
+  CT_HERE=[].concat(s.building&&s.job&&s.job.slug?[s.job.slug]:[],
+                    Array.isArray(s.queued)?s.queued:[]);
+  // WHAT IS LEFT OF THIS MONTH'S VOICE (T6b.2), painted on the Voice card
+  // above. Two units, because a parent thinks in books and ElevenLabs bills in
+  // characters. `narration` is null whenever the hub cannot say — no voice key,
+  // an answer that has not landed yet, a provider that would not answer — and
+  // then the line is simply not there: none is honest, nought is a lie.
+  const va=$("voiceAllowance"), n=s.narration;
+  if(n&&typeof n.charactersLeft==="number"){
+    const pages=Math.max(0,Math.round(n.charactersLeft/CT_CHARS_PER_PAGE));
+    const when=n.resetsAt?ctWhen(n.resetsAt):null;
+    va.innerHTML="≈ <b>"+n.charactersLeft.toLocaleString()+" characters</b> left this month — "
+      +"about <b>"+pages+" page"+(pages===1?"":"s")+"</b> of a picture book"
+      +(when?" (resets "+CT_ESC(when)+")":"")+".";
+    va.style.display="";
+  } else { va.textContent=""; va.style.display="none"; }
+  const list=$("contentBooks"), st=$("contentStatus");
+  // Gap 1: the hub's Drive scope is read-only, so a book built without the
+  // Drive app on this computer could never reach the family's Drive. Say which
+  // computer does the work instead of printing the code word.
+  if(!s.local){
+    $("contentActions").style.display="none";
+    st.innerHTML='<span class="bad">Books are built on the computer that has the <b>Google Drive</b> app and the folder set up in the card above.</span> Set that up, and <b>Build</b> on that computer makes the book.';
+    list.innerHTML=""; return;
+  }
+  $("contentActions").style.display="";
+  const jobs=s.jobs||[], loose=Number(s.loose)||0;
+  // PHOTOS ARE NOT NOTHING (dad 9/7). A pile dropped straight into books/ has no
+  // folder and no job, and the card used to say "No books yet" over the top of
+  // it. It has no slug either, which is why its tap is `loose:true` (spec §14)
+  // and why the button sits on this line rather than in a row.
+  //
+  // The ten minutes are gone with the clock that used to run them (spec §12):
+  // `quietMs` still travels on the status for older readers, but no scan gathers
+  // this pile any more, so a card promising a start "about 10 minutes after the
+  // last one lands" would be promising something nothing does.
+  const ctLoose=loose?'<b>'+loose+' photo'+(loose===1?'':'s')+'</b> just arrived in <b>books</b> — Our Era Comms takes them '
+    +'to be <b>one book</b>, waiting for a grown-up to tap <b>Build</b>. '
+    +ctBuildBtn(CT_LOOSE,'data-build-loose'):'';
+  if(!jobs.length){
+    st.innerHTML=ctLoose||'No books yet — drop the page photos of one book into <b>books</b> in your Google Drive, then press <b>Build</b>. Our Era Comms makes the folder and names it for you.';
+    list.innerHTML=""; ctWireBuild(st,CT_LOOSE,{kind:"books",loose:true},"the new book"); return;
+  }
+  st.innerHTML='<b>'+jobs.length+' book'+(jobs.length===1?'':'s')+'</b> in your Drive folder.'+(ctLoose?' '+ctLoose:'');
+  ctWireBuild(st,CT_LOOSE,{kind:"books",loose:true},"the new book");
+  list.innerHTML="";
+  for(const j of jobs) list.appendChild(ctRow(j));
+}
+// A sync is what finds new books (server.js fans drive.onSynced out to the
+// book scan), so this button is the same one the Drive card offers — said in
+// the words of this card.
+$("ctLook").onclick=async()=>{ toast("Looking for new books — this card shows the progress"); try{ await fetch("/integrations/drive/sync",{method:"POST"}); }catch(e){} contentPaint(); };
+contentPaint(); setInterval(contentPaint, 5000);
+
+// ---- Google Drive content: a LIVE CHECKLIST coach (dad 8/29, the Mac
+// pattern): every step checks itself off as the person completes it, and
+// every action deep-links to the exact right place.
+let dlCur = "";
+function dlRow(done, active, title, hint, btnLabel, fn){
+  const row=document.createElement("div");
+  row.style.cssText="display:flex;gap:14px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)"+(active?";background:var(--teal-wash);border-radius:10px;padding:10px 12px":"");
+  const chk=document.createElement("div");
+  chk.textContent=done?"✅":"⬜";
+  chk.style.cssText="font-size:24px;line-height:1.2";
+  const mid=document.createElement("div"); mid.style.flex="1";
+  const t=document.createElement("div"); t.style.cssText="font-weight:650;font-size:18px"+(done?";color:#6B7A80;text-decoration:line-through":""); t.textContent=title;
+  const h=document.createElement("div"); h.className="status"; h.textContent=done?"":hint;
+  mid.appendChild(t); mid.appendChild(h);
+  row.appendChild(chk); row.appendChild(mid);
+  if(btnLabel && !done){
+    const b=document.createElement("button"); b.textContent=btnLabel; b.onclick=fn;
+    row.appendChild(b);
+  }
+  return row;
+}
+async function drivePaint(){
+  try{
+    const s=await (await fetch("/integrations/drive/status",{cache:"no-store"})).json();
+    const hasContent = s.content && (s.content.books||s.content.music||s.content.movies||s.content.content||s.content.clothing);
+    const synced = !!(s.lastSync && !s.lastSync.error);
+    const steps=[
+      { done:s.appInstalled, title:"1. Get the Google Drive app",
+        hint:"Google's own app - it keeps your Drive on this computer.",
+        btn:"⬇ Open download page", fn:()=>openSite("https://www.google.com/drive/download/") },
+      // The school device 10/8: installed and signed in, but Drive had not come
+      // up after a reboot, so this box sat unticked with the sign-in hint over
+      // it. The hub starts Drive itself now (drive.js maybeLaunchDrive) and the
+      // hint says that instead, until the mount appears and the box ticks.
+      { done:s.signedIn, title:"2. Sign in to Google Drive",
+        hint:(s.driveLaunched && !s.signedIn)
+          ? "Drive was not running; started it at "+new Date(s.driveLaunched).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})+" — waiting for it to mount."
+          : "Open the Drive app it installed and sign in with your Google account. This box ticks by itself." },
+      // "Create your content folder" over a Drive that already HAS one is what
+      // stopped dad on the tablet 9/15: it reads as "make a duplicate", so he
+      // did not tap, and on that device nothing ever did. The hub finds an
+      // existing folder by itself now (drive.js adoptLocal), which is why this
+      // step ticks with nobody's hand on it — the title has to be a state, not
+      // an instruction, and the hint has to say so.
+      { done:!!s.folderPath, title:"3. Your content folder",
+        hint:"Found by itself when your content folder already exists in your Drive (another computer made it). Otherwise one tap makes it, with books, music, movies, content, and clothing folders inside — or pick a folder below.",
+        btn:"✨ Create it for me", fn:async()=>{
+          const r=await (await fetch("/integrations/drive/create-folder",{method:"POST"})).json();
+          // The same tap, two true sentences: the hub says which one it did
+          // (drive.js `existed`), because "created" over a folder that was
+          // already full is the sentence that made a duplicate sound likely.
+          if(r.ok){ toast(r.existed?"Folder connected":"Folder created in your Drive"); fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); }
+          else toast("Could not create: "+(r.error||""),false);
+        } },
+      { done:hasContent, title:"4. Put content in it",
+        hint:"Inside your folder make books, music, or content folders and drop things in.",
+        btn:"📂 Open the folder", fn:async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"folder"})}); } },
+      { done:synced, title:"5. Synced to this computer",
+        hint:"Happens by itself every 10 minutes." },
+    ];
+    let activeIdx = steps.findIndex(x=>!x.done); if(activeIdx<0) activeIdx=steps.length-1;
+    const box=$("dlChecklist"); box.innerHTML="";
+    steps.forEach((st,i)=>box.appendChild(dlRow(st.done, i===activeIdx, st.title, st.hint, st.btn, st.fn)));
+    $("dlAlways").style.display = s.folderPath ? "flex" : "none";
+    const picking = s.signedIn && !s.folderPath;
+    $("dlPicker").style.display = picking ? "block":"none";
+    if(picking){ if(!dlCur) dlCur = s.localRoots[0] || ""; await dlBrowse(dlCur); }
+    if(hasContent && s.lastSync && !s.lastSync.error && s.lastSync.files===0 && !s.syncing && !window.__autoSynced){
+      window.__autoSynced = true;
+      toast("New content found — syncing");
+      fetch("/integrations/drive/sync",{method:"POST"}).then(drivePaint);
+    }
+    const allDone = steps.every(x=>x.done);
+    let msg="";
+    if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open your content folder, and upload straight into those folders). Everything lands here within 10 minutes, or press Sync now.<br>';
+    if(s.folderPath) msg+="<b>Watching:</b> "+s.folderPath;
+    if(s.syncing) msg+=" · <b>Syncing…</b>";
+    else if(s.lastSync) msg += s.lastSync.error ? ' · <span class="bad">Last sync failed: '+s.lastSync.error+'</span>'
+      : " · Last sync "+new Date(s.lastSync.when).toLocaleString()+": "+s.lastSync.files+" new, "+s.lastSync.skipped+" unchanged"+(s.lastSync.removed?", "+s.lastSync.removed+" removed":"");
+    $("driveStatus").innerHTML=msg;
+  }catch(e){}
+}
+async function dlBrowse(p){
+  const r=await (await fetch("/integrations/drive/browse?path="+encodeURIComponent(p))).json();
+  if(r.error) return;
+  dlCur=r.path;
+  $("dlPath").innerHTML="<b>"+r.path+"</b>";
+  const box=$("dlDirs"); box.innerHTML="";
+  for(const d of r.dirs){
+    const b=document.createElement("button"); b.textContent="📁 "+d;
+    b.onclick=()=>dlBrowse(dlCur+"\\"+d);
+    box.appendChild(b);
+  }
+  if(!r.dirs.length){ const e=document.createElement("span"); e.className="status"; e.textContent="No folders inside - you can still use this one."; box.appendChild(e); }
+}
+$("dlUp").onclick=()=>{ const i=dlCur.lastIndexOf("\\"); if(i>2) dlBrowse(dlCur.slice(0,i)); };
+$("dlUse").onclick=async()=>{
+  const r=await fetch("/integrations/drive/localfolder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folderPath:dlCur})});
+  if(r.ok){ toast("Folder set — first sync starting"); fetch("/integrations/drive/sync",{method:"POST"}).then(drivePaint); drivePaint(); }
+  else toast("That folder is outside Google Drive",false);
+};
+$("dlSyncNow").onclick=async()=>{ toast("Sync started"); await fetch("/integrations/drive/sync",{method:"POST"}); drivePaint(); };
+// dad 9/3: added clothing photos after the first run and wanted to re-run
+// today's outfits with them right away (the hub does it by itself within
+// ~10 minutes of a sync; the Clothing Picker's footer shows the progress)
+$("dlOutfitsNow").onclick=async()=>{ toast("Looking for new clothing photos — the Clothing Picker shows the progress"); await fetch("/clothing/regenerate",{method:"POST"}); };
+
+// ---- The hours the outfits are dressed for (dad 9/5) ----
+// One window, every day. Saving re-sorts TODAY's board on the hub — no photos
+// are read and no AI request is spent, so this is safe to tap as often as a
+// parent likes.
+//
+// "All day" used to POST null, which DELETED the key — and since 9/23 an
+// absent window means 10 AM-2 PM on the board, so the page said "All day"
+// while the outfits were sorted for the middle of the day and the toast said
+// "the whole day" on top of it. The whole day is now stored as the window it
+// is, and the 10-2 default belongs to a family that has never touched the row,
+// which is what a default should mean.
+const WX_ALL_DAY={from:0,to:23};
+const WX_DEFAULT={from:10,to:14};          // what clothing-worker.js reads with nothing stored
+const wxIsAllDay=(w)=>!!w && w.from===0 && w.to===23;
+function wxLabel(h){ return (h%12===0?12:h%12)+(h<12?" AM":" PM"); }
+function wxFill(){
+  const f=$("wxFrom"), t=$("wxTo");
+  const all=document.createElement("option"); all.value=""; all.textContent="All day"; f.appendChild(all);
+  // a window always runs forwards, so the first hour stops at 11 PM's neighbour
+  // and the last hour starts at 1 AM — no pair a parent can pick is impossible
+  for(let h=0;h<24;h++){
+    if(h<23){ const a=document.createElement("option"); a.value=String(h); a.textContent=wxLabel(h); f.appendChild(a); }
+    if(h>0){ const b=document.createElement("option"); b.value=String(h); b.textContent=wxLabel(h); t.appendChild(b); }
+  }
+}
+function wxPaint(w){
+  // nothing stored shows the hours the BOARD will use, never "All day"
+  const win = w || WX_DEFAULT, all = wxIsAllDay(win);
+  const f=$("wxFrom"), t=$("wxTo");
+  f.value = all ? "" : String(win.from);
+  if(!all) t.value = String(win.to);
+  // "All day" has no second hour to pick, so the rest of the row steps aside —
+  // and the label loses its "between", which otherwise leaves the row reading
+  // "Dress for the weather between All day".
+  t.disabled = all; t.style.display = all ? "none" : ""; $("wxAnd").style.display = all ? "none" : "";
+  $("wxBetween").textContent = all ? "Dress for the weather" : "Dress for the weather between";
+}
+async function wxSave(w){
+  wxPaint(w);
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({weatherWindow:w})});
+  if(!r.ok){ toast("Could not save",false); return; }
+  toast(wxIsAllDay(w) ? "Outfits re-sorted for the whole day"
+                      : "Outfits re-sorted for "+wxLabel(w.from)+"-"+wxLabel(w.to));
+}
+function wxRead(){
+  const f=$("wxFrom").value;
+  if(f==="") return {...WX_ALL_DAY};
+  let to=+$("wxTo").value;
+  if(!(to>+f)) to=Math.min(23,+f+1);        // the window always runs forwards
+  return {from:+f, to:to};
+}
+wxFill();
+$("wxFrom").onchange=()=>wxSave(wxRead());
+$("wxTo").onchange=()=>wxSave(wxRead());
+
+// ---- Where the weather is read FOR (dad 9/23) ----
+// A typed town or ZIP, resolved by the hub (GET /weather/search) rather than
+// by this page, so one place owns the seam and the wording. With nothing
+// stored the hub falls back to an IP guess — the state that made every reading
+// cold, invisibly, for eleven days — so the row SAYS so instead of showing a
+// blank. Pressed by a parent, never on the build path: a geocoder that is down
+// costs a lookup, never a board.
+let wxPlace=null;
+function wxPlacePaint(loc){
+  wxPlace = loc || null;
+  const n=$("wxPlaceName");
+  if(wxPlace){ n.textContent=[wxPlace.name,wxPlace.admin1].filter(Boolean).join(", "); n.className=""; }
+  else { n.textContent="guessing from the network"; n.className="bad"; }
+  $("wxPlaceBox").hidden=true; $("wxPlaceFind").hidden=true;
+  $("wxPlaceEdit").hidden=false; $("wxPlaceHits").textContent="";
+}
+function wxPlaceEditing(){
+  $("wxPlaceEdit").hidden=true;
+  const b=$("wxPlaceBox"); b.hidden=false; b.value=(wxPlace&&wxPlace.q)||"";
+  $("wxPlaceFind").hidden=false; b.focus();
+}
+async function wxPlaceFind(){
+  const q=$("wxPlaceBox").value.trim();
+  const hits=$("wxPlaceHits");
+  if(!q){ hits.textContent=""; return; }
+  hits.textContent="Looking…";
+  let r;
+  try{ r=await fetch("/weather/search?q="+encodeURIComponent(q)); }catch(e){ r=null; }
+  // nothing matched is an empty list and a 200, so the two are tellable apart
+  if(!r||!r.ok){ hits.textContent="Could not reach the lookup — check the connection."; return; }
+  const {results}=await r.json();
+  if(!results.length){ hits.textContent="No town by that name — try a ZIP code."; return; }
+  hits.textContent="";
+  for(const h of results){
+    const b=document.createElement("button");
+    b.className="small"; b.style.margin="0 6px 6px 0";
+    // state and country too: one name is a dozen towns, and picking the wrong
+    // one is the same silent wrong number this row exists to end
+    b.textContent=[h.name,h.admin1,h.country].filter(Boolean).join(", ");
+    b.onclick=()=>wxPlaceSave({...h, q});
+    hits.appendChild(b);
+  }
+}
+async function wxPlaceSave(loc){
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({location:loc})});
+  if(!r.ok){ toast("Could not save",false); return; }
+  wxPlacePaint(loc);
+  toast("Weather now read for "+loc.name);
+}
+$("wxPlaceEdit").onclick=wxPlaceEditing;
+$("wxPlaceFind").onclick=wxPlaceFind;
+$("wxPlaceBox").onkeydown=(e)=>{ if(e.key==="Enter") wxPlaceFind(); };
+
+// ---- Updates: what is running, and a "look now" that shows the outcome ----
+// (dad 9/3: the boot check only runs 90 s after the hub STARTS, so a hub that
+// has been up since morning never sees an afternoon release until its 6-hour
+// tick; the Alt+F4-and-reopen a normal user tries does not restart the hub.)
+let updDisabled=false;
+async function paintVersion(){
+  try{
+    const v=await (await fetch("/version",{cache:"no-store"})).json();
+    updDisabled=!v.updater;
+    $("updStatus").innerHTML = v.updater
+      ? "Running build <b>"+v.build+"</b>"+(v.disk&&v.disk!==v.build?" — build <b>"+v.disk+"</b> is installed and starts next time Our Era Comms opens":"")
+      : "Running build <b>"+v.build+"</b> · this copy does not update itself (a developer checkout)";
+    return v;
+  }catch(e){ $("updStatus").textContent="Can't read the version right now."; return null; }
+}
+$("updCheck").onclick=async()=>{
+  const b=$("updCheck"); b.disabled=true;
+  $("updStatus").innerHTML="Looking for a newer version…";
+  try{
+    const r=await (await fetch("/update/check",{method:"POST"})).json();
+    if(r.status==="up-to-date"){ $("updStatus").innerHTML="<b>You're on the latest</b> — build "+r.build+(r.latest?" ("+r.latest+")":""); toast("Up to date ✓"); }
+    else if(r.status==="updated"){
+      $("updStatus").innerHTML="<b>Updated to build "+r.to+"</b>"+(r.version?" ("+r.version+")":"")+" — Our Era Comms restarts itself in a moment; this page follows.";
+      toast("Updated ✓");
+      // the hub restarts: wait for the new build to answer, then reload here
+      const was=r.from; let tries=0;
+      const poll=setInterval(async()=>{
+        tries++;
+        try{ const v=await (await fetch("/version",{cache:"no-store"})).json(); if(v.build!==was){ clearInterval(poll); location.reload(); } }catch(e){}
+        if(tries>90) clearInterval(poll);
+      },2000);
+      return;
+    }
+    else if(r.status==="busy"){ $("updStatus").textContent="Already checking — give it a moment."; }
+    else if(r.status==="disabled"){ $("updStatus").textContent="This copy does not update itself (a developer checkout)."; }
+    else { $("updStatus").innerHTML="<b>Couldn't fetch an update</b> ("+r.status+(r.code?" "+r.code:"")+(r.message?": "+r.message:"")+"). Check the internet connection and try again; Our Era Comms keeps trying by itself every 6 hours."; toast("Update check failed", false); }
+  }catch(e){ $("updStatus").textContent="Couldn't reach Our Era Comms to check."; toast("Update check failed", false); }
+  b.disabled=false;
+};
+paintVersion();
+$("dlOpenFolder").onclick=async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"folder"})}); };
+setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
+
+
+// ---- init from current state ----
+(async()=>{
+  await loadApps();
+  await loadVoices();
+  await loadMail();
+  await loadMoviesKeys();
+  await loadFalKey();
+  await drivePaint();
+  try{ const s=await (await fetch("/settings")).json(); if(s.childName) window.ERA_CHILD_NAME=s.childName; dwell=s.dwellMs||1200;
+       if(typeof s.settleMs==="number") settle=Math.max(0,Math.min(2000,s.settleMs));
+       if(typeof s.musicVolCap==="number") mvol=Math.max(1,Math.min(100,Math.round(s.musicVolCap)));
+       if(typeof s.lockMinutes==="number"){
+         const m=Math.max(0,Math.min(1440,Math.round(s.lockMinutes)));
+         // the stepper walks a fixed list, so a hand-edited number shows on its
+         // nearest stop — never on "until unlocked", which nobody types by accident
+         lockMin = LOCKS.includes(m) ? m : LOCKS.reduce((a,b)=> b && Math.abs(b-m)<Math.abs(a-m) ? b : a, 5);
+       }
+       lockPassPaint(!!s.lockPasscodeHash);
+       exitPaint(s.exitTo==="home"?"home":"tdsnap");
+       weekVideosPaint(s.downloadWeekVideos===false?"no":"yes");
+       wxPaint(s.weatherWindow||null); wxPlacePaint(s.location||null); }
+  catch(e){ exitPaint("tdsnap"); weekVideosPaint("yes"); wxPaint(null); wxPlacePaint(null); }
+  dwellDesc(); settleDesc(); mvolDesc(); lockDesc();
+  try{
+    const c=await (await fetch(ENGINE+"/config")).json();
+    if(c.radius===0) document.querySelector('#ring button[data-ring="off"]').click();
+    const g=c.graceMs; const gb=document.querySelector('#grace button[data-grace="'+g+'"]');
+    if(gb){ document.querySelectorAll('#grace button').forEach(x=>x.classList.remove('sel')); gb.classList.add('sel'); }
+    $("engineStatus").innerHTML='<b>ERAgaze connected ✓</b>';
+  }catch(e){
+    $("engineStatus").className="status bad";
+    $("engineStatus").innerHTML='ERAgaze not detected here (cursor settings only work on Ellie&rsquo;s device).';
+  }
+  // Volume cap card: needs ERAgaze reachable AND volcap installed on this device.
+  try{ volcapPaint(await (await fetch(ENGINE+"/volcap")).json()); }
+  catch(e){ volcapPaint(null); }
+  // Pause card owns its own engine-alive check via /status: if the engine is offline
+  // (process fully stopped), hide the toggles and show the restart guidance instead.
+  try{
+    const s=await (await fetch(ENGINE+"/status")).json();
+    const pon = s.paused===true;
+    const pb=document.querySelector('#paused button[data-paused="'+(pon?'on':'off')+'"]');
+    document.querySelectorAll('#paused button').forEach(x=>x.classList.remove('sel')); if(pb) pb.classList.add('sel');
+    $("pausedDesc").textContent = pon ? "Eye-gaze is paused — the cursor is not moving." : "Eye-gaze is controlling the cursor normally.";
+    if(pon){ $("pausedStatus").className="status"; $("pausedStatus").innerHTML='<b style="color:#DE7B52">Paused</b> — cursor is not moving'; }
+  }catch(e){
+    showStopped();   // /status unreachable = ERAgaze stopped: show restart guidance, not toggles
+  }
+})();
+</script>
+</body>
+</html>

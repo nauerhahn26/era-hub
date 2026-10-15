@@ -1,0 +1,1067 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review a book</title>
+<link rel="stylesheet" href="../lib/tokens.css">
+<style>
+  /* ============================================================
+     Review a book — the ONE builder screen (spec §5). A grown-up
+     stands at the computer with a mug of tea and fixes what the AI
+     got wrong: the page order, the cover, a misread word.
+
+     MOUSE AND TOUCH ONLY. There is no `.dwell` class, no gaze
+     handler and no dwell.js on this page, and there must never be
+     one: a dwell target here would let her reorder her own book by
+     looking at it. That is also why the page is deliberately NOT in
+     the STATES list that tests/invariants.mjs audits — that audit
+     measures gaze-target size and spacing on HER screens, and a
+     page with no gaze targets would only measure nothing.
+
+     URL: /book-review/?slug=<book>. It lives at /book-review/ and
+     not at the spec's /books/review/ because /books/ is the media
+     jail (server.js serveBook): the jail answers first and 404s any
+     path with no file extension, so /books/review/ could never have
+     reached the static handler. This directory needs no route of
+     its own — the static handler serves it, and the trailing-slash
+     301 keeps ?slug= (tests/routes.test.mjs).
+
+     Six doors, all in content.js: GET /content/status (which
+     books there are), GET /content/text?slug= (this book's pages),
+     GET /content/page?slug=&index= (one page's photo, straight out
+     of the build folder — the Drive mirror is ten minutes behind a
+     book being reviewed), POST /content/text (the new order and the
+     cover, or ONE page's words and flags), POST /content/run, which
+     re-publishes the book and is the only door here that spends the
+     family's money (one page's narration, reading the photos again,
+     or the moving pictures — the only dollars in the product), and
+     POST /content/remove, the only door in the hub that
+     deletes a family's own files.
+
+     Core, not a pack: shipped by tools/build-payload.sh and laid
+     down by the installer's core File /r (no /x — every /x belongs
+     to a pack, tests/packs.test.mjs).
+     ============================================================ */
+  :root{
+    --ink:var(--color-ink); --paper:#EEF2F1; --card:#FFFFFF; --line:#D3DCDA;
+    --teal:var(--color-primary); --teal-deep:#0B4E58; --teal-wash:#E4EFEF;
+    --coral:#DE7B52; --muted:#5A6A70;
+    --font:"Segoe UI", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:var(--font);
+       font-size:19px; line-height:1.5}
+  .wrap{max-width:980px; margin:0 auto; padding:28px 24px 80px}
+  header{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:6px}
+  h1{font-size:38px; margin:0; font-weight:750}
+  .sub{color:var(--muted); font-size:20px}
+  .back{font-size:17px; color:var(--teal-deep); text-decoration:none; font-weight:650;
+        border:2px solid var(--line); border-radius:12px; padding:8px 14px; background:#fff}
+  .back:hover{border-color:var(--teal)}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:16px;
+        padding:22px 24px; margin:18px 0}
+  .card h2{font-size:26px; margin:0 0 6px}
+  .status{font-size:17px; color:var(--muted); margin-top:4px}
+  .status.bad{color:var(--coral)}
+  .status b{color:var(--ink)}
+  .booklink{display:block; text-decoration:none; color:inherit; border:2px solid var(--line);
+            border-radius:14px; padding:14px 18px; margin:10px 0; background:#fff; cursor:pointer}
+  .booklink:hover{border-color:var(--teal); background:var(--teal-wash)}
+  .booklink .nm{font-size:22px; font-weight:650}
+  .placeholder{border:2px dashed var(--line); border-radius:14px; padding:18px 20px;
+               color:var(--muted); font-size:17px}
+
+  /* The page strip. One row per page of the book, in reading order. The row is
+     dragged by its handle and by nothing else: the rest of the row is where the
+     inline text field and the per-page buttons go, and a parent who starts to
+     select a word must not find they have moved the page instead. */
+  .strip{list-style:none; margin:14px 0 0; padding:0; display:flex; flex-direction:column; gap:10px}
+  .page{display:flex; align-items:flex-start; gap:14px; background:#fff;
+        border:2px solid var(--line); border-radius:14px; padding:12px 14px}
+  .page.dragging{border-color:var(--teal); box-shadow:0 8px 20px rgba(0,0,0,.18)}
+  /* touch-action:none so a finger on the handle DRAGS instead of scrolling the
+     page under it; everywhere else the strip scrolls normally. */
+  .grip{flex:none; width:46px; align-self:stretch; display:flex; align-items:center;
+        justify-content:center; font-size:26px; color:var(--muted); background:var(--teal-wash);
+        border-radius:10px; cursor:grab; touch-action:none; user-select:none}
+  .grip:active{cursor:grabbing}
+  .page img{flex:none; width:76px; height:100px; object-fit:cover; border-radius:8px;
+            border:1px solid var(--line); background:var(--paper)}
+  .noimg{flex:none; width:76px; height:100px; border-radius:8px; border:1px dashed var(--line)}
+  .page .body{flex:1 1 auto; min-width:0}
+  .no{font-size:16px; font-weight:700; color:var(--teal-deep)}
+  .txt{font-size:18px; margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere}
+  .txt.none{color:var(--muted); font-style:italic}
+  /* A word the model was not sure of. Underlined as well as coloured: this is
+     the one thing on the page a parent is hunting for, and a mark that is only
+     a colour is a mark half the family cannot see. */
+  .txt mark{background:#FBE6C8; color:var(--ink); border-radius:4px; padding:0 2px;
+            box-shadow:inset 0 -2px 0 var(--coral)}
+  /* A mark on the WHOLE page — nobody could check it. There is no word to
+     highlight, so it is a sentence under the words instead. */
+  .pagenote{margin-top:6px; font-size:16px; color:var(--ink); background:#FBE6C8;
+            border-radius:8px; padding:6px 10px}
+  /* The opposite mark, and it is not a warning: these words are the parent's
+     own, so it is said in the calm colour and never in the amber one. Plain
+     markup to READ — mouse, touch and nothing else, like the rest of the page. */
+  .mine{margin-top:6px; font-size:16px; color:var(--teal-deep)}
+  /* The per-page buttons. Mouse and touch only — 46px tall because a parent
+     does this standing up with a mug in the other hand, not because anything
+     here is ever a gaze target. */
+  .tools{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px}
+  .tools button, .actions button, .danger button{font:inherit; font-size:16px; font-weight:650;
+                min-height:46px; padding:8px 14px; border:2px solid var(--line); border-radius:12px;
+                background:#fff; color:var(--teal-deep); cursor:pointer}
+  .tools button:hover, .actions button:hover{border-color:var(--teal); background:var(--teal-wash)}
+  .tools button[disabled], .actions button[disabled], .danger button[disabled]{opacity:.55;
+                cursor:default; background:#fff; border-color:var(--line)}
+  .tools .save{border-color:var(--teal); background:var(--teal-wash)}
+  .tools .cancel{color:var(--muted)}
+  .page textarea{width:100%; font:inherit; font-size:18px; line-height:1.45; margin-top:3px;
+                 padding:10px 12px; border:2px solid var(--teal); border-radius:12px;
+                 background:#fff; color:var(--ink); resize:vertical}
+  .cover{flex:none; font:inherit; font-size:16px; font-weight:650; min-height:46px;
+         padding:8px 14px; border:2px solid var(--line); border-radius:12px;
+         background:#fff; color:var(--muted); cursor:pointer}
+  .cover:hover{border-color:var(--teal)}
+  .cover[aria-pressed="true"]{border-color:var(--teal); background:var(--teal-wash);
+                              color:var(--teal-deep)}
+
+  /* The three that act on the whole book. Each one sits above its own sentence
+     saying what it will do, because two of them are irreversible: reading the
+     photos again throws away a reading, and removing the book throws away the
+     book. */
+  .actions{display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:12px}
+  .tick{display:flex; align-items:center; gap:8px; font-size:17px; cursor:pointer}
+  .tick input{width:22px; height:22px; accent-color:var(--teal)}
+  /* Removing a book deletes the family's own photos out of their Drive folder,
+     so it does not sit in the same row as the buttons that only make things —
+     it has its own fenced-off strip at the bottom, and it asks first. */
+  .danger{margin-top:20px; padding-top:16px; border-top:2px solid var(--line)}
+  .danger button{color:var(--coral)}
+  .danger button:hover{border-color:var(--coral); background:#FBECE4}
+  .ask{margin-top:12px; border:2px solid var(--coral); border-radius:14px;
+       padding:14px 16px; background:#FDF3EE}
+  .ask p{margin:0 0 10px; font-size:18px}
+  .ask .yes{border-color:var(--coral); background:#fff}
+  [hidden]{display:none !important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📖 Review a book</h1>
+    <span class="sub" id="sub">Loading…</span>
+    <a class="back" href="/settings/#content">← Settings</a>
+  </header>
+
+  <!-- Gap 1: books are built in place inside the family's own Drive folder,
+       so only the computer running the Google Drive app can build one. -->
+  <div class="card" id="notLocal" hidden>
+    <h2>This computer does not build books</h2>
+    <!-- …and nothing starts it by itself over there either (spec §12): this
+         card promised that in the same breath as the inbox sentence below, and
+         a hub being set up is exactly where a false promise costs the most. -->
+    <p class="status">Books are built on the computer that has the <b>Google Drive</b> app
+    and the content folder set up in Settings. Set that up there, then tap <b>Build</b>
+    on that computer.</p>
+  </div>
+
+  <!-- No ?slug=, or a slug for a folder that is not there any more. -->
+  <div class="card" id="picker" hidden>
+    <h2 id="pickerTitle">Which book?</h2>
+    <p class="status" id="pickerHint"></p>
+    <div id="pickerList"></div>
+  </div>
+
+  <div id="book" hidden>
+    <div class="card">
+      <h2 id="bookTitle"></h2>
+      <div class="status" id="bookState"></div>
+      <div class="status" id="bookFlags" hidden></div>
+      <!-- OUT OF ALLOWANCE (T6b.2, spec §4 "Design target"). The family never
+           adds a card to Google and buys ElevenLabs by the month, so a book
+           that stops for the day is the NORMAL path. The sentence names whose
+           allowance ran out and when it comes back in the clock in front of
+           them; the two buttons are the two honest choices made pressable. -->
+      <div class="status" id="bookPaused" hidden>
+        <span id="bookPausedWords"></span>
+        <div class="actions" style="margin-top:8px">
+          <button id="pausedAdd" type="button" hidden></button>
+          <button id="pausedRetry" type="button">🔄 Try again now</button>
+        </div>
+      </div>
+    </div>
+    <!-- The page strip, with the per-page controls (inline edit, re-narrate,
+         clear flag) inside its rows; the book-level buttons below. -->
+    <div class="card">
+      <h2>Pages</h2>
+      <p class="status" id="stripHint">Loading the pages…</p>
+      <ol class="strip" id="strip"></ol>
+      <div class="status" id="stripNote" hidden></div>
+    </div>
+
+    <!-- The whole book (spec §5): read the photos again, animate, remove. -->
+    <div class="card">
+      <h2>This whole book</h2>
+
+      <div class="actions">
+        <button id="rebuild" type="button">📷 Read the photos again</button>
+        <label class="tick" for="keepEdits">
+          <input type="checkbox" id="keepEdits" checked>
+          Keep the words I have fixed myself
+        </label>
+      </div>
+      <!-- What it costs and what it does NOT touch. The narration is the
+           expensive half of a book and it is not re-bought here, so a parent
+           pressing this is spending pennies on reading, not pounds on a voice. -->
+      <p class="status">Our Era Comms looks at every photo again and writes down the words it sees.
+      The narration already recorded is kept — only the words change.</p>
+
+      <!-- The one button in the suite that spends real money (spec §5, T6.2).
+           Two rules it never breaks: it is disabled until this hub can QUOTE
+           the book (pages × the price of one clip, off the fal card), and the
+           price it will spend is written on the button itself — a parent must
+           never be able to press it without having been told the number. -->
+      <div class="actions">
+        <button id="animate" type="button" disabled>🎬 Animate this book</button>
+        <span class="status" id="animateHint">Moving pictures need a fal key —
+        add one to the “Moving pages” card in Settings. This button will say what a book
+        costs before it spends anything.</span>
+      </div>
+
+      <div class="danger">
+        <button id="remove" type="button">🗑 Remove this book</button>
+        <p class="status">This deletes the book&rsquo;s folder from your Google Drive folder,
+        on every computer in the family. Our Era Comms cannot put it back.</p>
+        <!-- Asked, never assumed: the question names the book, and the answer
+             is a different button in a different place, so the press that
+             removes a book can never be the second half of a double-tap. -->
+        <div class="ask" id="removeAsk" hidden>
+          <p id="removeWhat"></p>
+          <div class="actions" style="margin-top:0">
+            <button id="removeYes" class="yes" type="button">Yes, remove it</button>
+            <button id="removeNo" type="button">No, keep it</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="status" id="bookNote" hidden></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// A book title is family text and the only family text on this page, so it is
+// escaped everywhere it is printed, exactly as the Settings card does it.
+const ESC = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const $ = id => document.getElementById(id);
+const show = (id, on) => { $(id).hidden = !on; };
+
+// The one identifier this page runs on. Read client-side (the 301 onto the
+// trailing slash keeps the query, so a link from Settings survives it).
+const SLUG = new URL(location.href).searchParams.get("slug") || "";
+// The book's own title, as the parent typed it on their phone. Only the
+// removal question needs it after the heading is painted.
+let TITLE = SLUG;
+
+// state -> what the book is doing, in the parent's words. Same wording as the
+// Settings card: a parent who read it there must not meet a different sentence
+// here. No state name and no step name ever reaches the screen.
+const DOING = {
+  // Since "built here" (spec §12) nothing starts a book on a clock, so the
+  // sentence that used to sit here — the hub looking for new photos every few
+  // minutes — was the automatic start the other two screens have just stopped
+  // promising. Both the things that DO start one are said instead, because a
+  // row can be either: a pile nobody has claimed (a grown-up taps Build in
+  // Settings) or a job this computer already holds and picks back up after a
+  // restart.
+  inbox: "Waiting to start — a grown-up taps Build in Settings, or this computer picks its own book back up.",
+  transcribing: "Reading the words off the photos…",
+  reviewing: "Words read — about to record the narration.",
+  narrating: "Recording the narration…",
+  published: "Ready to read in Book Reader ✓",
+  animating: "Ready to read ✓ — adding animation.",
+  done: "Ready to read in Book Reader ✓",
+  failed: "Stopped part-way.",
+};
+
+function paintPicker(jobs, missing) {
+  $("pickerTitle").textContent = missing ? "That book is not there any more" : "Which book?";
+  $("pickerHint").innerHTML = jobs.length
+    ? (missing
+        ? "The folder for <b>" + ESC(missing) + "</b> is not in your Drive folder. Here is what is:"
+        : "Pick the book you want to look through.")
+    : "No books yet — make a folder inside <b>books</b> named after the book and drop the page photos in it.";
+  const list = $("pickerList");
+  list.innerHTML = "";
+  for (const j of jobs) {
+    const a = document.createElement("a");
+    a.className = "booklink";
+    a.href = "/book-review/?slug=" + encodeURIComponent(j.slug);
+    a.innerHTML = '<div class="nm">' + ESC(j.title || j.slug) + "</div>"
+                + '<div class="status">' + (DOING[j.state] || "Working…") + "</div>";
+    list.appendChild(a);
+  }
+  show("picker", true);
+}
+
+function paintBook(j) {
+  TITLE = j.title || j.slug;
+  document.title = TITLE + " — review";
+  $("bookTitle").textContent = TITLE;
+  // The removal question names the book, so a parent with two review tabs open
+  // cannot answer the wrong one.
+  $("removeWhat").innerHTML = "Remove <b>" + ESC(TITLE)
+    + "</b> and the photos in its folder?";
+  const p = j.progress || { pages: 0, transcribed: 0, narrated: 0 };
+  let s = DOING[j.state] || "Working…";
+  if (p.pages) s += ' <span style="color:#5A6A70">' + p.transcribed + " of " + p.pages + " pages read"
+                 + (p.narrated ? ", " + p.narrated + " of " + p.pages + " narrated" : "") + ".</span>";
+  $("bookState").innerHTML = s;
+  // Two counts, two sentences (E2). A WORD the AI was unsure of is highlighted
+  // in the page's own text below; a PAGE to check names no word — nobody could
+  // read it twice — and saying "N words" about it sends a parent hunting for
+  // highlights that are not there.
+  const bits = [];
+  if (j.flags) bits.push(j.flags + " word" + (j.flags === 1 ? "" : "s") + " the AI was unsure of");
+  if (j.pageFlags) bits.push(j.pageFlags + " page" + (j.pageFlags === 1 ? "" : "s") + " to check");
+  if (bits.length) {
+    $("bookFlags").textContent = bits.join(", ") + ".";
+    show("bookFlags", true);
+  }
+  paintPaused(j);
+  paintAnimate(j);
+  show("book", true);
+}
+
+// ---- OUT OF ALLOWANCE (T6b.2, spec §4 "Design target").
+//
+// The same three things the Settings card owes, in the same words, because a
+// parent who read it there must not meet a different story here: WHOSE
+// allowance ran out (Google's day and ElevenLabs' month are mended in different
+// places), WHEN it comes back — in their own clock, never the ISO moment the
+// payload carries — and the two honest choices: wait, and the book carries on
+// by itself, or add allowance and press Try again now.
+const PROVIDER = { google: "Google AI Studio", elevenlabs: "ElevenLabs" };
+// What "add allowance" actually buys, which is not the same for the two:
+// Google's free day returns either way and the paid tier buys SPEED;
+// ElevenLabs' month is a top-up and buys the narration itself.
+const ADD_WORDS = {
+  google: "open Google AI Studio and put that key on the paid tier — that buys a whole book the same day",
+  elevenlabs: "top up your ElevenLabs plan — that buys the rest of the narration",
+};
+// A moment in the family's own clock. "2026-09-05T17:04:00Z" is a machine
+// talking to itself; a parent reading it cannot tell tonight from next week.
+function when(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t), now = new Date();
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const tom = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const clock = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (sameDay(d, now)) return "today at " + clock;
+  if (sameDay(d, tom)) return "tomorrow at " + clock;
+  return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })
+       + " at " + clock;
+}
+
+function paintPaused(j) {
+  const p = j.paused;
+  if (!p) { show("bookPaused", false); return; }
+  const who = PROVIDER[p.provider] || "the AI service";
+  const at = when(p.until);
+  $("bookPausedWords").innerHTML =
+    "This book is waiting for more <b>" + ESC(who) + "</b> allowance"
+    + (at ? " — it carries on <b>by itself</b> " + ESC(at) + "."
+          : " — it carries on <b>by itself</b> when the allowance comes back.")
+    + " Nothing is broken and nothing already made is lost."
+    + " You can leave it, or " + ESC(ADD_WORDS[p.provider] || "add more allowance")
+    + ", then press <b>Try again now</b>.";
+  const add = $("pausedAdd");
+  if (p.addUrl) {
+    add.dataset.add = p.addUrl;
+    add.textContent = "💳 Open my " + who + " page";
+  }
+  add.hidden = !p.addUrl;
+  $("pausedRetry").disabled = false;
+  show("bookPaused", true);
+}
+
+// The address a family adds allowance at is opened through the hub's own door,
+// so it lands in a REAL browser window: a login page inside the kiosk traps a
+// novice with no URL bar and no way back (dad 8/29, and the fal card's 9/5
+// gate finding). window.open is the fallback when the hub will not do it.
+async function openSite(url) {
+  try {
+    const r = await (await fetch("/open-url", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })).json();
+    if (r.opened) return;
+  } catch (e) {}
+  window.open(url, "_blank", "noopener");
+}
+$("pausedAdd").addEventListener("click", () => {
+  const url = $("pausedAdd").dataset.add;
+  if (url) openSite(url);
+});
+
+// "Try again now": the family saying they have added allowance — or simply that
+// they would rather find out. retry:true is the only thing that lifts the pause
+// the steps honour (content.js runStep, T6b.1), so the press carries it, and
+// the button goes dead behind the press so a parent leaning on it cannot queue
+// the same book five times.
+$("pausedRetry").addEventListener("click", async () => {
+  $("pausedRetry").disabled = true;
+  bookNote("Starting this book again…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: null, retry: true });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    bookNote("Our Era Comms is not answering — nothing was started.", true);
+    $("pausedRetry").disabled = false; return;
+  }
+  if (!r.ok) {
+    bookNote((out && out.error) || "Our Era Comms could not start this book again.", true);
+    $("pausedRetry").disabled = false; return;
+  }
+  // The pause is lifted and the book is on the walk; the card follows the run
+  // from here, exactly as the other buttons on this page do.
+  show("bookPaused", false);
+  bookNote("Started again ✓ — this page follows along.", false);
+  const s = await settled();
+  const job = s && (s.jobs || []).find(b => b.slug === SLUG);
+  if (job) paintBook(job);
+});
+
+// THE COST GATE, PAINTED (spec §4 step 5, T6.2). /content/status carries the
+// book's quote — how many pages, what one clip costs this family, what the two
+// multiply to — and `ready` is false whenever that could not be worked out: no
+// fal key, a key fal already refused, or a book that has not published yet. No
+// quote, no press: a button that spends dollars and cannot say how many is a
+// button nobody should be able to lean on, so the number goes ON the button and
+// the button is disabled without it.
+let QUOTE = null;
+// Is Our Era Comms working on THIS book right now? /content/status names the job in
+// flight and the ones queued behind it. The money button is dead while it is
+// true, so a page opened in the middle of a half-hour run cannot start a second
+// run on top of the first (review 9/5).
+let RUNNING = false;
+const busyWith = (s) => !!s && (!!(s.building && s.job && s.job.slug === SLUG)
+                                || (s.queued || []).indexOf(SLUG) >= 0);
+
+function paintAnimate(j) {
+  const a = j.animate || { ready: false, pages: 0, perClip: null, total: null, done: 0 };
+  QUOTE = a;
+  const money = a.total == null ? null : "$" + a.total.toFixed(2);
+  const btn = $("animate");
+  btn.disabled = !a.ready || RUNNING;
+  btn.textContent = "🎬 Animate this book" + (money ? " (≈ " + money + ")" : "");
+  // What is already made, so a second press reads as "finish it" rather than
+  // "buy it all again" — and so a run that only managed half says so.
+  const made = a.done ? a.done + " of " + a.pages + " pages already have one. " : "";
+  // AND WHAT WAS PAID FOR AND NEVER CAME. fal bills the moment it accepts a
+  // clip, so a render that failed or a queue that never finished is money gone
+  // with nothing on disk to show for it. The job's ledger is the only place
+  // that number exists — a page that counted the files alone would keep the
+  // family's losses quiet (review 9/5).
+  const clips = a.clips || 0, lost = clips - (a.done || 0);
+  const paid = lost > 0
+    ? "Our Era Comms has paid fal for " + clips + " clip" + (clips === 1 ? "" : "s")
+      + (a.spent == null ? "" : " (≈ $" + a.spent.toFixed(2) + ")")
+      + ", and " + lost + " of them never arrived. "
+    : "";
+  $("animateHint").textContent = a.ready
+    ? (RUNNING
+        ? made + paid + "Our Era Comms is working on this book right now — each clip lands in it as "
+               + "it is finished, and this page follows along."
+        : made + paid + "Every page gets a five-second moving picture. Our Era Comms only pays for the "
+               + "ones it still has to make, and Ellie sees them at the next sync.")
+    : (j.published
+        ? "Moving pictures need a fal key — add one to the “Moving pages” card in Settings. "
+          + "This button will say what a book costs before it spends anything."
+        : "Our Era Comms makes the moving pictures once a book is finished — this one is still being built.");
+}
+
+// ============================================================ the page strip
+//
+// THE ORDER OF A BOOK is the order of text.json's `pages` ARRAY; a page's
+// `index` is its identity — the photo it came from, and the narration, the
+// flags and the characters already bought for it. So a drag permutes the array
+// and renames nothing: nothing paid for is lost, and Google Drive is not handed
+// every page of the book to re-upload. content.js writes it and
+// content-publish.js reads the same order, so the shelf follows the drag.
+//
+// Pointer events, not HTML5 drag-and-drop: the same code then serves a mouse
+// and a finger, which is what a parent at a laptop and a parent at the family
+// touchscreen each have. No gaze anywhere — see the header.
+
+const strip = $("strip");
+let PAGES = [];          // what the server last told us, in reading order
+let PUBLISHED = false;   // is this book already on Ellie's shelf?
+let SAVES = 0;           // bumped on every accepted write (the tests watch it)
+
+// The position a parent reads ("Page 3"), which after a drag is no longer the
+// index the scanner gave the photo. The position is the one that means
+// anything to them, so it is the one on the card.
+const order = () => Array.from(strip.children).map(li => Number(li.dataset.index));
+function renumber() {
+  Array.from(strip.children).forEach((li, i) => {
+    li.querySelector(".no").textContent = "Page " + (i + 1);
+  });
+}
+function coverIndex() {
+  const b = strip.querySelector('.cover[aria-pressed="true"]');
+  return b ? Number(b.closest(".page").dataset.index) : null;
+}
+function note(msg, bad) {
+  const el = $("stripNote");
+  el.textContent = msg;
+  el.classList.toggle("bad", !!bad);
+  show("stripNote", !!msg);
+}
+
+// A page's text is family text (the words off their own photos), so it is set
+// as textContent and never as HTML.
+function cardFor(p) {
+  const li = document.createElement("li");
+  li.className = "page";
+  li.dataset.index = String(p.index);
+  const grip = document.createElement("div");
+  grip.className = "grip";
+  grip.textContent = "⠿";
+  grip.title = "Drag to move this page";
+  li.appendChild(grip);
+  if (p.image) {
+    const img = document.createElement("img");
+    img.src = p.image;
+    img.alt = "";                       // decorative: the words beside it say it
+    img.draggable = false;              // the handle drags, not the picture
+    li.appendChild(img);
+  } else {
+    const box = document.createElement("div");
+    box.className = "noimg";
+    li.appendChild(box);
+  }
+  const body = document.createElement("div");
+  body.className = "body";
+  const no = document.createElement("div");
+  no.className = "no";
+  body.appendChild(no);
+  li.appendChild(body);
+  const cov = document.createElement("button");
+  cov.className = "cover";
+  cov.type = "button";
+  li.appendChild(cov);
+  paintCover(cov, p.cover);
+  paintBody(li, p);
+  return li;
+}
+
+// ------------------------------------------------- one page's words (spec §5)
+//
+// What a parent actually came here for: the words the model was not sure of,
+// picked out of the line they sit in, and three buttons under them.
+
+function btn(cls, label) {
+  const b = document.createElement("button");
+  b.className = cls;
+  b.type = "button";
+  b.textContent = label;
+  return b;
+}
+
+// Everything the page below rebuilds sits after .no, so this clears back to it
+// rather than to an empty body — the position label is not redrawn on a save.
+function clearBody(li) {
+  const body = li.querySelector(".body");
+  for (const el of Array.from(body.children)) if (!el.classList.contains("no")) el.remove();
+  return body;
+}
+
+const reEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// The page's own words with the flagged ones wrapped in <mark>. Built as NODES,
+// never by assembling HTML: this is the family's text, off their own photos,
+// and a book about "<b>bears</b>" must read as a book about "<b>bears</b>".
+//
+// A flag is matched on a WORD boundary of its own (letters and digits either
+// side, not \b, which counts an apostrophe as a boundary and would mark the
+// "cat" inside "cat's"). A flag whose word a parent has already fixed by hand
+// simply marks nothing — it is not an error and it must not blank the page.
+function marked(text, flags) {
+  const out = document.createDocumentFragment();
+  const list = (flags || []).filter(f => f && f.word);
+  if (!text || !list.length) { out.appendChild(document.createTextNode(text || "")); return out; }
+  const why = new Map(list.map(f => [f.word.toLowerCase(), f.reason || ""]));
+  // Longest first, so a flag for "mat" cannot eat the start of a flagged
+  // "mattress" that was going to be marked whole.
+  const words = [...new Set(list.map(f => f.word))].sort((a, b) => b.length - a.length);
+  let re;
+  try {
+    re = new RegExp("(?<![\\p{L}\\p{N}])(" + words.map(reEsc).join("|") + ")(?![\\p{L}\\p{N}])", "giu");
+  } catch (e) { out.appendChild(document.createTextNode(text)); return out; }
+  let at = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > at) out.appendChild(document.createTextNode(text.slice(at, m.index)));
+    const mk = document.createElement("mark");
+    mk.textContent = m[0];
+    const reason = why.get(m[0].toLowerCase());
+    if (reason) mk.title = reason;
+    out.appendChild(mk);
+    at = m.index + m[0].length;
+    if (!m[0].length) re.lastIndex++;              // never spin on an empty match
+  }
+  if (at < text.length) out.appendChild(document.createTextNode(text.slice(at)));
+  return out;
+}
+
+// The reading half of a card: the words, then the buttons. "Clear flag" is only
+// offered on a page that HAS one — a row of buttons that do nothing is a row a
+// parent has to read before they can ignore it.
+function paintBody(li, p) {
+  const body = clearBody(li);
+  const txt = document.createElement("div");
+  const has = p.text && p.text.trim();
+  txt.className = "txt" + (has ? "" : " none");
+  if (has) txt.appendChild(marked(p.text, p.flags));
+  else txt.textContent = "No words read off this page yet.";
+  body.appendChild(txt);
+  // A flag with NO word is a mark on the whole page — "nobody checked this
+  // page", or two readings that differed with no one word to point at. It has
+  // nothing to highlight, so it is said in a sentence instead; without this it
+  // was counted and never shown (E2, 9/4: every page of a book marked, the
+  // parent shown nothing at all).
+  // WHOSE WORDS THESE ARE (L6, the 16-page live run of 9/4). A page a grown-up
+  // retyped has no `read` — the words are theirs, and no model may be named as
+  // their author — so the most carefully checked page in the book was the one
+  // page that looked like nobody had ever looked at it. The badge says it plainly,
+  // and it doubles as the answer to "which pages does the tick below keep?".
+  if (p.edited) {
+    const mine = document.createElement("div");
+    mine.className = "mine";
+    mine.textContent = "✎ Edited by you";
+    body.appendChild(mine);
+  }
+  const notes = (p.flags || []).filter(f => f && !f.word && f.reason);
+  if (notes.length) {
+    const note = document.createElement("div");
+    note.className = "pagenote";
+    note.textContent = "⚠ " + notes.map(f => f.reason).join(" · ");
+    body.appendChild(note);
+  }
+  const tools = document.createElement("div");
+  tools.className = "tools";
+  tools.appendChild(btn("edit", "✎ Fix the words"));
+  tools.appendChild(btn("narrate", "🔊 Re-narrate this page"));
+  if ((p.flags || []).length) tools.appendChild(btn("clear", "✓ These words are right"));
+  body.appendChild(tools);
+}
+
+// The writing half. A plain textarea, because the words are the thing being
+// fixed and a rich editor would only put formatting between a parent and the
+// one job they came here for.
+function editBody(li, p) {
+  const body = clearBody(li);
+  const field = document.createElement("textarea");
+  field.value = p.text || "";
+  field.rows = Math.min(8, Math.max(2, (p.text || "").split("\n").length + 1));
+  field.setAttribute("aria-label", "The words on this page");
+  body.appendChild(field);
+  const tools = document.createElement("div");
+  tools.className = "tools";
+  tools.appendChild(btn("save", "Save these words"));
+  tools.appendChild(btn("cancel", "Cancel"));
+  body.appendChild(tools);
+  field.focus();
+  field.setSelectionRange(field.value.length, field.value.length);
+}
+
+function paintCover(btn, on) {
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.textContent = on ? "★ Cover" : "☆ Make this the cover";
+}
+
+function paintStrip(book) {
+  PAGES = book.pages || [];
+  PUBLISHED = !!book.published;
+  strip.innerHTML = "";
+  for (const p of PAGES) strip.appendChild(cardFor(p));
+  renumber();
+  $("stripHint").textContent = PAGES.length
+    ? "Drag a page by its ⠿ handle to put the book in the right order, and tap ☆ to choose the cover. "
+      + "Words Our Era Comms was not sure of are marked — fix them, or say they are right."
+    : "No pages yet — Our Era Comms makes them from the photos in this book's folder.";
+}
+
+const JSONPOST = (path, body) => fetch(path, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+// Spec §5: a write lands in text.json, then the book is re-published so the
+// shelf follows. Only a book that is ALREADY on the shelf — kicking a publish
+// at a book still being read would freeze a half-built book into a package
+// Ellie could open.
+function republish(published) {
+  if (!published) return;
+  PUBLISHED = true;
+  JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "publish" }).catch(() => {});
+}
+
+// Every write this page makes goes through here, so there is exactly one place
+// that says "Saved ✓", one that says the hub is not answering, and one that
+// counts the saves the tests watch.
+async function write(body) {
+  note("Saving…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/text", body);
+    out = await r.json();
+  } catch (e) { note("Our Era Comms is not answering — nothing was saved.", true); return null; }
+  if (!r.ok) {
+    note("That change was not saved: " + ((out && out.error) || "Our Era Comms said no."), true);
+    return null;
+  }
+  note("Saved ✓", false);
+  strip.dataset.saved = String(++SAVES);
+  republish(out.published);
+  return out;
+}
+
+// One write, for a drag and for a cover tap alike: the whole order plus the one
+// cover, so a half-applied change is not a shape the server ever sees.
+//
+// The star comes BACK from the server, and the screen takes its answer. On a
+// book where nothing wears the cover yet — a folder built by hand in power mode,
+// or one whose first page was dropped — coverIndex() sends null and content.js
+// picks a page rather than publish a book with no cover at all. Without this,
+// the shelf would show a cover the parent was never shown choosing.
+async function saveStrip() {
+  const out = await write({ slug: SLUG, order: order(), cover: coverIndex() });
+  if (!out || !Number.isInteger(out.cover)) return;
+  for (const li of Array.from(strip.children))
+    paintCover(li.querySelector(".cover"), Number(li.dataset.index) === out.cover);
+  for (const p of PAGES) p.cover = p.index === out.cover;
+}
+
+// ---- one page's words. The page is named, so the server writes THAT page and
+// touches neither the order nor the cover: a parent fixing a word cannot lose
+// their page order to a race with their own drag.
+async function savePage(li, p, body) {
+  const out = await write({ slug: SLUG, page: p.index, ...body });
+  if (!out) return false;       // the typed words stay on the screen to try again
+  p.text = out.text;
+  p.flags = out.flags;
+  // The server's answer, not a guess made here: "Clear flag" writes through this
+  // same door and does NOT make the page a parent's own words, so only content.js
+  // can say which of the two just happened (L6).
+  p.edited = !!out.edited;
+  paintBody(li, p);
+  return true;
+}
+
+// ---- "Re-narrate this page". THE ONE BUTTON ON THIS PAGE THAT SPENDS MONEY,
+// and it spends exactly one page of it: content.js checks the page is real and
+// that there is a voice at all BEFORE a worker is spawned, and the worker's
+// narrate step is handed only:[this page], so every other page keeps the audio
+// already bought for it (content-narrate.js rule 2).
+async function renarrate(li, p, button) {
+  button.disabled = true;
+  note("Recording this page…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "narrate", page: p.index });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    note("Our Era Comms is not answering — nothing was recorded.", true);
+    button.disabled = false; return;
+  }
+  // A refusal is already a sentence a parent can act on (no voice set up yet,
+  // a page that is not there any more) — it is shown as it came, not decorated.
+  if (!r.ok) {
+    note((out && out.error) || "Our Era Comms could not record that page.", true);
+    button.disabled = false; return;
+  }
+  // 202: the recording runs behind the answer. The worker is spawned before the
+  // 202 is written, so the first status we read already knows about it.
+  const s = await settled();
+  button.disabled = false;
+  const job = s && (s.jobs || []).find(b => b.slug === SLUG);
+  if (job && job.error) { note("That page was not recorded: " + job.error, true); return; }
+  note("Recorded ✓ — Ellie hears the new words next time she opens this book.", false);
+}
+
+// Wait for the hub to go quiet. Five minutes is far longer than one page of a
+// picture book takes and still finite, so a wedged provider leaves a parent
+// with a page they can use rather than a spinner for ever.
+async function settled() {
+  for (let i = 0; i < 1200; i++) {
+    let s;
+    try { s = await (await fetch("/content/status", { cache: "no-store" })).json(); }
+    catch (e) { return null; }
+    if (!s.building) return s;
+    await new Promise(done => setTimeout(done, 250));
+  }
+  return null;
+}
+
+// ---- the drag itself. Capture on the STRIP, never on the row: a captured row
+// is moved in and out of the DOM as the drag goes and would lose the pointer
+// half way down the book.
+let drag = null;
+strip.addEventListener("pointerdown", (e) => {
+  if (e.button > 0) return;                       // right/middle click is not a drag
+  const grip = e.target.closest(".grip");
+  if (!grip) return;
+  drag = { li: grip.closest(".page"), was: order().join(","), y0: e.clientY, moved: false };
+  drag.li.classList.add("dragging");
+  try { strip.setPointerCapture(e.pointerId); } catch (err) {}
+  e.preventDefault();                             // no text selection while dragging
+});
+strip.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  // A few pixels of slop, so a tap that wobbles is still a tap.
+  if (!drag.moved && Math.abs(e.clientY - drag.y0) < 4) return;
+  drag.moved = true;
+  for (const other of Array.from(strip.children)) {
+    if (other === drag.li) continue;
+    const r = other.getBoundingClientRect();
+    if (e.clientY < r.top || e.clientY > r.bottom) continue;
+    strip.insertBefore(drag.li, e.clientY > r.top + r.height / 2 ? other.nextSibling : other);
+    break;
+  }
+  renumber();
+});
+function endDrag(e) {
+  if (!drag) return;
+  const d = drag; drag = null;
+  d.li.classList.remove("dragging");
+  try { strip.releasePointerCapture(e.pointerId); } catch (err) {}
+  // Dropped a page back where it started: nothing to write, and nothing for
+  // Drive to re-upload.
+  if (d.moved && order().join(",") !== d.was) saveStrip();
+}
+strip.addEventListener("pointerup", endDrag);
+strip.addEventListener("pointercancel", endDrag);
+
+// ---- every button on a card, in one place. Delegated, because a card is
+// redrawn on every accepted write and a listener bound to a button would go
+// with it. Mouse and touch only: `click` is what a finger and a mouse agree on
+// and there is no gaze path to any of it.
+strip.addEventListener("click", (e) => {
+  const li = e.target.closest(".page");
+  if (!li) return;
+  // The cover. Exactly one, always: the tap moves the star rather than adding a
+  // second one, and content.js refuses anything else.
+  if (e.target.closest(".cover")) {
+    for (const other of Array.from(strip.children))
+      paintCover(other.querySelector(".cover"), other === li);
+    saveStrip();
+    return;
+  }
+  const p = PAGES.find(x => x.index === Number(li.dataset.index));
+  if (!p) return;
+  if (e.target.closest(".edit")) { editBody(li, p); return; }
+  // Thought better of it: the page goes back to what is on disk, and nothing
+  // was written — not even a "Saved ✓".
+  if (e.target.closest(".cancel")) { paintBody(li, p); return; }
+  if (e.target.closest(".save")) {
+    const field = li.querySelector("textarea");
+    if (field) savePage(li, p, { text: field.value });
+    return;
+  }
+  // "These words are right": the flag was a question and this answers it. The
+  // words themselves are not touched — content.js takes an empty flag list and
+  // nothing else.
+  if (e.target.closest(".clear")) { savePage(li, p, { flags: [] }); return; }
+  const nar = e.target.closest(".narrate");
+  if (nar) renarrate(li, p, nar);
+});
+
+// ======================================================= the whole book (§5)
+//
+// Three buttons, and two of them cannot be taken back. Both irreversible ones
+// therefore behave the same way: they say what they are about to do BEFORE they
+// do it, they answer in the parent's own words when they will not, and neither
+// of them is ever the second half of a press aimed at something else.
+
+function bookNote(msg, bad) {
+  const el = $("bookNote");
+  el.textContent = msg;
+  el.classList.toggle("bad", !!bad);
+  show("bookNote", !!msg);
+}
+
+// "Read the photos again" (rebuild text, spec §5). The tick decides what
+// happens to the pages a parent typed themselves, and content.js does the
+// deciding — the page only carries the answer, because the rule that keeps a
+// parent's own words has to hold for anything that presses this door, not just
+// for this button.
+async function rebuild() {
+  const button = $("rebuild");
+  button.disabled = true;
+  bookNote("Reading the photos again…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "transcribe",
+                                         rebuild: true, keepEdits: $("keepEdits").checked });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    bookNote("Our Era Comms is not answering — nothing was read.", true);
+    button.disabled = false; return;
+  }
+  // A refusal is already a sentence (no AI key yet, every page is one you typed
+  // and you asked to keep those) — shown as it came, not decorated.
+  if (!r.ok) {
+    bookNote((out && out.error) || "Our Era Comms could not read this book again.", true);
+    button.disabled = false; return;
+  }
+  const s = await settled();
+  button.disabled = false;
+  const job = s && (s.jobs || []).find(b => b.slug === SLUG);
+  if (job && job.error) { bookNote("The photos were not read: " + job.error, true); return; }
+  // The words on the screen are now yesterday's, so the strip is re-read from
+  // disk rather than left for the parent to reload themselves.
+  await loadStrip();
+  bookNote("Read again ✓ — the words below came off the photos.", false);
+}
+$("rebuild").addEventListener("click", rebuild);
+
+// "Animate this book (≈ $x)" — the only press in the whole suite that spends
+// dollars, and the price it is about to spend is written on the button that
+// takes the press. It says what it is doing, and afterwards it says what it
+// GOT: how many pages ended up with a moving picture. There is no error line to
+// wait for, deliberately — a clip that could not be made is one page's loss and
+// never the book's (content-worker.js: an optional step never marks a finished
+// book failed), so the count is the honest answer to "did that work?".
+async function animateBook() {
+  const button = $("animate");
+  button.disabled = true;
+  const had = (QUOTE && QUOTE.done) || 0;
+  bookNote("Making the moving pictures… a page takes a couple of minutes, and each one lands "
+         + "in the book as it is finished.", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/run", { kind: "books", slug: SLUG, step: "animate" });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    bookNote("Our Era Comms is not answering — nothing was made and nothing was spent.", true);
+    button.disabled = false; return;
+  }
+  // A refusal is already a sentence (no fal key, a book still being built) —
+  // shown as it came, not decorated.
+  if (!r.ok) {
+    bookNote((out && out.error) || "Our Era Comms could not make the moving pictures.", true);
+    button.disabled = false; return;
+  }
+  const j = await followRun();
+  // The hub went away mid-run. What is NOT said here is "nothing was made and
+  // nothing was spent": fal may well be rendering (and billing) this book still,
+  // and this page has no way of knowing from here.
+  if (!j) {
+    bookNote("Our Era Comms stopped answering. The moving pictures may still be being made — "
+           + "open this page again in a few minutes to see how many landed.", true);
+    return;
+  }
+  const now = (j.animate && j.animate.done) || 0;
+  if (now > had)
+    bookNote("Made ✓ — " + now + " of " + (j.animate.pages || now)
+           + " pages have a moving picture now. Ellie sees them at the next sync.", false);
+  else
+    bookNote("No moving pictures were made this time, and the book is exactly as it was. "
+           + "Check the fal key in Settings, then try again.", true);
+}
+
+// A BOOK IS NOT A PAGE. settled() above is calibrated to one page of work and
+// gives up after five minutes; this book is one clip per page, made one after
+// another at a couple of minutes each, so half an hour is an ORDINARY run. A
+// capped wait would print "nothing was made, try again" over a run that was
+// still going and still spending — and a parent who took that advice would press
+// the money button again. So this wait has no cap at all: it follows
+// /content/status until the hub stops working on this book, repainting the card
+// every time round so the "N of M pages already have one" count climbs as the
+// clips land. Returns the book's last job, or null if the hub stopped answering.
+const RUN_POLL_MS = 1000;
+async function followRun() {
+  let j = null;
+  for (;;) {
+    let s;
+    try { s = await (await fetch("/content/status", { cache: "no-store" })).json(); }
+    catch (e) { return null; }
+    RUNNING = busyWith(s);
+    const found = (s.jobs || []).find(b => b.slug === SLUG);
+    if (found) { j = found; paintBook(found); }
+    if (!RUNNING) return j;
+    const a = (j && j.animate) || {};
+    bookNote("Still making them — " + (a.done || 0) + " of " + (a.pages || 0)
+           + " pages have a moving picture so far. Each one lands in the book as it is finished.",
+           false);
+    await new Promise(done => setTimeout(done, RUN_POLL_MS));
+  }
+}
+$("animate").addEventListener("click", animateBook);
+
+// "Remove this book". The only thing on this page that deletes anything, so it
+// asks first — and the answer is a different button in a different place.
+const askRemove = (on) => { show("removeAsk", on); if (on) $("removeYes").focus(); };
+$("remove").addEventListener("click", () => { bookNote("", false); askRemove(true); });
+$("removeNo").addEventListener("click", () => askRemove(false));
+$("removeYes").addEventListener("click", async () => {
+  $("removeYes").disabled = true;
+  bookNote("Removing " + TITLE + "…", false);
+  let r, out;
+  try {
+    r = await JSONPOST("/content/remove", { kind: "books", slug: SLUG });
+    out = await r.json().catch(() => null);
+  } catch (e) {
+    bookNote("Our Era Comms is not answering — nothing was removed.", true);
+    $("removeYes").disabled = false; return;
+  }
+  if (!r.ok) {
+    bookNote((out && out.error) || "That book was not removed.", true);
+    $("removeYes").disabled = false; askRemove(false); return;
+  }
+  askRemove(false);
+  // Nothing here has anything left to act on; the line below is the only thing
+  // on the card that still means something, so it is the only thing left alive.
+  for (const id of ["rebuild", "animate", "remove"]) $(id).disabled = true;
+  bookNote("Removed ✓ — " + TITLE + " is gone from your Drive folder. "
+         + "The copy on Ellie's shelf goes at the next sync.", false);
+  // A page about a book that is no longer there cannot stand, so the parent is
+  // handed back the books they still have. Long enough to read the line first.
+  setTimeout(() => location.replace("/book-review/"), 1200);
+});
+
+async function loadStrip() {
+  let r, book;
+  try {
+    r = await fetch("/content/text?slug=" + encodeURIComponent(SLUG), { cache: "no-store" });
+    book = await r.json();
+  } catch (e) { $("stripHint").textContent = "Our Era Comms is not answering."; return; }
+  if (!r.ok) { $("stripHint").textContent = book && book.error === "needs-local-drive"
+    ? "This computer does not build books."
+    : "These pages could not be read: " + ((book && book.error) || "Our Era Comms said no."); return; }
+  paintStrip(book);
+}
+
+async function paint() {
+  let s;
+  try { s = await (await fetch("/content/status", { cache: "no-store" })).json(); }
+  catch (e) { $("sub").textContent = "Our Era Comms is not answering."; return; }
+  $("sub").textContent = "";
+  if (!s.local) { show("notLocal", true); return; }
+  // Before anything is painted: a book being worked on RIGHT NOW must not be
+  // handed an enabled money button just because this page was reloaded.
+  RUNNING = busyWith(s);
+  const jobs = s.jobs || [];
+  const j = SLUG ? jobs.find(b => b.slug === SLUG) : null;
+  if (j) { paintBook(j); await loadStrip(); }
+  else paintPicker(jobs, SLUG || null);
+}
+paint();
+</script>
+</body>
+</html>

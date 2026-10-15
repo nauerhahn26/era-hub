@@ -1,0 +1,243 @@
+// packs.test.mjs — the pack map (packs.js) and the installer must agree, or
+// an unticked app's files land anyway (or a ticked app's cut-out engine is
+// missing). Dad 9/3 on the installer's components page: "when you reduce the
+// apps you install the size stays the same" — the 21 MB garment cut-out
+// runtime rode with the core. Now it is part of the board pack, and this
+// test pins that the NSIS script excludes every pack path from the core
+// section and lays each down in exactly one pack section.
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { PACKS, packInstalled, packOf, ytDlp } = require("../packs.js");
+const NSI = fs.readFileSync(new URL("../tools/installer.nsi", import.meta.url), "utf8");
+const DIST = fs.readFileSync(new URL("../tools/build-dist.sh", import.meta.url), "utf8");
+const PAYLOAD = fs.readFileSync(new URL("../tools/build-payload.sh", import.meta.url), "utf8");
+const PIN = fs.readFileSync(new URL("../tools/yt-dlp.pin", import.meta.url), "utf8");
+const SERVER = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
+
+test("every pack path is excluded from the core section and shipped by a pack section", () => {
+  const core = NSI.match(/File \/r ((?:\/x \S+ )+)"\$\{PAYLOAD\}\/\*"/);
+  assert.ok(core, "core section uses File /r /x ... PAYLOAD/*");
+  const excluded = [...core[1].matchAll(/\/x (\S+)/g)].map(m => m[1]);
+  const all = Object.values(PACKS).flat();
+  for (const p of all) {
+    const base = path.posix.basename(p);
+    assert.ok(excluded.includes(base), base + " is excluded from the core section");
+    const laid = NSI.match(new RegExp('File(?: /r)? "\\$\\{PAYLOAD\\}/' + p.replace(/\//g, "\\/") + '"', "g")) || [];
+    assert.equal(laid.length, 1, p + " is laid down by exactly one section");
+  }
+  // nothing excluded that no pack claims — that would silently ship nothing
+  for (const x of excluded)
+    assert.ok(all.some(p => path.posix.basename(p) === x), "/x " + x + " belongs to a pack");
+});
+
+test("the garment cut-out runtime is part of the board pack, not the core", () => {
+  const board = PACKS.board;
+  for (const p of ["vendor/onnxruntime-web", "vendor/models", "vendor/libheif.js"])
+    assert.ok(board.includes(p), p + " ships with the board pack");
+  assert.equal(packOf("vendor/onnxruntime-web/dist/ort.node.min.js"), "board");
+  assert.equal(packOf("vendor" + path.sep + "libheif.js"), "board");
+  assert.equal(packOf("vendor/jpeg-js/index.js"), null);   // jpeg-js is core (photo tiles everywhere)
+  assert.equal(packOf("public/pencil/index.html"), "pencil");
+  assert.equal(packOf("public/pencil-extra/x"), null);     // prefix must be a whole path segment
+  assert.equal(packOf("server.js"), null);
+});
+
+// segment.js degrades QUIETLY: a runtime it cannot load logs "[segment] model
+// unavailable ... falling back" and the Clothing Picker trims by colour alone.
+// So the only thing standing between a family and a half-trimmed wardrobe is
+// that these files were in the checkout the cut was made from — and until
+// 0.32.3 they were not committed at all (a bare `dist/` in .gitignore matched
+// vendor/onnxruntime-web/dist/ as well as the build output). Both halves are
+// pinned here: the files are in the repo, and the build stops without them.
+const CUTOUT_FILES = [
+  "vendor/onnxruntime-web/dist/ort.node.min.js",              // what segment.js requires
+  "vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs",   // the glue it imports from wasmPaths
+  "vendor/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",  // the kernel itself (~14 MB)
+  "vendor/onnxruntime-web/node_modules/onnxruntime-common/dist/cjs/index.js",  // require("onnxruntime-common")
+  "vendor/models/u2netp.onnx",                                // dad 9/1: "add the 50mb"
+];
+
+test("the cut-out runtime is IN the checkout, so the blanket vendor copy can ship it", () => {
+  for (const f of CUTOUT_FILES) {
+    const p = new URL("../" + f, import.meta.url);
+    assert.ok(fs.existsSync(p) && fs.statSync(p).size > 0,
+              f + " is missing from this checkout - a cut here ships no cut-out engine");
+  }
+});
+
+test("build-payload refuses to cut a payload with a piece of the cut-out engine missing", () => {
+  const blanket = PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"');
+  const guard = PAYLOAD.match(/for f in vendor\/onnxruntime-web[\s\S]*?\ndone\n/);
+  assert.ok(guard && PAYLOAD.indexOf(guard[0]) > blanket, "the guard runs after the vendor copy");
+  for (const f of CUTOUT_FILES) assert.ok(guard[0].includes(f), "the guard names " + f);
+
+  // and it really fires — the loop is run here against a synthetic payload
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "era-cutout-"));
+  const run = () => spawnSync("bash", ["-c", 'OUT="' + out + '"\n' + guard[0]], { encoding: "utf8" });
+  try {
+    for (const f of CUTOUT_FILES) {
+      fs.mkdirSync(path.join(out, path.dirname(f)), { recursive: true });
+      fs.writeFileSync(path.join(out, f), "x");
+    }
+    assert.equal(run().status, 0, "a complete payload passes");
+    fs.rmSync(path.join(out, CUTOUT_FILES[2]));           // lose the wasm kernel
+    const bad = run();
+    assert.equal(bad.status, 1, "one missing file stops the cut");
+    assert.match(bad.stdout, /ort-wasm-simd-threaded\.wasm is missing/, "and says which one");
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test("packInstalled reads the pack's presence marker", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "era-packs-"));
+  try {
+    assert.equal(packInstalled(root, "reader"), false);
+    fs.mkdirSync(path.join(root, "public", "reader"), { recursive: true });
+    assert.equal(packInstalled(root, "reader"), true);
+    assert.equal(packInstalled(root, "board"), false);
+    assert.equal(packInstalled(root, "nope"), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("uninstall clears vendor\\ (the cut-out runtime used to be left behind)", () => {
+  assert.match(NSI, /RMDir \/r "\$INSTDIR\\vendor"/);
+});
+
+// The installer's hover text says where the megabytes are, and those numbers
+// come from build-dist.sh's du over the payload. That list was a HAND-MADE
+// second copy of packs.js: add a pack there and forget it here and the new
+// megabytes are silently counted as "engine". This is the only thing that
+// keeps the two equal.
+test("every pack path is measured by build-dist.sh, so the sizes on the page are true", () => {
+  for (const p of Object.values(PACKS).flat())
+    assert.ok(DIST.includes('"$P/' + p + '"'), p + " is measured (and subtracted from SZ_CORE) in build-dist.sh");
+  for (const term of ["SZ_BOARD", "SZ_MEDIA"]) {
+    assert.ok(DIST.includes("-D" + term + "="), term + " is handed to makensis");
+    assert.ok(NSI.includes("${" + term + "}"), term + " is named in the components page text");
+  }
+});
+
+// Adding a song from the web needs yt-dlp: one ~18 MB standalone binary, its
+// own pack, nobody else's business. It is NOT in the repo (see the pin file);
+// a build fetches it, checks its sha256, and lays it under vendor/.
+test("the media-tools pack is yt-dlp, and it is nobody else's pack", () => {
+  assert.deepEqual(PACKS["media-tools"], ["vendor/yt-dlp"]);
+  assert.equal(packOf("vendor/yt-dlp/yt-dlp.exe"), "media-tools");
+  assert.equal(packOf("vendor" + path.sep + "yt-dlp" + path.sep + "yt-dlp.exe"), "media-tools");
+  assert.equal(packOf("vendor/yt-dlp-notes.txt"), null);   // whole path segment only
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "era-packs-"));
+  try {
+    assert.equal(packInstalled(root, "media-tools"), false);
+    fs.mkdirSync(path.join(root, "vendor", "yt-dlp"), { recursive: true });
+    assert.equal(packInstalled(root, "media-tools"), true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// A pack nobody ticked has to have a way in AFTER setup, or a sheet that says
+// "install it and try again" is a dead end (review 9/5). media-tools is the
+// case that proved it: it is unticked by default in the installer AND belongs
+// to no APPS entry, so POST /apps — which resolves the id against that list —
+// could never lay it down, and there is no Settings row for it either.
+test("every pack can still be installed after setup, so no sheet offers a dead end", () => {
+  assert.match(SERVER, /req\.url === "\/packs\/install"/, "the hub has a pack door of last resort");
+  assert.ok(SERVER.includes("packs.PACKS"),
+            "and its allowlist IS the pack map, so a future pack cannot fall down the same hole");
+  const byApp = new Set([...SERVER.matchAll(/pack: "([a-z-]+)"/g)].map(m => m[1]));
+  assert.equal(byApp.has("media-tools"), false,
+               "media-tools is nobody's app - /packs/install is its only way in");
+  assert.match(NSI, /Section \/o "Add songs from the web"/,
+               "and it is off by default, so that way in is the one a family will use");
+});
+
+// The blanket vendor copy runs BEFORE the pinned fetch, so an unverified local
+// vendor/yt-dlp (which .gitignore expressly anticipates a developer dropping in
+// for testing) would ride into the payload and ship as the media-tools pack.
+// "Wrong hash = no build, ever" only holds if the payload's copy can ONLY ever
+// come from the hash-checked one.
+test("build-payload clears vendor/yt-dlp before the pinned, hash-checked copy lands", () => {
+  const blanket = PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"');
+  const clear = PAYLOAD.indexOf('rm -rf "$OUT/vendor/yt-dlp"');
+  const copy = PAYLOAD.indexOf('cp "$YTDLP" "$OUT/vendor/yt-dlp/yt-dlp.exe"');
+  assert.ok(blanket > 0, "the blanket vendor copy is still there");
+  assert.ok(clear > blanket, "an unchecked local copy is removed right after it");
+  assert.ok(copy > clear, "and only the pinned, hash-checked binary is laid down afterwards");
+});
+
+// The binary is pinned by version AND hash in one committed file; the build
+// reads it, verifies what it downloaded, and refuses to cut if the hash is
+// wrong (the <2 GB free rule, applied to a download).
+test("yt-dlp is pinned by version and sha256, and the build verifies before it copies", () => {
+  const pin = Object.fromEntries([...PIN.matchAll(/^([A-Z0-9_]+)=(\S+)$/gm)].map(m => [m[1], m[2]]));
+  assert.match(pin.YTDLP_VERSION, /^\d{4}\.\d{2}\.\d{2}$/, "a real yt-dlp release tag");
+  assert.match(pin.YTDLP_EXE_SHA256, /^[0-9a-f]{64}$/, "the sha256 from that release's SHA2-256SUMS");
+  assert.ok(PAYLOAD.includes("tools/yt-dlp.pin"), "build-payload.sh reads the pin");
+  assert.ok(PAYLOAD.includes("$YTDLP_EXE_SHA256"), "build-payload.sh checks the hash it pinned");
+  assert.ok(PAYLOAD.includes('"$OUT/vendor/yt-dlp/yt-dlp.exe"'), "and lays it where packs.js says");
+  assert.ok(/releases\/download\/\$YTDLP_VERSION\/yt-dlp\.exe/.test(PAYLOAD), "from the PINNED release, never 'latest'");
+});
+
+// yt-dlp solves YouTube's JS challenges in a real JavaScript runtime. Only
+// deno is enabled by default and no family PC has one — but every New ERA
+// install ships its own Node, which is what runs the hub.
+test("yt-dlp is pointed at the Node the hub is running on", () => {
+  const win = ytDlp("C:\\Users\\x\\AppData\\Local\\New ERA", "win32");
+  assert.equal(win.bin, path.join("C:\\Users\\x\\AppData\\Local\\New ERA", "vendor", "yt-dlp", "yt-dlp.exe"));
+  assert.deepEqual(win.args, ["--js-runtimes", "node:" + process.execPath]);
+  // no quotes around the path: yt-dlp splits the value on its FIRST colon and
+  // uses the rest verbatim as the program to run, so a quote would land inside
+  // the filename. The space in "New ERA" is safe — we spawn an argv array.
+  assert.ok(!win.args[1].includes('"'), "the runtime path is never quoted");
+  assert.equal(ytDlp("/opt/era", "linux").bin, "/opt/era/vendor/yt-dlp/yt-dlp");
+});
+
+// Drawing (spec 2026-09-30 §1) is CORE: no pack owns its files, the installer's core section ships
+// them with no /x, and the cut copies both the page and its hub module.
+test("Drawing is core: no pack owns public/drawing, no /x, and the cut copies the page and drawings.js", () => {
+  assert.equal(packOf("public/drawing/index.html"), null);
+  assert.equal(packOf("public/drawing/stickers/horse.png"), null);
+  assert.equal(packOf("public/drawing/people/mom.png"), null, "the default People library is core too (dad 10/7)");
+  assert.doesNotMatch(NSI, /\/x drawing\b/);
+  const payload = fs.readFileSync(new URL("../tools/build-payload.sh", import.meta.url), "utf8");
+  assert.match(payload, /cp -r "\$HUB\/public\/drawing" "\$OUT\/public\/drawing"/);
+  assert.match(payload, /"\$HUB\/drawings\.js"/);
+});
+
+// A core app with no component section starts UNTICKED on a fresh install: -writeApps only
+// names the apps whose section is selected (plan 9/30 risk 6). Drawing gets the SecMW shape —
+// a ticked section with no File lines (its files ride in the core), hover text, and a
+// writeApps line in the same order as the APPS registry.
+test("Drawing is a ticked installer component, described, and seeds apps.json", () => {
+  const sec = NSI.match(/^Section (\/o )?"Drawing" SecDrawing\r?\n([\s\S]*?)^SectionEnd/m);
+  assert.ok(sec, 'a Section "Drawing" SecDrawing exists');
+  assert.equal(sec[1], undefined, "and is ticked by default (no /o)");
+  assert.doesNotMatch(sec[2], /\bFile\b/, "core: it lays down no files of its own");
+  assert.match(NSI, /MUI_DESCRIPTION_TEXT \$\{SecDrawing\} "Drawing: [^"]+"/, "it has hover text");
+  const write = NSI.match(/Section "-writeApps"[\s\S]*?SectionEnd/)[0];
+  assert.match(write, /\$\{If\} \$\{SectionIsSelected\} \$\{SecDrawing\}\s+FileWrite \$0 '\$1"drawing"'\s+StrCpy \$1 ","/,
+               "writeApps emits \"drawing\" when it is selected");
+  // writeApps lists apps in APPS order, so apps.json reads like the registry
+  const order = [...SERVER.matchAll(/^\s*\{ id: "([a-z-]+)",/gm)].map(m => m[1]);
+  const written = [...write.matchAll(/'\$?1?"([a-z-]+)"'/g)].map(m => m[1]);
+  const reg = order.filter(id => written.includes(id));
+  assert.deepEqual(written, reg, "writeApps follows the APPS registry order");
+});
+
+// This week (spec 2026-10-12 §1) rides the board pack like Music and Movies: a
+// ticked section that lays down no files of its own (the board pack carries
+// them), hover text, and a writeApps line in APPS order.
+test("This week is a ticked installer component, described, and seeds apps.json", () => {
+  const sec = NSI.match(/^Section (\/o )?"This week" SecThisWeek\r?\n([\s\S]*?)^SectionEnd/m);
+  assert.ok(sec, 'a Section "This week" SecThisWeek exists');
+  assert.match(NSI, /MUI_DESCRIPTION_TEXT \$\{SecThisWeek\} "This week: [^"]+"/, "it has hover text");
+  const write = NSI.match(/Section "-writeApps"[\s\S]*?SectionEnd/)[0];
+  assert.match(write, /\$\{If\} \$\{SectionIsSelected\} \$\{SecThisWeek\}\s+FileWrite \$0 '\$1"this-week"'\s+StrCpy \$1 ","/);
+  const payload = fs.readFileSync(new URL("../tools/build-payload.sh", import.meta.url), "utf8");
+  assert.match(payload, /cp -r "\$HUB\/public\/watch" "\$OUT\/public\/watch"/, "the watch page ships");
+  assert.match(payload, /"\$HUB\/this-week\.js"/);
+  assert.match(payload, /"\$HUB\/this-week-fetch\.js"/);
+});

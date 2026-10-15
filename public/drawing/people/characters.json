@@ -1,0 +1,45 @@
+{
+  "v": 1,
+  "people": [
+    {
+      "slug": "mom",
+      "word": "Mom",
+      "scale": 0.32
+    },
+    {
+      "slug": "dad",
+      "word": "Dad",
+      "scale": 0.32
+    },
+    {
+      "slug": "girl",
+      "word": "Girl",
+      "scale": 0.22
+    },
+    {
+      "slug": "boy",
+      "word": "Boy",
+      "scale": 0.22
+    },
+    {
+      "slug": "grandma",
+      "word": "Grandma",
+      "scale": 0.32
+    },
+    {
+      "slug": "grandpa",
+      "word": "Grandpa",
+      "scale": 0.32
+    },
+    {
+      "slug": "baby",
+      "word": "Baby",
+      "scale": 0.18
+    },
+    {
+      "slug": "friend",
+      "word": "Friend",
+      "scale": 0.22
+    }
+  ]
+}

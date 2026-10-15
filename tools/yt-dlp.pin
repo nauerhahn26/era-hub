@@ -1,0 +1,15 @@
+# yt-dlp.pin — the ONE place the media-tools pack's binary is named.
+# yt-dlp is ~18 MB of standalone Windows executable (it carries its own
+# Python), so it is not committed: tools/build-payload.sh downloads exactly
+# this release, checks it against the sha256 below, and only then copies it
+# into the payload as vendor/yt-dlp/yt-dlp.exe (packs.js "media-tools").
+# A download that is missing or hashes differently stops a release cut, the
+# same way build-dist.sh stops on a full disk. No test needs the binary.
+#
+# Licence: Unlicense (public domain) — https://github.com/yt-dlp/yt-dlp
+# To bump, take BOTH lines from the release's own checksum file:
+#   curl -L https://github.com/yt-dlp/yt-dlp/releases/download/<version>/SHA2-256SUMS
+# and re-cut + re-verify the installer on the VM (a new binary is a new file
+# for Defender's FastPath to flag).
+YTDLP_VERSION=2026.08.19
+YTDLP_EXE_SHA256=66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a

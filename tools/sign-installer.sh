@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# sign-installer.sh <exe> — Authenticode-sign one Windows executable in place.
+# Called by makensis for BOTH the uninstaller stub and Setup.exe (see the
+# !uninstfinalize / !finalize lines in installer.nsi), so every release is
+# either fully signed or honestly unsigned — never half.
+#
+# Nothing calls this script unless it means to sign: era-family/data/signing.env
+# absent is a hard failure (both plain and --check), never a quiet unsigned build.
+# An honestly unsigned installer is build-dist.sh --unsigned, which omits -DSIGN
+# and never reaches here.
+# Certificate present: sign with osslsigncode (vendored deb in
+# era-family/cache/osslsigncode — no root on the build box) through Certum's
+# SimplySign cloud PKCS#11 module, RFC-3161 timestamp at Certum, then verify.
+# Any failure exits non-zero and fails the release (docs/signing-plan.md §3:
+# "an unsigned Setup.exe fails the release" once the cert exists).
+#
+# The cloud module only shows a token while SimplySign Desktop is running AND
+# logged in (era-family/tools/simplysign.sh up / login / token — one phone code
+# a session); "no slots" here means it is not, and the cut fails saying so.
+#
+# signing.env keys (gitignored; era-family/data is never committed):
+#   SIGN_PKCS11_MODULE=…/cache/simplysign/dists/SSD-2.9.14-dist/SimplySignPKCS_64-MS-1.0.20.so
+#                       (default; the CLOUD module — libcryptoCertum3PKCS.so is the smart-card one)
+#   SIGN_PKCS11_ENGINE=…/cache/simplysign/syslibs/usr/lib/x86_64-linux-gnu/engines-3/pkcs11.so
+#                       (default; osslsigncode 2.8 needs the libp11 engine, extracted deb)
+#   SIGN_PKCS11_CERT='pkcs11:model=SimplySign%20C;type=cert'      (default; read from the token)
+#   SIGN_KEY_URI='pkcs11:model=SimplySign%20C;type=private'       (default; the token's one key)
+#   SIGN_CHAIN_PEM=…/era-family/data/certum-chain.pem  (default if present; the issuing
+#                       "Certum Code Signing 2021 CA", embedded with -ac so verifiers chain
+#                       to Certum Trusted Network CA 2 without an AIA fetch — simplysign.sh cert)
+#   SIGN_PRELOAD=…/cache/simplysign/simplysign-deepbind.so  (default; REQUIRED with the cloud
+#                       module: it statically links OpenSSL 1.0 and exports those symbols, so
+#                       inside osslsigncode they bind to libcrypto.so.3 and it segfaults on the
+#                       first certificate read — the shim dlopen()s it RTLD_DEEPBIND)
+#   SIGN_CERT_PEM=…/certum-oss.pem  optional — use this leaf instead of the token's
+#   SIGN_PKCS11_PIN=…               optional — only if the token asks for a PIN
+#   SIGN_TSA=http://time.certum.pl  optional
+# Alternative (PFX exported from a card/cloud tool — same env file):
+#   SIGN_PFX=$HOME/new-era/era-family/data/certum-oss.pfx  SIGN_PFX_PASS=…
+set -euo pipefail
+EXE="${1:?usage: sign-installer.sh <file.exe> | --check}"
+# --check: sign nothing — exit 0 when a cut WOULD sign, 1 when it would fail on
+# the login (or on a missing signing.env). release.sh asks it at the signing step,
+# after a green VM: the Desktop's login lapses after ~2 h and on 9/6 a 50-min
+# green gate was followed by "not logged in" at the cut.
+CHECK=0; [ "$EXE" = "--check" ] && CHECK=1
+HUB="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(dirname "$HUB")"
+ENV="${ERA_SIGNING_ENV:-$ROOT/era-family/data/signing.env}"   # overridable for tests only
+OSSL="$ROOT/era-family/cache/osslsigncode/usr/bin/osslsigncode"
+SS="$ROOT/era-family/cache/simplysign"
+
+if [ ! -f "$ENV" ]; then
+  echo "sign: SIGNING REQUIRED but era-family/data/signing.env is absent"
+  exit 1
+fi
+set -a; . "$ENV"; set +a
+[ -x "$OSSL" ] || { echo "sign: osslsigncode missing at $OSSL"; exit 1; }
+[ "$CHECK" = 1 ] && [ -n "${SIGN_PFX:-}" ] && { echo "sign: ready (PFX)"; exit 0; }
+
+TSA="${SIGN_TSA:-http://time.certum.pl}"
+# -n is the description a signature dialog shows, -i its "more info" link: the
+# product's names (9/26 rename). The certificate itself names the maintainer
+# and never changed, so SmartScreen reputation carries over.
+COMMON=(-n "Our Era Comms" -i "https://ourerafoundation.org/communications/" -h sha256 -ts "$TSA")
+TMP="$EXE.signed"
+if [ -n "${SIGN_PFX:-}" ]; then
+  "$OSSL" sign -pkcs12 "$SIGN_PFX" -pass "$SIGN_PFX_PASS" "${COMMON[@]}" -in "$EXE" -out "$TMP"
+else
+  MODULE="${SIGN_PKCS11_MODULE:-$SS/dists/SSD-2.9.14-dist/SimplySignPKCS_64-MS-1.0.20.so}"
+  ENGINE="${SIGN_PKCS11_ENGINE:-$SS/syslibs/usr/lib/x86_64-linux-gnu/engines-3/pkcs11.so}"
+  SHIM="${SIGN_PRELOAD:-$SS/simplysign-deepbind.so}"
+  CERT_URI="${SIGN_PKCS11_CERT:-pkcs11:model=SimplySign%20C;type=cert}"
+  KEY_URI="${SIGN_KEY_URI:-pkcs11:model=SimplySign%20C;type=private}"
+  CHAIN="${SIGN_CHAIN_PEM:-$ROOT/era-family/data/certum-chain.pem}"
+  [ -f "$MODULE" ] || { echo "sign: PKCS#11 module missing at $MODULE"; exit 1; }
+  [ -f "$ENGINE" ] || { echo "sign: pkcs11 engine missing at $ENGINE"; exit 1; }
+  [ -f "$SHIM" ] || { echo "sign: DEEPBIND shim missing at $SHIM — era-family/tools/simplysign.sh up builds it"; exit 1; }
+  # the module's own libs and the extracted debs
+  export LD_LIBRARY_PATH="$(dirname "$MODULE"):$SS/syslibs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  P11="$SS/syslibs/usr/bin/pkcs11-tool"
+  if [ -x "$P11" ] && { LD_PRELOAD="$SHIM" "$P11" --module "$MODULE" -L 2>&1 || true; } | grep -q "No slots"; then   # (exits 1 with no slots)
+    echo "sign: SimplySign Desktop is not logged in (no token) — era-family/tools/simplysign.sh login/token, then re-cut"
+    exit 1
+  fi
+  [ "$CHECK" = 1 ] && { echo "sign: ready (SimplySign token on the slot)"; exit 0; }
+  if [ -n "${SIGN_CERT_PEM:-}" ]; then CERTARGS=(-certs "$SIGN_CERT_PEM" -key "$KEY_URI")
+  else CERTARGS=(-pkcs11cert "$CERT_URI" -key "$KEY_URI"); fi
+  [ -f "$CHAIN" ] && CERTARGS+=(-ac "$CHAIN")
+  LD_PRELOAD="$SHIM" "$OSSL" sign -pkcs11engine "$ENGINE" -pkcs11module "$MODULE" "${CERTARGS[@]}" \
+    ${SIGN_PKCS11_PIN:+-pass "$SIGN_PKCS11_PIN"} \
+    "${COMMON[@]}" -in "$EXE" -out "$TMP"
+fi
+mv -f "$TMP" "$EXE"
+# verify chains to the system CA bundle (Certum Trusted Network CA 2 is in it).
+# Captured, not piped: `| grep -q` closes the pipe early and pipefail turns
+# osslsigncode's SIGPIPE into a false FAILED.
+VERIFY="$("$OSSL" verify -in "$EXE" 2>&1)" && grep -q "^Signature verification: ok" <<<"$VERIFY" \
+  || { echo "$VERIFY" | tail -20; echo "sign: verification FAILED for $EXE"; exit 1; }
+echo "sign: SIGNED $(basename "$EXE") (timestamped at $TSA)"

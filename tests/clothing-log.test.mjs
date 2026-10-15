@@ -1,0 +1,706 @@
+// clothing-log.test.mjs — the shared dot-folder (spec §5), on its own.
+//
+// `clothing/.era/` rides inside the folder Google Drive for Desktop already
+// mirrors, so the family's devices learn from each other with no server and no
+// new secret. The rules that make that safe are all in this module, and every
+// one of them is a way to lose a family's data if it is wrong:
+//
+//   * ONE WRITER PER FILE. This hub appends only under its own device id, and
+//     only onto the Drive MOUNT — never into <DATA>/clothing/.era, which is
+//     the mirror's own destination (plan A4-9). A hub appending there would
+//     race the mirror's .part+rename.
+//   * NEVER CREATE clothing/. An absent source folder means "leave ours
+//     alone" to drive.js; an EMPTY one means "prune the wardrobe" (W8). A
+//     side-effect mkdir turns the first into the second and the family's
+//     local-only photos are gone for good.
+//   * NEVER THROW. A missing mount, a read-only volume, a torn line
+//     mid-sync: one log line, and the board is dealt anyway.
+//
+// Pure: temp dirs, no ports, no hub, no key. Every id, name and colour is
+// invented.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+
+const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(path.join(HUB, "server.js"));
+const { openLog, mergeHistory, sharedWriters } = require("./clothing-log.js");
+const { dayKey, yesterdayOf, HISTORY_DAYS_KEPT } = require("./clothing-rank.js");
+
+const ZONE = "UTC";
+const TODAY = dayKey(Date.now(), ZONE);
+const YESTERDAY = yesterdayOf(TODAY);
+const OWN = "own-dev";
+
+const tmp = (tag) => fs.mkdtempSync(path.join(os.tmpdir(), "era-log-" + tag + "-"));
+// A pair of temp dirs in the shape the hub sees them: the Drive mount (where
+// this device WRITES) and the data dir (where the mirror DELIVERS).
+function beds({ mount = true } = {}) {
+  const dataDir = tmp("d"), driveFolder = tmp("m");
+  if (mount) fs.mkdirSync(path.join(driveFolder, "clothing"), { recursive: true });
+  return { dataDir, driveFolder };
+}
+const era = (dataDir, ...p) => path.join(dataDir, "clothing", ".era", ...p);
+// Deliver a line the way the mirror would: under <DATA>/clothing/.era.
+function deliver(dataDir, rel, ...lines) {
+  const file = era(dataDir, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, lines.map(l => (typeof l === "string" ? l : JSON.stringify(l)) + "\n").join(""));
+  return file;
+}
+const open = (b, extra = {}) => openLog({ dataDir: b.dataDir, driveFolder: b.driveFolder,
+  deviceId: OWN, tz: ZONE, ...extra });
+
+// ---- writes: the mount, and nothing else -----------------------------------
+
+test("an own pick lands in the Drive mount under this device's id, and nowhere else", () => {
+  const b = beds();
+  const log = open(b);
+  assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_aaaa", "item_bbbb"] }), true);
+  const file = path.join(b.driveFolder, "clothing", ".era", "picks", OWN, TODAY + ".jsonl");
+  const line = JSON.parse(fs.readFileSync(file, "utf8").trim());
+  assert.equal(line.kind, "yes");
+  assert.deepEqual(line.combo, ["item_aaaa", "item_bbbb"]);
+  assert.match(line.t, /^\d{4}-\d{2}-\d{2}T/, "every line is stamped");
+  assert.ok(fs.readFileSync(file, "utf8").endsWith("\n"), "append-only: the file always grows by whole lines");
+  // A4-9: the local canonical for own picks is wardrobe/history.json. The
+  // mirror owns <DATA>/clothing/.era — a hub append there is a second writer.
+  assert.ok(!fs.existsSync(era(b.dataDir)), "nothing is written under the data dir");
+});
+
+test("offers and tags have their own shapes: a date file per device, one file per writer", () => {
+  const b = beds();
+  const log = open(b);
+  assert.equal(log.appendOffer(TODAY, { band: "warm", page1: [["item_aaaa", "item_bbbb"], ["item_cccc"]] }), true);
+  assert.equal(log.appendTag({ id: "item_aaaa", hash: "a".repeat(64), name: "Sunny tee",
+    category: "top", warmth: "warm", colors: ["blue"], pattern: "solid", statement: false }), true);
+  const root = path.join(b.driveFolder, "clothing", ".era");
+  assert.ok(fs.existsSync(path.join(root, "offers", OWN, TODAY + ".jsonl")));
+  assert.ok(fs.existsSync(path.join(root, "tags", OWN + ".jsonl")), "tags are one file per writer, not per day");
+  assert.ok(!fs.existsSync(era(b.dataDir)));
+});
+
+// W8, the one that eats photos: syncLocal treats an ABSENT <folder>/clothing
+// as "leave the local wardrobe alone" and an EMPTY one as "the parent deleted
+// everything". A side-effect mkdir here turns a family's Drive folder that has
+// no clothing/ yet into a delete-everything order on the next sync.
+// ...and spec §5 says an own write that cannot land is "a log line and nothing
+// else". Said ONCE per process, like the no-folder line: the worker opens a log
+// on every build, so a per-call line would be printed every fifteen minutes for
+// ever. This is the first case in the file that refuses a write for this
+// reason, which is why it is the one that can see the line.
+test("a Drive folder with no clothing/ is left exactly as it was, and says so once", () => {
+  const b = beds({ mount: false });
+  const said = [];
+  const realLog = console.log;
+  console.log = (...a) => said.push(a.join(" "));
+  let log;
+  try {
+    log = open(b);
+    assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_aaaa"] }), false);
+    assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_bbbb"] }), false);
+  } finally { console.log = realLog; }
+  assert.equal(said.filter(l => /no clothing\//.test(l)).length, 1,
+    "a parent who pointed Settings at a folder before making it is told once — not never, and not every build");
+  assert.equal(log.appendOffer(TODAY, { band: null, page1: [["item_aaaa"]] }), false);
+  assert.equal(log.appendTag({ id: "item_aaaa", category: "top" }), false);
+  assert.ok(!fs.existsSync(path.join(b.driveFolder, "clothing")),
+    "clothing/ was NOT created — an absent source must stay absent (W8)");
+  assert.deepEqual(fs.readdirSync(b.driveFolder), [], "the Drive folder is untouched");
+});
+
+// The id becomes a DIRECTORY NAME in a folder Drive mirrors onto three
+// operating systems. device-id.js guarantees a slug and every caller in the
+// tree goes through it, but the rule the module's own header states ("the only
+// mkdir is BENEATH clothing/") has to be the module's, not the caller's.
+test("a device id that is not a slug never becomes a path of its own", () => {
+  const b = beds();
+  const log = openLog({ dataDir: b.dataDir, driveFolder: b.driveFolder,
+    deviceId: "../..", tz: ZONE });
+  assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_aaaa"] }), true);
+  assert.ok(fs.existsSync(path.join(b.driveFolder, "clothing", ".era", "picks", "hub", TODAY + ".jsonl")),
+    "nothing survives the slug, so the line lands under the fallback name");
+  assert.deepEqual(fs.readdirSync(b.driveFolder), ["clothing"], "and nowhere above it");
+});
+
+test("no Drive folder at all (API mode) is a quiet no-op, never a throw", () => {
+  const b = beds();
+  const log = openLog({ dataDir: b.dataDir, driveFolder: null, deviceId: OWN, tz: ZONE });
+  assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_aaaa"] }), false);
+  assert.equal(log.appendOffer(TODAY, { band: null, page1: [] }), false);
+  assert.equal(log.appendTag({ id: "item_aaaa" }), false);
+  assert.ok(!fs.existsSync(era(b.dataDir)));
+});
+
+test("a mount this hub cannot write refuses the line instead of failing the build", {
+  skip: process.getuid && process.getuid() === 0 ? "root writes every directory" : false,
+}, () => {
+  const b = beds();
+  fs.chmodSync(path.join(b.driveFolder, "clothing"), 0o500);
+  try {
+    const log = open(b);
+    assert.equal(log.appendPick(TODAY, { kind: "yes", combo: ["item_aaaa"] }), false,
+      "it says no rather than throwing into the build");
+  } finally { fs.chmodSync(path.join(b.driveFolder, "clothing"), 0o700); }
+});
+
+// ---- reads: merge every device but this one --------------------------------
+
+test("another device's picks are read; this device's own mirrored copy is not", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T09:00:00Z", kind: "yes", combo: ["item_aaaa", "item_bbbb"] });
+  // A's own line, mirrored back to A. Its canonical copy is history.json, so
+  // reading this one would double-count — and a divergent copy would win.
+  deliver(b.dataDir, `picks/${OWN}/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T10:00:00Z", kind: "yes", combo: ["item_zzzz"] });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(m.picksEvents[YESTERDAY].map(e => e.combo),
+    [["item_aaaa", "item_bbbb"]], "only the other device's Yes");
+});
+
+test("a torn last line is skipped and the rest of the file is still read", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T09:00:00Z", kind: "yes", combo: ["item_aaaa"] },
+    { t: "2026-09-05T09:30:00Z", kind: "select", combo: ["item_bbbb"] });
+  fs.appendFileSync(era(b.dataDir, `picks/dev-b/${YESTERDAY}.jsonl`), '{"t":"2026-09-05T10:00:00Z","ki');
+  const m = open(b).readMerged(TODAY);
+  assert.equal(m.picksEvents[YESTERDAY].length, 2, "the two whole lines survived the mid-sync tear");
+});
+
+test("a picks line with no combo is dropped without taking the file down", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T09:00:00Z", kind: "yes" },
+    { t: "2026-09-05T09:05:00Z", kind: "yes", combo: "item_aaaa" },
+    { t: "2026-09-05T09:10:00Z", kind: "yes", combo: ["item_aaaa"] });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(m.picksEvents[YESTERDAY].map(e => e.combo), [["item_aaaa"]]);
+});
+
+// W9: the migration tool ends every file with a marker so a re-run changes the
+// byte length (a same-length rewrite is invisible to the mirror). The reader
+// has to skip it — and skipping it must not make it "the last line of the
+// date", or a re-run would blank the day's page 1 on every other device.
+test("a marker line at the end of an offers file leaves the day's page 1 alone", () => {
+  const b = beds();
+  deliver(b.dataDir, `offers/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T06:00:00Z", band: "cool", page1: [["item_aaaa", "item_bbbb"]] },
+    { t: "2026-09-05T06:30:00Z", band: "warm", page1: [["item_cccc", "item_dddd"]] },
+    { t: "2026-09-05T23:00:00Z", kind: "marker" });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(m.offers[YESTERDAY].page1, [["item_cccc", "item_dddd"]],
+    "the last VALID line of the date wins, not the marker");
+  assert.equal(m.offers[YESTERDAY].band, "warm");
+});
+
+// ...and a marker is a marker whatever else the line carries. The tool writes
+// a bare {t, kind:"marker"} today, which the required-field checks would drop
+// on their own; the rule has to hold if that line ever grows a field, or a
+// re-run of the migration would blank every other device's yesterday.
+test("a marker is never a line, even when it carries the field its file needs", () => {
+  const b = beds();
+  deliver(b.dataDir, `offers/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T06:00:00Z", band: "cool", page1: [["item_aaaa", "item_bbbb"]] },
+    { t: "2026-09-05T23:00:00Z", kind: "marker", page1: [] });
+  deliver(b.dataDir, `picks/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T09:00:00Z", kind: "yes", combo: ["item_aaaa"] },
+    { t: "2026-09-05T23:00:00Z", kind: "marker", combo: ["item_marker"] });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(m.offers[YESTERDAY].page1, [["item_aaaa", "item_bbbb"]], "yesterday's lineup stands");
+  assert.deepEqual(m.picksEvents[YESTERDAY].map(e => e.combo), [["item_aaaa"]], "and the marker is no pick");
+});
+
+// The local canonical already refuses an empty lineup (clothing.js recordOffer:
+// a build that finds every tile missing must not REPLACE the morning's seven
+// looks with none). The shared half of that memory needs the same rule at both
+// ends, or one device's broken build blanks that day's page 1 for the whole
+// family — and the yesterday bar (spec §1 V3) stops barring those looks
+// everywhere, not just here.
+test("a lineup with no looks is never published to the family", () => {
+  const b = beds();
+  const log = open(b);
+  assert.equal(log.appendOffer(TODAY, { band: "warm", page1: [] }), false,
+    "an empty deal is not an offer");
+  assert.ok(!fs.existsSync(path.join(b.driveFolder, "clothing", ".era", "offers")),
+    "…and it does not even make the folder");
+  assert.equal(log.appendOffer(TODAY, { band: "warm", page1: [["item_aaaa"]] }), true,
+    "a real lineup still lands");
+});
+
+test("an empty lineup that reached the folder anyway leaves the day's page 1 standing", () => {
+  const b = beds();
+  deliver(b.dataDir, `offers/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T06:00:00Z", band: "warm", page1: [["item_aaaa", "item_bbbb"]] },
+    { t: "2026-09-05T18:00:00Z", band: "warm", page1: [] });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(m.offers[YESTERDAY].page1, [["item_aaaa", "item_bbbb"]],
+    "the last line with looks in it wins, not the empty one after it");
+});
+
+test("two devices' page 1 for one day is the union, one entry per look", () => {
+  const b = beds();
+  deliver(b.dataDir, `offers/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T06:00:00Z", band: "warm", page1: [["item_aaaa", "item_bbbb"]] });
+  deliver(b.dataDir, `offers/dev-c/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T07:00:00Z", band: "warm", page1: [["item_aaaa", "item_bbbb"], ["item_cccc"]] });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(m.offers[YESTERDAY].page1.map(c => c.join("+")).sort(),
+    ["item_aaaa+item_bbbb", "item_cccc"]);
+});
+
+// Two devices can only disagree about a band for a date THIS device never
+// built (mergeHistory gives the local band priority), and the answer must not
+// be "whichever directory the filesystem happened to list last".
+test("when two devices disagree about a day's band, the same one always wins", () => {
+  const b = beds();
+  deliver(b.dataDir, `offers/dev-z/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T06:00:00Z", band: "cold", page1: [["item_cccc"]] });
+  deliver(b.dataDir, `offers/dev-b/${YESTERDAY}.jsonl`,
+    { t: "2026-09-05T07:00:00Z", band: "warm", page1: [["item_aaaa"]] });
+  const m = open(b).readMerged(TODAY);
+  assert.equal(m.offers[YESTERDAY].band, "warm",
+    "the first device by name, the way mergeHistory keeps the first band it has");
+  assert.equal(m.offers[YESTERDAY].page1.length, 2, "…and both lineups still bar page 1");
+});
+
+// A day older than the memory itself can only slow the read down.
+test("a date file older than the sixty days the memory keeps is not read at all", () => {
+  const b = beds();
+  const old = new Date(Date.now() - (HISTORY_DAYS_KEPT + 5) * 86400000).toISOString().slice(0, 10);
+  deliver(b.dataDir, `picks/dev-b/${old}.jsonl`, { t: old + "T09:00:00Z", kind: "yes", combo: ["item_old0"] });
+  deliver(b.dataDir, `picks/dev-b/${YESTERDAY}.jsonl`, { t: "2026-09-05T09:00:00Z", kind: "yes", combo: ["item_aaaa"] });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(Object.keys(m.picksEvents), [YESTERDAY]);
+});
+
+// I19: the mirror leaves .part siblings mid-copy and writes its own
+// .mirrored.json ledger beside the libraries. Neither is a log line.
+test("only .jsonl files with the right name shape are read", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/dev-b/${YESTERDAY}.jsonl`, { t: "2026-09-05T09:00:00Z", kind: "yes", combo: ["item_aaaa"] });
+  deliver(b.dataDir, `picks/dev-b/${YESTERDAY}.jsonl.part`, { t: "2026-09-05T10:00:00Z", kind: "yes", combo: ["item_part"] });
+  deliver(b.dataDir, "picks/dev-b/notes.jsonl", { t: "2026-09-05T11:00:00Z", kind: "yes", combo: ["item_note"] });
+  const m = open(b).readMerged(TODAY);
+  const all = Object.values(m.picksEvents).flat().map(e => e.combo.join("+"));
+  assert.deepEqual(all, ["item_aaaa"]);
+});
+
+test("a missing .era folder is simply an empty memory", () => {
+  const b = beds();
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual(m.picksEvents, {});
+  assert.deepEqual(m.offers, {});
+  assert.equal(m.tags.size, 0);
+  assert.equal(m.favorites.size, 0);
+  assert.equal(m.pairing.great.size + m.pairing.avoid.size, 0);
+});
+
+// ---- tags: the family pays the AI once (spec §3.1 item 1, §5) --------------
+
+test("a tag with only a hash is found by hash — the same garment under another filename", () => {
+  const b = beds();
+  const hash = "b".repeat(64);
+  deliver(b.dataDir, "tags/studio.jsonl",
+    { t: "2026-09-05T09:00:00Z", hash, name: "Sunny tee", category: "top", warmth: "warm",
+      colors: ["blue"], pattern: "solid", statement: false });
+  const log = open(b), m = log.readMerged(TODAY);
+  assert.equal(log.tagsFor(m, "item_other", hash).name, "Sunny tee");
+  assert.equal(log.tagsFor(m, "item_other", "c".repeat(64)), null, "a hash nobody tagged misses");
+});
+
+test("id is tried first; a line whose id is someone else's still matches by hash", () => {
+  const b = beds();
+  const hash = "d".repeat(64);
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_theirs", hash, category: "top", warmth: "hot", colors: ["red"] },
+    { t: "2026-09-05T09:01:00Z", id: "item_mine", hash: "e".repeat(64), category: "top", warmth: "cold", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  assert.deepEqual(log.tagsFor(m, "item_mine", hash).colors, ["navy"], "the id wins when it is known");
+  assert.deepEqual(log.tagsFor(m, "item_unknown", hash).colors, ["red"], "otherwise the hash finds it");
+});
+
+// W3: the migration tool carries the original's INT warmth levels.
+test("a warmth level from the migrated wardrobe reads as the hub's word", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/studio.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_aaaa", category: "pants", warmth: 2, colors: ["navy"] },
+    { t: "2026-09-05T09:00:01Z", id: "item_bbbb", category: "pants", warmth: 1, colors: ["navy"] },
+    { t: "2026-09-05T09:00:02Z", id: "item_cccc", category: "pants", warmth: 3, colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  assert.equal(log.tagsFor(m, "item_aaaa").warmth, "cool");
+  assert.equal(log.tagsFor(m, "item_bbbb").warmth, "warm");
+  assert.equal(log.tagsFor(m, "item_cccc").warmth, "cold");
+});
+
+// W5 / A4-3: the device that PAID for the call is the only one that saw which
+// way up the photo was. A shared tag stands in for that answer, so it has to
+// carry the turn and the crop with it — a phone photo tagged on the first
+// device would otherwise draw a sideways tile on the second, which is dad's
+// 9/3 "upside-down shorts" all over again, this time for a garment nobody
+// re-described. Nothing else in the suite reads these two fields.
+test("a shared tag carries the turn and crop the tagging device saw", () => {
+  const b = beds();
+  const crop = { x: 0.1, y: 0.05, w: 0.8, h: 0.9 };
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_sideways", category: "pants", warmth: "warm",
+      colors: ["navy"], rotate_deg: 90, crop },
+    { t: "2026-09-05T09:00:01Z", id: "item_upright", category: "top", warmth: "warm",
+      colors: ["blue"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const sideways = log.tagsFor(m, "item_sideways");
+  assert.equal(sideways.rotate_deg, 90, "the tile is turned the way the photo needed");
+  assert.deepEqual(sideways.crop, crop, "…and trimmed the same way too");
+  const upright = log.tagsFor(m, "item_upright");
+  assert.equal("rotate_deg" in upright, false, "a line without them means rot 0, not 'unknown'");
+  assert.equal("crop" in upright, false);
+});
+
+test("the newest line for a garment wins, whichever device wrote it", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_aaaa", category: "top", warmth: "warm", colors: ["blue"] });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-06T09:00:00Z", id: "item_aaaa", category: "top", warmth: "warm", colors: ["green"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  assert.deepEqual(log.tagsFor(m, "item_aaaa").colors, ["green"]);
+});
+
+test("a tag line naming neither an id nor a hash is not a tag", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", category: "top", warmth: "warm", colors: ["blue"] },
+    { t: "2026-09-05T09:01:00Z", kind: "marker" });
+  const m = open(b).readMerged(TODAY);
+  assert.equal(m.tags.size, 0);
+});
+
+// ---- manual edits: the grown-up outranks the model, for ever ---------------
+// (accessories spec 2026-09-17 §3.4.) A model line is a guess; a `manual:true`
+// line is a parent who looked at the garment and said what it is. So the usual
+// "newest wins" is suspended in one direction only: a manual line beats any
+// non-manual line for the same id or hash whatever the clocks say — including
+// a model line written later by a device whose ingest ran after the edit, which
+// is the ordinary case (the edit lands today, another tablet describes the same
+// photo tomorrow). Among manual lines the newest parent wins; among non-manual
+// lines nothing changes at all.
+
+test("a manual line beats a newer line from the model, and says so", () => {
+  const b = beds();
+  const hash = "f".repeat(64);
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-06T09:00:00Z", id: "item_aaaa", hash, category: "top", warmth: "warm", colors: ["navy"] });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_aaaa", hash, category: "jacket", occasion: "fancy",
+      hidden: false, manual: true, warmth: "cold", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const tag = log.tagsFor(m, "item_aaaa");
+  assert.equal(tag.category, "jacket", "the model described it again yesterday; the parent still wins");
+  assert.equal(tag.manual, true, "…and the worker can tell, so it can stamp manualAt");
+  assert.equal(tag.t, "2026-09-05T09:00:00Z", "…and knows when the parent said it");
+  // The sweep looks up by id THEN hash, so the hash key has to carry the same
+  // winner: a photo that arrived under another filename is the same garment.
+  assert.equal(log.tagsFor(m, "item_unknown", hash).category, "jacket");
+});
+
+test("among manual lines the newest one wins, and a later model line still loses", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_aaaa", category: "jacket", manual: true, colors: ["navy"] },
+    { t: "2026-09-07T09:00:00Z", id: "item_aaaa", category: "top", manual: true, colors: ["navy"] });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-08T09:00:00Z", id: "item_aaaa", category: "dress", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const tag = log.tagsFor(m, "item_aaaa");
+  assert.equal(tag.category, "top", "the parent changed their mind, and the model never gets a vote");
+  assert.equal(tag.t, "2026-09-07T09:00:00Z");
+});
+
+test("a manual line naming neither an id nor a hash is no more a tag than any other", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-06T09:00:00Z", category: "jacket", manual: true, colors: ["navy"] },
+    { t: "2026-09-05T09:00:00Z", id: "item_aaaa", category: "top", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  assert.equal(m.tags.size, 1, "manual is a precedence flag, not a way past the shape rule");
+  assert.equal(log.tagsFor(m, "item_aaaa").category, "top");
+});
+
+test("a shared tag carries the occasion the model gave it and the hide a parent set", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_party", category: "dress", occasion: "fancy", colors: ["red"] },
+    { t: "2026-09-05T09:00:01Z", id: "item_gone", category: "top", hidden: true, manual: true, colors: ["grey"] },
+    { t: "2026-09-05T09:00:02Z", id: "item_plain", category: "top", colors: ["blue"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  assert.equal(log.tagsFor(m, "item_party").occasion, "fancy");
+  assert.equal(log.tagsFor(m, "item_gone").hidden, true);
+  const plain = log.tagsFor(m, "item_plain");
+  assert.equal("occasion" in plain, false, "a line without them says nothing, rather than saying 'everyday'");
+  assert.equal("hidden" in plain, false);
+  assert.equal("manual" in plain, false);
+});
+
+// Warmth coherence (spec 2026-09-29 §2 D4, §3): the fit words ride the shared
+// line like occasion does — carried when the line really has them, through
+// their lists, and absent otherwise, so a pre-9/29 line normalizes to exactly
+// what it always did (the snapshot below is untouched).
+test("a shared tag carries coverage, weight and legs when it has them — and only valid ones", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-29T09:00:00Z", id: "item_fleece", category: "top", coverage: "long", weight: "heavy", colors: ["gray"] },
+    { t: "2026-09-29T09:00:01Z", id: "item_sun", category: "dress", coverage: "sleeveless", legs: "bare", colors: ["red"] },
+    { t: "2026-09-29T09:00:02Z", id: "item_guess", category: "top", coverage: "long", weight: "unsure", colors: ["navy"] },
+    { t: "2026-09-29T09:00:03Z", id: "item_junk", category: "top", coverage: "elbow", weight: 3, legs: "yes", colors: ["navy"] },
+    { t: "2026-09-29T09:00:04Z", id: "item_plain", category: "top", colors: ["blue"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const fleece = log.tagsFor(m, "item_fleece");
+  assert.equal(fleece.coverage, "long");
+  assert.equal(fleece.weight, "heavy");
+  assert.equal(log.tagsFor(m, "item_sun").legs, "bare");
+  assert.equal(log.tagsFor(m, "item_guess").weight, "unsure", "the model's own unsure travels as it was said");
+  const junk = log.tagsFor(m, "item_junk");
+  for (const k of ["coverage", "weight", "legs"]) assert.equal(k in junk, false, "a bad " + k + " is dropped, the line stands");
+  assert.equal(junk.category, "top");
+  const plain = log.tagsFor(m, "item_plain");
+  for (const k of ["coverage", "weight", "legs"]) assert.equal(k in plain, false, "a line without them says nothing");
+});
+
+// The file's rule for a bad OPTIONAL field is already settled by normalizeTag:
+// a warmth that is neither a word nor a level, a rotate_deg that is not a
+// number, a crop that is not an object — the FIELD is dropped and the line
+// stands. These three follow it. Dropping the whole line instead would throw
+// away a good `category` because a writer sent `hidden:"yes"`, and a bad
+// `manual` would be no better off either way.
+test("a malformed occasion, hidden or manual is ignored — the line itself still stands", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_junk", category: "jacket", colors: ["navy"],
+      occasion: "weird", hidden: "yes", manual: 1 });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-06T09:00:00Z", id: "item_junk", category: "top", colors: ["navy"] });
+  const log = open(b), m = log.readMerged(TODAY);
+  const tag = log.tagsFor(m, "item_junk");
+  assert.equal(tag.category, "top", "manual:1 is not manual, so the newer line wins as it always did");
+  assert.equal("occasion" in tag, false);
+  assert.equal("hidden" in tag, false);
+  assert.equal("manual" in tag, false);
+  // …and the junk line is still a tag in its own right, category and all.
+  const alone = open(beds()).readMerged(TODAY);
+  assert.equal(alone.tags.size, 0);
+  const c = beds();
+  deliver(c.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_junk", category: "jacket", colors: ["navy"],
+      occasion: "weird", hidden: "yes", manual: 1 });
+  const only = open(c);
+  assert.equal(only.tagsFor(only.readMerged(TODAY), "item_junk").category, "jacket");
+});
+
+// A family with no manual lines must read EXACTLY what it read before the rule
+// existed: three writers, ids and hashes, a migrated int warmth, the geometry
+// fields, this device's own line coming back through the mirror, and a torn
+// tail. Snapshot taken by running this fixture against the module before the
+// change (2026-09-17).
+test("the merged tags are byte-identical for a family that has never made a manual edit", () => {
+  const b = beds();
+  deliver(b.dataDir, "tags/dev-b.jsonl",
+    { t: "2026-09-05T09:00:00Z", id: "item_theirs", hash: "d".repeat(64), category: "top",
+      warmth: "hot", colors: ["red"], pattern: "solid", statement: false },
+    { t: "2026-09-05T09:01:00Z", id: "item_mine", hash: "e".repeat(64), category: "top",
+      warmth: "cold", colors: ["navy"], rotate_deg: 90, crop: { x: 0.1, y: 0.05, w: 0.8, h: 0.9 } });
+  deliver(b.dataDir, "tags/dev-c.jsonl",
+    { t: "2026-09-06T09:00:00Z", id: "item_mine", category: "top", warmth: "warm",
+      colors: ["green"], palette: "bright", vibe: "sporty" });
+  deliver(b.dataDir, "tags/studio.jsonl",
+    { t: "2026-09-04T09:00:00Z", id: "item_migrated", category: "pants", warmth: 2, colors: ["navy"] },
+    { t: "2026-09-05T08:00:00Z", hash: "b".repeat(64), name: "Sunny tee", category: "top",
+      warmth: "warm", colors: ["blue"] });
+  deliver(b.dataDir, `tags/${OWN}.jsonl`,
+    { t: "2026-09-07T09:00:00Z", id: "item_mine", category: "dress", colors: ["gold"] });
+  fs.appendFileSync(era(b.dataDir, "tags/dev-c.jsonl"), '{"t":"2026-09-08T09:00:00Z","id":"item_to');
+
+  const m = open(b).readMerged(TODAY);
+  const entries = [...m.tags.entries()].sort((a, c) => a[0].localeCompare(c[0]));
+  assert.deepEqual(JSON.parse(JSON.stringify(entries)), [
+    ["b".repeat(64), { name: "Sunny tee", category: "top", colors: ["blue"], warmth: "warm" }],
+    ["d".repeat(64), { category: "top", colors: ["red"], pattern: "solid", statement: false, warmth: "hot" }],
+    ["e".repeat(64), { category: "top", colors: ["navy"], warmth: "cold", rotate_deg: 90,
+      crop: { x: 0.1, y: 0.05, w: 0.8, h: 0.9 } }],
+    ["item_migrated", { category: "pants", colors: ["navy"], warmth: "cool" }],
+    ["item_mine", { category: "top", colors: ["green"], palette: "bright", vibe: "sporty", warmth: "warm" }],
+    ["item_theirs", { category: "top", colors: ["red"], pattern: "solid", statement: false, warmth: "hot" }],
+  ]);
+});
+
+test("an own manual tag carries occasion, hidden and manual out to the family", () => {
+  const b = beds();
+  const log = open(b);
+  assert.equal(log.appendTag({ id: "item_aaaa", hash: "a".repeat(64), name: "Blue puffer",
+    category: "jacket", occasion: "fancy", hidden: false, manual: true,
+    warmth: "cold", colors: ["blue"], pattern: "solid", statement: false }), true);
+  const file = path.join(b.driveFolder, "clothing", ".era", "tags", OWN + ".jsonl");
+  const line = JSON.parse(fs.readFileSync(file, "utf8").trim());
+  assert.equal(line.category, "jacket");
+  assert.equal(line.occasion, "fancy");
+  assert.equal(line.hidden, false);
+  assert.equal(line.manual, true, "the flag the other devices' readers rank on");
+  assert.match(line.t, /^\d{4}-\d{2}-\d{2}T/, "stamped like every other line — manual lines are ranked by t too");
+});
+
+// ---- pairs: the grown-up's curated taste (spec §4, §5) ---------------------
+
+test("a curated pair keys the same however the two ids are ordered", () => {
+  const b = beds();
+  deliver(b.dataDir, "pairs/studio.jsonl",
+    { t: "2026-09-05T09:00:00Z", kind: "great", combo: ["item_aaaa", "item_bbbb"] },
+    { t: "2026-09-05T09:00:01Z", kind: "avoid", combo: ["item_dddd", "item_cccc"] });
+  const m = open(b).readMerged(TODAY);
+  assert.ok(m.pairing.great.has("item_aaaa+item_bbbb"));
+  assert.ok(m.pairing.avoid.has("item_cccc+item_dddd"), "sorted into one key, whichever order it was written in");
+  assert.equal(m.pairing.great.size, 1);
+});
+
+test("the newest verdict on a pair is the one that counts", () => {
+  const b = beds();
+  deliver(b.dataDir, "pairs/studio.jsonl",
+    { t: "2026-09-05T09:00:00Z", kind: "great", combo: ["item_aaaa", "item_bbbb"] },
+    { t: "2026-09-06T09:00:00Z", kind: "avoid", combo: ["item_bbbb", "item_aaaa"] });
+  const m = open(b).readMerged(TODAY);
+  assert.equal(m.pairing.great.size, 0, "the great verdict was replaced, not kept alongside");
+  assert.ok(m.pairing.avoid.has("item_aaaa+item_bbbb"));
+});
+
+test("a favourite can be taken back", () => {
+  const b = beds();
+  deliver(b.dataDir, "pairs/studio.jsonl",
+    { t: "2026-09-05T09:00:00Z", kind: "favorite", combo: ["item_aaaa"] },
+    { t: "2026-09-05T09:00:01Z", kind: "favorite", combo: ["item_bbbb"] },
+    { t: "2026-09-06T09:00:00Z", kind: "none", combo: ["item_aaaa"] });
+  const m = open(b).readMerged(TODAY);
+  assert.deepEqual([...m.favorites], ["item_bbbb"]);
+});
+
+test("a pairs line with no combo is skipped, marker lines included", () => {
+  const b = beds();
+  deliver(b.dataDir, "pairs/studio.jsonl",
+    { t: "2026-09-05T09:00:00Z", kind: "great" },
+    { t: "2026-09-05T09:00:01Z", kind: "marker" },
+    { t: "2026-09-05T09:00:02Z", kind: "great", combo: ["item_aaaa", "item_bbbb"] });
+  const m = open(b).readMerged(TODAY);
+  assert.equal(m.pairing.great.size, 1);
+});
+
+// ---- the merge the deal actually reads (spec §5 "Reads", §6 step 4) --------
+// buildCandidates takes ONE {days, events}. The local canonical is this
+// device's (history.json, one writer); everything else arrives through the
+// mirror. mergeHistory is where the two become one memory — without it a
+// family's second tablet learns nothing from the first.
+
+test("another device's Yes joins this device's events for the day", () => {
+  const local = { events: { "2026-09-04": [{ kind: "select", combo: ["item_aaaa"], at: "2026-09-04T08:00:00Z" }] }, days: {} };
+  const merged = { picksEvents: { "2026-09-04": [{ kind: "yes", combo: ["item_bbbb"], t: "2026-09-04T19:00:00Z" }],
+                                  "2026-09-03": [{ kind: "yes", combo: ["item_cccc"], t: "2026-09-03T19:00:00Z" }] },
+                   offers: {} };
+  const h = mergeHistory(local, merged);
+  assert.deepEqual(h.events["2026-09-04"].map(e => e.combo.join("+")), ["item_aaaa", "item_bbbb"],
+    "both devices' events, oldest first");
+  assert.deepEqual(h.events["2026-09-03"].map(e => e.combo.join("+")), ["item_cccc"],
+    "a day only the other device saw is a day all the same");
+  assert.deepEqual(local.events["2026-09-04"].length, 1, "the local memory is never mutated");
+});
+
+test("yesterday's page 1 is the union of what every device offered", () => {
+  const local = { days: { "2026-09-04": { band: "warm", page1: [["item_aaaa", "item_bbbb"]] } }, events: {} };
+  const merged = { picksEvents: {},
+    offers: { "2026-09-04": { band: "cool", page1: [["item_aaaa", "item_bbbb"], ["item_cccc"]] },
+              "2026-09-03": { band: "hot", page1: [["item_dddd"]] } } };
+  const h = mergeHistory(local, merged);
+  assert.deepEqual(h.days["2026-09-04"].page1.map(c => c.join("+")).sort(),
+    ["item_aaaa+item_bbbb", "item_cccc"], "the look this device never offered still bars page 1 tomorrow");
+  assert.equal(h.days["2026-09-04"].band, "warm", "this device's own band for its own day");
+  assert.deepEqual(h.days["2026-09-03"].page1, [["item_dddd"]]);
+  assert.equal(h.days["2026-09-03"].band, "hot", "a day only the other device recorded keeps its band");
+});
+
+test("an empty or broken local memory merges to just the shared half", () => {
+  const merged = { picksEvents: { "2026-09-04": [{ kind: "yes", combo: ["item_aaaa"], t: "2026-09-04T19:00:00Z" }] },
+                   offers: { "2026-09-04": { band: null, page1: [["item_aaaa"]] } } };
+  for (const local of [{}, null, { days: "nope", events: 7 }]) {
+    const h = mergeHistory(local, merged);
+    assert.deepEqual(Object.keys(h.events), ["2026-09-04"]);
+    assert.deepEqual(h.days["2026-09-04"].page1, [["item_aaaa"]]);
+  }
+  const alone = mergeHistory({ events: { "2026-09-04": [] }, days: {} }, { picksEvents: {}, offers: {} });
+  assert.deepEqual(alone.days, {}, "no shared half is no change");
+});
+
+// ---- who else is in the folder (spec §4 "sharing", plan T5.1/W12) ----------
+//
+// Settings says "Shared with: 2 devices". A COUNT is all the hub may say: a
+// writer name is a hostname slug and /clothing/status is public and
+// unauthenticated (W12), so the module hands back the names and the caller
+// takes .size — the ids never leave this device.
+
+test("the other writers in the family's folder are found, and this device is not one of them", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/${OWN}/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa", "item_bbbb"] });
+  deliver(b.dataDir, `picks/dev-b/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa", "item_bbbb"] });
+  deliver(b.dataDir, `offers/dev-b/${TODAY}.jsonl`, { band: null, page1: [["item_aaaa"]] });
+  deliver(b.dataDir, `offers/dev-c/${TODAY}.jsonl`, { band: null, page1: [["item_cccc"]] });
+  deliver(b.dataDir, "tags/studio.jsonl", { id: "item_aaaa", category: "top", warmth: 1 });
+  deliver(b.dataDir, `tags/${OWN}.jsonl`, { id: "item_bbbb", category: "top", warmth: 1 });
+  // pairs/ is the fourth kind (spec §5) and the reason the count is of WRITERS
+  // rather than devices: a tablet that has only ever shared what goes together
+  // is still someone in the folder.
+  deliver(b.dataDir, "pairs/dev-d.jsonl", { kind: "great", combo: ["item_aaaa", "item_bbbb"] });
+  deliver(b.dataDir, `pairs/${OWN}.jsonl`, { kind: "favorite", combo: ["item_aaaa"] });
+  assert.deepEqual([...sharedWriters(b.dataDir, OWN)].sort(), ["dev-b", "dev-c", "dev-d"],
+    "three other devices; this device is not counted twice, and the tool is not a device");
+  assert.deepEqual([...sharedWriters(b.dataDir, "OWN-DEV!")].sort(), ["dev-b", "dev-c", "dev-d"],
+    "the caller's id is slugged here too, exactly as an own write slugs it");
+});
+
+// "Shared with: N devices" is the sentence this count becomes, and the family's
+// migration tool is not a device. Spec §7 has it writing tags/studio.jsonl,
+// pairs/studio.jsonl and picks|offers/studio/<date>.jsonl into the folder, and
+// A4-13 requires them to be there BEFORE the upgraded hub's first build — so
+// every migrated family would read one device more than it owns, permanently
+// (review r2).
+test("the migration tool is not a device — its 'studio' lines never inflate the count", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/dev-b/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa"] });
+  deliver(b.dataDir, `picks/studio/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa"] });
+  deliver(b.dataDir, `offers/studio/${TODAY}.jsonl`, { band: null, page1: [["item_aaaa"]] });
+  deliver(b.dataDir, "tags/studio.jsonl", { id: "item_aaaa", category: "top", warmth: 1 });
+  deliver(b.dataDir, "pairs/studio.jsonl", { kind: "great", combo: ["item_aaaa", "item_bbbb"] });
+  assert.deepEqual([...sharedWriters(b.dataDir, OWN)], ["dev-b"],
+    "a family of two reads 'Shared with: 2 devices' — the tool that carried her old picks over is not a third");
+});
+
+// The file half of this walk already skips what the syncer leaves behind (I19:
+// `.part` siblings, `.mirrored.json`); the directory half had no name rule at
+// all, so a scratch directory arriving through the shared folder would be
+// counted as a device and Settings would say "Shared with: 4 devices" to a
+// family of two.
+test("a directory with no day in it is not a device — a syncer's scratch never inflates the count", () => {
+  const b = beds();
+  deliver(b.dataDir, `picks/dev-b/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa"] });
+  fs.mkdirSync(era(b.dataDir, "picks", ".tmp-sync"), { recursive: true });
+  fs.mkdirSync(era(b.dataDir, "offers", "dev-b.part"), { recursive: true });
+  fs.mkdirSync(era(b.dataDir, "offers", "dev-e"), { recursive: true });   // a writer with nothing in it
+  deliver(b.dataDir, "picks/dev-f/notes.txt", "not a day");
+  assert.deepEqual([...sharedWriters(b.dataDir, OWN)].sort(), ["dev-b"],
+    "one other device really writes here; the rest are the mirror's leavings");
+});
+
+test("a family that has never shared anything has no other writers", () => {
+  const b = beds();
+  assert.equal(sharedWriters(b.dataDir, OWN).size, 0, "and no throw for a folder that is not there");
+  deliver(b.dataDir, `picks/${OWN}/${TODAY}.jsonl`, { kind: "yes", combo: ["item_aaaa"] });
+  assert.equal(sharedWriters(b.dataDir, OWN).size, 0, "one device's own lines coming back are not company");
+});

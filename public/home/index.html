@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Our Era Comms</title>
+<link rel="stylesheet" href="../lib/tokens.css">
+<style>
+  /* One design language with ERAgaze Settings: light paper, white cards,
+     teal accents (dad 8/29: hub and settings must match — this is the one). */
+  :root{
+    --ink:#22333B; --paper:#EEF2F1; --card:#FFFFFF; --line:#D3DCDA;
+    --teal:#177E89; --teal-deep:#0B4E58; --teal-wash:#E4EFEF; --good:#2E7D5B;
+    --font:"Segoe UI", system-ui, sans-serif;
+  }
+  body { margin: 0; font-family: var(--font); background: var(--paper); color: var(--ink);
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { max-width: 680px; width: 92%; background: var(--card); border: 1px solid var(--line);
+          border-radius: 18px; padding: 36px 40px; }
+  h1 { margin: 0 0 6px; font-size: 34px; font-weight: 750; }
+  .sub { color: #5A6A70; margin: 0 0 26px; font-size: 18px; line-height: 1.5; }
+  label { display: block; font-size: 17px; margin: 18px 0 6px; color: #44555C; }
+  input[type=text] { width: 100%; box-sizing: border-box; font-size: 22px; padding: 12px 14px;
+          border-radius: 12px; border: 2px solid var(--line); background: #fff; color: var(--ink); }
+  input[type=range] { width: 100%; }
+  .val { color: #5A6A70; font-size: 15px; }
+  button.go { margin-top: 26px; width: 100%; font-size: 22px; padding: 16px; font-family: var(--font);
+          border: 0; border-radius: 12px; background: var(--good); color: #fff; cursor: pointer; }
+  button.go:disabled { background: var(--line); color: #7A8A90; }
+  .apps { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
+  a.app { display: block; text-decoration: none; background: var(--teal-wash); color: var(--ink);
+          border: 2px solid var(--line); border-radius: 14px; padding: 22px 18px; font-size: 21px;
+          font-weight: 650; }
+  a.app:hover { border-color: var(--teal); }
+  a.app small { display: block; color: #5A6A70; font-size: 14px; margin-top: 6px; font-weight: 400; }
+  /* Ellie's own app icons (dad 9/3), the same ones the desktop shortcuts wear */
+  a.app img { float: right; width: 52px; height: 52px; margin: -6px 0 0 10px; }
+  .hidden { display: none; }
+  .note { margin-top: 18px; font-size: 14px; color: #6B7A80; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="card">
+  <!-- FIRST-RUN WIZARD -->
+  <div id="setup" class="hidden">
+    <h1>Welcome 👋</h1>
+    <p class="sub">Everything runs on this computer — nothing about your child is
+      uploaded anywhere. Two quick questions and you're in.</p>
+    <label for="name">Your child's first name or nickname</label>
+    <input id="name" type="text" maxlength="40" autocomplete="off" autofocus>
+    <label for="dwell">How long a gaze selects (dwell) — you can tune this anytime
+      <span class="val" id="dwellVal">1.0s</span></label>
+    <input id="dwell" type="range" min="600" max="3000" step="100" value="1000">
+    <label>Which apps? (change anytime from this screen)</label>
+    <div id="pickApps" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 14px"></div>
+    <button class="go" id="go" disabled>Start</button>
+    <p class="note">Voice, volume cap, and page-change pause live in Settings after
+      setup. Add an ElevenLabs key there for premium voices — the built-in computer
+      voice works with no account at all.</p>
+  </div>
+
+  <!-- LAUNCHER -->
+  <div id="launcher" class="hidden">
+    <h1 id="hello">Hi!</h1>
+    <p class="sub">Pick an app — each one works by eye gaze or touch.</p>
+    <div class="apps" id="appGrid">
+      <a class="app" href="/settings/">Settings<small>dwell, voice, volume cap</small></a>
+    </div>
+    <details class="note" id="appMgr" hidden>
+      <summary style="cursor:pointer">Add or remove apps</summary>
+      <div id="appMgrList" style="margin-top:8px"></div>
+    </details>
+    <p class="note" id="devnote"></p>
+  </div>
+</div>
+<script>
+(async () => {
+  let s = {};
+  try { s = await (await fetch("/settings", { cache: "no-store" })).json(); } catch {}
+  const setup = document.getElementById("setup"), launcher = document.getElementById("launcher");
+  if (s.hasProfile) {
+    launcher.classList.remove("hidden");
+    // Tiles come from the install's app picker (/apps). An empty Music or
+    // Movies still gets its tile: the board's "+ Add" strip is how a grown-up
+    // adds the first song or show (spec §6), and the tile is the only door to
+    // it — the tiles used to hide until the library had something in it, and
+    // a fresh install that ticked both then showed neither (VM QA 9/5). The
+    // empty tile says so instead. (Songs: a missing library is an honest 404;
+    // movies: the recipe is 200 even when empty, by design.)
+    try {
+      const { apps } = await (await fetch("/apps", { cache: "no-store" })).json();
+      let hasSongs = false, hasMovies = false, hasWeek = false;
+      try { hasSongs = (await fetch("/recipes/songs.json", { method: "HEAD", cache: "no-store" })).ok; } catch {}
+      try {
+        const mv = await fetch("/recipes/movies.json", { cache: "no-store" });
+        if (mv.ok) hasMovies = ((await mv.json()).boards || []).some(b => (b.buttons || []).length > 0);
+      } catch {}
+      // This week: no week folder on this computer yet (spec 2026-10-12 §1)
+      try {
+        const tw = await fetch("/this-week/status", { cache: "no-store" });
+        if (tw.ok) hasWeek = !!(await tw.json()).week_of;
+      } catch {}
+      const EMPTY = {
+        music: "no songs yet — grown-ups: + Add on the board, by mouse or touch",
+        movies: "nothing to watch yet — grown-ups: + Add on the board, by mouse or touch",
+        "this-week": "Nothing this week yet",
+      };
+      const grid = document.getElementById("appGrid");
+      for (const a of apps) {
+        if (a.engine || !a.enabled) continue;   // the gaze engine has no page
+        const empty = (a.id === "music" && !hasSongs) || (a.id === "movies" && !hasMovies) ||
+                    (a.id === "this-week" && !hasWeek);
+        const el = document.createElement("a");
+        el.className = "app"; el.href = a.path;
+        if (a.icon) { const im = document.createElement("img"); im.src = a.icon; im.alt = ""; el.appendChild(im); }
+        el.appendChild(document.createTextNode(a.title));
+        const sm = document.createElement("small"); sm.textContent = empty ? EMPTY[a.id] : a.sub;
+        el.appendChild(sm);
+        grid.insertBefore(el, grid.lastElementChild);   // Settings stays last
+      }
+      // grown-up manager: checkboxes mirror the install chooser
+      const mgr = document.getElementById("appMgr"), list = document.getElementById("appMgrList");
+      mgr.hidden = false;
+      for (const a of apps) {
+        if (a.engine) continue;   // manage the engine from Settings
+        const row = document.createElement("label");
+        row.style.cssText = "display:flex;gap:8px;align-items:center;margin:4px 0;font-size:15px";
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = a.enabled;
+        cb.addEventListener("change", async () => {
+          cb.disabled = true;
+          try {
+            const r = await fetch("/apps", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: a.id, enabled: cb.checked }) });
+            let installing = false;
+            try { installing = (await r.clone().json()).installing === true; } catch {}
+            if (installing) {
+              row.appendChild(document.createTextNode(" installing…"));
+              const iv = setInterval(async () => {
+                const { apps } = await (await fetch("/apps", { cache: "no-store" })).json();
+                const cur = apps.find(x => x.id === a.id);
+                if (cur && cur.installed) { clearInterval(iv); location.reload(); }
+              }, 3000);
+            } else location.reload();
+          } catch { cb.disabled = false; }
+        });
+        row.appendChild(cb); row.appendChild(document.createTextNode(a.title));
+        list.appendChild(row);
+      }
+    } catch {}
+    document.getElementById("hello").textContent = "Hi, " + s.childName + "'s family!";
+    // strongly encourage the premium voice: it is a different product with it
+    try {
+      const v = await (await fetch("/voices", { cache: "no-store" })).json();
+      if (!v.enabled) {
+        const b = document.createElement("a");
+        b.href = "/settings/#voice";
+        b.style.cssText = "display:block;background:#2E7D5B;color:#fff;border-radius:14px;padding:16px 18px;margin:0 0 16px;text-decoration:none;font-size:18px";
+        b.innerHTML = "<b>🎙 Add a premium voice</b> — the free ElevenLabs voice sounds far better than the computer voice. Two minutes in Settings.";
+        const grid = document.getElementById("appGrid");
+        grid.parentNode.insertBefore(b, grid);
+      }
+    } catch {}
+    const devnote = document.getElementById("devnote");
+    devnote.textContent =
+      "Hub is running locally on this machine. Dwell: " + ((s.dwellMs||1000)/1000) + "s.";
+    // Listen for updates: the hub self-updates from the website and restarts;
+    // when the RUNNING build changes under us, reload so this page runs the
+    // new code — and greet the family with a small "updated" note.
+    try {
+      const v = await (await fetch("/version", { cache: "no-store" })).json();
+      if (v.build && v.build !== "dev") {
+        devnote.textContent += " Build " + v.build + ".";
+        if (v.disk && v.disk !== v.build)
+          devnote.textContent += " Update ready — applies on the next start.";
+        let prev = "";
+        try { prev = localStorage.getItem("eraBuild") || ""; } catch {}
+        try { localStorage.setItem("eraBuild", v.build); } catch {}
+        if (prev && prev !== v.build)
+          devnote.textContent += " Updated just now ✓";
+        setInterval(async () => {
+          try {
+            const n = await (await fetch("/version", { cache: "no-store" })).json();
+            if (n.build && n.build !== v.build) location.reload();
+          } catch { /* hub restarting mid-update: next tick catches it */ }
+        }, 60 * 1000);
+      }
+    } catch {}
+    return;
+  }
+  setup.classList.remove("hidden");
+  const name = document.getElementById("name"), go = document.getElementById("go");
+  const dwell = document.getElementById("dwell"), dv = document.getElementById("dwellVal");
+  // the install-time app chooser (8/29: everything, one, or a few) lives HERE
+  // in the wizard — the package ships no installer script at all; the hub
+  // makes the shortcuts for whatever is picked.
+  const pick = document.getElementById("pickApps");
+  try {
+    const { apps } = await (await fetch("/apps", { cache: "no-store" })).json();
+    for (const a of apps) {
+      const row = document.createElement("label");
+      row.style.cssText = "display:flex;gap:8px;align-items:center;margin:2px 0;font-size:16px";
+      const cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = a.enabled; cb.dataset.id = a.id;   // installer choice pre-fills
+      row.appendChild(cb); row.appendChild(document.createTextNode(a.title));
+      pick.appendChild(row);
+    }
+  } catch {}
+  name.addEventListener("input", () => { go.disabled = !name.value.trim(); });
+  dwell.addEventListener("input", () => { dv.textContent = (dwell.value/1000).toFixed(1) + "s"; });
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    const chosen = [...pick.querySelectorAll("input:checked")].map(c => c.dataset.id);
+    const body = JSON.stringify({ childName: name.value.trim(), dwellMs: parseInt(dwell.value, 10),
+                                  apps: chosen });
+    // The hub can be restarting under us (a self-update landing right as the
+    // family presses Go — leg B, 9/3: the fetch threw, the button stayed grey
+    // and nothing happened). Keep trying for a while before giving up.
+    let ok = false;
+    for (let i = 0; i < 20 && !ok; i++) {
+      try {
+        const r = await fetch("/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+        if (r.ok) ok = true; else break;
+      } catch { await new Promise(r => setTimeout(r, 1500)); }
+    }
+    if (ok) location.reload(); else { go.disabled = false; alert("Could not save — try again."); }
+  });
+})();
+</script>
+</body>
+</html>

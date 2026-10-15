@@ -1,0 +1,485 @@
+// content-publish.test.mjs — step 4 of the book pipeline (plan T2.8): the
+// moment a folder of photos becomes a book on the shelf. manifest.json is
+// written LAST, atomically (manifest.tmp + rename), and never points at a file
+// that is not already on disk — a torn or early manifest is a package the
+// reader opens onto a 404.
+//
+// PORTS: 8433 (the real server.js, to prove booksIndex() lists what publish
+// wrote). The plan's 8429/8431 slots stay unclaimed by their own suites.
+//
+// MONEY GUARDRAIL (plan §B.2, Gap 20): nothing here talks to a provider —
+// publish is pure disk — and the spawned hub gets its own mkdtemp ERA_DATA_DIR
+// so the gate's real ElevenLabs credential is nowhere near this suite. No
+// ERA_*_URL seam is needed because no call is made; there is no key in this
+// file and no key file is read.
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { Worker } from "node:worker_threads";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+
+const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(path.join(HUB, "server.js"));
+const PORT = 8433;
+const BASE = `http://127.0.0.1:${PORT}`;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-content-publish-"));
+const BOOKS = path.join(TMP, "books");
+
+const store = require("./content-store.js");
+const publish = require("./content-publish.js");
+// For said() only — the fingerprint publish compares against. content-publish.js
+// already loads this module, so requiring it here adds no reach: nothing in it
+// is called except the pure hash.
+const narrate = require("./content-narrate.js");
+
+let child;
+
+// Synthetic bytes throughout: publish never decodes an image or an mp3, it only
+// checks that the file is there and copies the cover, so a page can be any
+// distinguishable blob. Never real book content.
+const jpg = (n) => Buffer.alloc(64, n);
+const mp3 = (n) => Buffer.concat([Buffer.from("ID3"), Buffer.alloc(8, n)]);
+
+// A book part-way through the pipeline: pages/ + audio/ on disk and the two
+// .build files the earlier steps left behind. `pages` is
+// [{text, flags?, audio?, video?, cover?}] in reading order, one-based like
+// content-ingest.js numbers them.
+function book(name, pages, opts) {
+  const o = opts || {};
+  const dir = path.join(BOOKS, name);
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  const text = [], narr = [];
+  pages.forEach((p, i) => {
+    const index = i + 1, pad = String(index).padStart(3, "0");
+    fs.writeFileSync(path.join(dir, "pages", pad + ".jpg"), jpg(index));
+    text.push({ index, source: "sources/IMG_000" + index + ".jpg", text: p.text || "",
+                flags: p.flags || [], cover: p.cover === undefined ? index === 1 : !!p.cover });
+    if (p.audio) {
+      fs.mkdirSync(path.join(dir, "audio"), { recursive: true });
+      if (p.audio !== "missing") fs.writeFileSync(path.join(dir, "audio", pad + ".mp3"), mp3(index));
+      narr.push({ index, audio: "audio/" + pad + ".mp3",
+                  words: [{ word: (p.text || "x").split(/\s+/)[0], start: 0, end: 0.4 }] });
+    }
+    if (p.video) {
+      fs.mkdirSync(path.join(dir, "video"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "video", pad + ".mp4"), Buffer.alloc(16, index));
+    }
+  });
+  store.writeText(dir, { pages: text });
+  if (narr.length || o.narration)
+    store.writeAtomic(path.join(dir, ".build", "narration.json"),
+      { provider: "elevenlabs", model: "eleven_multilingual_v2", voice: "JBFqnCBsd6RMkjVDRZzb",
+        pages: narr });
+  return dir;
+}
+
+const read = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
+
+before(async () => {
+  fs.mkdirSync(BOOKS, { recursive: true });
+});
+after(() => { if (child) child.kill("SIGKILL"); });
+
+// ------------------------------------------------------------ the manifest
+
+test("a three-page book publishes: schemaVersion 1, one page per photo", async () => {
+  const dir = book("Tabby McTat", [
+    { text: "Tabby McTat", audio: true },
+    { text: "The butcher's cat.", audio: true },
+    { text: "The end.", audio: true },
+  ]);
+  const r = await publish.publishBook(dir, { slug: "tabby-mctat", now: "2026-09-04T10:00:00.000Z" });
+  assert.equal(r.published, true);
+  const m = read(dir);
+  assert.equal(m.schemaVersion, 1);
+  assert.equal(m.slug, "tabby-mctat");
+  assert.equal(m.title, "Tabby McTat");
+  assert.equal(m.authored, false);          // built here, not hand-authored
+  assert.equal(m.exportedAt, "2026-09-04T10:00:00.000Z");
+  assert.match(m.id, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(m.narration,
+    { provider: "elevenlabs", model: "eleven_multilingual_v2", voice: "JBFqnCBsd6RMkjVDRZzb" });
+  assert.deepEqual(m.pages.map(p => p.index), [1, 2, 3]);
+  assert.deepEqual(m.pages.map(p => p.image), ["pages/001.jpg", "pages/002.jpg", "pages/003.jpg"]);
+  assert.deepEqual(m.pages.map(p => p.audio), ["audio/001.mp3", "audio/002.mp3", "audio/003.mp3"]);
+  assert.deepEqual(m.pages[1].words, [{ word: "The", start: 0, end: 0.4 }]);
+  assert.equal(m.pages[0].text, "Tabby McTat");
+  // the cover is the page text.json marked, copied to the name booksIndex()
+  // defaults to
+  assert.equal(m.cover, "cover.jpg");
+  assert.ok(fs.readFileSync(path.join(dir, "cover.jpg")).equals(jpg(1)));
+});
+
+test("nothing half-written is left behind, and every path in the manifest exists", async () => {
+  const dir = path.join(BOOKS, "Tabby McTat");
+  assert.ok(!fs.existsSync(path.join(dir, ".build", "manifest.tmp")));
+  assert.ok(!fs.existsSync(path.join(dir, "manifest.tmp")), "written tmp + rename");
+  const m = read(dir);
+  const mAt = fs.statSync(path.join(dir, "manifest.json")).mtimeMs;
+  for (const p of m.pages)
+    for (const rel of [p.image, p.audio, p.video].filter(Boolean)) {
+      const f = path.join(dir, rel);
+      assert.ok(fs.existsSync(f), rel + " must be on disk before the manifest names it");
+      assert.ok(fs.statSync(f).mtimeMs <= mAt, "the manifest is written LAST");
+    }
+});
+
+test("a flagged page publishes with the rest, and its flags stay in text.json", async () => {
+  const dir = book("Zog", [
+    { text: "Zog was the keenest.", audio: true },
+    { text: "He won a gold star.", audio: true,
+      flags: [{ word: "gold", reason: "the model was not sure of this word" }] },
+  ]);
+  await publish.publishBook(dir, { slug: "zog" });
+  const m = read(dir);
+  // ruling 9/4: a small mistake is tolerable, a book that never appears is not
+  assert.equal(m.pages.length, 2);
+  assert.equal(m.pages[1].text, "He won a gold star.");
+  // …and the flag is NOT in the manifest — the reader has no use for it; the
+  // review page reads text.json
+  assert.equal(m.pages[1].flags, undefined);
+  assert.deepEqual(store.readText(dir).pages[1].flags,
+    [{ word: "gold", reason: "the model was not sure of this word" }]);
+});
+
+test("a book with text and no voice publishes silent — no audio key at all", async () => {
+  const dir = book("The Gruffalo", [{ text: "A mouse took a stroll." }, { text: "The end." }]);
+  const r = await publish.publishBook(dir, { slug: "the-gruffalo" });
+  assert.equal(r.published, true);
+  const m = read(dir);
+  assert.equal(m.pages.length, 2);
+  for (const p of m.pages) {
+    assert.equal("audio" in p, false, "a silent page carries no audio key");
+    assert.equal("words" in p, false);
+    assert.ok(p.text);
+  }
+  // no narration.json was written, so nothing is claimed about a provider
+  assert.deepEqual(m.narration, { provider: null, model: null, voice: null });
+});
+
+test("an mp3 that is not on disk publishes as a silent page, never as a 404", async () => {
+  const dir = book("Room on the Broom", [{ text: "The witch had a cat.", audio: "missing" }]);
+  await publish.publishBook(dir, { slug: "room-on-the-broom" });
+  const m = read(dir);
+  assert.equal("audio" in m.pages[0], false);
+  assert.equal(m.pages[0].text, "The witch had a cat.");
+});
+
+// An mp3 that is on disk is not the same thing as an mp3 that says these words.
+// Live 9/4: a grown-up fixed a page, the narrate walk reused the old recording
+// (its only question was "is there an mp3?") and the book published the new
+// sentence under the old voice, with the old word timings highlighting it. A
+// child who cannot read is the one being misled by that, so the manifest names
+// audio only when its fingerprint agrees with the words beside it.
+test("a page rewritten since it spoke publishes silent; its neighbours keep their voices", async () => {
+  const dir = book("Fix A Word", [
+    { text: "Tabby McTat", audio: true },
+    { text: "The butchers cat.", audio: true },
+    { text: "The end.", audio: true },
+  ]);
+  // stamp the fingerprints today's narrate step writes
+  const np = path.join(dir, ".build", "narration.json");
+  const n = JSON.parse(fs.readFileSync(np, "utf8"));
+  ["Tabby McTat", "The butchers cat.", "The end."].forEach((t, i) => { n.pages[i].said = narrate.said(t); });
+  store.writeAtomic(np, n);
+  // and a grown-up puts the apostrophe back on page 2
+  const t = store.readText(dir);
+  t.pages[1].text = "The butcher's cat.";
+  store.writeText(dir, t);
+
+  const r = await publish.publishBook(dir, { slug: "fix-a-word", now: "2026-09-04T11:00:00.000Z" });
+  assert.equal(r.silent, 1);
+  const m = read(dir);
+  assert.equal(m.pages[1].text, "The butcher's cat.");
+  assert.equal("audio" in m.pages[1], false, "the old recording says the old sentence");
+  assert.equal("words" in m.pages[1], false, "and its timings would highlight it word by word");
+  assert.equal(m.pages[0].audio, "audio/001.mp3", "the pages nobody touched still read aloud");
+  assert.equal(m.pages[2].audio, "audio/003.mp3");
+  assert.ok(fs.existsSync(path.join(dir, "audio", "002.mp3")),
+    "the mp3 is left where it is — the next narrate walk overwrites it and the page gets its voice back");
+});
+
+test("a book narrated before fingerprints existed keeps every voice it has", async () => {
+  // book() writes the older hub's narration.json: entries, no `said`. Nothing
+  // about what those pages say has changed just because we started writing it
+  // down, so an existing shelf must not go silent on a hub upgrade.
+  const dir = book("Older Shelf", [
+    { text: "A mouse took a stroll.", audio: true },
+    { text: "The end.", audio: true },
+  ]);
+  const r = await publish.publishBook(dir, { slug: "older-shelf", now: "2026-09-04T11:05:00.000Z" });
+  assert.equal(r.silent, 0);
+  const m = read(dir);
+  assert.deepEqual(m.pages.map(p => p.audio), ["audio/001.mp3", "audio/002.mp3"]);
+});
+
+test("a page the transcriber never reached publishes as a picture page", async () => {
+  const dir = book("Stick Man", [{ text: "Stick Man lives in the family tree." }, { text: "" }]);
+  await publish.publishBook(dir, { slug: "stick-man" });
+  const m = read(dir);
+  assert.equal(m.pages.length, 2);
+  assert.equal(m.pages[1].text, "");
+  assert.equal(m.pages[1].image, "pages/002.jpg");
+});
+
+// The review page's drag (plan T3.2) permutes text.json's ARRAY and renames
+// nothing: a page's `index` stays welded to its photo, its audio and the flags
+// bought for it. Publish has to read that array order, or the parent's drag
+// lives only on the review page and the shelf keeps the scanner's guess.
+test("the reading order is text.json's array order, not the scanner's numbering", async () => {
+  const dir = book("Room on the Broom", [
+    { text: "one", audio: true }, { text: "two", audio: true }, { text: "three", audio: true },
+  ]);
+  const was = store.readText(dir).pages;
+  // the last page dragged to the front, exactly what content.js saveOrder writes
+  store.writeText(dir, { pages: [{ ...was[2], cover: true },
+                                 { ...was[0], cover: false }, { ...was[1], cover: false }] });
+  await publish.publishBook(dir, { slug: "room-on-the-broom" });
+  const m = read(dir);
+  assert.deepEqual(m.pages.map(p => p.text), ["three", "one", "two"]);
+  // every page keeps the photo and the voice that were bought for it
+  assert.deepEqual(m.pages.map(p => p.image), ["pages/003.jpg", "pages/001.jpg", "pages/002.jpg"]);
+  assert.deepEqual(m.pages.map(p => p.audio), ["audio/003.mp3", "audio/001.mp3", "audio/002.mp3"]);
+  assert.deepEqual(m.pages.map(p => p.index), [3, 1, 2]);
+  // and the cover is the page the parent starred, not page 1
+  assert.ok(fs.readFileSync(path.join(dir, "cover.jpg")).equals(jpg(3)));
+});
+
+test("a photo added since text.json was written follows on the end, never dropped", async () => {
+  const dir = book("The Gruffalo", [{ text: "a mouse", audio: true }, { text: "took a stroll" }]);
+  // page 3's photo landed after the transcriber wrote text.json
+  fs.writeFileSync(path.join(dir, "pages", "003.jpg"), jpg(3));
+  await publish.publishBook(dir, { slug: "the-gruffalo" });
+  const m = read(dir);
+  assert.deepEqual(m.pages.map(p => p.image),
+    ["pages/001.jpg", "pages/002.jpg", "pages/003.jpg"]);
+  assert.equal(m.pages[2].text, "");
+});
+
+test("a second publish bumps exportedAt and keeps the book's id", async () => {
+  const dir = path.join(BOOKS, "Zog");
+  const before = read(dir);
+  await publish.publishBook(dir, { slug: "zog", now: "2026-09-05T08:00:00.000Z" });
+  const after = read(dir);
+  assert.equal(after.exportedAt, "2026-09-05T08:00:00.000Z");
+  assert.notEqual(after.exportedAt, before.exportedAt, "the reader cache-busts on exportedAt");
+  assert.equal(after.id, before.id, "the same book, so the same id");
+});
+
+// ------------------------------------------------------ publishedAt, and kept
+//
+// `publishedAt` is when the book was FIRST published and never moves; exportedAt
+// moves on every publish. `weekOf` is the weekly maker's and is only carried.
+test("the first publish stamps publishedAt = exportedAt; a re-publish keeps it", async () => {
+  const dir = book("Dated One", [{ text: "A day." }]);
+  await publish.publishBook(dir, { slug: "dated-one", now: "2026-09-10T08:00:00.000Z" });
+  assert.equal(read(dir).publishedAt, "2026-09-10T08:00:00.000Z");
+  assert.equal(read(dir).exportedAt, "2026-09-10T08:00:00.000Z");
+  await publish.publishBook(dir, { slug: "dated-one", now: "2026-09-12T09:00:00.000Z" });
+  const m = read(dir);
+  assert.equal(m.exportedAt, "2026-09-12T09:00:00.000Z", "exportedAt still moves");
+  assert.equal(m.publishedAt, "2026-09-10T08:00:00.000Z", "publishedAt never does");
+});
+
+test("a manifest from before the field seeds publishedAt from its exportedAt", async () => {
+  const dir = book("Dated Old", [{ text: "Long ago." }]);
+  await publish.publishBook(dir, { slug: "dated-old", now: "2026-09-10T08:00:00.000Z" });
+  const was = read(dir);
+  const { publishedAt: _p, ...old } = was;
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...old, exportedAt: "2026-08-01T00:00:00.000Z" });
+  await publish.publishBook(dir, { slug: "dated-old", now: "2026-09-15T08:00:00.000Z" });
+  assert.equal(read(dir).publishedAt, "2026-08-01T00:00:00.000Z");
+  assert.equal(read(dir).exportedAt, "2026-09-15T08:00:00.000Z");
+});
+
+test("a garbage publishedAt is not trusted: it falls back to exportedAt, then to now", async () => {
+  const dir = book("Dated Junk", [{ text: "Hm." }]);
+  await publish.publishBook(dir, { slug: "dated-junk", now: "2026-09-10T08:00:00.000Z" });
+  const was = read(dir);
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...was, publishedAt: "not a date", exportedAt: "2026-08-02T00:00:00.000Z" });
+  await publish.publishBook(dir, { slug: "dated-junk", now: "2026-09-16T08:00:00.000Z" });
+  assert.equal(read(dir).publishedAt, "2026-08-02T00:00:00.000Z");
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...read(dir), publishedAt: "", exportedAt: "nope" });
+  await publish.publishBook(dir, { slug: "dated-junk", now: "2026-09-17T08:00:00.000Z" });
+  assert.equal(read(dir).publishedAt, "2026-09-17T08:00:00.000Z");
+});
+
+test("weekOf is carried through a re-publish, never invented", async () => {
+  const dir = book("Dated Week", [{ text: "A week." }]);
+  await publish.publishBook(dir, { slug: "dated-week", now: "2026-09-10T08:00:00.000Z" });
+  assert.ok(!("weekOf" in read(dir)), "a book with no weekOf does not get one");
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...read(dir), weekOf: "2026-09-28" });
+  await publish.publishBook(dir, { slug: "dated-week", now: "2026-09-11T08:00:00.000Z" });
+  assert.equal(read(dir).weekOf, "2026-09-28");
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...read(dir), weekOf: "last tuesday" });
+  await publish.publishBook(dir, { slug: "dated-week", now: "2026-09-12T08:00:00.000Z" });
+  assert.ok(!("weekOf" in read(dir)), "a weekOf that is not YYYY-MM-DD is dropped");
+});
+
+// ------------------------------------------------------ authored, and kept
+//
+// `authored: true` is the coral rim and the "…'s story" badge on the shelf
+// (reader.js:204, :238): this book was WRITTEN for her, not scanned out of a
+// picture book. Until now nothing but a hand-made package could carry it, so a
+// constant `false` here was the truth. It stopped being the truth the week the
+// weekly-book maker started posting a finished book into the Drive folder with
+// `authored: true` in its manifest and in the job.json beside it (spec §12).
+//
+// Everything the hub then does to that book goes back through this function:
+// a word fixed on the review page, a rename, and Animate, which re-publishes
+// after EVERY clip (content-animate.js:386). A constant would quietly strip the
+// rim on the first of those presses and no later step would ever put it back —
+// the family would watch the weekly book turn into an ordinary one by using it.
+// So publish READS the flag from the two places that can honestly hold it and
+// never invents it: the job beside the book, and the manifest being replaced.
+test("a book that arrived authored is still authored after the hub re-publishes it", async () => {
+  const dir = book("Nell And The Lost Sock", [
+    { text: "Nell found a sock.", audio: true },
+    { text: "The end.", audio: true },
+  ]);
+  // the shape the maker leaves behind: job.json (state done, its own claim)
+  // written BEFORE the manifest, and both saying who wrote the book
+  store.writeJob(dir, { ...store.newJob({ claimedBy: "study-pc:ellie-this-week" }),
+                        state: "done", authored: true });
+  await publish.publishBook(dir, { slug: "nell-and-the-lost-sock", now: "2026-09-09T07:00:00.000Z" });
+  assert.equal(read(dir).authored, true, "the first publish keeps what the job says");
+  const id = read(dir).id;
+
+  // a grown-up fixes a word and presses Save on the review page
+  const t = store.readText(dir);
+  t.pages[0].text = "Nell found her sock.";
+  store.writeText(dir, t);
+  await publish.publishBook(dir, { slug: "nell-and-the-lost-sock", now: "2026-09-09T08:00:00.000Z" });
+  const m = read(dir);
+  assert.equal(m.authored, true, "an edit is not a demotion");
+  assert.equal(m.pages[0].text, "Nell found her sock.");
+  assert.equal(m.id, id, "the same book, so the same id");
+  assert.equal(m.exportedAt, "2026-09-09T08:00:00.000Z");
+});
+
+test("the manifest alone is enough: a book whose job.json never mirrored keeps its rim", async () => {
+  // Drive mirrors file by file and a hand-made package has no job.json at all,
+  // so the manifest being replaced has to be able to say it on its own.
+  const dir = book("Hand Made", [{ text: "Once upon a time." }]);
+  await publish.publishBook(dir, { slug: "hand-made", now: "2026-09-09T09:00:00.000Z" });
+  const was = read(dir);
+  store.writeAtomic(path.join(dir, "manifest.json"), { ...was, authored: true });
+  assert.ok(!fs.existsSync(path.join(dir, ".build", "job.json")), "no job beside this one");
+
+  await publish.publishBook(dir, { slug: "hand-made", now: "2026-09-09T09:30:00.000Z" });
+  assert.equal(read(dir).authored, true);
+});
+
+test("the job alone is enough: the manifest can be the very first one written here", async () => {
+  // job.json lands before manifest.json (the maker writes it in that order,
+  // and Drive can hand us the two files hours apart), so the flag has to
+  // survive a publish that has no previous manifest to read it from.
+  const dir = book("Job First", [{ text: "A sock, alone." }]);
+  store.writeJob(dir, { ...store.newJob({ claimedBy: "study-pc:ellie-this-week" }),
+                        state: "done", authored: true });
+  assert.ok(!fs.existsSync(path.join(dir, "manifest.json")), "nothing to inherit from");
+  await publish.publishBook(dir, { slug: "job-first", now: "2026-09-09T10:00:00.000Z" });
+  assert.equal(read(dir).authored, true);
+});
+
+// The other direction matters just as much: `authored` is a claim about a
+// person, and a book this hub scanned out of a picture book must never wear it.
+test("a book the hub built stays plain — a job with no such flag is not a yes", async () => {
+  const dir = book("Scanned Here", [{ text: "The butcher's cat.", audio: true }]);
+  store.writeJob(dir, store.newJob({ claimedBy: "kitchen-pc-a1b2:1234" }));
+  await publish.publishBook(dir, { slug: "scanned-here", now: "2026-09-09T11:00:00.000Z" });
+  assert.equal(read(dir).authored, false, "absent is not true");
+
+  // and neither is a value that merely looks like one — the manifest carries a
+  // real boolean, because reader.js and server.js both ask `=== true`
+  store.writeJob(dir, { ...store.readJob(dir), authored: "yes" });
+  await publish.publishBook(dir, { slug: "scanned-here", now: "2026-09-09T11:05:00.000Z" });
+  assert.equal(read(dir).authored, false);
+  assert.equal(typeof read(dir).authored, "boolean");
+});
+
+// Animate is the press that would have cost the most: it re-publishes after
+// every single clip, so one press on a sixteen-page book is sixteen chances to
+// lose the rim. This pins the call it makes — no `now`, no extra options, over
+// and over — while content-animate.test.mjs drives the real run.
+test("animate's re-publish, made once per clip, never wears the flag away", async () => {
+  const dir = book("Moving Nell", [{ text: "Nell ran.", audio: true }, { text: "The end.", audio: true }]);
+  store.writeJob(dir, { ...store.newJob({ claimedBy: "study-pc:ellie-this-week" }),
+                        state: "done", authored: true });
+  await publish.publishBook(dir, { slug: "moving-nell", now: "2026-09-09T12:00:00.000Z" });
+  for (let i = 0; i < 5; i++)
+    publish.publishBook(dir, { slug: "moving-nell", title: "Moving Nell" });
+  assert.equal(read(dir).authored, true);
+});
+
+test("an animated page carries its video; a folder with no pages holds instead", async () => {
+  const dir = book("Superworm", [{ text: "Superworm is super-long.", audio: true, video: true }]);
+  await publish.publishBook(dir, { slug: "superworm" });
+  assert.equal(read(dir).pages[0].video, "video/001.mp4");
+
+  const empty = path.join(BOOKS, "Empty Book");
+  fs.mkdirSync(empty, { recursive: true });
+  const r = await publish.publishBook(empty, { slug: "empty-book" });
+  assert.equal(r.hold, "no-pages");
+  assert.ok(!fs.existsSync(path.join(empty, "manifest.json")), "no pages, no package");
+});
+
+// -------------------------------------------------------------- the wiring
+
+// The walk does not stop at `published`: that state owes no step, so a job left
+// there would look claimable to every hub in the family half an hour later, for
+// ever. `done` is the state nothing takes back (content-worker.js settle()).
+test("the worker's publish step walks a narrating job all the way to done", async () => {
+  const dir = book("The Snail and the Whale", [{ text: "This is the tale.", audio: true }]);
+  store.writeJob(dir, store.newJob({ claimedBy: "test", state: "narrating" }));
+  const done = await new Promise((resolve, reject) => {
+    const w = new Worker(path.join(HUB, "content-worker.js"), {
+      workerData: { dataDir: TMP, dir, kind: "books", slug: "the-snail-and-the-whale",
+                    name: "The Snail and the Whale", step: "publish" },
+    });
+    w.on("message", (m) => { if (m.done) resolve(m.done); });
+    w.on("error", reject);
+    w.on("exit", () => resolve(null));
+  });
+  assert.ok(done, "the worker must post a {done}");
+  assert.equal(done.error, undefined);
+  assert.deepEqual(done.steps.map(s => s.step), ["publish"]);
+  assert.equal(store.readJob(dir).state, "done");
+  assert.equal(done.state, "done");
+  assert.equal(read(dir).title, "The Snail and the Whale");
+});
+
+// --------------------------------------------------------------- the shelf
+
+test("booksIndex() lists a published book with its slug, title and page count", async () => {
+  child = spawn("node", ["server.js", String(PORT)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1", ERA_DEVICE_ID: "test-dev" },
+  });
+  let up = false;
+  for (let i = 0; i < 100 && !up; i++) {
+    try { await fetch(`${BASE}/settings`); up = true; } catch { await new Promise(r => setTimeout(r, 100)); }
+  }
+  assert.ok(up, "server never came up");
+
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const tabby = idx.find(e => e.slug === "tabby-mctat");
+  assert.ok(tabby, "the folder a parent named serves as its slug");
+  assert.equal(tabby.title, "Tabby McTat");
+  assert.equal(tabby.pages, 3);
+  assert.equal(tabby.authored, false);
+  assert.equal(tabby.hasVideo, false);
+  assert.equal(idx.find(e => e.slug === "superworm").hasVideo, true);
+  assert.ok(!idx.some(e => e.slug === "empty-book"), "a folder with no manifest is not a book");
+  // the manifest publish wrote actually serves, and so does the cover it made
+  const m = await fetch(`${BASE}/books/tabby-mctat/manifest.json`);
+  assert.equal(m.status, 200);
+  assert.equal((await m.json()).pages.length, 3);
+  assert.equal((await fetch(`${BASE}${tabby.cover}`)).status, 200);
+  // …and the builder's scratch is still private (T1.3's deny, unchanged here)
+  assert.equal((await fetch(`${BASE}/books/tabby-mctat/.build/text.json`)).status, 404);
+});

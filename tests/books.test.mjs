@@ -1,0 +1,703 @@
+// books.test.mjs — book-package serving (era-book-reader M3, spec Piece 2).
+// Spawns the REAL server.js on a TEST port with a throwaway ERA_DATA_DIR and a
+// SYNTHETIC fixture package ("Luna the Fox": hand-crafted 1x1 JPEG + tiny PCM
+// WAV — never real book content). Proves: index lists complete packages only,
+// manifest/media caching headers, HTTP Range (206 byte math, 416), jail escape
+// 403, and the degraded law (missing books dir -> [] with the server alive).
+// Also proves the slug<->directory identity (T1.4): a parent names the folder
+// ("Tabby McTat"), the shelf and the reader address it as /books/tabby-mctat/.
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import http from "node:http";
+import slugMod from "../slug.js";   // CJS: default import is module.exports
+const { slugify } = slugMod;
+
+// fetch() (WHATWG URL) normalizes ../ AND %2e%2e into dot segments client-side,
+// so jail-escape attempts must go out as a RAW request path.
+function rawGet(port, rawPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, path: rawPath, method: "GET" },
+      (res) => {
+        const chunks = [];
+        res.on("data", c => chunks.push(c));
+        res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+      });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const HUB = path.resolve(__dirname, "..");
+
+const PORT = 8392; // never the live port (8393/8394 pool, 8395/8396 seen held by stale scratch hubs)
+const BASE = `http://127.0.0.1:${PORT}`;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-books-"));
+let child;
+
+// Minimal valid 1x1 JPEG (hand-crafted synthetic bytes, no image lib needed).
+const JPEG = Buffer.from(
+  "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof" +
+  "Hh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAAB" +
+  "AAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==",
+  "base64");
+
+// Small valid PCM WAV: 44-byte RIFF header + 16-bit mono sine samples.
+function makeWav(samples) {
+  const dataLen = samples * 2;
+  const buf = Buffer.alloc(44 + dataLen);
+  buf.write("RIFF", 0); buf.writeUInt32LE(36 + dataLen, 4); buf.write("WAVE", 8);
+  buf.write("fmt ", 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22); buf.writeUInt32LE(8000, 24); buf.writeUInt32LE(16000, 28);
+  buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34);
+  buf.write("data", 36); buf.writeUInt32LE(dataLen, 40);
+  for (let i = 0; i < samples; i++)
+    buf.writeInt16LE(Math.round(3000 * Math.sin(i / 10)), 44 + i * 2);
+  return buf;
+}
+const WAV = makeWav(1000);   // 2044 bytes
+
+before(async () => {
+  // fixture package: media first, manifest LAST (the completeness marker)
+  const book = path.join(TMP, "books", "luna-the-fox");
+  fs.mkdirSync(path.join(book, "pages"), { recursive: true });
+  fs.mkdirSync(path.join(book, "audio"), { recursive: true });
+  fs.writeFileSync(path.join(book, "cover.jpg"), JPEG);
+  fs.writeFileSync(path.join(book, "pages", "001.jpg"), JPEG);
+  fs.writeFileSync(path.join(book, "pages", "002.jpg"), JPEG);
+  fs.writeFileSync(path.join(book, "audio", "001.wav"), WAV);
+  fs.writeFileSync(path.join(book, "manifest.json"), JSON.stringify({
+    schemaVersion: 1,
+    id: "00000000-0000-4000-8000-000000000001",
+    slug: "luna-the-fox",
+    title: "Luna the Fox",
+    exportedAt: "2026-08-24T00:00:00Z",
+    narration: { provider: "synthetic", model: "fixture", voice: "none" },
+    cover: "cover.jpg",
+    pages: [
+      { index: 0, image: "pages/001.jpg", text: "Luna naps.", audio: "audio/001.wav",
+        words: [{ word: "Luna", start: 0.0, end: 0.4 }, { word: "naps.", start: 0.4, end: 0.9 }] },
+      { index: 1, image: "pages/002.jpg", text: "", audio: null },
+    ],
+  }, null, 2));
+  // builder scratch: the originals the parent dropped in, plus the job state
+  // machine. These live INSIDE the package (so Drive mirrors them between
+  // devices) but must never be reachable over HTTP — .jpg/.json are allowlisted
+  // extensions, so only a name-based deny keeps them private.
+  fs.mkdirSync(path.join(book, "sources"), { recursive: true });
+  fs.mkdirSync(path.join(book, ".build"), { recursive: true });
+  fs.writeFileSync(path.join(book, "sources", "IMG_0001.jpg"), JPEG);
+  fs.writeFileSync(path.join(book, ".build", "job.json"), '{"state":"claimed"}');
+  fs.writeFileSync(path.join(book, ".build", "text.json"), '{"pages":[]}');
+  fs.writeFileSync(path.join(book, ".build", "log.jsonl"), '{"step":"ingest"}\n');
+  // The family's PC is the only platform this ships to, and Windows resolves a
+  // component's TRAILING dots and spaces away ("sources." IS sources/) and
+  // matches names case-insensitively. Linux does not — so the deny is only
+  // provably a deny if those spellings exist here as REAL directories holding
+  // real bytes: without the canonicalising compare each one would serve 200.
+  for (const d of ["Sources", "sources.", "sources ", ".Build", ".build."]) {
+    fs.mkdirSync(path.join(book, d), { recursive: true });
+    fs.writeFileSync(path.join(book, d, "IMG_0001.jpg"), JPEG);
+    fs.writeFileSync(path.join(book, d, "job.json"), '{"state":"claimed"}');
+  }
+  // the SAME names under the music jail: the deny is books-only, so these serve
+  fs.mkdirSync(path.join(TMP, "music", "sources"), { recursive: true });
+  fs.writeFileSync(path.join(TMP, "music", "sources", "cover.jpg"), JPEG);
+  // Folders a PARENT named, not the exporter — the builder builds in place
+  // inside the Drive folder, so the directory keeps the human name and the
+  // hub derives the URL slug. One tiny package each (cover + manifest).
+  const named = (dir, title) => {
+    const b = path.join(TMP, "books", dir);
+    fs.mkdirSync(b, { recursive: true });
+    fs.writeFileSync(path.join(b, "cover.jpg"), JPEG);
+    fs.writeFileSync(path.join(b, "manifest.json"), JSON.stringify({
+      schemaVersion: 1, slug: dir, title, exportedAt: "2026-09-04T00:00:00Z",
+      cover: "cover.jpg", pages: [{ index: 0, image: "cover.jpg", text: title }],
+    }));
+  };
+  named("Tabby McTat", "Tabby McTat");                 // spaces + case
+  named("Café Niño — Book 2!", "Café Niño — Book 2!"); // accents, em dash, punctuation
+  named("-- Extra Dashes --", "Extra Dashes");         // leading/trailing dashes
+  named("The Snail!", "The Snail (one)");              // collision pair: both
+  named("The Snail?", "The Snail (two)");              // slugify to "the-snail"
+  // The data-loss case: a folder that slugifies onto an EXISTING package's
+  // slug must never take it. luna-the-fox is already its own slug, so it keeps
+  // its URL (and the reader keeps its saved position); the newcomer is suffixed.
+  named("Luna The Fox", "Luna The Fox (copy)");
+  // TWO packages with the SAME manifest, one of them sent here by another
+  // family. `authored: true` is the coral rim and the "…'s story" badge — "this
+  // family made this book about this child" — and a book somebody else made
+  // about THEIR child carries the flag honestly and must not wear the badge
+  // here. What tells them apart is the share envelope .erabook.json, which
+  // books-share.js unpacks beside the manifest and which no package built on
+  // this computer has. It is the marker because it is a FACT about the package,
+  // not a rewrite of the manifest: the manifest travels byte for byte and a
+  // re-export has to be faithful (books-share.js law 3).
+  const authoredPkg = (dir, envelope) => {
+    const b = path.join(TMP, "books", dir);
+    fs.mkdirSync(b, { recursive: true });
+    fs.writeFileSync(path.join(b, "cover.jpg"), JPEG);
+    fs.writeFileSync(path.join(b, "manifest.json"), JSON.stringify({
+      schemaVersion: 1, slug: dir, title: dir, exportedAt: "2026-09-22T00:00:00Z",
+      authored: true, cover: "cover.jpg",
+      pages: [{ index: 0, image: "cover.jpg", text: dir }],
+    }, null, 2));
+    if (envelope) fs.writeFileSync(path.join(b, ".erabook.json"), JSON.stringify({
+      v: 1, title: dir, slug: dir, pages: 1, exportedAt: "2026-09-22T00:00:00Z",
+      from: { app: "Our Era Comms", build: "20260922.1200" },
+    }));
+  };
+  authoredPkg("their-book", true);    // came from another family's hub
+  authoredPkg("our-book", false);     // made here, about this child
+  // THE SHELF'S TWO STORES (book shelf layout, spec 2026-09-30): a package
+  // with no exportedAt at all (first-seen seeds with "now"), and one whose
+  // maker wrote an explicit weekOf (the forward-compatible field the shelf
+  // prefers over its own first-seen record when it sorts This Week).
+  const dated = (dir, extra) => {
+    const b = path.join(TMP, "books", dir);
+    fs.mkdirSync(b, { recursive: true });
+    fs.writeFileSync(path.join(b, "cover.jpg"), JPEG);
+    fs.writeFileSync(path.join(b, "manifest.json"), JSON.stringify({
+      schemaVersion: 1, slug: dir, title: dir, authored: true, cover: "cover.jpg",
+      pages: [{ index: 0, image: "cover.jpg", text: dir }], ...extra,
+    }, null, 2));
+  };
+  dated("undated-week", {});
+  dated("week-with-weekof", { exportedAt: "2026-09-01T00:00:00Z", weekOf: "2026-09-28", publishedAt: "2026-09-01T00:00:00.000Z" });
+  // an incomplete package (mid-export: media present, NO manifest) — must be skipped
+  const partial = path.join(TMP, "books", "half-exported");
+  fs.mkdirSync(partial, { recursive: true });
+  fs.writeFileSync(path.join(partial, "cover.jpg"), JPEG);
+  // an unparseable manifest — must also be skipped silently
+  const broken = path.join(TMP, "books", "broken-manifest");
+  fs.mkdirSync(broken, { recursive: true });
+  fs.writeFileSync(path.join(broken, "manifest.json"), "{not json");
+  // a jail-escape target OUTSIDE the books dir
+  fs.writeFileSync(path.join(TMP, "secret.json"), '{"secret":true}');
+
+  child = spawn("node", ["server.js", String(PORT)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1", ERA_DEVICE_ID: "test-dev" },
+  });
+  for (let i = 0; i < 100; i++) {
+    try { await fetch(`${BASE}/settings`); return; } catch {}
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error("server never came up");
+});
+after(() => { if (child) child.kill("SIGKILL"); });
+
+test("GET /books/index.json lists the complete package ONLY, spec shape, no-cache", async () => {
+  const r = await fetch(`${BASE}/books/index.json`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("cache-control"), "no-cache");
+  const idx = await r.json();
+  const slugs = idx.map(e => e.slug);
+  assert.ok(!slugs.includes("half-exported") && !slugs.includes("broken-manifest"),
+    "manifest-less + unparseable dirs are excluded");
+  const luna = idx.find(e => e.slug === "luna-the-fox");
+  // ?v= cache-bust: cover URL carries the package version (manifest mtime),
+  // so a re-exported package escapes the immutable media cache (Tiddler
+  // rotation lesson, 8/25)
+  assert.match(luna.cover, /^\/books\/luna-the-fox\/cover\.jpg\?v=[a-z0-9]+$/);
+  assert.equal(typeof luna.v, "string");
+  const { cover: _c, v: _v, ...rest } = luna;
+  assert.deepEqual(rest, {
+    slug: "luna-the-fox", title: "Luna the Fox", pages: 2, hasVideo: false,
+    authored: false,   // no `authored` in this manifest -> no coral rim, no badge
+    shared: false,     // and nobody sent it here -> no "From a friend" badge
+    // the shelf layout's three (spec 2026-09-30): nobody has given it a ♥, the
+    // shelf first saw it at its own exportedAt, and no maker wrote a weekOf
+    favorite: false, firstSeen: "2026-08-24T00:00:00.000Z", weekOf: null,
+    publishedAt: null,   // this manifest predates the field; the row never invents one
+  });
+  // and the versioned URL actually serves (query must not break the jail)
+  const cv = await fetch(`${BASE}${luna.cover}`);
+  assert.equal(cv.status, 200);
+});
+
+// The bug the two-hub journey caught (9/22): a book another family made about
+// THEIR child arrived on this shelf wearing the coral rim and the badge that
+// says "<her name>'s story" — announced to a non-verbal six-year-old as her own.
+//
+// The flag is not a lie and is not ours to clear: the book WAS authored, and
+// the manifest travels byte for byte so a re-export stays faithful. So the
+// SHELF decides. An imported package carries the share envelope beside its
+// manifest; a package built on this computer never does; and that is the one
+// durable, honest difference between the two directories below, whose
+// manifests are otherwise the same file.
+test("an imported package is not this family's story, whatever its manifest says", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const theirs = idx.find(e => e.slug === "their-book");
+  const ours = idx.find(e => e.slug === "our-book");
+  assert.ok(theirs && ours, "both packages are on the shelf: " + JSON.stringify(idx.map(e => e.slug)));
+  assert.equal(theirs.authored, false,
+    "a book sent here from another hub wears this child's 'story' badge");
+  assert.equal(ours.authored, true,
+    "the family's OWN book lost its rim — the envelope is the only difference");
+  // The flag the shelf declined to repeat is still in the file on disk, because
+  // nothing rewrote it: books-share.js law 3, from the serving side.
+  const m = await (await fetch(`${BASE}/books/their-book/manifest.json`)).json();
+  assert.equal(m.authored, true, "the import's manifest was rewritten");
+});
+
+// Saying "not her story" was the first half. Dad, 9/23, on what the card
+// should say instead: "From a friend is cool." The shelf cannot invent that
+// fact — the hub has to publish it — and it is the SAME fact the line above
+// suppresses the badge with: the share envelope beside the manifest, asked for
+// through books-index.js's isImported(). One question, one answer, two uses.
+// `authored` keeps its own meaning and stays false for an import.
+test("the row says a book came from another family: shared: true", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const theirs = idx.find(e => e.slug === "their-book");
+  const ours = idx.find(e => e.slug === "our-book");
+  assert.equal(theirs.shared, true, "the imported package does not report itself as shared");
+  assert.equal(ours.shared, false, "a book made on this computer is claiming it came from a friend");
+  // every row carries the flag, the way every row carries `authored` — a shelf
+  // that has to tell `false` from `undefined` is a shelf with two rules.
+  for (const row of idx) assert.equal(typeof row.shared, "boolean",
+    "row without a `shared` boolean: " + JSON.stringify(row));
+});
+
+test("manifest.json serves 200 with no-cache", async () => {
+  const r = await fetch(`${BASE}/books/luna-the-fox/manifest.json`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "application/json");
+  assert.equal(r.headers.get("cache-control"), "no-cache");
+  const m = await r.json();
+  assert.equal(m.title, "Luna the Fox");
+  assert.equal(m.pages.length, 2);
+});
+
+test("cover image: full 200, immutable cache, exact bytes", async () => {
+  const r = await fetch(`${BASE}/books/luna-the-fox/cover.jpg`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "image/jpeg");
+  assert.equal(r.headers.get("cache-control"), "max-age=86400, immutable");
+  const body = Buffer.from(await r.arrayBuffer());
+  assert.equal(body.length, JPEG.length);
+  assert.ok(body.equals(JPEG), "image bytes intact");
+});
+
+test("media full 200: Accept-Ranges, Content-Length, immutable, exact bytes", async () => {
+  const r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "audio/wav");
+  assert.equal(r.headers.get("accept-ranges"), "bytes");
+  assert.equal(r.headers.get("cache-control"), "max-age=86400, immutable");
+  assert.equal(parseInt(r.headers.get("content-length"), 10), WAV.length);
+  const body = Buffer.from(await r.arrayBuffer());
+  assert.ok(body.equals(WAV), "full WAV bytes intact");
+});
+
+test("Range bytes=a-b: 206 with correct Content-Range math and the exact slice", async () => {
+  const r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`,
+    { headers: { Range: "bytes=10-19" } });
+  assert.equal(r.status, 206);
+  assert.equal(r.headers.get("content-range"), `bytes 10-19/${WAV.length}`);
+  assert.equal(parseInt(r.headers.get("content-length"), 10), 10);
+  assert.equal(r.headers.get("accept-ranges"), "bytes");
+  const body = Buffer.from(await r.arrayBuffer());
+  assert.ok(body.equals(WAV.subarray(10, 20)), "exactly bytes 10..19");
+});
+
+test("Range bytes=a- (open end): 206 to EOF", async () => {
+  const start = WAV.length - 7;
+  const r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`,
+    { headers: { Range: `bytes=${start}-` } });
+  assert.equal(r.status, 206);
+  assert.equal(r.headers.get("content-range"), `bytes ${start}-${WAV.length - 1}/${WAV.length}`);
+  assert.equal(parseInt(r.headers.get("content-length"), 10), 7);
+  const body = Buffer.from(await r.arrayBuffer());
+  assert.ok(body.equals(WAV.subarray(start)), "tail bytes intact");
+});
+
+test("HEAD: GET's headers and no body — media, a range, the manifest, a denied dir", async () => {
+  // A probe (`curl -I`, a player's preflight) used to get 404 from a GET-only
+  // route, which reads as "the audio is missing". Same headers, nothing streamed.
+  let r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`, { method: "HEAD" });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "audio/wav");
+  assert.equal(r.headers.get("accept-ranges"), "bytes");
+  assert.equal(parseInt(r.headers.get("content-length"), 10), WAV.length);
+  assert.equal((await r.arrayBuffer()).byteLength, 0);
+  r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`, { method: "HEAD", headers: { Range: "bytes=10-19" } });
+  assert.equal(r.status, 206);
+  assert.equal(r.headers.get("content-range"), `bytes 10-19/${WAV.length}`);
+  assert.equal((await r.arrayBuffer()).byteLength, 0);
+  r = await fetch(`${BASE}/books/luna-the-fox/cover.jpg`, { method: "HEAD" });
+  assert.equal(r.status, 200);
+  assert.equal(parseInt(r.headers.get("content-length"), 10), JPEG.length);
+  assert.equal((await r.arrayBuffer()).byteLength, 0);
+  r = await fetch(`${BASE}/books/luna-the-fox/manifest.json`, { method: "HEAD" });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("cache-control"), "no-cache");
+  // the deny list and the slug map answer HEAD exactly as they answer GET
+  r = await fetch(`${BASE}/books/luna-the-fox/sources/IMG_0001.jpg`, { method: "HEAD" });
+  assert.equal(r.status, 404);
+  r = await fetch(`${BASE}/books/no-such-book/cover.jpg`, { method: "HEAD" });
+  assert.equal(r.status, 404);
+});
+
+test("Range bytes=-N (suffix): 206 with the last N bytes", async () => {
+  const r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`,
+    { headers: { Range: "bytes=-5" } });
+  assert.equal(r.status, 206);
+  assert.equal(r.headers.get("content-range"),
+    `bytes ${WAV.length - 5}-${WAV.length - 1}/${WAV.length}`);
+  assert.equal(parseInt(r.headers.get("content-length"), 10), 5);
+  const body = Buffer.from(await r.arrayBuffer());
+  assert.ok(body.equals(WAV.subarray(WAV.length - 5)));
+});
+
+test("Range end clamped to EOF when past it", async () => {
+  const r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`,
+    { headers: { Range: `bytes=0-${WAV.length + 500}` } });
+  assert.equal(r.status, 206);
+  assert.equal(r.headers.get("content-range"), `bytes 0-${WAV.length - 1}/${WAV.length}`);
+  assert.equal(parseInt(r.headers.get("content-length"), 10), WAV.length);
+});
+
+test("unsatisfiable Range: 416 with Content-Range bytes */size", async () => {
+  const r = await fetch(`${BASE}/books/luna-the-fox/audio/001.wav`,
+    { headers: { Range: `bytes=${WAV.length}-` } });
+  assert.equal(r.status, 416);
+  assert.equal(r.headers.get("content-range"), `bytes */${WAV.length}`);
+});
+
+test("jail escape is 403 and never leaks the file", async () => {
+  for (const p of ["/books/../secret.json",
+                   "/books/luna-the-fox/../../secret.json",
+                   "/books/%2e%2e/secret.json",
+                   "/books/luna-the-fox/%2e%2e/%2e%2e/secret.json"]) {
+    const r = await rawGet(PORT, p);
+    assert.equal(r.status, 403, `escape blocked for ${p}`);
+    assert.ok(!r.body.includes("secret"), `no leak for ${p}`);
+  }
+});
+
+test("disallowed extension in the jail is 404", async () => {
+  const r = await fetch(`${BASE}/books/luna-the-fox/manifest.txt`);
+  assert.equal(r.status, 404);
+});
+
+// The builder's scratch folders sit inside the package so Drive mirrors them,
+// but the serve-side allowlist is by EXTENSION — sources/*.jpg and
+// .build/*.json would otherwise be public. Deny by path segment, books only.
+test("builder scratch is never served: sources/ and .build/ are 404", async () => {
+  for (const p of ["/books/luna-the-fox/sources/IMG_0001.jpg",
+                   "/books/luna-the-fox/.build/job.json",
+                   "/books/luna-the-fox/.build/text.json",
+                   "/books/luna-the-fox/.build/log.jsonl"]) {
+    const r = await fetch(`${BASE}${p}`);
+    assert.equal(r.status, 404, `denied: ${p}`);
+    const body = await r.text();
+    assert.ok(!body.includes("claimed"), `no leak for ${p}`);
+  }
+});
+
+test("scratch deny survives raw paths: percent-encoding and a trailing slash", async () => {
+  for (const p of ["/books/luna-the-fox/%2Ebuild/job.json",   // .build re-encoded
+                   "/books/luna-the-fox/%73ources/IMG_0001.jpg", // sources
+                   "/books/luna-the-fox/SOURCES/IMG_0001.jpg", // case-insensitive fs
+                   "/books/luna-the-fox/sources/"]) {
+    const r = await rawGet(PORT, p);
+    assert.equal(r.status, 404, `denied: ${p}`);
+    assert.ok(!r.body.includes("claimed"), `no leak for ${p}`);
+  }
+});
+
+// Windows canonicalises a path component's trailing dots and spaces away and
+// matches names case-insensitively, so on the family's PC every spelling below
+// opens the SAME sources/ and .build/ the deny is meant to hide. The fixture
+// creates each one for real, so these are 200s without the canonicalising
+// compare — the deny has to be applied to the path Windows resolves.
+test("the deny follows Windows path canonicalisation: case, trailing dots and spaces", async () => {
+  for (const p of ["/books/luna-the-fox/Sources/IMG_0001.jpg",
+                   "/books/luna-the-fox/sources./IMG_0001.jpg",
+                   "/books/luna-the-fox/sources%20/IMG_0001.jpg",
+                   "/books/luna-the-fox/.Build/job.json",
+                   "/books/luna-the-fox/.build./job.json"]) {
+    const r = await rawGet(PORT, p);
+    assert.equal(r.status, 404, `denied: ${p}`);
+    assert.ok(!r.body.includes("claimed"), `no leak for ${p}`);
+    assert.ok(!r.body.includes("JFIF"), `no photo leak for ${p}`);
+  }
+});
+
+test("the deny is books-only: /music/sources/ still serves", async () => {
+  const r = await fetch(`${BASE}/music/sources/cover.jpg`);
+  assert.equal(r.status, 200, "music and movies have no scratch folders to hide");
+  const body = Buffer.from(await r.arrayBuffer());
+  assert.ok(body.equals(JPEG));
+});
+
+test("normal package files are unaffected by the deny", async () => {
+  for (const p of ["/books/luna-the-fox/manifest.json",
+                   "/books/luna-the-fox/cover.jpg",
+                   "/books/luna-the-fox/pages/001.jpg",
+                   "/books/luna-the-fox/audio/001.wav"]) {
+    assert.equal((await fetch(`${BASE}${p}`)).status, 200, `still served: ${p}`);
+  }
+});
+
+// ---- T1.4: slug <-> directory identity --------------------------------------
+// The builder builds IN PLACE in the family's Drive folder, so the directory is
+// whatever the parent typed. One slugify, shared by the index and the future
+// worker, decides the URL; serveBook resolves slug -> directory before jailing.
+
+test("slugify: spaces, case, accents, punctuation, edge dashes", () => {
+  assert.equal(slugify("Tabby McTat"), "tabby-mctat");
+  assert.equal(slugify("Café Niño — Book 2!"), "cafe-nino-book-2");
+  assert.equal(slugify("-- Extra Dashes --"), "extra-dashes");
+  assert.equal(slugify("The Snail & the Whale"), "the-snail-the-whale");
+  assert.equal(slugify("Ellie's Garden"), "ellies-garden");   // apostrophe vanishes
+  assert.equal(slugify("Ellie’s Garden"), "ellies-garden"); // curly one too
+  assert.equal(slugify("  ...  "), "");                       // nothing usable
+  assert.equal(slugify("tabby-mctat"), "tabby-mctat", "an already-slug name is a fixed point");
+  assert.ok(slugify("x".repeat(200)).length <= 64, "bounded, like the movies id rule");
+  assert.ok(!slugify("x".repeat(63) + " tail").endsWith("-"), "truncation never leaves a trailing dash");
+});
+
+test("slugify is idempotent for every fixture folder name", () => {
+  for (const n of ["Tabby McTat", "Café Niño — Book 2!", "-- Extra Dashes --",
+                   "The Snail!", "Luna The Fox", "luna-the-fox"])
+    assert.equal(slugify(slugify(n)), slugify(n), `idempotent for ${n}`);
+});
+
+test("a human-named folder serves under its slug", async () => {
+  const r = await fetch(`${BASE}/books/tabby-mctat/manifest.json`);
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).title, "Tabby McTat");
+  const c = await fetch(`${BASE}/books/tabby-mctat/cover.jpg`);
+  assert.equal(c.status, 200, "media under the slug resolves to the real directory");
+  // the raw directory name is NOT a second URL for the same package
+  assert.equal((await rawGet(PORT, "/books/Tabby%20McTat/manifest.json")).status, 404);
+});
+
+test("accents and punctuation: the shelf lists the slug, the slug serves", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const e = idx.find(x => x.slug === "cafe-nino-book-2");
+  assert.ok(e, "accented folder is indexed under its slug");
+  assert.equal(e.title, "Café Niño — Book 2!", "the TITLE keeps the parent's words");
+  assert.match(e.cover, /^\/books\/cafe-nino-book-2\/cover\.jpg\?v=/);
+  assert.equal((await fetch(`${BASE}${e.cover}`)).status, 200);
+  assert.ok(idx.some(x => x.slug === "extra-dashes"), "edge dashes trimmed");
+});
+
+test("collisions are deterministic: first by name keeps the slug, the next is suffixed", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const one = idx.find(x => x.title === "The Snail (one)");
+  const two = idx.find(x => x.title === "The Snail (two)");
+  assert.equal(one.slug, "the-snail", '"The Snail!" sorts first, so it keeps the bare slug');
+  assert.equal(two.slug, "the-snail-2", "the collider is suffixed, never merged");
+  for (const s of ["the-snail", "the-snail-2"])
+    assert.equal((await fetch(`${BASE}/books/${s}/manifest.json`)).status, 200);
+});
+
+test("an already-slug folder keeps its URL even when a newcomer slugifies onto it", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(x => x.slug === "luna-the-fox").title, "Luna the Fox",
+    "the existing package keeps its slug (reading positions are per-slug)");
+  assert.equal(idx.find(x => x.title === "Luna The Fox (copy)").slug, "luna-the-fox-2");
+  const m = await (await fetch(`${BASE}/books/luna-the-fox-2/manifest.json`)).json();
+  assert.equal(m.title, "Luna The Fox (copy)", "and the newcomer is reachable, not lost");
+});
+
+test("PARITY: every indexed slug is exactly the slug the resolver accepts", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.ok(idx.length >= 7, "all the fixture packages are on the shelf");
+  for (const e of idx) {
+    assert.equal(e.slug, slugify(e.slug), "the served slug is a slugify fixed point");
+    const r = await fetch(`${BASE}/books/${e.slug}/manifest.json`);
+    assert.equal(r.status, 200, `resolver accepts ${e.slug}`);
+    assert.equal((await r.json()).title, e.title, `${e.slug} resolves to its OWN directory`);
+  }
+});
+
+test("slug resolution never widens the jail: escapes and denies still hold", async () => {
+  assert.equal((await rawGet(PORT, "/books/../secret.json")).status, 403);
+  assert.equal((await rawGet(PORT, "/books/tabby-mctat/../../secret.json")).status, 403);
+  assert.equal((await fetch(`${BASE}/books/no-such-book/manifest.json`)).status, 404);
+  assert.equal((await fetch(`${BASE}/books/tabby-mctat/sources/IMG_0001.jpg`)).status, 404);
+});
+
+// A slug is a URL the reader saves a position against and the board links to.
+// Deriving ownership from the FOLDER NAME meant a package added later whose
+// folder happens to already be in slug form took the slug off the package that
+// had been serving under it — that one moved to <slug>-2, lost its reading
+// position and broke every existing link. Ownership is remembered instead.
+test("a slug belongs to the package that got it first, not to a later slug-named folder", async () => {
+  const before = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(before.find(x => x.title === "Tabby McTat").slug, "tabby-mctat");
+
+  const newcomer = path.join(TMP, "books", "tabby-mctat");   // literally the slug
+  fs.mkdirSync(newcomer, { recursive: true });
+  fs.writeFileSync(path.join(newcomer, "cover.jpg"), JPEG);
+  fs.writeFileSync(path.join(newcomer, "manifest.json"), JSON.stringify({
+    schemaVersion: 1, title: "A Different Book", exportedAt: "2026-09-05T00:00:00Z",
+    cover: "cover.jpg", pages: [{ index: 0, image: "cover.jpg", text: "hi" }],
+  }));
+
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(x => x.title === "Tabby McTat").slug, "tabby-mctat",
+    "the package that held the URL keeps it");
+  assert.equal(idx.find(x => x.title === "A Different Book").slug, "tabby-mctat-2",
+    "the newcomer is suffixed, not handed someone else's URL");
+  const m = await (await fetch(`${BASE}/books/tabby-mctat/manifest.json`)).json();
+  assert.equal(m.title, "Tabby McTat", "and /books/tabby-mctat/ still serves the same book");
+  assert.equal((await (await fetch(`${BASE}/books/tabby-mctat-2/manifest.json`)).json()).title,
+    "A Different Book", "the newcomer is reachable, not lost");
+});
+
+// ================================= the shelf's own two stores (spec 2026-09-30)
+//
+// This Week sorts newest week first, and a manifest's exportedAt cannot say
+// which week a book belongs to: every re-publish bumps it (a review edit, a
+// rename, every Animate clip — content-publish.js). So the hub keeps a
+// FIRST-SEEN record of its own, in the hub's data dir (never under books/, the
+// Drive mirror's), seeded from exportedAt on first sight and never rewritten.
+
+test("first-seen is seeded from exportedAt, stored in the hub's data dir, and never under books/", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  for (const row of idx) {
+    assert.equal(typeof row.firstSeen, "string", "row without firstSeen: " + JSON.stringify(row));
+    assert.ok(Number.isFinite(Date.parse(row.firstSeen)), row.firstSeen);
+    assert.equal(typeof row.favorite, "boolean", "row without a favorite boolean: " + JSON.stringify(row));
+  }
+  assert.equal(idx.find(e => e.slug === "our-book").firstSeen, "2026-09-22T00:00:00.000Z");
+  const store = JSON.parse(fs.readFileSync(path.join(TMP, "book-first-seen.json"), "utf8"));
+  assert.equal(store["luna-the-fox"], "2026-08-24T00:00:00.000Z");
+  assert.ok(!fs.existsSync(path.join(TMP, "books", "book-first-seen.json")),
+    "the store must not live in the Drive-mirrored books dir");
+});
+
+test("a package with no exportedAt is first seen NOW", async () => {
+  const t0 = Date.now();
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  const row = idx.find(e => e.slug === "undated-week");
+  const at = Date.parse(row.firstSeen);
+  // seeded by whichever index call saw it first — before() or this one — so
+  // "now" is anywhere since the suite began
+  assert.ok(at <= Date.now() && t0 - at < 120000, row.firstSeen);
+});
+
+test("first-seen survives a re-publish that bumps exportedAt", async () => {
+  const mPath = path.join(TMP, "books", "our-book", "manifest.json");
+  const before = (await (await fetch(`${BASE}/books/index.json`)).json())
+    .find(e => e.slug === "our-book").firstSeen;
+  const m = JSON.parse(fs.readFileSync(mPath, "utf8"));
+  fs.writeFileSync(mPath, JSON.stringify({ ...m, exportedAt: "2026-09-29T12:00:00Z" }, null, 2));
+  try {
+    const after = (await (await fetch(`${BASE}/books/index.json`)).json())
+      .find(e => e.slug === "our-book").firstSeen;
+    assert.equal(after, before, "a re-publish moved the book to a newer week");
+  } finally { fs.writeFileSync(mPath, JSON.stringify(m, null, 2)); }
+});
+
+test("publishedAt rides on the index row as the manifest wrote it, null when it has none", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "week-with-weekof").publishedAt, "2026-09-01T00:00:00.000Z");
+  assert.equal(idx.find(e => e.slug === "our-book").publishedAt, null);
+});
+
+test("an explicit weekOf in the manifest is published beside first-seen", async () => {
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "week-with-weekof").weekOf, "2026-09-28");
+  assert.equal(idx.find(e => e.slug === "our-book").weekOf, null);
+});
+
+// ♥ Favorites: a grown-up's finger hold toggles them; the hub keeps them (a
+// browser reset must not lose her favourites), keyed by slug, in the data dir.
+const fav = (slug, body, headers = {}) => fetch(`${BASE}/books/${slug}/favorite`, {
+  method: "POST", headers: { "Content-Type": "application/json", ...headers },
+  body: typeof body === "string" ? body : JSON.stringify(body) });
+
+test("POST /books/<slug>/favorite sets and clears the ♥, and the index carries it", async () => {
+  let r = await fav("luna-the-fox", { favorite: true });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { slug: "luna-the-fox", favorite: true });
+  let idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "luna-the-fox").favorite, true);
+  assert.equal(idx.find(e => e.slug === "our-book").favorite, false);
+  const store = JSON.parse(fs.readFileSync(path.join(TMP, "book-favorites.json"), "utf8"));
+  assert.ok(store["luna-the-fox"], "stored on the hub, keyed by slug: " + JSON.stringify(store));
+  assert.ok(!fs.existsSync(path.join(TMP, "books", "book-favorites.json")),
+    "the store must not live in the Drive-mirrored books dir");
+
+  r = await fav("luna-the-fox", { favorite: false });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { slug: "luna-the-fox", favorite: false });
+  idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "luna-the-fox").favorite, false);
+});
+
+test("the favorite door keeps the book routes' guards", async () => {
+  // a page on another site may not change her shelf (ownDoor)
+  let r = await fav("luna-the-fox", { favorite: true }, { "Sec-Fetch-Site": "cross-site" });
+  assert.equal(r.status, 403);
+  r = await fetch(`${BASE}/books/luna-the-fox/favorite`, { method: "POST",
+    headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ favorite: true }) });
+  assert.equal(r.status, 403, "a simple (preflight-free) content type is refused");
+  // a book nobody has
+  r = await fav("no-such-book", { favorite: true });
+  assert.equal(r.status, 404);
+  // a body that is not a yes or a no
+  r = await fav("luna-the-fox", { favorite: "yes" });
+  assert.equal(r.status, 400);
+  r = await fav("luna-the-fox", "{not json");
+  assert.equal(r.status, 400);
+  const idx = await (await fetch(`${BASE}/books/index.json`)).json();
+  assert.equal(idx.find(e => e.slug === "luna-the-fox").favorite, false, "no refusal changed anything");
+});
+
+test("a favorite whose book is gone is simply ignored", async () => {
+  const file = path.join(TMP, "book-favorites.json");
+  const had = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  fs.writeFileSync(file, JSON.stringify({ "long-gone-book": "2026-09-01T00:00:00.000Z" }));
+  try {
+    const r = await fetch(`${BASE}/books/index.json`);
+    assert.equal(r.status, 200);
+    const idx = await r.json();
+    assert.ok(!idx.some(e => e.slug === "long-gone-book"), "a ghost row appeared");
+    assert.ok(idx.every(e => e.favorite === false));
+  } finally { if (had == null) fs.rmSync(file, { force: true }); else fs.writeFileSync(file, had); }
+});
+
+test("an unreadable favorites store is an empty one, never a dead shelf", async () => {
+  const file = path.join(TMP, "book-favorites.json");
+  const had = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  fs.writeFileSync(file, "{broken");
+  try {
+    const r = await fetch(`${BASE}/books/index.json`);
+    assert.equal(r.status, 200);
+    assert.ok((await r.json()).every(e => e.favorite === false));
+  } finally { if (had == null) fs.rmSync(file, { force: true }); else fs.writeFileSync(file, had); }
+});
+
+test("LAW: missing books dir -> index [] and the server stays alive", async () => {
+  const TMP2 = fs.mkdtempSync(path.join(os.tmpdir(), "era-nobooks-"));
+  const PORT2 = 8398;
+  const c2 = spawn("node", ["server.js", String(PORT2)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env, ERA_DATA_DIR: TMP2, ERA_BIND: "127.0.0.1" },
+  });
+  try {
+    let up = false;
+    for (let i = 0; i < 100; i++) {
+      try { await fetch(`http://127.0.0.1:${PORT2}/settings`); up = true; break; } catch {}
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.ok(up, "server boots without a books dir");
+    const r = await fetch(`http://127.0.0.1:${PORT2}/books/index.json`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), [], "empty shelf, not an error");
+    const s = await fetch(`http://127.0.0.1:${PORT2}/settings`);
+    assert.equal(s.status, 200, "server alive after the degraded index");
+  } finally { c2.kill("SIGKILL"); }
+});

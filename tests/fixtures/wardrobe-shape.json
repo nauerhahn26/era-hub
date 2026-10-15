@@ -1,0 +1,1105 @@
+{
+ "_note": "Shape of a real 63-item wardrobe (2026-09-29): categories, legacy warmth words, colours/pattern/statement for the harmony rule, and the coverage/weight/legs a human would assign from the garment names. Names are generic on purpose. Strip coverage/weight/legs to simulate a catalogue the refit pass has not reached.",
+ "items": {
+  "item_019375ce6c.jpg": {
+   "id": "item_019375ce6c",
+   "ok": true,
+   "name": "top 01",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "blue"
+   ],
+   "pattern": "denim",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "basic",
+   "coverage": "short"
+  },
+  "item_03476bb9d0.jpg": {
+   "id": "item_03476bb9d0",
+   "ok": true,
+   "name": "dress 01",
+   "category": "dress",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "blue"
+   ],
+   "pattern": "denim",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "basic",
+   "coverage": "sleeveless",
+   "legs": "bare"
+  },
+  "item_039b7169dc.jpg": {
+   "id": "item_039b7169dc",
+   "ok": true,
+   "name": "pants 01",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "beige"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "basic",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_097b9a61fa.jpg": {
+   "id": "item_097b9a61fa",
+   "ok": true,
+   "name": "top 02",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "pink",
+    "white"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "mid"
+  },
+  "item_10808c4c69.jpg": {
+   "id": "item_10808c4c69",
+   "ok": true,
+   "name": "pants 02",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "black",
+    "silver"
+   ],
+   "pattern": "print",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "basic",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_14cccc4701.jpg": {
+   "id": "item_14cccc4701",
+   "ok": true,
+   "name": "top 03",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "cream",
+    "beige"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "sweet",
+   "coverage": "sleeveless"
+  },
+  "item_15f13629be.jpg": {
+   "id": "item_15f13629be",
+   "ok": true,
+   "name": "set 01",
+   "category": "set",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "white",
+    "purple",
+    "teal"
+   ],
+   "pattern": "floral",
+   "statement": true,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short",
+   "legs": "bare"
+  },
+  "item_178521ef10.jpg": {
+   "id": "item_178521ef10",
+   "ok": true,
+   "name": "top 04",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "brown",
+    "yellow"
+   ],
+   "pattern": "print",
+   "statement": false,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_17a7f9b445.jpg": {
+   "id": "item_17a7f9b445",
+   "ok": true,
+   "name": "shorts 01",
+   "category": "shorts",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "light blue"
+   ],
+   "pattern": "denim",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_1da9d05f7f.jpg": {
+   "id": "item_1da9d05f7f",
+   "ok": true,
+   "name": "jacket 01",
+   "category": "jacket",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "white",
+    "purple"
+   ],
+   "pattern": "floral",
+   "statement": true,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "heavy"
+  },
+  "item_244fbe4a66.jpg": {
+   "id": "item_244fbe4a66",
+   "ok": true,
+   "name": "jacket 02",
+   "category": "jacket",
+   "occasion": "everyday",
+   "warmth": "cold",
+   "colors": [
+    "cream",
+    "beige"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "sporty",
+   "coverage": "long",
+   "weight": "heavy"
+  },
+  "item_2a1f658ac1.jpg": {
+   "id": "item_2a1f658ac1",
+   "ok": true,
+   "name": "pants 03",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "pink"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_2e29876e0b.jpg": {
+   "id": "item_2e29876e0b",
+   "ok": true,
+   "name": "top 05",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "blue"
+   ],
+   "pattern": "print",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_36bb3f8631.jpg": {
+   "id": "item_36bb3f8631",
+   "ok": true,
+   "name": "shorts 02",
+   "category": "shorts",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "yellow",
+    "white"
+   ],
+   "pattern": "floral",
+   "statement": true,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_37a93d3c63.jpg": {
+   "id": "item_37a93d3c63",
+   "ok": true,
+   "name": "top 06",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "cream",
+    "brown",
+    "yellow"
+   ],
+   "pattern": "floral",
+   "statement": true,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "mid"
+  },
+  "item_3a815f6855.jpg": {
+   "id": "item_3a815f6855",
+   "ok": true,
+   "name": "top 07",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "grey"
+   ],
+   "pattern": "graphic",
+   "statement": true,
+   "palette": "neutral",
+   "vibe": "graphic",
+   "coverage": "short"
+  },
+  "item_3b48918b46.jpg": {
+   "id": "item_3b48918b46",
+   "ok": true,
+   "name": "jacket 03",
+   "category": "jacket",
+   "occasion": "everyday",
+   "warmth": "cold",
+   "colors": [
+    "pink",
+    "burgundy"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "heavy"
+  },
+  "item_3c2d2c520f.jpg": {
+   "id": "item_3c2d2c520f",
+   "ok": true,
+   "name": "top 08",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "white",
+    "pink"
+   ],
+   "pattern": "graphic",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_3dbdb2f6ac.jpg": {
+   "id": "item_3dbdb2f6ac",
+   "ok": true,
+   "name": "shorts 03",
+   "category": "shorts",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "pink"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_40b24aea1b.jpg": {
+   "id": "item_40b24aea1b",
+   "ok": true,
+   "name": "shorts 04",
+   "category": "shorts",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "blue",
+    "grey"
+   ],
+   "pattern": "denim",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "basic",
+   "coverage": "short"
+  },
+  "item_4108422c64.jpg": {
+   "id": "item_4108422c64",
+   "ok": true,
+   "name": "dress 02",
+   "category": "dress",
+   "occasion": "fancy",
+   "warmth": "warm",
+   "colors": [
+    "navy",
+    "white"
+   ],
+   "pattern": "print",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "short",
+   "legs": "bare"
+  },
+  "item_41da7522a7.jpg": {
+   "id": "item_41da7522a7",
+   "ok": true,
+   "name": "top 09",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "pink",
+    "cream"
+   ],
+   "pattern": "floral",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_42e46a25f2.jpg": {
+   "id": "item_42e46a25f2",
+   "ok": true,
+   "name": "top 10",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "pink",
+    "white"
+   ],
+   "pattern": "graphic",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_4466d62ed7.jpg": {
+   "id": "item_4466d62ed7",
+   "ok": true,
+   "name": "pants 04",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "purple",
+    "pink"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "basic",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_47d1d8e12f.jpg": {
+   "id": "item_47d1d8e12f",
+   "ok": true,
+   "name": "shorts 05",
+   "category": "shorts",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "purple",
+    "white"
+   ],
+   "pattern": "print",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_4acf705a7c.jpg": {
+   "id": "item_4acf705a7c",
+   "ok": true,
+   "name": "dress 03",
+   "category": "dress",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "white"
+   ],
+   "pattern": "floral",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "sleeveless",
+   "legs": "bare"
+  },
+  "item_4d3da45986.jpg": {
+   "id": "item_4d3da45986",
+   "ok": true,
+   "name": "top 11",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "tan",
+    "black",
+    "white"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "neutral",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_4d6504ab1e.jpg": {
+   "id": "item_4d6504ab1e",
+   "ok": true,
+   "name": "top 12",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "white",
+    "pink",
+    "purple"
+   ],
+   "pattern": "graphic",
+   "statement": true,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_4d8e07f2b4.jpg": {
+   "id": "item_4d8e07f2b4",
+   "ok": true,
+   "name": "top 13",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "white",
+    "navy"
+   ],
+   "pattern": "stripes",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_5bf563c2b5.jpg": {
+   "id": "item_5bf563c2b5",
+   "ok": true,
+   "name": "shorts 06",
+   "category": "shorts",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "pink",
+    "white"
+   ],
+   "pattern": "stripes",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_5ce94cc51e.jpg": {
+   "id": "item_5ce94cc51e",
+   "ok": true,
+   "name": "set 02",
+   "category": "set",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "sage",
+    "green"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "short",
+   "legs": "bare"
+  },
+  "item_5d863a58c4.jpg": {
+   "id": "item_5d863a58c4",
+   "ok": true,
+   "name": "jacket 04",
+   "category": "jacket",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "brown",
+    "white"
+   ],
+   "pattern": "floral",
+   "statement": false,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "heavy"
+  },
+  "item_60ee2f7664.jpg": {
+   "id": "item_60ee2f7664",
+   "ok": true,
+   "name": "top 14",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "white",
+    "black"
+   ],
+   "pattern": "stripes",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_669cf06822.jpg": {
+   "id": "item_669cf06822",
+   "ok": true,
+   "name": "dress 04",
+   "category": "dress",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "yellow",
+    "red",
+    "blue"
+   ],
+   "pattern": "floral",
+   "statement": true,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "sleeveless",
+   "legs": "bare"
+  },
+  "item_6fc1bb56f3.jpg": {
+   "id": "item_6fc1bb56f3",
+   "ok": true,
+   "name": "set 03",
+   "category": "set",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "yellow",
+    "blue",
+    "pink"
+   ],
+   "pattern": "floral",
+   "statement": true,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light",
+   "legs": "covered"
+  },
+  "item_75b119e086.jpg": {
+   "id": "item_75b119e086",
+   "ok": true,
+   "name": "top 15",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "navy"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "sleeveless"
+  },
+  "item_78429f7374.jpg": {
+   "id": "item_78429f7374",
+   "ok": true,
+   "name": "dress 05",
+   "category": "dress",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "white",
+    "blue"
+   ],
+   "pattern": "floral",
+   "statement": true,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "sleeveless",
+   "legs": "bare"
+  },
+  "item_7a4df9167d.jpg": {
+   "id": "item_7a4df9167d",
+   "ok": true,
+   "name": "top 16",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "white",
+    "red"
+   ],
+   "pattern": "stripes",
+   "statement": false,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_858937118b.jpg": {
+   "id": "item_858937118b",
+   "ok": true,
+   "name": "top 17",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "white",
+    "grey"
+   ],
+   "pattern": "floral",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "sweet",
+   "coverage": "sleeveless"
+  },
+  "item_86aeba7072.jpg": {
+   "id": "item_86aeba7072",
+   "ok": true,
+   "name": "top 18",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "grey",
+    "yellow"
+   ],
+   "pattern": "print",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_88e883afe4.jpg": {
+   "id": "item_88e883afe4",
+   "ok": true,
+   "name": "top 19",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "white",
+    "green"
+   ],
+   "pattern": "floral",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "sleeveless"
+  },
+  "item_8919a44241.jpg": {
+   "id": "item_8919a44241",
+   "ok": true,
+   "name": "shorts 07",
+   "category": "shorts",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "white"
+   ],
+   "pattern": "denim",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "basic",
+   "coverage": "short"
+  },
+  "item_8980bc3fdb.jpg": {
+   "id": "item_8980bc3fdb",
+   "ok": true,
+   "name": "shorts 08",
+   "category": "shorts",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "green"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "cool",
+   "vibe": "basic",
+   "coverage": "short"
+  },
+  "item_8b8348d5d8.jpg": {
+   "id": "item_8b8348d5d8",
+   "ok": true,
+   "name": "top 20",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "pink",
+    "rainbow"
+   ],
+   "pattern": "graphic",
+   "statement": true,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_9f99a0ce34.jpg": {
+   "id": "item_9f99a0ce34",
+   "ok": true,
+   "name": "top 21",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "grey",
+    "white"
+   ],
+   "pattern": "stripes",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "basic",
+   "coverage": "long",
+   "weight": "mid"
+  },
+  "item_9f9af26496.jpg": {
+   "id": "item_9f9af26496",
+   "ok": true,
+   "name": "top 22",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "black",
+    "silver"
+   ],
+   "pattern": "graphic",
+   "statement": true,
+   "palette": "neutral",
+   "vibe": "graphic",
+   "coverage": "short"
+  },
+  "item_a03abd737c.jpg": {
+   "id": "item_a03abd737c",
+   "ok": true,
+   "name": "dress 06",
+   "category": "dress",
+   "occasion": "fancy",
+   "warmth": "hot",
+   "colors": [
+    "green",
+    "white"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "cool",
+   "vibe": "sweet",
+   "coverage": "sleeveless",
+   "legs": "bare"
+  },
+  "item_a20f4bf013.jpg": {
+   "id": "item_a20f4bf013",
+   "ok": true,
+   "name": "top 23",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "peach",
+    "white"
+   ],
+   "pattern": "graphic",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_a9ace82a2f.jpg": {
+   "id": "item_a9ace82a2f",
+   "ok": true,
+   "name": "pants 05",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "grey"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "basic",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_aa916b81cb.jpg": {
+   "id": "item_aa916b81cb",
+   "ok": true,
+   "name": "set 04",
+   "category": "set",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "yellow",
+    "white",
+    "pink"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "short",
+   "legs": "bare"
+  },
+  "item_ae649aa879.jpg": {
+   "id": "item_ae649aa879",
+   "ok": true,
+   "name": "top 24",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "burgundy",
+    "pink"
+   ],
+   "pattern": "floral",
+   "statement": false,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_b2840c63ae.jpg": {
+   "id": "item_b2840c63ae",
+   "ok": true,
+   "name": "top 25",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "blue",
+    "orange"
+   ],
+   "pattern": "graphic",
+   "statement": true,
+   "palette": "cool",
+   "vibe": "graphic",
+   "coverage": "short"
+  },
+  "item_bdf1ae54a2.jpg": {
+   "id": "item_bdf1ae54a2",
+   "ok": true,
+   "name": "top 26",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "beige",
+    "black"
+   ],
+   "pattern": "print",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "sweet",
+   "coverage": "short"
+  },
+  "item_cfd6a258b5.jpg": {
+   "id": "item_cfd6a258b5",
+   "ok": true,
+   "name": "top 27",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "hot",
+   "colors": [
+    "cream",
+    "grey"
+   ],
+   "pattern": "floral",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "sweet",
+   "coverage": "sleeveless"
+  },
+  "item_d8b8d5cde6.jpg": {
+   "id": "item_d8b8d5cde6",
+   "ok": true,
+   "name": "pants 06",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "cream"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "basic",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_e7998ecba6.jpg": {
+   "id": "item_e7998ecba6",
+   "ok": true,
+   "name": "pants 07",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "pink",
+    "grey"
+   ],
+   "pattern": "print",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_eea35ac381.jpg": {
+   "id": "item_eea35ac381",
+   "ok": true,
+   "name": "pants 08",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "white"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "basic",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_f3d4f34581.jpg": {
+   "id": "item_f3d4f34581",
+   "ok": true,
+   "name": "jacket 05",
+   "category": "jacket",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "cream"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "neutral",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_f45e37cf83.jpg": {
+   "id": "item_f45e37cf83",
+   "ok": true,
+   "name": "top 28",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "white",
+    "brown"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_f8a022e604.jpg": {
+   "id": "item_f8a022e604",
+   "ok": true,
+   "name": "pants 09",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "black",
+    "white"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "neutral",
+   "vibe": "graphic",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_f8febddd5a.jpg": {
+   "id": "item_f8febddd5a",
+   "ok": true,
+   "name": "pants 10",
+   "category": "pants",
+   "occasion": "everyday",
+   "warmth": "warm",
+   "colors": [
+    "grey",
+    "pink"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "neutral",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_f9a67f33de.jpg": {
+   "id": "item_f9a67f33de",
+   "ok": true,
+   "name": "top 29",
+   "category": "top",
+   "occasion": "everyday",
+   "warmth": "cool",
+   "colors": [
+    "pink",
+    "white"
+   ],
+   "pattern": "solid",
+   "statement": false,
+   "palette": "pastel",
+   "vibe": "sweet",
+   "coverage": "long",
+   "weight": "light"
+  },
+  "item_fe70e36ac4.jpg": {
+   "id": "item_fe70e36ac4",
+   "ok": true,
+   "name": "dress 07",
+   "category": "dress",
+   "occasion": "fancy",
+   "warmth": "warm",
+   "colors": [
+    "white",
+    "pink",
+    "red"
+   ],
+   "pattern": "print",
+   "statement": true,
+   "palette": "warm",
+   "vibe": "sweet",
+   "coverage": "short",
+   "legs": "bare"
+  }
+ }
+}

@@ -1,0 +1,68 @@
+{
+  "asOf": "2026-09-04",
+  "currency": "USD",
+  "unit": "per 1,000,000 tokens",
+  "sources": [
+    "https://developers.openai.com/api/docs/pricing",
+    "https://ai.google.dev/gemini-api/docs/pricing",
+    "https://cloud.google.com/vision/pricing"
+  ],
+  "notes": [
+    "Image tokens are already inside the input-token usage reported by both OpenAI and Gemini, so cost = usage x price with no separate image line item.",
+    "Gemini reasoning ('thoughts') tokens are billed at the output rate; the gemini adapter folds thoughtsTokenCount into outputTokens.",
+    "Gemini 3.6/3.7/3.8 Flash prices are promotional through 2026-12-31 and double on 2027-01-01 (in 1.50 / out 7.50) - see promoEnds/afterPromo.",
+    "Gemini 3.1 Pro and 2.5 Pro have a >200k-prompt tier (in 4.00 / out 18.00 and in 2.50 / out 15.00). One book page is ~2-3k tokens, so the low tier always applies here.",
+    "Cloud Vision: first 1,000 units/month free, then $1.50 per 1,000 units. One DOCUMENT_TEXT_DETECTION call = 1 unit."
+  ],
+  "models": {
+    "gpt-5.6-sol": { "inputPerM": 4.0, "cachedInputPerM": 0.4, "outputPerM": 20.0 },
+    "gpt-5.6-terra": { "inputPerM": 2.0, "cachedInputPerM": 0.2, "outputPerM": 12.0 },
+    "gpt-5.6-luna": { "inputPerM": 0.2, "cachedInputPerM": 0.02, "outputPerM": 1.2 },
+    "gpt-5.5": { "inputPerM": 5.0, "cachedInputPerM": 0.5, "outputPerM": 30.0 },
+    "gpt-5.4": { "inputPerM": 2.5, "cachedInputPerM": 0.25, "outputPerM": 15.0 },
+    "gpt-5.4-mini": { "inputPerM": 0.75, "cachedInputPerM": 0.075, "outputPerM": 4.5 },
+    "gpt-5.4-nano": { "inputPerM": 0.2, "cachedInputPerM": 0.02, "outputPerM": 1.25 },
+    "gpt-5.2": { "inputPerM": 1.75, "cachedInputPerM": 0.175, "outputPerM": 14.0 },
+    "gpt-5.1": { "inputPerM": 1.25, "cachedInputPerM": 0.125, "outputPerM": 10.0 },
+    "gpt-5": { "inputPerM": 1.25, "cachedInputPerM": 0.125, "outputPerM": 10.0 },
+    "gpt-5-mini": { "inputPerM": 0.25, "cachedInputPerM": 0.025, "outputPerM": 2.0 },
+    "gpt-5-nano": { "inputPerM": 0.05, "cachedInputPerM": 0.005, "outputPerM": 0.4 },
+    "gpt-4.1": { "inputPerM": 2.0, "cachedInputPerM": 0.5, "outputPerM": 8.0 },
+    "gpt-4.1-mini": { "inputPerM": 0.4, "cachedInputPerM": 0.1, "outputPerM": 1.6 },
+    "gpt-4.1-nano": { "inputPerM": 0.1, "cachedInputPerM": 0.025, "outputPerM": 0.4 },
+    "gpt-4o": { "inputPerM": 2.5, "cachedInputPerM": 1.25, "outputPerM": 10.0 },
+    "gpt-4o-mini": { "inputPerM": 0.15, "cachedInputPerM": 0.075, "outputPerM": 0.6 },
+
+    "gemini-3.8-flash": {
+      "inputPerM": 0.75,
+      "outputPerM": 3.75,
+      "promoEnds": "2026-12-31",
+      "afterPromo": { "inputPerM": 1.5, "outputPerM": 7.5 }
+    },
+    "gemini-3.7-flash": {
+      "inputPerM": 0.75,
+      "outputPerM": 3.75,
+      "promoEnds": "2026-12-31",
+      "afterPromo": { "inputPerM": 1.5, "outputPerM": 7.5 }
+    },
+    "gemini-3.6-flash": {
+      "inputPerM": 0.75,
+      "outputPerM": 3.75,
+      "promoEnds": "2026-12-31",
+      "afterPromo": { "inputPerM": 1.5, "outputPerM": 7.5 }
+    },
+    "gemini-3.5-flash": { "inputPerM": 1.5, "outputPerM": 9.0 },
+    "gemini-3.5-flash-lite": { "inputPerM": 0.3, "outputPerM": 2.5 },
+    "gemini-3.1-pro-preview": { "inputPerM": 2.0, "outputPerM": 12.0 },
+    "gemini-3.1-flash-lite": { "inputPerM": 0.25, "outputPerM": 1.5 },
+    "gemini-3-flash-preview": { "inputPerM": 0.5, "outputPerM": 3.0 },
+    "gemini-2.5-pro": { "inputPerM": 1.25, "outputPerM": 10.0 },
+    "gemini-2.5-flash": { "inputPerM": 0.3, "outputPerM": 2.5 },
+    "gemini-2.5-flash-lite": { "inputPerM": 0.1, "outputPerM": 0.4 }
+  },
+  "gcv": {
+    "freeUnitsPerMonth": 1000,
+    "perUnitAfterFree": 0.0015,
+    "per1000AfterFree": 1.5
+  }
+}

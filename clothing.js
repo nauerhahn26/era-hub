@@ -1,0 +1,637 @@
+// clothing.js — thin shell for the Clothing Picker. The actual pipeline
+// (HEIC decode, AI ingest, composites, board build) lives in
+// clothing-worker.js and runs in a WORKER THREAD: on 8/31 dad's ingest froze
+// every hub page — Settings' "Back to apps" included — because the pixel
+// loops starved the event loop. The shell only tracks state, spawns one
+// worker at a time, and answers /clothing/status instantly.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const { Worker } = require("worker_threads");
+const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
+const { aiRoles, visionCheck } = require("./ai-config.js");
+const drive = require("./drive.js");
+const contentStore = require("./content-store.js");
+const rank = require("./clothing-rank.js");
+const clothingLog = require("./clothing-log.js");
+
+let DATA = null;
+// The family's calendar zone and this hub's name, handed in by server.js at
+// start(): the worker seeds the day's deal from the family's day key (spec
+// §3.2) and signs what it shares with the device id. The zone is a getter so
+// a profile edit reaches the next build without a restart. A caller that
+// passes neither (an in-process suite) gets the server's own defaults — a
+// suite that seeds "yesterday" by the clock must pass its zone (plan T2.1).
+const DEFAULT_TZ = "America/Los_Angeles";
+let tzOf = () => DEFAULT_TZ;
+let deviceId = "hub";
+let badZone = "";   // the last unusable zone we complained about
+// The zone the next build is seeded with. profile.json can hold a zone this
+// computer does not know — "Pacific Time" and "America/Los_Angelos" are not
+// IANA names — and dayKey throws RangeError on those. The deal is seeded with
+// dayKey(now, tz), so an unchecked zone threw inside the worker and the board
+// was simply never rebuilt, every build, with one console line as the only
+// signal. Probe it here and fall back to the default instead (review r1).
+// EXPORTED because history.json has two doors: POST /outfit-event buckets its
+// pick by a day key as well, and on the raw profile zone it threw RangeError
+// inside the route, answered 400 and dropped every Yes — silently, every
+// pick, so favourites could never be learned at all (review r2). One
+// validated zone, both doors.
+function zone() {
+  const z = String(tzOf() || DEFAULT_TZ);
+  try { rank.dayKey(Date.now(), z); return z; }
+  catch {
+    if (badZone !== z) {
+      badZone = z;
+      console.error("[clothing] profile time zone \"" + z + "\" is not one this computer knows — using " + DEFAULT_TZ);
+    }
+    return DEFAULT_TZ;
+  }
+}
+let worker = null;
+let ingesting = null;   // {done, total} live from the worker
+// The needs-attributes pass counts itself separately (I16): "naming 3 of 12
+// photos" and "describing 4 of 35 garments" are two different sentences, and
+// the pass must never look like photo work — nothing about it holds the day.
+let attrs = null;       // {done, total} live from the pass
+let lastResult = null;
+// The last build's memory did not work: either wardrobe/history.json would not
+// OPEN (the worker dealt blind — no staples, no yesterday bar, no freshness) or
+// the lineup it dealt would not be RECORDED (a hole in the sixty days, which
+// puts yesterday's page-1 looks back on page 1 tomorrow). Either way the board
+// on screen is not the day's work and tick deals again — but ONCE A DAY, and
+// as a RE-SORT:
+//   * once, because a file that will not open twice running never clears the
+//     flag, so an unbounded retry is a full build every 15 minutes for ever;
+//     a day, because that budget is the day's, exactly as holdDay is — trouble
+//     on a second morning deserves that morning's re-deal (review r5);
+//   * a re-sort, because this door jumps the allowance retry beside it, and a
+//     FULL build there walked the provider ladder again for every photo still
+//     waiting — four times an hour into an allowance the hub already holds,
+//     the very thing holdDay exists to prevent (review r4).
+// It lives INSIDE the freshness branch: a board that is stale is not the day's
+// work whatever the memory did, and that morning owes her the full build
+// (review r5).
+let memoryBlind = false;
+let memoryRedeals = 0;          // re-deals already bought TODAY
+let redealDay = "";             // ...and the day they were bought on
+const MEMORY_REDEALS = 1;
+let offerUnrecorded = false;    // the running build's {offer} did not land
+// The last board was dealt with NO weather at all — Open-Meteo, weather.gov
+// and the stored week all failed (spec §7.3). On 10/10 the home device built
+// at 09:57 into a 403, the tile was gone and the outfits ungated for a 64 °F
+// day, and the tile stayed gone all day because the tick never retries a board
+// that exists. Shaped like memoryBlind and consumed the same way, inside the
+// freshness branch and as a RE-SORT (never an ingest), but with no daily
+// budget: a retry that still finds nothing costs three small requests and
+// redraws nothing (the worker's weatherRetry leaves the board alone), so every
+// tick while it stands tries again, and the first answer re-sorts. A board
+// served from the stored week is NOT blind — it has weather; its old `at`
+// makes the next build try a refresh anyway.
+// "Every tick" is every TICK, not every call of tick(): the build that went
+// blind walked the ladder itself a moment ago, so a retry waits out the tick
+// interval less a minute from the last walk. Without it, any door that calls
+// tick() back to back (a sync landing, a suite settling the photo memory) is a
+// weather call each time, and a re-sort stands in for "nothing to do".
+let weatherBlind = false;
+let weatherTriedAt = 0;
+const weatherRetryMs = () => {
+  const v = Number(process.env.ERA_WEATHER_RETRY_MS);
+  return process.env.ERA_WEATHER_RETRY_MS !== undefined && Number.isFinite(v) && v >= 0 ? v : 14 * 60 * 1000;
+};
+let queued = false;     // a regenerate asked for while one was running
+let queuedFull = false; // ...and at least one of those callers wanted a FULL build
+let queuedRefit = false; // ...and at least one of them was POST /clothing/refit
+let waiters = [];       // callers that arrived mid-build, awaiting the queued run
+
+// The shell only ever needs to SAY which provider is configured (/clothing/status
+// is public), so it drops the key on the floor here; the worker reads the same
+// role for the calls it makes.
+function aiCfg() {
+  const v = aiRoles(DATA).vision;
+  return v ? { provider: v.provider, ...visionCheck(DATA) } : null;
+}
+
+function isBuilding() { return !!worker; }
+
+// ---- memory: wardrobe/history.json, ONE writer (spec §3.3, A4-1) ----------
+// {days: {date: {band, page1}}, events: {date: [{kind, combo, at}]}}. The
+// worker deals and posts the page-1 lineup; the shell records it here, and
+// POST /outfit-event (server.js) appends the board's picks through the same
+// two doors — every read-modify-write on the main thread, so none can
+// interleave, and every write is a rename (writeAtomic), so a reader never
+// sees half a file. Nothing else may write this file.
+function historyPath() { return path.join(DATA, "wardrobe", "history.json"); }
+// opts.readOnly: for a caller that only LOOKS at the memory. The set-aside
+// below is a write, and it belongs to the two doors that write this file (the
+// build's recordOffer and POST /outfit-event) — never to /clothing/status,
+// which is public, unauthenticated and polled every few seconds. A `cp` of a
+// keep's history.json into a running hub's data dir is not atomic, so a poll
+// landing mid-copy would otherwise rename the half-written file aside and the
+// finished copy would end up under .bad-<ts> with no history.json in place.
+// A read-only caller gets a throw instead, so it says nothing rather than
+// answering {} (the same rule clothing-worker.js:124-127 states from the
+// worker's side).
+function readHistory(opts = {}) {
+  const file = historyPath();
+  let raw;
+  try { raw = fs.readFileSync(file, "utf8"); }
+  catch (e) {
+    if (e.code === "ENOENT") return {};   // no memory yet: the first build makes it
+    // The file IS there and its bytes never arrived — a backup or a virus
+    // scanner holding it, a mode change. That is NOT "no memory": answering
+    // {} here and writing it back replaces 60 days of page-1 lineups and
+    // every Yes with one entry. Both callers already survive a throw (the
+    // build logs and keeps the board, /outfit-event answers 400), so one
+    // lost pick beats sixty lost days (review r1).
+    throw e;
+  }
+  try {
+    const h = JSON.parse(raw);
+    if (h && typeof h === "object" && !Array.isArray(h)) return h;
+  } catch {}
+  // Unreadable, and not empty: a parent's picks may be in there. Set it aside
+  // for a hand to look at rather than overwrite it with {} (plan T2.2).
+  if (raw.trim() && opts.readOnly) throw new Error("history.json is there and does not parse");
+  if (raw.trim()) {
+    // A name of its own: two set-asides in the same millisecond used to pick
+    // the same one, and the second rename clobbered the first quarantined
+    // copy — the very bytes this path exists to keep (review r2).
+    let aside = file + ".bad-" + Date.now();
+    for (let n = 2; fs.existsSync(aside); n++) aside = file + ".bad-" + Date.now() + "-" + n;
+    try {
+      fs.renameSync(file, aside);
+      console.error("[clothing] history.json unreadable — moved to " + path.basename(aside));
+    } catch (e) { console.error("[clothing] history.json unreadable and could not be set aside: " + e.message); }
+  }
+  return {};
+}
+// The day's page-1 lineup as the worker dealt it: {date, band, page1: [[ids]]}.
+// Same-date reruns overwrite (idempotent) and the 60-day window is trimmed
+// by clothing-rank.recordOffer.
+function recordOffer(offer) {
+  // A build that could draw nothing — every tile gone, the precondition the
+  // tile repair exists for — deals an empty page 1. Recording it would REPLACE
+  // the morning's seven-look lineup with none (recordOffer overwrites the day
+  // wholesale), so that day would contribute nothing to tomorrow's yesterday
+  // bar or per-garment freshness. An empty deal leaves the memory alone (r2).
+  if (!offer || !Array.isArray(offer.page1) || !offer.page1.length) return;
+  const h = readHistory();
+  const combos = offer.page1.map(ids => ({ pieces: ids.map(id => ({ id })) }));
+  rank.recordOffer(h, offer.date, combos, combos.length, offer.band);
+  // The read half of this file is retried (clothing-worker.js) because a backup
+  // or a scanner holds a 5 KB file for milliseconds. The WRITE meets the same
+  // hand: writeAtomic is a writeFileSync + rename, and a rename over a file
+  // something else is holding is EPERM/EBUSY on the family's Windows box. A
+  // lost write is a lost day of the sixty, so try again — synchronously, since
+  // the single-writer rule (A4-1) is exactly "no await between the read above
+  // and the write below", and briefly, since this is the hub's own event loop.
+  for (let tryN = 1; ; tryN++) {
+    try { contentStore.writeAtomic(historyPath(), h); return; }
+    catch (e) {
+      if (tryN >= WRITE_TRIES) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, WRITE_WAIT_MS);
+    }
+  }
+}
+const WRITE_TRIES = 3, WRITE_WAIT_MS = 50;
+
+// ---- the read-out: what a parent can SEE of the learning (spec §4) ---------
+//
+// Settings' Clothing Picker card is the only window onto any of this: how many
+// days of picks are recorded, which looks she keeps choosing (by name), how
+// much of the sixty-day memory is filled, and whether the family's other
+// devices are in it too. Everything here is derived from files this module
+// already owns — no new store, and nothing written.
+//
+// PUBLIC ENDPOINT. /clothing/status answers anyone on the network, and the
+// sibling /content/status deliberately says nothing about devices. So sharing
+// is a COUNT, never the writer names (plan W12/A4-2), the Drive folder's path
+// is never in the payload, and nothing about a garment but its name and id.
+//
+// MEMOIZED, NEVER CACHED ON A TIMER (plan W11). Settings polls this every 5 s
+// and the board every 3-15 s, and derivePicks over the merged log on each poll
+// would eat into the 900 ms bound clothing-responsive.test.mjs pins. The key
+// is the family's day plus the stat of the three files the block reads THROUGH —
+// wardrobe/history.json (the memory, and the door every Yes and every build
+// goes through), drive.json (the folder) and wardrobe.json (the names, and the
+// rule that a combo the catalogue lost is dropped). A TTL instead would hide a
+// history.json written a moment ago — by the build, by a Yes, by a hand — for
+// up to a minute, and would leave the card saying "not shared" for that long
+// after a parent picked their Drive folder.
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+let readOut = null, readOutKey = null;
+function statKey(file) {
+  try { const st = fs.statSync(file); return st.mtimeMs + ":" + st.size; } catch { return "0"; }
+}
+function drivePath() { return path.join(DATA, "drive.json"); }
+// The Drive folder without drive.status(): drive.js's own `mode` is "local"
+// even when no folder was ever picked (it means "Drive for Desktop", not
+// "unshared"), so the card would say "Shared with 1 device" to every family
+// that never connected anything (W13).
+function driveFolder() {
+  try {
+    const d = JSON.parse(fs.readFileSync(drivePath(), "utf8"));
+    if (d && d.mode === "local" && d.folderPath) return String(d.folderPath);
+  } catch {}
+  return null;
+}
+// A day counts as a day of picks if derivePicks would credit something for it.
+const hasPick = evs => Array.isArray(evs) && evs.some(e => e && (e.kind === "yes" || e.kind === "select")
+  && Array.isArray(e.combo) && e.combo.length);
+
+function readOutFor(items) {
+  const today = rank.dayKey(Date.now(), zone());
+  // THE THREE FILES THIS BLOCK READS THROUGH, and nothing else: the memory,
+  // the folder, and the catalogue the garment NAMES come from. A key missing
+  // the catalogue keeps a removed garment's name in "Favourites" until the next
+  // build — and memoizes an empty Favourites for the rest of the day if
+  // wardrobe.json was mid-write on the poll that missed (review r1).
+  const key = today + "|" + statKey(historyPath()) + "|" + statKey(drivePath())
+                    + "|" + statKey(path.join(DATA, "wardrobe.json"));
+  if (readOut && readOutKey === key) return readOut;
+  const folder = driveFolder();
+  const out = { picks: { days: 0, lastDay: null, top: [] },
+                memory: { days: 0, yesterdayPage1: 0 },
+                sharing: { mode: folder ? "drive" : "local", devices: 1 } };
+  // How many devices are writing into the family's folder. The names stay
+  // inside clothing-log.js; only the count comes out. Its OWN try: who else is
+  // in the folder is a different file from the memory, and a device that cannot
+  // read its own history still knows the answer to this one.
+  // No folder means nothing is shared — and a family that disconnected one, or
+  // moved to API mode, still has the other devices' mirrored lines under
+  // <DATA>/clothing/.era. Counting those would answer {mode:"local",devices:2}:
+  // "not shared", with two devices in it (review r1).
+  try {
+    if (folder) out.sharing.devices = 1 + clothingLog.sharedWriters(DATA, deviceId).size;
+  } catch (e) {
+    console.error("[clothing] the shared writers could not be counted: " + e.message);
+  }
+  try {
+    // Her memory as the next build will read it: this device's canonical file
+    // (A4-1) plus every other device's lines the mirror delivered (spec §5).
+    // readHistory RETHROWS a file that is there and will not open (a backup, a
+    // scanner, a mode change) — and that throw must reach the catch below.
+    // readOnly: a poll looks, it never moves the file aside (see readHistory);
+    // bytes that will not parse throw here for the same reason and the blocks
+    // drop out below.
+    const local = readHistory({ readOnly: true });
+    const log = clothingLog.openLog({ dataDir: DATA, driveFolder: folder, deviceId, tz: zone() });
+    const hist = clothingLog.mergeHistory(local, log.readMerged(today));
+
+    // picks: days strictly before today (§3.3), so this morning's own Yes
+    // counts tomorrow — exactly as the deal reads it.
+    const dates = Object.keys(hist.events)
+      .filter(d => DATE_KEY.test(d) && d < today && hasPick(hist.events[d])).sort();
+    out.picks.days = dates.length;
+    out.picks.lastDay = dates.length ? dates[dates.length - 1] : null;
+    const names = new Map();
+    for (const it of Object.values(items || {})) if (it && it.ok && it.id) names.set(it.id, it.name || "");
+    const weights = rank.derivePicks(hist.events, today);
+    out.picks.top = Object.entries(weights)
+      // by weight, then by key so two combos she likes equally do not swap
+      // places between two polls a second apart
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .map(([k, weight]) => ({ combo: k.split("+"), weight }))
+      // A combo naming a garment the catalogue no longer holds (a photo the
+      // family deleted) is dropped, not shown with a hole in it.
+      .filter(c => c.combo.every(id => names.has(id)))
+      .slice(0, 5)
+      .map(c => ({ combo: c.combo, names: c.combo.map(id => names.get(id)), weight: c.weight }));
+
+    // memory: every day the sixty holds, TODAY INCLUDED — the build that just
+    // finished is the first thing a parent looks for after "new outfits".
+    out.memory.days = Object.keys(hist.days).filter(d => DATE_KEY.test(d)).length;
+    const yd = hist.days[rank.yesterdayOf(today)];
+    out.memory.yesterdayPage1 = yd && Array.isArray(yd.page1) ? yd.page1.length : 0;
+  } catch (e) {
+    // SAY NOTHING RATHER THAN LIE. Zeroed blocks are not "no answer": Settings
+    // would print "No picks recorded yet — every Yes on the board is remembered
+    // from tomorrow." over sixty days of picks, every five seconds, because a
+    // scanner held the file for a moment. Without the blocks, picksPaint's
+    // `if (!(s && s.picks && s.memory))` blanks the line instead (review r1).
+    console.error("[clothing] the picks read-out could not be built: " + e.message);
+    delete out.picks; delete out.memory;
+  }
+  // A FAILURE IS NEVER MEMOIZED. The key is the day plus the mtime and size of
+  // three files, and a scanner or a backup RELEASING history.json changes its
+  // ctime alone — so a blind read-out stored here would be handed back under
+  // the same key until something wrote the file again (the next Yes, or
+  // tomorrow's 05:00 build), and the card would stay blank for hours on the
+  // very box the rethrow in readHistory was written for. Retrying costs one
+  // failed open() per poll: the throw comes from readHistory() on the first
+  // line of the try, so the merge below it never runs (review r2).
+  if (out.picks) { readOut = out; readOutKey = key; }
+  else { readOut = null; readOutKey = null; }
+  return out;
+}
+
+// What the Clothing Picker has to offer her beyond the outfits, and what a
+// grown-up has taken off the board (accessories spec §5.2). READ-ONLY, out of
+// the catalogue this call has already opened: a poll may not write, and it may
+// not spawn a build to find out either.
+//
+// A kind is listed only when she can really reach it — `ok`, not hidden, and
+// counted in ACCESSORY_KINDS order, which is the order she meets the tiles in.
+// `hidden` is every hidden garment, accessory or not: it answers the parent's
+// question ("what have I taken away?"), not the board's.
+function accessoriesOf(items) {
+  const counts = new Map();
+  let hidden = 0;
+  for (const it of Object.values(items)) {
+    if (!it || !it.ok) continue;
+    if (it.hidden === true) { hidden++; continue; }
+    if (!rank.isAccessory(it.category)) continue;
+    counts.set(String(it.category).toLowerCase(), (counts.get(String(it.category).toLowerCase()) || 0) + 1);
+  }
+  return { kinds: rank.ACCESSORY_KINDS.filter(k => counts.get(k.id))
+                    .map(k => ({ kind: k.id, count: counts.get(k.id) })), hidden };
+}
+
+// How far the refit pass has got (spec 2026-09-29 §2 D1): every ok garment or
+// jacket the fit words describe, counted by the one-way marker — `pending`
+// lacks `fitAt`, `done` has it. Phase 5's "wait for pending = 0" reads this.
+// READ-ONLY, out of the catalogue status() already opened.
+function refitOf(items) {
+  let pending = 0, done = 0;
+  for (const it of Object.values(items)) {
+    if (!it || !it.ok || !rank.fitTarget(it)) continue;
+    if (it.fitAt) done++; else pending++;
+  }
+  return { pending, done };
+}
+
+function status() {
+  const cfg = aiCfg();
+  let cataloged = 0, photos = 0, items = {};
+  try {
+    const cat = JSON.parse(fs.readFileSync(path.join(DATA, "wardrobe.json"), "utf8"));
+    items = cat.items || {};
+    cataloged = Object.values(items).filter(i => i.ok).length;
+  } catch {}
+  photos = listPhotos(path.join(DATA, "clothing")).length;
+  return { building: !!worker, ingesting, attrs, cataloged, photos,
+    accessories: accessoriesOf(items),
+    refit: refitOf(items),
+    ...readOutFor(items),
+    aiConfigured: !!cfg, aiProvider: cfg ? cfg.provider : null,
+    // whether the provider recognised the key when it was saved (null = unchecked)
+    aiKeyOk: cfg ? cfg.keyOk : null, aiKeyError: cfg ? cfg.keyError : "",
+    // photos not named yet, and whether today's free allowance is what stops them
+    waiting: cfg ? pendingPhotos(DATA) : 0, heldToday: holdDay === new Date().toDateString(),
+    guidance: lastResult && lastResult.guidance ? lastResult.guidance : null };
+}
+
+function regenerate(force, opts = {}) {
+  // One build at a time. A caller that arrives mid-build gets the QUEUED run's
+  // result, not a bare {busy} it would have to poll for (9/1: a sync landing
+  // during a build silently did nothing from the caller's point of view).
+  // The queued run is the widest thing anyone asked for: a full build if ANY
+  // waiter wanted one, a re-sort if they all only wanted a re-sort. It used to
+  // be a full build unconditionally, which turned the second half of setting a
+  // weather window (two POSTs, seconds apart) into photo ingest and spent AI
+  // requests — the one thing the re-sort door promises never to do (9/5).
+  if (worker) {
+    queued = true;
+    if (!opts.rebuildOnly) queuedFull = true;
+    if (opts.refit) queuedRefit = true;
+    return new Promise((resolve) => { waiters.push(resolve); });
+  }
+  return new Promise((resolve) => {
+    let done = null;
+    // The Drive folder is resolved HERE, at spawn, from the main thread's
+    // drive.js (the way content.js does): a worker of its own would read the
+    // config behind the main one's back (plan W10). API mode / no folder =
+    // null, and the worker shares nothing.
+    const st = drive.status();
+    const driveFolder = st.mode === "local" && st.folderPath ? st.folderPath : null;
+    offerUnrecorded = false;   // this build's own verdict on the recorder
+    const weatherRetry = !!opts.weatherRetry;
+    worker = new Worker(path.join(__dirname, "clothing-worker.js"),
+      // deviceId and driveFolder are the sharing seam: the worker does not read
+      // them yet (they are consumed in T4.3), the zone it seeds the deal with
+      // is live from this build on.
+      { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly,
+                      refit: !!opts.refit, weatherRetry, tz: zone(), deviceId, driveFolder } });
+    worker.on("message", (m) => {
+      if ("ingesting" in m) ingesting = m.ingesting;
+      if ("attrs" in m) attrs = m.attrs;
+      // The lineup arrives BEFORE the composites are drawn (I9): the memory
+      // tomorrow's deal reads must not depend on every picture surviving.
+      if (m.offer) {
+        try { recordOffer(m.offer); }
+        catch (e) {
+          // Say WHAT was lost, not just the errno: a day missing from the
+          // sixty is why yesterday's page-1 looks come back tomorrow.
+          console.error("[clothing] today's lineup was not recorded: " + e.message);
+          offerUnrecorded = true;
+        }
+      }
+      if (m.done) {
+        done = m.done;
+        // A build that dealt without her memory (history.json there but its
+        // bytes never came), or whose lineup would not go back in, is not the
+        // day's work: no staples, no yesterday bar, no freshness, and no day
+        // recorded for tomorrow to read. The next tick deals again instead of
+        // leaving it up until the next forced door (r3) — bounded, so a file
+        // that stays ill does not buy a build every pass (r4). Only a build
+        // that reached the deal can answer this; other results leave it alone.
+        if (m.done.mode === "cataloged") {
+          if (m.done.historyUnread || offerUnrecorded) {
+            // The budget is the DAY's, the way holdDay is: counted per OUTAGE
+            // and cleared only by a build that succeeded, the one re-deal was
+            // spent for good, so a file shut for a moment on a second morning
+            // bought nothing and that day's blind board simply stood (r5).
+            const day = new Date().toDateString();
+            if (redealDay !== day) { redealDay = day; memoryRedeals = 0; }
+            memoryBlind = memoryRedeals < MEMORY_REDEALS;
+            if (!memoryBlind)
+              console.error("[clothing] her memory is still not working — today's board stands as it is");
+          } else { memoryBlind = false; memoryRedeals = 0; }
+          // Every build that reached the deal answers this, whichever door
+          // asked for it: weather now = the flag is spent.
+          weatherBlind = !!m.done.weatherless;
+          if (weatherBlind) weatherTriedAt = Date.now();
+        }
+        // A weather retry that found nothing drew nothing and leaves the flag
+        // standing for the next tick — counted from this walk of the ladder.
+        if (m.done.retried) weatherTriedAt = Date.now();
+        // A re-sort that found nothing catalogued has no ingest behind it, so
+        // it knows nothing about the allowance or a busy provider: keeping the
+        // old verdict leaves the board's "allowance used up" coaching standing
+        // instead of dropping it to the generic Drive message (9/5).
+        if (!m.done.rebuildOnly) lastResult = m.done;
+        // Photos left behind by the day's allowance wait for tomorrow, and so
+        // does a photo that failed twice (a retry that landed nothing): an
+        // hourly loop into the same wall would only spend the free requests.
+        if (m.done.left && (m.done.quotaHit || (retryBuild && !m.done.landed))) holdDay = new Date().toDateString();
+        retryBuild = false;
+      }
+    });
+    worker.on("error", (e) => console.error("[clothing] worker: " + e.message));
+    worker.on("exit", () => {
+      worker = null; ingesting = null; attrs = null;
+      const result = done || lastResult || {};
+      resolve(result);
+      if (queued) {
+        const full = queuedFull, refit = queuedRefit;
+        queued = false; queuedFull = false; queuedRefit = false;
+        const pending = waiters; waiters = [];
+        regenerate(true, { rebuildOnly: !full, refit }).then(r => pending.forEach(w => w(r)),
+                              () => pending.forEach(w => w({})));
+      } else if (waiters.length) {
+        const pending = waiters; waiters = [];
+        pending.forEach(w => w(result));
+      }
+    });
+  });
+}
+
+// Scheduling (dad 9/1: "run locally each morning if it's awake, or as soon as
+// it wakes, and re-sort by the weather"). Three triggers, all local:
+//   * shortly after the hub starts  — covers "the computer just woke up"
+//   * every 15 minutes, but only ACTS when the day's board is missing or was
+//     built before this morning's cutoff — covers "it was already awake"
+//   * the Drive sync's onSynced hook (new photos land -> rebuild)
+// The build itself always re-reads the weather, so the outfits are sorted for
+// the day the child is actually dressing for.
+const MORNING_HOUR = 5;   // local time from which "today's board" is expected
+
+function boardIsFresh(dataDir) {
+  try {
+    const f = path.join(dataDir, "recipes", "today.json");
+    const built = fs.statSync(f).mtime;
+    const now = new Date();
+    const cutoff = new Date(now); cutoff.setHours(MORNING_HOUR, 0, 0, 0);
+    // before 5am the previous evening's board still counts as today's
+    if (now < cutoff) cutoff.setDate(cutoff.getDate() - 1);
+    return built >= cutoff;
+  } catch { return false; }
+}
+
+// What the tick last saw in clothing/ (names + sizes). A family that adds or
+// deletes photos at 3pm — Drive folder or the data folder itself — expects
+// the board to follow that afternoon, not tomorrow morning (dad 9/2: "all
+// that should just work by adding to the clothing directory").
+// The memory starts as what the LAST build saw (the worker stores its photo
+// set beside .clothing-sig, I23): a photo removed while the hub was down is
+// then a change to the first tick after boot, not a wait for tomorrow's 5am.
+let seenPhotos = null;
+function storedPhotoSet(dataDir) {
+  try { return fs.readFileSync(path.join(dataDir, PHOTOSET_FILE), "utf8"); } catch { return null; }
+}
+
+// Photos the AI has not named yet. A transient 503 or a hub restart mid-batch
+// must not park a garment until tomorrow's 5am build (QA 9/2: 12 of 20 photos
+// waited a day) — the tick tries the leftovers again about once an hour,
+// except on a day the allowance already ran out (holdDay).
+let holdDay = "";
+let lastRetry = 0;
+let retryBuild = false;   // the running build is a retry of leftovers
+const RETRY_EVERY = 60 * 60 * 1000;
+function pendingPhotos(dataDir) {
+  let items = {};
+  try { items = JSON.parse(fs.readFileSync(path.join(dataDir, "wardrobe.json"), "utf8")).items || {}; } catch {}
+  return listPhotos(path.join(dataDir, "clothing")).filter(f => !(items[f] && items[f].ok)).length;
+}
+
+// Returns the build's promise when it acts, null when there is nothing to do.
+function tick(reason) {
+  const now = photoSet(path.join(DATA, "clothing"));
+  const changed = seenPhotos !== null && now !== seenPhotos;
+  seenPhotos = now;
+  let why = changed ? "photos changed, " : "";
+  let rebuildOnly = false;
+  let weatherRetry = false;
+  if (!changed) {
+    // A board that predates this morning's cutoff falls through all of this to
+    // the day's FULL build. The blind-memory door BORROWS the freshness door,
+    // it never replaces it: asked first, it downgraded a morning that was also
+    // blind to a re-sort, and a re-sort runs no ingest — so a garment whose
+    // tile had gone missing was in no outfit all day, with no door left to
+    // re-open (review r5). A full build re-reads the memory anyway, which is
+    // what clears the flag, so nothing is owed to the re-deal budget here.
+    if (boardIsFresh(DATA)) {
+      if (memoryBlind) {
+        // Spend the flag as it is consumed and count the re-deal: the build this
+        // asks for may meet the same shut file, and nothing else would ever stop
+        // the loop. A RE-SORT, never a full build — see memoryBlind above.
+        memoryBlind = false;
+        memoryRedeals++;
+        why = "the last board was dealt without her memory, ";
+        rebuildOnly = true;
+      } else if (weatherBlind && Date.now() - weatherTriedAt >= weatherRetryMs()) {
+        // Not spent here: the build's own verdict clears it (weather found)
+        // or leaves it for the next tick (still none) — see weatherBlind.
+        why = "the last board was dealt with no weather, ";
+        rebuildOnly = true;
+        weatherRetry = true;
+      } else {
+        const retry = aiCfg() && holdDay !== new Date().toDateString() &&
+          Date.now() - lastRetry >= RETRY_EVERY && pendingPhotos(DATA) > 0;
+        if (!retry) return null;
+        lastRetry = Date.now();
+        retryBuild = true;
+        why = "photos still waiting, ";
+      }
+    }
+  }
+  console.log("[clothing] building today's board (" + why + reason + ")");
+  return regenerate(true, { rebuildOnly, weatherRetry }).catch(e => console.error("[clothing] " + e.message));
+}
+
+// noTimers: point the module at a data dir WITHOUT arming the schedule — for a
+// suite that drives the doors itself. The timers are unref'd, but a suite that
+// outlives the 20 s startup tick (a slow parallel gate on this two-CPU box)
+// would otherwise get a surprise full build, AI requests and all (9/5).
+// opts.tz: () => the family's IANA zone; opts.deviceId: this hub's name (both
+// from server.js). Both are AUTHORITATIVE: a start() without them puts the
+// module back on its own defaults, so a suite can hand a zone back (it used to
+// assign only when the option was present, and the caller that thought it had
+// reset the zone had not — review r2). A zone this computer cannot resolve is
+// never honoured at either history.json door — zone() falls back to the
+// default — so the two clocks below can only ever be a real zone apart.
+// Known residual (I22): boardIsFresh's 5am cutoff, the allowance hold (holdDay)
+// and the blind-memory re-deal budget (redealDay) all still read the OS clock,
+// not the family zone — the deal itself is seeded in the family zone by the
+// worker. Three doors, and they flip at the box's midnight together (the third
+// was missing from this list until the final review).
+function start(dataDir, opts = {}) {
+  DATA = dataDir;
+  tzOf = typeof opts.tz === "function" ? opts.tz : () => DEFAULT_TZ;
+  deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
+  seenPhotos = storedPhotoSet(dataDir);
+  ingesting = null; attrs = null;
+  // The read-out's memo is keyed on the day and two files' stats, and a data
+  // dir that has neither file yet keys the same as any other — so a start()
+  // pointed at a new dir must forget it, not answer the last one's numbers.
+  readOut = null; readOutKey = null;
+  // a fresh start knows nothing about the last build's memory, either half
+  memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false;
+  weatherBlind = false; weatherTriedAt = 0;
+  if (opts.noTimers) return;
+  setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
+  setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
+}
+
+// Re-sort TODAY'S board for a wardrobe that has not changed: the weather
+// window moved (dad 9/5), so the board must follow within the second. Same
+// build as the morning one minus photo ingest, so it costs no AI request and
+// cannot be slowed down by a folder full of new photos.
+function rebuildToday() { return regenerate(true, { rebuildOnly: true }); }
+
+// The refit pass (warmth coherence spec 2026-09-29 §2 D1): a re-sort that
+// first asks the cut of every garment catalogued before the ingest prompt did
+// — the shared log first, the model only for what nobody has described. An
+// OPERATOR's door, POST /clothing/refit, and the ONLY caller: no timer, no
+// tick, no sync and no other build ever sets `refit`, so a device nobody runs
+// it on never spends a request on it.
+function refit() { return regenerate(true, { rebuildOnly: true, refit: true }); }
+
+// recordOffer is not exported: the worker's {offer} message is its only caller
+// (server.js uses historyPath/readHistory/zone for POST /outfit-event).
+module.exports = { start, regenerate, rebuildToday, refit, isBuilding, status, boardIsFresh, tick,
+  historyPath, readHistory, zone,
+  _testReset: (o = {}) => { if (!o.keepHold) holdDay = ""; lastRetry = 0; retryBuild = false;
+    memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false;
+    weatherBlind = false; weatherTriedAt = 0; } };

@@ -1,0 +1,849 @@
+// content-claim.test.mjs — the shell that decides WHICH book folder is worth
+// starting and whether this hub is allowed to start it (spec §2 "Rules", plan
+// T2.2). Everything here is disk plus a fake clock: no server, no port, no
+// network, no key, and no real waiting — the ten-minute quiet period and the
+// thirty-minute stale claim are both driven by scan({now}).
+//
+// BUILT HERE, and this suite is where that landed (spec §12 and §14, plan
+// B1.3). Half of these tests used to prove that a quiet folder or a cold claim
+// was a LICENCE: ten still minutes and the hub made the book, half an hour of
+// silence and it took one off another computer. Neither is true any more. A
+// pile builds when a grown-up taps Build on the machine that will do the work,
+// because "the photos stopped arriving" and "make this into a book" are not the
+// same sentence and only the second one spends the family's vision key and
+// their narration allowance — and because two computers on one Drive folder
+// both claimed on the same clock and built the same book twice.
+//
+// So every clock below is still measured and still asserted, and what changed
+// is what the measurement entitles the hub to do. Each old assertion is now its
+// negative — the scan wrote NOTHING into the family's Drive folder — with the
+// assertion it used to make kept one press further on, against content.build().
+// Nothing here was deleted: the rationale comments are this suite's memory, and
+// they say why the answer flipped rather than pretending it never was.
+//
+// TWO CLOCKS, THEN. scan({now}) is the fake one — the quiet ten minutes, the
+// stale half hour, the twelve-hour slow look. The Build door is a person's
+// finger and a finger happens now, so it reads the wall clock: a fixture the
+// DOOR has to judge is written with ago() instead.
+// (Port table: this suite claims none — plan §B.)
+import { test, before, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(path.join(HUB, "server.js"));
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-claim-"));
+const DATA = path.join(TMP, "data");
+const FOLDER = path.join(TMP, "My Drive", "New ERA Content");   // what Drive for Desktop shows
+
+let content, store, drive, booksIndex, narrate;
+
+const MIN = 60 * 1000;
+const T0 = Date.parse("2026-09-04T09:00:00.000Z");
+// This install's own id, exactly as server.js hands it over (device-id.js
+// resolveDeviceId). It has to be said now that content.js reads claimedBy back:
+// "mine" is the part before the last colon (spec §14 "Who this host is"), and
+// os.hostname() cannot tell two PCs a family bought together apart.
+const DEVICE = "kitchen-pc";
+// A claim of ours, as an older hub or an earlier run of this hub left it.
+const MINE = DEVICE + ":1";
+// The wall clock, for the Build door only — see the header's two clocks. A
+// heartbeat written against T0 is stale to scan({now: T0 + …}) and means
+// nothing at all to build(), which asks the real one.
+const ago = (ms) => new Date(Date.now() - ms).toISOString();
+
+// The hub's own Drive config: local mode with a folder is the only mode a
+// content job may run in (plan Gap 1 — there is no upload path in API mode).
+function driveCfg(cfg) {
+  fs.mkdirSync(DATA, { recursive: true });
+  fs.writeFileSync(path.join(DATA, "drive.json"), JSON.stringify(cfg));
+}
+
+function book(name, photos) {
+  const dir = path.join(FOLDER, "books", name);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [f, bytes] of Object.entries(photos || {}))
+    fs.writeFileSync(path.join(dir, f), Buffer.alloc(bytes, 7));
+  return dir;
+}
+
+const jobOf = (dir) => store.readJob(dir);
+const found = (res, name) => (res.books || []).find(b => b.name === name);
+
+before(() => {
+  fs.mkdirSync(path.join(FOLDER, "books"), { recursive: true });
+  driveCfg({ mode: "local", folderPath: FOLDER });
+  drive = require("./drive.js");
+  drive.start(DATA);
+  store = require("./content-store.js");
+  booksIndex = require("./books-index.js");
+  narrate = require("./content-narrate.js");
+  content = require("./content.js");
+  content.start(DATA, { deviceId: DEVICE });
+});
+
+beforeEach(async () => {
+  // Let anything the LAST test started finish before its folder is taken away.
+  // A claim spawns a build, and a build that is still running while the next
+  // test wipes books/ raced it: `rmSync` walked a directory a worker thread was
+  // still writing into and threw ENOTEMPTY, failing whichever test happened to
+  // be next (about one run in four before this line existed).
+  await content.idle();
+  fs.rmSync(path.join(FOLDER, "books"), { recursive: true, force: true });
+  fs.mkdirSync(path.join(FOLDER, "books"), { recursive: true });
+  driveCfg({ mode: "local", folderPath: FOLDER });
+  content._testReset();
+  // …and no build here is a REAL one. This suite is about which folder gets
+  // claimed, not about what a build does (content-worker.test.mjs is), and
+  // _testReset puts the real worker back, so every scan() below would otherwise
+  // spawn a thread that reads and writes inside a folder the next test deletes.
+  // A test that cares what was started replaces this with a stub of its own.
+  content.runJob = () => Promise.resolve({ ok: true });
+});
+
+// ------------------------------------------------------------ where it runs
+
+test("API mode is skipped — nothing this hub builds could ever reach Drive", () => {
+  driveCfg({ mode: "api", folderId: "F0", token: { refresh_token: "x" } });
+  assert.deepEqual(content.scan({ now: T0 }), { skipped: "needs-local-drive" });
+});
+
+test("local mode with no folder chosen yet is skipped too", () => {
+  driveCfg({ mode: "local", folderPath: "" });
+  assert.deepEqual(content.scan({ now: T0 }), { skipped: "needs-local-drive" });
+});
+
+test("a missing books/ folder is not an error", () => {
+  fs.rmSync(path.join(FOLDER, "books"), { recursive: true, force: true });
+  const res = content.scan({ now: T0 });
+  assert.deepEqual(res.books, []);
+  assert.deepEqual(res.claimed, []);
+});
+
+// ------------------------------------------------------------- the inbox test
+
+test("images and no job.json make a folder an inbox", () => {
+  book("Tabby McTat", { "IMG_1.jpg": 10, "IMG_2.jpg": 12 });
+  const b = found(content.scan({ now: T0 }), "Tabby McTat");
+  assert.equal(b.inbox, true);
+  assert.equal(b.images, 2);
+  assert.equal(b.slug, "tabby-mctat");   // the shelf addresses it by this
+});
+
+test("a folder with no images is not an inbox", () => {
+  const dir = book("Notes", {});
+  fs.writeFileSync(path.join(dir, "readme.txt"), "hello");
+  const b = found(content.scan({ now: T0 }), "Notes");
+  assert.equal(b.inbox, false);
+  assert.equal(b.images, 0);
+});
+
+test("a folder that already has job.json is not an inbox", () => {
+  const dir = book("Started", { "IMG_1.jpg": 10 });
+  store.writeJob(dir, store.newJob({ claimedBy: "someone-else", now: T0 }));
+  const b = found(content.scan({ now: T0 + 60 * MIN }), "Started");
+  assert.equal(b.inbox, false);
+  assert.equal(b.state, "inbox");        // the job's state, not the folder's
+});
+
+// A BOOK THAT ARRIVED FINISHED IS NEVER AN INBOX (spec §12, "never twice").
+// Every week the weekly-book maker copies a whole package into this same Drive
+// folder — pages/, the cover it made out of page 1, manifest.json written last
+// — and this hub used to see a cover.jpg with no job.json beside it, call that
+// "one photo waiting", let its ten minutes pass and walk the folder: every page
+// read AGAIN against the family's vision key, the narration bought a second
+// time and the manifest overwritten (transcribeBook over pagesOf()'s pages/
+// fallback, content-worker.js). A finished sixteen-page book also said
+// seventeen photos, because the cover was counted as one of them.
+//
+// MID-DOWNLOAD is the shape that bites, and it is the shape below: Drive is
+// still delivering, so `.build/` has not mirrored and the maker's own job.json
+// latch — state `done`, which takeable() has refused since the first release —
+// is not there to say no on this device. manifest.json is, and that is the
+// whole rule: a folder holding one is a BOOK, whatever sits loose beside it.
+//
+// THROUGH THE TICK EVERY CALLER SHARES. The hub has exactly one starter,
+// scan(), and everything that reaches it goes through content.tick() with its
+// own word for the log: the 90-second boot tick, the five-minute interval
+// (content.js start()) and drive.onSynced's tick after every mirror pass
+// (server.js) — which is the one that runs the instant a book like this lands.
+// They share the path, so the loop below proves the RULE rather than three
+// wirings; that the three callers exist at all is server.js's own to hold.
+function madeElsewhere(name) {
+  const dir = path.join(FOLDER, "books", name);
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "pages", "001.jpg"), Buffer.alloc(64, 3));
+  fs.writeFileSync(path.join(dir, "cover.jpg"), Buffer.alloc(64, 3));   // publish's copy of page 1
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
+    schemaVersion: 1, id: "0f0f", slug: "fossil-week", title: name,
+    exportedAt: new Date(T0).toISOString(), cover: "cover.jpg", authored: true,
+    pages: [{ index: 1, image: "pages/001.jpg", text: "A fossil in the sand." }],
+  }));
+  return dir;
+}
+
+test("a book that arrived finished is never an inbox, whatever word the tick arrives with", () => {
+  const dir = madeElsewhere("Fossil Week");
+  for (const reason of ["startup", "scan", "drive sync"]) {
+    const res = content.tick(reason);
+    const b = found(res, "Fossil Week");
+    assert.equal(b.inbox, false, reason + ": a manifest makes it a book, not a pile");
+    assert.equal(b.images, 0, reason + ": cover.jpg is ours, not a photo a parent dropped in");
+    assert.deepEqual(res.claimed, [], reason);
+  }
+  assert.equal(jobOf(dir), null, "and nothing of ours is in the family's folder");
+  assert.equal(fs.existsSync(store.buildDir(dir)), false, "not even a .build/ for Drive to upload");
+  // Nor by a tap: the door's step 2 says the true sentence, which is that this
+  // book is already made — not that somebody else is making it.
+  assert.equal(content.build({ kind: "books", slug: "fossil-week" }).refused, "built");
+});
+
+// ---------------------------------------------------------- the quiet period
+
+test("a first sighting is never claimed — one observation proves nothing", () => {
+  const dir = book("Fresh", { "IMG_1.jpg": 10 });
+  const res = content.scan({ now: T0 });
+  assert.equal(found(res, "Fresh").quiet, false);
+  assert.deepEqual(res.claimed, []);
+  assert.equal(jobOf(dir), null);
+});
+
+test("a listing that changed between observations is not claimable", () => {
+  const dir = book("Uploading", { "IMG_1.jpg": 10 });
+  content.scan({ now: T0 });
+  fs.writeFileSync(path.join(dir, "IMG_2.jpg"), Buffer.alloc(10, 7));   // still uploading
+  const res = content.scan({ now: T0 + 11 * MIN });
+  assert.equal(found(res, "Uploading").quiet, false);
+  assert.deepEqual(res.claimed, []);
+  assert.equal(jobOf(dir), null);
+});
+
+test("a file that only grew is a change too — half an upload has the same name", () => {
+  const dir = book("Growing", { "IMG_1.jpg": 10 });
+  content.scan({ now: T0 });
+  fs.writeFileSync(path.join(dir, "IMG_1.jpg"), Buffer.alloc(4096, 7));
+  assert.deepEqual(content.scan({ now: T0 + 11 * MIN }).claimed, []);
+  assert.equal(jobOf(dir), null);
+});
+
+test("unchanged but under ten minutes is not claimable yet", () => {
+  const dir = book("Nearly", { "IMG_1.jpg": 10 });
+  content.scan({ now: T0 });
+  const res = content.scan({ now: T0 + 9 * MIN });
+  assert.equal(found(res, "Nearly").quiet, false);
+  assert.equal(jobOf(dir), null);
+});
+
+// TEN STILL MINUTES USED TO BE THE LICENCE (spec §12, "built here"). It is a
+// MEASUREMENT now and nothing more: this test asserted claimed:["quiet-book"]
+// and a full job.json here, and both of those moved one press further on, to
+// the companion below. The clock could only ever guess at "the parent has
+// finished uploading"; the grown-up whose photos they are knows, and a book is
+// the family's vision key and their narration allowance, so the guess is not
+// good enough to spend either on. What the hub still does is NOTICE — `quiet`
+// is what the card turns into "N photos, waiting for a grown-up to tap Build".
+test("unchanged across ten minutes is quiet, and quiet claims nothing", () => {
+  const dir = book("Quiet Book", { "IMG_1.jpg": 10, "IMG_2.jpg": 10 });
+  content.scan({ now: T0 });
+  const res = content.scan({ now: T0 + 10 * MIN });
+  assert.equal(found(res, "Quiet Book").quiet, true, "the clock is still measured");
+  assert.equal(found(res, "Quiet Book").inbox, true, "and it is still a pile of photos");
+  assert.deepEqual(res.claimed, []);
+  assert.equal(jobOf(dir), null, "nothing was written into the family's Drive folder");
+  assert.equal(fs.existsSync(store.buildDir(dir)), false, "not even a .build/ for Drive to mirror");
+});
+
+test("the tap claims it, and the claim is a full job.json", () => {
+  const dir = book("Quiet Book", { "IMG_1.jpg": 10, "IMG_2.jpg": 10 });
+  content.scan({ now: T0 });
+  content.scan({ now: T0 + 10 * MIN });
+  assert.deepEqual(content.build({ kind: "books", slug: "quiet-book" }),
+                   { started: true, slug: "quiet-book" });
+  const job = jobOf(dir);
+  assert.equal(job.state, "inbox");
+  assert.ok(job.claimedBy, "a claim names its worker");
+  assert.equal(content.isMine(job), true, "and the worker it names is this device");
+  // The heartbeat is asserted for its SHAPE, not against T0: the door reads the
+  // wall clock (the header's second clock), because a finger happens now.
+  assert.equal(job.startedAt, job.heartbeat);
+  assert.ok(Math.abs(Date.parse(job.heartbeat) - Date.now()) < MIN, "the claim is a moment old");
+  assert.deepEqual(job.errors, []);
+  assert.ok(job.steps && job.steps.inbox, "the state it was born in is a step it entered");
+});
+
+test("the quiet clock is content.js's own, not the sync count", () => {
+  // Six manual syncs inside one minute must not add up to a quiet period
+  // (plan Gap 18: a POST /integrations/drive/sync burst cannot claim a
+  // half-uploaded book). The burst cannot buy a claim at all any more — nothing
+  // a scan sees can — so what it must not buy is the word `quiet`, which is the
+  // card's "the photos have stopped arriving" and the sentence a parent decides
+  // on. Offering Build over a half-uploaded pile is the same mistake one press
+  // further back, and it would build half a book.
+  const dir = book("Bursty", { "IMG_1.jpg": 10 });
+  let res;
+  for (let i = 0; i <= 6; i++) res = content.scan({ now: T0 + i * 10 * 1000 });
+  assert.equal(found(res, "Bursty").quiet, false, "seven looks in a minute are one minute");
+  assert.equal(jobOf(dir), null);
+  res = content.scan({ now: T0 + 10 * MIN });
+  assert.equal(found(res, "Bursty").quiet, true, "ten minutes of wall clock is what stills it");
+  assert.equal(jobOf(dir), null, "and stillness alone still writes nothing");
+});
+
+// ATOMIC IS ATOMIC WHOEVER ASKS. The rule has not moved an inch — a half-written
+// job.json is one Google Drive mirrors to every other device in the family, and
+// a .tmp beside it is one Drive uploads for ever — only the hand that writes it
+// has: this test drove the claim with two scans, and drives it with the tap now.
+test("the claim is written atomically and leaves no .tmp behind", () => {
+  const dir = book("Atomic", { "IMG_1.jpg": 10 });
+  content.scan({ now: T0 });
+  content.scan({ now: T0 + 10 * MIN });
+  assert.equal(fs.existsSync(store.buildDir(dir)), false, "the scans wrote nothing at all");
+  assert.equal(content.build({ kind: "books", slug: "atomic" }).started, true);
+  const built = fs.readdirSync(store.buildDir(dir)).sort();
+  assert.deepEqual(built, ["job.json", "log.jsonl"]);   // the claim, and the line saying so
+  assert.ok(!built.some(f => f.endsWith(".tmp")), "a .tmp is a half-written claim Drive would mirror");
+});
+
+// ------------------------------------------------------------- stale claims
+
+test("a fresh claim from another device is left alone", () => {
+  const dir = book("Theirs", { "IMG_1.jpg": 10 });
+  const theirs = store.writeJob(dir, store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 }));
+  const res = content.scan({ now: T0 + 29 * MIN });
+  assert.equal(found(res, "Theirs").takeable, false);
+  assert.deepEqual(res.claimed, []);
+  assert.equal(jobOf(dir).claimedBy, "other-hub");
+  assert.equal(jobOf(dir).heartbeat, theirs.heartbeat);
+});
+
+// AN ABANDONED CLAIM IS COLD, NOT FREE (spec §15: "no machine takes over by
+// itself"). This test used to prove the opposite half of the same fact — that a
+// heartbeat thirty-one minutes old was a scan's to take — and every word of the
+// resume it asserted is kept below, one press further on. What changed is who
+// may press: a laptop that was closed mid-book is a person's problem, and the
+// hub's answer to it is a card that says Build, not a second machine starting a
+// second copy of a build the family has already paid part of.
+test("a claim whose heartbeat is 31 minutes old is still not a scan's to take", () => {
+  const dir = book("Abandoned", { "IMG_1.jpg": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  job = store.fail(job, "the network went away", { now: T0 });
+  job = store.transition(job, "transcribing", { now: T0 });
+  const was = store.writeJob(dir, job);
+  const res = content.scan({ now: T0 + 31 * MIN });
+  assert.equal(found(res, "Abandoned").takeable, true, "there is work owing and the claim is cold");
+  assert.deepEqual(res.claimed, [], "…and it is still the other computer's name on it");
+  assert.deepEqual(jobOf(dir), was, "the scan rewrote nothing in the family's Drive folder");
+});
+
+test("the tap takes over an abandoned claim, keeping its history", () => {
+  const dir = book("Abandoned", { "IMG_1.jpg": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  job = store.fail(job, "the network went away", { now: T0 });
+  job = store.transition(job, "transcribing", { now: T0 });
+  // Cold to the DOOR, which reads the wall clock: the laptop stopped beating
+  // half an hour ago, and the book has been where it fell over since yesterday.
+  store.writeJob(dir, { ...job, startedAt: ago(24 * 60 * MIN), heartbeat: ago(31 * MIN) });
+  assert.deepEqual(content.build({ kind: "books", slug: "abandoned" }),
+                   { started: true, slug: "abandoned" });
+  const taken = jobOf(dir);
+  assert.notEqual(taken.claimedBy, "other-hub");
+  assert.equal(content.isMine(taken), true);
+  assert.equal(taken.state, "transcribing");                       // resumes where it fell over
+  assert.ok(Math.abs(Date.parse(taken.heartbeat) - Date.now()) < MIN, "beating again, here");
+  assert.ok(Date.now() - Date.parse(taken.startedAt) > 23 * 60 * MIN,
+            "and it still says the book started yesterday, not now");
+  assert.equal(taken.errors.length, 1, "an earlier failure is history a parent needs");
+});
+
+// THE LATCH, AND THE ONE ASSERTION IN THIS SUITE THAT MUST NEVER CHANGE. A job
+// that says `done` owes nothing, so no clock and no claim makes it takeable —
+// this has been true since the first release, and it is now load-bearing for
+// somebody else: the weekly-book maker writes job.json with state "done" BEFORE
+// it uploads manifest.json (spec §8, §14 step 2), precisely so that a hub which
+// meets the folder half-delivered leaves it alone. The folder below is exactly
+// that shape — a claim, no manifest yet — and this is the walk as every hub
+// already in the family's house runs it, without §12's manifest rule at all. If
+// this test ever goes green by accident, a week's book is read again against
+// the vision key and narrated a second time on the day it lands.
+test("a finished book is never taken over, however old its heartbeat", () => {
+  const dir = book("Done", { "IMG_1.jpg": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "published", now: T0 });
+  job = store.transition(job, "done", { now: T0 });
+  const was = store.writeJob(dir, job);
+  const res = content.scan({ now: T0 + 10 * 60 * MIN });
+  assert.equal(found(res, "Done").takeable, false);
+  assert.deepEqual(res.claimed, []);
+  assert.equal(jobOf(dir).claimedBy, "other-hub");
+  assert.deepEqual(jobOf(dir), was, "and not a byte of the latch was rewritten");
+  // Nor by the tap: a book with no work owed is a record of who built it, not a
+  // hand on the wheel, so the door says the true sentence — already made.
+  assert.equal(content.build({ kind: "books", slug: "done" }).refused, "built");
+});
+
+// Every published book sits in the family's Drive folder for good. If the only
+// exemption were `done`, a published one would be re-claimed on the first scan
+// after its heartbeat went stale and then every thirty minutes forever, and each
+// re-claim rewrites job.json and appends to log.jsonl INSIDE the Drive folder —
+// which Drive then re-uploads and re-mirrors to every device, for ever.
+test("a published book is never re-claimed, however old its heartbeat", () => {
+  const dir = book("Out", { "IMG_1.jpg": 10 });
+  const was = store.writeJob(dir, store.newJob({ claimedBy: "other-hub", state: "published", now: T0 }));
+  const res = content.scan({ now: T0 + 31 * MIN });
+  assert.equal(found(res, "Out").takeable, false);
+  assert.deepEqual(res.claimed, []);
+  assert.deepEqual(jobOf(dir), was, "the scan rewrote nothing in the family's Drive folder");
+  assert.equal(store.readLog(dir).length, 0, "and appended nothing to the log");
+});
+
+test("a book that failed for good is never re-claimed — the refusal costs nothing to repeat", () => {
+  const dir = book("Refused", { "IMG_1.jpg": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  job = store.fail(job, "permanent: that key was refused", { now: T0 });
+  const was = store.writeJob(dir, job);
+  const res = content.scan({ now: T0 + 31 * MIN });
+  assert.equal(found(res, "Refused").takeable, false);
+  assert.deepEqual(res.claimed, []);
+  assert.deepEqual(jobOf(dir), was);
+});
+
+// F6. A book waiting for tomorrow's free allowance keeps its claim but stops
+// beating, so half an hour later it looks exactly like an abandoned one. Taking
+// it over buys nothing — the worker reads the same pause and holds again — and
+// it costs a job.json rewrite and a log line INSIDE the family's Drive folder
+// every thirty minutes until the quota comes back, all of it re-uploaded and
+// re-mirrored to every device.
+test("a book waiting for its quota is left alone until the moment the pause ends", () => {
+  const dir = book("Paused", { "IMG_1.jpg": 10 });
+  const until = new Date(T0 + 6 * 60 * MIN).toISOString();
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  job = { ...job, pausedUntil: until, pausedNote: "waiting for tomorrow's quota" };
+  const was = store.writeJob(dir, job);
+
+  const res = content.scan({ now: T0 + 31 * MIN });      // heartbeat stale, pause still running
+  assert.equal(found(res, "Paused").takeable, false);
+  assert.deepEqual(res.claimed, []);
+  assert.deepEqual(jobOf(dir), was, "the scan rewrote nothing in the family's Drive folder");
+
+  // …and the moment the pause ends, the book is takeable — the pause is what
+  // was holding it, not the heartbeat. IT IS STILL NOT TAKEN, because it is
+  // another computer's: this test used to assert claimed:["paused"] here, and
+  // that half moved to the door, where the companion below shows the door does
+  // not simply ask this question either.
+  const after = content.scan({ now: T0 + 6 * 60 * MIN + MIN });
+  assert.equal(found(after, "Paused").takeable, true);
+  assert.deepEqual(after.claimed, []);
+  assert.deepEqual(jobOf(dir), was, "and still nothing rewritten in the family's folder");
+});
+
+// takeable() IS NOT THE DOOR, and the pause is where the two part company
+// (spec §14 step 1). A book that held for a spent allowance wrote a FRESH
+// heartbeat as it held and then stopped beating (content-worker holdHere), so
+// on takeable() alone the second device walks in the second `pausedUntil`
+// passes — before the owner's own scan has had its turn at the book it has been
+// waiting all night for. The door asks the LATER of heartbeat and pausedUntil,
+// so the pause keeps the book its owner's for half an hour after it ends; then
+// the owner has plainly not come back, and the tap is answered.
+test("the pause keeps the book its owner's for half an hour after it ends", () => {
+  const dir = book("Paused", { "IMG_1.jpg": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing" });
+  job = { ...job, heartbeat: ago(7 * 60 * MIN), pausedNote: "waiting for tomorrow's quota" };
+  const was = store.writeJob(dir, { ...job, pausedUntil: ago(MIN) });   // ended a minute ago
+  assert.equal(content.build({ kind: "books", slug: "paused" }).refused, "elsewhere");
+  assert.deepEqual(jobOf(dir), was, "a refusal writes nothing");
+
+  store.writeJob(dir, { ...job, pausedUntil: ago(31 * MIN) });          // …and half an hour on
+  assert.equal(content.build({ kind: "books", slug: "paused" }).started, true);
+  assert.equal(content.isMine(jobOf(dir)), true);
+});
+
+// A SHORT PAUSE HAS TO END WHEN THE QUOTA DOES (F6's other half). The book that
+// holds keeps its claim and writes a FRESH heartbeat as it holds
+// (content-worker.js holdHere) so no other device mistakes it for abandoned —
+// which means, if the heartbeat still had to go stale first, a 429 answered
+// with "come back in 47 seconds" cost the book half an hour instead. That is
+// most of what the pause was written to recover.
+// The book below is THIS DEVICE'S OWN, and that is the change. The rule it
+// proves has not moved: a pause is a moment, and the moment is the whole of it.
+// But the hub that has to act on that in seconds is the one that parked the
+// book — its own scan, after its own crash or its own restart, which is the one
+// thing a scan may still start (spec §12: "It still resumes THIS device's own
+// stale job"). Another computer's short pause is the test above, and it is a
+// card now, not a claim.
+test("a pause that has passed wakes this device's own book, heartbeat minutes old or not", () => {
+  const dir = book("Short Pause", { "IMG_1.jpg": 10 });
+  const until = new Date(T0 + 47 * 1000).toISOString();          // the provider's own "47s"
+  let job = store.newJob({ claimedBy: MINE, state: "transcribing", now: T0 });
+  job = { ...job, pausedUntil: until, pausedNote: "waiting for tomorrow's quota" };
+  store.writeJob(dir, job);
+  assert.equal(job.heartbeat, new Date(T0).toISOString(), "the hold beat as it held");
+
+  // Still paused: nothing to do, and nothing written into the family's folder.
+  assert.equal(found(content.scan({ now: T0 + 30 * 1000 }), "Short Pause").takeable, false);
+  assert.deepEqual(jobOf(dir), job);
+  // A minute later the allowance is back and the book is takeable — the stale
+  // window is about an ABANDONED claim, and this claim said when it would wake.
+  // Half an hour of waiting on top is most of what the pause was written to
+  // recover, so the very next scan picks its own book back up.
+  const res = content.scan({ now: T0 + MIN });
+  assert.equal(found(res, "Short Pause").takeable, true);
+  assert.deepEqual(res.claimed, ["short-pause"]);
+  assert.equal(content.isMine(jobOf(dir)), true);
+  assert.equal(jobOf(dir).state, "transcribing", "resuming, not starting over");
+});
+
+// A HOLD THAT WAITS ON A PERSON (review 9/8). The two holds ingest can park a
+// book on — an iPhone photo with no decoder installed, files nothing can open —
+// are lifted by a grown-up ticking a box or saving the photos again, never by a
+// clock. They write a fresh heartbeat as they hold (content-worker.js holdHere)
+// and then stop, so on the ordinary half-hourly rule every scan for the rest of
+// the book's life re-claimed it: a job.json rewrite, a "claim" line in
+// log.jsonl and a worker thread every thirty minutes, INSIDE the family's Drive
+// folder, for Drive to re-upload to every device. It is a slow look, not a dead
+// end — the Settings card promises the book carries on by itself.
+// The book is THIS DEVICE'S OWN here, for the reason the short pause above is:
+// the slow look is a promise the Settings card makes on THIS computer ("tick it
+// in Apps above and this book carries on by itself"), and the hub that keeps a
+// promise about a book is the one whose claim is on it. The twelve hours are
+// unchanged; the only line that moved is who the claim names.
+test("a book waiting for the photo decoder is looked at twice a day, not every half hour", () => {
+  const dir = book("Needs Decoder", { "IMG_1.HEIC": 10 });
+  let job = store.newJob({ claimedBy: MINE, state: "inbox", now: T0 });
+  job = { ...job, held: "needs-photo-decoder" };
+  const was = store.writeJob(dir, job);
+
+  for (const mins of [31, 60, 6 * 60]) {
+    const res = content.scan({ now: T0 + mins * MIN });
+    assert.equal(found(res, "Needs Decoder").takeable, false, mins + " minutes is not a new look");
+    assert.deepEqual(res.claimed, []);
+    assert.deepEqual(jobOf(dir), was, "and nothing was rewritten inside the family's Drive folder");
+  }
+
+  // …and the slow look does come: the family ticked the box overnight and the
+  // book starts by itself in the morning.
+  const after = content.scan({ now: T0 + 13 * 60 * MIN });
+  assert.equal(found(after, "Needs Decoder").takeable, true);
+  assert.deepEqual(after.claimed, ["needs-decoder"]);
+});
+
+// A HOLD ON ANOTHER COMPUTER'S BOOK IS THE FAMILY'S TO ANSWER, not ours. The
+// twelve-hour rule above and the half-hourly one below both say when there is
+// something worth doing again; neither says whose book it is, and a scan may
+// only ever act on its own (spec §15). So the same fixture signed by the study
+// PC is a card with a Build button on it — the assertion this test used to make
+// (claimed:["retry"]) kept exactly, one press further on.
+test("a book holding for a page the provider lost is another computer's until somebody taps", () => {
+  const dir = book("Retry", { "IMG_1.jpg": 10 });
+  let job = store.newJob({ claimedBy: "other-hub", state: "transcribing", now: T0 });
+  const was = store.writeJob(dir, { ...job, held: "retry" });
+  const res = content.scan({ now: T0 + 31 * MIN });
+  assert.equal(found(res, "Retry").takeable, true, "a lost page is worth asking for again soon");
+  assert.deepEqual(res.claimed, [], "…but not by the computer that was not asked");
+  assert.deepEqual(jobOf(dir), was);
+
+  // The tap answers it: the claim is cold to the door as well, so the book is
+  // taken over and carries on at the step it was holding on.
+  store.writeJob(dir, { ...job, held: "retry", heartbeat: ago(31 * MIN) });
+  assert.equal(content.build({ kind: "books", slug: "retry" }).started, true);
+  assert.equal(content.isMine(jobOf(dir)), true);
+  assert.equal(jobOf(dir).state, "transcribing");
+});
+
+// BUILT ONCE (dad, 9/9: "once a book is built in drive it is not built again").
+// The claim used to come from a scan and this proved the NEXT scan let it be;
+// it comes from a tap now, and the scans that follow it must let it be in
+// exactly the same way — a second claim is a second job.json and a second log
+// line inside the family's Drive folder, for Drive to re-upload to every device,
+// and a second worker reading the same photos against the same vision key.
+test("the tap claims once, and the scans that follow rewrite nothing", async () => {
+  const dir = book("Once", { "IMG_1.jpg": 10 });
+  const jobs = [];
+  content.runJob = (job) => { jobs.push(job.slug); return Promise.resolve({ ok: true }); };
+  content.scan({ now: T0 });
+  content.scan({ now: T0 + 10 * MIN });
+  assert.equal(jobOf(dir), null, "the quiet clock claimed nothing");
+  assert.equal(content.build({ kind: "books", slug: "once" }).started, true);
+  const first = jobOf(dir);
+  for (const mins of [20, 45, 24 * 60]) {
+    const res = content.scan({ now: T0 + mins * MIN });
+    assert.deepEqual(res.claimed, [], mins + " minutes on");
+    assert.deepEqual(jobOf(dir), first, "and it rewrote nothing");
+  }
+  await content.idle();
+  assert.deepEqual(jobs, ["once"], "and it started the job exactly once");
+});
+
+// -------------------------------------------------------------- single flight
+
+test("one job at a time: the second book waits for the first", async () => {
+  const order = [];
+  let release;
+  content.runJob = (job) => {
+    order.push("start:" + job.slug);
+    return new Promise((res) => { release = () => res({ slug: job.slug }); })
+      .then(r => { order.push("end:" + job.slug); return r; });
+  };
+  const a = content.run({ kind: "books", slug: "a", dir: path.join(FOLDER, "books", "A") });
+  const b = content.run({ kind: "books", slug: "b", dir: path.join(FOLDER, "books", "B") });
+  assert.deepEqual(order, ["start:a"], "B has not started while A runs");
+  assert.equal(content.isBuilding(), true);
+  const relA = release; relA();
+  assert.deepEqual(await a, { slug: "a" });
+  const relB = release; relB();
+  assert.deepEqual(await b, { slug: "b" });
+  assert.deepEqual(order, ["start:a", "end:a", "start:b", "end:b"]);
+  assert.equal(content.isBuilding(), false);
+});
+
+test("asking for the running book again joins it instead of queueing a second run", async () => {
+  let calls = 0, release;
+  content.runJob = (job) => { calls++; return new Promise((res) => { release = () => res({ n: calls }); }); };
+  const dir = path.join(FOLDER, "books", "Same");
+  const a = content.run({ kind: "books", slug: "same", dir });
+  const b = content.run({ kind: "books", slug: "same", dir });
+  release();
+  assert.deepEqual(await a, { n: 1 });
+  assert.deepEqual(await b, { n: 1 });
+  assert.equal(calls, 1);
+});
+
+test("a job that throws does not wedge the queue", async () => {
+  const seen = [];
+  content.runJob = (job) => {
+    seen.push(job.slug);
+    if (job.slug === "bad") return Promise.reject(new Error("boom"));
+    return Promise.resolve({ ok: true });
+  };
+  const bad = content.run({ kind: "books", slug: "bad", dir: path.join(FOLDER, "books", "Bad") });
+  const good = content.run({ kind: "books", slug: "good", dir: path.join(FOLDER, "books", "Good") });
+  const r = await bad;
+  assert.match(r.error, /boom/);
+  assert.deepEqual(await good, { ok: true });
+  assert.deepEqual(seen, ["bad", "good"]);
+  assert.equal(content.isBuilding(), false);
+});
+
+// ---------------------------------------------------------------- the job list
+
+// The Settings card renders "N of M pages read" and the board renders "page N
+// of M" straight off progress. Counting only the pages already transcribed
+// makes M chase N, so a twelve-page book part-way through says "4 of 4" and
+// reads as finished.
+test("a part-read book's page total is the whole book, not the pages read so far", () => {
+  const dir = book("Twelve Pages", {});
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  for (let i = 1; i <= 12; i++)
+    fs.writeFileSync(path.join(dir, "pages", String(i).padStart(3, "0") + ".jpg"), Buffer.alloc(8, 7));
+  store.writeJob(dir, store.newJob({ claimedBy: "test", state: "transcribing", now: T0 }));
+  store.writeText(dir, { pages: [1, 2, 3, 4].map(i =>
+    ({ index: i, source: "sources/IMG_" + i + ".jpg", text: "a word", flags: [] })) });
+  const j = content.jobs().find(x => x.title === "Twelve Pages");
+  assert.equal(j.progress.pages, 12, "the card would otherwise say '4 of 4 pages read'");
+  assert.equal(j.progress.transcribed, 4);
+});
+
+// One resolver assigns every slug (books-index.js). Bare slugify() cannot: two
+// titles collapse onto one slug (so /content/run and the review link address
+// the wrong folder) and a title with no Latin letters slugifies to nothing at
+// all (so the link is dead), while the shelf serves both perfectly well.
+test("two titles that slugify alike, and one with no Latin letters, get one slug each", async () => {
+  // A worker still finishing an earlier test can recreate its folder under us,
+  // so this test speaks only about the three books it made itself.
+  await content.idle();
+  const titles = ["Tabby McTat", "Tabby, McTat!", "えほん"];
+  for (const t of titles) book(t, { "IMG_1.jpg": 10 });
+  const jobs = content.jobs().filter(j => titles.includes(j.title));
+  const slugs = jobs.map(j => j.slug);
+  assert.equal(slugs.length, 3);
+  assert.equal(new Set(slugs).size, 3, "two books must never share a slug: " + slugs.join(" "));
+  assert.ok(slugs.every(Boolean), "a book with no slug has no review link: " + slugs.join(" "));
+  // The shelf and the builder must agree, or Settings' "Review this book" and
+  // the board's review link point at a book the reader does not serve.
+  const shelf = booksIndex.bookDirs(path.join(FOLDER, "books")).list
+    .filter(e => titles.includes(e.dir)).map(e => e.slug);
+  assert.deepEqual(slugs.slice().sort(), shelf.slice().sort());
+  for (const j of jobs) assert.equal(content.bookFor(j.slug, { folderPath: FOLDER }).name, j.title);
+});
+
+// ------------------------------------------ the whole-book actions (T3.4, §5)
+//
+// The two rules the review page's own suite cannot reach from a browser: which
+// pages "Read the photos again" would pay for, and the refusal that stops a
+// book being deleted out from under the worker that is building it.
+
+// A book with text.json already written, one page of it typed by a grown-up.
+function reviewedBook(name) {
+  const dir = book(name, {});
+  fs.mkdirSync(path.join(dir, "pages"), { recursive: true });
+  for (const i of [1, 2, 3])
+    fs.writeFileSync(path.join(dir, "pages", String(i).padStart(3, "0") + ".jpg"), Buffer.alloc(8, i));
+  store.writeText(dir, {
+    pages: [
+      { index: 1, source: "pages/001.jpg", text: "read by the model", flags: [], cover: true },
+      { index: 2, source: "pages/002.jpg", text: "typed by a grown-up", flags: [], edited: true },
+      { index: 3, source: "pages/003.jpg", text: "read by the model", flags: [] },
+    ],
+  });
+  return dir;
+}
+
+test("'read the photos again' pays for the pages a grown-up did not type", () => {
+  const dir = reviewedBook("Rebuildable");
+  assert.deepEqual(content.rebuildPages(dir, true), [1, 3], "the page they typed is kept");
+  assert.deepEqual(content.rebuildPages(dir, false), [1, 2, 3], "unticked, the photos win everywhere");
+  // A photo that was never read at all is picked up by the same press: the
+  // union of what is on disk and what text.json knows about.
+  fs.writeFileSync(path.join(dir, "pages", "004.jpg"), Buffer.alloc(8, 4));
+  assert.deepEqual(content.rebuildPages(dir, true), [1, 3, 4]);
+  // A book nothing has read yet asks for nothing in particular — the ordinary
+  // step already reads every page with no words.
+  assert.equal(content.rebuildPages(book("Untouched", { "IMG_1.jpg": 10 }), true), null);
+});
+
+test("a book being built right now cannot be removed out from under the worker", async () => {
+  const dir = book("Busy", { "IMG_1.jpg": 10 });
+  let release;
+  content.runJob = () => new Promise((res) => { release = () => res({ ok: true }); });
+  const running = content.run({ kind: "books", slug: "busy", name: "Busy", dir });
+  const no = content.removeBook({ kind: "books", slug: "busy" });
+  assert.match(no.error, /right now/);
+  assert.ok(fs.existsSync(dir), "and the folder is still there");
+  release();
+  await running;
+  // Once it has stopped, the same press removes it.
+  const yes = content.removeBook({ kind: "books", slug: "busy" });
+  assert.deepEqual(yes, { removed: true, slug: "busy", title: "Busy" });
+  assert.ok(!fs.existsSync(dir));
+});
+
+test("a remove can only ever name a folder directly inside books/", () => {
+  const dir = book("Keep Me", { "IMG_1.jpg": 10 });
+  const outside = path.join(FOLDER, "clothing");
+  fs.mkdirSync(outside, { recursive: true });
+  for (const slug of ["..", "../..", "../clothing", "/etc", ".", "keep-me/pages", "no-such-book"])
+    assert.equal(content.removeBook({ kind: "books", slug }).error, "unknown book", slug);
+  assert.equal(content.removeBook({ kind: "music", slug: "keep-me" }).error, "unknown kind");
+  assert.ok(fs.existsSync(dir));
+  assert.ok(fs.existsSync(outside), "nothing beside books/ is reachable from this door");
+  assert.ok(fs.existsSync(path.join(FOLDER, "books")));
+});
+
+test("a remove that fails says so without naming a folder on the family's disk", () => {
+  const dir = reviewedBook("Wedged");
+  // A folder something else holds open (a virus scanner, Drive itself, a file
+  // manager) is the way this fails in a family's house; the message it throws
+  // carries the whole path, and that path is not this page's to hand out.
+  const real = fs.rmSync;
+  let out;
+  try {
+    fs.rmSync = () => {
+      throw new Error("EACCES: permission denied, rmdir '" + path.join(dir, "pages") + "'");
+    };
+    out = content.removeBook({ kind: "books", slug: "wedged" });
+  } finally { fs.rmSync = real; }
+  assert.ok(out.error, "a failure is a sentence, not a throw");
+  assert.ok(!out.error.includes(path.sep + "books"), "no folder on the family's disk: " + out.error);
+  assert.ok(!out.error.includes(FOLDER), "and nothing above it either: " + out.error);
+  assert.ok(!out.error.includes("EACCES"), "nor the provider's own words: " + out.error);
+  assert.ok(fs.existsSync(dir), "and the book is still there to try again");
+});
+
+// ------------------------------------------ the review page's writes (T3.2/3.3)
+//
+// Three rules the browser suite cannot reach: the audio a rewritten page must
+// no longer claim, the worker that owns a folder while a parent is typing into
+// it, and the permanent failure that only a deliberate press may lift.
+
+// The record of what was bought for a book, in the shape content-publish.js
+// reads back: page 1 and page 2 each have an mp3 and word timings.
+function narrated(dir) {
+  fs.mkdirSync(path.join(dir, "audio"), { recursive: true });
+  for (const i of [1, 2])
+    fs.writeFileSync(path.join(dir, "audio", String(i).padStart(3, "0") + ".mp3"), "ID3");
+  store.writeAtomic(narrate.narrationPath(dir), {
+    provider: "elevenlabs", model: "eleven_v3", voice: "V0",
+    pages: [{ index: 1, audio: "audio/001.mp3", words: [{ word: "read", start: 0, end: 0.4 }] },
+            { index: 2, audio: "audio/002.mp3", words: [{ word: "typed", start: 0, end: 0.5 }] }],
+  });
+}
+const spoken = (dir) => narrate.readNarration(dir).pages.map(p => p.index);
+
+test("fixing a page's words drops the audio that speaks the old ones", () => {
+  const dir = reviewedBook("Misread");
+  narrated(dir);
+  const out = content.saveText({ kind: "books", slug: "misread", page: 1, text: "what it really says" });
+  assert.equal(out.saved, true);
+  assert.deepEqual(spoken(dir), [2],
+    "page 1 speaks yesterday's words, so it publishes silent until it is narrated again");
+  assert.equal(narrate.readNarration(dir).voice, "V0", "the book's credits are not lost with it");
+  assert.equal(store.readText(dir).pages[0].text, "what it really says");
+});
+
+test("a save that changes no words keeps every second of audio already paid for", () => {
+  const dir = reviewedBook("Unchanged");
+  narrated(dir);
+  // The same words back again (a parent who opened the field and thought better
+  // of it), and the flags cleared: neither is a reason to buy the page twice.
+  content.saveText({ kind: "books", slug: "unchanged", page: 1, text: "read by the model" });
+  content.saveText({ kind: "books", slug: "unchanged", page: 2, flags: [] });
+  assert.deepEqual(spoken(dir), [1, 2]);
+  // Nor is a drag: the order moves, the words do not.
+  content.saveText({ kind: "books", slug: "unchanged", order: [3, 2, 1] });
+  assert.deepEqual(spoken(dir), [1, 2]);
+});
+
+test("a book being built right now cannot be written to out from under the worker", async () => {
+  const dir = reviewedBook("Busy Words");
+  const was = JSON.stringify(store.readText(dir));
+  let release;
+  content.runJob = () => new Promise((res) => { release = () => res({ ok: true }); });
+  const running = content.run({ kind: "books", slug: "busy-words", name: "Busy Words", dir });
+  // The transcriber holds the whole of text.json in memory for minutes and
+  // writes it back from that snapshot, so a save landing now is a save that is
+  // silently thrown away — and the page would have said "Saved ✓".
+  for (const req of [{ order: [3, 2, 1] }, { page: 1, text: "typed while it ran" },
+                     { page: 1, flags: [] }]) {
+    const no = content.saveText({ kind: "books", slug: "busy-words", ...req });
+    assert.match(no.error, /right now/, JSON.stringify(req));
+  }
+  assert.equal(JSON.stringify(store.readText(dir)), was, "and not a word of it changed");
+  release();
+  await running;
+  // Once it has stopped, the same press lands.
+  assert.equal(content.saveText({ kind: "books", slug: "busy-words", order: [3, 2, 1] }).saved, true);
+});
+
+test("only a deliberate 'try this book again' lifts a permanent failure", () => {
+  const dir = reviewedBook("Refused Key");
+  // CLAIMED BY THE HUB UNDER TEST. It has to be said now that content.js reads
+  // claimedBy back (spec §14): a fixture signed "test:1" is another computer,
+  // and this test is about the book this computer is holding.
+  let job = store.newJob({ claimedBy: MINE, state: "reviewing", now: T0 });
+  job = store.fail(job, "permanent: that key was refused", { now: T0 });
+  store.writeJob(dir, job);
+  // Every write on the review page re-publishes the book. A publish is not a
+  // retry of the step that fell over, so it must not put the book back on the
+  // half-hourly walk against the key the provider already refused.
+  assert.deepEqual(content.runStep({ kind: "books", slug: "refused-key", step: "publish" }),
+                   { started: true });
+  assert.equal(jobOf(dir).state, "failed", "a publish leaves the refusal exactly where it was");
+  assert.deepEqual(content.scan({ now: T0 + 31 * MIN }).claimed, [],
+                   "and no scan picks the book up again");
+  // The button in Settings says so out loud, and that is the one that lifts it.
+  assert.deepEqual(content.runStep({ kind: "books", slug: "refused-key", retry: true }),
+                   { started: true });
+  assert.equal(jobOf(dir).state, "reviewing", "back on the step it fell over on");
+});
+
+// -------------------------------------------------------------------- status
+
+test("status says what the shell is doing without naming a device or a key", () => {
+  const s = content.status();
+  assert.equal(s.local, true);
+  assert.equal(s.building, false);
+  assert.deepEqual(s.queued, []);
+  assert.ok(!JSON.stringify(s).toLowerCase().includes("apikey"));
+});

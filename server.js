@@ -1,0 +1,3793 @@
+// era-hub server — serves the Our Era Comms app modules + local APIs (settings, TTS
+// proxy/cache, prediction, logging, board recipes). Local-first: binds
+// 127.0.0.1 unless ERA_BIND says otherwise.
+//   node server.js [port]     (default 8377)
+// All state lives under the data dir (ERA_DATA_DIR, default ./data) — the
+// family overlay. Logs append to <data>/logs/YYYY-MM-DD.jsonl.
+"use strict";
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+
+const updater = require("./update");
+const drive = require("./drive");
+const clothing = require("./clothing");
+// CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
+// the worker's whitelist, the pools and this hub's edit door all read it, so a
+// word cannot be a category here and a stranger three files away.
+const { dayKey, CATEGORIES, OCCASIONS, FIT_WORDS } = require("./clothing-rank.js");
+const content = require("./content.js");
+const musicAdd = require("./music-add.js");
+const moviesAdd = require("./movies-add.js");
+const thisWeek = require("./this-week.js");
+const thisWeekFetch = require("./this-week-fetch.js");   // the download rail (spec 2026-10-12 §3.2)
+const moviesLookup = require("./movies-lookup.js");
+const booksIndex_ = require("./books-index.js");
+// Book sharing (spec §6): it owns the policy AND the one books allowlist, so
+// export, import and serving cannot drift into three different lists.
+const booksShare = require("./books-share.js");
+const booksShelf = require("./books-shelf.js");
+const drawings = require("./drawings.js");   // Drawing's pictures (spec 2026-09-30 §4-§5)
+const aiConfig = require("./ai-config.js");
+// For baseFor alone: the provider's real base, or the ERA_AI_URL stand-in.
+const contentProviders = require("./content-providers.js");
+// For writeAtomic alone: a key file is written tmp-then-rename, never in place.
+const contentStore = require("./content-store.js");
+
+const PORT = parseInt(process.argv[2], 10) || 8377;
+const BIND = process.env.ERA_BIND || "127.0.0.1";
+const PUB = path.join(__dirname, "public");
+const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
+const LOGS = path.join(DATA, "logs");
+const TTS_CACHE = path.join(DATA, "tts-cache");
+fs.mkdirSync(LOGS, { recursive: true });
+fs.mkdirSync(TTS_CACHE, { recursive: true });
+
+// On Windows a double-clicked launch would live in a black console window
+// (dad 8/29: weird for a novice). Re-spawn with NO window, log to
+// <data>/logs/hub.log, and let the visible parent exit. ERA_CONSOLE=1
+// keeps the console for debugging.
+if (process.platform === "win32" && !process.env.ERA_CONSOLE && !process.env.ERA_HIDDEN) {
+  try {
+    const { spawn } = require("child_process");
+    const out = fs.openSync(path.join(LOGS, "hub.log"), "a");
+    spawn(process.execPath, [__filename, String(PORT)], {
+      detached: true, windowsHide: true, stdio: ["ignore", out, out],
+      env: { ...process.env, ERA_HIDDEN: "1" },
+    }).unref();
+    process.exit(0);
+  } catch { /* visible console beats no hub */ }
+}
+const crypto = require("crypto");
+const predictor = require("./predict");
+
+// child/family profile (name for messages, publish email, timezone) — overlay data
+let PROFILE = {}, HAS_PROFILE = false, TZ = "America/Los_Angeles";
+function loadProfile() {
+  try {
+    PROFILE = JSON.parse(fs.readFileSync(path.join(DATA, "profile.json"), "utf8"));
+    HAS_PROFILE = true;
+  } catch { PROFILE = {}; HAS_PROFILE = false; }
+  TZ = PROFILE.tz || "America/Los_Angeles";
+}
+loadProfile();
+
+// ---- family data pool (shared-data contract v1; see pool.js) ----
+// Transition rule: legacy stores (logs/, wardrobe/history.json) stay canonical;
+// the pool is DOUBLE-WRITTEN so it accrues real data before readers migrate.
+// One name per INSTALL, not per product (device-id.js, spec §5): the pool and
+// the clothing log are both "one writer per file, under this device's id", and
+// two hubs both called "hub" shared every one of those files. Resolved once,
+// synchronously, before initPool — a /setup that changes profile.deviceId
+// takes effect on the next restart (see the /setup route below).
+const DEVICE_ID = require("./device-id.js").resolveDeviceId(DATA, { env: process.env, profile: PROFILE });
+const pool = require("./pool").initPool(DATA, DEVICE_ID);
+pool.heartbeat({ service: "era-hub" });
+setInterval(() => pool.heartbeat({ service: "era-hub" }), 60 * 60 * 1000).unref();
+
+// ---- board data paths: overlay data, read-only, path-jailed ----
+const RECIPE_PATHS = [
+  path.join(DATA, "recipes", "today.json"),
+];
+// One wardrobe dir, no env override: history.json is written by exactly two
+// doors (clothing.js recordOffer and POST /outfit-event below) through
+// clothing.historyPath(), and a seam that let them point at different files
+// was how they diverged (plan T2.2, I24).
+const WARDROBE_DIR = path.join(DATA, "wardrobe");
+// ---- the family's shared clothing log (clothing-log.js, spec §5) -----------
+// The board's picks go to wardrobe/history.json (the local canonical) AND to
+// <Drive folder>/clothing/.era/picks/<device>/<day>.jsonl, so the other
+// tablet's tomorrow knows what she chose here today. Opened once the Drive
+// config is loaded (drive.js has no DATA before start(), W10) and re-opened
+// whenever the folder or the family zone can have changed.
+let clothingLog = null;
+function openClothingLog() {
+  const st = drive.status();
+  clothingLog = require("./clothing-log.js").openLog({
+    dataDir: DATA, deviceId: DEVICE_ID, tz: clothing.zone(),
+    driveFolder: st.mode === "local" && st.folderPath ? st.folderPath : null,
+  });
+}
+const GEN_ASSETS_DIR = path.join(DATA, "gen-assets");
+const BOOKS_DIR = path.join(DATA, "books");   // book packages (era-book-reader M3)
+const MUSIC_DIR = path.join(DATA, "music");   // songs overlay (Songs Board 8/24)
+const MOVIES_DIR = path.join(DATA, "movies"); // movie catalog + posters (movie-player P1, 8/29)
+const THIS_WEEK_DIR = path.join(DATA, "this-week"); // the week package mirrored from Drive (spec 2026-10-12 §3)
+const SYMBOLS_CACHE = path.join(DATA, "symbols-cache");
+fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
+
+// ---- app registry (install-with-checkboxes, 8/29): one engine, apps chosen
+// at install and togglable later from the home screen. Enabled set lives in
+// <DATA>/apps.json ({"enabled":[ids]}); absent file = everything (existing
+// installs keep all their apps). Settings is not an app — always present.
+const APPS = [
+  { id: "making-words", title: "Making Words", sub: "guided word building", path: "/", pack: null },
+  { id: "pencil", title: "The Pencil", sub: "free writing with prediction", path: "/pencil/", pack: "pencil" },
+  { id: "board", title: "Clothing Picker", sub: "daily outfits, checked against the weather", path: "/board/", pack: "board" },
+  { id: "music", title: "Music", sub: "favorite songs, audio only", path: "/board/?recipe=songs", pack: "board" },
+  { id: "movies", title: "Movies", sub: "shows & movies, her picks", path: "/board/?recipe=movies", pack: "board" },
+  // This week (spec 2026-10-12 §1): the week package as a board — Watch + Talk. Rides the board pack.
+  { id: "this-week", title: "This week", sub: "what her class is learning", path: "/board/?recipe=this-week", pack: "board" },
+  { id: "reader", title: "Book Reader", sub: "picture books, read aloud", path: "/reader/", pack: "reader" },
+  // Drawing (spec 2026-09-30 §1): a CORE app — its files ride with the engine (build-payload.sh
+  // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
+  { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
+  // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
+  // on-device (Windows' built-in csc) and pairs it with the Tobii runtime
+  // already on Tobii devices (official NuGet as fallback for other PCs)
+  { id: "eragaze", title: "ERAgaze", sub: "eye-gaze cursor + dwell for Tobii trackers", path: null, pack: null, engine: true },
+];
+// pack = the files an app needs on disk, listed in packs.js (null = rides
+// with the core; board/music/movies share one pack, which also carries the
+// garment cut-out runtime under vendor/). The installer lays down only chosen
+// packs; enabling later REALLY installs the pack (dad 8/29: never
+// install-everything-and-hide) by pulling it from the release tarball.
+const packs = require("./packs.js");
+const shortcuts = require("./shortcuts.js");
+function appInstalled(app) {
+  if (app.engine) return gazeCompiled();
+  return !app.pack || packs.packInstalled(__dirname, app.pack);
+}
+const appInstalling = {};   // id -> true while a pack download runs
+// Anything enabled (installer checkboxes, wizard, restored apps.json) but not
+// on disk gets installed — runs at boot and after /setup. Dad's cold test
+// 8/29: the ERAgaze checkbox did nothing because only the Settings toggle
+// triggered installs.
+function reconcileApps() {
+  const enabled = loadEnabledApps();
+  for (const app of APPS) {
+    // the OFF side too: an engine the family never chose but a previous
+    // build compiled and started anyway (v0.31.3, bug 38) is still running
+    // — and in Startup — after the self-update; the first door would hand
+    // the kiosk to it (leg B, 9/3). Stop it and its autostart at every boot.
+    if (app.engine && !enabled.includes(app.id) && appInstalled(app)) { stopGaze(); continue; }
+    // An installed engine whose shipped source changed recompiles too: the
+    // self-update restarts the hub, so this boot pass is where a new
+    // ERAgaze.cs reaches the exe (9/27: v0.36.0's source never did — both home
+    // devices ran the 9/14 binary because "installed" ended the check).
+    const stale = app.engine && appInstalled(app) && gazeCanCompile() && gazeNeedsCompile();
+    if (stale && enabled.includes(app.id) && !appInstalling[app.id])
+      console.log("[gaze] shipped source changed — recompiling");
+    if (!enabled.includes(app.id) || (appInstalled(app) && !stale) || appInstalling[app.id]) continue;
+    appInstalling[app.id] = true;
+    (app.engine ? installGaze() : installPack(app))
+      .then(() => console.log("[apps] reconciled " + app.id))
+      .catch(e => console.error("[apps] reconcile " + app.id + ": " + e.message))
+      .finally(() => { delete appInstalling[app.id]; });
+  }
+}
+// Release tarball top folders a pack install accepts, the current name first.
+const SUITE_TOPS = ["new-era-suite", "our-era-comms"];
+async function installPack(app) {
+  const os = require("os");
+  const { spawnSync } = require("child_process");
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "era-pack-"));
+  try {
+    const r = await fetch(updater.FEED + "/new-era-suite.tar.gz", { redirect: "follow" });
+    if (!r.ok) throw new Error("download " + r.status);
+    const tarball = path.join(stage, "suite.tar.gz");
+    fs.writeFileSync(tarball, Buffer.from(await r.arrayBuffer()));
+    const paths = packs.packPaths(app.pack);
+    // The tarball's top folder: new-era-suite/ today, our-era-comms/ from R3
+    // of the rename (spec). tar extracts named members only, so try each name;
+    // then take the single top-level dir that landed, as update.js does.
+    const ex = path.join(stage, "x"); fs.mkdirSync(ex);
+    let t = null;
+    for (const top of SUITE_TOPS) {
+      t = spawnSync("tar", ["-xzf", tarball, "-C", ex,
+        ...paths.map(p => top + "/" + p)], { windowsHide: true });
+      if (t.status === 0) break;
+      fs.rmSync(ex, { recursive: true, force: true }); fs.mkdirSync(ex);
+    }
+    if (!t || t.status !== 0) throw new Error("extract failed");
+    const tops = fs.readdirSync(ex);
+    if (tops.length !== 1) throw new Error("extract: expected one top folder, got " + tops.length);
+    const root = path.join(ex, tops[0]);
+    // presence marker (first path) last, so a half-landed pack never counts as installed
+    for (const p of [...paths.slice(1), paths[0]]) {
+      const parts = p.split("/");
+      const dest = path.join(__dirname, ...parts);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.cpSync(path.join(root, ...parts), dest, { recursive: true, force: true });
+    }
+    console.log("[apps] installed pack " + app.pack + " (" + paths.join(", ") + ")");
+  } finally {
+    try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
+  }
+}
+function loadEnabledApps() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(DATA, "apps.json"), "utf8"));
+    if (Array.isArray(j.enabled)) return j.enabled.filter(id => APPS.some(a => a.id === id));
+  } catch {}
+  // no apps.json: every APP on, but never auto-enable the ENGINE — existing
+  // installs (and Ellie's device, which runs its own ERAgaze) must not grow
+  // a second gaze engine uninvited
+  return APPS.filter(a => !a.engine).map(a => a.id);
+}
+// A gaze engine is "there" if ours is compiled OR any engine answers the bus
+// (Ellie's device runs the family build — never fight it).
+function gazeBusAlive() {
+  return new Promise((resolve) => {
+    const req2 = http.get({ host: "127.0.0.1", port: 49155, path: "/status", timeout: 900 },
+      (r) => { r.resume(); resolve(true); });
+    req2.on("error", () => resolve(false));
+    req2.on("timeout", () => { req2.destroy(); resolve(false); });
+  });
+}
+const GAZE_DIR = path.join(__dirname, "gaze");
+// The engine is compiled ON the device, so a source fix shipped by the updater
+// only lands if we notice the shipped .cs differs from the one the .exe was
+// built from (dad 9/1: the exit-door fix could never have reached an installed
+// machine otherwise). By CONTENT, not mtime (9/27): update.js overlays with
+// fs.cpSync, which stamps every file with the copy time (a same-source update
+// would rebuild each time) while an installer may keep the build machine's
+// older times (a changed source would be skipped). An exe with no hash beside
+// it was built by an older hub and rebuilds once.
+const GAZE_HASH = path.join(GAZE_DIR, "ERAgaze.exe.src-sha256");
+function gazeSourceHash() {
+  return require("crypto").createHash("sha256")
+    .update(fs.readFileSync(path.join(GAZE_DIR, "ERAgaze.cs"))).digest("hex");
+}
+function gazeNeedsCompile() {
+  if (!fs.existsSync(path.join(GAZE_DIR, "ERAgaze.exe"))) return true;
+  try { return fs.readFileSync(GAZE_HASH, "utf8").trim() !== gazeSourceHash(); }
+  catch { return true; }
+}
+// csc is Windows' own; ERA_GAZE_CSC is the tests' stub compiler. Elsewhere the
+// stale check is a quiet no-op.
+const gazeCanCompile = () => process.platform === "win32" || !!process.env.ERA_GAZE_CSC;
+function gazeCompiled() { return fs.existsSync(path.join(GAZE_DIR, "ERAgaze.exe")); }
+async function installGaze() {
+  if (!gazeCanCompile()) throw new Error("windows only");
+  const { spawnSync, spawn } = require("child_process");
+  // 1. the Tobii runtime: prefer the copy already on this (Tobii) device
+  const dllDest = path.join(GAZE_DIR, "tobii_stream_engine.dll");
+  if (!fs.existsSync(dllDest)) {
+    let found = null;
+    for (const base of ["C:\\Program Files\\Tobii", "C:\\Program Files\\Tobii Dynavox",
+                        "C:\\Program Files (x86)\\Tobii", "C:\\Program Files (x86)\\Tobii Dynavox"]) {
+      const stack = [base];
+      while (stack.length && !found) {
+        const dir = stack.pop();
+        let entries = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+        for (const e of entries) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) stack.push(p);
+          else if (e.name.toLowerCase() === "tobii_stream_engine.dll" && !p.includes("x86")) found = p;
+        }
+      }
+      if (found) break;
+    }
+    if (found) fs.copyFileSync(found, dllDest);
+    else {
+      // non-Tobii PC: official Tobii package from NuGet (user pulls from
+      // Tobii's own distribution; we never redistribute their binaries)
+      const os = require("os");
+      const stage = fs.mkdtempSync(path.join(os.tmpdir(), "era-tobii-"));
+      const r = await fetch("https://api.nuget.org/v3-flatcontainer/tobii.streamengine.native/2.2.2.363/tobii.streamengine.native.2.2.2.363.nupkg");
+      if (!r.ok) throw new Error("tobii runtime download failed");
+      const pkg = path.join(stage, "t.zip");
+      fs.writeFileSync(pkg, Buffer.from(await r.arrayBuffer()));
+      spawnSync("tar", ["-xf", pkg, "-C", stage], { windowsHide: true });
+      fs.copyFileSync(path.join(stage, "build", "native", "lib", "x64", "tobii_stream_engine.dll"), dllDest);
+      try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
+    }
+  }
+  // 2. compile our engine with Windows' built-in compiler (also on UPDATE,
+  // when the shipped source is newer than the exe on disk)
+  if (gazeNeedsCompile()) {
+    const exePath = path.join(GAZE_DIR, "ERAgaze.exe");
+    const fresh = !fs.existsSync(exePath);
+    const srcHash = gazeSourceHash();   // the source as compiled, not as it may be after
+    // keep the working build so a bad compile is one rename from recovery
+    if (!fresh) { try { fs.copyFileSync(exePath, path.join(GAZE_DIR, "ERAgaze.prev.exe")); } catch {} }
+    const csc = process.env.ERA_GAZE_CSC || "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe";
+    const out = fresh ? exePath : path.join(GAZE_DIR, "ERAgaze.new.exe");
+    const c = spawnSync(csc, ["/nologo", "/target:winexe", "/platform:x64",
+      "/out:" + out,
+      "/r:System.Drawing.dll", "/r:System.Windows.Forms.dll",
+      "/r:System.Web.Extensions.dll", "/r:System.Management.dll",
+      path.join(GAZE_DIR, "ERAgaze.cs")], { windowsHide: true });
+    // a failed compile throws BEFORE anything is stopped or swapped: the old
+    // exe keeps running and the missing hash retries at the next boot
+    if (c.status !== 0) {
+      try { if (!fresh) fs.rmSync(out, { force: true }); } catch {}
+      // csc reports on STDOUT; stderr is an empty (truthy) Buffer, which
+      // used to swallow the reason
+      const why = (String(c.stdout || "") + String(c.stderr || "")).trim() || (c.error && c.error.message) || "status " + c.status;
+      throw new Error("compile failed: " + why.replace(/\s+/g, " ").slice(0, 400));
+    }
+    let swapped = fresh;
+    if (!fresh) {
+      // A running engine holds its exe open, so stop OUR build (by path) and
+      // swap; step 3 starts the new one. Were the swap still refused, the old
+      // exe stays and — no hash written — the next boot tries again.
+      stopGazeProcess();
+      try { fs.renameSync(out, exePath); swapped = true; console.log("[gaze] recompiled from updated source"); }
+      catch (e) { console.log("[gaze] recompiled build could not replace the running one (" + e.code + "); retrying next boot"); }
+    }
+    if (swapped) fs.writeFileSync(GAZE_HASH, srcHash + "\n");
+  }
+  // 3. shortcuts + autostart + start it (skip start when another engine runs)
+  appShortcut({ id: "eragaze", title: "ERAgaze", path: null, exe: path.join(GAZE_DIR, "ERAgaze.exe") }, true);
+  if (!(await gazeBusAlive())) {
+    spawn(path.join(GAZE_DIR, "ERAgaze.exe"), [], { cwd: GAZE_DIR, detached: true, stdio: "ignore", windowsHide: true })
+      .on("error", (e) => console.error("[gaze] start: " + e.message)).unref();
+  }
+  console.log("[gaze] installed");
+}
+// The engine turned OFF (wizard or Settings): stop OUR running build and its
+// autostart, or the next door still hands the screen to it (VM 9/3: the
+// wizard unticked ERAgaze, the engine kept running, the first door closed
+// the kiosk). Matched by path — a family build of the engine on Ellie's
+// device is never ours to stop.
+function stopGaze() {
+  console.log("[gaze] turned off — stopping the engine and its autostart");
+  const exe = path.join(GAZE_DIR, "ERAgaze.exe");
+  appShortcut({ id: "eragaze", title: "ERAgaze", path: null, exe }, false);   // Desktop + Start menu + Startup
+  if (process.platform !== "win32") return;
+  const { spawn } = require("child_process");
+  try {
+    spawn("powershell.exe", ["-NoProfile", "-Command", gazeStopScript()],
+      { stdio: "ignore", windowsHide: true })
+      .on("error", (e) => console.error("[gaze] stop: " + e.message));
+  } catch (e) { console.error("[gaze] stop: " + e.message); }
+}
+const gazeStopScript = () => `Get-Process ERAgaze -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq '${path.join(GAZE_DIR, "ERAgaze.exe")}' } | Stop-Process -Force`;
+// The recompile's stop: only the process, not the autostart, and waited for —
+// the exe must be released before the swap.
+function stopGazeProcess() {
+  if (process.platform !== "win32") return;
+  const r = require("child_process").spawnSync("powershell.exe", ["-NoProfile", "-Command", gazeStopScript()],
+    { stdio: "ignore", windowsHide: true, timeout: 20000 });
+  if (r.error) console.error("[gaze] stop: " + r.error.message);
+}
+// Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
+// best-effort — the home tile is the source of truth, the .lnk a convenience).
+// Minimize our kiosk windows so an externally opened window (browser page,
+// Explorer) is actually visible — background processes cannot steal the
+// foreground on Windows, but we can step aside (dad 8/29).
+function stepAsideFromKiosk() {
+  if (process.platform !== "win32") return;
+  const { spawn } = require("child_process");
+  // Shaped exactly like appShortcut's call — the one powershell spawn PROVEN
+  // to work from the production (detached, console-less) hub: -Command, not
+  // detached, windowsHide. No double quotes anywhere in the script (node's
+  // arg re-quoting mangled them and the CIM filter matched nothing, VM QA
+  // 9/1); WQL strings use PS single-quote doubling instead. Output lands in
+  // logs/stepaside.log so any future failure explains itself.
+  const ps =
+    "Add-Type -Name W -Namespace U -MemberDefinition '[DllImport(" + JSON.stringify("user32.dll") + ")] public static extern bool ShowWindow(IntPtr h, int n);'; " +
+    "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" + " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
+    "Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { " +
+    "$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; " +
+    "if ($p -and $p.MainWindowHandle -ne 0) { 'minimized ' + $_.ProcessId + ' rc ' + [U.W]::ShowWindow($p.MainWindowHandle, 6) } }";
+  try {
+    const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+    fs.writeSync(out, new Date().toISOString() + " step-aside\n");
+    const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+      { stdio: ["ignore", out, out], windowsHide: true });
+    c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+    c.unref();
+  } catch {}
+}
+
+// The window-poking prelude both the first-launch settle and the talk door's
+// resume need: the user32 calls, and the "$browsers" scriptblock that finds
+// real browser windows (never a --type= child process). Same quoting law as
+// stepAsideFromKiosk — no double quotes anywhere, WQL strings double their
+// single quotes — because node's arg re-quoting mangles them (VM QA 9/1).
+function psWindowPrelude() {
+  const dll = "[DllImport(" + JSON.stringify("user32.dll") + ")] public static extern ";
+  return "Add-Type -Name W -Namespace U -MemberDefinition '" +
+    dll + "bool ShowWindow(IntPtr h, int n); " +
+    dll + "bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f); " +
+    dll + "bool SetForegroundWindow(IntPtr h); " +
+    dll + "IntPtr GetForegroundWindow(); " +
+    dll + "int GetSystemMetrics(int n);'; " +
+    "$browsers = { Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" + " or Name=" + "''" + "msedge.exe" + "''" + "' | Where-Object { $_.CommandLine -notlike '*--type=*' } }; ";
+}
+// SETTLE our kiosk window: on a cold first launch Edge's full-screen window
+// sometimes lands at (10,10) with the taskbar over it (VM 9/3, four runs out
+// of ~eight — a race Edge loses while the disk is still busy) and the focus
+// stays with the desktop. SetWindowPos puts it on the screen,
+// SetForegroundWindow gives it the focus; when Windows refuses (a background
+// process may not foreground) a minimize+restore of the window is allowed and
+// does it — proven from the VM. Exactly the same move brings a PAUSED kiosk
+// back when she picks its TD Snap tile (talk door, 9/17), so it lives here in
+// one place. `tries` × 5 s is how long to wait for a window to exist: 24 for
+// the first launch (the kiosk is still starting), 1 for a resume (the launcher's
+// curl waits 8 s, which is deliberately longer than foregroundKiosk's own 6 s
+// kill so the HUB is always the one that decides — and a paused kiosk either
+// exists now or never will).
+// The LAST line is 'found' or 'none' — foregroundKiosk() reads only that, so
+// every other line is free to be a diagnostic and the 'none' branch spends one
+// saying WHY (a clear-stage log that only says 'none' tells the VM post-mortem
+// nothing about whether the loop ever saw a window).
+function psSettleKiosk(tries) {
+  return "$k = $null; for ($i = 0; $i -lt " + tries + " -and -not $k; $i++) { " +
+    "$k = & $browsers | Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; " +
+    "if (-not $k -and $i -lt " + (tries - 1) + ") { Start-Sleep -Seconds 5 } }; " +
+    "if ($k) { $h = $k.MainWindowHandle; " +
+    "'settle ' + $k.Id + ' pos ' + [U.W]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, [U.W]::GetSystemMetrics(0), [U.W]::GetSystemMetrics(1), 0x40) + ' fg ' + [U.W]::SetForegroundWindow($h); " +
+    "if ([U.W]::GetForegroundWindow() -ne $h) { 'settle min ' + [U.W]::ShowWindow($h, 6); Start-Sleep -Milliseconds 700; 'settle restore ' + [U.W]::ShowWindow($h, 9) + ' fg ' + [U.W]::SetForegroundWindow($h) }; " +
+    "'settle front ' + ([U.W]::GetForegroundWindow() -eq $h); " +
+    "'found' } else { 'settle: no kiosk window'; 'none' }";
+}
+// Bring our kiosk window back to the front — the talk door's return leg
+// (spec §3.2). Resolves TRUE only when a kiosk-profile window was actually
+// found and settled; FALSE means there is nothing to come back to and the
+// launcher must launch the app fresh.
+//
+// Off Windows there are no windows to poke, so the answer comes from
+// ERA_FAKE_KIOSK_WINDOW: the hub's suites need BOTH legs, and this is the
+// only seam (the Windows branches are otherwise flat no-ops). Default (unset)
+// is "the window is there", so a dev browser on Linux behaves like the device.
+function foregroundKiosk() {
+  if (process.platform !== "win32")
+    return Promise.resolve(process.env.ERA_FAKE_KIOSK_WINDOW !== "0");
+  const { spawn } = require("child_process");
+  const ps = psWindowPrelude() + psSettleKiosk(1);
+  return new Promise((resolve) => {
+    // TWO buffers, on purpose. The answer is the LAST LINE OF STDOUT, and
+    // PowerShell writes to stderr whenever it feels like it — an Add-Type
+    // warning, a CIM hiccup, a localized "cannot find process" — with no
+    // ordering guarantee against stdout. Interleaved into one string, a single
+    // stderr chunk arriving after 'found' would put itself last and turn a
+    // successful restore into a relaunch: her song starts over because a
+    // warning was late. So the regex reads stdout only; stderr is logged
+    // beside it, because the post-mortem needs it when the answer is 'none'.
+    let out = "", err = "";
+    let done = false;
+    let killer = null;
+    const finish = (found) => {
+      if (done) return;
+      done = true;
+      if (killer) { clearTimeout(killer); killer = null; }
+      try {
+        fs.appendFileSync(path.join(LOGS, "foreground.log"),
+          new Date().toISOString() + " foreground\n" + out + (err ? "stderr: " + err + "\n" : "") + "\n");
+      } catch {}
+      resolve(found);
+    };
+    try {
+      // piped (not redirected to the log) because the ANSWER is in the output:
+      // we log it ourselves on the way past.
+      const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+        { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      c.stdout.on("data", (b) => { out += b; });
+      c.stderr.on("data", (b) => { err += b; });
+      c.on("error", () => finish(false));
+      c.on("close", () => finish(/(^|\n)found\s*$/.test(out.trim() + "\n")));
+      killer = setTimeout(() => { try { c.kill(); } catch {} finish(false); }, 6000);
+    } catch { finish(false); }
+  });
+}
+// Minimize our kiosk windows — the talk door's step 3 is the step-aside, the
+// same PowerShell and the same reason (dad 8/29).
+const minimizeKiosk = stepAsideFromKiosk;
+
+// One-time stage-clearing at the very first boot after install (dad 9/1:
+// the welcome kiosk opened BEHIND the browser the family had just downloaded
+// with — "did anything happen?"). Windows won't let a background process
+// foreground our window, but it will let us MINIMIZE the covering browsers;
+// the kiosk is then the visible surface. Same proven spawn shape as
+// stepAsideFromKiosk, inverted filter (non-kiosk browser windows), logged.
+// Then the kiosk itself is settled (psSettleKiosk), waiting up to 2 min for
+// the window — one PowerShell spawn for both halves, as it has always been.
+function clearStageOnce() {
+  if (process.platform !== "win32") return;
+  const marker = path.join(DATA, ".first-launch-done");
+  if (fs.existsSync(marker)) return;
+  try { fs.writeFileSync(marker, new Date().toISOString()); } catch {}
+  const { spawn } = require("child_process");
+  const ps =
+    psWindowPrelude() +
+    "& $browsers | Where-Object { $_.CommandLine -notlike '*kiosk-profile*' } | ForEach-Object { " +
+    "$p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; " +
+    "if ($p -and $p.MainWindowHandle -ne 0) { 'cleared ' + $_.ProcessId + ' rc ' + [U.W]::ShowWindow($p.MainWindowHandle, 6) } }; " +
+    psSettleKiosk(24);
+  setTimeout(() => {
+    try {
+      const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+      fs.writeSync(out, new Date().toISOString() + " clear-stage (first launch)\n");
+      const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+        { stdio: ["ignore", out, out], windowsHide: true });
+      c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+      c.unref();
+    } catch {}
+  }, 9000);   // the kiosk browser needs a moment to exist before the stage clears
+}
+
+// Every app's own icon — Ellie's originals from her i13 (dad 9/3: "use icons
+// from Ellie's original for all the new era products"), Music/Movies drawn to
+// match. public/icons/<id>.png feeds the home tile, <id>.ico the shortcut;
+// an app without one falls back to the suite icon.
+function appIcon(app, ext) {
+  const f = app.id ? path.join(__dirname, "public", "icons", app.id + "." + ext) : "";
+  return f && fs.existsSync(f) ? f : null;
+}
+
+function appShortcut(app, enabled) {
+  // the PowerShell lives in shortcuts.js, shared with the boot pass
+  shortcuts.applyShortcut(app, enabled, { dir: __dirname, port: PORT, iconFor: (a) => appIcon(a, "ico") });
+}
+// The boot pass (rename spec R1): every link the hub owns — the home door,
+// each enabled app, the engine's Startup link when it is installed — is
+// rewritten with the current folder and titles, and the old-name home link
+// goes. After an installer or runbook folder move this is what repoints them.
+function reconcileBootShortcuts() {
+  const enabled = loadEnabledApps();
+  const owned = [];
+  for (const a of APPS) {
+    if (!enabled.includes(a.id)) continue;
+    if (a.engine) { if (gazeCompiled()) owned.push({ ...a, exe: path.join(GAZE_DIR, "ERAgaze.exe") }); continue; }
+    if (appInstalled(a)) owned.push(a);
+  }
+  const plan = shortcuts.reconcileShortcuts({ apps: owned, dir: __dirname, port: PORT,
+    iconFor: (a) => appIcon(a, "ico") });
+  if (process.platform === "win32") console.log("[apps] shortcuts reconciled (" + plan.length + " links)");
+}
+
+// ARASAAC lookup ported from packages/generator/aac_board_designer.py
+const ARASAAC_API = "https://api.arasaac.org/api/pictograms/en/bestsearch/";
+const ARASAAC_IMG = "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
+const PREWARM = ["sun", "cloud", "cold", "more", "shirt", "trousers", "13638", "dress",
+                 "clothes", "house", "clock", "snack", "back", "yes"];
+
+// Serve a file from a jail dir if it exists, has an allowed extension, and does
+// not escape the jail. `rest` is the raw (already URL-decoded) sub-path.
+function serveJailed(res, dir, rest, allowedExts) {
+  if (rest.includes("\0")) { res.writeHead(400).end(); return; }
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(400).end(); return; }
+  const file = path.normalize(path.join(dir, rest));
+  if (file !== dir && !file.startsWith(dir + path.sep)) { res.writeHead(400).end(); return; }
+  const ext = path.extname(file).toLowerCase();
+  if (!allowedExts.includes(ext)) { res.writeHead(404).end("not found"); return; }
+  fs.readFile(file, (err, data) => {
+    if (err) { res.writeHead(404).end("not found"); return; }
+    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream",
+                         "Cache-Control": "no-cache" });
+    res.end(data);
+  });
+}
+
+// ---- book packages (era-book-reader M3): <DATA>/books/<slug>/ ----
+// The builder builds IN PLACE inside the family's Drive folder, so a package's
+// directory is whatever a parent typed ("Tabby McTat") while its URL is a slug
+// (/books/tabby-mctat/). This map is the ONE place that identity lives: the
+// index publishes the slug, serveBook resolves it back to the directory. Cached
+// on the books dir's mtime (adding/removing a package bumps it) and rebuilt on
+// a miss, so a package that lands mid-second is still reachable.
+// A slug, once handed out, BELONGS to that directory for as long as it exists:
+// the reader saves reading positions per slug and the board links by slug, so a
+// package must never be moved to <slug>-2 by something that arrived later. The
+// folder name cannot carry that — a newcomer whose folder is already in slug
+// form would win on name alone — so ownership is written down here. Dotfile, so
+// the Drive mirror's prune leaves it be.
+// The map itself lives in books-index.js, because the BUILDER needs the very
+// same answer over the family's Drive folder (content.js) — two slug rules
+// would mean the shelf serves a book the Settings card links to by another
+// name. This is the shelf's root; content.js passes its own.
+function bookDirs(force) { return booksIndex_.bookDirs(BOOKS_DIR, force); }
+
+// A package is complete iff manifest.json exists and parses (manifest written
+// LAST by the exporter); manifest-less/unparseable dirs are skipped silently.
+// Degraded law: missing books dir -> [] — never a crash.
+// The shelf's two stores (spec 2026-09-30) — favourites and first-seen — live in
+// the hub's data dir, NEVER under BOOKS_DIR (the Drive mirror's). books-shelf.js.
+const shelfStore = booksShelf.create(DATA);
+
+function booksIndex() {
+  const out = [];
+  const dates = [];   // [{slug, exportedAt}] for the first-seen record, one write
+  for (const { slug, dir } of bookDirs().list) {
+    try {
+      const mPath = path.join(BOOKS_DIR, dir, "manifest.json");
+      const m = JSON.parse(fs.readFileSync(mPath, "utf8"));
+      const pages = Array.isArray(m.pages) ? m.pages : [];
+      // ?v= cache-bust: media is served immutable/24h, so a re-exported package
+      // must change its URLs (manifest mtime = the package version; the CSS
+      // stale-cache law generalized — clients cache the bare URL hard)
+      const v = Math.floor(fs.statSync(mPath).mtimeMs / 1000).toString(36);
+      // `authored` is the coral rim and the "…'s story" badge — "this family
+      // made this book about THIS child". A book another family sent us carries
+      // `authored: true` honestly (they made it, about their child) and the
+      // manifest travels byte for byte, so the flag is neither ours to clear nor
+      // false. The SHELF is what must not repeat it: an imported package is one
+      // books-index.js can recognise, and it is the only place that rule lives.
+      //
+      // `shared` is that same one answer, published rather than only subtracted
+      // (dad, 9/23: "From a friend is cool."). Suppressing the wrong badge left
+      // the card saying nothing; the true thing it can say is where the book
+      // came from, and the shelf cannot know that unless the row carries it.
+      // ONE call to isImported(), two uses — `authored` keeps its meaning and
+      // stays false for an import, `shared` is the new fact beside it.
+      const shared = booksIndex_.isImported(BOOKS_DIR, dir);
+      out.push({ slug, title: String(m.title || dir),
+                 cover: "/books/" + slug + "/" + (m.cover || "cover.jpg") + "?v=" + v,
+                 pages: pages.length, hasVideo: pages.some(p => p && p.video),
+                 authored: m.authored === true && !shared, shared, v,
+                 // This Week's sort key (spec 2026-09-30): a maker's explicit
+                 // week when the manifest carries one, else the hub's own
+                 // first-seen record (filled in below). exportedAt is NOT a
+                 // week — every re-publish moves it.
+                 weekOf: booksShelf.weekOfOf(m.weekOf),
+                 // when the book was FIRST published (content-publish.js law 5);
+                 // null for a manifest from before the field, which the shelf
+                 // then sorts by its own first-seen record.
+                 publishedAt: booksShelf.isoOf(m.publishedAt) });
+      dates.push({ slug, exportedAt: m.exportedAt });
+    } catch {}   // incomplete package: skip silently
+  }
+  // ♥ and first-seen, from the hub's own stores. A favourite whose book is gone
+  // has no row to land on and is simply ignored.
+  let seen = new Map(), favs = new Set();
+  try { seen = shelfStore.firstSeen(dates); } catch {}
+  try { favs = shelfStore.favorites(); } catch {}
+  for (const row of out) {
+    row.favorite = favs.has(row.slug);
+    row.firstSeen = seen.get(row.slug) || null;
+  }
+  return out;
+}
+
+// GET /books/<slug>/... and /music/... — path-jailed static with an allowlist.
+// Content is immutable, so media gets a long immutable Cache-Control; JSON
+// manifests no-cache. A/V files get single-range HTTP Range support and are
+// ALWAYS streamed (createReadStream), never buffered whole. HEAD answers with
+// GET's headers and no body (9/5: a probe like `curl -I` got 404 from a route
+// that only knew GET, which read as "the audio is missing").
+const BOOK_AV_EXTS = [".mp3", ".mp4", ".wav"];
+// ONE list (spec §7). It used to be spelled here; sharing added two more
+// readers of it — the export that walks a package into an archive and the
+// import that decides what a stranger's archive may hold — and one rule stated
+// three times is a rule that drifts. books-share.js owns it now and this is
+// the serve side reading the same one.
+const BOOK_EXTS = booksShare.BOOK_EXTS;
+const MUSIC_AV_EXTS = [".m4a", ".mp3", ".wav", ".webm", ".opus"];
+const MUSIC_EXTS = [".json", ".jpg", ".jpeg", ".png", ".webp", ...MUSIC_AV_EXTS];
+// movies jail: images + json ONLY — streaming services are never served by
+// the hub (D57: their pixels come from the services, always). Downloaded week
+// videos are a different thing and are served from this-week/ (spec 2026-10-12).
+const MOVIE_EXTS = [".json", ".jpg", ".webp", ".png"];
+// The books allowlist is by EXTENSION, so the builder's scratch folders —
+// sources/ (the originals a parent dropped in) and .build/ (job.json,
+// text.json) — would be public .jpg/.json under it. They live INSIDE the
+// package on purpose (Drive mirrors them between devices), so the serve side
+// denies them by name. Books only: music/movies have no such folders and must
+// not inherit the restriction. Kept with BOOK_EXTS in books-share.js, which
+// refuses to EXPORT a manifest that names anything under one of them — the
+// same two directories, hidden by the same list, on both doors.
+const BOOK_DENY_DIRS = booksShare.BOOK_DENY_DIRS;
+function serveBook(req, res, rest) {
+  serveMediaJail(req, res, BOOKS_DIR, rest, BOOK_EXTS, BOOK_AV_EXTS, BOOK_DENY_DIRS,
+    // Books only: the first segment is a SLUG, not a directory name. An unknown
+    // slug is 404 even when a directory of that literal name exists, so a
+    // package has exactly one URL and the parent's folder name is not a second.
+    (s) => booksIndex_.dirFor(BOOKS_DIR, s));
+}
+// cacheControl: for a jail whose images are REWRITTEN in place (Drawing's picture.png, rewritten by
+// every Done); everything else keeps the day-long immutable cache.
+function serveMediaJail(req, res, jailDir, rest, allowedExts, avExts, denyDirs, resolveDir, cacheControl) {
+  const head = req.method === "HEAD";           // same headers, no body, no stream
+  if (rest.includes("\0")) { res.writeHead(400).end(); return; }
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(rest)) { res.writeHead(403).end(); return; }
+  // after the escape guards (an escape stays 403), before the join
+  if (resolveDir) {
+    const i = rest.indexOf("/");
+    const dir = resolveDir(i === -1 ? rest : rest.slice(0, i));
+    if (dir === null) { res.writeHead(404).end("not found"); return; }
+    rest = i === -1 ? dir : dir + rest.slice(i);
+  }
+  const file = path.normalize(path.join(jailDir, rest));
+  if (file !== jailDir && !file.startsWith(jailDir + path.sep)) { res.writeHead(403).end(); return; }
+  // Private path segment anywhere under the jail -> 404 (not 403: a denied name
+  // is indistinguishable from a name that is not there). Compared against the
+  // name WINDOWS resolves, not the one the client typed: the family's fs
+  // matches SOURCES/ to the same directory and drops a component's trailing
+  // dots and spaces, so "sources./IMG.jpg" and "sources /IMG.jpg" open the very
+  // photos this deny exists to hide.
+  if (denyDirs && denyDirs.length) {
+    const segs = path.relative(jailDir, file).split(/[\\/]/)
+      .map(s => s.toLowerCase().replace(/[. ]+$/, ""));
+    if (segs.some(s => denyDirs.includes(s))) { res.writeHead(404).end("not found"); return; }
+  }
+  const ext = path.extname(file).toLowerCase();
+  if (!allowedExts.includes(ext)) { res.writeHead(404).end("not found"); return; }
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404).end("not found"); return; }
+    const type = MIME[ext] || "application/octet-stream";
+    if (ext === ".json") {                       // manifest.json: small, mutable view
+      if (head) { res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" }).end(); return; }
+      fs.readFile(file, (e, data) => {
+        if (e) { res.writeHead(404).end("not found"); return; }
+        res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-cache" });
+        res.end(data);
+      });
+      return;
+    }
+    const headers = { "Content-Type": type, "Cache-Control": cacheControl || "max-age=86400, immutable" };
+    if (!avExts.includes(ext)) {                 // images: full streamed 200
+      headers["Content-Length"] = st.size;
+      if (head) { res.writeHead(200, headers).end(); return; }
+      streamJailFile(res, file, undefined, 200, headers);
+      return;
+    }
+    headers["Accept-Ranges"] = "bytes";
+    const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
+    if (m && (m[1] !== "" || m[2] !== "")) {     // single range; malformed -> full 200
+      let start, end;
+      if (m[1] === "") {                         // suffix form: last N bytes
+        const n = parseInt(m[2], 10);
+        start = st.size - n; end = st.size - 1;
+        if (n === 0) start = st.size;            // bytes=-0 is unsatisfiable
+        if (start < 0) start = 0;
+      } else {
+        start = parseInt(m[1], 10);
+        end = m[2] === "" ? st.size - 1 : Math.min(parseInt(m[2], 10), st.size - 1);
+      }
+      if (start >= st.size || start > end) {
+        res.writeHead(416, { "Content-Range": "bytes */" + st.size }).end();
+        return;
+      }
+      headers["Content-Range"] = "bytes " + start + "-" + end + "/" + st.size;
+      headers["Content-Length"] = end - start + 1;
+      if (head) { res.writeHead(206, headers).end(); return; }
+      streamJailFile(res, file, { start, end }, 206, headers);
+      return;
+    }
+    headers["Content-Length"] = st.size;
+    if (head) { res.writeHead(200, headers).end(); return; }
+    streamJailFile(res, file, undefined, 200, headers);
+  });
+}
+// The status line goes out only once the file is OPEN: a file the Drive mirror prunes between the
+// stat above and this open is a 404 (any other open error a 500), never an unhandled stream error
+// that takes the hub down (review 10/2). A read error after the headers left cuts the response.
+function streamJailFile(res, file, range, status, headers) {
+  const s = fs.createReadStream(file, range);
+  s.on("error", (e) => {
+    if (res.headersSent) { res.destroy(); return; }
+    if (e && e.code === "ENOENT") res.writeHead(404).end("not found");
+    else res.writeHead(500).end();
+  });
+  s.on("open", () => { res.writeHead(status, headers); s.pipe(res); });
+  res.on("close", () => s.destroy());
+}
+
+// Pick whichever recipe path exists with the newest mtime; serve with ETag/304.
+function serveRecipe(req, res) {
+  let best = null;
+  for (const p of RECIPE_PATHS) {
+    try { const st = fs.statSync(p); if (!best || st.mtimeMs > best.st.mtimeMs) best = { p, st }; }
+    catch {}
+  }
+  if (!best) { res.writeHead(404).end("not found"); return; }
+  const etag = '"' + Math.floor(best.st.mtimeMs) + "-" + best.st.size + '"';
+  const headers = { "Content-Type": "application/json", "Cache-Control": "no-cache",
+                    "ETag": etag, "Access-Control-Allow-Origin": "*" };
+  if ((req.headers["if-none-match"] || "") === etag) { res.writeHead(304, headers).end(); return; }
+  if (req.method === "HEAD") { res.writeHead(200, headers).end(); return; }
+  fs.readFile(best.p, (err, data) => {
+    if (err) { res.writeHead(404).end("not found"); return; }
+    res.writeHead(200, headers); res.end(data);
+  });
+}
+
+// ---- Songs Board recipe: GENERATED from <DATA>/music/manifest.json ----
+// v2 (dad's 8/24 feedback round). GRID pages: 3x4, 7 song doors per page in
+// rank order at the learned cells, center rests unpinned, More bottom-left,
+// back (big <- glyph) top-left on later pages — NO Stop and NO exit tile on
+// the grid (playback only happens inside a song page, so leaving it IS stop;
+// the msgbar door remains the app exit). Each song door opens its SONG PAGE:
+// the cover hero fills the LEFT HALF (row/col spans), right column = back
+// arrow / Stop / Full song, far-right column all rest black (eye rest).
+// Default play is a CLIP_MS clip (school: scratch the itch, not the day);
+// "Full song" un-caps the running clip (or replays full) — deliberate extra
+// effort by design. Per-song `v` = audio file mtime (client IDB cache key).
+// ETag = manifest stat + RECIPE_REV (bump the rev when this generator's
+// OUTPUT changes without a manifest change, or boards keep their 304 cache).
+// page 1 has no chrome tiles at the corners (v3, dad 8/24): 9 songs. Later
+// pages keep (1,1) for back but use the (3,4) corner too (dad r4): 8 songs.
+const SONG_CELLS_P1 = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
+const SONG_CELLS_PN = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
+const CLIP_MS = 40000;
+const RECIPE_REV = 4;
+const STOP_SYMBOL = "8289";   // exact ARASAAC id: the red STOP sign (bestsearch "stop" = a bus stop)
+const FULL_SYMBOL = "music";  // sheet-music notes (verified via /symbol/music)
+function songsRecipe() {
+  const mp = path.join(MUSIC_DIR, "manifest.json");
+  const st = fs.statSync(mp);                    // throws -> caller 404s
+  const manifest = JSON.parse(fs.readFileSync(mp, "utf8"));
+  const songs = (Array.isArray(manifest.songs) ? manifest.songs : [])
+    .filter(s => s && s.id && s.audio)
+    .map(s => {
+      let v = 0;
+      try { v = Math.floor(fs.statSync(path.join(MUSIC_DIR, s.audio)).mtimeMs); }
+      catch { return null; }                     // audio file missing: skip the song
+      return { ...s, v };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.rank || 0) - (b.rank || 0));
+  const perP1 = SONG_CELLS_P1.length, perPN = SONG_CELLS_PN.length;
+  const pages = songs.length <= perP1 ? 1 : 1 + Math.ceil((songs.length - perP1) / perPN);
+  const boards = [];
+  for (let p = 0; p < pages; p++) {
+    const id = p === 0 ? "songs" : "songs-" + (p + 1);
+    const cells = p === 0 ? SONG_CELLS_P1 : SONG_CELLS_PN;
+    const from = p === 0 ? 0 : perP1 + (p - 1) * perPN;
+    const buttons = [];
+    if (p > 0) {
+      buttons.push({ label: "Back", say: "back", type: "back", glyph: "←",
+                     load: p === 1 ? "songs" : "songs-" + p, row: 1, col: 1 });
+    }
+    songs.slice(from, from + cells.length).forEach((s, i) => {
+      const [row, col] = cells[i];
+      buttons.push({ label: s.title, say: s.title, type: "song", song_id: s.id,
+                     audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
+                     image: s.cover ? "music/" + s.cover : undefined,
+                     load: "song-" + s.id,
+                     duration: s.duration || 0, row, col });
+    });
+    if (p < pages - 1)   // exactly the outfit board's More (teal control + ARASAAC "more")
+      buttons.push({ label: "More", type: "control", symbol: "more",
+                     load: "songs-" + (p + 2), row: 3, col: 1 });
+    boards.push({ id, name: "What do I want to hear?", rows: 3, columns: 4, buttons });
+  }
+  // one page per song: hero left half; back / Stop / Full song down col 3;
+  // col 4 stays unpinned -> a full black rest column.
+  songs.forEach((s, i) => {
+    const gridPage = i < perP1 ? "songs"
+                   : "songs-" + (Math.floor((i - perP1) / perPN) + 2);
+    boards.push({
+      id: "song-" + s.id, name: s.title, rows: 3, columns: 4,
+      buttons: [
+        { label: s.title, say: s.title, type: "song", song_id: s.id,
+          audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
+          image: s.cover ? "music/" + s.cover : undefined,
+          duration: s.duration || 0, row: 1, col: 1, row_span: 3, col_span: 2 },
+        { label: "Back", say: "back", type: "back", glyph: "←",
+          load: gridPage, row: 1, col: 3 },
+        { label: "Stop", say: "stop", type: "stop", symbol: STOP_SYMBOL, row: 2, col: 3 },
+        { label: "Full song", say: "full song", type: "full", song_id: s.id,
+          symbol: FULL_SYMBOL,
+          audio: "music/" + s.audio, v: s.v, row: 3, col: 3 },
+      ],
+    });
+  });
+  return {
+    recipe: { locale: "en-US", root: "songs", home_label: "Songs", boards },
+    etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + "-r" + RECIPE_REV + '"',
+  };
+}
+function serveSongsRecipe(req, res) {
+  let out;
+  try { out = songsRecipe(); }
+  catch { res.writeHead(404).end("not found"); return; }   // no music overlay: honest 404
+  const headers = { "Content-Type": "application/json", "Cache-Control": "no-cache",
+                    "ETag": out.etag, "Access-Control-Allow-Origin": "*" };
+  if ((req.headers["if-none-match"] || "") === out.etag) { res.writeHead(304, headers).end(); return; }
+  if (req.method === "HEAD") { res.writeHead(200, headers).end(); return; }
+  res.writeHead(200, headers);
+  res.end(JSON.stringify(out.recipe));
+}
+
+// ---- Movies Board recipe: GENERATED from <DATA>/movies/catalog.json ----
+// (movie-player P1; spec docs/specs/2026-08-29-movie-player-design.md
+// §2). 3x4 GRID pages with FROZEN slots (spatial memory, contract navAnchors):
+//   (1,1) = continue on page 1 (back arrow on later pages)
+//   six core-title cells in reading order: (1,2)(1,3)(1,4)(2,1)(3,2)(3,3)
+//   (2,4) = THE exploration slot — exactly ONE tier:"discovery" title per grid
+//           page (comfort titles NEVER sit here; a comfort-flagged discovery
+//           title joins the core flow instead)
+//   (3,1) = More on non-last pages; (3,4) = All-done exit on EVERY grid page
+//   (2,2)/(2,3) stay unpinned -> the renderer's black rest cells
+// Show tiles are DOORS (board: <titleId>) -> episode pages (8/page, back
+// top-left, More bottom-left) + a "<titleId>-next" what-next board: the
+// post-episode choice screen that replaces autoplay (next / watch again /
+// something else / all done).
+// GENERATOR RULE: only titles/episodes with a non-null launch.url appear;
+// every null launch is counted in meta.pendingCount (curation backlog
+// visibility). Missing/empty/unparseable catalog -> a VALID EMPTY recipe and
+// the server stays alive (degrade like /books/index.json, NOT like songs' 404
+// — the real v0 catalog ships all-null and the board must still boot).
+// ETag = catalog mtime + size + MOVIE_RECIPE_REV (bump the rev when this
+// generator's OUTPUT changes without a catalog change, or boards keep 304s).
+// D57b (dad 8/29): grid pages carry NO exit tile — the msgbar door is the
+// app exit (songs D56a convention); (3,4) seats content like songs v3.
+const MOVIE_CORE_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [3, 2], [3, 3], [3, 4]];
+const MOVIE_EP_CELLS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
+const MOVIE_RECIPE_REV = 4;
+// season/episode order flattened; keeps null-launch episodes so the caller can
+// both filter and count them (pendingCount).
+function movieEpisodesOf(t) {
+  const out = [];
+  const seasons = (Array.isArray(t.seasons) ? t.seasons : [])
+    .slice().sort((a, b) => (a && a.n || 0) - (b && b.n || 0));
+  for (const s of seasons) {
+    if (!s) continue;
+    const eps = (Array.isArray(s.episodes) ? s.episodes : [])
+      .slice().sort((a, b) => (a && a.n || 0) - (b && b.n || 0));
+    for (const e of eps) {
+      if (!e) continue;
+      out.push({ s: s.n, e: e.n, title: e.title, url: (e.launch && e.launch.url) || null });
+    }
+  }
+  return out;
+}
+function moviesRecipe() {
+  const cp = path.join(MOVIES_DIR, "catalog.json");
+  let st = null, catalog = null;
+  try {
+    st = fs.statSync(cp);
+    catalog = JSON.parse(fs.readFileSync(cp, "utf8"));
+  } catch {}                                     // degraded: valid empty recipe below
+  const etag = '"' + (st ? Math.floor(st.mtimeMs) + "-" + st.size : "0-0") +
+               "-r" + MOVIE_RECIPE_REV + '"';
+  const titles = (catalog && Array.isArray(catalog.titles) ? catalog.titles : [])
+    .filter(t => t && typeof t.id === "string" && /^[a-z0-9-]{1,64}$/.test(t.id));
+  let pending = 0;                               // null launch.urls awaiting curation
+  const playable = [];
+  for (const t of titles) {
+    if (t.kind === "movie") {
+      const url = (t.launch && t.launch.url) || null;
+      if (url) playable.push({ ...t, url });
+      else pending++;
+    } else if (t.kind === "show") {
+      const eps = movieEpisodesOf(t);
+      pending += eps.filter(e => !e.url).length;
+      if (!eps.length) pending++;                // seasons:[] = the whole show is pending
+      const ok = eps.filter(e => e.url);
+      if (ok.length) playable.push({ ...t, episodes: ok });
+    }
+  }
+  const byRank = (a, b) => (a.rank || 0) - (b.rank || 0) || String(a.id).localeCompare(String(b.id));
+  // comfort go-tos stay accessible but never occupy the exploration slot
+  const core = playable.filter(t => t.tier !== "discovery" || t.comfort === true).sort(byRank);
+  const discovery = playable.filter(t => t.tier === "discovery" && t.comfort !== true).sort(byRank);
+  // P3-SEAM(recommender): v1 "continue" is the most trivial deterministic rule
+  // — the first show (core first, then rank order) that has a playable episode;
+  // its "next" = the first playable episode. P3 replaces this pick (and the
+  // what-next next/again picks below) with lib/recommend.js output — history-
+  // driven next-unwatched of the most recently watched show — WITHOUT touching
+  // the cell contract.
+  const contShow = core.concat(discovery).find(t => t.kind === "show") || null;
+
+  // ---- cell contract (the board agent builds against exactly this) ----
+  function showCell(t, row, col) {
+    const c = { type: "show", label: t.title, board: t.id, row, col };
+    if (t.poster) c.image = "movies/" + t.poster;
+    return c;
+  }
+  function movieCell(t, row, col) {
+    const c = { type: "movie", label: t.title, titleId: t.id, service: t.service,
+                url: t.url, row, col };
+    if (t.poster) c.image = "movies/" + t.poster;
+    return c;
+  }
+  function episodeCell(t, ep, row, col, mark) {
+    const c = { type: "episode", label: ep.title || ("S" + ep.s + " E" + ep.e),
+                titleId: t.id, service: t.service, url: ep.url,
+                episode: { s: ep.s, e: ep.e }, row, col };
+    if (mark) c.mark = mark;                     // "next" | "again"
+    if (t.poster) c.image = "movies/" + t.poster; // the show's art (continue tile incl.)
+    return c;
+  }
+  const exitCell = () => ({ label: "All done", say: "all done", type: "exit", row: 3, col: 4 });
+
+  const boards = [];
+  const doorPage = {};                           // titleId -> grid board id (for Back doors)
+  // D57c (dad 8/28, photo review): ONLY the middle pair (2,2)(2,3) ever rests
+  // black — when a page has no discovery title, (2,4) joins the core flow.
+  let ci = 0, p = 0;
+  while (p === 0 || ci < core.length || discovery[p]) {
+    const id = p === 0 ? "movies" : "movies-" + (p + 1);
+    const buttons = [];
+    if (p === 0) {
+      if (contShow)                              // pinned slot 1: continue
+        buttons.push(episodeCell(contShow, contShow.episodes[0], 1, 1, "next"));
+    } else {
+      buttons.push({ label: "Back", say: "back", type: "back", glyph: "←",
+                     load: p === 1 ? "movies" : "movies-" + p, row: 1, col: 1 });
+    }
+    const disc = discovery[p];
+    const cells = disc ? MOVIE_CORE_CELLS : MOVIE_CORE_CELLS.concat([[2, 4]]);
+    for (const [row, col] of cells) {
+      const t = core[ci]; if (!t) break;
+      ci++;
+      doorPage[t.id] = id;
+      buttons.push(t.kind === "show" ? showCell(t, row, col) : movieCell(t, row, col));
+    }
+    if (disc) {                                  // the exploration slot, one per page
+      doorPage[disc.id] = id;
+      buttons.push(disc.kind === "show" ? showCell(disc, 2, 4) : movieCell(disc, 2, 4));
+    }
+    const morePages = ci < core.length || discovery[p + 1];
+    if (morePages)                               // exactly the songs board's More
+      buttons.push({ label: "More", type: "control", symbol: "more",
+                     load: "movies-" + (p + 2), row: 3, col: 1 });
+    // no exit tile (D57b): the msgbar door exits, like every other board
+    boards.push({ id, name: "What do I want to watch?", rows: 3, columns: 4, buttons });
+    p++;
+    if (!morePages) break;
+  }
+
+  // per-show episode pages + the "<show>-next" what-next board
+  for (const t of core.concat(discovery)) {
+    if (t.kind !== "show") continue;
+    const eps = t.episodes, per = MOVIE_EP_CELLS.length;
+    const epPages = Math.ceil(eps.length / per);
+    for (let p = 0; p < epPages; p++) {
+      const id = p === 0 ? t.id : t.id + "-" + (p + 1);
+      const buttons = [{ label: "Back", say: "back", type: "back", glyph: "←",
+                         load: p === 0 ? (doorPage[t.id] || "movies")
+                             : (p === 1 ? t.id : t.id + "-" + p),
+                         row: 1, col: 1 }];
+      eps.slice(p * per, (p + 1) * per).forEach((ep, i) => {
+        const [row, col] = MOVIE_EP_CELLS[i];
+        buttons.push(episodeCell(t, ep, row, col));
+      });
+      if (p < epPages - 1)
+        buttons.push({ label: "More", type: "control", symbol: "more",
+                       load: t.id + "-" + (p + 2), row: 3, col: 1 });
+      boards.push({ id, name: t.title, rows: 3, columns: 4, buttons });
+    }
+    // the post-episode choice screen (replaces autoplay; spec beat 6).
+    // P3-SEAM(recommender): v1 next = first playable, again = LAST playable
+    // (deterministic stand-ins for next-unwatched / last-watched).
+    boards.push({
+      id: t.id + "-next", name: "What next?", rows: 3, columns: 4,
+      buttons: [
+        episodeCell(t, eps[0], 1, 2, "next"),
+        episodeCell(t, eps[eps.length - 1], 1, 3, "again"),
+        { label: "Something else", say: "something else", type: "control",
+          load: "movies", row: 3, col: 2 },
+        exitCell(),
+      ],
+    });
+  }
+  return {
+    recipe: { locale: "en-US", root: "movies", home_label: "Movies",
+              meta: { pendingCount: pending }, boards },
+    etag,
+  };
+}
+// ---- This week (spec 2026-10-12 §3) -----------------------------------------
+const THIS_WEEK_EXTS = [".json", ".mp4", ".webp", ".jpg", ".jpeg", ".png"];
+const THIS_WEEK_AV_EXTS = [".mp4"];
+const THIS_WEEK_DENY_DIRS = [".tmp"];   // the rail's download staging (B3)
+function serveThisWeekRecipe(req, res) {
+  // build() never throws: no week -> root-only + "none-r1", a broken manifest
+  // -> root-only + "err-<now>" (the valid-empty degrade serveMoviesRecipe has)
+  const out = thisWeek.build(DATA);
+  if (out.error) console.error("[this-week] " + out.error);
+  const headers = { "Content-Type": "application/json", "Cache-Control": "no-cache",
+                    "ETag": out.etag, "Access-Control-Allow-Origin": "*" };
+  if ((req.headers["if-none-match"] || "") === out.etag) { res.writeHead(304, headers).end(); return; }
+  if (req.method === "HEAD") { res.writeHead(200, headers).end(); return; }
+  res.writeHead(200, headers);
+  res.end(JSON.stringify(out.recipe));
+}
+// The per-device download switch (B3 defines the key formally; default ON).
+function thisWeekSwitch() {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
+    if (s && s.downloadWeekVideos === false) return false;
+  } catch {}
+  return true;
+}
+// The download rail's view (this-week-fetch.js): `running` = {id, phase} of the
+// job in flight, and per-video states ready|coming|claimed|too-long|not-mp4|
+// failed|pack-missing|switch-off|no-folder (+ height, error). The files stay the
+// truth for "ready"; the rail answers for everything else.
+thisWeekFetch.init({ dataDir: DATA, deviceId: DEVICE_ID, pool, settingsReader: thisWeekSwitch });
+let thisWeekRail = {
+  running: () => thisWeekFetch.running(),
+  videoState: (id, files) => thisWeekFetch.videoState(id, files),
+};
+function thisWeekStatus() {
+  const out = thisWeek.build(DATA);
+  const videos = {};
+  if (out.week)
+    for (const v of out.week.manifest.watch)
+      videos[v.id] = thisWeekRail.videoState(v.id, out.ready[v.id]);
+  return {
+    week_of: out.week ? out.week.week_of : null,
+    switch: thisWeekSwitch(),
+    // the same two seams music-add.js tool() reads: ERA_YTDLP stands in for the pack
+    pack: { id: "media-tools", installed: !!process.env.ERA_YTDLP ||
+            packs.packInstalled(process.env.ERA_PACK_ROOT || __dirname, "media-tools") },
+    folder: !!drive.localFolder(),
+    running: thisWeekRail.running(),
+    videos,
+  };
+}
+function serveMoviesRecipe(req, res) {
+  let out;
+  try { out = moviesRecipe(); }
+  catch (e) {   // belt & braces: even a generator bug degrades to empty-but-alive
+    console.error("[movies] recipe failed: " + e.message);
+    out = { recipe: { locale: "en-US", root: "movies", home_label: "Movies",
+                      meta: { pendingCount: 0 },
+                      boards: [{ id: "movies", name: "What do I want to watch?",
+                                 rows: 3, columns: 4,
+                                 buttons: [{ label: "All done", say: "all done",
+                                             type: "exit", row: 3, col: 4 }] }] },
+            etag: '"err-' + Date.now() + '"' };
+  }
+  const headers = { "Content-Type": "application/json", "Cache-Control": "no-cache",
+                    "ETag": out.etag, "Access-Control-Allow-Origin": "*" };
+  if ((req.headers["if-none-match"] || "") === out.etag) { res.writeHead(304, headers).end(); return; }
+  if (req.method === "HEAD") { res.writeHead(200, headers).end(); return; }
+  res.writeHead(200, headers);
+  res.end(JSON.stringify(out.recipe));
+}
+
+// Fetch one symbol PNG from ARASAAC into the disk cache. Returns the file path
+// on success, null on any failure (never throws).
+async function fetchSymbolToCache(name) {
+  const file = path.join(SYMBOLS_CACHE, name + ".png");
+  try {
+    let id;
+    if (/^\d+$/.test(name)) {
+      id = name;   // exact ARASAAC pictogram id (recipes pin one when bestsearch
+                   // guesses wrong — "stop" finds a bus stop; 8289 IS the stop sign)
+    } else {
+      const r = await fetch(ARASAAC_API + encodeURIComponent(name));
+      if (!r.ok) return null;
+      const hits = await r.json();
+      if (!Array.isArray(hits) || !hits.length) return null;
+      id = hits[0]._id;
+    }
+    const img = await fetch(ARASAAC_IMG.replace(/\{id\}/g, String(id)));
+    if (!img.ok) return null;
+    const buf = Buffer.from(await img.arrayBuffer());
+    fs.writeFileSync(file, buf);
+    return file;
+  } catch (e) {
+    console.error("[symbol] lookup failed for '" + name + "': " + e.message);
+    return null;
+  }
+}
+
+// GET /symbol/:name — cached PNG, fetching from ARASAAC on a miss.
+async function serveSymbol(res, name) {
+  if (!/^[a-z0-9-]+$/.test(name)) { res.writeHead(404).end("not found"); return; }
+  const file = path.join(SYMBOLS_CACHE, name + ".png");
+  let cached = fs.existsSync(file);
+  if (!cached) {
+    const got = await fetchSymbolToCache(name);
+    if (!got) { console.error("[symbol] no match for '" + name + "'"); res.writeHead(404).end("not found"); return; }
+  }
+  fs.readFile(file, (err, data) => {
+    if (err) { res.writeHead(404).end("not found"); return; }
+    res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "max-age=86400",
+                         "X-Symbol-Cache": cached ? "hit" : "miss" });
+    res.end(data);
+  });
+}
+
+// ---- ElevenLabs TTS (proxied + cached; falls back to Windows TTS client-side) ----
+// Key: put ELEVENLABS_API_KEY=... in tts-config.json ("apiKey") or the environment.
+const TTS_CFG_PATH = path.join(DATA, "tts-config.json");
+const CURATED_VOICES = [
+  { id: "cgSgspJ2msm6clMCkdW9", name: "Jessica — playful American" },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah — soft & warm" },
+  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel — calm narrator" },
+  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda — friendly" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily — warm British" }
+];
+// ERA_ELEVEN_URL: a stand-in for the tests, like ERA_RESEND_URL (bug 14: the
+// key-check must be proven against a server that says no).
+const ELEVEN_URL = process.env.ERA_ELEVEN_URL || "https://api.elevenlabs.io";
+// Is this ElevenLabs key real? (cheap call, no synthesis, no quota spend)
+async function verifyTtsKey(key) {
+  try {
+    const r = await fetch(ELEVEN_URL + "/v1/user/subscription",
+      { headers: { "xi-api-key": key }, signal: AbortSignal.timeout(15000) });
+    if (r.ok) {
+      let tier = "";
+      try { tier = (await r.json()).tier || ""; } catch {}
+      return { ok: true, tier };
+    }
+    if (r.status === 401) return { ok: false, error: "ElevenLabs did not recognise that key - check for a missing character" };
+    return { ok: false, error: "ElevenLabs replied " + r.status };
+  } catch (e) { return { ok: false, error: "could not reach ElevenLabs (offline?)" }; }
+}
+
+// Is this vision key real? The cheapest question each provider has — list
+// your models — spends no tokens on any of the three. The key travels in the
+// provider's own header, never in the URL (Google also takes ?key=, and a URL
+// is what ends up in logs). The base comes from content-providers so the
+// ERA_AI_URL stand-in covers this door too: no test asks a real provider.
+const AI_PROBE = {
+  anthropic: { name: "Claude", path: "/v1/models?limit=1",
+    headers: (k) => ({ "x-api-key": k, "anthropic-version": "2023-06-01" }) },
+  openai: { name: "OpenAI", path: "/v1/models",
+    headers: (k) => ({ "Authorization": "Bearer " + k }) },
+  google: { name: "Google AI Studio", path: "/v1beta/models?pageSize=1",
+    headers: (k) => ({ "x-goog-api-key": k }) },
+};
+async function verifyAiKey(provider, key) {
+  const p = AI_PROBE[provider] || AI_PROBE.google;
+  try {
+    const r = await fetch(contentProviders.baseFor(provider) + p.path,
+      { headers: p.headers(key), signal: AbortSignal.timeout(15000) });
+    if (r.ok) return { ok: true };
+    // Google says API_KEY_INVALID with a 400; the other two 401/403
+    const refused = r.status === 401 || r.status === 403 || (r.status === 400 && provider === "google");
+    if (refused) return { ok: false, refused: true,
+      error: p.name + " did not recognise that key - check for a missing character" };
+    return { ok: false, error: p.name + " replied " + r.status };
+  } catch (e) { return { ok: false, error: "could not reach " + p.name + " (offline?)" }; }
+}
+
+// ---- fal: the only key in the product that spends money per press (T6.1) ----
+// ERA_FAL_URL is the same kind of stand-in seam ERA_ELEVEN_URL is: no test may
+// ever spend a key or leave the machine.
+const FAL_URL = process.env.ERA_FAL_URL || "https://api.fal.ai";
+// Is this fal key real? One cheap real call, exactly as verifyTtsKey does it:
+// the account's billing row READS a balance and generates nothing, so proving
+// the key costs nothing and a wrong key is caught here rather than halfway
+// through a book a parent has already agreed to pay for.
+//
+// perClipPrice comes back with it because the animate step's cost gate is
+// mandatory (spec §4 step 5) and fal publishes no price API — one number, from
+// ai-config.js, quoted on the card and spent by the worker.
+async function verifyFalKey(key) {
+  try {
+    const r = await fetch(FAL_URL + "/v1/account/billing?expand=credits",
+      { headers: { Authorization: "Key " + key }, signal: AbortSignal.timeout(15000) });
+    if (r.ok) return { ok: true, perClipPrice: aiConfig.DEFAULT_CLIP_PRICE };
+    if (r.status === 401 || r.status === 403)
+      return { ok: false, error: "fal did not recognise that key - check for a missing character" };
+    return { ok: false, error: "fal replied " + r.status };
+  } catch (e) { return { ok: false, error: "could not reach fal (offline?)" }; }
+}
+
+// <DATA>/ai-config.json is shared by three cards now (the AI helper's vision
+// key, the two film keys, the fal key), so every writer MERGES and a file that
+// exists but cannot be READ is a refusal — never something to start fresh over,
+// which would delete the keys the other cards saved (the movies catalog's Law
+// 3, one directory up). null means "do not touch this file".
+const AI_CFG_PATH = path.join(DATA, "ai-config.json");
+function readAiCfg() {
+  try {
+    const c = JSON.parse(fs.readFileSync(AI_CFG_PATH, "utf8"));
+    return c && typeof c === "object" && !Array.isArray(c) ? c : null;
+  } catch (e) { return e && e.code === "ENOENT" ? {} : null; }
+}
+// TMP-THEN-RENAME, never in place (review 9/5). The read side above refuses to
+// start fresh over an unreadable file because four cards' keys live in it now;
+// a rewrite in place takes exactly that risk from the other end — a crash or a
+// full disk (9/3: makensis died of one) half way through would leave every key
+// in the family's hub truncated. content-store already owns the primitive.
+function writeAiCfg(cfg) {
+  try { contentStore.writeAtomic(AI_CFG_PATH, JSON.stringify(cfg, null, 1)); return true; }
+  catch { return false; }
+}
+
+function loadTtsCfg() {
+  let cfg = { apiKey: process.env.ELEVENLABS_API_KEY || "", voiceId: CURATED_VOICES[0].id,
+              modelId: "eleven_flash_v2_5" };
+  try { cfg = { ...cfg, ...JSON.parse(fs.readFileSync(TTS_CFG_PATH, "utf8")) }; } catch {}
+  if (!cfg.apiKey && process.env.ELEVENLABS_API_KEY) cfg.apiKey = process.env.ELEVENLABS_API_KEY;
+  return cfg;
+}
+function saveTtsCfg(cfg) { fs.writeFileSync(TTS_CFG_PATH, JSON.stringify(cfg, null, 2)); }
+async function elevenTts(cfg, text) {
+  const key = crypto.createHash("sha1").update(cfg.voiceId + "|" + cfg.modelId + "|" + text).digest("hex");
+  const file = path.join(TTS_CACHE, key + ".mp3");
+  if (fs.existsSync(file)) return fs.readFileSync(file);       // repeat lines are free
+  const r = await fetch(ELEVEN_URL + "/v1/text-to-speech/" + cfg.voiceId +
+                        "?output_format=mp3_22050_32", {
+    method: "POST",
+    headers: { "xi-api-key": cfg.apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ text, model_id: cfg.modelId,
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 } })
+  });
+  if (!r.ok) throw new Error("elevenlabs " + r.status);
+  const buf = Buffer.from(await r.arrayBuffer());
+  fs.writeFileSync(file, buf);
+  return buf;
+}
+
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
+               ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml",
+               ".woff2": "font/woff2", ".mp3": "audio/mpeg",
+               ".mp4": "video/mp4", ".wav": "audio/wav",
+               ".m4a": "audio/mp4", ".webm": "audio/webm", ".opus": "audio/ogg",
+               ".webp": "image/webp",
+               ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".ico": "image/x-icon" };
+
+// ---- email published writing to the family (optional; Resend key + recipient
+// come from the overlay data dir, never from this repo) ----
+// Audit 9/2: nothing in the product ever WROTE these two values, so on every
+// public install The Pencil said "Sent! Your words are on their way" while the
+// hub logged "writing saved only". Settings now has a card for them
+// (POST /mail-config, which proves the pair by sending a real test email),
+// /publish reports honestly whether the words were mailed, and unsent
+// writings are retried so a flaky moment never loses her message.
+const RESEND_URL = process.env.ERA_RESEND_URL || "https://api.resend.com/emails";
+const WRITINGS = () => path.join(DATA, "writings");
+function resendKey() {
+  try {
+    const env = fs.readFileSync(path.join(DATA, "credentials.env"), "utf8");
+    const m = env.match(/^RESEND_API_KEY=(.+)$/m);
+    return m ? m[1].trim() : null;
+  } catch { return null; }
+}
+function saveResendKey(key) {
+  const f = path.join(DATA, "credentials.env");
+  let env = ""; try { env = fs.readFileSync(f, "utf8"); } catch {}
+  env = env.split(/\r?\n/).filter(l => l && !l.startsWith("RESEND_API_KEY=")).join("\n");
+  fs.writeFileSync(f, (env ? env + "\n" : "") + "RESEND_API_KEY=" + key + "\n", { mode: 0o600 });
+}
+function mailConfigured() { return !!(resendKey() && PROFILE.publishEmail); }
+// Resend's own error text is developer-speak; say what a parent can act on.
+function mailErrorFor(status, text) {
+  if (status === 401) return "Resend did not recognise that key — check for a missing character";
+  if (status === 403 || /own email|testing emails/i.test(text))
+    return "Resend's free sender only delivers to the email address you signed up to Resend with — use that one here";
+  if (status === 422) return "Resend did not accept that email address";
+  if (status === 429) return "Resend says too many emails for now — try again in a minute";
+  return "Resend answered " + status + " — try again in a minute";
+}
+async function resendSend(key, to, subject, html, attachments) {
+  const ctl = new AbortController();
+  // Drawing's picture (spec 2026-09-30 §5) rides as a 1-2 MB base64 attachment; 8 s is a text
+  // email's budget and a slow home link needs more. The Pencil's body and timeout are unchanged.
+  const withFiles = Array.isArray(attachments) && attachments.length > 0;
+  const timer = setTimeout(() => ctl.abort(), withFiles ? 30000 : 8000);
+  try {
+    const payload = { from: "The Pencil <onboarding@resend.dev>", to: [to], subject, html };
+    if (withFiles) payload.attachments = attachments;
+    const r = await fetch(RESEND_URL, {
+      method: "POST", signal: ctl.signal,
+      headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) { const t = (await r.text()).slice(0, 200); return { ok: false, error: mailErrorFor(r.status, t), detail: t }; }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: "could not reach Resend (" + (e.name === "AbortError" ? "timed out" : "no connection") + ")" };
+  } finally { clearTimeout(timer); }
+}
+// Drawing's Done mails through the Pencil's own door — same key, same family address, same sender.
+// drawings.js decides WHETHER (changed since the last mail, email set up); this says HOW.
+const DRAWING_MAIL = {
+  configured: () => mailConfigured(),
+  who: () => PROFILE.childName || "Your artist",
+  when: () => new Date().toLocaleString("en-US", { timeZone: TZ }),
+  send: (subject, html, attachments) => resendSend(resendKey(), PROFILE.publishEmail, subject, html, attachments),
+};
+function writingHtml(rec, who, when) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+  return "<div style=\"font-family:Georgia,serif\">" +
+    "<p style=\"font-size:28px;line-height:1.5\">“" + esc(rec.text) + "”</p>" +
+    "<p style=\"color:#777\">— " + esc(who) + ", with The Pencil · " + esc(when) + "</p>" +
+    "<p style=\"color:#999;font-size:13px\">Write back — a young writer loves an audience that answers.</p></div>";
+}
+// Send one saved writing. Returns {ok, error}; never throws. The writing file
+// carries `mailed` so a failed send is retried later, not forgotten.
+async function emailWriting(rec, file) {
+  const key = resendKey(), to = PROFILE.publishEmail;
+  let v;
+  if (!key || !to) { console.log("[mail] no family email set up; writing saved for Settings"); v = { ok: false, error: "not configured" }; }
+  else {
+    const who = PROFILE.childName || "your writer";
+    const when = new Date(rec.t || Date.now()).toLocaleString("en-US", { timeZone: TZ });
+    v = await resendSend(key, to,
+      "✏️ " + who + " wrote: “" + String(rec.text).slice(0, 60) + "”", writingHtml(rec, who, when));
+    if (v.ok) console.log("[mail] sent:", String(rec.text).slice(0, 40));
+    else console.error("[mail] not sent:", v.error, v.detail || "");
+  }
+  if (file) {
+    try {
+      const cur = JSON.parse(fs.readFileSync(file, "utf8"));
+      cur.mailed = v.ok ? new Date().toISOString() : false;
+      if (v.ok) delete cur.mailError; else cur.mailError = v.error;
+      fs.writeFileSync(file, JSON.stringify(cur, null, 2));
+    } catch {}
+  }
+  return v;
+}
+function listWritings(limit) {
+  let out = [];
+  try {
+    out = fs.readdirSync(WRITINGS()).filter(f => f.endsWith(".json")).sort().reverse().slice(0, limit || 20)
+      .map(f => { try { return { file: f, ...JSON.parse(fs.readFileSync(path.join(WRITINGS(), f), "utf8")) }; } catch { return null; } })
+      .filter(r => r && typeof r.text === "string");
+  } catch {}
+  return out.map(r => ({ file: r.file, t: r.t, text: r.text, mailed: r.mailed || false, mailError: r.mailError }));
+}
+// Retry writings that never went out (boot + every 30 min): a send that failed
+// because the wifi blinked, or one written before the family set up email,
+// must not stay "Saved" forever once mail works.
+let mailRetryBusy = false;
+async function retryUnsentWritings() {
+  if (mailRetryBusy || !mailConfigured()) return;
+  mailRetryBusy = true;
+  try {
+    for (const r of listWritings(50).filter(r => !r.mailed).reverse()) {
+      const v = await emailWriting(r, path.join(WRITINGS(), r.file));
+      if (!v.ok) break;   // provider down or key bad — try again next time
+    }
+  } finally { mailRetryBusy = false; }
+}
+setTimeout(() => retryUnsentWritings().catch(() => {}), 20000).unref();
+setInterval(() => retryUnsentWritings().catch(() => {}), 30 * 60 * 1000).unref();
+
+function safeDecode(u) {
+  try { return decodeURIComponent(u); } catch { return null; }
+}
+// ---- Book Reader dwell mirror (one knob) ----
+// Book Reader (separate Next.js/Vercel stack) keeps its own per-child dwell
+// in Supabase; its HTTPS pages cannot fetch this HTTP server (mixed content),
+// so the ONE dwell knob propagates the other way — a settings-page change
+// pushes dwell_ms into child_profiles server-side. Fire-and-forget: the
+// reader falls back to its stored value whenever this fails. Creds are read
+// at call time from Book-Reader's own .env.local (never committed here).
+const READER_ENV = process.env.ERA_READER_ENV || require("path").join(DATA, "reader.env");
+function pushReaderDwell(ms) {
+  let env = {};
+  try {
+    for (const line of fs.readFileSync(READER_ENV, "utf8").split("\n")) {
+      const i = line.indexOf("=");
+      if (i > 0) env[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    }
+  } catch { return; }
+  const url = env.NEXT_PUBLIC_SUPABASE_URL, key = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return;
+  fetch(url + "/rest/v1/child_profiles?id=not.is.null", {
+    method: "PATCH",
+    headers: { apikey: key, Authorization: "Bearer " + key,
+               "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify({ dwell_ms: Math.max(600, Math.min(3000, ms)) }),
+  }).then(r => { if (!r.ok) console.error("reader dwell push failed:", r.status); })
+    .catch(e => console.error("reader dwell push failed:", e.message));
+}
+
+// Where an app's door goes (Settings): "tdsnap" hands the screen to the
+// engine's ForegroundApp (TD Snap on Ellie's device); "home" stays in Our Era Comms.
+function exitTarget() {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
+    if (s.exitTo === "home") return "home";
+  } catch {}
+  return "tdsnap";
+}
+// POST to the local gaze engine; resolves true on 2xx, false when it is not
+// there (dev box, family without ERAgaze) or slow — never throws.
+function enginePost(p, body) {
+  return new Promise((resolve) => {
+    const r = http.request({ host: "127.0.0.1", port: 49155, path: p, method: "POST", timeout: 1500,
+      headers: { "Content-Length": Buffer.byteLength(body) } }, (rs) => {
+      rs.resume(); resolve(rs.statusCode >= 200 && rs.statusCode < 300);
+    });
+    r.on("timeout", () => { r.destroy(); resolve(false); });
+    r.on("error", () => resolve(false));
+    r.end(body);
+  });
+}
+// GET from the local gaze engine and parse its answer — resolves the object,
+// or null when the engine is not there, is slow, or says something that is not
+// JSON. Never throws, never rejects: every caller has a default to fall back
+// on (talk door 9/17: ForegroundApp from /config, TD Snap if the bus is quiet).
+function engineGet(p, ms = 1500) {
+  return new Promise((resolve) => {
+    const r = http.get({ host: "127.0.0.1", port: 49155, path: p, timeout: ms }, (rs) => {
+      if (rs.statusCode < 200 || rs.statusCode >= 300) { rs.resume(); resolve(null); return; }
+      let body = "";
+      rs.setEncoding("utf8");
+      rs.on("data", (c) => { body += c; if (body.length > 65536) { r.destroy(); resolve(null); } });
+      rs.on("end", () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+    });
+    r.on("timeout", () => { r.destroy(); resolve(null); });
+    r.on("error", () => resolve(null));
+  });
+}
+// Where the doors ACTUALLY go: TD Snap needs BOTH the Setting and an engine on
+// the bus (Ellie's device runs its own; a VM or a dev browser has none). One
+// helper so GET /settings (doorGoes, pauseGoes) and POST /kiosk/pause can never
+// disagree about it.
+function doorGoes() {
+  return exitTarget() === "tdsnap"
+    ? gazeBusAlive().then((alive) => (alive ? "tdsnap" : "home"))
+    : Promise.resolve("home");
+}
+// Close our kiosk window(s) — the ones launched with the kiosk-profile
+// user-data-dir — via the one powershell spawn shape proven from the
+// detached production hub (see stepAsideFromKiosk). Windows only; logged.
+function closeKiosk() {
+  if (process.platform !== "win32") return;
+  const { spawn } = require("child_process");
+  const ps =
+    "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" +
+    " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
+    "Where-Object { $_.CommandLine -like '*kiosk-profile*' } | ForEach-Object { " +
+    "Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; 'closed ' + $_.ProcessId }";
+  try {
+    const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+    fs.writeSync(out, new Date().toISOString() + " kiosk-close\n");
+    const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
+      { stdio: ["ignore", out, out], windowsHide: true });
+    c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+    c.unref();
+  } catch {}
+}
+
+// ---- the talk door's memory (dad 9/17, "pause to talk") --------------------
+// Which app she stepped out of, so that picking its TD Snap tile brings the
+// SAME app back instead of launching it over. In memory only, on purpose: a
+// hub restart forgets it, and the kiosk it named is gone with the hub anyway
+// (spec §7). Cleared whenever it can no longer be true — a resume for another
+// app (that launch kills the paused kiosk), a resume that found no window, and
+// every /kiosk/exit.
+let paused = null;   // { path, when } | null
+
+// Two spellings of one app are one app: "/reader/" is "/reader", and the
+// launcher's %OPEN% may or may not carry the trailing slash the hub's own 301
+// adds. Case folds too (a .bat is not careful about it). The QUERY is kept —
+// /board/?recipe=songs and /board/?recipe=movies are different apps to her.
+function normalizePath(p) {
+  const s = String(p == null ? "" : p).trim().toLowerCase();
+  if (!s) return "";
+  const q = s.indexOf("?");
+  let head = q < 0 ? s : s.slice(0, q);
+  const tail = q < 0 ? "" : s.slice(q);
+  if (head.length > 1 && head.endsWith("/")) head = head.slice(0, -1);
+  return head + tail;
+}
+
+// ------------------------------- doors only THIS hub's own pages may press ---
+//
+// The hub answers on 127.0.0.1 with no login, because the family PC is the
+// family's. That is fine for a door that reads. It is not fine for the three
+// that DELETE a family's photos, REWRITE their book or SPEND their allowance:
+// any web page open in any tab on that machine can POST to 127.0.0.1 without
+// asking anybody, and a page written for the purpose does not need to read the
+// answer to have done the damage.
+//
+// What a cross-site page cannot do is set a Content-Type the browser has to ask
+// permission for first. `application/json` is exactly that: requiring it means
+// the browser must send a CORS preflight, this hub answers no preflight, and
+// the request never leaves the attacker's tab. Sec-Fetch-Site is the belt to
+// that brace — every current browser sends it, and it says out loud where the
+// press came from ("same-origin", or "none" for a URL somebody typed). A tool
+// that sends neither header (curl, a test's fetch) is not a browser being
+// steered by a page it did not choose, and is let through.
+//
+// Applied to the doors that cannot be taken back, not to the whole hub: the
+// kiosk's own apps and the board post to plenty of others.
+function ownDoor(req, res) {
+  const type = String(req.headers["content-type"] || "").toLowerCase();
+  const site = req.headers["sec-fetch-site"];
+  if (type.startsWith("application/json") && (!site || site === "same-origin" || site === "none"))
+    return true;
+  res.writeHead(403, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "That came from somewhere else, so Our Era Comms did not do it." }));
+  return false;
+}
+
+// readBinaryBody(req, cap, cb) — the hub's FIRST binary request body (spec
+// §6.2), and the only one. Every other POST here accumulates a STRING with a
+// 4-64 KB cap; an archive must never be one, on two counts: a string decodes
+// the bytes and hands the import a corrupted zip, and forty megabytes of it
+// sits in this process's memory while the board is trying to be answered.
+//
+// So the body goes STRAIGHT TO A TEMP FILE, counted as it goes, and the request
+// is destroyed the moment it is larger than a book may be — the count is the
+// bytes that actually arrived, never a Content-Length a sender can lie about.
+// Backpressure is handled by hand (pause on a full sink, resume on drain)
+// because a pipe() cannot report which of the two ends stopped.
+//
+// cb(err, tmpPath). THE CALLER REMOVES THE FILE ON EVERY PATH — success,
+// refusal and crash — and this removes it itself on the paths where the caller
+// never learns the name.
+function readBinaryBody(req, cap, cb) {
+  const os = require("os");
+  const tmp = path.join(os.tmpdir(), "era-import-" + process.pid + "-" +
+    Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8));
+  let sink;
+  try { sink = fs.createWriteStream(tmp); }
+  catch { cb({ error: "write-failed" }, null); return; }
+  let got = 0, done = false;
+  // Unlinked once the handle is really closed, not the instant destroy() is
+  // called: Windows refuses to unlink a file something still has open, and
+  // silently leaving forty megabytes of somebody else's book in %TEMP% is the
+  // exact failure this whole function exists to avoid.
+  const discard = () => { sink.destroy(); sink.once("close", () => fs.unlink(tmp, () => {})); };
+  const stop = (err) => {
+    if (done) return;
+    done = true;
+    // A body over the cap is NOT hung up on here. A parent who picked the
+    // wrong file has earned the sentence that says so, and a destroyed
+    // request can carry no response at all — so the reading stops, the rest
+    // of the upload is discarded by the pause, and the caller answers 413 and
+    // closes. Every other way out has nobody left to talk to.
+    if (err.error === "too-big") req.pause(); else { try { req.destroy(); } catch {} }
+    discard();
+    cb(err, null);
+  };
+  req.on("data", (c) => {
+    if (done) return;
+    got += c.length;
+    if (got > cap) { stop({ error: "too-big" }); return; }
+    if (!sink.write(c)) { req.pause(); sink.once("drain", () => req.resume()); }
+  });
+  req.on("error", () => stop({ error: "aborted" }));
+  req.on("aborted", () => stop({ error: "aborted" }));
+  req.on("end", () => { if (!done) sink.end(); });
+  sink.on("error", () => stop({ error: "write-failed" }));
+  sink.on("finish", () => { if (!done) { done = true; cb(null, tmp); } });
+}
+
+const server = http.createServer((req, res) => {
+  // shared app settings (dwell time, chosen voice) — apps read at boot
+  if (req.method === "GET" && req.url === "/settings") {
+    let s = { dwellMs: 1200, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
+              lockMinutes: 45, lockPasscodeHash: "",
+              downloadWeekVideos: true,   // this device fetches the week's videos (spec 2026-10-12 §3.2)
+              voiceId: loadTtsCfg().voiceId,
+              childName: PROFILE.childName || "friend", hasProfile: HAS_PROFILE,
+              personalWords: [] };
+    try {
+      const lex = JSON.parse(fs.readFileSync(path.join(DATA, "personal-lexicon.json"), "utf8"));
+      if (Array.isArray(lex)) s.personalWords = lex.map(w => typeof w === "string" ? w : w.word).filter(Boolean);
+    } catch {}
+    try { s = { ...s, ...JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")) }; } catch {}
+    s.voiceId = loadTtsCfg().voiceId;
+    // where the door will ACTUALLY go: TD Snap needs a gaze engine on the
+    // bus (Ellie's device runs its own); without one /kiosk/exit answers
+    // home — so a tile named for the door (the Reader's) must not promise
+    // "Back to TD Snap" on a PC that has none (VM leg B, 9/3: a fresh
+    // v0.31.3 profile showed exactly that). Same probe as the door itself.
+    doorGoes().then((goes) => {
+      s.doorGoes = goes;
+      // pauseGoes IS doorGoes — the talk door 💬 goes exactly where 🚪 goes.
+      // It gets a key of its own so an app can tell "no pause on this PC"
+      // apart from an OLD hub that never heard of pausing: an old hub omits
+      // the key, and a missing key means "home", so no 💬 is ever mounted
+      // against a hub that could not honour it (dad 9/17, spec §3.3).
+      s.pauseGoes = goes;
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify(s));
+    });
+    return;
+  }
+  // The town lookup behind Settings' "Change", proxied instead of called from
+  // the page: one place owns the seam, the timeout and the wording. Open-
+  // Meteo's own geocoder — same provider as the forecast, no key — and it
+  // resolves a ZIP as well as a name, which is how people think ("either city
+  // or town or zip", dad 9/23). Pressed by a parent, never on the build path:
+  // a geocoder that is down costs a lookup, never a board.
+  //
+  // No ownDoor: it is a read that reveals nothing this device does not already
+  // send to the same host.
+  if (req.method === "GET" && (req.url === "/weather/search" || req.url.startsWith("/weather/search?"))) {
+    const say = (code, o) => {
+      res.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify(o));
+    };
+    const q = String(new URL(req.url, "http://x").searchParams.get("q") || "").trim().slice(0, 80);
+    if (!q) { say(200, { results: [] }); return; }
+    const base = process.env.ERA_GEOCODE_URL || "https://geocoding-api.open-meteo.com";
+    (async () => {
+      // 6 s, the same patience the forecast and the IP lookups are given.
+      const r = await fetch(base + "/v1/search?name=" + encodeURIComponent(q) +
+        "&count=5&language=en&format=json", { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) throw new Error("geocoder said " + r.status);
+      // A ceiling counted as the bytes arrive, not after: an answer that will
+      // not stop is not an answer, and this process has a board to build.
+      let n = 0;
+      const parts = [];
+      if (r.body) for await (const chunk of r.body) {
+        n += chunk.length;
+        if (n > 4096) throw new Error("geocoder answer past the ceiling");
+        parts.push(chunk);
+      }
+      const data = JSON.parse(Buffer.concat(parts).toString("utf8"));
+      // Nothing matched is an empty list and a 200 — the page has two different
+      // things to say ("no town by that name" and "could not reach the
+      // lookup") and could not tell them apart from a 404 that means both.
+      say(200, { results: (Array.isArray(data.results) ? data.results : [])
+        .filter(h => h && Number.isFinite(h.latitude) && Number.isFinite(h.longitude))
+        .slice(0, 5)
+        .map(h => ({ name: String(h.name || "").slice(0, 64),
+                     admin1: String(h.admin1 || "").slice(0, 64),
+                     country: String(h.country_code || "").slice(0, 8),
+                     lat: h.latitude, lon: h.longitude })) });
+    })().catch(() => { try { say(503, { error: "offline" }); } catch {} });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/settings") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const inc = JSON.parse(body);
+        let s = {};
+        try { s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")); } catch {}
+        if (typeof inc.dwellMs === "number") s.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
+        if (typeof inc.settleMs === "number") s.settleMs = Math.max(0, Math.min(2000, inc.settleMs));
+        // music loudness cap, % of speaker volume (Songs Board; dad 8/24)
+        if (typeof inc.musicVolCap === "number")
+          s.musicVolCap = Math.max(1, Math.min(100, Math.round(inc.musicVolCap)));
+        // where every app's door goes (dad 9/3): her talker, or the Our Era Comms home
+        if (inc.exitTo === "tdsnap" || inc.exitTo === "home") s.exitTo = inc.exitTo;
+        // whether THIS device downloads the week's videos (spec 2026-10-12 §3.2):
+        // a per-device switch, so a school PC can play what home fetched. Only a
+        // real boolean moves it; "no", 0 and friends are ignored like any junk.
+        if (typeof inc.downloadWeekVideos === "boolean") s.downloadWeekVideos = inc.downloadWeekVideos;
+        // how long the board's 🔒 stops music and movies for (dad 9/14), and
+        // the passcode that ends it early. 0 = until a grown-up unlocks it.
+        // The passcode reaches the hub already hashed and is handed back the
+        // same way: the board has to compare against it with no one to ask,
+        // and this is deterrence, not security — so the door checks the SHAPE
+        // (SHA-256 hex, or empty for none) and nothing more. Digits never
+        // arrive here at all.
+        if (typeof inc.lockMinutes === "number" && Number.isFinite(inc.lockMinutes))
+          s.lockMinutes = Math.max(0, Math.min(1440, Math.round(inc.lockMinutes)));
+        if (inc.lockPasscodeHash === "" || (typeof inc.lockPasscodeHash === "string" &&
+            /^[0-9a-f]{64}$/.test(inc.lockPasscodeHash))) s.lockPasscodeHash = inc.lockPasscodeHash;
+        // the hours the outfits are sorted for (dad 9/5): she dresses for
+        // the hours she is out, not for the afternoon high. Both ends
+        // inclusive; null clears it back to the whole day. Anything else is
+        // ignored, like every other knob here.
+        const wasWindow = JSON.stringify(s.weatherWindow || null);
+        const iw = inc.weatherWindow;
+        if (iw === null) delete s.weatherWindow;
+        else if (iw && typeof iw === "object" && Number.isInteger(iw.from) && Number.isInteger(iw.to) &&
+                 iw.from >= 0 && iw.to <= 23 && iw.from < iw.to) s.weatherWindow = { from: iw.from, to: iw.to };
+        // The place a parent typed (dad 9/23: "either city or town or zip —
+        // that's how people think"). Taken FIELD BY FIELD: a field that is not
+        // what it should be costs that field and nothing else. lat/lon are the
+        // place, so a body with no usable point is not a location at all and
+        // the one already stored is left exactly as it was — a slip in the box
+        // must never lose a parent the town they picked. null clears it, back
+        // to the IP guess. Compared without `at`, so re-saving the same town
+        // is not a change and costs no rebuild.
+        const locSig = (l) => l ? [l.lat, l.lon, l.name || "", l.admin1 || "", l.country || ""].join("|") : "";
+        const wasLoc = locSig(s.location);
+        const il = inc.location;
+        const coord = (v, lim) => Number.isFinite(v) && Math.abs(v) <= lim ? v : null;
+        const text = (v, n) => typeof v === "string" && v.trim() && v.trim().length <= n ? v.trim() : null;
+        if (il === null) delete s.location;
+        else if (il && typeof il === "object") {
+          const lat = coord(il.lat, 90), lon = coord(il.lon, 180);
+          if (lat !== null && lon !== null) {
+            const loc = {};
+            for (const [k, v] of [["q", text(il.q, 80)], ["name", text(il.name, 64)],
+                                  ["admin1", text(il.admin1, 64)], ["country", text(il.country, 8)]])
+              if (v) loc[k] = v;
+            s.location = { ...loc, lat, lon, at: new Date().toISOString() };
+          }
+        }
+        fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
+        // A new window makes the cached weather an answer to the old question,
+        // and today's board a board for the wrong hours: throw the cache away
+        // and re-sort the wardrobe she already has. Never an ingest, never an
+        // AI request — that is what "New outfits from new photos" is for.
+        // A new PLACE is the same fact about the other half of that key.
+        if (JSON.stringify(s.weatherWindow || null) !== wasWindow || locSig(s.location) !== wasLoc) {
+          try { fs.rmSync(path.join(DATA, ".weather-cache.json"), { force: true }); } catch {}
+          clothing.rebuildToday().catch(() => {});
+        }
+        // one knob: mirror a dwell change into Book Reader's profile store
+        if (typeof inc.dwellMs === "number") pushReaderDwell(s.dwellMs);
+        if (inc.voiceId && CURATED_VOICES.some(v => v.id === inc.voiceId)) {
+          const cfg = loadTtsCfg(); cfg.voiceId = inc.voiceId; saveTtsCfg(cfg);
+        }
+        res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  // first-run wizard: create the family profile (idempotent — updates too)
+  if (req.method === "POST" && req.url === "/setup") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const inc = JSON.parse(body);
+        const name = String(inc.childName || "").trim().slice(0, 40);
+        if (!name) { res.writeHead(400).end("childName required"); return; }
+        let cur = {};   // merge from DISK — other tools may have written keys
+        try { cur = JSON.parse(fs.readFileSync(path.join(DATA, "profile.json"), "utf8")); } catch {}
+        const prof = { ...cur, childName: name };
+        if (inc.tz && typeof inc.tz === "string") prof.tz = inc.tz.slice(0, 60);
+        // Stored, but NOT live: DEVICE_ID is resolved once at boot (it names
+        // the files the pool and the clothing log append to, and swapping it
+        // mid-run would leave half a day's lines under the old name). A
+        // deviceId change needs a restart.
+        if (inc.deviceId && /^[a-z0-9-]{1,32}$/.test(inc.deviceId)) prof.deviceId = inc.deviceId;
+        fs.writeFileSync(path.join(DATA, "profile.json"), JSON.stringify(prof, null, 2) + "\n");
+        loadProfile();
+        if (clothingLog) openClothingLog();   // the family zone names the log's day files
+        if (typeof inc.dwellMs === "number") {
+          let a = {}; try { a = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")); } catch {}
+          a.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
+          fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(a, null, 2));
+        }
+        // the wizard's app chooser (the package ships no installer script —
+        // shortcuts are made HERE for the chosen apps)
+        if (Array.isArray(inc.apps)) {
+          const chosen = APPS.filter(a => inc.apps.includes(a.id));
+          fs.writeFileSync(path.join(DATA, "apps.json"),
+            JSON.stringify({ enabled: chosen.map(a => a.id) }, null, 2));
+          for (const a of APPS) appShortcut(a, chosen.some(c => c.id === a.id));
+          appShortcut({ title: shortcuts.HOME_TITLE, path: "/home/" }, true);   // the home door
+          if (!chosen.some(a => a.engine)) stopGaze();   // unticked: an engine already up must go
+          reconcileApps();   // chosen-but-missing apps (the gaze engine) install now
+        }
+        res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "GET" && req.url === "/voices") {
+    const cfg = loadTtsCfg();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    // enabled means "this key actually works", not "a key is present": a
+    // mistyped key used to show 'Premium voices active' and then say nothing
+    // out loud (QA 9/1). cfg.keyOk is set when the key is saved/verified.
+    res.end(JSON.stringify({ enabled: !!cfg.apiKey && cfg.keyOk !== false,
+      keyPresent: !!cfg.apiKey, keyOk: cfg.keyOk === true,
+      keyError: cfg.keyError || "", current: cfg.voiceId, voices: CURATED_VOICES }));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/voice") {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      try {
+        const { voiceId } = JSON.parse(body);
+        if (!CURATED_VOICES.some(v => v.id === voiceId)) { res.writeHead(400).end(); return; }
+        const cfg = loadTtsCfg(); cfg.voiceId = voiceId; saveTtsCfg(cfg);
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/tts") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 8192) req.destroy(); });
+    req.on("end", async () => {
+      try {
+        const { text } = JSON.parse(body);
+        const cfg = loadTtsCfg();
+        if (!cfg.apiKey || !text || text.length > 600) { res.writeHead(503).end(); return; }
+        const buf = await elevenTts(cfg, String(text));
+        res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "max-age=86400" });
+        res.end(buf);
+      } catch (e) { res.writeHead(502).end(); }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/runway") {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      try {
+        const { pointer } = JSON.parse(body);
+        const rp = path.join(PUB, "runway.json");
+        const rw = JSON.parse(fs.readFileSync(rp, "utf8"));
+        if (typeof pointer !== "number" || pointer < 0 || pointer >= rw.sequence.length) { res.writeHead(400).end(); return; }
+        rw.pointer = pointer;
+        fs.writeFileSync(rp, JSON.stringify(rw, null, 1));
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/publish") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 65536) req.destroy(); });
+    req.on("end", async () => {
+      try {
+        const rec = JSON.parse(body);
+        if (typeof rec.text !== "string" || !rec.text.trim()) { res.writeHead(400).end(); return; }
+        fs.mkdirSync(WRITINGS(), { recursive: true });
+        const name = new Date().toISOString().replace(/[:.]/g, "-") + ".json";
+        const file = path.join(WRITINGS(), name);
+        fs.writeFileSync(file, JSON.stringify({ ...rec, mailed: false }, null, 2));
+        // Her words are safe on disk before anything else. Then tell The Pencil
+        // the truth: mailed (a real Resend accept, ≤8s), saved-for-Settings
+        // (no family email set up), or saved-and-will-retry (send failed).
+        const v = mailConfigured() ? await emailWriting(rec, file) : { ok: false, error: "not configured" };
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify({ saved: true, mailed: v.ok,
+          reason: v.ok ? undefined : (v.error === "not configured" ? "not configured" : "failed") }));
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  // ---- family email for The Pencil (Settings card) ----
+  if (req.method === "GET" && req.url === "/mail-config") {
+    let st = {}; try { st = JSON.parse(fs.readFileSync(path.join(DATA, "mail-status.json"), "utf8")); } catch {}
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ email: PROFILE.publishEmail || "", hasKey: !!resendKey(),
+      ok: st.ok, error: st.error || "", writings: listWritings(10) }));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/mail-config") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", async () => {
+      try {
+        const inc = JSON.parse(body);
+        const email = String(inc.email || "").trim().slice(0, 120);
+        const key = typeof inc.apiKey === "string" ? inc.apiKey.trim().slice(0, 200) : "";
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { res.writeHead(400).end("email"); return; }
+        if (!key && !resendKey()) { res.writeHead(400).end("key"); return; }
+        let cur = {}; try { cur = JSON.parse(fs.readFileSync(path.join(DATA, "profile.json"), "utf8")); } catch {}
+        fs.writeFileSync(path.join(DATA, "profile.json"), JSON.stringify({ ...cur, publishEmail: email }, null, 2) + "\n");
+        if (key) saveResendKey(key);
+        loadProfile();
+        // Prove the pair the way /tts-key proves a voice key: a real send. The
+        // family sees the test email land, or a reason they can act on.
+        const who = PROFILE.childName || "your child";
+        const v = await resendSend(resendKey(), email, "✏️ The Pencil is connected",
+          "<div style=\"font-family:Georgia,serif\"><p style=\"font-size:22px\">When " +
+          who.replace(/[&<>]/g, "") + " sends a message from The Pencil, it will arrive here.</p></div>");
+        fs.writeFileSync(path.join(DATA, "mail-status.json"), JSON.stringify({ ok: v.ok, error: v.error || "", at: new Date().toISOString() }));
+        if (v.ok) retryUnsentWritings().catch(() => {});
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: v.ok, error: v.error }));
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  // ---- board outfit events: picks -> history.json (feeds the generator) ----
+  // The 6:35 generator derives wear from these (a Yes = confirmed; otherwise the
+  // day's last select is inferred at half weight) to seat the staple slots.
+  if (req.method === "POST" && req.url === "/outfit-event") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { kind, combo } = JSON.parse(body);
+        const ok = (kind === "select" || kind === "yes") &&
+          Array.isArray(combo) && combo.length >= 1 && combo.length <= 2 &&
+          combo.every(id => typeof id === "string" && /^item_[0-9a-f]{4,32}$/.test(id));
+        if (!ok) { res.writeHead(400).end(); return; }
+        // The pool copy goes FIRST, because the history.json read below can
+        // throw (a file whose bytes will not come is never overwritten with an
+        // empty memory, review r1) and used to take this line down with it —
+        // losing the pick from BOTH stores when only one of them was ill (r3).
+        pool.append("outfit-" + kind, { combo });
+        // The family's calendar day buckets the pick — through the SAME
+        // validated zone the build seeds its deal with. profile.json can hold
+        // a zone this computer cannot resolve ("Pacific Time"), dayKey throws
+        // RangeError on those, and the catch below then answered 400 to every
+        // Yes and every select, forever, with no console line at all: the
+        // board built each morning and only the learning was dead (review r2).
+        const day = dayKey(Date.now(), clothing.zone());
+        // The ONE history.json writer path (clothing.js): an unreadable file is
+        // set aside, never overwritten; the write is a rename, so the worker's
+        // read never sees half a file. Both writers run on this thread, so
+        // this read-modify-write cannot interleave with the build's.
+        const h = clothing.readHistory();
+        h.events = h.events || {};
+        const evs = h.events[day] = h.events[day] || [];
+        // cap per day: a stuck client can't grow the file unboundedly. The
+        // family's copy on the mount (below) is inside the cap too: it lives in
+        // Google Drive and is mirrored to every device, so it needs the bound
+        // more than the local file does — and a pick recorded in one store and
+        // not the other would leave the two devices deriving different picks
+        // from the same day (review r1).
+        const recorded = evs.length < 200;
+        if (recorded) evs.push({ kind, combo, at: new Date().toISOString() });
+        // a fresh install has no wardrobe/ yet — writeAtomic makes it; without
+        // that every pick 400'd and favourites were never learned (QA 9/2)
+        contentStore.writeAtomic(clothing.historyPath(), h);
+        // ...and out to the family, AFTER the canonical write (spec §5 "the
+        // local canonical is always written first"). It never throws and it is
+        // never a reason to refuse a pick: the board is answered either way.
+        if (recorded && clothingLog) clothingLog.appendPick(day, { kind, combo });
+        // 204 with an empty body: era-board reads the status, not a payload.
+        res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
+      } catch (e) {
+        // Say so. The other two history.json doors already log (the build's
+        // recorder and the worker's reader); this one refused the pick in
+        // silence, so the one symptom a parent could act on — "her Yeses
+        // stopped being remembered" — never reached the hub log (review r4).
+        console.error("[clothing] outfit-event: " + e.message);
+        res.writeHead(400).end();
+      }
+    });
+    return;
+  }
+  // ---- songs board events: play/stop/end -> family pool (usage visibility) ----
+  if (req.method === "POST" && req.url === "/music-event") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { songId, action } = JSON.parse(body);
+        const ok = ["play", "stop", "end", "full"].includes(action) &&
+          typeof songId === "string" && /^[a-z0-9-]{1,64}$/.test(songId);
+        if (!ok) { res.writeHead(400).end(); return; }
+        pool.append("music-" + action, { songId });
+        res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  // ---- movies board events: launch/playing/pause/end/abandon/alldone ->
+  // family pool (movie-player P1). Feeds the P3 recommender read-side and
+  // dad's curation/demotion review; clone of /music-event. ----
+  if (req.method === "POST" && req.url === "/movie-event") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { titleId, action, service, episode } = JSON.parse(body);
+        const ok = ["launch", "playing", "pause", "end", "abandon", "alldone"].includes(action) &&
+          typeof titleId === "string" && /^[a-z0-9-]{1,64}$/.test(titleId) &&
+          ["disney", "netflix", "prime"].includes(service) &&
+          (episode === undefined ||
+            (episode !== null && typeof episode === "object" &&
+             Number.isInteger(episode.s) && Number.isInteger(episode.e) &&
+             episode.s >= 0 && episode.s <= 999 && episode.e >= 0 && episode.e <= 999));
+        if (!ok) { res.writeHead(400).end(); return; }
+        const rec = { titleId, service };
+        if (episode !== undefined) rec.episode = { s: episode.s, e: episode.e };
+        pool.append("movie-" + action, rec);
+        res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/log") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 65536) req.destroy(); });
+    req.on("end", () => {
+      try {
+        JSON.parse(body); // validate
+        const day = new Date().toISOString().slice(0, 10);
+        fs.appendFileSync(path.join(LOGS, day + ".jsonl"), body.replace(/\n/g, " ") + "\n");
+        pool.append("app-log", { entry: JSON.parse(body) });
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  // ---- board data routes (GET/HEAD, read-only, path-jailed) ----
+  const urlPath = safeDecode((req.url || "/").split("?")[0]);
+  if (urlPath === null) { res.writeHead(400).end(); return; }
+  // ---- word prediction (Pencil; see predict.js — her writing > her lexicon > corpus) ----
+  if (req.method === "GET" && urlPath === "/predict") {
+    try {
+      const q = new URL(req.url, "http://x").searchParams;
+      const n = Math.min(8, parseInt(q.get("n"), 10) || 3);
+      const words = predictor.predict(q.get("left") || "", q.get("prefix") || "", n);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ words }));
+    } catch (e) {
+      console.error("[predict] " + e.message);
+      try { res.writeHead(200, { "Content-Type": "application/json" }).end('{"words":[]}'); } catch {}
+    }
+    return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/today.json") {
+    serveRecipe(req, res); return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/songs.json") {
+    serveSongsRecipe(req, res); return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/movies.json") {
+    serveMoviesRecipe(req, res); return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/recipes/this-week.json") {
+    serveThisWeekRecipe(req, res); return;
+  }
+  // ---- This week (spec 2026-10-12 §3; this-week.js). status ABOVE the jail,
+  // which would otherwise 404 it as a file with no extension.
+  if (req.method === "GET" && urlPath === "/this-week/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(thisWeekStatus()));
+    return;
+  }
+  // One pass of the download rail now, instead of at the next sync or the
+  // 20-minute timer. Loopback peers only (the /update/check feed override's
+  // gate): it does nothing the timer would not, but no other machine on the
+  // LAN gets to make this one talk to YouTube on demand. 202 started, 200 busy.
+  if (req.method === "POST" && urlPath === "/this-week/tick") {
+    if (!updater.isLoopback(req.socket && req.socket.remoteAddress)) { res.writeHead(403).end(); return; }
+    const r = thisWeekFetch.tick("by hand");
+    res.writeHead(r.tick === "started" ? 202 : 200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ tick: r.tick }));
+    return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/this-week/")) {
+    const rest = urlPath.slice("/this-week/".length);
+    // claim-<id>.json is a hub's download lock: never served. Compared the way
+    // the jail compares denied dirs (lower case, trailing dots/spaces dropped).
+    const base = (rest.split(/[\\/]/).pop() || "").toLowerCase().replace(/[. ]+$/, "");
+    if (/^claim-.*\.json$/.test(base)) { res.writeHead(404).end("not found"); return; }
+    serveMediaJail(req, res, THIS_WEEK_DIR, rest, THIS_WEEK_EXTS, THIS_WEEK_AV_EXTS, THIS_WEEK_DENY_DIRS);
+    return;
+  }
+  // ---- Music: "+ Add a song from the web" (spec §6; music-add.js) ----
+  // Both doors sit ABOVE the /music/ media jail, which would otherwise 404
+  // them as a song with a disallowed extension.
+  //
+  // 202 and the download runs behind it, exactly like /clothing/regenerate: a
+  // song takes a minute and no sheet should hold a socket open for it. Every
+  // refusal is JSON with words a parent can read — a 500 here would leave them
+  // staring at a spinner with nothing to do about it. ownDoor because this
+  // downloads from the internet onto the family's PC: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/music/add") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = musicAdd.add(JSON.parse(body)); }
+      catch {
+        res.writeHead(400, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
+        return;
+      }
+      if (out.error) {
+        // 400 = the sheet sent something wrong; 409 = the hub cannot do it yet
+        // (no pack, no Drive folder, a song already downloading) and the sheet
+        // shows out.message and, for a missing pack, offers to install it.
+        const mine = ["bad-url", "need-url-or-query", "bad-slug"].includes(out.error);
+        res.writeHead(mine ? 400 : 409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+        return;
+      }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ started: true }));
+    });
+    return;
+  }
+  // ⇅ Arrange: the whole running order in one POST (spec §6 "Arrange").
+  // Answers when the manifest is written and mirrored — it is one small file,
+  // so the strip can wait and know the tiles moved. A partial or unknown id is
+  // a 400 that changed nothing (music-add.js order()).
+  if (req.method === "POST" && req.url === "/music/order") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    // A whole library of ids: a slug is at most 64 characters, so 64 KB is
+    // hundreds of songs and still nothing a sheet could use to fill memory.
+    req.on("data", c => { body += c; if (body.length > 65536) req.destroy(); });
+    req.on("end", () => {
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        res.writeHead(400, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
+        return;
+      }
+      musicAdd.order(parsed).then(out => {
+        if (out.error) {
+          // 400 = the strip sent an order that cannot be applied to what is on
+          // the shelf; 409 = the hub cannot do it yet (no Drive folder, no
+          // songs, a song still downloading).
+          const mine = ["bad-ids", "unknown-song", "incomplete"].includes(out.error);
+          res.writeHead(mine ? 400 : 409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(out));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      }).catch(() => {
+        // A failed write left the old order in place (writeAtomic never opens
+        // the target), so say so rather than leaving a spinner turning.
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed",
+                                 message: "Our Era Comms could not save the new order. Try again." }));
+      });
+    });
+    return;
+  }
+  // The same deal /clothing/status makes: no-store, because a sheet polling
+  // this while a song downloads must never be told a cached answer.
+  if (req.method === "GET" && urlPath === "/music/add/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(musicAdd.status()));
+    return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/music/")) {
+    serveMediaJail(req, res, MUSIC_DIR, urlPath.slice("/music/".length), MUSIC_EXTS, MUSIC_AV_EXTS);
+    return;
+  }
+  // ---- Movies: "+ Add" from the board's partner strip (spec §6; movies-add.js)
+  // Above the /movies/ jail below, which only answers GET but is easier to read
+  // with the doors kept together. Nothing is downloaded (D57: a streaming
+  // service's video is never served; week videos live in /this-week/), so unlike /music/add this answers when it is DONE — one
+  // small file and a mirror of a folder the family already has locally.
+  // ownDoor because it writes into the family's Drive folder: this hub's own
+  // pages only.
+  if (req.method === "POST" && req.url === "/movies/add") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        res.writeHead(400, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
+        return;
+      }
+      moviesAdd.add(parsed).then(out => {
+        if (out.error) {
+          // 400 = the sheet sent something wrong; 409 = the hub cannot do it
+          // yet (no Drive folder, a catalog it could not read) and the sheet
+          // shows out.message.
+          const mine = ["bad-url", "need-url-or-title", "bad-id", "bad-kind",
+                        "need-title"].includes(out.error);
+          res.writeHead(mine ? 400 : 409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(out));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      }).catch(() => {
+        // The catalog keeps whatever it had: writeAtomic never opens the target.
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed",
+                                 message: "Our Era Comms could not save that film. Try again." }));
+      });
+    });
+    return;
+  }
+  // ---- Settings > Films and shows: the two keys the search runs on (T5.3).
+  // What is SAVED and what that buys, never a key: movies-lookup.js's held()
+  // answers in booleans on purpose (review 9/5 — the hint said "add a TMDB key
+  // in Settings" while no card existed anywhere in the product, the same dead
+  // end "Install it and try again" was fixed for in Phase 4).
+  if (req.method === "GET" && req.url === "/movies/keys") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, ...moviesLookup.status(), ...moviesLookup.held() }));
+    return;
+  }
+  // Neither key is verified here. /tts-key proves a voice key with a real call
+  // because a bad one buys silence for months; these two are spent by the sheet
+  // within a second of being typed, and a probe would cost a request out of a
+  // free monthly allowance to learn what the next search learns anyway.
+  // ownDoor because it writes the family's keys: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/movies-key") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let b;
+      try { b = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
+      if (!b || typeof b !== "object" || Array.isArray(b)) { res.writeHead(400).end(); return; }
+      const one = (v) => v === undefined ? undefined
+                       : (typeof v === "string" && v.trim().length <= 300 ? v.trim() : null);
+      const tmdb = one(b.tmdb), wm = one(b.watchmode);
+      if (tmdb === null || wm === null) { res.writeHead(400).end(); return; }
+      const file = path.join(DATA, "ai-config.json");
+      // NEVER A REWRITE of this file. The AI helper's key and the fal role live
+      // in it too, and a card that saved over them would take the clothing
+      // build down with it — so a file that exists and cannot be READ is a
+      // refusal, not something to start fresh over (the movies catalog's Law 3,
+      // one directory up).
+      let cfg = {};
+      try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); }
+      catch (e) {
+        if (!e || e.code !== "ENOENT") {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "config-unreadable",
+            message: "Our Era Comms could not read the saved keys just now. Try again in a minute." }));
+          return;
+        }
+      }
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "config-unreadable",
+          message: "Our Era Comms could not read the saved keys just now. Try again in a minute." }));
+        return;
+      }
+      try {
+        if (tmdb !== undefined) { if (tmdb) cfg.tmdb = { apiKey: tmdb }; else delete cfg.tmdb; }
+        if (wm !== undefined) { if (wm) cfg.watchmode = { apiKey: wm }; else delete cfg.watchmode; }
+        // Atomic, like writeAiCfg above: this file holds every card's key now,
+        // so it is never left half written.
+        contentStore.writeAtomic(file, JSON.stringify(cfg, null, 1));
+        // The region is not a key: it is the same content choice the provider
+        // name lives beside (movies-lookup.js Law 1), so it goes in the same
+        // file that one is read from, merged the same careful way.
+        const reg = typeof b.region === "string" && /^[a-z]{2}$/i.test(b.region.trim())
+                  ? b.region.trim().toUpperCase() : null;
+        if (reg) {
+          const cf = path.join(DATA, "content-config.json");
+          let cc = {};
+          try { cc = JSON.parse(fs.readFileSync(cf, "utf8")); } catch {}
+          if (!cc || typeof cc !== "object" || Array.isArray(cc)) cc = {};
+          const movies = cc.movies && typeof cc.movies === "object" && !Array.isArray(cc.movies)
+                       ? cc.movies : {};
+          cc.movies = { ...movies, region: reg };
+          fs.writeFileSync(cf, JSON.stringify(cc, null, 1));
+        }
+      } catch {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed",
+                                 message: "Our Era Comms could not save that key. Try again." }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: true, ...moviesLookup.status(), ...moviesLookup.held() }));
+    });
+    return;
+  }
+  // "type a name" — the search behind the sheet's selection grid (spec §6
+  // "Streaming availability"; movies-lookup.js). It WRITES NOTHING: a grown-up
+  // picks a row and the pick goes to /movies/add, which is still the catalog's
+  // only writer.
+  //
+  // 200 even when the answer is an empty grid. A family with no key is not an
+  // error — they get `hint`, which names Settings and names the paste box that
+  // already works — and neither is a provider having a bad day. The only 400s
+  // are a request the sheet got wrong. ownDoor because this leaves the house on
+  // the family's key: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/movies/lookup") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch {
+        res.writeHead(400, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
+        return;
+      }
+      const b = parsed && typeof parsed === "object" ? parsed : {};
+      const query = typeof b.query === "string" ? b.query.trim()
+                  : typeof b.q === "string" ? b.q.trim() : "";
+      if (!query) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "need-query", message: "Type the name of a film or show to look for." }));
+        return;
+      }
+      const st = moviesLookup.status(b.region);
+      // TMDB's terms want the credit wherever their art is shown, and the
+      // grid the board draws from these rows shows their posters. Sent from
+      // here so the sentence has ONE owner (moviesAdd.TMDB_ATTRIBUTION) and
+      // the board never keeps a second copy of it to drift.
+      const credit = st.provider === "none" ? null : moviesAdd.TMDB_ATTRIBUTION;
+      moviesLookup.lookupTitle(query, b.region).then(results => {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ ok: true, provider: st.provider, region: st.region,
+                                 results, hint: st.hint, attribution: credit }));
+      }).catch(() => {
+        // lookupTitle never throws by design; if it ever does, the sheet still
+        // gets the paste box rather than a spinner.
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ ok: true, provider: st.provider, region: st.region,
+                                 results: [], hint: st.hint, attribution: credit }));
+      });
+    });
+    return;
+  }
+  // movies static jail: posters + catalog only (no AV extensions — streaming
+  // services are never served; av list empty so nothing gets Range handling).
+  // Downloaded week videos are served from /this-week/ instead.
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/movies/")) {
+    serveMediaJail(req, res, MOVIES_DIR, urlPath.slice("/movies/".length), MOVIE_EXTS, []);
+    return;
+  }
+  if (req.method === "GET" && urlPath.startsWith("/clothing-web/")) {
+    serveJailed(res, path.join(DATA, "clothing-web"), safeDecode(urlPath.slice("/clothing-web/".length)) || "", [".jpg", ".jpeg", ".png", ".webp"]);
+    return;
+  }
+  if (req.method === "GET" && urlPath.startsWith("/wardrobe/")) {
+    serveJailed(res, WARDROBE_DIR, urlPath.slice("/wardrobe/".length), [".jpg", ".jpeg", ".png"]);
+    return;
+  }
+  // cataloged item tiles + daily composite outfits (clothing.js ingest output)
+  if (req.method === "GET" && urlPath.startsWith("/wardrobe-items/")) {
+    serveJailed(res, path.join(DATA, "wardrobe-items"), safeDecode(urlPath.slice("/wardrobe-items/".length)) || "", [".jpg"]);
+    return;
+  }
+  if (req.method === "GET" && urlPath.startsWith("/wardrobe-outfits/")) {
+    serveJailed(res, path.join(DATA, "wardrobe-outfits"), safeDecode(urlPath.slice("/wardrobe-outfits/".length)) || "", [".jpg"]);
+    return;
+  }
+  if (req.method === "GET" && urlPath.startsWith("/gen-assets/")) {
+    serveJailed(res, GEN_ASSETS_DIR, urlPath.slice("/gen-assets/".length), [".png"]);
+    return;
+  }
+  // ---- book packages: shelf index (rebuilt per request) + jailed files ----
+  if (req.method === "GET" && urlPath === "/books/index.json") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+    res.end(JSON.stringify(booksIndex()));
+    return;
+  }
+  // ---- book sharing: one book, one file, person to person (spec §6) ----
+  //
+  // ALL THREE MUST BE MATCHED BEFORE the /books/ static route below. A
+  // <slug>.erabook that fell into serveMediaJail would 404 on its extension —
+  // which is the media jail doing its job, and exactly the wrong answer here.
+  if ((req.method === "GET" || req.method === "HEAD") &&
+      urlPath.startsWith("/books/") && urlPath.endsWith(booksShare.EXT)) {
+    const out = booksShare.exportBook(
+      urlPath.slice("/books/".length, -booksShare.EXT.length));
+    if (out.error) {
+      // A slug nobody owns is 404, serveBook's rule; a book that exists and
+      // cannot travel (still being built, a manifest pointing out of itself)
+      // is 409 with the sentence the send sheet shows.
+      res.writeHead(out.error === "no-such-book" ? 404 : 409, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: out.error, message: out.message }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/octet-stream",
+                         "Content-Disposition": out.disposition,
+                         "Cache-Control": "no-store" });
+    // HEAD answers with GET's headers and no body (the 9/5 rule): the stream
+    // is dropped unread, so nothing is packed for a probe.
+    if (req.method === "HEAD") { out.stream.destroy(); res.end(); return; }
+    // STREAMED. pack() is a stream for this one reason: a forty-megabyte book
+    // must never be a Buffer in the process that is also answering the board.
+    // A refusal mid-stream (a page that changed underneath us) cannot become a
+    // sentence any more — the response has already begun — so the connection
+    // is dropped and the sheet's fetch fails, which is the honest outcome.
+    out.stream.on("error", (e) => {
+      console.error("[books] export " + urlPath + ": " + e.message);
+      try { res.destroy(); } catch {}
+    });
+    out.stream.pipe(res);
+    return;
+  }
+  // "Put it in my Drive" (spec §4.2): the same bytes, into the family's own
+  // folder, which Google Drive for Windows uploads on its own. ownDoor because
+  // it writes into that folder: this hub's own pages only.
+  if (req.method === "POST" && /^\/books\/[^/]+\/share-to-drive$/.test(urlPath)) {
+    if (!ownDoor(req, res)) return;
+    const slug = urlPath.split("/")[2];
+    // The slug IS the request; the body is drained with the same small cap
+    // every other POST keeps so the socket stays reusable.
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      booksShare.shareToDrive(slug).then(out => {
+        if (out.error) {
+          res.writeHead(out.error === "no-such-book" ? 404 : 409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(out));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      }).catch(e => {
+        console.error("[books] share-to-drive: " + e.message);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed",
+                                 message: booksShare.messageFor("write-failed") }));
+      });
+    });
+    return;
+  }
+  // ♥ Favorites (book shelf layout, spec 2026-09-30). A grown-up's finger hold
+  // on a cover opens a sheet whose first button toggles this. ownDoor, like
+  // every book door that changes something: it rewrites her shelf, so this
+  // hub's own pages only. Body {favorite: true|false}; the answer is the state
+  // the hub now holds. The store is the hub's (books-shelf.js), never books/.
+  if (req.method === "POST" && /^\/books\/[^/]+\/favorite$/.test(urlPath)) {
+    if (!ownDoor(req, res)) return;
+    const slug = safeDecode(urlPath.split("/")[2]) || "";
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let want;
+      try { want = JSON.parse(body || "{}").favorite; } catch { want = undefined; }
+      if (typeof want !== "boolean") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "bad-favorite" }));
+        return;
+      }
+      // A ♥ belongs on a book the shelf can show: a package with a manifest.
+      const dir = slug ? booksIndex_.dirFor(BOOKS_DIR, slug) : null;
+      if (!dir || !fs.existsSync(path.join(BOOKS_DIR, dir, "manifest.json"))) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "no-such-book" }));
+        return;
+      }
+      if (!shelfStore.setFavorite(slug, want)) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "write-failed" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ slug, favorite: want }));
+    });
+    return;
+  }
+  // "+ Add a book" (spec §6.2). The browser sends the chosen File as the RAW
+  // BODY (fetch(url,{method:"POST",body:file})), so there is no multipart
+  // parser here and there must never be one.
+  if (req.method === "POST" && urlPath === "/books/import") {
+    // ownDoor() cannot guard this one: it insists on application/json, and this
+    // body is an archive. The half of its check that matters here is the
+    // browser's own sec-fetch-site, and that is kept — a page on another site
+    // may not post a book into this family's shelf. A request with no such
+    // header (curl, the e2e) is not a browser and is not what that guard is for.
+    const site = req.headers["sec-fetch-site"];
+    if (site && site !== "same-origin" && site !== "none") {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "That came from somewhere else, so Our Era Comms did not do it." }));
+      return;
+    }
+    // §9's only seam: one source today, and a second one is a new row in the
+    // sheet and a new word here — not a redesign. Nothing is stubbed for it.
+    const q = (req.url || "").split("?")[1] || "";
+    const source = new URLSearchParams(q).get("source") || "file";
+    if (source !== "file") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "bad-source", message: booksShare.messageFor("bad-source") }));
+      return;
+    }
+    readBinaryBody(req, booksShare.MAX_UPLOAD, (err, tmp) => {
+      if (err) {
+        // The sender hung up: there is nobody left to answer.
+        if (err.error === "aborted") { try { res.destroy(); } catch {} return; }
+        const big = err.error === "too-big";
+        res.writeHead(big ? 413 : 500,
+          { "Content-Type": "application/json", ...(big ? { Connection: "close" } : {}) });
+        res.end(JSON.stringify({ error: err.error, message: booksShare.messageFor(err.error) }),
+          // The rest of an over-cap upload is still on its way; the sentence is
+          // out, so the socket goes now rather than carrying another 200 MB.
+          () => { if (big) { try { req.destroy(); } catch {} } });
+        return;
+      }
+      let out;
+      try { out = booksShare.importBook(tmp, { source }); }
+      catch (e) {
+        console.error("[books] import: " + e.message);
+        out = { error: "write-failed", message: booksShare.messageFor("write-failed") };
+      } finally {
+        // ON EVERY PATH. A temp file left behind after a failed import is forty
+        // megabytes of somebody else's book sitting in %TEMP% for ever.
+        fs.unlink(tmp, () => {});
+      }
+      if (out.error) {
+        // 400 = the file is wrong; 409 = the file is fine and this computer
+        // cannot take it yet (no content folder, nowhere to write).
+        const cannotYet = ["needs-local-drive", "write-failed"].includes(out.error);
+        res.writeHead(cannotYet ? 409 : 400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out));
+    });
+    return;
+  }
+  // ---- Drawing (spec 2026-09-30 §5): the pictures, their scenes, the Done door. drawings.js does
+  // the work — every write goes to the family's Drive folder, or .local when there is none.
+  if (req.method === "GET" && urlPath === "/drawings/index.json") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(drawings.list()));
+    return;
+  }
+  if (req.method === "POST" && urlPath === "/drawings") {
+    if (!ownDoor(req, res)) return;                 // a page on another site may not make pictures
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      const r = drawings.create();
+      res.writeHead(r.error ? 500 : 200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r.error ? { error: r.error } : { id: r.id }));
+    });
+    return;
+  }
+  const drawingPath = /^\/drawings\/([^/]+)\/(scene\.json|picture\.png|done)$/.exec(urlPath);
+  if (drawingPath && req.method === "PUT" && drawingPath[2] === "scene.json") {
+    if (!ownDoor(req, res)) return;                 // …nor overwrite hers
+    const id = drawingPath[1];
+    if (!drawings.isId(id)) { res.writeHead(404, { "Content-Type": "application/json" }).end('{"error":"bad-id"}'); return; }
+    const chunks = [];
+    let size = 0, over = false;
+    req.on("data", (c) => {
+      if (over) return;
+      size += c.length;
+      if (size > drawings.LIMITS.sceneBytes) {
+        over = true;
+        res.writeHead(413, { "Content-Type": "application/json", Connection: "close" });
+        res.end('{"error":"too-big"}', () => { try { req.destroy(); } catch {} });
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (over) return;
+      let obj = null;
+      try { obj = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {}
+      const r = drawings.writeScene(id, obj);
+      res.writeHead(r.ok ? 200 : r.error === "write-failed" ? 500 : 400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r.ok ? { ok: true, updated: r.scene.updated } : { error: r.error, why: r.why }));
+    });
+    return;
+  }
+  if (drawingPath && req.method === "POST" && drawingPath[2] === "done") {
+    // ownDoor() insists on JSON and this body is a PNG, so keep the half that matters: the
+    // browser's own Sec-Fetch-Site (the /books/import precedent). curl and the suites send none.
+    const site = req.headers["sec-fetch-site"];
+    if (site && site !== "same-origin" && site !== "none") {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "That came from somewhere else, so Our Era Comms did not do it." }));
+      return;
+    }
+    const id = drawingPath[1];
+    if (!drawings.isId(id)) { res.writeHead(404, { "Content-Type": "application/json" }).end('{"error":"bad-id"}'); return; }
+    readBinaryBody(req, drawings.LIMITS.pngBytes, (err, tmp) => {
+      if (err) {
+        if (err.error === "aborted") { try { res.destroy(); } catch {} return; }
+        const big = err.error === "too-big";
+        res.writeHead(big ? 413 : 500, { "Content-Type": "application/json", ...(big ? { Connection: "close" } : {}) });
+        res.end(JSON.stringify({ error: err.error }), () => { if (big) { try { req.destroy(); } catch {} } });
+        return;
+      }
+      let png = null;
+      try { png = fs.readFileSync(tmp); } catch {} finally { fs.unlink(tmp, () => {}); }   // ON EVERY PATH
+      drawings.done(id, png, DRAWING_MAIL).then((r) => {
+        res.writeHead(r.error ? r.status : 200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(r.error ? { error: r.error } : r));
+      }).catch((e) => {
+        console.error("[drawings] done " + id + ": " + e.message);
+        try { res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"write-failed"}'); } catch {}
+      });
+    });
+    return;
+  }
+  if (drawingPath && (req.method === "GET" || req.method === "HEAD") && drawingPath[2] !== "done") {
+    serveMediaJail(req, res, path.join(DATA, "drawings"), drawingPath[1] + "/" + drawingPath[2],
+      [".json", ".png"], [], [], (id) => (drawings.isId(id) ? id : null), "no-cache");   // Done rewrites picture.png (review 9/30 #11a)
+    return;
+  }
+  // ---- People (spec 2026-10-02 §4): the private library the mirror carries in from the family's
+  // Drive folder — or, while the family has none, the built-in generic one in public/drawing/people/
+  // (dad 10/7; drawings.charactersLibrary decides, never merged). index.json never 500s (it reads
+  // defensively) and names its source in a header; files are path-jailed to that ONE flat folder, slugs only.
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath === "/characters/index.json") {
+    const lib = drawings.charactersLibrary();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Characters-Source": lib.source });
+    res.end(req.method === "HEAD" ? undefined : JSON.stringify(lib.people));
+    return;
+  }
+  const charPath = /^\/characters\/([a-z0-9][a-z0-9-]{0,39}\.png|characters\.json)$/.exec(urlPath);
+  if (charPath && (req.method === "GET" || req.method === "HEAD")) {
+    serveMediaJail(req, res, drawings.charactersLibrary().dir, charPath[1], [".png", ".json"], [], [], null, "no-cache");
+    return;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/books/")) {
+    serveBook(req, res, urlPath.slice("/books/".length));
+    return;
+  }
+  if (req.method === "GET" && urlPath.startsWith("/symbol/")) {
+    serveSymbol(res, urlPath.slice("/symbol/".length)).catch((e) => {
+      console.error("[symbol] route error: " + e.message);
+      try { res.writeHead(500).end(); } catch {}
+    });
+    return;
+  }
+
+  // ---- app picker: which apps this install offers (install-with-checkboxes,
+  // 8/29 ruling: everything, one, or a few) ----
+  if (req.method === "GET" && urlPath === "/apps") {
+    const enabled = loadEnabledApps();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ apps: APPS.map(a => ({ id: a.id, title: a.title, sub: a.sub, path: a.path,
+      icon: appIcon(a, "png") ? "/icons/" + a.id + ".png" : null,
+      engine: !!a.engine, enabled: enabled.includes(a.id), installed: appInstalled(a),
+      installing: !!appInstalling[a.id],
+      building: a.id === "board" ? clothing.isBuilding() : false })) }));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/apps") {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      try {
+        const { id, enabled } = JSON.parse(body);
+        const app = APPS.find(a => a.id === id);
+        if (!app || typeof enabled !== "boolean") { res.writeHead(400).end(); return; }
+        let set = loadEnabledApps().filter(x => x !== id);
+        if (enabled) set.push(id);
+        fs.writeFileSync(path.join(DATA, "apps.json"),
+          JSON.stringify({ enabled: APPS.map(a => a.id).filter(x => set.includes(x)) }, null, 2));
+        appShortcut(app, enabled);   // Windows: desktop/start-menu .lnk follows the toggle
+        if (app.engine && !enabled) stopGaze();
+        // enabling an app whose files were never installed REALLY installs it
+        if (enabled && !appInstalled(app) && !appInstalling[app.id]) {
+          appInstalling[app.id] = true;
+          (app.engine ? installGaze() : installPack(app))
+            .catch(e => console.error("[apps] pack install failed: " + e.message))
+            .finally(() => { delete appInstalling[app.id]; });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ installing: true }));
+          return;
+        }
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+
+  // ---- install a pack no app owns (review 9/5) ----
+  // media-tools (yt-dlp, ~18 MB) is unticked in the installer by default and
+  // hangs off no APPS entry, so POST /apps — which resolves the id against that
+  // list — could never lay it down. The "+ Add a song" sheet said "Install it
+  // and try again" over a button that did not exist anywhere. This is that
+  // button. Keyed off packs.PACKS rather than APPS, so a pack added later
+  // cannot fall down the same hole. ownDoor because it downloads onto the
+  // family's PC: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/packs/install") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 1024) req.destroy(); });
+    req.on("end", () => {
+      let pack = null;
+      try { pack = JSON.parse(body).pack; } catch {}
+      if (typeof pack !== "string" || !Object.prototype.hasOwnProperty.call(packs.PACKS, pack)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "unknown-pack",
+                                 message: "Our Era Comms does not know that add-on." }));
+        return;
+      }
+      if (packs.packInstalled(__dirname, pack)) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ installed: true }));
+        return;
+      }
+      // one pack download at a time, and never a second one on top of the app
+      // toggle that is already pulling the same pack
+      const key = "pack:" + pack;
+      const byApp = APPS.some(a => a.pack === pack && appInstalling[a.id]);
+      if (!appInstalling[key] && !byApp) {
+        appInstalling[key] = true;
+        installPack({ pack })
+          .then(() => console.log("[packs] installed " + pack))
+          .catch(e => console.error("[packs] install " + pack + " failed: " + e.message))
+          .finally(() => { delete appInstalling[key]; });
+      }
+      // 202: the sheet polls the status door it already polls (the pack shows
+      // up as installed there) rather than holding a socket for 18 MB.
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ installing: true }));
+    });
+    return;
+  }
+
+  // ---- open an external site in a NORMAL browser window (URL bar and all)
+  // — kiosk windows trap novices on web logins (dad 8/29) ----
+  if (req.method === "POST" && req.url === "/open-url") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 1024) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { url } = JSON.parse(body);
+        // every "Open my … keys page" button in Settings must be here, or the
+        // page falls back to window.open INSIDE the kiosk — dad hit that on
+        // Resend during his 9/3 novice run ("match the way Drive/ElevenLabs
+        // work, they come to the front")
+        const ALLOW = ["https://www.google.com/drive/", "https://elevenlabs.io/",
+                       "https://resend.com/", "https://console.anthropic.com/",
+                       "https://platform.openai.com/", "https://aistudio.google.com/",
+                       // the Films card's two key pages (T5.3)
+                       "https://www.themoviedb.org/", "https://api.watchmode.com/",
+                       // and the Moving pages card's (T6.1). Missing here, the
+                       // one card that spends money opened INSIDE the kiosk —
+                       // exactly the trap this list exists to close (gate 9/5).
+                       "https://fal.ai/"];
+        if (typeof url !== "string" || !ALLOW.some(a => url.startsWith(a))) { res.writeHead(400).end(); return; }
+        if (process.platform === "win32") {
+          const { spawn } = require("child_process");
+          const browsers = ["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                            "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+                            "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"];
+          const b = browsers.find(p => fs.existsSync(p));
+          if (b) {
+            spawn(b, ["--new-window", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+            setTimeout(stepAsideFromKiosk, 1200);   // our kiosk yields; the new window shows
+            res.writeHead(200, { "Content-Type": "application/json" }).end('{"opened":true}');
+            return;
+          }
+        }
+        res.writeHead(200, { "Content-Type": "application/json" }).end('{"opened":false}');
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+
+  // ---- per-app file removal (dad 8/29: uncheck hides; delete should exist) ----
+  if (req.method === "POST" && req.url === "/apps/delete") {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      try {
+        const { id } = JSON.parse(body);
+        const app = APPS.find(a => a.id === id);
+        if (!app) { res.writeHead(400).end(); return; }
+        const enabled = loadEnabledApps();
+        if (enabled.includes(id)) { res.writeHead(409).end("disable first"); return; }
+        if (app.engine) {
+          try { fs.rmSync(GAZE_DIR, { recursive: true, force: true }); } catch {}
+        } else if (app.pack) {
+          // the board pack is shared: only removable when board+music+movies are ALL off
+          const sharers = APPS.filter(a => a.pack === app.pack).map(a => a.id);
+          if (sharers.some(x => enabled.includes(x))) { res.writeHead(409).end("pack in use"); return; }
+          for (const p of packs.packPaths(app.pack))
+            try { fs.rmSync(path.join(__dirname, ...p.split("/")), { recursive: true, force: true }); } catch {}
+        } else { res.writeHead(400).end("core app"); return; }
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/create-folder") {
+    const r = drive.createContentFolder();
+    // The OTHER door that sets the local mount (drive.js: mode + folderPath),
+    // so the shared log has to be re-opened here exactly as it is after
+    // /integrations/drive/localfolder — otherwise this process keeps the
+    // `driveFolder: null` it booted with and every pick from now until a
+    // restart is recorded locally and shared with nobody (review r1).
+    if (r.ok) openClothingLog();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(r));
+    return;
+  }
+
+  // ---- Settings > Voice: ElevenLabs key entry (never echoed back) ----
+  if (req.method === "POST" && req.url === "/tts-key") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { apiKey } = JSON.parse(body);
+        if (typeof apiKey !== "string" || apiKey.length > 200) { res.writeHead(400).end(); return; }
+        const cfg = loadTtsCfg();
+        cfg.apiKey = apiKey.trim(); cfg.keyOk = undefined; cfg.keyError = "";
+        saveTtsCfg(cfg);
+        // Ask ElevenLabs whether the key is real before telling the family it
+        // is. A dropped character otherwise reads as success and then silence.
+        verifyTtsKey(cfg.apiKey).then((v) => {
+          const c = loadTtsCfg();
+          c.keyOk = v.ok; c.keyError = v.error || ""; saveTtsCfg(c);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(v));
+        }).catch(() => { res.writeHead(200, { "Content-Type": "application/json" })
+          .end('{"ok":false,"error":"could not reach ElevenLabs"}'); });
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+
+  // ---- Settings > Moving pages: the fal key (never echoed back) ----
+  // What is SAVED and whether fal recognised it, never the key — the same deal
+  // /movies/keys makes. perClipPrice rides along because the card and the review
+  // page's "Animate this book (≈ $x)" button have to quote the same money.
+  if (req.method === "GET" && req.url === "/fal-key") {
+    const cfg = readAiCfg();
+    const fal = cfg && cfg.fal && typeof cfg.fal === "object" && !Array.isArray(cfg.fal)
+              ? cfg.fal : null;
+    const saved = !!(fal && typeof fal.apiKey === "string" && fal.apiKey.trim());
+    const p = Number(fal && fal.perClipPrice);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true, saved,
+      keyOk: saved && typeof fal.keyOk === "boolean" ? fal.keyOk : null,
+      error: saved && typeof fal.keyError === "string" ? fal.keyError : "",
+      perClipPrice: Number.isFinite(p) && p > 0 ? p : aiConfig.DEFAULT_CLIP_PRICE }));
+    return;
+  }
+  // Saving PROVES the key first, the way /tts-key does and unlike the film keys:
+  // a wrong voice key buys silence for months, a wrong fal key is found halfway
+  // through a book a parent has already agreed to pay for. ownDoor because it
+  // writes the family's key: this hub's own pages only.
+  if (req.method === "POST" && req.url === "/fal-key") {
+    if (!ownDoor(req, res)) return;
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let b;
+      try { b = JSON.parse(body); } catch { res.writeHead(400).end(); return; }
+      if (!b || typeof b !== "object" || Array.isArray(b) ||
+          typeof b.apiKey !== "string" || b.apiKey.length > 300) { res.writeHead(400).end(); return; }
+      const apiKey = b.apiKey.trim();
+      const cfg = readAiCfg();
+      if (!cfg) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "config-unreadable",
+          message: "Our Era Comms could not read the saved keys just now. Try again in a minute." }));
+        return;
+      }
+      const price = aiConfig.DEFAULT_CLIP_PRICE;
+      const answer = (v) => {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(v));
+      };
+      const failedWrite = () => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "write-failed",
+                                 message: "Our Era Comms could not save that key. Try again." }));
+      };
+      // An empty box is a parent taking the key back out: the role goes away
+      // whole, so nothing downstream can read a blank key as half a key.
+      if (!apiKey) {
+        delete cfg.fal;
+        if (!writeAiCfg(cfg)) { failedWrite(); return; }
+        answer({ ok: true, saved: false, keyOk: null, perClipPrice: price });
+        return;
+      }
+      cfg.fal = { apiKey, keyOk: null, keyError: "", perClipPrice: price };
+      if (!writeAiCfg(cfg)) { failedWrite(); return; }
+      verifyFalKey(apiKey).then((v) => {
+        // Re-read: the probe took a network round trip, and another card may
+        // have written this file while it was out. Only OUR key's verdict is
+        // recorded, and only if it is still the key on disk.
+        const c = readAiCfg();
+        if (c && c.fal && typeof c.fal === "object" && c.fal.apiKey === apiKey) {
+          c.fal.keyOk = v.ok; c.fal.keyError = v.error || "";
+          if (v.perClipPrice) c.fal.perClipPrice = v.perClipPrice;
+          writeAiCfg(c);
+        }
+        answer({ ok: v.ok, saved: true, keyOk: v.ok, ...(v.error ? { error: v.error } : {}),
+                 perClipPrice: v.perClipPrice || price });
+      }).catch(() => answer({ ok: false, saved: true, keyOk: null,
+                              error: "could not reach fal", perClipPrice: price }));
+    });
+    return;
+  }
+
+  // ---- exit door fallback: close this app's kiosk window ----
+  // The apps ask ERAgaze to close them (it also foregrounds TD Snap), but an
+  // engine compiled before 9/1 swept only chrome.exe and matched the wrong
+  // tag, so the app stayed running behind TD Snap (dad 9/1, Making Words and
+  // The Pencil). The hub is always present and can always close its own kiosk.
+  if (req.method === "POST" && urlPath === "/kiosk/close") {
+    res.writeHead(200, { "Content-Type": "application/json" }).end('{"ok":true}');
+    closeKiosk();
+    return;
+  }
+  // ---- the door, decided in one place (dad 9/3: "configure where you
+  // return to when an app closes — TD Snap or Our Era Comms"). Every app's door
+  // POSTs here and follows the answer: "closed" = the engine took the screen
+  // (kiosk closing, TD Snap coming forward); "home" = navigate to /home/ in
+  // this window. Settings > exitTo: "tdsnap" (default) | "home"; with no
+  // engine reachable the door always goes home, as it always did.
+  if (req.method === "POST" && urlPath === "/kiosk/exit") {
+    const answer = (action) => {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ action }));
+    };
+    // the 🚪 ends the app, so whatever she had paused is over too — and the
+    // window it named is one of the ones about to be closed (spec §7).
+    if (paused) { console.log("[kiosk] exit: forgetting the paused " + paused.path); paused = null; }
+    if (exitTarget() === "home") {
+      // stay in the kiosk; just drop the app's park override so the corner park returns
+      enginePost("/app/park", "{}").catch(() => {});
+      answer("home");
+      return;
+    }
+    enginePost("/app/exit", "").then((ok) => {
+      if (ok) { closeKiosk(); answer("closed"); } else answer("home");
+    });
+    return;
+  }
+
+  // ---- the talk door: step out to TD Snap without losing her place ---------
+  // (dad 9/17, "pause to talk"; spec §3.) 💬 POSTs here with the app's own
+  // path. The kiosk is left ALIVE and minimized, the engine's park override is
+  // dropped so the corner park returns while she talks, and her talker comes
+  // to the front. Nothing is spent, nothing is deleted — so, like /kiosk/exit,
+  // this is not ownDoor-guarded: the launcher's curl sends no Sec-Fetch-Site
+  // and no JSON content type, and the worst a hostile tab could do is park her
+  // in TD Snap, which the 🚪 already allows (spec §3.2).
+  if (req.method === "POST" && urlPath === "/kiosk/pause") {
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let want = "";
+      try { const j = JSON.parse(body); if (j && typeof j.path === "string") want = j.path; } catch {}
+      if (!normalizePath(want)) {
+        // a pause with nowhere to come back to is not a pause
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "pause needs the app's path" }));
+        return;
+      }
+      doorGoes().then(async (goes) => {
+        const answer = (action) => {
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+          res.end(JSON.stringify({ action }));
+        };
+        // Door goes home (Settings, or no engine on the bus — a VM, a dev
+        // browser): home lives in THIS kiosk, so there is nothing to step out
+        // to and pausing is meaningless. The apps never mount 💬 in that case
+        // (§5); this is the belt for a stray POST.
+        if (goes !== "tdsnap") { answer("home"); return; }
+
+        paused = { path: normalizePath(want), when: Date.now() };
+        console.log("[kiosk] paused " + paused.path + " — handing the screen to her talker");
+        enginePost("/app/park", "{}").catch(() => {});   // fire-and-forget, as /kiosk/exit does
+        minimizeKiosk();
+        // where her talker lives is the engine's to say (a family may have
+        // changed ForegroundApp in ERAgaze.json); TD Snap when it will not say.
+        const cfg = await engineGet("/config");
+        const target = (cfg && typeof cfg.ForegroundApp === "string" && cfg.ForegroundApp)
+          || "shell:AppsFolder\\TobiiDynavox.Snap_626b2w651dr5w!App";
+        if (process.platform === "win32") {
+          try {
+            const { spawn } = require("child_process");
+            spawn("explorer.exe", [target], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+          } catch (e) { console.error("[kiosk] pause: " + e.message); }
+        }
+        answer("paused");
+      });
+    });
+    return;
+  }
+
+  // ---- back from talking: her tile asks before it launches ----------------
+  // start-hub.bat POSTs here FIRST, with the bare path as text/plain (%OPEN%
+  // carries ? and =, and quoting that into JSON inside a .bat is the fragile
+  // thing the Music/Movies icons taught us not to do) — JSON {path} is
+  // accepted too, for the tests and for anything else that calls it.
+  // 200 "resumed" = the same app is back in front and the bat stops; 409
+  // "launch" = launch it the way you always did (curl -f exits 22 on a 4xx,
+  // so `if not errorlevel 1` is exactly "not resumed").
+  if (req.method === "POST" && urlPath === "/kiosk/resume") {
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", async () => {
+      let want = body;
+      try { const j = JSON.parse(body); if (j && typeof j.path === "string") want = j.path; } catch {}
+      const asked = normalizePath(want);
+      const launch = (why) => {
+        if (paused) console.log("[kiosk] resume " + (asked || "(no path)") + ": " + why + " — forgetting " + paused.path);
+        else console.log("[kiosk] resume " + (asked || "(no path)") + ": " + why);
+        // Whatever was paused cannot survive this: the bat that gets the 409
+        // kills every kiosk window before it launches (spec §7).
+        paused = null;
+        res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ action: "launch" }));
+      };
+      if (!paused) { launch("nothing is paused"); return; }
+      if (!asked || asked !== paused.path) { launch("a different app"); return; }
+      // Hold the name across the await: `paused` can be REPLACED or cleared
+      // while PowerShell works (a 🚪 exit, or a second pause), and the lines
+      // below must talk about the entry we actually matched, not whatever is
+      // there when we wake up.
+      const was = paused.path;
+      if (!(await foregroundKiosk())) { launch("the paused window has gone"); return; }
+      // Re-check before answering. If a /kiosk/exit landed during the wait, the
+      // window we just foregrounded is being torn down: answering "resumed"
+      // would leave the bat with nothing on screen and no launch. 409 instead —
+      // the bat kills whatever is left and launches fresh, which is right.
+      if (!paused || paused.path !== was) { launch("the pause was dropped while we waited"); return; }
+      console.log("[kiosk] resumed " + was);
+      paused = null;   // spent: the window is in front, there is nothing left to restore
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ action: "resumed" }));
+    });
+    return;
+  }
+
+  // ---- Settings > AI helper: family's own model key (never echoed back).
+  // Used by the Clothing Picker's photo ingest today; book-reader QA later.
+  // Saving PROVES the key, the way /tts-key does (VM QA 9/5: the Voice card
+  // said "checked and working" and this one only "saved", so a Google key with
+  // a character missing looked accepted until the Clothing Picker quietly held
+  // every photo). Unlike the fal role a refused key is still saved and still
+  // counts as a key — the probe can be wrong (a project key without the
+  // models.list permission) and a wrong "no" would lock the wardrobe on a key
+  // that works; the card shows the refusal and asks for a paste-again instead.
+  if (req.method === "POST" && req.url === "/ai-key") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { apiKey, provider } = JSON.parse(body);
+        if (typeof apiKey !== "string" || apiKey.length > 300) { res.writeHead(400).end(); return; }
+        const prov = ["anthropic", "openai", "google"].includes(provider) ? provider : "google";
+        // MERGED, not rewritten (review 9/5): this file grew roles after this
+        // door was written — the movies keys the Films card saves and the fal
+        // role ai-config.js reads live beside the vision key now, and saving an
+        // AI key must not delete them. The vision key keeps the flat shape it
+        // has always had, which ai-config.js still reads first.
+        const file = path.join(DATA, "ai-config.json");
+        const merge = (fields) => {
+          let cfg = {};
+          try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+          if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) cfg = {};
+          // Atomic, like writeAiCfg: never a half-written file full of keys.
+          contentStore.writeAtomic(file, JSON.stringify({ ...cfg, ...fields }, null, 1));
+        };
+        const key = apiKey.trim();
+        merge({ provider: prov, apiKey: key, keyOk: undefined, keyError: "" });
+        verifyAiKey(prov, key).then((v) => {
+          merge({ keyOk: v.refused ? false : (v.ok ? true : undefined), keyError: v.error || "" });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: v.ok, error: v.error || "" }));
+        }).catch(() => { res.writeHead(200, { "Content-Type": "application/json" })
+          .end('{"ok":false,"error":"could not check the key"}'); });
+        // a key arriving is the cue to catalog waiting photos right away
+        setTimeout(() => clothing.regenerate(true).catch(() => {}), 500);
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  // The board's partner button "new outfits" (dad 9/3: photos added after the
+  // first run must reach today's board without waiting for the next poll):
+  // pull Drive now, then a forced rebuild - the board's status footer follows
+  // the work. 202: the build runs on; /clothing/status tells the rest.
+  if (req.method === "POST" && req.url === "/clothing/regenerate") {
+    Promise.resolve().then(() => drive.sync()).catch(() => {})
+      .then(() => clothing.regenerate(true)).catch(() => {});
+    res.writeHead(202, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ started: true }));
+    return;
+  }
+  // POST /clothing/refit — the one-time refit pass (warmth coherence spec
+  // 2026-09-29 §2 D1): ask the cut of every garment catalogued before the
+  // ingest prompt did. An OPERATOR's door, run on one device: it spends the
+  // family's key, so this hub's own pages only; 202 and it runs behind like
+  // /clothing/regenerate, pulling Drive first so the other device's lines are
+  // read before anything is asked. /clothing/status's `refit` counts it down.
+  // Nothing else in the hub ever starts this pass.
+  if (req.method === "POST" && urlPath === "/clothing/refit") {
+    if (!ownDoor(req, res)) return;
+    Promise.resolve().then(() => drive.sync()).catch(() => {})
+      .then(() => clothing.refit()).catch(() => {});
+    res.writeHead(202, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ started: true }));
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/clothing/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(clothing.status()));
+    return;
+  }
+
+  // POST /clothing/item {id, category?, occasion?, hidden?, coverage?, weight?,
+  // legs?} — the board's
+  // hold-to-edit sheet (accessories spec §5.1, dad 9/17: "can there be a user
+  // override without too many changes to UX"). The model files a hoodie as a
+  // top; a grown-up holds the tile for 1.6 s and says otherwise, and that word
+  // must outlive every later build on every device in the family.
+  //
+  // THIS DOOR NEVER WRITES wardrobe.json (preflight 4). The catalogue has
+  // exactly one writer — the build worker, with a plain writeFileSync — and a
+  // second one on this thread would hand the family half a file. What the
+  // route writes is the QUEUE the next build reads (wardrobe/edits.json, one
+  // writer: this route) and the family's shared line; the build applies both.
+  // So a catalogue it cannot read is not a refusal of the edit — it is "not
+  // this second": 503 and the sheet says try again.
+  if (req.method === "POST" && urlPath === "/clothing/item") {
+    if (!ownDoor(req, res)) return;             // it re-files a garment family-wide — this hub's own pages only
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      const say = (code, out) => {
+        res.writeHead(code, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(out));
+      };
+      // Every refusal is ONE sentence a parent reads on the sheet, in their
+      // words — the sheet prints whatever comes back, so a code word here is a
+      // code word on the board.
+      const no = (sentence) => say(400, { error: sentence });
+      const UNKNOWN = "Our Era Comms does not know which piece of clothing that is.";
+      let b;
+      try { b = JSON.parse(body); } catch { return no("That edit did not arrive in one piece — try again."); }
+      if (!b || typeof b !== "object" || Array.isArray(b)) return no("That edit did not say what to change.");
+      if (typeof b.id !== "string" || !/^item_[0-9a-f]{4,32}$/.test(b.id)) return no(UNKNOWN);
+      // Only the three fields, each through its own list, and at least one of
+      // them: an edit that says nothing would still cost the family a shared
+      // line and a build.
+      const fields = {};
+      if ("category" in b) {
+        if (typeof b.category !== "string" || !CATEGORIES.has(b.category))
+          return no("That is not a kind of clothing Our Era Comms knows about.");
+        fields.category = b.category;
+      }
+      if ("occasion" in b) {
+        if (!OCCASIONS.includes(b.occasion)) return no("Clothes here are either everyday or fancy.");
+        fields.occasion = b.occasion;
+      }
+      if ("hidden" in b) {
+        if (typeof b.hidden !== "boolean") return no("Hiding a piece of clothing is a yes or a no.");
+        fields.hidden = b.hidden;
+      }
+      // The fit words (warmth coherence spec 2026-09-29 D4), each through its
+      // own list first — a word the sheet never offers is one sentence, like
+      // the three above. Which garment a word APPLIES to needs the entry (its
+      // category, its stored sleeve), so that half waits for the catalogue.
+      if ("coverage" in b) {
+        if (!FIT_WORDS.coverage("top").includes(b.coverage)) return no("Sleeves are sleeveless, short or long.");
+        fields.coverage = b.coverage;
+      }
+      if ("weight" in b) {
+        // never `unsure`: that is the model's shrug, not a parent's answer (§3)
+        if (!FIT_WORDS.weight.includes(b.weight)) return no("A long sleeve is light, medium or heavy.");
+        fields.weight = b.weight;
+      }
+      if ("legs" in b) {
+        if (!FIT_WORDS.legs.includes(b.legs)) return no("Legs are either bare or covered.");
+        fields.legs = b.legs;
+      }
+      if (!Object.keys(fields).length) return no("That edit did not change anything.");
+
+      // The catalogue, read-only. A file that is not there yet is a family
+      // with no wardrobe at all — that is "no such garment", not "busy"; a
+      // file that IS there and will not parse is the worker mid-write.
+      let items;
+      try {
+        items = JSON.parse(fs.readFileSync(path.join(DATA, "wardrobe.json"), "utf8")).items || {};
+      } catch (e) {
+        if (e.code === "ENOENT") items = {};
+        else return say(503, { error: "catalogue busy — try again" });
+      }
+      // By id across the entries, because the KEY is the photo's path under
+      // clothing/ and the board only ever knows the id.
+      const item = Object.values(items).find(i => i && i.id === b.id);
+      if (!item) return no(UNKNOWN);
+      // …and whether each fit word fits THIS garment, as it will be filed
+      // after the edit: the same rule clothing-rank.fitFields applies at every
+      // build, said to the parent here instead of silently dropped there.
+      const kind = fields.category || item.category;
+      if ("coverage" in fields && !FIT_WORDS.coverage(kind).includes(fields.coverage))
+        return no(FIT_WORDS.coverage(kind).length ? "Pants and shorts are either short or long."
+          : "That piece has no sleeves or length to set.");
+      if ("weight" in fields && kind !== "jacket" && (fields.coverage || item.coverage) !== "long")
+        return no("Only a long-sleeve top or a jacket has a weight to set.");
+      if ("legs" in fields && kind !== "dress" && kind !== "set")
+        return no("Only a dress or a set has legs to set.");
+
+      // 1. the queue the next build reads. One writer (this route), through
+      // writeAtomic, so a build reading it never sees half a file.
+      const file = path.join(WARDROBE_DIR, "edits.json");
+      let store = {};
+      try {
+        const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) store = parsed;
+        else console.error("[clothing] edits.json is not a set of edits — starting a new one");
+      } catch (e) {
+        if (e.code !== "ENOENT")
+          console.error("[clothing] edits.json could not be read (" + e.message + ") — starting a new one");
+      }
+      // The parent's LATEST WORD, whole: the entry is REPLACED, never merged
+      // into. A sheet sends every row it changed, so "category only" a minute
+      // after "category and hide" means they have since decided not to hide
+      // it, and a merge would keep hiding the garment for ever.
+      store[b.id] = { ...fields, t: new Date().toISOString() };
+      // Pruned on OUR write and nowhere else (plan T4: the worker never writes
+      // this file, so there is one writer and no lock). An entry goes only
+      // when it is both old and already in the catalogue — a queue the build
+      // has not read yet outlives any clock.
+      const stamped = new Map();
+      for (const it of Object.values(items)) if (it && it.id) stamped.set(it.id, it.manualAt);
+      const OLD = 60 * 24 * 60 * 60 * 1000;
+      for (const [id, e] of Object.entries(store)) {
+        const at = Date.parse(e && e.t);
+        if (!at || Date.now() - at < OLD) continue;
+        const day = dayKey(at, clothing.zone());
+        const manualAt = stamped.get(id);
+        if (typeof manualAt === "string" && manualAt >= day) delete store[id];
+      }
+      try { contentStore.writeAtomic(file, store); }
+      catch (e) {
+        console.error("[clothing] the edit could not be written: " + e.message);
+        return say(500, { error: "That change could not be saved — try again." });
+      }
+
+      // 2. …and out to the family, AFTER the local write, exactly as a Yes
+      // goes. A COMPLETE tag line (shareTag's field set, spec §5.1 step 2):
+      // the device that receives it may never have ingested this photo, and a
+      // fragment would file the garment with no name and no warmth. Sharing
+      // off (no Drive folder) is not an error: appendTag says so and the local
+      // queue still stands.
+      if (clothingLog) {
+        try {
+          clothingLog.appendTag({
+            name: item.name, category: item.category, warmth: item.warmth,
+            colors: item.colors, pattern: item.pattern, statement: item.statement,
+            palette: item.palette, vibe: item.vibe,
+            rotate_deg: item.rotate_deg || 0, crop: item.crop || {},
+            occasion: item.occasion, hidden: item.hidden,
+            coverage: item.coverage, weight: item.weight, legs: item.legs,
+            ...fields, manual: true, id: item.id, hash: item.hash });
+        } catch (e) { console.error("[clothing] the manual tag was not shared: " + e.message); }
+      }
+
+      // 3. the build. `builds` is what the sheet waits on: true when THIS edit
+      // started a rebuild-only build, false when one was already running — in
+      // which case regenerate queues a run behind it and the edit lands on
+      // that one instead (preflight 7). Either way the edit is on disk, so a
+      // false is a "not yet", never a failure.
+      let builds = false;
+      try {
+        builds = !clothing.isBuilding();
+        clothing.rebuildToday().catch(() => {});
+      } catch (e) {
+        builds = false;
+        console.error("[clothing] the board was not rebuilt after an edit: " + e.message);
+      }
+      say(200, { ok: true, builds });
+    });
+    return;
+  }
+
+  // ---- book jobs: what every book is doing, and the button that kicks one ----
+  // The same deal /clothing/status makes: no-store, because the Settings card
+  // and the board note poll this while a book builds and a cached answer is a
+  // card that lies. content.js decides what is safe to say - no key, no device
+  // name, no folder path, nothing about the family but the book's own title.
+  if (req.method === "GET" && urlPath === "/content/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(content.status()));
+    return;
+  }
+  // POST /content/run {kind, slug, step} - re-run one step of one book (the
+  // review page's "re-narrate this page" and its "read the photos again",
+  // Settings' "start this book"). 202 and
+  // the build runs on behind it, like /clothing/regenerate: a transcription can
+  // take minutes and no browser should hold a socket open for it.
+  if (req.method === "POST" && req.url === "/content/run") {
+    if (!ownDoor(req, res)) return;             // it spends money — this hub's own pages only
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.runStep(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      // ANOTHER COMPUTER HAS THIS BOOK (spec §14, step 1). It comes back before
+      // `error` is looked at because a refusal carries both, and it is the only
+      // one of the two the card can render as anything but a mistake: `refused`
+      // says which of the three answers this is, `error` is the sentence
+      // content.js wrote for a parent to read. This door never gets step 2 —
+      // every review-page action runs through here on a book that HAS a
+      // manifest, so "already made" would lock a family out of their own book.
+      if (out.refused) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ refused: out.refused, error: out.error })); return; }
+      if (out.error) { res.writeHead(400, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: out.error })); return; }
+      // Nothing this hub builds in API mode could ever reach the family's Drive
+      // (Gap 1), so the request is refused rather than half-honoured.
+      if (out.skipped) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: out.skipped })); return; }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ started: true }));
+    });
+    return;
+  }
+
+  // POST /content/build {kind:"books", slug} or {kind:"books", loose:true} —
+  // THE TAP (spec §13, §14). Since "built here" the scan starts nothing by
+  // itself: it never claims a quiet inbox, never gathers the loose pile and
+  // never takes over another computer's job. This door is the whole of how a
+  // pile of photos becomes a book, and it is deliberately the same door
+  // /content/run is — `ownDoor`, a small JSON body, 202 and the walk runs on
+  // behind it — because it spends exactly the same money on exactly the same
+  // book. `loose:true` is the pile in books/ itself, which has no slug until
+  // it is gathered; the answer hands the new one back so the card can follow
+  // the book it just started.
+  //
+  // content.js owns every decision behind this: who holds the book, whether it
+  // is already made, and the sentence each refusal says. Nothing here invents a
+  // wording, and no answer names a device or a folder.
+  if (req.method === "POST" && urlPath === "/content/build") {
+    if (!ownDoor(req, res)) return;             // it spends money — this hub's own pages only
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.build(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      if (out.refused) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ refused: out.refused, error: out.error })); return; }
+      if (out.error) { res.writeHead(400, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: out.error })); return; }
+      if (out.skipped) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: out.skipped })); return; }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ started: true, slug: out.slug }));
+    });
+    return;
+  }
+
+  // POST /content/remove {kind, slug} - the review page's "Remove this book".
+  // The ONE door in the hub that deletes a family's own files, so it answers
+  // when the delete is DONE rather than 202-and-hope: a parent who pressed it
+  // is owed the truth about whether the book is gone. content.js owns the jail,
+  // the "not while it is being built" rule and the sentence a refusal says.
+  if (req.method === "POST" && urlPath === "/content/remove") {
+    if (!ownDoor(req, res)) return;             // it deletes photos — this hub's own pages only
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.removeBook(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      const code = out.error ? 400 : out.skipped ? 409 : 200;
+      res.writeHead(code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out.error ? { error: out.error }
+        : out.skipped ? { error: out.skipped } : out));
+    });
+    return;
+  }
+
+  // POST /content/rename {kind, slug, title} - "…and let me say otherwise"
+  // (dad 9/7). A pile of photos dropped straight into books/ is gathered into
+  // ONE book and named off its cover; this is the door that puts a wrong guess
+  // right, before or after the build. It moves a folder inside the family's own
+  // Drive folder, so it is an own-door POST like /content/remove, and content.js
+  // owns the jail, the "not while it is being built" rule and every sentence a
+  // refusal says.
+  if (req.method === "POST" && urlPath === "/content/rename") {
+    if (!ownDoor(req, res)) return;             // it moves a family's folder — this hub's own pages only
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.renameBook(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      // The same 409 as the two doors above, in the same shape, and it is the
+      // one of the three this door does not use today: a rename with a foreign
+      // claim RENAMES and simply starts nothing (spec §14 — the folder is the
+      // family's to name, the build is the other computer's to finish). The
+      // mapping is here so that a refusal content.js ever does return arrives
+      // as a sentence a card can show, rather than as a bare 400 saying the
+      // request was wrong when it was only the moment.
+      if (out.refused) { res.writeHead(409, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ refused: out.refused, error: out.error })); return; }
+      const code = out.error ? 400 : out.skipped ? 409 : 200;
+      res.writeHead(code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out.error ? { error: out.error }
+        : out.skipped ? { error: out.skipped } : out));
+    });
+    return;
+  }
+
+  // ---- the review page's strip (spec §5): read the pages, write their words --
+  // GET /content/text?slug= - every page of one book in reading order, with the
+  // URL of its own photo. POST the same path writes back either the whole
+  // book's order and cover (a drag) or ONE page's words and flags (a parent
+  // fixing a misread word) - content.saveText picks by whether a page is named.
+  // content.js owns every one of those decisions, so the jail, the "every page
+  // exactly once" rule, the "flags are cleared, never authored" rule and the
+  // local-Drive refusal are written down in one place and the routes stay four
+  // lines each.
+  if (req.method === "GET" && urlPath === "/content/text") {
+    const out = content.pagesFor(new URL(req.url, "http://x").searchParams.get("slug") || "");
+    const code = out.error ? 400 : out.skipped ? 409 : 200;
+    res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out.skipped ? { error: out.skipped } : out));
+    return;
+  }
+  if (req.method === "POST" && urlPath === "/content/text") {
+    if (!ownDoor(req, res)) return;             // it rewrites the book — this hub's own pages only
+    let body = "";
+    // Room for a long book's order, or one page of a picture book in the words
+    // a parent just typed (content.MAX_PAGE_TEXT), and nothing more.
+    req.on("data", c => { body += c; if (body.length > 16384) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = content.saveText(JSON.parse(body)); }
+      catch { res.writeHead(400).end(); return; }
+      const code = out.error ? 400 : out.skipped ? 409 : 200;
+      res.writeHead(code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out.error ? { error: out.error }
+        : out.skipped ? { error: out.skipped } : out));
+    });
+    return;
+  }
+  // GET /content/page?slug=&index= - one page's photo, straight out of the book
+  // folder. The Drive mirror only runs every ten minutes, so /books/<slug>/ is
+  // usually behind the book a parent is reviewing right now. no-store for the
+  // same reason: a re-ingested page keeps its URL and changes its bytes.
+  if (req.method === "GET" && urlPath === "/content/page") {
+    const q = new URL(req.url, "http://x").searchParams;
+    const out = content.pageFile(q.get("slug") || "", parseInt(q.get("index"), 10));
+    if (out.skipped) { res.writeHead(409).end(); return; }
+    if (out.error) { res.writeHead(404).end("not found"); return; }
+    fs.readFile(out.file, (err, data) => {
+      if (err) { res.writeHead(404).end("not found"); return; }
+      res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "no-store" });
+      res.end(data);
+    });
+    return;
+  }
+
+  // ---- Settings > Integrations: Google Drive content (drive.js) ----
+  if (req.method === "GET" && urlPath === "/integrations/drive/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(drive.status()));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/connect") {
+    drive.connect().then(r => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r));
+    }).catch(e => { res.writeHead(502).end(String(e.message)); });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/sync") {
+    drive.sync().then(r => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r));
+    }).catch(e => { res.writeHead(502).end(String(e.message)); });
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/integrations/drive/detect") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(drive.detectLocal()));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/open") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 512) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { target } = JSON.parse(body || "{}");
+        const r = drive.openInExplorer(target === "folder" ? "folder" : "root");
+        if (r.ok) setTimeout(stepAsideFromKiosk, 900);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(r));
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/integrations/drive/browse") {
+    const q = new URL(req.url, "http://x").searchParams;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(drive.browseLocal(q.get("path") || "")));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/localfolder") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 2048) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { folderPath } = JSON.parse(body);
+        const r = drive.setLocalFolder(String(folderPath || ""));
+        if (r.error) { res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify(r)); return; }
+        openClothingLog();   // a new mount is a new home for the shared log
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/integrations/drive/folders") {
+    drive.listFolders().then(r => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(r));
+    }).catch(e => { res.writeHead(502).end(String(e.message)); });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/integrations/drive/folder") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 2048) req.destroy(); });
+    req.on("end", () => {
+      try {
+        const { folderId } = JSON.parse(body);
+        if (typeof folderId !== "string" || folderId.length > 128) { res.writeHead(400).end(); return; }
+        drive.setFolder(folderId);
+        res.writeHead(204).end();
+      } catch { res.writeHead(400).end(); }
+    });
+    return;
+  }
+
+  // ---- self-update: version probe (FE polls it) + on-demand check ----
+  if (req.method === "GET" && urlPath === "/version") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ build: updater.runningBuild, disk: updater.currentBuild(),
+                             updater: updater.enabled, pid: process.pid }));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/update/check") {
+    // Optional body {feed}: take THIS build from that base URL instead of the
+    // public release feed (tools/push-device.sh, dev-flow spec §5.3). The
+    // route is ungated and reachable from the LAN whenever ERA_BIND opens the
+    // hub up, so the override is honoured only when the SOCKET's peer is the
+    // machine itself — otherwise anyone on a school network could install
+    // code on the Tobii. Headers (X-Forwarded-For & co) are attacker-written
+    // and never consulted. No body, bad JSON, or a feed that isn't an
+    // http(s) string: ignore it and check the default feed exactly as the
+    // Settings button (which POSTs no body at all) always has.
+    //
+    // The cap is counted in BYTES over the raw Buffer chunks (not `body += c`,
+    // which stringifies each chunk on its own — a multibyte character split
+    // across two TCP reads comes out as U+FFFD — and caps characters, so a
+    // 4096-char body of 3-byte characters is 12 KB of buffer). And an
+    // oversize body gets a 413 it can read, not a socket reset: a reset is
+    // indistinguishable from the hub being down, and the old code destroyed
+    // the request without answering at all, so the default check never ran.
+    const chunks = []; let total = 0, over = false;
+    req.on("error", () => {});   // the destroy below must not throw
+    req.on("data", c => {
+      if (over) return;
+      total += c.length;
+      if (total > 4096) {
+        over = true;
+        res.writeHead(413, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "body too large" }), () => req.destroy());
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (over) return;
+      const body = Buffer.concat(chunks).toString("utf8");
+      let feed;
+      if (updater.isLoopback(req.socket && req.socket.remoteAddress)) {
+        try {
+          const inc = JSON.parse(body);
+          if (inc && typeof inc.feed === "string" &&
+              (inc.feed.startsWith("http://") || inc.feed.startsWith("https://")))
+            feed = inc.feed;
+        } catch {}
+      }
+      updater.check(PORT, feed).then((r) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(r));
+      });
+    });
+    return;
+  }
+
+  // static
+  let p = safeDecode((req.url || "/").split("?")[0]);
+  if (p === null) { res.writeHead(400).end(); return; }
+  // /pencil -> /pencil/ (301, query kept): app dirs typed without the trailing
+  // slash used to 404 with a bare "not found" (install QA 8/28).
+  if (!p.endsWith("/") && !path.extname(p)) {
+    const dir = path.normalize(path.join(PUB, p));
+    if (dir.startsWith(PUB) && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      const q = (req.url || "").split("?")[1];
+      res.writeHead(301, { Location: p + "/" + (q ? "?" + q : "") }).end();
+      return;
+    }
+  }
+  if (p.endsWith("/")) p += "index.html";
+  const file = path.normalize(path.join(PUB, p));
+  if (!file.startsWith(PUB)) { res.writeHead(403).end(); return; }
+  fs.readFile(file, (err, data) => {
+    if (err) { res.writeHead(404).end("not found"); return; }
+    res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream",
+                         "Cache-Control": "no-cache" });
+    res.end(data);
+  });
+});
+// After a self-update the fresh hub starts while the old one is still
+// letting its last responses drain — retry the bind until the port frees.
+let bindTries = 0;
+server.on("error", (e) => {
+  if (e.code === "EADDRINUSE" && bindTries++ < 40) {
+    setTimeout(() => server.listen(PORT, BIND), 500);
+    return;
+  }
+  throw e;
+});
+server.on("listening", () => {
+  console.log("era-hub on http://" + BIND + ":" + PORT);
+  // installed payloads only; checkouts are a no-op. Never restart under the
+  // welcome wizard: the timers wait for a profile (leg B, 9/3)
+  updater.start(PORT, () => HAS_PROFILE);
+  // THE THIRD DOOR onto the family's Drive folder, and the only one with no
+  // tap behind it: drive.js adopts a content folder a mount already holds
+  // (dad's tablet 9/15 — Drive signed in, the folder fully synced down, every
+  // app empty because folderPath was only ever written by a tap in Settings and
+  // that was the family's SECOND device). The two Settings doors re-open the
+  // shared log where they are handled; this one can fire minutes or hours after
+  // boot, when Drive for Desktop finally signs in, so it needs the hook. The
+  // cached clothingLog is the one consumer that does not re-read drive.json
+  // live — without this, every pick from adoption until the next restart is
+  // recorded locally and shared with nobody, silently (review r1's bug again).
+  // Set BEFORE start(), which adopts.
+  drive.onAdopted = () => openClothingLog();
+  drive.start(DATA);     // Google Drive content mirror (no-op until connected)
+  // Book sharing: it reads the shelf (<DATA>/books) and writes the family's
+  // Drive folder, so it needs the data dir the same way drive.js does.
+  booksShare.start(DATA);
+  // Drawing (spec 2026-09-30 §4): the device that signs new picture ids, the family's clock for them,
+  // and the one-day sweep of blank pictures. After drive.start: it reads drive.json.
+  drawings.start(DATA, { deviceId: DEVICE_ID, tz: () => TZ });
+  // A finished sync feeds BOTH pipelines. onSynced is one property, so the
+  // fan-out lives here rather than in either module: whoever is added next
+  // adds a line, and neither clothing.js nor content.js has to know the other
+  // exists (or risk quietly overwriting it — that is how a slot with two
+  // owners loses one).
+  drive.onSynced = () => {
+    // tick(), not regenerate(true): a sync every ten minutes RE-DEALT the
+    // board every ten minutes, so the least-recently-shown signal collapsed
+    // within the hour and the lineup flipped all day (spec §1 V4). tick only
+    // acts when the photos really changed, the board predates this morning's
+    // cutoff, or leftovers are due a retry — so another device's picks, offers
+    // and tags arriving change nothing today and count tomorrow, which is what
+    // the original did (spec §3.5).
+    try { clothing.tick("drive sync"); }
+    catch (e) { console.error("[clothing] " + e.message); }
+    // ...and content.tick() no longer starts one either (spec §12 "Built
+    // here"): a book only builds where a grown-up tapped Build. What this
+    // still does is look — a folder that arrived from another device, or the
+    // family's own book finished on this one, reaches /content/status (and so
+    // the shelf and the Settings card) on the sync rather than up to five
+    // minutes later. It also resumes THIS device's own job after a crash.
+    try { content.tick("drive sync"); }                     // fresh books -> the card
+    catch (e) { console.error("[content] " + e.message); }
+    // The week's videos: a sync is when a new week (or another device's claim
+    // or finished video) arrives. tick() only starts the pass and returns; a
+    // pass already running answers busy (spec 2026-10-12 §3.2).
+    try { thisWeekFetch.tick("drive sync"); }
+    catch (e) { console.error("[this-week] " + e.message); }
+  };
+  // ...and on a timer, for the device whose sync found nothing new while a
+  // failed video's hour ran out.
+  setInterval(() => { try { thisWeekFetch.tick("timer"); } catch {} }, 20 * 60 * 1000).unref();
+  // And the way back: a book that just published is in the family's DRIVE
+  // folder, and the Reader serves <DATA>/books. Only the ten-minute mirror (or
+  // a hand on "Sync now") carried it across, so a parent watched the card say
+  // "finished", opened the Reader, and the book was not there for up to ten
+  // minutes (F5, 9/4). drive.mirrorBook copies THAT BOOK and nothing else —
+  // deliberately not drive.sync(), which ends in the fan-out above and would
+  // spend the family's vision quota on the clothing board on every publish.
+  // `blocked` and `error` are the two ways a book does not reach the shelf;
+  // `skipped` is a COUNT of files that had not changed since the last publish
+  // and is not a failure of any kind (drive.js says why the two are separate
+  // keys). A file that would not copy is neither: the book IS shelved, minus
+  // that file, and the errors are said out loud rather than swallowed.
+  content.onPublished = (b) => {
+    const r = drive.mirrorBook(b.name) || {};
+    const failed = (r.errors || []).length;
+    if (r.error || r.blocked) console.error("[content] " + b.slug + " is built but not shelved: " + (r.error || r.blocked));
+    else console.log("[content] shelved " + b.slug + " (" + r.files + " file(s) copied)");
+    if (failed) console.error("[content] " + b.slug + ": " + failed + " file(s) would not copy onto the shelf: " + r.errors.join("; "));
+  };
+  clothing.start(DATA, { tz: () => TZ, deviceId: DEVICE_ID });  // the Clothing Picker generator (no-op without photos)
+  openClothingLog();     // after drive.start: drive.js has no DATA before it (W10)
+  // book jobs in the family's Drive folder (local mode only). DEVICE_ID is what
+  // every claim this hub writes is signed with from here on (spec §14): two PCs
+  // a family bought together are both "DESKTOP-7F3K" to os.hostname(), so on the
+  // machine name alone every claim read as our own and "is anyone else already
+  // building this?" could not be asked at all.
+  content.start(DATA, { deviceId: DEVICE_ID });
+  clearStageOnce();      // first boot after install: minimize covering browsers
+  // installer-chosen apps install at first boot — but the wizard has the final
+  // say, and until it is answered the installer's ticks are only its pre-fill.
+  // VM 9/3: a silent install ticks everything, the engine compiled and STARTED
+  // before the family unticked it, and the first door handed their kiosk to
+  // an engine they never chose.
+  setTimeout(() => {
+    if (!HAS_PROFILE) { console.log("[apps] reconcile deferred until the wizard is answered"); return; }
+    reconcileApps();
+    reconcileBootShortcuts();
+  }, 5000).unref();
+  // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
+  for (const name of PREWARM) {
+    if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;
+    fetchSymbolToCache(name).then(f => { if (f) console.log("[symbol] pre-warmed " + name); });
+  }
+});
+server.listen(PORT, BIND);

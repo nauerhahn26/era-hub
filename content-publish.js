@@ -1,0 +1,240 @@
+// content-publish.js — step 4, the last one a book must pass: the folder of
+// photos becomes a package the reader can open (spec §4.4).
+//
+// Everything before this step is "get the words and the voice right"; this step
+// is deterministic from what is already on disk. It writes ONE file —
+// manifest.json — and copies one more (cover.jpg), and its whole job is to make
+// sure that file is honest:
+//
+//  1. MANIFEST LAST, AND ATOMIC. Its presence IS the package (server.js's
+//     booksIndex() skips a folder without one), so it is written through
+//     content-store's writeAtomic — manifest.tmp then rename — after every
+//     other byte is in place. Google Drive for Windows mirrors this folder to
+//     the family's other devices while we work; a half-written manifest, or one
+//     that lands before its media, is a shelf entry that opens onto a 404.
+//  2. IT NEVER NAMES A FILE THAT IS NOT THERE. Every image, mp3 and mp4 is
+//     stat'd on the way in. A page whose mp3 never landed (a Drive mirror still
+//     catching up, a narration that failed) publishes SILENT — no `audio` key,
+//     no `words` — which is a page the reader already knows how to show. Nor
+//     does it name audio that speaks OTHER words: an mp3 bought for a sentence
+//     a grown-up has since rewritten is checked off narration.json's `said`
+//     fingerprint and left out until the page is narrated again.
+//  3. AN IMPERFECT BOOK STILL PUBLISHES. Flagged pages publish (ruling 9/4: a
+//     small mistake is tolerable, a book that never appears is not) and their
+//     flags stay in text.json for the review page. A page the transcriber never
+//     reached publishes as a picture page rather than holding the whole book.
+//     The only thing that stops a publish is having no pages at all.
+//  4. EVERY PUBLISH BUMPS exportedAt. The reader cache-busts its media on it
+//     (public/reader/reader.js:187), so a re-publish that kept the old stamp
+//     would leave the family looking at yesterday's audio for 24 hours. The
+//     book's `id` is the opposite: read back from the manifest we are replacing,
+//     so a package keeps one identity for life. So is `authored` — the rim on a
+//     book written for her — which this step keeps but never awards.
+//  5. `publishedAt` IS THE OTHER HALF OF LAW 4: when the book was FIRST
+//     published, and never again. exportedAt moves on every publish, so it
+//     cannot say "which week is this book from"; publishedAt can (dad, 9/30).
+//     Read back, never invented, like `id` — see the block beside the manifest.
+//
+// No network, no key, no clock beyond the one the caller passes. The narration
+// credit (provider/model/voice) is read from .build/narration.json, which
+// content-narrate.js writes as the record of what actually spoke — not from the
+// Voice card, which the family may have changed since.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const store = require("./content-store.js");
+const { pagesOf } = require("./content-providers.js");
+const { readNarration, said: saidOf } = require("./content-narrate.js");
+const { slugify } = require("./slug.js");
+
+const MANIFEST = "manifest.json";
+const COVER = "cover.jpg";
+const SCHEMA_VERSION = 1;
+
+function iso(now) {
+  if (typeof now === "string") return now;                    // tests pin the clock
+  return new Date(now == null ? Date.now() : now).toISOString();
+}
+
+// A file is only worth naming in the manifest if it is on disk AND has bytes:
+// Drive mirrors a big mp4 as a zero-length placeholder first.
+function present(dir, rel) {
+  if (!rel) return false;
+  try { return fs.statSync(path.join(dir, rel)).size > 0; } catch { return false; }
+}
+
+// The cover the reader's shelf shows. text.json marks it (page 1 by default,
+// or whatever a parent chose on the review page); the manifest points at
+// "cover.jpg" because that is the name booksIndex() falls back to and the name
+// every hand-authored package in the family already uses. Copied, not linked:
+// the shelf must survive a page being re-ingested underneath it.
+// Re-copied only when the bytes actually differ, or every scan would hand Drive
+// another megabyte to upload.
+function writeCover(dir, pages, text) {
+  const marked = text.find(t => t.cover);
+  const page = (marked && pages.find(p => p.index === marked.index)) || pages[0];
+  if (!page || !present(dir, page.image)) return null;
+  const src = fs.readFileSync(path.join(dir, page.image));
+  const dst = path.join(dir, COVER);
+  try { if (fs.readFileSync(dst).equals(src)) return COVER; } catch {}
+  store.writeAtomic(dst, src);
+  return COVER;
+}
+
+// Who spoke, for the record. content-narrate.js stamps narration.json with the
+// provider it used; a book narrated by an older hub (or never narrated at all)
+// carries nulls rather than a claim we cannot back up.
+function narrationOf(narration, anyAudio) {
+  if (!anyAudio) return { provider: null, model: null, voice: null };
+  return {
+    provider: narration.provider || "elevenlabs",
+    model: narration.model || null,
+    voice: narration.voice || null,
+  };
+}
+
+// publishBook(dir, opts) — write the package manifest for the book in `dir`.
+//
+//   opts.slug   the URL slug (content.js computed it from the folder name)
+//   opts.title  the folder name as the parent typed it
+//   opts.now    pinned clock for exportedAt
+//
+// Returns {published:true, pages:[…], silent, flagged, blank, exportedAt}, or
+// {hold:"no-pages"} for a folder with nothing built in it yet — a hold keeps
+// the claim and the state exactly where they are (content-worker.js), which is
+// what a book whose photos have not been ingested yet needs.
+function publishBook(dir, opts) {
+  const o = opts || {};
+  const title = o.title || path.basename(dir);
+  const slug = o.slug || slugify(title) || "book";
+  const exportedAt = iso(o.now);
+
+  const text = ((store.readText(dir) || { pages: [] }).pages) || [];
+  const byIndex = new Map(text.map(t => [t.index, t]));
+
+  // READING ORDER is text.json's ARRAY order — that is what the review page's
+  // drag rewrites (spec §5, content.js saveOrder) — while a page's `index`
+  // stays welded to the photo, the audio and the flags bought for it. Without
+  // this the manifest would keep the order the scanner happened to give the
+  // photos and the parent's drag would live only on the review page.
+  // A page text.json does not mention (a photo added since it was written)
+  // keeps its scanner order and follows on the end, so nothing is ever dropped.
+  // pagesOf() is the same reader the transcriber uses: ingest's own record when
+  // it is there, the pages/ directory itself when it is not (a folder built by
+  // hand in power mode still publishes).
+  const seats = new Map(text.map((t, i) => [t.index, i]));
+  const seat = (p) => (seats.has(p.index) ? seats.get(p.index) : text.length + p.index);
+  const built = pagesOf(dir).filter(p => present(dir, p.image)).sort((a, b) => seat(a) - seat(b));
+  if (!built.length) {
+    store.appendLog(dir, "publish", "no pages yet - nothing to publish", { now: o.now });
+    return { hold: "no-pages", published: false, pages: [] };
+  }
+  const narration = readNarration(dir);
+  const spoke = new Map(narration.pages.map(p => [p.index, p]));
+
+  let silent = 0, flagged = 0, blank = 0;
+  const pages = built.map((b) => {
+    const t = byIndex.get(b.index);
+    const page = { index: b.index, image: b.image, text: t ? t.text : "" };
+    if (!t || !t.text.trim()) blank++;
+    if (t && t.flags.length) flagged++;
+    const said = spoke.get(b.index);
+    // The mp3 has to BE there. A page listed in narration.json whose audio has
+    // not mirrored yet is silent for now and gains its voice on the next
+    // publish — far better than a reader that stalls on a 404.
+    // And it has to say THESE words. A page rewritten since it spoke — a
+    // grown-up's correction, a re-reading of the photo — still has its old mp3
+    // and its old timings sitting on disk, and naming them here is worse than
+    // naming nothing: the reader would play one sentence while highlighting
+    // another, word by word, and the person being misled cannot read yet.
+    // Silent is honest, and the next narrate walk hands the page its voice back
+    // (content-narrate.js buys exactly the pages whose words moved).
+    // A book from an older hub carries no fingerprint and keeps its audio: what
+    // it says has not changed just because we started writing this down.
+    if (said && present(dir, said.audio) && (!said.said || !t || said.said === saidOf(t.text))) {
+      page.audio = said.audio;
+      page.words = Array.isArray(said.words) ? said.words : [];
+    } else silent++;
+    const video = "video/" + String(b.index).padStart(3, "0") + ".mp4";
+    if (present(dir, video)) page.video = video;
+    return page;
+  });
+
+  const cover = writeCover(dir, built, text);
+  const previous = store.readJson(path.join(dir, MANIFEST));
+  const id = previous && typeof previous.id === "string" && previous.id
+    ? previous.id : crypto.randomUUID();
+
+  // WHO WROTE THE BOOK IS NOT OURS TO CHANGE. `authored: true` is the coral rim
+  // and the "…'s story" badge on the shelf (reader.js:204) — a book written for
+  // her rather than scanned out of a picture book — and until the weekly book
+  // existed, nothing this file wrote could honestly carry it, so a constant
+  // `false` was the truth. It stopped being the truth when the weekly-book
+  // maker started posting a finished, authored package into the Drive folder
+  // (spec §12).
+  //
+  // Everything the hub does to that book afterwards comes back through here: a
+  // word fixed on the review page, a rename, and Animate, which re-publishes
+  // after EVERY clip (content-animate.js:386). A constant would strip the rim
+  // on the first of those presses, and no later step would put it back — the
+  // family would watch the week's book turn ordinary by using it.
+  //
+  // So it is read, never invented, from the two places that can honestly hold
+  // it: the job beside the book (the maker writes job.json before the manifest,
+  // so on a Drive mirror this is sometimes the only one here yet) and
+  // the manifest we are replacing (a hand-made package has no job at all). Both
+  // are asked `=== true`, the same question server.js:475 and the reader ask,
+  // because a foreign file may hold anything at all in that key.
+  const job = store.readJob(dir);
+  const authored = (!!job && job.authored === true) ||
+                   (!!previous && previous.authored === true);
+
+  // WHEN THE BOOK WAS FIRST PUBLISHED IS NOT THIS PUBLISH'S TO RESTATE.
+  // `exportedAt` is bumped by every publish (law 4: a review edit, a rename,
+  // every Animate clip), so on its own it cannot date a book: the week's book
+  // would look a day old the moment anyone pressed a button on it. `publishedAt`
+  // is the stamp that stays put, and the shelf sorts This Week by it (spec
+  // 2026-09-30, books-shelf.js).
+  //
+  // So, like `id` and `authored` above, it is read, never invented: from the
+  // manifest we are replacing when that holds a real date. A manifest from
+  // before the field has no publishedAt but did have an exportedAt, and that is
+  // the nearest honest answer to "when did this first go out" — better than
+  // today, which would make every old book on the shelf brand new. Only a book
+  // with no usable history at all is dated by this publish. A garbage value
+  // (a foreign file may hold anything) is treated as absent.
+  //
+  // `weekOf` ("YYYY-MM-DD") belongs to the weekly maker alone, which knows
+  // which week it wrote the book for and the hub does not. It is carried
+  // through unchanged when it is that shape, and left out otherwise — never
+  // guessed from a date that is merely nearby.
+  const dateOk = (v) => typeof v === "string" && v !== "" && Number.isFinite(Date.parse(v));
+  const publishedAt = previous && dateOk(previous.publishedAt) ? previous.publishedAt
+    : previous && dateOk(previous.exportedAt) ? previous.exportedAt
+    : exportedAt;
+  const weekOf = previous && typeof previous.weekOf === "string" &&
+                 /^\d{4}-\d{2}-\d{2}$/.test(previous.weekOf) &&
+                 Number.isFinite(Date.parse(previous.weekOf)) ? previous.weekOf : null;
+
+  const manifest = {
+    schemaVersion: SCHEMA_VERSION,
+    id, slug, title, exportedAt, publishedAt,
+    ...(weekOf ? { weekOf } : {}),
+    narration: narrationOf(narration, pages.some(p => p.audio)),
+    // Omitted rather than guessed at: booksIndex() falls back to cover.jpg and
+    // the reader shows its own "No cover" card, so a bad path helps nobody.
+    ...(cover ? { cover } : {}),
+    authored,             // kept, never claimed: see the block above
+    pages,
+  };
+  // LAST. Every path above has been stat'd, and the cover is already beside it.
+  store.writeAtomic(path.join(dir, MANIFEST), manifest);
+  store.appendLog(dir, "publish", "published " + pages.length + " page(s)" +
+    (silent ? ", " + silent + " silent" : "") + (blank ? ", " + blank + " with no text yet" : "") +
+    (flagged ? ", " + flagged + " with flags to review" : ""), { now: o.now });
+
+  return { published: true, slug, title, exportedAt, pages, silent, flagged, blank };
+}
+
+module.exports = { publishBook, writeCover, narrationOf, present, MANIFEST, COVER, SCHEMA_VERSION };

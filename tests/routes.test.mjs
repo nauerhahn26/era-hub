@@ -1,0 +1,263 @@
+// routes.test.mjs — static-route contract from the install QA (8/28): app
+// directories reached WITHOUT a trailing slash redirect to the canonical
+// slash form (query string kept) instead of 404ing, and /favicon.ico serves
+// so browsers stop logging a 404 on every app. Born of the v0.12.0 payload
+// QA: a family typing 127.0.0.1:8377/pencil got a bare "not found".
+// Also the review page's front door (T3.1): /book-review/ is a PLAIN static
+// directory, deliberately outside /books/ — that prefix is the media jail and
+// 404s any extension-less path, so the page could never have been served from
+// inside it.
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PORT = 8409; // never live 8377; 8391-8408 held by sibling suites (movies took 8404-8406)
+const BASE = `http://127.0.0.1:${PORT}`;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-routes-"));
+let child;
+
+before(async () => {
+  child = spawn("node", ["server.js", String(PORT)], {
+    cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
+    // The hub builds today's outfits on its own timers, and that build reads
+    // the weather: point both lookups at a dead loopback port so nothing in
+    // this suite can ever reach the internet.
+    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1",
+           ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1" },
+  });
+  for (let i = 0; i < 100; i++) {
+    try { await fetch(`${BASE}/settings`); return; } catch {}
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error("server never came up");
+});
+after(() => { if (child) child.kill("SIGKILL"); });
+
+test("app dirs without trailing slash redirect to the slash form", async () => {
+  for (const dir of ["/pencil", "/board", "/reader", "/home", "/lib"]) {
+    const r = await fetch(`${BASE}${dir}`, { redirect: "manual" });
+    assert.equal(r.status, 301, `${dir} should 301`);
+    assert.equal(r.headers.get("location"), `${dir}/`);
+  }
+});
+
+test("redirect keeps the query string (Music board deep link)", async () => {
+  const r = await fetch(`${BASE}/board?recipe=songs`, { redirect: "manual" });
+  assert.equal(r.status, 301);
+  assert.equal(r.headers.get("location"), "/board/?recipe=songs");
+});
+
+test("redirected app dirs then serve 200", async () => {
+  for (const dir of ["/pencil", "/board", "/reader", "/home"]) {
+    const r = await fetch(`${BASE}${dir}`); // follow redirects
+    assert.equal(r.status, 200, `${dir} should land on index.html`);
+  }
+});
+
+// The review page (T3.1). /books/review/ was the spec's URL and is
+// unreachable: /books/ is the media jail, which 404s a path with no file
+// extension before the static handler is ever asked. /book-review/ is a free
+// prefix and needs no route of its own — it is just a directory under public/.
+test("/book-review serves the review page and keeps ?slug= across the 301", async () => {
+  const r = await fetch(`${BASE}/book-review?slug=tabby-mctat`, { redirect: "manual" });
+  assert.equal(r.status, 301);
+  assert.equal(r.headers.get("location"), "/book-review/?slug=tabby-mctat");
+  const page = await fetch(`${BASE}/book-review/?slug=tabby-mctat`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-type") || "", /text\/html/);
+  const html = await page.text();
+  // Mouse/touch only: a grown-up page must never carry a gaze target, or a
+  // stray dwell would let her reorder her own book by looking at it. The
+  // page's own comments SAY "dwell" — the check is on the markup, so strip
+  // them (both comment forms) before looking.
+  const code = html.replace(/<!--[\s\S]*?-->/g, "").replace(/\/\*[\s\S]*?\*\//g, "")
+                   .replace(/^\s*\/\/.*$/gm, "");
+  assert.equal(/dwell/i.test(code), false, "no dwell engine and no .dwell class on the review page");
+  assert.match(html, /invariants/, "the header says why it is not in invariants' STATES");
+});
+
+test("missing paths still 404 (no blind redirecting)", async () => {
+  assert.equal((await fetch(`${BASE}/nope`, { redirect: "manual" })).status, 404);
+  assert.equal((await fetch(`${BASE}/nope/`, { redirect: "manual" })).status, 404);
+});
+
+test("/favicon.ico serves with an image content type", async () => {
+  const r = await fetch(`${BASE}/favicon.ico`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("content-type") || "", /icon|image/);
+});
+
+// The exit door's closer (dad 9/1: Making Words and The Pencil returned him to
+// TD Snap but kept running behind it — the gaze engine's sweep missed our
+// kiosk). The hub is always present, so it owns closing its own window; the
+// route must answer immediately and never fail the caller.
+test("POST /kiosk/close answers ok and never throws", async () => {
+  const r = await fetch(`${BASE}/kiosk/close`, { method: "POST" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true });
+});
+
+// The door, decided in one place (dad 9/3: "configure where you return to
+// when an app closes — TD Snap or Our Era Comms"). Every app POSTs /kiosk/exit and
+// follows the answer; the setting round-trips through /settings.
+test("Settings exitTo round-trips and rejects junk", async () => {
+  const s0 = await (await fetch(`${BASE}/settings`)).json();
+  assert.equal(s0.exitTo, "tdsnap", "TD Snap is the default door");
+  const post = (exitTo) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ exitTo }) });
+  await post("home");
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).exitTo, "home");
+  await post("elsewhere");
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).exitTo, "home", "unknown values are ignored");
+  await post("tdsnap");
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).exitTo, "tdsnap");
+});
+
+// This week's videos (spec 2026-10-12 §3.2): a per-device switch — the
+// school PC can play what the home PC downloaded. Default on; only a real
+// boolean is taken, anything else is ignored like every other knob.
+test("Settings downloadWeekVideos defaults on, round-trips, and ignores junk", async () => {
+  const get = async () => (await (await fetch(`${BASE}/settings`)).json()).downloadWeekVideos;
+  const post = (v) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ downloadWeekVideos: v }) });
+  assert.equal(await get(), true, "a device downloads the week's videos unless told not to");
+  assert.equal((await post(false)).status, 204);
+  assert.equal(await get(), false);
+  await post("no");
+  assert.equal(await get(), false, "a string is not a switch position");
+  await post(1);
+  assert.equal(await get(), false, "nor is a number");
+  await post(true);
+  assert.equal(await get(), true);
+});
+
+test("POST /kiosk/exit → home when no engine answers (TD Snap chosen but unreachable)", async () => {
+  const r = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { action: "home" });
+  // ...and /settings tells the apps so (the Reader's tile is named for it)
+  assert.equal((await (await fetch(`${BASE}/settings`)).json()).doorGoes, "home", "no engine on the bus: doorGoes=home even though exitTo=tdsnap");
+});
+
+test("POST /kiosk/exit → closed when the engine takes the screen; → home when Settings says Our Era Comms", async () => {
+  // a stand-in ERAgaze on its fixed port; skip (not fail) if a real one holds it
+  const http = await import("node:http");
+  const hits = [];
+  const engine = http.createServer((q, s) => { hits.push(q.url); s.writeHead(200).end("ok"); });
+  const bound = await new Promise((res) => {
+    engine.once("error", () => res(false));
+    engine.listen(49155, "127.0.0.1", () => res(true));
+  });
+  if (!bound) { console.log("# 49155 busy — engine stand-in skipped"); return; }
+  try {
+    assert.equal((await (await fetch(`${BASE}/settings`)).json()).doorGoes, "tdsnap", "/settings says where the door really goes");
+    hits.length = 0;                                   // (that probe was /status)
+    const r = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
+    assert.deepEqual(await r.json(), { action: "closed" });
+    assert.deepEqual(hits, ["/app/exit"], "TD Snap: the hub asks the engine to hand the screen over");
+
+    await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exitTo: "home" }) });
+    hits.length = 0;
+    assert.equal((await (await fetch(`${BASE}/settings`)).json()).doorGoes, "home");
+    const r2 = await fetch(`${BASE}/kiosk/exit`, { method: "POST" });
+    assert.deepEqual(await r2.json(), { action: "home" });
+    await new Promise((res) => setTimeout(res, 200));
+    assert.deepEqual(hits, ["/app/park"], "Our Era Comms: no hand-over, only the park override is cleared");
+  } finally {
+    engine.close();
+    await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exitTo: "tdsnap" }) });
+  }
+});
+
+// "Dress for the hours she is out" (dad 9/5): the hours the outfits are sorted
+// for live in app-settings.json beside the other knobs, and changing them throws
+// away the cached weather so today's board is re-sorted for the new hours. The
+// re-sort is the CHEAP door (clothing.rebuildToday) — no photo ingest, no AI.
+// 9-12 here is an INVENTED window, like every fixture: the family's real daily
+// schedule is their config, never a test's data.
+test("Settings weatherWindow round-trips, rejects junk, and re-sorts today's outfits", async () => {
+  const post = (weatherWindow) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weatherWindow }) });
+  const cache = path.join(TMP, ".weather-cache.json");
+  const stamp = () => fs.writeFileSync(cache, JSON.stringify({ at: Date.now(), window: "all", w: { t: 72, band: "warm", symbol: "sun" } }));
+  const get = async () => (await (await fetch(`${BASE}/settings`)).json()).weatherWindow;
+
+  assert.equal(await get(), undefined, "no window by default: the whole day, as before");
+
+  stamp();
+  await post({ from: 9, to: 12 });
+  assert.deepEqual(await get(), { from: 9, to: 12 });
+  assert.ok(!fs.existsSync(cache), "a change throws the cached weather away and rebuilds");
+
+  stamp();
+  await post({ from: 9, to: 12 });
+  assert.ok(fs.existsSync(cache), "the same window again is not a change: nothing is rebuilt");
+
+  for (const junk of [{ from: 13, to: 10 }, { from: "x", to: 3 }, { from: -1, to: 5 },
+                      { from: 2, to: 24 }, { from: 2 }, { from: 1.5, to: 4 }, "10-1", 7]) {
+    await post(junk);
+    assert.deepEqual(await get(), { from: 9, to: 12 }, "ignored: " + JSON.stringify(junk));
+  }
+  assert.ok(fs.existsSync(cache), "junk changes nothing, so nothing is rebuilt");
+
+  await post(null);
+  assert.equal(await get(), undefined, "null clears it back to the whole day");
+  assert.ok(!fs.existsSync(cache), "clearing it is a change too");
+});
+
+// The media lock (dad 9/14): a grown-up holds the board's 🔒 and music and
+// movies stop for a while. Two knobs live here beside the other board
+// settings — how long the lock lasts, and the passcode that ends it early.
+// Deterrence, not security: the hub only ever sees the SHA-256 of the digits,
+// the page keeps the digits, and the hash being readable back is the point —
+// the board compares against it offline. So the door's whole job is shape:
+// a whole number of minutes it can act on, and a hash it can compare.
+test("Settings lockMinutes clamps and lockPasscodeHash only takes a hash", async () => {
+  const post = (body) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const get = async () => (await (await fetch(`${BASE}/settings`)).json());
+
+  const s0 = await get();
+  assert.equal(s0.lockMinutes, 45, "45 minutes is the default lock");
+  assert.equal(s0.lockPasscodeHash, "", "no passcode until a parent sets one");
+
+  await post({ lockMinutes: 90 });
+  assert.equal((await get()).lockMinutes, 90);
+  await post({ lockMinutes: -5 });
+  assert.equal((await get()).lockMinutes, 0, "below zero is 'until a grown-up unlocks it'");
+  await post({ lockMinutes: 99999 });
+  assert.equal((await get()).lockMinutes, 1440, "a day is as long as it gets");
+  await post({ lockMinutes: 45.6 });
+  assert.equal((await get()).lockMinutes, 46, "a fraction of a minute is no use to a timer");
+  for (const junk of ["60", null, {}, [30], true]) {
+    await post({ lockMinutes: junk });
+    assert.equal((await get()).lockMinutes, 46, "ignored: " + JSON.stringify(junk));
+  }
+
+  const hash = "a".repeat(64);
+  await post({ lockPasscodeHash: hash });
+  assert.equal((await get()).lockPasscodeHash, hash);
+  for (const junk of ["1234", "A".repeat(64), "a".repeat(65), "a".repeat(63),
+                      "g".repeat(64), 1234, null, {}]) {
+    await post({ lockPasscodeHash: junk });
+    assert.equal((await get()).lockPasscodeHash, hash, "ignored: " + JSON.stringify(junk));
+  }
+  await post({ lockPasscodeHash: "" });
+  assert.equal((await get()).lockPasscodeHash, "", "an empty hash clears the passcode");
+
+  // the lock card saves one knob at a time, and must not blank the rest
+  await post({ musicVolCap: 40, exitTo: "home" });
+  await post({ lockMinutes: 15 });
+  const s1 = await get();
+  assert.equal(s1.lockMinutes, 15);
+  assert.equal(s1.musicVolCap, 40, "a lock-only save leaves the other settings alone");
+  assert.equal(s1.exitTo, "home");
+  await post({ exitTo: "tdsnap" });
+});
