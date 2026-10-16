@@ -14,7 +14,7 @@
 // re-check — no relaunch (the reader's 9/2 "never notices" bug).
 //
 // Since 9/17 it also covers the SHARED door bar (era-core lib/doorbar.js): the
-// 🚪 and the new 💬 "pause to talk" hold 2 x her Settings dwell while every
+// 🚪 and the new 💬 "pause to talk" hold 2 x her Pencil dwell while every
 // other control on the page holds her dwell exactly (no attribute at all), the
 // 💬 exists only where /settings says there is a TD Snap to go and talk in, and
 // pressing it stops speech, posts /kiosk/pause with this app's path and leaves
