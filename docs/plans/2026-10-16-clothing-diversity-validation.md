@@ -3,11 +3,12 @@
 Branch: `feat/clothing-diversity`; worktree: `era-hub--wt-clothing-diversity`.
 Implementation: [design and behaviour](../specs/2026-10-16-clothing-diversity.md).
 
-Status: implemented and validated; 200 focused tests pass, full integration
-gate **122 passed, 0 failed** on clean implementation commit `2eae73a`.
-Dad authorized publishing the next patch for normal device update checks.
-The current public feed is v1.0.0; preparing v1.0.1 with its signed installer.
-No live-server restart or direct device update is requested.
+Status: **published v1.0.1**, build `20261016.1925`, for normal device update
+checks. Feature landed as `887f110`; implementation commit `2eae73a` passed
+200 focused tests and the full integration gate **122 passed, 0 failed**.
+Windows self-update leg B passed **5 tests, 0 failed**. The public latest feed
+and downloaded update archive were verified. Device installation receipt has
+not been checked; publication and update availability are complete.
 
 ## Scope and sibling worktrees
 
@@ -90,3 +91,36 @@ on a More page. A 21-day learned-choice run reproduced this on two deep pages
 with the unmodified deployed source. This change does not alter pagination;
 first pages remain garment-distinct, and the existing deep-page variety cases
 continue to pass. Track a pagination repair separately from favourite spacing.
+
+## Published patch receipt
+
+- Release: [v1.0.1](https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.0.1).
+- Build: `20261016.1925`; source: `887f110`; installer retained from signed v1.0.0
+  as `Our-Era-Comms-Setup.exe`, with its signature verified before publication.
+- Update archive SHA-256:
+  `03d66c2fe5035b18391f52a1109d7efdc0cb4d0c165d61a706359a06e7a7401d`.
+- Windows verification: clean v1.0.0 install, wizard and chosen-pack setup,
+  automatic update to v1.0.1, profile/pack/app preservation, clean shutdown;
+  all five checks passed on the exact archive published.
+- Public `releases/latest/download/latest.json` matched the tested feed.
+  Its stable update archive was downloaded publicly: 62,949,685 bytes, with
+  the SHA-256 above. All six download/update assets were present.
+- Temporary QA host teardown completed; status confirmed no QA host remains.
+  No live development-server restart or direct device update was performed.
+
+The first release attempt built successfully but stopped before publication
+because the test harness's default output directory referenced an unset `USER`.
+The successful rerun supplied `VM_OUT` explicitly; no application or test
+assertion was changed. The old QA template required its documented temporary
+clean-baseline repair on each fresh host; this release did not save a new
+template. The separate permanent-template follow-up remains as previously
+documented in the private QA runbook.
+
+Release command used (with an existing fresh, clean gate stamp):
+
+```
+VM_OUT=/tmp/clothing-diversity-release-20261016/vm bash tools/release.sh v1.0.1 --patch --skip-gate
+```
+
+Installed devices receive this release on their normal updater checks. Delayed
+or offline-device receipt is pending delivery, not a failed publication.
