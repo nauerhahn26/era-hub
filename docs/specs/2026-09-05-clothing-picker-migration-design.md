@@ -1,5 +1,10 @@
 # Clothing Picker — migrating the original's variety, favourites and memory (design)
 
+**10/16 amendment:** [Clothing diversity](2026-10-16-clothing-diversity.md)
+adds a seven-day combination-recency score and spaces favourite/coverage
+reservations while preserving preference strength. Historical port-parity and
+one-day rotation descriptions below are superseded where that amendment applies.
+
 **Date:** 2026-09-05 · **Branch:** `feat/clothing-migration` (era-hub) · **Ships as:** v0.32.2
 **Origin:** dad, 9/5: "I think the diversity of outfits is not as good or creative as
 the original. Also not sure it's tracking favorites or what was selected yesterday.

@@ -1,5 +1,9 @@
 # Warmth coherence + the Dress up page — amendment to the 9/23 warmth model
 
+**10/16 amendment:** [Clothing diversity](2026-10-16-clothing-diversity.md)
+adds combination spacing online and offline. The weather curve/quotas below
+still apply; the old offline multi-day ordering guarantee is superseded.
+
 **Date:** 2026-09-29 · **Branch:** `fix/weather` (era-hub + era-board) · **Amends:** `2026-09-23-warmth-model-design.md` (unit B)
 **Origin:** dad, 9/29, after checking the board on an 81 °F morning:
 
