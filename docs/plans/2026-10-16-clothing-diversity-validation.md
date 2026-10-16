@@ -5,7 +5,9 @@ Implementation: [design and behaviour](../specs/2026-10-16-clothing-diversity.md
 
 Status: implemented and validated; 200 focused tests pass, full integration
 gate **122 passed, 0 failed** on clean implementation commit `2eae73a`.
-No merge, release, live-server restart or device update has been performed.
+Dad authorized publishing the next patch for normal device update checks.
+The current public feed is v1.0.0; preparing v1.0.1 with its signed installer.
+No live-server restart or direct device update is requested.
 
 ## Scope and sibling worktrees
 
