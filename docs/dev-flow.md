@@ -156,3 +156,11 @@ carrying that change, so the first delivery of it is a normal release (patch or
 signed); an older hub ignores the body and the script says so plainly.
 **App packs still come from the public feed** (`server.js` downloads packs from
 `updater.FEED`) — only the suite tarball comes from the pushed dist.
+
+## Alternative Pencil dwell
+
+The Pencil has an independent `pencilDwellMs` setting (default 1500 ms,
+600–3000 ms). Settings → Alternative Pencil dwell time saves it for the next
+Pencil opening. Other apps continue using `dwellMs`. The Pencil partner strip's
+dwell buttons also save this value; its exit and talk doors remain twice its
+current dwell. Predicted words retain their existing 2000 ms hold.

@@ -1650,7 +1650,7 @@ function readBinaryBody(req, cap, cb) {
 const server = http.createServer((req, res) => {
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
-    let s = { dwellMs: 1200, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
+    let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
               lockMinutes: 45, lockPasscodeHash: "",
               downloadWeekVideos: true,   // this device fetches the week's videos (spec 2026-10-12 §3.2)
               voiceId: loadTtsCfg().voiceId,
@@ -1734,6 +1734,7 @@ const server = http.createServer((req, res) => {
         let s = {};
         try { s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")); } catch {}
         if (typeof inc.dwellMs === "number") s.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
+        if (Number.isFinite(inc.pencilDwellMs)) s.pencilDwellMs = Math.max(600, Math.min(3000, Math.round(inc.pencilDwellMs)));
         if (typeof inc.settleMs === "number") s.settleMs = Math.max(0, Math.min(2000, inc.settleMs));
         // music loudness cap, % of speaker volume (Songs Board; dad 8/24)
         if (typeof inc.musicVolCap === "number")
