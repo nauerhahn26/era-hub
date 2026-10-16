@@ -140,10 +140,10 @@ test("no module repo is read from the main checkout any more", () => {
   assert.doesNotMatch(PAYLOAD, /\$HUB\/\.\.\/era-core\b/, "…nor the $HUB/.. spelling of it");
 });
 
-test("era-gaze and era-family keep pointing at the main checkouts", () => {
-  // neither has a feature worktree; era-family is the private data/cache repo
-  // and era-gaze ships the engine source. A blanket sed would have caught them.
-  assert.ok(PAYLOAD.includes("$ROOT/era-gaze/device/ERAgaze.cs"), "the gaze source still comes from $ROOT");
+test("era-gaze source follows its feature worktree; era-family stays private", () => {
+  assert.ok(PAYLOAD.includes('$(sib era-gaze)/device/ERAgaze.cs'), "payload ships selected gaze source");
+  assert.ok(GATE.includes('export ERA_GAZE_SRC="$(sib era-gaze)"'), "contracts check selected gaze source");
+  assert.match(GATE, /for repo in era-core era-making-words era-pencil era-board era-gaze; do/, "gate stamps gaze worktree");
   assert.ok(PAYLOAD.includes("$ROOT/era-family/cache/"), "the yt-dlp/node cache still comes from $ROOT");
   assert.ok(GATE.includes("$ROOT/era-family/"), "the gate's private env still comes from $ROOT");
 });

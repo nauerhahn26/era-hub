@@ -15,10 +15,11 @@ GATE="$HUB/gate"
 # sibling from there, else from the main checkout as before. Without it a
 # hub-worktree gate would collect MASTER's era-core/board/pencil/words suites
 # and never run the feature's — the same blind spot as the 8/28 one below,
-# one repo over. era-gaze and era-family have no feature worktrees.
+# one repo over. era-family remains the private data checkout.
 sib() { local d="$ROOT/$1${ERA_WT_SUFFIX:-}"; [ -d "$d" ] && echo "$d" || echo "$ROOT/$1"; }
 # optional private env (e.g. ERA_GAZE_SRC until era-gaze is imported)
 [ -f "$ROOT/era-family/gate-env.sh" ] && . "$ROOT/era-family/gate-env.sh"
+export ERA_GAZE_SRC="$(sib era-gaze)"
 
 # one gate at a time, machine-wide: concurrent runs (e.g. two feature worktrees)
 # thrash CPU and can fight over default ports — the second run WAITS its turn.
@@ -97,7 +98,7 @@ stamp_tree() {
 write_green_stamp() {
   local repo d
   stamp_tree "$HUB"
-  for repo in era-core era-making-words era-pencil era-board; do
+  for repo in era-core era-making-words era-pencil era-board era-gaze; do
     d="$(sib "$repo")"
     [ "$d" = "$ROOT/$repo" ] && continue   # the main checkout — this run gated no tree of its own there
     [ -d "$d/.git" ] || [ -f "$d/.git" ] || continue

@@ -33,7 +33,7 @@ feature doesn't touch. A green gate then stamps the hub's tree **and** every
 sibling worktree tree it sourced (each with its own `dirty=1` verdict), so
 `worktree.sh land` accepts each repo in turn; land in dependency order, in one
 sitting while the 2 h stamps hold: era-core → era-board → era-making-words →
-era-pencil → era-hub, and never restart the live 8377 hub in between.
+era-pencil → era-gaze → era-hub, and never restart the live 8377 hub in between.
 
 ## The three release shapes
 
@@ -164,3 +164,12 @@ The Pencil has an independent `pencilDwellMs` setting (default 1500 ms,
 Pencil opening. Other apps continue using `dwellMs`. The Pencil partner strip's
 dwell buttons also save this value; its exit and talk doors remain twice its
 current dwell. Predicted words retain their existing 2000 ms hold.
+
+## Overlay rendering regression
+
+Gaze engine changes can use `era-gaze--wt-<slug>` too: payload source, gate
+contracts and gate stamps follow `ERA_WT_SUFFIX`. Run the gaze repo's
+`tests/overlay-regression.ps1` on an interactive Windows desktop when changing
+overlays; it verifies drawing, hiding, GDI resource stability and recovery from
+conversion failure. A responding gaze `/status` alone does not detect a modal
+WinForms error that has blocked the UI timer.
