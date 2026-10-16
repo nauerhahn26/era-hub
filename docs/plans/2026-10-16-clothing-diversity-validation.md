@@ -3,7 +3,8 @@
 Branch: `feat/clothing-diversity`; worktree: `era-hub--wt-clothing-diversity`.
 Implementation: [design and behaviour](../specs/2026-10-16-clothing-diversity.md).
 
-Status: implemented; 200 focused tests pass. Full integration gate running.
+Status: implemented and validated; 200 focused tests pass, full integration
+gate **122 passed, 0 failed** on clean implementation commit `2eae73a`.
 No merge, release, live-server restart or device update has been performed.
 
 ## Scope and sibling worktrees
@@ -60,8 +61,14 @@ likes still get a first-page turn the next day when not recently offered there.
   every-other-day builds at 74°F. Both preserved full first pages and showed
   zero two-calendar-day exact-combination overlap in these runs.
 - `git diff --check`: clean.
-- Full integration gate: pending. Invoked with `ERA_TEST_PORT=8389` after
-  confirming the port was free; the gate retains its global serialization.
+- Full integration gate: **122 passed, 0 failed**, with a clean tree stamp for
+  implementation commit `2eae73a`. Invoked with `ERA_TEST_PORT=8389` after
+  confirming the port was free; the gate retained its global serialization.
+  The first attempt reported 121 passing suites and one browser launch crash
+  (`board-edit.test.mjs`, Chromium signal 11 before that test's assertions).
+  A standalone retry passed all 15 tests, then the entire gate was rerun and
+  passed all 122 suites without any code changes between attempts. The test
+  server exited normally and released its port. This receipt update is docs-only.
 
 The original 5,970-deal audit and the expanded implementation audit's private
 snapshots/logs live only in local scratch storage, not in the repository.
