@@ -909,7 +909,9 @@ describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", 
     const history = {
       days: {
         "2026-08-16": { band: "warm", page1: [["item_r", "item_b"]] },
-        "2026-09-02": { band: "warm", page1: [["item_t3", "item_b2"]] },
+        // Outside the combination-return window: this case isolates the
+        // coverage fallback, rather than the newer weekly-spacing rule.
+        "2026-08-29": { band: "warm", page1: [["item_t3", "item_b2"]] },
       },
       events: {
         "2026-09-01": [{ kind: "yes", combo: ["item_t0", "item_b"] }],

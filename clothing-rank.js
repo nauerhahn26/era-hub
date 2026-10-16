@@ -20,13 +20,20 @@
 //   :302-303  combo_key              :320-357 derive_picks
 //   :364-373  record_offer           :376-557 build_candidates
 //
-// The ONLY two deviations from the original, both labelled where they live:
+// The migration's two initial deviations, both labelled where they live:
 //   (I5)  isNeutral: a garment with no colours, no pattern and statement false
 //         counts as neutral (spec §3.1 item 4 "degrade, never exclude"; the
 //         original's is_neutral is false for that garment).
 //   (W1)  buildCandidates sorts items by id before pooling, so rank ties break
 //         the same way on every device (the original's ties break by catalogue
 //         order, which the hub does not share between devices).
+//
+// AMENDED 10/16 (docs/specs/2026-10-16-clothing-diversity.md): exact looks
+// carry a declining seven-day exposure penalty. Staples and the coverage
+// slot reserve priority only for looks not on page 1 in the past six days.
+// Favourite weights and the two staple slots stay; favourites return across
+// weeks rather than immediately regaining priority every other day. This
+// applies online and offline and never removes a look from the pool.
 //
 // One place takes a hub-side default where the original's input cannot occur
 // here (the hub tags warmth with a word); a parity audit should know it:
@@ -53,7 +60,8 @@
 // across the kinds by largest remainder (sharesAt / quotasFor below). Inside a
 // kind the port's rank decides — staples, the coverage slot, freshness, loved,
 // style — plus a fit term that orders weights. Weather offline (temp null) is
-// the port's deal exactly. `occasion "fancy"` is dropped at the door (§2 D3).
+// the original's mix, with 10/16 combination spacing. `occasion "fancy"`
+// is dropped at the door (§2 D3).
 // BAND_WARMTH stays: accessoryOrder reads it; buildCandidates accepts `band`
 // and ignores it.
 //
@@ -80,6 +88,8 @@ const LOVED_PTS = 12;          // a combo she has picked twice floats back up
 const JITTER_PTS = 16;         // small date-seeded tiebreak (freshness does the real work)
 const STAPLE_SLOTS = 2;        // page-1 slots for proven favourites
 const STAPLE_POOL = 5;         // rotate staples among the top N so none squats daily
+const COMBO_RETURN_DAYS = 7;  // a favourite regains a reserved slot after a week
+const COMBO_RECENCY_PTS = 14; // per remaining day: 84 yesterday, 0 after a week
 const YES_WEIGHT = 1.0;        // she gazed Yes on the confirm page: a confirmed wear
 const INFERRED_WEIGHT = 0.5;   // no Yes that day: her last-selected outfit, inferred
 const SINGLE_STYLE = 55;       // a dress/set's style score (outfit_set.py:435, :465)
@@ -323,6 +333,25 @@ function lastPage1(history, before) {
     }
   }
   return last;
+}
+// Exact combinations need their own clock: changing a partner is a new look,
+// while Monday's favourite should not regain full priority on Wednesday.
+// Same-day offers/events never change today's deal, including shared offers.
+function lastComboPage1(history, before) {
+  const last = {};
+  for (const [date, entry] of Object.entries(daysOf(history))) {
+    if (!DATE_KEY.test(date) || date >= before) continue;
+    for (const ids of Array.isArray(entry?.page1) ? entry.page1 : []) {
+      if (!Array.isArray(ids) || !ids.length) continue;
+      const key = ids.join("+");
+      if (!Object.hasOwn(last, key) || date > last[key]) last[key] = date;
+    }
+  }
+  return last;
+}
+function comboGap(key, ctx) {
+  return ctx.lastComboP1 && Object.hasOwn(ctx.lastComboP1, key)
+    ? daysBetween(ctx.lastComboP1[key], ctx.seed) : COMBO_RETURN_DAYS;
 }
 // The Set of combo keys that sat on page 1 yesterday (outfit_set.py:424-428).
 function yesterdayPage1(history, day) {
@@ -607,7 +636,7 @@ const FIT_WORDS = {
 // ---- the rank (outfit_set.py:434-451, minus dress_bonus — no "dressy" here) --
 //
 // ctx = {seed, pairing (normalised), favorites (Set of ids), picks, lastP1,
-// temp}. fresh: the look is as fresh as its LEAST fresh piece; a piece never
+// lastComboP1, temp}. fresh: the look is as fresh as its LEAST fresh piece; a piece never
 // on page 1 counts as FRESH_CAP_DAYS + 1 days old. fit (9/29, no original —
 // spec 2026-09-29 §2 D2; since §7 it ranks inside a kind and gates nothing):
 // −FIT_PTS_PER_DEG per °F the look's two halves sit from their FIT centres,
@@ -616,7 +645,7 @@ const FIT_WORDS = {
 // the tank-and-shorts it stands for rank alike. (The worst piece alone, like
 // fresh, was tried and failed the sweep: on a cold day the light pants' 20 °F
 // hid the difference between a sweatshirt and a thin long sleeve.) No temp
-// (weather offline) is no fit term, so every rank is the port's. Every term
+// (weather offline) is no fit term; combination spacing still applies. Every term
 // is an integer, so the sort below is exact.
 function fitPts(pieces, temp) {
   if (!isTemp(temp)) return 0;
@@ -638,7 +667,11 @@ function rankOf(pieces, ctx) {
   const fresh = Math.min(gap, FRESH_CAP_DAYS) * FRESH_PTS_PER_DAY;
   const key = comboKey(pieces);
   const loved = (ctx.picks[key] || 0) >= 2 ? LOVED_PTS : 0;
-  return style + fav + fresh + loved + fitPts(pieces, ctx.temp) + hmod(ctx.seed, JITTER_PTS, key);
+  // Soft, including for staples: a recent look remains on the More pages
+  // and can still fill a small wardrobe. Its preference signal is retained;
+  // only exposure costs points, declining to zero after seven calendar days.
+  const recent = Math.max(0, COMBO_RETURN_DAYS - comboGap(key, ctx)) * COMBO_RECENCY_PTS;
+  return style + fav + fresh + loved - recent + fitPts(pieces, ctx.temp) + hmod(ctx.seed, JITTER_PTS, key);
 }
 
 function cmpHash(a, b) {   // I4: BigInt comparison, never subtraction
@@ -774,8 +807,8 @@ function quotasFor(spec, slots, dealt, page, seed) {
 // the deeper pages. Pure: same inputs → same list.
 //
 // opts.temp is the planning °F (the window's maximum, 9/23 §4 — the worker's
-// `w.t`); null means the weather is offline, and the deal is the port's,
-// exactly: no shares, no apportionment (spec §7.2). opts.band is still
+// `w.t`); null means the weather is offline: no shares or apportionment
+// (spec §7.2), still with 10/16 combination spacing. opts.band is still
 // accepted — the worker's offer record carries it — and decides nothing here
 // since 9/29 (spec 2026-09-29 §3).
 //
@@ -816,8 +849,9 @@ function buildCandidates(opts) {
   // :412-427 — memory as of today (today's own entries ignored: same-date reruns stay stable).
   const picks = derivePicks(eventsOf(history), seed);
   const lastP1 = lastPage1(history, seed);
+  const lastComboP1 = lastComboPage1(history, seed);
   const yP1 = yesterdayPage1(history, seed);
-  const ctx = { seed, pairing, favorites, picks, lastP1, temp };
+  const ctx = { seed, pairing, favorites, picks, lastP1, lastComboP1, temp };
 
   // :434-453 — rank every look once; stable sort, descending.
   const key = comboKey;
@@ -826,6 +860,9 @@ function buildCandidates(opts) {
   const ranked = [...pool].sort((a, b) => score.get(key(b)) - score.get(key(a)));
 
   // :459-482 — staples: most-picked combos, else the curated great looks.
+  // Their preference weight survives recent exposure, but the reserved
+  // priority recovers only after a week. Filter BEFORE the disjoint top five
+  // so recently offered favourites do not crowd out other ready favourites.
   let staplePool = pool.filter(o => (picks[key(o)] || 0) > 0);
   staplePool.sort((a, b) => picks[key(b)] - picks[key(a)]);
   if (!staplePool.length) {
@@ -837,6 +874,7 @@ function buildCandidates(opts) {
   const topUsed = new Set();
   for (const o of staplePool) {
     if (top.length >= STAPLE_POOL) break;
+    if (comboGap(key(o), ctx) < COMBO_RETURN_DAYS) continue;
     if (!o.some(p => topUsed.has(p.id))) {
       top.push(o);
       for (const p of o) topUsed.add(p.id);
@@ -848,7 +886,7 @@ function buildCandidates(opts) {
   const chosen = [];
   const chosenKeys = new Set();
   // The page's quotas (spec §7.2). Offline there are none and `room` is always
-  // true, so every loop below is the port's, look for look.
+  // true; the same combination-spacing rules still apply.
   const dealt = { top: Object.fromEntries(TOP_KINDS.map(k => [k, 0])), legs: Object.fromEntries(LEG_SIDES.map(k => [k, 0])) };
   let page = null;
   const openPage = (n, index) => {
@@ -927,7 +965,11 @@ function buildCandidates(opts) {
   aged.sort((a, b) => age(b) - age(a) || cmpHash(agedHash.get(a.id), agedHash.get(b.id)));
   if (aged.length && chosen.length < pageCap) {
     const want = aged[0].id;
-    const best = ranked.find(o => o.some(p => p.id === want) && !chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id)) && room(o));
+    // A standalone dress/set has no new partner to try. Do not let its
+    // garment-coverage reservation undo combination spacing; ordinary fill
+    // below can still seat it when the day's wardrobe needs a repeat.
+    const best = ranked.find(o => o.some(p => p.id === want) && comboGap(key(o), ctx) >= COMBO_RETURN_DAYS
+      && !chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id)) && room(o));
     if (best) take(best);
   }
 
@@ -1007,11 +1049,12 @@ function toWorkerShape(combo) {
 module.exports = {
   NEUTRALS, HISTORY_DAYS_KEPT, FRESH_CAP_DAYS, FRESH_PTS_PER_DAY, LOVED_PTS,
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
+  COMBO_RETURN_DAYS, COMBO_RECENCY_PTS,
   BAND_WARMTH, WARMTH_LEVELS, FIT, FIT_PTS_PER_DEG, fitAttrs, fitFields, fitTarget, FIT_WORDS,
   SPECTRUM_K, LEGS_CROSSOVER_F, LONG_SLEEVE_CROSSOVER_F, SLEEVELESS_CROSSOVER_F, SHARE_FLOOR, sharesAt, lookCell,
   GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder,
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
-  derivePicks, recordOffer, pruneEvents, lastPage1, yesterdayPage1,
+  derivePicks, recordOffer, pruneEvents, lastPage1, lastComboPage1, yesterdayPage1,
   categoryOf, rankOf, buildCandidates, toWorkerShape,
 };

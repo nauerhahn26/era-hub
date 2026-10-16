@@ -27,7 +27,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -160,23 +159,23 @@ describe("70 °F on consecutive days alternates which side gets the odd slot (sp
   });
 });
 
-describe("weather offline (temp null) is the port's deal, exactly as before §7 (spec §7.2)", () => {
-  // Pinned 9/29 from the pre-§7 module on this fixture: seven days from the
-  // receipt's morning, six a page, eighteen looks. Offline never read a fit
-  // word, so the stripped fixture deals the same list.
+describe("weather offline ignores fit words, including the week's combination spacing", () => {
+  // Day one still matches the 9/29 port. Later days deliberately gain the
+  // 10/16 combination-spacing rule, online and offline alike. Fit words
+  // must still make no difference to any of the week's offline deals.
   const DAY1 = ["item_4d8e07f2b4+item_f8febddd5a", "item_4d6504ab1e+item_47d1d8e12f", "item_178521ef10+item_36bb3f8631",
     "item_8b8348d5d8+item_2a1f658ac1", "item_4d3da45986+item_4466d62ed7", "item_cfd6a258b5+item_f8a022e604",
     "item_42e46a25f2+item_f8febddd5a", "item_14cccc4701+item_36bb3f8631", "item_4d3da45986+item_d8b8d5cde6",
     "item_37a93d3c63+item_8919a44241", "item_3a815f6855+item_10808c4c69", "item_4d6504ab1e+item_eea35ac381",
     "item_86aeba7072+item_f8febddd5a", "item_3a815f6855+item_40b24aea1b", "item_4d3da45986+item_10808c4c69",
     "item_7a4df9167d+item_f8a022e604", "item_8b8348d5d8+item_5bf563c2b5", "item_097b9a61fa+item_eea35ac381"];
-  const WEEK_SHA256 = "8eb89ec784e024c248ec4c6f77e93285b7c88a35ba3b559b830aeb56fcd64c8a";
   for (const stripFit of [false, true]) {
     test(stripFit ? "stripped" : "after refit", () => {
       const run = simulate({ items: ITEMS, temps: [null], seed: SEED, days: DAYS, stripFit });
       const week = run.results[0].days.map(d => d.looks.map(l => l.key));
       assert.deepEqual(week[0], DAY1);
-      assert.equal(crypto.createHash("sha256").update(JSON.stringify(week)).digest("hex"), WEEK_SHA256);
+      const other = simulate({ items: ITEMS, temps: [null], seed: SEED, days: DAYS, stripFit: !stripFit });
+      assert.deepEqual(week, other.results[0].days.map(d => d.looks.map(l => l.key)));
       assert.deepEqual(failures(run), []);
     });
   }

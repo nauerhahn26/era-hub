@@ -207,7 +207,7 @@ const noneOf = (looks, pred, what) => {
 // ---- the verdicts (spec §7.3) — LAW; tune the curve's constants, never these.
 // Every one holds on every day, in both modes (refit's words and the legacy
 // fallback). `temp` null (weather offline) is judged by the always-rules only:
-// it is the port's deal, pinned by the harness against a golden.
+// it ignores fit words but retains the seven-day combination-spacing rule.
 const VERDICTS = [
   { rule: "never empty: at least one full page", applies: () => true,
     check: ({ looks, perPage }) => ({ pass: looks.length >= perPage, detail: `${looks.length} looks, page ${perPage}` }) },
@@ -310,7 +310,7 @@ function table(run, out = console.log) {
   out(`  °F │ ${COLUMNS.map(c => c[2].padEnd(12)).join(" │ ")} │ page 1  │ verdicts`);
   out(`     │ ${COLUMNS.map(() => "curve dealt ").join(" │ ")} │ sh/pa   │`);
   for (const r of run.results) {
-    if (r.temp == null) { out(`  offline — the port's deal, no curve`); continue; }
+    if (r.temp == null) { out(`  offline — no weather curve, combination spacing retained`); continue; }
     const looks = r.days.reduce((a, d) => a + d.looks.length, 0) || 1;
     const dealt = (dim, k) => r.days.reduce((a, d) => a + d.deal[dim][k], 0) / looks;
     const p1 = r.days.map(d => `${d.page1.legs.shorts}/${d.page1.legs.pants}`);
@@ -328,7 +328,7 @@ function report(run, out = console.log, { tableOnly = false } = {}) {
     for (const d of r.days) for (const v of d.verdicts) if (!v.pass) failed += 1;
     if (tableOnly) continue;
     out("");
-    out(`== ${r.temp} °F${r.want ? ` — curve: top ${fmt(Object.fromEntries(TOP_KINDS.map(k => [k, pct(r.want.top[k])])))} · legs ${fmt(Object.fromEntries(LEG_KINDS.map(k => [k, pct(r.want.legs[k])])))}` : " — weather offline: the port's deal"} ==`);
+    out(`== ${r.temp} °F${r.want ? ` — curve: top ${fmt(Object.fromEntries(TOP_KINDS.map(k => [k, pct(r.want.top[k])])))} · legs ${fmt(Object.fromEntries(LEG_KINDS.map(k => [k, pct(r.want.legs[k])])))}` : " — weather offline: combination spacing retained"} ==`);
     for (const d of r.days) {
       if (r.days.length > 1) out(`-- ${d.seed}`);
       d.looks.forEach((l, i) => {
