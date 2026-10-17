@@ -47,5 +47,7 @@ build `20261017.0310`. Hub implementation landed as ad26148; board as ecb106e.
   QA host destroyed; permanent template unchanged.
 
 See [release receipt](../plans/2026-10-17-clothing-page-1-release.md) for the
-archive hash and delivery state. Devices use normal automatic updates;
-publication does not establish installation on a particular device.
+archive hash and delivery state. Tablet installation was verified after a
+requested push: running build `20261017.0310`, with the eight-choice layout and
+spanning center weather confirmed in its live recipe. Other devices use normal
+automatic updates; their installation has not been verified.
