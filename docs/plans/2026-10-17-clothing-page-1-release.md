@@ -52,5 +52,9 @@ VM_OUT=/tmp/clothing-page-1-release-vm ERA_WT_SUFFIX=--wt-clothing-page-1 \
   bash tools/release.sh v1.0.3 --patch --skip-gate
 ```
 
-Delivery uses the normal public updater. No family-device receipt was checked
-or claimed. No live development-server restart or direct device push was done.
+Delivery uses the normal public updater. On dad's request, v1.0.3 was also
+pushed to the tablet through `push-device.sh` on 2026-10-17. The tablet's running
+build was verified as `20261017.0310`; its regenerated clothing recipe has eight
+first-page outfits, weather at row 2 / column 2 spanning two columns, Full
+wardrobe, and no Accessories door on the suggested-outfit page. Other devices'
+receipt remains unverified. No live development-server restart was done.
