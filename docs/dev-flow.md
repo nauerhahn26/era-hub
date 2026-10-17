@@ -179,5 +179,5 @@ WinForms error that has blocked the UI timer.
 The approved [clothing page 1 layout](specs/2026-10-17-clothing-page-1.md)
 uses eight outfit slots first, then seven beside Back. Weather spans the center
 pair; Full wardrobe replaces Build my own, and Accessories lives inside it.
-This feature also has an era-board worktree: use
-`ERA_WT_SUFFIX=--wt-clothing-page-1` until both repos are integrated.
+Shipped in v1.0.3 across era-hub and era-board. Future changes to both repos
+use matching feature worktrees and `ERA_WT_SUFFIX` as described above.

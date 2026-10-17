@@ -31,17 +31,21 @@ The separate clothing-diversity, clothing-picker-ui, jackets,
 long-press-clothing and weather worktrees overlap these files or behavior;
 review their changes when integrating. No sibling branch was changed here.
 
-## Validation and handoff
+## Validation and release
 
-Implemented in the hub and board feature worktrees; not merged or deployed.
+Released as [v1.0.3](https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.0.3),
+build `20261017.0310`. Hub implementation landed as ad26148; board as ecb106e.
 
 - Browser checks pass at 1920×1080 and 1280×800, including two separate gaze
   dwells speaking the forecast without recording an outfit choice.
-- The full gate passed 121 suites. Its sole failing suite was
-  `weather-location.test.mjs`, whose three helpers still selected the old
-  top-left forecast. After updating those selectors to the spanning center
-  tile, all 26 tests in that suite passed on a separate rerun. Production code
-  did not change after the full run. All 122 suites are therefore verified
-  across that run and rerun; there is no fresh all-green gate stamp.
-- Run the full gate with `ERA_WT_SUFFIX=--wt-clothing-page-1` before landing
-  or releasing, to obtain the required green stamps for both committed trees.
+- Full gate on the final committed hub and board trees: 122 suites passed,
+  zero failed. The weather-location selectors cover the spanning center tile.
+- Clean Windows self-update leg B on the exact release archive: five passed,
+  zero failed. The inherited signed v1.0.0 installer signature was verified.
+- Public latest feed, six assets, downloaded archive checksum and included
+  clothing code, board renderer and wardrobe icon were verified. Temporary
+  QA host destroyed; permanent template unchanged.
+
+See [release receipt](../plans/2026-10-17-clothing-page-1-release.md) for the
+archive hash and delivery state. Devices use normal automatic updates;
+publication does not establish installation on a particular device.
