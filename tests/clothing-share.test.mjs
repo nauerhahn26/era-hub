@@ -265,7 +265,7 @@ test("two devices with the same logs deal the identical board, look for look", a
   await syncInto(DATA_B);
   await build(DATA_B, idB);
   const a = allCombos(DATA_A), b = allCombos(DATA_B);
-  assert.equal(a.length, 21, "a full three pages");
+  assert.equal(a.length, 22, "a full three pages");
   assert.deepEqual(a, b, "the same looks, in the same order, on both devices");
 
   // …and each of them told the family what it showed (spec §6 step 1), which
@@ -292,7 +292,7 @@ test("another device's Yes seats that look as today's staple", async () => {
   await syncInto(DATA_C);
   await build(DATA_C, idC);
   const base = allCombos(DATA_C);
-  assert.equal(base.length, 21);
+  assert.equal(base.length, 22);
   const wanted = base[10];                     // a look from a deeper page
   assert.ok(!page1Of(DATA_C).includes(wanted), "…which page 1 did not hold");
 
@@ -320,9 +320,9 @@ test("another device's page 1 yesterday sits out page 1 here today, and opens pa
   await build(DATA_C, idC);
 
   const now = allCombos(DATA_C);
-  assert.equal(page1Of(DATA_C).length, 7, "a full page 1");
+  assert.equal(page1Of(DATA_C).length, 8, "a full page 1");
   assert.ok(!page1Of(DATA_C).includes(demoted), "a look another device showed yesterday waits a day");
-  assert.equal(now[7], demoted, "…and it is the first thing on page 2 (dad's 8/5 ruling)");
+  assert.equal(now[8], demoted, "…and it is the first thing on page 2 (dad's 8/5 ruling)");
   fs.rmSync(path.join(DRIVE_C, "clothing", ".era", "offers"), { recursive: true, force: true });
   fs.rmSync(era(DATA_C, "offers"), { recursive: true, force: true });
 });

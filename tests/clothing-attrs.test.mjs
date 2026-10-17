@@ -525,7 +525,7 @@ test("no attributes anywhere and no key: the board is still a full 21", async ()
   const boards = JSON.parse(fs.readFileSync(path.join(PLAIN, "recipes", "today.json"), "utf8")).boards;
   const outfits = boards.filter(b => /^today(_\d)?$/.test(b.id))
     .flatMap(b => b.buttons.filter(x => x.type === "outfit"));
-  assert.equal(outfits.length, 21, "a wardrobe the model has never described still fills the day");
+  assert.equal(outfits.length, 22, "a wardrobe the model has never described still fills the day");
   const page1 = boards.find(b => b.id === "today").buttons
     .filter(x => x.type === "outfit").flatMap(x => x.combo);
   assert.equal(new Set(page1).size, page1.length, "and page 1 still repeats no garment");

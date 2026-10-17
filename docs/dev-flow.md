@@ -173,3 +173,11 @@ contracts and gate stamps follow `ERA_WT_SUFFIX`. Run the gaze repo's
 overlays; it verifies drawing, hiding, GDI resource stability and recovery from
 conversion failure. A responding gaze `/status` alone does not detect a modal
 WinForms error that has blocked the UI timer.
+
+## Clothing page layout
+
+The approved [clothing page 1 layout](specs/2026-10-17-clothing-page-1.md)
+uses eight outfit slots first, then seven beside Back. Weather spans the center
+pair; Full wardrobe replaces Build my own, and Accessories lives inside it.
+This feature also has an era-board worktree: use
+`ERA_WT_SUFFIX=--wt-clothing-page-1` until both repos are integrated.

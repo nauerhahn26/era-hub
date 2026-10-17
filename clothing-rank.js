@@ -993,7 +993,7 @@ function buildCandidates(opts) {
     const pageUsed = new Set();
     let pageCount = 0;
     index += 1;
-    const slots = Math.min(perPage, cap - chosen.length);
+    const slots = Math.min(opts.laterPerPage == null ? perPage : opts.laterPerPage, cap - chosen.length);
     openPage(slots, index);
     const put = o => {
       chosen.push(o);
@@ -1003,7 +1003,7 @@ function buildCandidates(opts) {
       count(o);
     };
     for (const o of deepOrder) {
-      if (pageCount >= perPage || chosen.length >= cap) break;
+      if (pageCount >= slots || chosen.length >= cap) break;
       if (chosenKeys.has(key(o)) || o.some(p => pageUsed.has(p.id)) || !room(o)) continue;
       put(o);
     }

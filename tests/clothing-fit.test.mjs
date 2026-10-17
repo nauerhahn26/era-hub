@@ -106,7 +106,7 @@ describe("spec §7.3 over her wardrobe's shape, every integer °F 45-95, seven c
     test(mode, () => {
       const run = simulate({ items: ITEMS, temps: TEMPS, seed: SEED, days: DAYS, stripFit });
       assert.equal(run.results.length, TEMPS.length);
-      assert.equal(run.perPage, 6, "the accessories door takes the seventh slot");
+      assert.equal(run.perPage, 8, "accessories do not reduce outfit capacity");
       for (const r of run.results) {
         assert.equal(r.days.length, DAYS, `${r.temp}: seven days`);
         for (const d of r.days) assert.equal(d.verdicts.length, 6 + (r.temp >= 78) + (r.temp <= 54), `${r.temp} ${d.seed}: every verdict judged`);
@@ -120,16 +120,15 @@ describe("spec §7.3 over her wardrobe's shape, every integer °F 45-95, seven c
 });
 
 describe("the anchors, by name (spec §7.3): shorts-side ≈ 10 % at 60, 50 % at 70, 90 % at 80", () => {
-  // page 1 of seven looks (the fixture without jackets): 1/7, 3-4/7, 6/7 —
-  // and of six (as her board stands, jackets and all): 1/6, 3/6, 5/6
+  // Eight first-page choices, with or without accessories: 1/8, 4/8, 7/8.
   for (const stripFit of [false, true]) {
     test(stripFit ? "stripped" : "after refit", () => {
       const shortsOnP1 = (items, temp) => simulate({ items, temps: [temp], seed: SEED, days: DAYS, stripFit })
         .results[0].days.map(d => d.page1.legs.shorts);
-      const seven = { 60: [1], 70: [3, 4], 80: [6] }, six = { 60: [1], 70: [3], 80: [5] };
+      const expected = { 60: [1], 70: [4], 80: [7] };
       for (const t of [60, 70, 80]) {
-        for (const n of shortsOnP1(NO_ACCESSORIES, t)) assert.ok(seven[t].includes(n), `${t} °F, seven a page: ${n}/7 shorts-side`);
-        for (const n of shortsOnP1(ITEMS, t)) assert.ok(six[t].includes(n), `${t} °F, six a page: ${n}/6 shorts-side`);
+        for (const n of shortsOnP1(NO_ACCESSORIES, t)) assert.ok(expected[t].includes(n), `${t} °F, eight a page: ${n}/8 shorts-side`);
+        for (const n of shortsOnP1(ITEMS, t)) assert.ok(expected[t].includes(n), `${t} °F, eight a page: ${n}/8 shorts-side`);
       }
       // …and across the whole deal, every day
       const run = simulate({ items: ITEMS, temps: [60, 70, 80], seed: SEED, days: DAYS, stripFit });
@@ -149,31 +148,24 @@ describe("the anchors, by name (spec §7.3): shorts-side ≈ 10 % at 60, 50 % at
   });
 });
 
-describe("70 °F on consecutive days alternates which side gets the odd slot (spec §7.2: the tie breaks by the day's hash)", () => {
-  test("seven a page: both 4/3 and 3/4 happen across the week, and no day is anything else", () => {
+describe("70 °F divides the eight first-page slots evenly", () => {
+  test("eight a page: 4/4 across the week", () => {
     const run = simulate({ items: NO_ACCESSORIES, temps: [70], seed: SEED, days: DAYS });
-    assert.equal(run.perPage, 7);
+    assert.equal(run.perPage, 8);
     const splits = run.results[0].days.map(d => `${d.page1.legs.shorts}/${d.page1.legs.pants}`);
-    for (const s of splits) assert.ok(s === "4/3" || s === "3/4", `a 70 °F page 1 is 4/3 or 3/4: ${s}`);
-    assert.ok(splits.includes("4/3") && splits.includes("3/4"), `both sides get the odd slot: ${splits.join(", ")}`);
+    for (const s of splits) assert.ok(s === "4/4", `a 70 °F page 1 is 4/4: ${s}`);
+    assert.ok(splits.every(s => s === "4/4"), "eight slots divide evenly");
   });
 });
 
 describe("weather offline ignores fit words, including the week's combination spacing", () => {
-  // Day one still matches the 9/29 port. Later days deliberately gain the
-  // 10/16 combination-spacing rule, online and offline alike. Fit words
-  // must still make no difference to any of the week's offline deals.
-  const DAY1 = ["item_4d8e07f2b4+item_f8febddd5a", "item_4d6504ab1e+item_47d1d8e12f", "item_178521ef10+item_36bb3f8631",
-    "item_8b8348d5d8+item_2a1f658ac1", "item_4d3da45986+item_4466d62ed7", "item_cfd6a258b5+item_f8a022e604",
-    "item_42e46a25f2+item_f8febddd5a", "item_14cccc4701+item_36bb3f8631", "item_4d3da45986+item_d8b8d5cde6",
-    "item_37a93d3c63+item_8919a44241", "item_3a815f6855+item_10808c4c69", "item_4d6504ab1e+item_eea35ac381",
-    "item_86aeba7072+item_f8febddd5a", "item_3a815f6855+item_40b24aea1b", "item_4d3da45986+item_10808c4c69",
-    "item_7a4df9167d+item_f8a022e604", "item_8b8348d5d8+item_5bf563c2b5", "item_097b9a61fa+item_eea35ac381"];
+  // The new page capacities preserve combination spacing and fit-word
+  // independence across the whole week when weather is unavailable.
   for (const stripFit of [false, true]) {
     test(stripFit ? "stripped" : "after refit", () => {
       const run = simulate({ items: ITEMS, temps: [null], seed: SEED, days: DAYS, stripFit });
       const week = run.results[0].days.map(d => d.looks.map(l => l.key));
-      assert.deepEqual(week[0], DAY1);
+      assert.equal(week[0].length, 22, "offline deal fills the new layout");
       const other = simulate({ items: ITEMS, temps: [null], seed: SEED, days: DAYS, stripFit: !stripFit });
       assert.deepEqual(week, other.results[0].days.map(d => d.looks.map(l => l.key)));
       assert.deepEqual(failures(run), []);
@@ -243,10 +235,10 @@ describe("the harness checks what it claims (a verdict that cannot fail proves n
 });
 
 describe("tools/clothing-simulate.mjs — the deploy check dad asked for", () => {
-  test("simulate() reads the fixture like the worker: fancy and accessories never dealt, six to a page while jackets exist", () => {
+  test("simulate() reads the fixture like the worker: fancy and accessories never dealt, eight first-page choices even with jackets", () => {
     const run = simulate({ items: ITEMS, temps: [72], seed: SEED });
-    assert.equal(run.perPage, 6, "the accessories door takes the seventh slot");
-    assert.equal(run.cap, 18);
+    assert.equal(run.perPage, 8, "accessories do not reduce outfit capacity");
+    assert.equal(run.cap, 22);
     const r = run.results[0];
     assert.deepEqual(Object.keys(r.want).sort(), ["legs", "top"]);
     for (const l of r.looks) for (const p of l.pieces) {

@@ -552,7 +552,17 @@ function tick(reason) {
     // re-open (review r5). A full build re-reads the memory anyway, which is
     // what clears the flag, so nothing is owed to the re-deal budget here.
     if (boardIsFresh(DATA)) {
-      if (memoryBlind) {
+      // Upgrade an already-built board on the first tick after installation.
+      // Re-sort only: moving the doors never needs another photo ingest.
+      let oldLayout = false;
+      try {
+        const recipe = JSON.parse(fs.readFileSync(path.join(DATA, "recipes", "today.json"), "utf8"));
+        oldLayout = recipe.boards.some(b => b.id === "build" && b.name === "Build my own");
+      } catch {}
+      if (oldLayout) {
+        why = "clothing layout updated, ";
+        rebuildOnly = true;
+      } else if (memoryBlind) {
         // Spend the flag as it is consumed and count the re-deal: the build this
         // asks for may meet the same shut file, and nothing else would ever stop
         // the loop. A RE-SORT, never a full build — see memoryBlind above.

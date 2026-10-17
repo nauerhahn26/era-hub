@@ -1351,3 +1351,21 @@ describe("hub deviation (W1, A4-4): items are sorted by id before pooling", () =
     assert.deepEqual(keysOf(a), keysOf(c));
   });
 });
+
+
+test("an eight-look first page and seven-look deeper pages preserve per-page garment variety", () => {
+  const items = makeItems({ n: 60, seed: 1 });
+  const opts = { items, temp: null, cap: 22, perPage: 8, laterPerPage: 7, seed: "2026-10-17" };
+  const dealt = R.buildCandidates(opts);
+  assert.equal(dealt.length, 22);
+  for (const page of [dealt.slice(0, 8), dealt.slice(8, 15), dealt.slice(15)]) {
+    const ids = page.flatMap(c => c.pieces.map(p => p.id));
+    assert.equal(new Set(ids).size, ids.length, "no garment repeats within a roomy page");
+  }
+  const memory = R.recordOffer({}, opts.seed, dealt, 8, null);
+  assert.equal(memory.days[opts.seed].page1.length, 8);
+  const tomorrow = R.buildCandidates({ ...opts, seed: "2026-10-18", history: memory });
+  const yesterday = new Set(dealt.slice(0, 8).map(c => c.key));
+  assert.ok(tomorrow.slice(0, 8).every(c => !yesterday.has(c.key)));
+  assert.ok(yesterday.has(tomorrow[8].key), "yesterday starts after eight, at page 2");
+});
