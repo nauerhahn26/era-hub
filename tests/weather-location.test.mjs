@@ -133,7 +133,7 @@ function dropCache() {
 function tile() {
   const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
   return r.boards.find(b => b.id === "today")
-          .buttons.find(b => b.type === "control" && b.row === 1 && b.col === 1);
+          .buttons.find(b => b.type === "control" && b.row === 2 && b.col === 2 && b.col_span === 2);
 }
 
 before(async () => {
@@ -275,7 +275,7 @@ function hubTile() {
   try {
     const r = JSON.parse(fs.readFileSync(path.join(HTMP, "recipes", "today.json"), "utf8"));
     return r.boards.find(b => b.id === "today")
-            .buttons.find(b => b.type === "control" && b.row === 1 && b.col === 1);
+            .buttons.find(b => b.type === "control" && b.row === 2 && b.col === 2 && b.col_span === 2);
   } catch { return null; }
 }
 // A bounded wait, and the bound is load-bearing: the hub runs a startup build
@@ -594,7 +594,7 @@ const distinctDays = (h) => new Set(h.time.map(t => String(t).slice(0, 10))).siz
 function rungs(om, nws) { OM = om; NWS = nws; }
 function hasTile() {
   const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
-  return r.boards.find(b => b.id === "today").buttons.some(b => b.type === "control" && b.row === 1 && b.col === 1);
+  return r.boards.find(b => b.id === "today").buttons.some(b => b.type === "control" && b.row === 2 && b.col === 2 && b.col_span === 2);
 }
 
 test("rung 1 serves the day: one call, the whole week stored, source open-meteo", async () => {

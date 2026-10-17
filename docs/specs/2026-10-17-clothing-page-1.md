@@ -30,3 +30,18 @@ Use `ERA_WT_SUFFIX=--wt-clothing-page-1` for assembly, gate and payloads.
 The separate clothing-diversity, clothing-picker-ui, jackets,
 long-press-clothing and weather worktrees overlap these files or behavior;
 review their changes when integrating. No sibling branch was changed here.
+
+## Validation and handoff
+
+Implemented in the hub and board feature worktrees; not merged or deployed.
+
+- Browser checks pass at 1920×1080 and 1280×800, including two separate gaze
+  dwells speaking the forecast without recording an outfit choice.
+- The full gate passed 121 suites. Its sole failing suite was
+  `weather-location.test.mjs`, whose three helpers still selected the old
+  top-left forecast. After updating those selectors to the spanning center
+  tile, all 26 tests in that suite passed on a separate rerun. Production code
+  did not change after the full run. All 122 suites are therefore verified
+  across that run and rerun; there is no fresh all-green gate stamp.
+- Run the full gate with `ERA_WT_SUFFIX=--wt-clothing-page-1` before landing
+  or releasing, to obtain the required green stamps for both committed trees.
