@@ -58,3 +58,37 @@ build was verified as `20261017.0310`; its regenerated clothing recipe has eight
 first-page outfits, weather at row 2 / column 2 spanning two columns, Full
 wardrobe, and no Accessories door on the suggested-outfit page. Other devices'
 receipt remains unverified. No live development-server restart was done.
+
+## Pre-clear audit (2026-10-17)
+
+Feature work and delivery are complete; application source worktrees are clean.
+A cold, read-only agent with no chat history recovered the layout, navigation,
+small-wardrobe rule, release/build/archive hash, validation results, and the
+separate tablet delivery evidence from these files. It cited both the spec and
+release receipt and corroborated the Windows test marker/log. Probe passed.
+
+The archive job compressed eight updated transcripts without failures. Six
+additional CLI transcripts were compressed separately because the current
+backup script scans only its original transcript directory. The archive job
+then reported 12 files synced to tablet recovery/chats. The transient concurrent
+connection timeout did not negate that completed transfer. Additional active
+transcript updates are archived again at the end of this audit.
+
+The host-wide hygiene sweep returned exit 1 with 12 findings:
+
+- Nine reported missing paths all exist after expanding `~`; these are scanner
+  path-resolution false positives, not missing project files.
+- The workspace router repo has six uncommitted entries, comprising prior
+  operational documentation/log changes and an untracked plans directory.
+  They are outside this feature; do not commit or discard another session's
+  work to make the sweep green.
+- School-device work remains queued while that device is offline. Delayed
+  school delivery was previously accepted; do not claim receipt.
+- The legacy gaze source and current gaze repo differ. Their drift requires
+  separate review; do not overwrite either source during this audit.
+
+No legacy application code changed in this feature, so its conditional legacy
+suite rerun is not required. The current suite's release gate is 122/0 and the
+Windows self-update result is 5/0. The seal checklist strictly requires hygiene
+exit 0, so this audit cannot claim a seal while the sweep remains nonzero.
+The feature's decisions and verified delivery are nevertheless preserved here.
