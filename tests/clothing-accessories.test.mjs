@@ -175,9 +175,16 @@ const cellOf = (board, label) => {
 function assertEntryTile(btn, where) {
   assert.ok(btn, "no Accessories tile " + where);
   assert.equal(btn.label, "Accessories", where);
-  assert.equal(btn.type, "category", where + ": a dwell target like Build my own");
+  assert.equal(btn.type, "category", where + ": a dwell target like Full wardrobe");
   assert.equal(btn.load, "acc", where + ": one door, whatever the number of kinds");
   assert.ok(btn.symbol, where + ": a picture, like every other category tile");
+}
+function assertWardrobeTile(btn, where) {
+  assert.ok(btn, where);
+  assert.equal(btn.label, "Full wardrobe", where);
+  assert.equal(btn.type, "category");
+  assert.equal(btn.load, "build");
+  assert.equal(btn.image, "board/wardrobe.svg");
 }
 const outfitsOn = (board) => (board.buttons || []).filter(b => b.type === "outfit");
 const tileIds = (board) => (board.buttons || []).filter(b => b.type === "clothing")
@@ -636,7 +643,7 @@ test("an edits.json that will not parse costs a log line, never the build or the
 // door costs today's seventh outfit slot ([3,3], dad 9/17), so a page carries
 // six looks while she has accessories and seven when she has none.
 
-test("one jacket opens the accessories door on every page she can be standing on", async () => {
+test("one jacket is reachable through Full wardrobe without costing an outfit", async () => {
   const D = dataDir("onejacket");
   // 35 garments: 17 tops, so the tops grid really has a second page and the
   // [3,4] door has to be drawn twice.
@@ -652,36 +659,35 @@ test("one jacket opens the accessories door on every page she can be standing on
   for (const pid of ["today", "today_2", "today_3"]) {
     const page = boardOf(D, pid);
     assert.ok(page, pid + " exists");
-    assertEntryTile(at(page, 3, 3), pid + " [3,3]");
-    assert.equal(outfitsOn(page).length, 6, pid + " carries six looks while she has accessories");
-    for (const o of outfitsOn(page))
-      assert.ok(!(o.row === 3 && o.col === 3), pid + ": no look is hiding under the door");
+    assert.equal(at(page, 3, 3).type, "outfit");
+    assert.equal(outfitsOn(page).length, pid === "today" ? 8 : 7);
+    assert.ok(!page.buttons.some(b => b.load === "acc"));
     assert.equal(new Set(page.buttons.map(x => x.row + "," + x.col)).size, page.buttons.length,
       pid + ": one button per cell");
-    assert.equal(cellOf(page, "Build my own"), "3,4", pid + ": Build my own keeps its corner");
+    assert.equal(cellOf(page, "Full wardrobe"), "3,4", pid + ": Full wardrobe keeps its corner");
   }
   // The memory the next day reads must agree with the page she saw.
   const hist = JSON.parse(fs.readFileSync(path.join(D, "wardrobe", "history.json"), "utf8"));
-  assert.equal(hist.days[today()].page1.length, 6, "page 1 remembered six looks, not seven");
+  assert.equal(hist.days[today()].page1.length, 8, "memory matches the eight offered looks");
 
-  assertEntryTile(at(boardOf(D, "confirm_0"), 3, 2), "confirm_0 [3,2]");
+  assertWardrobeTile(at(boardOf(D, "confirm_0"), 3, 2), "confirm_0 [3,2]");
 
   const tops = pagesOf(D, "cat_top");
   assert.ok(tops.length >= 2, "17 tops is two pages, so the door is drawn more than once");
-  for (const p of tops) assertEntryTile(at(p, 3, 4), p.id + " [3,4]");
+  for (const p of tops) assertWardrobeTile(at(p, 3, 4), p.id + " [3,4]");
 
-  // Build my own: 3 x 4, centre black, the kinds along the edges.
+  // Full wardrobe: 3 x 4, centre black, the kinds along the edges.
   const b = boardOf(D, "build");
-  assert.equal(b.rows + "x" + b.columns, "3x4", "Build my own is the centre-black 3x4 board now");
+  assert.equal(b.rows + "x" + b.columns, "3x4", "Full wardrobe is the centre-black 3x4 board now");
   assert.equal(cellOf(b, "Back"), "1,1");
   assert.equal(cellOf(b, "Tops"), "1,2");
   assert.equal(cellOf(b, "Bottoms"), "1,3");
   assert.equal(cellOf(b, "Dresses"), "1,4");
   assert.equal(cellOf(b, "Outfits"), "2,1");
-  assert.equal(cellOf(b, "Jackets"), "2,4", "the first present kind takes the first edge cell");
+  assert.equal(cellOf(b, "Accessories"), "2,4", "accessories live inside Full wardrobe");
   assert.equal(at(b, 2, 2), undefined, "the centre cells stay black");
   assert.equal(at(b, 2, 3), undefined, "…both of them");
-  assert.equal(at(b, 2, 4).load, "acc_jacket", "and it goes straight to the jackets");
+  assert.equal(at(b, 2, 4).load, "acc", "and it opens the accessories menu");
 
   // The kind's own grid: clothing tiles that speak, Back to today, no door.
   const g = boardOf(D, "acc_jacket");
@@ -691,7 +697,7 @@ test("one jacket opens the accessories door on every page she can be standing on
   const tile = g.buttons.find(x => x.type === "clothing");
   assert.equal(tile.say, tile.label, "tapping a jacket speaks its name, like a garment tile");
   assert.equal(tile.load, undefined, "…and goes nowhere");
-  assert.equal(at(g, 1, 1).load, "today", "Back from a jackets grid is today");
+  assert.equal(at(g, 1, 1).load, "build", "Back from a jackets grid is today");
   assert.ok(!g.buttons.some(x => x.label === "Accessories"), "no door on the door's own grid");
 });
 
@@ -705,14 +711,14 @@ test("one jacket opens the accessories door on every page she can be standing on
 // `item_slots`); dad found the hub's port filling the centre and blacking the
 // edges instead — "all tops doesn't follow our design guidelines of all cells
 // filled and black squares in middle", and the same on jackets and bottoms.
-test("a browse grid fills every cell around the black centre: eight to a page when no door stands on [3,4]", async () => {
+test("a browse grid keeps the black centre and Full wardrobe corner", async () => {
   const D = dataDir("gridlaw");
   materialize({ dataDir: D, n: 35 });   // 17 tops, and no accessories: no door anywhere
   await build(D, "dev-gridlaw");
 
   const page = boardOf(D, "cat_top");
   assert.deepEqual(cellsOf(page, "clothing"),
-    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3", "3,4"],
+    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3"],
     "a garment in every cell but Back, More and the two centre rest cells");
   assert.equal(at(page, 2, 2), undefined, "the centre cells stay black");
   assert.equal(at(page, 2, 3), undefined, "…both of them");
@@ -723,12 +729,12 @@ test("a browse grid fills every cell around the black centre: eight to a page wh
   // last page leaves its leftover cells black rather than re-flowing.
   const pages = pagesOf(D, "cat_top");
   assert.equal(pages.length, 3, "17 tops is three pages of eight");
-  assert.deepEqual(cellsOf(pages[2], "clothing"), ["1,2"],
+  assert.deepEqual(cellsOf(pages[2], "clothing"), ["1,2", "1,3", "1,4"],
     "the seventeenth top sits in the first slot of page 3, the rest black");
   assert.equal(cellOf(pages[2], "More"), null, "and the last page offers no More");
 });
 
-test("the accessories door owns [3,4], so a browse grid behind it carries seven", async () => {
+test("Full wardrobe owns [3,4] on garment and accessory browse grids", async () => {
   const D = dataDir("gridlawdoor");
   // Nine jackets: one full page of the kind's own grid and a second behind More.
   materialize({ dataDir: D, n: 35, accessories: { jacket: 9 } });
@@ -738,32 +744,31 @@ test("the accessories door owns [3,4], so a browse grid behind it carries seven"
   assert.deepEqual(cellsOf(tops, "clothing"),
     ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3"],
     "seven tops — the door has the eighth cell");
-  assertEntryTile(at(tops, 3, 4), "cat_top [3,4]");
+  assertWardrobeTile(at(tops, 3, 4), "cat_top [3,4]");
   assert.equal(at(tops, 2, 2), undefined, "the centre cells stay black");
   assert.equal(at(tops, 2, 3), undefined, "…both of them");
 
   // Behind the door there is no door, so a kind's own grid keeps all eight.
   const jackets = boardOf(D, "acc_jacket");
   assert.deepEqual(cellsOf(jackets, "clothing"),
-    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3", "3,4"],
-    "eight jackets on the kind's own grid, [3,4] among them");
+    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3"],
+    "seven jackets and the Full wardrobe door");
   assert.equal(cellOf(jackets, "More"), "3,1", "the ninth jacket is behind More");
   assert.equal(at(jackets, 2, 2), undefined, "the centre stays black behind the door too");
   assert.equal(at(jackets, 2, 3), undefined, "…both of them");
 });
 
-test("a pair of shoes takes the next cell on Build my own and the second on the menu", async () => {
+test("a pair of shoes appears second inside the accessories menu", async () => {
   const D = dataDir("jacketshoes");
   materialize({ dataDir: D, n: 12, accessories: { jacket: 1, shoes: 1 } });
   const r = await build(D, "dev-jacketshoes");
   assert.deepEqual(r.accessories, ["jacket", "shoes"], "in ACCESSORY_KINDS order, not photo order");
 
   const b = boardOf(D, "build");
-  assert.equal(cellOf(b, "Jackets"), "2,4");
-  assert.equal(cellOf(b, "Shoes"), "3,1", "the second kind takes the second edge cell");
+  assertEntryTile(at(b, 2, 4), "inside Full wardrobe");
   const menu = boardOf(D, "acc");
   assert.equal(menu.rows + "x" + menu.columns, "3x4");
-  assert.equal(at(menu, 1, 1).load, "today", "Back from the menu is today");
+  assert.equal(at(menu, 1, 1).load, "build", "Back from the menu is today");
   assert.equal(cellOf(menu, "Jackets"), "1,2");
   assert.equal(cellOf(menu, "Shoes"), "1,3");
   assert.equal(at(menu, 1, 3).load, "acc_shoes");
@@ -772,9 +777,9 @@ test("a pair of shoes takes the next cell on Build my own and the second on the 
   assert.ok(boardOf(D, "acc_shoes"), "and the shoes have a grid");
 });
 
-// Six kinds can never fit the five edge cells Build my own has left, so the
+// Six kinds can never fit the five edge cells Full wardrobe has left, so the
 // last one becomes the door itself (spec §4.1).
-test("six kinds turn Build my own's last cell into the door, and the menu holds them all", async () => {
+test("six accessory kinds fit inside the Full wardrobe accessories menu", async () => {
   const D = dataDir("sixkinds");
   materialize({ dataDir: D, n: 12,
     accessories: { jacket: 1, shoes: 1, jewelry: 1, hat: 1, hair: 1, makeup: 1 } });
@@ -782,13 +787,7 @@ test("six kinds turn Build my own's last cell into the door, and the menu holds 
   assert.deepEqual(r.accessories, ["jacket", "shoes", "jewelry", "hat", "hair", "makeup"]);
 
   const b = boardOf(D, "build");
-  assert.equal(cellOf(b, "Jackets"), "2,4");
-  assert.equal(cellOf(b, "Shoes"), "3,1");
-  assert.equal(cellOf(b, "Jewelry"), "3,2");
-  assert.equal(cellOf(b, "Hats"), "3,3");
-  assertEntryTile(at(b, 3, 4), "build [3,4] with six kinds");
-  assert.equal(cellOf(b, "Hair"), null, "the fifth kind is behind the door, not on the board");
-  assert.equal(cellOf(b, "Makeup"), null);
+  assertEntryTile(at(b, 2, 4), "Full wardrobe accessories");
 
   const menu = boardOf(D, "acc");
   assert.deepEqual(["Jackets", "Shoes", "Jewelry", "Hats", "Hair", "Makeup"].map(l => cellOf(menu, l)),
@@ -921,7 +920,7 @@ function buildAsBaseline(dir, deviceId) {
   });
 }
 
-test("a wardrobe with no accessories gets the board she had yesterday", async () => {
+test("a wardrobe with no accessories still offers the full layout", async () => {
   const D = dataDir("nochange");
   materialize({ dataDir: D, n: 35 });
   const was = await buildAsBaseline(D, "dev-nochange");
@@ -931,24 +930,8 @@ test("a wardrobe with no accessories gets the board she had yesterday", async ()
   assert.deepEqual(r.accessories, [], "nothing to offer, so no kind is present");
   const after = recipeOf(D);
 
-  // The three things T5 adds and nothing else: the items on the tiles, the
-  // category list at the root, and the reshaped Build my own board.
-  //
-  // Plus, since 9/22, the browse grids — the ONE cell-for-cell difference this
-  // family is meant to see. The baseline dealt six garments a page into
-  // [1,2][1,3][1,4][2,1][2,2][2,3]; the grid law deals eight around a black
-  // centre, so `cat_*` pages carry a different split of the same list. They
-  // come out of the cell-for-cell comparison and are measured on their own
-  // terms below: same garments, same order, new slots.
-  const strip = (recipe) => {
-    const r2 = JSON.parse(JSON.stringify(recipe));
-    delete r2.categories;
-    r2.boards = r2.boards.filter(b => b.id !== "build" && !/^cat_/.test(b.id));
-    for (const b of r2.boards) for (const btn of b.buttons) delete btn.items;
-    return r2;
-  };
-  assert.deepEqual(strip(after), strip(before),
-    "board for board, cell for cell, the board she had before accessories existed");
+  assert.equal(outfitsOn(boardOf(D, "today")).length, 8);
+  assertWardrobeTile(at(boardOf(D, "today"), 3, 4), "today wardrobe");
 
   // Nothing fell off a grid and nothing was re-ordered when the slots changed:
   // page by page, in order, the same garments (dad 9/22).
@@ -959,14 +942,14 @@ test("a wardrobe with no accessories gets the board she had yesterday", async ()
     assert.deepEqual(gridGarments(after, id), gridGarments(before, id),
       id + ": the same garments in the same order — only the slots moved");
   assert.deepEqual(cellsOf(boardOf(D, "cat_top"), "clothing"),
-    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3", "3,4"],
-    "…into the eight cells the grid law leaves, with no door to pay for");
+    ["1,2", "1,3", "1,4", "2,1", "2,4", "3,2", "3,3"],
+    "…into the seven cells the grid law leaves, with no door to pay for");
   assert.ok(!JSON.stringify(after).includes("Accessories"), "and no door anywhere on it");
   assert.ok(!after.boards.some(b => String(b.id).startsWith("acc")), "no acc boards either");
   for (const pid of ["today", "today_2", "today_3"])
-    assert.equal(outfitsOn(boardOf(D, pid)).length, 7, pid + " keeps its seven looks");
+    assert.equal(outfitsOn(boardOf(D, pid)).length, pid === "today" ? 8 : 7, pid + " has the approved capacity");
 
-  // Build my own is the new 3 x 4 shape even with nothing to put on it.
+  // Full wardrobe is the new 3 x 4 shape even with nothing to put on it.
   const b = boardOf(D, "build");
   assert.equal(b.rows + "x" + b.columns, "3x4");
   assert.equal(b.buttons.length, 5, "five buttons and eight black cells");
@@ -986,7 +969,7 @@ test("hiding the only jacket takes the door down with it", async () => {
   writeEdits(D, { [j1]: { hidden: true, t: iso(Date.now()) } });
   await build(D, "dev-hidejacket", { rebuildOnly: true });
   assert.deepEqual(tileIds(boardOf(D, "acc_jacket")), [j2], "the hidden one is off the grid");
-  assertEntryTile(at(boardOf(D, "today"), 3, 3), "today [3,3] with one jacket left");
+  assertWardrobeTile(at(boardOf(D, "today"), 3, 4), "today wardrobe with one jacket left");
 
   writeEdits(D, { [j1]: { hidden: true, t: iso(Date.now()) }, [j2]: { hidden: true, t: iso(Date.now()) } });
   const r = await build(D, "dev-hidejacket", { rebuildOnly: true });
@@ -994,7 +977,7 @@ test("hiding the only jacket takes the door down with it", async () => {
   const recipe = recipeOf(D);
   assert.ok(!recipe.boards.some(b => String(b.id).startsWith("acc")), "so are its boards");
   assert.ok(!JSON.stringify(recipe).includes("Accessories"), "and every door on every page");
-  assert.equal(outfitsOn(boardOf(D, "today")).length, 7, "and the seventh slot is a look again");
+  assert.equal(outfitsOn(boardOf(D, "today")).length, 8, "accessories never take an outfit slot");
 });
 
 // ---- Dress up (warmth coherence spec 2026-09-29 D3) -------------------------
@@ -1005,7 +988,7 @@ test("hiding the only jacket takes the door down with it", async () => {
 // page, Dress up, reached through the accessories menu like a real kind. It is
 // a VIRTUAL kind — not in ACCESSORY_KINDS, because a garment is not filed
 // under it: it joins `present` when at least one ok, un-hidden fancy item with
-// a tile exists, so the door, the seventh-slot arithmetic, Build my own's
+// a tile exists, so the door, the seventh-slot arithmetic, Full wardrobe's
 // overflow and the menu cells follow it with no rule of their own.
 const markFancy = (dir, ids, over = {}) => {
   const cat = JSON.parse(fs.readFileSync(path.join(dir, "wardrobe.json"), "utf8"));
@@ -1036,7 +1019,7 @@ test("Dress up holds every fancy item — garments and accessories, in id order 
   assert.equal(page.name, "Dress up");
   assert.deepEqual(tileIds(page), [...fancy].sort(), "every fancy item, garment or accessory, in id order");
   for (const b of page.buttons.filter(x => x.type === "clothing")) assert.equal(b.items[0].occasion, "fancy");
-  assert.equal(at(page, 1, 1).load, "today", "Back goes home, like every page behind the door");
+  assert.equal(at(page, 1, 1).load, "build", "Back returns to Full wardrobe");
 
   for (const id of ["cat_top", "cat_pants", "cat_shorts", "cat_dress", "cat_outfit"])
     for (const p of pagesOf(D, id))
@@ -1047,7 +1030,7 @@ test("Dress up holds every fancy item — garments and accessories, in id order 
   for (const g of [top.id, dress.id]) assert.ok(!dealt.includes(g), "a fancy garment is never dealt");
 });
 
-test("a family whose only 'accessory' is a fancy dress gets the door, six looks a page and Dress up on Build my own", async () => {
+test("a family whose only 'accessory' is a fancy dress gets the door, six looks a page and Dress up on Full wardrobe", async () => {
   const D = dataDir("onlyfancy");
   const items = materialize({ dataDir: D, n: 35 });
   const dress = items.find(i => i.category === "dress");
@@ -1055,19 +1038,19 @@ test("a family whose only 'accessory' is a fancy dress gets the door, six looks 
   const r = await build(D, "dev-onlyfancy");
   assert.deepEqual(r.accessories, ["fancy"]);
   for (const pid of ["today", "today_2", "today_3"]) {
-    assertEntryTile(at(boardOf(D, pid), 3, 3), pid + " [3,3]");
-    assert.equal(outfitsOn(boardOf(D, pid)).length, 6, pid + ": the door takes the seventh slot");
+    assertWardrobeTile(at(boardOf(D, pid), 3, 4), pid + " wardrobe");
+    assert.equal(outfitsOn(boardOf(D, pid)).length, pid === "today" ? 8 : 7, pid + ": all outfit slots remain available");
   }
-  assertEntryTile(at(boardOf(D, "confirm_0"), 3, 2), "confirm_0 [3,2]");
-  for (const p of pagesOf(D, "cat_top")) assertEntryTile(at(p, 3, 4), p.id + " [3,4]");
+  assertWardrobeTile(at(boardOf(D, "confirm_0"), 3, 2), "confirm_0 [3,2]");
+  for (const p of pagesOf(D, "cat_top")) assertWardrobeTile(at(p, 3, 4), p.id + " [3,4]");
   const b = boardOf(D, "build");
-  assert.equal(cellOf(b, "Dress up"), "2,4", "the first present kind's cell");
-  assert.equal(at(b, 2, 4).load, "acc_fancy");
+  assert.equal(cellOf(b, "Accessories"), "2,4", "accessories entry");
+  assert.equal(at(b, 2, 4).load, "acc");
   assert.deepEqual(boardOf(D, "acc").buttons.map(x => x.label), ["Back", "Dress up"]);
   assert.deepEqual(tileIds(boardOf(D, "acc_fancy")), [dress.id]);
 });
 
-test("six real kinds and Dress up: Build my own's last cell is the door, and the menu holds all seven", async () => {
+test("six real kinds and Dress up remain reachable through Full wardrobe", async () => {
   const D = dataDir("sevenkinds");
   const items = materialize({ dataDir: D, n: 12,
     accessories: { jacket: 1, shoes: 1, jewelry: 1, hat: 1, hair: 1, makeup: 1 } });
@@ -1075,7 +1058,7 @@ test("six real kinds and Dress up: Build my own's last cell is the door, and the
   const r = await build(D, "dev-sevenkinds");
   assert.equal(r.accessories.length, 7);
   const b = boardOf(D, "build");
-  assertEntryTile(at(b, 3, 4), "build [3,4] — the overflow door");
+  assertEntryTile(at(b, 2, 4), "Full wardrobe accessories");
   const menu = boardOf(D, "acc");
   assert.equal(menu.buttons.length, 8, "Back and seven kinds on nine edge cells");
   assert.equal(cellOf(menu, "Dress up"), "3,2", "the seventh kind's cell");
@@ -1096,4 +1079,55 @@ test("no Dress up without a fancy item she can reach: hidden, or with no tile, i
   const recipe = recipeOf(D);
   assert.ok(!recipe.boards.some(b => String(b.id).startsWith("acc")), "no menu, no Dress up page");
   assert.ok(!JSON.stringify(recipe).includes("Dress up"));
+});
+
+
+test("approved layout offers 8 then 7 then 7, with speaking weather and no overlapping cells", async () => {
+  const D = dataDir("approved-layout");
+  materialize({ dataDir: D, n: 35, accessories: { jacket: 1 } });
+  await underSky(allDayAt(72), () => build(D, "dev-layout"));
+  const recipe = recipeOf(D);
+  const pages = recipe.boards.filter(b => /^today(_\d+)?$/.test(b.id));
+  assert.deepEqual(pages.map(p => outfitsOn(p).length), [8, 7, 7]);
+  for (const page of pages) {
+    const weather = page.buttons.find(b => b.footnote != null);
+    assert.equal(weather.row, 2);
+    assert.equal(weather.col, 2);
+    assert.equal(weather.col_span, 2);
+    assert.match(weather.say, /72 degrees/);
+    assert.equal(weather.load, undefined);
+    assert.equal(weather.combo, undefined);
+    const occupied = new Set();
+    for (const b of page.buttons) for (let r = 0; r < (b.row_span || 1); r++)
+      for (let c = 0; c < (b.col_span || 1); c++) {
+        const cell = `${b.row+r},${b.col+c}`;
+        assert.ok(!occupied.has(cell), `${page.id}: overlapping ${cell}`);
+        occupied.add(cell);
+      }
+    assertWardrobeTile(at(page, 3, 4), page.id);
+    assert.ok(!page.buttons.some(b => b.load === "acc"));
+  }
+  assert.equal(at(pages[0], 1, 1).type, "outfit");
+  assert.equal(at(pages[1], 1, 1).load, "today");
+  assert.equal(at(pages[2], 1, 1).load, "today_2");
+  assertEntryTile(at(boardOf(D, "build"), 2, 4), "accessories inside wardrobe");
+  assertWardrobeTile(at(boardOf(D, "choose_bottom"), 2, 2), "bottoms chooser");
+  for (const board of recipe.boards.filter(b => /^cat_|^acc_/.test(b.id)))
+    assertWardrobeTile(at(board, 3, 4), board.id);
+});
+
+
+test("an existing same-day layout upgrades with a re-sort and no photo calls", async () => {
+  const D = dataDir("upgrade-layout");
+  materialize({ dataDir: D, n: 35 });
+  await build(D, "dev-upgrade");
+  const recipe = recipeOf(D);
+  recipe.boards.find(b => b.id === "build").name = "Build my own";
+  fs.writeFileSync(path.join(D, "recipes", "today.json"), JSON.stringify(recipe));
+  const before = asks.length;
+  const result = await clothing.tick("upgrade check");
+  assert.equal(result.mode, "cataloged", "the existing board was rebuilt");
+  assert.equal(asks.length, before, "layout upgrade buys no photo calls");
+  assert.equal(boardOf(D, "build").name, "Full wardrobe");
+  assert.equal(outfitsOn(boardOf(D, "today")).length, 8);
 });

@@ -44,7 +44,8 @@ const R = require(path.join(__dirname, "..", "clothing-rank.js"));
 
 // clothing-worker.js SLOTS / todaySlots / PAGES: seven looks a page, six while
 // she has accessories (the door takes the seventh cell), three pages a day.
-const PER_PAGE = 7;
+const PER_PAGE = 8;
+const LATER_PER_PAGE = 7;
 const PAGES = 3;
 
 // ---- the words a deal is judged by ------------------------------------------
@@ -253,10 +254,10 @@ const plus = (key, n) => {
 function simulate({ items, temps, seed, days = 1, stripFit = false }) {
   if (typeof seed !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(seed)) throw new TypeError("simulate: seed must be a YYYY-MM-DD day key");
   const pool = (stripFit ? strip(items) : items).filter(i => i.hidden !== true);
-  // the worker's `present`: an accessory kind with at least one dealt-from item
-  const hasAccessory = pool.some(i => R.isAccessory(i));
-  const perPage = hasAccessory ? PER_PAGE - 1 : PER_PAGE;
-  const cap = perPage * PAGES;
+  // Match the board: eight looks first, then seven beside Back.
+  const perPage = PER_PAGE;
+  const laterPerPage = LATER_PER_PAGE;
+  const cap = perPage + laterPerPage * (PAGES - 1);
   const mode = stripFit ? "legacy" : "fit";
   // what the door lets through (buildCandidates applies the same door itself)
   const door = pool.filter(i => !R.isAccessory(i) && !isFancy(i));
@@ -270,7 +271,7 @@ function simulate({ items, temps, seed, days = 1, stripFit = false }) {
       const day = plus(seed, d);
       // a memory = any page 1 recorded before this day (what freshness reads)
       const memory = Object.keys(history.days).some(k => k < day);
-      const dealt = R.buildCandidates({ items: pool, temp, band: null, cap, seed: day, history, perPage });
+      const dealt = R.buildCandidates({ items: pool, temp, band: null, cap, seed: day, history, perPage, laterPerPage });
       history = R.recordOffer(history, day, dealt, perPage, null);
       const looks = dealt.map(c => ({ key: c.key, pieces: c.pieces, ...wordsOf(c.pieces), cell: cellOf(c) }));
       const verdicts = VERDICTS.filter(v => v.applies(temp)).map(v => ({ rule: v.rule, ...v.check({ temp, looks, perPage, want, st }) }));
@@ -280,7 +281,7 @@ function simulate({ items, temps, seed, days = 1, stripFit = false }) {
     }
     results.push({ temp, want, looks: out[0].looks, verdicts: out[0].verdicts, days: out });
   }
-  return { perPage, cap, mode, results };
+  return { perPage, laterPerPage, cap, mode, results };
 }
 // A look's sleeve and leg words: the top half's coverage, and the bottom's
 // (short | long) or the single's legs (bare | covered).
@@ -323,7 +324,7 @@ function table(run, out = console.log) {
 }
 function report(run, out = console.log, { tableOnly = false } = {}) {
   let failed = 0;
-  out(`mode: ${run.mode === "legacy" ? "legacy fallback (coverage/weight/legs stripped)" : "fit (coverage/weight/legs as catalogued)"} · ${run.perPage} a page, ${run.cap} looks · ${run.results[0] ? run.results[0].days.length : 0} day(s)`);
+  out(`mode: ${run.mode === "legacy" ? "legacy fallback (coverage/weight/legs stripped)" : "fit (coverage/weight/legs as catalogued)"} · ${run.perPage} first / ${run.laterPerPage} later, ${run.cap} looks · ${run.results[0] ? run.results[0].days.length : 0} day(s)`);
   for (const r of run.results) {
     for (const d of r.days) for (const v of d.verdicts) if (!v.pass) failed += 1;
     if (tableOnly) continue;
@@ -332,7 +333,7 @@ function report(run, out = console.log, { tableOnly = false } = {}) {
     for (const d of r.days) {
       if (r.days.length > 1) out(`-- ${d.seed}`);
       d.looks.forEach((l, i) => {
-        const page = Math.floor(i / run.perPage) + 1;
+        const page = i < run.perPage ? 1 : 2 + Math.floor((i - run.perPage) / run.laterPerPage);
         out(`  p${page} ${String(i + 1).padStart(2)}  ${l.pieces.map(tag).join(" + ")}`);
       });
       for (const v of d.verdicts) out(`  ${v.pass ? (v.dry ? "DRY " : "PASS") : "FAIL"}  ${v.rule} — ${v.detail}`);

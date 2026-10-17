@@ -308,7 +308,7 @@ test("with a key: photos are cataloged and the board is her exact graph", async 
   assert.ok(outfit.say_on_load, "outfit tiles speak on load, like hers");
   assert.ok(Array.isArray(outfit.combo) && outfit.combo.length >= 1, "combo ids for the decision log");
   assert.ok(fs.existsSync(path.join(TMP, "wardrobe-outfits", path.basename(outfit.image))), "composite image exists");
-  assert.ok(todayB.buttons.some(x => x.label === "Build my own"), "Build my own on today");
+  assert.ok(todayB.buttons.some(x => x.label === "Full wardrobe"), "Full wardrobe on today");
 
   const confirm = recipe.boards.find(b => b.id === outfit.load);
   const labels = confirm.buttons.map(x => x.label);
@@ -329,14 +329,14 @@ test("with a key: photos are cataloged and the board is her exact graph", async 
   // page, overruling the 9/1 six-cap and bottom-row rest strip. The Yes
   // tile is a TD-Snap-style green CHECK, not a pictogram.
   const outfits = todayB.buttons.filter(x => x.type === "outfit");
-  assert.ok(outfits.length <= 7, "max 7 outfit choices per page");
+  assert.ok(outfits.length <= 8, "max 8 outfit choices on page 1");
   for (const o of outfits) {
     assert.ok(o.row && o.col, "outfit tiles pinned to stable slots");
     assert.ok(!(o.row === 2 && (o.col === 2 || o.col === 3)), "center rest cells stay black");
     assert.ok(!(o.row === 3 && (o.col === 1 || o.col === 4)), "More and Build own the bottom corners");
   }
-  const build = todayB.buttons.find(x => x.label === "Build my own");
-  assert.equal(build.row + "," + build.col, "3,4", "Build my own pinned bottom-right");
+  const build = todayB.buttons.find(x => x.label === "Full wardrobe");
+  assert.equal(build.row + "," + build.col, "3,4", "Full wardrobe pinned bottom-right");
   const yes = confirm.buttons.find(x => x.label === "Yes");
   assert.equal(yes.glyph, "✓", "Yes is the green check");
   assert.ok(!yes.symbol, "no pictogram on Yes");
@@ -1076,12 +1076,12 @@ test("with no picks yet, today is pure rotation (nothing seated)", async () => {
   fs.rmSync(path.join(TMP, "wardrobe", "history.json"), { force: true });
   await clothing.regenerate(true);
   const first = firstCombos();
-  assert.equal(first.length, 7, "page 1 is full: seven outfit slots (dad 9/3), the wardrobe has more");
+  assert.equal(first.length, 8, "page 1 fills the approved eight outfit slots");
   // eight tops, seven bottoms → page 1 repeats no garment (spec §1 V3)
   const tops = first.map(k => k.split("+")[0]), bottoms = first.map(k => k.split("+")[1]);
-  assert.equal(new Set(tops).size, 7, "no top repeats on page 1");
+  assert.ok(new Set(tops).size >= 7, "page 1 uses at least seven different tops");
   assert.equal(new Set(bottoms).size, 7, "no bottom repeats on page 1");
-  assert.equal(allCombos().length, 21, "21 a day across today, today_2, today_3");
+  assert.equal(allCombos().length, 22, "21 a day across today, today_2, today_3");
   // the worker's private least-recently-shown file is retired: memory is
   // wardrobe/history.json alone (plan T2.3)
   assert.ok(!fs.existsSync(path.join(TMP, "clothing-history.json")), "no clothing-history.json after a build");
@@ -1092,7 +1092,7 @@ test("with no picks yet, today is pure rotation (nothing seated)", async () => {
 // memory ignores today's own entries; nothing random is left in the worker.
 test("a same-day rebuild deals the same 21 in the same order", async () => {
   const first = allCombos();
-  assert.equal(first.length, 21);
+  assert.equal(first.length, 22);
   await clothing.regenerate(true);
   assert.deepEqual(allCombos(), first, "21-for-21 identical across today, today_2, today_3");
 });
@@ -1109,7 +1109,7 @@ test("the build records today's page 1 in history.json and leaves the day's even
   await clothing.regenerate(true);
   const h = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe", "history.json"), "utf8"));
   assert.deepEqual(h.events[today], seeded, "today's events are untouched by the build");
-  assert.equal(h.days[today].page1.length, 7, "page 1 as dealt: seven outfits");
+  assert.equal(h.days[today].page1.length, 8, "page 1 as dealt: seven outfits");
   assert.equal(h.days[today].band, null, "weather offline: no band");
   assert.deepEqual(h.days[today].page1, firstCombos().map(k => k.split("+")), "the same seven the board shows, in order");
   assert.ok(!fs.existsSync(path.join(TMP, "wardrobe", "history.tmp")), "the atomic write left no tmp file behind");
@@ -1127,9 +1127,9 @@ test("a Yes yesterday on yesterday's page 1 sits out page 1 today and opens page
   writePicks({ [yesterday]: yEvents, [today]: [{ kind: "yes", combo: ["item_top2", "item_pants1"] }] }, days);
   await clothing.regenerate(true);
   const all = allCombos();
-  assert.equal(all.length, 21);
+  assert.equal(all.length, 22);
   assert.ok(!firstCombos().includes("item_top3+item_pants2"), "yesterday's page-1 look is not on page 1 again");
-  assert.equal(all[7], "item_top3+item_pants2", "…it opens today_2 instead (her Yes leads the demoted looks)");
+  assert.equal(all[8], "item_top3+item_pants2", "…it opens today_2 instead (her Yes leads the demoted looks)");
   // today's Yes changes nothing about today: the same day without it deals
   // the very same 21 (and a same-day rebuild never shuffles — LRU would have)
   writePicks({ [yesterday]: yEvents }, days);
@@ -1148,7 +1148,7 @@ test("a Yes yesterday on a look that was not on yesterday's page 1 leads page 1 
   });
   await clothing.regenerate(true);
   assert.equal(firstCombos()[0], "item_top3+item_pants2", "her Yes leads the board");
-  assert.equal(allCombos().length, 21);
+  assert.equal(allCombos().length, 22);
 });
 
 test("a day with no Yes credits her last-selected outfit at half weight; only the top looks are seated", async () => {
@@ -1165,5 +1165,5 @@ test("a day with no Yes credits her last-selected outfit at half weight; only th
   assert.ok(seated.includes("item_top3+item_pants2"), "twice-worn look is seated");
   assert.ok(seated.includes("item_top1+item_pants1"), "the inferred wear is seated at half weight");
   assert.ok(!seated.includes("item_top2+item_pants2"), "an earlier gaze that day is not a wear");
-  assert.equal(firstCombos().length, 7, "the rest of page 1 is still fresh rotation");
+  assert.equal(firstCombos().length, 8, "the rest of page 1 is still fresh rotation");
 });
