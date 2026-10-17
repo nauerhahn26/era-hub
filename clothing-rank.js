@@ -978,12 +978,24 @@ function buildCandidates(opts) {
     if (chosen.length >= pageCap) break;
     if (!chosenKeys.has(key(o)) && !yP1.has(key(o)) && !o.some(p => used.has(p.id)) && room(o)) take(o);
   }
+  // An explicit first/deeper-page split must not pull the start of page 2
+  // into page 1 when a small wardrobe runs out of distinct garments. Prefer
+  // a different pairing of a garment over bringing yesterday's look forward.
+  const fillFirst = order => {
+    for (const o of order) {
+      if (chosen.length >= pageCap) break;
+      if (!chosenKeys.has(key(o)) && room(o)) take(o);
+    }
+    spill(order, o => !chosenKeys.has(key(o)), take, () => chosen.length >= pageCap);
+  };
+  if (opts.laterPerPage != null) fillFirst(ranked.filter(o => !yP1.has(key(o))));
   for (const o of ranked) {
     if (chosen.length >= pageCap) break;
     if (!chosenKeys.has(key(o)) && !o.some(p => used.has(p.id)) && room(o)) take(o);
   }
   const free1 = o => !chosenKeys.has(key(o)) && !o.some(p => used.has(p.id));
   spill(ranked.filter(o => !yP1.has(key(o))).concat(ranked.filter(o => yP1.has(key(o)))), free1, take, () => chosen.length >= pageCap);
+  if (opts.laterPerPage != null) fillFirst(ranked);
 
   // :538-556 — deeper pages: yesterday's page 1 leads page 2; a garment once per page.
   const demoted = ranked.filter(o => yP1.has(key(o)));

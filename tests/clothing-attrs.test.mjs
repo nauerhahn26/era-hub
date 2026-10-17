@@ -507,11 +507,9 @@ test("a garment the model had nothing to say about is asked once, not every morn
 
 // ---- degradation, never exclusion (spec §3.1 item 4) ----------------------
 
-test("no attributes anywhere and no key: the board is still a full 21", async () => {
-  // Eight tops by seven bottoms: enough for a garment-distinct page of seven
-  // with one garment to spare, and 56 pairs behind the day's 21. (A smaller
-  // wardrobe would run page 1 short and the RENDERED first seven would spill
-  // into the next algorithmic page, where a garment may return — I11.)
+test("no attributes anywhere and no key: the board still fills all 22 outfit slots", async () => {
+  // Eight tops by seven bottoms: the eighth choice needs a new pairing of
+  // an already-used bottom, while the first seven can stay garment-distinct.
   const names = [];
   for (let i = 1; i <= 8; i++) names.push(["item_t" + i, "Sunny tee " + i, "top"]);
   for (let i = 1; i <= 7; i++) names.push(["item_b" + i, "Sky leggings " + i, "pants"]);
@@ -528,5 +526,6 @@ test("no attributes anywhere and no key: the board is still a full 21", async ()
   assert.equal(outfits.length, 22, "a wardrobe the model has never described still fills the day");
   const page1 = boards.find(b => b.id === "today").buttons
     .filter(x => x.type === "outfit").flatMap(x => x.combo);
-  assert.equal(new Set(page1).size, page1.length, "and page 1 still repeats no garment");
+  assert.equal(new Set(page1.slice(0, 14)).size, 14, "the first seven outfits remain garment-distinct");
+  assert.ok(new Set(page1).size >= 14, "only the extra choice may reuse garments");
 });

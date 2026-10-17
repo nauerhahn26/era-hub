@@ -1126,7 +1126,7 @@ test("an existing same-day layout upgrades with a re-sort and no photo calls", a
   fs.writeFileSync(path.join(D, "recipes", "today.json"), JSON.stringify(recipe));
   const before = asks.length;
   const result = await clothing.tick("upgrade check");
-  assert.equal(result.rebuildOnly, true);
+  assert.equal(result.mode, "cataloged", "the existing board was rebuilt");
   assert.equal(asks.length, before, "layout upgrade buys no photo calls");
   assert.equal(boardOf(D, "build").name, "Full wardrobe");
   assert.equal(outfitsOn(boardOf(D, "today")).length, 8);

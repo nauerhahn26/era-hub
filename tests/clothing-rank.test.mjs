@@ -1369,3 +1369,22 @@ test("an eight-look first page and seven-look deeper pages preserve per-page gar
   assert.ok(tomorrow.slice(0, 8).every(c => !yesterday.has(c.key)));
   assert.ok(yesterday.has(tomorrow[8].key), "yesterday starts after eight, at page 2");
 });
+
+
+test("a seven-bottom wardrobe fills eight first-page choices without stealing yesterday from page 2", () => {
+  const items = [
+    ...Array.from({ length: 8 }, (_, i) => top("item_top" + i)),
+    ...Array.from({ length: 7 }, (_, i) => bottom("item_bottom" + i)),
+  ];
+  const combo = ["item_top3", "item_bottom2"];
+  const opts = { items, temp: null, cap: 22, perPage: 8, laterPerPage: 7, seed: "2026-10-17",
+    history: { days: { "2026-10-16": { page1: [combo] } } } };
+  const dealt = R.buildCandidates(opts);
+  assert.equal(dealt.length, 22);
+  const yesterday = combo.join("+");
+  assert.ok(!dealt.slice(0, 8).some(c => c.key === yesterday));
+  assert.equal(dealt[8].key, yesterday);
+  assert.equal(new Set(dealt.slice(0, 8).map(c => c.key)).size, 8);
+  const ids = dealt.slice(0, 7).flatMap(c => c.pieces.map(p => p.id));
+  assert.equal(new Set(ids).size, ids.length, "first seven remain garment-distinct");
+});

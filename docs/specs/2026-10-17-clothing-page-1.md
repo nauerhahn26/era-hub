@@ -19,7 +19,9 @@ Dad approved the layout preview on 2026-10-17, with the existing board style.
   colors, sizing, gaps, labels and dwell behavior. No layout change elsewhere.
 - Ranking knows the different first/deeper page capacities. Recorded page 1
   contains eight combinations when available; yesterday's looks start after
-  those eight. The simulator uses the same capacities.
+  those eight. A small wardrobe first uses distinct garments, then fills the
+  extra choice with another pairing when necessary, preferring a repeated
+  garment over yesterday's combination. The simulator uses the same capacities.
 - An existing recipe named Build my own triggers a re-sort on the first tick
   after upgrading, without ingesting its photos again.
 
