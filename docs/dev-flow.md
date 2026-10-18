@@ -181,3 +181,15 @@ uses eight outfit slots first, then seven beside Back. Weather spans the center
 pair; Full wardrobe replaces Build my own, and Accessories lives inside it.
 Shipped in v1.0.3 across era-hub and era-board. Future changes to both repos
 use matching feature worktrees and `ERA_WT_SUFFIX` as described above.
+
+## Per-device speaker limit
+
+Settings → Volume cap → Maximum speaker volume saves a whole percentage
+(0–100) to the local gaze engine through `/volcap` (`integratedEnabled` and
+`integratedCap`). Open Settings on the device being adjusted. The engine
+persists this limit in its device configuration and applies it live; lowering
+the cap can lower current audio, while raising it does not raise current audio.
+Music volume cap remains the separate shared music setting. Where the legacy
+speaker watchdog is installed, its ceiling still applies when running; Settings
+shows that ceiling alongside the device limit. The percentage control requires
+an engine reporting integrated volume-cap support.

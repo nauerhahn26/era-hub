@@ -403,7 +403,14 @@
 
   <div class="card">
     <h2>🔊 Volume cap</h2>
-    <p class="hint">Keeps the speaker from going louder than the cap — Ellie can still turn it down or mute. It starts by itself at boot and heals itself if it dies (back within 30 minutes). This switch is for <b>pushing it back on right now</b>, or pausing it briefly for testing.</p>
+    <p class="hint">Speaker limit for this device, including speech and apps. Open Settings on the device you want to change. Lowering the limit turns loud audio down; raising it does not turn audio up.</p>
+    <div id="deviceVolumeControls" style="display:none">
+      <label for="deviceVolumeCap">Maximum speaker volume (%)</label>
+      <input id="deviceVolumeCap" type="number" min="0" max="100" step="1" value="45">
+      <button id="deviceVolumeSave">Save device limit</button>
+      <p id="deviceVolumeStatus" class="status" role="status"></p>
+    </div>
+    <p class="hint">Separate speaker watchdog: starts at boot and restarts within 30 minutes if stopped. These switches control only that watchdog; the saved device limit above stays active.</p>
     <div id="volcapControls" style="display:none">
       <div class="seg" id="volcap">
         <button data-volcap="on" class="sel">🔒 Capped</button>
@@ -730,10 +737,17 @@ seg("ring","ring", async v=>{ if(await postEngine({radius: v==="off"?0:26})) toa
 
 // ---- Volume cap (VolCap watchdog — its own scheduled task on the gaze devices; ERAgaze relays) ----
 function volcapPaint(s){
+  const integrated = s && s.integrated;
+  $("deviceVolumeControls").style.display = integrated ? "block" : "none";
+  if(integrated){
+    $("deviceVolumeCap").value = integrated.enabled ? integrated.cap : (s.running && Number.isFinite(s.cap) ? s.cap : integrated.cap);
+    $("deviceVolumeStatus").textContent = (integrated.enabled ? "Saved on this device: "+integrated.cap+"%." : "No device limit saved here yet.")
+      + (s.installed && Number.isFinite(s.cap) ? " The separate speaker watchdog also limits volume to "+s.cap+"% when running." : "");
+  }
   const box=$("volcapControls"), miss=$("volcapMissing");
   if(!s || !s.installed){
     box.style.display="none"; miss.style.display="block";
-    miss.textContent = s ? "Volume cap isn’t installed on this device (it protects her eye-gaze devices, not tablets)."
+    miss.textContent = s ? "The separate speaker watchdog is not installed on this device."
                          : "Volume cap status only shows on Ellie’s device while ERAgaze is running.";
     return;
   }
@@ -742,10 +756,31 @@ function volcapPaint(s){
   const b=document.querySelector('#volcap button[data-volcap="'+(s.running?'on':'off')+'"]'); if(b) b.classList.add('sel');
   $("volcapDesc").textContent = s.running
     ? "Speaker can’t go above "+s.cap+"."
-    : "Cap is OFF — the speaker can reach full volume. It re-arms itself within 30 minutes.";
+    : "Separate watchdog is off. The saved device limit still applies. The watchdog re-arms within 30 minutes.";
   $("volcapStatus").className = "status"+(s.running?"":" bad");
   $("volcapStatus").innerHTML = s.running ? "<b>Capped at "+s.cap+" ✓</b>" : "<b>Not running</b>";
 }
+$("deviceVolumeSave").onclick = async ()=>{
+  const input = $("deviceVolumeCap"), button = $("deviceVolumeSave");
+  const cap = input.valueAsNumber;
+  if(!Number.isInteger(cap) || cap<0 || cap>100){
+    $("deviceVolumeStatus").textContent = "Enter a whole percentage from 0 to 100.";
+    return;
+  }
+  button.disabled = true;
+  try{
+    const r = await fetch(ENGINE+"/volcap", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({integratedEnabled:true, integratedCap:cap})});
+    if(!r.ok) throw new Error("save failed");
+    const state = await r.json();
+    if(!state.integrated || !state.integrated.enabled || state.integrated.cap!==cap) throw new Error("save not confirmed");
+    volcapPaint(state);
+    toast("Device speaker limit: "+cap+"%");
+  }catch(e){
+    $("deviceVolumeStatus").textContent = "Could not save the device limit. Check that ERAgaze is running and try again.";
+    toast("Device limit was not confirmed", false);
+  }finally{ button.disabled = false; }
+};
 async function volcapSet(on){
   try{
     const r=await fetch(ENGINE+"/volcap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({on:on})});
