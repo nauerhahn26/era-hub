@@ -116,6 +116,7 @@ async function settingsPage(contentStatus, opts = {}) {
     status: 200, contentType: "application/json", body: JSON.stringify(opts.clothing) }));
   // ERAgaze lives on 127.0.0.1:49155 on the family PC; here nothing answers
   await ctx.route("http://127.0.0.1:49155/**", r => r.abort());
+  if (opts.volumeRoute) await ctx.route("http://127.0.0.1:49155/volcap", opts.volumeRoute);
   // A book job needs a local Drive folder full of photos; the card's job is to
   // turn whatever /content/status says into sentences, so the payload is the
   // fixture and the real route is left alone unless a test asks for one.
@@ -1702,4 +1703,39 @@ test("the This week card switches this device's video downloads off and remember
     await fetch(`${BASE}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ downloadWeekVideos: true }) });
   }
+});
+
+
+test("device volume can rise above 45, decrease, switch Off, and retain its mode on reopening", async () => {
+  let device = { enabled: true, cap: 45 };
+  const writes = [];
+  const { ctx, page } = await settingsPage(null, { volumeRoute: async route => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON();
+      writes.push(body);
+      device = { enabled: body.deviceEnabled, cap: body.deviceCap };
+    }
+    await route.fulfill({ status: 200, contentType: "application/json",
+      headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" },
+      body: JSON.stringify({ device }) });
+  } });
+  try {
+    await page.waitForSelector("#deviceVolumeControls", { state: "visible" });
+    assert.equal(await page.inputValue("#deviceVolumeCap"), "45");
+    await page.fill("#deviceVolumeCap", "75");
+    await page.click("#deviceVolumeSave");
+    await page.waitForFunction(() => /On: maximum 75%/.test(document.getElementById("deviceVolumeStatus").textContent));
+    assert.deepEqual(writes.at(-1), { deviceEnabled: true, deviceCap: 75 });
+    await page.fill("#deviceVolumeCap", "25");
+    await page.click("#deviceVolumeSave");
+    await page.waitForFunction(() => /On: maximum 25%/.test(document.getElementById("deviceVolumeStatus").textContent));
+    await page.click("#deviceVolumeOff");
+    await page.waitForFunction(() => /Off: no speaker limit/.test(document.getElementById("deviceVolumeStatus").textContent));
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => document.getElementById("deviceVolumeOff").getAttribute("aria-pressed") === "true");
+    assert.equal(await page.inputValue("#deviceVolumeCap"), "25");
+    await page.click("#deviceVolumeOn");
+    await page.waitForFunction(() => /On: maximum 25%/.test(document.getElementById("deviceVolumeStatus").textContent));
+    assert.deepEqual(writes.at(-1), { deviceEnabled: true, deviceCap: 25 });
+  } finally { await ctx.close(); }
 });

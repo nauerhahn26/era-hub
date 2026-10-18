@@ -402,17 +402,18 @@
   </div>
 
   <div class="card">
-    <h2>🔊 Volume cap</h2>
-    <p class="hint">Keeps the speaker from going louder than the cap — Ellie can still turn it down or mute. It starts by itself at boot and heals itself if it dies (back within 30 minutes). This switch is for <b>pushing it back on right now</b>, or pausing it briefly for testing.</p>
-    <div id="volcapControls" style="display:none">
-      <div class="seg" id="volcap">
-        <button data-volcap="on" class="sel">🔒 Capped</button>
-        <button data-volcap="off">🔓 Off (testing)</button>
+    <h2>🔊 Volume cap for this device</h2>
+    <p class="hint">Limit all speaker audio, including speech and apps, on this device. Default cap: 45%. Open Settings on the device you want to change. Raising the cap does not turn the volume up.</p>
+    <div id="deviceVolumeControls" style="display:none">
+      <div class="seg" id="deviceVolumeMode">
+        <button id="deviceVolumeOn">On</button>
+        <button id="deviceVolumeOff">Off</button>
       </div>
-      <div class="desc" id="volcapDesc"></div>
-      <div class="status" id="volcapStatus"></div>
+      <label for="deviceVolumeCap">Maximum speaker volume (%)</label>
+      <input id="deviceVolumeCap" type="number" min="0" max="100" step="1" value="45">
+      <button id="deviceVolumeSave">Save device limit</button>
     </div>
-    <div class="status" id="volcapMissing" style="display:none"></div>
+    <p id="deviceVolumeStatus" class="status" role="status"></p>
   </div>
 
   <div class="card">
@@ -728,33 +729,51 @@ seg("feel","feel", async v=>{ if(await postEngine(FEEL[v])) toast("Cursor feel: 
 seg("grace","grace", async v=>{ if(await postEngine({graceMs:+v})) toast("Forgiveness updated"); });
 seg("ring","ring", async v=>{ if(await postEngine({radius: v==="off"?0:26})) toast(v==="off"?"Ring hidden":"Ring shown"); });
 
-// ---- Volume cap (VolCap watchdog — its own scheduled task on the gaze devices; ERAgaze relays) ----
+// ---- Per-device speaker cap: the local engine persists On/Off and percentage. ----
+let deviceVolumeEnabled = false;
 function volcapPaint(s){
-  const box=$("volcapControls"), miss=$("volcapMissing");
-  if(!s || !s.installed){
-    box.style.display="none"; miss.style.display="block";
-    miss.textContent = s ? "Volume cap isn’t installed on this device (it protects her eye-gaze devices, not tablets)."
-                         : "Volume cap status only shows on Ellie’s device while ERAgaze is running.";
+  const device = s && s.device;
+  $("deviceVolumeControls").style.display = device ? "block" : "none";
+  if(!device){
+    $("deviceVolumeStatus").textContent = s
+      ? "Update or restart ERAgaze on this device to change its speaker limit."
+      : "Speaker settings need ERAgaze running on this device.";
     return;
   }
-  box.style.display="block"; miss.style.display="none";
-  document.querySelectorAll('#volcap button').forEach(x=>x.classList.remove('sel'));
-  const b=document.querySelector('#volcap button[data-volcap="'+(s.running?'on':'off')+'"]'); if(b) b.classList.add('sel');
-  $("volcapDesc").textContent = s.running
-    ? "Speaker can’t go above "+s.cap+"."
-    : "Cap is OFF — the speaker can reach full volume. It re-arms itself within 30 minutes.";
-  $("volcapStatus").className = "status"+(s.running?"":" bad");
-  $("volcapStatus").innerHTML = s.running ? "<b>Capped at "+s.cap+" ✓</b>" : "<b>Not running</b>";
+  deviceVolumeEnabled = device.enabled;
+  $("deviceVolumeCap").value = device.cap;
+  $("deviceVolumeOn").classList.toggle("sel", device.enabled);
+  $("deviceVolumeOff").classList.toggle("sel", !device.enabled);
+  $("deviceVolumeOn").setAttribute("aria-pressed", String(device.enabled));
+  $("deviceVolumeOff").setAttribute("aria-pressed", String(!device.enabled));
+  $("deviceVolumeStatus").textContent = device.enabled
+    ? "On: maximum "+device.cap+"%. Saved only on this device."
+    : "Off: no speaker limit. Saved cap: "+device.cap+"%.";
 }
-async function volcapSet(on){
+async function saveDeviceVolume(enabled){
+  const cap = $("deviceVolumeCap").valueAsNumber;
+  if(!Number.isInteger(cap) || cap<0 || cap>100){
+    $("deviceVolumeStatus").textContent = "Enter a whole percentage from 0 to 100.";
+    return;
+  }
+  const controls = ["deviceVolumeCap", "deviceVolumeSave", "deviceVolumeOn", "deviceVolumeOff"].map($);
+  controls.forEach(control=>control.disabled=true);
   try{
-    const r=await fetch(ENGINE+"/volcap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({on:on})});
-    if(r.ok){ volcapPaint(await r.json()); toast(on?"Volume cap on":"Volume cap off (re-arms itself)"); return; }
-  }catch(e){}
-  toast("Could not reach ERAgaze", false);
-  volcapPaint(null);
+    const r = await fetch(ENGINE+"/volcap", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({deviceEnabled:enabled, deviceCap:cap})});
+    if(!r.ok) throw new Error("save failed");
+    const state = await r.json();
+    if(!state.device || state.device.enabled!==enabled || state.device.cap!==cap) throw new Error("save not confirmed");
+    volcapPaint(state);
+    toast(enabled ? "Device speaker limit: "+cap+"%" : "Device speaker limit off");
+  }catch(e){
+    $("deviceVolumeStatus").textContent = "Could not save the device limit. Check that ERAgaze is running and try again.";
+    toast("Device limit was not confirmed", false);
+  }finally{ controls.forEach(control=>control.disabled=false); }
 }
-seg("volcap","volcap", v=>volcapSet(v==="on"));
+$("deviceVolumeSave").onclick = ()=>saveDeviceVolume(deviceVolumeEnabled);
+$("deviceVolumeOn").onclick = ()=>saveDeviceVolume(true);
+$("deviceVolumeOff").onclick = ()=>saveDeviceVolume(false);
 
 // ---- Pause eye-gaze (testing) : self-contained so its status stays in this card ----
 async function setPaused(on){
@@ -1916,7 +1935,7 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
     $("engineStatus").className="status bad";
     $("engineStatus").innerHTML='ERAgaze not detected here (cursor settings only work on Ellie&rsquo;s device).';
   }
-  // Volume cap card: needs ERAgaze reachable AND volcap installed on this device.
+  // Volume cap card talks only to the local device engine.
   try{ volcapPaint(await (await fetch(ENGINE+"/volcap")).json()); }
   catch(e){ volcapPaint(null); }
   // Pause card owns its own engine-alive check via /status: if the engine is offline
