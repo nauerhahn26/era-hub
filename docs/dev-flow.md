@@ -184,12 +184,16 @@ use matching feature worktrees and `ERA_WT_SUFFIX` as described above.
 
 ## Per-device speaker limit
 
-Settings → Volume cap → Maximum speaker volume saves a whole percentage
-(0–100) to the local gaze engine through `/volcap` (`integratedEnabled` and
-`integratedCap`). Open Settings on the device being adjusted. The engine
-persists this limit in its device configuration and applies it live; lowering
-the cap can lower current audio, while raising it does not raise current audio.
-Music volume cap remains the separate shared music setting. Where the legacy
-speaker watchdog is installed, its ceiling still applies when running; Settings
-shows that ceiling alongside the device limit. The percentage control requires
-an engine reporting integrated volume-cap support.
+Settings → Volume cap for this device saves On/Off and a whole percentage
+(0–100, default 45) to the local gaze engine through `/volcap`
+(`deviceEnabled`, `deviceCap`). Open Settings on the device being adjusted.
+Both the mode and percentage persist across restarts. Raising the cap does not
+raise current volume. Music volume cap remains the separate shared music setting.
+New devices retain the engine's opt-in behavior; their initial cap value is 45.
+
+On the first explicit save, the engine neutralizes the legacy watchdog's saved
+ceiling (`CAP=100`) and stops only its known executable. A scheduled restart
+therefore cannot reimpose 45 or undo Off. The integrated engine owns the saved
+limit afterward. Older Settings clients keep their existing endpoint fields.
+The new control requires an updated local engine and verifies its reply before
+reporting success. Windows regression: `era-gaze/tests/volume-cap-regression.ps1`.
