@@ -317,6 +317,8 @@ ice/flurr → `cold`; sunny/clear → `sun`; anything else → `cloud`. The "wor
   again, and the first success spends the flag on a RE-SORT (`rebuildOnly`, never an ingest). A board
   served from the store is not blind — it has weather — but its `at` is old, so the ordinary 3 h
   refresh retries rungs 1-2 on the next build anyway.
+- **Amended 2026-10-19** (spec 2026-10-19 §5): a rung-3 answer (`stale: true`, build result `weatherStale`) IS
+  blind for the retry's purposes — it sets `weatherBlind` like no weather at all, and the same spacing holds.
 
 ### 7.4 Seams and tests
 

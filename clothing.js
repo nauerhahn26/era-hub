@@ -86,8 +86,9 @@ let offerUnrecorded = false;    // the running build's {offer} did not land
 // budget: a retry that still finds nothing costs three small requests and
 // redraws nothing (the worker's weatherRetry leaves the board alone), so every
 // tick while it stands tries again, and the first answer re-sorts. A board
-// served from the stored week is NOT blind — it has weather; its old `at`
-// makes the next build try a refresh anyway.
+// served from the stored week after both providers failed (weatherStale) IS
+// blind for this purpose since 2026-10-19 (spec §5): a logon start races
+// Wi-Fi, and that board used to stand all day on numbers days old.
 // "Every tick" is every TICK, not every call of tick(): the build that went
 // blind walked the ladder itself a moment ago, so a retry waits out the tick
 // interval less a minute from the last walk. Without it, any door that calls
@@ -450,7 +451,7 @@ function regenerate(force, opts = {}) {
           } else { memoryBlind = false; memoryRedeals = 0; }
           // Every build that reached the deal answers this, whichever door
           // asked for it: weather now = the flag is spent.
-          weatherBlind = !!m.done.weatherless;
+          weatherBlind = !!(m.done.weatherless || m.done.weatherStale);
           if (weatherBlind) weatherTriedAt = Date.now();
         }
         // A weather retry that found nothing drew nothing and leaves the flag
@@ -573,7 +574,7 @@ function tick(reason) {
       } else if (weatherBlind && Date.now() - weatherTriedAt >= weatherRetryMs()) {
         // Not spent here: the build's own verdict clears it (weather found)
         // or leaves it for the next tick (still none) — see weatherBlind.
-        why = "the last board was dealt with no weather, ";
+        why = "the last board was dealt with no fresh weather, ";
         rebuildOnly = true;
         weatherRetry = true;
       } else {
