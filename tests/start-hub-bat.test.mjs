@@ -289,3 +289,40 @@ test("build-payload.sh still parses (the heredoc is closed)", () => {
   // keep all of them green while the cut itself died at "== payload ==".
   execFileSync("bash", ["-n", new URL("../tools/build-payload.sh", import.meta.url).pathname]);
 });
+
+// ---- the hub survives a reboot (spec 2026-10-19 §4.1) -----------------------
+// The boot pass lays Startup\Our Era Comms.lnk -> start-hub.bat <port> --hub-only.
+// At logon that run must start the hub if it is down and open NOTHING: no
+// resume POST, no kiosk sweep (a hub-only run at any other moment must never
+// close the window she is using), no browser. The branch sits right after
+// `:open` because the already-running guard jumps straight there, so a hub-only
+// run with the hub already up must leave at the same spot.
+const HUB_ONLY = "--hub-only";
+const hubOnly = bat.split("\n").find((l) => /^if "%~2"==/.test(l) && l.includes(HUB_ONLY));
+
+test("start-hub.bat --hub-only: the flag is compared exactly, quotes stripped", () => {
+  assert.ok(hubOnly, "a line compares %~2 with the hub-only token");
+  assert.equal(hubOnly, 'if "%~2"=="' + HUB_ONLY + '" goto done', "exactly this line: " + hubOnly);
+  assert.ok(/^:done$/m.test(bat), "and :done exists");
+});
+
+test("the hub-only branch sits right after :open, before the resume POST, the sweep and the kiosk", () => {
+  const lines = bat.split("\n");
+  const open = lines.indexOf(":open");
+  assert.ok(open > 0, ":open label found");
+  // only rem lines may sit between the label and the branch
+  const at = lines.indexOf(hubOnly);
+  assert.ok(at > open, "after :open");
+  for (const l of lines.slice(open + 1, at)) assert.ok(/^rem(\s|$)/i.test(l), "only comments between :open and the branch: " + l);
+  assert.ok(bat.indexOf(hubOnly) < bat.indexOf(resume), "before the /kiosk/resume curl");
+  assert.ok(bat.indexOf(hubOnly) < bat.indexOf(kill), "before the wmic sweep");
+  assert.ok(bat.indexOf(hubOnly) < bat.indexOf(kioskLine), "before the kiosk launch");
+  // the guard and the node start still come first: hub-only STARTS the hub
+  assert.ok(bat.indexOf("/settings") < bat.indexOf(hubOnly), "the already-running guard runs first");
+  assert.ok(bat.indexOf('start "Our Era Comms hub"') < bat.indexOf(hubOnly), "and the node start");
+  // :done is the bat's end: nothing past it to run
+  const done = lines.indexOf(":done");
+  assert.ok(lines.slice(done + 1).every((l) => l.trim() === ""), ":done is the last line, nothing runs after it");
+  // the why lives next to the branch
+  assert.ok(lines.filter((l) => l.includes(HUB_ONLY)).length >= 2, "the branch plus a rem line saying why");
+});

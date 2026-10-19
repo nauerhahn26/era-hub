@@ -25,8 +25,10 @@ test("dryRun plan: home door + each enabled app + ERAgaze Startup, all under the
   const plan = reconcileShortcuts({ apps: APPS, dryRun: true, dir: DIR, port: 8377 });
   const writes = plan.filter(p => p.action === "write");
   const bat = DIR + "\\start-hub.bat";
-  // home door on Desktop + Start Menu, never Startup
-  const home = writes.filter(p => p.path.endsWith("\\Our Era Comms.lnk"));
+  // home door on Desktop + Start Menu, never Startup. The Startup link that
+  // shares its name is the hub's logon start (spec 2026-10-19 §4.2), not the
+  // door, so the door is selected outside Startup\.
+  const home = writes.filter(p => p.path.endsWith("\\Our Era Comms.lnk") && !p.path.startsWith("Startup\\"));
   assert.deepEqual(home.map(p => p.path).sort(),
     ["Desktop\\Our Era Comms.lnk", "StartMenu\\Programs\\Our Era Comms.lnk"]);
   for (const h of home) assert.equal(h.target, bat);
@@ -105,4 +107,69 @@ test("a Drawing shortcut opens /drawing/ and wears its own icon, not the generic
     ["Desktop\\Drawing.lnk", "StartMenu\\Programs\\Drawing.lnk"]);
   assert.match(script, /'8377 "\/drawing\/"'/);
   assert.match(script, /drawing\.ico,0'/);
+});
+
+// ---- the hub survives a reboot (spec 2026-10-19 §4.2) ------------------------
+// Startup\Our Era Comms.lnk -> start-hub.bat <port> --hub-only: at logon the
+// launcher starts the hub and opens nothing. It rides with the home door —
+// written by the boot pass AND by the wizard's own home-door script — so a
+// fresh install has it before its first reboot. The door itself stays exactly
+// Desktop + Start Menu.
+const hubLinkRx = (title, port) => new RegExp(
+  "\\$l = \\$w\\.CreateShortcut\\(\\(Join-Path \\(\\[Environment\\]::GetFolderPath\\('Startup'\\)\\) '" + title + "\\.lnk'\\)\\);" +
+  "\\$l\\.TargetPath = '" + (DIR + "\\start-hub.bat").replace(/\\/g, "\\\\") + "';" +
+  "\\$l\\.Arguments = '" + port + " --hub-only';" +
+  "\\$l\\.WorkingDirectory = '" + DIR.replace(/\\/g, "\\\\") + "';" +
+  "\\$l\\.IconLocation = '" + (DIR + "\\public\\favicon.ico").replace(/\\/g, "\\\\") + ",0';" +
+  "\\$l\\.WindowStyle = 7; \\$l\\.Save\\(\\)");
+
+test("the boot pass lays exactly one Startup hub link: start-hub.bat <port> --hub-only", () => {
+  const { plan, script } = reconcileShortcuts({ apps: APPS, dryRun: true, dir: DIR, port: 8377,
+    iconFor: () => null, returnScript: true });
+  const writes = plan.filter(p => p.action === "write");
+  const hub = writes.filter(p => p.path === "Startup\\Our Era Comms.lnk");
+  assert.equal(hub.length, 1, "one Startup hub link in the plan");
+  assert.deepEqual(hub[0], { action: "write", path: "Startup\\Our Era Comms.lnk", target: DIR + "\\start-hub.bat" });
+  // the plan grows by exactly one: door 2 + reader 2 + making words 2 + engine 3 + hub 1
+  assert.equal(writes.length, 10);
+  assert.match(script, hubLinkRx("Our Era Comms", 8377));
+  // only the hub link carries the flag
+  assert.equal(script.split("--hub-only").length - 1, 1, "the flag appears once in the pass");
+  // the port is the hub's own
+  const other = reconcileShortcuts({ apps: [], dryRun: true, dir: DIR, port: 8401, iconFor: () => null, returnScript: true });
+  assert.match(other.script, hubLinkRx("Our Era Comms", 8401));
+});
+
+test("the hub link wears the home door's title, so a rename sweeps it with the door", () => {
+  const { plan, script } = reconcileShortcuts({ apps: [], homeTitle: "Comms Test", dryRun: true, dir: DIR,
+    port: 8377, iconFor: () => null, returnScript: true });
+  assert.ok(plan.some(p => p.action === "write" && p.path === "Startup\\Comms Test.lnk"));
+  assert.match(script, hubLinkRx("Comms Test", 8377));
+});
+
+test("the wizard's home-door script writes the Startup hub link too; turning the door off removes it", () => {
+  const home = { title: HOME_TITLE, path: "/home/" };
+  const on = shortcutScript(home, true, { dir: DIR, port: 8377, iconFor: () => null });
+  assert.match(on, hubLinkRx("Our Era Comms", 8377));
+  assert.ok(!on.replace(/'(?:[^']|'')*'/g, "").includes("'"), "quotes balanced: " + on);
+  const off = shortcutScript(home, false, { dir: DIR, port: 8377 });
+  assert.match(off, /Remove-Item \(Join-Path \(\[Environment\]::GetFolderPath\('Startup'\)\) 'Our Era Comms\.lnk'\) -Force/);
+  // a page app's script never touches Startup, and never carries the flag
+  const reader = shortcutScript(APPS[1], true, { dir: DIR, port: 8377 });
+  assert.ok(!/Startup/.test(reader) && !/--hub-only/.test(reader), "page apps stay off Startup");
+  const readerOff = shortcutScript(APPS[1], false, { dir: DIR, port: 8377 });
+  assert.ok(!/Startup/.test(readerOff), "and removing one never touches Startup");
+});
+
+test("the wizard path still spawns one PowerShell for the home door (hub link included)", async () => {
+  const { applyShortcut } = require("../shortcuts.js");
+  const calls = [];
+  applyShortcut({ title: HOME_TITLE, path: "/home/" }, true, { dir: DIR, port: 8377, platform: "win32",
+    spawn: (cmd, args, opts) => { calls.push({ cmd, args, opts }); return { on() { return this; } }; } });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].args[calls[0].args.length - 1], /--hub-only/);
+  // off Windows the wizard path runs nothing
+  applyShortcut({ title: HOME_TITLE, path: "/home/" }, true, { dir: DIR, port: 8377, platform: "linux",
+    spawn: () => { calls.push(1); return { on() { return this; } }; } });
+  assert.equal(calls.length, 1);
 });

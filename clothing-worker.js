@@ -1380,10 +1380,13 @@ async function weather() {
   }
   // Rung 3: whatever answered last, for any day it covers. A forecast fetched
   // three days ago for today beats no forecast at all — and the footnote
-  // carries its fetch time, so a parent can see how old it is.
+  // carries its fetch time, so a parent can see how old it is. It is marked
+  // `stale`: dealt on, but blind for the retry's purposes, so the shell keeps
+  // walking the ladder until a provider answers (spec 2026-10-19 §5 — a
+  // logon start races Wi-Fi, and this board used to stand all day).
   if (mine && readWindow(mine.hourly, day, win))
-    return answer(mine, "the stored " + mine.source + " week fetched " +
-      new Date(mine.at).toISOString() + " (" + why.join("; ") + ")");
+    return { ...answer(mine, "the stored " + mine.source + " week fetched " +
+      new Date(mine.at).toISOString() + " (" + why.join("; ") + ")"), stale: true };
   console.error("[clothing] weather: none — open-meteo, weather.gov and the stored week all failed (" +
     why.join("; ") + ")");
   return null;
@@ -1753,7 +1756,7 @@ async function buildCataloged(cat, known) {
     boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
       ? items.filter(isFancy).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       : accessoryOrder(items.filter(i => i.category === k.id), band), "build", door));
-  return { boards, present, weatherless: !w };
+  return { boards, present, weatherless: !w, weatherStale: !!(w && w.stale) };
 }
 
 // No catalog yet -> no board. Decide which coaching state the splash shows.
@@ -1840,11 +1843,15 @@ async function regenerate(force) {
   // the ladder answers yet. Still nothing = leave that board exactly as it is
   // and say so — redrawing every composite to put back the same blind board
   // four times an hour buys her nothing. An answer is handed to the build
-  // below, so the ladder is walked once per build.
+  // below, so the ladder is walked once per build. The stored week again
+  // (both providers still down) is the same answer the board already has:
+  // nothing to redraw either (spec 2026-10-19 §5).
   const known = workerData.weatherRetry ? await weather() : null;
   if (workerData.weatherRetry && !known)
     return { rebuildOnly: true, weatherless: true, retried: true, photos: photos.length };
-  const { boards, present, weatherless } = await buildCataloged(cat, known);
+  if (workerData.weatherRetry && known.stale)
+    return { rebuildOnly: true, weatherStale: true, retried: true, photos: photos.length };
+  const { boards, present, weatherless, weatherStale } = await buildCataloged(cat, known);
   fs.mkdirSync(RECIPES(), { recursive: true });
   // `categories` is the whole filing cabinet, not this wardrobe's corner of
   // it: the board's hold sheet names its chips from here (spec §4.2), and a
@@ -1866,6 +1873,9 @@ async function regenerate(force) {
            // weatherless only when it really happened: the shell reads it as
            // "dealt with no weather at all, try the ladder again" (spec §7.3)
            ...(weatherless ? { weatherless: true } : {}),
+           // ...and weatherStale when the deal used the stored week after
+           // both providers failed: the shell retries it the same way (§5)
+           ...(weatherStale ? { weatherStale: true } : {}),
            ...(historyUnread ? { historyUnread: true } : {}) };
 }
 

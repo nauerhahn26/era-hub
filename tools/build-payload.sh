@@ -162,6 +162,9 @@ if exist "%~dp0node\node.exe" set NODE=%~dp0node\node.exe
 start "Our Era Comms hub" /min "%NODE%" server.js %PORT%
 timeout /t 2 /nobreak >nul
 :open
+rem Hub only (the Startup link at logon, spec 2026-10-19): start-hub.bat PORT --hub-only
+rem starts the hub if it is down and opens NOTHING - no resume, no sweep, no page.
+if "%~2"=="--hub-only" goto done
 rem Paused app? (talk door, 9/17) Leaving an app by the talk door does NOT close
 rem it: the hub parks that kiosk window minimized while she says her piece in TD
 rem Snap. So before we close anything, ask the hub whether the app this tile just
