@@ -23,7 +23,7 @@
 ### Phase 1: the launcher (Part A, §4.1)
 **Posture hint:** implementing
 
-1. [ ] **`start-hub.bat --hub-only`** — `tools/build-payload.sh` heredoc + `tests/start-hub-bat.test.mjs`
+1. [x] **`start-hub.bat --hub-only`** — `tools/build-payload.sh` heredoc + `tests/start-hub-bat.test.mjs`
    - **Acceptance:** With `--hub-only` as the second argument the file runs the already-running guard and (if needed) the node start, reaches `:open`, and jumps to `:done` BEFORE the `/kiosk/resume` curl; it never reaches the wmic line or the `--kiosk` line. Without the flag the file is byte-for-byte what it was (diff shows only the new lines). No PowerShell anywhere in the payload.
    - **Tests to write first (red):** the hub-only branch exists between the `:open` label and the first `curl … /kiosk/resume`; it jumps to `:done`; the existing kiosk/wmic/PowerShell laws still pass; `%~2` is compared with the exact token (the test pins the token).
    - **Verification:** `node --test tests/start-hub-bat.test.mjs` → all pass; `bash -n tools/build-payload.sh`; `grep -c -- "--hub-only" tools/build-payload.sh` ≥ 2 (branch + a rem line explaining why).
@@ -33,14 +33,14 @@
 ### Phase 2: the Startup link (Part A, §4.2)
 **Posture hint:** implementing
 
-2. [ ] **`shortcuts.js` lays `Startup\<homeTitle>.lnk`** from both write sites + `tests/shortcuts.test.mjs`
+2. [x] **`shortcuts.js` lays `Startup\<homeTitle>.lnk`** from both write sites + `tests/shortcuts.test.mjs`
    - **Acceptance:** (a) `reconcileShortcuts` dry-run plan has exactly one `Startup\Our Era Comms.lnk` write with target `<dir>\start-hub.bat`; the returned script sets that link's `Arguments` to `'<port> --hub-only'`, `WorkingDirectory` `<dir>`, the suite icon, `WindowStyle = 7`. (b) The home door still has exactly `Desktop` + `StartMenu\Programs` (the test's filter now excludes `Startup\`). (c) `shortcutScript(home, true)` — the wizard path — also writes the Startup hub link; `shortcutScript(home, false)` removes it. (d) One PowerShell per boot pass; nothing runs off Windows; the old-name deletion set is unchanged; the plan count rises by one and `server.js`'s log line needs no change.
    - **Tests to write first (red):** the four acceptance points above, plus the existing apostrophe-balance test still passes with the new arguments.
    - **Verification:** `node --test tests/shortcuts.test.mjs tests/apps.test.mjs` → all pass.
    - **Guardrails:** the hub link is a third kind of owned entry (not a change to what `exe`/page-app mean); keep `dirsFor()`'s meaning for apps; the title is `homeTitle` (so a rename sweeps it like the home door).
    - **Gate:** overseer reads the diff; `/reviewing` against §4.2.
 
-3. [ ] **VM legs assert the link** — `tests-vm/leg-a-fresh.e2e.mjs`, `tests-vm/leg-b-update.e2e.mjs`
+3. [x] **VM legs assert the link** — `tests-vm/leg-a-fresh.e2e.mjs`, `tests-vm/leg-b-update.e2e.mjs`
    - **Acceptance:** after leg A's wizard and after leg B's self-update, the guest's `Startup\Our Era Comms.lnk` exists and its `TargetPath` ends with `start-hub.bat` and `Arguments` contains `--hub-only` (read the way leg A already reads .lnk files via PowerShell on the guest). A missing or wrong link fails the leg.
    - **Verification:** `node --check` on both files; the legs run for real only inside `release.sh` (VM); a dry read of the new assertion against the existing helper's shape by the overseer.
    - **Guardrails:** mirror the existing .lnk read helper exactly; no new guest-side tooling.
@@ -49,7 +49,7 @@
 ### Phase 3: stale-week weather is still blind (Part B, §5)
 **Posture hint:** implementing
 
-4. [ ] **`weather()` marks rung 3, the shell keeps retrying** — `clothing-worker.js`, `clothing.js`, `tests/weather-location.test.mjs`, spec §7.3 note in `docs/specs/2026-09-23-weather-location-design.md`
+4. [x] **`weather()` marks rung 3, the shell keeps retrying** — `clothing-worker.js`, `clothing.js`, `tests/weather-location.test.mjs`, spec §7.3 note in `docs/specs/2026-09-23-weather-location-design.md`
    - **Acceptance:** (a) a rung-3 answer (both providers failed, the store covers today) carries `stale: true`; a provider answer or an under-3-h store does not. (b) The build result reports `weatherStale: true` when the deal used a stale answer; a `weatherRetry` build that gets a stale answer again returns `{ rebuildOnly: true, weatherStale: true, retried: true }` and redraws nothing. (c) `clothing.js` sets `weatherBlind` on `weatherless` OR `weatherStale`, so the existing 14-minute retry (`ERA_WEATHER_RETRY_MS`) walks the ladder; when a provider answers, the retry re-deals, the store is rewritten and the flag clears. (d) The footnote, the bands, the rung order and the §7.3 spacing law are untouched.
    - **Tests to write first (red):** in `tests/weather-location.test.mjs` next to the existing "both fail, the store covers today" case: the result reports `weatherStale`; with `ERA_WEATHER_RETRY_MS=0` a following tick re-walks the ladder (the fake providers count calls); providers restored → the next tick re-deals on fresh numbers and a further tick does nothing; an under-3-h store is served with zero provider calls and is not stale.
    - **Verification:** `node --test tests/weather-location.test.mjs tests/clothing-weather.test.mjs tests/clothing.test.mjs tests/clothing-accessories.test.mjs` → all pass.
@@ -81,7 +81,7 @@
 ---
 
 ## Phase retrospectives
-After each phase the overseer records in this file's Outbox: decisions made, surprises, follow-ups.
+- Phases 1-3 (10/19): built by two builders in parallel on disjoint files; commits 8c11082, e9ed4ba, 011959c, 2022ec7. Surprises: a bare `[Environment]::GetFolderPath(...)` inside `Join-Path` is a string in PowerShell argument mode, not a call — the folder expression needs its own parentheses (pinned by a test); the launcher test selects the kiosk and resume lines by their first match, so new comments must not contain `--kiosk` or `/kiosk/resume`; the VM legs assert the exact arguments `8377 --hub-only` and poll up to 120 s because the link is written in the background. The tick log reason became "no fresh weather" to cover a stale board.
 
 ## Outbox
 ### Follow-ups
