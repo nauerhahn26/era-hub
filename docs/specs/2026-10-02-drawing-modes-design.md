@@ -93,6 +93,11 @@ gaze-move (§6).
   arrives through the mirror). Served by a path-jailed `GET /characters/<file>`
   (`.png`, `.json`), and `GET /characters/index.json` returns the parsed list
   (empty list when the folder or the json is absent or malformed, never 500).
+  Amended 10/19: an entry may carry `"retired": true` (passed through as a
+  boolean only) — the person stays in old pictures (rendered, movable,
+  removable, named) but gets no People tile and is not counted toward the
+  pages; the hero of the week rotates by publishing each hero under its own
+  slug and retiring the previous one (docs/drawing.md "Retired people").
 - **Producing the cut-outs is pipeline work, not hub work**, in the private
   ellie-this-week repo: a tool that takes `people/<slug>/sheet.png` (plain
   white, the per-person turnaround) or a dad-chosen render, cuts out the figure

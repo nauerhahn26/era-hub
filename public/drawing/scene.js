@@ -25,9 +25,13 @@ export const itemWord = (table, s) => { const st = stickerById(table, s); return
 // /characters/. A person is a ground sticker whose scale and word come from characters.json. Their
 // plural is the word + "s", never a spelling change ("two Grandpas", "three Ellies"): a name must stay
 // recognisable in the voice, and setting it HERE keeps describe() one rule for stickers and people.
+// A retired person (characters.json "retired": true, dad 10/19 — last week's hero) is in the table like
+// anyone else, so her old pictures draw, move, lift, delete and name them exactly as before; the page
+// just gives them no People tile (drawing.js onPalette), so they cannot be added again.
 export function withPeople(table, people) {
   return { ...table, people: (people || []).map((p) => ({ id: "person:" + p.slug, word: p.word, plural: p.word + "s",
-    zone: "ground", scale: p.scale, src: "/characters/" + encodeURIComponent(p.slug) + ".png", person: true })) };
+    zone: "ground", scale: p.scale, src: "/characters/" + encodeURIComponent(p.slug) + ".png", person: true,
+    ...(p.retired === true ? { retired: true } : {}) })) };
 }
 
 // The pen (spec 2026-10-02 §3, EyeDraw's look-look adapted): it follows her gaze through an

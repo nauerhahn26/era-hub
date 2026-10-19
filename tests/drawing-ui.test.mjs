@@ -1030,7 +1030,7 @@ function seedPeople(people) {
   fs.mkdirSync(CHARS, { recursive: true });
   for (const p of people) fs.writeFileSync(path.join(CHARS, p.slug + ".png"), tinyPng(...(p.size || [64, 128]), p.rgba || [51, 102, 204, 255]));
   fs.writeFileSync(path.join(CHARS, "characters.json"),
-    JSON.stringify({ v: 1, people: people.map(({ slug, word, scale }) => ({ slug, word, scale })) }));
+    JSON.stringify({ v: 1, people: people.map(({ slug, word, scale, retired }) => ({ slug, word, scale, retired })) }));
 }
 
 test("People: the library in dad's order, the other seats black; a dwell says the name and they land on the grass", async () => {
@@ -1120,6 +1120,57 @@ test("a person who left the library: drawn as nothing, kept, and the picture sti
   assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["person:sam", "horse"], "kept");
   assert.deepEqual(errors, []);
   await ctx.close();                 // the page first: the library leaves only once nothing can still ask for it
+  seedPeople(null);
+});
+
+// dad 10/19: her old pictures keep last week's hero exactly as drawn — she can move or remove it — but
+// only the current people are on the palette. characters.json marks the old ones "retired": true.
+test("a retired person: no People tile and no page count, yet drawn in her old picture, lifted and moved (dad 10/19)", async () => {
+  const now = Array.from({ length: 8 }, (_, k) => ({ slug: "p" + k, word: "P" + k, scale: 0.3 }));
+  seedPeople([now[0], { slug: "hero", word: "Hero", scale: 0.3, retired: true }, ...now.slice(1, 5),
+    { slug: "hero-one", word: "Hero one", scale: 0.3, retired: true, rgba: [138, 90, 43, 255] }, ...now.slice(5)]);
+  const id = "2026-10-12-140000-test-dev";
+  seed(id, [{ s: "person:hero", x: 0.3, y: 0.77, w: 0.3, by: "ellie" }, { s: "person:hero-one", x: 0.7, y: 0.77, w: 0.3, by: "ellie" }],
+    "2026-10-12T14:00:00Z");
+  const { ctx, page, errors } = await openRing({ id });
+  await page.waitForFunction(() => [...document.querySelectorAll("#art img.item")].every((im) => im.complete && im.naturalWidth > 0));
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#art img.item")].map((im) => im.getAttribute("src"))),
+    ["/characters/hero.png", "/characters/hero-one.png"], "the old heroes are drawn from their own cut-outs");
+  assert.deepEqual((await hitsOf(page)).map((h) => h.label), ["Hero", "Hero one"], "and are targets like anyone");
+  await page.locator("#mode-people").click();
+  assert.equal((await st(page)).said.at(-1), "People");
+  assert.deepEqual((await paletteOf(page)).map((c) => c.id), now.map((p) => "person-" + p.slug),
+    "eight current people fill the eight seats: no tile for a retired one, and no More");
+  let s = await st(page);
+  assert.deepEqual([s.people, s.retired, s.peoplePage, s.peoplePages], [now.map((p) => p.slug), ["hero", "hero-one"], 0, 1],
+    "the page count ignores the retired");
+  assert.equal(await page.locator("#person-hero, #person-hero-one").count(), 0);
+  // lift → carry → drop, then Undo: the old hero moves exactly like anyone else
+  await slowDwell(page);
+  await liftAt(page, 1);
+  s = await st(page);
+  assert.deepEqual([s.carrying, s.said.at(-1)], [1, "Hero one"]);
+  const to = await scenePt(page, 0.5, 0.4);
+  await page.mouse.move(to.x, to.y, { steps: 15 });
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.ok() && r.url().endsWith(`/drawings/${id}/scene.json`));
+  await page.locator("#spot").click();
+  s = await st(page);
+  assert.equal(s.carrying, null);
+  assert.equal(s.items[1].s, "person:hero-one");
+  assert.ok(Math.abs(s.items[1].x - 0.5) < 0.05 && Math.abs(s.items[1].y - 0.4) < 0.08, JSON.stringify(s.items[1]));
+  await saved;
+  assert.deepEqual((await hubScene(id)).items.map((i) => i.s), ["person:hero", "person:hero-one"], "kept on the hub, moved");
+  assert.deepEqual(errors, []);
+  await ctx.close();
+  // a library of only retired people: People says "No people yet", every seat black
+  seedPeople([{ slug: "hero", word: "Hero", scale: 0.3, retired: true }]);
+  const b = await openRing({ id });
+  assert.equal(await b.page.locator('#art img.item[src="/characters/hero.png"]').count(), 1, "still drawn");
+  await b.page.locator("#mode-people").click();
+  assert.equal((await st(b.page)).said.at(-1), "No people yet");
+  const pal = await paletteOf(b.page);
+  assert.deepEqual([pal.length, pal.every((c) => c.black && !c.dwell)], [8, true]);
+  await b.ctx.close();               // the page first: the library leaves only once nothing can still ask for it
   seedPeople(null);
 });
 
