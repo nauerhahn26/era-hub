@@ -1,5 +1,6 @@
 // shortcuts.js — the Windows .lnk files the hub owns (Desktop, Start Menu,
-// and Startup for the gaze engine), written through ONE PowerShell script.
+// and Startup for the gaze engine and the hub itself), written through ONE
+// PowerShell script.
 //
 // Two callers: server.js's appShortcut (a toggle, the wizard) and the boot
 // pass reconcileShortcuts (rename spec R1). The boot pass rewrites every link
@@ -34,6 +35,27 @@ function iconOf(app, dir, iconFor) {
   const own = iconFor ? iconFor(app) : null;
   return own || path.win32.join(dir, "public", "favicon.ico");
 }
+// The home door is the one owned entry for /home/ that is not an engine.
+function isHomeDoor(app) { return !app.exe && app.path === "/home/"; }
+// The hub's logon start (spec 2026-10-19 §4.2): Startup\<home title>.lnk ->
+// start-hub.bat <port> --hub-only, which starts the hub and opens nothing. A
+// third kind of owned link, neither page app nor engine: it rides with the
+// home door (same title, so a rename sweeps it; both uninstallers already
+// delete Startup\Our Era Comms.lnk) and is written or removed in the door's
+// own script, so the wizard and the boot pass both lay it.
+const HUB_ONLY = "--hub-only";
+function hubLinkScript(home, enabled, { dir, port, iconFor } = {}) {
+  // the folder expression in its own parens: a bare [Environment]::... in
+  // argument mode is a string to Join-Path, not a call
+  const lnk = "(Join-Path (" + DIRS.Startup + ") " + psQuote(home.title + ".lnk") + ")";
+  if (!enabled) return `Remove-Item ${lnk} -Force -ErrorAction SilentlyContinue`;
+  return `$l = $w.CreateShortcut(${lnk});` +
+    `$l.TargetPath = ${psQuote(path.win32.join(dir, "start-hub.bat"))};` +
+    `$l.Arguments = ${psQuote(port + " " + HUB_ONLY)};` +
+    `$l.WorkingDirectory = ${psQuote(dir)};` +
+    `$l.IconLocation = ${psQuote(iconOf(home, dir, iconFor) + ",0")};` +
+    `$l.WindowStyle = 7; $l.Save()`;
+}
 // default icon lookup: public/icons/<id>.ico beside this file, when it exists
 function defaultIconFor(app) {
   const f = app.id ? path.join(__dirname, "public", "icons", app.id + ".ico") : "";
@@ -44,9 +66,10 @@ function defaultIconFor(app) {
 function shortcutScript(app, enabled, { dir, port, iconFor } = {}) {
   const dirs = "@(" + dirsFor(app).map(d => DIRS[d]).join(", ") + ")";
   const lnk = psQuote(app.title + ".lnk");
+  const hub = isHomeDoor(app) ? "; " + hubLinkScript(app, enabled, { dir, port, iconFor }) : "";
   if (!enabled) {
     return `foreach ($d in ${dirs}) {` +
-      `Remove-Item (Join-Path $d ${lnk}) -Force -ErrorAction SilentlyContinue }`;
+      `Remove-Item (Join-Path $d ${lnk}) -Force -ErrorAction SilentlyContinue }` + hub;
   }
   return `$w = New-Object -ComObject WScript.Shell;` +
     `foreach ($d in ${dirs}) {` +
@@ -57,7 +80,7 @@ function shortcutScript(app, enabled, { dir, port, iconFor } = {}) {
     // every shortcut wore a generic gear (QA 9/1) — carry an icon so a
     // parent can find the app on a crowded desktop
     `$l.IconLocation = ${psQuote(iconOf(app, dir, iconFor) + ",0")};` +
-    `$l.WindowStyle = 7; $l.Save() }`;   // 7 = minimized: the launcher console never pops up
+    `$l.WindowStyle = 7; $l.Save() }` + hub;   // 7 = minimized: the launcher console never pops up
 }
 
 function runPowerShell(script, spawn) {
@@ -81,7 +104,8 @@ function applyShortcut(app, enabled, opts = {}) {
 
 // The boot pass. `apps` = the links the hub owns right now: each ENABLED app
 // (and the engine only when it is installed — the caller passes it with its
-// exe). The home door is always added. Returns the plan
+// exe). The home door is always added, and with it the hub's Startup link.
+// Returns the plan
 // [{action: "write"|"delete", path, target}]; runs nothing off Windows or
 // with dryRun.
 function reconcileShortcuts({ apps = [], homeTitle = HOME_TITLE, dryRun = false, dir = __dirname,
@@ -90,6 +114,7 @@ function reconcileShortcuts({ apps = [], homeTitle = HOME_TITLE, dryRun = false,
   const plan = [];
   for (const app of owned) {
     for (const d of dirsFor(app)) plan.push({ action: "write", path: d + "\\" + app.title + ".lnk", target: targetOf(app, dir) });
+    if (isHomeDoor(app)) plan.push({ action: "write", path: "Startup\\" + app.title + ".lnk", target: path.win32.join(dir, "start-hub.bat") });
   }
   const old = { title: OLD_HOME_TITLE, exe: "(old home door)" };   // exe: so Startup is swept too
   if (homeTitle !== OLD_HOME_TITLE) {
