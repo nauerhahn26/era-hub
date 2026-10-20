@@ -59,31 +59,34 @@
 ### Phase 4: gate, land, release (overseer)
 **Posture hint:** implementing
 
-5. [ ] **Full gate in the worktree** — `setsid nohup bash tools/era-gate.sh > <scratch>/gate-reboot.log 2>&1; echo $? > <scratch>/gate-reboot.log.done`, pid captured, Monitor on the sentinel
+5. [x] **Full gate in the worktree** — `setsid nohup bash tools/era-gate.sh > <scratch>/gate-reboot.log 2>&1; echo $? > <scratch>/gate-reboot.log.done`, pid captured, Monitor on the sentinel
    - **Acceptance:** `== era-gate: N passed, 0 failed ==` with N ≥ 123; a green stamp for this tree under `/tmp/era-gate-green/`.
    - **Verification:** `tail -3 <scratch>/gate-reboot.log`; a single-suite flake is re-run alone once and the gate re-run if it was a flake.
-6. [ ] **Land** — `bash ~/aac-board-builder/tools/worktree.sh land /home/ai/new-era/era-hub weather`
+6. [x] **Land** — `bash ~/aac-board-builder/tools/worktree.sh land /home/ai/new-era/era-hub weather`
    - **Acceptance:** master fast-forwards to the land commit; `git log origin/master -1` shows it after push.
-7. [ ] **Patch release (on dad's word)** — `bash tools/release.sh v1.0.5 --patch` from the main checkout under `setsid nohup`, stamp < 2 h
+7. [x] **Patch release (on dad's word)** — `bash tools/release.sh v1.0.5 --patch` from the main checkout under `setsid nohup`, stamp < 2 h
    - **Acceptance:** VM leg B 5/5 including the new Startup assertion; `RELEASED: v1.0.5`.
 
 ### Phase 5 (final): Behavioral verification on a real device
 **Posture hint:** implementing (overseer, read-only on the device except the self-update POST)
 
-8. [ ] **Tablet and home i13 on v1.0.5, link laid in HER profile**
+8. [x] **Tablet and home i13 on v1.0.5, link laid in HER profile**
    - **Verification:** `ssh <dev> 'curl.exe -s -X POST http://127.0.0.1:8377/update/check'` → `{"status":"updated",…,"version":"v1.0.5"}`; then `/version` shows the new build. Read `C:\Users\<her>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\Our Era Comms.lnk` via PowerShell on the device: TargetPath `…\Our Era Comms\start-hub.bat`, Arguments `8377 --hub-only`, WorkingDirectory the install folder. Confirm the hub's node process owner is her account (`Get-CimInstance Win32_Process | GetOwner`).
    - **Expected:** link present with those values; owner = her account; hub log shows `[apps] shortcuts reconciled (N+1 links)` for the restarted hub.
-9. [ ] **Hub-only run by hand while the hub is up (tablet)**
+9. [x] **Hub-only run by hand while the hub is up (tablet)**
    - **Verification:** `ssh tablet 'cmd /c ""C:\Users\<her>\AppData\Local\Our Era Comms\start-hub.bat" 8377 --hub-only"'` → exits within ~3 s; `/version` pid unchanged; no new msedge kiosk process (`Get-Process msedge` count unchanged); hub log gains no `[kiosk]` line.
    - **Expected:** exactly that. (A true reboot is dad's to schedule; this plus the VM legs is the proof.)
-10. [ ] **Docs + memory** — status doc entry in `aac-board-builder/docs/status.md`, memory note; the plan's checkboxes ticked.
+10. [x] **Docs + memory** — status doc entry in `aac-board-builder/docs/status.md`, memory note; the plan's checkboxes ticked.
 
 ---
 
 ## Phase retrospectives
 - Phases 1-3 (10/19): built by two builders in parallel on disjoint files; commits 8c11082, e9ed4ba, 011959c, 2022ec7. Surprises: a bare `[Environment]::GetFolderPath(...)` inside `Join-Path` is a string in PowerShell argument mode, not a call — the folder expression needs its own parentheses (pinned by a test); the launcher test selects the kiosk and resume lines by their first match, so new comments must not contain `--kiosk` or `/kiosk/resume`; the VM legs assert the exact arguments `8377 --hub-only` and poll up to 120 s because the link is written in the background. The tick log reason became "no fresh weather" to cover a stale board.
 
+- Phases 4-5 (10/20): gate 123/0 twice (the stamp had lapsed by the time dad said ship, so the release re-gated itself); the first VM leg B went 0/5 at the harness — the QA template snapshot (2026-10-05) still carries the guest account whose password expired 10/12, so every fresh QA host needs the repair helper (`era-family/tools/vm/qa-template-repair.py`, 10/16) before a VM leg; release.sh does not run it. Repaired host → re-cut with --skip-gate → leg B 5/5 with the Startup assertion → RELEASED v1.0.5 (build 20261020.0030). Tablet + home i13 self-updated in one POST each; both carry `Startup\Our Era Comms.lnk` in HER profile (args `8377 --hub-only`, wd + icon under her install; the raw link bytes hold only her path — a .lnk read from the ssh user's session shows the TARGET under that user's profile because of known-folder tracking, the ERAgaze link reads the same way), hub owner = her account, boot pass `shortcuts reconciled (25 links)` on the tablet / 23 on the i13. Hub-only by hand on the tablet: exit 0 in 86 ms, pid/Edge count/log unchanged. A true reboot is still dad's to schedule.
+
 ## Outbox
 ### Follow-ups
+- [ ] `qa.sh save` is still refused (API token lacks image:create) — until dad widens the token, run the repair helper after every `qa.sh up` before a VM leg.
 - [ ] Windows auto-logon on each device (device runbook, not code) — without it the hub starts at the first logon, which still precedes any tile tap.
 - [ ] The school i13 receives this through its queued update like every patch; its hub currently runs in her session (10/15 memory), so the link lands in the right profile.
