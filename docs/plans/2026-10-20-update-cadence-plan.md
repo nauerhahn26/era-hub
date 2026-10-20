@@ -54,21 +54,22 @@
 ### Phase 2: gate, land, release (overseer)
 **Posture hint:** implementing
 
-4. [ ] **Full gate in the worktree** — `== era-gate: N passed, 0 failed ==`, N ≥ 125 (two new suites); green stamp for this tree.
-5. [ ] **Land** — `bash ~/aac-board-builder/tools/worktree.sh land /home/ai/new-era/era-hub update-cadence`.
-6. [ ] **Patch release (on dad's word)** — `qa.sh up` → `qa-template-repair.py` → `release.sh v1.0.6 --patch --skip-gate` (stamp < 2 h) from the main checkout under `setsid nohup`, `USER` exported.
+4. [x] **Full gate in the worktree** — `== era-gate: N passed, 0 failed ==`, N ≥ 125 (two new suites); green stamp for this tree.
+5. [x] **Land** — `bash ~/aac-board-builder/tools/worktree.sh land /home/ai/new-era/era-hub update-cadence`.
+6. [x] **Patch release (on dad's word)** — `qa.sh up` → `qa-template-repair.py` → `release.sh v1.0.6 --patch --skip-gate` (stamp < 2 h) from the main checkout under `setsid nohup`, `USER` exported.
 
 ### Phase 3 (final): Behavioral verification on a real device
 **Posture hint:** implementing (overseer; read-only on the device except the self-update POST)
 
 7. [ ] **Home i13 on v1.0.6, then a later patch lands by the hub alone, quietly** — after the next release after v1.0.6 is published, do NOT POST; within 30 minutes `/version` on the home i13 shows the new build and hub.log carries `[update] ... restarting` with no preceding `/update/check` request. (Until then: hub.log shows no `[update]` errors; `/version.idleMs` on the tablet climbs while nobody touches it and resets on a tap.) Also: while the board is in active use (tap every few seconds by hand), a published build STAGES and does not restart until the taps stop.
 8. [ ] **School i13** — the next time it appears, `/version` shows ≥ v1.0.6 (delivered by the ops nudge); the following release reaches it inside its first awake window with no nudge in the ops log.
-9. [ ] **Operator side (ops repo, separate worker):** school board-sync idle gate 15 → 5 min with the pixel gates unchanged (dad 10/20: "5 min is right to check if TD Snap is on screen and try"); the watcher treats a fresh `presence/school.json` as online; a hook script kicks the queue on a beacon and, on an `idle` beacon, runs board-sync at once in priority mode (the device certified idle; pixel gates stay); a queued job sets `beaconUrl` on the school hub once it serves ≥ v1.0.6; the end-of-day mail reads presence too; runbook updated. Dad restarts the operator hub on the new build by hand.
+9. [x] **Operator side (ops repo, separate worker):** school board-sync idle gate 15 → 5 min with the pixel gates unchanged (dad 10/20: "5 min is right to check if TD Snap is on screen and try"); the watcher treats a fresh `presence/school.json` as online; a hook script kicks the queue on a beacon and, on an `idle` beacon, runs board-sync at once in priority mode (the device certified idle; pixel gates stay); a queued job sets `beaconUrl` on the school hub once it serves ≥ v1.0.6; the end-of-day mail reads presence too; runbook updated. Dad restarts the operator hub on the new build by hand.
 10. [ ] **Docs + memory** — status doc entry, memory note, this plan ticked.
 
 ---
 
 ## Phase retrospectives
+- Phases 1-2 (10/20): one builder, five tasks plus three fixes (live beacon enable through POST /settings, the settings route accepting `beaconUrl`/`idleWatchFiles` and returning `deviceId`, the Settings page saying 30 minutes). Gate 125/0 → land 2a47fb0 → v1.0.7 (build 20261020.1654) published after v1.0.6 (another session's family-photos cut, 16:47 UTC) went first; the QA host needed the repair helper again (template still 10/05). Tablet on v1.0.7 within a minute of the POST (`idleMs` null until her first tap, `deviceId` in /settings); home i13 asleep, takes it from the feed. Builder notes kept: no seam-parity test exists in era-hub (the seams are closed by one `unset` line in era-gate.sh); update-boot and settings-ui both use port 8424 for their fake servers (fine in the serial gate); the ops job's own POST /settings counts as an interaction, so the first idle beacon after it comes 5 min later.
 
 ## Outbox
 ### Follow-ups
