@@ -333,9 +333,9 @@ function start(port, ready = () => true, interactionAt = () => null) {
 // at} there: "boot" once it listens, "wake" from the heartbeat above, "alive"
 // every BEACON_MS. Fire-and-forget: 5-s timeout, never retried, never two in
 // flight, one log line per failure class until a send succeeds again. The
-// URL is read at boot (unset = no timer at all, nothing ever runs) and again
-// before every send, so clearing it stops the beacon without a restart;
-// setting it on a running hub takes effect at its next boot.
+// timers always run (a settings read and a few stats per tick) and every send
+// re-reads the URL, so the operator can set or clear it through POST
+// /settings on a hub that may not reboot for days; unset, nothing is sent.
 //
 // "idle" (dad 2026-10-20: "anytime it's idle for 5 mins, then we catch a
 // moment"): once per idle stretch, when BOTH the board has had no interaction
@@ -349,8 +349,6 @@ const IDLE_MS = Number(process.env.ERA_BEACON_IDLE_MS) || 5 * 60 * 1000;
 const IDLE_POLL_MS = Math.min(30 * 1000, Math.max(100, Math.floor(IDLE_MS / 6)));
 const bootedAt = Date.now();
 function startBeacon({ beaconUrl, watchFiles = () => [], device, idleMs: boardIdle = () => null }) {
-  const url0 = beaconUrl();
-  if (!url0) return false;
   // ms since the newest change to a watched file; null when nothing is watched
   const filesIdle = () => {
     const files = watchFiles();
@@ -387,7 +385,7 @@ function startBeacon({ beaconUrl, watchFiles = () => [], device, idleMs: boardId
       .finally(() => { busy = false; });
     return true;
   };
-  send("boot");
+  send("boot");   // a no-op when no URL is set yet; "alive" follows once it is
   let idleArmed = true;
   setInterval(() => {
     const b = boardIdle();
@@ -401,7 +399,6 @@ function startBeacon({ beaconUrl, watchFiles = () => [], device, idleMs: boardId
   // the minute"
   onWake(() => setTimeout(() => send("wake"), WAKE_DELAY_MS).unref());
   setInterval(() => send("alive"), BEACON_MS).unref();
-  return true;
 }
 
 module.exports = { enabled, currentBuild, runningBuild, check, start, FEED, isLoopback, wokeUp,

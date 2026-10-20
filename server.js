@@ -1700,6 +1700,9 @@ const server = http.createServer((req, res) => {
     } catch {}
     try { s = { ...s, ...JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")) }; } catch {}
     s.voiceId = loadTtsCfg().voiceId;
+    // the pool device id: the name the presence receiver files this hub under
+    // (spec 2026-10-20 §4.5), so the operator can tell which file is whose
+    s.deviceId = DEVICE_ID;
     // where the door will ACTUALLY go: TD Snap needs a gaze engine on the
     // bus (Ellie's device runs its own); without one /kiosk/exit answers
     // home — so a tile named for the door (the Reader's) must not promise
@@ -1769,8 +1772,24 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const inc = JSON.parse(body);
+        // The presence beacon's two operator settings (spec 2026-10-20 §4.5),
+        // set by the ops job on a running hub. Unlike the family's knobs a bad
+        // value is a 400 that stores nothing: the caller is a script that must
+        // hear it was wrong. "" clears the URL.
+        if ("beaconUrl" in inc && !(inc.beaconUrl === "" ||
+            (typeof inc.beaconUrl === "string" && inc.beaconUrl.length <= 512 && /^https?:\/\/[^\s]+$/.test(inc.beaconUrl)))) {
+          res.writeHead(400).end("beaconUrl must be an http(s) URL or \"\""); return;
+        }
+        if ("idleWatchFiles" in inc && !(Array.isArray(inc.idleWatchFiles) && inc.idleWatchFiles.length <= 16 &&
+            inc.idleWatchFiles.every(f => typeof f === "string" && f.length <= 1024 &&
+              (path.isAbsolute(f) || path.win32.isAbsolute(f))))) {
+          res.writeHead(400).end("idleWatchFiles must be up to 16 absolute paths"); return;
+        }
         let s = {};
         try { s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")); } catch {}
+        if (inc.beaconUrl === "") delete s.beaconUrl;
+        else if (typeof inc.beaconUrl === "string") s.beaconUrl = inc.beaconUrl;
+        if (Array.isArray(inc.idleWatchFiles)) s.idleWatchFiles = inc.idleWatchFiles.slice();
         if (typeof inc.dwellMs === "number") s.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
         if (Number.isFinite(inc.pencilDwellMs)) s.pencilDwellMs = Math.max(600, Math.min(3000, Math.round(inc.pencilDwellMs)));
         if (typeof inc.settleMs === "number") s.settleMs = Math.max(0, Math.min(2000, inc.settleMs));
@@ -3792,7 +3811,8 @@ server.on("listening", () => {
     watchFiles: () => {
       try {
         const w = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")).idleWatchFiles;
-        return Array.isArray(w) ? w.filter(f => typeof f === "string" && path.isAbsolute(f)).slice(0, 16) : [];
+        return Array.isArray(w) ? w.filter(f => typeof f === "string" &&
+          (path.isAbsolute(f) || path.win32.isAbsolute(f))).slice(0, 16) : [];
       } catch { return []; }
     },
     device: DEVICE_ID,

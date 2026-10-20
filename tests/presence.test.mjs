@@ -59,7 +59,7 @@ before(async () => {
 
   rx = spawn("node", ["server.js", String(RX_PORT)], { cwd: HUB, stdio: "ignore",
     env: { ...process.env, ...SEAMS, ERA_DATA_DIR: RX_DATA, ERA_DEVICE_ID: "operator-test",
-           ERA_PRESENCE_HOOK: HOOK } });
+           ERA_PRESENCE_HOOK: HOOK, ERA_BEACON_MS: String(BEACON_MS) } });
   await up(RX_PORT);
   tx = spawn("node", ["server.js", String(TX_PORT)], { cwd: HUB, stdio: "ignore",
     env: { ...process.env, ...SEAMS, ERA_DATA_DIR: TX_DATA, ERA_DEVICE_ID: "device-test",
@@ -155,4 +155,45 @@ test("a change to a watched file postpones idle (she is in another app)", async 
   assert.equal(idles(), n0 + 1, "idle once the file has rested too");
   const rec = (await list()).find(d => d.device === "device-test");
   assert.equal(typeof rec.idleMs, "number");
+});
+
+// The operator sets beaconUrl on a RUNNING hub that may not reboot for days:
+// it must start beaconing without a restart. The receiver itself started with
+// none (the case above proves it sent nothing); now it is pointed at itself.
+test("beaconUrl set through POST /settings takes effect live, no restart; GET shows it with deviceId; bad values are 400", async () => {
+  const pid0 = (await (await fetch(`${RX}/version`)).json()).pid;
+  const r = await fetch(`${RX}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ beaconUrl: `${RX}/presence`, idleWatchFiles: [WATCHED] }) });
+  assert.equal(r.status, 204);
+  const saved = JSON.parse(fs.readFileSync(path.join(RX_DATA, "app-settings.json"), "utf8"));
+  assert.equal(saved.beaconUrl, `${RX}/presence`, "stored");
+  assert.deepEqual(saved.idleWatchFiles, [WATCHED], "stored");
+  let rec;
+  for (let i = 0; i < 40 && !rec; i++) {
+    await sleep(BEACON_MS / 2);
+    rec = (await list()).find(d => d.device === "operator-test");
+  }
+  assert.ok(rec, "a beacon arrived within a few ticks");
+  assert.ok(["boot", "alive", "idle"].includes(rec.event), rec.event);
+  assert.equal((await (await fetch(`${RX}/version`)).json()).pid, pid0, "same process");
+  // GET /settings shows both, and the device id the presence file is named by
+  const g = await (await fetch(`${RX}/settings`)).json();
+  assert.equal(g.beaconUrl, `${RX}/presence`);
+  assert.deepEqual(g.idleWatchFiles, [WATCHED]);
+  assert.equal(g.deviceId, "operator-test");
+  // a bad URL or a relative path is 400 and leaves the stored values untouched
+  for (const bad of [{ beaconUrl: "ftp://nowhere" }, { beaconUrl: 7 }, { idleWatchFiles: ["relative/path"] },
+                     { idleWatchFiles: [7] }, { idleWatchFiles: "/not/an/array" },
+                     { idleWatchFiles: Array.from({ length: 17 }, (_, i) => "/f" + i) }]) {
+    const rb = await fetch(`${RX}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bad) });
+    assert.equal(rb.status, 400, JSON.stringify(bad).slice(0, 60));
+  }
+  const kept = JSON.parse(fs.readFileSync(path.join(RX_DATA, "app-settings.json"), "utf8"));
+  assert.equal(kept.beaconUrl, `${RX}/presence`);
+  assert.deepEqual(kept.idleWatchFiles, [WATCHED]);
+  // an empty string clears the beacon
+  await fetch(`${RX}/settings`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ beaconUrl: "" }) });
+  assert.ok(!JSON.parse(fs.readFileSync(path.join(RX_DATA, "app-settings.json"), "utf8")).beaconUrl, "cleared");
 });
