@@ -192,7 +192,7 @@ test("a second check is a no-op: up-to-date", async () => {
 });
 
 // Settings has a "Check for updates now" button (dad 9/3: a hub that has been
-// up since morning only notices an afternoon release at its 6-hour tick, and
+// up since morning only noticed an afternoon release at its 6-hour tick, and
 // closing/reopening Our Era Comms does not restart the hub). The button POSTs the
 // same route as the timer and must have a plain-English line for every
 // status the route can answer — an unknown status falls into the generic
@@ -209,6 +209,13 @@ test("Settings' 'Check for updates now' hits /update/check and speaks every stat
     assert.ok(html.includes(`r.status==="${s}"`), `settings speaks "${s}"`);
   }
   assert.match(html, /Couldn't fetch an update/, "every other status gets the generic try-again line");
+  // the cadence the family is told is the cadence the hub keeps (spec 2026-10-20 §4.1)
+  const card = html.match(/<div class="card" id="updates">[\s\S]*?<p class="hint">([^<]*)<\/p>/)[1];
+  assert.match(card, /every 30 minutes/, "the Updates card says 30 minutes");
+  assert.doesNotMatch(card, /6 hours/);
+  const failLine = html.match(/Couldn't fetch an update[^\n]*/)[0];
+  assert.match(failLine, /every 30 minutes/, "the try-again line says 30 minutes");
+  assert.doesNotMatch(failLine, /6 hours/);
 });
 
 test("a checkout hub keeps the updater disabled", async () => {
