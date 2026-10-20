@@ -195,7 +195,22 @@ public repo carries no addresses), the hub POSTs a small JSON body
 `{device, build, event, idleMs, at}` to that URL:
 - `event: "boot"` once the server listens;
 - `event: "wake"` when the heartbeat of §4.2 detects lost time;
+- `event: "idle"` the moment the device has been idle for `IDLE_MS` (5 min,
+  seam `ERA_BEACON_IDLE_MS`) — edge-triggered: once per idle stretch, re-armed
+  by the next activity. Dad (2026-10-20): "have the device notify you on boot
+  and anytime it's idle for 5 mins, then we catch a moment to perform
+  functions immediately." A device that sleeps at 10 idle minutes still gives
+  the operator a five-minute window it certified itself.
 - `event: "alive"` every `BEACON_MS` (5 min) while running.
+
+Idle, for the beacon, means BOTH of: no board interaction (the §4.4 stamp) for
+`IDLE_MS`, AND every file named by the setting `idleWatchFiles` (an array of
+absolute paths; default empty) unmodified for `IDLE_MS`. The hub cannot see
+other apps' use — on the school device Ellie may be in TD Snap, whose
+page-set file the operator's gate has trusted as the "is she on it" proxy
+since August — so the operator lists that file and the hub stats it every
+30 s (a stat, never a read; a missing file counts as idle). `idleMs` in the
+body is the smaller of the two idle times.
 Fire-and-forget: 5-s timeout, never retried, one log line per failure class
 (`[beacon] unreachable`), never more than one in flight. `device` is the pool's
 device id (`pool.deviceId`), `build` is `updater.runningBuild`.
@@ -212,14 +227,19 @@ callers are remote by nature) and changes nothing but that file; a flood is
 harmless (one small write per request; the hook is rate-limited by the hook
 itself).
 
-`GET /presence` lists the files (for the operator and tests). On a family
+`GET /presence` lists the files (for the operator and tests). On an `idle`
+beacon the operator's hook runs the queued jobs at once with the device's own
+certification standing in for the jobs' idle gate; the on-screen pixel gates
+stay no matter what. On a family
 device no one sets `ERA_PRESENCE_HOOK`, and `beaconUrl` unset means the beacon
 code never runs.
 
 Tests: `tests/presence.test.mjs` (a fresh port from the free band; grep every
 repo's tests/ before choosing, as the port memory requires): a hub with
 `beaconUrl` pointing at a second hub's `/presence` sends `boot` within a few
-seconds of listening; the receiver's file carries the device id and build;
+seconds of listening; with `ERA_BEACON_IDLE_MS` small, an `idle` beacon follows
+once after the last interaction and not again until a new interaction (POST
+`/log`) re-arms it; touching a file listed in `idleWatchFiles` postpones it; the receiver's file carries the device id and build;
 `GET /presence` lists it; a bad device id is 400; with the hook env set to a
 script that appends its arguments to a file, the hook runs once per beacon.
 
