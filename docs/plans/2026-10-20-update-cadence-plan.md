@@ -23,29 +23,29 @@
 ### Phase 1: the cadence (spec §4.1, §5)
 **Posture hint:** implementing
 
-1. [ ] **Periodic check every 30 min, test first** — `tests/update-boot.test.mjs`, `update.js`
+1. [x] **Periodic check every 30 min, test first** — `tests/update-boot.test.mjs`, `update.js`
    - **Acceptance:** with `ERA_UPDATE_EVERY_MS` small (hundreds of ms) the third case publishes `NEWER_BUILD` on the fake feed after the second case and, with no POST, `/version` serves `NEWER_BUILD` from a new pid within ~20 intervals; the first two cases are unchanged and green; the default interval in `update.js` is 30 minutes and the 6-hour literal is gone.
    - **Tests to write first (red):** the third case (the feed handler serves a mutable `latest`/tarball; the hub's env in `before` gains `ERA_UPDATE_EVERY_MS`). Run `node --test tests/update-boot.test.mjs` → the new case fails (the hub never updates without a POST because 6 h never elapses).
    - **Verification:** `node --test tests/update-boot.test.mjs` → 3 pass. Check `ss -ltn` shows 8423/8424 free before running.
    - **Guardrails:** the interval tick stays gated by `ready()`; `inFlight` unchanged.
 
-2. [ ] **Wake detection, test first** — `update.js` (`wokeUp`, heartbeat, delayed wake check), `tests/update-wake.test.mjs` (pure, no ports)
+2. [x] **Wake detection, test first** — `update.js` (`wokeUp`, heartbeat, delayed wake check), `tests/update-wake.test.mjs` (pure, no ports)
    - **Acceptance:** `wokeUp(prev, now, hb, gap)` is exported; false when `now - prev <= hb + gap`; true above; true for `now < prev` (clock went backwards); the heartbeat in `start()` calls it every `HEARTBEAT_MS` and on true schedules exactly one `check()` after `WAKE_DELAY_MS` (20 s), gated by `ready()`, with a log line `[update] wake check: <status>` when not up-to-date; a second wake while one wake check is pending does not schedule another.
    - **Tests to write first (red):** the unit test file importing `wokeUp` from `../update.js` (fails: not exported).
    - **Verification:** `node --test tests/update-wake.test.mjs tests/update-boot.test.mjs tests/update.test.mjs` → all pass.
    - **Guardrails:** timers `.unref()` like the existing ones; `WAKE_DELAY_MS` and `HEARTBEAT_MS` need no seams unless an integration test drives them — prefer none.
 
-3. [ ] **Seams closed and listed** — `tools/era-gate.sh`, the seam-parity test
+3. [x] **Seams closed and listed** — `tools/era-gate.sh`, the seam-parity test
    - **Acceptance:** every new `ERA_UPDATE_*` seam is in the gate's close list and in the parity test's list; the parity test passes.
    - **Verification:** `grep -n ERA_UPDATE_EVERY_MS tools/era-gate.sh tests/*.mjs`; run the parity suite alone.
 
-4. [ ] **Stage, then apply when quiet (spec §4.4), test first** — `update.js`, `server.js`, `tests/update-boot.test.mjs` (+ a boot-applies-staged case)
+4. [x] **Stage, then apply when quiet (spec §4.4), test first** — `update.js`, `server.js`, `tests/update-boot.test.mjs` (+ a boot-applies-staged case)
    - **Acceptance:** (a) `server.js` stamps `lastInteractionAt` for every POST except `/update/check`, `/kiosk/resume`, `/kiosk/close`, and for GET `/tts*` and `/predict*`; `/version` carries `idleMs` (null before any interaction). (b) `runCheck()` stages into `<HERE>/.update-staged/<build>` and applies only when `idleMs >= QUIET_MS` (`ERA_UPDATE_QUIET_MS`, default 90 s) or when called with `force` (the manual POST route passes `force: true`); when it defers it answers `{status:"staged", build, idleMs}` and arms one 15-s timer that applies as soon as quiet; a second check while staged does not re-download (same build already staged) and does not arm a second timer. (c) On boot, a staged build newer than `VERSION` is applied before the server listens (overlay + continue, no restart needed, or restart — builder's call, documented). (d) Logs: `[update] staged <build>` and the existing `->` line on apply. (e) The 2026-10-19 Startup link / wizard gate behaviour is untouched; `ready()` still gates the automatic paths.
    - **Tests to write first (red):** in `update-boot.test.mjs`: a case that keeps POSTing `/log` every 300 ms while a newer build is published, asserts after several intervals that the hub still serves the old build and the staged dir exists, stops posting, then sees the new build from a new pid within `ERA_UPDATE_QUIET_MS` (set to ~1500 ms) + a few ticks; `idleMs` assertions; a boot-with-staged case. Ensure the existing manual-POST case in `tests/update.test.mjs` still updates immediately (force).
    - **Verification:** `node --test tests/update-boot.test.mjs tests/update.test.mjs tests/update-wake.test.mjs tests/settings-ui.test.mjs tests/routes.test.mjs` → all pass (routes/settings suites pin `/version`'s shape — extend, never break).
    - **Guardrails:** never overlay into the live tree from the stage path except in apply; never apply with the wizard unanswered (automatic paths) — the manual POST is the one exception as today; the staging dir is removed after apply and on a bad checksum; disk full → `{status:"stage-error"}`, nothing half-written in the live tree.
 
-5. [ ] **Presence beacon + `/presence` receiver (spec §4.5), test first** — `server.js` (route, hook spawn, `beaconUrl` setting), `update.js` or a small `beacon.js` (sender), `tests/presence.test.mjs`
+5. [x] **Presence beacon + `/presence` receiver (spec §4.5), test first** — `server.js` (route, hook spawn, `beaconUrl` setting), `update.js` or a small `beacon.js` (sender), `tests/presence.test.mjs`
    - **Acceptance:** with `beaconUrl` set the hub sends `boot` after listening, `wake` from the §4.2 detector, `alive` every `ERA_BEACON_MS` (seam; default 5 min), `idle` once per idle stretch after `ERA_BEACON_IDLE_MS` (default 5 min) of BOTH no interaction and no change to any file in the `idleWatchFiles` setting (stat every 30 s; missing file = idle; the body's idleMs is the smaller of the two); 5-s timeout, one in flight, one log line per failure class; the receiver writes `<DATA>/presence/<id>.json`, appends a pool event, spawns `ERA_PRESENCE_HOOK <id> <event>` detached when set; id/body validation → 400; `GET /presence` lists; unset `beaconUrl` → no sender timer at all.
    - **Tests to write first (red):** `tests/presence.test.mjs` on a NEW port pair chosen after grepping `tests/` of era-hub, era-board, era-core, era-pencil, era-making-words and era-gaze for the number (the port memory: the suite band has holes; never 8377/8378/8425/8427/8450-8462/8463/8464/8471-8474); the parity test lists `ERA_BEACON_MS` and `ERA_BEACON_IDLE_MS`; idle-beacon cases: fires once after the last `/log`, not again until a new `/log`, postponed by touching a watched file.
    - **Verification:** `node --test tests/presence.test.mjs tests/routes.test.mjs tests/settings-ui.test.mjs` → pass; `grep -n ERA_BEACON_MS tools/era-gate.sh`.
