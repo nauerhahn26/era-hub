@@ -251,6 +251,24 @@ test("people are ground stickers named by their word, scaled from the library, d
   assert.deepEqual([ops[0].kind, ops[0].src, ops[0].s], ["img", "/characters/maya.png", "person:maya"]);
 });
 
+// dad 10/19: a retired person (last week's hero) is still in the table — her old pictures draw it from
+// its own cut-out and the celebration names it — only the page's palette leaves it out.
+test("a retired person still renders from its own src and describe() names it (dad 10/19)", () => {
+  const TP = withPeople(T, [{ slug: "hero-two", word: "Hero two", scale: 0.3 }, { slug: "hero-one", word: "Hero one", scale: 0.35, retired: true },
+    { slug: "maya", word: "Maya", scale: 0.3, retired: false }, { slug: "sam", word: "Sam", scale: 0.25, retired: "yes" }]);
+  const old = stickerById(TP, "person:hero-one");
+  assert.deepEqual([old.src, old.word, old.scale, old.retired, old.person], ["/characters/hero-one.png", "Hero one", 0.35, true, true]);
+  assert.deepEqual([TP.people[0].retired, TP.people[2].retired, TP.people[3].retired], [undefined, undefined, undefined],
+    "only retired === true marks a person");
+  const ops = sceneOps({ v: 1, items: [{ s: "person:hero-one", x: 0.4, y: 0.77, w: 0.35, by: "ellie" },
+                                        { s: "person:hero-two", x: 0.6, y: 0.77, w: 0.3, by: "ellie" }] }, TP);
+  assert.deepEqual(ops.map((o) => [o.kind, o.s, o.src]), [["img", "person:hero-one", "/characters/hero-one.png"],
+    ["img", "person:hero-two", "/characters/hero-two.png"]], "the old hero is drawn exactly as before, beside the new one");
+  assert.equal(itemWord(TP, "person:hero-one"), "Hero one");
+  assert.equal(describe([{ s: "person:hero-one" }, { s: "horse" }, { s: "person:hero-two" }], TP),
+    "You made a picture with Hero one, a horse and Hero two!");
+});
+
 test("the PNG draws a person into its box without stretching: contain, bottom on the box's bottom", () => {
   const calls = [];
   renderScene(fakeCtx(calls), { v: 1, backdrop: "meadow", items: [{ s: "person:maya", x: 0.5, y: 0.5, w: 0.4, by: "ellie" }] },

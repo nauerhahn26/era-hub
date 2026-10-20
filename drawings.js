@@ -71,7 +71,9 @@ function stickerTable() {
 // An entry shows only with its PNG beside it; anything malformed is skipped; an unreadable file is an
 // empty library. A family without one — or whose library shows nobody yet — gets the DEFAULT library
 // (dad 10/7): public/drawing/people/, the same format, eight generic people. Never merged: one shown
-// family entry hides every default. The same /characters/ routes serve whichever is in use.
+// family entry hides every default. The same /characters/ routes serve whichever is in use. An entry
+// may carry "retired": true — still listed (old pictures keep drawing it), the page just gives it no
+// tile; a family library whose shown entries are all retired is still the family's (never the defaults).
 const charactersRoot = () => path.join(DATA, "characters");
 function charactersLibrary() {
   const family = DATA ? readLibrary(charactersRoot()) : [];
@@ -90,7 +92,9 @@ function readLibrary(dir) {
     if (!fs.existsSync(path.join(dir, slug + ".png"))) continue;
     const scale = typeof p.scale === "number" && Number.isFinite(p.scale) && p.scale >= SCALE.min && p.scale <= SCALE.max ? p.scale : SCALE.dflt;
     seen.add(slug);
-    out.push({ slug, word, scale });
+    // retired (dad 10/19): a person who stays in her old pictures exactly as drawn but is no longer on
+    // the People palette (each week's hero, once the next one arrives). Passed through only as a boolean.
+    out.push(typeof p.retired === "boolean" ? { slug, word, scale, retired: p.retired } : { slug, word, scale });
   }
   return out;
 }

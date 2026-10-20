@@ -114,6 +114,19 @@ shown; `Drawing.state().lastMail` and the `done` log line keep it.
 PNG. Cut-outs are made and approved in the private pipeline (plan 2026-10-02 "Private pipeline task");
 nothing family-specific is ever committed here.
 
+**Retired people (dad 10/19).** An entry may carry `"retired": true`. The hub passes it through to
+`/characters/index.json` unchanged (a boolean only; any other value is dropped; order and every other
+field as before). The page loads a retired person like anyone else — `table.people`, its cut-out — so a
+picture holding it draws, lifts, moves, deletes and names it exactly as when it was drawn; it just gets
+no People tile, does not count toward the People pages (eight seats / More are counted over the
+non-retired only) and can never be placed again. This is how the hero of the week rotates: the weekly
+tool publishes each hero under its own slug (`hero-<name>`) and marks the previous ones retired, so her
+old pictures keep the old hero while only the current one is on the palette. The legacy slug `hero`
+(replaced in place before 10/19) is simply one more retired entry; nothing in the hub special-cases the
+word. Never delete a retired entry or its PNG — that is what makes the person vanish from old pictures.
+A family library whose shown entries are all retired is still the family's (People says "No people
+yet"); it never falls back to the defaults under her old pictures.
+
 **The default library (dad 10/7).** A family without a library of its own sees eight built-in GENERIC
 characters — Mom, Dad, Girl, Boy, Grandma, Grandpa, Baby, Friend — from `public/drawing/people/`
 (`characters.json` in the same format + `<slug>.png`). The art is generic: no real people, no likeness of
