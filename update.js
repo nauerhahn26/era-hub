@@ -80,7 +80,7 @@ let inFlight = false;
 //
 // `feed` overrides the release feed for THIS call only (push-device.sh sends
 // one build to one device over an ssh tunnel); the boot check and the
-// 6-hourly tick pass no feed and keep using FEED. When an override is used
+// periodic tick pass no feed and keep using FEED. When an override is used
 // the answer carries it back, so the operator can see which feed served.
 async function check(port, feed = FEED) {
   const r = await runCheck(port, feed);
@@ -143,12 +143,16 @@ async function runCheck(port, feed) {
 }
 
 // Quiet background cadence: first look shortly after boot (let the network
-// settle), then every 6 hours. Failures just wait for the next tick.
+// settle), then every 30 minutes. Failures just wait for the next tick. A
+// device that sleeps after 10 idle minutes is awake in 20-60 minute windows;
+// a 6-hour tick almost never landed in one (spec 2026-10-20 §4.1). A check
+// that finds nothing costs one small GET of latest.json.
 // `ready()` says whether the hub may restart itself right now: the boot
 // check used to fire 90 s in, which on a first launch is mid-wizard — the
 // hub restarted under the family's "Go" and the wizard stuck with its button
 // greyed (VM leg B, 9/3). A manual POST /update/check is never gated.
 const BOOT_MS = Number(process.env.ERA_UPDATE_BOOT_MS) || 90 * 1000;
+const EVERY_MS = Number(process.env.ERA_UPDATE_EVERY_MS) || 30 * 60 * 1000;
 function start(port, ready = () => true) {
   if (!enabled) return;
   const boot = () => {
@@ -158,7 +162,7 @@ function start(port, ready = () => true) {
     });
   };
   setTimeout(boot, BOOT_MS).unref();
-  setInterval(() => { if (ready()) check(port); }, 6 * 60 * 60 * 1000).unref();
+  setInterval(() => { if (ready()) check(port); }, EVERY_MS).unref();
 }
 
 module.exports = { enabled, currentBuild, runningBuild, check, start, FEED, isLoopback };
