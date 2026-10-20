@@ -190,7 +190,7 @@ every minute and by jobs that try every ten; a device that wakes for a short
 window can be missed, and the end-of-day mail then says it never came online.
 
 The hub gains an opt-in, generic beacon. When the setting `beaconUrl` is set
-(settings.json; no UI; set per device by the operator — never a default, the
+(app-settings.json; no UI; set per device by the operator — never a default, the
 public repo carries no addresses), the hub POSTs a small JSON body
 `{device, build, event, idleMs, at}` to that URL:
 - `event: "boot"` once the server listens;
