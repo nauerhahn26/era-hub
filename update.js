@@ -73,21 +73,102 @@ function isLoopback(addr) {
   return typeof addr === "string" && LOOPBACK.has(addr);
 }
 
+// Stage, then apply when quiet (spec 2026-10-20 §4.4). A restart takes about
+// two seconds and a tap that lands in them fails, so a check only STAGES a
+// newer build (download, verify, extract into <HERE>/.update-staged/<build>,
+// never into the live tree) and the overlay + restart wait until the hub has
+// heard nothing from her for QUIET_MS — or for the next boot, or for an
+// operator's manual POST /update/check (force). One staged build at a time:
+// the dir name IS the build; a dot-prefixed dir is an extraction in progress
+// and is never taken as staged.
+const STAGE_ROOT = path.join(HERE, ".update-staged");
+const QUIET_MS = Number(process.env.ERA_UPDATE_QUIET_MS) || 90 * 1000;
+const QUIET_POLL_MS = Math.min(15 * 1000, QUIET_MS);
+let lastInteractionAt = () => null;   // server.js hands its clock to start()
+let readyFn = () => true;
+let quietTimer = null;
+let stagedVersion = "";               // the feed's version label, for the log line
+
+function idleMs() {
+  const at = lastInteractionAt();
+  return at == null ? null : Date.now() - at;
+}
+// Quiet: nothing from her for QUIET_MS — or nothing at all since this process
+// started (a fresh hub has no tap to protect).
+function quiet() {
+  const idle = idleMs();
+  return idle == null || idle >= QUIET_MS;
+}
+// The staged build waiting, or null. Newest wins if more than one is there.
+function stagedBuild() {
+  try {
+    const b = fs.readdirSync(STAGE_ROOT).filter(n => !n.startsWith(".") &&
+      fs.existsSync(path.join(STAGE_ROOT, n, "VERSION"))).sort();
+    return b.length ? b[b.length - 1] : null;
+  } catch { return null; }
+}
+function clearStaged() {
+  try { fs.rmSync(STAGE_ROOT, { recursive: true, force: true }); } catch {}
+}
+
+// Overlay the staged build onto this install and restart. Never data/ (not in
+// the tarball anyway, belt+braces) and never node/ — node.exe is the running
+// binary and is locked on Windows; a runtime bump lands on the next fresh
+// install. App packs (packs.js): refresh the ones on disk, never lay down one
+// the family did not choose — an update must not undo the installer's
+// checkboxes (dad 9/3). Enabling later still installs from the feed.
+function applyStaged(port, build, version) {
+  const root = path.join(STAGE_ROOT, build);
+  const local = currentBuild();
+  const absent = Object.keys(packs.PACKS).filter(id => !packs.packInstalled(HERE, id));
+  fs.cpSync(root, HERE, { recursive: true, force: true, filter: (src) => {
+    const rel = path.relative(root, src);
+    if (rel === "data" || rel.startsWith("data" + path.sep) ||
+        rel === "node" || rel.startsWith("node" + path.sep)) return false;
+    const pack = packs.packOf(rel);
+    return !(pack && absent.includes(pack));
+  }});
+  clearStaged();
+  if (quietTimer) { clearInterval(quietTimer); quietTimer = null; }
+  const now = currentBuild();
+  const restart = scheduleRestart(port);
+  console.log("[update] " + local + " -> " + now + " (" + (version || "") + "); " + restart);
+  return { status: "updated", from: local, to: now, version: version || "", restart };
+}
+
+// ONE short timer while a build waits: it applies the moment the board has
+// been quiet for QUIET_MS. Gated by ready() like every automatic path.
+function armQuietTimer(port) {
+  if (quietTimer) return;
+  quietTimer = setInterval(() => {
+    if (inFlight || !readyFn() || !quiet()) return;
+    const b = stagedBuild();
+    if (!b || !(b > currentBuild())) { clearInterval(quietTimer); quietTimer = null; return; }
+    inFlight = true;
+    try { applyStaged(port, b, stagedVersion); }
+    catch (e) { console.log("[update] apply failed: " + (e && e.message)); }
+    finally { inFlight = false; }
+  }, QUIET_POLL_MS);
+  quietTimer.unref();
+}
+
 let inFlight = false;
-// One full check-and-apply pass. Returns a status object; when it returns
+// One full check pass. Returns a status object; when it returns
 // {status:"updated"} a restart is already scheduled (~1s out) — respond to
-// the client first, the exit comes after.
+// the client first, the exit comes after. {status:"staged"} means a newer
+// build waits beside the install for a quiet moment (or the next boot).
 //
 // `feed` overrides the release feed for THIS call only (push-device.sh sends
 // one build to one device over an ssh tunnel); the boot check and the
-// 6-hourly tick pass no feed and keep using FEED. When an override is used
+// periodic tick pass no feed and keep using FEED. When an override is used
 // the answer carries it back, so the operator can see which feed served.
-async function check(port, feed = FEED) {
-  const r = await runCheck(port, feed);
+// `force` (the manual POST route) applies at once, quiet or not.
+async function check(port, feed = FEED, { force = false } = {}) {
+  const r = await runCheck(port, feed, force);
   return feed === FEED ? r : { ...r, feed };
 }
 
-async function runCheck(port, feed) {
+async function runCheck(port, feed, force) {
   if (!enabled) return { status: "disabled" };
   if (inFlight) return { status: "busy" };
   inFlight = true;
@@ -96,45 +177,24 @@ async function runCheck(port, feed) {
     const r = await fetch(feed + "/latest.json", { cache: "no-store", redirect: "follow" });
     if (!r.ok) return { status: "feed-error", code: r.status, build: local };
     const latest = await r.json();
-    if (!latest.build || !(String(latest.build) > local))
+    if (!latest.build || !(String(latest.build) > local)) {
+      if (stagedBuild()) clearStaged();   // nothing newer to wait with
       return { status: "up-to-date", build: local, latest: latest.version || "" };
-
-    const stage = fs.mkdtempSync(path.join(os.tmpdir(), "era-update-"));
-    try {
-      const tarball = path.join(stage, "suite.tar.gz");
-      const dl = await fetch(feed + "/new-era-suite.tar.gz", { redirect: "follow" });
-      if (!dl.ok) return { status: "download-error", code: dl.status, build: local };
-      fs.writeFileSync(tarball, Buffer.from(await dl.arrayBuffer()));
-      if (latest.sha256 && sha256(tarball) !== latest.sha256)
-        return { status: "bad-checksum", build: local };
-
-      const ex = path.join(stage, "x"); fs.mkdirSync(ex);
-      const t = spawnSync("tar", ["-xzf", tarball, "-C", ex]);
-      if (t.status !== 0) return { status: "extract-error", build: local };
-      const top = fs.readdirSync(ex);
-      const root = top.length === 1 ? path.join(ex, top[0]) : ex;
-
-      // Overlay onto this install. Never data/ (not in the tarball anyway,
-      // belt+braces) and never node/ — node.exe is the running binary and is
-      // locked on Windows; a runtime bump lands on the next fresh install.
-      // App packs (packs.js): refresh the ones on disk, never lay down one
-      // the family did not choose — an update must not undo the installer's
-      // checkboxes (dad 9/3). Enabling later still installs from the feed.
-      const absent = Object.keys(packs.PACKS).filter(id => !packs.packInstalled(HERE, id));
-      fs.cpSync(root, HERE, { recursive: true, force: true, filter: (src) => {
-        const rel = path.relative(root, src);
-        if (rel === "data" || rel.startsWith("data" + path.sep) ||
-            rel === "node" || rel.startsWith("node" + path.sep)) return false;
-        const pack = packs.packOf(rel);
-        return !(pack && absent.includes(pack));
-      }});
-      const now = currentBuild();
-      const restart = scheduleRestart(port);
-      console.log("[update] " + local + " -> " + now + " (" + (latest.version || "") + "); " + restart);
-      return { status: "updated", from: local, to: now, version: latest.version || "", restart };
-    } finally {
-      try { fs.rmSync(stage, { recursive: true, force: true }); } catch {}
     }
+    const want = String(latest.build);
+
+    // FETCH + STAGE — skipped when this very build already waits.
+    if (stagedBuild() !== want) {
+      const st = await stage(feed, want, latest.sha256, local);
+      if (st) return st;
+      console.log("[update] staged " + want);
+    }
+    stagedVersion = latest.version || "";
+
+    // APPLY — only when quiet, or when the operator asked.
+    if (force || quiet()) return applyStaged(port, want, stagedVersion);
+    armQuietTimer(port);
+    return { status: "staged", build: want, idleMs: idleMs() };
   } catch (e) {
     return { status: "error", message: String(e && e.message) };
   } finally {
@@ -142,14 +202,107 @@ async function runCheck(port, feed) {
   }
 }
 
+// Download, verify and extract `build` into STAGE_ROOT/<build>. Returns null
+// on success, else the status to answer with. Nothing is ever half-written:
+// the extraction lands in a dot-dir and is renamed into place only whole; a
+// bad checksum or a full disk leaves no staged build behind.
+async function stage(feed, build, sha, local) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "era-update-"));
+  let incoming = null;
+  try {
+    const tarball = path.join(tmp, "suite.tar.gz");
+    const dl = await fetch(feed + "/new-era-suite.tar.gz", { redirect: "follow" });
+    if (!dl.ok) return { status: "download-error", code: dl.status, build: local };
+    try { fs.writeFileSync(tarball, Buffer.from(await dl.arrayBuffer())); }
+    catch (e) { return { status: "stage-error", message: String(e && e.message), build: local }; }
+    if (sha && sha256(tarball) !== sha) { clearStaged(); return { status: "bad-checksum", build: local }; }
+
+    clearStaged();   // one staged build at a time
+    try {
+      fs.mkdirSync(STAGE_ROOT, { recursive: true });
+      incoming = fs.mkdtempSync(path.join(STAGE_ROOT, ".incoming-"));
+    } catch (e) { return { status: "stage-error", message: String(e && e.message), build: local }; }
+    const t = spawnSync("tar", ["-xzf", tarball, "-C", incoming]);
+    if (t.status !== 0) { clearStaged(); return { status: "extract-error", build: local }; }
+    const top = fs.readdirSync(incoming);
+    const root = top.length === 1 ? path.join(incoming, top[0]) : incoming;
+    try {
+      if (root === incoming) fs.renameSync(incoming, path.join(STAGE_ROOT, build));
+      else fs.renameSync(root, path.join(STAGE_ROOT, build));
+    } catch (e) { clearStaged(); return { status: "stage-error", message: String(e && e.message), build: local }; }
+    return null;
+  } finally {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+    if (incoming) try { fs.rmSync(incoming, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// At boot, before the hub serves: a build left staged (she never paused while
+// the device was awake) applies now. The old process overlays and hands over
+// through the same restart as any update, and never listens itself — this
+// server.js was loaded before the overlay, so serving from it would mix two
+// builds. Returns true when a restart is under way (the caller must not
+// listen). Nobody is using a hub that is not serving yet, so this path needs
+// no quiet moment; a staged build is only ever there because a ready() path
+// staged it.
+function applyStagedAtBoot(port) {
+  if (!enabled) return false;
+  const b = stagedBuild();
+  if (!b) return false;
+  if (!(b > currentBuild())) { clearStaged(); return false; }
+  try {
+    const r = applyStaged(port, b, "");
+    return r.restart === "restarting";
+  } catch (e) {
+    console.log("[update] boot apply failed: " + (e && e.message));
+    return false;
+  }
+}
+
 // Quiet background cadence: first look shortly after boot (let the network
-// settle), then every 6 hours. Failures just wait for the next tick.
+// settle), then every 30 minutes. Failures just wait for the next tick. A
+// device that sleeps after 10 idle minutes is awake in 20-60 minute windows;
+// a 6-hour tick almost never landed in one (spec 2026-10-20 §4.1). A check
+// that finds nothing costs one small GET of latest.json.
 // `ready()` says whether the hub may restart itself right now: the boot
 // check used to fire 90 s in, which on a first launch is mid-wizard — the
 // hub restarted under the family's "Go" and the wizard stuck with its button
 // greyed (VM leg B, 9/3). A manual POST /update/check is never gated.
 const BOOT_MS = Number(process.env.ERA_UPDATE_BOOT_MS) || 90 * 1000;
-function start(port, ready = () => true) {
+const EVERY_MS = Number(process.env.ERA_UPDATE_EVERY_MS) || 30 * 60 * 1000;
+
+// Wake detection (spec 2026-10-20 §4.2). A heartbeat every HEARTBEAT_MS
+// records the time; a gap longer than HEARTBEAT_MS + WAKE_GAP_MS between two
+// beats means the machine slept (or the clock jumped), so the hub checks ONCE,
+// WAKE_DELAY_MS later (let Wi-Fi settle — the Clothing Picker's wake delay).
+// A wake check does not reset the periodic tick. A clock that went backwards
+// counts as a wake: one extra check is harmless.
+const HEARTBEAT_MS = 30 * 1000;
+const WAKE_GAP_MS = 2 * 60 * 1000;
+const WAKE_DELAY_MS = 20 * 1000;
+function wokeUp(prevMs, nowMs, heartbeatMs, gapMs) {
+  return nowMs < prevMs || nowMs - prevMs > heartbeatMs + gapMs;
+}
+
+// One heartbeat per process, shared by everything that wants to hear about a
+// wake (the wake check below, the presence beacon). Started by the first
+// listener; never started at all when nobody listens.
+const wakeListeners = [];
+function onWake(fn) {
+  wakeListeners.push(fn);
+  if (wakeListeners.length > 1) return;
+  let prev = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    if (wokeUp(prev, now, HEARTBEAT_MS, WAKE_GAP_MS))
+      for (const f of wakeListeners) { try { f(); } catch {} }
+    prev = now;
+  }, HEARTBEAT_MS).unref();
+}
+
+function start(port, ready = () => true, interactionAt = () => null) {
+  readyFn = ready;
+  lastInteractionAt = interactionAt;
   if (!enabled) return;
   const boot = () => {
     if (!ready()) { setTimeout(boot, BOOT_MS).unref(); return; }
@@ -158,7 +311,95 @@ function start(port, ready = () => true) {
     });
   };
   setTimeout(boot, BOOT_MS).unref();
-  setInterval(() => { if (ready()) check(port); }, 6 * 60 * 60 * 1000).unref();
+  setInterval(() => { if (ready()) check(port); }, EVERY_MS).unref();
+  let wakePending = false;
+  onWake(() => {
+    if (wakePending) return;   // one wake check at a time, never a storm
+    wakePending = true;
+    setTimeout(() => {
+      wakePending = false;
+      if (!ready()) return;
+      check(port).then(r => {
+        if (r.status !== "up-to-date") console.log("[update] wake check: " + r.status);
+      });
+    }, WAKE_DELAY_MS).unref();
+  });
 }
 
-module.exports = { enabled, currentBuild, runningBuild, check, start, FEED, isLoopback };
+// Presence beacon (spec 2026-10-20 §4.5): "the device should tell us the
+// minute it wakes up" (dad). Opt-in per device: `beaconUrl` in the family's
+// app-settings.json, set by the operator, never a default — the public code
+// carries no address. When set, the hub POSTs {device, build, event, idleMs,
+// at} there: "boot" once it listens, "wake" from the heartbeat above, "alive"
+// every BEACON_MS. Fire-and-forget: 5-s timeout, never retried, never two in
+// flight, one log line per failure class until a send succeeds again. The
+// timers always run (a settings read and a few stats per tick) and every send
+// re-reads the URL, so the operator can set or clear it through POST
+// /settings on a hub that may not reboot for days; unset, nothing is sent.
+//
+// "idle" (dad 2026-10-20: "anytime it's idle for 5 mins, then we catch a
+// moment"): once per idle stretch, when BOTH the board has had no interaction
+// (the §4.4 stamp; none since boot counts from boot) AND every file in the
+// `idleWatchFiles` setting (absolute paths — another app's working file, e.g.
+// the talker's page set) has gone unmodified for IDLE_MS. A stat, never a
+// read; a missing file counts as idle. Re-armed by the next activity of
+// either kind. The body's idleMs is always the smaller of the two idle times.
+const BEACON_MS = Number(process.env.ERA_BEACON_MS) || 5 * 60 * 1000;
+const IDLE_MS = Number(process.env.ERA_BEACON_IDLE_MS) || 5 * 60 * 1000;
+const IDLE_POLL_MS = Math.min(30 * 1000, Math.max(100, Math.floor(IDLE_MS / 6)));
+const bootedAt = Date.now();
+function startBeacon({ beaconUrl, watchFiles = () => [], device, idleMs: boardIdle = () => null }) {
+  // ms since the newest change to a watched file; null when nothing is watched
+  const filesIdle = () => {
+    const files = watchFiles();
+    if (!files.length) return null;
+    let least = Infinity;
+    for (const f of files) {
+      try { least = Math.min(least, Date.now() - fs.statSync(f).mtimeMs); } catch {}
+    }
+    return least;
+  };
+  const idle = () => {
+    const b = boardIdle(), f = filesIdle();
+    const known = [b, f].filter(v => v != null && Number.isFinite(v));
+    return known.length ? Math.max(0, Math.min(...known)) : null;
+  };
+  let busy = false;
+  const said = new Set();
+  // false when nothing was sent (no URL, or another beacon still in flight)
+  const send = (event) => {
+    const url = beaconUrl();
+    if (!url || busy) return false;
+    busy = true;
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device, build: runningBuild, event, idleMs: idle(), at: new Date().toISOString() }),
+      signal: AbortSignal.timeout(5000) })
+      .then(r => {
+        if (r.ok) { said.clear(); return; }
+        const cls = "http " + r.status;
+        if (!said.has(cls)) { said.add(cls); console.log("[beacon] refused (" + cls + ")"); }
+      })
+      .catch(() => {
+        if (!said.has("unreachable")) { said.add("unreachable"); console.log("[beacon] unreachable"); }
+      })
+      .finally(() => { busy = false; });
+    return true;
+  };
+  send("boot");   // a no-op when no URL is set yet; "alive" follows once it is
+  let idleArmed = true;
+  setInterval(() => {
+    const b = boardIdle();
+    const f = filesIdle();
+    const stretch = Math.min(b == null ? Date.now() - bootedAt : b, f == null ? Infinity : f);
+    if (stretch < IDLE_MS) { idleArmed = true; return; }
+    if (idleArmed && send("idle")) idleArmed = false;   // busy: try again next poll
+  }, IDLE_POLL_MS).unref();
+  // after the same 20 s the wake check waits: a send into Wi-Fi that is still
+  // coming up is lost (never retried), and the heartbeat already says "within
+  // the minute"
+  onWake(() => setTimeout(() => send("wake"), WAKE_DELAY_MS).unref());
+  setInterval(() => send("alive"), BEACON_MS).unref();
+}
+
+module.exports = { enabled, currentBuild, runningBuild, check, start, FEED, isLoopback, wokeUp,
+                   applyStagedAtBoot, startBeacon };

@@ -107,7 +107,7 @@
 
   <div class="card" id="updates">
     <h2>⬆️ Updates</h2>
-    <p class="hint">Our Era Comms looks for a newer version by itself — shortly after it starts and every 6 hours after that — and installs it quietly. Press the button to look right now instead of waiting.</p>
+    <p class="hint">Our Era Comms looks for a newer version by itself — shortly after it starts and every 30 minutes after that — and installs it quietly. Press the button to look right now instead of waiting.</p>
     <div class="row">
       <button id="updCheck">⬆️ Check for updates now</button>
     </div>
@@ -1892,7 +1892,7 @@ $("updCheck").onclick=async()=>{
     }
     else if(r.status==="busy"){ $("updStatus").textContent="Already checking — give it a moment."; }
     else if(r.status==="disabled"){ $("updStatus").textContent="This copy does not update itself (a developer checkout)."; }
-    else { $("updStatus").innerHTML="<b>Couldn't fetch an update</b> ("+r.status+(r.code?" "+r.code:"")+(r.message?": "+r.message:"")+"). Check the internet connection and try again; Our Era Comms keeps trying by itself every 6 hours."; toast("Update check failed", false); }
+    else { $("updStatus").innerHTML="<b>Couldn't fetch an update</b> ("+r.status+(r.code?" "+r.code:"")+(r.message?": "+r.message:"")+"). Check the internet connection and try again; Our Era Comms keeps trying by itself every 30 minutes."; toast("Update check failed", false); }
   }catch(e){ $("updStatus").textContent="Couldn't reach Our Era Comms to check."; toast("Update check failed", false); }
   b.disabled=false;
 };

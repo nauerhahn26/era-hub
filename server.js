@@ -9,7 +9,13 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
+const PORT = parseInt(process.argv[2], 10) || 8377;
 const updater = require("./update");
+// A build the updater staged but never found a quiet moment to apply (spec
+// 2026-10-20 §4.4) applies now, before this process loads anything else or
+// serves: the overlay replaces this very server.js, so it hands over through
+// the update restart and never listens itself.
+if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
@@ -34,7 +40,6 @@ const contentProviders = require("./content-providers.js");
 // For writeAtomic alone: a key file is written tmp-then-rename, never in place.
 const contentStore = require("./content-store.js");
 
-const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
 const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
@@ -1647,7 +1652,40 @@ function readBinaryBody(req, cap, cb) {
   sink.on("finish", () => { if (!done) { done = true; cb(null, tmp); } });
 }
 
+// When the hub last heard from HER (spec 2026-10-20 §4.4): every POST her
+// actions produce, plus spoken words (/tts*) and predictions (/predict*).
+// Not interaction: POSTs from the launcher or an operator (/update/check,
+// /kiosk/resume, /kiosk/close) and polls (/version, /settings, recipe ETags).
+// The updater only restarts the hub after QUIET_MS of none; /version reports
+// it as idleMs (null until the first one).
+let lastInteractionAt = null;
+
+// The presence receiver's store and hook (spec 2026-10-20 §4.5).
+const PRESENCE_DIR = path.join(DATA, "presence");
+const PRESENCE_EVENTS = new Set(["boot", "wake", "idle", "alive"]);
+function runPresenceHook(device, event) {
+  const hook = process.env.ERA_PRESENCE_HOOK;
+  if (!hook) return;
+  try {
+    if (!fs.statSync(hook).isFile()) return;
+    fs.accessSync(hook, fs.constants.X_OK);
+    const c = require("child_process").spawn(hook, [device, event],
+      { detached: true, windowsHide: true, stdio: "ignore" });
+    c.on("error", (e) => console.error("[presence] hook: " + e.message));
+    c.unref();
+  } catch (e) { console.error("[presence] hook: " + e.message); }
+}
+// /presence is another device's beacon (§4.5), not her either.
+const NOT_INTERACTION = new Set(["/update/check", "/kiosk/resume", "/kiosk/close", "/presence"]);
+function stampInteraction(req) {
+  const p = (req.url || "/").split("?")[0];
+  if (req.method === "POST" ? !NOT_INTERACTION.has(p)
+      : req.method === "GET" && (p.startsWith("/tts") || p.startsWith("/predict")))
+    lastInteractionAt = Date.now();
+}
+
 const server = http.createServer((req, res) => {
+  stampInteraction(req);
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
     let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
@@ -1662,6 +1700,9 @@ const server = http.createServer((req, res) => {
     } catch {}
     try { s = { ...s, ...JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")) }; } catch {}
     s.voiceId = loadTtsCfg().voiceId;
+    // the pool device id: the name the presence receiver files this hub under
+    // (spec 2026-10-20 §4.5), so the operator can tell which file is whose
+    s.deviceId = DEVICE_ID;
     // where the door will ACTUALLY go: TD Snap needs a gaze engine on the
     // bus (Ellie's device runs its own); without one /kiosk/exit answers
     // home — so a tile named for the door (the Reader's) must not promise
@@ -1731,8 +1772,24 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const inc = JSON.parse(body);
+        // The presence beacon's two operator settings (spec 2026-10-20 §4.5),
+        // set by the ops job on a running hub. Unlike the family's knobs a bad
+        // value is a 400 that stores nothing: the caller is a script that must
+        // hear it was wrong. "" clears the URL.
+        if ("beaconUrl" in inc && !(inc.beaconUrl === "" ||
+            (typeof inc.beaconUrl === "string" && inc.beaconUrl.length <= 512 && /^https?:\/\/[^\s]+$/.test(inc.beaconUrl)))) {
+          res.writeHead(400).end("beaconUrl must be an http(s) URL or \"\""); return;
+        }
+        if ("idleWatchFiles" in inc && !(Array.isArray(inc.idleWatchFiles) && inc.idleWatchFiles.length <= 16 &&
+            inc.idleWatchFiles.every(f => typeof f === "string" && f.length <= 1024 &&
+              (path.isAbsolute(f) || path.win32.isAbsolute(f))))) {
+          res.writeHead(400).end("idleWatchFiles must be up to 16 absolute paths"); return;
+        }
         let s = {};
         try { s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")); } catch {}
+        if (inc.beaconUrl === "") delete s.beaconUrl;
+        else if (typeof inc.beaconUrl === "string") s.beaconUrl = inc.beaconUrl;
+        if (Array.isArray(inc.idleWatchFiles)) s.idleWatchFiles = inc.idleWatchFiles.slice();
         if (typeof inc.dwellMs === "number") s.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
         if (Number.isFinite(inc.pencilDwellMs)) s.pencilDwellMs = Math.max(600, Math.min(3000, Math.round(inc.pencilDwellMs)));
         if (typeof inc.settleMs === "number") s.settleMs = Math.max(0, Math.min(2000, inc.settleMs));
@@ -3604,7 +3661,50 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/version") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ build: updater.runningBuild, disk: updater.currentBuild(),
-                             updater: updater.enabled, pid: process.pid }));
+                             updater: updater.enabled, pid: process.pid,
+                             idleMs: lastInteractionAt == null ? null : Date.now() - lastInteractionAt }));
+    return;
+  }
+  // ---- presence (spec 2026-10-20 §4.5): the receiving end of the beacon ----
+  // Runs on the operator's hub (ERA_BIND open to its private network); its
+  // callers are other devices, so it is not loopback-gated — it changes
+  // nothing but <DATA>/presence/<device>.json (newest wins) and a pool line,
+  // and hands the news to ERA_PRESENCE_HOOK (spawned detached, never awaited,
+  // its output never read) so the operator's queue acts within seconds.
+  if (req.method === "POST" && urlPath === "/presence") {
+    const chunks = []; let total = 0, over = false;
+    req.on("error", () => {});
+    req.on("data", c => { if (over) return; total += c.length; if (total > 4096) over = true; else chunks.push(c); });
+    req.on("end", () => {
+      let b = null;
+      if (!over) { try { b = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {} }
+      const ok = b && typeof b === "object" &&
+        typeof b.device === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(b.device) &&
+        PRESENCE_EVENTS.has(b.event) &&
+        (b.build === undefined || typeof b.build === "string") &&
+        (b.idleMs === undefined || b.idleMs === null || (typeof b.idleMs === "number" && Number.isFinite(b.idleMs)));
+      if (!ok) { res.writeHead(400).end(); return; }
+      const rec = { device: b.device, lastSeen: new Date().toISOString(), event: b.event,
+                    build: b.build || "", idleMs: b.idleMs == null ? null : b.idleMs,
+                    from: (req.socket && req.socket.remoteAddress) || "" };
+      try {
+        fs.mkdirSync(PRESENCE_DIR, { recursive: true });
+        contentStore.writeAtomic(path.join(PRESENCE_DIR, b.device + ".json"), JSON.stringify(rec, null, 1));
+      } catch (e) { console.error("[presence] " + e.message); res.writeHead(500).end(); return; }
+      try { pool.append("presence", { entry: rec }); } catch {}   // app-log shape: the line stays signed by THIS hub
+      runPresenceHook(b.device, b.event);
+      res.writeHead(204).end();
+    });
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/presence") {
+    const devices = [];
+    try {
+      for (const f of fs.readdirSync(PRESENCE_DIR).filter(f => f.endsWith(".json")).sort())
+        try { devices.push(JSON.parse(fs.readFileSync(path.join(PRESENCE_DIR, f), "utf8"))); } catch {}
+    } catch {}
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ devices }));
     return;
   }
   if (req.method === "POST" && req.url === "/update/check") {
@@ -3650,7 +3750,9 @@ const server = http.createServer((req, res) => {
             feed = inc.feed;
         } catch {}
       }
-      updater.check(PORT, feed).then((r) => {
+      // force: the operator asked — stage AND apply now, quiet or not (spec
+      // 2026-10-20 §4.4); only the automatic paths wait for a quiet moment
+      updater.check(PORT, feed, { force: true }).then((r) => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(r));
       });
@@ -3695,7 +3797,27 @@ server.on("listening", () => {
   console.log("era-hub on http://" + BIND + ":" + PORT);
   // installed payloads only; checkouts are a no-op. Never restart under the
   // welcome wizard: the timers wait for a profile (leg B, 9/3)
-  updater.start(PORT, () => HAS_PROFILE);
+  updater.start(PORT, () => HAS_PROFILE, () => lastInteractionAt);
+  // the presence beacon (spec 2026-10-20 §4.5): only where the operator set
+  // beaconUrl in this device's app-settings.json; unset, nothing runs
+  updater.startBeacon({
+    beaconUrl: () => {
+      try {
+        const u = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")).beaconUrl;
+        return typeof u === "string" && /^https?:\/\//.test(u) ? u : "";
+      } catch { return ""; }
+    },
+    // absolute paths of other apps' working files; idle waits for them too
+    watchFiles: () => {
+      try {
+        const w = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")).idleWatchFiles;
+        return Array.isArray(w) ? w.filter(f => typeof f === "string" &&
+          (path.isAbsolute(f) || path.win32.isAbsolute(f))).slice(0, 16) : [];
+      } catch { return []; }
+    },
+    device: DEVICE_ID,
+    idleMs: () => lastInteractionAt == null ? null : Date.now() - lastInteractionAt,
+  });
   // THE THIRD DOOR onto the family's Drive folder, and the only one with no
   // tap behind it: drive.js adopts a content folder a mount already holds
   // (dad's tablet 9/15 — Drive signed in, the folder fully synced down, every
