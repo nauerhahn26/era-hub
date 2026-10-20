@@ -153,6 +153,20 @@ async function runCheck(port, feed) {
 // greyed (VM leg B, 9/3). A manual POST /update/check is never gated.
 const BOOT_MS = Number(process.env.ERA_UPDATE_BOOT_MS) || 90 * 1000;
 const EVERY_MS = Number(process.env.ERA_UPDATE_EVERY_MS) || 30 * 60 * 1000;
+
+// Wake detection (spec 2026-10-20 §4.2). A heartbeat every HEARTBEAT_MS
+// records the time; a gap longer than HEARTBEAT_MS + WAKE_GAP_MS between two
+// beats means the machine slept (or the clock jumped), so the hub checks ONCE,
+// WAKE_DELAY_MS later (let Wi-Fi settle — the Clothing Picker's wake delay).
+// A wake check does not reset the periodic tick. A clock that went backwards
+// counts as a wake: one extra check is harmless.
+const HEARTBEAT_MS = 30 * 1000;
+const WAKE_GAP_MS = 2 * 60 * 1000;
+const WAKE_DELAY_MS = 20 * 1000;
+function wokeUp(prevMs, nowMs, heartbeatMs, gapMs) {
+  return nowMs < prevMs || nowMs - prevMs > heartbeatMs + gapMs;
+}
+
 function start(port, ready = () => true) {
   if (!enabled) return;
   const boot = () => {
@@ -163,6 +177,21 @@ function start(port, ready = () => true) {
   };
   setTimeout(boot, BOOT_MS).unref();
   setInterval(() => { if (ready()) check(port); }, EVERY_MS).unref();
+  let prev = Date.now(), wakePending = false;
+  setInterval(() => {
+    const now = Date.now();
+    if (wokeUp(prev, now, HEARTBEAT_MS, WAKE_GAP_MS) && !wakePending) {
+      wakePending = true;   // one wake check at a time, never a storm
+      setTimeout(() => {
+        wakePending = false;
+        if (!ready()) return;
+        check(port).then(r => {
+          if (r.status !== "up-to-date") console.log("[update] wake check: " + r.status);
+        });
+      }, WAKE_DELAY_MS).unref();
+    }
+    prev = now;
+  }, HEARTBEAT_MS).unref();
 }
 
-module.exports = { enabled, currentBuild, runningBuild, check, start, FEED, isLoopback };
+module.exports = { enabled, currentBuild, runningBuild, check, start, FEED, isLoopback, wokeUp };
