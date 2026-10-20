@@ -1659,7 +1659,24 @@ function readBinaryBody(req, cap, cb) {
 // The updater only restarts the hub after QUIET_MS of none; /version reports
 // it as idleMs (null until the first one).
 let lastInteractionAt = null;
-const NOT_INTERACTION = new Set(["/update/check", "/kiosk/resume", "/kiosk/close"]);
+
+// The presence receiver's store and hook (spec 2026-10-20 §4.5).
+const PRESENCE_DIR = path.join(DATA, "presence");
+const PRESENCE_EVENTS = new Set(["boot", "wake", "idle", "alive"]);
+function runPresenceHook(device, event) {
+  const hook = process.env.ERA_PRESENCE_HOOK;
+  if (!hook) return;
+  try {
+    if (!fs.statSync(hook).isFile()) return;
+    fs.accessSync(hook, fs.constants.X_OK);
+    const c = require("child_process").spawn(hook, [device, event],
+      { detached: true, windowsHide: true, stdio: "ignore" });
+    c.on("error", (e) => console.error("[presence] hook: " + e.message));
+    c.unref();
+  } catch (e) { console.error("[presence] hook: " + e.message); }
+}
+// /presence is another device's beacon (§4.5), not her either.
+const NOT_INTERACTION = new Set(["/update/check", "/kiosk/resume", "/kiosk/close", "/presence"]);
 function stampInteraction(req) {
   const p = (req.url || "/").split("?")[0];
   if (req.method === "POST" ? !NOT_INTERACTION.has(p)
@@ -3629,6 +3646,48 @@ const server = http.createServer((req, res) => {
                              idleMs: lastInteractionAt == null ? null : Date.now() - lastInteractionAt }));
     return;
   }
+  // ---- presence (spec 2026-10-20 §4.5): the receiving end of the beacon ----
+  // Runs on the operator's hub (ERA_BIND open to its private network); its
+  // callers are other devices, so it is not loopback-gated — it changes
+  // nothing but <DATA>/presence/<device>.json (newest wins) and a pool line,
+  // and hands the news to ERA_PRESENCE_HOOK (spawned detached, never awaited,
+  // its output never read) so the operator's queue acts within seconds.
+  if (req.method === "POST" && urlPath === "/presence") {
+    const chunks = []; let total = 0, over = false;
+    req.on("error", () => {});
+    req.on("data", c => { if (over) return; total += c.length; if (total > 4096) over = true; else chunks.push(c); });
+    req.on("end", () => {
+      let b = null;
+      if (!over) { try { b = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {} }
+      const ok = b && typeof b === "object" &&
+        typeof b.device === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(b.device) &&
+        PRESENCE_EVENTS.has(b.event) &&
+        (b.build === undefined || typeof b.build === "string") &&
+        (b.idleMs === undefined || b.idleMs === null || (typeof b.idleMs === "number" && Number.isFinite(b.idleMs)));
+      if (!ok) { res.writeHead(400).end(); return; }
+      const rec = { device: b.device, lastSeen: new Date().toISOString(), event: b.event,
+                    build: b.build || "", idleMs: b.idleMs == null ? null : b.idleMs,
+                    from: (req.socket && req.socket.remoteAddress) || "" };
+      try {
+        fs.mkdirSync(PRESENCE_DIR, { recursive: true });
+        contentStore.writeAtomic(path.join(PRESENCE_DIR, b.device + ".json"), JSON.stringify(rec, null, 1));
+      } catch (e) { console.error("[presence] " + e.message); res.writeHead(500).end(); return; }
+      try { pool.append("presence", { entry: rec }); } catch {}   // app-log shape: the line stays signed by THIS hub
+      runPresenceHook(b.device, b.event);
+      res.writeHead(204).end();
+    });
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/presence") {
+    const devices = [];
+    try {
+      for (const f of fs.readdirSync(PRESENCE_DIR).filter(f => f.endsWith(".json")).sort())
+        try { devices.push(JSON.parse(fs.readFileSync(path.join(PRESENCE_DIR, f), "utf8"))); } catch {}
+    } catch {}
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ devices }));
+    return;
+  }
   if (req.method === "POST" && req.url === "/update/check") {
     // Optional body {feed}: take THIS build from that base URL instead of the
     // public release feed (tools/push-device.sh, dev-flow spec §5.3). The
@@ -3720,6 +3779,25 @@ server.on("listening", () => {
   // installed payloads only; checkouts are a no-op. Never restart under the
   // welcome wizard: the timers wait for a profile (leg B, 9/3)
   updater.start(PORT, () => HAS_PROFILE, () => lastInteractionAt);
+  // the presence beacon (spec 2026-10-20 §4.5): only where the operator set
+  // beaconUrl in this device's app-settings.json; unset, nothing runs
+  updater.startBeacon({
+    beaconUrl: () => {
+      try {
+        const u = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")).beaconUrl;
+        return typeof u === "string" && /^https?:\/\//.test(u) ? u : "";
+      } catch { return ""; }
+    },
+    // absolute paths of other apps' working files; idle waits for them too
+    watchFiles: () => {
+      try {
+        const w = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")).idleWatchFiles;
+        return Array.isArray(w) ? w.filter(f => typeof f === "string" && path.isAbsolute(f)).slice(0, 16) : [];
+      } catch { return []; }
+    },
+    device: DEVICE_ID,
+    idleMs: () => lastInteractionAt == null ? null : Date.now() - lastInteractionAt,
+  });
   // THE THIRD DOOR onto the family's Drive folder, and the only one with no
   // tap behind it: drive.js adopts a content folder a mount already holds
   // (dad's tablet 9/15 — Drive signed in, the folder fully synced down, every

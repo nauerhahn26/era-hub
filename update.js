@@ -284,6 +284,22 @@ function wokeUp(prevMs, nowMs, heartbeatMs, gapMs) {
   return nowMs < prevMs || nowMs - prevMs > heartbeatMs + gapMs;
 }
 
+// One heartbeat per process, shared by everything that wants to hear about a
+// wake (the wake check below, the presence beacon). Started by the first
+// listener; never started at all when nobody listens.
+const wakeListeners = [];
+function onWake(fn) {
+  wakeListeners.push(fn);
+  if (wakeListeners.length > 1) return;
+  let prev = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    if (wokeUp(prev, now, HEARTBEAT_MS, WAKE_GAP_MS))
+      for (const f of wakeListeners) { try { f(); } catch {} }
+    prev = now;
+  }, HEARTBEAT_MS).unref();
+}
+
 function start(port, ready = () => true, interactionAt = () => null) {
   readyFn = ready;
   lastInteractionAt = interactionAt;
@@ -296,22 +312,97 @@ function start(port, ready = () => true, interactionAt = () => null) {
   };
   setTimeout(boot, BOOT_MS).unref();
   setInterval(() => { if (ready()) check(port); }, EVERY_MS).unref();
-  let prev = Date.now(), wakePending = false;
-  setInterval(() => {
-    const now = Date.now();
-    if (wokeUp(prev, now, HEARTBEAT_MS, WAKE_GAP_MS) && !wakePending) {
-      wakePending = true;   // one wake check at a time, never a storm
-      setTimeout(() => {
-        wakePending = false;
-        if (!ready()) return;
-        check(port).then(r => {
-          if (r.status !== "up-to-date") console.log("[update] wake check: " + r.status);
-        });
-      }, WAKE_DELAY_MS).unref();
+  let wakePending = false;
+  onWake(() => {
+    if (wakePending) return;   // one wake check at a time, never a storm
+    wakePending = true;
+    setTimeout(() => {
+      wakePending = false;
+      if (!ready()) return;
+      check(port).then(r => {
+        if (r.status !== "up-to-date") console.log("[update] wake check: " + r.status);
+      });
+    }, WAKE_DELAY_MS).unref();
+  });
+}
+
+// Presence beacon (spec 2026-10-20 §4.5): "the device should tell us the
+// minute it wakes up" (dad). Opt-in per device: `beaconUrl` in the family's
+// app-settings.json, set by the operator, never a default — the public code
+// carries no address. When set, the hub POSTs {device, build, event, idleMs,
+// at} there: "boot" once it listens, "wake" from the heartbeat above, "alive"
+// every BEACON_MS. Fire-and-forget: 5-s timeout, never retried, never two in
+// flight, one log line per failure class until a send succeeds again. The
+// URL is read at boot (unset = no timer at all, nothing ever runs) and again
+// before every send, so clearing it stops the beacon without a restart;
+// setting it on a running hub takes effect at its next boot.
+//
+// "idle" (dad 2026-10-20: "anytime it's idle for 5 mins, then we catch a
+// moment"): once per idle stretch, when BOTH the board has had no interaction
+// (the §4.4 stamp; none since boot counts from boot) AND every file in the
+// `idleWatchFiles` setting (absolute paths — another app's working file, e.g.
+// the talker's page set) has gone unmodified for IDLE_MS. A stat, never a
+// read; a missing file counts as idle. Re-armed by the next activity of
+// either kind. The body's idleMs is always the smaller of the two idle times.
+const BEACON_MS = Number(process.env.ERA_BEACON_MS) || 5 * 60 * 1000;
+const IDLE_MS = Number(process.env.ERA_BEACON_IDLE_MS) || 5 * 60 * 1000;
+const IDLE_POLL_MS = Math.min(30 * 1000, Math.max(100, Math.floor(IDLE_MS / 6)));
+const bootedAt = Date.now();
+function startBeacon({ beaconUrl, watchFiles = () => [], device, idleMs: boardIdle = () => null }) {
+  const url0 = beaconUrl();
+  if (!url0) return false;
+  // ms since the newest change to a watched file; null when nothing is watched
+  const filesIdle = () => {
+    const files = watchFiles();
+    if (!files.length) return null;
+    let least = Infinity;
+    for (const f of files) {
+      try { least = Math.min(least, Date.now() - fs.statSync(f).mtimeMs); } catch {}
     }
-    prev = now;
-  }, HEARTBEAT_MS).unref();
+    return least;
+  };
+  const idle = () => {
+    const b = boardIdle(), f = filesIdle();
+    const known = [b, f].filter(v => v != null && Number.isFinite(v));
+    return known.length ? Math.max(0, Math.min(...known)) : null;
+  };
+  let busy = false;
+  const said = new Set();
+  // false when nothing was sent (no URL, or another beacon still in flight)
+  const send = (event) => {
+    const url = beaconUrl();
+    if (!url || busy) return false;
+    busy = true;
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device, build: runningBuild, event, idleMs: idle(), at: new Date().toISOString() }),
+      signal: AbortSignal.timeout(5000) })
+      .then(r => {
+        if (r.ok) { said.clear(); return; }
+        const cls = "http " + r.status;
+        if (!said.has(cls)) { said.add(cls); console.log("[beacon] refused (" + cls + ")"); }
+      })
+      .catch(() => {
+        if (!said.has("unreachable")) { said.add("unreachable"); console.log("[beacon] unreachable"); }
+      })
+      .finally(() => { busy = false; });
+    return true;
+  };
+  send("boot");
+  let idleArmed = true;
+  setInterval(() => {
+    const b = boardIdle();
+    const f = filesIdle();
+    const stretch = Math.min(b == null ? Date.now() - bootedAt : b, f == null ? Infinity : f);
+    if (stretch < IDLE_MS) { idleArmed = true; return; }
+    if (idleArmed && send("idle")) idleArmed = false;   // busy: try again next poll
+  }, IDLE_POLL_MS).unref();
+  // after the same 20 s the wake check waits: a send into Wi-Fi that is still
+  // coming up is lost (never retried), and the heartbeat already says "within
+  // the minute"
+  onWake(() => setTimeout(() => send("wake"), WAKE_DELAY_MS).unref());
+  setInterval(() => send("alive"), BEACON_MS).unref();
+  return true;
 }
 
 module.exports = { enabled, currentBuild, runningBuild, check, start, FEED, isLoopback, wokeUp,
-                   applyStagedAtBoot };
+                   applyStagedAtBoot, startBeacon };
