@@ -9,7 +9,13 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
+const PORT = parseInt(process.argv[2], 10) || 8377;
 const updater = require("./update");
+// A build the updater staged but never found a quiet moment to apply (spec
+// 2026-10-20 §4.4) applies now, before this process loads anything else or
+// serves: the overlay replaces this very server.js, so it hands over through
+// the update restart and never listens itself.
+if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
@@ -34,7 +40,6 @@ const contentProviders = require("./content-providers.js");
 // For writeAtomic alone: a key file is written tmp-then-rename, never in place.
 const contentStore = require("./content-store.js");
 
-const PORT = parseInt(process.argv[2], 10) || 8377;
 const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
 const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
@@ -1647,7 +1652,23 @@ function readBinaryBody(req, cap, cb) {
   sink.on("finish", () => { if (!done) { done = true; cb(null, tmp); } });
 }
 
+// When the hub last heard from HER (spec 2026-10-20 §4.4): every POST her
+// actions produce, plus spoken words (/tts*) and predictions (/predict*).
+// Not interaction: POSTs from the launcher or an operator (/update/check,
+// /kiosk/resume, /kiosk/close) and polls (/version, /settings, recipe ETags).
+// The updater only restarts the hub after QUIET_MS of none; /version reports
+// it as idleMs (null until the first one).
+let lastInteractionAt = null;
+const NOT_INTERACTION = new Set(["/update/check", "/kiosk/resume", "/kiosk/close"]);
+function stampInteraction(req) {
+  const p = (req.url || "/").split("?")[0];
+  if (req.method === "POST" ? !NOT_INTERACTION.has(p)
+      : req.method === "GET" && (p.startsWith("/tts") || p.startsWith("/predict")))
+    lastInteractionAt = Date.now();
+}
+
 const server = http.createServer((req, res) => {
+  stampInteraction(req);
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
     let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
@@ -3604,7 +3625,8 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/version") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ build: updater.runningBuild, disk: updater.currentBuild(),
-                             updater: updater.enabled, pid: process.pid }));
+                             updater: updater.enabled, pid: process.pid,
+                             idleMs: lastInteractionAt == null ? null : Date.now() - lastInteractionAt }));
     return;
   }
   if (req.method === "POST" && req.url === "/update/check") {
@@ -3650,7 +3672,9 @@ const server = http.createServer((req, res) => {
             feed = inc.feed;
         } catch {}
       }
-      updater.check(PORT, feed).then((r) => {
+      // force: the operator asked — stage AND apply now, quiet or not (spec
+      // 2026-10-20 §4.4); only the automatic paths wait for a quiet moment
+      updater.check(PORT, feed, { force: true }).then((r) => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(r));
       });
@@ -3695,7 +3719,7 @@ server.on("listening", () => {
   console.log("era-hub on http://" + BIND + ":" + PORT);
   // installed payloads only; checkouts are a no-op. Never restart under the
   // welcome wizard: the timers wait for a profile (leg B, 9/3)
-  updater.start(PORT, () => HAS_PROFILE);
+  updater.start(PORT, () => HAS_PROFILE, () => lastInteractionAt);
   // THE THIRD DOOR onto the family's Drive folder, and the only one with no
   // tap behind it: drive.js adopts a content folder a mount already holds
   // (dad's tablet 9/15 — Drive signed in, the folder fully synced down, every

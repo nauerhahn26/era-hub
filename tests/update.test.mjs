@@ -118,6 +118,10 @@ test("installed hub reports its build and an enabled updater", async () => {
 
 test("check applies a newer release and the hub restarts on the new build", async () => {
   const pid0 = (await (await fetch(`${BASE}/version`)).json()).pid;
+  // the board is in use (spec 2026-10-20 §4.4): the automatic paths would only
+  // stage now, but a manual check is the operator asking — it applies at once
+  const tapped = await fetch(`${BASE}/log`, { method: "POST", body: JSON.stringify({ app: "update-test", event: "tap" }) });
+  assert.equal(tapped.status, 204);
   const r = await (await fetch(`${BASE}/update/check`, { method: "POST" })).json();
   assert.equal(r.status, "updated");
   assert.equal(r.from, OLD_BUILD);
