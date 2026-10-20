@@ -181,6 +181,48 @@ restart then is invisible. Why not the TD Snap file-age proxy: the hub cannot
 see TD Snap, and the hub restart does not touch TD Snap; what it must not
 touch is OUR board mid-use, which the hub sees directly.
 
+### 4.5 Presence beacon: the device says "I am awake" (dad 2026-10-20)
+
+Dad: "the device should tell us the minute it wakes up so we don't get
+confusing messages about it never coming online just due to insignificant
+checks." Today the ops side learns a device is up by polling the network
+every minute and by jobs that try every ten; a device that wakes for a short
+window can be missed, and the end-of-day mail then says it never came online.
+
+The hub gains an opt-in, generic beacon. When the setting `beaconUrl` is set
+(settings.json; no UI; set per device by the operator — never a default, the
+public repo carries no addresses), the hub POSTs a small JSON body
+`{device, build, event, idleMs, at}` to that URL:
+- `event: "boot"` once the server listens;
+- `event: "wake"` when the heartbeat of §4.2 detects lost time;
+- `event: "alive"` every `BEACON_MS` (5 min) while running.
+Fire-and-forget: 5-s timeout, never retried, one log line per failure class
+(`[beacon] unreachable`), never more than one in flight. `device` is the pool's
+device id (`pool.deviceId`), `build` is `updater.runningBuild`.
+
+The receiving side is the same hub code running on the operator's host with
+`ERA_BIND` open to the private network: a route `POST /presence` that accepts
+that body (device id limited to `[A-Za-z0-9_-]{1,64}`, body ≤ 4 KB, else 400),
+writes `<DATA>/presence/<device>.json` `{device, lastSeen, event, build,
+idleMs, from}` (newest wins), appends an `app-log`-style pool event, and — if
+`ERA_PRESENCE_HOOK` names an executable — spawns it detached with the device
+id and event as arguments, so the operator's queue can act within seconds
+instead of on the next cron minute. The route is not loopback-gated (its
+callers are remote by nature) and changes nothing but that file; a flood is
+harmless (one small write per request; the hook is rate-limited by the hook
+itself).
+
+`GET /presence` lists the files (for the operator and tests). On a family
+device no one sets `ERA_PRESENCE_HOOK`, and `beaconUrl` unset means the beacon
+code never runs.
+
+Tests: `tests/presence.test.mjs` (a fresh port from the free band; grep every
+repo's tests/ before choosing, as the port memory requires): a hub with
+`beaconUrl` pointing at a second hub's `/presence` sends `boot` within a few
+seconds of listening; the receiver's file carries the device id and build;
+`GET /presence` lists it; a bad device id is 400; with the hook env set to a
+script that appends its arguments to a file, the hook runs once per beacon.
+
 ### 4.3 What a device sees
 
 1. Logon (the Startup link from the 2026-10-19 unit) → hub boots → boot check
@@ -188,7 +230,8 @@ touch is OUR board mid-use, which the hub sees directly.
 2. Sleep at 10 idle minutes; wake by the aide or the wake task → heartbeat sees
    the gap → check 20 s later → a newer release is staged; it applies the first
    time the board has been quiet for 90 s (or at the next boot).
-3. Awake all day → a check every 30 minutes.
+3. Awake all day → a check every 30 minutes; the beacon says "alive" every
+   5 minutes, so the operator's view of the device is never older than that.
 
 ## 5. Tests
 
@@ -228,6 +271,11 @@ touch is OUR board mid-use, which the hub sees directly.
 - Whether `ERA_UPDATE_EVERY_MS` deserves a floor on devices.
 
 ## 7. Release
+
+The operator's own hub must be restarted on the new build by hand (it runs
+from a checkout, so the updater is off there) before `/presence` exists for
+the devices to call; that restart is an explicit act, never a script's.
+
 
 Unsigned patch (`release.sh v1.0.6 --patch`) under the signed v1.0.0
 installer. Publishing waits for dad's word. The QA host needs the 10/16

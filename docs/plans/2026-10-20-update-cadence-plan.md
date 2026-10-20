@@ -45,10 +45,16 @@
    - **Verification:** `node --test tests/update-boot.test.mjs tests/update.test.mjs tests/update-wake.test.mjs tests/settings-ui.test.mjs tests/routes.test.mjs` → all pass (routes/settings suites pin `/version`'s shape — extend, never break).
    - **Guardrails:** never overlay into the live tree from the stage path except in apply; never apply with the wizard unanswered (automatic paths) — the manual POST is the one exception as today; the staging dir is removed after apply and on a bad checksum; disk full → `{status:"stage-error"}`, nothing half-written in the live tree.
 
+5. [ ] **Presence beacon + `/presence` receiver (spec §4.5), test first** — `server.js` (route, hook spawn, `beaconUrl` setting), `update.js` or a small `beacon.js` (sender), `tests/presence.test.mjs`
+   - **Acceptance:** with `beaconUrl` set the hub sends `boot` after listening, `wake` from the §4.2 detector, `alive` every `ERA_BEACON_MS` (seam; default 5 min); 5-s timeout, one in flight, one log line per failure class; the receiver writes `<DATA>/presence/<id>.json`, appends a pool event, spawns `ERA_PRESENCE_HOOK <id> <event>` detached when set; id/body validation → 400; `GET /presence` lists; unset `beaconUrl` → no sender timer at all.
+   - **Tests to write first (red):** `tests/presence.test.mjs` on a NEW port pair chosen after grepping `tests/` of era-hub, era-board, era-core, era-pencil, era-making-words and era-gaze for the number (the port memory: the suite band has holes; never 8377/8378/8425/8427/8450-8462/8463/8464/8471-8474); the parity test lists `ERA_BEACON_MS`.
+   - **Verification:** `node --test tests/presence.test.mjs tests/routes.test.mjs tests/settings-ui.test.mjs` → pass; `grep -n ERA_BEACON_MS tools/era-gate.sh`.
+   - **Guardrails:** no address or host name anywhere in code, tests or docs (loopback only); the setting has no default; the hook is spawned with `windowsHide` and `detached`, never awaited; the route never reads the hook output.
+
 ### Phase 2: gate, land, release (overseer)
 **Posture hint:** implementing
 
-4. [ ] **Full gate in the worktree** — `== era-gate: N passed, 0 failed ==`, N ≥ 124 (one new suite); green stamp for this tree.
+4. [ ] **Full gate in the worktree** — `== era-gate: N passed, 0 failed ==`, N ≥ 125 (two new suites); green stamp for this tree.
 5. [ ] **Land** — `bash ~/aac-board-builder/tools/worktree.sh land /home/ai/new-era/era-hub update-cadence`.
 6. [ ] **Patch release (on dad's word)** — `qa.sh up` → `qa-template-repair.py` → `release.sh v1.0.6 --patch --skip-gate` (stamp < 2 h) from the main checkout under `setsid nohup`, `USER` exported.
 
@@ -57,7 +63,8 @@
 
 7. [ ] **Home i13 on v1.0.6, then a later patch lands by the hub alone, quietly** — after the next release after v1.0.6 is published, do NOT POST; within 30 minutes `/version` on the home i13 shows the new build and hub.log carries `[update] ... restarting` with no preceding `/update/check` request. (Until then: hub.log shows no `[update]` errors; `/version.idleMs` on the tablet climbs while nobody touches it and resets on a tap.) Also: while the board is in active use (tap every few seconds by hand), a published build STAGES and does not restart until the taps stop.
 8. [ ] **School i13** — the next time it appears, `/version` shows ≥ v1.0.6 (delivered by the ops nudge); the following release reaches it inside its first awake window with no nudge in the ops log.
-9. [ ] **Docs + memory** — status doc entry, memory note, this plan ticked.
+9. [ ] **Operator side (ops repo, separate worker):** school board-sync idle gate 15 → 5 min with the pixel gates unchanged (dad 10/20: "5 min is right to check if TD Snap is on screen and try"); the watcher treats a fresh `presence/school.json` as online; a hook script kicks the queue on a beacon; a queued job sets `beaconUrl` on the school hub once it serves ≥ v1.0.6; the end-of-day mail reads presence too; runbook updated. Dad restarts the operator hub on the new build by hand.
+10. [ ] **Docs + memory** — status doc entry, memory note, this plan ticked.
 
 ---
 
