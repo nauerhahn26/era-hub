@@ -27,9 +27,44 @@ Two layers. The ops side (private repo) now nudges the school hub with
 minutes while it stays up. This unit is the hub side, so a device never depends
 on the ops watcher: the hub checks often enough, and right after it wakes.
 
+### 1.1 What the daily alert mails and the watcher logs say (reviewed 2026-10-20)
+
+Twelve "deploy queue stalled" mails since 2026-10-02, one per school day the
+queue had not drained by 3:30 PM Pacific. Three classes:
+
+- NEVER-ONLINE (10/2, 10/5, 10/7, 10/8, 10/12, 10/16): the device was not seen
+  on the network all day — or, on 10/16, WAS seen 08:32-08:59 PT but the
+  end-of-day check did not read the watcher log then (fixed 10/19).
+- ONLINE-FAILING (10/9, 10/14, 10/15): a job erred on every attempt (the
+  Drive-for-Desktop repair; resolved 10/15).
+- STILL-QUEUED (10/6, 10/13, 10/19): the device had windows but the board-sync
+  job's "is she on it" proxy — the TD Snap page-set file untouched for 15-20
+  minutes — never opened. On 10/19 the four windows were 76, 18, 32 and 16
+  minutes long, and the watcher kicked nothing because of a crontab path bug
+  (fixed 10/19 20:23 UTC, after the last window). Hub self-update was never
+  among the queued jobs: nothing from the ops side asked the hub to check, and
+  the hub's own 6-hour timer never landed in a window. The school hub has
+  served build 20261005.0056 since 10/6.
+
+Online windows seen by the watcher (Pacific): 10/14 08:40-13:00 (one long
+block), 10/15 08:50-10:03 and 11:50-12:41, 10/16 08:32-08:59, 10/19 08:47-10:03,
+10:40-10:58, 11:01-11:33, 12:05-12:20. None on weekends. The device sleeps
+after 10 idle minutes on battery, so "idle for 15 minutes" and "awake" almost
+never overlap — exactly dad's point — while the awake minutes are minutes
+Ellie is using it. A deploy path for this device must therefore (a) act within
+the first minute of a window and (b) not need her to stop using it, or not
+touch anything she is using.
+
+The device's own wake-window log (what woke it, how long it held) has not been
+read yet: the read-only probe armed 10/19 fires the next time the device is
+seen and answers that question. Until then the watcher's online windows are
+the wake evidence.
+
 ## 2. Goals, non-goals, anti-goals
 
 Goals
+- An update never interrupts Ellie: the restart that completes an update
+  happens only in a quiet moment, or at the next boot if none comes.
 - A hub that is awake for 20 minutes with a newer release on the feed updates
   itself inside that window, with no help from outside.
 - A hub that has just woken from sleep checks within about a minute of waking.
@@ -47,6 +82,8 @@ Non-goals
 Anti-goals (a failure even if it "works")
 - Two checks in flight at once, or a check storm after a long sleep (one wake
   check, then the normal cadence).
+- A restart while she is mid-use: a tap that fails because the hub was
+  restarting under it.
 - A restart under the welcome wizard (`tests/update-boot.test.mjs` pins it).
 - A hub that hammers the feed: the periodic interval never goes below the
   decided default on a device; only the test seams shrink it.
@@ -102,12 +139,55 @@ drive the heartbeat path, `ERA_UPDATE_HEARTBEAT_MS`; every seam added goes
 into the gate's close list and the seam-parity test. Fewer seams is better:
 the pure function test needs none.
 
+### 4.4 The apply step waits for a quiet moment (dad 2026-10-20: "without interference")
+
+Today `runCheck()` downloads, verifies, overlays the install and restarts in one
+pass. A restart takes about two seconds, during which any request from the
+kiosk fails once (a tap's log line, a spoken word, a prediction). Fine at 3 AM;
+not fine while Ellie is using the board. So the pass splits:
+
+- FETCH + STAGE (safe any time): download, verify the checksum, extract into a
+  staging directory beside the install (`<HERE>/.update-staged/<build>`), never
+  into the live tree. Log `[update] staged <build>`.
+- APPLY (only when quiet): overlay from the staging directory exactly as today
+  (same filters: never `data/`, never `node/`, never an absent pack) and
+  restart. Log line unchanged (`[update] <from> -> <to> (<version>); restarting`).
+
+Quiet means: no interaction for `QUIET_MS` (90 s). The hub learns interaction
+from its own traffic — `server.js` stamps `lastInteractionAt` on every request
+Ellie's actions produce: every POST except `/update/check`, `/kiosk/resume`,
+`/kiosk/close` (those come from the launcher or an operator), and every GET
+under `/tts` and `/predict` (spoken words and predictions). Polls (`/version`,
+`/settings` GET, board recipe ETag checks) are not interaction. The hub exposes
+the stamp to the updater as a function (`lastInteractionAt()`), and `/version`
+gains `idleMs` (ms since the last interaction, or null when none yet) so an
+operator can read it.
+
+Scheduling: when a check finds a staged build waiting, or has just staged one,
+it applies at once if quiet, else arms ONE short timer (every 15 s) that
+applies the moment `QUIET_MS` has passed. A staged build also applies on the
+next boot before anything else (so a device that is never quiet while awake
+still updates at its first logon after the download). A manual
+`POST /update/check` keeps today's immediate behaviour (`force: true` through
+the route → stage + apply now): the operator asked for it. `/update/check`'s
+answer reports `{status:"staged", build, idleMs}` when it stages but defers.
+
+Seams: `ERA_UPDATE_QUIET_MS` (test seam, default 90 s). Same rule as every
+seam: closed by the gate, listed in the parity test.
+
+Why 90 s: a page of the board is a few taps a minute while she is talking;
+90 s without any of them is a break (recess, a transition), and a two-second
+restart then is invisible. Why not the TD Snap file-age proxy: the hub cannot
+see TD Snap, and the hub restart does not touch TD Snap; what it must not
+touch is OUR board mid-use, which the hub sees directly.
+
 ### 4.3 What a device sees
 
 1. Logon (the Startup link from the 2026-10-19 unit) → hub boots → boot check
    90 s in (unchanged).
 2. Sleep at 10 idle minutes; wake by the aide or the wake task → heartbeat sees
-   the gap → check 20 s later → a newer release lands and the hub restarts.
+   the gap → check 20 s later → a newer release is staged; it applies the first
+   time the board has been quiet for 90 s (or at the next boot).
 3. Awake all day → a check every 30 minutes.
 
 ## 5. Tests
@@ -118,6 +198,16 @@ the pure function test needs none.
   env is set there); within a few intervals `/version` serves `NEWER_BUILD`
   from a new pid, with no POST sent. (The feed handler must be able to switch
   what it serves; the first two cases are untouched.)
+- `tests/update-boot.test.mjs` cadence case (above) also proves the quiet gate:
+  before publishing `NEWER_BUILD`, the test keeps the hub "in use" by POSTing
+  `/log` every few hundred ms for several intervals and asserts the hub STAGED
+  (`/update/check`-free: the log line or `/version` shows the old build with
+  the staging dir present) but did not restart; then it stops posting and the
+  update lands within `ERA_UPDATE_QUIET_MS` + a few ticks. `/version.idleMs`
+  is asserted to reset on a POST `/log` and to be null before any interaction.
+- A boot with a staged build present applies it before serving (a small case
+  in the same suite or `tests/update.test.mjs`: write a staged dir by hand,
+  start the hub, it comes up on the staged build).
 - A unit test for `wokeUp` (in the same file or `tests/update-wake.test.mjs`
   with NO ports — a pure import): below the threshold false; above it true;
   a backwards clock jump is treated as a wake (true) — the check is harmless.
@@ -128,6 +218,10 @@ the pure function test needs none.
   is answered") stay green unchanged.
 
 ## 6. Left to the builder
+
+- The staging directory layout and how a boot finds it (one dir, newest build).
+- Which single place in `server.js` stamps interaction (a request-level hook
+  before routing is the obvious one).
 
 - Whether the heartbeat lives in `start()` or a small helper; whether one or
   two seams are needed. Exact log wording, keeping the `[update]` prefix.
