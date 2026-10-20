@@ -166,6 +166,9 @@ export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
   ERA_GEOCODE_URL="http://127.0.0.1:1/geocode" ERA_NWS_URL="http://127.0.0.1:1" \
   ERA_RESEND_URL="http://127.0.0.1:1" ERA_TMDB_URL="http://127.0.0.1:1" \
   ERA_STREAMING_URL="http://127.0.0.1:1"
+# Updater timing seams (spec 2026-10-20 §4.1/§4.4) never leak from the shell
+# that runs the gate: a suite that needs one sets it on the hub it spawns.
+unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS
 
 # ERA_DEVICE_ID: the gate's DATA is era-family/test-data (a PRIVATE repo's
 # working tree). Without a name given here the hub would generate one from
