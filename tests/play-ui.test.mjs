@@ -33,6 +33,14 @@ const ITEMS = [
   { id: "aBcDeFgHiJ3", skill: "true-false", q: "Can a shadow be in front of you?",
     choices: [{ label: "No", glyph: "👎" }, { label: "Yes", glyph: "👍", right: true }] },
 ];
+// the Sort it week (B2): a second fake week, so the first keeps "no sort, no playit" for B1's cases
+const SORT_WEEK = "2026-01-12";
+const SORT = { skill: "classify",
+  bins: [{ label: "a light source", glyph: "💡" }, { label: "not a light source", glyph: "🌑" }],
+  items: [{ label: "the sun", glyph: "☀️", bin: 0 }, { label: "a moon", glyph: "🌙", bin: 1 },
+          { label: "a candle", glyph: "🕯️", bin: 0 }, { label: "a book", glyph: "📕", bin: 1 },
+          { label: "a torch", glyph: "🔦", bin: 0 }] };
+const sortQ = (i) => `Is ${SORT.items[i].label} ${SORT.bins[0].label} or ${SORT.bins[1].label}?`;
 let child, browser;
 
 before(async () => {
@@ -41,6 +49,11 @@ before(async () => {
   fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
     week_of: WEEK, title: "Shadows!", topic: "shadows", schema: 1, watch: [], talk: [],
     play: { which: ITEMS } }));
+  const sdir = path.join(TMP, "this-week", SORT_WEEK);
+  fs.mkdirSync(sdir, { recursive: true });
+  fs.writeFileSync(path.join(sdir, "manifest.json"), JSON.stringify({
+    week_of: SORT_WEEK, title: "Light!", topic: "shadows", schema: 1, watch: [], talk: [],
+    play: { which: [], sort: SORT } }));
   fs.writeFileSync(path.join(TMP, "app-settings.json"), JSON.stringify({ musicVolCap: 40 }));
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
@@ -394,4 +407,200 @@ test("which.js is a module with no page globals: it imports only the kit", () =>
   assert.match(src, /export function mountWhich\(host, item, \{/);
   assert.doesNotMatch(src, /window\.(Play|Speech|Dwell|__)/, "no page globals in which.js");
   for (const m of src.matchAll(/^import .* from "([^"]+)"/gm)) assert.match(m[1], /^\.\.\/lib\//);
+});
+
+// ================================================================ Sort it (B2)
+const SQ = "?w=" + SORT_WEEK;
+async function openSort(page) {
+  await page.locator("#tile-sort").click();
+  await page.waitForFunction(() => window.Play.state().page === "sort" && document.querySelector(".so-bin"));
+}
+const itemLabel = (page) => page.$eval("#sortItem .so-label", (el) => el.textContent);
+const chips = (page) => page.$$eval(".so-bin", (els) => els.map((b) => [...b.querySelectorAll(".so-tray .so-chip")].map((c) => c.textContent)));
+async function waitSortItem(page, i) {
+  await page.waitForFunction((i) => window.Play.state().page === "sort" && window.Play.state().idx === i &&
+    !document.querySelector("#sortItem.landing") && document.querySelector(".so-bin.dwell:not([data-dwell-disabled])"), i, { timeout: 5000 });
+}
+// a wobble lasts ~500 ms: record it when it starts
+async function watchWobble(page) {
+  await page.evaluate(() => {
+    window.__wobbled = 0;
+    new MutationObserver((ms) => { for (const m of ms)
+      if (m.target.id === "sortItem" && m.target.classList.contains("wobble")) window.__wobbled++; })
+      .observe(document.getElementById("stage"), { attributes: true, attributeFilter: ["class"], subtree: true });
+  });
+}
+
+test("Sort it: the menu seats its tile in the centre (🗂️); the Which one? and Play it seats black", async () => {
+  const { ctx, page, errors } = await playPage({ query: SQ });
+  const g = await page.$$eval("#stage .seat", (els) => els.map((el) => { const r = el.getBoundingClientRect();
+    return { id: el.id, seat: el.dataset.seat, dwell: el.matches(".dwell"), bg: getComputedStyle(el).backgroundColor,
+             text: el.innerText.trim(), w: r.width, h: r.height }; }));
+  assert.deepEqual(g.map((s) => s.id), ["", "tile-sort", ""]);
+  assert.equal(g[1].seat, "1");
+  assert.match(g[1].text, /🗂️/u); assert.match(g[1].text, /Sort it/);
+  assert.ok(g[1].dwell && Math.min(g[1].w, g[1].h) >= 90);
+  for (const s of [g[0], g[2]]) { assert.equal(s.bg, "rgb(0, 0, 0)"); assert.equal(s.dwell, false); }
+  assert.deepEqual(await st(page).then((s) => s.engines), { which: false, sort: true, playit: false });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("Sort it: two bins left and right (glyph + label, ≥ 120 px tall), the item centred and inert, the question shown and spoken", async () => {
+  const { ctx, page, errors, reqs } = await playPage({ query: SQ });
+  await openSort(page);
+  const g = await page.evaluate(() => {
+    const b = (el) => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2 }; };
+    const item = document.getElementById("sortItem");
+    return {
+      bins: [...document.querySelectorAll(".so-bin")].map((el) => ({ ...b(el), id: el.id, dwell: el.matches(".dwell"),
+        label: el.getAttribute("aria-label"), glyph: el.querySelector(".so-glyph").textContent, word: el.querySelector(".so-label").textContent })),
+      item: { ...b(item), dwell: !!item.closest(".dwell") || !!item.querySelector(".dwell"),
+              glyph: item.querySelector(".so-glyph").textContent, word: item.querySelector(".so-label").textContent },
+      stage: b(document.getElementById("stage")),
+      q: document.querySelector(".so-q").innerText.trim(),
+      dwells: [...document.querySelectorAll("#stage .dwell")].map((el) => el.id),
+      fonts: [...document.querySelectorAll(".so-q, .so-bin .so-label, #sortItem .so-label")].map((el) => parseFloat(getComputedStyle(el).fontSize)),
+    };
+  });
+  assert.deepEqual(g.bins.map((x) => [x.id, x.label, x.glyph, x.word]),
+    [["bin0", "a light source", "💡", "a light source"], ["bin1", "not a light source", "🌑", "not a light source"]]);
+  assert.deepEqual(g.dwells, ["bin0", "bin1"], "the bins are the only dwell targets in the stage");
+  assert.ok(g.bins.every((x) => x.dwell && x.h >= 120 && Math.min(x.w, x.h) >= 90), JSON.stringify(g.bins));
+  assert.ok(g.bins[0].x + g.bins[0].w < g.item.x && g.item.x + g.item.w < g.bins[1].x, "left bin | item | right bin");
+  assert.ok(g.item.x - (g.bins[0].x + g.bins[0].w) >= 13.5 && g.bins[1].x - (g.item.x + g.item.w) >= 13.5, "gaps ≥ 14");
+  assert.ok(Math.abs(g.item.cx - g.stage.cx) < 4, "the item is centred");
+  assert.equal(g.item.dwell, false, "the item is inert");
+  assert.deepEqual([g.item.glyph, g.item.word], ["☀️", "the sun"]);
+  assert.equal(g.q, sortQ(0));
+  for (const f of g.fonts) assert.ok(f >= 32 * 4 / 3, "text ≥ 32 pt: " + f);
+  assert.ok(await until(async () => (await said(page)).includes(sortQ(0))), "the question was said");
+  assert.ok(await page.locator("#btnBack.dwell").isVisible());
+  const holds = await page.evaluate(() => [...document.querySelectorAll("[data-dwell-ms]")].map((el) => el.id + "=" + el.dataset.dwellMs).sort());
+  assert.deepEqual(holds, ["barDoor=2400", "barTalk=2400"], "only the two doors hold 2x");
+  assert.deepEqual(await chips(page), [[], []], "the trays start empty");
+  for (const u of reqs) assert.ok(u.startsWith(BASE + "/"), "this hub only: " + u);
+  await neverATest(page);
+  await page.locator("#btnBack").click();
+  await page.waitForFunction(() => window.Play.state().page === "menu" && document.getElementById("tile-sort"));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("Sort it at 1280x720: bins ≥ 60 px, gaps ≥ 14", async () => {
+  const { ctx, page } = await playPage({ query: SQ, viewport: { width: 1280, height: 720 } });
+  await openSort(page);
+  const g = await page.$$eval(".so-bin, #sortItem, #btnBack", (els) => els.map((el) => { const r = el.getBoundingClientRect();
+    return { id: el.id, l: r.left, r: r.right, b: r.bottom, m: Math.min(r.width, r.height) }; }));
+  for (const x of g) assert.ok(x.m >= 60, x.id + " " + x.m);
+  const [b0, b1, it] = [g.find((x) => x.id === "bin0"), g.find((x) => x.id === "bin1"), g.find((x) => x.id === "sortItem")];
+  assert.ok(it.l - b0.r >= 13.5 && b1.l - it.r >= 13.5);
+  for (const x of g) assert.ok(x.b <= 720, "on screen: " + x.id);
+  await ctx.close();
+});
+
+test("Sort it: a dwell on the right bin slides the item in, pops, a glyph lands in the tray, the pick is logged, the next item is asked", async () => {
+  const { ctx, page, logs } = await playPage({ query: SQ });
+  await openSort(page);
+  const tr = await page.$eval("#sortItem", (el) => getComputedStyle(el).transitionDuration);
+  assert.ok(tr.split(",").some((d) => Math.abs(parseFloat(d) - 0.5) < 1e-6), "a 500 ms slide: " + tr);
+  await page.evaluate(() => { window.__soundLog.length = 0; });
+  await dwellOn(page, "#bin0");
+  await waitSortItem(page, 1);
+  assert.deepEqual(await chips(page), [["☀️"], []], "the sun landed in the light-source tray");
+  assert.ok((await sounds(page)).includes("pop"));
+  assert.ok(await until(() => logs.length >= 1));
+  assert.deepEqual(logs[0], { app: "this-week", door: "play", week_of: SORT_WEEK, engine: "sort",
+    item: 0, pick: 0, right: true, strike: 0 });
+  assert.equal(await itemLabel(page), "a moon");
+  assert.equal(await page.$eval(".so-q", (el) => el.innerText.trim()), sortQ(1));
+  assert.ok(await until(async () => (await said(page)).includes(sortQ(1))), "the next question is said");
+  await neverATest(page);
+  if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, "play-sort-1920.png") }); }
+  await ctx.close();
+});
+
+test("Sort it: a miss wobbles the item back and re-asks; a second miss slides it into the right bin by itself with the cheer", async () => {
+  const { ctx, page, logs } = await playPage({ query: SQ });
+  await openSort(page);
+  await page.locator("#bin0").click();                       // the sun -> a light source
+  await waitSortItem(page, 1);                               // a moon (bin 1)
+  logs.length = 0;
+  await page.evaluate(() => { window.__speechLog.length = 0; window.__soundLog.length = 0; window.__confettiSeen = 0; });
+  await watchWobble(page);
+
+  // first miss
+  await dwellOn(page, "#bin0");
+  await page.waitForFunction(() => window.__wobbled > 0, null, { timeout: 3000 });
+  assert.ok(await until(() => logs.length >= 1));
+  assert.deepEqual(logs[0], { app: "this-week", door: "play", week_of: SORT_WEEK, engine: "sort",
+    item: 1, pick: 0, right: false, strike: 1 });
+  assert.ok(await until(async () => (await said(page)).includes(sortQ(1))), "the question again: " + JSON.stringify(await said(page)));
+  await page.waitForFunction(() => !document.querySelector("#sortItem.wobble"), null, { timeout: 3000 });
+  assert.deepEqual(await chips(page), [["☀️"], []], "nothing landed on a miss");
+  assert.equal(await itemLabel(page), "a moon", "the item is back in the middle");
+  const live = await page.$$eval(".so-bin", (els) => els.map((el) => el.matches(".dwell:not([data-dwell-disabled])")));
+  assert.deepEqual(live, [true, true], "both bins stay live");
+  assert.equal(await page.evaluate(() => window.__confettiSeen), 0);
+  assert.ok(!(await sounds(page)).includes("cheer"));
+  await neverATest(page);
+
+  // second miss
+  await dwellOn(page, "#bin0");
+  await waitSortItem(page, 2);
+  assert.ok(await until(() => logs.length >= 2));
+  assert.deepEqual(logs[1], { app: "this-week", door: "play", week_of: SORT_WEEK, engine: "sort",
+    item: 1, pick: 0, right: false, strike: 2 });
+  assert.deepEqual(await chips(page), [["☀️"], ["🌙"]], "it slid into the right bin by itself");
+  assert.ok((await sounds(page)).includes("cheer"), "the cheer");
+  assert.ok((await page.evaluate(() => window.__confettiSeen)) > 0, "confetti");
+  assert.equal(await itemLabel(page), "a candle");
+  await neverATest(page);
+  await ctx.close();
+});
+
+test("Sort it: after the last item, confetti, 'All sorted!', and the menu", async () => {
+  const { ctx, page, logs } = await playPage({ query: SQ });
+  await openSort(page);
+  for (let i = 0; i < SORT.items.length; i++) {
+    await waitSortItem(page, i);
+    await page.locator("#bin" + SORT.items[i].bin).click();
+  }
+  await page.waitForFunction(() => window.Play.state().page === "menu" && document.getElementById("tile-sort"), null, { timeout: 6000 });
+  assert.ok((await page.evaluate(() => window.__confettiSeen)) >= 60, "the bigger cheer");
+  assert.ok((await said(page)).includes("All sorted!"));
+  assert.equal(await page.evaluate(() => location.hash), "#menu");
+  assert.deepEqual(logs.map((l) => [l.engine, l.item, l.pick, l.right, l.strike]),
+    SORT.items.map((it, i) => ["sort", i, it.bin, true, 0]));
+  await neverATest(page);
+  await ctx.close();
+});
+
+test("Sort it: with no pick the question is said once more after the idle wait, and only once", async () => {
+  const { ctx, page } = await playPage({ query: SQ, idleMs: 400 });
+  await openSort(page);
+  assert.ok(await until(async () => (await said(page)).filter((t) => t === sortQ(0)).length === 2, 3000),
+    JSON.stringify(await said(page)));
+  await page.waitForTimeout(1200);
+  assert.equal((await said(page)).filter((t) => t === sortQ(0)).length, 2, "once more, not on a loop");
+  await ctx.close();
+});
+
+test("Sort it: a reload on #sort lands on the first item", async () => {
+  const { ctx, page } = await playPage({ query: SQ, hash: "#sort" });
+  await page.waitForFunction(() => window.Play.state().page === "sort" && window.Play.state().idx === 0);
+  assert.equal(await itemLabel(page), "the sun");
+  await ctx.close();
+});
+
+test("Sort it under reduced motion: no transition, no animation; the item still lands", async () => {
+  const { ctx, page } = await playPage({ query: SQ, reducedMotion: "reduce" });
+  await openSort(page);
+  const r = await page.$eval("#sortItem", (el) => { const s = getComputedStyle(el); return { t: s.transitionDuration, a: s.animationName }; });
+  assert.ok(r.t.split(",").every((d) => parseFloat(d) === 0), "no transition: " + r.t);
+  assert.equal(r.a, "none");
+  await page.locator("#bin0").click();
+  await waitSortItem(page, 1);
+  assert.deepEqual(await chips(page), [["☀️"], []]);
+  await ctx.close();
 });

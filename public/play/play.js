@@ -9,7 +9,7 @@
  *
  * The URL hash names the page (#menu, #which, #sort, #playit) so a reload lands on the same page
  * at its first item; state lives in memory. On an engine page Back returns to the menu.
- * Sort it and Play it are later tasks: their routes fall back to the menu until they exist.
+ * Play it is a later task: its route falls back to the menu until it exists.
  *
  * Laws: one dwell per user, only the two doors hold 2x (the bar does that; every tile here holds
  * her dwell, holdFor("content")); Speech.stop() before every say; nothing scores, nothing says
@@ -21,6 +21,7 @@ import { mountDoorBar } from "../lib/doorbar.js";
 import { confetti } from "../lib/celebrate.js";
 import { createSounds } from "./sounds.js";
 import { mountWhich } from "./which.js";
+import { mountSort } from "./sort.js";
 
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 const BOARD = "/board/?recipe=this-week";
@@ -55,7 +56,7 @@ function play() { return (S.data && S.data.play) || { which: [], sort: null, pla
 function has(page) {
   const p = play();
   if (page === "which") return p.which.length > 0;
-  if (page === "sort") return !!p.sort && false;       // B2 builds the page
+  if (page === "sort") return !!p.sort;
   if (page === "playit") return !!p.playit && false;   // B3 builds the page
   return page === "menu";
 }
@@ -138,11 +139,40 @@ function mountItem() {
   suppress();
 }
 
+function renderSort() {
+  unmount();
+  S.page = "sort";
+  S.idx = 0;
+  const stage = $("stage");
+  stage.textContent = "";
+  const host = document.createElement("div");
+  host.className = "so-host";
+  stage.appendChild(host);
+  let mounted = null;
+  mounted = mountSort(host, play().sort, {
+    say,
+    log: (d) => logPick("sort", d),
+    sound: (name) => SOUNDS.play(name),
+    idleMs: idleMs(),
+    onItem: (i) => { if (S.page === "sort" && (mounted === null || S.mounted === mounted)) { S.idx = i; S.item = i; } },
+    onDone: () => {
+      if (S.page !== "sort" || S.mounted !== mounted) return;
+      try { confetti(60); } catch {}
+      say("All sorted!");
+      // a moment to see the full bins under the confetti, then the menu
+      setTimeout(() => { if (S.page === "sort" && S.mounted === mounted) location.hash = "#menu"; }, 1200);
+    },
+  });
+  S.mounted = mounted;
+  suppress();
+}
+
 function route() {
   const h = (location.hash || "").replace(/^#/, "");
   const page = PAGES.includes(h) && has(h) ? h : "menu";
   if (page !== h && h !== "") { history.replaceState(null, "", location.pathname + location.search + "#menu"); }
   if (page === "which") renderWhich();
+  else if (page === "sort") renderSort();
   else renderMenu();
 }
 
