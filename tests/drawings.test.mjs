@@ -580,6 +580,35 @@ test("GET /characters/index.json lists the library (the default one with none), 
   assert.equal((await call("PUT", `/drawings/${id}/scene.json`, { v: 1, items: [{ ...P("kai"), s: "person:Kai!" }] })).status, 400);
 });
 
+// dad 10/19: last week's hero stays in her old pictures but is no longer on the palette. characters.json
+// marks such an entry "retired": true; the hub passes it through untouched (order kept, every other field
+// as before) and drops any value that is not a boolean. Nothing here knows the word "hero".
+test("GET /characters/index.json carries retired:true through from characters.json and drops non-boolean values (dad 10/19)", async () => {
+  const CHR = path.join(RT, "characters");
+  const before = fs.existsSync(CHR) ? fs.readdirSync(CHR).map((f) => [f, fs.readFileSync(path.join(CHR, f))]) : null;  // put back after
+  fs.rmSync(CHR, { recursive: true, force: true });
+  fs.mkdirSync(CHR, { recursive: true });
+  for (const s of ["hero", "hero-one", "hero-two", "maya", "sam", "kai"]) fs.writeFileSync(path.join(CHR, s + ".png"), tinyPng(16, 32));
+  fs.writeFileSync(path.join(CHR, "characters.json"), JSON.stringify({ v: 1, people: [
+    { slug: "maya", word: "Maya", scale: 0.25 }, { slug: "hero", word: "Hero", retired: true },
+    { slug: "hero-one", word: "Hero one", scale: 0.35, retired: true }, { slug: "sam", word: "Sam", retired: false },
+    { slug: "kai", word: "Kai", retired: "yes" }, { slug: "hero-two", word: "Hero two", retired: 1 }] }));
+  const want = [{ slug: "maya", word: "Maya", scale: 0.25 }, { slug: "hero", word: "Hero", scale: 0.3, retired: true },
+    { slug: "hero-one", word: "Hero one", scale: 0.35, retired: true }, { slug: "sam", word: "Sam", scale: 0.3, retired: false },
+    { slug: "kai", word: "Kai", scale: 0.3 }, { slug: "hero-two", word: "Hero two", scale: 0.3 }];
+  const r = await fetch(BASE + "/characters/index.json");
+  assert.deepEqual([r.headers.get("x-characters-source"), await r.json()], ["family", want],
+    "dad's order, retired passed through as a boolean only, every other field as before");
+  assert.equal((await fetch(BASE + "/characters/hero.png")).status, 200, "a retired person's cut-out is still served (old pictures draw it)");
+  fs.writeFileSync(path.join(CHR, "characters.json"), JSON.stringify({ v: 1, people: [{ slug: "hero", word: "Hero", retired: true }] }));
+  assert.deepEqual([(await fetch(BASE + "/characters/index.json")).headers.get("x-characters-source")], ["family"],
+    "a library of only retired people is still the family's — never swapped for the defaults under her old pictures");
+  fs.rmSync(CHR, { recursive: true, force: true });
+  assert.deepEqual(await (await fetch(BASE + "/characters/index.json")).json(), DEFAULTS, "the default library is unaffected");
+  assert.ok(DEFAULTS.every((p) => !("retired" in p)));
+  if (before) { fs.mkdirSync(CHR, { recursive: true }); for (const [f, b] of before) fs.writeFileSync(path.join(CHR, f), b); }
+});
+
 test("GET is path-jailed: an id's scene.json and picture.png, nothing beside or above them", async () => {
   const id = await newPic();
   assert.equal((await fetch(`${BASE}/drawings/${id}/scene.json`)).status, 200);

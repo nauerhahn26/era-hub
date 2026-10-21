@@ -167,7 +167,7 @@ function setMode(m) {
   S.mode = m;
   try { localStorage.setItem(MODE_KEY, m); } catch {}
   const mo = (S.table.modes || []).find((x) => x.id === m);
-  say(m === "people" && !S.people.length ? "No people yet" : (mo ? mo.word : m));
+  say(m === "people" && !onPalette().length ? "No people yet" : (mo ? mo.word : m));
   renderPalette();
   applyTargets();
   suppress();
@@ -224,6 +224,9 @@ async function loadPeople() {
 }
 // A late cut-out: the ring's boxes take its shape now (never mid-line or mid-carry). The shelf keeps its
 // square boxes — contain draws the figure the same — rather than rebuilding under a dwell.
+// The People palette: everyone in the library but the retired (dad 10/19: last week's hero stays in
+// her old pictures, loaded above like anyone else, but only the current people can be added).
+const onPalette = () => S.people.filter((p) => p.retired !== true);
 function artLoaded() { if (S.screen === "ring" && S.scene && !S.pen && !S.carry) paintScene(); }
 const aspect = (s) => SC.artAspect(S.images, s);
 function personTile(p) {
@@ -251,11 +254,11 @@ function peopleMoreTile() {
   return b;
 }
 function peopleCells() {
-  const n = S.people.length, seats = SEATS.length;
+  const pal = onPalette(), n = pal.length, seats = SEATS.length;
   S.peoplePages = n > seats ? Math.ceil(n / (seats - 1)) : 1;
   if (S.peoplePage >= S.peoplePages) S.peoplePage = 0;
   const per = S.peoplePages > 1 ? seats - 1 : seats;
-  const slice = S.people.slice(S.peoplePage * per, S.peoplePage * per + per);
+  const slice = pal.slice(S.peoplePage * per, S.peoplePage * per + per);
   const cells = SEATS.map((_, k) => (slice[k] ? personTile(slice[k]) : blackPal()));
   if (S.peoplePages > 1) cells[seats - 1] = peopleMoreTile();
   return cells;
@@ -722,7 +725,7 @@ function place(id, tile) {
   settle();
   if (S.screen !== "ring" || !S.scene || S.paused) return;
   const st = SC.stickerById(S.table, id);
-  if (!st) return;
+  if (!st || st.retired) return;                                      // a retired person is never added again
   hush();
   say(st.word);
   if (S.scene.items.length >= MAX_ITEMS) { log("place_full", { s: id }); return; }   // the hub's cap
@@ -984,7 +987,8 @@ window.Drawing = {
     shelfPage: S.shelfPage, shelfPages: S.shelfPages, shelfIds: S.shelfIds.slice(),
     said: S.said.slice(), park: S.park, paused: S.paused,
     crayon: S.scene ? S.scene.crayon || null : null, pen: S.pen ? { n: S.pen.pts.length, c: S.pen.c } : null,
-    people: S.people.map((p) => p.slug), peoplePage: S.peoplePage, peoplePages: S.peoplePages,
+    people: onPalette().map((p) => p.slug), retired: S.people.filter((p) => p.retired === true).map((p) => p.slug),
+    peoplePage: S.peoplePage, peoplePages: S.peoplePages,
     carrying: S.carry ? S.carry.i : null, carryAt: S.carry ? { x: S.carry.x, y: S.carry.y } : null, cool: S.cool,
     mode: S.mode, backdrop: S.scene ? S.scene.backdrop || "meadow" : null, trash: S.trash, gone: !!S.gone,
   }),

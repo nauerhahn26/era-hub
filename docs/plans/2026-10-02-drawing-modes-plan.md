@@ -219,6 +219,7 @@ Scene gains `"crayon": "<hex>"` (default `#0F7C8A`); `"backdrop"` ∈ the eight 
 ```
 - Display order = array order. `slug` `^[a-z0-9][a-z0-9-]{0,39}$`, unique; `word` 1–24 chars (trimmed); `scale` ∈ [0.1, 0.6], default 0.30. An entry shows only when `<slug>.png` exists beside the json. Anything malformed → that entry is skipped; an unreadable file → `[]`.
 - `GET /characters/index.json` → `[ { slug, word, scale } ]` (the shown entries, in order); never 500.
+- Amended 10/19: `"retired": true|false` passes through to the index as given (non-boolean dropped); the page keeps a retired person in `table.people` (old pictures render and move it) but gives it no tile and leaves it out of the page count (docs/drawing.md "Retired people").
 
 ### State machines (drawing.js)
 

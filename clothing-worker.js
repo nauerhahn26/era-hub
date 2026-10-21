@@ -1380,10 +1380,13 @@ async function weather() {
   }
   // Rung 3: whatever answered last, for any day it covers. A forecast fetched
   // three days ago for today beats no forecast at all — and the footnote
-  // carries its fetch time, so a parent can see how old it is.
+  // carries its fetch time, so a parent can see how old it is. It is marked
+  // `stale`: dealt on, but blind for the retry's purposes, so the shell keeps
+  // walking the ladder until a provider answers (spec 2026-10-19 §5 — a
+  // logon start races Wi-Fi, and this board used to stand all day).
   if (mine && readWindow(mine.hourly, day, win))
-    return answer(mine, "the stored " + mine.source + " week fetched " +
-      new Date(mine.at).toISOString() + " (" + why.join("; ") + ")");
+    return { ...answer(mine, "the stored " + mine.source + " week fetched " +
+      new Date(mine.at).toISOString() + " (" + why.join("; ") + ")"), stale: true };
   console.error("[clothing] weather: none — open-meteo, weather.gov and the stored week all failed (" +
     why.join("; ") + ")");
   return null;
@@ -1477,7 +1480,7 @@ function itemRef(it) {
 }
 
 // The cells a 3x4 page leaves for CONTENT, in reading order: everything but
-// Back/weather [1,1], More [3,1], the bottom-right corner [3,4] and the two
+// Back [1,1], More [3,1], the bottom-right corner [3,4] and the two
 // CENTER rest cells [2,2][2,3] (lib contract restCells: "center"). Today pages
 // and browse pages share it, which is why it lives above both of them.
 const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,2],[3,3]];
@@ -1489,7 +1492,7 @@ const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,2],[3,3]];
 // (outfit_set.py:839) garment for garment. Any cell a short page does not
 // reach stays black; the slots never move, so one layout serves every page.
 // `extra` (optional) is one button repeated on EVERY page at [3,4] — the
-// corner today pages give Build my own — because she can be standing on page 3
+// corner today pages give Full wardrobe — because she can be standing on page 3
 // of the tops when she wants a jacket (spec §4.1); it costs that page its
 // eighth garment, never a centre cell. Dad's 9/3 ruling below ("fill the black
 // 2 bottom tiles and the middle-right tile ... when enough available",
@@ -1520,20 +1523,14 @@ function gridPages(id, name, items, backLoad, extra) {
   return pages;
 }
 
-// today pages take those same slots, with Build my own in the corner [3,4].
-// SLOTS' [3,3] is LAST on purpose: it is the cell the accessories door takes
-// when the family has any (dad 9/17), so a page with accessories is that list
-// minus its tail — six looks — and a page without one is all seven, unchanged.
-const ACC_CELL = [3,3];
-const todaySlots = (present) =>
-  present.length ? SLOTS.filter(([r, c]) => !(r === ACC_CELL[0] && c === ACC_CELL[1])) : SLOTS;
-const PAGES = 3;   // how many "More" pages a day gets at most
+// Page 1 reclaims the old weather corner. Later pages keep Back there.
+// Accessories live behind Full wardrobe, so every remaining edge cell is a look.
+const FIRST_SLOTS = [[1,1], ...SLOTS];
+const PAGES = 3;
+const wardrobeDoor = (row, col) => ({ label: "Full wardrobe", type: "category",
+  image: "board/wardrobe.svg", load: "build", row, col });
 
-// The one door she has to learn, wherever it turns up: today [3,3], "This
-// one?" [3,2], every browse page [3,4], Build my own's last cell when the
-// kinds outgrow it. "accessories" is an ARASAAC bestsearch word (25634, the
-// fashion-accessories pictogram — checked 9/17), the worker's own convention
-// for a category tile.
+// Accessories has one entry inside Full wardrobe.
 // Dress up (warmth coherence spec 2026-09-29 D3; dad 9/29: "fancy should be in
 // accessories and should not be eligible for the daily offerings"). A VIRTUAL
 // kind, deliberately not in clothing-rank's ACCESSORY_KINDS: nothing is FILED
@@ -1541,7 +1538,7 @@ const PAGES = 3;   // how many "More" pages a day gets at most
 // shoes — and ACCESSORY_KINDS is the category list the prompt, the whitelist
 // and the chips read (and the "six kinds" its suite asserts). It lives here,
 // where `present` is made, and joins it exactly like a real kind, so the door,
-// the seventh-slot arithmetic, Build my own's overflow and the menu cells
+// Full wardrobe's entry and the menu cells
 // follow it with no rule of their own. "party" is an ARASAAC bestsearch word:
 // 7099, balloons and bunting (checked 9/29; "dress up" = 5986, a costume
 // being put on, the spec's second choice).
@@ -1583,13 +1580,10 @@ async function buildCataloged(cat, known) {
   // …and Dress up, the virtual kind, last: `items` is already ok, un-hidden
   // and tiled, so one fancy piece she can really see is what it takes.
   if (items.some(isFancy)) present.push(DRESS_UP.id);
-  // While she has accessories the seventh outfit slot IS the door, so the
-  // whole build — the deal's cap, the page size, the lineup the memory keeps
-  // and the "More" arithmetic — follows this one number and never a constant.
-  const slots = todaySlots(present);
-  const per = slots.length;
+  const per = FIRST_SLOTS.length;
+  const laterPer = SLOTS.length;
 
-  // The day's 21, dealt by the original's rules (spec §3.5): page 1 is her
+  // The day's 22, dealt by the original's rules (spec §3.5): page 1 is her
   // staples then fresh, garment-distinct looks; yesterday's page 1 opens page
   // 2; the seed is the family's day, so a same-day rebuild (weather re-sort,
   // sync, restart) deals the same 21 in the same order — nothing random here.
@@ -1607,9 +1601,9 @@ async function buildCataloged(cat, known) {
   // port's deal, as band null was. The band still names the tile, orders the accessories and goes on
   // the offer record.
   const today = buildCandidates({
-    items, band, temp: w ? w.t : null, cap: per * PAGES, seed,
+    items, band, temp: w ? w.t : null, cap: per + laterPer * (PAGES - 1), seed,
     pairing: m.pairing, favorites: m.favorites,
-    history: mergeHistory(readHistory(), m), perPage: per,
+    history: mergeHistory(readHistory(), m), perPage: per, laterPerPage: laterPer,
   }).map(toWorkerShape);
 
   // The page-1 lineup goes to the shell FIRST (I9): it is the memory tomorrow's
@@ -1630,56 +1624,51 @@ async function buildCataloged(cat, known) {
   if (page1.length) log().appendOffer(seed, { band, page1 });
 
   fs.mkdirSync(OUTFITS(), { recursive: true });
-  // Layout per ux-contract.md placement LAW (dad 9/1: "follow the docs"):
-  // More = bottom-LEFT [3,1] (TD-Snap muscle memory), Build/exit = bottom-
-  // RIGHT [3,4], Back/weather top-left [1,1], rest cells = the two CENTER
-  // cells [2,2][2,3]. The other seven cells hold outfits when the wardrobe
-  // has them (dad 9/3, I-13 photo: "fill the black 2 bottom tiles and the
-  // middle-right tile with outfits on each page when enough available" -
-  // this overrules the 9/1 six-per-page cap and the bottom-row rest strip);
-  // cells left over stay black. Ten targets = under the contract's
-  // comfortable 12.
+  // Approved clothing layout: eight looks on page 1, seven thereafter with
+  // Back top-left. Weather spans the centre pair and speaks without navigating.
+  // More and Full wardrobe keep their bottom corners. Browse centres stay black.
   const boards = [];
-  const pages = Math.max(1, Math.ceil(today.length / per));
+  const pages = 1 + Math.max(0, Math.ceil((today.length - per) / laterPer));
   for (let pg = 0; pg < pages; pg++) {
     const pid = pg === 0 ? "today" : "today_" + (pg + 1);
     const buttons = [];
-    if (pg === 0) {
-      if (w) {
-        // With a window the tile has to say WHICH hours it is talking about,
-        // or a parent reads "72\u00b0" as the whole day again (dad 9/5).
-        // A family that really does want the whole day stores 0-23 (Settings
-        // no longer deletes the key for "All day"), and the whole day is
-        // called the whole day: "for 12 AM-11 PM" is accurate and nobody says
-        // it. `w.window` absent is DEFENCE with no live caller \u2014 weatherWindow()
-        // has answered with a window, default or stored, since 9/23.
-        const span = !w.window ? null
-          : w.window.from === 0 && w.window.to === 23 ? "all day"
-          : hourLabel(w.window.from) + "-" + hourLabel(w.window.to);
-        const lead = span === "all day" ? "All day"
-          : span ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to)
-          : "Today";                      // ...and so is this one
-        buttons.push({ label: w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
-          say: lead + " it is " + w.band + ", about " + w.t + " degrees.",
-          // The PLACE leads the footnote: a forecast for the wrong town is
-          // what read cold every day for eleven days, invisibly, and the only
-          // way that is ever caught is if the board says where it is reading.
-          // No town stored means the ISP's guess, and the tile says so.
-          // "updated" is when the forecast was FETCHED, not when the board
-          // was built (spec §7.3): a day served from the stored week reads
-          // "updated Thu, Oct 8 …", so a parent can see the number is old.
-          footnote: (w.place || "approximate location") + " \u00b7 " +
-            (span ? "for " + span + " \u00b7 " : "") + "updated " +
-            new Date(Number.isFinite(w.fetchedAt) ? w.fetchedAt : Date.now()).toLocaleString("en-US",
-              { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
-          row: 1, col: 1 });
-      }
-    } else {
+    const slots = pg === 0 ? FIRST_SLOTS : SLOTS;
+    const offset = pg === 0 ? 0 : per + (pg - 1) * laterPer;
+    if (w) {
+      // With a window the tile has to say WHICH hours it is talking about,
+      // or a parent reads "72\u00b0" as the whole day again (dad 9/5).
+      // A family that really does want the whole day stores 0-23 (Settings
+      // no longer deletes the key for "All day"), and the whole day is
+      // called the whole day: "for 12 AM-11 PM" is accurate and nobody says
+      // it. `w.window` absent is DEFENCE with no live caller \u2014 weatherWindow()
+      // has answered with a window, default or stored, since 9/23.
+      const span = !w.window ? null
+        : w.window.from === 0 && w.window.to === 23 ? "all day"
+        : hourLabel(w.window.from) + "-" + hourLabel(w.window.to);
+      const lead = span === "all day" ? "All day"
+        : span ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to)
+        : "Today";                      // ...and so is this one
+      buttons.push({ label: w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
+        say: lead + " it is " + w.band + ", about " + w.t + " degrees.",
+        // The PLACE leads the footnote: a forecast for the wrong town is
+        // what read cold every day for eleven days, invisibly, and the only
+        // way that is ever caught is if the board says where it is reading.
+        // No town stored means the ISP's guess, and the tile says so.
+        // "updated" is when the forecast was FETCHED, not when the board
+        // was built (spec §7.3): a day served from the stored week reads
+        // "updated Thu, Oct 8 …", so a parent can see the number is old.
+        footnote: (w.place || "approximate location") + " \u00b7 " +
+          (span ? "for " + span + " \u00b7 " : "") + "updated " +
+          new Date(Number.isFinite(w.fetchedAt) ? w.fetchedAt : Date.now()).toLocaleString("en-US",
+            { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+        row: 2, col: 2, col_span: 2 });
+    }
+    if (pg > 0) {
       buttons.push({ label: "Back", type: "back", glyph: "\u2190",
         load: pg === 1 ? "today" : "today_" + pg, row: 1, col: 1 });
     }
-    today.slice(pg * per, (pg + 1) * per).forEach((c, k) => {
-      const i = pg * per + k;
+    today.slice(offset, offset + slots.length).forEach((c, k) => {
+      const i = offset + k;
       const label = c.one ? c.one.name : comboLabel(c.top, c.bottom);
       const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
       const img = "outfit_" + i + ".jpg";
@@ -1704,24 +1693,19 @@ async function buildCataloged(cat, known) {
         // …and the door on the one empty cell "This one?" has had all along:
         // she changes her mind about the top AFTER she picked the look, so the
         // jacket has to be reachable from here too (dad 9/17).
-        ...(present.length ? [accDoor(3, 2)] : []),
+        wardrobeDoor(3, 2),
       ]});
     });
-    if ((pg + 1) * per < today.length)
+    if (offset + slots.length < today.length)
       buttons.push({ label: "More", type: "control", symbol: "more", load: "today_" + (pg + 2), row: 3, col: 1 });
-    if (present.length) buttons.push(accDoor(ACC_CELL[0], ACC_CELL[1]));
-    buttons.push({ label: "Build my own", type: "category", symbol: "clothes", load: "build", row: 3, col: 4 });
+    buttons.push(wardrobeDoor(3, 4));
     boards.push({ id: pid, name: "What will I wear today?", rows: 3, columns: 4, buttons });
   }
   // hoist today pages to the front so `today` is the root board in order
   boards.sort((a, b) => (a.id.startsWith("today") ? 0 : 1) - (b.id.startsWith("today") ? 0 : 1));
-  // Build my own is a 3x4 board with the two CENTRE cells black, always —
-  // accessories or none (dad 9/17), so the four garment doors never move under
-  // her when a jacket arrives. Ten edge cells, filled clockwise from the
-  // contract's back anchor: Back, Tops, Bottoms, Dresses, Outfits, then the
-  // present kinds. Empty edge cells stay black, like every other rest cell.
+  // Full wardrobe retains the standard centre-black grid. Its Accessories
+  // entry opens the full menu without taking a slot from suggested outfits.
   const kinds = [...ACCESSORY_KINDS, DRESS_UP].filter(k => present.includes(k.id));
-  const KIND_CELLS = [[2,4],[3,1],[3,2],[3,3],[3,4]];
   const kindTile = (k, row, col) =>
     ({ label: k.label, type: "category", symbol: k.symbol, load: "acc_" + k.id, row, col });
   const buildButtons = [
@@ -1731,21 +1715,15 @@ async function buildCataloged(cat, known) {
     { label: "Dresses", type: "category", symbol: "dress", load: "cat_dress", row: 1, col: 4 },
     { label: "Outfits", type: "category", symbol: "clothes", load: "cat_outfit", row: 2, col: 1 },
   ];
-  KIND_CELLS.forEach(([row, col], i) => {
-    if (i >= kinds.length) return;
-    // Six kinds can never fit five cells: the LAST cell becomes the door to
-    // the menu rather than the fifth kind, so nothing is ever unreachable.
-    const overflow = i === KIND_CELLS.length - 1 && kinds.length > KIND_CELLS.length;
-    buildButtons.push(overflow ? accDoor(row, col) : kindTile(kinds[i], row, col));
-  });
-  boards.push({ id: "build", name: "Build my own", rows: 3, columns: 4, buttons: buildButtons });
+  if (kinds.length) buildButtons.push(accDoor(2, 4));
+  boards.push({ id: "build", name: "Full wardrobe", rows: 3, columns: 4, buttons: buildButtons });
   // The menu behind the door: the same shape, Back top-left, one tile per
   // present kind over the nine remaining edge cells. Seven kinds is the most
   // there can ever be (ACCESSORY_KINDS + Dress up), so it always fits on one page.
   if (kinds.length) {
     const MENU_CELLS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,1],[3,2],[3,3],[3,4]];
     boards.push({ id: "acc", name: "Accessories", rows: 3, columns: 4, buttons: [
-      { label: "Back", type: "back", glyph: "←", load: "today", row: 1, col: 1 },
+      { label: "Back", type: "back", glyph: "←", load: "build", row: 1, col: 1 },
       ...kinds.map((k, i) => kindTile(k, MENU_CELLS[i][0], MENU_CELLS[i][1])),
     ]});
   }
@@ -1755,11 +1733,11 @@ async function buildCataloged(cat, known) {
     // (dad 9/1: "the shorts image are pants" — both tiles wore the same jeans)
     { label: "Shorts", type: "category", symbol: "13638", load: "cat_shorts" },
     { label: "Back", type: "back", glyph: "←", load: "today" },
+    wardrobeDoor(2, 2),
   ]});
-  // Every browse page carries the door at [3,4] — she can be on page 3 of the
-  // tops when she decides she wants a jacket (spec §4.1).
+  // Full wardrobe is reachable from every browse page at the same corner.
   // A fancy garment is in none of them (spec 2026-09-29 D3): it lives on Dress up.
-  const door = present.length ? accDoor(3, 4) : null;
+  const door = wardrobeDoor(3, 4);
   const browse = cat => items.filter(i => i.category === cat && !isFancy(i));
   boards.push(...gridPages("cat_top", "Tops", browse("top"), "today", door));
   boards.push(...gridPages("cat_pants", "Pants", browse("pants"), "choose_bottom", door));
@@ -1768,19 +1746,17 @@ async function buildCataloged(cat, known) {
   boards.push(...gridPages("cat_outfit", "Outfits", browse("set"), "build", door));
   // Every browse grid above asks for a GARMENT word, so an accessory falls
   // into none of them (preflight 2): each present kind gets its own pages.
-  // Back goes to `today` — the door can be entered from anywhere, so the one
-  // place she is always happy to land is home. The day's band only RE-ORDERS
+  // Back goes to Full wardrobe. The day's band only RE-ORDERS
   // these pages (accessoryOrder): on a cold morning the coats lead, but no
-  // accessory is ever weather-hidden (spec §4.1). No door on these pages: she
-  // is already behind it.
+  // accessory is ever weather-hidden (spec §4.1). Full wardrobe stays reachable.
   // Dress up is every fancy piece — garments and accessories — in id order
   // (a fancy accessory stays on its own kind's page too; it was never dealt
   // anyway), `type: "clothing"` tiles exactly like a browse page.
   for (const k of kinds)
     boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
       ? items.filter(isFancy).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-      : accessoryOrder(items.filter(i => i.category === k.id), band), "today"));
-  return { boards, present, weatherless: !w };
+      : accessoryOrder(items.filter(i => i.category === k.id), band), "build", door));
+  return { boards, present, weatherless: !w, weatherStale: !!(w && w.stale) };
 }
 
 // No catalog yet -> no board. Decide which coaching state the splash shows.
@@ -1867,11 +1843,15 @@ async function regenerate(force) {
   // the ladder answers yet. Still nothing = leave that board exactly as it is
   // and say so — redrawing every composite to put back the same blind board
   // four times an hour buys her nothing. An answer is handed to the build
-  // below, so the ladder is walked once per build.
+  // below, so the ladder is walked once per build. The stored week again
+  // (both providers still down) is the same answer the board already has:
+  // nothing to redraw either (spec 2026-10-19 §5).
   const known = workerData.weatherRetry ? await weather() : null;
   if (workerData.weatherRetry && !known)
     return { rebuildOnly: true, weatherless: true, retried: true, photos: photos.length };
-  const { boards, present, weatherless } = await buildCataloged(cat, known);
+  if (workerData.weatherRetry && known.stale)
+    return { rebuildOnly: true, weatherStale: true, retried: true, photos: photos.length };
+  const { boards, present, weatherless, weatherStale } = await buildCataloged(cat, known);
   fs.mkdirSync(RECIPES(), { recursive: true });
   // `categories` is the whole filing cabinet, not this wardrobe's corner of
   // it: the board's hold sheet names its chips from here (spec §4.2), and a
@@ -1893,6 +1873,9 @@ async function regenerate(force) {
            // weatherless only when it really happened: the shell reads it as
            // "dealt with no weather at all, try the ladder again" (spec §7.3)
            ...(weatherless ? { weatherless: true } : {}),
+           // ...and weatherStale when the deal used the stored week after
+           // both providers failed: the shell retries it the same way (§5)
+           ...(weatherStale ? { weatherStale: true } : {}),
            ...(historyUnread ? { historyUnread: true } : {}) };
 }
 

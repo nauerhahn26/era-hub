@@ -33,7 +33,7 @@ feature doesn't touch. A green gate then stamps the hub's tree **and** every
 sibling worktree tree it sourced (each with its own `dirty=1` verdict), so
 `worktree.sh land` accepts each repo in turn; land in dependency order, in one
 sitting while the 2 h stamps hold: era-core → era-board → era-making-words →
-era-pencil → era-hub, and never restart the live 8377 hub in between.
+era-pencil → era-gaze → era-hub, and never restart the live 8377 hub in between.
 
 ## The three release shapes
 
@@ -156,3 +156,44 @@ carrying that change, so the first delivery of it is a normal release (patch or
 signed); an older hub ignores the body and the script says so plainly.
 **App packs still come from the public feed** (`server.js` downloads packs from
 `updater.FEED`) — only the suite tarball comes from the pushed dist.
+
+## Alternative Pencil dwell
+
+The Pencil has an independent `pencilDwellMs` setting (default 1500 ms,
+600–3000 ms). Settings → Alternative Pencil dwell time saves it for the next
+Pencil opening. Other apps continue using `dwellMs`. The Pencil partner strip's
+dwell buttons also save this value; its exit and talk doors remain twice its
+current dwell. Predicted words retain their existing 2000 ms hold.
+
+## Overlay rendering regression
+
+Gaze engine changes can use `era-gaze--wt-<slug>` too: payload source, gate
+contracts and gate stamps follow `ERA_WT_SUFFIX`. Run the gaze repo's
+`tests/overlay-regression.ps1` on an interactive Windows desktop when changing
+overlays; it verifies drawing, hiding, GDI resource stability and recovery from
+conversion failure. A responding gaze `/status` alone does not detect a modal
+WinForms error that has blocked the UI timer.
+
+## Clothing page layout
+
+The approved [clothing page 1 layout](specs/2026-10-17-clothing-page-1.md)
+uses eight outfit slots first, then seven beside Back. Weather spans the center
+pair; Full wardrobe replaces Build my own, and Accessories lives inside it.
+Shipped in v1.0.3 across era-hub and era-board. Future changes to both repos
+use matching feature worktrees and `ERA_WT_SUFFIX` as described above.
+
+## Per-device speaker limit
+
+Settings → Volume cap for this device saves On/Off and a whole percentage
+(0–100, default 45) to the local gaze engine through `/volcap`
+(`deviceEnabled`, `deviceCap`). Open Settings on the device being adjusted.
+Both the mode and percentage persist across restarts. Raising the cap does not
+raise current volume. Music volume cap remains the separate shared music setting.
+New devices retain the engine's opt-in behavior; their initial cap value is 45.
+
+On the first explicit save, the engine neutralizes the legacy watchdog's saved
+ceiling (`CAP=100`) and stops only its known executable. A scheduled restart
+therefore cannot reimpose 45 or undo Off. The integrated engine owns the saved
+limit afterward. Older Settings clients keep their existing endpoint fields.
+The new control requires an updated local engine and verifies its reply before
+reporting success. Windows regression: `era-gaze/tests/volume-cap-regression.ps1`.

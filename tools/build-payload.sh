@@ -13,8 +13,7 @@ ROOT="$(dirname "$HUB")"
 # (<repo>--wt-<slug>); when set and that directory exists, source the
 # sibling from there, else from the main checkout as before. A dry-run cut
 # from a hub worktree otherwise ships MASTER's apps under the feature's hub.
-# era-gaze (engine source) and era-family (the private cache) have no feature
-# worktrees and stay on $ROOT.
+# era-gaze source follows the same worktree selection; era-family stays private.
 sib() { local d="$ROOT/$1${ERA_WT_SUFFIX:-}"; [ -d "$d" ] && echo "$d" || echo "$ROOT/$1"; }
 # Default output lives INSIDE this checkout (worktree-safe: the old $ROOT/dist
 # default made a worktree run rm -rf the main checkout's reference payload).
@@ -111,7 +110,7 @@ cp "$(sib era-making-words)/content/lessons.json" "$OUT/public/lessons.json"
 # the Tobii runtime already present on Tobii devices (NuGet fallback) — we
 # never redistribute Tobii's binaries.
 mkdir -p "$OUT/gaze"
-cp "$ROOT/era-gaze/device/ERAgaze.cs" "$OUT/gaze/ERAgaze.cs"
+cp "$(sib era-gaze)/device/ERAgaze.cs" "$OUT/gaze/ERAgaze.cs"
 cp -r "$(sib era-pencil)/app" "$OUT/public/pencil"
 cp -r "$(sib era-board)/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"
@@ -166,6 +165,9 @@ if exist "%~dp0node\node.exe" set NODE=%~dp0node\node.exe
 start "Our Era Comms hub" /min "%NODE%" server.js %PORT%
 timeout /t 2 /nobreak >nul
 :open
+rem Hub only (the Startup link at logon, spec 2026-10-19): start-hub.bat PORT --hub-only
+rem starts the hub if it is down and opens NOTHING - no resume, no sweep, no page.
+if "%~2"=="--hub-only" goto done
 rem Paused app? (talk door, 9/17) Leaving an app by the talk door does NOT close
 rem it: the hub parks that kiosk window minimized while she says her piece in TD
 rem Snap. So before we close anything, ask the hub whether the app this tile just

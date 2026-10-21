@@ -95,7 +95,23 @@ test("after the update: profile intact, removed pack still absent, chosen packs 
   // the candidate's boot pass rewrites the home shortcut under the new name and
   // deletes the old one (spec R1: Desktop shows only Our Era Comms.lnk)
   await vm.waitFor(() => vm.desktopLink() === vm.HOME_LINK && !vm.exists(GUEST_HOME + "\\Desktop\\" + vm.OLD_HOME_LINK) && { ok: 1 },
-    { timeout: 120000, every: 5000, what: "the Desktop to show " + vm.HOME_LINK + " only (it had " + prevLink + ")" });  const apps = vm.hubGet("/apps").apps;
+    { timeout: 120000, every: 5000, what: "the Desktop to show " + vm.HOME_LINK + " only (it had " + prevLink + ")" });
+  // the hub's logon start (spec 2026-10-19 §4.2): the candidate's boot pass lays
+  // Startup\Our Era Comms.lnk -> start-hub.bat 8377 --hub-only, so a reboot never
+  // leaves the hub dead until a tile tap. Read the way leg A reads its .lnk files.
+  const hubLink = await vm.waitFor(() => {
+    vm.bat("lnk-hub", [
+      `powershell -NoProfile -Command "$p = Join-Path ([Environment]::GetFolderPath('Startup')) 'Our Era Comms.lnk'; if (Test-Path $p) { $l = (New-Object -ComObject WScript.Shell).CreateShortcut($p); Write-Output ($l.TargetPath + '|' + $l.Arguments + '|' + $l.WorkingDirectory) } else { Write-Output 'missing' }" > ${GUEST_HOME}\\lnk-hub.txt`,
+    ]);
+    const t = vm.guestText("lnk-hub.txt").trim();
+    return t && t !== "missing" && t;
+  }, { timeout: 120000, every: 5000, what: "Startup\\Our Era Comms.lnk (the hub's logon start)" });
+  const [hubTarget, hubArgs, hubWd] = hubLink.split("|");
+  assert.ok(/\\start-hub\.bat$/i.test(hubTarget), "the Startup link runs start-hub.bat — got " + JSON.stringify(hubLink));
+  assert.equal(hubTarget.toLowerCase(), (vm.INSTDIR + "\\start-hub.bat").toLowerCase(), "…the installed one");
+  assert.equal(hubArgs, "8377 --hub-only", "the Startup link starts the hub only, no page — got " + JSON.stringify(hubLink));
+  assert.equal((hubWd || "").toLowerCase(), vm.INSTDIR.toLowerCase(), "it runs in the install folder");
+  const apps = vm.hubGet("/apps").apps;
   assert.deepEqual(apps.filter((a) => a.enabled).map((a) => a.id), ["making-words", "pencil", "reader"]);
   for (const [tile, url] of [["The Pencil", /\/pencil\//], ["Book Reader", /\/reader\//]]) {
     await vm.home(page);

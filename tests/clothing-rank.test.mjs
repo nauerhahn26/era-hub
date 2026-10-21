@@ -909,7 +909,9 @@ describe("buildCandidates — staples, coverage, fill (outfit_set.py:455-536)", 
     const history = {
       days: {
         "2026-08-16": { band: "warm", page1: [["item_r", "item_b"]] },
-        "2026-09-02": { band: "warm", page1: [["item_t3", "item_b2"]] },
+        // Outside the combination-return window: this case isolates the
+        // coverage fallback, rather than the newer weekly-spacing rule.
+        "2026-08-29": { band: "warm", page1: [["item_t3", "item_b2"]] },
       },
       events: {
         "2026-09-01": [{ kind: "yes", combo: ["item_t0", "item_b"] }],
@@ -1348,4 +1350,41 @@ describe("hub deviation (W1, A4-4): items are sorted by id before pooling", () =
     assert.deepEqual(keysOf(a), keysOf(b));
     assert.deepEqual(keysOf(a), keysOf(c));
   });
+});
+
+
+test("an eight-look first page and seven-look deeper pages preserve per-page garment variety", () => {
+  const items = makeItems({ n: 60, seed: 1 });
+  const opts = { items, temp: null, cap: 22, perPage: 8, laterPerPage: 7, seed: "2026-10-17" };
+  const dealt = R.buildCandidates(opts);
+  assert.equal(dealt.length, 22);
+  for (const page of [dealt.slice(0, 8), dealt.slice(8, 15), dealt.slice(15)]) {
+    const ids = page.flatMap(c => c.pieces.map(p => p.id));
+    assert.equal(new Set(ids).size, ids.length, "no garment repeats within a roomy page");
+  }
+  const memory = R.recordOffer({}, opts.seed, dealt, 8, null);
+  assert.equal(memory.days[opts.seed].page1.length, 8);
+  const tomorrow = R.buildCandidates({ ...opts, seed: "2026-10-18", history: memory });
+  const yesterday = new Set(dealt.slice(0, 8).map(c => c.key));
+  assert.ok(tomorrow.slice(0, 8).every(c => !yesterday.has(c.key)));
+  assert.ok(yesterday.has(tomorrow[8].key), "yesterday starts after eight, at page 2");
+});
+
+
+test("a seven-bottom wardrobe fills eight first-page choices without stealing yesterday from page 2", () => {
+  const items = [
+    ...Array.from({ length: 8 }, (_, i) => top("item_top" + i)),
+    ...Array.from({ length: 7 }, (_, i) => bottom("item_bottom" + i)),
+  ];
+  const combo = ["item_top3", "item_bottom2"];
+  const opts = { items, temp: null, cap: 22, perPage: 8, laterPerPage: 7, seed: "2026-10-17",
+    history: { days: { "2026-10-16": { page1: [combo] } } } };
+  const dealt = R.buildCandidates(opts);
+  assert.equal(dealt.length, 22);
+  const yesterday = combo.join("+");
+  assert.ok(!dealt.slice(0, 8).some(c => c.key === yesterday));
+  assert.equal(dealt[8].key, yesterday);
+  assert.equal(new Set(dealt.slice(0, 8).map(c => c.key)).size, 8);
+  const ids = dealt.slice(0, 7).flatMap(c => c.pieces.map(p => p.id));
+  assert.equal(new Set(ids).size, ids.length, "first seven remain garment-distinct");
 });

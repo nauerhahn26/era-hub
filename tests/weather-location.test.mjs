@@ -133,7 +133,7 @@ function dropCache() {
 function tile() {
   const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
   return r.boards.find(b => b.id === "today")
-          .buttons.find(b => b.type === "control" && b.row === 1 && b.col === 1);
+          .buttons.find(b => b.type === "control" && b.row === 2 && b.col === 2 && b.col_span === 2);
 }
 
 before(async () => {
@@ -275,7 +275,7 @@ function hubTile() {
   try {
     const r = JSON.parse(fs.readFileSync(path.join(HTMP, "recipes", "today.json"), "utf8"));
     return r.boards.find(b => b.id === "today")
-            .buttons.find(b => b.type === "control" && b.row === 1 && b.col === 1);
+            .buttons.find(b => b.type === "control" && b.row === 2 && b.col === 2 && b.col_span === 2);
   } catch { return null; }
 }
 // A bounded wait, and the bound is load-bearing: the hub runs a startup build
@@ -594,7 +594,7 @@ const distinctDays = (h) => new Set(h.time.map(t => String(t).slice(0, 10))).siz
 function rungs(om, nws) { OM = om; NWS = nws; }
 function hasTile() {
   const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
-  return r.boards.find(b => b.id === "today").buttons.some(b => b.type === "control" && b.row === 1 && b.col === 1);
+  return r.boards.find(b => b.id === "today").buttons.some(b => b.type === "control" && b.row === 2 && b.col === 2 && b.col_span === 2);
 }
 
 test("rung 1 serves the day: one call, the whole week stored, source open-meteo", async () => {
@@ -646,9 +646,13 @@ test("both fail, the store covers today: the tile comes from the store and says 
     hourly: series([today()], () => 62, () => 3) };
   writeCache(rec);
   const before = asks.length;
-  await clothing.rebuildToday();
+  const r = await clothing.rebuildToday();
   assert.equal(asks.length, before + 1, "an old series is refreshed first — the store is the fallback, never the first answer");
   assert.ok(hasTile(), "a forecast fetched three days ago for today beats no forecast at all");
+  // ...but it is not a forecast anyone fetched today: the build says so, and
+  // the shell keeps walking the ladder (spec 2026-10-19 §5)
+  assert.equal(r.weatherStale, true, "a rung-3 answer is reported stale: " + JSON.stringify(r));
+  assert.ok(!r.weatherless, "it HAS weather — stale is not weatherless");
   const t = tile();
   assert.match(t.label, /^62°/, t.label);
   assert.equal(t.symbol, "cloud");
@@ -656,6 +660,57 @@ test("both fail, the store covers today: the tile comes from the store and says 
     "the fetch time, not the build time, so a parent can see it is three days old: " + t.footnote);
   assert.deepEqual(readCache(), rec, "and a failed refresh leaves the store exactly as it was");
   rungs("ok", "ok");
+});
+
+// 2026-10-14: a reboot, a logon start that races Wi-Fi, and both providers
+// fail — rung 3 deals from a week up to six days old, and until now that
+// counted as weather found, so the board stood all day on old numbers. A
+// stored-week answer is blind for the retry's purposes (spec 2026-10-19 §5).
+test("a stored-week board keeps retrying the ladder until a provider answers, then re-deals once", async () => {
+  rungs("403", "404");
+  settings({ location: TYPED, weatherWindow: { from: 10, to: 14 } });
+  const fetchedAt = Date.now() - 3 * 24 * HOUR;
+  const rec = { at: fetchedAt, place: PLACE, source: "open-meteo",
+    hourly: series([today()], () => 62, () => 3) };
+  writeCache(rec);
+  const r = await clothing.rebuildToday();
+  assert.equal(r.weatherStale, true, "dealt from the store after both providers failed");
+  assert.match(tile().label, /^62°/);
+
+  // the §7.3 spacing law holds for a stale board exactly as for a blind one
+  process.env.ERA_WEATHER_RETRY_MS = String(10 * 60e3);
+  assert.equal(clothing.tick("test"), null, "the ladder was walked a moment ago: not again yet");
+  process.env.ERA_WEATHER_RETRY_MS = "0";
+
+  // still down: the tick walks the ladder, gets the store again, redraws nothing
+  const board = path.join(TMP, "recipes", "today.json");
+  const mtime = fs.statSync(board).mtimeMs;
+  const asked = asks.length;
+  const first = clothing.tick("test");
+  assert.ok(first, "a board dealt from the stored week is not the day's work: the tick acts");
+  const r1 = await first;
+  assert.equal(asks.length, asked + 1, "...and what it does is ask the providers again");
+  assert.equal(r1.rebuildOnly, true);
+  assert.equal(r1.weatherStale, true);
+  assert.equal(r1.retried, true);
+  assert.equal(r1.built, undefined, "a retry that got the same stored week draws nothing");
+  assert.equal(fs.statSync(board).mtimeMs, mtime, "...and leaves the board alone");
+  assert.deepEqual(readCache(), rec, "the store is untouched by a failed refresh");
+  assert.match(tile().label, /^62°/);
+
+  // the providers come back: the retry re-deals on fresh numbers
+  rungs("ok", "ok");
+  const second = clothing.tick("test");
+  assert.ok(second, "still stale, so the tick tries again");
+  const r2 = await second;
+  assert.equal(r2 && r2.mode, "cataloged", "a RE-SORT of what she has");
+  assert.ok(!r2.weatherStale, "a provider answered: not stale");
+  assert.match(tile().label, /^70°/);
+  const c = readCache();
+  assert.equal(c.source, "open-meteo", "the store is rewritten");
+  assert.ok(c.at > fetchedAt, "...with today's fetch time");
+  assert.equal(clothing.tick("test"), null, "and the flag is spent: nothing left to retry");
+  delete process.env.ERA_WEATHER_RETRY_MS;
 });
 
 test("both fail and the store does not cover today: no tile, and the next tick tries again", async () => {
@@ -705,18 +760,20 @@ test("under three hours the store is served with no call; older is refreshed, an
   writeCache({ at: Date.now() - 1 * HOUR, place: PLACE, source: "weather.gov",
     hourly: series(week, () => 61) });
   let before = asks.length, nwsBefore = nwsHits.length;
-  await clothing.rebuildToday();
+  let r = await clothing.rebuildToday();
   assert.equal(asks.length, before, "an hour old: no call");
   assert.equal(nwsHits.length, nwsBefore, "...to either service");
   assert.match(tile().label, /^61°/);
+  assert.ok(!r.weatherStale, "an under-3-h store is fresh weather, not stale: " + JSON.stringify(r));
 
   writeCache({ at: Date.now() - 4 * HOUR, place: PLACE, source: "weather.gov",
     hourly: series(week, () => 61) });
   before = asks.length;
-  await clothing.rebuildToday();
+  r = await clothing.rebuildToday();
   assert.equal(asks.length, before + 1, "four hours old: refreshed");
   assert.equal(readCache().source, "open-meteo", "a success replaces the store");
   assert.match(tile().label, /^70°/);
+  assert.ok(!r.weatherStale, "a provider's answer is not stale");
 
   rungs("403", "dead");
   const old = { at: Date.now() - 4 * HOUR, place: PLACE, source: "open-meteo",

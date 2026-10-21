@@ -72,7 +72,7 @@ function setWindow(win) {
 function tile() {
   const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
   const today = r.boards.find(b => b.id === "today");
-  return today.buttons.find(b => b.type === "control" && b.row === 1 && b.col === 1);
+  return today.buttons.find(b => b.type === "control" && b.row === 2 && b.col === 2 && b.col_span === 2);
 }
 // every outfit's garment ids, from every today page (today, today_2, ...)
 function dealtIds() {

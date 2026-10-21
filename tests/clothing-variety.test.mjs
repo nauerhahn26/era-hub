@@ -253,7 +253,7 @@ describe("yesterday's page 1 leads page 2 (outfit_set.py:538-556, apportioned by
         assert.equal(page2.filter(c => yKeys.has(c.key)).length, run, `${band} ${DATES[i]}: yesterday's looks come first, none after a fresh one`);
         const today = new Set(keysOf(lineups[i]));
         for (const k of yKeys) assert.ok(today.has(k), `${band} ${DATES[i]}: ${k} is still dealt`);
-        const ctx = { seed: DATES[i], pairing: R.normalizePairing(PAIRING), favorites: new Set(), picks: R.derivePicks(seen[i].events, DATES[i]), lastP1: R.lastPage1(seen[i], DATES[i]), temp: TEMP[band] };
+        const ctx = { seed: DATES[i], pairing: R.normalizePairing(PAIRING), favorites: new Set(), picks: R.derivePicks(seen[i].events, DATES[i]), lastP1: R.lastPage1(seen[i], DATES[i]), lastComboP1: R.lastComboPage1(seen[i], DATES[i]), temp: TEMP[band] };
         const scores = page2.slice(0, run).map(c => R.rankOf(c.pieces, ctx));
         for (let k = 1; k < scores.length; k++) assert.ok(scores[k - 1] >= scores[k], `${band} ${DATES[i]}: page 2 in ranked order`);
       }
