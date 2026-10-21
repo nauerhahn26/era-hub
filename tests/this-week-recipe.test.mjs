@@ -67,7 +67,10 @@ const at = (b, row, col) => b.buttons.filter(c => c.row === row && c.col === col
 
 // ---------------------------------------------------------------- in-process
 
-test("root board: exactly Watch [1,1] + Talk [1,4], say_on_load on the first", () => {
+const PLAY_DOOR = { type: "link", href: "/play/?w=" + WEEK, label: "Play", say: "play",
+                    glyph: "🎲", row: 3, col: 4 };
+
+test("root board: Watch [1,1] + Talk [1,4] + Play [3,4], say_on_load on the first", () => {
   const d = fs.mkdtempSync(path.join(TMP, "d-"));
   writeWeek(d, WEEK, manifest());
   const { recipe } = tw.build(d);
@@ -75,11 +78,13 @@ test("root board: exactly Watch [1,1] + Talk [1,4], say_on_load on the first", (
   const root = board(recipe, "this-week");
   assert.equal(root.rows, 3); assert.equal(root.columns, 4);
   assert.equal(root.name, "Shadows!");
-  assert.equal(root.buttons.length, 2);
+  assert.equal(root.buttons.length, 3);
   assert.deepEqual(root.buttons[0], { type: "show", board: "watch", label: "Watch", say: "watch",
     glyph: "🎬", row: 1, col: 1, say_on_load: "This week: Shadows!" });
   assert.deepEqual(root.buttons[1], { type: "show", board: "talk-1", label: "Talk", say: "talk",
     glyph: "💬", row: 1, col: 4 });
+  // the fixture's play holds only a playit: that alone opens the door
+  assert.deepEqual(root.buttons[2], PLAY_DOOR);
 });
 
 test("watch board: Back, one ready video, two 'not here yet' in seats", () => {
@@ -153,8 +158,8 @@ test("ETag changes when the zero-byte mp4 gains bytes, stable otherwise", () => 
   const dir = writeWeek(d, WEEK, manifest());
   const e1 = tw.build(d).etag, e2 = tw.build(d).etag;
   assert.equal(e1, e2);
-  assert.match(e1, /^"\d+-\d+-[0-9a-f]+-r1"$/);
-  assert.equal(tw.THIS_WEEK_REV, 1);
+  assert.match(e1, /^"\d+-\d+-[0-9a-f]+-r2"$/);
+  assert.equal(tw.THIS_WEEK_REV, 2);
   fs.writeFileSync(path.join(dir, B + ".mp4"), Buffer.alloc(512, 1));
   const e3 = tw.build(d).etag;
   assert.notEqual(e3, e1);
@@ -188,6 +193,191 @@ test("a manifest with pages is refused: err etag, root-only", () => {
   const out = tw.build(d);
   assert.match(out.etag, /^"err-\d+"$/);
   assert.deepEqual(out.recipe.boards.map(b => b.id), ["this-week"]);
+});
+
+// ------------------------------------------------- Play (spec 2026-10-12 §5.6)
+
+const ch = (label, glyph, right, sound) => {
+  const c = { label, glyph };
+  if (sound !== undefined) c.sound = sound;
+  c.right = right ? true : null;
+  return c;
+};
+const which = (id, skill, q, choices) => ({ id, skill, q, choices });
+function fullPlay() {
+  return {
+    which: [
+      which("w1", "true-false", "A shadow is light. Yes or no?",
+        [ch("no", "👎", true), ch("yes", "👍", false)]),   // listed no-first, kept as listed
+      which("w2", "compare", "Which shadow is bigger?", [ch("tree", "🌳", true), ch("ant", "🐜", false)]),
+      which("w3", "predict", "What makes a shadow?",
+        [ch("light", "💡", true, "bell-high"), ch("water", "💧", false), ch("sound", "🔔", false)]),
+      which("w4", "count", "How many lamps?", [ch("two", "🪔", true), ch("five", "🖐️", false)]),
+      which("w5", "add", "One sun and one moon make?", [ch("two", "✌️", true), ch("three", "🌟", false)]),
+      which("w6", "rhyme", "What rhymes with sun?", [ch("fun", "🎉", true), ch("cat", "🐱", false)]),
+      which("w7", "decode", "Which word says bed?", [ch("bed", "🛏️", true), ch("bad", "😠", false)]),
+      which("w8", "sequence", "What comes first?", [ch("lamp on", "💡", true), ch("shadow", "🌑", false)]),
+      which("w9", "cause", "Why is it dark at night?", [ch("no sun", "🌙", true), ch("rain", "🌧️", false)]),
+    ],
+    sort: { bins: [{ label: "makes light", glyph: "💡" }, { label: "no light", glyph: "🌑" }],
+            skill: "classify",
+            items: [{ label: "sun", glyph: "☀️", bin: 0 }, { label: "lamp", glyph: "🪔", bin: 0 },
+                    { label: "rock", glyph: "🪨", bin: 1 }, { label: "book", glyph: "📕", bin: 1 }] },
+    playit: { instrument: "harmonica", q: "Which hole makes the lowest note?", answer: 0 },
+  };
+}
+const BEFORE = which("b1", "predict", "Will the shadow be big or small?",
+  [ch("big", "🐘", true, "drum-low"), ch("small", "🐜", false, "drum-high")]);
+function fullManifest() {
+  const m = manifest({ play: fullPlay() });
+  m.watch[0] = { ...m.watch[0], before: BEFORE };
+  return m;
+}
+
+test("play.json: a full week validates whole, the root has the Play door", () => {
+  const d = fs.mkdtempSync(path.join(TMP, "d-"));
+  writeWeek(d, WEEK, fullManifest());
+  const pj = tw.playJson(d, WEEK);
+  assert.deepEqual(Object.keys(pj).sort(), ["before", "dropped", "play", "title", "week_of"]);
+  assert.equal(pj.week_of, WEEK);
+  assert.equal(pj.title, "Shadows!");
+  assert.deepEqual(pj.dropped, []);
+  assert.deepEqual(pj.play, fullPlay());
+  assert.equal(pj.play.which[0].choices[0].label, "no", "the hub keeps manifest order; seating is the page's");
+  assert.deepEqual(pj.before, { [A]: BEFORE });
+  const root = board(tw.build(d).recipe, "this-week");
+  assert.deepEqual(at(root, 3, 4), [PLAY_DOOR]);
+  // validatePlay is the same answer without the disk
+  const v = tw.validatePlay(fullManifest());
+  assert.deepEqual(v, { play: fullPlay(), before: { [A]: BEFORE }, dropped: [] });
+});
+
+test("play.json: each malformed item is dropped with a reason, the page intact", () => {
+  const m = fullManifest();
+  const p = m.play;
+  p.which.push(which("x1", "compare", "Two rights?", [ch("a", "🌳", true), ch("b", "🐜", true)]));
+  p.which.push(which("x2", "compare", "Four choices?",
+    [ch("a", "🌳", true), ch("b", "🐜"), ch("c", "💡"), ch("d", "🌑")]));
+  p.which[2] = which("w3", "predict", "Bad glyph?", [ch("a", "ab", true), ch("b", "🐜")]);
+  p.playit = { instrument: "harmonica", q: "Which hole?", answer: 10 };
+  p.sort = { ...p.sort, bins: [{ label: "only", glyph: "💡" }] };
+  m.watch[1] = { ...m.watch[1], before: which("b2", "predict", "No right?",
+    [ch("big", "🐘"), ch("small", "🐜")]) };
+  const d = fs.mkdtempSync(path.join(TMP, "d-"));
+  writeWeek(d, WEEK, m);
+  const pj = tw.playJson(d, WEEK);
+  // which: 9 + 2 pushed - the bad glyph (w3) - two rights - four choices = 8
+  assert.deepEqual(pj.play.which.map(w => w.id), ["w1", "w2", "w4", "w5", "w6", "w7", "w8", "w9"]);
+  assert.equal(pj.play.sort, null);
+  assert.equal(pj.play.playit, null);
+  assert.deepEqual(pj.before, { [A]: BEFORE });
+  const why = (field, test) => pj.dropped.find(x => x.field === field && test(x));
+  assert.ok(why("play.which", x => x.index === 9 && /right/.test(x.why)), "two rights");
+  assert.ok(why("play.which", x => x.index === 10 && /choices/.test(x.why)), "four choices");
+  assert.ok(why("play.which", x => x.index === 2 && /glyph/.test(x.why)), "bad glyph");
+  assert.ok(why("play.playit", x => /answer/.test(x.why)), "answer 10");
+  assert.ok(why("play.sort", x => /bins/.test(x.why)), "one bin");
+  assert.ok(why("before", x => x.id === B && /right/.test(x.why)), "before with no right");
+  assert.equal(pj.dropped.length, 6);
+  for (const x of pj.dropped) assert.ok(typeof x.why === "string" && x.why, JSON.stringify(x));
+  // the board is untouched: watch + talk as before, Play still opens on the which left
+  const r = tw.build(d).recipe;
+  assert.equal(board(r, "watch").buttons.length, 4);
+  assert.equal(board(r, "talk-1").buttons.filter(c => c.type === "word").length, 8);
+  assert.deepEqual(at(board(r, "this-week"), 3, 4), [PLAY_DOOR]);
+});
+
+test("validatePlay: the rest of the schema's rules, one item at a time", () => {
+  const one = (mut) => { const m = fullManifest(); mut(m.play, m); return tw.validatePlay(m); };
+  const W = (o) => one(p => { p.which = [o]; });
+  const good = fullPlay().which[1];
+  assert.equal(W(good).play.which.length, 1);
+  assert.equal(W({ ...good, id: "" }).play.which.length, 0, "empty id");
+  assert.equal(W({ ...good, skill: "spelling" }).play.which.length, 0, "skill outside the twelve");
+  assert.equal(W({ ...good, q: "" }).play.which.length, 0, "empty q");
+  assert.equal(W({ ...good, q: "x".repeat(161) }).play.which.length, 0, "q over 160");
+  assert.equal(W({ ...good, q: "x".repeat(160) }).play.which.length, 1, "q at 160");
+  assert.equal(W({ ...good, choices: [ch("a", "🌳", true)] }).play.which.length, 0, "one choice");
+  assert.equal(W({ ...good, choices: [ch("", "🌳", true), ch("b", "🐜")] }).play.which.length, 0, "empty label");
+  assert.equal(W({ ...good, choices: [ch("x".repeat(41), "🌳", true), ch("b", "🐜")] }).play.which.length, 0,
+    "label over 40");
+  assert.equal(W({ ...good, choices: [ch("a", "🌳", true, 7), ch("b", "🐜")] }).play.which.length, 0,
+    "sound not a string");
+  assert.equal(W({ ...good, choices: [ch("a", "🌳", true, null), ch("b", "🐜")] }).play.which.length, 1,
+    "sound null is absent");
+  assert.equal(W({ ...good, choices: [ch("a", "🌳", true, "no-such-voice"), ch("b", "🐜")] })
+    .play.which.length, 1, "an unknown sound name is the page's to ignore");
+  assert.equal(W({ ...good, choices: [ch("a", "🌳"), ch("b", "🐜")] }).play.which.length, 0, "no right");
+  assert.equal(W(null).play.which.length, 0, "not an object");
+  const dup = one(p => { p.which = [good, { ...good }]; });
+  assert.equal(dup.play.which.length, 1);
+  assert.match(dup.dropped[0].why, /duplicate/);
+  const eleven = one(p => { p.which = Array.from({ length: 11 }, (_, i) => ({ ...good, id: "w" + i })); });
+  assert.equal(eleven.play.which.length, 10);
+  assert.equal(eleven.dropped.length, 1);
+  // sort
+  const S = (mut) => one(p => mut(p.sort)).play.sort;
+  assert.notEqual(S(() => {}), null);
+  assert.equal(S(s => { s.bins.push({ label: "third", glyph: "🌳" }); }), null, "three bins");
+  assert.equal(S(s => { s.bins[0].glyph = "ab"; }), null, "bin glyph");
+  assert.equal(S(s => { s.bins[1].label = ""; }), null, "bin label");
+  assert.equal(S(s => { s.items = s.items.slice(0, 3); }), null, "three items");
+  assert.equal(S(s => { while (s.items.length < 11) s.items.push({ label: "x", glyph: "🪨", bin: 1 }); }), null,
+    "eleven items");
+  assert.equal(S(s => { s.items[0].bin = 2; }), null, "bin 2");
+  assert.equal(S(s => { s.items[0].bin = "0"; }), null, "bin a string");
+  assert.equal(S(s => { s.items[0].glyph = "rock"; }), null, "item glyph");
+  assert.equal(S(s => { s.items[0].label = ""; }), null, "item label");
+  assert.equal(S(s => { s.skill = "spelling"; }), null, "sort skill");
+  // playit: positions 10, 10, 2, 2
+  const P = (o) => one(p => { p.playit = o; }).play.playit;
+  for (const [instrument, n] of [["harmonica", 10], ["xylophone", 10], ["string-telephone", 2], ["shadow-puppet", 2]]) {
+    assert.notEqual(P({ instrument, q: "Which?", answer: n - 1 }), null, instrument + " " + (n - 1));
+    assert.equal(P({ instrument, q: "Which?", answer: n }), null, instrument + " " + n);
+  }
+  assert.equal(P({ instrument: "harmonica", q: "Which?", answer: -1 }), null, "negative");
+  assert.equal(P({ instrument: "harmonica", q: "Which?", answer: 1.5 }), null, "not an integer");
+  assert.equal(P({ instrument: "harmonica", q: "Which?", answer: "0" }), null, "a string");
+  assert.equal(P({ instrument: "kazoo", q: "Which?", answer: 0 }), null, "unknown instrument");
+  assert.equal(P({ instrument: "harmonica", q: "", answer: 0 }), null, "empty q");
+  // before: absent and null are not drops; a bad one is
+  const nb = one((p, m) => { m.watch[0] = { ...m.watch[0], before: null }; });
+  assert.deepEqual(nb.before, {}); assert.deepEqual(nb.dropped, []);
+  const ab = one((p, m) => { delete m.watch[0].before; });
+  assert.deepEqual(ab.before, {}); assert.deepEqual(ab.dropped, []);
+});
+
+test("no play: no door, play.json carries empty engines; all-invalid play: no door either", () => {
+  const d = fs.mkdtempSync(path.join(TMP, "d-"));
+  const m = manifest(); delete m.play;
+  writeWeek(d, WEEK, m);
+  const pj = tw.playJson(d, WEEK);
+  assert.deepEqual(pj.play, { which: [], sort: null, playit: null });
+  assert.deepEqual(pj.before, {});
+  assert.deepEqual(pj.dropped, []);
+  const root = board(tw.build(d).recipe, "this-week");
+  assert.equal(root.buttons.length, 2);
+  assert.equal(at(root, 3, 4).length, 0, "the seat stays black");
+  const d2 = fs.mkdtempSync(path.join(TMP, "d-"));
+  writeWeek(d2, WEEK, manifest({ play: { which: [which("x", "nope", "?", [])], sort: { bins: [] },
+                                          playit: { instrument: "kazoo", q: "?", answer: 0 } } }));
+  assert.equal(at(board(tw.build(d2).recipe, "this-week"), 3, 4).length, 0);
+  assert.equal(tw.playJson(d2, WEEK).dropped.length, 3);
+  const d3 = fs.mkdtempSync(path.join(TMP, "d-"));
+  writeWeek(d3, WEEK, manifest({ play: null }));
+  assert.deepEqual(tw.playJson(d3, WEEK).play, { which: [], sort: null, playit: null });
+});
+
+test("playJson: null for no such week, a bad week string, a broken manifest", () => {
+  const d = fs.mkdtempSync(path.join(TMP, "d-"));
+  writeWeek(d, WEEK, manifest());
+  writeWeek(d, "2026-01-19", "{not json", false);
+  writeWeek(d, "2026-01-26", manifest({ pages: [] }), false);
+  assert.equal(tw.playJson(d, "2026-01-12"), null);
+  assert.equal(tw.playJson(d, "../x"), null);
+  assert.equal(tw.playJson(d, "2026-01-19"), null);
+  assert.equal(tw.playJson(d, "2026-01-26"), null);
+  assert.notEqual(tw.playJson(d, WEEK), null, "an older week than the newest is still served");
 });
 
 // ---------------------------------------------------------------- over HTTP
@@ -232,7 +422,7 @@ test("HTTP: recipe 200 + ETag, 304 on If-None-Match, unknown recipe 404", async 
   assert.equal(r.status, 200);
   assert.equal(r.headers.get("cache-control"), "no-cache");
   const etag = r.headers.get("etag");
-  assert.match(etag, /-r1"$/);
+  assert.match(etag, /-r2"$/);
   const body = await r.json();
   assert.equal(body.root, "this-week");
   assert.equal(board(body, "watch").buttons.filter(c => c.type === "video").length, 1);
@@ -270,4 +460,24 @@ test("HTTP: /this-week/status reads the files", async () => {
   assert.equal(s.videos[A].state, "ready");
   assert.equal(s.videos[B].state, "coming");
   assert.equal(s.videos[C].state, "coming");
+});
+
+test("HTTP: /this-week/<w>/play.json — no-store, 404 unknown week, 400 bad w", async () => {
+  const r = await fetch(`${BASE}/this-week/${WEEK}/play.json`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("cache-control"), "no-store");
+  assert.match(r.headers.get("content-type"), /application\/json/);
+  const pj = await r.json();
+  assert.equal(pj.week_of, WEEK);
+  assert.equal(pj.title, "Shadows!");
+  assert.deepEqual(pj.play, { which: [], sort: null,
+    playit: { instrument: "shadow-puppet", q: "Tall?", answer: 0 } });
+  assert.deepEqual(pj.before, {});
+  assert.deepEqual(pj.dropped, []);
+  assert.equal((await fetch(`${BASE}/this-week/2026-01-12/play.json`)).status, 404);
+  assert.equal(await raw(`/this-week/../x/play.json`), 400);
+  assert.equal(await raw(`/this-week/..%2Fx/play.json`), 400);
+  assert.equal(await raw(`/this-week/nope/play.json`), 400);
+  // the jail's own files are unchanged beside it
+  assert.equal((await fetch(`${BASE}/this-week/${WEEK}/manifest.json`)).status, 200);
 });

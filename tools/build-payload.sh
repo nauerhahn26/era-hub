@@ -128,6 +128,9 @@ cp -r "$HUB/public/drawing" "$OUT/public/drawing"
 # to play one downloaded video. CORE like book-review: a few hundred bytes, no
 # /x in installer.nsi (every /x there belongs to a pack).
 cp -r "$HUB/public/watch" "$OUT/public/watch"
+# Play (spec 2026-10-12 §5.6): the This week app's Play page — menu, the engines, the synthesised
+# sounds. CORE like the watch page: plain files, no media, no /x in installer.nsi.
+cp -r "$HUB/public/play" "$OUT/public/play"
 cp "$HUB/public/favicon.ico" "$OUT/public/favicon.ico"
 cp -r "$HUB/public/icons" "$OUT/public/icons"   # per-app icons (tiles + shortcuts)
 

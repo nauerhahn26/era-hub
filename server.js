@@ -2183,6 +2183,17 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ tick: r.tick }));
     return;
   }
+  // The week's Play content, validated (spec §5.6). ABOVE the jail, which would
+  // otherwise serve a raw file of that name. `.+` so "../x" is caught here (400).
+  const playPath = urlPath.match(/^\/this-week\/(.+)\/play\.json$/);
+  if ((req.method === "GET" || req.method === "HEAD") && playPath) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(playPath[1])) { res.writeHead(400).end("bad week"); return; }
+    const pj = thisWeek.playJson(DATA, playPath[1]);
+    if (!pj) { res.writeHead(404, { "Cache-Control": "no-store" }).end("not found"); return; }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(req.method === "HEAD" ? undefined : JSON.stringify(pj));
+    return;
+  }
   if ((req.method === "GET" || req.method === "HEAD") && urlPath.startsWith("/this-week/")) {
     const rest = urlPath.slice("/this-week/".length);
     // claim-<id>.json is a hub's download lock: never served. Compared the way

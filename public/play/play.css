@@ -1,0 +1,47 @@
+/* play.css — the Play app's shell and menu (spec 2026-10-12 §5.6). Which one? brings its own
+   styles (which.js injects them, so the watch page can mount it too). Contract colours come from
+   ../lib/tokens.css; the page keeps only its own derived shades. */
+:root{
+  --ink:var(--color-ink, #17272E); --card:#FFFFFF;
+  --page:#22343B;                 /* dark page: the black seats read as their own shape (Drawing's) */
+  --teal:var(--color-primary, #0F7C8A); --nav:var(--color-nav, #6B7B82);
+  --rail:clamp(120px, 13vw, 250px);
+  --gap:var(--gap-floor, 14px);
+  --font:"Segoe UI", system-ui, sans-serif;
+}
+*{box-sizing:border-box; user-select:none}
+[hidden]{display:none !important}
+html,body{height:100%; margin:0}
+body{background:var(--page); color:var(--ink); font-family:var(--font); overflow:hidden}
+
+/* under the shared bar; --bar-h is published on <body> by doorbar.js */
+#screen{position:fixed; inset:0; top:var(--bar-h, 0px); display:grid;
+        grid-template-columns:var(--rail) minmax(0, 1fr); gap:var(--gap); padding:12px 14px 14px}
+#rail{display:grid; grid-template-rows:repeat(3, minmax(0, 1fr)); gap:var(--gap); min-height:0}
+.black{background:#000; border-radius:16px}          /* rest boxes: inert, no text */
+#stage{min-width:0; min-height:0; display:grid}
+
+.railTile, .seat.tile{appearance:none; border:0; margin:0; padding:10px; border-radius:16px; cursor:pointer;
+       font:inherit; min-width:0; min-height:0; overflow:hidden;
+       display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px}
+.railTile{background:var(--nav); color:#fff}
+.glyph{font-size:clamp(28px, 2.9vw, 56px); line-height:1}
+.word{font-size:clamp(44px, 3.86vw, 74px); font-weight:750; line-height:1.1; text-align:center}
+
+/* ---- the menu: the week's title in the strip, three fixed seats across the middle ---- */
+.menu{display:grid; grid-template-rows:auto minmax(0, 1fr); gap:var(--gap); min-height:0}
+#strip{margin:0; padding:10px 18px; border-radius:16px; background:var(--card); color:var(--ink); text-align:center;
+       font-size:clamp(44px, 3.86vw, 74px); font-weight:750; line-height:1.15}
+.seats{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--gap); min-height:0}
+.seat{border-radius:16px; min-width:0; min-height:0}
+.seat.tile{background:var(--teal); color:#fff; transition:transform 200ms ease}
+.seat.tile{gap:clamp(10px, 1.6vw, 28px)}
+.seat.tile .big{font-size:clamp(64px, 8vw, 160px); line-height:1.2}
+.seat.empty{background:#000}
+
+/* the Which one? page sits in the stage */
+.wh-host{min-width:0; min-height:0}
+
+@media (prefers-reduced-motion: reduce){
+  .seat.tile, .railTile{transition:none; animation:none}
+}
