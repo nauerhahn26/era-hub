@@ -1,0 +1,44 @@
+/* watch.css — the watch page (spec 2026-10-12 §3.3): the Play app's rail look (play.css) beside a
+   video on black. Which one? brings its own styles (which.js injects them) for the `before` step.
+   Contract colours come from ../lib/tokens.css. */
+:root{
+  --ink:var(--color-ink, #17272E); --card:#FFFFFF;
+  --page:#22343B;                 /* the Play app's dark page: black seats read as their own shape */
+  --teal:var(--color-primary, #0F7C8A); --nav:var(--color-nav, #6B7B82);
+  --rail:clamp(120px, 13vw, 250px);   /* one board cell wide, as the Play app's rail */
+  --gap:var(--gap-floor, 14px);
+  --font:"Segoe UI", system-ui, sans-serif;
+}
+*{box-sizing:border-box; user-select:none}
+[hidden]{display:none !important}
+html,body{height:100%; margin:0}
+body{background:var(--page); color:var(--ink); font-family:var(--font); overflow:hidden}
+
+/* under the shared bar; --bar-h is published on <body> by doorbar.js */
+#screen{position:fixed; inset:0; top:var(--bar-h, 0px); display:grid;
+        grid-template-columns:var(--rail) minmax(0, 1fr); gap:var(--gap); padding:12px 14px 14px}
+#rail{display:grid; grid-template-rows:repeat(3, minmax(0, 1fr)); gap:var(--gap); min-height:0}
+.black{background:#000; border-radius:16px}          /* the rest box: inert, no text */
+
+.railTile{appearance:none; border:0; margin:0; border-radius:16px; cursor:pointer;
+          font:inherit; min-width:0; min-height:0; overflow:hidden; background:var(--nav); color:#fff; padding:10px 6px;
+          display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+          transition:background-color 200ms ease}
+.glyph{font-size:clamp(28px, 2.9vw, 56px); line-height:1}
+.word{font-size:clamp(44px, 3.86vw, 74px); font-weight:750; line-height:1.1; text-align:center}
+/* "Pause" is the rail's longest word: it fits the cell's width, never under the 44 px minimum */
+.railTile{container-type:size}
+.railTile .word{font-size:max(44px, min(74px, 3.86vw, 27cqw))}
+/* the Pause tile while the `before` question is up: a rest box like the one below it */
+.railTile.resting{background:#000; cursor:default}
+.railTile.resting > *{visibility:hidden}
+
+/* the video fills the rest, letterboxed on black */
+#stage{position:relative; min-width:0; min-height:0; background:#000; border-radius:16px; overflow:hidden}
+#video{position:absolute; inset:0; width:100%; height:100%; display:block; object-fit:contain; background:#000}
+/* the `before` question over the video area, in the Play app's dress */
+#before{position:absolute; inset:0; background:var(--page); display:grid; min-width:0; min-height:0}
+
+@media (prefers-reduced-motion: reduce){
+  #rail .railTile{transition:none; animation:none}   /* over dwell.js's injected .dwell transition */
+}

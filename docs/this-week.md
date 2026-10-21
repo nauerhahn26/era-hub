@@ -18,7 +18,7 @@ becomes "This week". There is no Play door yet: Play is phase 2 and no `link` ti
 ## Files
 - `this-week.js`: pure. Finds the newest week, validates the manifest, builds the recipe and ETag.
 - `this-week-fetch.js`: the download rail (the only code that ever talks to YouTube).
-- `public/watch/index.html` + `watch.js`: the player page.
+- `public/watch/index.html` + `watch.js` + `watch.css`: the watch page (a hub app page; imports `public/play/which.js` for `before`).
 - `server.js`: `/recipes/this-week.json`, `/this-week/status`, `/this-week/tick`, the `/this-week/` jail,
   the `downloadWeekVideos` setting, the rail's two triggers.
 - `drive.js`: `this-week` in `MIRROR_SUBDIRS`, `MIRROR_DELETES`, `ADOPT_ON_FIRST_SYNC` and `SKIP_EMPTY`;
@@ -114,12 +114,27 @@ device plays what any device downloaded. Typical setup: home devices on, the sch
 network blocks YouTube anyway).
 
 ## The watch page (`/watch/?w=<week_of>&v=<id>`)
-A black page with one `<video>` playing `/this-week/<w>/<v>.mp4`. A `video` tile launches it through
-ERAgaze's watch mode (`/app/launch` with `watch: true`) and logs `launch` to `/log`. On `ended` or
-`error` the page posts `/log` (`app:"this-week"`, `door:"watch"`, `week_of`, `id`, `event`, `ms` played),
-then `POST http://127.0.0.1:49155/app/watch-end` (no headers, simple CORS). Bad params: a blank page that
-posts `watch-end` after a second. ERAgaze 2.6 is what brings her back: its return-to-picker recognises
-the hub's own `kiosk-profile` board and foregrounds it instead of closing it.
+A hub app page in the same kiosk window (spec §3.3, amended 10/21: "like the music player — another
+screen, with pause and back"). A `video` tile navigates here; nothing is launched, nothing can fire
+twice, and the page never calls the gaze engine. It wears the shared door bar (🚪 leaves as everywhere;
+💬 pauses the video in place, posts `/kiosk/pause` with `/watch/`, and coming back plays it on). Under
+the bar a left rail one board cell wide: **Back** (← , to `/board/?recipe=this-week&board=watch`) on top,
+**Pause / Play** (⏸ "Pause" while playing, ▶ "Play" while paused) below it, a black rest box; the
+`<video playsinline>` fills the rest, `object-fit: contain` on black, `volume = musicVolCap / 100`.
+`/settings` sets the dwell (the two doors hold 2×, Back and Pause her dwell), the settle and the 💬.
+
+The mp4 is `/this-week/<w>/<v>.mp4`. When it ends the page logs `ended` and goes to the Watch grid; a
+file that cannot play logs `error` and goes there after a second; bad params (`w` not `YYYY-MM-DD`, `v`
+not 11 of `[A-Za-z0-9_-]`) go there after a second with nothing logged.
+
+`before` (§5.4): the page reads `play.json`; when `before[<v>]` holds a Which-one item, the Play app's
+`which.js` shows it over the video area first (the video loaded, paused and hidden, the Pause tile a rest
+box): the question spoken, two-strike and never wrong, the cheer; then the question clears and the video
+plays.
+
+Every step POSTs `/log` `{app:"this-week", door:"watch", week_of, id, event, ms}` (`ms` = video played),
+`event` ∈ `open|paused|resumed|before|ended|error`; `before` adds `{item, pick, right, strike}`; the lines
+that precede a navigation (`ended`, `error`, the 💬's `paused`) go `keepalive`.
 
 ## Push a week by hand
 From a package folder holding `manifest.json` (and any pictures), files first, the manifest LAST:
@@ -151,8 +166,8 @@ curl -s -X POST http://127.0.0.1:8377/this-week/tick
 ```
 
 ## Logs
-- `<DATA>/logs/<day>.jsonl`: the board's and watch page's lines, `app:"this-week"`, `door:"watch"`,
-  `event` `launch` / `ended` / `error` (also in the pool as kind `app-log`).
+- `<DATA>/logs/<day>.jsonl`: the watch page's lines, `app:"this-week"`, `door:"watch"`, `event`
+  `open` / `paused` / `resumed` / `before` / `ended` / `error` (also in the pool as kind `app-log`).
 - `<DATA>/pool/events/<device>/<day>.jsonl`: one line per job, kind `this-week-fetch`
   `{id, state, height, ms}` (`height` on `ready` only).
 - The console: `[this-week]` lines, with yt-dlp's last stderr line on a failure.

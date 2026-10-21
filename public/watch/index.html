@@ -4,15 +4,39 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>This week</title>
-<!-- The watch page (spec 2026-10-12 §3.3): ERAgaze's watch mode opens it full
-     screen to play one downloaded video with the picture. The video and nothing
-     else: no buttons, no door — the engine owns leaving. -->
-<style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-  video { display: block; width: 100vw; height: 100vh; object-fit: contain; background: #000; }
-</style>
+<!-- The watch page (spec docs/specs/2026-10-12-weekly-suite-design.md §3.3, amended 2026-10-21;
+     §5.4): the board takes the SAME kiosk window here, as the music player is its own screen.
+     The shared door bar on top, a left rail with Back and Pause / Play, the video filling the rest
+     on black. A video with a `before` question shows that Which-one item first (the Play app's
+     which.js). Nothing here launches anything or talks to anything but this hub. -->
+<link rel="stylesheet" href="../lib/tokens.css">
+<link rel="stylesheet" href="../lib/doorbar.css">
+<link rel="stylesheet" href="watch.css">
+<script>
+  window.DwellConfig = {
+    ms: 1200, graceMs: 400, decayMs: 1000, padPx: 16, rearmPx: 48,
+    audioPreview: false, chime: false, bus: "auto", staleMs: 600, color: "#0F7C8A"
+  };
+</script>
 </head>
 <body>
-<script src="watch.js"></script>
+<!-- under the bar: the rail (Back on top, Pause / Play below it, a black rest box) and the stage,
+     which holds the video and, for a `before` question, the question over it -->
+<main id="screen">
+  <nav id="rail" aria-label="Back and pause">
+    <button type="button" id="btnBack" class="railTile dwell" aria-label="Back">
+      <span class="glyph" aria-hidden="true">←</span><span class="word">Back</span></button>
+    <button type="button" id="btnPause" class="railTile dwell" aria-label="Pause">
+      <span class="glyph" aria-hidden="true">⏸</span><span class="word">Pause</span></button>
+    <div class="black" aria-hidden="true"></div>
+  </nav>
+  <section id="stage">
+    <video id="video" playsinline preload="auto"></video>
+    <div id="before" hidden></div>
+  </section>
+</main>
+<script src="../dwell.js"></script>
+<script src="../speech.js"></script>
+<script type="module" src="watch.js"></script>
 </body>
 </html>
