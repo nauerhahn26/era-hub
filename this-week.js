@@ -17,7 +17,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const THIS_WEEK_REV = 1;
+const THIS_WEEK_REV = 2;   // 2: the Play door (spec 2026-10-12 §5.6)
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^[A-Za-z0-9_-]{11}$/;
 const SYMBOL_RE = /^[a-z0-9-]{1,32}$/;
@@ -28,6 +28,12 @@ const MAX_WATCH = 5, MAX_TALK = 16;
 const WATCH_SEATS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4]];
 const TALK_SEATS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
 const ROOT = "this-week";
+// Play (spec §5.6): the twins of schema.py's Skill, Instrument and the
+// instruments' position counts (harmonica/xylophone 10, telephone/puppet 2).
+const SKILLS = ["predict", "compare", "cause", "classify", "sequence", "true-false",
+                "count", "add", "subtract", "decode", "rhyme", "vocabulary"];
+const POSITIONS = { "harmonica": 10, "xylophone": 10, "string-telephone": 2, "shadow-puppet": 2 };
+const MAX_WHICH = 10, MAX_Q = 160, MAX_LABEL = 40;
 
 const isStr = (s) => typeof s === "string" && s.trim() !== "";
 
@@ -102,6 +108,95 @@ function validate(m) {
   return { manifest: out, dropped };
 }
 
+// ---- Play (spec 2026-10-12 §5.6, §6) ----------------------------------------
+// One Which-one item (play.which[] or a video's `before`): null when good.
+function whichProblem(w) {
+  if (!w || typeof w !== "object" || Array.isArray(w)) return "not an object";
+  if (!isStr(w.id)) return "no id";
+  if (!SKILLS.includes(w.skill)) return "bad skill";
+  if (!isStr(w.q) || w.q.length > MAX_Q) return "q missing or over " + MAX_Q;
+  if (!Array.isArray(w.choices) || w.choices.length < 2 || w.choices.length > 3) return "needs 2-3 choices";
+  for (const c of w.choices) {
+    if (!c || typeof c !== "object") return "a choice is not an object";
+    if (!isStr(c.label) || c.label.length > MAX_LABEL) return "choice label missing or over " + MAX_LABEL;
+    if (!isGlyph(c.glyph)) return "choice glyph is not one emoji";
+    // a name the page's library lacks is the page's to ignore (spec §5.6)
+    if (c.sound !== undefined && c.sound !== null && typeof c.sound !== "string") return "sound not a string";
+    if (c.right !== undefined && c.right !== null && typeof c.right !== "boolean") return "right not a boolean";
+  }
+  const rights = w.choices.filter(c => c.right === true).length;
+  if (rights !== 1) return rights ? "two right answers" : "no right answer";
+  return null;
+}
+function sortProblem(s) {
+  if (!s || typeof s !== "object" || Array.isArray(s)) return "not an object";
+  if (!Array.isArray(s.bins) || s.bins.length !== 2) return "needs exactly 2 bins";
+  for (const b of s.bins)
+    if (!b || typeof b !== "object" || !isStr(b.label) || !isGlyph(b.glyph)) return "a bin needs a label and one emoji";
+  if (!SKILLS.includes(s.skill)) return "bad skill";
+  if (!Array.isArray(s.items) || s.items.length < 4 || s.items.length > 10) return "needs 4-10 items";
+  for (const it of s.items) {
+    if (!it || typeof it !== "object" || !isStr(it.label) || !isGlyph(it.glyph)) return "an item needs a label and one emoji";
+    if (it.bin !== 0 && it.bin !== 1) return "an item points at no bin";
+  }
+  return null;
+}
+function playitProblem(p) {
+  if (!p || typeof p !== "object" || Array.isArray(p)) return "not an object";
+  if (!Object.prototype.hasOwnProperty.call(POSITIONS, p.instrument)) return "unknown instrument";
+  if (!isStr(p.q)) return "no q";
+  if (!Number.isInteger(p.answer) || p.answer < 0 || p.answer >= POSITIONS[p.instrument])
+    return "answer outside 0-" + (POSITIONS[p.instrument] - 1);
+  return null;
+}
+
+// m = a manifest (validate()'s, so `watch` holds only good videos) ->
+// {play: {which[], sort|null, playit|null}, before: {<video id>: item}, dropped[]}.
+// Drops the failing ITEM, never the page, like validate().
+function validatePlay(m) {
+  const dropped = [];
+  const p = (m && m.play && typeof m.play === "object" && !Array.isArray(m.play)) ? m.play : {};
+  const play = { which: [], sort: null, playit: null };
+  const seen = new Set();
+  (Array.isArray(p.which) ? p.which : []).forEach((w, i) => {
+    let why = whichProblem(w);
+    if (!why && seen.has(w.id)) why = "duplicate id";
+    if (!why && play.which.length >= MAX_WHICH) why = "more than " + MAX_WHICH + " items";
+    if (why) { dropped.push({ field: "play.which", index: i, id: w && w.id, why }); return; }
+    seen.add(w.id);
+    play.which.push(w);
+  });
+  if (p.sort !== undefined && p.sort !== null) {
+    const why = sortProblem(p.sort);
+    if (why) dropped.push({ field: "play.sort", why }); else play.sort = p.sort;
+  }
+  if (p.playit !== undefined && p.playit !== null) {
+    const why = playitProblem(p.playit);
+    if (why) dropped.push({ field: "play.playit", why }); else play.playit = p.playit;
+  }
+  const before = {};
+  for (const v of (m && Array.isArray(m.watch) ? m.watch : [])) {
+    if (!v || v.before === undefined || v.before === null) continue;
+    const why = whichProblem(v.before);
+    if (why) dropped.push({ field: "before", id: v.id, why }); else before[v.id] = v.before;
+  }
+  return { play, before, dropped };
+}
+const playHasContent = (play) => play.which.length >= 1 || !!play.sort || !!play.playit;
+
+// GET /this-week/<week_of>/play.json: that week's folder (not only the newest),
+// validated; null when there is no such week or its manifest is not a week.
+function playJson(dataDir, week_of) {
+  if (typeof week_of !== "string" || !WEEK_RE.test(week_of)) return null;
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(path.join(dataDir, "this-week", week_of, "manifest.json"), "utf8")); }
+  catch { return null; }
+  let manifest;
+  try { ({ manifest } = validate(raw)); } catch { return null; }
+  const { play, before, dropped } = validatePlay(manifest);
+  return { week_of, title: manifest.title, play, before, dropped };
+}
+
 // Newest <YYYY-MM-DD> folder holding a parseable manifest.json, or null.
 // A newer folder whose manifest is mid-write (unparseable) is skipped; one that
 // parses but carries a book's keys is refused (thrown), not skipped — a week
@@ -163,6 +258,10 @@ function recipe(week, ready) {
       say_on_load: "This week: " + title },
     { type: "show", board: "talk-1", label: "Talk", say: "talk", glyph: "💬", row: 1, col: 4 },
   ] });
+  // the Play door (spec §5.6): a same-origin link, only when an engine has content
+  if (playHasContent(validatePlay(m).play))
+    boards[0].buttons.push({ type: "link", href: "/play/?w=" + week.week_of, label: "Play", say: "play",
+                             glyph: "🎲", row: 3, col: 4 });
   const watch = [backCell()];
   m.watch.slice(0, WATCH_SEATS.length).forEach((v, i) => {
     const [row, col] = WATCH_SEATS[i];
@@ -213,5 +312,5 @@ function build(dataDir) {
   }
 }
 
-module.exports = { THIS_WEEK_REV, readWeek, validate, recipe, videoState, etagFor, build, emptyRecipe,
+module.exports = { THIS_WEEK_REV, readWeek, validate, validatePlay, playJson, recipe, videoState, etagFor, build, emptyRecipe,
                    WATCH_SEATS, TALK_SEATS, THUMB_EXT };

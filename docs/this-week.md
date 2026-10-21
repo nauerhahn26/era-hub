@@ -43,11 +43,24 @@ folder removed in Drive leaves every device on the next sync.
   (`<id>.mp4` with bytes) is a `video` tile with its thumbnail (none on disk: the label carries it).
   A video not here yet is a word tile that says "not here yet" with ⏳.
 - Talk: `talk-1`, `talk-2`, ...: Back [1,1], words in seats [1,2] [1,3] [1,4] [2,1] [2,4] [3,2] [3,3] [3,4].
-- ETag: `"<manifest mtime>-<size>-<ready bits as hex, watch order>-r1"`, so it moves when a video lands.
+- Root: Watch [1,1], Talk [1,4], and Play [3,4] — a `link` tile `{type:"link", href:"/play/?w=<week_of>",
+  label:"Play", say:"play", glyph:"🎲"}` — only when the validated `play` has at least one Which item, a
+  sort or a Play it; otherwise that seat stays black.
+- ETag: `"<manifest mtime>-<size>-<ready bits as hex, watch order>-r2"`, so it moves when a video lands
+  (`r2` since the Play door; `THIS_WEEK_REV` in `this-week.js`).
 - No week on disk: a valid root-only board, ETag `"none-r1"`. A broken manifest: the same board,
   ETag `"err-<now>"`, and the reason on the console.
 - The hub re-checks the engine's rules and drops a failing ITEM (a bad id, minutes outside 1-15, a word
   with no glyph or symbol, more than 5 videos or 16 words), never the page.
+- `GET /this-week/<week_of>/play.json` (no-store): that week's Play content, validated by
+  `validatePlay()` — `{week_of, title, play: {which[], sort|null, playit|null}, before: {<video id>: item},
+  dropped[]}`. Which items: ≤10, unique `id`, `skill` one of the engine's twelve, `q` ≤160, 2-3 choices
+  (label ≤40, one emoji glyph, `sound` a string or absent), exactly one `right`. Sort: 2 bins, 4-10 items
+  with `bin` 0 or 1. Play it: `answer` an index into the instrument's positions (harmonica and xylophone
+  10, string-telephone and shadow-puppet 2). A video's `before` is a Which item. A failing item goes to
+  `dropped` with a reason, never the page; no `play` gives empty engines. 404 when there is no such
+  week, 400 when `<week_of>` is not `YYYY-MM-DD`. Served above the media jail, which never hands out a
+  raw file of that name.
 
 ## The download rail (`this-week-fetch.js`)
 Triggers: every Drive sync (`drive.onSynced`) and a 20-minute timer. One pass at a time; a tick during a
