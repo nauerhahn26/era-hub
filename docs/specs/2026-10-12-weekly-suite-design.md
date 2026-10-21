@@ -115,27 +115,41 @@ removes it from Drive. The week file is named `manifest.json` because the
 mirror re-copies manifest-class files even when the size does not change
 (the same-size-edit trap).
 
-### 3.3 Playback
+### 3.3 Playback (amended 2026-10-21)
 
-A Watch tile is a `video` tile (new tile type in `board-render.js`, joining
-`LAUNCH_TYPES` at `:114`): thumbnail as the picture, title as the label. One
-look launches it exactly as a movie launches — `POST 127.0.0.1:49155/app/launch`
-with `watch: true` — but the url is the hub's own
-`/watch/?v=<id>` page, which plays `/this-week/<week_of>/<id>.mp4` in a
-full-screen `<video>` with `autoplay`, nothing else on the page. The engine
-(`ERAgaze.cs:741–788`) already accepts any `http://` url. ERAgaze's watch
-mode gives the corner wake target and the options strip (pause, exit, louder,
-softer) with no new engine code. When the video ends, the page POSTs
-`/app/watch-end`; the kiosk closes and she is back on the Watch page, no
-up-next. The tile posts `/log` (`{app:"this-week", door:"watch", id, event}`)
-and **not** `/movie-event`, which accepts only the streaming services
-(`server.js:1984`).
+> Dad 10/13, after the first week on the tablet: "it launched in another
+> Chrome window … the best experience should resemble the music player: you
+> take yourself to another screen and there you see the video, with the same
+> tooling to pause it. Not the little button in the corner — that is for a
+> movie you watch for an hour." The tablet's gaze log for that test shows the
+> video tile asking ERAgaze to launch four times in four seconds (the tile
+> stays under the gaze ring until the new kiosk covers it, so the dwell keeps
+> re-firing) and two windows playing at once. Phase 1's launch path is retired.
+
+A Watch tile is a `video` tile (thumbnail as the picture, title as the label).
+One look takes the **same kiosk window** to the hub's own watch page,
+`/watch/?w=<week_of>&v=<id>`, the way Drawing and the Book Reader are their own
+screens. Nothing is launched: no ERAgaze watch mode, no second Chrome, no corner
+wake target, nothing that can fire twice. (The gaze engine's v2.6
+return-to-picker fix stays; this door no longer needs it.)
+
+The watch page wears the shared door bar on top (🚪 leaves as everywhere; 💬
+pauses the video in place and goes to talk, resume picks it up). Below the bar,
+a **left rail of two tiles** at board size — **Back** (to
+`/board/?recipe=this-week&board=watch`) and **Pause / Play** (one tile whose
+label and glyph follow the state) — and the video filling the rest, letterboxed
+on black, its volume capped by the family's `musicVolCap`. When the video ends
+the page returns to the Watch page by itself; a video that cannot play does the
+same after a second, so a broken file never strands her. A video with a
+`before` question (§5.4) shows that one Which-one item first, in the Play app's
+dress, and plays as its answer. Every step is logged to `/log` as
+`{app:"this-week", door:"watch", week_of, id, event, ms}` with `event` ∈
+`open|ended|error|paused|resumed|before`.
 
 The mp4 and thumbnails are served through the existing path-jailed media
-helper (`serveMediaJail`, as `/movies/` at `server.js:2307`) under
-`/this-week/`, extension allowlist `.mp4 .jpg .webp .json`. The old "the hub
-never serves video" line in `movies-add.js` is about streaming services (D57)
-and is amended to say so.
+helper (`serveMediaJail`, as `/movies/`) under `/this-week/`, extension
+allowlist `.mp4 .jpg .jpeg .webp .png .json`. The old "the hub never serves
+video" line in `movies-add.js` is about streaming services (D57) and says so.
 
 Downloaded videos play anywhere, home or school. That is the point of offline.
 
@@ -257,6 +271,65 @@ in `public/play/sounds/` (Freesound CC0, licence file beside it) keyed by name
 (`drum-low`, `bell-high`, `string-pluck`); an item names its sounds and the
 engine refuses an item whose sound is not in the library. Animations are CSS
 on the tile (shake, glow, slide, fill). No AI images in Play.
+
+### 5.6 The app's pages, the instruments, the sounds (phase 2, 2026-10-21)
+
+Dad 10/21: "do all plays so I can assess". The three engines ship together.
+
+**Pages.** `/play/?w=<week_of>` opens the **menu**: the shared door bar, a
+Back tile (to `/board/?recipe=this-week`) and up to three tiles in fixed seats
+— *Which one?*, *Sort it*, *Play it* — one per engine the week's manifest
+fills; an engine with no content this week has no tile. Every page below keeps
+the door bar and a Back tile (to the menu). Tiles are board-sized dwell
+targets; the two doors hold 2× her dwell, everything else 1× (contract).
+
+**Which one?** The question across the top (text first, ≥32 pt), spoken on
+entry and again after 20 s with no pick. Two or three answer tiles in fixed
+seats: left / right, or left / middle / right. For a yes-or-no item **yes is
+always the left seat and no the right one**, whatever order the manifest lists
+them (D5 in app form). Two-strike per §5.2. After the right answer comes alive
+and the cheer, the next item appears by itself; after the last, the bigger
+cheer and back to the menu. Which-one items that a video carries as `before`
+are not in this set; they belong to the watch page (§3.3).
+
+**Sort it.** One thing in the middle, two bins left and right named by the
+property (label + glyph). A look at a bin slides the thing in. First miss: the
+thing wobbles back to the middle and the question is said again with both bin
+names ("Is water a need or a want?"). Second miss: it slides into the right bin
+by itself with the cheer. A full set celebrates and returns to the menu.
+
+**Play it.** Each instrument is an **ordered list of positions** she can look
+at; the manifest's `answer` is an index into that list. The lists are fixed
+here and the engine's prompt names them, so the model and the app agree:
+
+| instrument | positions (index 0 first) | what happens |
+|---|---|---|
+| `harmonica` | 10 holes, left → right, blow notes ascending C4 … E5 | a hole sounds its note and the reed strip above it shakes while it plays |
+| `xylophone` | 10 bars, longest → shortest, left → right, C4 … E5 | the bar rings and bounces |
+| `string-telephone` | `[tight, loose]` | two cups and a string; she picks tight or loose, then looks at her cup to "talk": a wave runs the string and the far cup plays the voice clear (tight) or faint and muffled (loose) |
+| `shadow-puppet` | `[closer to the lamp, farther from it]` | a lamp, a puppet, a wall; tiles for a few puppet shapes (bat, bird, rabbit, dog); the wall's shadow grows as the puppet moves closer |
+
+Free play first. After 60 s the week's question appears and is spoken; her next
+pick on the instrument answers it: first miss → the position does its own thing
+and the question repeats with a hint; second miss → the right position lights
+and sounds by itself with the cheer. Free play continues; the question does not
+come back.
+
+**Sounds.** Synthesised with Web Audio in `public/play/sounds.js` — no files, no
+licence file, works offline, and the instruments need pitched notes anyway. A
+small voice library by name (`drum-low`, `drum-high`, `bell-low`, `bell-high`,
+`string-pluck`, `whoosh-up`, `whoosh-down`, `pop`, `cheer`) plus `note(midi)`
+for the instruments. A manifest `sound` name the library lacks is ignored.
+Volume follows `musicVolCap`. This replaces §5.5's CC0 file library (the build
+box downloads no media).
+
+**Never a test, logged silently.** Nothing on screen scores. Every pick posts
+`/log` `{app:"this-week", door:"play", week_of, engine, item, pick, right, strike}`.
+
+**The door.** The root board's Play door is a `link` tile —
+`{type:"link", href:"/play/?w=<week_of>", label:"Play", say:"play", glyph:"🎲",
+row:3, col:4}` — a new board tile type that navigates the kiosk window to a
+same-origin path. The board treats `video` tiles the same way (§3.3).
 
 ## 6. The week package (data contract)
 
@@ -415,6 +488,7 @@ the IEP is dad's call per week, not the system's.
 | era-board `board.js:56–63`, `board-partner.js:19` | `this-week` is a legal recipe name; the partner strip stays off it |
 | `aac-board-builder/tools/tile-launchers/` | `ThisWeek.bat` (same shape as `Drawing.bat`) |
 | `docs/` | `this-week.md` next to `drawing.md`; D56 and D57 amended in the D-log |
+| **phase 2 (2026-10-21)** | `public/watch/` reworked per §3.3 (door bar, rail, no engine call); `public/play/` + `tools/build-payload.sh` ships it; `this-week.js` validates `play` and adds the `link` door; era-board `link` tile + `video` navigation (no `/app/launch`); the engine's prompt names the instrument positions (§5.6) |
 
 Known traps carried from the research: `isPhoto` (`board-render.js:153`)
 decides from the path, so thumbnails live under a path it treats as a photo;
@@ -446,7 +520,7 @@ nothing serves (harmless) and the engine must not delete it before then.
 | phase | delivers | repo / worktree |
 |---|---|---|
 | 1 | §7 engine stage + eval harness on held-out weeks; §3 Watch (download rail, player, tiles); §4 Talk page; the mail section and words; hub release | `ellie-this-week--wt-youtube-videos` (engine), `era-hub--wt-youtube-videos` + `era-board--wt-youtube-videos` (hub) |
-| 2 | §5 Play, three engines, sounds library, before-questions | era-hub |
+| 2 | §5 Play, all three engines, synthesised sounds (§5.6), before-questions; §3.3 playback rework; `link`/`video` navigation | era-hub + era-board (+ one prompt line in ellie-this-week) — plan `docs/plans/2026-10-21-weekly-suite-phase2-plan.md` |
 | 3 | §8 the Sunday note | ellie-this-week |
 | any | a Talk page into TD Snap on `snap yes` | human session, editor harness |
 
