@@ -238,6 +238,7 @@ test("This week is a ticked installer component, described, and seeds apps.json"
   assert.match(write, /\$\{If\} \$\{SectionIsSelected\} \$\{SecThisWeek\}\s+FileWrite \$0 '\$1"this-week"'\s+StrCpy \$1 ","/);
   const payload = fs.readFileSync(new URL("../tools/build-payload.sh", import.meta.url), "utf8");
   assert.match(payload, /cp -r "\$HUB\/public\/watch" "\$OUT\/public\/watch"/, "the watch page ships");
+  assert.match(payload, /cp -r "\$HUB\/public\/play" "\$OUT\/public\/play"/, "the Play app ships (spec §5.6)");
   assert.match(payload, /"\$HUB\/this-week\.js"/);
   assert.match(payload, /"\$HUB\/this-week-fetch\.js"/);
 });
