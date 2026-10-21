@@ -41,6 +41,13 @@ const SORT = { skill: "classify",
           { label: "a candle", glyph: "🕯️", bin: 0 }, { label: "a book", glyph: "📕", bin: 1 },
           { label: "a torch", glyph: "🔦", bin: 0 }] };
 const sortQ = (i) => `Is ${SORT.items[i].label} ${SORT.bins[0].label} or ${SORT.bins[1].label}?`;
+// the Play it weeks (B3): one small week per instrument, nothing else in them
+const PI = {
+  "harmonica": { week: "2026-01-19", q: "Which hole plays the lowest note?", answer: 0 },
+  "xylophone": { week: "2026-01-26", q: "Which bar makes the highest sound?", answer: 9 },
+  "string-telephone": { week: "2026-02-09", q: "Which string carries your voice, tight or loose?", answer: 0 },
+  "shadow-puppet": { week: "2026-02-16", q: "Which makes the shadow bigger, closer to the lamp or farther?", answer: 0 },
+};
 let child, browser;
 
 before(async () => {
@@ -54,6 +61,13 @@ before(async () => {
   fs.writeFileSync(path.join(sdir, "manifest.json"), JSON.stringify({
     week_of: SORT_WEEK, title: "Light!", topic: "shadows", schema: 1, watch: [], talk: [],
     play: { which: [], sort: SORT } }));
+  for (const [instrument, w] of Object.entries(PI)) {
+    const d = path.join(TMP, "this-week", w.week);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "manifest.json"), JSON.stringify({
+      week_of: w.week, title: "Sound!", topic: "sound", schema: 1, watch: [], talk: [],
+      play: { which: [], playit: { instrument, q: w.q, answer: w.answer } } }));
+  }
   fs.writeFileSync(path.join(TMP, "app-settings.json"), JSON.stringify({ musicVolCap: 40 }));
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
@@ -78,9 +92,10 @@ after(async () => {
 async function playPage(opts = {}) {
   const ctx = await browser.newContext({ viewport: opts.viewport || { width: 1920, height: 1080 },
     deviceScaleFactor: 1, reducedMotion: opts.reducedMotion || "no-preference" });
-  await ctx.addInitScript((idleMs) => {
+  await ctx.addInitScript(([idleMs, clockMs]) => {
     window.__testHooks = true;
     if (idleMs) window.__idleMs = idleMs;
+    if (clockMs) window.__clockMs = clockMs;
     window.__confettiSeen = 0;
     new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes)
       if (n.classList && n.classList.contains("confetti")) window.__confettiSeen++; })
@@ -90,7 +105,7 @@ async function playPage(opts = {}) {
     new MutationObserver((ms) => { for (const m of ms)
       if (m.target.classList && m.target.classList.contains("wiggle")) window.__wiggled.push(m.target.getAttribute("aria-label")); })
       .observe(document, { attributes: true, attributeFilter: ["class"], subtree: true });
-  }, opts.idleMs || 0);
+  }, [opts.idleMs || 0, opts.clockMs || 0]);
   await ctx.route("**/voices", (r) => r.fulfill({ status: 200, contentType: "application/json",
     body: JSON.stringify({ enabled: false, voices: [] }) }));
   await ctx.route("**/tts*", (r) => r.fulfill({ status: 503, body: "" }));
@@ -603,4 +618,331 @@ test("Sort it under reduced motion: no transition, no animation; the item still 
   await waitSortItem(page, 1);
   assert.deepEqual(await chips(page), [["☀️"], []]);
   await ctx.close();
+});
+
+// ================================================================ Play it (B3)
+const PQ = (inst) => "?w=" + PI[inst].week;
+const SHOT_DIR = () => { fs.mkdirSync(SHOTS, { recursive: true }); return SHOTS; };
+async function openPlayit(page) {
+  await page.locator("#tile-playit").click();
+  await page.waitForFunction(() => window.Play.state().page === "playit" && document.querySelector(".pi-pos"));
+}
+const positions = (page) => page.$$eval(".pi-pos", (els) => els.map((el) => { const r = el.getBoundingClientRect();
+  return { i: Number(el.dataset.i), label: el.getAttribute("aria-label"), dwell: el.matches(".dwell"),
+           x: r.left, r: r.right, y: r.top, b: r.bottom, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; }));
+const playLogs = (logs) => logs.filter((l) => l.engine === "playit");
+// classes that come and go (alive while a note sounds, the wave on the string): record them as they appear
+async function watchClasses(page) {
+  await page.evaluate(() => {
+    window.__seen = [];
+    new MutationObserver((ms) => { for (const m of ms) {
+      const t = m.target; if (!t.classList) continue;
+      for (const c of ["alive", "wave"]) if (t.classList.contains(c)) window.__seen.push((t.dataset.i != null ? t.dataset.i : (t.id || t.className)) + "." + c);
+    } }).observe(document.getElementById("stage"), { attributes: true, attributeFilter: ["class"], subtree: true });
+  });
+}
+const seen = (page) => page.evaluate(() => window.__seen.slice());
+// every word sits whole inside its tile: one line, not clipped
+async function wordsFit(page, what) {
+  const bad = await page.$$eval("#stage .pi-tile .pi-word", (els) => els.filter((el) => {
+    const t = el.closest(".pi-tile").getBoundingClientRect(), r = el.getBoundingClientRect();
+    const lh = parseFloat(getComputedStyle(el).fontSize) * 1.5;
+    return r.height > lh || r.left < t.left - 0.5 || r.right > t.right + 0.5;
+  }).map((el) => el.textContent));
+  assert.deepEqual(bad, [], what + ": words that wrap or spill");
+}
+const holds2x = (page) => page.evaluate(() => [...document.querySelectorAll("[data-dwell-ms]")].map((el) => el.id + "=" + el.dataset.dwellMs).sort());
+
+test("Play it: the menu seats its tile on the right with the instrument's glyph; the other seats black", async () => {
+  const glyph = { "harmonica": "🎵", "xylophone": "🎵", "string-telephone": "☎️", "shadow-puppet": "🔦" };
+  for (const inst of Object.keys(PI)) {
+    const { ctx, page, errors } = await playPage({ query: PQ(inst) });
+    const g = await page.$$eval("#stage .seat", (els) => els.map((el) => ({ id: el.id, seat: el.dataset.seat,
+      dwell: el.matches(".dwell"), bg: getComputedStyle(el).backgroundColor, text: el.innerText.trim() })));
+    assert.deepEqual(g.map((s) => s.id), ["", "", "tile-playit"], inst);
+    assert.equal(g[2].seat, "2");
+    assert.ok(g[2].text.includes(glyph[inst]), inst + ": " + g[2].text);
+    assert.match(g[2].text, /Play it/);
+    for (const s of g.slice(0, 2)) { assert.equal(s.bg, "rgb(0, 0, 0)"); assert.equal(s.dwell, false); }
+    assert.deepEqual((await st(page)).engines, { which: false, sort: false, playit: true });
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  }
+});
+
+test("Play it, harmonica: ten holes left to right, ≥ 90 px at 1920; hole 3 plays MIDI 65, its reed comes alive while it sounds, the pick is logged with no right", async () => {
+  const { ctx, page, logs, errors, reqs } = await playPage({ query: PQ("harmonica") });
+  await openPlayit(page);
+  const pos = await positions(page);
+  assert.equal(pos.length, 10);
+  assert.deepEqual(pos.map((p) => p.i), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  for (let k = 1; k < 10; k++) assert.ok(pos[k].x - pos[k - 1].r >= 13.5, "left to right, gap ≥ 14: " + (pos[k].x - pos[k - 1].r));
+  assert.ok(pos.every((p) => p.dwell && Math.min(p.w, p.h) >= 90), JSON.stringify(pos.map((p) => [p.w, p.h])));
+  assert.equal(await page.locator(".pi-hole .pi-reed").count(), 10, "a reed strip over every hole");
+  assert.equal(await page.locator("#piQ").count(), 0, "free play first: no question");
+  assert.deepEqual(await holds2x(page), ["barDoor=2400", "barTalk=2400"], "only the two doors hold 2x");
+  assert.ok(await page.locator("#btnBack.dwell").isVisible());
+  await watchClasses(page);
+  await page.evaluate(() => { window.__soundLog.length = 0; });
+  await dwellOn(page, '.pi-pos[data-i="3"]');
+  await page.waitForSelector('.pi-pos[data-i="3"].alive', { timeout: 3000 });
+  assert.deepEqual(await sounds(page), [65]);
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR(), "playit-harmonica-1920.png") });
+  await page.waitForFunction(() => !document.querySelector('.pi-pos[data-i="3"].alive'), null, { timeout: 3000 });
+  assert.ok(await until(() => playLogs(logs).length >= 1));
+  assert.deepEqual(playLogs(logs)[0], { app: "this-week", door: "play", week_of: PI.harmonica.week, engine: "playit",
+    instrument: "harmonica", pick: 3 });
+  // every hole has its own note, low to high
+  await page.evaluate(() => { window.__soundLog.length = 0; });
+  for (let i = 0; i < 10; i++) await page.locator(`.pi-pos[data-i="${i}"]`).click();
+  assert.deepEqual(await sounds(page), [60, 62, 64, 65, 67, 69, 71, 72, 74, 76]);
+  for (const u of reqs) assert.ok(u.startsWith(BASE + "/"), "this hub only: " + u);
+  await neverATest(page);
+  await page.locator("#btnBack").click();
+  await page.waitForFunction(() => window.Play.state().page === "menu" && document.getElementById("tile-playit"));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("Play it at 1280x720: ten harmonica holes and ten xylophone bars are each ≥ 60 px with gaps ≥ 14, on screen", async () => {
+  for (const inst of ["harmonica", "xylophone"]) {
+    const { ctx, page } = await playPage({ query: PQ(inst), viewport: { width: 1280, height: 720 } });
+    await openPlayit(page);
+    const pos = await positions(page);
+    assert.equal(pos.length, 10);
+    console.log(`# ${inst} at 1280x720: ` + pos.map((p) => Math.round(p.w) + "x" + Math.round(p.h)).join(" "));
+    for (const p of pos) { assert.ok(Math.min(p.w, p.h) >= 60, inst + " " + p.w + "x" + p.h); assert.ok(p.b <= 720 && p.r <= 1280); }
+    for (let k = 1; k < 10; k++) assert.ok(pos[k].x - pos[k - 1].r >= 13.5, inst + " gap " + (pos[k].x - pos[k - 1].r));
+    await ctx.close();
+  }
+  for (const inst of ["string-telephone", "shadow-puppet"]) {
+    const { ctx, page } = await playPage({ query: PQ(inst), viewport: { width: 1280, height: 720 } });
+    await openPlayit(page);
+    const m = await page.$$eval("#stage .dwell, #btnBack", (els) => els.map((el) => { const r = el.getBoundingClientRect();
+      return { id: el.id || el.className, m: Math.min(r.width, r.height), b: r.bottom }; }));
+    for (const x of m) { assert.ok(x.m >= 60, inst + " " + x.id + " " + x.m); assert.ok(x.b <= 720, inst + " on screen " + x.id); }
+    const fonts = await page.$$eval("#stage .pi-word, .pi-name", (els) => els.map((el) => parseFloat(getComputedStyle(el).fontSize)));
+    for (const f of fonts) assert.ok(f >= 32 * 4 / 3, inst + " text ≥ 32 pt: " + f);
+    await wordsFit(page, inst + " at 1280");
+    await ctx.close();
+  }
+});
+
+test("Play it, xylophone: ten bars, longest to shortest left to right; bar 0 rings MIDI 60 and comes alive", async () => {
+  const { ctx, page, logs, errors } = await playPage({ query: PQ("xylophone") });
+  await openPlayit(page);
+  const pos = await positions(page);
+  assert.equal(pos.length, 10);
+  assert.equal(await page.locator(".pi-bar.pi-pos").count(), 10);
+  for (let k = 1; k < 10; k++) {
+    assert.ok(pos[k].x > pos[k - 1].r, "left to right");
+    assert.ok(pos[k].h < pos[k - 1].h, "each bar shorter than the one before: " + pos.map((p) => Math.round(p.h)).join(" "));
+  }
+  assert.ok(pos.every((p) => p.dwell && Math.min(p.w, p.h) >= 90));
+  await page.evaluate(() => { window.__soundLog.length = 0; });
+  await dwellOn(page, '.pi-pos[data-i="0"]');
+  await page.waitForSelector('.pi-pos[data-i="0"].alive', { timeout: 3000 });
+  assert.deepEqual(await sounds(page), [60]);
+  assert.ok(await until(() => playLogs(logs).length >= 1));
+  assert.deepEqual(playLogs(logs)[0], { app: "this-week", door: "play", week_of: PI.xylophone.week, engine: "playit",
+    instrument: "xylophone", pick: 0 });
+  await neverATest(page);
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR(), "playit-xylophone-1920.png") });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("Play it, string telephone: Tight left, Loose right, her cup and the far cup; tight + her cup -> a wave runs and hello plays clear; loose -> muffled", async () => {
+  const { ctx, page, logs, errors } = await playPage({ query: PQ("string-telephone") });
+  await openPlayit(page);
+  const pos = await positions(page);
+  assert.deepEqual(pos.map((p) => [p.i, p.label]), [[0, "Tight"], [1, "Loose"]]);
+  assert.ok(pos[0].r < pos[1].x, "tight left, loose right");
+  assert.ok(pos.every((p) => p.dwell && Math.min(p.w, p.h) >= 90));
+  const cups = await page.evaluate(() => ({ her: !!document.querySelector("#piCup.dwell"),
+    far: !!document.getElementById("piFar") && !document.querySelector("#piFar.dwell, #piFar .dwell"),
+    string: !!document.getElementById("piString"),
+    dwells: [...document.querySelectorAll("#stage .dwell")].map((el) => el.id).sort() }));
+  assert.ok(cups.her && cups.far && cups.string, JSON.stringify(cups));
+  assert.deepEqual(cups.dwells, ["piCup", "pos0", "pos1"], "the two strings and her cup are the only dwell targets");
+  const cup = await box(page, "#piCup"), far = await box(page, "#piFar");
+  assert.ok(Math.min(cup.w, cup.h) >= 90 && cup.cx < far.cx, "her cup on the left, ≥ 90 px");
+  await wordsFit(page, "telephone at 1920");
+  await watchClasses(page);
+
+  await page.locator("#pos0").click();                               // tight
+  await page.evaluate(() => { window.__soundLog.length = 0; });
+  await dwellOn(page, "#piCup");
+  await page.waitForFunction(() => window.__seen.includes("piString.wave"), null, { timeout: 3000 });
+  assert.ok(await until(async () => (await sounds(page)).includes("hello"), 3000), JSON.stringify(await sounds(page)));
+  const s1 = await sounds(page);
+  assert.deepEqual(s1.slice(s1.indexOf("hello") - 1, s1.indexOf("hello") + 1), ["clear", "hello"], JSON.stringify(s1));
+  await page.waitForFunction(() => !document.querySelector("#piString.wave"), null, { timeout: 3000 });
+
+  await page.locator("#pos1").click();                               // loose
+  await page.evaluate(() => { window.__soundLog.length = 0; });
+  await page.locator("#piCup").click();
+  assert.ok(await until(async () => (await sounds(page)).includes("hello"), 3000));
+  const s2 = await sounds(page);
+  assert.deepEqual(s2.slice(s2.indexOf("hello") - 1, s2.indexOf("hello") + 1), ["muffled", "hello"], JSON.stringify(s2));
+  assert.ok(await until(async () => (await sounds(page)).includes("clear"), 3000), "the muffle comes off after the call");
+
+  const pl = playLogs(logs);
+  assert.deepEqual(pl.filter((l) => "pick" in l).map((l) => l.pick), [0, 1]);
+  assert.ok(pl.every((l) => !("right" in l) && !("strike" in l)), "free play: no right, no strike");
+  assert.deepEqual(pl.filter((l) => l.talk).map((l) => l.string), ["tight", "loose"], "the cup's calls are logged too");
+  await neverATest(page);
+  if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR(), "playit-string-telephone-1920.png") });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("Play it, shadow puppet: Closer left, Farther right, four shapes under the scene; closer grows the shadow to 1.6, farther shrinks it to 0.7", async () => {
+  const { ctx, page, logs, errors } = await playPage({ query: PQ("shadow-puppet") });
+  await openPlayit(page);
+  const pos = await positions(page);
+  assert.deepEqual(pos.map((p) => [p.i, p.label]), [[0, "Closer"], [1, "Farther"]]);
+  assert.ok(pos[0].r < pos[1].x && pos.every((p) => p.dwell && Math.min(p.w, p.h) >= 90));
+  const shapes = await page.$$eval(".pi-shape", (els) => els.map((el) => { const r = el.getBoundingClientRect();
+    return { shape: el.dataset.shape, glyph: el.querySelector(".pi-glyph").textContent, dwell: el.matches(".dwell"),
+             hold: el.dataset.dwellMs || null, y: r.top, m: Math.min(r.width, r.height) }; }));
+  assert.deepEqual(shapes.map((s) => [s.shape, s.glyph]), [["bat", "🦇"], ["bird", "🐦"], ["rabbit", "🐰"], ["dog", "🐕"]]);
+  const scene = await box(page, "#piScene");
+  assert.ok(shapes.every((s) => s.dwell && s.hold === null && s.m >= 90 && s.y >= scene.y + scene.h), "1x tiles under the scene");
+  for (const id of ["piLamp", "piPuppet", "piWall", "piShadow"]) assert.equal(await page.locator("#" + id).count(), 1, id);
+  await wordsFit(page, "puppet at 1920");
+  const scale = () => page.$eval("#piShadow", (el) => Number(el.dataset.scale));
+  assert.equal(await scale(), 1);
+  await page.evaluate(() => { window.__soundLog.length = 0; });
+  await dwellOn(page, "#pos0");
+  await page.waitForFunction(() => document.getElementById("piShadow").dataset.scale === "1.6", null, { timeout: 3000 });
+  assert.ok((await sounds(page)).length >= 1, "the move sounds");
+  // the shadow grows over its 600 ms transition: read the painted scale once it has settled
+  await page.waitForFunction(() => Math.abs(new DOMMatrix(getComputedStyle(document.getElementById("piShadow")).transform).a - 1.6) < 0.01,
+    null, { timeout: 3000 }).catch(() => {});
+  const grown = await page.$eval("#piShadow", (el) => new DOMMatrix(getComputedStyle(el).transform).a);
+  await page.locator("#pos1").click();
+  assert.equal(await scale(), 0.7);
+  await page.locator('.pi-shape[data-shape="rabbit"]').click();
+  assert.equal(await page.$eval("#piPuppet", (el) => el.textContent), "🐰");
+  assert.equal(await page.$eval("#piShadow", (el) => el.textContent), "🐰");
+  assert.ok(Math.abs(grown - 1.6) < 0.01, "the shadow's painted scale grew to 1.6: " + grown);
+  const pl = playLogs(logs);
+  assert.deepEqual(pl.filter((l) => "pick" in l).map((l) => l.pick), [0, 1]);
+  assert.ok(pl.some((l) => l.shape === "rabbit"));
+  assert.ok(pl.every((l) => !("right" in l)));
+  assert.deepEqual(await holds2x(page), ["barDoor=2400", "barTalk=2400"]);
+  await neverATest(page);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("Play it: the question waits for 60 s of play from the FIRST pick; then it is shown and said; a right pick comes alive with the cheer; the question never returns", async () => {
+  const { ctx, page, logs, errors } = await playPage({ query: PQ("harmonica"), clockMs: 700 });
+  await openPlayit(page);
+  await page.waitForTimeout(1100);
+  assert.equal(await page.locator("#piQ").count(), 0, "nobody played: no question");
+  await page.locator('.pi-pos[data-i="4"]').click();                 // the clock starts here
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator("#piQ").count(), 0, "still free play");
+  await page.waitForSelector("#piQ", { timeout: 3000 });
+  assert.equal(await page.$eval("#piQ", (el) => el.innerText.trim()), PI.harmonica.q);
+  assert.ok(await until(async () => (await said(page)).includes(PI.harmonica.q)), "the question was said");
+  const f = await page.$eval("#piQ", (el) => parseFloat(getComputedStyle(el).fontSize));
+  assert.ok(f >= 32 * 4 / 3, "≥ 32 pt: " + f);
+  logs.length = 0;
+  await page.evaluate(() => { window.__soundLog.length = 0; window.__confettiSeen = 0; });
+  await dwellOn(page, '.pi-pos[data-i="0"]');
+  await page.waitForSelector('.pi-pos[data-i="0"].alive', { timeout: 3000 });
+  assert.ok(await until(async () => (await sounds(page)).includes("cheer")), JSON.stringify(await sounds(page)));
+  assert.ok((await sounds(page)).includes(60), "the hole still plays its note");
+  assert.ok((await page.evaluate(() => window.__confettiSeen)) > 0, "confetti");
+  assert.ok(await until(() => playLogs(logs).length >= 1));
+  assert.deepEqual(playLogs(logs)[0], { app: "this-week", door: "play", week_of: PI.harmonica.week, engine: "playit",
+    instrument: "harmonica", pick: 0, right: true, strike: 0 });
+  await page.waitForFunction(() => !document.getElementById("piQ"), null, { timeout: 4000 });
+  // free play goes on, and the question does not come back
+  logs.length = 0;
+  await page.evaluate(() => { window.__soundLog.length = 0; });
+  await page.locator('.pi-pos[data-i="9"]').click();
+  assert.ok((await sounds(page)).includes(76));
+  await page.waitForTimeout(1500);
+  assert.equal(await page.locator("#piQ").count(), 0, "the question never returns");
+  assert.ok(await until(() => playLogs(logs).length >= 1));
+  assert.deepEqual(playLogs(logs)[0], { app: "this-week", door: "play", week_of: PI.harmonica.week, engine: "playit",
+    instrument: "harmonica", pick: 9 });
+  await neverATest(page);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("Play it: a first miss does its own thing and re-asks with the instrument's hint; a second miss lights the right position by itself with the cheer", async () => {
+  const cases = [
+    { inst: "harmonica", miss: [5, 7], hint: "Listen for the low one", rightNote: 60 },
+    { inst: "xylophone", miss: [2, 4], hint: "Listen for the high one", rightNote: 76 },
+    { inst: "string-telephone", miss: [1, 1], hint: "Try the tight string" },
+    { inst: "shadow-puppet", miss: [1, 1], hint: "Move it closer" },
+  ];
+  for (const c of cases) {
+    const w = PI[c.inst];
+    const { ctx, page, logs, errors } = await playPage({ query: PQ(c.inst), clockMs: 300 });
+    await openPlayit(page);
+    await page.locator(`.pi-pos[data-i="${c.miss[0]}"]`).click();      // free play starts the clock
+    await page.waitForSelector("#piQ", { timeout: 3000 });
+    if (SHOTS && c.inst === "shadow-puppet") await page.screenshot({ path: path.join(SHOT_DIR(), "playit-shadow-puppet-question-1920.png") });
+    logs.length = 0;
+    await page.waitForTimeout(400);                                  // let the free-play sound settle
+    await watchClasses(page);
+    await page.evaluate(() => { window.__speechLog.length = 0; window.__soundLog.length = 0; window.__confettiSeen = 0; });
+    // first miss
+    await page.locator(`.pi-pos[data-i="${c.miss[0]}"]`).click();
+    assert.ok(await until(() => playLogs(logs).length >= 1));
+    assert.deepEqual(playLogs(logs)[0], { app: "this-week", door: "play", week_of: w.week, engine: "playit",
+      instrument: c.inst, pick: c.miss[0], right: false, strike: 1 }, c.inst);
+    assert.ok(await until(async () => (await said(page)).includes(w.q + " " + c.hint)), c.inst + ": " + JSON.stringify(await said(page)));
+    assert.ok((await sounds(page)).length >= 1, c.inst + ": the picked position does its own thing");
+    assert.ok(!(await sounds(page)).includes("cheer"), c.inst + ": no cheer on a first miss");
+    assert.ok(!(await seen(page)).includes(w.answer + ".alive"), c.inst + ": the right one did not light");
+    assert.equal(await page.locator("#piQ").count(), 1, c.inst + ": the question stays up");
+    assert.ok((await positions(page)).every((p) => p.dwell), "every position stays live");
+    await neverATest(page);
+    // second miss
+    await page.locator(`.pi-pos[data-i="${c.miss[1]}"]`).click();
+    await page.waitForSelector(`.pi-pos[data-i="${w.answer}"].alive`, { timeout: 3000 });
+    assert.ok(await until(async () => (await sounds(page)).includes("cheer")), c.inst);
+    if (c.rightNote) assert.ok((await sounds(page)).includes(c.rightNote), c.inst + ": the right one sounds by itself");
+    assert.ok((await page.evaluate(() => window.__confettiSeen)) > 0, c.inst + ": confetti");
+    assert.ok(await until(() => playLogs(logs).length >= 2));
+    assert.deepEqual(playLogs(logs)[1], { app: "this-week", door: "play", week_of: w.week, engine: "playit",
+      instrument: c.inst, pick: c.miss[1], right: false, strike: 2 }, c.inst);
+    await page.waitForFunction(() => !document.getElementById("piQ"), null, { timeout: 4000 });
+    await neverATest(page);
+    assert.deepEqual(errors, [], c.inst);
+    await ctx.close();
+  }
+});
+
+test("Play it: a reload on #playit lands on the instrument; reduced motion -> the positions have no transition or animation", async () => {
+  const { ctx, page } = await playPage({ query: PQ("xylophone"), hash: "#playit", reducedMotion: "reduce" });
+  await page.waitForFunction(() => window.Play.state().page === "playit" && document.querySelectorAll(".pi-pos").length === 10);
+  await page.locator('.pi-pos[data-i="2"]').click();
+  const r = await page.$eval('.pi-pos[data-i="2"]', (el) => { const s = getComputedStyle(el);
+    return { t: s.transitionDuration, a: s.animationName, alive: el.matches(".alive") }; });
+  assert.ok(r.alive);
+  assert.ok(r.t.split(",").every((d) => parseFloat(d) === 0), "no transition: " + r.t);
+  assert.equal(r.a, "none");
+  await ctx.close();
+  const p = await playPage({ query: PQ("shadow-puppet"), hash: "#playit", reducedMotion: "reduce" });
+  await p.page.waitForFunction(() => window.Play.state().page === "playit" && document.getElementById("piShadow"));
+  const s = await p.page.$eval("#piShadow", (el) => getComputedStyle(el).transitionDuration);
+  assert.ok(s.split(",").every((d) => parseFloat(d) === 0), "the shadow jumps: " + s);
+  await p.ctx.close();
+});
+
+test("playit.js is a module with no page globals: it imports only the kit", () => {
+  const src = fs.readFileSync(path.join(HUB, "public", "play", "playit.js"), "utf8");
+  assert.match(src, /export function mountPlayit\(host, playit, \{/);
+  assert.doesNotMatch(src, /window\.(Play|Speech|Dwell|__)/, "no page globals in playit.js");
+  for (const m of src.matchAll(/^import .* from "([^"]+)"/gm)) assert.match(m[1], /^\.\.\/lib\//);
+  assert.doesNotMatch(src, /\.(png|jpe?g|webp|gif|mp3|wav|ogg)\b/i, "no media files");
 });

@@ -28,6 +28,7 @@ const VOICES = {
   "whoosh-down": (c, out, t) => whoosh(c, out, t, 3000, 300),
   "pop": (c, out, t) => pop(c, out, t),
   "cheer": (c, out, t) => { [72, 76, 79].forEach((m, i) => tone(c, out, t + i * 0.13, hz(m), 0.32, "triangle", 0.5)); },
+  "hello": (c, out, t) => hello(c, out, t),
 };
 export const VOICE_NAMES = Object.freeze(Object.keys(VOICES));
 
@@ -77,6 +78,26 @@ function pop(c, out, t) {
   const o = c.createOscillator(), g = env(c, t, 0.7, 0.12);
   o.type = "sine"; o.frequency.setValueAtTime(400, t); o.frequency.exponentialRampToValueAtTime(900, t + 0.06);
   o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.14);
+}
+// "hello" (the string telephone's far cup): a breathy h, then two voiced vowels ("eh", "oh") made of
+// a buzzing source through two formant band-passes, the pitch lifting then falling like a greeting.
+// Under muffled(true) the low-pass takes the second formant and the buzz away: faint and muffled.
+function vowel(c, out, t, dur, f0a, f0b, F1, F2, peak) {
+  const src = c.createOscillator(), g = c.createGain(), b1 = c.createBiquadFilter(), b2 = c.createBiquadFilter();
+  src.type = "sawtooth"; src.frequency.setValueAtTime(f0a, t); src.frequency.linearRampToValueAtTime(f0b, t + dur);
+  b1.type = "bandpass"; b1.frequency.value = F1; b1.Q.value = 6;
+  b2.type = "bandpass"; b2.frequency.value = F2; b2.Q.value = 8;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.03);
+  g.gain.setValueAtTime(peak, t + dur - 0.06); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(b1); src.connect(b2); b1.connect(g); b2.connect(g); g.connect(out);
+  src.start(t); src.stop(t + dur + 0.02);
+}
+function hello(c, out, t) {
+  const h = noise(c, 0.09), hp = c.createBiquadFilter(), hg = env(c, t, 0.25, 0.09);
+  hp.type = "highpass"; hp.frequency.value = 1200;
+  h.connect(hp); hp.connect(hg); hg.connect(out); h.start(t); h.stop(t + 0.1);
+  vowel(c, out, t + 0.06, 0.2, 210, 250, 530, 1840, 1.6);      // "heh"
+  vowel(c, out, t + 0.28, 0.38, 250, 180, 570, 840, 1.8);      // "loh"
 }
 // harmonica: sawtooth + 5 Hz vibrato + a band-pass reed colour, 700 ms
 function harmonica(c, out, t, f) {

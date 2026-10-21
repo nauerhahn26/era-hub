@@ -9,7 +9,8 @@
  *
  * The URL hash names the page (#menu, #which, #sort, #playit) so a reload lands on the same page
  * at its first item; state lives in memory. On an engine page Back returns to the menu.
- * Play it is a later task: its route falls back to the menu until it exists.
+ * Play it (playit.js) mounts the week's one instrument; its 60 s free-play clock is the module's,
+ * shortened under tests by window.__clockMs as the 20 s re-say is by window.__idleMs.
  *
  * Laws: one dwell per user, only the two doors hold 2x (the bar does that; every tile here holds
  * her dwell, holdFor("content")); Speech.stop() before every say; nothing scores, nothing says
@@ -22,6 +23,7 @@ import { confetti } from "../lib/celebrate.js";
 import { createSounds } from "./sounds.js";
 import { mountWhich } from "./which.js";
 import { mountSort } from "./sort.js";
+import { mountPlayit } from "./playit.js";
 
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 const BOARD = "/board/?recipe=this-week";
@@ -52,12 +54,13 @@ function logPick(engine, d) {
   } catch {}
 }
 function idleMs() { const n = Number(window.__idleMs); return Number.isFinite(n) && n > 0 ? n : 20000; }
+function clockMs() { const n = Number(window.__clockMs); return Number.isFinite(n) && n > 0 ? n : 60000; }
 function play() { return (S.data && S.data.play) || { which: [], sort: null, playit: null }; }
 function has(page) {
   const p = play();
   if (page === "which") return p.which.length > 0;
   if (page === "sort") return !!p.sort;
-  if (page === "playit") return !!p.playit && false;   // B3 builds the page
+  if (page === "playit") return !!p.playit;
   return page === "menu";
 }
 
@@ -167,12 +170,33 @@ function renderSort() {
   suppress();
 }
 
+function renderPlayit() {
+  unmount();
+  S.page = "playit";
+  S.idx = 0;
+  const stage = $("stage");
+  stage.textContent = "";
+  const host = document.createElement("div");
+  host.className = "pi-host";
+  stage.appendChild(host);
+  S.item = play().playit.instrument;
+  S.mounted = mountPlayit(host, play().playit, {
+    say,
+    log: (d) => logPick("playit", d),
+    // SOUNDS is re-made once /settings answers: always reach the current one
+    sound: { play: (n) => SOUNDS.play(n), note: (m, v) => SOUNDS.note(m, v), muffled: (on) => SOUNDS.muffled(on) },
+    clockMs: clockMs(),
+  });
+  suppress();
+}
+
 function route() {
   const h = (location.hash || "").replace(/^#/, "");
   const page = PAGES.includes(h) && has(h) ? h : "menu";
   if (page !== h && h !== "") { history.replaceState(null, "", location.pathname + location.search + "#menu"); }
   if (page === "which") renderWhich();
   else if (page === "sort") renderSort();
+  else if (page === "playit") renderPlayit();
   else renderMenu();
 }
 
