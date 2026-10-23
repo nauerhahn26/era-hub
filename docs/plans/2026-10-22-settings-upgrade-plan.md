@@ -1,7 +1,7 @@
 # Settings upgrade plan
 
 Date: 2026-10-22. Branch: `feat/settings-upgrade`.
-Status: approved for implementation, testing and release on 2026-10-23.
+Status: implemented, tested, landed and released as v1.0.9 on 2026-10-23.
 
 Design and evidence: [settings upgrade proposal](../specs/2026-10-22-settings-upgrade-design.md).
 Interactive artifact: [standalone preview](../specs/2026-10-22-settings-upgrade-preview.html).
@@ -80,10 +80,10 @@ scrolling through the complete library to find a device preference.
   Installed Windows browser behavior is checked in the release leg below.
 - [x] Run the full gate detached with a PID and sentinel, observing the host-wide
   process safety rules. Address failures before requesting land/release.
-- [ ] Update the docs nearest changed behavior and the private workspace status
+- [x] Update the docs nearest changed behavior and the private workspace status
   in the same completion unit. Record concrete screenshots and test evidence.
-- [ ] Return the completed change for maintainer review. Publish only with the
-  maintainer's explicit release instruction.
+- [x] Complete the authorized release after the full gate and Windows self-update
+  leg pass. The maintainer explicitly requested release on 2026-10-23.
 
 ## Research retrospective and current limits
 
@@ -131,5 +131,24 @@ no horizontal overflow, no runtime errors and no write requests. Its private
 captures remain outside the repository.
 
 Release authorization is the maintainer's 2026-10-23 request to build, test and
-release. Planned patch: **v1.0.9**. Windows self-update/Settings smoke and publication
-are the remaining release steps.
+release. Completed patch: **v1.0.9**. Windows self-update/Settings smoke passed and the
+release is published.
+
+## Release receipt
+
+- Published [v1.0.9](https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.0.9),
+  build `20261023.1934`, as a normal patch release.
+- Source implementation `371b0b7`; landed as `2d79e9c`.
+- Targeted settings tests **101/101**; full gate **128 suites, 0 failures**.
+- Windows leg B **6/6**, including the installed Settings navigation/search/legacy
+  link smoke case and an actual kiosk screenshot. Self-update preserved the
+  profile and chosen packs; the kiosk stayed open.
+- All five packaged Settings files match the tested source. The published
+  manifest matches the local tested manifest; all six expected assets exist.
+- Payload SHA-256:
+  `d4160cb5f99669fe9dff42c01fc38f211e9557c1d4205dbd559a244f26296caa`.
+- Retained installer `v1.0.0`, `Our-Era-Comms-Setup.exe`, signature verified.
+- The release's temporary QA machine was destroyed after publication.
+- No manual restart of the live hub was performed. Family-device physical touch
+  and zoom acceptance remain a maintainer check; the live-data rendering and
+  installed Windows kiosk checks are recorded above.

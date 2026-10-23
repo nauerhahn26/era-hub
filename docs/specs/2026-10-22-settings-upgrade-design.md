@@ -256,3 +256,8 @@ showed six rows per page, eight destinations, no horizontal overflow and no
 runtime errors or writes. The physical tablet's touch/zoom setting remains a
 maintainer acceptance check; the release pipeline additionally exercises the
 installed page in a Windows kiosk after self-update.
+
+Shipped as [v1.0.9](https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.0.9)
+on 2026-10-23, build `20261023.1934`. Windows self-update leg B passed6/6,
+including the new installed Settings smoke test. See the plan's release receipt
+for checksums and validation evidence.
