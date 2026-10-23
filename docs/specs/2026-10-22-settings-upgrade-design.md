@@ -249,3 +249,10 @@ Sync now button and normal background sync remain. Periodic detail reads are
 limited to their relevant visible sections; navigation refreshes the destination.
 The existing allowance, data-use, confirmation and recovery messages remain with
 their forms or selected-book details.
+
+Validation before publication: all101 targeted settings/browser tests and all128
+full-gate suites passed. A read-only rendering with the live tablet's16 books
+showed six rows per page, eight destinations, no horizontal overflow and no
+runtime errors or writes. The physical tablet's touch/zoom setting remains a
+maintainer acceptance check; the release pipeline additionally exercises the
+installed page in a Windows kiosk after self-update.

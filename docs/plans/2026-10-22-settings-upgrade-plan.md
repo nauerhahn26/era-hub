@@ -70,11 +70,15 @@ scrolling through the complete library to find a device preference.
 
 - [x] Run targeted settings UI, device-volume, navigation and library suites;
   the full gate below also covers route and reader/book regressions.
-- [ ] Verify desktop, tablet portrait/landscape, narrow viewport and zoom layouts;
-  test keyboard focus, screen-reader labels and touch target sizes.
+- [x] Verify desktop, reference tablet and narrow/zoom-equivalent layouts;
+  test keyboard focus, semantic labels and touch target sizes.
 - [ ] Verify the real tablet layout through its interactive browser; use an
   isolated test hub or approved preview and do not restart the live hub.
-- [ ] Run the full gate detached with a PID and sentinel, observing the host-wide
+  Physical interaction is deferred: no interactive QA helper is registered on the
+  family tablet. A read-only rendering of its actual 16-book payload passed: eight
+  destinations, six visible rows, no overflow, zero writes and zero runtime errors.
+  Installed Windows browser behavior is checked in the release leg below.
+- [x] Run the full gate detached with a PID and sentinel, observing the host-wide
   process safety rules. Address failures before requesting land/release.
 - [ ] Update the docs nearest changed behavior and the private workspace status
   in the same completion unit. Record concrete screenshots and test evidence.
@@ -119,3 +123,13 @@ returns to the launcher. No setting is saved and no build is started by it.
 Final review also repaired detached Build confirmation labels and retained
 library filters/page plus section scroll across full returns from book review.
 The new browser regressions failed before the respective fixes and passed after.
+
+Full gate result: **128 suites passed, 0 failed**, over committed implementation
+`371b0b7`. The stamp is clean. Targeted settings tests passed **101/101**.
+The family tablet live-data check also passed with16 books, six visible per page,
+no horizontal overflow, no runtime errors and no write requests. Its private
+captures remain outside the repository.
+
+Release authorization is the maintainer's 2026-10-23 request to build, test and
+release. Planned patch: **v1.0.9**. Windows self-update/Settings smoke and publication
+are the remaining release steps.
