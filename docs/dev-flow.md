@@ -197,3 +197,29 @@ therefore cannot reimpose 45 or undo Off. The integrated engine owns the saved
 limit afterward. Older Settings clients keep their existing endpoint fields.
 The new control requires an updated local engine and verifies its reply before
 reporting success. Windows regression: `era-gaze/tests/volume-cap-regression.ps1`.
+
+## Settings navigation
+
+Settings now has a persistent section list: Eye gaze, Voice & sound, Apps &
+navigation, Books, Clothing & weather, Writing & media, Connections and System.
+Search finds named controls across sections. Narrow windows use an Open sections
+button; keyboard users can jump to search with Ctrl+K.
+
+Books has Library, Build activity and Book setup views. Library search, status
+filters and six-row pages keep a growing collection separate from device controls.
+View opens the existing review, rename, build and recovery actions. Readable books
+with uncertain words also appear under Needs review. Saved writing is paged too.
+
+Service setup lives in Connections; feature pages link to the relevant form.
+Weather place and hours are in Clothing & weather. Temporary gaze pause is in
+Eye gaze, while complete stop and restart guidance are in System.
+
+Old links such as `/settings/#content` and `/settings/#integrations` still reveal
+their destinations. New links can use `/settings/#books`, `#books/activity`,
+`#books/setup`, `#clothing`, or `#connections/drive`. Preferences stay on the
+computer being adjusted; Drive content sharing does not synchronize these settings.
+The existing Reader dwell mirror is unchanged. Opening or navigating Settings
+does not save a preference or start a content sync. Explicit actions and the hub's
+background work retain their existing behavior.
+
+Design and acceptance checks: [settings upgrade](specs/2026-10-22-settings-upgrade-design.md).

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ERAgaze Settings</title>
+<title>Our Era Settings</title>
 <link rel="stylesheet" href="../lib/tokens.css">
 <style>
   /* ERAgaze — the family gaze settings page. All click-driven, for the
@@ -85,6 +85,8 @@
   .stopped .bd{font-size:18px; color:#5A6A70; margin:0}
   .stopped .bd b{color:var(--ink)}
 </style>
+<link rel="stylesheet" href="settings-layout.css">
+<link rel="stylesheet" href="settings-books.css">
 </head>
 <body>
 <div class="wrap">
@@ -338,7 +340,7 @@
 
   <div class="card">
     <h2>⏱ Dwell time</h2>
-    <p class="hint">The default time she holds her gaze on a button before it activates. The Alternative Pencil has its own setting below. Longer = calmer, fewer accidental picks. Shorter = faster once she&rsquo;s confident.</p>
+    <p class="hint">The default time she holds her gaze on a button before it activates. The Alternative Pencil has its own dwell setting. Longer = calmer, fewer accidental picks. Shorter = faster once she&rsquo;s confident.</p>
     <div class="stepper">
       <button id="dwellDown">−</button>
       <div class="val"><span id="dwellVal">1200</span> ms</div>
@@ -473,7 +475,7 @@
       <div class="status" id="pausedStatus"></div>
 
       <div class="danger-zone">
-        <p class="hint">Full stop <b>releases the eye-tracker completely</b> so you can test another eye-gaze app (like Aivota) with no interference. Pause above only holds the cursor still — the tracker connection stays open. Use this when you need ERAgaze fully out of the way.</p>
+        <p class="hint">Full stop <b>releases the eye-tracker completely</b> so you can test another eye-gaze app (like Aivota) with no interference. Pause in <a href="#gaze">Eye gaze</a> only holds the cursor still — the tracker connection stays open. Use this when you need ERAgaze fully out of the way.</p>
         <button id="stopBtn" class="stopbtn">⏻ Stop ERAgaze completely (for testing other eye-gaze apps)</button>
         <div class="stophint" id="stopHint">Tap once to arm, then tap again to confirm.</div>
       </div>
@@ -489,6 +491,7 @@
 </div>
 <div class="toast" id="toast">Saved</div>
 
+<script src="settings-books.js"></script>
 <script>
 const ENGINE = "http://127.0.0.1:49155";     // ERAgaze on this machine
 const $ = id => document.getElementById(id);
@@ -501,7 +504,7 @@ async function loadVoices(){
     const box = $("voices"); box.innerHTML="";
     if(v.enabled){
       $("voiceStatus").innerHTML='<b>Premium voices active ✓</b>';
-      $("ttsKeyStatus").innerHTML='<b>Key checked and working ✓</b> Tap a voice above to hear it.';
+      $("ttsKeyStatus").innerHTML='<b>Key checked and working ✓</b> Choose a voice in <a href="#sound">Voice &amp; sound</a>.';
     } else if(v.keyPresent){
       // a key is stored but ElevenLabs rejected it — say so plainly instead of
       // claiming success and then going silent (QA 9/1)
@@ -953,7 +956,7 @@ async function loadMail(){
     else if(m.email && m.hasKey) $("mailStatus").innerHTML='<span class="bad">Email is set up but the last test failed: '+(m.error||"unknown")+'</span>';
     else $("mailStatus").innerHTML='No email set up yet — her messages are kept here in Settings.';
     const box=$("writings"); box.innerHTML="";
-    if(!m.writings.length){ box.innerHTML='<div class="status">Nothing written yet.</div>'; return; }
+    if(!m.writings.length){ box.innerHTML='<div class="status">Nothing written yet.</div>'; window.ERA_SETTINGS_BOOKS.paginateWriting(box); return; }
     for(const w of m.writings){
       const d=document.createElement("div");
       d.style.cssText="border-top:1px solid var(--line);padding:10px 0;font-size:20px";
@@ -961,6 +964,7 @@ async function loadMail(){
       d.innerHTML='&ldquo;'+w.text.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))+'&rdquo; <span style="color:#7A8A90;font-size:15px">'+when+(w.mailed?" · emailed ✓":"")+'</span>';
       box.appendChild(d);
     }
+    window.ERA_SETTINGS_BOOKS.paginateWriting(box);
   }catch(e){ $("mailStatus").textContent="Could not reach the app server."; }
 }
 $("resendOpen").onclick=()=>openSite("https://resend.com/api-keys");
@@ -1172,7 +1176,7 @@ function accPaint(s){
   if(hidden) parts.push(hidden+" hidden item"+(hidden===1?"":"s")+" (not on her board)");
   el.innerHTML=parts.join(" &middot; ")+".";
 }
-aiProvPaint(); aiPaint(); setInterval(aiPaint, 5000);
+aiProvPaint(); aiPaint(); setInterval(()=>{if(!document.hidden && ["connections","clothing"].includes(window.ERASettingsLayout?.section)) aiPaint();}, 5000);
 
 // ---- Your books: /content/status turned into sentences (T2.10). The card
 // never shows a state name, a step name or a date stamp — a parent needs to
@@ -1206,7 +1210,7 @@ const CT_DOING = {
 function ctSorry(msg){
   const m=String(msg||"");
   if(/permanent:|\b(401|403)\b|not accept|invalid[_ ]api|refused/i.test(m))
-    return "One of the keys in the cards above was not accepted. Check it, then press the button below.";
+    return "One of the saved service keys was not accepted. Check Connections, then try this book again.";
   if(/\b429\b|quota|allowance|RESOURCE_EXHAUSTED/i.test(m))
     return "Today’s free AI allowance ran out part-way. It carries on tomorrow morning by itself.";
   if(/\b5\d\d\b|timeout|timed out|network|fetch failed|ENOTFOUND|ECONNREFUSED/i.test(m))
@@ -1233,14 +1237,14 @@ const CT_PROVIDER={ google:"Google AI Studio", elevenlabs:"ElevenLabs" };
 // sentence here simply shows nothing, which is what "no-pages" deserves on a
 // folder a parent has just started filling.
 const CT_WAITING={
-  "no-ai-key":'This book is waiting for an <b>AI helper key</b> &mdash; add one in the card above and it starts by itself.',
+  "no-ai-key":'This book is waiting for an <b>AI helper key</b> &mdash; add one in <a href="#ai">Connections</a>, then try this book again.',
   "retry":'A page did not come back last time. Our Era Comms tries that page again on its next look; every page already read is kept.',
   "needs-title":'Reading the cover to find out what this book is called&hellip;',
   // The 9/7 dead end, said out loud. iPhones write HEIC, Our Era Comms opens HEIC
   // with the file that ships alongside the Clothing Picker, and a hub that has
   // Book Reader on its own does not have it. Nothing is lost while it waits.
   "needs-photo-decoder":'These are <b>iPhone photos (HEIC)</b>. Our Era Comms opens those with the file that comes with the '
-    +'<b>Clothing Picker</b> app &mdash; tick it in <b>Apps</b> above and this book carries on by itself. '
+    +'<b>Clothing Picker</b> app &mdash; tick it in <a href="#apps">Apps &amp; navigation</a> and this book carries on by itself. '
     +'(Or save the photos as <b>JPEG</b> and put them back in the folder.) Every photo is kept either way.',
   "unreadable-photos":'None of these files can be made into pages. A page has to be a <b>JPEG</b> photo or an '
     +'<b>iPhone photo (HEIC)</b> &mdash; a PDF, a screenshot in another format or a document cannot be one.',
@@ -1568,6 +1572,7 @@ function ctRow(j){
     try{ out=await (await fetch("/content/run",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({kind:"books",slug:j.slug,step:null,retry:true})})).json(); }
     catch(e){ out={error:"That did not go through — try again."}; }
+    finally{ again.disabled=false; }
     // …and since "built here" (spec §14) this door can refuse: a book another
     // computer holds is not restarted from here, and it says so in the hub's own
     // words. Swallowing that answer left a parent pressing a button that plainly
@@ -1583,6 +1588,23 @@ function ctRow(j){
 // dozen pages is still telling a parent the true thing: whether this month has
 // a book left in it.
 const CT_CHARS_PER_PAGE=120;
+let CT_LIBRARY;
+function ctLibraryUpdate(s){
+  if(!CT_LIBRARY) CT_LIBRARY=window.ERA_SETTINGS_BOOKS.create({
+    card:$("content"),container:$("contentBooks"),renderRow:ctRow,
+    syncActions(detail,j){
+      const b=detail.querySelector('button[data-build]');
+      if(b){
+        const on=CT_ARMED===j.slug;
+        b.classList.toggle("armed",on);
+        b.textContent=on?CT_BUILD_ARMED:CT_BUILD_LABEL;
+      }
+    }
+  });
+  CT_LIBRARY.update(s);
+  $("content").dataset.settingsContentReady="true";
+  document.dispatchEvent(new CustomEvent("era-settings-content",{detail:{section:"books"}}));
+}
 async function contentPaint(){
   let s; try{ s=await (await fetch("/content/status",{cache:"no-store"})).json(); }catch(e){ return; }
   // Read before any row is painted: ctCanBuild() asks it of every one of them.
@@ -1608,8 +1630,8 @@ async function contentPaint(){
   // computer does the work instead of printing the code word.
   if(!s.local){
     $("contentActions").style.display="none";
-    st.innerHTML='<span class="bad">Books are built on the computer that has the <b>Google Drive</b> app and the folder set up in the card above.</span> Set that up, and <b>Build</b> on that computer makes the book.';
-    list.innerHTML=""; return;
+    st.innerHTML='<span class="bad">Books are built on the computer that has the <b>Google Drive</b> app and the folder set up in <a href="#integrations">Connections</a>.</span> Set that up, and <b>Build</b> on that computer makes the book.';
+    ctLibraryUpdate({...s,jobs:[]}); return;
   }
   $("contentActions").style.display="";
   const jobs=s.jobs||[], loose=Number(s.loose)||0;
@@ -1627,18 +1649,17 @@ async function contentPaint(){
     +ctBuildBtn(CT_LOOSE,'data-build-loose'):'';
   if(!jobs.length){
     st.innerHTML=ctLoose||'No books yet — drop the page photos of one book into <b>books</b> in your Google Drive, then press <b>Build</b>. Our Era Comms makes the folder and names it for you.';
-    list.innerHTML=""; ctWireBuild(st,CT_LOOSE,{kind:"books",loose:true},"the new book"); return;
+    ctLibraryUpdate(s); ctWireBuild(st,CT_LOOSE,{kind:"books",loose:true},"the new book"); return;
   }
   st.innerHTML='<b>'+jobs.length+' book'+(jobs.length===1?'':'s')+'</b> in your Drive folder.'+(ctLoose?' '+ctLoose:'');
   ctWireBuild(st,CT_LOOSE,{kind:"books",loose:true},"the new book");
-  list.innerHTML="";
-  for(const j of jobs) list.appendChild(ctRow(j));
+  ctLibraryUpdate(s);
 }
 // A sync is what finds new books (server.js fans drive.onSynced out to the
 // book scan), so this button is the same one the Drive card offers — said in
 // the words of this card.
 $("ctLook").onclick=async()=>{ toast("Looking for new books — this card shows the progress"); try{ await fetch("/integrations/drive/sync",{method:"POST"}); }catch(e){} contentPaint(); };
-contentPaint(); setInterval(contentPaint, 5000);
+contentPaint(); setInterval(()=>{if(!document.hidden && ["books","connections"].includes(window.ERASettingsLayout?.section)) contentPaint();}, 5000);
 
 // ---- Google Drive content: a LIVE CHECKLIST coach (dad 8/29, the Mac
 // pattern): every step checks itself off as the person completes it, and
@@ -1707,11 +1728,6 @@ async function drivePaint(){
     const picking = s.signedIn && !s.folderPath;
     $("dlPicker").style.display = picking ? "block":"none";
     if(picking){ if(!dlCur) dlCur = s.localRoots[0] || ""; await dlBrowse(dlCur); }
-    if(hasContent && s.lastSync && !s.lastSync.error && s.lastSync.files===0 && !s.syncing && !window.__autoSynced){
-      window.__autoSynced = true;
-      toast("New content found — syncing");
-      fetch("/integrations/drive/sync",{method:"POST"}).then(drivePaint);
-    }
     const allDone = steps.every(x=>x.done);
     let msg="";
     if(allDone) msg='<b style="font-size:17px">Setup complete ✓</b> Add clothing photos to <b>clothing</b>, one folder per book in <b>books</b>, songs in <b>music</b> — from this computer or your phone (install the Google Drive app on your phone, open your content folder, and upload straight into those folders). Everything lands here within 10 minutes, or press Sync now.<br>';
@@ -1898,8 +1914,15 @@ $("updCheck").onclick=async()=>{
 };
 paintVersion();
 $("dlOpenFolder").onclick=async()=>{ await fetch("/integrations/drive/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({target:"folder"})}); };
-setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
+setInterval(()=>{if(!document.hidden && window.ERASettingsLayout?.section==="connections") drivePaint();}, 5000);   // the checklist ticks itself as steps finish
 
+
+document.addEventListener("era-settings-section",e=>{
+  const section=e.detail.section;
+  if(section==="books") contentPaint();
+  if(section==="connections"){ drivePaint(); aiPaint(); contentPaint(); }
+  if(section==="clothing") aiPaint();
+});
 
 // ---- init from current state ----
 (async()=>{
@@ -1927,7 +1950,9 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
   dwellDesc(); pencilDwellPaint(); settleDesc(); mvolDesc(); lockDesc();
   try{
     const c=await (await fetch(ENGINE+"/config")).json();
-    if(c.radius===0) document.querySelector('#ring button[data-ring="off"]').click();
+    if(c.radius===0){
+      document.querySelectorAll('#ring button').forEach(b=>b.classList.toggle('sel',b.dataset.ring==='off'));
+    }
     const g=c.graceMs; const gb=document.querySelector('#grace button[data-grace="'+g+'"]');
     if(gb){ document.querySelectorAll('#grace button').forEach(x=>x.classList.remove('sel')); gb.classList.add('sel'); }
     $("engineStatus").innerHTML='<b>ERAgaze connected ✓</b>';
@@ -1952,5 +1977,6 @@ setInterval(drivePaint, 5000);   // the checklist ticks itself as steps finish
   }
 })();
 </script>
+<script src="settings-layout.js"></script>
 </body>
 </html>

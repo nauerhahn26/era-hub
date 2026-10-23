@@ -117,15 +117,35 @@ async function settingsPage(contentStatus, opts = {}) {
   // ERAgaze lives on 127.0.0.1:49155 on the family PC; here nothing answers
   await ctx.route("http://127.0.0.1:49155/**", r => r.abort());
   if (opts.volumeRoute) await ctx.route("http://127.0.0.1:49155/volcap", opts.volumeRoute);
+  if (opts.engineConfigRoute) await ctx.route("**/config", opts.engineConfigRoute);
   // A book job needs a local Drive folder full of photos; the card's job is to
   // turn whatever /content/status says into sentences, so the payload is the
   // fixture and the real route is left alone unless a test asks for one.
   if (contentStatus) await ctx.route("**/content/status", r => r.fulfill({
     status: 200, contentType: "application/json", body: JSON.stringify(contentStatus) }));
   const page = await ctx.newPage();
-  await page.goto(`${BASE}/settings/`, { waitUntil: "load" });
+  await page.goto(`${BASE}/settings/#${opts.fragment || "gaze"}`, { waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll("#appsList label").length > 0);
+  await page.waitForFunction(() => Boolean(window.ERASettingsLayout));
+  // These cases exercise the existing book actions and recovery copy. Reach
+  // their detail view through the same View control a parent uses.
+  if ((opts.fragment || "").startsWith("books") && opts.fragment !== "books/setup") {
+    for (const job of contentStatus?.jobs || []) {
+      const row = page.locator(`#contentBooks [data-book-slug="${job.slug}"]`);
+      await row.locator("button[data-book-view]").click();
+      await row.locator(`[data-slug="${job.slug}"]`).waitFor({ state: "visible" });
+    }
+  }
   return { ctx, page };
+}
+
+async function settingsSection(page, fragment) {
+  await page.evaluate(value => { location.hash = value; }, fragment);
+  await page.waitForFunction(value => {
+    const id = value.split("/")[0];
+    const aliases = { ai: "connections", content: "books" };
+    return document.getElementById("settings-section-" + (aliases[id] || id))?.hidden === false;
+  }, fragment);
 }
 
 // The shape content.js:status() returns, with the parts a test cares about
@@ -171,7 +191,7 @@ function pausedIn(hours, provider) {
 }
 
 test("the AI helper defaults to Google — free services first (bug 16)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "connections" });
   const sel = await page.$eval("#aiProv button.sel", b => b.dataset.prov);
   assert.equal(sel, "google");
   assert.match(await page.$eval("#aiOpen", b => b.textContent), /Google AI Studio/);
@@ -179,7 +199,7 @@ test("the AI helper defaults to Google — free services first (bug 16)", async 
 });
 
 test("the key placeholder admits the new AQ. AI Studio keys (U7)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "connections" });
   const ph = await page.$eval("#aiKey", i => i.placeholder);
   assert.match(ph, /AQ\./, ph);
   assert.match(ph, /AIza/, ph);
@@ -187,7 +207,7 @@ test("the key placeholder admits the new AQ. AI Studio keys (U7)", async () => {
 });
 
 test("the Drive card names the clothing folder and the 10-minute check (U14)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "connections" });
   const hint = await page.$eval("#integrations .hint", p => p.textContent);
   assert.match(hint, /\bclothing\b/);
   assert.match(hint, /every 10 minutes/);
@@ -196,7 +216,7 @@ test("the Drive card names the clothing folder and the 10-minute check (U14)", a
 });
 
 test("a stray tap beside the Apps row does not untick an app (bug 30)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "apps" });
   const row = page.locator("#appsList label", { hasText: "Making Words" });
   const cb = row.locator("input[type=checkbox]");
   assert.equal(await cb.isChecked(), true, "Making Words starts on");
@@ -215,7 +235,7 @@ test("a stray tap beside the Apps row does not untick an app (bug 30)", async ()
 });
 
 test("a voice key ElevenLabs rejects never shows 'Premium voices active' (bug 14)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "connections" });
   await page.fill("#ttsKey", "sk_typo_missing_char");
   await page.click("#ttsKeySave");
   // wait for the refusal itself, not "Checking the key with ElevenLabs…" or a
@@ -253,7 +273,7 @@ test("a voice key ElevenLabs rejects never shows 'Premium voices active' (bug 14
 // goes dead and the card says who is being asked, and the 5-second repaint
 // must not wipe that line while the answer is still out (review 9/5).
 test("the AI card goes busy while the key is checked, and never says 'saved ✓' for a refused key (T7.6 bug 6)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "connections" });
   const status = () => page.$eval("#aiStatus", e => e.textContent);
   const busy = () => page.$eval("#aiKeySave", b => b.disabled);
 
@@ -315,7 +335,7 @@ test("the AI card goes busy while the key is checked, and never says 'saved ✓'
 // names. Neither key is ever verified against a provider here (that would spend
 // one), and neither may ever come back out of the hub.
 test("the films card takes both keys and never hands either one back (T5.3)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "connections" });
   assert.match(await page.$eval("#movies h2", h => h.textContent), /Films/);
   assert.equal(await page.$eval("#tmdbKey", i => i.type), "password",
                "a key is not shoulder-surfable on a family PC");
@@ -364,7 +384,7 @@ test("the films card takes both keys and never hands either one back (T5.3)", as
 // pay for. It says the price of a clip, because the button that spends is
 // quoted in the same money (T6.2's cost gate).
 test("the fal card checks the key and quotes what a clip costs (T6.1)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "connections" });
   assert.equal(await page.$eval("#fal h2", h => /pages|video|moving/i.test(h.textContent)), true,
                "the card is about turning pages into moving pictures");
   const hint = await page.$eval("#fal .hint", p => p.textContent);
@@ -401,7 +421,7 @@ test("the fal card checks the key and quotes what a clip costs (T6.1)", async ()
 // ---- "Your books" content card (T2.10) ----
 
 test("the books card is #content and names the recommended setup (spec §4)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "books/setup" });
   assert.equal(await page.$eval("#content h2", h => h.textContent.includes("books")), true,
     "the card is headed 'Your books'");
   const tiers = await page.$eval("#contentTiers", e => e.textContent);
@@ -417,7 +437,7 @@ test("the books card is #content and names the recommended setup (spec §4)", as
 // The books card steers to that same free key on purpose: two free readers
 // checking each other is what the 9/4 bake-off bought, and it is free.
 test("the free Google key is described honestly, and books are steered to it (E8)", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "connections" });
   // VISIBLE, not merely present: the note ships display:none and one line of
   // script reveals it for the Google tier. Reading textContent off a hidden
   // node passes whether or not a parent can ever see the disclosure, which is
@@ -429,11 +449,14 @@ test("the free Google key is described honestly, and books are steered to it (E8
   assert.match(note, /improve Google’s products/i, note);
   assert.match(note, /pay-as-you-go/i, note);
   assert.match(note, /Google’s terms/i, note);
+  await settingsSection(page, "books/setup");
+  await page.locator("#contentTiers").waitFor({ state: "visible" });
   const tiers = await page.$eval("#contentTiers", e => e.textContent);
   assert.match(tiers, /Books read best with a free Google AI Studio key/i, tiers);
   assert.match(tiers, /two free readers check every page/i, tiers);
   // …and it belongs to the tier it describes: the other two providers are not
   // used that way, so the sentence goes away when they are picked.
+  await settingsSection(page, "ai");
   await page.click('#aiProv button[data-prov="anthropic"]');
   assert.equal(await page.isVisible("#aiNote"), false,
     "a pay-as-you-go provider must not be given the free tier's warning");
@@ -444,7 +467,7 @@ test("the free Google key is described honestly, and books are steered to it (E8
 
 test("no Drive folder: the books card says which computer builds books (Gap 1)", async () => {
   const { ctx, page } = await settingsPage(
-    statusPayload({ mode: "off", local: false, skipped: "needs-local-drive" }));
+    statusPayload({ mode: "off", local: false, skipped: "needs-local-drive" }), { fragment: "books" });
   await page.waitForFunction(() => /\S/.test(document.getElementById("contentStatus").textContent));
   const s = await page.$eval("#contentStatus", e => e.textContent);
   assert.match(s, /Google Drive/);
@@ -454,7 +477,7 @@ test("no Drive folder: the books card says which computer builds books (Gap 1)",
 });
 
 test("zero books: the card says how to add one", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [] }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [] }), { fragment: "books" });
   await page.waitForFunction(() => /\S/.test(document.getElementById("contentStatus").textContent));
   const s = await page.$eval("#contentStatus", e => e.textContent);
   assert.match(s, /No books yet/i);
@@ -465,7 +488,7 @@ test("zero books: the card says how to add one", async () => {
 test("a book being built shows its title and how far it has got", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
     building: true, job: { kind: "books", slug: "tabby-mctat", step: "transcribe" },
-    jobs: [bookJob()] }));
+    jobs: [bookJob()] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.match(row, /Tabby McTat/);
@@ -487,7 +510,7 @@ test("a pause with no provider says only what it knows, and a flagged book links
     bookJob({ slug: "the-gruffalo", title: "The Gruffalo", state: "published",
               step: null, flags: 2, pageFlags: 3, published: true,
               progress: { pages: 8, transcribed: 8, narrated: 8 } }),
-  ] }));
+  ] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="the-gruffalo"]');
   const paused = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.match(paused, /waiting for more AI allowance/i);
@@ -517,7 +540,7 @@ test("a pause with no provider says only what it knows, and a flagged book links
 test("a pause whose moment has passed says nothing at all (T6b.2)", async () => {
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [
     bookJob({ pausedUntil: new Date(Date.now() - 60 * 1000).toISOString() }),
-  ] }));
+  ] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.doesNotMatch(row, /allowance/i, row);
@@ -535,7 +558,7 @@ test("the books card says which pages carry words a grown-up typed", async () =>
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [
     bookJob({ slug: "the-gruffalo", title: "The Gruffalo", state: "published", step: null,
               edited: 2, published: true, progress: { pages: 8, transcribed: 8, narrated: 8 } }),
-  ] }));
+  ] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="the-gruffalo"]');
   const row = await page.$eval('#contentBooks [data-slug="the-gruffalo"]', e => e.textContent);
   assert.match(row, /2 pages have words you typed/i, row);
@@ -548,7 +571,7 @@ test("the books card says which pages carry words a grown-up typed", async () =>
 // machine. The same sentence also has to say what it is FOR: the re-read keeps
 // exactly these pages, which is the tick a parent meets on the review page.
 test("one typed page is said in the singular, and the card says the re-read keeps it", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({ edited: 1 })] }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({ edited: 1 })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.match(row, /1 page has words you typed/i, row);
@@ -565,7 +588,7 @@ test("one typed page is said in the singular, and the card says the re-read keep
 test("a stopped book says so in plain words and offers its own try-again button", async () => {
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
     state: "failed", step: "transcribe",
-    error: "ai(google/gemini-3-flash-preview) 500 boom" })] }));
+    error: "ai(google/gemini-3-flash-preview) 500 boom" })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] button[data-run]');
   const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.doesNotMatch(row, /gemini|500|boom|ai\(/, "the raw provider error never reaches the parent");
@@ -597,7 +620,7 @@ test("a stopped book says so in plain words and offers its own try-again button"
 test("a paused book names the provider, the local time it comes back, and both choices (T6b.2)", async () => {
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [
     bookJob({ paused: pausedIn(3, "google"), pausedUntil: pausedIn(3, "google").until }),
-  ] }));
+  ] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] [data-paused]');
   const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"] [data-paused]',
                                e => e.textContent);
@@ -626,7 +649,7 @@ test("a book waiting on the voice allowance points at ElevenLabs, not at Google 
   const p = pausedIn(30, "elevenlabs");
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [
     bookJob({ state: "narrating", step: "narrate", paused: p, pausedUntil: p.until }),
-  ] }));
+  ] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] [data-paused]');
   const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"] [data-paused]',
                                e => e.textContent);
@@ -653,7 +676,7 @@ test("Try again now posts retry:true, once (T6b.2)", async () => {
   const p = pausedIn(5, "elevenlabs");
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [
     bookJob({ state: "narrating", step: "narrate", paused: p, pausedUntil: p.until }),
-  ] }));
+  ] }), { fragment: "books" });
   const posts = [];
   await page.route("**/content/run", r => {
     posts.push(JSON.parse(r.request().postData()));
@@ -670,7 +693,7 @@ test("Try again now posts retry:true, once (T6b.2)", async () => {
 });
 
 test("a book that is not paused says nothing about allowances (T6b.2)", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob()] }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob()] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   assert.equal(await page.$('#contentBooks [data-slug="tabby-mctat"] [data-paused]'), null);
   assert.equal(await page.$('#contentBooks [data-slug="tabby-mctat"] button[data-add]'), null);
@@ -685,7 +708,7 @@ test("a book that is not paused says nothing about allowances (T6b.2)", async ()
 // pages of a picture book those buy.
 test("the Voice card says how much of this month's voice is left (T6b.2)", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
-    narration: { charactersLeft: 8000, resetsAt: "2026-10-03T09:00:00.000Z" } }));
+    narration: { charactersLeft: 8000, resetsAt: "2026-10-03T09:00:00.000Z" } }), { fragment: "connections" });
   await page.waitForFunction(() => /\S/.test(document.getElementById("voiceAllowance").textContent));
   const s = await page.$eval("#voiceAllowance", e => e.textContent);
   assert.match(s, /8,000 characters/, s);
@@ -697,7 +720,7 @@ test("the Voice card says how much of this month's voice is left (T6b.2)", async
 });
 
 test("no allowance answer, no made-up number (T6b.2)", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ narration: null }));
+  const { ctx, page } = await settingsPage(statusPayload({ narration: null }), { fragment: "connections" });
   await page.waitForFunction(() => /\S/.test(document.getElementById("contentStatus").textContent));
   assert.equal(await page.isVisible("#voiceAllowance"), false,
     "an allowance nobody could read is not an allowance of zero");
@@ -713,7 +736,7 @@ test("the weather-window row loads the saved hours and saves a change", async ()
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weatherWindow }) });
   const saved = async () => (await (await fetch(`${BASE}/settings`)).json()).weatherWindow;
   await post({ from: 10, to: 13 });
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing" });
   try {
     await page.waitForFunction(() => document.getElementById("wxFrom").value === "10");
     assert.equal(await page.$eval("#wxTo", s => s.value), "13");
@@ -771,7 +794,7 @@ const hit = (p) => ({ name: p.name, admin1: p.admin1, country: p.country, lat: p
 
 test("the weather row names the town a parent typed", async () => {
   await postSettings({ location: TOWN });
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing" });
   try {
     await placed(page);
     assert.equal(await page.$eval("#wxPlaceName", e => e.textContent), "Bramblewick, Aldershire");
@@ -783,7 +806,7 @@ test("the weather row names the town a parent typed", async () => {
 
 test("with no town stored the row says the point is a guess, and warns", async () => {
   await postSettings({ location: null });
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing" });
   try {
     await placed(page);
     assert.equal(await page.$eval("#wxPlaceName", e => e.textContent), "guessing from the network");
@@ -794,7 +817,7 @@ test("with no town stored the row says the point is a guess, and warns", async (
 
 test("Find, then a tap on one of the matches, stores that place", async () => {
   await postSettings({ location: null });
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing" });
   try {
     // the geocoder is never reached from this suite: the seam is the route
     await ctx.route("**/weather/search**", r => r.fulfill({ status: 200,
@@ -826,7 +849,7 @@ test("Find, then a tap on one of the matches, stores that place", async () => {
 
 test("the two things that can go wrong say two different sentences", async () => {
   await postSettings({ location: TOWN });
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing" });
   try {
     // The first lookup is PARKED so the in-flight state is reachable: a parent
     // on a slow link must see the row working, not an unchanged screen.
@@ -866,7 +889,7 @@ test("the two things that can go wrong say two different sentences", async () =>
 // lie. 0-23 is a window the validator already accepts.
 test('"All day" stores the whole day, it does not delete the window', async () => {
   await postSettings({ weatherWindow: { from: 9, to: 12 } });
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing" });
   const sent = [];
   page.on("request", r => {
     if (r.method() === "POST" && r.url().endsWith("/settings")) sent.push(JSON.parse(r.postData() || "{}"));
@@ -888,7 +911,7 @@ test('"All day" stores the whole day, it does not delete the window', async () =
 test("an untouched install shows the 10 AM-2 PM the board actually reads", async () => {
   await postSettings({ weatherWindow: null });
   assert.equal((await settingsOnDisk()).weatherWindow, undefined, "nothing stored, as a fresh hub has");
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing" });
   try {
     await page.waitForFunction(() => document.getElementById("wxFrom").value !== "", null, { timeout: 8000 });
     assert.equal(await page.$eval("#wxFrom", s => s.value), "10");
@@ -938,7 +961,7 @@ const picksText = (page) => page.$eval("#picksStatus", e => e.textContent);
 
 test("the picks card names her favourite looks, and escapes the names (O1)", async () => {
   const yesterday = dayKeyBack(1, "UTC");
-  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({
     picks: { days: 24, lastDay: yesterday, top: [
       { combo: ["item_aaaa", "item_bbbb"], names: ["Sunny <b>tee</b>", "Pond shorts"], weight: 3 },
       { combo: ["item_cccc"], names: ["Meadow dress"], weight: 2 },
@@ -958,7 +981,7 @@ test("the picks card names her favourite looks, and escapes the names (O1)", asy
 });
 
 test("with no picks yet the card says what will happen tomorrow, not nothing", async () => {
-  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload() });
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload() });
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
   const t = await picksText(page);
   assert.match(t, /No picks recorded yet/, t);
@@ -972,7 +995,7 @@ test("with no picks yet the card says what will happen tomorrow, not nothing", a
 // The empty line is the whole point: it says nothing.
 test("a payload with no picks block leaves the line empty instead of claiming there are none", async () => {
   const { picks, memory, ...blind } = clothingPayload();
-  const { ctx, page } = await settingsPage(null, { clothing: blind });
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: blind });
   await page.waitForFunction(() => /\S/.test(document.getElementById("aiStatus").textContent));
   assert.equal((await picksText(page)).trim(), "", "no sentence at all");
   assert.doesNotMatch(await picksText(page), /No picks recorded yet/);
@@ -982,19 +1005,19 @@ test("a payload with no picks block leaves the line empty instead of claiming th
 test("the sharing line appears only when the family really has a Drive folder", async () => {
   const shared = clothingPayload({ picks: { days: 4, lastDay: dayKeyBack(1, "UTC"), top: [] },
     sharing: { mode: "local", devices: 3 } });
-  let { ctx, page } = await settingsPage(null, { clothing: shared });
+  let { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: shared });
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
   assert.doesNotMatch(await picksText(page), /Shared with/, "no folder, no claim about other devices");
   await ctx.close();
 
-  ({ ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+  ({ ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({
     picks: shared.picks, sharing: { mode: "drive", devices: 3 } }) }));
   await page.waitForFunction(() => /Shared with/.test(document.getElementById("picksStatus").textContent));
   assert.match(await picksText(page), /Shared with: 3 devices/);
   await ctx.close();
 
   // A folder nobody else has written into yet is not "shared with 1 device".
-  ({ ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+  ({ ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({
     picks: shared.picks, sharing: { mode: "drive", devices: 1 } }) }));
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
   const t = await picksText(page);
@@ -1009,7 +1032,7 @@ test("the picks line survives the branches that overwrite the AI status line", a
   for (const over of [{ aiConfigured: false, aiProvider: null, aiKeyOk: null, cataloged: 0 },
                       { ingesting: { done: 2, total: 9 } },
                       { aiConfigured: true, aiKeyOk: false, aiKeyError: "That key was not recognised" }]) {
-    const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({ picks, ...over }) });
+    const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({ picks, ...over }) });
     await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
     const t = await picksText(page);
     assert.match(t, /6 days recorded/, JSON.stringify(over) + " → " + t);
@@ -1022,7 +1045,7 @@ test("a pick made yesterday says yesterday; an older one names its weekday in th
   // The browser is put in the same zone the key is built in: the card measures
   // against the BROWSER's local midnight, so on a box east of UTC a bare
   // dayKeyBack(1, "UTC") is two days back here and the sentence names a weekday.
-  let { ctx, page } = await settingsPage(null, { timezoneId: "UTC",
+  let { ctx, page } = await settingsPage(null, { fragment: "clothing", timezoneId: "UTC",
     clothing: clothingPayload({
       picks: { days: 2, lastDay: dayKeyBack(1, "UTC"), top: [] } }) });
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
@@ -1033,7 +1056,7 @@ test("a pick made yesterday says yesterday; an older one names its weekday in th
   // UTC, which is the day BEFORE here — the card would name the wrong weekday.
   const zone = "America/Los_Angeles";
   const back4 = dayKeyBack(4, zone);
-  ({ ctx, page } = await settingsPage(null, { timezoneId: zone,
+  ({ ctx, page } = await settingsPage(null, { fragment: "clothing", timezoneId: zone,
     clothing: clothingPayload({ picks: { days: 9, lastDay: back4, top: [] } }) }));
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
   const t = await picksText(page);
@@ -1049,7 +1072,7 @@ test("a pick made yesterday says yesterday; an older one names its weekday in th
 test("a pick more than a week old names its date instead of a weekday", async () => {
   const zone = "America/Los_Angeles";
   const back9 = dayKeyBack(9, zone);
-  const { ctx, page } = await settingsPage(null, { timezoneId: zone,
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", timezoneId: zone,
     clothing: clothingPayload({ picks: { days: 12, lastDay: back9, top: [] } }) });
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
   const t = await picksText(page);
@@ -1065,7 +1088,7 @@ test("a pick more than a week old names its date instead of a weekday", async ()
 // made today is a small wrong word, and the empty form already renders cleanly.
 test("a lastDay the browser has not reached yet says nothing about when, not 'yesterday'", async () => {
   const ahead = dayKeyBack(0, "Pacific/Kiritimati");     // UTC+14: today or tomorrow in California
-  const { ctx, page } = await settingsPage(null, { timezoneId: "America/Los_Angeles",
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", timezoneId: "America/Los_Angeles",
     clothing: clothingPayload({ picks: { days: 3, lastDay: ahead, top: [] } }) });
   await page.waitForFunction(() => /\S/.test(document.getElementById("picksStatus").textContent));
   const t = await picksText(page);
@@ -1079,7 +1102,7 @@ test("a lastDay the browser has not reached yet says nothing about when, not 'ye
 // down with it: aiPaint's one try/catch would swallow the throw and leave both
 // lines blank on every five-second repaint.
 test("a picks block the card cannot render never takes the AI status line with it", async () => {
-  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({
     // names as a string, not an array: (c.names||[]).join is not a function
     picks: { days: 4, lastDay: dayKeyBack(1, "UTC"),
              top: [{ combo: ["item_aaaa"], names: "Sunny tee", weight: 1 }] } }) });
@@ -1097,7 +1120,7 @@ test("a picks block the card cannot render never takes the AI status line with i
 const accText = (page) => page.$eval("#accStatus", e => e.textContent);
 
 test("the accessories line counts the kinds she can reach and the garments a grown-up hid", async () => {
-  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({
     accessories: { kinds: [{ kind: "jacket", count: 4 }, { kind: "shoes", count: 1 }], hidden: 2 } }) });
   await page.waitForFunction(() => /\S/.test(document.getElementById("accStatus").textContent));
   const t = await accText(page);
@@ -1109,7 +1132,7 @@ test("the accessories line counts the kinds she can reach and the garments a gro
 });
 
 test("one of a kind, and one hidden garment, are said in the singular", async () => {
-  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({
     accessories: { kinds: [{ kind: "jacket", count: 1 }], hidden: 1 } }) });
   await page.waitForFunction(() => /\S/.test(document.getElementById("accStatus").textContent));
   const t = await accText(page);
@@ -1123,7 +1146,7 @@ test("one of a kind, and one hidden garment, are said in the singular", async ()
 // The kind word arrives from the hub, and everything from the hub that is
 // printed on this page goes through CT_ESC — the garment names beside it do.
 test("a kind word is family text: it is escaped, never markup the page runs", async () => {
-  const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({
+  const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({
     accessories: { kinds: [{ kind: "<b>jacket</b>", count: 2 }], hidden: 0 } }) });
   await page.waitForFunction(() => /\S/.test(document.getElementById("accStatus").textContent));
   assert.match(await accText(page), /<b>jacket<\/b>/, "the text is shown as text");
@@ -1137,7 +1160,7 @@ test("no accessories and nothing hidden: the card says nothing at all", async ()
   // Both the empty block and no block at all (an older hub answering a newer
   // page during an update) leave the line empty rather than claiming a zero.
   for (const acc of [{ kinds: [], hidden: 0 }, undefined]) {
-    const { ctx, page } = await settingsPage(null, { clothing: clothingPayload({ accessories: acc }) });
+    const { ctx, page } = await settingsPage(null, { fragment: "clothing", clothing: clothingPayload({ accessories: acc }) });
     await page.waitForFunction(() => /\S/.test(document.getElementById("aiStatus").textContent));
     assert.equal((await accText(page)).trim(), "", "no sentence at all for " + JSON.stringify(acc));
     await ctx.close();
@@ -1153,7 +1176,7 @@ test("no accessories and nothing hidden: the card says nothing at all", async ()
 // now offers the tap that is the only thing which starts one.
 
 test("photos waiting in books/ are said out loud, and they wait for a TAP", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [], loose: 17 }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [], loose: 17 }), { fragment: "books" });
   await page.waitForFunction(() => /photo/.test(document.getElementById("contentStatus").textContent));
   const s = await page.$eval("#contentStatus", e => e.textContent);
   assert.match(s, /17 photos/, s);
@@ -1171,7 +1194,7 @@ test("photos waiting in books/ are said out loud, and they wait for a TAP", asyn
 // pages-read counter stays away: nothing has been read, and "0 of 17 pages
 // read" under a pile nobody has started reads like a failure.
 test("a pile of photos says how many, and that it is waiting for a grown-up (spec §14)", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.match(s, /17 photos/, s);
@@ -1185,7 +1208,7 @@ test("a pile of photos says how many, and that it is waiting for a grown-up (spe
 // shutdown button's idiom, index.html:596): the first tap arms and buys
 // nothing, the second is the one that builds.
 test("Build on a pile row arms on the first tap and posts on the second (spec §14)", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }), { fragment: "books" });
   const posts = [];
   await page.route("**/content/build", r => {
     posts.push(JSON.parse(r.request().postData()));
@@ -1210,7 +1233,7 @@ test("Build on a pile row arms on the first tap and posts on the second (spec §
 // would be thrown away half a second before the second tap. It lives outside the
 // paint, the way the reader's ask does (`S.asking`, spec §13).
 test("an armed Build survives the card's own repaint", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }), { fragment: "books" });
   await page.route("**/content/build", r => r.fulfill({ status: 202,
     contentType: "application/json", body: JSON.stringify({ started: true, slug: "tabby-mctat" }) }));
   const btn = page.locator('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
@@ -1231,7 +1254,7 @@ test("an armed Build survives the card's own repaint", async () => {
 // buttons on the card and no way to tell which tap spends.
 test("arming a second Build puts the first one back to rest", async () => {
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [
-    pileJob(), pileJob({ slug: "sunny-pond", title: "Sunny Pond" })] }));
+    pileJob(), pileJob({ slug: "sunny-pond", title: "Sunny Pond" })] }), { fragment: "books" });
   const first = page.locator('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
   const second = page.locator('#contentBooks [data-slug="sunny-pond"] button[data-build]');
   await first.click();
@@ -1248,7 +1271,7 @@ test("arming a second Build puts the first one back to rest", async () => {
 // reader's old NUL-prefixed grid marker is never sent, and neither is this
 // card's own copy of it.
 test("the loose pile's Build posts loose:true, never a slug", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [], loose: 17 }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [], loose: 17 }), { fragment: "books" });
   await page.route("**/content/build", r => r.fulfill({ status: 202,
     contentType: "application/json", body: JSON.stringify({ started: true, slug: "photos-10-september" }) }));
   const btn = page.locator("#contentStatus button[data-build-loose]");
@@ -1269,7 +1292,7 @@ test("the loose pile's Build posts loose:true, never a slug", async () => {
 // in the family is making this book" is the whole answer, and the card says it
 // in the hub's own words (server.js answers 409 {refused, error}).
 test("a refused Build shows the hub's own sentence", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()] }), { fragment: "books" });
   await page.route("**/content/build", r => r.fulfill({ status: 409,
     contentType: "application/json", body: JSON.stringify({ refused: "elsewhere",
       error: "Another computer in the family is making this book." }) }));
@@ -1291,7 +1314,7 @@ test("a refused Build shows the hub's own sentence", async () => {
 test("a run this hub may not make says why, in the hub's own words", async () => {
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
     state: "failed", step: "transcribe", elsewhere: true, buildable: false,
-    error: "ai(google/gemini-3-flash-preview) 500 boom" })] }));
+    error: "ai(google/gemini-3-flash-preview) 500 boom" })] }), { fragment: "books" });
   await page.route("**/content/run", r => r.fulfill({ status: 409,
     contentType: "application/json", body: JSON.stringify({ refused: "elsewhere",
       error: "Another computer in the family is making this book." }) }));
@@ -1304,9 +1327,33 @@ test("a run this hub may not make says why, in the hub's own words", async () =>
 
 // The one time the card says why there is no button (spec §13/§14). No device
 // name, no path: another computer is enough.
+test("a settled retry can be tried again after refusal and later status refreshes its details", async () => {
+  const payload = statusPayload({ jobs: [bookJob({ state: "failed", held: "retry",
+    error: "The content service could not be reached." })] });
+  const { ctx, page } = await settingsPage(payload, { fragment: "books" });
+  try {
+    await page.route("**/content/run", r => r.fulfill({ status: 409,
+      contentType: "application/json", body: JSON.stringify({ error: "Another computer is working on this book." }) }));
+    const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
+    const retry = row.locator("button[data-run]");
+    await retry.click();
+    await page.waitForFunction(() => /Another computer/.test(document.getElementById("toast").textContent));
+    assert.equal(await retry.isEnabled(), true, "a settled refusal must not permanently disable retry");
+
+    payload.building = true;
+    payload.job = { kind: "books", slug: "tabby-mctat", step: "transcribe" };
+    payload.jobs[0] = bookJob({ buildable: false,
+      progress: { pages: 12, transcribed: 8, narrated: 0 } });
+    await page.evaluate(() => contentPaint());
+    assert.match(await row.textContent(), /8 of 12/, "later progress replaces the settled failure details");
+    assert.equal(await row.locator(".status.bad").count(), 0, "the old failure no longer remains visible");
+    assert.equal(await row.locator("button[data-run]").count(), 0, "the running book does not retain a stale retry action");
+  } finally { await ctx.close(); }
+});
+
 test("a book another computer is building says so, and offers no Build (spec §13)", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
-    jobs: [bookJob({ elsewhere: true, buildable: false })] }));
+    jobs: [bookJob({ elsewhere: true, buildable: false })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.match(s, /Building on another computer/i, s);
@@ -1326,7 +1373,7 @@ test("a book another computer is building says so, and offers no Build (spec §1
 test("a book held on ANOTHER computer says only that, never 'it starts by itself'", async () => {
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
     state: "inbox", step: "ingest", held: "no-ai-key",
-    elsewhere: true, buildable: false })] }));
+    elsewhere: true, buildable: false })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.match(row, /Building on another computer\./, row);
@@ -1345,7 +1392,7 @@ test("a book held on ANOTHER computer says only that, never 'it starts by itself
 // between the paint and the tap gets the 409 sentence this card already renders.
 test("a book the other computer gave up on offers Build in Settings too (spec §14)", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
-    jobs: [bookJob({ state: "transcribing", buildable: true, elsewhere: false })] }));
+    jobs: [bookJob({ state: "transcribing", buildable: true, elsewhere: false })] }), { fragment: "books" });
   const btn = page.locator('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
   await btn.waitFor();
   const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
@@ -1376,7 +1423,7 @@ test("Settings offers no Build on a book being made — here or on the other com
       job: { kind: "books", slug: "other-book", step: "transcribe" },
       queued: ["tabby-mctat"], jobs: [bookJob()] }],
   ]) {
-    const { ctx, page } = await settingsPage(statusPayload(over));
+    const { ctx, page } = await settingsPage(statusPayload(over), { fragment: "books" });
     await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
     const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
     assert.match(s, /read|Building on another computer/i, what + ": " + s);
@@ -1391,7 +1438,7 @@ test("Settings offers no Build on a book being made — here or on the other com
 test("a finished book from another computer says it is ready to read (§17)", async () => {
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
     slug: "first-grade-news", title: "First Grade News", state: "done", step: null,
-    published: true, buildable: false, progress: { pages: 8, transcribed: 8, narrated: 8 } })] }));
+    published: true, buildable: false, progress: { pages: 8, transcribed: 8, narrated: 8 } })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="first-grade-news"]');
   const s = await page.$eval('#contentBooks [data-slug="first-grade-news"]', e => e.textContent);
   assert.match(s, /Ready to read in Book Reader ✓/, s);
@@ -1410,7 +1457,7 @@ test("a finished book says it is ready, and counts no pages it never had to read
   const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({
     slug: "first-grade-news", title: "First Grade News", state: "done", step: null,
     published: true, buildable: false,
-    progress: { pages: 16, transcribed: 0, narrated: 0 } })] }));
+    progress: { pages: 16, transcribed: 0, narrated: 0 } })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="first-grade-news"]');
   const row = await page.$eval('#contentBooks [data-slug="first-grade-news"]', e => e.textContent);
   assert.match(row, /Ready to read in Book Reader ✓/, row);
@@ -1422,7 +1469,7 @@ test("a finished book says it is ready, and counts no pages it never had to read
 // asserts no card promises one". The whole card is read, static copy included —
 // the hint above the list promised the same thing in the same breath.
 test("nothing in Your books promises a build that starts by itself (spec §12)", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()], loose: 17 }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [pileJob()], loose: 17 }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"] button[data-build]');
   const card = await page.$eval("#content", e => e.textContent);
   for (const promise of [/building begins/i, /starts building/i, /looks for new photos/i,
@@ -1434,7 +1481,7 @@ test("nothing in Your books promises a build that starts by itself (spec §12)",
 
 test("iPhone photos with no decoder: the card names the fix, not a code word", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
-    jobs: [bookJob({ state: "inbox", held: "needs-photo-decoder" })] }));
+    jobs: [bookJob({ state: "inbox", held: "needs-photo-decoder" })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.match(s, /HEIC/, s);
@@ -1446,7 +1493,7 @@ test("iPhone photos with no decoder: the card names the fix, not a code word", a
 
 test("a book with no AI key says so instead of pretending to read", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
-    jobs: [bookJob({ state: "transcribing", held: "no-ai-key" })] }));
+    jobs: [bookJob({ state: "transcribing", held: "no-ai-key" })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const s = await page.$eval('#contentBooks [data-slug="tabby-mctat"]', e => e.textContent);
   assert.match(s, /AI helper key/i, s);
@@ -1461,7 +1508,7 @@ test("a book with no AI key says so instead of pretending to read", async () => 
 test("a book that lost a page says it will try again, and is not called stopped", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
     jobs: [bookJob({ state: "transcribing", held: "retry",
-                     error: "ai(google/gemini-3-flash-preview) 500 boom on page 4" })] }));
+                     error: "ai(google/gemini-3-flash-preview) 500 boom on page 4" })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
   const s = await row.textContent();
@@ -1477,7 +1524,7 @@ test("a book that really stopped keeps its red line, in words and never the prov
     // keeps `held`, so the card must not tell a parent to wait AND that it
     // stopped in the same breath.
     jobs: [bookJob({ state: "failed", held: "needs-photo-decoder",
-                     error: "ai(google/gemini-3-flash-preview) 500 boom" })] }));
+                     error: "ai(google/gemini-3-flash-preview) 500 boom" })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
   assert.equal(await row.locator(".status.bad").count(), 1);
@@ -1495,7 +1542,7 @@ test("a book that really stopped keeps its red line, in words and never the prov
 // box gets a press that says "look now" instead of waiting until the morning.
 test("a book waiting on a person can be started by hand", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
-    jobs: [bookJob({ state: "inbox", held: "needs-photo-decoder" })] }));
+    jobs: [bookJob({ state: "inbox", held: "needs-photo-decoder" })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
   assert.equal(await row.locator("button[data-run]").count(), 1);
@@ -1514,7 +1561,7 @@ test("a book waiting on a person can be started by hand", async () => {
 
 test("a book Our Era Comms named itself offers the rename, and says how to split it", async () => {
   const { ctx, page } = await settingsPage(statusPayload({
-    jobs: [bookJob({ title: "New book 2026-09-07", autoTitle: true })] }));
+    jobs: [bookJob({ title: "New book 2026-09-07", autoTitle: true })] }), { fragment: "books" });
   await page.waitForSelector('#contentBooks [data-slug="tabby-mctat"]');
   const row = page.locator('#contentBooks [data-slug="tabby-mctat"]');
   const s = await row.textContent();
@@ -1531,7 +1578,7 @@ test("a book Our Era Comms named itself offers the rename, and says how to split
 });
 
 test("the rename box posts the new name and shows the hub's own refusal", async () => {
-  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({ autoTitle: true })] }));
+  const { ctx, page } = await settingsPage(statusPayload({ jobs: [bookJob({ autoTitle: true })] }), { fragment: "books" });
   let sent = null;
   await page.route("**/content/rename", (r) => {
     sent = JSON.parse(r.request().postData());
@@ -1556,7 +1603,7 @@ test("the rename box posts the new name and shows the hub's own refusal", async 
 // ever posted or stored — the hub could not show them back if it wanted to.
 // That is the point of the test below that reads the request body itself.
 test("the Lock card steps the lock length and saves it", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "lock" });
   try {
     const val = () => page.$eval("#lockVal", e => e.textContent);
     const lockMinutes = async () => (await (await fetch(`${BASE}/settings`)).json()).lockMinutes;
@@ -1595,7 +1642,7 @@ test("the Lock card steps the lock length and saves it", async () => {
 });
 
 test("the passcode is hashed in the page — the digits never leave it", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "lock" });
   const posts = [];
   page.on("request", r => {
     if (r.method() === "POST" && r.url().endsWith("/settings")) posts.push(r.postData() || "");
@@ -1656,7 +1703,7 @@ test("the passcode is hashed in the page — the digits never leave it", async (
     assert.equal(await page.$eval("#lockPass", i => getComputedStyle(i).webkitTextSecurity), "disc");
 
     // a parent coming back sees THAT there is one, never what it is
-    const re = await settingsPage();
+    const re = await settingsPage(null, { fragment: "lock" });
     try {
       await re.page.waitForFunction(() => /Passcode set/.test(document.getElementById("lockPassStatus").textContent));
       assert.equal(await re.page.$eval("#lockPass", i => i.value), "");
@@ -1675,7 +1722,7 @@ test("the passcode is hashed in the page — the digits never leave it", async (
 // like the door card. Yes is where a family starts; a tap on No saves exactly
 // one key, and a parent coming back sees No.
 test("the This week card switches this device's video downloads off and remembers it", async () => {
-  const { ctx, page } = await settingsPage();
+  const { ctx, page } = await settingsPage(null, { fragment: "weekVideos" });
   const posts = [];
   page.on("request", r => {
     if (r.method() === "POST" && r.url().endsWith("/settings")) posts.push(r.postData() || "");
@@ -1706,10 +1753,28 @@ test("the This week card switches this device's video downloads off and remember
 });
 
 
+test("a hidden cursor loads its saved state without posting an engine change", async () => {
+  const writes = [];
+  const { ctx, page } = await settingsPage(null, { fragment: "gaze", engineConfigRoute: async route => {
+    if (route.request().method() === "POST") writes.push(route.request().postDataJSON());
+    await route.fulfill({ status: 200, contentType: "application/json",
+      headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" },
+      body: JSON.stringify({ radius: 0, graceMs: 400 }) });
+  } });
+  try {
+    await page.waitForFunction(() => document.querySelector('#ring button[data-ring="off"]')?.classList.contains("sel"));
+    assert.deepEqual(writes, [], "loading the saved setting is read-only");
+    await page.click('#ring button[data-ring="on"]');
+    await page.waitForFunction(() => /updated/.test(document.getElementById("engineStatus").textContent));
+    assert.equal(writes.length, 1, "only the explicit change posts to the engine");
+    assert.ok(writes[0].radius > 0, "Show ring restores a visible cursor");
+  } finally { await ctx.close(); }
+});
+
 test("device volume can rise above 45, decrease, switch Off, and retain its mode on reopening", async () => {
   let device = { enabled: true, cap: 45 };
   const writes = [];
-  const { ctx, page } = await settingsPage(null, { volumeRoute: async route => {
+  const { ctx, page } = await settingsPage(null, { fragment: "sound", volumeRoute: async route => {
     if (route.request().method() === "POST") {
       const body = route.request().postDataJSON();
       writes.push(body);
