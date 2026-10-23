@@ -1,0 +1,35 @@
+.settings-books-tabs{display:flex;gap:24px;border-bottom:1px solid var(--line,#d8e2dd);margin:18px 0 22px;overflow-x:auto}
+.settings-books-tabs button{border:0;border-radius:0;padding:10px 1px 14px;min-height:44px;white-space:nowrap;background:transparent;color:#53696b;font-size:15px}
+.settings-books-tabs button[aria-pressed=true]{color:#146870;border-bottom:3px solid #146870;font-weight:700}
+.settings-books-library[hidden],.settings-books-setup[hidden],.settings-book-detail[hidden],.settings-books-empty[hidden],.settings-books-toolbar[hidden],.settings-books-filters[hidden],.settings-books-pagination[hidden],#writings>[hidden]{display:none!important}
+.settings-books-toolbar{display:flex;justify-content:space-between;gap:12px;margin:18px 0 14px;align-items:center}
+.settings-books-toolbar input{font:inherit;font-size:15px;border:1px solid var(--line,#d8e2dd);border-radius:9px;padding:11px 14px;width:100%;max-width:420px;min-width:80px;min-height:44px}
+.settings-books-toolbar select{font-size:14px;min-height:44px;max-width:190px}
+.settings-books-filters{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 20px}
+.settings-books-filters button{min-height:44px;border-radius:24px;padding:8px 13px;font-size:13px;border:1px solid var(--line,#d8e2dd);background:transparent}
+.settings-books-filters button[aria-pressed=true]{background:#20383a;color:white;border-color:#20383a}
+#contentBooks{border:1px solid var(--line,#d8e2dd);border-radius:14px;overflow:hidden;background:#fff}
+#contentBooks:empty{border:0}
+.settings-book-row+.settings-book-row{border-top:1px solid var(--line,#d8e2dd)}
+.settings-book-summary{display:flex;align-items:center;gap:15px;padding:17px 20px;min-height:100px}
+.settings-book-cover{width:43px;height:58px;display:grid;place-items:center;background:#e0eadd;color:#31594e;box-shadow:inset 4px 0 #0000000b;border-radius:3px 7px 7px 3px;font-size:26px;flex:none}
+.settings-book-info{flex:1;min-width:0;font-size:15px;line-height:1.5}
+.settings-book-info strong{display:block;overflow-wrap:anywhere}
+.settings-book-info p{margin:3px 0 5px;color:#53696b;font-size:13px}
+.settings-book-tag{display:inline-block;padding:3px 8px;font-size:12px;border-radius:20px;background:#eef5ee;color:#286849}
+.settings-book-tag[data-state=waiting]{background:#fbf0dc;color:#79501b}
+.settings-book-tag[data-state=failed]{background:#f8e9e3;color:#8a4a2c}
+.settings-book-tag[data-state=building]{background:#e9f2f8;color:#336683}
+.settings-book-summary>button{font-size:13px;min-height:44px;padding:9px 14px;flex:none}
+.settings-book-detail{padding:0 20px 20px;background:#f9fbf8}
+.settings-book-detail>div{border-top:0!important;padding-top:16px!important}
+.settings-book-detail button,.settings-book-detail a{min-height:44px}
+.settings-book-detail .row{flex-wrap:wrap;gap:9px}
+.settings-books-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;color:#53696b;font-size:13px}
+.settings-books-page-buttons{display:flex;gap:8px}
+.settings-books-page-buttons button{width:44px;min-height:44px;padding:7px}
+.settings-books-empty{padding:25px 10px;color:#53696b;font-size:15px}
+.settings-books-links{display:flex;flex-wrap:wrap;gap:8px 20px;border-top:1px solid var(--line,#d8e2dd);margin-top:20px;padding-top:12px}
+.settings-books-links a{display:inline-flex;min-height:44px;align-items:center;color:#146870;font-size:14px}
+.settings-books-setup .hint{margin-top:10px}
+@media(max-width:760px){.settings-books-toolbar{gap:8px}.settings-books-toolbar select{max-width:145px;font-size:12px;padding:9px}.settings-books-toolbar input{font-size:14px;padding:10px}.settings-book-summary{padding:15px 12px;gap:10px}.settings-book-cover{width:32px;height:46px;font-size:22px}.settings-book-info{font-size:14px}.settings-book-info p{font-size:12px}.settings-book-summary>button{font-size:12px;padding:8px 10px;max-width:85px}.settings-books-filters button{font-size:12px;padding:7px 10px}.settings-book-detail{padding:0 12px 18px}.settings-books-tabs{gap:18px}.settings-books-tabs button{font-size:14px}.settings-books-pagination{font-size:12px}}

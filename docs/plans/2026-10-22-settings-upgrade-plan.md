@@ -1,0 +1,121 @@
+# Settings upgrade plan
+
+Date: 2026-10-22. Branch: `feat/settings-upgrade`.
+Status: approved for implementation, testing and release on 2026-10-23.
+
+Design and evidence: [settings upgrade proposal](../specs/2026-10-22-settings-upgrade-design.md).
+Interactive artifact: [standalone preview](../specs/2026-10-22-settings-upgrade-preview.html).
+
+## Completed preparation
+
+- [x] Read workspace instructions, dev flow and relevant settings code.
+- [x] Use parallel reconnaissance for code inventory and primary design sources.
+- [x] Inspect the live tablet settings payload through a read-only browser relay.
+- [x] Count current cards and quantify the library's contribution to page length.
+- [x] Verify local-setting scope, fragment links and position-dependent copy.
+- [x] Map every existing card to a proposed destination.
+- [x] Build a standalone interactive proposal with synthetic content.
+- [x] Complete prototype browser walkthrough and record the result below.
+- [x] Obtain maintainer approval of section names, grouping and Books approach.
+  Maintainer instruction: “Looks good, please build, test release.”
+
+## Approved implementation
+
+### 1. Add a navigation shell without changing save behavior
+
+- [x] Recheck sibling worktree changes and recent master changes; sync through the
+  documented worktree flow if needed. Do not overwrite other feature work.
+- [x] Write failing tests for section navigation, browser history, direct links,
+  legacy fragments, search results, visible focus and keyboard entry points.
+- [x] Add a small destination registry and section shell around stable existing
+  controls. Keep each handler attached once. Use logical headings, real links,
+  `aria-current`, focus management and a responsive section drawer.
+- [x] Preserve local engine requests, setting validation, update timing and APIs.
+- [x] Test form and confirmation preservation across navigation and status polls.
+
+Acceptance: every existing control remains reachable; no unintended save,
+sync, paid action or engine command occurs solely from selecting a section.
+
+### 2. Separate mixed tasks and connection setup
+
+- [x] Write behavior tests before splitting mixed cards.
+- [x] Move weather, wardrobe status and new-photo action beside Clothing.
+- [x] Put service credentials in Connections with direct contextual links.
+- [x] Keep saved writing in Writing & media and email setup in Connections.
+- [x] Keep temporary pause in Eye gaze and complete stop in System; preserve
+  existing confirmation and restart guidance.
+- [x] Replace positional copy with named destinations; retain relevant price,
+  data-use, verification and unavailable-engine information.
+
+Acceptance: all 21 original cards are represented by the design mapping; each
+setting has one authoritative form and its real persistence scope is clear.
+
+### 3. Make Books manageable with a growing library
+
+- [x] Write tests with 0, 1, 16 and 100 synthetic books, including readable books
+  with uncertain words, active/queued builds, allowances and failed work.
+- [x] Implement title search, useful derived filters, sorting, pagination and
+  selected-book details. Preserve filters and position when returning from review
+  or Connections. Keep empty/no-match states clear.
+- [x] Keep build activity and setup separate from library rows.
+- [x] Preserve Build confirmation, the single-builder rule, rename, review,
+  corrections, partial progress and provider-specific recovery actions.
+- [x] Keep stable row identity through polling so focus and active input survive.
+- [x] Bound saved-writing lists too; do not create a new endless content section.
+
+Acceptance: a library of 100 books does not extend unrelated settings or require
+scrolling through the complete library to find a device preference.
+
+### 4. Verify, document and return for review
+
+- [x] Run targeted settings UI, device-volume, navigation and library suites;
+  the full gate below also covers route and reader/book regressions.
+- [ ] Verify desktop, tablet portrait/landscape, narrow viewport and zoom layouts;
+  test keyboard focus, screen-reader labels and touch target sizes.
+- [ ] Verify the real tablet layout through its interactive browser; use an
+  isolated test hub or approved preview and do not restart the live hub.
+- [ ] Run the full gate detached with a PID and sentinel, observing the host-wide
+  process safety rules. Address failures before requesting land/release.
+- [ ] Update the docs nearest changed behavior and the private workspace status
+  in the same completion unit. Record concrete screenshots and test evidence.
+- [ ] Return the completed change for maintainer review. Publish only with the
+  maintainer's explicit release instruction.
+
+## Research retrospective and current limits
+
+The most useful live evidence was the relationship between the 16-row library
+and the controls below it. A sidebar by itself would not make the book workflow
+manageable; the library also needs bounded browsing and detail disclosure.
+The initial recon overcount of 23 cards was corrected to 21 by the source and
+rendered DOM. Scope checking also corrected the tempting but inaccurate claim
+that app preferences synchronize with family content.
+
+Actual on-device browser zoom and physical touch navigation remain unverified.
+The live-data inspection used a separate browser at a stated reference viewport,
+not a physical-screen capture. The original proposal remains a visual decision aid with sample state. The
+approved implementation now lives under `public/settings/` and retains the
+existing APIs and action handlers.
+
+Prototype verification: the standalone browser walkthrough passed all eight
+sections, title search and status filters, six-row pagination, detail dialogs,
+global settings search, browser Back, the legacy Books fragment, and layouts at
+1368 × 912, 1024 × 768 and 390 × 844. There were zero runtime errors and zero
+external requests. The full product gate was not run because production code
+was not changed. Research artifact whitespace checks passed.
+
+Implementation checks before the full gate: existing settings UI and device
+volume suites 76/76, library 16/16, navigation 9/9: 101/101 together. A separate review found that
+Retry stayed disabled in the cached detail after a request settled; a failing
+regression was added before repairing the handler. Actual implementation screens
+were checked at1368 ×912,1024 ×768 and390 ×844. All eight sections fit the
+narrow width without horizontal overflow. Syntax, whitespace and privacy scans
+passed. Full-gate and release evidence will be recorded after they complete.
+
+Release preparation: a read-only Settings smoke case was added to Windows leg B.
+After self-update it checks the installed layout/styles, eight destinations,
+Books setup, volume search, System controls and the legacy Drive link, then
+returns to the launcher. No setting is saved and no build is started by it.
+
+Final review also repaired detached Build confirmation labels and retained
+library filters/page plus section scroll across full returns from book review.
+The new browser regressions failed before the respective fixes and passed after.

@@ -130,6 +130,38 @@ test("after the update: profile intact, removed pack still absent, chosen packs 
   assert.equal(ex.json?.action, "home", "/kiosk/exit (new in the candidate) answers home with no engine — " + ex.text);
 });
 
+test("after the update: Settings sections, search and legacy links work in the installed kiosk", { timeout: 120000 }, async () => {
+  try {
+    await page.goto(new URL("/settings/#content", page.url()).href, { waitUntil: "load", timeout: 60000 });
+    await page.locator("#settings-section-books").waitFor({ state: "visible", timeout: 30000 });
+    assert.equal(await page.locator("#settingsHeading").innerText(), "Books");
+    assert.equal(await page.locator("#settingsNav a").count(), 8, "all settings sections shipped in the update");
+    await page.waitForFunction(() => getComputedStyle(document.body).overflow === "hidden" &&
+      document.querySelector(".settings-books-tabs") &&
+      getComputedStyle(document.querySelector(".settings-books-tabs")).display === "flex");
+
+    await page.locator('[data-books-view="setup"]').click();
+    await page.locator("#booksSetup").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#contentTiers").isVisible(), true, "book setup is reachable without starting a build");
+
+    if (!await page.locator("#settingsSearch").isVisible()) await page.locator("#settingsMenu").click();
+    await page.fill("#settingsSearch", "volume");
+    await page.waitForFunction(() => document.querySelectorAll(".settings-search-result").length >= 2);
+    await page.locator(".settings-search-result").first().click();
+    await page.locator("#settings-section-sound").waitFor({ state: "visible" });
+    assert.equal(await page.locator('#settingsNav a[href="#sound"]').getAttribute("aria-current"), "page");
+
+    await page.evaluate(() => { location.hash = "system"; });
+    await page.locator("#settings-section-system").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#updCheck").isVisible(), true, "the update control is reachable without pressing it");
+
+    await page.goto(new URL("/settings/#integrations", page.url()).href, { waitUntil: "load", timeout: 60000 });
+    await page.locator("#settings-section-connections").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#integrations").isVisible(), true, "the legacy Drive link opens Connections");
+    vm.shot("settings-after-update");
+  } finally { await vm.home(page); }
+});
+
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {
   try { await browser?.close(); } catch {}
   vm.bat("stop", ["taskkill /IM msedge.exe /F >nul 2>&1", "taskkill /IM node.exe /F >nul 2>&1", "echo stopped"]);
