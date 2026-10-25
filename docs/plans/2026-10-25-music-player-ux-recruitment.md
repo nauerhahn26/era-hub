@@ -96,3 +96,38 @@ Pictures use video preview resolution and can look soft at full size. The song
 page fills the first three columns with the image and the final column with
 Back, Stop and Full song. A completed gaze selection advances one picture
 without restarting the song; remaining on the image does not repeatedly fire.
+
+## Content-only resolution follow-up
+
+The maintainer found the 320 × 180 preview pictures too soft on the expanded
+song page and requested a modest step up. This follow-up extracts actual
+640 × 360 frames from the existing source videos on the maintenance machine;
+it does not upscale the previews or add a decoder to the installed player.
+Frames are matched to the previously reviewed moments, then visually reviewed
+again, with empty transitions and end cards replaced where needed.
+
+- [x] Download all 27 picture-source videos without changing the song audio.
+- [x] Prepare and review ten sharper pictures for every existing entry.
+- [x] Publish immutable picture files before atomically updating the shared manifest.
+- [x] Mirror and fetch all 270 installed files; verify dimensions, hashes,
+  complete recipes and preservation of every non-picture song field.
+
+This is a shared-content refresh on v1.0.11, not a software release. The normal
+on-device Get video pictures action still uses the largest available storyboard
+previews; maintaining the sharper library sets requires the full-video
+maintenance path until an installed extraction path is designed and verified.
+
+Verified on the tablet after the refresh: 27 complete recipes, 270 served JPEGs,
+all **640 × 360**, with matching SHA-256 hashes. The pictures total 9,999,033
+bytes (37,033 bytes per picture on average). Pixel checks found zero blanks or
+near-duplicates; all nine contact sheets received visual review. Every song
+field other than `pictures` matches the original manifest, including its audio,
+source, title, cover and rank. The shared-folder mirror copied 271 files (the
+pictures plus manifest), with zero errors. Old picture files remain available
+for rollback, and a private recovery receipt retains the original manifest,
+original picture bytes, replacement files, frame selections and checksums.
+
+The shared mount is accessible to the signed-in account running the hub, not
+the maintenance SSH account. A temporary task ran the atomic update in that
+existing interactive session, with no application restart or persistent task.
+Reopening Music loads the new immutable image names and caches the sharper set.
