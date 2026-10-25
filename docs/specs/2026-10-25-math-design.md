@@ -1,6 +1,6 @@
-# Math exploration proposal
+# Math exploration
 
-Research completed and first implementation authorized, 2026-10-25. The maintainer requested a school-email
+Implemented and verified, 2026-10-25. The maintainer requested a school-email
 review, first-grade curriculum comparison, accessible mathematics research,
 and visual proposals, then approved building the exploration-first experience.
 The first delivery includes Numbers and Number partners, using commands for
@@ -12,7 +12,7 @@ Delivery plan: [research and implementation stages](../plans/2026-10-25-math-pla
 Individual school evidence and education records remain in the private
 workspace; this document contains reusable design rationale only.
 
-## Proposed experience
+## Experience
 
 The first build opens to two large choices: Numbers and Number partners.
 Stories is added when its instructional examples have been reviewed; it is
