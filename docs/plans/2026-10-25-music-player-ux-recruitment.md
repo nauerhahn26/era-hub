@@ -13,9 +13,11 @@ Maintainer authorized build and deployment on 2026-10-25.
 - [x] Add a touch-only parent review, refresh and cover-only option.
 - [x] Verify synthetic pipeline, recipe, range serving and add/refresh behavior.
 - [x] Verify browser geometry, gaze rearm, playback, offline frames and parent controls.
-- [ ] Run the full gate on committed matching worktrees, detached with a sentinel.
+- [x] Run the full gate on committed matching worktrees, detached with a sentinel.
 - [ ] Land the green branches, build the patch and verify Windows self-update.
 - [ ] Deploy the approved release and record live verification and limitations.
+- [ ] Refresh pictures for all 27 existing songs through their saved video sources,
+  as explicitly requested by the maintainer, and verify audio/order preservation.
 
 Initial evidence: the updated layout regression failed against the former
 half-width image. Targeted hub checks passed 39/39 after implementation.
@@ -34,3 +36,10 @@ Using actual video preview frames preserves that installation contract, at the
 cost of preview resolution. Pictures are optional enrichment: missing helper,
 missing storyboards, failed screening or unavailable networking retain the
 song's usable cover/audio rather than turning a music add into a failure.
+
+## Full gate
+
+The committed hub and board worktrees passed the full gate: **129 suites,
+0 failed**. The gate stamped both repositories with clean trees. Hub targeted
+checks passed 39/39; the board checks include actual gaze rearming, image
+wraparound, offline cycling and continued audio/full-song mode.
