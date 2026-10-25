@@ -3,7 +3,7 @@
 // (faked here via ERA_AI_URL) into named, categorized, cropped item tiles,
 // and the daily board comes out in her exact graph: today -> confirm_N with
 // Yes / Change top / Change bottoms -> choose_bottom -> cat_* -> build.
-// Without a key, plain photo tiles still appear (v1 fallback).
+// Without a key, setup guidance appears instead of raw photo tiles.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -155,7 +155,7 @@ before(async () => {
       // A provider that accepts the request and then drops the connection: the
       // client sees a transport error, the server has already counted the
       // request, and callModel sends the very same picture again 3 s later.
-      if (hangups > 0) { hangups--; req.destroy(); return; }
+      if (hangups > 0) { hangups--; res.destroy(); return; }
       if (throttleModel && req.url.includes(throttleModel) && calls > throttleAfter) {
         res.writeHead(429, { "Content-Type": "application/json" });
         res.end('{"error":{"code":429,"message":"Resource exhausted"}}');
@@ -233,6 +233,22 @@ test("the fake AI answers a body it cannot parse instead of throwing", async () 
   assert.equal(calls, before, "...and is not counted as a model call");
 });
 
+test("the local provider drops an accepted request without waiting for the response deadline", async () => {
+  const beforeCalls = calls, beforeAborted = aborted;
+  hangups = 1;
+  try {
+    await assert.rejects(fetch(`http://127.0.0.1:${AI_PORT}/fixture-drop`, {
+      method: "POST", body: "{}", signal: AbortSignal.timeout(5000),
+    }), error => {
+      assert.notEqual(error.name, "TimeoutError", "the fixture must break the connection, not leave a response pending");
+      return true;
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls - beforeCalls, 1, "the request reached the provider before the drop");
+    assert.equal(aborted - beforeAborted, 1, "the accepted request was never answered");
+  } finally { hangups = 0; }
+});
+
 test("photos but no AI key: no board, a no-key guidance state (dad 8/31: coach, don't dump raw tiles)", async () => {
   const r = await clothing.regenerate(true);
   assert.equal(r.guidance, "no-key");
@@ -256,9 +272,10 @@ test("a stale v1 plain recipe is cleared so the splash can coach", async () => {
 test("with a key: photos are cataloged and the board is her exact graph", async () => {
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
     JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
+  const before = calls;
   const r = await clothing.regenerate(true);
   assert.equal(r.mode, "cataloged");
-  assert.equal(calls, 3, "one vision call per photo");
+  assert.equal(calls - before, 3, "one vision call per photo");
 
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   const items = Object.values(cat.items);
@@ -342,25 +359,36 @@ test("with a key: photos are cataloged and the board is her exact graph", async 
   assert.ok(!yes.symbol, "no pictogram on Yes");
 });
 
-test("morning rule: a board built yesterday is stale, one built after 5am today is fresh (dad 9/1)", async () => {
-  const recipe = path.join(TMP, "recipes", "today.json");
-  const isFresh = () => clothing.boardIsFresh(TMP);
-  const setBuilt = (d) => fs.utimesSync(recipe, d, d);
-
-  const now = new Date();
-  const beforeCutoff = new Date(now); beforeCutoff.setHours(4, 30, 0, 0);
-  const afterCutoff = new Date(now); afterCutoff.setHours(6, 30, 0, 0);
-  const yesterday = new Date(now.getTime() - 24 * 3600e3);
-
-  setBuilt(yesterday);
-  assert.equal(isFresh(), false, "yesterday's board must be rebuilt");
-  if (now.getHours() >= 7) {          // only meaningful once past the cutoff
-    setBuilt(afterCutoff);
-    assert.equal(isFresh(), true, "a board built this morning stands");
-    setBuilt(beforeCutoff);
-    assert.equal(isFresh(), false, "a 4:30am board is last night's");
+test("morning rule: a board built yesterday is stale, one built after 5am today is fresh (dad 9/1)", () => {
+  const dataDir = path.join(TMP, "freshness");
+  const recipe = path.join(dataDir, "recipes", "today.json");
+  fs.mkdirSync(path.dirname(recipe), { recursive: true });
+  fs.writeFileSync(recipe, "{}");
+  const RealDate = Date;
+  const at = (day, hour, minute = 0) => new RealDate(2026, 0, day, hour, minute);
+  let now = at(15, 7).getTime();
+  globalThis.Date = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  };
+  try {
+    for (const [clock, built, expected, why] of [
+      [at(15, 4, 30), at(14, 18), true, "before 5am yesterday evening still stands"],
+      [at(15, 4, 30), at(14, 4, 30), false, "before 5am the older morning is stale"],
+      [at(15, 5), at(15, 4, 59), false, "the cutoff invalidates the previous board"],
+      [at(15, 5), at(15, 5), true, "a board built at the cutoff is fresh"],
+      [at(15, 7), at(14, 18), false, "after 5am yesterday evening is stale"],
+      [at(15, 7), at(15, 4, 30), false, "a 4:30am board is last night's"],
+      [at(15, 7), at(15, 6, 30), true, "a board built this morning stands"],
+    ]) {
+      now = clock.getTime();
+      fs.utimesSync(recipe, built, built);
+      assert.equal(clothing.boardIsFresh(dataDir), expected, why);
+    }
+  } finally {
+    globalThis.Date = RealDate;
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
-  setBuilt(now);
 });
 
 test("second regenerate makes no further AI calls (catalog is durable)", async () => {
@@ -457,6 +485,7 @@ test("the segmentation model and its runtime are present and loadable", async ()
   const w = 200, h = 200, data = Buffer.alloc(w * h * 4, 128);
   for (let i = 3; i < data.length; i += 4) data[i] = 255;
   const out = await seg.cutOut({ data, width: w, height: h });
+  assert.equal(seg.available(), true, "the bundled runtime initialized even when the empty scene is declined");
   assert.ok(out === null || (out.kept > 0.02 && out.kept < 0.97), "no blank tiles");
 });
 
@@ -833,15 +862,29 @@ test("the worker never loads drive.js", () => {
 
 // Until the repair runs, one absent picture must not empty the board.
 test("an item with no tile is left off the board, not fatal to it", async () => {
-  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const catalog = path.join(TMP, "wardrobe.json");
+  const saved = fs.readFileSync(catalog);
+  const cat = JSON.parse(saved.toString("utf8"));
+  const photo = path.join(TMP, "clothing", "ghost.jpg");
+  makeJpg(photo, 40, 90, 130);
   cat.items["ghost.jpg"] = { id: "item_ghost", ok: true, name: "Ghost tee",
     category: "top", warmth: "any", attrsAt: DESCRIBED };
-  fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify(cat));
-  await clothing.regenerate(true);
-  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
-  const labels = JSON.stringify(rec.boards);
-  assert.ok(!labels.includes("Ghost tee"), "the item with no picture is skipped");
-  assert.ok(rec.boards.some(b => String(b.id).startsWith("confirm_")), "the board still builds");
+  fs.writeFileSync(catalog, JSON.stringify(cat));
+  const before = spent();
+  try {
+    await clothing.rebuildToday();
+    assert.ok(JSON.parse(fs.readFileSync(catalog, "utf8")).items["ghost.jpg"],
+      "the untiled item remains catalogued, so exclusion cannot pass through source-photo pruning");
+    assert.equal(fs.existsSync(path.join(TMP, "wardrobe-items", "item_ghost.jpg")), false,
+      "a re-sort leaves the missing tile for a later repair");
+    const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+    assert.ok(!JSON.stringify(rec.boards).includes("Ghost tee"), "the item with no picture is skipped");
+    assert.ok(rec.boards.some(b => String(b.id).startsWith("confirm_")), "the board still builds");
+    assert.equal(spent(), before, "excluding an untiled item spends no requests");
+  } finally {
+    fs.rmSync(photo, { force: true });
+    fs.writeFileSync(catalog, saved);
+  }
 });
 
 // Each half of a combo was shortened on its own, so two long halves made a
@@ -849,29 +892,41 @@ test("an item with no tile is left off the board, not fatal to it", async () => 
 // (QA 9/2: "Ribbed camisole + Green shorts" lost "Green shorts" off the
 // bottom). Dad's standing rule is that a label is never cut mid-word.
 test("a combo label is budgeted as a whole, so it never clips", async () => {
-  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
+  const catalog = path.join(TMP, "wardrobe.json");
+  const saved = fs.readFileSync(catalog);
+  const cat = JSON.parse(saved.toString("utf8"));
   // reuse a real tile so the pair can actually be composited
   const tileId = Object.values(cat.items).find(i => i.ok &&
     fs.existsSync(path.join(TMP, "wardrobe-items", i.id + ".jpg"))).id;
-  fs.writeFileSync(path.join(TMP, "wardrobe.json"), JSON.stringify({ items: {
-    "long_top.jpg":    { id: tileId, ok: true, name: "Ribbed camisole", category: "top",    warmth: "any", attrsAt: DESCRIBED },
-    "long_bottom.jpg": { id: tileId, ok: true, name: "Green shorts",    category: "shorts", warmth: "any", attrsAt: DESCRIBED },
-  }}));
-  for (const f of ["long_top.jpg", "long_bottom.jpg"])   // the photos must exist or the entries are pruned
-    fs.copyFileSync(path.join(TMP, "clothing", "photo_a.jpg"), path.join(TMP, "clothing", f));
-  await clothing.regenerate(true);
+  const photos = path.join(TMP, "clothing"), aside = path.join(TMP, "label-photos-aside");
+  fs.renameSync(photos, aside);
+  fs.mkdirSync(photos);
+  try {
+    fs.writeFileSync(catalog, JSON.stringify({ items: {
+      "long_top.jpg":    { id: tileId, ok: true, name: "Ribbed camisole", category: "top",    warmth: "any", attrsAt: DESCRIBED },
+      "long_bottom.jpg": { id: tileId, ok: true, name: "Green shorts",    category: "shorts", warmth: "any", attrsAt: DESCRIBED },
+    }}));
+    for (const f of ["long_top.jpg", "long_bottom.jpg"])
+      fs.copyFileSync(path.join(aside, "photo_a.jpg"), path.join(photos, f));
+    const before = spent();
+    await clothing.regenerate(true);
+    assert.equal(spent(), before, "label-only rebuilding must not describe unrelated photos");
 
-  const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
-  const combos = [];
-  for (const b of rec.boards) for (const btn of b.buttons || [])
-    if (btn.type === "outfit") combos.push(btn.label);
-  assert.ok(combos.length, "the pair produced an outfit");
-  for (const label of combos)
-    assert.ok(label.length <= 28, `outfit plate too long to fit: "${label}" (${label.length})`);
-  // the garment nouns survive — they are what tell two outfits apart — and the
-  // bottom keeps the colour that distinguishes one pair of shorts from another
-  assert.ok(combos.some(l => /green shorts/i.test(l)),
-    `the bottom kept its colour, got ${JSON.stringify(combos)}`);
+    const rec = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+    const combos = [];
+    for (const b of rec.boards) for (const btn of b.buttons || [])
+      if (btn.type === "outfit") combos.push(btn.label);
+    assert.ok(combos.length, "the pair produced an outfit");
+    for (const label of combos)
+      assert.ok(label.length <= 28, `outfit plate too long to fit: "${label}" (${label.length})`);
+    // Keep the garment nouns and the bottom's distinguishing colour.
+    assert.ok(combos.some(l => /green shorts/i.test(l)),
+      `the bottom kept its colour, got ${JSON.stringify(combos)}`);
+  } finally {
+    fs.rmSync(photos, { recursive: true, force: true });
+    fs.renameSync(aside, photos);
+    fs.writeFileSync(catalog, saved);
+  }
 });
 
 // ...and the second cut, from the tile into the outfit picture, was the one
