@@ -243,10 +243,28 @@ test("a pasted link: audio + thumbnail into the DRIVE folder, one manifest entry
                    "and the staged download swept up after itself");
 });
 
+test("existing-song picture refresh preserves audio and degrades cleanly without a helper", async () => {
+  const before = manifest().songs[0];
+  const audio = fs.readFileSync(path.join(MUSIC, before.audio));
+  const start = calls().length;
+  assert.equal((await post("/music/pictures", { id: "../escape" })).status, 409);
+  assert.equal(calls().length, start);
+  assert.equal((await post("/music/pictures", { id: before.id })).status, 202);
+  const last = await settled();
+  assert.equal(last.pictureStatus, "needs-helper");
+  assert.equal(calls().length, start + 1, "only lookup, no second audio download");
+  assert.deepEqual(manifest().songs[0], before);
+  assert.deepEqual(fs.readFileSync(path.join(MUSIC, before.audio)), audio);
+  assert.equal((await post("/music/pictures", { id: before.id, clear: true })).status, 202);
+  assert.equal((await settled()).pictureStatus, "cover-only");
+  assert.equal(calls().length, start + 1, "cover-only does not contact the source");
+  assert.deepEqual(manifest().songs[0].pictures, []);
+});
+
 test("ffmpeg is never required: audio-only format, thumbnail written raw, no -x and no conversion", async () => {
   const seen = calls();
   assert.ok(seen.length >= 2, "one look-up and one download");
-  const dl = seen[seen.length - 1];
+  const dl = seen.filter(args => args.includes("-f")).at(-1);
   assert.equal(dl[dl.indexOf("-f") + 1], "ba[ext=m4a]/ba", "best audio, m4a preferred");
   assert.ok(dl.includes("--write-thumbnail"), "the cover comes down as-is");
   assert.ok(dl.includes("--no-playlist"), "a link with a list attached is still one song");

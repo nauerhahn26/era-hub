@@ -223,3 +223,14 @@ does not save a preference or start a content sync. Explicit actions and the hub
 background work retain their existing behavior.
 
 Design and acceptance checks: [settings upgrade](specs/2026-10-22-settings-upgrade-design.md).
+
+## Song page pictures
+
+The song image fills the first three columns; Back, Stop and Full song fill
+the fourth. During playback, a completed dwell on the image advances one of
+ten screened video stills without changing the song. The normal move-to-rearm
+rule applies. Images are cached for offline use. New song adds request pictures
+automatically when an AI helper is configured; missing or unapproved pictures
+leave cover art available. The touch-only Pictures panel reviews a song's set,
+gets pictures for older songs, or returns to cover art. Details and source
+resolution limits: [song page design](specs/2026-10-25-music-player-ux-recruitment.md).

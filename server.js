@@ -808,8 +808,8 @@ function serveRecipe(req, res) {
 // back (big <- glyph) top-left on later pages — NO Stop and NO exit tile on
 // the grid (playback only happens inside a song page, so leaving it IS stop;
 // the msgbar door remains the app exit). Each song door opens its SONG PAGE:
-// the cover hero fills the LEFT HALF (row/col spans), right column = back
-// arrow / Stop / Full song, far-right column all rest black (eye rest).
+// the cover hero fills three quarters (row/col spans), far-right column =
+// back arrow / Stop / Full song, with no empty cells on a song page.
 // Default play is a CLIP_MS clip (school: scratch the itch, not the day);
 // "Full song" un-caps the running clip (or replays full) — deliberate extra
 // effort by design. Per-song `v` = audio file mtime (client IDB cache key).
@@ -820,9 +820,15 @@ function serveRecipe(req, res) {
 const SONG_CELLS_P1 = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
 const SONG_CELLS_PN = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
 const CLIP_MS = 40000;
-const RECIPE_REV = 4;
+const RECIPE_REV = 5;
 const STOP_SYMBOL = "8289";   // exact ARASAAC id: the red STOP sign (bestsearch "stop" = a bus stop)
 const FULL_SYMBOL = "music";  // sheet-music notes (verified via /symbol/music)
+// Only complete local sets reach the child; manifest paths are never URLs.
+function songPictures(song) {
+  if (!Array.isArray(song.pictures) || song.pictures.length !== 10 || new Set(song.pictures).size !== 10) return [];
+  return song.pictures.every(n => typeof n === "string" && /^[a-z0-9-]+-frame-[a-f0-9]{16}-[0-9]{2}\.jpg$/.test(n) &&
+    fs.existsSync(path.join(MUSIC_DIR, n))) ? song.pictures.map(n => "music/" + n) : [];
+}
 function songsRecipe() {
   const mp = path.join(MUSIC_DIR, "manifest.json");
   const st = fs.statSync(mp);                    // throws -> caller 404s
@@ -853,7 +859,7 @@ function songsRecipe() {
       const [row, col] = cells[i];
       buttons.push({ label: s.title, say: s.title, type: "song", song_id: s.id,
                      audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
-                     image: s.cover ? "music/" + s.cover : undefined,
+                     image: s.cover ? "music/" + s.cover : songPictures(s)[0],
                      load: "song-" + s.id,
                      duration: s.duration || 0, row, col });
     });
@@ -862,8 +868,7 @@ function songsRecipe() {
                      load: "songs-" + (p + 2), row: 3, col: 1 });
     boards.push({ id, name: "What do I want to hear?", rows: 3, columns: 4, buttons });
   }
-  // one page per song: hero left half; back / Stop / Full song down col 3;
-  // col 4 stays unpinned -> a full black rest column.
+  // One page per song: image fills three columns; controls fill column four.
   songs.forEach((s, i) => {
     const gridPage = i < perP1 ? "songs"
                    : "songs-" + (Math.floor((i - perP1) / perPN) + 2);
@@ -872,20 +877,24 @@ function songsRecipe() {
       buttons: [
         { label: s.title, say: s.title, type: "song", song_id: s.id,
           audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
-          image: s.cover ? "music/" + s.cover : undefined,
-          duration: s.duration || 0, row: 1, col: 1, row_span: 3, col_span: 2 },
+          image: s.cover ? "music/" + s.cover : songPictures(s)[0],
+          pictures: songPictures(s),
+          duration: s.duration || 0, row: 1, col: 1, row_span: 3, col_span: 3 },
         { label: "Back", say: "back", type: "back", glyph: "←",
-          load: gridPage, row: 1, col: 3 },
-        { label: "Stop", say: "stop", type: "stop", symbol: STOP_SYMBOL, row: 2, col: 3 },
+          load: gridPage, row: 1, col: 4 },
+        { label: "Stop", say: "stop", type: "stop", symbol: STOP_SYMBOL, row: 2, col: 4 },
         { label: "Full song", say: "full song", type: "full", song_id: s.id,
           symbol: FULL_SYMBOL,
-          audio: "music/" + s.audio, v: s.v, row: 3, col: 3 },
+          audio: "music/" + s.audio, v: s.v, row: 3, col: 4 },
       ],
     });
   });
   return {
     recipe: { locale: "en-US", root: "songs", home_label: "Songs", boards },
-    etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + "-r" + RECIPE_REV + '"',
+    // The manifest can arrive before its frames during a content mirror.
+    etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + "-r" + RECIPE_REV + "-p" +
+      crypto.createHash("sha256").update(JSON.stringify(boards.filter(b => b.id.startsWith("song-"))
+        .map(b => b.buttons[0].pictures))).digest("hex").slice(0, 12) + '"',
   };
 }
 function serveSongsRecipe(req, res) {
@@ -2235,6 +2244,18 @@ const server = http.createServer((req, res) => {
       }
       res.writeHead(202, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ started: true }));
+    });
+    return;
+  }
+  // Refresh an existing song's screened pictures without replacing its audio.
+  if (req.method === "POST" && req.url === "/music/pictures") {
+    let body = "";
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let out;
+      try { out = musicAdd.refreshPictures(JSON.parse(body)); }
+      catch { res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "bad-request" })); return; }
+      res.writeHead(out.error ? 409 : 202, { "Content-Type": "application/json" }).end(JSON.stringify(out));
     });
     return;
   }

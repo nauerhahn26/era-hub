@@ -69,6 +69,10 @@ before(async () => {
                  cover: `song-${i}.jpg`, duration: 30 + i,
                  source: "https://example.invalid/" + i, rank: i });
   }
+  const pictures = Array.from({ length: 10 }, (_, i) => `song-1-frame-0123456789abcdef-${String(i).padStart(2, "0")}.jpg`);
+  for (const name of pictures) fs.writeFileSync(path.join(music, name), JPEG);
+  songs[0].pictures = pictures;
+  songs[1].pictures = ["../secret.json"];
   // manifest written out of rank order on purpose: server must sort by rank
   songs.reverse();
   fs.writeFileSync(path.join(music, "manifest.json"),
@@ -139,33 +143,55 @@ test("GET /recipes/songs.json v3: 9-song page 1 (corner cells are songs) + a pag
   assert.equal(btnAt(p2, 3, 1), null, "no More on the last page");
 });
 
-test("song pages: hero spans the left half; back arrow / Stop / Full song down col 3", async () => {
+test("picture arrival invalidates the recipe even when the manifest did not change", async () => {
+  const before = await fetch(`${BASE}/recipes/songs.json`);
+  const etag = before.headers.get("etag");
+  const picture = path.join(TMP, "music", "song-1-frame-0123456789abcdef-00.jpg");
+  fs.renameSync(picture, picture + ".held");
+  try {
+    const partial = await fetch(`${BASE}/recipes/songs.json`, { headers: { "If-None-Match": etag } });
+    assert.equal(partial.status, 200, "availability changed without touching the manifest");
+    const recipe = await partial.json();
+    assert.deepEqual(recipe.boards.find(b => b.id === "song-song-1").buttons[0].pictures, []);
+    const partialTag = partial.headers.get("etag");
+    fs.renameSync(picture + ".held", picture);
+    const complete = await fetch(`${BASE}/recipes/songs.json`, { headers: { "If-None-Match": partialTag } });
+    assert.equal(complete.status, 200, "late frame arrival becomes visible");
+    const ready = await complete.json();
+    assert.equal(ready.boards.find(b => b.id === "song-song-1").buttons[0].pictures.length, 10);
+  } finally { if (fs.existsSync(picture + ".held")) fs.renameSync(picture + ".held", picture); }
+});
+
+test("song pages: hero spans three quarters; controls fill the far-right column", async () => {
   const recipe = await (await fetch(`${BASE}/recipes/songs.json`)).json();
   const sp = recipe.boards.find(b => b.id === "song-song-1");
   assert.ok(sp, "song page exists");
   assert.equal(sp.rows, 3); assert.equal(sp.columns, 4);
   const hero = btnAt(sp, 1, 1);
   assert.equal(hero.type, "song");
-  assert.equal(hero.row_span, 3); assert.equal(hero.col_span, 2);
+  assert.equal(hero.row_span, 3); assert.equal(hero.col_span, 3);
   assert.equal(hero.load, undefined, "hero replays; it is not a door");
   assert.equal(hero.clip_ms, 40000);
-  const back = btnAt(sp, 1, 3);
+  assert.equal(hero.pictures.length, 10, "complete set of video stills included");
+  assert.ok(hero.pictures.every(p => p.startsWith("music/song-1-frame-")));
+  const invalid = recipe.boards.find(b => b.id === "song-song-2");
+  assert.deepEqual(btnAt(invalid, 1, 1).pictures, [], "invalid or incomplete sets stay off the child page");
+  const back = btnAt(sp, 1, 4);
   assert.equal(back.type, "back"); assert.equal(back.glyph, "←");
   assert.equal(back.label, "Back", "arrow AND the word (dad r3)");
   assert.equal(back.load, "songs", "rank 1's page returns to grid page 1");
-  const stop = btnAt(sp, 2, 3);
+  const stop = btnAt(sp, 2, 4);
   assert.equal(stop.type, "stop");
   assert.equal(stop.symbol, "8289", "Stop wears the exact-id STOP-sign pictogram");
-  const full = btnAt(sp, 3, 3);
+  const full = btnAt(sp, 3, 4);
   assert.equal(full.type, "full");
   assert.equal(full.symbol, "music", "Full song wears the sheet-music pictogram");
   assert.equal(full.song_id, "song-1");
   assert.ok(full.audio && full.v, "Full song can start playback on its own");
-  // col 4 fully unpinned -> black rest column
-  for (const row of [1, 2, 3]) assert.equal(btnAt(sp, row, 4), null);
+  assert.equal(sp.buttons.reduce((n, b) => n + (b.row_span || 1) * (b.col_span || 1), 0), 12, "every cell covered");
   // a page-TWO song's back door returns to grid page 2 (rank 10 with v3 paging)
   const sp10 = recipe.boards.find(b => b.id === "song-song-10");
-  assert.equal(btnAt(sp10, 1, 3).load, "songs-2");
+  assert.equal(btnAt(sp10, 1, 4).load, "songs-2");
 });
 
 test("musicVolCap: /settings round-trip with clamping (default 100)", async () => {

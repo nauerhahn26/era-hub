@@ -47,6 +47,8 @@ const path = require("path");
 const { spawn } = require("child_process");
 const drive = require("./drive.js");
 const packs = require("./packs.js");
+const { aiRoles } = require("./ai-config.js");
+const { buildPictures } = require("./music-pictures.js");
 const { slugify } = require("./slug.js");
 const { writeAtomic, redact } = require("./content-store.js");
 
@@ -332,13 +334,16 @@ async function runAdd(job, t, dir) {
   // touched until the new one is really here, and whatever the download left
   // half-finished is swept whether it worked or not.
   const stage = staging(slug);
-  let audio = null, cover = null;
+  let audio = null, cover = null, images;
   sweep(dir, stage);
   try {
     await download(t, dir, stage, source);
     const ae = pickExt(dir, stage, AUDIO_EXT);
     if (!ae) throw new OwnWords("the download finished but left no audio file");
     const ce = pickExt(dir, stage, COVER_EXT);
+    job.phase = "choosing song pictures";
+    images = await buildPictures({ info, dir, slug,
+      cfg: aiRoles(process.env.ERA_DATA_DIR || path.join(__dirname, "data")).vision });
     // Last look before anything the family has is touched: upsert() would
     // refuse to write an unreadable manifest, and refusing AFTER the swap
     // would leave the old audio deleted and the manifest still naming it.
@@ -356,12 +361,12 @@ async function runAdd(job, t, dir) {
   const entry = upsert(dir, {
     id: slug, title, audio, cover,
     duration: Math.max(0, Math.round(Number(info.duration) || 0)),
-    source, sourceTitle,
+    source, sourceTitle, ...images,
   });
   // The board plays from this device's shelf (<DATA>/music), which the mirror
   // fills from the folder we just wrote. Without this the song would appear at
   // the next ten-minute sync, long after the parent walked away.
-  return { id: entry.id, title: entry.title, rank: entry.rank, mirrored: await mirror() };
+  return { id: entry.id, title: entry.title, rank: entry.rank, ...images, mirrored: await mirror() };
 }
 
 // Carry what we just wrote from the family's Drive folder to this device's
@@ -415,7 +420,7 @@ function add(body) {
   running = job;
   runAdd(job, t, dir)
     .then(r => { last = { ok: true, id: r.id, title: r.title, rank: r.rank, error: "",
-                          mirrored: r.mirrored, when: new Date().toISOString() }; })
+                          mirrored: r.mirrored, pictureStatus: r.pictureStatus, when: new Date().toISOString() }; })
     .catch(e => {
       const raw = redact(String(e && e.message || e)).replace(/\s+/g, " ");
       // Two readers, two sentences: `error` is yt-dlp's line, kept for the
@@ -427,6 +432,32 @@ function add(body) {
                error: raw, message: e instanceof OwnWords ? e.message : plainly(raw),
                when: new Date().toISOString() };
     })
+    .finally(() => { running = null; });
+  return { started: true };
+}
+
+// One writer owns both operations, so a refresh cannot race an add or reorder.
+function refreshPictures(body) {
+  if (!body || typeof body.id !== "string" || !SLUG_RE.test(body.id))
+    return { error: "bad-id", message: "Choose a song first." };
+  if (running) return { error: "busy", message: "A song is still being prepared. Try again when it finishes." };
+  const dir = musicDir(), t = tool();
+  if (!dir || (!t && body.clear !== true)) return { error: "not-ready", message: "Choose the music folder and install media tools first." };
+  const { songs, unreadable } = readManifest(dir);
+  if (unreadable) return UNREADABLE;
+  const song = songs.find(s => s.id === body.id);
+  if (!song || (!body.clear && !song.source)) return { error: "no-source", message: "This song needs a video link. Add it again with its link." };
+  running = { title: song.title, phase: "choosing song pictures" };
+  (async () => {
+    const info = body.clear ? null : await lookUp(t, song.source);
+    const images = body.clear ? { pictures: [], pictureStatus: "cover-only" } : await buildPictures({ info, dir, slug: song.id,
+      cfg: aiRoles(process.env.ERA_DATA_DIR || path.join(__dirname, "data")).vision });
+    if (body.clear || images.pictures.length === 10) upsert(dir, { id: song.id, ...images });
+    const mirrored = body.clear || images.pictures.length === 10 ? await mirror() : true;
+    last = { ok: true, id: song.id, title: song.title, pictureStatus: images.pictureStatus,
+      mirrored, when: new Date().toISOString() };
+  })().catch(() => { last = { ok: false, id: song.id, title: song.title,
+    message: "Could not get pictures for this song. Its cover and music are still available.", when: new Date().toISOString() }; })
     .finally(() => { running = null; });
   return { started: true };
 }
@@ -510,4 +541,4 @@ function status() {
   };
 }
 
-module.exports = { add, order, status, SLUG_RE };
+module.exports = { add, order, refreshPictures, status, SLUG_RE };

@@ -26,7 +26,7 @@ RELEASE=0
 if [ "${1:-}" = "--with-node" ] || [ "${2:-}" = "--with-node" ]; then RELEASE=1; fi
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/music-pictures.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/predict-model.json" "$OUT/"
 # every local require of the hub's modules must resolve INSIDE the payload —
 # a module added to the repo but not to the list above shipped a hub that
 # died on its first line (packs.js, caught by the VM e2e 9/3, never by the
@@ -63,6 +63,10 @@ for f in vendor/onnxruntime-web/dist/ort.node.min.js \
          vendor/onnxruntime-web/node_modules/onnxruntime-common/dist/cjs/index.js \
          vendor/models/u2netp.onnx; do
   [ -s "$OUT/$f" ] || { echo "build-payload: $f is missing - the garment cut-out would fall back to the colour heuristic; no build."; exit 1; }
+done
+for f in vendor/webp-decoder/webp_dec.mjs vendor/webp-decoder/webp_dec.wasm \
+         vendor/webp-decoder/LICENSE vendor/webp-decoder/LICENSE.codec.md; do
+  [ -s "$OUT/$f" ] || { echo "build-payload: $f is missing - video pictures need the decoder and its licenses; no build."; exit 1; }
 done
 du -sh "$OUT/vendor/onnxruntime-web" "$OUT/vendor/models" 2>/dev/null || true
 
