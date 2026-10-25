@@ -4,8 +4,10 @@ import http from 'node:http';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import os from 'node:os';
 
 const require = createRequire(import.meta.url);
 const { createChatApi } = require('../chat-api.js');
@@ -112,6 +114,75 @@ test('runtime starts without a shell and receives ordered bounded PCM only while
   assert.equal((await send(2)).status, 409);
   assert.equal((await s.request(`/sessions/${id}`, undefined, 'DELETE')).status, 200);
   assert.equal(child.killed, true);
+});
+
+test('configured bundled speech uses this Node runtime with only speech secrets in its child environment', async t => {
+  const speech = { ERA_CHAT_SPEECH_URL: 'https://speech.example/transcribe', ERA_CHAT_SPEECH_MODEL: 'configured',
+    ERA_CHAT_SPEECH_TOKEN: 'speech-private', ERA_CHAT_SPEECH_LANGUAGE: 'en', ERA_CHAT_TEXT_TOKEN: 'text-private',
+    UNRELATED_PRIVATE_KEY: 'other-private' };
+  const s = await service(t, { env: speech, workerExists: () => true });
+  const config = await (await fetch(s.base + '/config')).json();
+  assert.equal(config.runtime.available, true);
+  assert.equal(config.runtime.kind, 'built-in');
+  const created = await s.request('/sessions'); assert.equal(created.status, 201);
+  const [command, args, options] = s.children[0].args;
+  assert.equal(command, process.execPath);
+  assert.equal(path.basename(args[0]), 'chat-speech-worker.js');
+  assert.equal(path.isAbsolute(args[0]), true);
+  assert.equal(options.shell, false);
+  assert.equal(options.env.ERA_CHAT_SPEECH_TOKEN, 'speech-private');
+  assert.equal(options.env.ERA_CHAT_SPEECH_LANGUAGE, 'en');
+  assert.ok(!('ERA_CHAT_TEXT_TOKEN' in options.env) && !('UNRELATED_PRIVATE_KEY' in options.env));
+  const { id } = await created.json();
+  await s.request(`/sessions/${id}/control`, { type: 'ask' });
+  assert.deepEqual(s.children[0].messages, [{ type: 'ask', generation: 1 }]);
+  assert.ok(!JSON.stringify(config).includes('speech-private') && !JSON.stringify(config).includes('text-private'));
+  const missing = await service(t, { env: speech, workerExists: () => false });
+  assert.equal((await (await fetch(missing.base + '/config')).json()).runtime.available, false);
+  assert.equal((await missing.request('/sessions')).status, 503);
+});
+
+test('bundled speech availability matches the worker transport restrictions', async t => {
+  const base = { ERA_CHAT_SPEECH_MODEL: 'configured', ERA_CHAT_SPEECH_TOKEN: 'speech-private' };
+  for (const url of ['https://speech.example/transcribe', 'http://localhost:8380/transcribe',
+    'http://127.0.0.1:8380/transcribe', 'http://[::1]:8380/transcribe']) {
+    const s = await service(t, { env: { ...base, ERA_CHAT_SPEECH_URL: url }, workerExists: () => true });
+    assert.equal((await (await fetch(s.base + '/config')).json()).runtime.available, true, url);
+  }
+  for (const url of ['http://speech.example/transcribe', 'https://user:secret@speech.example/transcribe',
+    'ftp://speech.example/transcribe', 'http://[::ffff:127.0.0.1]:8380/transcribe']) {
+    const s = await service(t, { env: { ...base, ERA_CHAT_SPEECH_URL: url }, workerExists: () => true });
+    assert.equal((await (await fetch(s.base + '/config')).json()).runtime.available, false, url);
+    assert.equal((await s.request('/sessions')).status, 503, url);
+    assert.equal(s.children.length, 0);
+  }
+  const external = await service(t, { env: { ...base, ...configured, ERA_CHAT_SPEECH_URL: 'http://speech.example/transcribe' } });
+  assert.equal((await external.request('/sessions')).status, 201);
+  assert.equal(external.children[0].args[0], configured.ERA_CHAT_RUNTIME);
+});
+
+test('explicit private file loads configured API while the process override and disable flag remain authoritative', async t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'era-chat-api-config-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'ai.env');
+  writeFileSync(file, ['ERA_CHAT_SPEECH_URL=https://speech.example/transcribe', 'ERA_CHAT_SPEECH_MODEL=configured',
+    'ERA_CHAT_SPEECH_TOKEN=private-value', 'UNRELATED_PRIVATE_KEY=not-chat'].join('\n'));
+  const s = await service(t, { env: { ERA_CHAT_SPEECH_MODEL: 'process-choice' }, configPath: file, workerExists: () => true });
+  const config = await (await fetch(s.base + '/config')).json(); assert.equal(config.runtime.kind, 'built-in');
+  await s.request('/sessions');
+  assert.equal(s.children[0].args[2].env.ERA_CHAT_SPEECH_MODEL, 'process-choice');
+  assert.ok(!JSON.stringify(config).includes('private-value') && !('UNRELATED_PRIVATE_KEY' in s.children[0].args[2].env));
+  const disabled = await service(t, { env: { ERA_CHAT_CONFIG_DISABLED: '1' }, configPath: file, workerExists: () => true });
+  assert.equal((await disabled.request('/sessions')).status, 503);
+  assert.equal(disabled.children.length, 0);
+});
+
+test('explicit external runtime remains authoritative over bundled speech', async t => {
+  const s = await service(t, { env: { ...configured, ERA_CHAT_SPEECH_URL: 'https://speech.example/transcribe',
+    ERA_CHAT_SPEECH_MODEL: 'configured', ERA_CHAT_SPEECH_TOKEN: 'speech-private' }, workerExists: () => true });
+  await s.request('/sessions');
+  assert.equal(s.children[0].args[0], configured.ERA_CHAT_RUNTIME);
+  assert.deepEqual(s.children[0].args[1], ['--worker']);
 });
 
 test('SSE timestamps events, drops cancelled generations and sanitizes runtime errors', async t => {
@@ -422,6 +493,36 @@ test('configured adapter handles open questions, validates output and never expo
   assert.ok(!JSON.stringify(result).includes('private-value'));
 });
 
+test('configured text generation works in process without a standalone adapter', async t => {
+  let calls = 0;
+  const s = await service(t, { env: { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' },
+    fetch: async (url, options) => {
+      calls++; assert.equal(url, 'https://text.example/responses');
+      assert.equal(options.headers.Authorization, 'Bearer private-value');
+      assert.deepEqual(JSON.parse(JSON.parse(options.body).input), { question: 'What shall we talk about?', context: ['Me: Space.'] });
+      return new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
+        choices: [{ label: 'Space', say: 'We could talk about space.' }, { label: 'Something else', say: 'Let us choose something else.' }],
+      }) }] }] }));
+    } });
+  assert.equal((await (await fetch(s.base + '/config')).json()).choices.kind, 'built-in');
+  const result = await (await s.request('/choices', { text: 'What shall we talk about?', context: ['Me: Space.'] })).json();
+  assert.equal(result.kind, 'generated'); assert.equal(result.generated, true); assert.equal(calls, 1);
+  assert.ok(!JSON.stringify(result).includes('private-value'));
+});
+
+test('explicit external choices override built-in generation and invalid overrides fail without a paid fallback', async t => {
+  const textEnv = { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' };
+  const s = await service(t, { env: { ...textEnv, ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (url) => {
+    assert.equal(url, 'https://adapter.example/choices');
+    return new Response(JSON.stringify({ choices: [{ label: 'More', say: 'Tell me more.' }, { label: 'Not sure', say: 'I am not sure.' }] }));
+  } });
+  assert.equal((await (await s.request('/choices', { text: 'What shall we talk about?' })).json()).kind, 'adapter');
+  let calls = 0;
+  const invalid = await service(t, { env: { ...textEnv, ERA_CHAT_CHOICES_URL: 'invalid-endpoint' }, fetch: () => { calls++; throw Error('must not call'); } });
+  assert.equal((await invalid.request('/choices', { text: 'What shall we talk about?' })).status, 503);
+  assert.equal(calls, 0);
+});
+
 test('malformed or oversized adapter replies fail explicitly', async t => {
   for (const body of ['bad-json', JSON.stringify({ choices: [{ label: 'One', say: 'Only one' }] }), 'x'.repeat(40000)]) {
     const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async () => new Response(body) });
@@ -479,12 +580,14 @@ test('gate clears inherited Chat configuration before any test hub starts', () =
   const source = readFileSync(new URL('../tools/era-gate.sh', import.meta.url), 'utf8');
   const block = source.match(/for chat_setting in[^\n]+; do unset[^\n]+; done/);
   assert.ok(block, 'gate must clear the complete Chat configuration namespace');
-  assert.ok(block.index < source.indexOf('node "$HUB/server.js"'));
-  const run = spawnSync('bash', ['-c', block[0] + '\ncompgen -A variable ERA_CHAT_'], {
+  const disabled = source.indexOf('export ERA_CHAT_CONFIG_DISABLED=1');
+  assert.ok(disabled > block.index && disabled < source.indexOf('node "$HUB/server.js"'), 'private file loading is disabled after inherited values are cleared');
+  const isolated = source.slice(block.index, disabled + 'export ERA_CHAT_CONFIG_DISABLED=1'.length);
+  const run = spawnSync('bash', ['-c', isolated + '\nnode -e \'console.log(JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith("ERA_CHAT_")))))\''], {
     env: { PATH: process.env.PATH, ERA_CHAT_RUNTIME: 'unexpected-command', ERA_CHAT_CHOICES_URL: 'https://adapter.example',
       ERA_CHAT_CHOICES_TOKEN: 'private-value', ERA_CHAT_SPEECH_CONFIG: 'unexpected-file' }, encoding: 'utf8',
   });
-  assert.equal(run.stdout, '');
+  assert.deepEqual(JSON.parse(run.stdout), { ERA_CHAT_CONFIG_DISABLED: '1' });
 });
 
 test('standalone preview serves only the prototype and has inert app handoffs', async t => {

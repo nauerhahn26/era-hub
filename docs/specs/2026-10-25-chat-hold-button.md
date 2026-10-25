@@ -46,6 +46,8 @@ speaking during a hold, timeout, hide/end, repeated turns and failure recovery.
 Measure a real recognition request containing an internal pause. Simulated events
 establish interaction contracts; they do not establish transcription accuracy.
 
-This is still a host prototype. Actual device microphone, gaze, voice output,
-Windows runtime setup and Bluetooth access need their own acceptance. Publishing,
-device delivery and live communication-board edits are separate maintainer acts.
+The [installed release design](2026-10-25-chat-installed-release.md) extends this
+interaction to the optional installed app. Actual microphone, gaze, voice output
+and Bluetooth access still need their own acceptance. The maintainer separately
+authorized publishing and device delivery; communication-board edits remain
+outside this change.

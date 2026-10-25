@@ -83,7 +83,7 @@ async function runCase(file) {
   try {
     process.stdout.write(`[real chat] ${kind}: starting real microphone and worker\n`);
     await page.goto(`${base}/chat/`);
-    await page.waitForFunction(() => document.querySelector('#engineNote').textContent.includes('configured'));
+    await page.waitForFunction(() => /speech is set up/i.test(document.querySelector('#engineNote').textContent));
     await touchDown('#startChat'); await touchUp();
     await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 20000 });
     const micAt = await page.evaluate(() => window.__realChat.micAt);

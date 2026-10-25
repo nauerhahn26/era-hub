@@ -243,3 +243,12 @@ commands handle all movement; the quantities themselves are passive.
 Existing explicit app selections are preserved, so enable Math in Settings
 when it is not already listed on the home screen. State stays local to each
 computer. Usage and access behavior: [Math](math.md).
+
+## Experimental Chat
+
+Chat is an optional app at `/chat/`, disabled by default and sharing the Board
+pack's portable speech activity runtime. A configured installed Node worker
+transcribes a partner's held question after release; optional contextual choices
+run through the hub. Service credentials stay in the operating account's private
+configuration file. Gates disable private configuration loading. Setup, cloud
+data boundaries and current acceptance limits: [Chat](chat.md).

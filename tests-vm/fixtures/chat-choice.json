@@ -1,0 +1,15 @@
+{
+  "file": "chat-choice.wav",
+  "kind": "synthetic speech",
+  "text": "Would you like music or a story?",
+  "source": "Locally generated test sentence using espeak-ng; no recording of a person.",
+  "voice": "en-us",
+  "speedWordsPerMinute": 155,
+  "sampleRate": 16000,
+  "channels": 1,
+  "sampleFormat": "PCM signed 16-bit little-endian WAV",
+  "durationMs": 2465,
+  "sha256": "cbaae3ea10a0c3863f405bfb894a25e596d18ed9067419ca8b8fb3298bbe5bd9",
+  "rights": "Original test sentence. Speech synthesis output is supplied as a test fixture; the synthesis program is not distributed with this file.",
+  "limits": "Exercises speech activity and transport with a mock recognizer. Does not establish transcription accuracy, microphone quality, native voice output, gaze access or classroom performance."
+}

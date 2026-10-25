@@ -26,7 +26,7 @@ const fixed = {
 async function json(url, options = {}) {
   const r = await fetch(url, { ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.message || body.error || 'The local service is unavailable.');
+  if (!r.ok) throw new Error(body.message || body.error || 'The speech service is unavailable.');
   return body;
 }
 const notice = text => { $('notice').textContent = text || ''; };
@@ -163,7 +163,7 @@ function sendFrame(bytes) {
 }
 function queueFrame(bytes) {
   const mine = lifecycle, epoch = uploadEpoch, id = session;
-  if (++queued > 20) { queued--; failSession('Local listening could not keep up. Start again when ready.'); return; }
+  if (++queued > 20) { queued--; failSession('Question capture could not keep up. Start again when ready.'); return; }
   uploadChain = uploadChain.then(async () => {
     if (mine !== lifecycle || epoch !== uploadEpoch || mode === 'blocked') return;
     const r = await fetch(`${API}/sessions/${encodeURIComponent(id)}/audio?seq=${sequence}`, {
@@ -176,7 +176,7 @@ function queueFrame(bytes) {
       if (error.error === 'capture-inactive') throw new Error('Question capture stopped. Release and start Chat again.');
       throw new Error('Audio sequence changed. Start a new listening session.');
     }
-    if (!r.ok) throw new Error('Local audio connection stopped.');
+    if (!r.ok) throw new Error('The audio connection stopped.');
   }).catch(e => { if (mine === lifecycle && e.name !== 'AbortError') failSession(e.message); })
     .finally(() => { if (mine === lifecycle) queued--; });
 }
@@ -227,13 +227,13 @@ function receiveEvent(event) {
     controller.prepare(data.text);
   } else if (data.type === 'error') {
     diagnostic(`Listening: ${String(data.message || data.error || 'unavailable').slice(0, 300)}`);
-    failSession(data.error === 'no-speech' ? 'No question was heard. Start again, or use a phrase.' : 'Local listening stopped. Your phrases still work.');
+    failSession(data.error === 'no-speech' ? 'No question was heard. Start again, or use a phrase.' : 'Speech recognition stopped. Your phrases still work.');
   }
 }
 
 async function startChat() {
   if (starting || closing || session || document.visibilityState !== 'visible') return;
-  if (!config?.runtime?.available) { controller.fail('Live listening is not set up. Your phrases and stories still work.'); return; }
+  if (!config?.runtime?.available) { controller.fail('Speech is not set up. Prepared phrases and stories still work.'); return; }
   starting = true; const mine = ++lifecycle; sessionAbort = new AbortController();
   $('startChat').disabled = true; notice('Starting the microphone…');
   try {
@@ -246,9 +246,9 @@ async function startChat() {
     startHeartbeat();
     events = new EventSource(`${API}/sessions/${encodeURIComponent(session)}/events`);
     events.onmessage = event => { if (mine === lifecycle && session) receiveEvent(event); };
-    events.onerror = () => { if (mine === lifecycle) failSession('The local listening connection closed. Your phrases still work.'); };
-    readyTimer = setTimeout(() => failSession('Local recognition did not become ready. Your phrases still work.'), 20000);
-    $('endChat').disabled = false; notice('Waiting for local recognition…');
+    events.onerror = () => { if (mine === lifecycle) failSession('The speech connection closed. Your phrases still work.'); };
+    readyTimer = setTimeout(() => failSession('Speech did not become ready. Your phrases still work.'), 20000);
+    $('endChat').disabled = false; notice('Waiting for speech to become ready…');
   } catch (e) {
     if (mine === lifecycle) { await shutdown('close'); controller.fail(e.name === 'NotAllowedError' ? 'Microphone permission was not granted. Your phrases still work.' : e.message); }
   } finally {
@@ -376,6 +376,6 @@ window.addEventListener('resize', () => { window.Dwell?.suppress(600); fitLabels
 json(`${API}/config`).then(value => {
   config = value;
   $('engineNote').textContent = value.runtime?.available
-    ? 'A local recognition worker is configured. Start Chat to check the microphone and worker.'
-    : 'Live listening is not set up on this computer. Fixed words and stories work. Typed prompts can test suggestions.';
-}).catch(() => { $('engineNote').textContent = 'The local listening service is unavailable. Fixed words and stories work.'; });
+    ? (value.runtime.kind === 'built-in' ? 'Cloud speech is set up. Start Chat to check the microphone, then wait for Ready to ask.' : 'Speech is set up. Start Chat to check the microphone, then wait for Ready to ask.')
+    : 'Speech is not set up on this computer. Prepared phrases and stories work. A maintainer can finish speech setup.';
+}).catch(() => { $('engineNote').textContent = 'Speech is unavailable. Prepared phrases and stories work.'; });

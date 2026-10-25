@@ -27,6 +27,7 @@ const errors = [], controls = [], frames = [], choiceRequests = [], trace = [];
 let generation = 0, serverSequence = 0, created = 0, statusPolls = 0;
 let delayAsk = true, heldAsk = null, heldChoice = null, heldFailure = null;
 let stallCancel = false, releaseCancel = null, staleFinalChecked = false;
+let speechConfigured = true;
 page.on('pageerror', e => errors.push(e.message));
 await page.addInitScript(() => {
   window.__qaSpeech = []; window.__qaStreams = []; window.__qaContexts = []; window.__qaPointers = [];
@@ -44,7 +45,7 @@ await page.addInitScript(() => {
 });
 await page.route('**/chat/api/**', async route => {
   const req = route.request(), url = new URL(req.url()); let data = {};
-  if (url.pathname.endsWith('/config')) data = { wakeName: 'Ellie', runtime: { available: true }, choices: { available: true } };
+  if (url.pathname.endsWith('/config')) data = { wakeName: 'Ellie', runtime: { available: speechConfigured, kind: speechConfigured ? 'built-in' : 'unconfigured' }, choices: { available: true } };
   else if (url.pathname.endsWith('/sessions') && req.method() === 'POST') {
     created++; generation = 0; serverSequence = 0; data = { id: `browser-session-${created}` };
   } else if (/\/sessions\/[^/]+$/.test(url.pathname) && req.method() === 'GET') {
@@ -94,7 +95,7 @@ async function waitNode(predicate, label) { for (let i = 0; i < 100 && !predicat
 const finishCount = () => controls.filter(x => x === 'finish').length;
 async function idleNoAudio(ms = 180) { const before = frames.length; await page.waitForTimeout(ms); assert.equal(frames.length, before, 'idle has zero audio uploads'); }
 async function ready() {
-  await emit({ type: 'ready', generation, capabilities: { wake: true, automaticEndpoint: true, remoteFinal: true } });
+  await emit({ type: 'ready', generation, capabilities: { wake: false, automaticEndpoint: false, remoteFinal: true } });
   await page.waitForFunction(() => document.body.dataset.ready === 'true');
   assert.equal(await page.evaluate(() => document.body.dataset.listening), 'false');
   assert.ok((await page.locator('#engineNote').textContent()).includes('Voice activation is off'));
@@ -124,7 +125,9 @@ async function disposed() {
 try {
   step('startup stays idle until hold');
   await page.goto(`${base}/chat/`); await page.waitForSelector('.tile');
-  await page.waitForFunction(() => document.querySelector('#engineNote').textContent.includes('configured'));
+  await page.waitForFunction(() => !document.querySelector('#engineNote').textContent.startsWith('Checking'));
+  assert.ok((await page.locator('#engineNote').textContent()).includes('Cloud speech is set up.'));
+  assert.ok(!/local recognition worker|python/i.test(await page.locator('#engineNote').textContent()));
   assert.equal(await page.locator('#grid .tile').count(), 12); assert.equal(await page.locator('#grid .rest').count(), 2);
   await page.locator('#startChat').click(); await page.locator('#startChat').evaluate(el => el.click());
   assert.equal(await page.evaluate(() => window.__qaStreams.length), 0);
@@ -216,10 +219,19 @@ try {
   const endedPolls = statusPolls, endedFrames = frames.length; await page.clock.fastForward(30001); await page.waitForTimeout(50);
   assert.equal(statusPolls, endedPolls); assert.equal(frames.length, endedFrames); assert.equal(controls.includes('arm'), false);
   assert.ok(staleFinalChecked); assert.deepEqual(errors, []);
+  const priorSpeech = await page.evaluate(() => window.__qaSpeech);
+  step('unconfigured speech keeps prepared phrases available without requesting a microphone');
+  const priorSessions = created; speechConfigured = false; await page.reload();
+  await page.waitForFunction(() => document.querySelector('#engineNote').textContent.includes('Speech is not set up'));
+  await touch('#startChat');
+  assert.equal(await page.evaluate(() => window.__qaStreams.length), 0);
+  assert.equal(created, priorSessions); assert.equal(await page.locator('#phase').textContent(), 'Off');
+  await page.locator('.yes').evaluate(el => el.click()); await page.waitForFunction(() => window.__qaSpeech.includes('Yes.'));
   const report = { ok: true, evidence: 'Hold-only UI, real microphone/worklet with synthetic WAV; recognition, choices and heartbeat service simulated.',
     frames: frames.length, frameBytesMax: 3200, idleAudioUploads: 0, implicitArmCommands: 0, statusPolls,
     pendingAskAudioPreserved: true, fixedSpeechAbortsHold: true, canceledAskFailureIgnored: true,
     pointerCancelDoesNotSubmit: true, holdLimitDoesNotSubmit: true, choicesFailureRecovery: true, staleFailureAfterRestartIgnored: true,
-    controls, spoken: await page.evaluate(() => window.__qaSpeech), errors, screenshots: ['chat-desktop.png', 'chat-compact.png'] };
+    configuredBuiltInCopy: true, unconfiguredSpeechPreservesPhrases: true,
+    controls, spoken: [...priorSpeech, ...await page.evaluate(() => window.__qaSpeech)], errors, screenshots: ['chat-desktop.png', 'chat-compact.png'] };
   await fs.writeFile(path.join(out, 'report.json'), JSON.stringify(report, null, 2)); process.stdout.write(JSON.stringify(report, null, 2) + '\n');
 } finally { await browser.close(); }

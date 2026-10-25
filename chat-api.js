@@ -2,13 +2,72 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
 const { spawn: spawnProcess } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { isLoopback } = require('./update.js');
+const { createChoicesAdapter } = require('./chat-choices.js');
 
 const PREFIX = '/chat/api';
 const DEFAULTS = Object.freeze({ sessions: 2, idleMs: 90000, lifetimeMs: 1800000,
   bodyBytes: 8192, audioBytes: 64000, utteranceBytes: 640000, sessionBytes: 19200000,
   runtimeLineBytes: 16384, runtimeQueueBytes: 256000, adapterBytes: 32768,
   adapterMs: 15000, choices: 2, writeMs: 3000 });
+
+function chatVariables(env) {
+  const result = {};
+  for (const [key, value] of Object.entries(env || {}))
+    if (/^ERA_CHAT_[A-Z0-9_]+$/.test(key) && typeof value === 'string' && value.length <= 8192) result[key] = value;
+  return result;
+}
+function literalValue(raw) {
+  if (raw.startsWith("'")) {
+    const match = /^'([^']*)'(?:\s*#.*)?$/.exec(raw);
+    return match ? match[1] : null;
+  }
+  if (raw.startsWith('"')) {
+    const match = /^("(?:[^"\\]|\\.)*")(?:\s*#.*)?$/.exec(raw);
+    if (!match) return null;
+    try { return JSON.parse(match[1]); } catch { return null; }
+  }
+  return raw.replace(/\s+#.*$/, '').trim();
+}
+function loadChatEnvironment(options = {}) {
+  const overrides = chatVariables(options.env === undefined ? process.env : options.env);
+  if (overrides.ERA_CHAT_CONFIG_DISABLED === '1') return overrides;
+  const file = options.file === undefined ? path.join(os.homedir(), '.config', 'ai', 'ai.env') : options.file;
+  const fromFile = {};
+  let descriptor;
+  try {
+    descriptor = fs.openSync(file, 'r');
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > 65536) return overrides;
+    const bytes = Buffer.alloc(65537), size = fs.readSync(descriptor, bytes, 0, bytes.length, 0);
+    if (size > 65536) return overrides;
+    for (const line of bytes.subarray(0, size).toString('utf8').split(/\r?\n/)) {
+      const match = /^\s*(?:export\s+)?(ERA_CHAT_[A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
+      if (!match) continue;
+      const value = literalValue(match[2]);
+      if (typeof value === 'string' && value.length <= 8192) fromFile[match[1]] = value;
+    }
+  } catch { /* Missing or unreadable private configuration means unconfigured. */ }
+  finally { if (descriptor !== undefined) try { fs.closeSync(descriptor); } catch {} }
+  return { ...fromFile, ...overrides };
+}
+function speechEnvironment(chat, system, builtIn) {
+  const result = {};
+  for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'ComSpec', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PYTHONPATH', 'VIRTUAL_ENV'])
+    if (typeof system[key] === 'string') result[key] = system[key];
+  for (const [key, value] of Object.entries(chat))
+    if (builtIn ? key.startsWith('ERA_CHAT_SPEECH_') : !/^ERA_CHAT_(?:TEXT|CHOICES)_/.test(key)) result[key] = value;
+  return result;
+}
+function transportUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return ['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password ? parsed.href : null;
+  } catch { return null; }
+}
 
 function fault(status, code) { return Object.assign(new Error(code), { status, code }); }
 function json(res, status, body) {
@@ -109,22 +168,37 @@ function localChoices(text) {
 }
 
 function createChatApi(options = {}) {
-  const env = options.env || process.env;
+  // Explicit test/application environments are isolated unless a file is named.
+  const env = options.env === undefined || options.configPath !== undefined
+    ? loadChatEnvironment({ env: options.env, file: options.configPath }) : chatVariables(options.env);
   const spawn = options.spawn || spawnProcess;
   const fetcher = options.fetch || globalThis.fetch;
   const clock = options.clock || Date.now;
   const limits = { ...DEFAULTS, ...options.limits };
   const sessions = new Map(), requests = new Set();
-  let runtimeArgs = null, adapterUrl = null, closed = false;
+  let runtimeArgs = null, closed = false;
   try {
     const args = JSON.parse(env.ERA_CHAT_RUNTIME_ARGS || '[]');
     if (Array.isArray(args) && args.length <= 32 && args.every(x => typeof x === 'string' && x.length <= 4096)) runtimeArgs = args;
   } catch { /* invalid configuration is unavailable */ }
-  const runtimeAvailable = typeof env.ERA_CHAT_RUNTIME === 'string' && !!env.ERA_CHAT_RUNTIME.trim() && runtimeArgs !== null;
+  const externalRuntime = typeof env.ERA_CHAT_RUNTIME === 'string' && !!env.ERA_CHAT_RUNTIME.trim();
+  let speechUrl = null;
   try {
-    const parsed = new URL(env.ERA_CHAT_CHOICES_URL);
-    if (['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password) adapterUrl = parsed.href;
-  } catch { /* no optional adapter */ }
+    const parsed = new URL(transportUrl(env.ERA_CHAT_SPEECH_URL));
+    if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname))) speechUrl = parsed.href;
+  } catch { /* Native speech permits secure remote transport or local testing. */ }
+  const speechConfigured = !!(speechUrl && env.ERA_CHAT_SPEECH_MODEL && env.ERA_CHAT_SPEECH_TOKEN);
+  const workerPath = path.join(__dirname, 'chat-speech-worker.js');
+  const builtIn = !externalRuntime && speechConfigured;
+  const runtimeKind = externalRuntime ? 'external' : builtIn ? 'built-in' : 'unconfigured';
+  const runtimeConfigured = externalRuntime || builtIn;
+  const runtimeAvailable = externalRuntime ? runtimeArgs !== null : builtIn && (options.workerExists || fs.existsSync)(workerPath);
+  const runtimeCommand = externalRuntime ? env.ERA_CHAT_RUNTIME : process.execPath;
+  if (builtIn) runtimeArgs = [workerPath];
+  const childEnv = speechEnvironment(env, options.env || process.env, builtIn);
+  const adapterRequested = typeof env.ERA_CHAT_CHOICES_URL === 'string' && !!env.ERA_CHAT_CHOICES_URL.trim();
+  const adapterUrl = transportUrl(env.ERA_CHAT_CHOICES_URL);
+  const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices, timeoutMs: Math.min(limits.adapterMs, 12000) } });
 
   function emit(session, event) {
     if (session.closed) return;
@@ -173,7 +247,7 @@ function createChatApi(options = {}) {
     if (!runtimeAvailable) throw fault(503, 'runtime-unavailable');
     if (sessions.size >= limits.sessions) throw fault(429, 'session-limit');
     let child;
-    try { child = spawn(env.ERA_CHAT_RUNTIME, runtimeArgs, { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    try { child = spawn(runtimeCommand, runtimeArgs, { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: childEnv }); }
     catch { throw fault(503, 'runtime-unavailable'); }
     const session = { id: randomUUID(), child, created: clock(), touched: clock(), generation: 0,
       mode: 'paused', seq: 0, bytes: 0, utteranceBytes: 0, uploading: false, events: null, runtimeReady: false, closed: false };
@@ -244,7 +318,8 @@ function createChatApi(options = {}) {
     }
     const local = localChoices(text);
     if (local) return json(res, 200, { ...local, timings: { totalMs: Math.max(0, clock() - began) } });
-    if (!adapterUrl) return json(res, 200, { kind: 'fallback', choices: choiceList([
+    if (adapterRequested && !adapterUrl) throw fault(503, 'choices-unavailable');
+    if (!adapterUrl && !choicesCore.available) return json(res, 200, { kind: 'fallback', choices: choiceList([
       'Tell me more', "I'm not sure", 'Please say that again', "I don't want to answer",
     ]), timings: { totalMs: Math.max(0, clock() - began) } });
     if (requests.size >= limits.choices) throw fault(429, 'choices-busy');
@@ -253,18 +328,21 @@ function createChatApi(options = {}) {
     res.once('close', cancel);
     const timeout = setTimeout(() => controller.abort(), limits.adapterMs); timeout.unref();
     try {
-      const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', ...(env.ERA_CHAT_CHOICES_TOKEN ? { Authorization: 'Bearer ' + env.ERA_CHAT_CHOICES_TOKEN } : {}) },
-        body: JSON.stringify({ text, ...(context ? { context } : {}) }) });
-      if (!response.ok || !response.body) throw fault(502, 'choices-unavailable');
-      let size = 0, chunks = [];
-      for await (const chunk of response.body) {
-        size += chunk.length;
-        if (size > limits.adapterBytes) { controller.abort(); throw fault(502, 'choices-invalid'); }
-        chunks.push(Buffer.from(chunk));
-      }
       let result;
-      try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fault(502, 'choices-invalid'); }
+      if (!adapterUrl) result = await choicesCore.generate({ text, ...(context ? { context } : {}) }, { signal: controller.signal });
+      else {
+        const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', ...(env.ERA_CHAT_CHOICES_TOKEN ? { Authorization: 'Bearer ' + env.ERA_CHAT_CHOICES_TOKEN } : {}) },
+          body: JSON.stringify({ text, ...(context ? { context } : {}) }) });
+        if (!response.ok || !response.body) throw fault(502, 'choices-unavailable');
+        let size = 0, chunks = [];
+        for await (const chunk of response.body) {
+          size += chunk.length;
+          if (size > limits.adapterBytes) { controller.abort(); throw fault(502, 'choices-invalid'); }
+          chunks.push(Buffer.from(chunk));
+        }
+        try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fault(502, 'choices-invalid'); }
+      }
       const items = result && result.choices;
       if (!Array.isArray(items) || items.length < 2 || items.length > 6 || !items.every(item =>
         item && cleanText(item.label, 60) && cleanText(item.say, 300))) throw fault(502, 'choices-invalid');
@@ -283,9 +361,9 @@ function createChatApi(options = {}) {
     if (!ownRequest(req)) throw fault(403, 'local-only');
     const routePath = url.pathname.slice(PREFIX.length);
     if (req.method === 'GET' && routePath === '/config') return json(res, 200, {
-      wakeName: 'Ellie', runtime: { available: !!runtimeAvailable, configured: !!runtimeAvailable,
-        status: runtimeAvailable ? 'configured' : 'unconfigured', capabilities: { wake: null, streaming: null } },
-      choices: { available: true, kind: adapterUrl ? 'adapter' : 'local', generated: !!adapterUrl },
+      wakeName: 'Ellie', runtime: { available: !!runtimeAvailable, configured: !!runtimeConfigured, kind: runtimeKind,
+        status: runtimeAvailable ? 'configured' : runtimeConfigured ? 'unavailable' : 'unconfigured', capabilities: { wake: null, streaming: null } },
+      choices: { available: true, kind: adapterRequested ? 'adapter' : choicesCore.available ? 'built-in' : 'local', generated: adapterRequested ? !!adapterUrl : choicesCore.available },
     });
     if (req.method === 'POST' && routePath === '/choices') return generate(req, res);
     if (req.method === 'POST' && routePath === '/sessions') {
@@ -348,7 +426,7 @@ function createChatApi(options = {}) {
       return true;
     },
     sweep,
-    close() { closed = true; clearInterval(timer); for (const session of sessions.values()) dispose(session); for (const request of requests) request.abort(); },
+    close() { closed = true; clearInterval(timer); for (const session of sessions.values()) dispose(session); for (const request of requests) request.abort(); choicesCore.close(); },
   };
 }
-module.exports = { createChatApi };
+module.exports = { createChatApi, loadChatEnvironment };
