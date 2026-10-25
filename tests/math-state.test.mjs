@@ -33,8 +33,8 @@ test('one more and one fewer change exactly one unit, with no wrap at zero or fi
   assert.deepEqual(step(partners(),1),partners(),'ordinary quantity changes cannot change a fixed whole');
 });
 
-test('every partition of every whole through ten transfers one counter and conserves the whole', () => {
-  for(let whole=0;whole<=10;whole++) {
+test('every partition of every whole through twenty transfers one counter and conserves the whole', () => {
+  for(let whole=0;whole<=20;whole++) {
     let s=picked(partners(),whole);
     for(let i=0;i<whole;i++)s=transfer(s,'right');
     assert.equal(s.left,0);
@@ -73,14 +73,14 @@ test('structured collections contain exactly the quantity, including an empty ze
     assert.equal(numberWord(n).replaceAll('-',' '),w);
 });
 
-test('picker decades retain ten stable units seats and never offer an out-of-range quantity', () => {
+test('Numbers keeps decade seats while partners offers zero through ten, then eleven through twenty', () => {
   for(let start=0;start<=50;start+=10) {
     const seats=pickerNumbers(start,'numbers');
     assert.equal(seats.length,10);
     for(let i=0;i<10;i++)assert.equal(seats[i],start+i<=50?start+i:null);
   }
-  assert.deepEqual(pickerNumbers(0,'partners'),[0,1,2,3,4,5,6,7,8,9]);
-  assert.deepEqual(pickerNumbers(10,'partners'),[10,null,null,null,null,null,null,null,null,null]);
+  assert.deepEqual(pickerNumbers(0,'partners'),[0,1,2,3,4,5,6,7,8,9,10]);
+  assert.deepEqual(pickerNumbers(11,'partners'),[11,12,13,14,15,16,17,18,19,20]);
 });
 
 test('range browsing and both cancel paths preserve an unusual partition and the other workspace', () => {
@@ -93,27 +93,27 @@ test('range browsing and both cancel paths preserve an unusual partition and the
   assert.equal(s.view,'picker');
   assert.equal(s.returnView,'partners');
   s=navigate(s,'ranges');
-  assert.equal(s.view,'ranges');
-  s=navigate(s,'range',10);
   assert.equal(s.view,'picker');
-  assert.equal(s.rangeStart,10);
+  assert.equal(s.rangeStart,11,'Other numbers opens the second page directly');
   assert.deepEqual(math(s),math(original));
   s=navigate(s,'back');
   assert.equal(s.view,'partners');
   assert.deepEqual(math(s),math(original));
-  s=navigate(navigate(navigate(s,'pick'),'ranges'),'back');
+  s=navigate(navigate(s,'pick'),'ranges');
   assert.equal(s.view,'picker');
+  s=navigate(s,'ranges');
+  assert.equal(s.rangeStart,0,'Other numbers returns directly to the first page');
   assert.deepEqual(math(navigate(s,'back')),math(original));
 });
 
 test('selection returns to its caller and gives a predictable partition without changing Numbers', () => {
-  for(let n=0;n<=10;n++) {
+  for(let n=0;n<=20;n++) {
     const s=picked(partners(),n);
     assert.equal(s.view,'partners');
     assert.deepEqual([s.whole,s.left,s.number],[n,Math.floor(n/2),7]);
   }
   const p=navigate(partners(),'pick');
-  for(const invalid of [-1,11,50,1.5,NaN,'7',null])assert.deepEqual(selectNumber(p,invalid),p);
+  for(const invalid of [-1,21,50,1.5,NaN,'7',null])assert.deepEqual(selectNumber(p,invalid),p);
   const n=navigate(numbers(),'pick');
   for(const invalid of [-1,51,1.5,NaN,'7',null])assert.deepEqual(selectNumber(n,invalid),n);
   assert.deepEqual(selectNumber(partners(),3),partners(),'a passive displayed numeral is not selection');
@@ -127,7 +127,36 @@ test('versioned restore preserves both workspaces and a picker cancellation roun
   const restored=restoreState(serializeState(s));
   assert.deepEqual(restored,s);
   assert.deepEqual(restoreState(structuredClone(s)),s);
-  assert.deepEqual(math(navigate(navigate(restored,'back'),'back')),math(s));
+  assert.deepEqual(math(navigate(restored,'back')),math(s));
+});
+
+test('partners twenty opens its second picker page and persists across workspace and menu transitions', () => {
+  let s=picked(partners(),20);
+  s=transfer(s,'left');
+  const original=math(s);
+  s=navigate(s,'pick');
+  assert.deepEqual([s.view,s.rangeStart],['picker',11]);
+  for(const action of ['back','back','numbers']) {
+    s=navigate(s,action);
+    assert.deepEqual(restoreState(serializeState(s)),s,'retained partner page is valid after '+action);
+    assert.deepEqual(math(s),original);
+  }
+  s=navigate(s,'pick');
+  assert.deepEqual([s.view,s.returnView,s.rangeStart],['picker','numbers',0],'Numbers still opens a decade page');
+  const ten=navigate(picked(partners(),10),'pick');
+  assert.equal(ten.rangeStart,0,'ten stays on the first partner page');
+});
+
+test('legacy partner picker and range states migrate without losing quantities or a partition', () => {
+  for(const view of ['picker','ranges','partners','menu']) {
+    const old={...createState(),view,number:42,whole:7,left:5,returnView:'partners',rangeStart:10};
+    const migrated=restoreState(JSON.stringify(old));
+    assert.deepEqual(math(migrated),math(old));
+    assert.equal(migrated.rangeStart,0,'legacy lonely ten maps to the first page');
+    assert.equal(migrated.view,view==='ranges'?'picker':view);
+    assert.deepEqual(restoreState(serializeState(migrated)),migrated);
+    if(['picker','ranges'].includes(view))assert.deepEqual(math(navigate(migrated,'back')),math(old));
+  }
 });
 
 test('malformed, unsupported-version and impossible persisted states fall back safely', () => {
@@ -135,7 +164,7 @@ test('malformed, unsupported-version and impossible persisted states fall back s
   const invalid=[undefined,null,'','{broken','null','[]',{},[],
     {...d,version:0},{...d,version:2},{...d,view:'missing'},
     {...d,number:-1},{...d,number:51},{...d,number:7.5},{...d,number:'7'},
-    {...d,whole:11},{...d,whole:-1},{...d,left:-1},{...d,left:8},
+    {...d,whole:21},{...d,whole:-1},{...d,left:-1},{...d,left:8},
     {...d,left:NaN},{...d,returnView:'menu'},{...d,rangeStart:3},
     {...d,view:'picker',returnView:'partners',rangeStart:50}];
   for(const raw of invalid) assert.deepEqual(restoreState(raw),d,JSON.stringify(raw));

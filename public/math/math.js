@@ -124,7 +124,7 @@ function renderShell() {
       });
       seats[12] = button('ranges', ['Other', 'numbers'], { nav: true });
     } else {
-      const max = S.returnView === 'partners' ? 10 : 50;
+      const max = 50;
       for (let start = 0; start <= max; start += 10) {
         const end = Math.min(max, start + 9);
         const label = start === end ? String(start) : `${start}–${end}`;
@@ -189,7 +189,11 @@ function paintQuantity() {
     const parts = document.createElement('div'); parts.className = 'math-parts';
     for (const [side, n, index] of [['left', S.left, 0], ['right', right, S.left]]) {
       const part = document.createElement('div'); part.className = `math-part ${side}`;
-      part.append(textElement('part-number', String(n)), frame(n, index, 'part-tray')); parts.append(part);
+      const groups = document.createElement('div'); const quantities = quantityGroups(n);
+      groups.className = 'part-groups';
+      groups.style.setProperty('--part-rows', String(quantities.length));
+      quantities.forEach((q, i) => groups.append(frame(q, index + i * 10, 'part-tray')));
+      part.append(textElement('part-number', String(n)), groups); parts.append(part);
     }
     canvas.append(parts, textElement('math-equation', `${S.left} + ${right} = ${S.whole}`));
     disable('move-left', right === 0); disable('move-right', S.left === 0);
