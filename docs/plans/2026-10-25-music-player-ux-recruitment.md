@@ -43,3 +43,24 @@ The committed hub and board worktrees passed the full gate: **129 suites,
 0 failed**. The gate stamped both repositories with clean trees. Hub targeted
 checks passed 39/39; the board checks include actual gaze rearming, image
 wraparound, offline cycling and continued audio/full-song mode.
+
+## Live content review and quality follow-up
+
+v1.0.10 passed Windows self-update 7/7 and was published (build
+`20261025.0231`). The published manifest and tarball hash matched the build.
+The local push helper refused the docs-only receipt tree, so the tablet used
+the normal published-feed updater and reported the new running/disk build.
+All 27 sources produced ten pictures, with original audio/order metadata
+preserved. Visual review then caught blank end frames and two static album
+cover sources that byte hashes had treated as distinct. This prevented closing
+the picture task on a technically complete but unhelpful result.
+
+- [x] Add failing regressions for dark/white end frames, perceptual duplicates
+  and an alternate picture source that preserves audio.
+- [x] Filter blank frames and near-duplicates before helper screening; sample
+  more of the video and screen at most forty useful candidates.
+- [x] Let a parent supply a music-video link for pictures independently of audio.
+- [x] Pass focused hub checks (41/41) and browser checks (18/18).
+- [ ] Gate, release and deploy the quality follow-up.
+- [ ] Rebuild and visually verify all 27 picture sets with the quality checks;
+  use matching music-video sources for the two static album uploads.

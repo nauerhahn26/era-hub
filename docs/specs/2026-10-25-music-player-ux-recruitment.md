@@ -16,7 +16,7 @@ clip/full authorization. Existing Stop/resume and end/replay behavior remains.
 The normal dwell rearm rule applies: a stationary gaze changes one picture;
 moving the gaze re-arms another selection. There is no slideshow timer.
 
-Song ingestion samples up to forty distinct preview frames across the source
+Song ingestion samples up to one hundred preview frames across the source
 video, using the largest storyboard supplied by the downloader metadata. The
 storyboard schema is documented in the [downloader's extractor source](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/youtube/_video.py).
 These are video stills at the source's preview resolution; they may look softer
@@ -27,7 +27,9 @@ uses file signatures. The small vendored WebP decoder runs in WebAssembly,
 with its pinned package provenance and licenses in `vendor/NOTICE-vendor.txt`.
 Image downloads are bounded, limited to the image CDN, and reject redirects.
 
-The existing configured AI helper screens a contact sheet for age-appropriate
+Pixel checks reject nearly black/white frames and perceptual near-duplicates
+before selection. Up to forty useful candidates reach the contact sheet.
+The existing configured AI helper screens that sheet for age-appropriate
 frames. Only an explicit, unambiguous selection of at least ten distinct
 approved frames produces a ten-picture set. Otherwise audio and cover remain
 available and the parent sees why pictures were unavailable. Screening is an
@@ -43,7 +45,10 @@ prevent a late load from replacing a newer selection or a different page.
 
 POST `/music/pictures` with `{id}` refreshes an existing song's pictures using
 its saved source, without downloading audio or changing rank. `{id,clear:true}`
-returns to cover art without contacting the source. Both operations share the
+returns to cover art without contacting the source. An optional `{url}` picks
+a video specifically for pictures; its saved `pictureSource` is separate from
+the audio source. This lets an audio-only album upload use a matching music
+video for its stills. Both operations share the
 add/reorder writer lock and report progress through `/music/add/status`.
 New songs acquire pictures during the existing add operation. Existing songs
 can be prepared from Pictures → Get video pictures.
