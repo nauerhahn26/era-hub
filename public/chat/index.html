@@ -11,7 +11,7 @@
       audioPreview:false, chime:false, bus:'auto', staleMs:600, settleMs:300, color:'#0F7C8A' };
   </script>
 </head>
-<body>
+<body data-listening="false" data-capturing="false">
   <main id="app">
     <div id="sessionStatus" role="status"><span id="statusDot"></span><span id="phase">Off</span></div>
     <div id="partnerStrip" aria-label="Conversation partner controls">
@@ -26,8 +26,8 @@
   <dialog id="partnerDialog" aria-labelledby="partnerTitle">
     <form method="dialog"><button class="close" aria-label="Close partner settings">Close</button></form>
     <h1 id="partnerTitle">Conversation partner</h1>
-    <p id="engineNote">Checking local listening…</p>
-    <p>Start Chat with a finger. Hold <strong>Hold to ask</strong> while asking a question; release to finish. Or say <strong id="wakeName">Ellie</strong>, then ask. Only the open Chat session listens.</p>
+    <p id="engineNote">Checking question capture…</p>
+    <p>Start Chat with a finger and wait for <strong>Ready to ask</strong>. Then hold <strong>Hold to ask</strong> while speaking; release to finish. Pauses do not end the held question. Voice activation is off. Only audio from the held question is submitted; release finishes it.</p>
     <label>Voice <select id="voicePreference"><option value="local">Device voice · fastest</option><option value="saved">Saved voice · prepares audio first</option></select></label>
     <section class="partnerSection">
       <h2>My news</h2>

@@ -184,6 +184,41 @@ test('malformed control, oversized bodies, session caps and idle expiry are boun
   assert.equal((await s.request(`/sessions/${id}/control`, { type: 'ask' })).status, 404);
 });
 
+test('session heartbeat refreshes idle time without worker commands or extending hard lifetime', async t => {
+  let now = 0;
+  const s = await service(t, { env: configured, clock: () => now, limits: { idleMs: 100, lifetimeMs: 300 } });
+  const { id } = await (await s.request('/sessions')).json();
+  const status = () => fetch(`${s.base}/sessions/${id}`);
+  assert.deepEqual(await (await status()).json(), { ready: false, mode: 'paused' });
+  const child = s.children[0];
+  child.stdout.write(JSON.stringify({ type: 'ready', capabilities: { wake: false, private: 'private-value' } }) + '\n');
+  for (const at of [80, 160, 240]) {
+    now = at; s.api.sweep();
+    assert.equal(child.killed, undefined);
+    const reply = await status();
+    assert.equal(reply.status, 200);
+    assert.deepEqual(await reply.json(), { ready: true, mode: 'paused' });
+  }
+  assert.deepEqual(child.messages, []);
+  assert.equal((await fetch(`${s.base}/sessions/${id}`, { headers: { Origin: 'https://elsewhere.example' } })).status, 403);
+  assert.deepEqual(child.messages, []);
+  now = 301; s.api.sweep();
+  assert.equal(child.killed, true);
+  assert.equal((await status()).status, 404);
+});
+
+test('heartbeat leaves active capture generation and worker state untouched', async t => {
+  const s = await service(t, { env: configured });
+  const { id } = await (await s.request('/sessions')).json();
+  await s.request(`/sessions/${id}/control`, { type: 'ask' });
+  const child = s.children[0], generation = child.messages[0].generation;
+  for (let i = 0; i < 2; i++)
+    assert.deepEqual(await (await fetch(`${s.base}/sessions/${id}`)).json(), { ready: false, mode: 'capturing' });
+  await s.request(`/sessions/${id}/control`, { type: 'finish' });
+  assert.deepEqual(child.messages.map(message => message.type), ['ask', 'finish']);
+  assert.equal(child.messages[1].generation, generation);
+});
+
 test('malformed runtime output closes the worker without reflecting content', async t => {
   const s = await service(t, { env: configured });
   const { id } = await (await s.request('/sessions')).json();
@@ -246,6 +281,36 @@ test('static alternatives accept clear natural choice prompts without repeating 
     assert.equal(result.kind, 'alternatives', text);
     assert.deepEqual(result.choices.map(choice => choice.say), expected, text);
   }
+});
+
+test('recognized choice prompts allow natural sentence punctuation before their options', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  for (const [text, expected] of [
+    ['What do you like? Music or a story.', ['Music', 'A story']],
+    ['What do you like? Music or a story?', ['Music', 'A story']],
+    ['Which would you prefer? Read or draw.', ['Read', 'Draw']],
+    ['Would you rather. Read or draw?', ['Read', 'Draw']],
+    ['Do you want! Music or a story?', ['Music', 'A story']],
+  ]) {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'alternatives', text);
+    assert.deepEqual(result.choices.map(choice => choice.say), expected, text);
+  }
+});
+
+test('choice punctuation does not repair missing words or swallow negative follow-up clauses', async t => {
+  const seen = [];
+  const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body).text);
+    return new Response(JSON.stringify({ choices: [{ label: 'More time', say: 'I need more time.' }, { label: 'Another way', say: 'Ask me another way.' }] }));
+  } });
+  for (const text of ['What you like? Music or a story.', 'What do you not like? Music or a story.',
+    'Would you like music or a story? Not music.', 'What do you like? Music or a story. I do not want music.']) {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'adapter', text);
+    assert.equal(seen.at(-1), text);
+  }
+  assert.equal(seen.length, 4);
 });
 
 test('both leading wake addresses preserve fast alternatives, yes/no and guarded history', async t => {

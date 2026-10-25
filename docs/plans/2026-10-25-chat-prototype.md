@@ -2,11 +2,15 @@
 
 Design: [Chat prototype](../specs/2026-10-25-chat-prototype.md).
 
+Current pilot: [on-screen hold button](2026-10-25-chat-hold-button.md), with voice
+activation off. The original measurements below describe the earlier prototype;
+the current plan records new behavior and validation.
+
 ## Scope and work division
 
 The maintainer authorized a prototype, key interaction tests and performance
 validation. Recognition quality is the acceptance priority; local or hosted
-processing is acceptable. Voice activation uses Ellie while Chat is active.
+processing is acceptable. The original voice experiment used Ellie while Chat was active.
 The maintainer subsequently authorized comparing Ellie with Hey Ellie and
 choosing on reliability and naturalness. The fixed-settings comparison retains
 Ellie provisionally; requiring Hey Ellie missed connected-speech requests on
@@ -92,9 +96,9 @@ An optional `ERA_CHAT_CHOICES_URL` accepts `{text, context}` and returns
 clearly identified generic replies are used. Typed prompts and local reply rules
 do not establish recognition quality or open-ended generation quality.
 
-Start Chat with actual touch. Desktop microphone tests use the separate partner
-drawer keyboard controls. Hold Ask while speaking and release to finish, or use
-the configured wake name. End, hide and leave close the microphone.
+Start Chat with actual touch and wait for Ready to ask. Desktop microphone tests
+use the separate partner drawer keyboard controls. Hold Ask while speaking and
+release to finish. Voice activation is off. End, hide and leave close the microphone.
 
 For the measured setup, the private configuration is already retained in
 `~/.config/ai/ai.env`, with dependencies and models in `~/.cache/era-chat/`.

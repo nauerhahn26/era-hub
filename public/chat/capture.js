@@ -1,11 +1,11 @@
 import { createPCM16Resampler } from './controller.js';
 
-// The browser hands audio only to this device's session endpoint. Cloud ASR is
-// never called from this module; wake routing belongs to the local worker.
+// Start warms the graph without retaining audio. Only an explicit hold begins
+// collection; release flushes that hold and leaves the graph idle again.
 export function createMicrophone({ onFrame, onError }) {
-  let stream, context, source, node, active = false, generation = 0, flushed = null, resampler = null;
+  let stream, context, source, node, active = false, generation = 0, captureTurn = 0, collecting = false, flushed = null, resampler = null;
   async function stop() {
-    generation++; active = false;
+    generation++; captureTurn++; active = false; collecting = false;
     node?.port.postMessage('stop'); node?.disconnect(); source?.disconnect();
     if (node) { node.port.onmessage = null; node.onprocessorerror = null; node.port.close(); }
     flushed?.(); flushed = null; resampler = null;
@@ -23,19 +23,30 @@ export function createMicrophone({ onFrame, onError }) {
     stream = incoming;
     await context.audioWorklet.addModule('./pcm-worklet.js');
     if (mine !== generation || !context) return;
-    resampler = createPCM16Resampler(context.sampleRate, b => { if (active) onFrame(b); });
     node = new AudioWorkletNode(context, 'chat-pcm');
     node.port.onmessage = e => {
-      if (!active || mine !== generation) return;
-      if (e.data?.flushed) { resampler.flush(); flushed?.(); flushed = null; }
-      else resampler.push(e.data);
+      if (!active || mine !== generation || e.data?.turn !== captureTurn || !resampler) return;
+      if (e.data.flushed) { resampler.flush(); collecting = false; flushed?.(); flushed = null; }
+      else if (e.data.samples) resampler.push(e.data.samples);
     };
     node.onprocessorerror = () => { if (active && mine === generation) onError(new Error('Microphone processing stopped.')); };
     source = context.createMediaStreamSource(stream); source.connect(node); node.connect(context.destination);
     active = true;
   }
-  return { start, stop, flush() { return new Promise(resolve => {
-    if (!active || !node) { resolve(); return; }
-    flushed = resolve; node.port.postMessage('flush'); setTimeout(resolve, 200);
-  }); } };
+  return {
+    start, stop,
+    begin() {
+      if (!active || !node || !context || collecting) return false;
+      captureTurn++; collecting = true;
+      resampler = createPCM16Resampler(context.sampleRate, b => { if (active) onFrame(b); });
+      node.port.postMessage({ type: 'capture', turn: captureTurn }); return true;
+    },
+    cancel() { captureTurn++; collecting = false; resampler = null; flushed?.(); flushed = null; node?.port.postMessage({ type: 'cancel' }); },
+    flush() { return new Promise((resolve, reject) => {
+      if (!active || !node || !collecting) { resolve(); return; }
+      const timer = setTimeout(() => { flushed = null; reject(new Error('Microphone did not finish the held question.')); }, 1000);
+      flushed = () => { clearTimeout(timer); resolve(); };
+      node.port.postMessage({ type: 'flush', turn: captureTurn });
+    }); },
+  };
 }

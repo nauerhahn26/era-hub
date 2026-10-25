@@ -14,7 +14,7 @@ export function createChatController(deps = {}) {
   const api = {
     get state() { return state; },
     subscribe(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
-    ready(wakeEnabled = true) { patch({ engineReady: true, wakeEnabled, phase: state.phase === 'Off' && wakeEnabled ? 'Local wake listening' : state.phase, error: '' }); },
+    ready(wakeEnabled = false) { patch({ engineReady: true, wakeEnabled, phase: state.phase === 'Off' ? (wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.phase, error: '' }); },
     ask() {
       invalidate();
       patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: Object.freeze([]), staged: false, error: '' });
@@ -60,7 +60,7 @@ export function createChatController(deps = {}) {
       const mine = turn, spoken = ++utterance;
       speechAbort?.abort(); speechAbort = new AbortController();
       deps.stopSpeech?.();
-      const back = state.choices.length ? 'Your turn' : state.engineReady && state.wakeEnabled ? 'Local wake listening' : 'Off';
+      const back = state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off';
       patch({ phase: 'Speaking' });
       try { await deps.speak?.({ say: text }, { signal: speechAbort.signal }); }
       catch { if (mine === turn && spoken === utterance) patch({ error: 'Sound unavailable. The words are still here.' }); }

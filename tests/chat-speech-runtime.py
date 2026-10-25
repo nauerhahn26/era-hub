@@ -24,6 +24,7 @@ class RuntimeDouble:
         self.release = threading.Event()
         self.block = False
         self.entered = threading.Event()
+        self.fed_samples = 0
 
     def keyword(self, samples):
         return any(x > .8 for x in samples)
@@ -41,6 +42,7 @@ class RuntimeDouble:
         return []
 
     def feed(self, stream, samples):
+        self.fed_samples += len(samples)
         stream.extend(samples)
 
     def partial(self, stream):
@@ -110,13 +112,76 @@ class WorkerTests(unittest.TestCase):
         self.assertFalse(self.runtime.received)
 
     def test_auto_endpoint_does_not_rearm_or_record_next_turn(self):
-        self.send("ask")
+        self.send("ask", endpoint="automatic")
         self.send("audio", pcm=audio(.3))
         self.send("audio", pcm=audio(0, .3))
         self.worker.wait_final(3)
         self.send("audio", pcm=audio(.9))
         self.assertEqual(sum(e["type"] == "final" for e in self.output), 1)
         self.assertEqual(len(self.runtime.received), 1)
+
+    def test_hold_survives_pause_then_release_finishes_exactly_once(self):
+        self.send("ask")
+        self.send("audio", pcm=audio(.3))
+        self.send("audio", pcm=audio(0, .5))
+        self.worker.wait_final(1)
+        self.assertTrue(self.worker.capturing)
+        self.assertFalse(self.runtime.received)
+        self.send("audio", pcm=audio(.4))
+        self.send("finish")
+        self.send("finish")
+        self.worker.wait_final(3)
+        self.assertEqual(len(self.runtime.received), 1)
+        self.assertEqual(len(self.runtime.received[0]), 11200)
+        self.assertEqual(sum(e["type"] == "final" for e in self.output), 1)
+
+    def test_silent_hold_waits_for_release_beyond_no_speech_timeout(self):
+        self.worker.no_speech_seconds = .2
+        self.send("ask")
+        self.send("audio", pcm=audio(0, .5))
+        self.assertTrue(self.worker.capturing)
+        self.assertEqual(self.output, [])
+        self.finish()
+        self.assertEqual(self.output[-1]["message"], "no_speech")
+
+    def test_wake_capture_keeps_automatic_endpoint(self):
+        self.send("arm", enabled=True)
+        self.send("audio", pcm=audio(.9))
+        self.send("audio", pcm=audio(0, .3))
+        self.worker.wait_final(3)
+        self.assertEqual(sum(e["type"] == "final" for e in self.output), 1)
+        self.assertFalse(self.worker.capturing)
+        self.send("audio", pcm=audio(.9))
+        self.assertEqual(sum(e["type"] == "wake" for e in self.output), 1)
+
+    def test_hold_cap_aborts_before_excess_audio_reaches_runtime(self):
+        self.worker = self.module.Worker(self.runtime, self.output.append, {"max_seconds": 60})
+        self.assertEqual(self.worker.max_seconds, 15)
+        self.send("ask")
+        for _ in range(8):
+            self.send("audio", pcm=audio(.3, 2))
+        self.send("finish")
+        self.worker.wait_final(1)
+        self.assertFalse(self.worker.capturing)
+        self.assertLess(self.runtime.fed_samples, 15 * 16000)
+        self.assertEqual(self.output[-1]["message"], "capture_limit")
+        self.assertFalse(any(e["type"] == "final" for e in self.output))
+
+    def test_configured_shorter_cap_and_cancel_discard_a_hold(self):
+        self.send("ask")
+        self.send("audio", pcm=audio(.3))
+        self.send("cancel", generation=2)
+        self.send("finish", generation=2)
+        self.assertFalse(self.runtime.received)
+        self.send("ask", generation=3)
+        self.send("audio", generation=3, pcm=audio(.3, 2))
+        self.assertEqual(self.output[-1]["message"], "capture_limit")
+        self.assertFalse(self.worker.capturing)
+
+    def test_unsupported_endpoint_disarms_without_starting_capture(self):
+        self.send("ask", endpoint="unsupported")
+        self.assertFalse(self.worker.capturing)
+        self.assertEqual(self.output[-1]["message"], "invalid_command")
 
     def test_cancel_during_slow_final_drops_late_output(self):
         self.runtime.block = True

@@ -93,7 +93,10 @@ class Process:
         mode = row.get("mode", "ask")
         while not self.events.empty():
             self.events.get_nowait()
-        self.send("arm" if mode != "ask" else "ask", generation, enabled=True)
+        if mode == "ask":
+            self.send("ask", generation, endpoint="automatic" if row.get("autoEndpoint") else "release")
+        else:
+            self.send("arm", generation, enabled=True)
         started = time.perf_counter()
         audio_end = started + len(data) / 32000
         for index, start in enumerate(range(0, len(data), 3200)):

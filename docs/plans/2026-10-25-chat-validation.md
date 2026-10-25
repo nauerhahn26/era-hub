@@ -98,6 +98,10 @@ sample in uploaded PCM timed on the browser clock; buffering and request queue
 delay limit that estimate. The neutral event is supplied by the test after
 replies become ready, so the user's reading/selection time is excluded.
 
+These two browser trials precede the hold-button pilot. The current page disables
+voice activation; current behavior, additional failures and measurements are in
+the [hold button plan](2026-10-25-chat-hold-button.md).
+
 | Browser case | Actual final | Ready after estimated speech end | Other observation |
 | --- | --- | --- | --- |
 | Touch hold | Would you like music or a story? | 1635 ms | 1046 ms after release |
@@ -137,8 +141,8 @@ conversation are added to tracked fixtures or application logs.
 `tools/chat-benchmark.py` accepts an external attributed manifest and explicit
 output path; add `--paced` for real-time replay. The browser scripts are separate:
 `tools/chat-browser-check.mjs <base> <scratch>` simulates recognition, whereas
-`tools/chat-real-browser-check.mjs <base> <scratch> <hold.wav> <wake.wav>
-<expected,words>` makes actual configured calls and can spend the operator's
+`tools/chat-real-browser-check.mjs <base> <scratch> <hold.wav>
+<expected,words>` tests one release-ended hold with actual configured calls and can spend the operator's
 service credential. Keep scratch output outside the checkout. Unit tests use
 transport doubles and the full gate removes inherited Chat configuration.
 

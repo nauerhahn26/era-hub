@@ -255,7 +255,7 @@ class Worker:
         self.capturing = False
         self.preroll = collections.deque(maxlen=int(SAMPLE_RATE * config.get("preroll_seconds", 1)))
         self.silence_seconds = config.get("silence_seconds", .9)
-        self.max_seconds = config.get("max_seconds", 20)
+        self.max_seconds = min(15, max(0, config.get("max_seconds", 15)))
         self.no_speech_seconds = config.get("no_speech_seconds", 5)
         self.closed = False
         self.final_guard = threading.Lock()
@@ -268,6 +268,7 @@ class Worker:
     def _clear_capture(self):
         self.samples = []
         self.stream = None
+        self.automatic_endpoint = False
         self.saw_speech = False
         self.silence_samples = 0
         self.last_partial = ""
@@ -292,11 +293,12 @@ class Worker:
         self.runtime.reset_keyword()
         self.runtime.reset_vad()
 
-    def _begin(self):
+    def _begin(self, automatic=False):
         self.epoch += 1
         self.armed = False
         self.capturing = True
         self._clear_capture()
+        self.automatic_endpoint = automatic
         try:
             self.runtime.reset_vad()
             self.stream = self.runtime.new_stream()
@@ -332,9 +334,13 @@ class Worker:
             buffered = list(self.preroll)
             self.preroll.clear()
             self._event("wake")
-            if not self._begin():
+            if not self._begin(automatic=True):
                 return
             samples = buffered
+        if len(self.samples) + len(samples) >= self.max_seconds * SAMPLE_RATE:
+            self._abort()
+            self._event("error", message="capture_limit")
+            return
         self.samples.extend(samples)
         if self.runtime.voiced(samples):
             self.saw_speech = True
@@ -348,10 +354,9 @@ class Worker:
             if self.first_partial_ms is None:
                 self.first_partial_ms = (time.perf_counter() - self.started) * 1000
             self._event("partial", text=text)
-        if len(self.samples) >= self.max_seconds * SAMPLE_RATE:
-            self._abort()
-            self._event("error", message="capture_limit")
-        elif not self.saw_speech and len(self.samples) >= self.no_speech_seconds * SAMPLE_RATE:
+        if not self.automatic_endpoint:
+            return
+        if not self.saw_speech and len(self.samples) >= self.no_speech_seconds * SAMPLE_RATE:
             self._finish()
         elif self.saw_speech and self.silence_samples >= self.silence_seconds * SAMPLE_RATE:
             self._finish()
@@ -443,7 +448,11 @@ class Worker:
             self.armed = message.get("enabled") is True
         elif kind == "ask":
             self._abort()
-            self._begin()
+            endpoint = message.get("endpoint", "release")
+            if endpoint not in ("release", "automatic"):
+                self._event("error", message="invalid_command")
+                return
+            self._begin(automatic=endpoint == "automatic")
         elif kind == "audio":
             self._audio(message)
         elif kind == "finish":

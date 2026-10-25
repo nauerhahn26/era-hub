@@ -1,8 +1,11 @@
 """Metric checks use invented strings; measured transcripts stay outside the repo."""
 import importlib.util
 import pathlib
+import queue
 import sys
+import time
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 root = pathlib.Path(__file__).resolve().parents[1]
@@ -37,6 +40,27 @@ class MetricsTests(unittest.TestCase):
         result = self.module.summarize(rows)["negativeWakeChecks"]
         self.assertEqual(result["acousticFalseActivations"], 0)
         self.assertEqual(result["nameMentionActivations"], 1)
+
+    def test_replay_selects_release_or_diagnostic_automatic_endpoint(self):
+        for automatic in (False, True):
+            with self.subTest(automatic=automatic):
+                process = object.__new__(self.module.Process)
+                process.events = queue.Queue()
+                sent = []
+
+                def send(kind, generation, **fields):
+                    sent.append((kind, fields))
+                    if kind == "audio":
+                        process.events.put((time.perf_counter(), {
+                            "type": "final", "generation": generation, "text": "question"}))
+
+                process.send = send
+                row = {"id": "sample", "path": "unused", "kind": "synthetic",
+                       "text": "question", "autoEndpoint": automatic}
+                with mock.patch.object(self.module, "read_pcm", return_value=bytes(3200)):
+                    process.run(row, 1)
+                self.assertEqual(sent[0][0], "ask")
+                self.assertEqual(sent[0][1].get("endpoint"), "automatic" if automatic else "release")
 
 
 if __name__ == "__main__":

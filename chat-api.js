@@ -82,7 +82,7 @@ function localChoices(text) {
   else if (questionAddress && /^(?:(?:what|which|why|where|when|how|who|hi|hello|hey)\b|(?:do|does|did|can|could|would|will|have|has|had|shall|should|may|are|were)\s+(?:you|we)\b|(?:is|was)\s+(?:it|this|that|there)\b)/i.test(questionAddress[1]))
     trimmed = questionAddress[1];
   if (/\bor\b/i.test(trimmed)) {
-    const prefix = /^(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)\s*[:,]?\s+/i;
+    const prefix = /^(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)\s*[:,.!?]?\s+/i;
     // Unrecognised question forms need context and factual grounding. Splitting
     // them can turn half a question into the communicator's spoken answer.
     if (!prefix.test(trimmed)) {
@@ -94,7 +94,7 @@ function localChoices(text) {
     }
     const stripped = trimmed.replace(prefix, '');
     const parts = stripped.split(/\s+or\s+/i);
-    if (parts.length >= 2 && parts.length <= 4 && parts.every(p => p.length > 0 && p.length <= 55)) {
+    if (parts.length >= 2 && parts.length <= 4 && parts.every(p => p.length > 0 && p.length <= 55 && !/[.!?;:]/.test(p))) {
       return { kind: 'alternatives', choices: choiceList(parts.map(p => p[0].toUpperCase() + p.slice(1))) };
     }
     return null;
@@ -297,6 +297,7 @@ function createChatApi(options = {}) {
     const session = sessions.get(match[1]);
     if (!session || session.closed) throw fault(404, 'session-not-found');
     session.touched = clock();
+    if (req.method === 'GET' && !match[2]) return json(res, 200, { ready: session.runtimeReady, mode: session.mode });
     if (req.method === 'DELETE' && !match[2]) { dispose(session); return json(res, 200, { closed: true }); }
     if (req.method === 'GET' && match[2] === 'events') {
       if (session.events) throw fault(409, 'events-already-open');

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 
 const source = await readFile(new URL('../public/chat/controller.js', import.meta.url), 'utf8');
 const { createChatController, isPartnerTouch, createPCM16Resampler } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
@@ -119,10 +120,11 @@ test('staged replies stay hidden until speech ends and another neutral event occ
   assert.equal(c.state.phase, 'Preparing'); assert.equal(c.neutral(), true);
 });
 
-test('recognition ready without wake support never claims wake listening', async () => {
+test('recognition ready defaults to hold-only and speech returns to ready without enabling wake', async () => {
   const c = createChatController({ speak: async () => {} });
-  c.ready(false); assert.equal(c.state.engineReady, true); assert.equal(c.state.phase, 'Off');
-  await c.sayFixed('Hello.'); assert.equal(c.state.phase, 'Off');
+  c.ready(); assert.equal(c.state.engineReady, true); assert.equal(c.state.phase, 'Ready to ask');
+  assert.equal(c.state.wakeEnabled, false);
+  await c.sayFixed('Hello.'); assert.equal(c.state.phase, 'Ready to ask'); assert.equal(c.state.wakeEnabled, false);
 });
 
 test('fractional device sample rates produce the same PCM across input block boundaries', () => {
@@ -162,5 +164,26 @@ test('failed choices from a closed session cannot shut down a restarted session'
   const c = createChatController({ requestChoices: () => old.promise, onChoicesError: () => { cleanup++; } });
   c.ready(); const pending = c.prepare('old question'); c.stop(); c.ready();
   old.reject(new Error('closed session failure')); await pending;
-  assert.equal(cleanup, 0); assert.equal(c.state.phase, 'Local wake listening'); assert.equal(c.state.engineReady, true);
+  assert.equal(cleanup, 0); assert.equal(c.state.phase, 'Ready to ask'); assert.equal(c.state.engineReady, true);
+});
+
+test('microphone worklet retains no idle audio and release flushes one bounded hold', async () => {
+  const source = await readFile(new URL('../public/chat/pcm-worklet.js', import.meta.url), 'utf8');
+  let Processor; const sent = [];
+  class Base { constructor() { this.port = { onmessage: null, postMessage: data => sent.push(data) }; } }
+  vm.runInNewContext(source, { AudioWorkletProcessor: Base, registerProcessor: (_name, value) => { Processor = value; }, Float32Array });
+  const processor = new Processor();
+  processor.process([[new Float32Array(2048).fill(0.9)]]);
+  assert.equal(sent.length, 0, 'idle samples never leave the processor');
+  processor.port.onmessage({ data: { type: 'capture', turn: 7 } });
+  processor.process([[new Float32Array(500).fill(0.25)]]);
+  processor.port.onmessage({ data: { type: 'flush', turn: 7 } });
+  assert.equal(sent.length, 2); assert.equal(sent[0].turn, 7);
+  assert.equal(sent[0].samples.length, 500); assert.ok(sent[0].samples.every(x => x === 0.25));
+  assert.equal(sent[1].flushed, true);
+  processor.process([[new Float32Array(2048).fill(0.9)]]);
+  assert.equal(sent.length, 2, 'nothing is captured after release');
+  processor.port.onmessage({ data: { type: 'capture', turn: 8 } });
+  processor.process([[new Float32Array(2048).fill(-0.5)]]);
+  assert.equal(sent.at(-1).turn, 8); assert.ok(sent.at(-1).samples.every(x => x === -0.5));
 });

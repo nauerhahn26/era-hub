@@ -10,21 +10,23 @@ system or a release approved for school use.
 
 ## Accepted interaction
 
-- Voice activation uses **Ellie**, only while the visible Chat session is armed.
+- The first pilot now uses the on-screen hold button with voice activation off.
+  The current contract is [the hold button design](2026-10-25-chat-hold-button.md).
+- The earlier voice experiment uses **Ellie**, only while a session is armed.
   Both Ellie and Hey Ellie were compared after the maintainer authorized either
   phrase. The current detector retains Ellie provisionally; the strict prefix
   candidate failed connected synthetic speech. Transcript address parsing accepts
   both forms, which does not imply that both activate reliably. Details:
   [wake comparison](../plans/2026-10-25-chat-wake-comparison.md).
-- A partner can instead hold a strictly touch-only Ask control. Releasing it
+- A partner holds a strictly touch-only Ask control. Releasing it
   ends the question. Desktop keyboard input is a separate testing convenience.
 - Wake detection processes microphone audio locally. Activation captures one
   utterance; it does not identify the speaker or establish permission.
 - A short volatile audio buffer preserves the beginning of an utterance spoken
   without a pause after the name. No audio or transcript history is saved by
   default. Local recognition and cloud response generation are distinct paths.
-- Capture and wake activation pause while Ellie reads, selects, and speaks.
-  Listening resumes after playback. Hide, pause, leave, cancel and disposal
+- Capture pauses while Ellie reads, selects, and speaks. The hold pilot returns
+  to Ready to ask after playback. Hide, pause, leave, cancel and disposal
   stop capture and invalidate outstanding work.
 - Labels, spoken messages and positions remain immutable during a choice.
   A replacement batch requires an explicit turn boundary and neutral gaze before

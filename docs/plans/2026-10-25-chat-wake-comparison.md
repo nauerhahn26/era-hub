@@ -3,6 +3,11 @@
 Date: 2026-10-25. Host prototype only; no deployment or live service changes.
 Design: [Chat prototype](../specs/2026-10-25-chat-prototype.md).
 
+This is historical comparison evidence. The maintainer subsequently chose an
+[on-screen hold button](2026-10-25-chat-hold-button.md) for the first pilot; the
+page now keeps voice activation off. The name-only recommendation below applies
+to the compared wake configurations, not to the current pilot's activation.
+
 ## Decision
 
 Retain Ellie provisionally with the current detector. Requiring Hey Ellie loses

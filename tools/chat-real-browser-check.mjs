@@ -1,14 +1,14 @@
-// One paced hold turn and one paced wake turn through the actual preview APIs.
+// One paced, release-ended hold turn through the actual preview APIs.
 // No recognition, choices, microphone graph or server responses are mocked.
 // Supply external, attributed mono 16k PCM16 WAV fixtures; none live in the repo.
-// node tools/chat-real-browser-check.mjs <base> <scratch dir> <hold.wav> <wake.wav> <expected,words>
+// node tools/chat-real-browser-check.mjs <base> <scratch dir> <hold.wav> <expected,words>
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
-const [base, out, holdFile, wakeFile, expectedText] = process.argv.slice(2);
-if (!base || !out || !holdFile || !wakeFile || !expectedText) throw new Error('Supply base, scratch directory, two external WAV files and expected choice words.');
+const [base, out, holdFile, expectedText] = process.argv.slice(2);
+if (!base || !out || !holdFile || !expectedText) throw new Error('Supply base, scratch directory, an external hold WAV file and expected choice words.');
 const expected = expectedText.split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
 const leadMs = 8000, tailMs = 10000;
 await fs.mkdir(out, { recursive: true });
@@ -31,7 +31,8 @@ function paddedWave(pcm) {
   wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(bytes, 40);
   pcm.copy(wav, 44 + leadMs * 32); return wav;
 }
-async function runCase(kind, file) {
+async function runCase(file) {
+  const kind = 'hold';
   const pcm = pcmFromWave(await fs.readFile(file));
   const clipMs = pcm.length / 32, padded = path.join(out, `${kind}-padded.wav`);
   await fs.writeFile(padded, paddedWave(pcm));
@@ -84,16 +85,16 @@ async function runCase(kind, file) {
     await page.goto(`${base}/chat/`);
     await page.waitForFunction(() => document.querySelector('#engineNote').textContent.includes('configured'));
     await touchDown('#startChat'); await touchUp();
-    await page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 20000 });
+    await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 20000 });
     const micAt = await page.evaluate(() => window.__realChat.micAt);
     const now = await page.evaluate(() => performance.now());
     assert.ok(now < micAt + leadMs - 800, 'worker is ready before fixture speech begins');
-    if (kind === 'hold') {
-      await waitUntil(micAt + leadMs - 450);
-      await touchDown('#ask');
-      await waitUntil(micAt + leadMs + clipMs + 250);
-      await touchUp();
-    }
+    assert.equal(await page.evaluate(() => window.__realChat.audio.length), 0, 'warmup and ready state send no PCM');
+    await waitUntil(micAt + leadMs - 450);
+    assert.equal(await page.evaluate(() => window.__realChat.audio.length), 0, 'idle before hold sends no PCM');
+    await touchDown('#ask');
+    await waitUntil(micAt + leadMs + clipMs + 250);
+    await touchUp();
     await page.waitForFunction(() => window.__realChat.stagedAt !== null || document.querySelector('#notice').textContent.includes('stopped'), null, { timeout: 35000 });
     assert.ok(await page.evaluate(() => window.__realChat.stagedAt !== null), 'actual recognition produces real choices');
     assert.equal(await page.locator('.response').count(), 0, 'actual returned choices remain staged until neutral gaze');
@@ -104,8 +105,10 @@ async function runCase(kind, file) {
     const final = qa.events.find(e => e.type === 'final'); assert.ok(final);
     const labels = await page.locator('.response').allTextContents();
     for (const word of expected) assert.ok(labels.some(label => label.toLowerCase().includes(word)), `actual replies preserve ${word}`);
-    if (kind === 'wake') assert.ok(qa.events.some(e => e.type === 'wake'), 'real local keyword event activates capture');
-    if (kind === 'hold') assert.equal(qa.controls.filter(x => x.type === 'ask').length, 1);
+    assert.equal(qa.events.filter(e => e.type === 'wake').length, 0);
+    assert.equal(qa.controls.filter(x => x.type === 'ask').length, 1);
+    assert.equal(qa.controls.filter(x => x.type === 'finish').length, 1);
+    assert.equal(qa.controls.filter(x => x.type === 'arm').length, 0);
     assert.deepEqual(errors, []); assert.deepEqual(remoteRequests, []);
     const last = qa.audio.filter(f => f.lastActive >= 0).at(-1);
     const speechEndEstimate = last ? last.at - last.bytes / 32 + (last.lastActive + 1) / 16 : null;
@@ -120,7 +123,7 @@ async function runCase(kind, file) {
       },
       speechEndMethod: 'Last above-threshold sample in actual uploaded PCM, timed from its browser request; estimate includes worklet buffering and request queue delay.',
       runtimeTimings: final.timings, readyCapabilities: qa.events.find(e => e.type === 'ready')?.capabilities,
-      wakeEvents: qa.events.filter(e => e.type === 'wake').length, audioFrames: qa.audio.length,
+      wakeEvents: 0, implicitArmCommands: 0, idleAudioUploads: 0, audioFrames: qa.audio.length,
       directBrowserRemoteRequests: remoteRequests,
       cloudBeforeActivation: 'Worker network calls are not instrumented by this browser check; no claim from browser request observation alone.',
       nativeVoicePlayback: 'Not exercised; no reply was selected.', errors,
@@ -132,14 +135,12 @@ async function runCase(kind, file) {
     await fs.writeFile(path.join(out, `${kind}-failure.json`), JSON.stringify(evidence, null, 2));
     throw error;
   } finally {
-    await page.evaluate(() => { document.dispatchEvent(new Event('visibilitychange')); }).catch(() => {});
+    await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); }).catch(() => {});
     await browser.close();
   }
 }
 const results = [];
-for (const [kind, file] of [['hold', holdFile], ['wake', wakeFile]]) {
-  try { results.push(await runCase(kind, file)); }
-  catch (error) { results.push({ kind, ok: false, error: error.message }); process.stdout.write(`[real chat] ${kind}: ${error.message}\n`); }
-  await fs.writeFile(path.join(out, 'report.json'), JSON.stringify({ evidence: 'Real browser audio graph, actual worker, actual transcription and choices APIs. Two bounded synthetic speech cases; native playback not tested.', results }, null, 2));
-}
+try { results.push(await runCase(holdFile)); }
+catch (error) { results.push({ kind: 'hold', ok: false, error: error.message }); process.stdout.write(`[real chat] hold: ${error.message}\n`); }
+await fs.writeFile(path.join(out, 'report.json'), JSON.stringify({ evidence: 'Hold-only real browser audio graph, actual worker, actual transcription and choices APIs. One bounded synthetic speech case; native playback not tested.', results }, null, 2));
 if (results.some(r => !r.ok)) process.exitCode = 1;
