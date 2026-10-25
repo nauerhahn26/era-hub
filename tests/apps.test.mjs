@@ -40,6 +40,7 @@ test("fresh install: every APP enabled; the gaze ENGINE stays off by default", a
   const pencil = apps.find(a => a.id === "pencil");
   assert.equal(pencil.title, "The Pencil");
   assert.equal(pencil.path, "/pencil/");
+  assert.equal(apps.find(a => a.id === "math")?.enabled, true, "Math is available on a default install");
   assert.ok(apps.every(a => a.title && a.sub && (a.path || a.engine)));   // engines have no page
 });
 
@@ -108,4 +109,25 @@ test("Drawing is a core app: registered as the spec says, always installed, neve
   const removable = settings.match(/\(a\.engine \|\| (\[[^\]]*\])\.includes\(a\.id\)\)/);
   assert.ok(removable, "Settings' remove-files list is where it was");
   assert.ok(!JSON.parse(removable[1]).includes("drawing"), "no remove-files button for a core app");
+});
+
+test("Math is an installed core app with a usable icon and respects the app chooser", async () => {
+  const { apps } = await (await fetch(`${BASE}/apps`)).json();
+  const math = apps.find(a => a.id === "math");
+  assert.ok(math, "Math appears in the home and Settings registry");
+  assert.deepEqual({ title: math.title, sub: math.sub, path: math.path, engine: math.engine, installed: math.installed, icon: math.icon },
+    { title: "Math", sub: "explore numbers and number partners", path: "/math/", engine: false, installed: true, icon: "/icons/math.png" });
+  assert.equal(math.enabled, false, "an existing explicit app choice is preserved");
+  const icon = await fetch(`${BASE}${math.icon}`);
+  assert.equal(icon.status, 200);
+  assert.deepEqual([...new Uint8Array(await icon.arrayBuffer()).slice(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  const enable = await fetch(`${BASE}/apps`, { method: "POST", body: JSON.stringify({ id: "math", enabled: true }) });
+  assert.equal(enable.status, 204);
+  const onDisk = JSON.parse(fs.readFileSync(path.join(TMP, "apps.json"), "utf8"));
+  assert.ok(onDisk.enabled.includes("math"));
+  const disable = await fetch(`${BASE}/apps`, { method: "POST", body: JSON.stringify({ id: "math", enabled: false }) });
+  assert.equal(disable.status, 204);
+  const remove = await fetch(`${BASE}/apps/delete`, { method: "POST", body: JSON.stringify({ id: "math" }) });
+  assert.equal(remove.status, 400);
+  assert.equal(await remove.text(), "core app");
 });
