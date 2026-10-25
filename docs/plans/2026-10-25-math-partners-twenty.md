@@ -28,3 +28,18 @@ through the 11 + 9 partition visits one continuous twenty-object inventory.
 The existing Windows Math smoke now exercises the new picker and saves the
 11 + 9 partition across reload. Its syntax check passed; actual installed
 Windows validation remains required before publication.
+
+## Concurrent release coordination
+
+A prior authorized weekly-board update is ahead in the shared gate queue and
+also plans a suite patch. Automatic publication of a preselected version was
+stopped before it could run. The owned Math gate is paused before collecting
+sources, retaining its place in the queue. Synchronize the incoming landed
+master before continuing that gate. Choose the next unused release version
+only after the preceding publication finishes, and build from the tested
+landed snapshot containing both features.
+
+The gate, landing and Windows locks are separate; there is no whole-release
+lock or version reservation. Existing release tagging can overwrite a tag, so
+check both the public release and existing tag before any publication. Do not
+reuse an old dist directory or let a later patch omit already published work.
