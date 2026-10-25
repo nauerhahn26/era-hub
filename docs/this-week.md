@@ -7,13 +7,15 @@ Where the plan and this note differ, the code is the truth and this note follows
 ## What it is
 A board app, `/board/?recipe=this-week` (`APPS` id `this-week`, installer section "This week", which
 shares the board pack with Clothing Picker, Music and Movies). It shows what Ellie's class is learning
-this week. The root board has two doors, everything else black:
-- **Watch** [1,1] opens a grid of the week's videos (3 to 5), one look plays one.
-- **Talk** [1,4] opens the week's words, 8 a page, More at [3,1] when there is another page.
+this week. The root board is a 2×3 triangle, two doors up and Play below, everything else black:
+- **Watch** [1,1] opens a 3×3 ring of the week's videos (3 to 5) around a black centre, one look plays one.
+- **Talk** [1,3] opens the week's words on a 3×4 board, 8 a page, More at [3,1] when there is another page.
+- **Play** [2,2] opens the Play page when the week fills an engine; [1,2] is always black, and [2,1]
+  then [2,3] are the seats for a fourth and fifth door if one ever comes.
 
 The board's spoken title comes from the manifest's `title`: the root board is named after it and its
 first button carries `say_on_load: "This week: <title>"`. A missing title, or one over 24 characters,
-becomes "This week". There is no Play door yet: Play is phase 2 and no `link` tile exists until it does.
+becomes "This week".
 
 ## Files
 - `this-week.js`: pure. Finds the newest week, validates the manifest, builds the recipe and ETag.
@@ -39,16 +41,16 @@ travel) is never copied down (`SKIP_EMPTY`), so a placeholder never reads as a r
 folder removed in Drive leaves every device on the next sync.
 
 ## The recipe (`GET /recipes/this-week.json`)
-- Watch: Back [1,1], videos in seats [1,2] [1,3] [1,4] [2,1] [2,4] in manifest order. A ready video
+- Watch (3×3): Back [1,1], videos in seats [1,2] [1,3] [2,1] [2,3] [3,1] in manifest order, [2,2] black. A ready video
   (`<id>.mp4` with bytes) is a `video` tile with its thumbnail (none on disk: the label carries it).
   A video not here yet is a word tile that says "not here yet" with ⏳.
-- Talk: `talk-1`, `talk-2`, ...: Back [1,1], words in seats [1,2] [1,3] [1,4] [2,1] [2,4] [3,2] [3,3] [3,4].
-- Root: Watch [1,1], Talk [1,4], and Play [3,4] — a `link` tile `{type:"link", href:"/play/?w=<week_of>",
+- Talk (3×4): `talk-1`, `talk-2`, ...: Back [1,1], words in seats [1,2] [1,3] [1,4] [2,1] [2,4] [3,2] [3,3] [3,4].
+- Root (2×3): Watch [1,1], Talk [1,3], and Play [2,2] — a `link` tile `{type:"link", href:"/play/?w=<week_of>",
   label:"Play", say:"play", glyph:"🎲"}` — only when the validated `play` has at least one Which item, a
   sort or a Play it; otherwise that seat stays black.
-- ETag: `"<manifest mtime>-<size>-<ready bits as hex, watch order>-r2"`, so it moves when a video lands
-  (`r2` since the Play door; `THIS_WEEK_REV` in `this-week.js`).
-- No week on disk: a valid root-only board, ETag `"none-r1"`. A broken manifest: the same board,
+- ETag: `"<manifest mtime>-<size>-<ready bits as hex, watch order>-r3"`, so it moves when a video lands
+  (`r2` since the Play door, `r3` since the small boards; `THIS_WEEK_REV` in `this-week.js`).
+- No week on disk: a valid root-only 2×3 board, ETag `"none-r3"`. A broken manifest: the same board,
   ETag `"err-<now>"`, and the reason on the console.
 - The hub re-checks the engine's rules and drops a failing ITEM (a bad id, minutes outside 1-15, a word
   with no glyph or symbol, more than 5 videos or 16 words), never the page.
