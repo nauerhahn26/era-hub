@@ -7,6 +7,24 @@ const crypto = require("crypto");
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
 const { decodeJpg, encodeJpg, scaleRgba } = require("./image-util.js");
 const { transcribePage } = require("./content-providers.js");
+const { pathToFileURL } = require("url");
+let webpDecoder;
+
+async function decodeSheet(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8)
+    return decodeJpg(bytes, { maxResolutionInMP: 20, maxMemoryUsageInMB: 160 });
+  if (bytes.toString("ascii", 0, 4) !== "RIFF" || bytes.toString("ascii", 8, 12) !== "WEBP")
+    throw new Error("unsupported storyboard image");
+  if (!webpDecoder) webpDecoder = (async () => {
+    const factory = (await import(pathToFileURL(path.join(__dirname, "vendor/webp-decoder/webp_dec.mjs")).href)).default;
+    return factory({ wasmBinary: fs.readFileSync(path.join(__dirname, "vendor/webp-decoder/webp_dec.wasm")) });
+  })();
+  const decoder = await webpDecoder;
+  const image = decoder.decode(bytes);
+  if (!image || !image.width || !image.height || image.width * image.height > 20000000)
+    throw new Error("unsupported storyboard dimensions");
+  return { data: Buffer.from(image.data), width: image.width, height: image.height };
+}
 
 function storyboardUrl(value) {
   try {
@@ -99,7 +117,7 @@ async function collect({ info, dir, slug, cfg }, deps = {}) {
   let lastUrl = null, sheet;
   for (const f of plan) {
     if (lastUrl !== f.url) {
-      sheet = decodeJpg(await (deps.sheetBytes || sheetBytes)(f.url), { maxResolutionInMP: 20, maxMemoryUsageInMB: 160 });
+      sheet = await decodeSheet(await (deps.sheetBytes || sheetBytes)(f.url));
       lastUrl = f.url;
     }
     const frame = cropFrame(sheet, f);
@@ -149,4 +167,4 @@ if (!isMainThread) collect(workerData)
   .then(r => parentPort.postMessage(r))
   .catch(() => parentPort.postMessage({ pictures: [], pictureStatus: "unavailable" }));
 
-module.exports = { planFrames, cropFrame, safeSelection, storyboardUrl, collect, buildPictures };
+module.exports = { planFrames, cropFrame, safeSelection, storyboardUrl, collect, buildPictures, decodeSheet };

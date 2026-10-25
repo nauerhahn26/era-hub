@@ -24,3 +24,13 @@ yt-dlp — Unlicense (public domain).
   Python), unmodified, from the release pinned in tools/yt-dlp.pin and
   verified against that release's published sha256 at build time. It runs
   only on this machine, only when someone adds a song from a link.
+
+--------------------------------------------------------------------------
+WebP decoder — jSquash WebP 1.5.0, Apache-2.0 wrapper and BSD-3-Clause codec.
+  vendor/webp-decoder/webp_dec.mjs and webp_dec.wasm are the unmodified decoder
+  from @jsquash/webp 1.5.0 (the JavaScript suffix is changed to .mjs).
+  Package source: https://registry.npmjs.org/@jsquash/webp/-/webp-1.5.0.tgz
+  Package integrity: sha512-KggLoj2MnRSfIqTeKe1EmbljTX2vuV7mh79k89PCL1pyqiDULcPM1L47twxXt0hkb68F70bXiL31MxsuoZtKFw==
+  Upstream: https://github.com/jamsinclair/jSquash/tree/main/packages/webp
+  Both licenses are retained beside the decoder. It decodes downloaded video
+  preview sheets locally in a worker; it needs no native runtime or video tool.

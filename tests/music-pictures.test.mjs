@@ -9,6 +9,17 @@ const { planFrames, cropFrame, safeSelection, storyboardUrl } = require("../musi
 const { collect, buildPictures } = require("../music-pictures.js");
 const { encodeJpg, decodeJpg } = require("../image-util.js");
 
+test("storyboard decoding follows the bytes when a jpg address returns WebP", async () => {
+  const { decodeSheet } = require("../music-pictures.js");
+  const fixture = fs.readFileSync(new URL("./fixtures/music-storyboard.webp", import.meta.url));
+  const sheet = await decodeSheet(fixture);
+  assert.equal(sheet.width, 200);
+  assert.equal(sheet.height, 20);
+  assert.ok(sheet.data[1] > 230, "first frame is green");
+  assert.ok(sheet.data[(199 * 4)] > 190, "last frame is red");
+  await assert.rejects(decodeSheet(Buffer.from("not an image")));
+});
+
 test("storyboards sample the whole video, choose the largest frames, and skip padding", () => {
   const info = { duration: 100, formats: [
     { protocol: "mhtml", width: 2, height: 2, rows: 2, columns: 2, fps: 0.1,

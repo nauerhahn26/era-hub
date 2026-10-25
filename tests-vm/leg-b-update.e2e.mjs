@@ -7,6 +7,7 @@
 // removed, the apps still work. docs/e2e-deploy-gate-plan.md.
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import * as vm from "./lib/vm.mjs";
 
 // vm.INSTDIR is live: the previous installer may be a New ERA one, and a
@@ -160,6 +161,18 @@ test("after the update: Settings sections, search and legacy links work in the i
     assert.equal(await page.locator("#integrations").isVisible(), true, "the legacy Drive link opens Connections");
     vm.shot("settings-after-update");
   } finally { await vm.home(page); }
+});
+
+test("after the update: the picture worker and WebP decoder run without native tools", { timeout: 120000 }, async () => {
+  const fixture = fs.readFileSync(new URL("../tests/fixtures/music-storyboard.webp", import.meta.url)).toString("base64");
+  const code = "const p=require('./music-pictures.js');Promise.all([p.decodeSheet(Buffer.from('" + fixture +
+    "','base64')),p.buildPictures({cfg:null})]).then(([i,r])=>console.log('PICTURES='+i.width+'x'+i.height+';WORKER='+r.pictureStatus))" +
+    ".catch(e=>{console.error(e.message);process.exitCode=1;})";
+  const out = vm.bat("song-pictures-runtime", [
+    `cd /d "${vm.INSTDIR}"`,
+    `"node\\node.exe" -e "${code}"`,
+  ]);
+  assert.match(out, /PICTURES=200x20;WORKER=needs-helper/, "the installed runtime decodes WebP and starts its picture worker");
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {

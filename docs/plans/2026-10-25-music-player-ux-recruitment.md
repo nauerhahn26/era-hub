@@ -18,10 +18,16 @@ Maintainer authorized build and deployment on 2026-10-25.
 - [ ] Deploy the approved release and record live verification and limitations.
 
 Initial evidence: the updated layout regression failed against the former
-half-width image. Targeted hub checks passed 37/37 after implementation.
+half-width image. Targeted hub checks passed 39/39 after implementation.
 The first browser pass covered all ten pictures, wraparound, offline cycling,
 unchanged music position/full-song mode, zero empty song-page cells and the
 pointer-only parent review. Additional gaze and shared-control checks follow.
+Gaze, lock, arrange and parent-strip checks subsequently passed (39 browser
+checks across the focused suites). A sync-race regression first failed, then
+passed after frame availability was added to the recipe ETag. Real source
+lookup succeeded on the tablet; the build host was bot-blocked. The real
+storyboard returned WebP bytes behind a `.jpg` URL, so a synthetic WebP
+fixture and an installed Windows decoder/worker smoke were added before release.
 
 Retrospective: the installed payload intentionally has no video decoder.
 Using actual video preview frames preserves that installation contract, at the

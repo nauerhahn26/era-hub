@@ -21,7 +21,10 @@ video, using the largest storyboard supplied by the downloader metadata. The
 storyboard schema is documented in the [downloader's extractor source](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/youtube/_video.py).
 These are video stills at the source's preview resolution; they may look softer
 than full-resolution screenshots. No full video download, new binary or video
-decoder is required. JPEG decoding, cropping and screening run in a worker.
+decoder is required. JPEG/WebP image decoding, cropping and screening run in a worker.
+Real video validation found WebP content behind a `.jpg` address, so decoding
+uses file signatures. The small vendored WebP decoder runs in WebAssembly,
+with its pinned package provenance and licenses in `vendor/NOTICE-vendor.txt`.
 Image downloads are bounded, limited to the image CDN, and reject redirects.
 
 The existing configured AI helper screens a contact sheet for age-appropriate

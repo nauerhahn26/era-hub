@@ -64,6 +64,10 @@ for f in vendor/onnxruntime-web/dist/ort.node.min.js \
          vendor/models/u2netp.onnx; do
   [ -s "$OUT/$f" ] || { echo "build-payload: $f is missing - the garment cut-out would fall back to the colour heuristic; no build."; exit 1; }
 done
+for f in vendor/webp-decoder/webp_dec.mjs vendor/webp-decoder/webp_dec.wasm \
+         vendor/webp-decoder/LICENSE vendor/webp-decoder/LICENSE.codec.md; do
+  [ -s "$OUT/$f" ] || { echo "build-payload: $f is missing - video pictures need the decoder and its licenses; no build."; exit 1; }
+done
 du -sh "$OUT/vendor/onnxruntime-web" "$OUT/vendor/models" 2>/dev/null || true
 
 # media-tools pack (packs.js): yt-dlp.exe, the downloader behind Music's
