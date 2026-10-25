@@ -29,9 +29,9 @@ live operator hub as part of this work.
 
 ## Validation and handoff
 
-Targeted API, configuration, shared choice and native speech checks pass 60/60.
-Packaging, app registry, launcher and isolation checks pass 83/83, overlapping
-some API checks. Actual local activity inference rejects synthetic silence, tone
+Targeted API, configuration, shared choice, native speech, packaging, app
+registry, launcher and isolation checks pass 107/107 in one final run. The
+installed harness adds one passing host check. Actual local activity inference rejects synthetic silence, tone
 and deterministic noise and accepts the ordinary and paused synthetic question.
 These controls establish execution and basic boundaries, not field accuracy.
 
@@ -48,6 +48,11 @@ The identical installed-speech harness passes on the host with actual activity
 inference and a local mock recognizer: silence rejected, zero uploads while held,
 one final after release, transport closed on cancel, no stale final, and a
 successful following turn. The Windows leg remains pending.
+
+The branch incorporates the tested fixture repair from the concurrent testing
+suite work: accepted mock-provider disconnects now close the response promptly,
+and clothing label checks isolate their photos. The full gate validates those
+fixtures without changing production behavior or reducing release coverage.
 
 Retain private real-service evidence under `~/.cache/era-chat/installed/`; never
 commit private credentials or recorded partner speech. Full gate logs and tree
