@@ -891,7 +891,10 @@ function songsRecipe() {
   });
   return {
     recipe: { locale: "en-US", root: "songs", home_label: "Songs", boards },
-    etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + "-r" + RECIPE_REV + '"',
+    // The manifest can arrive before its frames during a content mirror.
+    etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + "-r" + RECIPE_REV + "-p" +
+      crypto.createHash("sha256").update(JSON.stringify(boards.filter(b => b.id.startsWith("song-"))
+        .map(b => b.buttons[0].pictures))).digest("hex").slice(0, 12) + '"',
   };
 }
 function serveSongsRecipe(req, res) {

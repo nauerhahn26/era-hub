@@ -143,6 +143,25 @@ test("GET /recipes/songs.json v3: 9-song page 1 (corner cells are songs) + a pag
   assert.equal(btnAt(p2, 3, 1), null, "no More on the last page");
 });
 
+test("picture arrival invalidates the recipe even when the manifest did not change", async () => {
+  const before = await fetch(`${BASE}/recipes/songs.json`);
+  const etag = before.headers.get("etag");
+  const picture = path.join(TMP, "music", "song-1-frame-0123456789abcdef-00.jpg");
+  fs.renameSync(picture, picture + ".held");
+  try {
+    const partial = await fetch(`${BASE}/recipes/songs.json`, { headers: { "If-None-Match": etag } });
+    assert.equal(partial.status, 200, "availability changed without touching the manifest");
+    const recipe = await partial.json();
+    assert.deepEqual(recipe.boards.find(b => b.id === "song-song-1").buttons[0].pictures, []);
+    const partialTag = partial.headers.get("etag");
+    fs.renameSync(picture + ".held", picture);
+    const complete = await fetch(`${BASE}/recipes/songs.json`, { headers: { "If-None-Match": partialTag } });
+    assert.equal(complete.status, 200, "late frame arrival becomes visible");
+    const ready = await complete.json();
+    assert.equal(ready.boards.find(b => b.id === "song-song-1").buttons[0].pictures.length, 10);
+  } finally { if (fs.existsSync(picture + ".held")) fs.renameSync(picture + ".held", picture); }
+});
+
 test("song pages: hero spans three quarters; controls fill the far-right column", async () => {
   const recipe = await (await fetch(`${BASE}/recipes/songs.json`)).json();
   const sp = recipe.boards.find(b => b.id === "song-song-1");
