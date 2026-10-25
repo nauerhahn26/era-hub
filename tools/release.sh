@@ -210,7 +210,7 @@ fi
 if [ "$GATECHECK" = 1 ]; then exit 0; fi
 
 # the app list is server.js APPS — keep the two in step
-APPS="Our Era Comms suite $V — free eye-gaze apps for a child on a Tobii device, all running on the family's own PC: Making Words, The Pencil, Clothing Picker, Music, Movies, Book Reader, plus the ERAgaze engine for PCs without one. Bundled Node runtime; nothing about your child leaves the machine."
+APPS="Our Era Comms suite $V — free eye-gaze apps for a child on a Tobii device, all running on the family's own PC: Making Words, The Pencil, Clothing Picker, Music, Movies, Book Reader, Math, plus the ERAgaze engine for PCs without one. Bundled Node runtime; nothing about your child leaves the machine."
 TAIL="Every release is installed and driven end to end on a clean Windows 10 before it is published. sha256 in checksums.txt."
 
 if [ "$PATCH" = 1 ]; then

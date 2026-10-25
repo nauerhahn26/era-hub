@@ -163,6 +163,59 @@ test("after the update: Settings sections, search and legacy links work in the i
   } finally { await vm.home(page); }
 });
 
+test("after the update: Math opens from Home and preserves a number partition", { timeout: 180000 }, async () => {
+  const appsBefore = vm.hubGet("/apps").apps;
+  const math = appsBefore.find(a => a.id === "math");
+  assert.ok(math?.installed, "Math's core files arrived with the update");
+  assert.equal(math.enabled, false, "the update preserves the family's earlier app choice");
+  const enabledBefore = appsBefore.filter(a => a.enabled).map(a => a.id).sort();
+  await vm.home(page);
+  // This is only the disposable VM's math workspace; other app state is untouched.
+  const previousMathState = await page.evaluate(() => {
+    const saved = localStorage.getItem("era.math.v1");
+    localStorage.removeItem("era.math.v1");
+    return saved;
+  });
+  try {
+    const enable = await vm.api(page, "/apps", "POST", { id: "math", enabled: true });
+    assert.equal(enable.status, 204, "Math can be enabled after updating — " + enable.text);
+    await page.reload({ waitUntil: "commit", timeout: 60000 });
+    await vm.home(page);
+    await vm.openTile(page, "Math", /\/math\//);
+    await page.waitForFunction(() => window.MathApp?.state().ready, undefined, { timeout: 30000 });
+    await page.locator('[data-action="numbers"]').click();
+    assert.equal(await page.evaluate(() => MathApp.state().number), 7);
+    await page.locator('[data-action="more"]').click();
+    assert.equal(await page.evaluate(() => MathApp.state().number), 8);
+    assert.equal(await page.locator(".math-counter").count(), 8, "the installed quantity matches the numeral");
+    await page.locator('[data-action="fewer"]').click();
+    assert.equal(await page.evaluate(() => MathApp.state().number), 7);
+    await page.locator('[data-action="back"]').click();
+    await page.locator('[data-action="partners"]').click();
+    await page.locator('[data-action="move-left"]').click();
+    assert.equal(await page.locator(".math-equation").innerText(), "4 + 3 = 7");
+    await page.reload({ waitUntil: "load", timeout: 60000 });
+    await page.waitForFunction(() => window.MathApp?.state().ready, undefined, { timeout: 30000 });
+    const state = await page.evaluate(() => {
+      const s = MathApp.state();
+      return { view: s.view, whole: s.whole, left: s.left, right: s.right };
+    });
+    assert.deepEqual(state, { view: "partners", whole: 7, left: 4, right: 3 }, "reopening retains the explored partition");
+    assert.equal(await page.locator(".math-counter").count(), 7, "moving an object preserves the whole");
+    vm.shot("math-after-update");
+  } finally {
+    // Leave Math before restoring its storage: pagehide saves the active workspace.
+    await vm.home(page);
+    await page.evaluate(saved => {
+      if (saved === null) localStorage.removeItem("era.math.v1");
+      else localStorage.setItem("era.math.v1", saved);
+    }, previousMathState);
+    const restore = await vm.api(page, "/apps", "POST", { id: "math", enabled: math.enabled });
+    assert.equal(restore.status, 204, "the previous Math app choice is restored");
+    assert.deepEqual(vm.hubGet("/apps").apps.filter(a => a.enabled).map(a => a.id).sort(), enabledBefore);
+  }
+});
+
 test("after the update: the picture worker and WebP decoder run without native tools", { timeout: 120000 }, async () => {
   const fixture = fs.readFileSync(new URL("../tests/fixtures/music-storyboard.webp", import.meta.url)).toString("base64");
   const code = "const p=require('./music-pictures.js');Promise.all([p.decodeSheet(Buffer.from('" + fixture +
