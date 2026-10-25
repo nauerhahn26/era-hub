@@ -23,7 +23,7 @@ const browser = await chromium.launch({ headless: true, args: ['--use-fake-devic
 const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, hasTouch: true, permissions: ['microphone'] });
 const page = await context.newPage();
 const errors = [], controls = [], frames = [], spoken = [], choiceRequests = [];
-let generation = 0, heldChoice = null, staleFinalChecked = false, stallCancel = false, releaseCancel = null, rejectNextAudio = false, rejectedAudio = 0, acceptedSequence = 0;
+let generation = 0, heldChoice = null, heldFailure = null, staleFinalChecked = false, stallCancel = false, releaseCancel = null, rejectNextAudio = false, rejectedAudio = 0, acceptedSequence = 0;
 page.on('pageerror', e => errors.push(e.message));
 await page.addInitScript(() => {
   window.__qaSpeech = []; window.__qaStreams = []; window.__qaContexts = [];
@@ -40,7 +40,7 @@ await page.route('**/chat/api/**', async route => {
   const req = route.request(), url = new URL(req.url());
   let data = {};
   if (url.pathname.endsWith('/config')) data = { wakeName: 'Ellie', runtime: { available: true }, choices: { available: true } };
-  else if (url.pathname.endsWith('/sessions')) data = { id: 'browser-contract-session' };
+  else if (url.pathname.endsWith('/sessions')) { generation = 0; acceptedSequence = 0; data = { id: 'browser-contract-session' }; }
   else if (url.pathname.endsWith('/control')) {
     const body = req.postDataJSON(); controls.push(body.type); const oldGeneration = generation;
     if (body.type !== 'finish') generation++;
@@ -66,6 +66,10 @@ await page.route('**/chat/api/**', async route => {
   } else if (url.pathname.endsWith('/choices')) {
     const body = req.postDataJSON();
     choiceRequests.push(body);
+    if (body.text === 'late failing question') await new Promise(resolve => { heldFailure = resolve; });
+    if (['unavailable choices', 'late failing question'].includes(body.text)) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'choices-unavailable' }) }).catch(() => {}); return;
+    }
     if (body.text === 'older question') await new Promise(resolve => { heldChoice = resolve; });
     data = { choices: [{ id: 'first', label: body.text === 'older question' ? 'Older answer' : 'I like that!', say: body.text === 'older question' ? 'Older spoken answer.' : 'I like that idea!' }, { id: 'second', label: 'Something else', say: 'I would like something else.' }], kind: 'adapter' };
   }
@@ -154,6 +158,31 @@ try {
   await page.screenshot({ path: path.join(out, 'chat-compact.png') });
   const overflow = await page.locator('.tile .label').evaluateAll(labels => labels.filter(el => el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.parentElement.clientHeight - 12).map(el => el.textContent));
   assert.deepEqual(overflow, [], 'labels fit without clipping');
+  await typed('unavailable choices');
+  await page.waitForFunction(() => document.querySelector('#phase').textContent !== 'Preparing');
+  assert.equal(await page.locator('#phase').textContent(), 'Off', 'choices failure must not claim wake listening');
+  await page.waitForFunction(() => window.__qaStreams.every(s => s.getTracks().every(t => t.readyState === 'ended')) && window.__qaContexts.every(c => c.state === 'closed'));
+  assert.equal(await page.locator('#startChat').isEnabled(), true, 'choices failure enables a fresh session');
+  assert.equal(await page.locator('#ask').isDisabled(), true);
+  assert.equal(await page.evaluate(() => document.body.dataset.listening), 'false');
+  await page.locator('.yes').click(); await page.waitForFunction(() => window.__qaSpeech.includes('Yes.'));
+  async function restart() {
+    await page.waitForFunction(() => !document.querySelector('#startChat').disabled);
+    await touch('#startChat'); await page.waitForFunction(() => window.__qaEvents && !window.__qaEvents.closed);
+    await emit({ type: 'ready', generation, capabilities: { wake: true, automaticEndpoint: true } });
+    await page.waitForFunction(() => document.body.dataset.listening === 'true');
+  }
+  await restart();
+  await typed('late failing question'); await page.waitForTimeout(50);
+  assert.ok(heldFailure);
+  await touch('#endChat'); await restart(); heldFailure(); await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => document.body.dataset.listening), 'true', 'late failure cannot close a restarted session');
+  assert.equal(await page.locator('#startChat').isDisabled(), true);
+  assert.equal(await page.locator('#ask').isEnabled(), true);
+  await emit({ type: 'wake', generation }); await emit({ type: 'final', text: 'current question', generation });
+  await page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'));
+  const latestRest = await page.locator('.rest').first().boundingBox();
+  await page.mouse.move(latestRest.x + 20, latestRest.y + 20); await page.waitForSelector('.response');
   await page.evaluate(() => window.__qaEvents.onerror());
   await page.waitForFunction(() => document.querySelector('#startChat').disabled === false);
   assert.equal(await page.locator('.response').first().textContent(), 'I like that!', 'engine expiry preserves committed answers');
@@ -165,7 +194,7 @@ try {
   assert.equal(await page.locator('.response').count(), 0);
   assert.ok(staleFinalChecked); assert.deepEqual(errors, []);
   spoken.push(...await page.evaluate(() => window.__qaSpeech));
-  const report = { ok: true, evidence: 'Real browser microphone graph with synthetic WAV; recognition events and choices simulated.', frames: frames.length, frameBytes: 3200, controls, spoken, errors, screenshots: ['chat-desktop.png', 'chat-compact.png'] };
+  const report = { ok: true, evidence: 'Real browser microphone graph with synthetic WAV; recognition events and choices simulated.', frames: frames.length, frameBytes: 3200, choicesFailureRecovery: true, staleFailureAfterRestartIgnored: true, controls, spoken, errors, screenshots: ['chat-desktop.png', 'chat-compact.png'] };
   await fs.writeFile(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
 } finally { await browser.close(); }

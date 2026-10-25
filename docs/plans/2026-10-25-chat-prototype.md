@@ -28,7 +28,7 @@ hub restart is included.
 ## Validation receipt
 
 The prototype and its real speech path are implemented. Targeted checks pass:
-46 Node tests, including 21 Python speech checks inside two of those tests.
+49 Node tests, including 21 Python speech checks inside two of those tests.
 The interaction browser check passes with a real microphone processing graph
 and simulated recognition/choices. A separate browser run uses the actual local
 worker and hosted recognition for both touch and wake activation. It returns the
@@ -113,7 +113,10 @@ validation alone also failed to catch invented personal facts: manual review
 rejected that first configuration and led to explicit repair/ownership guards.
 
 The neutral boundary and cancellation checks caught interaction races before
-handoff. Keep the fast deterministic paths for simple alternatives; the measured
+handoff. A failed reply request originally left a listening label above paused
+capture. The regression now verifies microphone/session closure, an honest Off
+state, restart controls, surviving fixed phrases and ignored stale failures.
+Keep the fast deterministic paths for simple alternatives; the measured
 open-ended path needs further latency work. Next acceptance is representative
 speech on the communication device, with actual voice playback, gaze access,
 foreground transitions and the intended network. No school-readiness conclusion

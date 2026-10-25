@@ -47,6 +47,7 @@ const controller = createChatController({
     recentConversation = [...recentConversation, `Partner: ${text}`.slice(0, 500)].slice(-8);
     return json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context }), signal });
   },
+  onChoicesError: () => shutdown('cancel', true),
   stopSpeech: () => { currentSpeech++; voice.stop(); },
   prefetch: choices => voice.prefetch(choices),
   beforeChoices: () => window.Dwell?.suppress(600),

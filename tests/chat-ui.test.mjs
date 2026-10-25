@@ -6,7 +6,7 @@ const source = await readFile(new URL('../public/chat/controller.js', import.met
 const { createChatController, isPartnerTouch, createPCM16Resampler } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const voiceSource = await readFile(new URL('../public/chat/voice.js', import.meta.url), 'utf8');
 const { createChatVoice } = await import(`data:text/javascript;base64,${Buffer.from(voiceSource).toString('base64')}`);
-const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+const deferred = () => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; };
 const choice = (id, say = id) => ({ id, label: id, say });
 
 test('new choices wait for a fresh neutral event and remain immutable during reading', async () => {
@@ -135,4 +135,32 @@ test('fractional device sample rates produce the same PCM across input block bou
   assert.equal(Buffer.concat(full).length, 3200);
   assert.deepEqual(Buffer.concat(full), Buffer.concat(split));
   assert.equal(Buffer.concat(full).readInt16LE(0), 8192);
+});
+
+test('current choices failure stops listening truthfully and requests session cleanup while fixed phrases work', async () => {
+  let cleanup = 0, spoken = '';
+  const c = createChatController({ requestChoices: async () => { throw new Error('choices-unavailable'); },
+    onChoicesError: () => { cleanup++; }, speak: async item => { spoken = item.say; } });
+  c.ready(); await c.prepare('a question');
+  assert.equal(c.state.phase, 'Off'); assert.equal(c.state.engineReady, false); assert.equal(c.state.wakeEnabled, false);
+  assert.equal(cleanup, 1); assert.ok(c.state.error.includes('phrases still work'));
+  await c.sayFixed('Yes.'); assert.equal(spoken, 'Yes.'); assert.equal(c.state.phase, 'Off');
+});
+
+test('late failed choices from an older turn cannot shut down the newer turn', async () => {
+  const old = deferred(); let cleanup = 0, n = 0;
+  const c = createChatController({ requestChoices: () => ++n === 1 ? old.promise : Promise.resolve({ choices: [choice('new')] }),
+    onChoicesError: () => { cleanup++; } });
+  c.ready(); const previous = c.prepare('old question'); await c.prepare('new question'); c.neutral();
+  old.reject(new Error('old choices failure')); await previous;
+  assert.equal(cleanup, 0); assert.equal(c.state.engineReady, true); assert.equal(c.state.phase, 'Your turn');
+  assert.equal(c.state.choices[0].label, 'new');
+});
+
+test('failed choices from a closed session cannot shut down a restarted session', async () => {
+  const old = deferred(); let cleanup = 0;
+  const c = createChatController({ requestChoices: () => old.promise, onChoicesError: () => { cleanup++; } });
+  c.ready(); const pending = c.prepare('old question'); c.stop(); c.ready();
+  old.reject(new Error('closed session failure')); await pending;
+  assert.equal(cleanup, 0); assert.equal(c.state.phase, 'Local wake listening'); assert.equal(c.state.engineReady, true);
 });

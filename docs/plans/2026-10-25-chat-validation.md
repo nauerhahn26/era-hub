@@ -80,7 +80,9 @@ The simulated-event browser check uses an actual microphone stream and audio
 worklet but injects recognition and reply events. It verifies strictly touch-only
 partner controls, ordered PCM, finishing once after release, stable choices,
 neutral-gaze staging, speech cancellation races, bounded confirmed context,
-foreground cleanup, engine failure recovery and compact layout. It is not a
+foreground cleanup, engine failure recovery and compact layout. A reply-service
+503 closes the microphone/session, shows Off, enables Start and preserves fixed
+phrases; a late failure from an older turn cannot close a new session. It is not a
 recognition-quality test. Voice playback is an instrumented test double.
 
 A separate browser check uses actual microphone processing, the local worker,
@@ -122,7 +124,8 @@ only local wake detection is armed.
 
 Private evidence lives in `~/.cache/era-chat/benchmarks/`: attributed manifests,
 input audio, paced reports, text results, `browser/` screenshots and JSON,
-`interaction/` report/screenshots, and `real-api.json`. No recordings or captured
+`interaction/` report/screenshots, `failure-recovery/` browser evidence, and
+`real-api.json`. No recordings or captured
 conversation are added to tracked fixtures or application logs.
 
 `tools/chat-benchmark.py` accepts an external attributed manifest and explicit

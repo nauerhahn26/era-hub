@@ -37,7 +37,10 @@ export function createChatController(deps = {}) {
         deps.prefetch?.(pending);
       } catch (e) {
         if (mine !== turn) return;
-        patch({ phase: state.engineReady && state.wakeEnabled ? 'Local wake listening' : 'Off', error: e.message || 'Suggestions unavailable. Your phrases still work.' });
+        // Final recognition has already paused capture. A failed reply request
+        // cannot truthfully restore listening without an acknowledged rearm.
+        api.fail('Replies are unavailable. Chat is off. Your phrases still work.');
+        await deps.onChoicesError?.();
       }
     },
     neutral() {
