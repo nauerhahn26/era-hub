@@ -43,7 +43,7 @@ private Drive copies after local file links proved unsuitable on a phone.
   fit exceptions are recorded in the usage guide. Normal-motion interruption
   retains the same animation node and progress.
 - [x] Update usage documentation and record the implementation receipt.
-- [ ] Commit as the user and run the full gate detached with a sentinel.
+- [x] Commit as the user and launch the full gate detached with a sentinel.
 - [ ] Record the actual gate result and any physical acceptance limits.
 
 ## Acceptance and handoff
@@ -90,3 +90,10 @@ Neither publishing nor device delivery has been performed.
 Private phone previews of the functioning app were uploaded and read back as
 PNG files with owner-only permissions. No external game profile was created;
 hosted games remain partner references rather than redistributed content.
+
+Implementation commit: `b5ec044`. A 37-second silent recording of actual UI
+commands was also supplied as a private, verified phone-compatible video.
+The full gate is queued behind other feature runs on the shared lock. Its
+artifacts are `/tmp/era-games-gate-20261025-b5ec044/gate.log`, `pid` and `exit`;
+the exit sentinel is written only when the run finishes. Do not treat the
+focused checks as a full-gate stamp. Never stop another worktree's run.
