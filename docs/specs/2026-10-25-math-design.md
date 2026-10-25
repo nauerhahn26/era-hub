@@ -64,6 +64,10 @@ alternative remains available for review if ten numeral choices prove tiring.
 
 ### Number partners
 
+The first installed trial prompted a picker and range refinement:
+[Number partners through twenty](2026-10-25-math-partners-twenty.md).
+That update supersedes the initial within-ten picker scope described below.
+
 Pick a whole, initially within 10, and explore two parts of it. For seven,
 show a whole numeral 7 connected to two parts, initially 3 and 4. The
 objects appear only in the two parts: there is no duplicate seven-object

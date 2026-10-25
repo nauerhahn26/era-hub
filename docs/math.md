@@ -27,7 +27,11 @@ can interrupt it. If speech is unavailable, the visual model still works.
 
 ## Number partners
 
-Choose a whole from 0–10 and explore two parts of it. Move left moves one
+Choose a whole from 0–20 and explore two parts of it. Pick a number offers
+0–10 on its first page, including ten. Other numbers switches directly to
+11–20 and back again. The picker opens on the page containing the current
+whole. Each part above ten uses two structured frames so every object remains
+visible. Move left moves one
 object from the right part to the left; Move right reverses that transfer.
 The whole stays unchanged. For example, 3 + 4 = 7 can become 4 + 3 = 7.
 Both parts may include zero. A control that cannot move another object

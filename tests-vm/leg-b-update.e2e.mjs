@@ -193,16 +193,27 @@ test("after the update: Math opens from Home and preserves a number partition", 
     assert.equal(await page.evaluate(() => MathApp.state().number), 7);
     await page.locator('[data-action="back"]').click();
     await page.locator('[data-action="partners"]').click();
+    await page.locator('[data-action="pick"]').click();
+    assert.equal(await page.locator('[data-number="10"]').count(), 1, "ten is available on the first partner page");
+    assert.equal(await page.locator('[data-number="11"]').count(), 0);
+    await page.locator('[data-number="10"]').click();
+    assert.equal(await page.evaluate(() => MathApp.state().whole), 10);
+    await page.locator('[data-action="pick"]').click();
+    await page.locator('[data-action="ranges"]').click();
+    assert.equal(await page.locator('[data-range]').count(), 0, "Other numbers opens the next page directly");
+    assert.deepEqual(await page.locator('[data-number]').evaluateAll(nodes => nodes.map(node => Number(node.dataset.number))),
+      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+    await page.locator('[data-number="20"]').click();
     await page.locator('[data-action="move-left"]').click();
-    assert.equal(await page.locator(".math-equation").innerText(), "4 + 3 = 7");
+    assert.equal(await page.locator(".math-equation").innerText(), "11 + 9 = 20");
     await page.reload({ waitUntil: "load", timeout: 60000 });
     await page.waitForFunction(() => window.MathApp?.state().ready, undefined, { timeout: 30000 });
     const state = await page.evaluate(() => {
       const s = MathApp.state();
       return { view: s.view, whole: s.whole, left: s.left, right: s.right };
     });
-    assert.deepEqual(state, { view: "partners", whole: 7, left: 4, right: 3 }, "reopening retains the explored partition");
-    assert.equal(await page.locator(".math-counter").count(), 7, "moving an object preserves the whole");
+    assert.deepEqual(state, { view: "partners", whole: 20, left: 11, right: 9 }, "reopening retains the explored partition");
+    assert.equal(await page.locator(".math-counter").count(), 20, "moving an object preserves the whole");
     vm.shot("math-after-update");
   } finally {
     // Leave Math before restoring its storage: pagehide saves the active workspace.
