@@ -16,5 +16,7 @@ caches — never in this repo.
   test suite, boots a test instance on its own port, runs everything.
 - [Math](docs/math.md) — number exploration and number partners through
   large gaze or touch controls, with optional spoken counting.
+- [Games](docs/games.md) — local Fashion Studio, Four in a Row and Number
+  Tiles, with large gaze or touch commands and saved progress.
 
 License: MPL-2.0.

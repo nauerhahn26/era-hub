@@ -138,6 +138,7 @@ const APPS = [
   // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
   { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
   { id: "math", title: "Math", sub: "explore numbers and number partners", path: "/math/", pack: null },
+  { id: "games", title: "Games", sub: "fashion, four in a row and number tiles", path: "/games/", pack: null },
   // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
   // on-device (Windows' built-in csc) and pairs it with the Tobii runtime
   // already on Tobii devices (official NuGet as fallback for other PCs)

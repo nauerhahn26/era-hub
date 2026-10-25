@@ -176,10 +176,19 @@ unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS E
 # working tree). Without a name given here the hub would generate one from
 # this build box's hostname and write <DATA>/device-id into that repo — a
 # side effect the clothing-migration plan forbids (device-id.js, plan T4.1).
-# start the hub test instance (killing any stale holder of the TEST port first —
-# a survivor from a killed session otherwise fails every live-server suite with
-# EADDRINUSE; bracket trick so pkill never matches this script's own cmdline)
-pkill -f "[n]ode .*server.js $PORT" 2>/dev/null; sleep 0.5
+# A listener may belong to another session. Refuse a busy port; only the server
+# PID this invocation starts below belongs to this gate.
+require_free_test_port() {
+  node -e '
+    const server = require("node:net").createServer();
+    server.once("error", () => {
+      console.error("FATAL: test port " + process.argv[1] + " in use or unavailable; choose another test port");
+      process.exitCode = 1;
+    });
+    server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close());
+  ' "$PORT"
+}
+require_free_test_port || exit 1
 ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate \
   node "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
 SRV=$!

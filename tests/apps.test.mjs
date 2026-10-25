@@ -41,6 +41,7 @@ test("fresh install: every APP enabled; the gaze ENGINE stays off by default", a
   assert.equal(pencil.title, "The Pencil");
   assert.equal(pencil.path, "/pencil/");
   assert.equal(apps.find(a => a.id === "math")?.enabled, true, "Math is available on a default install");
+  assert.equal(apps.find(a => a.id === "games")?.enabled, true, "Games is available on a default install");
   assert.ok(apps.every(a => a.title && a.sub && (a.path || a.engine)));   // engines have no page
 });
 
@@ -130,4 +131,28 @@ test("Math is an installed core app with a usable icon and respects the app choo
   const remove = await fetch(`${BASE}/apps/delete`, { method: "POST", body: JSON.stringify({ id: "math" }) });
   assert.equal(remove.status, 400);
   assert.equal(await remove.text(), "core app");
+});
+
+test("Games is an installed core app and preserves explicit app choices", async () => {
+  const { apps } = await (await fetch(`${BASE}/apps`)).json();
+  const games = apps.find(a => a.id === "games");
+  assert.ok(games, "Games appears in the shared app registry");
+  assert.deepEqual({title:games.title,path:games.path,engine:games.engine,installed:games.installed,icon:games.icon},
+    {title:"Games",path:"/games/",engine:false,installed:true,icon:"/icons/games.png"});
+  assert.equal(games.enabled,false,"existing explicit app choices do not silently grow");
+  const icon=await fetch(`${BASE}${games.icon}`);
+  assert.equal(icon.status,200);
+  assert.deepEqual([...new Uint8Array(await icon.arrayBuffer()).slice(0,8)],[137,80,78,71,13,10,26,10]);
+  const enable=await fetch(`${BASE}/apps`,{method:"POST",body:JSON.stringify({id:"games",enabled:true})});
+  assert.equal(enable.status,204);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(TMP,"apps.json"),"utf8")).enabled.includes("games"));
+  assert.equal((await fetch(`${BASE}/apps`,{method:"POST",body:JSON.stringify({id:"games",enabled:false})})).status,204);
+  const remove=await fetch(`${BASE}/apps/delete`,{method:"POST",body:JSON.stringify({id:"games"})});
+  assert.equal(remove.status,400);assert.equal(await remove.text(),"core app");
+});
+
+test("Games ships with the core payload and has a desktop icon", () => {
+  const payload=fs.readFileSync(path.join(HUB,"tools/build-payload.sh"),"utf8");
+  assert.match(payload,/cp -r "\$HUB\/public\/games" "\$OUT\/public\/games"/);
+  assert.deepEqual([...fs.readFileSync(path.join(HUB,"public/icons/games.ico")).subarray(0,4)],[0,0,1,0]);
 });
