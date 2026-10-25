@@ -20,7 +20,9 @@ Chat is optional and disabled by default; saved enabled-app selections remain
 authoritative. Both uninstall paths remove its shortcuts.
 
 The hub reads bounded literal private Chat settings from the operating account's
-configuration file. The worker receives speech credentials only. Structured
+configuration file. Idle configuration and new-session requests pick up changes
+without restarting the hub. Active sessions, choice requests and pending request
+bodies retain their current instance. The worker receives speech credentials only. Structured
 reply generation runs in process using the existing validated choice logic;
 text credentials are not passed into the worker. Explicit external adapters
 remain an operator override. Gates disable private file loading as well as

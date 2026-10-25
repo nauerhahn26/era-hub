@@ -30,8 +30,8 @@ live operator hub as part of this work.
 ## Validation and handoff
 
 Targeted API, configuration, shared choice, native speech, packaging, app
-registry, launcher and isolation checks pass 107/107 in one final run. The
-installed harness adds one passing host check. Actual local activity inference rejects synthetic silence, tone
+registry, launcher, isolation and installed host harness checks pass 111/111 in
+one final run. Actual local activity inference rejects synthetic silence, tone
 and deterministic noise and accepts the ordinary and paused synthetic question.
 These controls establish execution and basic boundaries, not field accuracy.
 
@@ -53,6 +53,12 @@ The branch incorporates the tested fixture repair from the concurrent testing
 suite work: accepted mock-provider disconnects now close the response promptly,
 and clothing label checks isolate their photos. The full gate validates those
 fixtures without changing production behavior or reducing release coverage.
+
+An update/setup ordering review found that credentials might arrive after the
+updated hub starts. Private settings now reload at idle config/session boundaries
+without a restart. Three regressions cover file creation, an active session and
+an active generation request; none interrupts existing work or reads a file in
+the PCM upload path.
 
 Retain private real-service evidence under `~/.cache/era-chat/installed/`; never
 commit private credentials or recorded partner speech. Full gate logs and tree

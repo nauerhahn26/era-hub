@@ -21,7 +21,9 @@ explicit local entry; they are not invented from questions.
 
 The installed hub reads literal `ERA_CHAT_*` assignments from
 `~/.config/ai/ai.env` in the Windows account running the hub. Process environment
-values override the file. The file is operator managed, restricted to that
+values override the file. Idle configuration and new-session requests pick up
+file changes without a hub restart; active sessions and generation retain their
+current configuration until finished. The file is operator managed, restricted to that
 account, and never included in a release. Do not enter secrets into browser
 storage, URLs or source files. The parser does not run shell commands.
 

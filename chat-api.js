@@ -167,16 +167,13 @@ function localChoices(text) {
   return null;
 }
 
-function createChatApi(options = {}) {
-  // Explicit test/application environments are isolated unless a file is named.
-  const env = options.env === undefined || options.configPath !== undefined
-    ? loadChatEnvironment({ env: options.env, file: options.configPath }) : chatVariables(options.env);
+function createFixedChatApi(options = {}, env = chatVariables(options.env === undefined ? process.env : options.env)) {
   const spawn = options.spawn || spawnProcess;
   const fetcher = options.fetch || globalThis.fetch;
   const clock = options.clock || Date.now;
   const limits = { ...DEFAULTS, ...options.limits };
   const sessions = new Map(), requests = new Set();
-  let runtimeArgs = null, closed = false;
+  let runtimeArgs = null, closed = false, activeRoutes = 0;
   try {
     const args = JSON.parse(env.ERA_CHAT_RUNTIME_ARGS || '[]');
     if (Array.isArray(args) && args.length <= 32 && args.every(x => typeof x === 'string' && x.length <= 4096)) runtimeArgs = args;
@@ -422,11 +419,43 @@ function createChatApi(options = {}) {
       let url;
       try { url = new URL(req.url, 'http://localhost'); } catch { return false; }
       if (url.pathname !== PREFIX && !url.pathname.startsWith(PREFIX + '/')) return false;
-      route(req, res, url).catch(error => json(res, error.status || 500, { error: error.code || 'chat-error' }));
+      activeRoutes++;
+      route(req, res, url).catch(error => json(res, error.status || 500, { error: error.code || 'chat-error' }))
+        .finally(() => { activeRoutes--; });
       return true;
     },
     sweep,
+    isIdle() { return sessions.size === 0 && requests.size === 0 && activeRoutes === 0; },
     close() { closed = true; clearInterval(timer); for (const session of sessions.values()) dispose(session); for (const request of requests) request.abort(); choicesCore.close(); },
+  };
+}
+
+function createChatApi(options = {}) {
+  // Explicit environments stay isolated unless the caller names a private file.
+  if (options.env !== undefined && options.configPath === undefined) return createFixedChatApi(options);
+  const load = () => loadChatEnvironment({ env: options.env, file: options.configPath });
+  const stamp = env => JSON.stringify(Object.keys(env).sort().map(key => [key, env[key]]));
+  const initial = load();
+  let fingerprint = stamp(initial), inner = createFixedChatApi(options, initial), closed = false;
+  return {
+    handle(req, res) {
+      let boundary = false;
+      try {
+        const url = new URL(req.url, 'http://localhost');
+        boundary = req.method === 'GET' && url.pathname === PREFIX + '/config' ||
+          req.method === 'POST' && url.pathname === PREFIX + '/sessions';
+      } catch { /* The inner router handles malformed URLs. */ }
+      if (!closed && boundary && inner.isIdle() && ownRequest(req)) {
+        const next = load(), nextFingerprint = stamp(next);
+        if (nextFingerprint !== fingerprint) {
+          const replacement = createFixedChatApi(options, next);
+          inner.close(); inner = replacement; fingerprint = nextFingerprint;
+        }
+      }
+      return inner.handle(req, res);
+    },
+    sweep() { inner.sweep(); },
+    close() { closed = true; inner.close(); },
   };
 }
 module.exports = { createChatApi, loadChatEnvironment };

@@ -177,6 +177,58 @@ test('explicit private file loads configured API while the process override and 
   assert.equal(disabled.children.length, 0);
 });
 
+test('private speech configuration created after startup is picked up at the next idle boundary', async t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'era-chat-api-late-config-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'ai.env');
+  const s = await service(t, { configPath: file, workerExists: () => true });
+  assert.equal((await (await fetch(s.base + '/config')).json()).runtime.available, false);
+  writeFileSync(file, ['ERA_CHAT_SPEECH_URL=https://speech.example/transcribe',
+    'ERA_CHAT_SPEECH_MODEL=late-configured', 'ERA_CHAT_SPEECH_TOKEN=private-value'].join('\n'));
+  assert.equal((await (await fetch(s.base + '/config')).json()).runtime.available, true);
+  assert.equal((await s.request('/sessions')).status, 201);
+  assert.equal(s.children[0].args[2].env.ERA_CHAT_SPEECH_MODEL, 'late-configured');
+});
+
+test('private configuration changes preserve active sessions and apply after the session closes', async t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'era-chat-api-live-config-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'ai.env');
+  const settings = model => ['ERA_CHAT_SPEECH_URL=https://speech.example/transcribe',
+    `ERA_CHAT_SPEECH_MODEL=${model}`, 'ERA_CHAT_SPEECH_TOKEN=private-value'].join('\n');
+  writeFileSync(file, settings('initial-configured'));
+  const s = await service(t, { configPath: file, workerExists: () => true });
+  const { id } = await (await s.request('/sessions')).json();
+  writeFileSync(file, '');
+  assert.equal((await (await fetch(s.base + '/config')).json()).runtime.available, true);
+  assert.ok(!s.children[0].killed);
+  await s.request(`/sessions/${id}`, undefined, 'DELETE');
+  assert.equal((await (await fetch(s.base + '/config')).json()).runtime.available, false);
+  writeFileSync(file, settings('replacement-configured'));
+  assert.equal((await s.request('/sessions')).status, 201);
+  assert.equal(s.children[1].args[2].env.ERA_CHAT_SPEECH_MODEL, 'replacement-configured');
+});
+
+test('private configuration reload waits for an active choices request without aborting it', async t => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'era-chat-api-busy-config-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'ai.env');
+  writeFileSync(file, ['ERA_CHAT_TEXT_URL=https://text.example/respond', 'ERA_CHAT_TEXT_MODEL=configured', 'ERA_CHAT_TEXT_TOKEN=private-value'].join('\n'));
+  let finish, signal;
+  const s = await service(t, { configPath: file, fetch: (_, init) => {
+    signal = init.signal; return new Promise(resolve => { finish = resolve; });
+  } });
+  const pending = s.request('/choices', { text: 'What is a fun game?' });
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  writeFileSync(file, '');
+  assert.equal((await (await fetch(s.base + '/config')).json()).choices.kind, 'built-in');
+  assert.equal(signal.aborted, false);
+  finish(Response.json({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text',
+    text: JSON.stringify({ choices: [{ label: 'Guessing', say: 'We could play a guessing game.' }, { label: 'Your idea', say: 'What would you like to play?' }] }) }] }] }));
+  assert.equal((await pending).status, 200);
+  assert.equal((await (await fetch(s.base + '/config')).json()).choices.kind, 'local');
+});
+
 test('explicit external runtime remains authoritative over bundled speech', async t => {
   const s = await service(t, { env: { ...configured, ERA_CHAT_SPEECH_URL: 'https://speech.example/transcribe',
     ERA_CHAT_SPEECH_MODEL: 'configured', ERA_CHAT_SPEECH_TOKEN: 'speech-private' }, workerExists: () => true });
