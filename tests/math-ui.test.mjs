@@ -81,8 +81,11 @@ const action=(page,name,arg)=>page.evaluate(([name,arg])=>window.MathApp.action(
 const control=(page,name)=>page.locator(`[data-action="${name}"]`);
 async function choose(page,n) {
   await control(page,'pick').click();
-  await control(page,'ranges').click();
-  await page.locator(`[data-range="${Math.floor(n/10)*10}"]`).click();
+  if(!await page.locator(`[data-number="${n}"]`).count()) {
+    const picker=await state(page);
+    await control(page,'ranges').click();
+    if(picker.returnView!=='partners')await page.locator(`[data-range="${Math.floor(n/10)*10}"]`).click();
+  }
   await page.locator(`[data-number="${n}"]`).click();
 }
 async function settle(page) {await page.waitForFunction(()=>!window.Dwell.state().suppressedMs);}
@@ -147,8 +150,9 @@ test('partners has one inventory, transfers one object, includes zero parts and 
     assert.deepEqual((s=>[s.whole,s.left])(await state(page)),[7,4]);
     assert.equal(await inventory(page),7,'there is no duplicate whole collection');
     await control(page,'pick').click();await control(page,'ranges').click();
-    assert.deepEqual(await page.locator('[data-range]').evaluateAll(els=>els.map(e=>Number(e.dataset.range))),[0,10]);
-    await control(page,'back').click();await control(page,'back').click();
+    assert.equal(await page.locator('[data-range]').count(),0,'partners has no intermediate range chooser');
+    assert.deepEqual(await page.locator('[data-number]').evaluateAll(els=>els.map(e=>Number(e.dataset.number))),[11,12,13,14,15,16,17,18,19,20]);
+    await control(page,'back').click();
     assert.deepEqual((s=>[s.view,s.whole,s.left])(await state(page)),['partners',7,4]);
     for(let i=0;i<4;i++)await control(page,'move-right').click();
     assert.equal((await state(page)).left,0);
@@ -160,6 +164,71 @@ test('partners has one inventory, transfers one object, includes zero parts and 
     await choose(page,0);assert.equal(await inventory(page),0);
     assert.equal(await control(page,'move-left').isDisabled(),true);
     assert.equal(await control(page,'move-right').isDisabled(),true);
+  } finally {await context.close();}
+});
+
+for(const [width,height] of [[1920,1080],[1280,720]])test(`partners puts ten on its first page and changes directly to eleven through twenty at ${width}×${height}`,async()=>{
+  const {context,page}=await open({width,height});
+  async function inspectPicker(sample) {
+    const targets=await page.locator('.number-picker button').evaluateAll(buttons=>buttons.map(button=>{
+      const box=button.getBoundingClientRect(),label=button.querySelector('.label-line'),range=document.createRange();
+      range.selectNodeContents(label);
+      const text=range.getBoundingClientRect();
+      return {label:button.innerText,x:box.left,y:box.top,right:box.right,bottom:box.bottom,
+        textFits:text.left>=box.left-1&&text.right<=box.right+1&&text.top>=box.top-1&&text.bottom<=box.bottom+1,
+        font:parseFloat(getComputedStyle(label).fontSize)};
+    }));
+    for(const target of targets) {
+      assert.ok(target.x>=0&&target.y>=0&&target.right<=width&&target.bottom<=height,JSON.stringify(target));
+      assert.equal(target.textFits,true,'picker label is fully visible: '+target.label);
+      assert.ok(target.font>=74*width/1920,'picker label remains readable: '+target.label);
+    }
+    if(SHOTS){fs.mkdirSync(SHOTS,{recursive:true});await page.screenshot({path:path.join(SHOTS,`math-partners-picker-${sample}-${width}.png`)});}
+  }
+  try {
+    await control(page,'numbers').click();await choose(page,42);await control(page,'back').click();
+    await control(page,'partners').click();
+    const back=await control(page,'back').boundingBox();
+    await control(page,'pick').click();
+    assert.deepEqual(await page.locator('[data-number]').evaluateAll(els=>els.map(e=>Number(e.dataset.number))),[0,1,2,3,4,5,6,7,8,9,10]);
+    assert.equal(await page.locator('[data-number="11"]').count(),0);
+    await inspectPicker('0-10');
+    const pickerBack=await control(page,'back').boundingBox(),other=await control(page,'ranges').boundingBox();
+    assert.ok(Math.abs(back.x-pickerBack.x)<1&&Math.abs(back.y-pickerBack.y)<1,'Back keeps its top-left anchor');
+    await page.locator('[data-number="10"]').tap();
+    assert.deepEqual((s=>[s.view,s.whole,s.left,s.number])(await state(page)),['partners',10,5,42]);
+    await control(page,'pick').click();await control(page,'ranges').tap();
+    assert.deepEqual((s=>[s.view,s.rangeStart])(await state(page)),['picker',11]);
+    assert.equal(await page.locator('[data-range]').count(),0);
+    assert.deepEqual(await page.locator('[data-number]').evaluateAll(els=>els.map(e=>Number(e.dataset.number))),[11,12,13,14,15,16,17,18,19,20]);
+    await inspectPicker('11-20');
+    assert.deepEqual(await control(page,'ranges').boundingBox(),other,'Other numbers keeps its bottom-left seat');
+    await control(page,'ranges').tap();
+    assert.deepEqual((s=>[s.view,s.rangeStart])(await state(page)),['picker',0]);
+    assert.equal(await page.locator('[data-number="10"]').count(),1);
+    await control(page,'ranges').tap();await page.locator('[data-number="20"]').tap();
+    assert.deepEqual((s=>[s.view,s.whole,s.left,s.number])(await state(page)),['partners',20,10,42]);
+    await control(page,'move-left').tap();
+    await control(page,'pick').tap();
+    assert.equal((await state(page)).rangeStart,11,'reopening twenty shows its own page');
+    await control(page,'ranges').tap();await control(page,'back').tap();
+    assert.deepEqual((s=>[s.view,s.whole,s.left,s.number])(await state(page)),['partners',20,11,42],'cancelling a different page preserves the partition');
+    await page.reload();await page.waitForFunction(()=>window.MathApp?.state().ready);
+    assert.deepEqual((s=>[s.view,s.whole,s.left,s.number])(await state(page)),['partners',20,11,42]);
+    assert.equal(await inventory(page),20);
+  } finally {await context.close();}
+});
+
+test('a stored version-one partner picker migrates its old lonely ten page to zero through ten',async()=>{
+  const {context,page}=await open();
+  try {
+    // Seed after pagehide's normal save and before the next runtime restores state.
+    await context.addInitScript(()=>localStorage.setItem('era.math.v1',JSON.stringify({version:1,view:'picker',number:42,whole:7,left:5,returnView:'partners',rangeStart:10})));
+    await page.reload();await page.waitForFunction(()=>window.MathApp?.state().ready);
+    assert.deepEqual((s=>[s.view,s.rangeStart,s.whole,s.left,s.number])(await state(page)),['picker',0,7,5,42]);
+    assert.deepEqual(await page.locator('[data-number]').evaluateAll(els=>els.map(e=>Number(e.dataset.number))),[0,1,2,3,4,5,6,7,8,9,10]);
+    await control(page,'back').click();
+    assert.deepEqual((s=>[s.view,s.whole,s.left,s.number])(await state(page)),['partners',7,5,42]);
   } finally {await context.close();}
 });
 
@@ -308,23 +377,73 @@ test('Count reads the existing inventory once and another action cancels highlig
   } finally {await context.close();}
 });
 
-test('partners Count traverses one continuous inventory and leaves the partition unchanged',async()=>{
+test('partners Count continues across two left frames and the right part without changing twenty',async()=>{
   const {context,page}=await open();
   try {
     await control(page,'partners').click();
+    await choose(page,20);await control(page,'move-left').click();
+    assert.deepEqual((s=>[s.whole,s.left])(await state(page)),[20,11]);
     const before=quantities(await state(page));
     await page.evaluate(()=>{window.__speechEngineLog.length=0;window.__countSeen=[];const timer=setInterval(()=>{
       const s=window.MathApp.state();if(s.counting&&s.countIndex>=0&&!window.__countSeen.includes(s.countIndex))window.__countSeen.push(s.countIndex);
     },5);window.__countObserverTimer=timer;});
     await control(page,'count').click();
     await page.waitForFunction(()=>window.MathApp.state().counting);
-    await page.waitForFunction(()=>!window.MathApp.state().counting,{},{timeout:8000});
+    await page.waitForFunction(()=>!window.MathApp.state().counting,{},{timeout:18000});
     assert.deepEqual(quantities(await state(page)),before);
-    assert.deepEqual(await page.evaluate(()=>window.__countSeen),[0,1,2,3,4,5,6]);
+    assert.deepEqual(await page.evaluate(()=>window.__countSeen),Array.from({length:20},(_,i)=>i));
     const spoken=await page.evaluate(()=>window.__speechEngineLog.filter(e=>e.ev==='say').map(e=>e.text));
-    assert.deepEqual(spoken.slice(0,7),['one','two','three','four','five','six','seven'],'spoken counting continues across both parts');
-    assert.match(spoken.at(-1),/seven.*altogether/i);
-    assert.equal(await inventory(page),7);
+    assert.deepEqual(spoken.slice(0,20),['one','two','three','four','five','six','seven','eight','nine','ten',
+      'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen','twenty'],
+      'spoken counting continues across both left frames and the right part');
+    assert.match(spoken.at(-1),/twenty.*altogether/i);
+    assert.equal(await inventory(page),20);
+  } finally {await context.close();}
+});
+
+for(const [width,height] of [[1920,1080],[1280,720]])test(`twenty stays visible in either extreme partner partition at ${width}×${height}`,async()=>{
+  const {context,page,errors}=await open({width,height});
+  try {
+    await control(page,'partners').click();await choose(page,20);
+    for(const desiredLeft of [0,20]) {
+      while((await state(page)).left!==desiredLeft)
+        await control(page,(await state(page)).left<desiredLeft?'move-left':'move-right').click();
+      assert.equal(await inventory(page),20);
+      assert.deepEqual((s=>[s.whole,s.left,s.right])(await state(page)),[20,desiredLeft,20-desiredLeft]);
+      assert.equal(await page.locator('.math-equation').innerText(),`${desiredLeft} + ${20-desiredLeft} = 20`);
+      const display=await page.evaluate(()=>{
+        const canvas=document.getElementById('mathStage'),bounds=canvas.getBoundingClientRect();
+        const inside=(r,b=bounds)=>r.left>=b.left-1&&r.right<=b.right+1&&r.top>=b.top-1&&r.bottom<=b.bottom+1;
+        return [...canvas.querySelectorAll('.math-part')].map(part=>{
+          const partBox=part.getBoundingClientRect();
+          return {number:Number(part.querySelector('.part-number').textContent),inside:inside(partBox),
+            frames:[...part.querySelectorAll('.part-tray')].map(frame=>inside(frame.getBoundingClientRect(),partBox)),
+            counters:[...part.querySelectorAll('.math-counter')].map(counter=>{
+              const r=counter.getBoundingClientRect(),paint=getComputedStyle(counter),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+              return {index:Number(counter.dataset.countIndex),w:r.width,h:r.height,inside:inside(r,partBox),
+                visible:paint.visibility!=='hidden'&&Number(paint.opacity)>0,
+                unobscured:!!hit&&(hit===counter||hit.contains(counter)||counter.contains(hit))};
+            })};
+        });
+      });
+      assert.deepEqual(display.map(part=>part.number),[desiredLeft,20-desiredLeft]);
+      assert.deepEqual(display.flatMap(part=>part.counters.map(c=>c.index)),Array.from({length:20},(_,i)=>i),
+        'all twenty objects have one continuous counting index');
+      for(const part of display) {
+        assert.equal(part.inside,true);
+        assert.equal(part.frames.length,Math.max(1,Math.ceil(part.number/10)),'a part above ten has two countable frames');
+        assert.ok(part.frames.every(Boolean),'both frames fit within their part');
+        assert.equal(part.counters.length,part.number);
+        for(const counter of part.counters) {
+          assert.equal(counter.inside,true);assert.equal(counter.visible,true);assert.equal(counter.unobscured,true);
+          assert.ok(Math.min(counter.w,counter.h)>=32*width/1920,'twenty counters remain distinguishable');
+          assert.ok(Math.abs(counter.w/counter.h-1)<.12,'each counter retains its circular shape');
+        }
+      }
+      assert.equal(await control(page,desiredLeft===0?'move-right':'move-left').isDisabled(),true);
+      if(SHOTS){fs.mkdirSync(SHOTS,{recursive:true});await page.screenshot({path:path.join(SHOTS,`math-partners-${desiredLeft}-${20-desiredLeft}-${width}.png`)});}
+    }
+    assert.deepEqual(errors,[]);
   } finally {await context.close();}
 });
 
@@ -398,9 +517,9 @@ for(const [width,height] of [[1920,1080],[1280,720]])test(`math views fit ${widt
     for(const view of ['menu','numbers','partners','picker','ranges']) {
       if(view==='numbers'||view==='partners')await action(page,view);
       if(view==='numbers')await choose(page,50);
-      if(view==='partners')await choose(page,10);
+      if(view==='partners')await choose(page,20);
       if(view==='picker')await action(page,'pick');
-      if(view==='ranges')await action(page,'ranges');
+      if(view==='ranges'){await action(page,'numbers');await action(page,'pick');await action(page,'ranges');}
       const geometry=await page.evaluate(()=>{
         const targets=[...document.querySelectorAll('button.dwell')].filter(e=>e.getBoundingClientRect().width);
         const body=targets.filter(e=>!['barDoor','barTalk'].includes(e.id));
