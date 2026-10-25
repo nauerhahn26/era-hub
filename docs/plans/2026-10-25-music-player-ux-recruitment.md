@@ -14,9 +14,9 @@ Maintainer authorized build and deployment on 2026-10-25.
 - [x] Verify synthetic pipeline, recipe, range serving and add/refresh behavior.
 - [x] Verify browser geometry, gaze rearm, playback, offline frames and parent controls.
 - [x] Run the full gate on committed matching worktrees, detached with a sentinel.
-- [ ] Land the green branches, build the patch and verify Windows self-update.
-- [ ] Deploy the approved release and record live verification and limitations.
-- [ ] Refresh pictures for all 27 existing songs through their saved video sources,
+- [x] Land the green branches, build the patch and verify Windows self-update.
+- [x] Deploy the approved release and record live verification and limitations.
+- [x] Refresh pictures for all 27 existing songs through their saved video sources,
   as explicitly requested by the maintainer, and verify audio/order preservation.
 
 Initial evidence: the updated layout regression failed against the former
@@ -61,6 +61,38 @@ the picture task on a technically complete but unhelpful result.
   more of the video and screen at most forty useful candidates.
 - [x] Let a parent supply a music-video link for pictures independently of audio.
 - [x] Pass focused hub checks (41/41) and browser checks (18/18).
-- [ ] Gate, release and deploy the quality follow-up.
-- [ ] Rebuild and visually verify all 27 picture sets with the quality checks;
+- [x] Gate, release and deploy the quality follow-up.
+- [x] Rebuild and visually verify all 27 picture sets with the quality checks;
   use matching music-video sources for the two static album uploads.
+
+## Completion receipt
+
+v1.0.11 is published and installed on the tablet, build `20261025.0332`.
+The running and on-disk versions both report that build. The second full gate
+passed **129 suites, 0 failed** on committed matching trees; Windows self-update
+passed **7/7**, including the installed picture worker and WebP decoder. The
+temporary Windows QA host was destroyed after verification. The published
+manifest and tarball matched the built artifact, SHA-256
+`654cffbabaea2abaed10bdcff9ca672c1011338683820b7b17f1f8981072a5c4`.
+The tablet used the verified tagged release feed because the latest-release
+download was still cached at the preceding version.
+
+All 27 existing entries now have ten newly downloaded pictures each. Source
+prechecks found forty useful, distinct candidates for every entry. The quality
+follow-up regenerated 25 sets; two uncertain helper results retained the sets
+downloaded earlier in this task after direct visual review. Those retained
+sets show ordinary animated film scenes and computer hardware, respectively.
+The two static album uploads now use matching music-video picture sources,
+independently of their original audio sources.
+
+All 270 installed files were fetched and decoded for verification: zero blank
+frames and zero near-duplicate pairs under the implemented quality checks.
+All nine contact sheets received a final visual review. Every installed song
+recipe exposes its complete ten-picture set. Original audio, source, titles,
+covers and ordering metadata match the baseline library.
+
+Reopening Music loads the updated player and starts its normal picture cache.
+Pictures use video preview resolution and can look soft at full size. The song
+page fills the first three columns with the image and the final column with
+Back, Stop and Full song. A completed gaze selection advances one picture
+without restarting the song; remaining on the image does not repeatedly fire.
