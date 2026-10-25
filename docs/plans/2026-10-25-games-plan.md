@@ -93,7 +93,16 @@ hosted games remain partner references rather than redistributed content.
 
 Implementation commit: `b5ec044`. A 37-second silent recording of actual UI
 commands was also supplied as a private, verified phone-compatible video.
-The full gate is queued behind other feature runs on the shared lock. Its
-artifacts are `/tmp/era-games-gate-20261025-b5ec044/gate.log`, `pid` and `exit`;
-the exit sentinel is written only when the run finishes. Do not treat the
-focused checks as a full-gate stamp. Never stop another worktree's run.
+The first queued gate yielded voluntarily to a previously approved public
+patch, before any Games tests were collected. Only this feature's verified
+owned gate/waiter processes were stopped; its exit 143 records cancellation,
+not a failed test. The replacement run's artifacts are
+`/tmp/era-games-gate-20261025-requeued/gate.log`, `pid` and `exit`; the exit
+sentinel is written only when the run finishes. Do not treat the focused
+checks as a full-gate stamp. Never stop another worktree's run.
+
+Reviewed fixture-only commit `fe2e9e7` was adopted as `783f083` before new gate
+collection. It repairs an accepted-request disconnect and isolates a label
+fixture's photos while strengthening missing-tile, runtime and cutoff checks.
+It changes no app or runner behavior. Its focused red/green evidence is in
+the testing-suite records; this full gate must validate the combined tree.
