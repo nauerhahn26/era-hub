@@ -128,6 +128,8 @@ cp -r "$HUB/public/book-review" "$OUT/public/book-review"
 # Drawing (spec 2026-09-30 §1) — CORE like book-review: its page, scene module, sticker table
 # and the vendored Fluent Emoji (MIT, LICENSE beside them). No /x in installer.nsi.
 cp -r "$HUB/public/drawing" "$OUT/public/drawing"
+cp "$HUB/chat-api.js" "$OUT/"
+cp -r "$HUB/public/chat" "$OUT/public/chat"
 # This week's watch page (spec 2026-10-12 §3.3): ERAgaze's watch mode opens it
 # to play one downloaded video. CORE like book-review: a few hundred bytes, no
 # /x in installer.nsi (every /x there belongs to a pack).

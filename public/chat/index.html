@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Chat · Our Era Comms</title>
+  <link rel="stylesheet" href="/lib/doorbar.css">
+  <link rel="stylesheet" href="chat.css">
+  <script>
+    window.DwellConfig = { ms:1200, graceMs:400, decayMs:1000, padPx:16, rearmPx:48,
+      audioPreview:false, chime:false, bus:'auto', staleMs:600, settleMs:300, color:'#0F7C8A' };
+  </script>
+</head>
+<body>
+  <main id="app">
+    <div id="sessionStatus" role="status"><span id="statusDot"></span><span id="phase">Off</span></div>
+    <div id="partnerStrip" aria-label="Conversation partner controls">
+      <button id="startChat" type="button">Start Chat</button>
+      <button id="ask" type="button" disabled>Hold to ask</button>
+      <button id="endChat" type="button" disabled>End</button>
+      <button id="partnerOpen" type="button" aria-label="Partner settings">•••</button>
+    </div>
+    <section id="grid" aria-label="Chat words"></section>
+    <div id="notice" role="status"></div>
+  </main>
+  <dialog id="partnerDialog" aria-labelledby="partnerTitle">
+    <form method="dialog"><button class="close" aria-label="Close partner settings">Close</button></form>
+    <h1 id="partnerTitle">Conversation partner</h1>
+    <p id="engineNote">Checking local listening…</p>
+    <p>Start Chat with a finger. Hold <strong>Hold to ask</strong> while asking a question; release to finish. Or say <strong id="wakeName">Ellie</strong>, then ask. Only the open Chat session listens.</p>
+    <label>Voice <select id="voicePreference"><option value="local">Device voice · fastest</option><option value="saved">Saved voice · prepares audio first</option></select></label>
+    <section class="partnerSection">
+      <h2>My news</h2>
+      <p>Add a real story together. A short label can speak a longer message. Stories stay on this browser.</p>
+      <label>Button label <input id="storyLabel" maxlength="55" placeholder="A short title"></label>
+      <label>What the button says <textarea id="storyMessage" rows="3" maxlength="600" placeholder="The words she wants to share"></textarea></label>
+      <button id="saveStory" type="button">Add story</button><button id="clearStories" type="button">Clear saved stories</button>
+      <p id="storyNote"></p>
+    </section>
+    <details class="partnerSection" id="testing"><summary>Desktop testing and diagnostics</summary>
+      <p>These controls test suggestions and input handling. A typed question does not test microphone recognition.</p>
+      <label>Test question <textarea id="typedQuestion" rows="2" maxlength="600"></textarea></label>
+      <button id="typedAsk" type="button">Prepare test replies</button>
+      <p>For desktop microphone testing, focus a button below and use Space. Hold Space on Ask; release to finish.</p>
+      <button id="desktopStart" type="button">Keyboard: start Chat</button>
+      <button id="desktopAsk" type="button">Keyboard: hold to ask</button>
+      <pre id="diagnostics"></pre>
+    </details>
+  </dialog>
+  <script src="/dwell.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

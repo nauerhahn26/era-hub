@@ -18,6 +18,7 @@ const updater = require("./update");
 if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
+const chatApi = require("./chat-api.js").createChatApi();
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
 // the worker's whitelist, the pools and this hub's edit door all read it, so a
 // word cannot be a category here and a stranger three files away.
@@ -1695,6 +1696,7 @@ function stampInteraction(req) {
 
 const server = http.createServer((req, res) => {
   stampInteraction(req);
+  if (chatApi.handle(req, res)) return;
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
     let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
@@ -3945,4 +3947,5 @@ server.on("listening", () => {
     fetchSymbolToCache(name).then(f => { if (f) console.log("[symbol] pre-warmed " + name); });
   }
 });
+server.on("close", () => chatApi.close());
 server.listen(PORT, BIND);

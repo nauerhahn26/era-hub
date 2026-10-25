@@ -171,6 +171,8 @@ export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
 # that needs one sets it on the hub it spawns. An operator's shell that names
 # ERA_PRESENCE_HOOK would otherwise run its real queue hook from test hubs.
 unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS ERA_PRESENCE_HOOK
+# Test hubs never inherit a real speech runtime or generation adapter.
+for chat_setting in "${!ERA_CHAT_@}"; do unset "$chat_setting"; done
 
 # ERA_DEVICE_ID: the gate's DATA is era-family/test-data (a PRIVATE repo's
 # working tree). Without a name given here the hub would generate one from
