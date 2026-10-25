@@ -440,19 +440,24 @@ function add(body) {
 function refreshPictures(body) {
   if (!body || typeof body.id !== "string" || !SLUG_RE.test(body.id))
     return { error: "bad-id", message: "Choose a song first." };
+  const pictureUrl = typeof body.url === "string" ? body.url.trim() : "";
+  if (body.url != null && (!pictureUrl || !/^https?:\/\/[^\s/]+\/?\S*$/i.test(pictureUrl)))
+    return { error: "bad-url", message: "Paste the whole video link for the pictures." };
   if (running) return { error: "busy", message: "A song is still being prepared. Try again when it finishes." };
   const dir = musicDir(), t = tool();
   if (!dir || (!t && body.clear !== true)) return { error: "not-ready", message: "Choose the music folder and install media tools first." };
   const { songs, unreadable } = readManifest(dir);
   if (unreadable) return UNREADABLE;
   const song = songs.find(s => s.id === body.id);
-  if (!song || (!body.clear && !song.source)) return { error: "no-source", message: "This song needs a video link. Add it again with its link." };
+  if (!song || (!body.clear && !pictureUrl && !song.pictureSource && !song.source)) return { error: "no-source", message: "This song needs a video link. Add it again with its link." };
   running = { title: song.title, phase: "choosing song pictures" };
   (async () => {
-    const info = body.clear ? null : await lookUp(t, song.source);
+    const pictureSource = pictureUrl || song.pictureSource || song.source;
+    const info = body.clear ? null : await lookUp(t, pictureSource);
     const images = body.clear ? { pictures: [], pictureStatus: "cover-only" } : await buildPictures({ info, dir, slug: song.id,
       cfg: aiRoles(process.env.ERA_DATA_DIR || path.join(__dirname, "data")).vision });
-    if (body.clear || images.pictures.length === 10) upsert(dir, { id: song.id, ...images });
+    if (body.clear || images.pictures.length === 10) upsert(dir, { id: song.id, ...images,
+      ...(!body.clear ? { pictureSource: String(info.webpage_url || pictureSource) } : {}) });
     const mirrored = body.clear || images.pictures.length === 10 ? await mirror() : true;
     last = { ok: true, id: song.id, title: song.title, pictureStatus: images.pictureStatus,
       mirrored, when: new Date().toISOString() };

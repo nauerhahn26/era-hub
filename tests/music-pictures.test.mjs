@@ -9,6 +9,20 @@ const { planFrames, cropFrame, safeSelection, storyboardUrl } = require("../musi
 const { collect, buildPictures } = require("../music-pictures.js");
 const { encodeJpg, decodeJpg } = require("../image-util.js");
 
+test("blank end frames and compression variants of static artwork are rejected", () => {
+  const { usableFrame, frameSignature, similarFrame } = require("../music-pictures.js");
+  const img = value => ({ data: Buffer.alloc(20 * 20 * 4, value), width: 20, height: 20 });
+  assert.equal(usableFrame(img(0)), false);
+  assert.equal(usableFrame(img(255)), false);
+  const credits = img(0);
+  credits.data.fill(255, 0, 60);
+  assert.equal(usableFrame(credits), false, "small credits on black are not a useful picture");
+  const art = img(100), compressed = img(102), different = img(150);
+  assert.equal(usableFrame(art), true);
+  assert.equal(similarFrame(frameSignature(art), frameSignature(compressed)), true);
+  assert.equal(similarFrame(frameSignature(art), frameSignature(different)), false);
+});
+
 test("storyboard decoding follows the bytes when a jpg address returns WebP", async () => {
   const { decodeSheet } = require("../music-pictures.js");
   const fixture = fs.readFileSync(new URL("./fixtures/music-storyboard.webp", import.meta.url));

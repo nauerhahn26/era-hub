@@ -261,6 +261,18 @@ test("existing-song picture refresh preserves audio and degrades cleanly without
   assert.deepEqual(manifest().songs[0].pictures, []);
 });
 
+test("a picture-only video link never replaces the song's audio source", async () => {
+  const before = manifest().songs[0];
+  const alternate = "https://www.youtube.com/watch?v=picture-video";
+  const count = calls().length;
+  assert.equal((await post("/music/pictures", { id: before.id, url: "not a link" })).status, 409);
+  assert.equal(calls().length, count);
+  assert.equal((await post("/music/pictures", { id: before.id, url: alternate })).status, 202);
+  await settled();
+  assert.equal(calls().at(-1).at(-1), alternate, "lookup uses the picture video");
+  assert.deepEqual(manifest().songs[0], before, "failed picture preparation preserves the original entry");
+});
+
 test("ffmpeg is never required: audio-only format, thumbnail written raw, no -x and no conversion", async () => {
   const seen = calls();
   assert.ok(seen.length >= 2, "one look-up and one download");
