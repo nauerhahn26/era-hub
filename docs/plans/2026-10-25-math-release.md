@@ -15,8 +15,8 @@ Implementation: [Math plan](2026-10-25-math-plan.md).
 - [x] Run a fresh full gate; the earlier 132-suite green stamp has expired.
 - [x] Build and run the required Windows self-update leg through release.sh.
 - [x] Publish v1.0.12 and verify public manifest, archives and included Math files.
-- [ ] Check installed delivery and selected-app visibility separately.
-- [ ] Commit and push the release receipt.
+- [x] Check installed delivery and selected-app visibility separately.
+- [x] Commit and push the release receipt.
 
 Use the patch flow, retaining the signed v1.0.0 installer. The standard release
 script owns temporary QA host setup and cleanup. Capture the detached run's PID,
@@ -54,7 +54,16 @@ source. All six expected release assets are published; the release is neither
 draft nor prerelease. The temporary Windows QA host was destroyed successfully.
 
 The initial installed-device probe showed the previous build and a saved app
-selection. The device went offline while validation ran. Publication is verified;
-installed delivery and enabling Math remain pending until the device is online.
-The maintainer was asked to wake it. No operator hub restart, website change
-or other device write was performed.
+selection. The device went offline while validation ran; the maintainer woke
+it for verification. Its normal public-feed update check then applied v1.0.12,
+and a subsequent probe confirmed both running and disk build `20261025.2212`.
+Math was enabled through the existing app endpoint. The app response confirms
+it installed and enabled, the earlier enabled-app set is preserved exactly
+with Math added, and the device serves its Math page. The Home screen's normal
+update reload or returning to Home makes the new tile available. Physical
+eye-gaze acceptance remains a maintainer check.
+
+Publication and installed delivery are both verified. No operator hub restart,
+website change or other-device update was performed. The website retains its
+coming-soon notice as requested. Release and installed-delivery receipts were
+committed and pushed through the normal documentation-only landing process.
