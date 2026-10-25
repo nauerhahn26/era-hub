@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Math exploration — design review</title>
+<style>
+  * { box-sizing: border-box; }
+  :root { --teal:#0F7C8A; --ink:#17272E; --grey:#6B7B82; }
+  body { margin:0; background:#edf1f0; color:var(--ink); font-family:Arial,Helvetica,sans-serif; }
+  .review { max-width:1600px; margin:auto; padding:30px 30px 22px; }
+  .eyebrow { color:var(--teal); font-size:13px; font-weight:800; letter-spacing:.12em; }
+  h1 { margin:9px 0; font-size:32px; letter-spacing:-.03em; }
+  .intro { max-width:1100px; font-size:17px; line-height:1.5; margin:0 0 18px; }
+  .tabs { display:flex; flex-wrap:wrap; gap:8px; }
+  .tabs button,.review-action { border:1px solid #b5c3c4; border-radius:8px; padding:11px 16px; background:white; color:var(--ink); font:600 15px Arial,sans-serif; cursor:pointer; }
+  .tabs button[aria-selected="true"] { background:var(--ink); color:white; border-color:var(--ink); }
+  .review-options { display:flex; align-items:center; flex-wrap:wrap; gap:14px; margin-top:16px; font-size:14px; }
+  .review-options select { margin-left:5px; font:inherit; padding:6px; }
+  #screen-note { font-size:15px; line-height:1.5; max-width:1180px; min-height:45px; margin:16px 0 0; }
+  .viewport { width:100%; overflow:hidden; background:black; }
+  .screen { position:relative; width:1920px; height:1080px; transform-origin:top left; background:#000; color:var(--ink); }
+  .doorbar { position:relative; height:97px; padding:6px 12px 10px; display:flex; background:#0B4E58; border-bottom:2px solid #0B4E58; }
+  .screen button { font-family:Arial,Helvetica,sans-serif; border:0; cursor:pointer; }
+  .screen button:focus-visible { outline:8px solid var(--teal); outline-offset:-9px; }
+  .door { width:158px; height:79px; border-radius:12px; background:var(--grey); color:white; display:flex; align-items:center; justify-content:center; padding:0; }
+  .door[data-action="talk"] { position:absolute; left:50%; top:6px; transform:translateX(-50%); }
+  .door svg { width:49px; height:49px; fill:none; stroke:currentColor; stroke-width:4; flex:none; }
+  .workspace { position:absolute; inset:111px 28px 12px; display:grid; grid-template-columns:360px 1fr 360px; grid-template-rows:minmax(0,1fr); gap:14px; }
+  .edge { display:grid; grid-template-rows:repeat(3,1fr); gap:14px; }
+  .tile { background:var(--teal); border-radius:20px; color:#fff; font-size:74px; font-weight:600; line-height:1.1; padding:18px 16px; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:8px; }
+  .tile.nav { background:var(--grey); }
+  .tile .symbol { display:block; font-size:100px; font-weight:500; line-height:1; }
+  .tile:disabled { background:#374247; color:#abb5b9; cursor:default; }
+  .rest { background:#000; pointer-events:none; }
+  .canvas { border-radius:22px; background:#fff; overflow:hidden; display:flex; flex-direction:column; align-items:center; position:relative; padding:30px 36px; min-height:0; }
+  .numeral { font-size:246px; font-weight:600; line-height:1; margin:5px 0 0; font-variant-numeric:tabular-nums; }
+  .number-word { font-size:88px; line-height:1.1; margin:8px 0 44px; }
+  .frames { display:grid; grid-template-columns:1fr; gap:24px; width:930px; }
+  .tenframe { display:grid; grid-template-columns:repeat(5,1fr); grid-template-rows:repeat(2,1fr); aspect-ratio:2.5; border:4px solid var(--grey); }
+  .cell { display:flex; align-items:center; justify-content:center; border-right:2px solid #bbc7cb; border-bottom:2px solid #bbc7cb; }
+  .cell:nth-child(5n) { border-right:0; }
+  .cell:nth-child(n+6) { border-bottom:0; }
+  .counter { display:block; width:64%; aspect-ratio:1; border-radius:50%; background:var(--teal); }
+  .counter.highlight { outline:8px solid var(--ink); outline-offset:7px; }
+  .canvas.many .numeral { font-size:162px; }
+  .canvas.many .number-word { font-size:74px; margin:6px 0 24px; }
+  .canvas.many .frames { grid-template-columns:repeat(2,1fr); gap:20px; width:940px; }
+  .canvas.tens .numeral { font-size:192px; }
+  .canvas.tens .equation { font-size:100px; margin:10px 0 26px; }
+  .canvas.tens .frames { width:640px; gap:22px; }
+  .canvas.tens.many .frames { width:900px; grid-template-columns:repeat(2,1fr); gap:20px; }
+  .canvas.tens.many .numeral { font-size:160px; }
+  .equation { font-size:104px; line-height:1.1; font-weight:500; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .partners .whole { font-size:164px; line-height:1; height:170px; }
+  .branches { width:650px; height:96px; flex:none; margin-top:-2px; }
+  .branches path { fill:none; stroke:var(--grey); stroke-width:5; }
+  .parts { display:grid; grid-template-columns:1fr 1fr; width:100%; gap:36px; }
+  .part { display:flex; flex-direction:column; align-items:center; }
+  .part-number { font-size:148px; line-height:1; margin:6px 0 22px; }
+  .tray { display:grid; grid-template-columns:repeat(5,1fr); grid-template-rows:repeat(2,1fr); width:100%; height:206px; border:3px solid #bbc7cb; border-radius:12px; padding:10px; gap:8px; }
+  .tray .counter { width:76%; align-self:center; justify-self:center; }
+  .partners .equation { margin-top:32px; }
+  .picker { position:absolute; inset:111px 28px 12px; display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:repeat(4,1fr); gap:14px; }
+  .picker .digit { background:white; color:var(--ink); font-size:154px; font-weight:500; }
+  .picker .tile { padding:12px; }
+  .picker .tile span { display:block; }
+  .review-footer { max-width:1600px; padding:22px 30px 34px; margin:auto; font-size:15px; line-height:1.5; }
+  .review-footer p { margin:0 0 10px; }
+  #demo-status { color:var(--teal); font-weight:700; min-height:23px; }
+  body.capture .review,body.capture .review-footer { display:none; }
+</style>
+<main>
+  <header class="review">
+    <div class="eyebrow">DESIGN PREVIEW · TOUCH DEMO · NO GAZE RUNTIME</div>
+    <h1>Math exploration for Ellie</h1>
+    <p class="intro">Main proposal: choose a number, inspect its quantity, and explore what changes. A quiet white workspace holds the math; a few stable edge controls do the changing. These four sample views are for design review.</p>
+    <nav class="tabs" aria-label="Review sample views">
+      <button data-sheet="numbers" aria-selected="true">1 · Numbers · 7</button>
+      <button data-sheet="partners" aria-selected="false">2 · Number partners · 7</button>
+      <button data-sheet="tens" aria-selected="false">3 · Ten and ones · 14</button>
+      <button data-sheet="picker" aria-selected="false">4 · Number picker · 0–9</button>
+    </nav>
+    <div class="review-options">
+      <span>Reviewer controls — outside the child screen</span>
+      <label>Representation <select id="representation"><option value="numbers">Numbers</option><option value="tens">Ten and ones</option></select></label>
+      <button class="review-action" id="reset">Reset sample</button>
+      <span>1920 × 1080 geometry, scaled to fit</span>
+    </div>
+    <p id="screen-note"></p>
+  </header>
+  <div class="viewport" id="viewport">
+    <section class="screen" id="screen" aria-label="Simulated child screen"></section>
+  </div>
+  <footer class="review-footer">
+    <p id="demo-status" role="status" aria-live="polite">Touch a control to explore the proposal.</p>
+    <p><strong>Shared behavior:</strong> math objects are passive. Count highlights the existing collection; it never adds objects. Back opens the number view from partners or ten and ones. The illustrated doors use the shared geometry: Exit at the top left, Talk at the top center, in a 9% high bar. The unlabeled black bottom-right corner is always inert.</p>
+    <p><strong>Review boundary:</strong> the tabs load named samples; they are not child controls. The representation selector keeps the current quantity. The picker remembers the previous workspace, includes zero, and keeps each last digit in the same seat across ranges. This demo stops at 50 for review, with no unlock or implied learning ceiling. Choosing a numeral is not counted as evidence of mathematical understanding.</p>
+    <p><strong>Picker tradeoff to review:</strong> Back stays at the top left. Ten numerals plus Back and Other numbers make 12 body targets, or 14 including the two doors. Other numbers opens six range choices and Back, or 9 targets including the doors. Number partners is limited to 0–10 in this first representation; its range view offers 0–9 and 10. Larger-number exploration remains available in Numbers and Ten and ones. The extra range-selection step reduces navigation commands. Lower-density layouts may be considered after a gaze trial.</p>
+    <p><strong>Count demonstration:</strong> one touch starts a visual model through the counters, then leaves the quantity intact. Spoken counting and descriptions are proposed behavior; this offline review does not play audio. Number partners has one countable inventory split between two trays; the whole is a numeral, not another collection. Moving one counter preserves the whole. Empty endpoints stay calmly inactive in their original seats.</p>
+  </footer>
+</main>
+<script>
+(() => {
+  'use strict';
+  const screen = document.getElementById('screen');
+  const note = document.getElementById('screen-note');
+  const status = document.getElementById('demo-status');
+  const selector = document.getElementById('representation');
+  let sheet = 'numbers', previous = 'numbers', sample = 'numbers', number = 7, left = 3, decade = 0;
+  let countRun = 0;
+  const notes = {
+    numbers:'Numbers · Default sample 7. A single quantity and its numeral. One more and One fewer change the total by exactly one. Pick a number opens the stable number grid.',
+    partners:'Number partners · Default sample 7 = 3 + 4, exploring whole numbers 0–10. One whole, two parts. Move left transfers one counter from right to left; Move right does the reverse. There is no correct partition. Larger-number exploration remains in Numbers and Ten and ones.',
+    tens:'Ten and ones · Default sample 14. A full frame makes ten visible, with four extra ones. One more and One fewer also work across 9/10 and 19/20. Filled frames stay in reading order.',
+    picker:'Number picker · Ten numerals at a time, with Back at the top left and Other numbers at the bottom left. Each last digit keeps its seat. Back returns without changing the quantity; choosing a numeral returns to the previous workspace.',
+    ranges:'Other numbers · Choose a range to inspect: 0–9, 10–19, 20–29, 30–39, 40–49, or 50. Back returns to the picker. Range selection changes the available choices, not the current quantity.'
+  };
+  const words = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+  function word(n) { if (n<20) return words[n]; const tens=['','','twenty','thirty','forty','fifty']; return tens[Math.floor(n/10)]+(n%10?' '+words[n%10]:''); }
+  function door(kind,label) {
+    const path = kind==='exit' ? '<path d="M34 8H12v48h22M25 32h29m-10-10 10 10-10 10"/>' : '<path d="M8 9h44v33H29L16 55V42H8z"/><path d="M18 22h24m-24 9h18"/>';
+    return `<button class="door" data-action="${kind}" aria-label="${label}"><svg viewBox="0 0 64 64" aria-hidden="true">${path}</svg></button>`;
+  }
+  function tile(action,label,nav=false,disabled=false) { return `<button class="tile${nav?' nav':''}" data-action="${action}" ${disabled?'disabled':''}>${label}</button>`; }
+  function counter() { return '<span class="counter" aria-hidden="true"></span>'; }
+  function frame(n) { return `<div class="tenframe" aria-hidden="true">${Array.from({length:10},(_,i)=>`<span class="cell">${i<n?counter():''}</span>`).join('')}</div>`; }
+  function frames(n) { return `<div class="frames">${Array.from({length:Math.max(1,Math.ceil(n/10))},(_,i)=>frame(Math.min(10,Math.max(0,n-i*10)))).join('')}</div>`; }
+  function tray(n) { return `<div class="tray" aria-hidden="true">${Array.from({length:10},(_,i)=>`<span class="cell" style="border:0">${i<n?counter():''}</span>`).join('')}</div>`; }
+  function render() {
+    countRun++;
+    let content='';
+    if (sheet==='picker'||sheet==='ranges') {
+      const rest='<div class="rest"></div>';
+      const limit=previous==='partners'?10:50;
+      if(sheet==='ranges') {
+        const rangeCount=previous==='partners'?2:6;
+        const choices=Array.from({length:rangeCount},(_,i)=>`<button class="tile digit" style="font-size:100px" data-range="${i*10}">${i*10===limit?limit:`${i*10}–${i*10+9}`}</button>`).join('');
+        content=`<div class="picker">${tile('range-back','Back',true)}${choices}${rest.repeat(15-rangeCount)}</div>`;
+      } else {
+        const digits=Array.from({length:10},(_,i)=>decade+i<=limit?`<button class="tile digit" data-number="${decade+i}">${decade+i}</button>`:rest).join('');
+        content=`<div class="picker">${tile('picker-back','Back',true)}${digits}${rest}${tile('ranges','<span>Other</span><span>numbers</span>',true)}${rest.repeat(3)}</div>`;
+      }
+    } else {
+      const edge=`<div class="edge">${tile('back','Back',true)}${tile('pick','<span>Pick a</span><span>number</span>')}${tile('count','Count')}</div>`;
+      let canvas;
+      if(sheet==='partners') {
+        canvas=`<div class="canvas partners" aria-label="Whole ${number}, parts ${left} and ${number-left}"><div class="whole">${number}</div><svg class="branches" viewBox="0 0 650 96" aria-hidden="true"><path d="M325 0V18L85 85M325 18l240 67"/></svg><div class="parts"><div class="part"><div class="part-number">${left}</div>${tray(left)}</div><div class="part"><div class="part-number">${number-left}</div>${tray(number-left)}</div></div><div class="equation">${left} + ${number-left} = ${number}</div></div>`;
+      } else if(sheet==='tens') {
+        canvas=`<div class="canvas tens${number>20?' many':''}" aria-label="${number}, shown in tens and ones"><div class="numeral">${number}</div><div class="equation">${Math.floor(number/10)*10} + ${number%10} = ${number}</div>${frames(number)}</div>`;
+      } else {
+        canvas=`<div class="canvas${number>10?' many':''}" aria-label="${word(number)}, ${number} counters"><div class="numeral">${number}</div><div class="number-word">${word(number)}</div>${frames(number)}</div>`;
+      }
+      const right=sheet==='partners'?`${tile('move-left','<span class="symbol">←</span><span>Move</span><span>left</span>',false,left===number)}${tile('move-right','<span class="symbol">→</span><span>Move</span><span>right</span>',false,left===0)}`:`${tile('more','<span class="symbol">+1</span><span>One more</span>',false,number===50)}${tile('fewer','<span class="symbol">−1</span><span>One fewer</span>',false,number===0)}`;
+      content=`<div class="workspace">${edge}${canvas}<div class="edge">${right}<div class="rest"></div></div>`;
+    }
+    screen.innerHTML=`<div class="doorbar">${door('exit','Exit')}${door('talk','Talk')}</div>${content}`;
+    note.textContent=notes[sheet];
+    if(sheet==='ranges'&&previous==='partners')note.textContent='Other numbers · Number partners explores 0–10. Choose 0–9 or 10; Back returns to the picker. Larger-number exploration remains in Numbers and Ten and ones.';
+    if(sheet==='picker')note.textContent+=` Current range: ${decade}–${Math.min(previous==='partners'?10:50,decade+9)}.`;
+    document.querySelectorAll('[data-sheet]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.sheet===sheet)));
+    if(sheet==='numbers'||sheet==='tens') selector.value=sheet;
+  }
+  function loadSample(mode) {
+    sample=mode; sheet=mode; number=mode==='tens'?14:7; left=3; decade=0; previous=mode==='picker'?'numbers':mode;
+    status.textContent='Sample loaded for review. Touch a control to explore.'; render();
+  }
+  async function count() {
+    const run=++countRun;
+    screen.querySelectorAll('.highlight').forEach(c=>c.classList.remove('highlight'));
+    const counters=[...screen.querySelectorAll('.counter')];
+    if(!counters.length) { status.textContent='Count model: zero. The empty frame remains empty.'; return; }
+    for(let i=0;i<counters.length;i++) {
+      if(run!==countRun) return;
+      counters.forEach(c=>c.classList.remove('highlight'));
+      counters[i].classList.add('highlight'); status.textContent=`Count model: ${i+1}. The total remains ${number}.`;
+      await new Promise(resolve=>setTimeout(resolve,650));
+    }
+    if(run===countRun) { counters.forEach(c=>c.classList.remove('highlight')); status.textContent=`Count model complete: ${number} altogether. No objects were added.`; }
+  }
+  screen.addEventListener('click',event=>{
+    const button=event.target.closest('button'); if(!button||button.disabled)return;
+    if(button.dataset.range!==undefined) { decade=Number(button.dataset.range);sheet='picker';render();status.textContent=`Showing ${decade}–${Math.min(previous==='partners'?10:50,decade+9)}. The current quantity remains ${number}.`;return; }
+    if(button.dataset.number!==undefined) {
+      number=Number(button.dataset.number); left=Math.floor(number/2); sheet=previous; status.textContent=`Selected ${number}. Returned to ${sheet==='partners'?'number partners':sheet==='tens'?'ten and ones':'numbers'}.`; render();return;
+    }
+    const action=button.dataset.action;
+    if(action==='count'){ count(); return; }
+    if(action==='exit'||action==='talk'){ status.textContent=`${action==='exit'?'Exit':'Talk'} is an illustrated door. This design review stays open.`;return; }
+    if(action==='pick'){ previous=sheet; decade=Math.min(50,Math.floor(number/10)*10);sheet='picker'; }
+    if(action==='picker-back')sheet=previous;
+    if(action==='ranges')sheet='ranges';
+    if(action==='range-back')sheet='picker';
+    if(action==='back'){ sheet='numbers'; previous='numbers'; }
+    if(action==='more')number=Math.min(50,number+1);
+    if(action==='fewer')number=Math.max(0,number-1);
+    if(action==='move-left')left=Math.min(number,left+1);
+    if(action==='move-right')left=Math.max(0,left-1);
+    render();
+    status.textContent=sheet==='partners'?`${left} and ${number-left} make ${number}. The whole stays fixed.`:sheet==='picker'?`Showing ${decade}–${Math.min(previous==='partners'?10:50,decade+9)}. Choosing a number returns to the workspace.`:sheet==='ranges'?'Choose a range. The quantity is unchanged.':`The quantity is ${number}.`;
+  });
+  document.querySelectorAll('[data-sheet]').forEach(button=>button.addEventListener('click',()=>loadSample(button.dataset.sheet)));
+  document.getElementById('reset').addEventListener('click',()=>loadSample(sample));
+  selector.addEventListener('change',()=>{sheet=selector.value;previous=sheet;render();status.textContent=`Representation changed; the quantity remains ${number}.`;});
+  function fit(){ const host=document.getElementById('viewport'); const scale=host.clientWidth/1920; screen.style.transform=`scale(${scale})`;host.style.height=`${1080*scale}px`; }
+  const params=new URLSearchParams(location.search);
+  if(params.has('capture'))document.body.classList.add('capture');
+  loadSample(['numbers','partners','tens','picker'].includes(params.get('sheet'))?params.get('sheet'):'numbers');
+  window.addEventListener('resize',fit);fit();
+})();
+</script>
+</html>

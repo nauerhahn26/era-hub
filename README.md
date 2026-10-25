@@ -14,6 +14,8 @@ caches — never in this repo.
   module repos (era-core, era-making-words, era-pencil, era-board).
 - `tools/era-gate.sh` — the parity/regression gate: collects every module's
   test suite, boots a test instance on its own port, runs everything.
+- [Math](docs/math.md) — number exploration and number partners through
+  large gaze or touch controls, with optional spoken counting.
 
 The experimental Chat board lives at `/chat/`. Its isolated local preview runs
 with `node tools/chat-preview.mjs` after checking that test port 8386 is free.

@@ -137,6 +137,8 @@ cp -r "$HUB/public/watch" "$OUT/public/watch"
 # Play (spec 2026-10-12 §5.6): the This week app's Play page — menu, the engines, the synthesised
 # sounds. CORE like the watch page: plain files, no media, no /x in installer.nsi.
 cp -r "$HUB/public/play" "$OUT/public/play"
+# Math's local number exploration rides with the core, including its state model.
+cp -r "$HUB/public/math" "$OUT/public/math"
 cp "$HUB/public/favicon.ico" "$OUT/public/favicon.ico"
 cp -r "$HUB/public/icons" "$OUT/public/icons"   # per-app icons (tiles + shortcuts)
 
@@ -263,7 +265,7 @@ rem Both names: a PC that ran the old installer still has New ERA shortcuts.
 taskkill /IM node.exe /F >nul 2>&1
 taskkill /IM ERAgaze.exe /F >nul 2>&1
 for %%d in ("%USERPROFILE%\Desktop" "%APPDATA%\Microsoft\Windows\Start Menu\Programs" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup") do (
-  for %%n in ("Our Era Comms" "New ERA" "Making Words" "The Pencil" "Board" "Clothing Picker" "Music" "Movies" "Book Reader" "ERAgaze" "ERAgaze eye-gaze engine") do (
+  for %%n in ("Our Era Comms" "New ERA" "Making Words" "The Pencil" "Board" "Clothing Picker" "Music" "Movies" "Book Reader" "Math" "ERAgaze" "ERAgaze eye-gaze engine") do (
     del /q "%%~d\%%~n.lnk" >nul 2>&1
   )
 )
