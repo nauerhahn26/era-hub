@@ -204,6 +204,8 @@ test("after the update: Math opens from Home and preserves a number partition", 
     assert.equal(await page.locator(".math-counter").count(), 7, "moving an object preserves the whole");
     vm.shot("math-after-update");
   } finally {
+    // Leave Math before restoring its storage: pagehide saves the active workspace.
+    await vm.home(page);
     await page.evaluate(saved => {
       if (saved === null) localStorage.removeItem("era.math.v1");
       else localStorage.setItem("era.math.v1", saved);
@@ -211,7 +213,6 @@ test("after the update: Math opens from Home and preserves a number partition", 
     const restore = await vm.api(page, "/apps", "POST", { id: "math", enabled: math.enabled });
     assert.equal(restore.status, 204, "the previous Math app choice is restored");
     assert.deepEqual(vm.hubGet("/apps").apps.filter(a => a.enabled).map(a => a.id).sort(), enabledBefore);
-    await vm.home(page);
   }
 });
 
