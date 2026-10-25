@@ -1098,7 +1098,7 @@ const THIS_WEEK_EXTS = [".json", ".mp4", ".webp", ".jpg", ".jpeg", ".png"];
 const THIS_WEEK_AV_EXTS = [".mp4"];
 const THIS_WEEK_DENY_DIRS = [".tmp"];   // the rail's download staging (B3)
 function serveThisWeekRecipe(req, res) {
-  // build() never throws: no week -> root-only + "none-r1", a broken manifest
+  // build() never throws: no week -> root-only + "none-r3", a broken manifest
   // -> root-only + "err-<now>" (the valid-empty degrade serveMoviesRecipe has)
   const out = thisWeek.build(DATA);
   if (out.error) console.error("[this-week] " + out.error);

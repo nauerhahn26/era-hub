@@ -3,8 +3,9 @@
  *
  * /play/?w=<week_of> reads GET /this-week/<w>/play.json (the hub validated it; the page never
  * reads the raw manifest) and opens the MENU: the shared door bar, Back in the rail (to the This
- * week board), and up to three engine tiles in fixed seats — Which one? left, Sort it centre,
- * Play it right; an engine with no content this week has no tile, its seat black. A 404 or a bad
+ * week board), and up to three engine tiles in the triangle (§5.6 amended 2026-10-25), two rows of
+ * three seats — Which one? top-left, Sort it top-right, Play it bottom-centre, black in the other
+ * three; an engine with no content this week has no tile, its seat black. A 404 or a bad
  * w: the menu with no engine tiles and "Nothing to play yet", said once.
  *
  * The URL hash names the page (#menu, #which, #sort, #playit) so a reload lands on the same page
@@ -39,11 +40,13 @@ let BAR = null, SOUNDS = createSounds({ volCap: 1 });
 
 // ---------- small things ----------
 function hush() { try { if (window.Speech) Speech.stop(); } catch {} }
+// returns the reading's promise (Which one? arms its answers when it settles), or nothing when
+// nothing is read
 function say(text) {
   if (window.__testHooks) (window.__speechLog = window.__speechLog || []).push({ call: "say", text });
   if (S.paused || !window.Speech) return;
   hush();
-  try { Speech.say(text, "long"); } catch {}
+  try { return Speech.say(text, "long"); } catch { return undefined; }
 }
 function suppress() { try { if (window.Dwell && Dwell.suppress) Dwell.suppress(); } catch {} }
 function logPick(engine, d) {
@@ -84,13 +87,14 @@ function renderMenu() {
   strip.textContent = any ? (S.data.title || "This week") : "Nothing to play yet";
   const seats = document.createElement("div");
   seats.className = "seats";
+  // the triangle, in reading order: null = a black rest seat
   const engines = [
-    { id: "which", label: "Which one?", glyph: "❓" },
-    { id: "sort", label: "Sort it", glyph: "🗂️" },
-    { id: "playit", label: "Play it", glyph: (p.playit && PLAYIT_GLYPH[p.playit.instrument]) || "🎵" },
+    { id: "which", label: "Which one?", glyph: "❓" }, null,
+    { id: "sort", label: "Sort it", glyph: "🗂️" }, null,
+    { id: "playit", label: "Play it", glyph: (p.playit && PLAYIT_GLYPH[p.playit.instrument]) || "🎵" }, null,
   ];
   engines.forEach((e, seat) => {
-    if (!has(e.id)) {
+    if (!e || !has(e.id)) {
       const b = document.createElement("div");
       b.className = "seat empty"; b.dataset.seat = String(seat); b.setAttribute("aria-hidden", "true");
       seats.appendChild(b);
