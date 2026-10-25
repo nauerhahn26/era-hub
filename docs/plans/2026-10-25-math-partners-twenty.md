@@ -33,11 +33,16 @@ Windows validation remains required before publication.
 
 A prior authorized weekly-board update is ahead in the shared gate queue and
 also plans a suite patch. Automatic publication of a preselected version was
-stopped before it could run. The owned Math gate is paused before collecting
-sources, retaining its place in the queue. Synchronize the incoming landed
-master before continuing that gate. Choose the next unused release version
-only after the preceding publication finishes, and build from the tested
-landed snapshot containing both features.
+stopped before it could run. The owned Math gate was briefly paused before
+collecting sources, retaining its place in the queue. The released master was
+then synchronized and the queued gate resumed. The other feature has not yet
+landed; pending feature branches do not belong in this patch.
+
+After the gate, recheck master and synchronize/retest if new runtime changes
+have landed. Choose an unused version against the then-current public release
+and any actual release run in progress. If another publication is in progress,
+wait for it to finish before selecting the next version. Build from the tested
+landed snapshot containing all already published features.
 
 The gate, landing and Windows locks are separate; there is no whole-release
 lock or version reservation. Existing release tagging can overwrite a tag, so
