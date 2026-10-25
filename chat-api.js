@@ -71,13 +71,22 @@ function safeTimings(value) {
   return result;
 }
 function localChoices(text) {
-  const trimmed = text.replace(/[?.!]+$/, '').trim();
+  let trimmed = text.replace(/[?.!]+$/, '').trim();
+  const explicitAddress = /^hey[\s,!.?:]+ellie[\s,!.?:]+(.+)$/i.exec(trimmed) ||
+    /^ellie\s*[,!.?:]+\s*(.+)$/i.exec(trimmed);
+  const questionAddress = /^ellie\s+(.+)$/i.exec(trimmed);
+  // Explicit addresses also precede statements. Without punctuation, a lone
+  // name is removed only before a clear question, preserving name subjects and
+  // possessives. Only local parsing changes; the transcript is kept.
+  if (explicitAddress) trimmed = explicitAddress[1];
+  else if (questionAddress && /^(?:(?:what|which|why|where|when|how|who|hi|hello|hey)\b|(?:do|does|did|can|could|would|will|have|has|had|shall|should|may|are|were)\s+(?:you|we)\b|(?:is|was)\s+(?:it|this|that|there)\b)/i.test(questionAddress[1]))
+    trimmed = questionAddress[1];
   if (/\bor\b/i.test(trimmed)) {
-    const prefix = /^(?:Ellie[, ]+)?(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)\s*[:,]?\s+/i;
+    const prefix = /^(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)\s*[:,]?\s+/i;
     // Unrecognised question forms need context and factual grounding. Splitting
     // them can turn half a question into the communicator's spoken answer.
     if (!prefix.test(trimmed)) {
-      if (/^(?:Ellie[, ]+)?(?:did|have|had|were|was)\s+you\b/i.test(trimmed))
+      if (/^(?:did|have|had|were|was)\s+you\b/i.test(trimmed))
         return { kind: 'guarded', generated: false, choices: choiceList([
           'Can you give me a clue?', 'Let me tell you another way.', "I don't want to answer now.",
         ]) };
@@ -90,7 +99,7 @@ function localChoices(text) {
     }
     return null;
   }
-  if (/^(?:Ellie[, ]+)?(?:is|are|was|were|do|does|did|can|could|would|will|have|has|should|may)\b/i.test(trimmed))
+  if (/^(?:is|are|was|were|do|does|did|can|could|would|will|have|has|should|may)\b/i.test(trimmed))
     return { kind: 'yes-no', choices: choiceList(['Yes', 'No', "I'm not sure", 'Please say that again']) };
   if (/^(hi|hello|hey)(?:\b|!)/i.test(trimmed))
     return { kind: 'comments', choices: choiceList(['Hello!', "It's good to see you", 'How are you?']) };

@@ -7,6 +7,10 @@ Design: [Chat prototype](../specs/2026-10-25-chat-prototype.md).
 The maintainer authorized a prototype, key interaction tests and performance
 validation. Recognition quality is the acceptance priority; local or hosted
 processing is acceptable. Voice activation uses Ellie while Chat is active.
+The maintainer subsequently authorized comparing Ellie with Hey Ellie and
+choosing on reliability and naturalness. The fixed-settings comparison retains
+Ellie provisionally; requiring Hey Ellie missed connected-speech requests on
+the current detector. Neither wake configuration is accepted for classroom use.
 
 - [x] Read workspace instructions and synchronize the clean feature branch.
 - [x] Inspect existing UI, speech, dwell and application handoff components.
@@ -28,7 +32,7 @@ hub restart is included.
 ## Validation receipt
 
 The prototype and its real speech path are implemented. Targeted checks pass:
-49 Node tests, including 21 Python speech checks inside two of those tests.
+53 Node tests, including 21 Python speech checks inside two of those tests.
 The interaction browser check passes with a real microphone processing graph
 and simulated recognition/choices. A separate browser run uses the actual local
 worker and hosted recognition for both touch and wake activation. It returns the
@@ -51,6 +55,8 @@ Full methods, comparisons, retained evidence and outstanding device acceptance:
 [speech and interaction validation](2026-10-25-chat-validation.md).
 Choice grounding and earlier rejected configurations:
 [choice validation](2026-10-25-chat-choice-validation.md).
+Wake phrase comparison and additional noise/miss limitations:
+[wake comparison](2026-10-25-chat-wake-comparison.md).
 
 After the final commit, run `bash tools/era-gate.sh` detached. The authoritative
 receipt is `/tmp/era-gate-green/<tree-sha>`, where `tree-sha` comes from
@@ -121,3 +127,10 @@ open-ended path needs further latency work. Next acceptance is representative
 speech on the communication device, with actual voice playback, gaze access,
 foreground transitions and the intended network. No school-readiness conclusion
 is drawn from the host prototype.
+
+The expanded wake comparison found substantially more misses than the first
+two positive controls. Keep separate evidence for keyword detection and reply
+parsing: accepting Hey Ellie in the transcript does not demonstrate that it
+activates the microphone reliably. Both leading address forms, including natural
+punctuation and following statements, now preserve the substantive question in
+the local reply rules; ordinary name subjects and possessives remain content.

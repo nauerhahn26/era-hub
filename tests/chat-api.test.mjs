@@ -248,6 +248,80 @@ test('static alternatives accept clear natural choice prompts without repeating 
   }
 });
 
+test('both leading wake addresses preserve fast alternatives, yes/no and guarded history', async t => {
+  const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' },
+    fetch: () => { throw Error('these questions should be handled locally'); } });
+  for (const address of ['Ellie,', 'Hey Ellie,', 'Ellie', 'Hey Ellie']) {
+    const alternatives = await (await s.request('/choices', { text: `${address} do you want music or a story?` })).json();
+    assert.equal(alternatives.kind, 'alternatives', address);
+    assert.deepEqual(alternatives.choices.map(choice => choice.say), ['Music', 'A story'], address);
+    const request = await (await s.request('/choices', { text: `${address} shall we read or draw?` })).json();
+    assert.equal(request.kind, 'alternatives', address);
+    assert.deepEqual(request.choices.map(choice => choice.say), ['Read', 'Draw'], address);
+    const yesno = await (await s.request('/choices', { text: `${address} can we play?` })).json();
+    assert.equal(yesno.kind, 'yes-no', address);
+    const history = await (await s.request('/choices', { text: `${address} did you go to the park or the pool?` })).json();
+    assert.equal(history.kind, 'guarded', address);
+    assert.equal(history.generated, false);
+    assert.ok(history.choices.every(choice => !/park|pool|did you/i.test(choice.say)), address);
+  }
+  for (const text of ['Hey!', 'Hey there!']) {
+    const greeting = await (await s.request('/choices', { text })).json();
+    assert.equal(greeting.kind, 'comments', text);
+  }
+});
+
+test('addressed wh questions retain their complete text and context for the adapter', async t => {
+  const seen = [];
+  const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'Space', say: 'We could talk about space.' }, { label: 'Something else', say: 'Let us choose something else.' }] }));
+  } });
+  const context = ['Me: Space sounds interesting.'];
+  for (const address of ['Ellie,', 'Hey Ellie,', 'Ellie', 'Hey Ellie']) {
+    const text = `${address} what should we talk about next?`;
+    const result = await (await s.request('/choices', { text, context })).json();
+    assert.equal(result.kind, 'adapter', address);
+    assert.deepEqual(seen.at(-1), { text, context });
+  }
+  assert.equal(seen.length, 4);
+});
+
+test('subject, possessive and embedded name references remain conversation content', async t => {
+  const seen = [];
+  const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body).text);
+    return new Response(JSON.stringify({ choices: [{ label: 'More', say: 'Tell me more.' }, { label: 'A moment', say: 'I need a moment.' }] }));
+  } });
+  for (const text of ["Ellie's drawing was funny.", 'Ellie is a friend from class.', 'Ellie can draw really well.', 'I told Ellie about the game.']) {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'adapter', text);
+    assert.equal(seen.at(-1), text);
+  }
+  assert.equal(seen.length, 4);
+});
+
+test('punctuated Hey addresses preserve choice prompts and contextual statements', async t => {
+  const seen = [];
+  const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'More', say: 'Tell me more.' }, { label: 'A moment', say: 'I need a moment.' }] }));
+  } });
+  for (const text of ['Hey, Ellie, do you want music or a story?', 'Hey! Ellie, do you want music or a story?']) {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'alternatives', text);
+    assert.deepEqual(result.choices.map(choice => choice.say), ['Music', 'A story']);
+  }
+  const context = ['Me: Tell me something new.'];
+  for (const text of ['Hey Ellie, I got a new puppy.', 'Hey, Ellie, that was funny.', 'Hey Ellie that was funny.',
+    'Ellie, I got a new puppy.', 'Ellie, that was funny.']) {
+    const result = await (await s.request('/choices', { text, context })).json();
+    assert.equal(result.kind, 'adapter', text);
+    assert.deepEqual(seen.at(-1), { text, context });
+  }
+  assert.equal(seen.length, 5);
+});
+
 test('past-history alternatives use honest repairs before any generation request', async t => {
   let calls = 0;
   const question = 'Did you go to the park or the pool?';

@@ -74,6 +74,12 @@ activates, while the one genuine name mention does activate even when it is
 not addressed to the communicator. Name-only activation cannot distinguish
 address from mention. These counts do not estimate a false-alarm rate.
 
+A later, larger synthetic wake comparison exposes many additional misses,
+especially in added noise and connected Hey Ellie speech. The two original
+positive controls are not evidence of general reliability. See the separate
+[wake comparison](2026-10-25-chat-wake-comparison.md) for denominators, calibrated
+diagnostic limits and the provisional decision to keep name activation.
+
 ## Complete path and interaction checks
 
 The simulated-event browser check uses an actual microphone stream and audio

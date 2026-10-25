@@ -11,6 +11,11 @@ system or a release approved for school use.
 ## Accepted interaction
 
 - Voice activation uses **Ellie**, only while the visible Chat session is armed.
+  Both Ellie and Hey Ellie were compared after the maintainer authorized either
+  phrase. The current detector retains Ellie provisionally; the strict prefix
+  candidate failed connected synthetic speech. Transcript address parsing accepts
+  both forms, which does not imply that both activate reliably. Details:
+  [wake comparison](../plans/2026-10-25-chat-wake-comparison.md).
 - A partner can instead hold a strictly touch-only Ask control. Releasing it
   ends the question. Desktop keyboard input is a separate testing convenience.
 - Wake detection processes microphone audio locally. Activation captures one

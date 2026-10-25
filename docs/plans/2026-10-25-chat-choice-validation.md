@@ -61,9 +61,11 @@ real conversation was used for this text evaluation. Full speech-to-choice
 latency must be measured through the complete chain; these generation timings
 alone do not establish the two-second end-to-end target.
 
-Targeted checks: 31 backend/adapter tests pass, including request/response caps,
+Targeted checks: 35 backend/adapter tests pass, including request/response caps,
 cancel/timeout behavior, source metadata, unknown-history handling, ownership
 handling, static alternative extraction, and worker capability whitelists. Past
 history alternatives use guarded repairs rather than incomplete question fragments
-or invented answers. The broader gate is recorded in the
+or invented answers. Leading Ellie and Hey Ellie addresses, punctuation variants
+and subsequent statements cannot turn substantive questions into greetings.
+Original transcripts and context remain unchanged for the adapter. The broader gate is recorded in the
 main prototype plan.
