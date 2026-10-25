@@ -77,6 +77,7 @@ async function watchPage(query, opts = {}) {
         n.addEventListener("loadedmetadata", () => { n.playbackRate = 0.1; }); } })
       .observe(document, { childList: true, subtree: true });
   }, !!opts.slow);
+  if (opts.arming) await ctx.addInitScript(ARM_WATCH);
   const logs = [], reqs = [], errors = [], pauses = [];
   await ctx.route("**/log", (r) => { logs.push({ ...JSON.parse(r.request().postData()), t: Date.now() }); return r.fulfill({ status: 204 }); });
   await ctx.route("**/voices", (r) => r.fulfill({ status: 200, contentType: "application/json",
@@ -117,6 +118,25 @@ async function dwellOn(page, sel) {
   await page.mouse.move(rest.cx, rest.cy);
   const b = await box(page, sel);
   await page.mouse.move(b.cx, b.cy, { steps: 4 });
+}
+// arming (spec §5.6 amended 2026-10-25): an init script (no closures) recording the answers' state
+// when they first appear and whether the question's `end` was in the speech engine's log as they armed
+function ARM_WATCH() {
+  window.__arm = { first: null, endAtArm: null };
+  new MutationObserver((ms) => {
+    for (const m of ms) {
+      if (m.type === "childList") for (const n of m.addedNodes) {
+        if (!n.querySelectorAll || window.__arm.first) continue;
+        const t = n.matches(".wh-tile") ? [n] : [...n.querySelectorAll(".wh-tile")];
+        if (t.length) window.__arm.first = t.map((el) => el.hasAttribute("data-dwell-disabled") && el.classList.contains("wh-waiting"));
+      }
+      if (m.type === "attributes" && m.target.classList.contains("wh-tile") && !m.target.hasAttribute("data-dwell-disabled") &&
+          window.__arm.endAtArm === null) {
+        const q = (document.querySelector(".wh-q") || {}).textContent || "";
+        window.__arm.endAtArm = (window.__speechEngineLog || []).some((e) => e.ev === "end" && e.text === q.slice(0, 40));
+      }
+    }
+  }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-dwell-disabled"] });
 }
 async function neverATest(page) {
   const text = await page.evaluate(() => document.body.innerText);
@@ -246,6 +266,9 @@ test("a video with a before question: the question first (spoken), the video pau
     let v = await vid(page);
     assert.ok(v.paused && !v.visible && !v.autoplay, "the video waits, hidden, no autoplay: " + JSON.stringify(v));
     assert.equal(v.src, `/this-week/${WEEK}/${QID}.mp4`, "the video element exists");
+    // the answers arm once the question has been read (spec §5.6 amended 2026-10-25)
+    await page.waitForFunction(() => [...document.querySelectorAll(".wh-tile")].every((el) => !el.hasAttribute("data-dwell-disabled")),
+      null, { timeout: 3000 });
     const dw = await page.$$eval(".dwell:not([data-dwell-disabled])", (els) => els.map((el) => el.matches(".wh-tile") ? el.getAttribute("aria-label") : el.id).sort());
     assert.deepEqual(dw, ["A cloud", "A torch", "barDoor", "barTalk", "btnBack"].sort(),
       "during the question: Back, the doors and the choices; the Pause tile rests");
@@ -287,6 +310,23 @@ test("before, two-strike: a miss re-asks with 'Look for', a second miss lights t
     await neverATest(page);
     await playing(page);
     assert.ok((await vid(page)).visible);
+  } finally { await ctx.close(); }
+});
+
+test("before: the answers are inert and muted on mount and arm when the question's reading has ended", async () => {
+  const { ctx, page, logs, errors } = await watchPage(`?w=${WEEK}&v=${QID}`, { slow: true, arming: true });
+  try {
+    await page.waitForFunction(() => document.querySelector(".wh-tile"));
+    assert.deepEqual(await page.evaluate(() => window.__arm.first), [true, true], "inert + muted when they appear");
+    await page.waitForFunction(() => { const t = [...document.querySelectorAll(".wh-tile")];
+      return t.length === 2 && t.every((el) => !el.hasAttribute("data-dwell-disabled") && !el.classList.contains("wh-waiting")); },
+      null, { timeout: 3000 });
+    assert.equal(await page.evaluate(() => window.__arm.endAtArm), true, "armed only once the question's end was logged");
+    assert.deepEqual(logs.filter((l) => l.event === "before"), [], "nothing picked yet");
+    await dwellOn(page, '.wh-tile[aria-label="A torch"]');
+    await page.waitForFunction(() => document.querySelector(".wh-tile.alive"));
+    assert.ok(await until(() => logs.some((l) => l.event === "before")), "armed: a right dwell logs");
+    assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
 
