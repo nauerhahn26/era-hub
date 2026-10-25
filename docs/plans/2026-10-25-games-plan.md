@@ -106,3 +106,12 @@ collection. It repairs an accepted-request disconnect and isolates a label
 fixture's photos while strengthening missing-tile, runtime and cutoff checks.
 It changes no app or runner behavior. Its focused red/green evidence is in
 the testing-suite records; this full gate must validate the combined tree.
+
+The complete clothing-file proof subsequently passed 35/35 with exit 0 in
+420.499 seconds; its fixture SHA-256 matches the adopted file. The testing
+coordinator then required synchronizing the preceding release's master changes
+immediately before Games collection. The replacement waiting run was also
+withdrawn intentionally (exit 143, no tests collected) to avoid starting before
+that landing. Current verification state: waiting for the preceding release's
+master landing, then sync, verify combined inputs and launch a fresh full gate.
+There is currently no active Games gate. Preserve all Games acceptance checks.
