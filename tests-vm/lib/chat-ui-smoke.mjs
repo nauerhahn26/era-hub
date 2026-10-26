@@ -165,6 +165,50 @@ function installInstrumentation(origin) {
   };
 }
 
+// Chat's readable floor: every picture tile keeps a font of at least 44 px and
+// its complete words inside the tile (public/chat/app.js fitLabels shrinks from
+// 74 px down to this floor and no further). The smallest supported Chat viewport
+// is 1280x800 (tests/chat-symbols.test.mjs); on the QA template's native
+// 1024x768 "Reactions" cannot fit at 44 px, which is why leg B sets the guest's
+// real desktop mode first (tests-vm/lib/native-display.mjs).
+const FONT_FLOOR = 44, SMALLEST_VIEWPORT = { width: 1280, height: 800 };
+
+// Measures what the family sees after the page's own fit pass: renderGrid queues
+// fitLabels for the next animation frame, and a reveal's visibility poll can
+// land before that frame. One frame, bounded (an occluded window gets none, and
+// then the page itself never fitted its labels either; frame:false says so).
+export async function measureChatTiles(page) {
+  const frame = await page.evaluate(() => new Promise(resolve => { requestAnimationFrame(() => resolve(true)); setTimeout(() => resolve(false), 1000); }));
+  return page.evaluate(frame => ({
+    viewport: { innerWidth, innerHeight, screenWidth: screen.width, screenHeight: screen.height, devicePixelRatio, frame },
+    tiles: [...document.querySelectorAll('#grid button.tile')].map(node => {
+      const label = node.querySelector('.label'), icon = node.querySelector('.chat-symbol'), style = getComputedStyle(node);
+      const available = node.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+        - (icon ? icon.getBoundingClientRect().height + parseFloat(style.rowGap) : 0);
+      return { text: (label?.textContent || '').trim().slice(0, 40), font: parseFloat(style.fontSize),
+        clientWidth: label?.clientWidth ?? 0, scrollWidth: label?.scrollWidth ?? 0, available: Math.round(available * 10) / 10, scrollHeight: label?.scrollHeight ?? 0,
+        fits: !!label && label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= available + 1 };
+    }),
+  }), frame);
+}
+
+// Pure, so its report is checked without a browser (tests-vm/chat-ui-smoke.test.mjs).
+// A failure names every offending tile with its metrics, the screen it was
+// measured on, and lists every tile: the 10/26 red said only "did not fit".
+export function assertChatTilesFit({ viewport = {}, tiles = [] } = {}) {
+  assert.ok(tiles.length > 0, 'no Chat tiles were measured');
+  const report = tile => JSON.stringify({ text: String(tile.text).slice(0, 40), font: tile.font, clientWidth: tile.clientWidth,
+    scrollWidth: tile.scrollWidth, available: tile.available, scrollHeight: tile.scrollHeight });
+  const bad = tiles.filter(tile => !(tile.font >= FONT_FLOOR && tile.fits));
+  const small = viewport.innerWidth < SMALLEST_VIEWPORT.width || viewport.innerHeight < SMALLEST_VIEWPORT.height;
+  assert.ok(bad.length === 0, 'pictures and complete words fit at the readable font floor'
+    + ` — ${bad.length} of ${tiles.length} tiles do not: [${bad.map(report).join(',')}]`
+    + ` on a ${viewport.innerWidth}x${viewport.innerHeight} viewport (screen ${viewport.screenWidth}x${viewport.screenHeight}, DPR ${viewport.devicePixelRatio})`
+    + (small ? `, below ${SMALLEST_VIEWPORT.width}x${SMALLEST_VIEWPORT.height}, the smallest supported Chat viewport — on the QA guest run vm.nativeDisplay() before the kiosk opens` : '')
+    + (viewport.frame === false ? '; no animation frame arrived before measuring, so the page had not run its own fit pass' : '')
+    + `; every tile: [${tiles.map(report).join(',')}]`);
+}
+
 export async function checkInstalledChatUI(page, options = {}) {
   const timeout = options.timeout || 30000, originalURL = page.url();
   const base = new URL(options.baseURL || originalURL).origin;
@@ -255,13 +299,8 @@ export async function checkInstalledChatUI(page, options = {}) {
       symbols: node.querySelectorAll('.chat-symbol').length,
     })));
     assert.deepEqual(restAfter, restBefore, 'revealing replies does not change the black rest slots');
-    const fit = await page.locator('#grid button.tile').evaluateAll(nodes => nodes.map(node => {
-      const label = node.querySelector('.label'), icon = node.querySelector('.chat-symbol'), style = getComputedStyle(node);
-      const available = node.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
-        - (icon ? icon.getBoundingClientRect().height + parseFloat(style.rowGap) : 0);
-      return { font: parseFloat(style.fontSize), fits: label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= available + 1 };
-    }));
-    assert.ok(fit.every(item => item.font >= 44 && item.fits), 'pictures and complete words fit at the readable font floor');
+    const fit = await measureChatTiles(page);
+    assertChatTilesFit(fit);
     await options.screenshot?.();
     assert.equal((await audio()).playCalls, 0, 'revealing replies does not speak');
     await page.getByRole('button', { name: 'Music', exact: true }).click({ timeout });
@@ -298,7 +337,7 @@ export async function checkInstalledChatUI(page, options = {}) {
       assert.deepEqual(restartState.timings, savedMetrics.turns);
     }
     return { ok: true, evidence: 'Typed local alternatives; service audio mocked; native browser playback observed. No microphone or recognition accuracy test.',
-      symbols: true, restUnchanged: true, savedDefaultAndPersistence: true, exportContentFree: true, typedTurn,
+      symbols: true, restUnchanged: true, savedDefaultAndPersistence: true, exportContentFree: true, fit, typedTurn,
       exportedTurns: savedMetrics.turns.length, actualAudio, microphoneCalls: actualAudio.microphoneCalls, ...(restartState ? { restartState } : {}) };
   } finally {
     if (script) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: script });

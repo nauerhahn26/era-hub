@@ -49,6 +49,9 @@ test("VM: pristine snapshot, PREVIOUS release installed silently", { timeout: 12
 });
 
 test("previous release: wizard → launcher, the board pack removed (the family never chose it)", { timeout: 1800000 }, async () => {
+  // the template boots at 1024x768, below any family screen and Chat's smallest
+  // supported viewport: the kiosk opens on a real 1280x800 desktop (native-display.mjs)
+  await vm.nativeDisplay();
   await vm.launchKiosk();
   ({ browser, page } = await vm.kiosk());
   await page.locator("#setup").waitFor({ state: "visible", timeout: 60000 });

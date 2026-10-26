@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeChatToneWav, assertContentFreeMetrics, makeChatStateDiagnostic, waitForChatState } from './lib/chat-ui-smoke.mjs';
+import { makeChatToneWav, assertContentFreeMetrics, makeChatStateDiagnostic, waitForChatState, assertChatTilesFit } from './lib/chat-ui-smoke.mjs';
 
 test('Chat UI audio fixture is a small valid PCM WAV with real samples', () => {
   const wav = makeChatToneWav();
@@ -70,4 +70,43 @@ test('an unresponsive UI cannot block the bounded state failure diagnostic', asy
     assert.deepEqual(error.chatStateDiagnostic.ui, { counts: {}, storageState: 'unknown' }); return true;
   });
   assert.ok(Date.now() - started < 1500, 'diagnostic returns after its half-second observation limit');
+});
+
+// The leg B red of 10/26 (v1.0.21 and v1.0.22): the QA guest's native 1024x768
+// desktop left "Reactions" 210 px wide at the 44 px floor in a 208 px label box,
+// and the assertion said only that something did not fit.
+const tile = (text, extra = {}) => ({ text, font: 44, clientWidth: 208, scrollWidth: 120, available: 150, scrollHeight: 48, fits: true, ...extra });
+const qaScreen = { innerWidth: 1024, innerHeight: 768, screenWidth: 1024, screenHeight: 768, devicePixelRatio: 1, frame: true };
+
+test('the Chat fit check passes when every measured tile keeps the 44 px floor and fits', () => {
+  assert.doesNotThrow(() => assertChatTilesFit({ viewport: { ...qaScreen, innerWidth: 1280, innerHeight: 800, screenWidth: 1280, screenHeight: 800 },
+    tiles: [tile('yes'), tile('Reactions', { clientWidth: 272, scrollWidth: 210 }), tile('Help me say it', { scrollHeight: 96 })] }));
+});
+
+test('a Chat fit failure names each offending tile with its metrics and the screen it was measured on', () => {
+  const tiles = [tile('yes'), tile('Reactions', { scrollWidth: 210, fits: false }), tile('Music', { font: 40 })];
+  assert.throws(() => assertChatTilesFit({ viewport: qaScreen, tiles }), error => {
+    assert.equal(error.code, 'ERR_ASSERTION');
+    assert.match(error.message, /^pictures and complete words fit at the readable font floor/, 'the original message still leads');
+    assert.match(error.message, /2 of 3 tiles/);
+    assert.match(error.message, /"text":"Reactions","font":44,"clientWidth":208,"scrollWidth":210,"available":150,"scrollHeight":48/);
+    assert.match(error.message, /"text":"Music","font":40/);
+    assert.match(error.message, /1024x768 viewport \(screen 1024x768, DPR 1\)/);
+    assert.match(error.message, /below 1280x800/, 'a screen below the smallest supported Chat viewport is called out');
+    assert.match(error.message, /every tile: .*"text":"yes"/, 'every tile is reported, not only the offending ones');
+    return true;
+  });
+});
+
+test('a Chat fit check that measured no tiles fails instead of passing vacuously', () => {
+  assert.throws(() => assertChatTilesFit({ viewport: qaScreen, tiles: [] }), /no Chat tiles were measured/);
+});
+
+test('Chat fit diagnostics are bounded: long labels are cut and a missing animation frame is reported', () => {
+  const long = 'x'.repeat(500);
+  assert.throws(() => assertChatTilesFit({ viewport: { ...qaScreen, frame: false }, tiles: [tile(long, { fits: false })] }), error => {
+    assert.equal(error.message.includes('x'.repeat(41)), false);
+    assert.match(error.message, /no animation frame/);
+    return true;
+  });
 });
