@@ -19,8 +19,10 @@ Spec: [response voice pace](../specs/2026-10-26-response-voice-pace.md).
 - [ ] Release only on the maintainer's explicit instruction.
 
 The initial implementation hold was lifted by the maintainer's explicit request
-to test and release. Testing suite has Lockout ahead of this candidate; sync
-that accepted predecessor before the final gate and publication transaction.
-Testing suite's subsequent monitoring update reported an interrupted Lockout
-gate without acceptance. Full Voice collection remains on hold pending that
-owner's settled source tuple. Focused checks grant no release eligibility.
+to test and release. The maintainer subsequently changed the queue: Voice goes
+first on the accepted baseline, without unpublished Lockout changes. Coordinate
+the native test lane, Windows lane and release lock handoff with Testing suite
+and the Lockout owner. Recheck the next free release version under the shared
+release lock. The maintainer also requested avoiding unnecessary full reruns;
+confirm the minimum supported acceptance evidence before collection. Existing
+focused checks grant no complete gate stamp by themselves.

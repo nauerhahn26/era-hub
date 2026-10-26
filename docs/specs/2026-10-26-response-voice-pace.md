@@ -20,4 +20,5 @@ The maintainer authorized testing and release, explicitly preserving Book
 Reader pace. Regression coverage checks unchanged narration requests and word
 timings, device independence, hub restart persistence, cache separation and
 Settings save/error behavior. Coordinate with Testing suite before shared
-runtime landing or publishing; the release follows the accepted Lockout patch.
+runtime landing or publishing. The maintainer changed the release order to
+Voice first on the accepted baseline, excluding unpublished Lockout changes.
