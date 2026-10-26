@@ -35,6 +35,14 @@ sibling worktree tree it sourced (each with its own `dirty=1` verdict), so
 sitting while the 2 h stamps hold: era-core → era-board → era-making-words →
 era-pencil → era-gaze → era-hub, and never restart the live 8377 hub in between.
 
+Symbol-provider tests use `ERA_SYMBOL_SEARCH_URL` and `ERA_SYMBOL_IMAGE_URL`
+to point the hub at an owned local service. The image template replaces `{id}`;
+normal installations retain the existing public-service defaults. The board
+route suite owns its data and provider so a complete gate can exercise cache
+misses without external network access. Standalone board routes must name the
+selected hub with `ERA_HUB_SRC`; matching feature worktrees retain the source
+selection rules above.
+
 ## The three release shapes
 
 A dist lives at `~/new-era/dist/release-<V>/` (sibling of the

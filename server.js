@@ -561,8 +561,8 @@ function reconcileBootShortcuts() {
 }
 
 // ARASAAC lookup ported from packages/generator/aac_board_designer.py
-const ARASAAC_API = "https://api.arasaac.org/api/pictograms/en/bestsearch/";
-const ARASAAC_IMG = "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
+const ARASAAC_API = process.env.ERA_SYMBOL_SEARCH_URL || "https://api.arasaac.org/api/pictograms/en/bestsearch/";
+const ARASAAC_IMG = process.env.ERA_SYMBOL_IMAGE_URL || "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
 const PREWARM = ["sun", "cloud", "cold", "more", "shirt", "trousers", "13638", "dress",
                  "clothes", "house", "clock", "snack", "back", "yes"];
 
