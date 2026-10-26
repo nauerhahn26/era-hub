@@ -3,6 +3,12 @@
 // as public/icons/<id>.ico (desktop shortcuts) with a .png twin (home tiles);
 // Music and Movies were drawn to match. Runs against the live :8377 hub like
 // the other engine suites; the tile check drives the real home page.
+//
+// It only READS that hub. In the gate it is the shared hub every suite reads,
+// started over a copy of the test seed, and the seed carries profile.json, so
+// the home page already has its tiles. Answering the welcome wizard
+// (POST /setup) would make this the one suite that writes to the shared hub,
+// so it is opt-in: ICONS_SEED_PROFILE=1, for a fresh scratch hub only.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -12,6 +18,10 @@ import { chromium } from "playwright";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = "http://127.0.0.1:8377";
+const SEED_PROFILE = process.env.ICONS_SEED_PROFILE === "1";
+const NO_PROFILE = `the hub at ${BASE} has no profile, so its home page has no app tiles. ` +
+  "The gate's seed carries profile.json; against a fresh hub, set ICONS_SEED_PROFILE=1 " +
+  "to let this suite answer the welcome wizard (POST /setup).";
 let browser;
 before(async () => { browser = await chromium.launch(); });
 after(async () => { if (browser) await browser.close(); });
@@ -33,10 +43,20 @@ test("every app — engine included — has a real .ico on disk; every page app 
   }
 });
 
+test("the hub it reads already has a profile: nothing here writes to it unless ICONS_SEED_PROFILE=1", async (t) => {
+  if (SEED_PROFILE) { t.skip("ICONS_SEED_PROFILE=1: a fresh hub may be seeded by the next case"); return; }
+  const s = await (await fetch(`${BASE}/settings`)).json();
+  assert.equal(s.hasProfile, true, NO_PROFILE);
+  // in the gate the shared hub's data dir is a copy of this seed
+  const seed = process.env.ERA_GATE_SEED_DIR;
+  if (seed) assert.ok(fs.existsSync(path.join(seed, "profile.json")), `the gate's seed ${seed} has lost profile.json`);
+});
+
 test("the home page shows each app's icon on its tile", async () => {
   // the tiles only exist once a family has been through the welcome wizard
   const s = await (await fetch(`${BASE}/settings`)).json();
   if (!s.hasProfile) {
+    assert.ok(SEED_PROFILE, NO_PROFILE);
     const r = await fetch(`${BASE}/setup`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ childName: s.childName || "Zoe", dwellMs: s.dwellMs || 1200 }) });
     assert.equal(r.status, 204, "wizard setup so the tiles appear");

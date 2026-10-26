@@ -2,7 +2,8 @@
 // step 5): a page photo in, video/NNN.mp4 out, and the manifest re-published
 // after every single clip so a book gains its moving pictures as they arrive.
 //
-// PORTS: 8441 (the stand-in fal). No hub is spawned — the animate step adds no
+// PORTS: 8429 (the stand-in fal; 8441 is fal-key's, so this moved off it
+// 10/26 and no two suites share a port). No hub is spawned — the animate step adds no
 // route of its own (POST /content/run already carries {step}), so the module
 // and content.js's door are driven in-process and the plan's 8439 slot stays
 // with tests/fal-key.test.mjs.
@@ -10,7 +11,7 @@
 // MONEY GUARDRAIL (plan §B.2, Gap 20), and this is the sharpest one in the
 // product: fal is the only provider in the suite that bills real dollars per
 // press ($0.35 a clip). Every test here points ERA_FAL_URL at the stand-in on
-// 8441, builds its books inside a mkdtemp Drive folder, and reads no key file
+// 8429, builds its books inside a mkdtemp Drive folder, and reads no key file
 // on this machine — the two keys below are assembled at runtime and are not
 // credentials. The stand-in COUNTS what it was asked, and the counts are
 // asserted in both directions: zero on every path that must not spend (no key,
@@ -27,7 +28,7 @@ import { fileURLToPath } from "node:url";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(path.join(HUB, "server.js"));
-const FAKE = 8441;                       // plan §B: the stand-in fal, never a live hub
+const FAKE = 8429;                       // the stand-in fal, never a live hub (8441 = fal-key)
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-content-animate-"));
 const DATA = path.join(TMP, "data");
 const FOLDER = path.join(TMP, "My Drive", "New ERA Content");   // what Drive shows

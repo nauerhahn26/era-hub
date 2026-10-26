@@ -5,7 +5,8 @@
 //
 // PORTS: 8430 (the stand-in vision provider). No hub is spawned — T2.6 adds no
 // route (that is T2.9) — so the step is driven in-process and through a real
-// content-worker.js thread; the plan's 8429 hub slot stays unclaimed.
+// content-worker.js thread; the plan's 8429 hub slot went to content-animate's
+// stand-in on 10/26.
 //
 // MONEY GUARDRAIL (plan §B.2). Every call in this suite goes to 127.0.0.1:8430
 // through the ERA_AI_URL seam, the data dir is an mkdtemp of our own, and the

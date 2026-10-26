@@ -9,11 +9,12 @@
 // Two checkout hubs on loopback.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stopHubOnPort } from "./hub-port.mjs";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RX_PORT = 8486;   // the operator's hub (receiver)
@@ -50,7 +51,9 @@ async function up(port) {
 }
 
 before(async () => {
-  for (const p of [RX_PORT, TX_PORT]) spawnSync("pkill", ["-f", `server[.]js ${p}`]);
+  // a crashed earlier run's hubs may still hold the ports: stopped by pid once
+  // their command line proves they are `server.js <port>` (tests/hub-port.mjs)
+  for (const p of [RX_PORT, TX_PORT]) await stopHubOnPort(p);
   fs.mkdirSync(RX_DATA, { recursive: true });
   fs.mkdirSync(TX_DATA, { recursive: true });
   fs.writeFileSync(HOOK, `#!/bin/sh\necho "$1 $2" >> "${HOOK_LOG}"\n`, { mode: 0o755 });

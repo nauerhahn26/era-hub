@@ -31,7 +31,7 @@
 // repos' tests/ and every open worktree (9/26: moved off 8470/8471 — the
 // ellie-repository web + MCP servers took 8471/8472 on this box on 9/25, and
 // their 401 answered hub B's port in the gate). 8377 is the live family hub,
-// 8378 the gate's, 8469 the reader-share/reader-strip suites'.
+// 8378 the gate's, 8469 reader-share's (reader-strip moved to 8408 on 10/26).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

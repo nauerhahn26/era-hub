@@ -70,11 +70,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 8,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-clothing-coach.test.mjs",
@@ -85,11 +92,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 5,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-clothing-visuals.test.mjs",
@@ -100,11 +114,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser layout/access"
+      "level": "browser layout/access",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 3,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-content-note.test.mjs",
@@ -115,11 +136,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 2,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-edit.test.mjs",
@@ -130,11 +158,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser access/integration"
+      "level": "browser access/integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 15,
+      "heavy": true,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-events.test.mjs",
@@ -145,11 +180,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "unit + HTTP integration"
+      "level": "unit + HTTP integration",
+      "hub": "own",
+      "ports": [
+        8451
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-input.test.mjs",
@@ -160,11 +205,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser access"
+      "level": "browser access",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 8,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-lock.test.mjs",
@@ -175,11 +227,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser access/integration"
+      "level": "browser access/integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 13,
+      "heavy": true,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-model.test.mjs",
@@ -190,11 +249,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "unit with external fixture"
+      "level": "unit with external fixture",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-movies.test.mjs",
@@ -205,11 +270,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 12,
+      "heavy": true,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-music.test.mjs",
@@ -220,11 +292,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 4,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-partner-strip.test.mjs",
@@ -235,11 +314,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 14,
+      "heavy": true,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-pixel.test.mjs",
@@ -250,11 +336,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser layout/access"
+      "level": "browser layout/access",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-resilience.test.mjs",
@@ -265,11 +358,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser recovery"
+      "level": "browser recovery",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 6,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-routes.test.mjs",
@@ -280,11 +380,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "HTTP integration"
+      "level": "HTTP integration",
+      "hub": "own",
+      "ports": [
+        8390
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-splash-door.test.mjs",
@@ -295,11 +405,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser access"
+      "level": "browser access",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 3,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-talk-door.test.mjs",
@@ -310,11 +427,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser access/integration"
+      "level": "browser access/integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 10,
+      "heavy": true,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-this-week.test.mjs",
@@ -325,11 +449,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 6,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-board:tests/board-wardrobe-note.test.mjs",
@@ -340,11 +471,23 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser + HTTP integration"
+      "level": "browser + HTTP integration",
+      "hub": "shared-reader",
+      "ports": [
+        8407
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-core:tests/doorbar.test.mjs",
@@ -355,11 +498,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "browser"
       ],
-      "level": "browser component"
+      "level": "browser component",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-core:tests/dwell-engine.test.mjs",
@@ -370,11 +519,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser component"
+      "level": "browser component",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 10,
+      "heavy": true,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-core:tests/lib-contract.test.mjs",
@@ -385,11 +541,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "unit + static contract"
+      "level": "unit + static contract",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-core:tests/speech-barge-in.test.mjs",
@@ -400,11 +562,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "browser"
       ],
-      "level": "browser component"
+      "level": "browser component",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-core:tests/speech-engine.test.mjs",
@@ -415,11 +583,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser component"
+      "level": "browser component",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 6,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-core:tests/speech-overlap.test.mjs",
@@ -430,11 +605,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser component"
+      "level": "browser component",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 3,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-core:tests/speech-ready.test.mjs",
@@ -450,7 +632,15 @@
         "controlled-fetch-and-audio",
         "virtual-clock"
       ],
-      "level": "browser component"
+      "level": "browser component",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/ai-config.test.mjs",
@@ -461,11 +651,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/ai-key.test.mjs",
@@ -476,11 +672,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8431,
+        8449
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/apps.test.mjs",
@@ -491,11 +698,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8413
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/assemble-suffix.test.mjs",
@@ -506,11 +723,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "build/static contract and local behavior"
+      "level": "build/static contract and local behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/book-review-ui.test.mjs",
@@ -521,11 +744,23 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8435,
+        8440
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/book-sharing-e2e.test.mjs",
@@ -536,11 +771,23 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8473,
+        8474
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/books-share.test.mjs",
@@ -551,11 +798,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/books.test.mjs",
@@ -566,11 +819,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8392,
+        8398
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-api.test.mjs",
@@ -593,7 +857,15 @@
         "temporary-data",
         "synthetic-runtime-children",
         "shared-static-farm"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-browser.test.mjs",
@@ -621,7 +893,15 @@
         "temporary-data",
         "private-hub-data",
         "fresh-browser-and-store-instances"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 3,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-choices-adapter.test.mjs",
@@ -636,7 +916,15 @@
       "resources": [
         "owned-loopback-services",
         "provider-doubles"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-config.test.mjs",
@@ -649,7 +937,15 @@
       ],
       "resources": [
         "temporary-data"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-metrics.test.mjs",
@@ -667,7 +963,15 @@
         "injected-clock",
         "vm-application-helpers",
         "short-deadline-fixtures"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-native-speech.test.mjs",
@@ -686,7 +990,15 @@
         "owned-loopback-services",
         "owned-node-child",
         "provider-doubles"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-speech.test.mjs",
@@ -705,7 +1017,15 @@
         "owned-loopback-services",
         "owned-python-children",
         "synthetic-audio"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-storage-ui.test.mjs",
@@ -726,7 +1046,15 @@
         "speech-synthesis-double",
         "deferred-state-acknowledgements",
         "real-deadline-observation"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 2,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-storage.test.mjs",
@@ -742,7 +1070,15 @@
         "fetch-doubles",
         "deferred-promises",
         "short-deadline-fixtures"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-store.test.mjs",
@@ -762,7 +1098,15 @@
         "owned-loopback-services",
         "injected-filesystem-failures",
         "owned-shell-child"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-symbols.test.mjs",
@@ -779,7 +1123,15 @@
         "chromium",
         "offline-rendered-scenes",
         "private-browser-pages"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-ui.test.mjs",
@@ -795,7 +1147,15 @@
       "resources": [
         "in-process-voice-doubles",
         "vm-worklet-harness"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/chat-voice.test.mjs",
@@ -812,7 +1172,15 @@
         "storage-doubles",
         "mock-timers",
         "bounded-stream-fixtures"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-accessories.test.mjs",
@@ -823,11 +1191,20 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [
+        8467
+      ],
+      "browsers": 0,
+      "heavy": true,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-attrs.test.mjs",
@@ -838,11 +1215,20 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [
+        8462
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-diversity.test.mjs",
@@ -853,11 +1239,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-fit.test.mjs",
@@ -868,11 +1260,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-item.test.mjs",
@@ -883,11 +1281,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8468
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-log.test.mjs",
@@ -898,11 +1306,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-rank.test.mjs",
@@ -913,11 +1327,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-refit.test.mjs",
@@ -928,11 +1348,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8452,
+        8453
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-responsive.test.mjs",
@@ -943,11 +1374,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8417,
+        8418
+      ],
+      "browsers": 0,
+      "heavy": true,
+      "solo": true,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-share.test.mjs",
@@ -958,11 +1400,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8458,
+        8459
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-status.test.mjs",
@@ -973,11 +1426,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8461
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-sync-rebuild.test.mjs",
@@ -988,11 +1451,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8460
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-variety.test.mjs",
@@ -1003,11 +1476,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing-weather.test.mjs",
@@ -1018,11 +1497,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [
+        8446,
+        8447
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/clothing.test.mjs",
@@ -1033,11 +1522,20 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [
+        8416
+      ],
+      "browsers": 0,
+      "heavy": true,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-allowance.test.mjs",
@@ -1048,11 +1546,23 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8443,
+        8444,
+        8445
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-animate.test.mjs",
@@ -1063,11 +1573,20 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [
+        8429
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-build.test.mjs",
@@ -1078,11 +1597,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-claim.test.mjs",
@@ -1093,11 +1618,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-imprint.test.mjs",
@@ -1108,11 +1639,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-ingest.test.mjs",
@@ -1123,11 +1660,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-loose.test.mjs",
@@ -1138,11 +1681,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-narrate.test.mjs",
@@ -1153,11 +1702,20 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [
+        8432
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-publish.test.mjs",
@@ -1168,11 +1726,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8433
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-routes.test.mjs",
@@ -1183,11 +1751,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8434
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-store.test.mjs",
@@ -1198,11 +1776,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-transcribe.test.mjs",
@@ -1213,11 +1797,20 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [
+        8430
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/content-worker.test.mjs",
@@ -1228,11 +1821,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8428
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/device-id.test.mjs",
@@ -1243,11 +1846,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/device-volume.test.mjs",
@@ -1258,11 +1867,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "build/static contract and local behavior"
+      "level": "build/static contract and local behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/drawing-scene.test.mjs",
@@ -1273,11 +1888,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/drawing-ui.test.mjs",
@@ -1288,11 +1909,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8478
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": true,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/drawings.test.mjs",
@@ -1303,11 +1935,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8477,
+        8479
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/drive-launch.test.mjs",
@@ -1318,11 +1961,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8455
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/drive-localfolder.test.mjs",
@@ -1333,11 +1986,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8442
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/drive-mirror.test.mjs",
@@ -1348,11 +2011,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module integration with local fixtures"
+      "level": "module integration with local fixtures",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/era-scan-parity.test.mjs",
@@ -1363,11 +2032,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "build/static contract and local behavior"
+      "level": "build/static contract and local behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/erabook.test.mjs",
@@ -1378,11 +2053,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/fal-key.test.mjs",
@@ -1393,11 +2074,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8439,
+        8441
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/games-audio.test.mjs",
@@ -1416,7 +2108,15 @@
         "owned-loopback-services",
         "private-browser-storage",
         "deferred-audio-context-double"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/games-save.test.mjs",
@@ -1437,7 +2137,15 @@
         "owned-loopback-services",
         "private-browser-storage",
         "private-hub-data"
-      ]
+      ],
+      "hub": "own",
+      "ports": [],
+      "browsers": 7,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/games-state.test.mjs",
@@ -1452,7 +2160,15 @@
       ],
       "resources": [
         "in-process"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/games-ui.test.mjs",
@@ -1472,7 +2188,15 @@
         "private-browser-storage",
         "real-dwell-timers",
         "rendered-catalog-matrix"
-      ]
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": true,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/gate-safety.test.mjs",
@@ -1487,7 +2211,15 @@
         "gate-lock",
         "synthetic-git-repositories"
       ],
-      "level": "runner integration"
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/gate-stamp.test.mjs",
@@ -1498,11 +2230,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "build/static contract and local behavior"
+      "level": "build/static contract and local behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/gaze-recompile.test.mjs",
@@ -1513,11 +2251,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8476
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/gaze-status.test.mjs",
@@ -1528,11 +2276,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8489,
+        8491
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/gaze-supervisor.test.mjs",
@@ -1543,8 +2302,41 @@
         "era-hub/tests/gaze-supervisor.test.mjs"
       ],
       "lane": "linux",
-      "resources": [],
-      "level": "unit"
+      "resources": [
+        "in-process"
+      ],
+      "level": "unit",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/harvest-durations.test.mjs",
+      "purpose": "Per-suite wall times harvested from green gate directories for longest-first lanes",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/testing/harvest-durations.mjs",
+        "era-hub/tests/harvest-durations.test.mjs"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data",
+        "owned-node-child"
+      ],
+      "level": "module and filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/home-tiles.test.mjs",
@@ -1555,11 +2347,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8448
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/icons.test.mjs",
@@ -1570,11 +2373,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/image-orient.test.mjs",
@@ -1585,11 +2395,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/image-util.test.mjs",
@@ -1600,11 +2416,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/integration-queue.test.mjs",
@@ -1619,7 +2441,15 @@
         "gate-lock",
         "synthetic-git-repositories"
       ],
-      "level": "runner integration"
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/invariants.test.mjs",
@@ -1630,11 +2460,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/kiosk-pause.test.mjs",
@@ -1645,11 +2482,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8463,
+        8464
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/mail.test.mjs",
@@ -1660,11 +2508,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8419,
+        8420
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/maker-drop.test.mjs",
@@ -1675,11 +2534,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8400
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/math-state.test.mjs",
@@ -1690,11 +2559,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/math-ui.test.mjs",
@@ -1705,11 +2580,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": true,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/movies-add.test.mjs",
@@ -1720,11 +2601,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8437
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/movies-lookup.test.mjs",
@@ -1735,11 +2626,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8438
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/movies.test.mjs",
@@ -1750,11 +2651,23 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8404,
+        8405,
+        8406
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/music-add.test.mjs",
@@ -1765,11 +2678,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8436
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/music-pictures.test.mjs",
@@ -1780,11 +2703,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/music.test.mjs",
@@ -1795,11 +2724,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8402,
+        8403
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/packs.test.mjs",
@@ -1810,11 +2750,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "temporary-data"
       ],
-      "level": "build/static contract and local behavior"
+      "level": "build/static contract and local behavior",
+      "hub": "own",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/parallel-gate.test.mjs",
@@ -1837,7 +2784,15 @@
         "approved-host-test-port",
         "private-mount-network-pid-namespaces"
       ],
-      "level": "runner integration"
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/pencil-ui.test.mjs",
@@ -1848,11 +2803,23 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8421,
+        8422
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/play-ui.test.mjs",
@@ -1863,11 +2830,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8466
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": true,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/pool.test.mjs",
@@ -1878,11 +2856,24 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8393,
+        8394,
+        8395,
+        8396
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/predict.test.mjs",
@@ -1893,11 +2884,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "temporary-data"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/presence.test.mjs",
@@ -1908,11 +2906,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8486,
+        8487
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": true,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/reader-share.test.mjs",
@@ -1923,11 +2932,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8469
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/reader-shelf.test.mjs",
@@ -1938,11 +2958,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8454
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/reader-sizing.test.mjs",
@@ -1953,11 +2984,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8450
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/reader-strip.test.mjs",
@@ -1968,11 +3010,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8408
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/reader-ui.test.mjs",
@@ -1983,11 +3036,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8391
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/reconcile.test.mjs",
@@ -1998,11 +3062,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8414,
+        8415
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/routes.test.mjs",
@@ -2013,11 +3088,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8409
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/settings-library.test.mjs",
@@ -2028,11 +3113,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/settings-navigation.test.mjs",
@@ -2043,11 +3134,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "browser"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/settings-ui.test.mjs",
@@ -2058,11 +3155,23 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8399,
+        8475
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/setup.test.mjs",
@@ -2073,11 +3182,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8397
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/shortcuts.test.mjs",
@@ -2088,11 +3207,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "build/static contract and local behavior"
+      "level": "build/static contract and local behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/start-hub-bat.test.mjs",
@@ -2103,11 +3228,68 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "build/static contract and local behavior"
+      "level": "build/static contract and local behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/suite-classes.test.mjs",
+      "purpose": "Every suite carries its scheduling classes (hub use, fixed ports, browser launches, heavy, solo, quiet, retry, owner), typed and equal to what classify-suites derives from the sources",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/testing/classify-suites.mjs",
+        "era-hub/tools/testing/suite-source.mjs",
+        "era-hub/tools/testing/registry.json",
+        "suite sources of all five repositories"
+      ],
+      "lane": "linux",
+      "resources": [
+        "sibling-suite-sources",
+        "owned-node-child",
+        "temporary-data"
+      ],
+      "level": "static contract and local process behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/suite-ports.test.mjs",
+      "purpose": "Every fixed listener port claimed by one suite only, none in a reserved band, and no kill-by-name in any suite",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tests/**",
+        "era-hub/tools/testing/suite-source.mjs",
+        "collected suite sources of all five repositories"
+      ],
+      "lane": "linux",
+      "resources": [
+        "collected-suite-sources",
+        "owned-node-child",
+        "ephemeral-loopback-ports"
+      ],
+      "level": "static contract and local process behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/symbol-provider.test.mjs",
@@ -2119,9 +3301,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock"
+        "temporary-data"
       ],
-      "level": "module unit"
+      "level": "module unit",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/test-suite.test.mjs",
@@ -2136,7 +3326,15 @@
         "gate-lock",
         "synthetic-git-repositories"
       ],
-      "level": "runner integration"
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/this-week-fetch.test.mjs",
@@ -2147,11 +3345,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8457
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/this-week-recipe.test.mjs",
@@ -2162,11 +3370,21 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8456
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/update-boot.test.mjs",
@@ -2177,11 +3395,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8423,
+        8424
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": true,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/update-wake.test.mjs",
@@ -2192,11 +3421,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/update.test.mjs",
@@ -2207,11 +3442,23 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8410,
+        8411,
+        8412
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/vm-e2e.test.mjs",
@@ -2222,11 +3469,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "temporary-data"
       ],
-      "level": "build/static contract and local behavior"
+      "level": "build/static contract and local behavior",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/watch-ui.test.mjs",
@@ -2237,11 +3490,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "browser",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "browser integration"
+      "level": "browser integration",
+      "hub": "own",
+      "ports": [
+        8427
+      ],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/weather-location.test.mjs",
@@ -2252,11 +3516,22 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
       ],
-      "level": "hub process integration"
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8401,
+        8426
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/windows-parallel.test.mjs",
@@ -2275,7 +3550,15 @@
         "owned-local-processes",
         "owned-loopback-listeners"
       ],
-      "level": "runner integration"
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-hub:tests/words.test.mjs",
@@ -2286,11 +3569,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "in-process"
       ],
-      "level": "module unit/local filesystem"
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/bargein.js",
@@ -2301,11 +3590,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/fltest.js",
@@ -2316,11 +3612,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/layout.test.mjs",
@@ -2331,11 +3634,17 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "browser"
       ],
-      "level": "browser layout/access"
+      "level": "browser layout/access",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/mistakes.js",
@@ -2346,11 +3655,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/narrow.js",
@@ -2361,11 +3677,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/parts.js",
@@ -2376,11 +3699,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/phonetic.js",
@@ -2391,11 +3721,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/rhymecount.js",
@@ -2406,11 +3743,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/run.js",
@@ -2421,11 +3765,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/sortbugs.js",
@@ -2436,11 +3787,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/sortfix.js",
@@ -2451,11 +3809,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/transfer.js",
@@ -2466,11 +3831,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-making-words:tests/transfercount.js",
@@ -2481,11 +3853,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     },
     {
       "id": "era-pencil:tests/pencil.js",
@@ -2496,11 +3875,18 @@
       ],
       "lane": "linux",
       "resources": [
-        "gate-lock",
-        "shared-assembly",
-        "fixed-ports"
+        "shared-hub",
+        "browser"
       ],
-      "level": "legacy browser integration"
+      "level": "legacy browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     }
   ],
   "support": [
@@ -2826,6 +4212,16 @@
         "era-making-words:tests/transfer.js",
         "era-making-words:tests/transfercount.js",
         "era-pencil:tests/pencil.js"
+      ]
+    },
+    {
+      "id": "era-hub:tests/hub-port.mjs",
+      "purpose": "Stops the hub holding a suite's own fixed port by its verified pid, never by command-line pattern",
+      "consumers": [
+        "era-hub:tests/presence.test.mjs",
+        "era-hub:tests/suite-ports.test.mjs",
+        "era-hub:tests/update-boot.test.mjs",
+        "era-hub:tests/update.test.mjs"
       ]
     },
     {
