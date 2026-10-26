@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewed": "2026-10-25",
+  "reviewed": "2026-10-26",
   "repositories": [
     "era-core",
     "era-making-words",
@@ -13,6 +13,7 @@
     "era-core:tests/lib-contract.test.mjs",
     "era-core:tests/dwell-engine.test.mjs",
     "era-core:tests/doorbar.test.mjs",
+    "era-core:tests/speech-ready.test.mjs",
     "era-hub:tests/kiosk-pause.test.mjs"
   ],
   "rules": [
@@ -432,6 +433,22 @@
         "gate-lock",
         "shared-assembly",
         "fixed-ports"
+      ],
+      "level": "browser component"
+    },
+    {
+      "id": "era-core:tests/speech-ready.test.mjs",
+      "purpose": "Production speech probe readiness, bounded fallback, no-init compatibility and cancellation during initialization",
+      "group": "shared-access",
+      "dependencies": [
+        "era-core/speech.js"
+      ],
+      "lane": "linux",
+      "resources": [
+        "chromium",
+        "owned-browser-pages",
+        "controlled-fetch-and-audio",
+        "virtual-clock"
       ],
       "level": "browser component"
     },
@@ -2153,6 +2170,7 @@
         "era-core:tests/speech-barge-in.test.mjs",
         "era-core:tests/speech-engine.test.mjs",
         "era-core:tests/speech-overlap.test.mjs",
+        "era-core:tests/speech-ready.test.mjs",
         "era-hub:tests/ai-config.test.mjs",
         "era-hub:tests/ai-key.test.mjs",
         "era-hub:tests/apps.test.mjs",
@@ -2296,6 +2314,7 @@
         "era-core:tests/speech-barge-in.test.mjs",
         "era-core:tests/speech-engine.test.mjs",
         "era-core:tests/speech-overlap.test.mjs",
+        "era-core:tests/speech-ready.test.mjs",
         "era-hub:tests/ai-config.test.mjs",
         "era-hub:tests/ai-key.test.mjs",
         "era-hub:tests/apps.test.mjs",

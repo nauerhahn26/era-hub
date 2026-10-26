@@ -169,3 +169,27 @@ tuple, update the execution registry and shared-helper consumer lists, and run
 its completeness check. Keep measured suite durations and initial outcomes in
 run receipts. Do not remove cases or split stateful files merely to reduce the
 reported suite count.
+
+## Published shared speech readiness supplement
+
+Core `02377c5471b6bf2eac71a3554cb65658992456aa` adds
+`tests/speech-ready.test.mjs`. Retain all four cases: a sentence during the voice
+probe waits for the chosen voice, a stalled probe falls back after a bounded
+wait, callers without initialization retain immediate local speech, and stopping
+a waiting sentence preserves the probe while suppressing the stale sentence.
+These protect production `speech.js` with controlled fetch, Audio and speech
+synthesis in Chromium. They require no hub, network service, credentials or
+physical speaker. The four-second fallback uses a virtual clock.
+
+This boundary is distinct from `lib-contract`'s static values and `dwell-engine`'s
+activation and rearm behavior. `speech-barge-in` awaits initialization before
+checking delayed clip cancellation, so it cannot detect this startup race.
+One targeted run passed all four cases with zero skips or TODOs in 1.82 seconds
+including browser startup. This small shared regression suite therefore joins
+the always-run development smoke set; the observation is not a runtime budget
+or a substitute for complete gate evidence.
+
+The registry refused the new executable suite before classification. Its exact
+speech dependency, browser resources and conservative helper consumer membership
+are now registered, with review date 2026-10-26. Core changes still select the
+complete gate. Unmerged Chat and Games entries above remain drafts.
