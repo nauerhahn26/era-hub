@@ -57,10 +57,21 @@ without touching any pinned test.
       suites). After phase 2 it reads `results.jsonl` instead; refreshed on
       every green master gate, committed weekly. Test: a synthetic gate dir
       yields the expected table.
-- [ ] 0.4 (an observer script that samples the gate's process-tree RSS, host
-      MemAvailable, swap and the running suite every 2 s is ready in the
-      session scratchpad; it rides along the first Phase 1 landing gate instead
-      of costing a run of its own.) Memory profile: one instrumented serial run (`ERA_GATE_LANES=1`, a
+- [x] 0.4 (first pass 10/26 on the landing gate, 989 samples at 2 s: host
+      MemAvailable 4.28 GiB at start, 3.25 GiB at the floor, so the whole gate
+      drew at most 1.03 GiB above the idle host. Draw by suite, start minus
+      the suite's lowest MemAvailable: clothing 1.03 GiB, clothing-accessories
+      0.76, weather-location 0.71, clothing-responsive 0.56, clothing-weather
+      0.53, reader-ui 0.49, clothing-share 0.47, suite-classes 0.45,
+      update-boot 0.42, pencil 0.40, clothing-attrs 0.30, book-review-ui 0.30,
+      settings-ui 0.28; everything else under 0.26. Host-level deltas, so
+      other activity is folded in; the sampler's process-tree RSS column was
+      empty on this run (a shell bug, fixed) and the next landing gate gives
+      the exact per-tree figure. Reading: two heavy clothing suites side by
+      side cost about 1.8 GiB, three lanes of ordinary suites under 1 GiB;
+      with the host floor at 3.25 GiB today, two lanes always fit and three
+      fit whenever no two heavy suites coincide, which the heavy class
+      already prevents.) Memory profile: one instrumented serial run (`ERA_GATE_LANES=1`, a
       sampler recording tree RSS per running suite) to learn the per-suite
       peak; record the ten heaviest here. Expected: the clothing family
       (wasm), board suites with 13 to 15 Chromium launches, drawing-ui,
@@ -126,7 +137,112 @@ without touching any pinned test.
       8410 was cleared.) Replace `pkill -f "server[.]js <port>"` in presence, update and
       update-boot with pid-tracked kills of the child they spawned (house law;
       gate-stamp already pins that the gate itself has no pkill).
-- [ ] 1.3 Shared-hub background rebuild seam: `ERA_CLOTHING_TICK_MS` (0
+- [ ] 1.3 Per-suite speedups (added 10/26 after dad asked "nothing to speed up
+      the existing tests?"). Eight profilers and eight skeptics (Opus) audited
+      the twelve longest suites, 1632 s of the 2120 s gate. Verified: 772 s
+      is removable without changing what a test proves; 850 s is real work.
+      Verified by family (now / removable / floor, seconds): clothing 369 /
+      233 / 136; clothing-accessories 194 / 124 / 70; clothing-share, -attrs,
+      -weather, -responsive, -refit 233 / 80 / 145; drawing-ui 122 / 60 / 62;
+      play-ui, games-ui, math-ui, watch-ui 191 / 62 / 129; reader-ui and
+      reader-share 107 / 52 / 55; pencil, run, narrow, parts 183 / 115 / 68;
+      the 111 small suites 232 / 46 / 185.
+
+      Where the time went. clothing.test pays 25 photo-loop sleeps of a literal
+      5 s (clothing-worker.js:1052; `usedAi` is set before the provider call,
+      so failed attempts sleep too) and 14 quick-retry gaps of 3 s (:567): 167 s
+      of sleep against a stand-in provider, in one 35-case file. The remaining
+      long poles are real compute (one cut-out inference about 2.4 s, a WASM
+      session load about 0.9 s, a full board redraw about 0.15 s per outfit)
+      and fixed waits in browser suites (400 ms audit settles in
+      invariants.mjs, 300 ms in-page sleeps, 2 s finger holds that are
+      product law, pencil's 450 ms park sleep).
+
+      Decision taken by the overseer, flagged for dad: review r1 ruled that
+      "a stray ERA_AI_SPACING_MS must not be able to remove" the 5 s defence.
+      That ruling stands for environment variables. The seam built here is an
+      explicit `pacing` option passed through `clothing.start()` by test code
+      only; server.js never passes it, no environment variable reaches it, and
+      a unit test pins all three facts. Production defaults are unchanged.
+
+      Not done, by the skeptics' blockers: the segmentation skip (changes
+      what two cut-out cases prove, needs a per-build toggle); fake clocks in
+      play-ui and watch-ui (their negative "unchanged after 900 ms" checks
+      flake with a running clock); any change to her dwell timings (law);
+      merging the legacy scripts (their list is hard-coded in eight places
+      across two repos); the update exit seam (would stop exercising the
+      bind-retry path a real self-update depends on).
+
+      Intra-suite concurrency (dad: "can the tests themselves run some in
+      parallel too?"): possible in node:test by moving cases under a
+      `describe` with a concurrency option, but no long suite is written for
+      it. Each shares one hub and one data directory per file, several share
+      one page, and the browser suites share Chromium's speech queue. Making
+      cases independent means a hub, a data dir and a port per case (or
+      hubs on port 0), 80 to 250 MB per concurrent case, on a host whose
+      memory is the binding limit. The verified gain is 8 s for the hub
+      suites and only drawing-ui would gain more, at the cost of moving 84
+      cases under describe blocks. Decision: not now; lanes between suites
+      plus the seams above deliver the win, and the split is revisited once
+      the per-suite floors dominate.
+
+      New fact for phase 2: kiosk-pause and routes bind a stand-in gaze
+      engine on 127.0.0.1:49155, and every reader hub, pencil page and
+      dwell.js browser suite talks to 49155 when ERA_GAZE is not pointed
+      elsewhere. The port extractor misses it (a listen on a literal inside a
+      helper). 49155 must become an exclusive resource in the registry before
+      any two of those suites share a gate run.
+
+      Batch S1 (era-hub only, one landing): the pacing option and the
+      pacing-zero calls in every clothing suite that starts the module in
+      process; makeJpg memoisation in synthetic-wardrobe.mjs (byte-identical
+      fixtures); clothing-responsive seeds 2 photos, not 6, and asserts the
+      rounds it measured; clothing-item polls `building` every 50 ms once;
+      an opt-in `ready` predicate in invariants.mjs for drawing states;
+      reducedMotion on play-ui's two Sort-shuffle cases; an event-waited
+      positive hold in reader-share; a shorter settle in drive-launch; and
+      the shared-hub tick seam below. DONE 10/26: measured one suite at a
+      time, clothing 353 to 188 s, clothing-accessories 184 to 121,
+      clothing-responsive 60 to 12 (2 photos, still 10 latency rounds inside
+      the build), clothing-weather 45 to 24, clothing-attrs 36 to 18,
+      clothing-refit 19 to 6, clothing-item 9.5 to 1.4, drawing-ui 105 to 96,
+      play-ui 83 to 77, reader-share 33 to 29, drive-launch 6 to 2.6,
+      invariants 25 to 21; every pass count unchanged; two new suites
+      (clothing-pacing 1 s, clothing-schedule 22.5 s on port 8425). About
+      370 s net off the serial gate, not the audit's 450 to 550: clothing-share
+      spends its time in hubs that never ask the provider about photos, and
+      the shared hub's awaited build never rewrites the seed's today.json
+      (the seed has no wardrobe), so board-input and board-pixel read the
+      seed's own recipe as they always did. Dad 10/26: "Don't wait 5s in the
+      testing environment." Implemented as a rule, not an env: the worker
+      waits 0 when ERA_AI_URL names this machine (127.0.0.1, localhost,
+      [::1]) because there is no real provider to protect, 5 s and 3 s for
+      any other or no URL; ERA_AI_SPACING_MS reaches neither; an explicit
+      clothing.start({aiPacing}) from test code wins over both; a family's
+      hub never sets ERA_AI_URL. clothing-pacing pins every branch, including
+      lookalike hosts. The worker posts its pacing once at load so the test
+      can read it without sleeping.
+      Batch S2 (DONE 10/26, committed in `era-pencil--wt-testing-parallelization`
+      and `era-making-words--wt-testing-parallelization`; the era-hub gate
+      must run with ERA_WT_SUFFIX=--wt-testing-parallelization to collect
+      them): pencil.js drops the 450 ms park sleep (25 a run, waited for
+      nothing: re-arming is distance-only and the park spot is not a dwell
+      target) and reads predictions after their single paint; run, parts and
+      narrow wait for the event each sleep stood for (the engine's
+      dwell:activate on the gazed element, lessons and runway loaded, the
+      phase reached, the /runway or /log row landed, viewport plus two
+      frames), every wait bounded and falling through to the original
+      checks. Measured against a scratch hub with the gate's port rewrite:
+      run 33 to 11 s, parts 25 to 5, narrow 25 to 4, pencil 84 to 73; same
+      pass lines (28, 15, 9, 24), identical check details. 76 s saved, not
+      the audit's 100: the speech self-test fails in 18 to 56 ms headless,
+      not 3 s, so stubbing it was worth nothing, and the rest of pencil's
+      hold margins (about 16 s) were not in scope. The audit also missed
+      that parts' first 300 ms and run's 900 ms door wait covered real
+      events; both now have explicit waits.
+      Later, if wanted: the segmentation skip (about 60 s more on clothing).
+
+- [ ] 1.3a Shared-hub background rebuild seam: `ERA_CLOTHING_TICK_MS` (0
       disables the 20 s one-shot and the 15 min interval); the gate exports 0
       for its shared hub and performs one awaited `POST /clothing/regenerate`
       after readiness, before any suite starts. The env prefix stays on the
@@ -164,7 +280,9 @@ without touching any pinned test.
       every field; `solo` = clothing-responsive; `heavy` = the segmentation
       suites; `quiet` = games-ui, math-ui, play-ui, drawing-ui, presence,
       update-boot; `retry: true` requires `owner`.
-- [ ] 1.6 (revised: three landings, not six — hygiene + harvester + classes
+- [ ] 1.6 (first landing 10/26 20:12 UTC: gate 161/0 in 33 min 16 s (19:38:53 to
+      20:12:09), landed as master 3a783fe with hygiene, harvester, classes and
+      the Windows leg B fix. Revised: three landings, not six — hygiene + harvester + classes
       in one gate once the Windows leg B fix is in; seams + per-suite speedups
       in a second; anything the speedup review adds in a third.) Land each
       batch on its own green gate; record the gate times here.
