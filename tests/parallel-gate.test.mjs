@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import '../tools/testing/test/parallel-capacity.test.mjs';
 import '../tools/testing/test/parallel-snapshot.test.mjs';
 import {
-  jobPath, executionEnvironment, parseProgress, estimateQueue,
+  jobPath, executionEnvironment, parseProgress, estimateQueue, recordedGateStats,
   runtimeManifest, verifyRuntime, copyControlBundle, runPreflight, runReversePreflight, stateDirectory, readStatus, PYTHON,
 } from '../tools/testing/parallel-worker.mjs';
 
@@ -56,8 +56,29 @@ test('progress keeps source gate outcomes and never treats a partial summary as 
 
 test('queue estimates remain unknown until an actual completed full gate exists',()=>{
   assert.equal(estimateQueue([],2).seconds,null);
-  const result=estimateQueue([{status:'passed',gateSeconds:1200},{status:'failed',gateSeconds:2},{status:'passed',gateSeconds:1800}],2);
+  const result=estimateQueue([
+    {status:'stale',reason:'Origin HEAD moved',result:{valid:true,gateExitCode:0,summary:'== era-gate: 140 passed, 0 failed ==',gateSeconds:1200}},
+    {status:'failed',result:{valid:false,gateExitCode:1,summary:'== era-gate: 139 passed, 1 failed ==',gateSeconds:2}},
+    {status:'passed',result:{valid:true,gateExitCode:0,summary:'== era-gate: 143 passed, 0 failed ==',gateSeconds:1800}},
+  ],2);
   assert.equal(result.samples,2);assert.equal(result.seconds,3000);
+});
+
+test('historical full pilot reporting survives stale origins without accepting incomplete proof',()=>{
+  const result={valid:true,gateExitCode:0,summary:'== era-gate: 140 passed, 0 failed ==',gateSeconds:2042};
+  const stale={status:'stale',reason:'Origin HEAD moved',stamps:null,result};
+  assert.deepEqual(recordedGateStats([stale],1),{fullPilotValidated:true,eta:estimateQueue([stale],1)});
+  assert.equal(stale.status,'stale');assert.equal(stale.stamps,null);
+  for(const invalid of [
+    {...result,valid:false}, {...result,gateExitCode:1}, {...result,summary:'== affected tests: 1 passed; failures=0; no full stamp =='},
+    {...result,summary:null}, {...result,summary:'== era-gate: 0 passed, 0 failed =='}, {...result,summary:'== era-gate: 139 passed, 1 failed =='},
+    {...result,gateSeconds:0}, {...result,gateSeconds:NaN}, {...result,gateSeconds:undefined},
+  ]) {
+    const stats=recordedGateStats([{status:'passed',result:invalid}],2);
+    assert.equal(stats.fullPilotValidated,false);assert.equal(stats.eta.samples,0);assert.equal(stats.eta.seconds,null);
+  }
+  assert.equal(recordedGateStats([{status:'passed'}],1).fullPilotValidated,false);
+  assert.equal(recordedGateStats([{status:'failed',result:{...result,valid:false}}],1).fullPilotValidated,false);
 });
 
 test('runtime identity covers file bytes, links and mode, and rejects escaping links',t=>{

@@ -98,11 +98,20 @@ export function parseProgress(text) {
   }
   return {completed:outcomes.length,failed:outcomes.filter(row=>row.status==='fail').length,lastSuite:outcomes.at(-1)?.name || null,activeSuite,summary};
 }
+export function hasRecordedFullResult(job) {
+  const result=job?.result;
+  if(result?.valid!==true || result.gateExitCode!==0 || !Number.isFinite(result.gateSeconds) || result.gateSeconds<=0 || typeof result.summary!=='string') return false;
+  const summary=/^== era-gate: ([1-9]\d*) passed, 0 failed(?: →[^\r\n]*)? ==$/.exec(result.summary);
+  return !!summary && summary[0]===result.summary;
+}
 export function estimateQueue(results,ahead) {
-  const seconds=results.filter(row=>row.status==='passed' && Number.isFinite(row.gateSeconds) && row.gateSeconds>0).map(row=>row.gateSeconds).sort((a,b)=>a-b);
+  const seconds=results.filter(hasRecordedFullResult).map(row=>row.result.gateSeconds).sort((a,b)=>a-b);
   if(!seconds.length) return {seconds:null,samples:0,note:'No validated complete parallel gate has finished; ETA is not established'};
   const median=seconds.length%2?seconds[(seconds.length-1)/2]:(seconds[seconds.length/2-1]+seconds[seconds.length/2])/2;
-  return {seconds:Math.round(median*ahead),samples:seconds.length,note:'Estimate from completed full gates; source scope and host load may differ'};
+  return {seconds:Math.round(median*ahead),samples:seconds.length,note:'Estimate from historically validated full results; current acceptance, source scope and host load may differ'};
+}
+export function recordedGateStats(jobs,ahead) {
+  return {fullPilotValidated:jobs.some(hasRecordedFullResult),eta:estimateQueue(jobs,ahead)};
 }
 function processAlive(worker) {
   if(!worker?.pid || !worker.startTicks) return false;

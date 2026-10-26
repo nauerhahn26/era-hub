@@ -7,13 +7,13 @@ alone may replace its own queued job. Existing running gates remain untouched.
 
 ## Availability
 
-The source-isolation proof passed all 35 clothing cases. The standalone runner,
-source snapshot and resource admission safeguards pass their synthetic and real
-namespace preflight checks. Two complete 139-suite pilots finished red because
-of fixture defects; their results were never accepted as green. The current
-combined-runtime Chat and Games gates are running with all known fixture repairs.
-Do not treat preliminary checks as a full landing or release stamp. Commands and
-boundaries: [isolated full gates](../../tools/testing/parallel-worker.README.md).
+Two complete Linux gates have now passed concurrently: Chat's isolated pilot
+passed 140/140 and Games' legacy gate passed 143/143. Both owners verified their
+full source tuples, runtime inputs, complete collection and genuine stamps.
+The standalone runner's safeguards also pass 40/40 synthetic and real namespace
+checks. Two earlier 139-suite pilots finished red because of fixture defects;
+their results were never accepted as green. Commands and boundaries:
+[isolated full gates](../../tools/testing/parallel-worker.README.md).
 
 Initial capacity is one isolated gate plus the reserved legacy gate lane,
 subject to available RAM and CPU. Each isolated run has private sources, data,
@@ -28,8 +28,8 @@ invalidate promotion. Final landing and publication remain serialized.
 | Math | Existing run unchanged | v1.0.13 completed 132/0 plus Windows 8/8 | No migration requested |
 | YouTube Videos | `2597549` includes `fe2e9e7`; file hash verified | v1.0.14 completed 132/0 plus Windows 8/8 | Owner explicitly agrees to use the runner on a next necessary run after full pilot validation |
 | Speech and sorting follow-up | Existing legacy lane | v1.0.15 completed 133/0 plus Windows 8/8; actual Hub `cbfbb8d` and Core `02377c5` are now predecessors | Owner confirms no further repository landings during the Chat/Games batch |
-| Chat | Fixture stages and both Reader repairs adopted | Frozen Hub `81fcabb`, Core `02377c5`, Board `395d02b`; every dependency is pinned in matching worktrees | Full 140-suite isolated run started 01:54 UTC, port 8388, two CPUs |
-| Games | Same fixture repairs adopted before collection | Frozen Hub `c097524`, Core pin `02377c5`, Board `fca7f91`; 143-suite inventory verified | Full 143-suite legacy run started 01:56:53 UTC on 8381 alongside Chat |
+| Chat | Fixture stages and both Reader repairs adopted | Tested Hub `81fcabb`, Core `02377c5`, Board `395d02b`; every dependency pinned in matching worktrees | Full 140/140 isolated run, 01:54–02:28 UTC, port 8388, two CPUs; original stamps privately archived before allowed documentation sync |
+| Games | Same fixture repairs adopted before collection | Tested Hub `c097524`, Core `02377c5`, Board `fca7f91`; complete fingerprint unchanged at postflight | Full 143/143 legacy run, 01:56:53–02:29:14 UTC on 8381 alongside Chat; owner postflight verified at 02:29:49 UTC |
 
 These are observations and acknowledgments at the time of writing, not a
 reservation of publication order or version numbers. Recheck the original
@@ -38,11 +38,21 @@ execution from source movement; it does not waive the requirement to include
 current master when landing. Candidates can overlap usefully when later ones
 already include the frozen earlier source, or when earlier changes have landed.
 
-The active Chat job is `gate-20261026T015400Z-b27fb428`. Games owns its separate
-legacy job and completion sentinel. The initial intended ordering changed when
+The completed Chat job is `gate-20261026T015400Z-b27fb428`; its private
+`verified-receipt` retains all six original stamp bytes and hashes, manifest,
+result and resource observations. Games owns its separate legacy job and
+completion sentinel; its verified postflight is recorded with that job. The
+initial intended ordering changed when
 the speech/sorting release was authorized and shipped first. Both candidates
 now include that actual runtime. New publication still requires each owner's
 authorization; Games publication has not been inferred from test coordination.
+
+Chat acknowledged its normal Board then Hub landing and patch build under the
+shared release/VM locks. The accepted source is `e3a03653` after documentation
+changes only. Games acknowledged waiting for Chat's lock handoff before its own
+Windows acceptance. Windows, version selection and publication remain in series;
+each release still runs its required complete Windows leg. Testing will not land
+into master during this release window.
 
 ## Verification and timing
 
@@ -68,16 +78,11 @@ case took 15.498 seconds and the label-budget case 0.520 seconds. These fixture
 improvements are secondary to the parallel-gate work.
 
 The first full pilot started on 2026-10-26 at 00:06 UTC, job
-`gate-20261026T000616Z-e0a2d99d`, using the frozen Chat tuple in the table. Its
-complete expected inventory contains 139 suites. It runs alongside YouTube's
-existing legacy gate. This original pilot retains its collected port and code;
-new legacy starts are held while it runs. Future isolated jobs use 8388 so the
-host legacy gate's 8378 cleanup cannot match them. Both cleanup directions and
-nested namespace execution passed owned synthetic checks before that change.
-
-No measured complete parallel-gate duration is available yet. Record the first
-pilot's complete inventory, input verification, start/end times, peak resource
-use and receipt location before giving a firm revised queue completion time.
+`gate-20261026T000616Z-e0a2d99d`, using the earlier Chat candidate `28fc5be`.
+It ran alongside YouTube's legacy gate. Its collected port and code remained
+unchanged. Later isolated jobs use 8388 so the host legacy gate's 8378 cleanup
+cannot match them. Both cleanup directions and nested namespace execution
+passed owned synthetic checks before that change.
 
 The first pilot completed all 139 suites with 137 passing and two failing; no
 green stamp was issued or accepted. Music still required an external numeric
@@ -88,3 +93,24 @@ identity plus cache behavior; Reader waits for independent rendered-grid
 readiness after both navigations while retaining the original state assertions.
 Both complete files passed in fresh no-egress namespaces. These test changes
 require a fresh complete candidate gate under the existing acceptance policy.
+
+The second complete pilot passed 138/139 and exposed a separate Reader fixture
+that claimed an alphabetical tie while generating distinct date keys. Commit
+`309b603` makes those keys equal and asserts that precondition; all 17 Reader
+cases passed with an adversarial clock that made the old fixture fail. Both
+final candidates also include the subsequently published real shared speech and
+sorting changes; their integration required the fresh complete 140/143 gates.
+
+The successful isolated gate took 2,041.778 seconds (34.03 minutes), including
+every expected suite once, with all modern skipped and todo counters zero.
+All six genuine stamps retained their original issue time. The memory monitor
+recorded 1,016 valid samples, peak tree RSS 1,457,807,360 bytes (1.36 GiB), minimum
+host available RAM 2,720,542,720 bytes (2.53 GiB), and at most 130,154,496 bytes
+(124 MiB) additional host swap. These are sampled observations, not hard limits.
+
+The aligned pair completed and was verified in about 36 minutes. Summing the
+observed individual gate durations gives about 66 minutes, suggesting roughly
+30 minutes of throughput savings for a similar pair. This is an estimate from
+the overlapping runs, not a controlled serial benchmark or a claim that the
+initial rollout avoided its earlier fixture-repair and source-order delays.
+Full Windows tests and publication add their own serialized time.

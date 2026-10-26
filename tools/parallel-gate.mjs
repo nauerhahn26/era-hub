@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { stateDirectory,jobPath,readJSON,queueGate,readStatus,allStatuses,internal,inspectRuntime,runPreflight,runReversePreflight,estimateQueue } from './testing/parallel-worker.mjs';
+import { stateDirectory,jobPath,readJSON,queueGate,readStatus,allStatuses,internal,inspectRuntime,runPreflight,runReversePreflight,recordedGateStats } from './testing/parallel-worker.mjs';
 const args=process.argv.slice(2),command=args.shift() || 'help';
 const print=value=>console.log(JSON.stringify(value,null,2));
 function option(name) {const at=args.indexOf(name);return at<0?undefined:args[at+1];}
@@ -14,7 +14,7 @@ try {
     const runtime=inspectRuntime(),capacity=await import('./testing/parallel-capacity.mjs');
     const resources=await capacity.readHostResources({diskPath:state});
     const statuses=await allStatuses(state);
-    const result={version:1,capacity:await capacity.inspectCapacity(resources),lease:await capacity.readLease({leaseDir:path.join(state,'parallel-capacity')}),runtime,jobs:statuses,fullPilotValidated:statuses.some(job=>job.status==='passed'),eta:estimateQueue(statuses.map(job=>({status:job.status,gateSeconds:job.result?.gateSeconds})),statuses.filter(job=>['queued','waiting','preparing','running'].includes(job.status)).length)};
+    const result={version:1,capacity:await capacity.inspectCapacity(resources),lease:await capacity.readLease({leaseDir:path.join(state,'parallel-capacity')}),runtime,jobs:statuses,...recordedGateStats(statuses,statuses.filter(job=>['queued','waiting','preparing','running'].includes(job.status)).length)};
     if(args.includes('--preflight')) {
       result.preflight=runPreflight(path.join(state,'preflight',crypto.randomBytes(8).toString('hex')));
       result.reversePreflight=runReversePreflight(path.join(state,'preflight',crypto.randomBytes(8).toString('hex')));

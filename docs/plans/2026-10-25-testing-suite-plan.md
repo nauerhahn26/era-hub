@@ -34,13 +34,21 @@ two complete gates is the total ceiling, not two additional gates.
   runtime and synthetic data; validate origins before and after execution.
 - [x] Verify isolation, complete collection, resource admission and genuine
   gate-issued receipts with negative and concurrent synthetic tests.
-- [ ] Run a consenting queued release's complete gate as the first real pilot.
-- [x] Obtain owner acknowledgments of adoption and exact source tuples; timing
-  remains provisional until the first complete pilot finishes.
+- [x] Run a consenting queued release's complete gate as the first real pilot:
+  Chat passed 140/140 alongside Games 143/143 on 2026-10-26.
+- [x] Obtain owner acknowledgments of adoption and exact source tuples; both
+  owners verified their complete receipts before changing tested sources.
 - [ ] Coordinate cumulative source candidates and serialize final landing,
   version selection and publication; retain all required Windows acceptance.
-- [ ] Measure actual overlap, memory and completion time before promising
-  throughput or increasing capacity.
+- [x] Measure actual overlap, memory and completion time. The pair completed in
+  about 36 minutes; the isolated gate took 34.03 minutes with sampled peak tree
+  RSS 1.36 GiB and minimum host available memory 2.53 GiB. Retain two total lanes.
+
+Chat now holds the shared landing/release and Windows VM locks for its patch
+build and full Windows acceptance. Games waits for that handoff; its Linux proof
+is preserved. Testing infrastructure will not land into master during their
+release window. The remaining coordination checkbox includes that Windows and
+publication handoff, with each owner's existing publication authorization.
 
 See the [adoption record](2026-10-25-parallel-gate-adoption.md). The implementation
 order below remains the wider strategy; this priority supersedes its sequencing.
@@ -50,7 +58,7 @@ order below remains the wider strategy; this priority supersedes its sequencing.
 The separate conservative planner, registry, serialized development queue and
 gate hardening are implemented. Inventory validation covers 138 suites on this
 branch. The combined targeted checks passed 84/84 with no skipped or todo cases;
-the parallel safeguards separately passed 37/37 and their nested namespace proof.
+the parallel safeguards separately passed 40/40 and their nested namespace proof.
 These checks do not replace this branch's eventual complete acceptance gate.
 Do not migrate the queued releases to the wider development-tool stage merely
 to use the standalone parallel capability.

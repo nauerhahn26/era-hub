@@ -2,8 +2,10 @@
 
 This standalone capability runs a consenting owner's committed candidate through
 that candidate's own unchanged `tools/era-gate.sh`. Invoke the driver by absolute
-path; the candidate does not need this framework or a new registry. Availability
-remains provisional until an actual full pilot finishes and its evidence validates.
+path; the candidate does not need this framework or a new registry. The first
+complete isolated pilot passed all 140 suites while a legacy 143-suite gate also
+passed. See the [adoption record](../../docs/plans/2026-10-25-parallel-gate-adoption.md)
+for source identities, measured resources and the serial Windows handoff.
 
 ```sh
 node /absolute/driver/tools/parallel-gate.mjs inspect --preflight
@@ -85,8 +87,13 @@ sync. A private copy creates no new acceptance policy, refreshes no proof, and
 must not overwrite the shared host stamp directory.
 
 Queue ETA is explicitly unknown until at least one actual complete isolated gate
-passes validation. Later estimates use completed full runs and can vary with host
-load and candidate scope. There is no active cancellation command in this first
+passes validation. `inspect.fullPilotValidated` records that historical pilot;
+ETA uses recorded results with successful validation, exit zero, a complete
+passing gate summary and positive measured gate time. A later origin move can
+make current status stale without erasing that history or timing sample. Neither
+field grants current stamp eligibility: `status JOB` retains all source, runtime
+and genuine-stamp checks. Estimates can vary with host load and candidate scope.
+There is no active cancellation command in this first
 version. A dead or unknown lease owner is retained for explicit owner review;
 the driver never steals leases or kills unrelated processes.
 Failure cleanup verifies and waits for its captured namespace launcher before
