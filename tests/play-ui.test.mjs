@@ -104,10 +104,14 @@ after(async () => {
 async function playPage(opts = {}) {
   const ctx = await browser.newContext({ viewport: opts.viewport || { width: 1920, height: 1080 },
     deviceScaleFactor: 1, reducedMotion: opts.reducedMotion || "no-preference" });
-  await ctx.addInitScript(([idleMs, clockMs]) => {
+  await ctx.addInitScript(([idleMs, clockMs, rng]) => {
     window.__testHooks = true;
     if (idleMs) window.__idleMs = idleMs;
     if (clockMs) window.__clockMs = clockMs;
+    // Sort it shuffles with window.__rng (spec §5.6, amended 2026-10-26): pinned to the identity
+    // (every Fisher–Yates draw picks its own slot, the manifest order) unless a test hands it a
+    // sequence of draws; once the sequence runs out it is the identity again
+    { const seq = rng.slice(); window.__rng = () => (seq.length ? seq.shift() : 0.999999); }
     window.__confettiSeen = 0;
     new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes)
       if (n.classList && n.classList.contains("confetti")) window.__confettiSeen++; })
@@ -117,7 +121,7 @@ async function playPage(opts = {}) {
     new MutationObserver((ms) => { for (const m of ms)
       if (m.target.classList && m.target.classList.contains("wiggle")) window.__wiggled.push(m.target.getAttribute("aria-label")); })
       .observe(document, { attributes: true, attributeFilter: ["class"], subtree: true });
-  }, [opts.idleMs || 0, opts.clockMs || 0]);
+  }, [opts.idleMs || 0, opts.clockMs || 0, opts.rng || []]);
   // arming: the answers' state when they first appear, and whether the question's `end` was in the
   // speech engine's log at the moment they armed
   if (opts.arming) await ctx.addInitScript(ARM_WATCH);
@@ -831,6 +835,62 @@ test("Sort it under reduced motion: no transition, no animation; the item still 
   await page.locator("#bin0").click();
   await waitSortItem(page, 1);
   assert.deepEqual(await chips(page), [["☀️"], []]);
+  await ctx.close();
+});
+
+// ---- Sort it shuffles (spec §5.6, amended 2026-10-26): every open deals the items afresh, and
+// never opens on the previous play's first item for the same week
+// the draws a descending Fisher–Yates over 5 items needs to reverse them: j = 0, 1, 2, 1
+const REVERSE5 = [0.1, 0.375, 0.99, 0.75];
+const order = (page) => page.evaluate(() => { try { return sessionStorage.getItem("era-sort-first:2026-01-12"); } catch { return "throws"; } });
+
+test("Sort it shuffles: a reversing draw opens on the manifest's last item; the questions and the logs follow the dealt order; the bins keep their seats", async () => {
+  const { ctx, page, logs, errors } = await playPage({ query: SQ, rng: REVERSE5 });
+  await openSort(page);
+  const dealt = [4, 3, 2, 1, 0];
+  const bins = await page.$$eval(".so-bin", (els) => els.map((el) => [el.id, el.dataset.seat, el.getAttribute("aria-label"),
+    el.querySelector(".so-glyph").textContent]));
+  assert.deepEqual(bins, [["bin0", "0", "a light source", "💡"], ["bin1", "2", "not a light source", "🌑"]], "the bins never move");
+  assert.equal(await page.$eval(".so-mid", (el) => el.dataset.seat), "1");
+  for (let k = 0; k < dealt.length; k++) {
+    const m = dealt[k];
+    await waitSortItem(page, k);
+    assert.equal(await itemLabel(page), SORT.items[m].label, "dealt item " + k);
+    assert.equal(await page.$eval(".so-q", (el) => el.innerText.trim()), sortQ(m));
+    assert.ok(await until(async () => (await said(page)).includes(sortQ(m))), "its question is said: " + sortQ(m));
+    assert.equal((await st(page)).item, m, "the page holds the manifest index of the item up");
+    if (k === 0) assert.equal(await order(page), "4", "the first item is remembered for the week");
+    await page.locator("#bin" + SORT.items[m].bin).click();
+  }
+  await page.waitForFunction(() => window.Play.state().page === "menu", null, { timeout: 6000 });
+  assert.deepEqual(logs.map((l) => [l.engine, l.item, l.pick, l.right, l.strike]),
+    dealt.map((m) => ["sort", m, SORT.items[m].bin, true, 0]), "the log carries the manifest index, in the dealt order");
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("Sort it shuffles: an open whose deal would repeat the last play's first item rotates it away; the next open is free again", async () => {
+  const { ctx, page, errors } = await playPage({ query: SQ });       // identity draws: the sun every time
+  await openSort(page);
+  assert.equal(await itemLabel(page), "the sun");
+  assert.equal(await order(page), "0");
+  await page.locator("#btnBack").click();
+  await page.waitForFunction(() => window.Play.state().page === "menu" && document.getElementById("tile-sort"));
+  await openSort(page);
+  assert.equal(await itemLabel(page), "a moon", "never the same first item twice in a row");
+  assert.equal(await page.$eval(".so-q", (el) => el.innerText.trim()), sortQ(1));
+  assert.equal(await order(page), "1");
+  // rotated by one: the rest follow, the old first item comes last
+  for (const [k, m] of [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]]) {
+    await waitSortItem(page, k);
+    assert.equal(await itemLabel(page), SORT.items[m].label, "rotated item " + k);
+    await page.locator("#bin" + SORT.items[m].bin).click();
+  }
+  await page.waitForFunction(() => window.Play.state().page === "menu" && document.getElementById("tile-sort"), null, { timeout: 6000 });
+  await openSort(page);
+  assert.equal(await itemLabel(page), "the sun", "the sun differs from the moon, so no rotation");
+  assert.equal(await order(page), "0");
+  assert.deepEqual(errors, []);
   await ctx.close();
 });
 

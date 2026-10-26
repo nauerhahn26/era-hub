@@ -17,4 +17,11 @@ caches — never in this repo.
 - [Math](docs/math.md) — number exploration and number partners through
   large gaze or touch controls, with optional spoken counting.
 
+The optional experimental [Chat app](docs/chat.md) lives at `/chat/`. Enable it
+in Settings; it shares the Board pack's bundled speech activity runtime.
+Prepared phrases work without cloud configuration. Configured speech uses the
+installed Node runtime and sends a held question for transcription after release.
+The child deliberately selects what to say. Setup and validation are recorded in
+[the installed Chat plan](docs/plans/2026-10-25-chat-installed-release.md).
+
 License: MPL-2.0.
