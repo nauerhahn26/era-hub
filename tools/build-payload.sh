@@ -27,6 +27,7 @@ if [ "${1:-}" = "--with-node" ] || [ "${2:-}" = "--with-node" ]; then RELEASE=1;
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
 cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/music-pictures.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/chat-api.js" "$HUB/chat-choices.js" "$HUB/chat-speech-worker.js" "$OUT/"
 # every local require of the hub's modules must resolve INSIDE the payload —
 # a module added to the repo but not to the list above shipped a hub that
 # died on its first line (packs.js, caught by the VM e2e 9/3, never by the
@@ -39,6 +40,15 @@ for m in $(grep -ho 'require("\./[a-z-]*\(\.js\)\?")' "$OUT"/*.js | sed 's/requi
   [ -f "$OUT/$m.js" ] || { echo "build-payload: $m.js is required by the hub but not in the payload"; exit 1; }
 done
 cp -r "$HUB/vendor" "$OUT/vendor"   # HEIC decode (libheif, LGPL - see NOTICE) + jpeg-js
+# Chat speech activity assets
+for f in vendor/models/chat-activity.onnx vendor/models/chat-activity.LICENSE; do
+  [ -s "$OUT/$f" ] || { echo "build-payload: $f is missing - Chat speech needs its activity model and license; no build."; exit 1; }
+done
+CHAT_ACTIVITY_SHA256=9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
+[ "$(sha256sum "$OUT/vendor/models/chat-activity.onnx" | cut -d' ' -f1)" = "$CHAT_ACTIVITY_SHA256" ] || {
+  echo "build-payload: Chat activity model hash does not match the pinned bytes; no build."; exit 1;
+}
+# End Chat speech activity assets
 # ...but NOT the media-tools binary. .gitignore expects a developer to drop a
 # local vendor/yt-dlp in for testing, and the blanket copy above would ship it
 # as the pack without ever checking its hash. The only copy allowed in a
@@ -128,6 +138,7 @@ cp -r "$HUB/public/book-review" "$OUT/public/book-review"
 # Drawing (spec 2026-09-30 §1) — CORE like book-review: its page, scene module, sticker table
 # and the vendored Fluent Emoji (MIT, LICENSE beside them). No /x in installer.nsi.
 cp -r "$HUB/public/drawing" "$OUT/public/drawing"
+cp -r "$HUB/public/chat" "$OUT/public/chat"
 # This week's watch page (spec 2026-10-12 §3.3): ERAgaze's watch mode opens it
 # to play one downloaded video. CORE like book-review: a few hundred bytes, no
 # /x in installer.nsi (every /x there belongs to a pack).
@@ -265,7 +276,7 @@ rem Both names: a PC that ran the old installer still has New ERA shortcuts.
 taskkill /IM node.exe /F >nul 2>&1
 taskkill /IM ERAgaze.exe /F >nul 2>&1
 for %%d in ("%USERPROFILE%\Desktop" "%APPDATA%\Microsoft\Windows\Start Menu\Programs" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup") do (
-  for %%n in ("Our Era Comms" "New ERA" "Making Words" "The Pencil" "Board" "Clothing Picker" "Music" "Movies" "Book Reader" "Math" "ERAgaze" "ERAgaze eye-gaze engine") do (
+  for %%n in ("Our Era Comms" "New ERA" "Making Words" "The Pencil" "Board" "Clothing Picker" "Music" "Movies" "Book Reader" "Math" "Chat" "ERAgaze" "ERAgaze eye-gaze engine") do (
     del /q "%%~d\%%~n.lnk" >nul 2>&1
   )
 )

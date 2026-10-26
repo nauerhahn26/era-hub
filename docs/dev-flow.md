@@ -240,7 +240,7 @@ resolution limits: [song page design](specs/2026-10-25-music-player-ux-recruitme
 ## Math
 
 Math is a core app at `/math/`: Numbers explores 0–50, and Number partners
-keeps a whole within 10 while one object moves between its parts. Large
+keeps a whole within 20 while one object moves between its parts. Large
 commands handle all movement; the quantities themselves are passive.
 Existing explicit app selections are preserved, so enable Math in Settings
 when it is not already listed on the home screen. State stays local to each
@@ -255,3 +255,12 @@ The partner panel contains hosted-game references and local source credits.
 Existing explicit app selections are preserved, so enable Games in Settings
 when it is absent from the home screen. State and recovery stay in the local
 browser. Usage and access behavior: [Games](games.md).
+
+## Experimental Chat
+
+Chat is an optional app at `/chat/`, disabled by default and sharing the Board
+pack's portable speech activity runtime. A configured installed Node worker
+transcribes a partner's held question after release; optional contextual choices
+run through the hub. Service credentials stay in the operating account's private
+configuration file. Gates disable private configuration loading. Setup, cloud
+data boundaries and current acceptance limits: [Chat](chat.md).

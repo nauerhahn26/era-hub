@@ -19,6 +19,15 @@ U^2-Net ("u2netp") — Apache License 2.0.
   to cut clothing photos out of their background. No image is uploaded.
 
 --------------------------------------------------------------------------
+Speech activity weights — MIT License.
+  vendor/models/chat-activity.onnx — the unmodified 16 kHz recurrent speech
+  activity export from https://github.com/snakers4/silero-vad, distributed by
+  https://k2-fsa.github.io/sherpa/onnx/vad/silero-vad.html .
+  SHA-256: 9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
+  License and original copyright are retained in chat-activity.LICENSE.
+  It classifies held audio locally before an optional cloud transcription.
+
+--------------------------------------------------------------------------
 yt-dlp — Unlicense (public domain).
   vendor/yt-dlp/yt-dlp.exe — the standalone Windows build (it carries its own
   Python), unmodified, from the release pinned in tools/yt-dlp.pin and

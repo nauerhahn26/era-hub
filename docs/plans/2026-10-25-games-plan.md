@@ -115,3 +115,15 @@ withdrawn intentionally (exit 143, no tests collected) to avoid starting before
 that landing. Current verification state: waiting for the preceding release's
 master landing, then sync, verify combined inputs and launch a fresh full gate.
 There is currently no active Games gate. Preserve all Games acceptance checks.
+
+Cumulative source preparation then merged the frozen preceding candidate
+`0c771772831115f18e3facceaf9d53724ea56e2d` (tree
+`7ce783af8015fb378d8fb829ce9a60683862ae77`), containing master `e75e16c`, Math
+and Video. Three conflicts in the registry, app tests and development notes
+retain both features. Games source, tests and artwork are byte-identical to
+the initial implementation. Thirteen targeted suites passed 198/198 after
+this merge. The app registry's fixed-port fixture had a free listener check
+before/after its run; final acceptance still requires the isolated combined
+full run. No other test processes were stopped. The isolated full command is
+still awaiting the testing coordinator's validation and exact input tuple;
+source preparation alone authorizes no landing, publication or device update.

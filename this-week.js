@@ -17,7 +17,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const THIS_WEEK_REV = 2;   // 2: the Play door (spec 2026-10-12 §5.6)
+const THIS_WEEK_REV = 3;   // 2: the Play door (spec 2026-10-12 §5.6); 3: the small boards (spec §1, §3.4)
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^[A-Za-z0-9_-]{11}$/;
 const SYMBOL_RE = /^[a-z0-9-]{1,32}$/;
@@ -25,7 +25,8 @@ const GROUPS = ["science", "social_studies", "hero", "describing", "core"];
 const THUMB_EXT = [".webp", ".jpg", ".jpeg", ".png"];
 const MAX_WATCH = 5, MAX_TALK = 16;
 // The fixed seats (D26, ux-contract §B): Back [1,1], More [3,1], centre black.
-const WATCH_SEATS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4]];
+// Watch is a 3×3 ring around a black [2,2] (spec §3.4); Talk keeps the 3×4.
+const WATCH_SEATS = [[1, 2], [1, 3], [2, 1], [2, 3], [3, 1]];
 const TALK_SEATS = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
 const ROOT = "this-week";
 // Play (spec §5.6): the twins of schema.py's Skill, Instrument and the
@@ -245,7 +246,7 @@ const backCell = () => ({ label: "Back", say: "back", type: "back", glyph: "←"
 // The root-only board: no week on disk, or a broken one. Valid and alive.
 function emptyRecipe() {
   return { locale: "en-US", root: ROOT, home_label: "This week",
-           boards: [{ id: ROOT, name: "This week", rows: 3, columns: 4, buttons: [] }] };
+           boards: [{ id: ROOT, name: "This week", rows: 2, columns: 3, buttons: [] }] };
 }
 
 // week = readWeek()'s answer with a VALIDATED manifest; ready = {id: videoState}.
@@ -253,15 +254,16 @@ function recipe(week, ready) {
   ready = ready || {};
   const m = week.manifest, title = m.title;
   const boards = [];
-  boards.push({ id: ROOT, name: title, rows: 3, columns: 4, buttons: [
+  // the root is the 2×3 triangle (spec §1): two doors up, Play below, black between
+  boards.push({ id: ROOT, name: title, rows: 2, columns: 3, buttons: [
     { type: "show", board: "watch", label: "Watch", say: "watch", glyph: "🎬", row: 1, col: 1,
       say_on_load: "This week: " + title },
-    { type: "show", board: "talk-1", label: "Talk", say: "talk", glyph: "💬", row: 1, col: 4 },
+    { type: "show", board: "talk-1", label: "Talk", say: "talk", glyph: "💬", row: 1, col: 3 },
   ] });
   // the Play door (spec §5.6): a same-origin link, only when an engine has content
   if (playHasContent(validatePlay(m).play))
     boards[0].buttons.push({ type: "link", href: "/play/?w=" + week.week_of, label: "Play", say: "play",
-                             glyph: "🎲", row: 3, col: 4 });
+                             glyph: "🎲", row: 2, col: 2 });
   const watch = [backCell()];
   m.watch.slice(0, WATCH_SEATS.length).forEach((v, i) => {
     const [row, col] = WATCH_SEATS[i];
@@ -276,7 +278,7 @@ function recipe(week, ready) {
     } else
       watch.push({ type: "word", label: v.title, say: "not here yet", glyph: "⏳", row, col });
   });
-  boards.push({ id: "watch", name: "Watch", rows: 3, columns: 4, buttons: watch });
+  boards.push({ id: "watch", name: "Watch", rows: 3, columns: 3, buttons: watch });
   const per = TALK_SEATS.length;
   const pages = Math.max(1, Math.ceil(m.talk.length / per));
   for (let p = 0; p < pages; p++) {
@@ -300,7 +302,7 @@ function recipe(week, ready) {
 function build(dataDir) {
   try {
     const raw = readWeek(dataDir);
-    if (!raw) return { recipe: emptyRecipe(), etag: '"none-r1"', week: null, dropped: [] };
+    if (!raw) return { recipe: emptyRecipe(), etag: '"none-r3"', week: null, dropped: [] };
     const { manifest, dropped } = validate(raw.manifest);
     const week = { ...raw, manifest };
     const ready = {};
