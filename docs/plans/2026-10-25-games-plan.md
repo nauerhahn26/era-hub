@@ -168,3 +168,20 @@ It also carries the independently validated Music local-provider fixture
 blobs match the owner commit; application code and every Games acceptance
 check remain unchanged. A fresh complete 142-suite run is required. Retry
 artifacts belong in `/tmp/era-games-gate-20261026-8381-retry/`.
+
+That retry acquired the lane at 01:28 UTC with clean source admission and was
+stopped at 01:36 UTC after 46 passes and no failures. The preceding candidate
+then supplied a validated true-tie Reader fixture (`309b603` in cumulative
+`6d1e556`): all three date keys are equal and asserted before testing the
+alphabetical fallback. Its full 17-case file passes under a forced 10 ms clock.
+No partial run is a green gate.
+
+Postflight also detected that shared Core moved from `3059695` to `02377c5`
+while the retry ran. This changes `speech.js` and adds a readiness regression
+suite. The API remains compatible with Games; its four new stubbed browser
+cases pass, including cancellation of narration waiting for initialization.
+Games now uses a matching Core worktree pinned to actual master `02377c5`
+(tree `dd8ba1dbf271fa15bb798367fb35487e04f1c42c`) without editing that engine.
+The complete inventory is therefore 143 suites (130 modern and 13 legacy).
+Keep all checks. Fresh full-run artifacts belong in
+`/tmp/era-games-gate-20261026-143/`; originals and previous logs remain intact.
