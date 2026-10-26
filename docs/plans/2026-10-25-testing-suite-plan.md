@@ -109,11 +109,13 @@ validation passes at 151. A change to the shared Windows/browser UI helper still
 selects the complete 151-suite fallback. Its three separate helper-contract tests
 passed explicitly; they are outside the Linux gate and Windows leg execution.
 
-The Chat 147-suite run exposed a routing race in the new browser fixture.
-No known-failing duplicate tooling gate will be started. Its owner is proving a
-private repair and will include both that repair and release-note copy correction
-before the next committed collector. The next tooling source must incorporate
-that exact corrected snapshot before its fresh full gate.
+The Chat 147-suite run exposed a routing race in the new browser fixture. Its
+owner preserved the failed evidence and stopped only its captured namespace after
+the private repair passed three cold two-CPU stress runs. The corrected frozen
+source `cbe7a54` changes only the browser fixture, release-note copy and plan;
+product and shared VM-helper bytes are unchanged. API/browser/packs checks pass
+57/57. This worktree incorporates that exact correction before its fresh full
+151-suite native gate; Chat's own fresh isolated gate collects all 147 suites.
 
 Resource review found the second native Linux lane independent of Games' remote
 Windows retry: only host 9222 belongs to that VM transport; its feed and other
@@ -122,6 +124,12 @@ and do not acquire VM/release locks. Recheck at least 3 GiB available RAM and al
 required host ports immediately before starting native port 8381. Use CPUs 0–1
 at low priority beside the isolated worker's CPUs 2–3; retain two total Linux
 gates. No master landing occurs during the current artifact window.
+
+The real development queue passed its six selected smoke/scanner suites for a
+documentation-only change in about 28 seconds. It verified matching complete
+inputs before and after, zero missing/failed suites, and explicitly recorded
+`completeEvidence: false` with no complete green stamp. This is development
+feedback; complete landing and release evidence still requires the full gate.
 
 The optional hub-only verification/landing transaction and compatible house
 helper were tested against synthetic repositories. They retain serialized

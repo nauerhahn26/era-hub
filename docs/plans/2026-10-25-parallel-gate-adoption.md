@@ -63,6 +63,15 @@ correcting the fixture inventory and rehearsing the added Games smoke before a
 full fresh Windows retry on the same built bytes; no Linux rerun or rebuild is
 needed for that private staging repair.
 
+The fresh Windows retry passed all nine baseline cases in 740.934 seconds.
+Its added Games journey passed design/save/order/show/reload and stopped on a
+Computer-label layout metric at the QA desktop's native 1024×768 mode. Connect
+Four, Talk and Tiles acceptance remained incomplete. The owner retained the
+failure and is repeating full baseline plus Games at a documented native logical
+viewport, recording actual CSS dimensions, scale and zoom with unchanged
+readability assertions and the same artifact bytes. No full Games acceptance or
+publication is claimed from the partial journey.
+
 Windows, version selection and publication remain in series. Each release
 retains complete Windows acceptance. Games publication has not been inferred,
 and testing will not land into master during this release window.
@@ -72,6 +81,11 @@ Both owners acknowledged conditional inclusion of frozen Games `0227f86` before
 that next collector runs. This does not approve Games' landing through another
 feature. The next Chat candidate keeps priority over the testing repair rerun;
 its complete inventory will be derived from its actual frozen sources.
+The next Chat collector derived 147 suites. Its first new run exposed a browser
+fixture routing race; after private whole-file stress verification, the owner
+stopped only its own captured failed namespace and froze correction `cbe7a54`.
+The fresh complete run is separate from that failed partial evidence. Testing
+incorporates the same corrected snapshot before the second native Linux lane.
 
 ## Verification and timing
 
