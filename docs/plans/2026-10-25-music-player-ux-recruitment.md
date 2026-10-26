@@ -131,3 +131,28 @@ The shared mount is accessible to the signed-in account running the hub, not
 the maintenance SSH account. A temporary task ran the atomic update in that
 existing interactive session, with no application restart or persistent task.
 Reopening Music loads the new immutable image names and caches the sharper set.
+
+## Home-device verification and recovery checkpoint
+
+The subsequent home-device check found all 27 sharper sets in its local
+manifest and all 270 replacement files present, totaling 9,999,033 bytes.
+Its running and on-disk builds both reported `20261025.0332`; its live songs
+recipe exposed all 27 replacement sets. An initial HTTP timeout cleared on
+retry. The older-looking open player was therefore likely holding its cached
+picture list; the maintainer was advised to reload Music with Ctrl+Shift+R.
+The browser's actual displayed image was not inspected, so cache remains the
+diagnosis supported by those checks rather than a directly observed fact.
+
+The private recovery checkpoint is
+`~/backups/music-picture-resolution-20261025/`. Its `receipt.json` records the
+completed refresh and verification, `music-sharper-baseline.json` and
+`music-sharper-before.json` preserve the prior library and image bytes, and
+`pictures/` holds replacements and frame selections. Contact sheets, the
+before/after comparison, checksums and maintenance scripts are retained there.
+Scripts assume their original scratch paths and must be reviewed before reuse.
+
+The implementation is landed and released. The resolution receipt and this
+home-device diagnosis are documentation-only follow-ups committed on
+`feat/music-player-ux-recruitment`; they have not been merged into master.
+A main merge remains subject to the normal fresh-gate rule. No software
+release or image regeneration is needed to preserve the deployed result.
