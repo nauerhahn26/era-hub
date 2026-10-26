@@ -271,10 +271,13 @@ test('the shared hub runs without a clothing schedule and its board is built bef
   assert.ok(unset.index < launch.index, 'cleared before the shared hub starts');
   const ready = gate.indexOf('gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" ||');
   const build = gate.indexOf('gate_build_clothing "$PORT"');
-  const loop = gate.indexOf('for index in "${!EXPECTED_FILES[@]}"');
-  assert.ok(ready > launch.index && build > ready && loop > build,
+  // the suites start when the lane runner does (tools/testing/lanes.mjs); a
+  // comment that names it does not count, only the command at a line's start
+  const runner = gate.search(/^node "\$HUB\/tools\/testing\/lanes\.mjs" "\$GATE"/m);
+  assert.ok(runner > 0, 'the lane runner starts the suites');
+  assert.ok(ready > launch.index && build > ready && runner > build,
     'launch, then readiness, then the one awaited build, then the suites');
-  assert.match(gate.slice(build, loop), /gate_build_clothing "\$PORT" \|\| \{[^}]*exit 1; \}/,
+  assert.match(gate.slice(build, runner), /gate_build_clothing "\$PORT" \|\| \{[^}]*exit 1; \}/,
     'a build that does not finish stops the gate');
 });
 

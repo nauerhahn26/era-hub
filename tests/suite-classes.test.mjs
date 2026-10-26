@@ -21,7 +21,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { claims } from "../tools/testing/suite-source.mjs";
+import { claims, claimsEngine, ENGINE_PORT } from "../tools/testing/suite-source.mjs";
 import {
   CLASS_FIELDS, HUBS, BOILERPLATE, DERIVED_RESOURCES, analyseSource, classifyRegistry, validateClasses,
   serialize, sourceReader,
@@ -153,6 +153,19 @@ test("ports are suite-ports' claims, deduplicated and sorted", () => {
   assert.deepEqual(analyseSource(src).ports, [8458, 8463, 8464]);
 });
 
+test("a stand-in gaze engine on its fixed bus port is a port claim; a route intercept or a comment is not", () => {
+  // kiosk-pause and routes bind 127.0.0.1:49155 themselves and skip when it is
+  // busy: two of them side by side would silently skip, so the lanes must see it.
+  const standIn = `const PORT = 8463;\nengine.listen(${ENGINE_PORT}, "127.0.0.1", () => res(true));\n`;
+  assert.deepEqual(analyseSource(standIn).ports, [8463, ENGINE_PORT]);
+  for (const src of [
+    `await ctx.route("http://127.0.0.1:${ENGINE_PORT}/**", (r) => r.abort());`,
+    `// the hub the gate runs has no engine on ${ENGINE_PORT}\nconst PORT = 8463;`,
+    `assert.ok(!reqs.some((u) => /${ENGINE_PORT}/.test(u)));`,
+    `const big = ${ENGINE_PORT}0;`,
+  ]) assert.equal(claimsEngine(src), false, src);
+});
+
 // ---- the registry-level transform, on a synthetic registry -------------------
 
 function synthetic() {
@@ -241,9 +254,12 @@ test("every registered suite carries every class field with the right type", () 
   assert.deepEqual(validateClasses(registry), []);
 });
 
-test("solo is clothing-responsive alone; quiet is the six timing-sensitive suites; heavy holds the segmentation suites", () => {
+test("solo is clothing-responsive and the two stand-in engines; quiet is the six timing-sensitive suites; heavy holds the segmentation suites", () => {
   const registry = committed();
-  assert.deepEqual(ids(registry, "solo"), [id("clothing-responsive")]);
+  // clothing-responsive measures latency on a loaded host; kiosk-pause and
+  // routes hold a stand-in engine on 49155, which every hub's GET /settings
+  // probes to place the door, so hubs in other lanes would see it.
+  assert.deepEqual(ids(registry, "solo"), [id("clothing-responsive"), id("kiosk-pause"), id("routes")]);
   assert.deepEqual(ids(registry, "quiet"), QUIET);
   const heavy = ids(registry, "heavy");
   for (const s of SEGMENTATION) assert.ok(heavy.includes(s), `${s} runs the segmentation runtime but is not heavy`);
@@ -266,14 +282,17 @@ test("no suite writes to the shared hub", () => {
   assert.deepEqual(writers, [], "lanes run shared-hub suites side by side; a writer changes what the others read");
 });
 
-test("ports agree with suite-ports' extraction of each suite's own source", () => {
+test("ports agree with suite-ports' extraction of each suite's own source, plus the engine bus it stands up", () => {
   const read = sourceReader(resolveRoots(HUB));
   const off = [];
   for (const s of committed().suites) {
-    const expected = [...new Set(claims(read(s.id)).map((c) => c.port))].sort((a, b) => a - b);
+    const src = read(s.id);
+    const expected = [...new Set([...claims(src).map((c) => c.port), ...(claimsEngine(src) ? [ENGINE_PORT] : [])])].sort((a, b) => a - b);
     if (JSON.stringify(expected) !== JSON.stringify(s.ports)) off.push(`${s.id}: registry ${JSON.stringify(s.ports)}, source ${JSON.stringify(expected)}`);
   }
   assert.deepEqual(off, []);
+  const engine = committed().suites.filter((s) => s.ports.includes(ENGINE_PORT)).map((s) => s.id).sort();
+  assert.deepEqual(engine, [id("kiosk-pause"), id("routes")], "the two suites that stand an engine up on its bus");
 });
 
 test("the committed registry is exactly what the transform derives from today's sources", () => {

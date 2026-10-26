@@ -29,14 +29,19 @@
 //             posting /log on its own) are not visible to a static read; the
 //             route-stub registry test (plan 3.5) guards those.
 //   ports     every fixed listener port the source claims, by the same
-//             extractor tests/suite-ports.test.mjs uses (suite-source.mjs).
+//             extractor tests/suite-ports.test.mjs uses (suite-source.mjs),
+//             plus the gaze engine's bus port (49155) when the suite stands a
+//             stand-in engine up on it (claimsEngine): kiosk-pause and routes
+//             share it by design, so the lanes must never run them together.
 //   browsers  browser launch call sites (.launch( / .launchPersistentContext()
 //             in code, not in comments or strings). Call sites, not runtime
 //             launches: one in a loop counts once.
 //   heavy     loads the garment segmentation runtime directly (a require,
 //             import or Worker of segment.js or clothing-worker.js), or has at
 //             least HEAVY_BROWSERS launch sites, or is named in OVERRIDES.
-//   solo      only from OVERRIDES: suites that assert latency on a loaded host.
+//   solo      only from OVERRIDES: suites that assert latency on a loaded host,
+//             or hold a host-wide resource other suites' hubs read (the gaze
+//             engine's bus).
 //   quiet     only from OVERRIDES: suites whose fixed dwell or timer windows
 //             fail under CPU starvation. The summary lists timing-dense suites
 //             that are not quiet as candidates; promotion is evidence-led
@@ -55,7 +60,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { blank, claims } from './suite-source.mjs';
+import { blank, claims, claimsEngine, ENGINE_PORT } from './suite-source.mjs';
 import { REGISTRY_FILE, resolveRoots } from './suite-runner.mjs';
 
 export const CLASS_FIELDS = ['hub', 'ports', 'browsers', 'heavy', 'solo', 'quiet', 'retry', 'owner'];
@@ -77,10 +82,21 @@ const LIVE = 8300 + 77;
 // outlive its reason. An entry naming an unregistered suite also stops it.
 const suite = (name) => `era-hub:tests/${name}.test.mjs`;
 export const OVERRIDES = [
-  // solo: drain the other lanes first.
+  // solo: runs with nothing else running (lanes.mjs starts solo suites first).
   { id: suite('clothing-responsive'), set: { solo: true, heavy: true },
     why: 'asserts every page answers under 900 ms while a slow-AI ingest runs (two photos since the 10/26 speedups, each with a segmentation cut-out; six before); a neighbour lane is exactly the load it measures',
     witness: /slowest\s*<\s*900/ },
+  // A stand-in engine on 127.0.0.1:49155 is seen by every hub on the host:
+  // each hub's GET /settings probes that port to place the door (doorGoes and
+  // pauseGoes flip from "home" to "tdsnap"), so a suite in another lane that
+  // reads /settings from the gate hub or its own would see this suite's
+  // engine. Both suites bind the bus for about a second; solo costs that.
+  { id: suite('kiosk-pause'), set: { solo: true },
+    why: 'holds a stand-in engine on 49155, which every hub\'s GET /settings probes to place the door, so hubs in other lanes would see it',
+    witness: /\.listen\(\s*49155\b/ },
+  { id: suite('routes'), set: { solo: true },
+    why: 'holds a stand-in engine on 49155, which every hub\'s GET /settings probes to place the door, so hubs in other lanes would see it',
+    witness: /\.listen\(\s*49155\b/ },
   // heavy: segmentation reached through a hub or clothing.js build, which a
   // static read cannot see. Measured 10/26 with a preload hook that logged every
   // segment.js cutOut call per suite run (clothing.test.mjs, 24 cut-outs in
@@ -254,7 +270,7 @@ export function analyseSource(src, { helper = () => null, seen = new Set() } = {
     [...code.matchAll(/\bimport\b[^;'"`]*?\bfrom\s*(["'`])([^"'`]+)\1/g)].some((m) => SEGMENTATION.test(m[2]));
   return {
     shared, writes, seams, own,
-    ports: [...new Set(claims(src).map((c) => c.port))].sort((a, b) => a - b),
+    ports: [...new Set([...claims(src).map((c) => c.port), ...(claimsEngine(src) ? [ENGINE_PORT] : [])])].sort((a, b) => a - b),
     browsers: (bare.match(/\.\s*launch(?:PersistentContext)?\s*\(/g) || []).length,
     segmentation,
     waits: (bare.match(/\bwaitForTimeout\s*\(/g) || []).length,

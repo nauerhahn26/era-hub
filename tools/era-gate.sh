@@ -339,15 +339,21 @@ JS
   done <"$GATE/.execution-plan.tsv"
 }
 
+# $2: the digest the lane runner hashed as it started the suite. Without it
+# the collected copy is hashed here, now.
 gate_record_execution() {
-  local index="$1" id name digest
+  local index="$1" started="${2:-}" id name digest
   [[ "$index" =~ ^[0-9]+$ ]] && [ -n "${EXPECTED_FILES[$index]:-}" ] || {
     gate_error "unexpected suite execution"; return 1;
   }
   id="${EXPECTED_IDS[$index]}"; name="${EXPECTED_FILES[$index]}"
   [ "${EXECUTED_COUNT["$id"]:-0}" = 0 ] || { gate_error "duplicate suite execution: $id"; return 1; }
-  [ -f "$GATE/$name" ] || { gate_error "missing collected suite: $id"; return 1; }
-  digest="$(sha256sum -- "$GATE/$name")" || return 1
+  if [ -n "$started" ]; then
+    digest="$started"
+  else
+    [ -f "$GATE/$name" ] || { gate_error "missing collected suite: $id"; return 1; }
+    digest="$(sha256sum -- "$GATE/$name")" || return 1
+  fi
   [ "${digest%% *}" = "${EXPECTED_HASHES[$index]}" ] || { gate_error "collected suite changed before execution: $id"; return 1; }
   EXECUTED_COUNT["$id"]=1
 }
@@ -358,6 +364,54 @@ gate_verify_execution() {
     [ "${EXECUTED_COUNT["$id"]:-0}" = 1 ] || { gate_error "missing suite execution: $id"; return 1; }
   done
   [ "${#EXECUTED_COUNT[@]}" = "${#EXPECTED_IDS[@]}" ] || { gate_error "unexpected suite execution count"; return 1; }
+}
+
+# The lane runner's tally (tools/testing/lanes.mjs writes .lane-results.tsv: one
+# row per suite it reached, in the frozen order: state, plan index, the digest
+# it hashed at start or "missing", source ID), counted exactly as the serial
+# loop counted: a pass once; a failure once, by its label; a copy refused as
+# missing or changed once, by its file name, and never recorded as executed.
+# $1 is the runner's exit status: anything but 0 or 1 means it did not finish.
+gate_record_results() {
+  local status="$1" state index digest id t label
+  if [ -f "$GATE/.lane-results.tsv" ]; then
+    while IFS=$'\t' read -r state index digest id; do
+      t=""; [[ "$index" =~ ^[0-9]+$ ]] && t="${EXPECTED_FILES[$index]:-}"
+      [ -n "$t" ] && [ "$id" = "${EXPECTED_IDS[$index]}" ] || {
+        gate_error "unexpected lane result: $id"; fail=$((fail+1)); failed="$failed lanes"; continue;
+      }
+      if [[ "$t" = *.test.mjs ]]; then label="$t"; else label="${t%.js}"; fi
+      case "$state" in
+        pass|fail)
+          gate_record_execution "$index" "$digest" || { fail=$((fail+1)); failed="$failed $t"; continue; }
+          if [ "$state" = pass ]; then pass=$((pass+1)); else fail=$((fail+1)); failed="$failed $label"; fi ;;
+        changed)
+          if [ "$digest" = missing ]; then gate_error "missing collected suite: $id"
+          else gate_error "collected suite changed before execution: $id"; fi
+          fail=$((fail+1)); failed="$failed $t" ;;
+        *) gate_error "unknown lane result for $id: $state"; fail=$((fail+1)); failed="$failed lanes" ;;
+      esac
+    done <"$GATE/.lane-results.tsv"
+  fi
+  [ "$status" = 0 ] || [ "$status" = 1 ] || { fail=$((fail+1)); failed="$failed lanes"; }
+}
+
+# An early exit (TERM or INT while suites run) stops the lane runner: only the
+# pid this gate started, while it is still this shell's child, never by name or
+# group. The runner stops its suites by their pids and exits; it gets ten
+# seconds before KILL.
+gate_stop_lanes() {
+  local pid="${LANES_PID:-}" identity="${LANES_ID:-}" attempt
+  [ -n "$pid" ] && [ -n "$identity" ] || return 0
+  case "$identity" in "$$":*) ;; *) return 0 ;; esac
+  [ "$(gate_process_identity "$pid")" = "$identity" ] || return 0
+  kill -TERM "$pid" 2>/dev/null || return 0
+  for attempt in {1..100}; do
+    [ "$(gate_process_identity "$pid")" = "$identity" ] || break
+    sleep 0.1
+  done
+  if [ "$(gate_process_identity "$pid")" = "$identity" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+  wait "$pid" 2>/dev/null || true
 }
 
 gate_archive_reports() {
@@ -374,6 +428,7 @@ gate_archive_reports() {
 
 gate_finish() {
   local status="$1"
+  gate_stop_lanes
   gate_cleanup_server "${SRV:-}" "${SRV_ID:-}" "${SRV_ARGS:-}"
   if [ "${REPORTS_SAVED:-0}" != 1 ]; then gate_archive_reports || status=1; fi
   [ -z "${OWN_INPUTS:-}" ] || rm -f -- "$OWN_INPUTS"
@@ -390,7 +445,7 @@ ROOT="$(dirname "$HUB")"
 DATA="${ERA_GATE_SEED_DIR:-${ERA_DATA_DIR:-$ROOT/era-family/test-data}}"  # immutable seed, never live data
 PORT="${ERA_TEST_PORT:-8378}"
 GATE="$HUB/gate"
-OWN_DATA=""; OWN_INPUTS=""; SRV=""; SRV_ID=""; SRV_ARGS=""; GATE_PREPARED=0
+OWN_DATA=""; OWN_INPUTS=""; SRV=""; SRV_ID=""; SRV_ARGS=""; GATE_PREPARED=0; LANES_PID=""; LANES_ID=""
 # ERA_WT_SUFFIX (9/17): a multi-repo feature keeps sibling worktrees
 # (<repo>--wt-<slug>); when set and that directory exists, source the
 # sibling from there, else from the main checkout as before. Without it a
@@ -402,6 +457,11 @@ sib() { local d="$ROOT/$1${ERA_WT_SUFFIX:-}"; [ -d "$d" ] && echo "$d" || echo "
 [ -f "$ROOT/era-family/gate-env.sh" ] && . "$ROOT/era-family/gate-env.sh"
 export ERA_GAZE_SRC="$(sib era-gaze)"
 export ERA_HUB_SRC="$HUB"
+# How many suites run at once (tools/testing/lanes.mjs). 1 is the serial loop
+# exactly: the frozen order, one suite at a time. Validated here, before the
+# lock, and exported so the runner reads the value this gate checked.
+export ERA_GATE_LANES="${ERA_GATE_LANES:-2}"
+[[ "$ERA_GATE_LANES" =~ ^[1-8]$ ]] || { gate_error "ERA_GATE_LANES must be a whole number from 1 to 8"; exit 1; }
 gate_validate_port "$PORT" || exit 1
 gate_export_test_data || exit 1
 export ERA_GATE_SEED_DIR="$DATA"
@@ -593,23 +653,20 @@ gate_build_clothing "$PORT" || { cat "$GATE/server.log"; exit 1; }
 cd "$GATE"
 pass=0; fail=0; failed=""
 # The complete executable set was frozen before any suite ran. A previous
-# suite cannot delete or rewrite a later file and silently shrink acceptance.
-for index in "${!EXPECTED_FILES[@]}"; do
-  t="${EXPECTED_FILES[$index]}"
-  if ! gate_record_execution "$index"; then
-    fail=$((fail+1)); failed="$failed $t"; echo "FAIL $t (collected suite missing or changed)"; continue
-  fi
-  echo "RUN $t"
-  if [[ "$t" = *.test.mjs ]]; then
-    label="$t"; output="${t%.mjs}.out"
-    timeout 900 node --test "./$t" >"$output" 2>&1; result=$?
-  else
-    label="${t%.js}"; output="$label.out"
-    timeout 420 node "./$t" >"$output" 2>&1; result=$?
-  fi
-  if [ "$result" = 0 ]; then pass=$((pass+1)); echo "PASS $label";
-  else fail=$((fail+1)); failed="$failed $label"; echo "FAIL $label (see gate/$output)"; fi
-done
+# suite cannot delete or rewrite a later file and silently shrink acceptance:
+# the lane runner re-hashes each copy against its frozen digest as it starts
+# it and refuses a missing or changed one. It runs ERA_GATE_LANES suites at
+# once, each with the serial loop's command (timeout 900 node --test ./X.test.mjs,
+# timeout 420 node ./X.js), cwd, environment, stdin and X.out, prints RUN/PASS/
+# FAIL, and writes results.jsonl and .lane-results.tsv (header of
+# tools/testing/lanes.mjs). It runs in the background so a TERM or INT reaches
+# this shell at once; gate_finish then stops it by its pid.
+node "$HUB/tools/testing/lanes.mjs" "$GATE" <&0 &
+LANES_PID=$!
+LANES_ID="$(gate_process_identity "$LANES_PID")" || LANES_ID=""
+wait "$LANES_PID"; lanes_status=$?
+LANES_PID=""; LANES_ID=""
+gate_record_results "$lanes_status"
 gate_verify_execution || { fail=$((fail+1)); failed="$failed execution-set"; }
 node "$HUB/tools/test-suite.mjs" verify-inputs "$ERA_GATE_INPUTS" --phase running || {
   fail=$((fail+1)); failed="$failed inputs-changed";
