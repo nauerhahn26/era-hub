@@ -88,6 +88,16 @@ Those inputs now compute the protected port while preserving strict rejection
 assertions. Both complete files pass 48/48 after the actual replacement to each
 of two approved alternate ports. Application port validation is unchanged.
 
+The second complete isolated run finished 138/139 passing; Music and reload
+restoration passed. Reader's separate sort test had not made its two purported
+ties equal in the third sort key: first-seen time. A controlled advancing clock
+reproduces the correct non-alphabetical result for those unequal keys. The two
+manifests now seed equal first-seen values, and the test verifies all three date
+keys match before its original alphabetical assertion. Product sorting is
+unchanged. The full Reader file passes 17/17 under the adversarial clock.
+This second failed run also yields no green authorization; retain its receipt
+under `gate-20261026T005503Z-5d020d05` and require another complete run.
+
 Retain private real-service evidence under `~/.cache/era-chat/installed/`; never
 commit private credentials or recorded partner speech. Full gate logs and tree
 stamp are authoritative for landing. The patch pipeline must run Windows update
