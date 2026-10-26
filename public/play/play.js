@@ -161,7 +161,8 @@ function renderSort() {
     log: (d) => logPick("sort", d),
     sound: (name) => SOUNDS.play(name),
     idleMs: idleMs(),
-    onItem: (i) => { if (S.page === "sort" && (mounted === null || S.mounted === mounted)) { S.idx = i; S.item = i; } },
+    weekOf: S.week_of,
+    onItem: (i, m) => { if (S.page === "sort" && (mounted === null || S.mounted === mounted)) { S.idx = i; S.item = m; } },
     onDone: () => {
       if (S.page !== "sort" || S.mounted !== mounted) return;
       try { confetti(60); } catch {}
