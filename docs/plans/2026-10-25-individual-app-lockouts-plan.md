@@ -135,3 +135,17 @@ era-board--wt-lockout, era-making-words--wt-lockout, era-pencil--wt-lockout.
 Use ERA_WT_SUFFIX=--wt-lockout for later validation. Changes are uncommitted;
 the hub has a local integration merge of Games. Do not land it while review
 and validation are pending.
+
+## Qualification — 2026-10-26
+
+Dad explicitly authorized testing and release. The sources were synced to current
+master, retaining Chat persistence, Games saving and native Windows display setup.
+The first full run was deliberately interrupted to reproduce and repair a stale
+offline PIN cache; its exit 143 was not accepted. The next complete 167-suite
+run passed 157 and failed 10. Raw outputs were retained privately.
+
+Failures identified two shared UI issues (nested unlock visibility and a hidden
+Continue gaze target), the unlocked Watch autoplay property, and old exact bar
+inventories rejecting the newly authorized adult lock. Regressions for both
+shared UI issues failed before the fix. Bar-contract updates retain the original
+geometry and door-only gaze rules. A fresh complete gate is required.

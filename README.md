@@ -31,4 +31,4 @@ The child deliberately selects what to say. Setup and validation are recorded in
 License: MPL-2.0.
 
 - [Individual app locks](docs/app-locks.md) — independent locks with shared adult
-  controls and passcode handling; implementation awaits testing and release.
+  controls and passcode handling.

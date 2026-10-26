@@ -101,7 +101,7 @@ function watch() {
   video.hidden = false;
   paint();
   if (S.failed) { failed(); return; }
-  video.autoplay = false;
+  video.autoplay = !appLocked();
   start();
 }
 function failed() {
@@ -166,7 +166,7 @@ async function boot() {
   // THE DOOR IS UP BEFORE ANY FETCH (the board's 9/3 rule)
   BAR = mountDoorBar(document.body, {
     appPath: "/watch/",
-    onLock() { video.pause(); S.talkPaused = false; WHICH?.pause?.(); SOUNDS.stop(); hush(); },
+    onLock() { video.autoplay = false; video.pause(); S.talkPaused = false; WHICH?.pause?.(); SOUNDS.stop(); hush(); },
     onUnlock() { WHICH?.resume?.(); },
     onLeave, onPause, onResume,
   });
