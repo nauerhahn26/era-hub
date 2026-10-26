@@ -40,12 +40,16 @@ const aiConfig = require("./ai-config.js");
 const contentProviders = require("./content-providers.js");
 // For writeAtomic alone: a key file is written tmp-then-rename, never in place.
 const contentStore = require("./content-store.js");
+let gamesModel;
+const loadGamesModel = () => gamesModel ||= import("./public/games/state.js");
 
 const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
 const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
 const LOGS = path.join(DATA, "logs");
 const TTS_CACHE = path.join(DATA, "tts-cache");
+const GAMES_STATE = path.join(DATA, "games", "state.json");
+const GAMES_STATE_LIMIT = 524288;
 fs.mkdirSync(LOGS, { recursive: true });
 fs.mkdirSync(TTS_CACHE, { recursive: true });
 
@@ -139,6 +143,7 @@ const APPS = [
   // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
   { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
   { id: "math", title: "Math", sub: "explore numbers and number partners", path: "/math/", pack: null },
+  { id: "games", title: "Games", sub: "fashion, four in a row and number tiles", path: "/games/", pack: null },
   // The Chat page is core; its speech activity runtime comes from the board pack.
   { id: "chat", title: "Chat", sub: "experimental conversation · hold to ask", path: "/chat/", pack: "board", defaultEnabled: false },
   // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
@@ -1700,6 +1705,82 @@ function stampInteraction(req) {
 const server = http.createServer((req, res) => {
   stampInteraction(req);
   if (chatApi.handle(req, res)) return;
+  if (req.url === "/games/state/recovery" && req.method === "GET") {
+    void loadGamesModel().then(({ readSavedState }) => {
+      let size;
+      try { size = fs.statSync(GAMES_STATE).size; }
+      catch { res.writeHead(404).end(); return; }
+      if (size <= GAMES_STATE_LIMIT && readSavedState(fs.readFileSync(GAMES_STATE, "utf8")).valid) {
+        res.writeHead(404).end(); return;
+      }
+      res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": 'attachment; filename="games-state-recovery.txt"', "Cache-Control": "no-store" });
+      const stream = fs.createReadStream(GAMES_STATE);
+      stream.on("error", () => res.destroy());
+      stream.pipe(res);
+    }).catch(() => res.writeHead(500).end());
+    return;
+  }
+  if (req.url === "/games/state" && req.method === "GET") {
+    void loadGamesModel().then(({ readSavedState }) => {
+      let raw;
+      try {
+        if (fs.statSync(GAMES_STATE).size > GAMES_STATE_LIMIT) {
+          res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+          res.end('{"error":"unreadable"}');
+          return;
+        }
+        raw = fs.readFileSync(GAMES_STATE);
+      }
+      catch (error) {
+        const code = error.code === "ENOENT" ? 404 : 500;
+        res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: code === 404 ? "missing" : "read-failed" }));
+        return;
+      }
+      if (raw.length > GAMES_STATE_LIMIT || !readSavedState(raw.toString("utf8")).valid) {
+        res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end('{"error":"unreadable"}');
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(raw);
+    }).catch(() => res.writeHead(500).end());
+    return;
+  }
+  if (req.url === "/games/state" && req.method === "PUT") {
+    if (!ownDoor(req, res)) return;
+    const chunks = []; let size = 0, over = false;
+    req.on("data", chunk => {
+      size += chunk.length;
+      if (size > GAMES_STATE_LIMIT) over = true;
+      else chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (over) { res.writeHead(413, { "Content-Type": "application/json" }).end('{"error":"too-large"}'); return; }
+      void loadGamesModel().then(({ readSavedState, serializeState }) => {
+        const incoming = readSavedState(Buffer.concat(chunks).toString("utf8"));
+        if (!incoming.valid) { res.writeHead(400, { "Content-Type": "application/json" }).end('{"error":"invalid"}'); return; }
+        try {
+          if (fs.statSync(GAMES_STATE).size > GAMES_STATE_LIMIT) {
+            res.writeHead(409, { "Content-Type": "application/json" }).end('{"error":"unreadable"}'); return;
+          }
+          const current = fs.readFileSync(GAMES_STATE);
+          if (current.length > GAMES_STATE_LIMIT || !readSavedState(current.toString("utf8")).valid) {
+            res.writeHead(409, { "Content-Type": "application/json" }).end('{"error":"unreadable"}'); return;
+          }
+        } catch (error) {
+          if (error.code !== "ENOENT") { res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"read-failed"}'); return; }
+        }
+        try {
+          contentStore.writeAtomic(GAMES_STATE, serializeState(incoming.state));
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end('{"ok":true}');
+        } catch {
+          res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"write-failed"}');
+        }
+      }).catch(() => res.writeHead(500).end());
+    });
+    return;
+  }
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
     let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
