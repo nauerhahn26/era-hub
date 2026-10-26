@@ -131,7 +131,7 @@ test('HTTP adapter rejects cross-origin traffic, caps payloads and closes pendin
   assert.deepEqual((await result.json()).choices, choices);
   assert.equal(calls, 1);
   assert.equal(adapterPort({}), 8385);
-  assert.throws(() => adapterPort({ ERA_CHAT_TEXT_PORT: '8377' }));
+  assert.throws(() => adapterPort({ ERA_CHAT_TEXT_PORT: String(8300 + 77) }));
 });
 
 test('disconnect aborts an in-flight upstream call and releases capacity', async t => {

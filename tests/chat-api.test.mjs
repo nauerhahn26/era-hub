@@ -645,7 +645,7 @@ test('gate clears inherited Chat configuration before any test hub starts', () =
 test('standalone preview serves only the prototype and has inert app handoffs', async t => {
   const { createPreviewServer, previewPort } = await import('../tools/chat-preview.mjs');
   assert.equal(previewPort({}), 8386);
-  assert.throws(() => previewPort({ ERA_TEST_PORT: '8377' }));
+  assert.throws(() => previewPort({ ERA_TEST_PORT: String(8300 + 77) }));
   let stopped = false;
   const server = createPreviewServer({ env: {}, api: { handle: () => false, close: () => { stopped = true; } } });
   await new Promise(resolve => server.listen(0, 'localhost', resolve));

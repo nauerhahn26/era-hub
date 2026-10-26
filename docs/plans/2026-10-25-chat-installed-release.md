@@ -70,6 +70,24 @@ finds no weakened contract. Three provider checks and eleven Board checks pass.
 The Board changes affect tests and their README only. The full run must stamp
 both Chat worktrees; land Board before the hub, then publish the exact candidate.
 
+The first isolated full run completed all 139 suites with 137 passing and two
+test failures. All six Chat suites passed. Music's numeric-symbol test still
+depended on a public image download; it now owns a local image provider and
+checks exact numeric URL, bytes, miss/disk/hit behavior and one provider request.
+Reader's reload test observed its index before boot restored the saved position;
+it now waits for the independently rendered grid before the unchanged section
+and page assertions. A deterministic delayed-status browser probe confirms
+persistence was intact. Whole-file checks pass 12/12 and 17/17. No application
+code changed. The failed run yields no release authorization or green stamp;
+a fresh complete run is required. Original failed job:
+`gate-20261026T000616Z-e0a2d99d` in the private parallel-gate job directory.
+
+A separate gate on an alternate test port exposed two negative-test literals
+being rewritten into valid preview ports by the gate's blanket port replacement.
+Those inputs now compute the protected port while preserving strict rejection
+assertions. Both complete files pass 48/48 after the actual replacement to each
+of two approved alternate ports. Application port validation is unchanged.
+
 Retain private real-service evidence under `~/.cache/era-chat/installed/`; never
 commit private credentials or recorded partner speech. Full gate logs and tree
 stamp are authoritative for landing. The patch pipeline must run Windows update

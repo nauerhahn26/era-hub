@@ -152,3 +152,19 @@ modern and 13 legacy). The frozen source tuple, runtime and inventory belong
 in `/tmp/era-games-gate-20261026-8381/inputs.json`; the same directory holds the
 owned `pid`, `gate.log` and completion `exit` sentinel. This is the ordinary
 full gate with its genuine stamps; it grants no Games publication or delivery.
+
+The first full attempt started at 00:36 UTC on 2026-10-26 from `f22ff9d`.
+It was stopped intentionally after 58 suite passes and two Chat fixture
+failures: gate rewriting changed an invalid live-port example into allowed
+port 8381. Source fingerprints stayed unchanged; owned processes were
+verified individually and stopped without group signals or other-job changes.
+Exit 143 is cancellation, and no green stamp was issued.
+
+The corrected frozen predecessor `228b5b3220148f9de331c1319d63048595268067`
+constructs the real protected port without a rewriteable literal. Both full
+Chat test files pass 48/48 after actual gate rewriting at both 8381 and 8388.
+It also carries the independently validated Music local-provider fixture
+(12/12) and Reader rendered-shelf readiness fixture (17/17). All four fixture
+blobs match the owner commit; application code and every Games acceptance
+check remain unchanged. A fresh complete 142-suite run is required. Retry
+artifacts belong in `/tmp/era-games-gate-20261026-8381-retry/`.
