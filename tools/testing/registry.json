@@ -1,0 +1,2624 @@
+{
+  "version": 1,
+  "reviewed": "2026-10-26",
+  "repositories": [
+    "era-core",
+    "era-making-words",
+    "era-pencil",
+    "era-board",
+    "era-hub"
+  ],
+  "policy": "Development selection only. Unmapped product paths require the complete gate. Group metadata does not establish independence.",
+  "always": [
+    "era-core:tests/lib-contract.test.mjs",
+    "era-core:tests/dwell-engine.test.mjs",
+    "era-core:tests/doorbar.test.mjs",
+    "era-core:tests/speech-ready.test.mjs",
+    "era-hub:tests/kiosk-pause.test.mjs"
+  ],
+  "rules": [
+    {
+      "repo": "era-hub",
+      "paths": [
+        "public/math/**"
+      ],
+      "suites": [
+        "era-hub:tests/math-state.test.mjs",
+        "era-hub:tests/math-ui.test.mjs"
+      ],
+      "reason": "Reviewed standalone Math state/page boundary; shared access smoke also runs"
+    },
+    {
+      "repo": "era-hub",
+      "paths": [
+        "docs/**/*.md"
+      ],
+      "suites": [
+        "era-hub:tests/era-scan-parity.test.mjs"
+      ],
+      "reason": "Editorial documentation: scanner contract plus shared smoke; no landing stamp"
+    }
+  ],
+  "full": [
+    {
+      "repo": "era-core",
+      "paths": [
+        "**"
+      ],
+      "reason": "Shared runtime or shared test dependencies require complete coverage"
+    },
+    {
+      "repo": "era-hub",
+      "paths": [
+        "server.js",
+        "tools/**",
+        "tests/invariants.mjs",
+        "tests/synthetic-wardrobe.mjs",
+        "tests/fixtures/**",
+        "public/lib/**"
+      ],
+      "reason": "Shared server, runner, assembly or uncertain helper/fixture consumers"
+    }
+  ],
+  "suites": [
+    {
+      "id": "era-board:tests/board-arrange.test.mjs",
+      "purpose": "Touch-only music reorder, drag nonactivation, pagination, errors and saved/pending status",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-board:tests/board-clothing-coach.test.mjs",
+      "purpose": "Wardrobe setup and in-progress/retry explanations",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-board:tests/board-clothing-visuals.test.mjs",
+      "purpose": "Clothing image geometry, item identity and weather repeat activation",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser layout/access"
+    },
+    {
+      "id": "era-board:tests/board-content-note.test.mjs",
+      "purpose": "Book build progress and review link in normal and splash views",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-board:tests/board-edit.test.mjs",
+      "purpose": "Touch long-press edit, drift, tap/hold distinction, changed-field writes and error recovery",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser access/integration"
+    },
+    {
+      "id": "era-board:tests/board-events.test.mjs",
+      "purpose": "Offline event queue and actual outfit telemetry endpoint validation",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "unit + HTTP integration"
+    },
+    {
+      "id": "era-board:tests/board-input.test.mjs",
+      "purpose": "Tap/dwell parity, accidental activation prevention, speech order and escape",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser access"
+    },
+    {
+      "id": "era-board:tests/board-lock.test.mjs",
+      "purpose": "Touch-only media lock, cross-tab persistence, passcodes and exit availability",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser access/integration"
+    },
+    {
+      "id": "era-board:tests/board-model.test.mjs",
+      "purpose": "Recipe normalization, navigation, activation and fresh-recipe recovery",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "unit with external fixture"
+    },
+    {
+      "id": "era-board:tests/board-movies.test.mjs",
+      "purpose": "Movie recipe launch, engine failure, watchdog timeout and adult add/search form",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-board:tests/board-music.test.mjs",
+      "purpose": "Song grid/player journeys, volume, offline and picture review",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-board:tests/board-partner-strip.test.mjs",
+      "purpose": "Touch-only media forms, async add completion and pack install behavior",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-board:tests/board-pixel.test.mjs",
+      "purpose": "Measured screen geometry, font/target floors and inert corners across required viewports",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser layout/access"
+    },
+    {
+      "id": "era-board:tests/board-resilience.test.mjs",
+      "purpose": "Offline cached boot, safe recipe refresh, hidden/active guards and no-cache recovery",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser recovery"
+    },
+    {
+      "id": "era-board:tests/board-routes.test.mjs",
+      "purpose": "Actual recipe/wardrobe/generated assets/symbol endpoints including traversal and cache behavior",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "HTTP integration"
+    },
+    {
+      "id": "era-board:tests/board-splash-door.test.mjs",
+      "purpose": "Escape and Talk availability while wardrobe is building and splash cleanup",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser access"
+    },
+    {
+      "id": "era-board:tests/board-talk-door.test.mjs",
+      "purpose": "Pause/resume playback, loading cancellation, modal escape and geometry",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser access/integration"
+    },
+    {
+      "id": "era-board:tests/board-this-week.test.mjs",
+      "purpose": "Weekly Watch/Play/Talk recipes, local link validity and media-lock behavior",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-board:tests/board-wardrobe-note.test.mjs",
+      "purpose": "Clothing build notices and actual async regenerate endpoint responsiveness",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser + HTTP integration"
+    },
+    {
+      "id": "era-core:tests/doorbar.test.mjs",
+      "purpose": "Shared Exit/Talk doors, fallback, resume, hold values, layout and listener teardown",
+      "group": "shared-access",
+      "dependencies": [
+        "era-core/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser component"
+    },
+    {
+      "id": "era-core:tests/dwell-engine.test.mjs",
+      "purpose": "Activation, grace/decay, rearm, hold lengths, halo, tap parity, DOM replacement and suppression",
+      "group": "shared-access",
+      "dependencies": [
+        "era-core/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser component"
+    },
+    {
+      "id": "era-core:tests/lib-contract.test.mjs",
+      "purpose": "UX contract values, role holds, immutability, generated JSON parity and gaze source constants",
+      "group": "shared-access",
+      "dependencies": [
+        "era-core/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "unit + static contract"
+    },
+    {
+      "id": "era-core:tests/speech-barge-in.test.mjs",
+      "purpose": "Production speech late-response cancellation and fallback behavior using controlled audio objects",
+      "group": "shared-access",
+      "dependencies": [
+        "era-core/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser component"
+    },
+    {
+      "id": "era-core:tests/speech-engine.test.mjs",
+      "purpose": "Serialization, queued stop, letter overlap, empty text, off mode and preload test-mode semantics",
+      "group": "shared-access",
+      "dependencies": [
+        "era-core/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser component"
+    },
+    {
+      "id": "era-core:tests/speech-overlap.test.mjs",
+      "purpose": "Sentence/letter ordering, queued speech stop and rapid letter echo ordering",
+      "group": "shared-access",
+      "dependencies": [
+        "era-core/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser component"
+    },
+    {
+      "id": "era-core:tests/speech-ready.test.mjs",
+      "purpose": "Production speech probe readiness, bounded fallback, no-init compatibility and cancellation during initialization",
+      "group": "shared-access",
+      "dependencies": [
+        "era-core/speech.js"
+      ],
+      "lane": "linux",
+      "resources": [
+        "chromium",
+        "owned-browser-pages",
+        "controlled-fetch-and-audio",
+        "virtual-clock"
+      ],
+      "level": "browser component"
+    },
+    {
+      "id": "era-hub:tests/ai-config.test.mjs",
+      "purpose": "Read-only key role precedence, compatibility and non-disclosure",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/ai-key.test.mjs",
+      "purpose": "Key verification, persistence, provider protocol and non-disclosure",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/apps.test.mjs",
+      "purpose": "Registry, enablement persistence, installed/core app protection",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/assemble-suffix.test.mjs",
+      "purpose": "Sibling-worktree source resolution and assembly parity",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/book-review-ui.test.mjs",
+      "purpose": "Page review, ordering, corrections, spending consent and recovery",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/book-sharing-e2e.test.mjs",
+      "purpose": "Two real hubs exchange, mirror, serve and open an unchanged book",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/books-share.test.mjs",
+      "purpose": "Export/import policy, path safety, filenames and local mirror placement",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/books.test.mjs",
+      "purpose": "Book index, serving, byte ranges, cache and path isolation",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/chat-api.test.mjs",
+      "purpose": "Local Chat authorization, bounded sessions, runtime/configuration lifecycle and choice-service integration",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-speech-worker.js",
+        "era-hub/tools/chat-preview.mjs",
+        "era-hub/tools/chat-choices-adapter.mjs",
+        "era-hub/tools/era-gate.sh",
+        "era-hub/update.js",
+        "era-core/dwell.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "temporary-data",
+        "synthetic-runtime-children",
+        "shared-static-farm"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-choices-adapter.test.mjs",
+      "purpose": "Bounded grounded choice generation, strict provider replies and direct adapter HTTP cancellation",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module and HTTP integration",
+      "dependencies": [
+        "era-hub/tools/chat-choices-adapter.mjs",
+        "era-hub/chat-choices.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "provider-doubles"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-config.test.mjs",
+      "purpose": "Literal private configuration parsing, precedence, bounds and disabled behavior",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module and filesystem",
+      "dependencies": [
+        "era-hub/chat-api.js"
+      ],
+      "resources": [
+        "temporary-data"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-native-speech.test.mjs",
+      "purpose": "Release-only speech capture, actual activity refusal, cancellation, bounded transport and safe child protocol",
+      "group": "chat",
+      "lane": "linux",
+      "level": "worker and inference integration",
+      "dependencies": [
+        "era-hub/chat-speech-worker.js",
+        "era-hub/vendor/models/chat-activity.onnx",
+        "era-hub/vendor/onnxruntime-web/**"
+      ],
+      "resources": [
+        "wasm-cpu",
+        "bundled-activity-assets",
+        "owned-loopback-services",
+        "owned-node-child",
+        "provider-doubles"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-speech.test.mjs",
+      "purpose": "Optional Python speech-runtime protocol and evaluation-tool metric contracts",
+      "group": "chat-tools",
+      "lane": "linux",
+      "level": "subprocess protocol and metrics",
+      "dependencies": [
+        "era-hub/tests/chat-speech-runtime.py",
+        "era-hub/tests/chat-speech-benchmark.py",
+        "era-hub/tools/chat-speech-worker.py",
+        "era-hub/tools/chat-benchmark.py"
+      ],
+      "resources": [
+        "python3",
+        "owned-loopback-services",
+        "owned-python-children",
+        "synthetic-audio"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-ui.test.mjs",
+      "purpose": "Conversation/voice generations, neutral gating, bounded PCM resampling and idle worklet retention",
+      "group": "chat",
+      "lane": "linux",
+      "level": "controller and VM worklet unit",
+      "dependencies": [
+        "era-hub/public/chat/controller.js",
+        "era-hub/public/chat/voice.js",
+        "era-hub/public/chat/pcm-worklet.js"
+      ],
+      "resources": [
+        "in-process-voice-doubles",
+        "vm-worklet-harness"
+      ]
+    },
+    {
+      "id": "era-hub:tests/clothing-accessories.test.mjs",
+      "purpose": "Accessory classification, edits, shared tags and board navigation",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/clothing-attrs.test.mjs",
+      "purpose": "Attribute backfill, persistence, reuse and provider failure spending",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/clothing-diversity.test.mjs",
+      "purpose": "Preference rotation, repeats, daily determinism and sparse wardrobes",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/clothing-fit.test.mjs",
+      "purpose": "Independent warmth curve acceptance across temperatures and days",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/clothing-item.test.mjs",
+      "purpose": "Garment editing route validation, sharing, rebuild and status",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/clothing-log.test.mjs",
+      "purpose": "Shared append/merge log ownership, corruption and validated tags",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/clothing-rank.test.mjs",
+      "purpose": "Ranking, history, weather eligibility, preferences and deterministic dealing",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/clothing-refit.test.mjs",
+      "purpose": "Explicit fit refresh, no background spending and parent overrides",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/clothing-responsive.test.mjs",
+      "purpose": "Pages remain responsive during an actual worker build",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/clothing-share.test.mjs",
+      "purpose": "Two-device history, matching, shared tags and deterministic boards",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/clothing-status.test.mjs",
+      "purpose": "Memory, favourite and refit status without modifying history",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/clothing-sync-rebuild.test.mjs",
+      "purpose": "Sync preserves current offers and rebuilds for real wardrobe changes",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/clothing-variety.test.mjs",
+      "purpose": "Multi-day garment and outfit coverage, diversity and stability",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/clothing-weather.test.mjs",
+      "purpose": "Hourly window forecasts, caching, rebuild and weather-dependent dealing",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/clothing.test.mjs",
+      "purpose": "Wardrobe ingestion, worker isolation, provider retries and end-to-end board build",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/content-allowance.test.mjs",
+      "purpose": "Paid quota pauses, resume, cache, accounting and no secret disclosure",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/content-animate.test.mjs",
+      "purpose": "Animation quoting, explicit spending, reuse, queue safety and publication",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/content-build.test.mjs",
+      "purpose": "Explicit build ownership, claims, replay and recovery",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/content-claim.test.mjs",
+      "purpose": "Inbox discovery, claims, concurrency, incomplete uploads and state handling",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/content-imprint.test.mjs",
+      "purpose": "Publisher furniture filtering preserves story words and spacing",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/content-ingest.test.mjs",
+      "purpose": "Photo ordering, orientation, conversion, replay and safe filesystem operations",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/content-loose.test.mjs",
+      "purpose": "Loose photo gathering, naming, interrupted moves and rename safety",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/content-narrate.test.mjs",
+      "purpose": "Narration protocol, timings, idempotency, accounting and targeted rereads",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/content-publish.test.mjs",
+      "purpose": "Atomic readable manifest publication, provenance and stale audio safety",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/content-routes.test.mjs",
+      "purpose": "Content status and editing routes, consent, validation and recovery",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/content-store.test.mjs",
+      "purpose": "Atomic persistence, state transitions, accounting and scrubbed logs",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/content-transcribe.test.mjs",
+      "purpose": "Transcription protocol, reuse, retries, pauses and text integrity",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/content-worker.test.mjs",
+      "purpose": "Real worker steps, failure/retry, targeted narration and publication",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/device-id.test.mjs",
+      "purpose": "Stable directory-safe generated identifiers and precedence",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/device-volume.test.mjs",
+      "purpose": "Settings volume limit endpoint payload and honest success reporting",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/drawing-scene.test.mjs",
+      "purpose": "Deterministic drawing placement, geometry, backdrops and scene semantics",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/drawing-ui.test.mjs",
+      "purpose": "Drawing access, dwell, editing, saving, undo and interruption behavior",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/drawings.test.mjs",
+      "purpose": "Drawing assets, storage, validation, serving and completion behavior",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/drive-launch.test.mjs",
+      "purpose": "Start a configured sync client once, retry bounds and delayed availability",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/drive-localfolder.test.mjs",
+      "purpose": "Mount jail, adoption, delayed availability and one-book mirroring",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/drive-mirror.test.mjs",
+      "purpose": "Mirror ordering, ownership, safe pruning and all media content types",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module integration with local fixtures"
+    },
+    {
+      "id": "era-hub:tests/era-scan-parity.test.mjs",
+      "purpose": "Required scanner patterns and equality across available repositories",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/erabook.test.mjs",
+      "purpose": "Archive interoperability, exact bytes, malicious inputs and atomic refusal",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/fal-key.test.mjs",
+      "purpose": "Animation key verification, quoted cost and no credential disclosure",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/games-audio.test.mjs",
+      "purpose": "Explicit synthesized music activation, Talk cancellation, shared cap and scheduled-note cleanup",
+      "group": "games",
+      "lane": "linux",
+      "level": "browser audio lifecycle integration",
+      "dependencies": [
+        "era-hub/public/games/**",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "private-browser-storage",
+        "deferred-audio-context-double"
+      ]
+    },
+    {
+      "id": "era-hub:tests/games-state.test.mjs",
+      "purpose": "Independent persisted workspaces, legal game rules, confirmations, deterministic randomness and reversible undo",
+      "group": "games",
+      "lane": "linux",
+      "level": "state unit",
+      "dependencies": [
+        "era-hub/public/games/state.js",
+        "era-hub/public/games/connect4-engine.js",
+        "era-hub/public/games/tiles-engine.js"
+      ],
+      "resources": [
+        "in-process"
+      ]
+    },
+    {
+      "id": "era-hub:tests/games-ui.test.mjs",
+      "purpose": "Rendered game journeys, real shared dwell/doors, lifecycle recovery, geometry and distinct catalog options",
+      "group": "games",
+      "lane": "linux",
+      "level": "browser access and integration",
+      "dependencies": [
+        "era-hub/public/games/**",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "private-browser-storage",
+        "real-dwell-timers",
+        "rendered-catalog-matrix"
+      ]
+    },
+    {
+      "id": "era-hub:tests/gate-safety.test.mjs",
+      "purpose": "Reject unsafe ports/data, preserve process ownership and full-gate evidence",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "tools/**",
+        "tests/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "synthetic-git-repositories"
+      ],
+      "level": "runner integration"
+    },
+    {
+      "id": "era-hub:tests/gate-stamp.test.mjs",
+      "purpose": "Per-tree clean/dirty stamps across hub and selected siblings",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/gaze-recompile.test.mjs",
+      "purpose": "Source hash compilation, reuse, atomic replacement and failure rollback",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/home-tiles.test.mjs",
+      "purpose": "Enabled app home tiles, empty libraries and correct icons",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/icons.test.mjs",
+      "purpose": "Registry icon files, serving and real rendered home icon loading",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/image-orient.test.mjs",
+      "purpose": "EXIF parsing and pixel transformations for every image orientation",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/image-util.test.mjs",
+      "purpose": "JPEG decode/encode, scale, orientation and timestamp extraction",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/integration-queue.test.mjs",
+      "purpose": "Explicit verification-and-landing reservation, cumulative candidates, capability refusal and failed-gate isolation",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "tools/testing/verify-and-land.sh",
+        "house landing lock capability"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "synthetic-git-repositories"
+      ],
+      "level": "runner integration"
+    },
+    {
+      "id": "era-hub:tests/invariants.test.mjs",
+      "purpose": "Shared accessibility contract geometry and holds across declared states",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/kiosk-pause.test.mjs",
+      "purpose": "Communication handoff, parking, resuming and engine failure fallback",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/mail.test.mjs",
+      "purpose": "Outbox, validation, sending and escaped writing with local service stubs",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/maker-drop.test.mjs",
+      "purpose": "Finished package arrival is served without rebuilding or spending",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/math-state.test.mjs",
+      "purpose": "Quantity bounds, partition conservation and reversible persisted navigation",
+      "group": "math",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/math-ui.test.mjs",
+      "purpose": "Real dwell/speech access, touch parity, interruption and persisted math state",
+      "group": "math",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/movies-add.test.mjs",
+      "purpose": "Explicit media addition, local folder, links, posters and recipe integration",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/movies-lookup.test.mjs",
+      "purpose": "Search, region and service selection protocol with key-safe failures",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/movies.test.mjs",
+      "purpose": "Movie recipes, paging, events, media ranges and path isolation",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/music-add.test.mjs",
+      "purpose": "Audio import tool protocol, local folder, library integration and picture refresh",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/music-pictures.test.mjs",
+      "purpose": "Storyboard decoding, distinct safe frames and screening refusal",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/music.test.mjs",
+      "purpose": "Song recipes, playback pages, volume, events, ranges and path isolation",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/packs.test.mjs",
+      "purpose": "Installer/core pack split, shipped dependencies and media tool pins",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/parallel-gate.test.mjs",
+      "purpose": "Namespace PID/filesystem/network isolation, admission lease ownership, frozen source/runtime inputs and complete genuine gate receipts",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "tools/parallel-gate.mjs",
+        "tools/testing/parallel-worker.mjs",
+        "tools/testing/parallel-worker.py",
+        "tools/testing/parallel-snapshot.mjs",
+        "tools/testing/parallel-capacity.mjs",
+        "tools/testing/parallel_monitor.py",
+        "tools/testing/test/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "synthetic-git-repositories",
+        "owned-namespace-canary",
+        "approved-host-test-port",
+        "private-mount-network-pid-namespaces"
+      ],
+      "level": "runner integration"
+    },
+    {
+      "id": "era-hub:tests/pencil-ui.test.mjs",
+      "purpose": "Writing send eligibility, dwell, communication handoff and resume",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/play-ui.test.mjs",
+      "purpose": "Weekly games, dwell, questions, sounds, speech and interruption behavior",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/pool.test.mjs",
+      "purpose": "Device-owned event append/merge, corrupt data recovery and availability",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/predict.test.mjs",
+      "purpose": "Prediction endpoint context, completions and personal vocabulary fixture",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/presence.test.mjs",
+      "purpose": "Beacons, idle suppression, watched files, hooks and live settings",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/reader-share.test.mjs",
+      "purpose": "Touch-only sharing gesture, accessibility, consent and error behavior",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/reader-shelf.test.mjs",
+      "purpose": "Sections, ordering, favourites, paging and stable gaze layout",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/reader-sizing.test.mjs",
+      "purpose": "Measured reader and shelf geometry at supported viewports",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/reader-strip.test.mjs",
+      "purpose": "Adult import sheet, frozen shelf targets and import refusal behavior",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/reader-ui.test.mjs",
+      "purpose": "Readable playback, word highlights, page turns, doors and interruption",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/reconcile.test.mjs",
+      "purpose": "Setup-triggered pack selection, delayed install and disabled engine stop",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/routes.test.mjs",
+      "purpose": "Redirects, settings validation, kiosk exit and shared route behavior",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/settings-library.test.mjs",
+      "purpose": "Bounded library rendering, search, review actions and editing preservation",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/settings-navigation.test.mjs",
+      "purpose": "Sections, history, search, unsaved form preservation and narrow navigation",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/settings-ui.test.mjs",
+      "purpose": "Real settings controls, configuration, status, consent and errors",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/setup.test.mjs",
+      "purpose": "Initial profile, idempotency, dwell setting and setup validation",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/shortcuts.test.mjs",
+      "purpose": "Shortcut plan, quoting, boot integration and startup behavior",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/start-hub-bat.test.mjs",
+      "purpose": "Generated launchers, kiosk ownership, resume, encoding and hub-only startup",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/symbol-provider.test.mjs",
+      "purpose": "Symbol endpoint configuration and cache behavior using a controlled fetch stand-in",
+      "group": "hub",
+      "dependencies": [
+        "server.js",
+        "symbol provider configuration"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock"
+      ],
+      "level": "module unit"
+    },
+    {
+      "id": "era-hub:tests/test-suite.test.mjs",
+      "purpose": "Inventory completeness, cumulative selection, input identity and owned job outcomes",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "tools/**",
+        "tests/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "synthetic-git-repositories"
+      ],
+      "level": "runner integration"
+    },
+    {
+      "id": "era-hub:tests/this-week-fetch.test.mjs",
+      "purpose": "Video tool invocation, size/format limits, claims and serialized fetch",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/this-week-recipe.test.mjs",
+      "purpose": "Weekly manifests, board validation, questions, assets and recipe routes",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/update-boot.test.mjs",
+      "purpose": "Deferred initial update, periodic staging, interaction idle and boot apply",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/update-wake.test.mjs",
+      "purpose": "Heartbeat wake detection and backwards clock handling",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-hub:tests/update.test.mjs",
+      "purpose": "Installed updater, pack refresh, override authorization and atomic application",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/vm-e2e.test.mjs",
+      "purpose": "Candidate/previous installer selection and VM invocation wiring",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/watch-ui.test.mjs",
+      "purpose": "Real video playback, pause, completion, questions and communication handoff",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser integration"
+    },
+    {
+      "id": "era-hub:tests/weather-location.test.mjs",
+      "purpose": "Place-specific forecast caching, fallback, settings and weather symbols",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/words.test.mjs",
+      "purpose": "Word timing alignment, malformed data and recorded narration regression",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "module unit/local filesystem"
+    },
+    {
+      "id": "era-making-words:tests/bargein.js",
+      "purpose": "Rapid triple answers advance once; no duplicate placement or stale prompt",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/fltest.js",
+      "purpose": "First-letter transfer, letter heads, word placement and no advancement on wrong pick",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/layout.test.mjs",
+      "purpose": "Actual words app geometry across native/scaled viewports plus Talk/resume and shared bar/partner alignment",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "browser layout/access"
+    },
+    {
+      "id": "era-making-words:tests/mistakes.js",
+      "purpose": "Two-strike reveal preserves correct letters, neutral gaps, fix and reset",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/narrow.js",
+      "purpose": "Letter-row and sort-head geometry at three viewport widths",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/parts.js",
+      "purpose": "Adult lesson pointer, sort-only flow, end-screen reset, transfer and viewport fit",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/phonetic.js",
+      "purpose": "Phonetic spelling prediction examples and literal-prefix behavior",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/rhymecount.js",
+      "purpose": "Rhyme sort count and internal rhyme consistency across lessons",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/run.js",
+      "purpose": "Main spelling dwell journey, incorrect/fixed answers, partner controls, telemetry and escape",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/sortbugs.js",
+      "purpose": "Sort-choice semantics, presentation, ordering and no answer leakage",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/sortfix.js",
+      "purpose": "Sort chooser, head-word advancement and derived rhyme sorting",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/transfer.js",
+      "purpose": "Transfer wrong-answer isolation, two-strike reveal and next-answer advancement",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-making-words:tests/transfercount.js",
+      "purpose": "Transfer and first-letter choice counts across lessons",
+      "group": "literacy",
+      "dependencies": [
+        "era-making-words/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    },
+    {
+      "id": "era-pencil:tests/pencil.js",
+      "purpose": "Whole typing/prediction/edit/publish/draft-recovery journey",
+      "group": "writing",
+      "dependencies": [
+        "era-pencil/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "legacy browser integration"
+    }
+  ],
+  "support": [
+    {
+      "id": "era-hub:tests/invariants.mjs",
+      "purpose": "Shared measured access audit helper; changing it requires the complete gate",
+      "consumers": [
+        "era-board:tests/board-arrange.test.mjs",
+        "era-board:tests/board-clothing-coach.test.mjs",
+        "era-board:tests/board-clothing-visuals.test.mjs",
+        "era-board:tests/board-content-note.test.mjs",
+        "era-board:tests/board-edit.test.mjs",
+        "era-board:tests/board-events.test.mjs",
+        "era-board:tests/board-input.test.mjs",
+        "era-board:tests/board-lock.test.mjs",
+        "era-board:tests/board-model.test.mjs",
+        "era-board:tests/board-movies.test.mjs",
+        "era-board:tests/board-music.test.mjs",
+        "era-board:tests/board-partner-strip.test.mjs",
+        "era-board:tests/board-pixel.test.mjs",
+        "era-board:tests/board-resilience.test.mjs",
+        "era-board:tests/board-routes.test.mjs",
+        "era-board:tests/board-splash-door.test.mjs",
+        "era-board:tests/board-talk-door.test.mjs",
+        "era-board:tests/board-this-week.test.mjs",
+        "era-board:tests/board-wardrobe-note.test.mjs",
+        "era-core:tests/doorbar.test.mjs",
+        "era-core:tests/dwell-engine.test.mjs",
+        "era-core:tests/lib-contract.test.mjs",
+        "era-core:tests/speech-barge-in.test.mjs",
+        "era-core:tests/speech-engine.test.mjs",
+        "era-core:tests/speech-overlap.test.mjs",
+        "era-core:tests/speech-ready.test.mjs",
+        "era-hub:tests/ai-config.test.mjs",
+        "era-hub:tests/ai-key.test.mjs",
+        "era-hub:tests/apps.test.mjs",
+        "era-hub:tests/assemble-suffix.test.mjs",
+        "era-hub:tests/book-review-ui.test.mjs",
+        "era-hub:tests/book-sharing-e2e.test.mjs",
+        "era-hub:tests/books-share.test.mjs",
+        "era-hub:tests/books.test.mjs",
+        "era-hub:tests/chat-api.test.mjs",
+        "era-hub:tests/chat-choices-adapter.test.mjs",
+        "era-hub:tests/chat-config.test.mjs",
+        "era-hub:tests/chat-native-speech.test.mjs",
+        "era-hub:tests/chat-speech.test.mjs",
+        "era-hub:tests/chat-ui.test.mjs",
+        "era-hub:tests/clothing-accessories.test.mjs",
+        "era-hub:tests/clothing-attrs.test.mjs",
+        "era-hub:tests/clothing-diversity.test.mjs",
+        "era-hub:tests/clothing-fit.test.mjs",
+        "era-hub:tests/clothing-item.test.mjs",
+        "era-hub:tests/clothing-log.test.mjs",
+        "era-hub:tests/clothing-rank.test.mjs",
+        "era-hub:tests/clothing-refit.test.mjs",
+        "era-hub:tests/clothing-responsive.test.mjs",
+        "era-hub:tests/clothing-share.test.mjs",
+        "era-hub:tests/clothing-status.test.mjs",
+        "era-hub:tests/clothing-sync-rebuild.test.mjs",
+        "era-hub:tests/clothing-variety.test.mjs",
+        "era-hub:tests/clothing-weather.test.mjs",
+        "era-hub:tests/clothing.test.mjs",
+        "era-hub:tests/content-allowance.test.mjs",
+        "era-hub:tests/content-animate.test.mjs",
+        "era-hub:tests/content-build.test.mjs",
+        "era-hub:tests/content-claim.test.mjs",
+        "era-hub:tests/content-imprint.test.mjs",
+        "era-hub:tests/content-ingest.test.mjs",
+        "era-hub:tests/content-loose.test.mjs",
+        "era-hub:tests/content-narrate.test.mjs",
+        "era-hub:tests/content-publish.test.mjs",
+        "era-hub:tests/content-routes.test.mjs",
+        "era-hub:tests/content-store.test.mjs",
+        "era-hub:tests/content-transcribe.test.mjs",
+        "era-hub:tests/content-worker.test.mjs",
+        "era-hub:tests/device-id.test.mjs",
+        "era-hub:tests/device-volume.test.mjs",
+        "era-hub:tests/drawing-scene.test.mjs",
+        "era-hub:tests/drawing-ui.test.mjs",
+        "era-hub:tests/drawings.test.mjs",
+        "era-hub:tests/drive-launch.test.mjs",
+        "era-hub:tests/drive-localfolder.test.mjs",
+        "era-hub:tests/drive-mirror.test.mjs",
+        "era-hub:tests/era-scan-parity.test.mjs",
+        "era-hub:tests/erabook.test.mjs",
+        "era-hub:tests/fal-key.test.mjs",
+        "era-hub:tests/games-audio.test.mjs",
+        "era-hub:tests/games-state.test.mjs",
+        "era-hub:tests/games-ui.test.mjs",
+        "era-hub:tests/gate-safety.test.mjs",
+        "era-hub:tests/gate-stamp.test.mjs",
+        "era-hub:tests/gaze-recompile.test.mjs",
+        "era-hub:tests/home-tiles.test.mjs",
+        "era-hub:tests/icons.test.mjs",
+        "era-hub:tests/image-orient.test.mjs",
+        "era-hub:tests/image-util.test.mjs",
+        "era-hub:tests/integration-queue.test.mjs",
+        "era-hub:tests/invariants.test.mjs",
+        "era-hub:tests/kiosk-pause.test.mjs",
+        "era-hub:tests/mail.test.mjs",
+        "era-hub:tests/maker-drop.test.mjs",
+        "era-hub:tests/math-state.test.mjs",
+        "era-hub:tests/math-ui.test.mjs",
+        "era-hub:tests/movies-add.test.mjs",
+        "era-hub:tests/movies-lookup.test.mjs",
+        "era-hub:tests/movies.test.mjs",
+        "era-hub:tests/music-add.test.mjs",
+        "era-hub:tests/music-pictures.test.mjs",
+        "era-hub:tests/music.test.mjs",
+        "era-hub:tests/packs.test.mjs",
+        "era-hub:tests/parallel-gate.test.mjs",
+        "era-hub:tests/pencil-ui.test.mjs",
+        "era-hub:tests/play-ui.test.mjs",
+        "era-hub:tests/pool.test.mjs",
+        "era-hub:tests/predict.test.mjs",
+        "era-hub:tests/presence.test.mjs",
+        "era-hub:tests/reader-share.test.mjs",
+        "era-hub:tests/reader-shelf.test.mjs",
+        "era-hub:tests/reader-sizing.test.mjs",
+        "era-hub:tests/reader-strip.test.mjs",
+        "era-hub:tests/reader-ui.test.mjs",
+        "era-hub:tests/reconcile.test.mjs",
+        "era-hub:tests/routes.test.mjs",
+        "era-hub:tests/settings-library.test.mjs",
+        "era-hub:tests/settings-navigation.test.mjs",
+        "era-hub:tests/settings-ui.test.mjs",
+        "era-hub:tests/setup.test.mjs",
+        "era-hub:tests/shortcuts.test.mjs",
+        "era-hub:tests/start-hub-bat.test.mjs",
+        "era-hub:tests/symbol-provider.test.mjs",
+        "era-hub:tests/test-suite.test.mjs",
+        "era-hub:tests/this-week-fetch.test.mjs",
+        "era-hub:tests/this-week-recipe.test.mjs",
+        "era-hub:tests/update-boot.test.mjs",
+        "era-hub:tests/update-wake.test.mjs",
+        "era-hub:tests/update.test.mjs",
+        "era-hub:tests/vm-e2e.test.mjs",
+        "era-hub:tests/watch-ui.test.mjs",
+        "era-hub:tests/weather-location.test.mjs",
+        "era-hub:tests/words.test.mjs",
+        "era-making-words:tests/bargein.js",
+        "era-making-words:tests/fltest.js",
+        "era-making-words:tests/layout.test.mjs",
+        "era-making-words:tests/mistakes.js",
+        "era-making-words:tests/narrow.js",
+        "era-making-words:tests/parts.js",
+        "era-making-words:tests/phonetic.js",
+        "era-making-words:tests/rhymecount.js",
+        "era-making-words:tests/run.js",
+        "era-making-words:tests/sortbugs.js",
+        "era-making-words:tests/sortfix.js",
+        "era-making-words:tests/transfer.js",
+        "era-making-words:tests/transfercount.js",
+        "era-pencil:tests/pencil.js"
+      ]
+    },
+    {
+      "id": "era-hub:tests/synthetic-wardrobe.mjs",
+      "purpose": "Synthetic clothing test data generator; consumers remain conservatively complete",
+      "consumers": [
+        "era-board:tests/board-arrange.test.mjs",
+        "era-board:tests/board-clothing-coach.test.mjs",
+        "era-board:tests/board-clothing-visuals.test.mjs",
+        "era-board:tests/board-content-note.test.mjs",
+        "era-board:tests/board-edit.test.mjs",
+        "era-board:tests/board-events.test.mjs",
+        "era-board:tests/board-input.test.mjs",
+        "era-board:tests/board-lock.test.mjs",
+        "era-board:tests/board-model.test.mjs",
+        "era-board:tests/board-movies.test.mjs",
+        "era-board:tests/board-music.test.mjs",
+        "era-board:tests/board-partner-strip.test.mjs",
+        "era-board:tests/board-pixel.test.mjs",
+        "era-board:tests/board-resilience.test.mjs",
+        "era-board:tests/board-routes.test.mjs",
+        "era-board:tests/board-splash-door.test.mjs",
+        "era-board:tests/board-talk-door.test.mjs",
+        "era-board:tests/board-this-week.test.mjs",
+        "era-board:tests/board-wardrobe-note.test.mjs",
+        "era-core:tests/doorbar.test.mjs",
+        "era-core:tests/dwell-engine.test.mjs",
+        "era-core:tests/lib-contract.test.mjs",
+        "era-core:tests/speech-barge-in.test.mjs",
+        "era-core:tests/speech-engine.test.mjs",
+        "era-core:tests/speech-overlap.test.mjs",
+        "era-core:tests/speech-ready.test.mjs",
+        "era-hub:tests/ai-config.test.mjs",
+        "era-hub:tests/ai-key.test.mjs",
+        "era-hub:tests/apps.test.mjs",
+        "era-hub:tests/assemble-suffix.test.mjs",
+        "era-hub:tests/book-review-ui.test.mjs",
+        "era-hub:tests/book-sharing-e2e.test.mjs",
+        "era-hub:tests/books-share.test.mjs",
+        "era-hub:tests/books.test.mjs",
+        "era-hub:tests/chat-api.test.mjs",
+        "era-hub:tests/chat-choices-adapter.test.mjs",
+        "era-hub:tests/chat-config.test.mjs",
+        "era-hub:tests/chat-native-speech.test.mjs",
+        "era-hub:tests/chat-speech.test.mjs",
+        "era-hub:tests/chat-ui.test.mjs",
+        "era-hub:tests/clothing-accessories.test.mjs",
+        "era-hub:tests/clothing-attrs.test.mjs",
+        "era-hub:tests/clothing-diversity.test.mjs",
+        "era-hub:tests/clothing-fit.test.mjs",
+        "era-hub:tests/clothing-item.test.mjs",
+        "era-hub:tests/clothing-log.test.mjs",
+        "era-hub:tests/clothing-rank.test.mjs",
+        "era-hub:tests/clothing-refit.test.mjs",
+        "era-hub:tests/clothing-responsive.test.mjs",
+        "era-hub:tests/clothing-share.test.mjs",
+        "era-hub:tests/clothing-status.test.mjs",
+        "era-hub:tests/clothing-sync-rebuild.test.mjs",
+        "era-hub:tests/clothing-variety.test.mjs",
+        "era-hub:tests/clothing-weather.test.mjs",
+        "era-hub:tests/clothing.test.mjs",
+        "era-hub:tests/content-allowance.test.mjs",
+        "era-hub:tests/content-animate.test.mjs",
+        "era-hub:tests/content-build.test.mjs",
+        "era-hub:tests/content-claim.test.mjs",
+        "era-hub:tests/content-imprint.test.mjs",
+        "era-hub:tests/content-ingest.test.mjs",
+        "era-hub:tests/content-loose.test.mjs",
+        "era-hub:tests/content-narrate.test.mjs",
+        "era-hub:tests/content-publish.test.mjs",
+        "era-hub:tests/content-routes.test.mjs",
+        "era-hub:tests/content-store.test.mjs",
+        "era-hub:tests/content-transcribe.test.mjs",
+        "era-hub:tests/content-worker.test.mjs",
+        "era-hub:tests/device-id.test.mjs",
+        "era-hub:tests/device-volume.test.mjs",
+        "era-hub:tests/drawing-scene.test.mjs",
+        "era-hub:tests/drawing-ui.test.mjs",
+        "era-hub:tests/drawings.test.mjs",
+        "era-hub:tests/drive-launch.test.mjs",
+        "era-hub:tests/drive-localfolder.test.mjs",
+        "era-hub:tests/drive-mirror.test.mjs",
+        "era-hub:tests/era-scan-parity.test.mjs",
+        "era-hub:tests/erabook.test.mjs",
+        "era-hub:tests/fal-key.test.mjs",
+        "era-hub:tests/games-audio.test.mjs",
+        "era-hub:tests/games-state.test.mjs",
+        "era-hub:tests/games-ui.test.mjs",
+        "era-hub:tests/gate-safety.test.mjs",
+        "era-hub:tests/gate-stamp.test.mjs",
+        "era-hub:tests/gaze-recompile.test.mjs",
+        "era-hub:tests/home-tiles.test.mjs",
+        "era-hub:tests/icons.test.mjs",
+        "era-hub:tests/image-orient.test.mjs",
+        "era-hub:tests/image-util.test.mjs",
+        "era-hub:tests/integration-queue.test.mjs",
+        "era-hub:tests/invariants.test.mjs",
+        "era-hub:tests/kiosk-pause.test.mjs",
+        "era-hub:tests/mail.test.mjs",
+        "era-hub:tests/maker-drop.test.mjs",
+        "era-hub:tests/math-state.test.mjs",
+        "era-hub:tests/math-ui.test.mjs",
+        "era-hub:tests/movies-add.test.mjs",
+        "era-hub:tests/movies-lookup.test.mjs",
+        "era-hub:tests/movies.test.mjs",
+        "era-hub:tests/music-add.test.mjs",
+        "era-hub:tests/music-pictures.test.mjs",
+        "era-hub:tests/music.test.mjs",
+        "era-hub:tests/packs.test.mjs",
+        "era-hub:tests/parallel-gate.test.mjs",
+        "era-hub:tests/pencil-ui.test.mjs",
+        "era-hub:tests/play-ui.test.mjs",
+        "era-hub:tests/pool.test.mjs",
+        "era-hub:tests/predict.test.mjs",
+        "era-hub:tests/presence.test.mjs",
+        "era-hub:tests/reader-share.test.mjs",
+        "era-hub:tests/reader-shelf.test.mjs",
+        "era-hub:tests/reader-sizing.test.mjs",
+        "era-hub:tests/reader-strip.test.mjs",
+        "era-hub:tests/reader-ui.test.mjs",
+        "era-hub:tests/reconcile.test.mjs",
+        "era-hub:tests/routes.test.mjs",
+        "era-hub:tests/settings-library.test.mjs",
+        "era-hub:tests/settings-navigation.test.mjs",
+        "era-hub:tests/settings-ui.test.mjs",
+        "era-hub:tests/setup.test.mjs",
+        "era-hub:tests/shortcuts.test.mjs",
+        "era-hub:tests/start-hub-bat.test.mjs",
+        "era-hub:tests/symbol-provider.test.mjs",
+        "era-hub:tests/test-suite.test.mjs",
+        "era-hub:tests/this-week-fetch.test.mjs",
+        "era-hub:tests/this-week-recipe.test.mjs",
+        "era-hub:tests/update-boot.test.mjs",
+        "era-hub:tests/update-wake.test.mjs",
+        "era-hub:tests/update.test.mjs",
+        "era-hub:tests/vm-e2e.test.mjs",
+        "era-hub:tests/watch-ui.test.mjs",
+        "era-hub:tests/weather-location.test.mjs",
+        "era-hub:tests/words.test.mjs",
+        "era-making-words:tests/bargein.js",
+        "era-making-words:tests/fltest.js",
+        "era-making-words:tests/layout.test.mjs",
+        "era-making-words:tests/mistakes.js",
+        "era-making-words:tests/narrow.js",
+        "era-making-words:tests/parts.js",
+        "era-making-words:tests/phonetic.js",
+        "era-making-words:tests/rhymecount.js",
+        "era-making-words:tests/run.js",
+        "era-making-words:tests/sortbugs.js",
+        "era-making-words:tests/sortfix.js",
+        "era-making-words:tests/transfer.js",
+        "era-making-words:tests/transfercount.js",
+        "era-pencil:tests/pencil.js"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-speech-runtime.py",
+      "purpose": "Optional speech runtime protocol checks",
+      "consumers": [
+        "era-hub:tests/chat-speech.test.mjs"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-speech-benchmark.py",
+      "purpose": "Evaluation metric and replay checks",
+      "consumers": [
+        "era-hub:tests/chat-speech.test.mjs"
+      ]
+    }
+  ]
+}
