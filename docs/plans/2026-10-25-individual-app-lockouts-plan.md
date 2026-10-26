@@ -1,6 +1,6 @@
 # Individual app lockouts — implementation plan
 
-Date: 2026-10-25. Status: implementation prepared; testing and release paused by dad.
+Date: 2026-10-25. Status: qualification and release authorized; final full gate pending.
 Design: [individual app lockouts](../specs/2026-10-25-individual-app-lockouts-design.md).
 Worktree: era-hub--wt-lockout; branch: fix/lockout.
 
@@ -122,7 +122,7 @@ review and worktree-only assembly are the only checks performed.
 - [x] Authored state/UI/app-entry regression cases and revised media-only board
   expectations for independent full-app locks. These have NOT been executed.
 - [x] Updated user-facing app-lock documentation and sibling READMEs.
-- [ ] Await explicit instruction to start testing; then finish the verification
+- [x] Explicit instruction to test and release received; continue the verification
   matrix above, including real touch, viewport/door geometry, optional payloads,
   offline/storage failure, all app adapters and interrupted asynchronous work.
 - [ ] Coordinate the final baseline and gate/landing slot with Testing suite.
@@ -149,3 +149,16 @@ Continue gaze target), the unlocked Watch autoplay property, and old exact bar
 inventories rejecting the newly authorized adult lock. Regressions for both
 shared UI issues failed before the fix. Bar-contract updates retain the original
 geometry and door-only gaze rules. A fresh complete gate is required.
+
+The twelve-file consumer run passed ten complete files. Follow-up fixes drained
+Watch's context-owned route handlers before teardown and updated the second
+book-footer bar count. Both remaining complete files then passed; that focused
+run's input check rejected a commit made during collection, so it issued no
+qualification stamp. A new clean full gate follows.
+
+The recorded real-app journey passed all eleven app entrypoints at 1280×800,
+including persistent locks after reload, refusal of synthetic content clicks,
+visible and reachable exits, independent trusted-finger Music/Pencil locks, a
+wrong passcode followed by the correct one, and the Exit request. No page errors
+were observed. Video, screenshots and the structured receipt are retained in the
+private qualification directory.

@@ -1,7 +1,7 @@
 # Individual app lockouts — proposed design
 
 Date: 2026-10-25. Status: implementation authorized; code prepared in isolated feature worktrees.
-Testing and release are explicitly on hold.
+Testing and release were explicitly authorized on 2026-10-26; qualification is in progress.
 Request: every app can be locked individually, using the same shared code and
 interaction as Music. This supersedes the media-only scope of the September
 media-lock design when approved.
@@ -107,8 +107,8 @@ proposal. New locks use the latest duration; active expiry does not change.
 
 ## Coordination and limits
 
-Implementation is authorized in isolated feature worktrees. No tests, live
-restart, landing, device delivery or publishing may run until further instruction. Chat/Games integration gates freeze shared
+Implementation is authorized in isolated feature worktrees. Testing and release are authorized. Landing and publication still require
+coordinated green qualification; the live development hub is never restarted by a tool. Chat/Games integration gates freeze shared
 sources. Testing suite must coordinate the baseline, gate slot and any shared
 file changes before implementation touches those sources or any landing.
 Relevant overlaps: server.js, docs/dev-flow.md, payload and gate tooling,
