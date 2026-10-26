@@ -270,7 +270,7 @@ export function verifyWindowsInputs(job) {
 }
 
 async function executeOwned({program,args,cwd,environment,log,captureChildIdentity=processIdentity,onCapture=()=>{}}) {
-  let child,done,permitSent=false;
+  let child,done,permitSent=false,completed=false;
   const output=fs.openSync(log,'a',0o600);
   try {
     try{child=spawn('bash',['-c','IFS= read -r permit\n[ "$permit" = run ] || exit 2\nexec "$@"','windows-worker',program,...args],{cwd,env:environment,stdio:['pipe',output,output]});}
@@ -278,11 +278,23 @@ async function executeOwned({program,args,cwd,environment,log,captureChildIdenti
     done=new Promise(resolve=>{
       let error=null;child.once('error',value=>{error=value.message;});
       child.stdin?.on('error',value=>{error ||= value.message;});
-      child.once('close',(code,signal)=>resolve({code,signal,error}));
+      child.once('close',(code,signal)=>{completed=true;resolve({code,signal,error});});
     });
     if(!Number.isSafeInteger(child.pid) || child.pid<=1)throw Error('Windows child failed before identity capture');
-    const identity=captureChildIdentity(child.pid);onCapture(identity);
+    const launchIdentity=captureChildIdentity(child.pid);
+    const execution={argv:[program,...args],commandHash:digest(Buffer.from([program,...args].join('\0')+'\0'))};
+    let identity={...launchIdentity,captureStage:'launch',launchIdentity,execution};onCapture(identity);
     child.stdin.end('run\n');permitSent=true;
+    // exec preserves PID/start while replacing the waiting shell's command.
+    // Keep both receipts; never treat its pre-permit hash as the running argv.
+    for(let attempt=0;attempt<100 && !completed;attempt++) {
+      await new Promise(resolve=>setTimeout(resolve,1));
+      let observed;try{observed=processIdentity(child.pid);}catch(error){if(error.code==='ENOENT' || error.code==='ESRCH')break;throw error;}
+      if(observed.startTicks!==launchIdentity.startTicks)throw Error('Owned Windows child identity changed during exec');
+      if(observed.commandHash===execution.commandHash) {
+        identity={...observed,captureStage:'execution',launchIdentity,execution};onCapture(identity);break;
+      }
+    }
     return {...await done,identity};
   }finally{if(done){if(!permitSent)child.stdin?.end();await done;}}
 }

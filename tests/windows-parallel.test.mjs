@@ -119,7 +119,7 @@ test('job launch is claimed once and occupied CDP ports are refused without stop
   const listener=net.createServer();await new Promise(resolve=>listener.listen(8596,'127.0.0.1',resolve));
   t.after(()=>listener.close());await assert.rejects(requireFreeCdp(8596));assert.equal(listener.listening,true);
 });
-function workerFixture(t,{skip=false,cleanupFailure=false,application=false,applicationFailure=false,applicationTamper=false}={}) {
+function workerFixture(t,{skip=false,cleanupFailure=false,application=false,applicationFailure=false,applicationTamper=false,hold=false}={}) {
   const f=fixture(t),job=f.root,control=path.join(job,'control'),helpers=path.join(job,'helpers'),executionHub=path.join(job,'execution');
   for(const p of [path.join(control,'tools/testing'),helpers,executionHub])fs.mkdirSync(p,{recursive:true});
   const manager=`import json,os,pathlib,sys\np=pathlib.Path(os.environ['WINDOWS_JOB_DIR']);a=sys.argv[1]\nwith (p/'events').open('a') as f:f.write(a+'\\n')\nif a=='up':\n (p/'private').mkdir(exist_ok=True);(p/'private/resource.json').write_text('{}');(p/'transport').mkdir();(p/'transport/bootstrap.json').write_text('{}')\nif a=='down' and ${cleanupFailure?'True':'False'}:sys.exit(3)\nprint(json.dumps({'runId':os.environ['QA_RUN_ID'],'slot':os.environ['QA_SLOT'],'status':'ready' if a=='up' else 'deleted','ready':a=='up','resourceId':'123','guestUser':'fixture-user','owner':{'pid':int(os.environ['QA_OWNER_PID']),'startTicks':os.environ['QA_OWNER_START_TICKS']}}))\n`;
@@ -127,6 +127,7 @@ function workerFixture(t,{skip=false,cleanupFailure=false,application=false,appl
   fs.writeFileSync(path.join(control,'tools/testing/windows-transport.py'),"import os,pathlib\np=pathlib.Path(os.environ['WINDOWS_JOB_DIR'])\nwith (p/'events').open('a') as f:f.write('transport\\n')\n");
   const runner=path.join(job,'runner.sh');
   fs.writeFileSync(runner,`#!/bin/bash\nmkdir -p "$WINDOWS_JOB_DIR/vm-out"\nprintf ran > "$WINDOWS_JOB_DIR/ran"\ncat > "$WINDOWS_JOB_DIR/vm-out/leg-b.log" <<'TAP'\n1..9\n# tests9\n# pass9\n# fail0\n# cancelled0\n# skipped${skip?1:0}\n# todo0\nTAP\n`.replaceAll(/# (tests|pass|fail|cancelled|skipped|todo)(\d)/g,'# $1 $2'));
+  if(hold)fs.appendFileSync(runner,'cat "/proc/$$/cmdline" > "$WINDOWS_JOB_DIR/executed-argv"\nsleep 0.08\n');
   const meta={version:2,id:path.basename(job),directory:job,slot:'managed',only:'b',cdpPort:8595,expectedCases:9,control,helpers,executionHub,runner,manifest:{origins:{}},artifacts:{destination:f.source,head:'1'.repeat(40),tree:'2'.repeat(40),versionTag:'v1.2.3',build:'20261026.0001'}};
   if(application) {
     const root=path.join(job,'application');fs.mkdirSync(root);fs.symlinkSync(process.execPath,path.join(control,'node'));
@@ -143,6 +144,16 @@ test('worker waits for its actual complete TAP then tears down transport before 
   assert.equal(result.valid,true,result.error);assert.equal(result.completeReleaseEvidence,false);
   assert.equal(fs.readFileSync(path.join(f.job,'events'),'utf8'),'up\ntransport\ndown\n');
   assert.equal(result.tap.counts.tests,9);assert.ok(result.child.pid>1);
+});
+test('worker receipts distinguish the permit wrapper from its observed executed command',async t=>{
+  const f=workerFixture(t,{hold:true}),result=await runWindowsJob(f.job,f.options);
+  assert.equal(result.valid,true,result.error);
+  const identity=result.baselineExit.identity;
+  assert.equal(identity.captureStage,'execution');
+  assert.equal(identity.commandHash,sha(fs.readFileSync(path.join(f.job,'executed-argv'))));
+  assert.equal(identity.execution.commandHash,identity.commandHash);
+  assert.equal(identity.startTicks,identity.launchIdentity.startTicks);
+  assert.notEqual(identity.commandHash,identity.launchIdentity.commandHash);
 });
 test('worker refuses skipped cases and cleanup failure despite a zero child exit',async t=>{
   for(const options of [{skip:true},{cleanupFailure:true}]) {

@@ -15,7 +15,7 @@ speed and recovery recommendations afterward.
 - [x] Coordinate and validate a real second Windows host without disturbing Games.
 - [x] Add pinned native initialization after revert and application execution
   after complete baseline, preserving test assertions and separate outputs.
-- [x] Finish review and negative coverage:22 public checks (including33 Python
+- [x] Finish review and negative coverage:23 public checks (including33 Python
   transport checks),56 private manager checks, registry148 and syntax checks.
 - [x] Freeze the public/private implementation commits for owner review and adoption.
 - [ ] Report supported concurrency, measured overlap, blockers and adoption commands.
@@ -42,3 +42,12 @@ does not qualify Games' new durable runtime or Chat's eleven-case baseline.
 Games' new full148 and Chat's full155 Linux runs passed and retain their genuine
 original receipts. Games' failed fullscreen/visibility app journey stays failed;
 its owner is qualifying the private native harness before another full run.
+
+Chat adopted the staged driver for its exact eleven-case baseline and native
+hooks. Its first attempt failed the native helper's interactive-exit precondition
+and is preserved as failed; the owner's exact child interruption allowed normal
+transport/host cleanup. No installation/application acceptance is inferred.
+That attempt exposed a receipt issue: exec changed the waiting wrapper's argv
+at the same PID/start. A real-child regression now requires separate immutable
+launch and observed-execution receipts, with the intended argv explicitly pinned.
+The replacement driver does not alter the failed job's frozen controls.

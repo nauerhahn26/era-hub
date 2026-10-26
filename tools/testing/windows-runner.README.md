@@ -90,6 +90,13 @@ directory: it contains credentials and resource authority. Preserve original
 outputs and issue times. Historical status remains historical when sources
 later move; it does not grant a new release stamp.
 
+Child receipts distinguish the waiting permit wrapper from its observed executed
+command. `launchIdentity` retains the original PID/start/command, `execution`
+records the authorized argv/digest, and `captureStage` says whether that exec
+was observed. The PID/start must remain unchanged. Do not replace a stored hash
+merely because it mismatches; validate the explicit transition and current
+identity before any owner-controlled individual-PID interruption.
+
 Cleanup stops only captured individual process identities, then requests deletion
 of the exact owned provider resource. Accepted deletion is recorded before
 polling. Ambiguous inventory or changed identity retains the reservation for
