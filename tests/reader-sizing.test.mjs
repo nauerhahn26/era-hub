@@ -75,6 +75,8 @@ const SEAMS = {
   ERA_NWS_URL: "http://127.0.0.1:1",
   ERA_TMDB_URL: "http://127.0.0.1:1",
   ERA_STREAMING_URL: "http://127.0.0.1:1", ERA_RESEND_URL: "http://127.0.0.1:1",
+  ERA_SYMBOL_SEARCH_URL: "http://127.0.0.1:1/search/",
+  ERA_SYMBOL_IMAGE_URL: "http://127.0.0.1:1/images/{id}.png",
 };
 
 // Minimal valid 1x1 JPEG (synthetic bytes, no image lib needed).
