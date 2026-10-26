@@ -1,16 +1,19 @@
 # Chat trial feedback plan
 
-Status: private v1.0.20 / `20261026.1045` is prepared and unpublished. The exact
+Status: v1.0.20 / `20261026.1045` was published at 15:00:34 UTC. All six public
+assets match the tested distribution and the public latest feed names this build.
+The exact
 replacement passed all 156 regression suites, all eleven installed Windows
 cases, native display preparation, separate browser geometry and owned cleanup.
 Original evidence and six genuine stamps are archived. Earlier v1.0.18 and
 v1.0.19 candidates remain immutable history; their evidence does not certify
-this replacement. Publication and further device validation remain separate.
+this replacement. Further device validation remains with the maintainer.
 
 Goal: prepare the next installed Chat candidate with pictograms, timing for
 every turn and reliable use of the configured saved voice. The maintainer
-requested preparation, not publication, and explicitly owns further home-device
-validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md).
+initially requested preparation and later explicitly authorized publication.
+The maintainer owns further home-device validation.
+Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md).
 
 ## Work
 
@@ -28,7 +31,7 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [x] Commit the clean candidate and pass the complete gate.
 - [x] Prepare the normal patch distribution and pass Windows update leg B.
 - [x] Record exact source, payload hash, tests and remaining maintainer checks.
-- [x] Keep the candidate unpublished; publication requires a later explicit instruction.
+- [x] Hold publication until the maintainer's later explicit instruction.
 
 ### Persistence follow-up
 
@@ -261,6 +264,32 @@ or timings stay on the browser. Durable state actually stays on this computer;
 the runtime save status and this guide describe that behavior correctly. Keep
 the prepared artifact immutable. Timing export includes the current memory
 snapshot, so heed any visible unsaved warning before relying on persistence.
+
+## Publication follow-up
+
+The maintainer explicitly said to publish, then directed reuse of the completed
+tests without another full run. Only the two-hour age requirement was waived.
+Original 156-suite and eleven-case Windows results, stamp bytes and issue times
+remain unchanged. The newly started refresh run was interrupted through verified
+individual owned process identities after four completed suites; it supplies no
+acceptance evidence or fresh stamp. No other session was stopped.
+
+All six source/master relationships, documentation-only changes after artifact
+`f2d6d2d`, original proof digests, eight immutable distribution files and genuine
+`VM-GREEN` bytes were checked again. The owner used the normal clean-master,
+ancestor, no-fast-forward merge and shared landing/release locks, with the
+maintainer's recorded age exception, without changing the canonical helper or
+fabricating a stamp. Tag `v1.0.20` names exact artifact source `f2d6d2d`.
+
+[Release v1.0.20](https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.0.20)
+was published at 15:00:34 UTC with the six original assets. Every public asset
+was downloaded and matched byte-for-byte against the tested distribution. The
+public latest-update URL returns build `20261026.1045` and payload hash
+`20f87330d324ec8b7efb270ec26c6aab3fb5c3cb3f0182e9dea5d45b27018253`.
+Private publication and readback receipts live in
+`~/.cache/era-chat/publish-v20/`. No device contact, additional Windows run or
+live operator hub restart occurred. The next owning feature received the final
+cumulative master identity after this publication receipt was integrated.
 
 ## Existing measurements and limits
 
