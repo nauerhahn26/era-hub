@@ -6,11 +6,15 @@ import path from 'node:path';
 import http from 'node:http';
 import { chromium } from 'playwright';
 const PUBLIC = new URL('../public/', import.meta.url).pathname;
-let server, browser, base;
+let server, browser, base, passcodeHash = '';
 before(async () => {
   server = http.createServer((req, res) => {
     const p = new URL(req.url, 'http://fixture.invalid').pathname;
-    if (p === '/settings') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ lockMinutes: 0, lockPasscodeHash: '', pauseGoes: 'tdsnap', dwellMs: 900 })); return; }
+    if (p === '/settings') {
+      const respond = () => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ lockMinutes: 0, lockPasscodeHash: passcodeHash, pauseGoes: 'tdsnap', dwellMs: 900 })); };
+      if (req.method === 'POST') { let body = ''; req.on('data', chunk => { body += chunk; }); req.on('end', () => { const update = JSON.parse(body); if (typeof update.lockPasscodeHash === 'string') passcodeHash = update.lockPasscodeHash; respond(); }); }
+      else respond(); return;
+    }
     if (p === '/apps') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ apps: ['making-words','pencil','board','music','movies','this-week','reader','drawing','math','games','chat'].map(id => ({ id, installed: true, enabled: true })) })); return; }
     if (p === '/log') { res.writeHead(204).end(); return; }
     if (p.startsWith('/lib/') || /\.(js|css|svg|png)$/.test(p) || p.endsWith('/') || p === '/index.html') {
@@ -68,4 +72,17 @@ test('Settings offers independent app controls and does not lock anything on loa
     await page.locator('[data-app-lock-id="music"] button').click();
     await page.waitForFunction(() => !localStorage.getItem('era.app-lock.v1.music'));
   } finally { await context.close(); }
+});
+
+test('saving a passcode refreshes its offline hash immediately', async () => {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage(); await page.goto(base + '/settings/#apps');
+    await page.waitForFunction(() => document.querySelectorAll('[data-app-lock-id]').length === 11);
+    await page.locator('#lockPass').fill('2468');
+    const saved = page.waitForResponse(response => response.url().endsWith('/settings') && response.request().method() === 'POST');
+    await page.locator('#lockPassSave').click(); await saved;
+    const expected = await page.evaluate(async () => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('2468')))].map(b => b.toString(16).padStart(2, '0')).join(''));
+    await page.waitForFunction(hash => JSON.parse(localStorage.getItem('era.app-lock.settings.v1')).lockPasscodeHash === hash, expected, { timeout: 3000 });
+  } finally { passcodeHash = ''; await context.close(); }
 });

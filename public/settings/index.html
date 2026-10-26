@@ -621,7 +621,7 @@ $("settleDown").onclick=()=>{ settle=Math.max(0,settle-50); saveSettle(); };
 // rest of the lesson" or "the rest of the day", not a number. 0 sits at the
 // far end, past a day, because "until I say so" is the longest lock there is.
 const LOCKS=[5,10,15,30,45,60,90,120,180,240,480,720,1440,0];
-let lockMin=45;
+let lockMin=45, lockPasscodeValue=null;
 function lockLabel(m){
   if(!m) return "Until unlocked";
   if(m<60) return m+" minutes";
@@ -635,7 +635,9 @@ function lockDesc(){
 }
 async function saveLock(){
   lockDesc();
-  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({lockMinutes:lockMin})});
+  const response=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({lockMinutes:lockMin})});
+  if(!response.ok){ toast("Could not save",false); return; }
+  if(lockPasscodeValue!==null) window.AppLock?.configure({lockMinutes:lockMin,lockPasscodeHash:lockPasscodeValue});
   toast("Lock: "+lockLabel(lockMin).toLowerCase());
 }
 function lockStep(d){
@@ -664,6 +666,8 @@ async function lockPassPost(hash){
     body:JSON.stringify({lockPasscodeHash:hash})});
   if(!r.ok){ toast("Could not save",false); return; }
   $("lockPass").value="";
+  lockPasscodeValue=hash;
+  window.AppLock?.configure({lockMinutes:lockMin,lockPasscodeHash:hash});
   lockPassPaint(hash!=="");
   toast(hash?"Passcode set ✓":"Passcode cleared");
 }
@@ -1959,6 +1963,7 @@ document.addEventListener("era-settings-section",e=>{
          // nearest stop — never on "until unlocked", which nobody types by accident
          lockMin = LOCKS.includes(m) ? m : LOCKS.reduce((a,b)=> b && Math.abs(b-m)<Math.abs(a-m) ? b : a, 5);
        }
+       lockPasscodeValue=typeof s.lockPasscodeHash==="string"?s.lockPasscodeHash:"";
        lockPassPaint(!!s.lockPasscodeHash);
        exitPaint(s.exitTo==="home"?"home":"tdsnap");
        weekVideosPaint(s.downloadWeekVideos===false?"no":"yes");
