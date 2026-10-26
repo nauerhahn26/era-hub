@@ -18,6 +18,10 @@
 // header that documents a neighbour's port is not a claim.
 
 export const BAND = [8300, 8599];               // the house band a claim is read from
+// The gaze engine's bus. Every device's engine listens on it, so it sits outside
+// BAND; kiosk-pause and routes stand an engine up on it and skip when it is
+// busy, so they share it by design and claims() never reports it.
+export const ENGINE_PORT = 49155;
 
 // Blank comments and regular-expression literals, and string and template
 // bodies unless keepStrings, keeping every newline so line numbers survive.
@@ -95,4 +99,12 @@ export function claims(src) {
     }
   }
   return found;
+}
+
+// Does the code (comments, strings and regular expressions blanked) name the
+// engine's bus port as a number, as a stand-in engine's listen(49155, ...)
+// does? A URL a browser route intercepts ("http://127.0.0.1:49155/**") or a
+// comment about the bus binds nothing and does not count.
+export function claimsEngine(src) {
+  return new RegExp(String.raw`(?<![\w$.])${ENGINE_PORT}(?![\w$.])`).test(blank(src));
 }

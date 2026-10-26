@@ -2490,8 +2490,36 @@
       "hub": "own",
       "ports": [
         8463,
-        8464
+        8464,
+        49155
       ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": true,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/lanes.test.mjs",
+      "purpose": "The gate lane runner: longest-first order, solo/heavy/quiet/fixed-port (gaze engine bus included) exclusions, memory floor that never holds the last lane, one lane = the serial loop, results.jsonl, the gate tally, stop by pid",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/testing/lanes.mjs",
+        "era-hub/tools/testing/suite-source.mjs",
+        "era-hub/tools/era-gate.sh",
+        "era-hub/tools/testing/registry.json",
+        "era-hub/tools/testing/durations.json"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data",
+        "owned-node-child",
+        "owned-process-tree"
+      ],
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
       "browsers": 0,
       "heavy": false,
       "solo": false,
@@ -3095,11 +3123,12 @@
       "level": "hub process integration",
       "hub": "own",
       "ports": [
-        8409
+        8409,
+        49155
       ],
       "browsers": 0,
       "heavy": false,
-      "solo": false,
+      "solo": true,
       "quiet": false,
       "retry": false,
       "owner": ""
