@@ -24,7 +24,7 @@
 //     hub and there must never be one;
 //   * every refusal is one sentence a parent can act on, and the sheet keeps it.
 //
-// Harness: reader-ui.test.mjs's — the REAL server.js on scratch port 8469 with
+// Harness: reader-ui.test.mjs's — the REAL server.js on scratch port 8408 with
 // a throwaway ERA_DATA_DIR, a real Drive content folder, and the SYNTHETIC
 // "Luna the Fox" fixture (never real book content). The `.erabook` this suite
 // imports is one the hub exported from that fixture seconds earlier, so the
@@ -41,10 +41,11 @@ import { chromium } from "playwright";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HUB = path.resolve(__dirname, "..");
 
-// 8469, the same port reader-share.test.mjs uses — the two suites never run at
-// the same time (the gate runs *.test.mjs one after another) and the plan's
-// sweep claimed exactly one port for the reader half of this feature.
-const PORT = Number(process.env.ERA_TEST_HUB_PORT) || 8469;
+// 8408: this suite's own port. It shared 8469 with reader-share.test.mjs while
+// the gate ran one suite at a time; side-by-side lanes cannot, so it moved 10/26
+// to a port no suite in the five repos claims (tests/suite-ports.test.mjs pins
+// that). reader-share keeps 8469.
+const PORT = Number(process.env.ERA_TEST_HUB_PORT) || 8408;
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-reader-strip-"));
 const FOLDER = path.join(TMP, "drive", "New ERA Content");

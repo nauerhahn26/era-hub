@@ -14,6 +14,8 @@ caches — never in this repo.
   module repos (era-core, era-making-words, era-pencil, era-board).
 - `tools/era-gate.sh` — the parity/regression gate: collects every module's
   test suite, boots a test instance on its own port, runs everything.
+- [Windows patch runner](tools/testing/windows-runner.README.md) — an opt-in
+  independent QA host, pinned native/app phases and owned cleanup.
 - [Math](docs/math.md) — number exploration and number partners through
   large gaze or touch controls, with optional spoken counting.
 - [Games](docs/games.md) — local Fashion Studio, Four in a Row and Number

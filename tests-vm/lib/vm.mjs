@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { NATIVE_DISPLAY, checkNativeDisplay } from "./native-display.mjs";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VMTOOLS = path.join(path.dirname(HUB), "era-family", "tools", "vm");
@@ -122,6 +123,39 @@ export function prepGuest() {
     "powercfg /change monitor-timeout-ac 0", "powercfg /change monitor-timeout-dc 0", "echo PREPPED"], { soft: true });
   if (!/PREPPED/.test(out)) throw new Error("guest prep (Windows Update off, display stays on) did not run: " + out);
   prepped = true;
+}
+
+/** set the guest's REAL desktop mode (default 1280x800) and prove it by Windows'
+ *  own readback; no browser viewport emulation. The pristine template boots at
+ *  1024x768 — smaller than any family screen and than Chat's smallest supported
+ *  viewport — and leg B's Chat check fails there on "Reactions" (210 px wide at
+ *  the 44 px floor in a 208 px box; v1.0.21/v1.0.22, 10/26). Run it before the
+ *  kiosk opens; it lasts until the guest reboots. Why and the contract:
+ *  native-display.mjs; the helper: native-display.cs. */
+export async function nativeDisplay({ width, height } = NATIVE_DISPLAY) {
+  wake();   // on a dark display the helper never wrote its result (10/26)
+  prepGuest();
+  // straight after a revert Defender's signature update starves the guest: the
+  // helper applied the mode, then took 78 s to write its result (10/26), past
+  // its budget. Waiting here moves launchKiosk's own wait, it adds none.
+  await quiet();
+  ship(fileURLToPath(new URL("native-display.cs", import.meta.url)));
+  const built = bat("native-display-build", [`if exist ${GUEST_HOME}\\native-display.exe del ${GUEST_HOME}\\native-display.exe`,
+    `C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /target:winexe /reference:System.Web.Extensions.dll /out:${GUEST_HOME}\\native-display.exe ${GUEST_HOME}\\native-display.cs`,
+    `if exist ${GUEST_HOME}\\native-display.exe (echo DISPLAY_BUILT=1) else (echo DISPLAY_BUILT=0)`], { soft: true, timeout: 180000 });
+  if (!/DISPLAY_BUILT=1/.test(built)) throw new Error("native-display.exe did not build in the guest: " + built);
+  bat("native-display-clear", [`del ${GUEST_HOME}\\native-display.json 2>nul`, `del ${GUEST_HOME}\\native-display.json.progress.txt 2>nul`,
+    `del ${GUEST_HOME}\\native-display-exit.txt 2>nul`, "echo CLEARED"]);
+  // prefix redirection: `echo 0> file` would redirect handle 0 instead of writing "0"
+  interactive("native-display", [`start /wait "" ${GUEST_HOME}\\native-display.exe ${width} ${height} ${GUEST_HOME}\\native-display.json`,
+    `>${GUEST_HOME}\\native-display-exit.txt echo %errorlevel%`]);
+  const exit = await waitFor(() => { const t = guestText("native-display-exit.txt").trim(); return /^\d+$/.test(t) && t; },
+    { timeout: 300000, every: 2000, what: "the native display helper to exit" })
+    .catch((e) => { throw new Error(e.message + " — its progress: " + (guestText("native-display.json.progress.txt").replace(/\s+/g, " ").trim() || "none")); });
+  const result = checkNativeDisplay(guestText("native-display.json"), { width, height, exit });
+  fs.writeFileSync(path.join(OUT, "native-display.json"), JSON.stringify(result, null, 2) + "\n");
+  console.log(`# native display ${result.before.width}x${result.before.height} -> ${result.after.width}x${result.after.height} (Windows readback; no browser emulation)`);
+  return result;
 }
 
 /** silent-install an installer already pushed as <exe> in the guest's home;

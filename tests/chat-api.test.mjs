@@ -254,7 +254,7 @@ test('SSE timestamps events, drops cancelled generations and sanitizes runtime e
   child.stdout.write(JSON.stringify({ type: 'final', text: 'obsolete', generation: old }) + '\n');
   child.stdout.write(JSON.stringify({ type: 'partial', text: 'A question', generation }) + '\n');
   child.stdout.write(JSON.stringify({ type: 'final', text: 'A question?', generation,
-    timings: { audioMs: 250, finalDecodeMs: 20, firstPartialMs: null, private: '/private/path' } }) + '\n');
+    timings: { audioMs: 250, activityMs: 3, cloudMs: 17, finalDecodeMs: 20, firstPartialMs: null, private: '/private/path' } }) + '\n');
   child.stdout.write(JSON.stringify({ type: 'error', error: '/private/path secret', generation }) + '\n');
   while (!received.includes('runtime-error')) received += new TextDecoder().decode((await reader.read()).value);
   assert.ok(!received.includes('obsolete') && !received.includes('/private/path'));
@@ -262,7 +262,7 @@ test('SSE timestamps events, drops cancelled generations and sanitizes runtime e
   assert.ok(events.some(event => event.type === 'partial' && event.text === 'A question'));
   assert.deepEqual(events.find(event => event.type === 'ready').capabilities,
     { wake: true, partial: false, automaticEndpoint: false, remoteFinal: true, remoteStreaming: false });
-  assert.deepEqual(events.find(event => event.type === 'final').timings, { audioMs: 250, finalDecodeMs: 20, firstPartialMs: null });
+  assert.deepEqual(events.find(event => event.type === 'final').timings, { audioMs: 250, activityMs: 3, cloudMs: 17, finalDecodeMs: 20, firstPartialMs: null });
   assert.ok(events.every(event => Number.isFinite(event.at) && event.elapsedMs >= 0));
   controller.abort();
   await new Promise(resolve => setTimeout(resolve, 10));
@@ -630,11 +630,29 @@ test('disconnect cancels an outstanding adapter request', async t => {
 
 test('gate clears inherited Chat configuration before any test hub starts', () => {
   const source = readFileSync(new URL('../tools/era-gate.sh', import.meta.url), 'utf8');
-  const block = source.match(/for chat_setting in[^\n]+; do unset[^\n]+; done/);
-  assert.ok(block, 'gate must clear the complete Chat configuration namespace');
-  const disabled = source.indexOf('export ERA_CHAT_CONFIG_DISABLED=1');
-  assert.ok(disabled > block.index && disabled < source.indexOf('node "$HUB/server.js"'), 'private file loading is disabled after inherited values are cleared');
-  const isolated = source.slice(block.index, disabled + 'export ERA_CHAT_CONFIG_DISABLED=1'.length);
+  function checkedIsolation(script) {
+    const block = script.match(/for chat_setting in[^\n]+; do unset[^\n]+; done/);
+    assert.ok(block, 'gate must clear the complete Chat configuration namespace');
+    const disabled = /^[ \t]*export ERA_CHAT_CONFIG_DISABLED=1[ \t]*(?:#[^\n]*)?$/m.exec(script);
+    assert.ok(disabled && disabled.index > block.index + block[0].length,
+      'private file loading is disabled after inherited values are cleared');
+    const launches = [...script.matchAll(/^[ \t]*(?:node|"\$NODE_BIN")[ \t]+"\$HUB\/server\.js"[ \t]+"\$PORT"[^#;\n|]*[ \t]&[ \t]*(?:#[^\n]*)?$/gm)];
+    assert.ok(launches.length, 'an actual background hub launch must exist');
+    for (const launch of launches) assert.ok(disabled.index + disabled[0].length < launch.index,
+      'private file loading is disabled before every actual background hub launch');
+    return { block, disabled };
+  }
+  const { block, disabled } = checkedIsolation(source);
+  const clear = block[0], guard = 'export ERA_CHAT_CONFIG_DISABLED=1';
+  for (const command of ['node', '"$NODE_BIN"']) {
+    const launch = `${command} "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &`;
+    const decoys = `# ${launch}\nSRV_ARGS='${launch}'\n${command} "$HUB/server.js" "$PORT" # &`;
+    checkedIsolation(`${decoys}\n${clear}\n${guard}\n${launch}\n`);
+    assert.throws(() => checkedIsolation(`${decoys}\n${clear}\n${guard}\n`), /actual background hub launch/);
+    assert.throws(() => checkedIsolation(`${clear}\n${launch}\n${guard}\n`), /before every actual background hub launch/);
+    assert.throws(() => checkedIsolation(`${guard}\n${clear}\n${launch}\n`), /after inherited values are cleared/);
+  }
+  const isolated = source.slice(block.index, disabled.index + disabled[0].length);
   const run = spawnSync('bash', ['-c', isolated + '\nnode -e \'console.log(JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith("ERA_CHAT_")))))\''], {
     env: { PATH: process.env.PATH, ERA_CHAT_RUNTIME: 'unexpected-command', ERA_CHAT_CHOICES_URL: 'https://adapter.example',
       ERA_CHAT_CHOICES_TOKEN: 'private-value', ERA_CHAT_SPEECH_CONFIG: 'unexpected-file' }, encoding: 'utf8',

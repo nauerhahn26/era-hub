@@ -1,7 +1,10 @@
 # Installed Chat release plan
 
-Current status: the complete Linux gate passed 140/140; Windows update validation
-and publication are in progress. This supersedes the development-only setup in the earlier prototype
+Current status: v1.0.16 is published and all six public assets are verified.
+The complete Linux gate passed 140/140 and Windows update validation passed 9/9.
+Private device configuration and normal update delivery are verified. The
+home device runs the published build with Chat and its services enabled. This
+supersedes the development-only setup in the earlier prototype
 plan. Design: [installed Chat](../specs/2026-10-25-chat-installed-release.md).
 Usage and private setup: [Chat](../chat.md).
 
@@ -17,10 +20,13 @@ Usage and private setup: [Chat](../chat.md).
 - [x] Prevent the gate from loading private settings or using paid services.
 - [x] Adopt owned symbol fixtures so the complete gate can run without network access.
 - [x] Probe the actual configured service through the browser audio graph.
-- [ ] Validate the installed worker and model on Windows during update leg B.
+- [x] Validate the installed worker and model on Windows during update leg B.
 - [x] Commit, synchronize master and run the complete gate on the clean tree.
-- [ ] Land, publish the patch, provision private device configuration and verify.
-- [ ] Record final evidence and the remaining physical acceptance checks.
+- [x] Land, publish the patch and verify all public assets.
+- [x] Provision private configuration in the running device account's profile.
+- [x] Queue normal public-feed delivery and Chat enablement for the next connection.
+- [x] Verify the running device build, enabled Chat and configured services after delivery.
+- [x] Record final evidence and the remaining physical acceptance checks.
 
 Agents own separate speech, backend and packaging changes; the overseer reviews,
 documents, validates and releases. Sibling Math, Music, Games, video and testing
@@ -48,7 +54,8 @@ and `choices-probe.json` in the private installed evidence directory.
 The identical installed-speech harness passes on the host with actual activity
 inference and a local mock recognizer: silence rejected, zero uploads while held,
 one final after release, transport closed on cancel, no stale final, and a
-successful following turn. The Windows leg remains pending.
+successful following turn. The same installed harness also passes on Windows
+in the final update leg below.
 
 The branch incorporates the tested fixture repair from the concurrent testing
 suite work: accepted mock-provider disconnects now close the response promptly,
@@ -134,6 +141,45 @@ natural question, release, move to the black center and deliberately select a
 reply. Confirm audible voice, normal gaze behavior, a second turn, cancellation
 and return to the communication system. Bluetooth and wake activation are
 deferred.
+
+## Published patch and device handoff
+
+Published v1.0.16, build `20261026.0231`, from hub source `e3a0365` and
+tree `9d39594c`. Board landed as `2cb86de`, followed by hub `e1caf6b`, through
+the normal worktree helper. The source differs from the full tested hub only
+in Markdown. The normal patch pipeline retained the signed v1.0.0 installer
+and ran the exact candidate through Windows update leg B: 9/9 passing, no
+failures or skips. Installed Chat recovered its shared pack, loaded the actual
+activity model, rejected silence, withheld transcription until release and
+cancelled transport without accepting stale results. Recognition in this
+Windows acceptance check used a local mock; it establishes installed execution
+and interaction boundaries, not recognition accuracy.
+
+All six public assets match the locally tested distribution. The manifest and
+both tarball names agree with the payload SHA-256
+`011aa3c2347210a6dca3b8aebd763ed6246a5c886b6ce4f97fcd38f2d2e47f24`.
+Private receipts are `parallel-release-receipt.json` and the attempt directory
+`parallel-release-v1.0.16-1792981883/` under the installed evidence directory.
+The temporary Windows QA host was destroyed, its lease released, the local
+debug tunnel closed and both release locks verified free.
+
+Private service settings were provisioned into the profile belonging to the
+running device hub, with restricted file permissions and no hub restart.
+The device later disconnected and reconnected. The bounded delivery helper
+requested the normal public update and verified running build
+`20261026.0231`, enabled Chat, preserved all other app selections and checked
+the page and both service configurations. The completed receipt is
+`delivery-receipt.json` in the private installed evidence directory. The helper
+did not open a page, start the microphone or play audio, and has exited.
+
+Physical microphone quality, audible playback, gaze and natural conversation
+remain the live trial above. The optional installed synthetic performance
+probe subsequently measured one synthetic file through the installed worker:
+1871 ms from release to final and 2063 ms to simple replies. A separate
+contextual request took 2469 ms. These are individual synthetic observations,
+not the maintainer's real turn or field accuracy. Further home-device
+validation belongs to the maintainer. The live trial follow-up is scoped in
+[the next candidate plan](2026-10-26-chat-trial-feedback.md).
 
 ## Retrospective
 

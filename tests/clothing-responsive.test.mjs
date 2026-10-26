@@ -18,6 +18,10 @@ const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 8417;      // 8391-8416 held by sibling suites
 const AI_PORT = 8418;
 const BASE = `http://127.0.0.1:${PORT}`;
+const PHOTOS = 2;
+// The measurement has to happen DURING the build to mean anything: at least
+// this many of its rounds must end with the worker still building.
+const MIN_ROUNDS_BUILDING = 5;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-resp-"));
 const require = createRequire(path.join(HUB, "server.js"));
 let ai, child;
@@ -31,7 +35,12 @@ function makeJpg(file, r, g, b) {
 }
 
 before(async () => {
-  // slow AI: 1.5s per answer — a 6-photo ingest is a ~9s+ build window
+  // slow AI: 1.5 s per answer. Two photos are plenty: each one also pays its
+  // 1600 px decode and its cut-out, so the build outlasts the 10 rounds the
+  // measurement below takes (all 10 ended mid-build on 10/26), and the six this
+  // used to seed only lengthened the wait after it. The worker skips the 5 s
+  // photo spacing here: this hub's provider is a loopback stand-in
+  // (clothing-worker.js PHOTO_SPACING_MS, maintainer 10/26).
   ai = http.createServer((req, res) => {
     let body = ""; req.on("data", c => body += c);
     req.on("end", () => setTimeout(() => {
@@ -46,7 +55,7 @@ before(async () => {
   await new Promise(r => ai.listen(AI_PORT, "127.0.0.1", r));
 
   fs.mkdirSync(path.join(TMP, "clothing"), { recursive: true });
-  for (let i = 0; i < 6; i++) makeJpg(path.join(TMP, "clothing", `p${i}.jpg`), 40 * i, 90, 120);
+  for (let i = 0; i < PHOTOS; i++) makeJpg(path.join(TMP, "clothing", `p${i}.jpg`), 40 * i, 90, 120);
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
     JSON.stringify({ provider: "anthropic", apiKey: "sk-test" }));
 
@@ -66,7 +75,7 @@ before(async () => {
 });
 after(() => { if (child) child.kill("SIGKILL"); if (ai) ai.close(); });
 
-test("pages answer fast while a clothing build is running", async () => {
+test("pages answer fast while a clothing build is running", async (t) => {
   // kick the build via the same path Settings uses (saving a key re-triggers)
   await fetch(`${BASE}/ai-key`, { method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -82,7 +91,7 @@ test("pages answer fast while a clothing build is running", async () => {
   assert.ok(s.building, "build started");
 
   // while it builds: the exact clicks dad made — home page, settings, status
-  let slowest = 0;
+  let slowest = 0, roundsBuilding = 0;
   for (let i = 0; i < 10; i++) {
     for (const p of ["/home/", "/settings", "/clothing/status", "/apps"]) {
       const t0 = Date.now();
@@ -93,15 +102,19 @@ test("pages answer fast while a clothing build is running", async () => {
     await new Promise(r => setTimeout(r, 300));
     const st = await (await fetch(`${BASE}/clothing/status`)).json();
     if (!st.building) break;   // build finished early — we still measured during it
+    roundsBuilding++;
   }
+  t.diagnostic(`${roundsBuilding} round(s) measured while building; slowest page ${slowest} ms`);
+  assert.ok(roundsBuilding >= MIN_ROUNDS_BUILDING,
+    `only ${roundsBuilding} round(s) measured while the worker was building — too few to call it "during a build"`);
   assert.ok(slowest < 900, `slowest page during build ${slowest}ms — the 8/31 freeze is back if this grows`);
 
   // and the build itself completes into her board
   for (let i = 0; i < 240; i++) {
     const st = await (await fetch(`${BASE}/clothing/status`)).json();
-    if (!st.building && st.cataloged >= 6) break;
+    if (!st.building && st.cataloged >= PHOTOS) break;
     await new Promise(r => setTimeout(r, 500));
   }
   const fin = await (await fetch(`${BASE}/clothing/status`)).json();
-  assert.equal(fin.cataloged, 6, "all photos cataloged by the worker");
+  assert.equal(fin.cataloged, PHOTOS, "all photos cataloged by the worker");
 });

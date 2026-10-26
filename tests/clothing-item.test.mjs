@@ -62,18 +62,19 @@ const post = (body, headers = {}) => fetch(`${BASE}/clothing/item`, {
   body: typeof body === "string" ? body : JSON.stringify(body),
 });
 
-// A build settles in stages; "not building" has to hold twice with a gap, or a
-// queued run starts right after the check said the hub was idle.
-async function idle(tries = 120) {
-  for (let round = 0; round < 2; round++) {
-    let ok = false;
-    for (let i = 0; i < tries; i++) {
-      if (!(await status()).building) { ok = true; break; }
-      await new Promise(r => setTimeout(r, 250));
-    }
-    assert.ok(ok, "the hub settled");
-    if (round === 0) await new Promise(r => setTimeout(r, 800));
+// One round of "not building" is enough here, polled every 50 ms. Every build
+// this suite asks for comes from POST /clothing/item, and the hub spawns that
+// build's worker before it answers the POST (server.js -> clothing.regenerate,
+// which creates the Worker synchronously); a run queued behind it is respawned
+// in the old worker's exit handler, so `building` never reads false between
+// two builds. The old second round, 800 ms after the first, waited for a race
+// this door does not have.
+async function idle(tries = 600) {
+  for (let i = 0; i < tries; i++) {
+    if (!(await status()).building) return;
+    await new Promise(r => setTimeout(r, 50));
   }
+  assert.fail("the hub never settled");
 }
 
 before(async () => {

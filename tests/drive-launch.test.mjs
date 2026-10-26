@@ -114,7 +114,25 @@ async function until(what, ok, ms = 10000) {
   }
   throw new Error("timed out waiting for " + what);
 }
-const settle = () => new Promise(r => setTimeout(r, 700));   // long enough for a spawned node to log
+// The absence window after the last pass: long enough for a Drive the hub
+// spawned to have written its line to the fake's log, which stays the witness
+// (status().driveLaunches is counted even when a spawn fails, so it cannot say
+// whether a process ran). Measured on this host rather than guessed: start the
+// same fake the same way (crash mode only logs, and to a log of its own), wait
+// for ITS line, then as long again, never under 150 ms. A launch the hub made
+// was spawned before this one, by the same node binary, so it has had the
+// probe's whole start-up twice over to write its line to w.log. On an idle host
+// that is ~150 ms where a fixed 700 ms sat; on a loaded one it stretches with
+// the load it measures.
+async function settle() {
+  const mark = path.join(TMP, "settle-" + process.hrtime.bigint() + ".log");
+  const t0 = Date.now();
+  spawn(process.execPath, [FAKE, "--settle"], { stdio: "ignore",
+    env: { ...process.env, FAKE_DRIVE_MODE: "crash", FAKE_DRIVE_LOG: mark } }).on("error", () => {});
+  await until("the settle probe to log", () => fs.existsSync(mark), 10000);
+  const took = Date.now() - t0;
+  await new Promise(r => setTimeout(r, Math.max(150 - took, took)));
+}
 
 test("installed + signed in + not running + no mount: the hub starts Drive, and the next pass mirrors the family's People", async () => {
   const w = world("launch");

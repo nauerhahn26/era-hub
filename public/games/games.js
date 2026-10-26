@@ -5,10 +5,14 @@ const screen = document.getElementById('gamesScreen');
 const origins = new WeakSet();
 const BACKUP_KEY = `${STORAGE_KEY}.recovery`;
 let S = createState(), recoveryNotice = '', storageBlocked = false, recoveryOriginal = null;
+let localRaw = null, localValid = false, durableBlocked = false;
+let revision = 0, acknowledged = 0, queuedRevision = 0, latestSave = '', saveFailed = false;
+let saving = Promise.resolve(true);
+const saveNotice = document.getElementById('saveNotice');
 try {
   const raw = localStorage.getItem(STORAGE_KEY);
   const loaded = readSavedState(raw);
-  S = loaded.state;
+  localRaw = raw; localValid = !!raw && loaded.valid;
   if (raw && !loaded.valid) {
     recoveryOriginal = raw;
     try {
@@ -22,14 +26,82 @@ try {
 let ready = false, gone = false, renderedKey = '', uiPage = '', rigTemplate = null;
 let bar, stage, choices, heading, status, footer, botTimer = null, showTimer = null;
 let showStarted = 0, showRemaining = 1600, showToken = '', sceneKey = '', idCounter = 0;
-let audio = null, musicTimer = null, musicStep = 0, partnerPanel, partnerButton;
+let audio = null, musicTimer = null, musicStep = 0, partnerPanel, partnerButton, durableCopy;
 let musicGeneration = 0, musicArmed = false, musicPending = false, musicVolCap = 0;
 const liveNotes = new Set();
 
+function saveMessage(message) { saveNotice.textContent = message; }
+function startSave() {
+  if (durableBlocked || queuedRevision === revision) return saving;
+  queuedRevision = revision;
+  saving = saving.then(async () => {
+      const current = revision, body = latestSave;
+      if (acknowledged >= current) return true;
+      try {
+        const controller = new AbortController();
+        let timeout;
+        let status;
+        try {
+          status = await Promise.race([
+            (async () => {
+              const response = await fetch('/games/state', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body,
+                keepalive: body.length <= 60000, signal: controller.signal,
+              });
+              await response.text();
+              return response.status;
+            })(),
+            new Promise((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(Error('save timeout')); }, 750); }),
+          ]);
+        } finally { clearTimeout(timeout); }
+        if (status !== 200) throw Error(`save ${status}`);
+        acknowledged = current;
+        saveFailed = false;
+        if (current === revision) {
+          if (!recoveryOriginal) recoveryNotice = '';
+          saveMessage('Saved');
+        }
+        return true;
+      } catch {
+        saveFailed = true;
+        if (current === revision) {
+          recoveryNotice = 'The hub did not confirm the latest save. Progress remains in this session. Make another choice to retry, then wait for Saved.';
+          saveMessage('Not saved');
+        }
+        return false;
+      }
+  });
+  return saving;
+}
 function persist() {
-  if (storageBlocked) return;
-  try { localStorage.setItem(STORAGE_KEY, serializeState(S)); }
-  catch { recoveryNotice = 'Progress is available in this session. Local saving is unavailable.'; }
+  if (!ready || durableBlocked) return Promise.resolve(false);
+  try {
+    const nextSave = serializeState(S);
+    if (nextSave === latestSave && !saveFailed) return saving;
+    latestSave = nextSave;
+    revision++;
+    saveMessage('Saving…');
+    if (!storageBlocked) {
+      try { localStorage.setItem(STORAGE_KEY, latestSave); }
+      catch { storageBlocked = true; }
+    }
+    return startSave();
+  } catch {
+    recoveryNotice = 'The latest progress could not be prepared for saving. This session still works, but the change is not saved.';
+    saveMessage('Not saved');
+    return Promise.resolve(false);
+  }
+}
+async function flushBeforeExit() {
+  if (durableBlocked) return;
+  if (acknowledged === revision) return;
+  const done = await Promise.race([
+    startSave(), new Promise(resolve => setTimeout(() => resolve(false), 900)),
+  ]);
+  if (!done && acknowledged < revision) {
+    recoveryNotice = 'The latest save was not confirmed before Exit. The previous saved progress was preserved.';
+    saveMessage('Not saved yet');
+  }
 }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function active() { return !window.AppLock?.isLocked() && !gone && !S.paused && !S.hidden && document.visibilityState === 'visible'; }
@@ -442,9 +514,11 @@ function actionFor(action, value, input = 'unknown') {
     if (action === 'fashion-save' && !S.pending) S = reduce(S, { type: 'fashion-view', value: 'collection' });
     if (['show-start', 'show-next', 'show-encore'].includes(action)) { showRemaining = 1600; showToken = ''; }
   }
-  armMusic(action); persist(); render();
+  armMusic(action); const saved = persist(), saveIssued = revision; render();
   if (S !== before && action === 'option') speak(safeLabel(before.fashion.editField || currentField(), value));
-  if ((action === 'fashion-save' && !S.pending && S.fashion.looks.length > before.fashion.looks.length) || (action === 'confirm' && before.pending?.type === 'look-replace' && !S.pending)) speak('Your look is kept.');
+  if ((action === 'fashion-save' && !S.pending && S.fashion.looks.length > before.fashion.looks.length) || (action === 'confirm' && before.pending?.type === 'look-replace' && !S.pending)) {
+    void saved.then(ok => { if (ok && active() && revision === saveIssued) speak('Your look is kept.'); });
+  }
   if (S.view === 'connect4' && S.connect4.status !== before.connect4.status && S.connect4.status !== 'playing') speak(S.connect4.status === 'won' ? `Player ${S.connect4.winner} has four in a row.` : 'A draw.');
   try { fetch('/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: 'games', event: action, input, view: S.view }) }).catch(() => {}); } catch {}
 }
@@ -453,6 +527,8 @@ function mountPartner() {
   partnerPanel = document.createElement('aside'); partnerPanel.className = 'partner-panel'; partnerPanel.hidden = true;
   partnerPanel.innerHTML = '<h2>Partner setup and credits</h2><p>The three local games work offline. Hosted games use their own controls and do not inherit these HTML dwell targets. Mouse access alone does not verify gaze access.</p><p><a href="https://prod.games.eyegazegames.com/?game=connect4" target="_blank" rel="noopener">Hosted Four in a Row</a> — use its official tracker/browser setup.</p><p><a href="https://gameaccess.info/gazey-golf-eye-control-options/" target="_blank" rel="noopener">Golf control guidance</a> — the Demo is a video.</p><p><a href="https://pbskids.org/games/play/pinkalicious-fashion-game/66548" target="_blank" rel="noopener">Pinkamagine Fashion</a> — hosted clothing/design choices; independent control review required.</p>';
   const notice = text('', recoveryNotice); notice.id = 'storageNotice'; partnerPanel.append(notice);
+  durableCopy = document.createElement('a'); durableCopy.href = '/games/state/recovery'; durableCopy.download = 'games-state-recovery.txt';
+  durableCopy.textContent = 'Export unreadable saved Games file'; durableCopy.hidden = true; partnerPanel.append(durableCopy);
   const credits = document.createElement('button'); credits.type = 'button'; credits.textContent = 'Local game credits';
   credits.addEventListener('click', () => { partnerPanel.hidden = true; partnerButton.setAttribute('aria-expanded', 'false'); actionFor('open', 'credits', 'partner'); });
   const backup = document.createElement('button'); backup.type = 'button'; backup.textContent = 'Export recovery copy';
@@ -478,21 +554,57 @@ bar = mountDoorBar(document.body, {
   appPath: '/games/',
   onLock() { interrupt(); musicArmed = false; persist(); syncDwell(); },
   onUnlock() { syncDwell(); },
-  onLeave() { interrupt(); musicArmed = false; gone = true; persist(); syncDwell(); },
+  onLeave() { interrupt(); musicArmed = false; gone = true; persist(); syncDwell(); return flushBeforeExit(); },
   onPause() { lifecycle('suspend', true); },
   onResume() { lifecycle('suspend', false); },
 });
 mountPartner();
+let migrate = false;
+try {
+  const controller = new AbortController();
+  let timeout;
+  try {
+    const loadedResponse = await Promise.race([
+      (async () => {
+        const response = await fetch('/games/state', { signal: controller.signal, cache: 'no-store' });
+        return { status: response.status, body: response.status === 200 ? await response.text() : '' };
+      })(),
+      new Promise((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(Error('load timeout')); }, 2000); }),
+    ]);
+    if (loadedResponse.status === 200) {
+      const loaded = readSavedState(loadedResponse.body);
+      if (!loaded.valid) throw Error('invalid response');
+      S = loaded.state;
+      saveMessage('Restored');
+    } else if (loadedResponse.status === 404) {
+      if (localValid) { S = readSavedState(localRaw).state; migrate = true; }
+      saveMessage(migrate ? 'Moving save…' : 'Ready');
+    } else if (loadedResponse.status === 409) {
+      durableBlocked = true;
+      durableCopy.hidden = false;
+      recoveryNotice = 'The unreadable saved Games file remains untouched in the hub data folder. Export it with the link below. New changes in this session are not saved.';
+      saveMessage('Not saved');
+    } else throw Error(`load ${loadedResponse.status}`);
+  } finally { clearTimeout(timeout); }
+} catch {
+  durableBlocked = true;
+  if (localValid) S = readSavedState(localRaw).state;
+  recoveryNotice = 'The hub could not read saved Games progress. This session still works, but new changes are not saved. Existing data was not overwritten.';
+  saveMessage('Not saved');
+}
 try {
   const response = await fetch('art/character.svg');
   if (response.ok) rigTemplate = new DOMParser().parseFromString(await response.text(), 'image/svg+xml').documentElement;
 } catch { /* A failed decorative asset never blocks commands. */ }
-render(); persist(); ready = true;
+ready = true; render();
+if (migrate) void persist();
+else if (!durableBlocked) latestSave = serializeState(S);
 window.GamesApp = { state: () => ({ ...clone(S), ready }), storageKey: STORAGE_KEY };
 if (window.__testHooks) {
   window.GamesApp.test = {
     setState(value) { interrupt(); musicArmed = false; S = restoreState(JSON.stringify(value)); uiPage = ''; renderedKey = ''; showToken = ''; showRemaining = 1600; persist(); render(true); },
     action: (action, value) => actionFor(action, value, 'test'),
+    flush: () => saving,
   };
 }
 try { Promise.resolve(window.Speech?.init('Games')).then(mode => { document.getElementById('voiceWarning').hidden = mode !== 'off'; }).catch(() => {}); } catch {}

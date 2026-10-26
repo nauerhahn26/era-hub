@@ -26,8 +26,8 @@ RELEASE=0
 if [ "${1:-}" = "--with-node" ] || [ "${2:-}" = "--with-node" ]; then RELEASE=1; fi
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/music-pictures.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/predict-model.json" "$OUT/"
-cp "$HUB/chat-api.js" "$HUB/chat-choices.js" "$HUB/chat-speech-worker.js" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/music-pictures.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/gaze-supervisor.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/chat-api.js" "$HUB/chat-choices.js" "$HUB/chat-speech-worker.js" "$HUB/chat-store.js" "$OUT/"
 # every local require of the hub's modules must resolve INSIDE the payload —
 # a module added to the repo but not to the list above shipped a hub that
 # died on its first line (packs.js, caught by the VM e2e 9/3, never by the
@@ -152,6 +152,13 @@ cp -r "$HUB/public/math" "$OUT/public/math"
 cp -r "$HUB/public/games" "$OUT/public/games"
 cp "$HUB/public/favicon.ico" "$OUT/public/favicon.ico"
 cp -r "$HUB/public/icons" "$OUT/public/icons"   # per-app icons (tiles + shortcuts)
+# BEGIN Chat private-state guard
+# Profile state and unfinished atomic writes belong only to the installed data directory.
+if [ -n "$(find "$OUT" \( -name 'chat-state.json' -o -name '.chat-state-*.tmp' \) -print -quit)" ]; then
+  echo "build-payload: private Chat state found in payload; refusing to ship."
+  exit 1
+fi
+# END Chat private-state guard
 
 # --with-node: bundle a portable Windows Node runtime (no install needed)
 if [ "${2:-}" = "--with-node" ] || [ "${1:-}" = "--with-node" ]; then

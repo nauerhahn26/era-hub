@@ -8,6 +8,42 @@ Fashion Studio first playable loop. The selected art direction is polished
 illustrated 2D. The initial research and review artifacts were supplied as
 private Drive copies after local file links proved unsuitable on a phone.
 
+## Published result, 2026-10-26
+
+[v1.0.17](https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.0.17)
+is published as build `20261026.0742`. Fashion Studio, Four in a Row and
+Number Tiles ship in the core payload. Existing app selections remain intact;
+enable Games in Settings when it is absent from the home screen.
+
+The built source is Hub `663978b` and Core `3c908c9`. The matching `games-save`
+worktrees supplied the durable-save correction. The complete fresh gate passed
+148/148 suites: 135 modern suites with 2,554 cases and 13 legacy suites, with
+zero failures, cancellations, skips or todos. Its original six stamps and raw
+source, runtime and control evidence were archived without changing their times.
+
+One complete Windows run passed portable qualification, the unchanged nine-case
+installation/update baseline, and the full installed Games and restart checks.
+Actual native and browser dimensions were 1280×800 with DPR and zoom 1. Both
+game passes verified 59 installed and 53 served file hashes. The actual native
+minimize, hidden pause, pending computer turn and fullscreen return passed.
+Removing the automation client's own focus override made real visibility
+observable; no visibility event or game state was injected.
+
+Closing every browser process and reopening with a new process and DevTools
+connection retained the draft, three looks, lineup, show and both boards on the
+same hub data folder. Automatic audio remained stopped. Selection restoration,
+owned process cleanup and QA teardown passed; the overall run exited 0.
+
+All six public release assets were downloaded and matched against the tested
+bytes. The normal public update feed also matched. The attached installer is
+the verified, signed v1.0.0 installer. Private proof records are retained in
+`~/.local/state/era-games-releases/v1.0.17-20261026.0742/`.
+
+Windows acceptance used ordinary pointer input and mocked Talk transport with
+actual native window transitions. Physical tracker calibration, reading comfort,
+gaze audio unlock, speaker level and enjoyment still need a real-device trial.
+No live development hub restart or separate device push was performed.
+
 ## Implementation sequence
 
 - [x] Reorient from the house router, development flow and current source.
@@ -44,7 +80,7 @@ private Drive copies after local file links proved unsuitable on a phone.
   retains the same animation node and progress.
 - [x] Update usage documentation and record the implementation receipt.
 - [x] Commit as the user and launch the full gate detached with a sentinel.
-- [ ] Record the actual gate result and any physical acceptance limits.
+- [x] Record the actual gate result and any physical acceptance limits.
 
 ## Acceptance and handoff
 
@@ -61,6 +97,9 @@ temporary test data. Never restart the live hub. A release or device delivery
 requires the maintainer's separate instruction.
 
 ## Retrospective and validation receipt
+
+The following checkpoints record implementation history. The published result
+above supersedes their pending release statements.
 
 The first implementation used several catalog values without a matching
 visible treatment. Review found those gaps before acceptance; every offered
@@ -85,7 +124,7 @@ runtime visibility handlers; they do not establish Windows foreground handoff.
 Validated logical viewports are 1920×1080 and 1280×720, with reduced and normal
 motion. Actual device calibration, physical reading comfort/zoom, synthetic
 gaze audio unlock, speaker level and enjoyment remain physical acceptance.
-Neither publishing nor device delivery has been performed.
+This checkpoint preceded publication and device delivery.
 
 Private phone previews of the functioning app were uploaded and read back as
 PNG files with owner-only permissions. No external game profile was created;
@@ -193,3 +232,33 @@ of partial results. Core is pinned in `era-core--wt-games`, Board in
 `era-board--wt-games`; all other selected source heads and runtime versions
 are recorded in the new input fingerprint. Games product code remains
 unchanged from the reviewed playable implementation.
+
+## Kiosk restart durability, 2026-10-26
+
+The installed Edge kiosk uses InPrivate storage. Browser localStorage does not
+carry the wardrobe through a full kiosk close, so the released model lives in
+the hub data folder. This required a new source and release candidate; the
+earlier unpublished build `20261026.0258` did not prove this change.
+
+- [x] Add a bounded, model-validated `GET`/`PUT /games/state` with same-origin
+  write guard and atomic replacement. A corrupt durable file remains intact
+  and has a fixed recovery download.
+- [x] Load durable state before Games is ready. Migrate a valid browser save
+  only when the durable file is missing. Keep play usable and show a visible
+  truthful failure state when loading or writing fails.
+- [x] Serialize writes so an older response cannot certify newer edits. Wait
+  briefly for the latest write before Exit while keeping Talk immediate.
+- [x] Test a new browser context and restarted hub using the same data folder;
+  validate all three game workspaces, three looks, draft and lineup, and cover
+  invalid, oversized, foreign, corrupt and failed writes.
+- [x] Extend the shared doorbar's optional leave callback with a bounded wait,
+  without changing synchronous callers; test completion, rejection, thrown
+  errors, timeout and retry after a completed close response.
+- [x] Add the new Games persistence suite to the exact test registry.
+- [x] Run the fresh complete gate and installed Windows kiosk restart test on
+  the newly built artifact before release.
+
+The same new candidate also carries the test-only Reader empty-shelf readiness
+fix: the browser test waits for the visible empty shelf before its original
+assertions. It changes no Reader runtime. The complete gate validated the
+combined source tree and its 148-suite inventory.

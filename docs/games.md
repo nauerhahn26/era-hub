@@ -5,8 +5,19 @@ core installation. When a computer already has an explicit app selection,
 enable Games in Settings → Apps & navigation; that selection is preserved.
 
 Fashion Studio, Four in a Row and Number Tiles run locally without an
-account or subscription. Progress is stored in this browser on this computer.
-Clearing browser storage removes it; it is not shared through Drive.
+account or subscription. Progress is saved in the hub's data folder on this
+computer, so it returns after the kiosk browser closes and reopens. The small
+status beside the Games heading says **Saved** only after the hub confirms the
+latest change. If it says **Not saved**, play can continue, but ask a partner
+to check saving before closing the browser. Clearing browser storage does not
+remove progress already saved by the hub. Games progress is not shared through Drive.
+
+On the first launch after an update, an older valid browser save moves into
+the hub data folder only when no hub save exists. If an existing hub save is
+unreadable, Games leaves its original bytes untouched and starts a usable
+session without writing over them. A partner can export those bytes from the
+Games partner panel. That session's new changes are not saved until the file
+is repaired.
 
 ## Fashion Studio
 

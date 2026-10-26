@@ -8,7 +8,9 @@ enabling it does not need an additional app download.
 The first menu offers Numbers and Number partners. Every action works with
 eye gaze or touch. Objects are positioned by the app; dragging and dropping
 are unnecessary. The objects, numerals and equations inside the workspace
-are for looking at, and do not activate commands.
+are for looking at, and do not activate commands. Larger numerals and slightly
+wider side controls keep the quantities easy to see while retaining space around
+them and the black rest area.
 
 ## Numbers
 

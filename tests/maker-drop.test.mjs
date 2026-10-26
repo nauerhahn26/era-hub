@@ -30,11 +30,12 @@
 //
 // PORTS: 8400 (the plan's 8390-8424 range). 8390 board, 8391 reader-ui,
 // 8392/8398 books, 8393/8394 pool, 8395/8396 seen held by stale scratch hubs,
-// 8397 setup, 8402+ the sibling suites. 8399 is free in this repo and was NOT
-// free on the box — a stray python -m http.server sat on it and answered every
-// request 404/501, which reads exactly like a broken hub; hence the identity
-// check in before(), which fails on "something is listening" rather than
-// leaving the next person to debug a mirror that was never asked. Never
+// 8397 setup, 8402+ the sibling suites. 8399 (settings-ui's stand-in since
+// 10/26) was once NOT free on the box — a stray python -m http.server sat
+// on it and answered every request 404/501, which reads exactly like a
+// broken hub; hence the identity check in before(), which fails on
+// "something is listening" rather than leaving the next person to debug a
+// mirror that was never asked. Never
 // 8377/8378 (live) and never 8425+ (device tunnels answer as the device's live
 // hub).
 //

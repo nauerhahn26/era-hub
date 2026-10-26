@@ -12,13 +12,14 @@
 // a build left staged applies at the next boot before the hub serves.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync, execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stopHubOnPort } from "./hub-port.mjs";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 8423;      // hub under test (8391-8422 held by sibling suites)
@@ -74,8 +75,10 @@ function publish(build, ver) {
 const version = async () => { try { return await (await fetch(`${BASE}/version`)).json(); } catch { return null; } };
 
 before(async () => {
-  spawnSync("pkill", ["-f", `server[.]js ${PORT}`]);
-  await new Promise(r => setTimeout(r, 300));
+  // a crashed earlier run's hub (or its self-restarted successor) may still
+  // hold the port: stopped by pid once its command line proves it is
+  // `server.js <port>`, and the port is free when this returns
+  await stopHubOnPort(PORT);
   makeInstall(INSTALL, OLD_BUILD);
   // a fresh install: apps chosen at install time, NO profile yet (wizard pending)
   fs.mkdirSync(DATADIR, { recursive: true });
@@ -102,9 +105,11 @@ before(async () => {
   throw new Error("hub never came up");
 });
 
-after(() => {
+after(async () => {
+  // the hub on the port is a self-restarted one by now — its pid comes from
+  // the port's owner, never from spawn — and `child` is the first process
+  await stopHubOnPort(PORT);
   if (child) child.kill("SIGKILL");
-  spawnSync("pkill", ["-f", `server[.]js ${PORT}`]);
   if (feed) feed.close();
 });
 
@@ -201,7 +206,7 @@ test("while the board is in use a newer build STAGES and waits; when she stops, 
 });
 
 test("a build left staged applies at the next boot, before the hub serves (§4.4)", async () => {
-  spawnSync("pkill", ["-f", `server[.]js ${PORT}`]);
+  await stopHubOnPort(PORT);                       // the self-restarted hub, by pid
   for (let i = 0; i < 50 && await version(); i++) await new Promise(rr => setTimeout(rr, 100));
   assert.equal(await version(), null, "hub is down");
   makeInstall(path.join(STAGED, STAGED_BUILD), STAGED_BUILD);    // what a deferred check leaves behind

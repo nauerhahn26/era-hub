@@ -759,6 +759,8 @@ test("an empty shelf notices the first book without a relaunch (bug 31)", async 
     ? r.fulfill({ status: 200, contentType: "application/json", body: "[]" }) : r.continue());
   const page = await ctx.newPage();
   await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
+  // Reader.state() starts empty before boot has fetched and painted the shelf.
+  await page.locator("#shelfEmpty").waitFor({ state: "visible" });
   await page.waitForFunction(() => window.Reader && window.Reader.state().shelfCount === 0);
   assert.equal(await page.locator("#shelfEmpty").isHidden(), false, "'No books yet' shows");
   assert.equal(await page.locator("#shelfGrid .shelf-card-button").count(), 0);

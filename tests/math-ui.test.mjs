@@ -282,6 +282,25 @@ test('Talk freezes all math input until resume and never restarts an interrupted
     await control(page,'count').click();
     await page.waitForFunction(()=>window.MathApp.state().counting);
     const expected=quantities(await state(page));
+    await page.evaluate(()=>{
+      window.__mathPauseAck=false;
+      const fetch=window.fetch;
+      window.fetch=function(input,...args){
+        const pending=fetch.call(this,input,...args);
+        if(new URL(input.url||input,location.href).pathname==='/kiosk/pause'){
+          window.fetch=fetch;
+          pending.then(response=>{
+            const json=response.json;
+            response.json=function(...args){
+              const body=json.apply(this,args);
+              body.then(()=>setTimeout(()=>{window.__mathPauseAck=true;},0),()=>{});
+              return body;
+            };
+          },()=>{});
+        }
+        return pending;
+      };
+    });
     const requested=page.waitForRequest(r=>new URL(r.url()).pathname==='/kiosk/pause');
     const paused=page.waitForResponse(r=>new URL(r.url()).pathname==='/kiosk/pause');
     await page.locator('#barTalk').tap();await requested;
@@ -295,7 +314,21 @@ test('Talk freezes all math input until resume and never restarts an interrupted
     await page.waitForTimeout(1100);
     assert.deepEqual(quantities(await state(page)),expected,'background gaze cannot mutate a paused exploration');
     releasePause();await paused;
-    const suppressed=await page.evaluate(()=>{document.dispatchEvent(new Event('visibilitychange'));return window.Dwell.state().suppressedMs;});
+    await page.waitForFunction(()=>window.__mathPauseAck,null,{timeout:5000});
+    const returned=await page.evaluate(()=>{
+      const descriptor=Object.getOwnPropertyDescriptor(performance,'now');
+      const fixed=performance.now();
+      try{
+        Object.defineProperty(performance,'now',{configurable:true,value:()=>fixed});
+        document.dispatchEvent(new Event('visibilitychange'));
+        return {paused:window.MathApp.state().paused,suppressedMs:window.Dwell.state().suppressedMs};
+      }finally{
+        if(descriptor)Object.defineProperty(performance,'now',descriptor);
+        else delete performance.now;
+      }
+    });
+    assert.equal(returned.paused,false,'the acknowledged Talk handoff resumes the exploration');
+    const suppressed=returned.suppressedMs;
     assert.ok(suppressed>=500,'the shared return window is not shortened by the page visibility handler');
     await settle(page);
     assert.equal((await state(page)).counting,false,'returning does not restart a model');

@@ -6,13 +6,14 @@
 // disabled and never touches itself.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync, execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stopHubOnPort } from "./hub-port.mjs";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 8410;      // hub under test (8391-8409 held by sibling suites)
@@ -64,9 +65,9 @@ const has = (f) => fs.existsSync(at(f));
 
 before(async () => {
   // a prior run's self-restarted hub may still hold the port (it outlives its
-  // parent by design) — clear it, same pattern as era-gate's port pre-kill
-  spawnSync("pkill", ["-f", `server[.]js ${PORT}`]);
-  await new Promise(r => setTimeout(r, 300));
+  // parent by design): stopped by pid once its command line proves it is
+  // `server.js <port>`, and the port is free when this returns
+  await stopHubOnPort(PORT);
   makeInstall(INSTALL, OLD_BUILD, null);
   // the family ticked Making Words + The Pencil at install: only the pencil
   // pack (and the core's jpeg-js) is on disk, and apps.json says so — else
@@ -104,9 +105,11 @@ before(async () => {
   throw new Error("hub never came up");
 });
 
-after(() => {
+after(async () => {
+  // the self-restarted hub: the test never held its pid, so it is read from
+  // the port's owner and checked before it is signalled
+  await stopHubOnPort(PORT);
   if (child) child.kill("SIGKILL");
-  spawnSync("pkill", ["-f", `server[.]js ${PORT}`]); // the self-restarted hub
   if (feed) feed.close();
 });
 

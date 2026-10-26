@@ -100,12 +100,15 @@ test('saved audio arriving after cancellation never plays', async () => {
   assert.equal(plays, 0); voice.dispose();
 });
 
-test('device voice does not wait for failed cloud prefetch', async () => {
+test('saved voice failure requires an explicit device voice choice', async () => {
   const spoken = [];
   const voice = createChatVoice({ fetch: async () => { throw new Error('offline'); },
     synth: { cancel() {}, getVoices() { return []; }, speak(u) { spoken.push(u.text); queueMicrotask(() => u.onend()); } },
     makeUtterance: text => ({ text }) });
   voice.setPreference('saved'); voice.prefetch([{ say: 'A response' }]);
+  await assert.rejects(voice.say('A response'), /Saved voice unavailable/);
+  assert.deepEqual(spoken, []);
+  voice.setPreference('local');
   await voice.say('A response');
   assert.deepEqual(spoken, ['A response']); voice.dispose();
 });

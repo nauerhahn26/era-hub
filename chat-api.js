@@ -123,7 +123,7 @@ function choiceList(items) {
 function safeTimings(value) {
   const result = {};
   if (!value || typeof value !== 'object') return result;
-  for (const key of ['audioMs', 'captureWallMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs']) {
+  for (const key of ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs']) {
     if (Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 3600000) result[key] = value[key];
     else if (key === 'firstPartialMs' && value[key] === null) result[key] = null;
   }
@@ -458,4 +458,4 @@ function createChatApi(options = {}) {
     close() { closed = true; inner.close(); },
   };
 }
-module.exports = { createChatApi, loadChatEnvironment };
+module.exports = { createChatApi, loadChatEnvironment, ownRequest };
