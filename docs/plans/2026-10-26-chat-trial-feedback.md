@@ -1,5 +1,9 @@
 # Chat trial feedback plan
 
+Status: v1.0.18 / `20261026.0436` is prepared and unpublished. The complete
+Linux gate passed 147/147 and the exact candidate passed all ten Windows
+update cases. The published release remains v1.0.16.
+
 Goal: prepare the next installed Chat candidate with pictograms, timing for
 every turn and reliable use of the configured saved voice. The maintainer
 requested preparation, not publication, and explicitly owns further home-device
@@ -18,10 +22,10 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [x] Persist saved-voice preference, prefetch silently and expose failures.
 - [x] Review combined changes and update usage and privacy documentation.
 - [x] Run a complete browser interaction with local fixtures.
-- [ ] Commit the clean candidate and pass the complete gate.
-- [ ] Prepare the normal patch distribution and pass Windows update leg B.
-- [ ] Record exact source, payload hash, tests and remaining maintainer checks.
-- [ ] Publish only after the maintainer's later explicit instruction.
+- [x] Commit the clean candidate and pass the complete gate.
+- [x] Prepare the normal patch distribution and pass Windows update leg B.
+- [x] Record exact source, payload hash, tests and remaining maintainer checks.
+- [x] Keep the candidate unpublished; publication requires a later explicit instruction.
 
 ## Ownership and coordination
 
@@ -106,3 +110,66 @@ after 64 suites: 63 passing and the fixture failure. It produced no green stamp
 or completed full receipt. A new complete 147-suite run is required on the
 corrected clean candidate. Release copy is corrected before that run as well,
 so its saved-voice description matches the implemented default.
+
+## Prepared candidate receipt
+
+The corrected clean source is `cbe7a54` (tree `0faa354`). Complete job
+`gate-20261026T034943Z-35b25ee9` ran all 147 unique collected suites unchanged
+and passed with zero failures, TAP skips, TODO cases or cancellations. The
+full gate took 1978 seconds. All six selected sources remained clean and
+matched the recorded pins. After namespace and worker exit, the owner
+validated the genuine result. Original proof, timestamps and all six exact
+stamp bytes were archived before any receipt edits under
+`~/.cache/era-chat/feedback/proof-gate-20261026T034943Z-35b25ee9/`.
+No stamp was relabelled, renewed or synthesized.
+
+The standard gate reader and patch builder produced private v1.0.18, build
+`20261026.0436`, retaining the signed v1.0.0 installer. Distribution:
+`~/new-era/dist/release-v1.0.18/`. Stable and versioned payloads have SHA-256
+`3f7e7643cd5b828af2d62945b145dcc7b780db90c969ae7899621ff533ab8c76`.
+All 250 expanded payload files agree with the tarball; required source files,
+all eight distribution files and checksums were verified. The candidate was
+reused unchanged for Windows validation.
+
+An initial Windows attempt stopped at its display fixture before installing
+the app: the advertised high-resolution mode failed the native mode test.
+The failed attempt and successful cleanup remain recorded. A separately
+reviewed private fixture then tested actually enumerated modes, requested
+width and height without forcing the virtual driver's refresh frequency,
+and applied only a mode whose native test succeeded. Windows reported
+1280 by 800, and the actual installed kiosk independently reported the same
+screen, inner and visual viewport dimensions, pixel ratio one and zoom one.
+No browser viewport emulation was used. Windows coverage is 1280 by 800;
+the local browser checks retain their recorded viewport sizes.
+
+Private transport adaptations retain all ten canonical update cases and
+their assertions unchanged. Only helper source paths and process ownership
+are adapted; cleanup signals recorded process identities rather than process
+name patterns. The native display setup runs after the pristine revert and
+before installation. The accepted run is
+`~/.cache/era-chat/feedback-prep/chat-v18-mode2/runs/chatprep-3812523/`.
+Its receipt is `prepared-unpublished`; Windows leg B passes 10/10 with zero
+failures, skips, TODO cases or cancellations. `VM-GREEN` names leg B and the
+exact payload hash above.
+
+Installed checks cover update continuity, profile and pack preservation,
+existing apps, real local speech activity inference, release/cancel transport,
+picture rendering, saved-voice default and persistence, deliberate native
+audio playback, and content-free timing export. Recognition and voice service
+responses in these Windows checks are local mocks. Actual browser playback
+events were observed; this does not claim physical speaker audibility or
+live recognition accuracy.
+
+The temporary QA host was destroyed, its own lease removed, local debug
+tunnel closed and both release locks independently confirmed free. Games
+received the explicit next-slot handoff and qualified display fixture hashes.
+No master landing, tag, publication, public-feed change, home-device contact
+or delivery target was part of this preparation. This receipt-only commit is
+outside the prepared artifact; the artifact and Windows proof bind `cbe7a54`.
+The conditional cumulative dependency remains subject to its owning feature's
+separate acceptance and approved landing.
+
+Maintainer trial after a later release: confirm readable pictures, the selected
+saved voice, a held natural question, a deliberate reply, cancellation and
+return to the communication system. Inspect Turn timings for actual field
+durations. Further home-device validation belongs to the maintainer.
