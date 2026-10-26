@@ -19,7 +19,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
+import http from "node:http";
 
 const HUB = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const SCRATCH = process.env.SCRATCHPAD || path.join(os.tmpdir(), "era-hub-tests");
@@ -145,4 +146,23 @@ test("without ERA_WT_SUFFIX nothing changes: one stamp, the hub's", () => {
     `== era-gate: 3 passed, 0 failed ==\nhead=${head(hub)}\nat=${
       read(dir, tree(hub)).match(/^at=(\d+)$/m)[1]}\nhub=${hub}\n`);
   assert.doesNotMatch(out, /^stamp:/m, "and nothing extra is printed");
+});
+
+test("a busy gate port is refused without stopping its existing listener", async () => {
+  const listener=http.createServer((req,res)=>res.end("still running"));
+  await new Promise(resolve=>listener.listen(0,"127.0.0.1",resolve));
+  const port=listener.address().port;
+  try {
+    const guard=fn("require_free_test_port");
+    const result=await new Promise(resolve=>{
+      const child=spawn("bash",["-c",`${guard}\nrequire_free_test_port`],{env:{...process.env,PORT:String(port)}});
+      let output="";child.stdout.on("data",chunk=>output+=chunk);child.stderr.on("data",chunk=>output+=chunk);
+      child.on("close",code=>resolve({code,output}));
+    });
+    assert.equal(result.code,1);
+    assert.match(result.output,/port.*in use/i);
+    assert.equal(await (await fetch(`http://127.0.0.1:${port}`)).text(),"still running");
+    assert.doesNotMatch(GATE,/^\s*(?:pkill|killall)\b/m,"the gate never stops another session's listener");
+    assert.match(GATE,/^require_free_test_port \|\| exit 1$/m,"the shipped gate refuses when its port guard fails");
+  } finally {await new Promise(resolve=>listener.close(resolve));}
 });

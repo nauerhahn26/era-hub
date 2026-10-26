@@ -539,6 +539,18 @@ export ERA_CHAT_CONFIG_DISABLED=1
 # Refuse a race for the test endpoint. A stale or foreign hub belongs to its
 # owner; neither its command name nor its port authorizes this run to kill it.
 gate_port_available "$PORT" || exit 1
+# Also prove that the endpoint is bindable before launching our owned child.
+require_free_test_port() {
+  node -e '
+    const server = require("node:net").createServer();
+    server.once("error", () => {
+      console.error("FATAL: test port " + process.argv[1] + " in use or unavailable; choose another test port");
+      process.exitCode = 1;
+    });
+    server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close());
+  ' "$PORT"
+}
+require_free_test_port || exit 1
 NODE_BIN="$(type -P node)" || exit 1
 SRV_ARGS="$NODE_BIN $HUB/server.js $PORT"
 ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate \

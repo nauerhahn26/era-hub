@@ -81,7 +81,7 @@ Games also extends `gate-stamp.test.mjs` with a busy-port listener-survival
 regression. Keep those existing files and their added boundary checks; this
 supplement does not count modifications as new suite files.
 
-## Registry metadata: Chat applied, Games pending
+## Registry metadata: Chat and Games applied
 
 The six Chat entries and their two Python helper declarations are now applied
 to the execution registry after Chat master `e1caf6b` merged into the testing
@@ -90,10 +90,17 @@ the two already-reviewed forbidden-port fixture repairs; case counts and runtime
 boundaries remain unchanged. Applied dependencies use repository-qualified paths
 and include the API's shared loopback helper and preview's served dwell source.
 
-The three Games entries below remain drafts until their files merge. Register
-each suite only when its source exists in the selected source tuple. The inventory
-must not declare files that have not merged. These entries introduce no new
-omission rule: Chat, Games, shared runtime and unknown source
+The three Games entries are now applied after frozen, complete-green candidate
+`c097524` merged into the cumulative testing source. All three suite files are
+byte-identical to the originally audited Games versions. The state dependency
+metadata explicitly includes its two imported rule engines; audio's volume
+contract is exercised through the Games implementation and its controlled settings
+fixture. These applied entries, including the Python helpers above, bring the
+current inventory to 147 suites.
+
+Register each suite only when its source exists in the selected source tuple.
+The inventory must not declare files that have not merged. These entries introduce
+no new omission rule: Chat, Games, shared runtime and unknown source
 changes retain the existing conservative complete fallback until their impact
 boundaries are explicitly reviewed.
 
@@ -171,12 +178,12 @@ boundaries are explicitly reviewed.
 }
 ```
 
-After Games files merge, reconcile their draft with the actual source tuple,
-update the execution registry and shared-helper consumer lists, and run its
-completeness check. Chat classification brought the current inventory from 138
-to 144 suites, with the existing 30 planner regressions passing. Keep measured
-suite durations and initial outcomes in run receipts. Do not remove cases or
-split stateful files merely to reduce the reported suite count.
+The metadata above records the original audit. The execution registry qualifies
+source paths and includes reconciled implementation dependencies and conservative
+shared-helper consumer lists. Chat classification brought the inventory from
+138 to 144 suites; Games brings it to 147. Keep measured suite durations and
+initial outcomes in run receipts. Do not remove cases or split stateful files
+merely to reduce the reported suite count.
 
 ## Published shared speech readiness supplement
 
@@ -200,4 +207,4 @@ or a substitute for complete gate evidence.
 The registry refused the new executable suite before classification. Its exact
 speech dependency, browser resources and conservative helper consumer membership
 are now registered, with review date 2026-10-26. Core changes still select the
-complete gate. Chat is now registered; the unmerged Games entries remain drafts.
+complete gate. Chat and Games are now registered without new omission rules.

@@ -11,10 +11,9 @@ remain unchanged.
 
 The [queued-suite supplement](../research/2026-10-26-queued-suite-audit.md)
 reviews the six Chat and three Games files added since the original snapshot.
-All protect distinct boundaries; none warrants deletion. The six Chat entries
-are registered after their sources merged into this worktree. The three Games
-entries remain draft until their sources merge, so the active inventory cannot
-claim files absent from its selected tuple.
+All protect distinct boundaries; none warrants deletion. All nine entries are
+registered after their sources merged into this cumulative worktree, so the
+active inventory claims only files present in its selected tuple.
 
 The [reuse eligibility record](../research/2026-10-26-gate-reuse-eligibility.md)
 distinguishes the avoidable fixture-only repeat cost from the new full
@@ -57,19 +56,31 @@ order below remains the wider strategy; this priority supersedes its sequencing.
 ## Development-tool stage
 
 The separate conservative planner, registry, serialized development queue and
-gate hardening are implemented. After integrating landed Chat source, inventory
-validation covers 144 suites on this branch. The combined targeted checks
-passed 84/84 again with no skipped or todo cases;
+gate hardening are implemented. After integrating landed Chat source and the
+frozen full-green Games predecessor, inventory validation covers 147 suites on
+this branch. The targeted planner, gate, integration and provider checks pass;
 the parallel safeguards separately passed 40/40 and their nested namespace proof.
 These checks do not replace this branch's eventual complete acceptance gate.
 Do not migrate the queued releases to the wider development-tool stage merely
 to use the standalone parallel capability.
 
-The next complete acceptance run uses this worktree's frozen candidate and the
-separate isolated lane while Chat and Games use the Windows VM in series. It
-does not land or move master during their release window. The selected Board
-worktree includes its already-landed fixture changes; no unlanded application
-dependency is being substituted into their candidates.
+The next complete acceptance run uses this worktree's frozen cumulative
+candidate and the separate isolated lane while Chat and Games use the Windows
+VM in series. It includes Games `c097524` with that owner's acknowledgment so
+its later landing does not invalidate this validation. It cannot land ahead of
+Games' separately approved landing; withdrawal or changed runtime would require
+reconsidering this candidate. No master moves during their release window. The
+selected Board worktree includes its already-landed fixture changes; the owning
+release candidates remain unchanged.
+
+The first 144-suite tooling request omitted that Games predecessor. The owner
+stopped only its captured, identity-verified namespace launcher after about
+three minutes, before any complete receipt, and verified that its worker and
+lease cleared. Its durable outcome is failed, with no accepted green stamp.
+The replacement uses the complete cumulative 147-suite candidate. The merge
+retains both the occupied-listener refusal and Games' bindability probe, with
+the existing owned-child readiness and cleanup. The corresponding 52 gate and
+integration regressions, plus 30 planner regressions, passed without skips.
 
 The optional hub-only verification/landing transaction and compatible house
 helper were tested against synthetic repositories. They retain serialized

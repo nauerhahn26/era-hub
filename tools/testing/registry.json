@@ -1263,6 +1263,60 @@
       "level": "hub process integration"
     },
     {
+      "id": "era-hub:tests/games-audio.test.mjs",
+      "purpose": "Explicit synthesized music activation, Talk cancellation, shared cap and scheduled-note cleanup",
+      "group": "games",
+      "lane": "linux",
+      "level": "browser audio lifecycle integration",
+      "dependencies": [
+        "era-hub/public/games/**",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "private-browser-storage",
+        "deferred-audio-context-double"
+      ]
+    },
+    {
+      "id": "era-hub:tests/games-state.test.mjs",
+      "purpose": "Independent persisted workspaces, legal game rules, confirmations, deterministic randomness and reversible undo",
+      "group": "games",
+      "lane": "linux",
+      "level": "state unit",
+      "dependencies": [
+        "era-hub/public/games/state.js",
+        "era-hub/public/games/connect4-engine.js",
+        "era-hub/public/games/tiles-engine.js"
+      ],
+      "resources": [
+        "in-process"
+      ]
+    },
+    {
+      "id": "era-hub:tests/games-ui.test.mjs",
+      "purpose": "Rendered game journeys, real shared dwell/doors, lifecycle recovery, geometry and distinct catalog options",
+      "group": "games",
+      "lane": "linux",
+      "level": "browser access and integration",
+      "dependencies": [
+        "era-hub/public/games/**",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "private-browser-storage",
+        "real-dwell-timers",
+        "rendered-catalog-matrix"
+      ]
+    },
+    {
       "id": "era-hub:tests/gate-safety.test.mjs",
       "purpose": "Reject unsafe ports/data, preserve process ownership and full-gate evidence",
       "group": "test-infrastructure",
@@ -2329,6 +2383,9 @@
         "era-hub:tests/era-scan-parity.test.mjs",
         "era-hub:tests/erabook.test.mjs",
         "era-hub:tests/fal-key.test.mjs",
+        "era-hub:tests/games-audio.test.mjs",
+        "era-hub:tests/games-state.test.mjs",
+        "era-hub:tests/games-ui.test.mjs",
         "era-hub:tests/gate-safety.test.mjs",
         "era-hub:tests/gate-stamp.test.mjs",
         "era-hub:tests/gaze-recompile.test.mjs",
@@ -2479,6 +2536,9 @@
         "era-hub:tests/era-scan-parity.test.mjs",
         "era-hub:tests/erabook.test.mjs",
         "era-hub:tests/fal-key.test.mjs",
+        "era-hub:tests/games-audio.test.mjs",
+        "era-hub:tests/games-state.test.mjs",
+        "era-hub:tests/games-ui.test.mjs",
         "era-hub:tests/gate-safety.test.mjs",
         "era-hub:tests/gate-stamp.test.mjs",
         "era-hub:tests/gaze-recompile.test.mjs",
