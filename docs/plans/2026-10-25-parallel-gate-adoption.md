@@ -28,8 +28,8 @@ invalidate promotion. Final landing and publication remain serialized.
 | Math | Existing run unchanged | v1.0.13 completed 132/0 plus Windows 8/8 | No migration requested |
 | YouTube Videos | `2597549` includes `fe2e9e7`; file hash verified | v1.0.14 completed 132/0 plus Windows 8/8 | Owner explicitly agrees to use the runner on a next necessary run after full pilot validation |
 | Speech and sorting follow-up | Existing legacy lane | v1.0.15 completed 133/0 plus Windows 8/8; actual Hub `cbfbb8d` and Core `02377c5` are now predecessors | Owner confirms no further repository landings during the Chat/Games batch |
-| Chat | Fixture stages and both Reader repairs adopted | Tested Hub `81fcabb`, Core `02377c5`, Board `395d02b`; every dependency pinned in matching worktrees | Full 140/140 isolated run, 01:54–02:28 UTC, port 8388, two CPUs; original stamps privately archived before allowed documentation sync |
-| Games | Same fixture repairs adopted before collection | Tested Hub `c097524`, Core `02377c5`, Board `fca7f91`; complete fingerprint unchanged at postflight | Full 143/143 legacy run, 01:56:53–02:29:14 UTC on 8381 alongside Chat; owner postflight verified at 02:29:49 UTC |
+| Chat | Fixture stages and both Reader repairs adopted | Tested Hub `81fcabb`, Core `02377c5`, Board `395d02b`; every dependency pinned in matching worktrees | Full 140/140 isolated run, 01:54–02:28 UTC, port 8388, two CPUs; full Windows 9/9, v1.0.16 published and verified |
+| Games | Same fixture repairs adopted before collection | Tested Hub `c097524`, Core `02377c5`, Board `fca7f91`; complete fingerprint unchanged at postflight | Full 143/143 legacy run, 01:56:53–02:29:14 UTC on 8381 alongside Chat; original proof privately archived, Windows retry pending |
 
 These are observations and acknowledgments at the time of writing, not a
 reservation of publication order or version numbers. Recheck the original
@@ -47,12 +47,31 @@ the speech/sorting release was authorized and shipped first. Both candidates
 now include that actual runtime. New publication still requires each owner's
 authorization; Games publication has not been inferred from test coordination.
 
-Chat acknowledged its normal Board then Hub landing and patch build under the
-shared release/VM locks. The accepted source is `e3a03653` after documentation
-changes only. Games acknowledged waiting for Chat's lock handoff before its own
-Windows acceptance. Windows, version selection and publication remain in series;
-each release still runs its required complete Windows leg. Testing will not land
-into master during this release window.
+Chat completed normal Board then Hub landing, full Windows 9/9 and verified
+publication of v1.0.16, build `20261026.0231`, source `e3a03653`. Its final
+documentation receipt is master `67ff162`; its owner confirmed all later source
+and documentation landings are held during Games' artifact window. QA, the
+browser tunnel and shared locks were cleared before the explicit Games handoff.
+
+Games performed a normal sync to `0227f86`. Independent comparison with its
+tested `c097524` shows only two Markdown files changed, so its original 143-suite
+proof remains usable under the existing readers. Its private v1.0.17 build
+`20261026.0258` retains that frozen source. The first Windows attempt passed 8/9
+but could not exercise the image-worker case because private staging omitted a
+cross-tree test image. No complete Windows green was accepted. The owner is
+correcting the fixture inventory and rehearsing the added Games smoke before a
+full fresh Windows retry on the same built bytes; no Linux rerun or rebuild is
+needed for that private staging repair.
+
+Windows, version selection and publication remain in series. Each release
+retains complete Windows acceptance. Games publication has not been inferred,
+and testing will not land into master during this release window.
+
+The maintainer subsequently requested another unpublished Chat preparation.
+Both owners acknowledged conditional inclusion of frozen Games `0227f86` before
+that next collector runs. This does not approve Games' landing through another
+feature. The next Chat candidate keeps priority over the testing repair rerun;
+its complete inventory will be derived from its actual frozen sources.
 
 ## Verification and timing
 

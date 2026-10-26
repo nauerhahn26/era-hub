@@ -64,7 +64,7 @@ These checks do not replace this branch's eventual complete acceptance gate.
 Do not migrate the queued releases to the wider development-tool stage merely
 to use the standalone parallel capability.
 
-The next complete acceptance run uses this worktree's frozen cumulative
+The complete 147-suite run used this worktree's frozen cumulative
 candidate and the separate isolated lane while Chat and Games use the Windows
 VM in series. It includes Games `c097524` with that owner's acknowledgment so
 its later landing does not invalidate this validation. It cannot land ahead of
@@ -77,10 +77,29 @@ The first 144-suite tooling request omitted that Games predecessor. The owner
 stopped only its captured, identity-verified namespace launcher after about
 three minutes, before any complete receipt, and verified that its worker and
 lease cleared. Its durable outcome is failed, with no accepted green stamp.
-The replacement uses the complete cumulative 147-suite candidate. The merge
+The replacement used the complete cumulative 147-suite candidate. The merge
 retains both the occupied-listener refusal and Games' bindability probe, with
 the existing owned-child readiness and cleanup. The corresponding 52 gate and
 integration regressions, plus 30 planner regressions, passed without skips.
+
+That complete run executed every expected suite once: 146 passed, one failed,
+with all modern skipped and todo counters zero. The sole failure was Chat API's
+privacy-order assertion searching for the old literal `node` launch; the gate
+already correctly clears configuration before its resolved executable starts.
+No genuine stamps were issued or accepted. Owned processes exited and the
+isolated lease cleared. Complete gate time was 2,066.754 seconds.
+
+The narrow test correction requires an actual background hub launch, supports
+both invocation forms, checks clearing and disabling before every launch, and
+retains the real subprocess environment proof. Its separate complete-file
+no-egress verification reproduced the old 37/38 result and passed the corrected
+38/38 with no skipped or todo cases. A fresh complete green gate remains required.
+
+The maintainer's next Chat preparation has priority for the isolated lane.
+Its owner acknowledged the test correction and conditional frozen Games source
+before collection. Reconcile exact committed source tuples and landing order
+before the next tooling run; neither preparation authorizes those application
+releases to land or publish through this feature.
 
 The optional hub-only verification/landing transaction and compatible house
 helper were tested against synthetic repositories. They retain serialized
