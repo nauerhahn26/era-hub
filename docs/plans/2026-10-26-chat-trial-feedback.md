@@ -53,7 +53,7 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [x] Preserve the exact v1.0.19 payload and both failed Windows attempts.
 - [x] Reproduce a committed write with a delayed acknowledgement using unchanged code.
 - [x] Keep real external-writer conflicts protected in the reproduction controls.
-- [x] Integrate the reviewed Windows tooling through `defec579` before new collection.
+- [x] Integrate the reviewed Windows tooling through `d642995` before new collection.
 - [x] Reconcile only an exact next revision and complete expected committed value.
 - [x] Preserve newer timing/clear operations and bounded leave behavior during recovery.
 - [x] Retain strict Windows assertions and add bounded content-free failure diagnostics.
@@ -178,6 +178,10 @@ The final Games master `ce63f10` is merged before collection. Core selects its
 landed `c5f33cf` history with the same tested `44b0248` tree. The other four
 dependency trees remain unchanged. The new full run must bind this complete
 clean tuple; earlier 155-suite evidence remains historical.
+The final tooling successor `d642995` also removes fixed host-port dependencies
+from its test fixtures while retaining the production port guard. Its combined
+Windows-runner and registry checks pass 54/54, and the final inventory remains
+156. This is included before freezing the new complete run.
 
 ## Existing measurements and limits
 
