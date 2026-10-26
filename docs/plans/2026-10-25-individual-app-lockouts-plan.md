@@ -170,3 +170,11 @@ visible note start/end edges before the real dwell. The test keeps MIDI 60, exac
 pick telemetry, all geometry assertions, the three-second deadline and a minimum
 450 ms feedback-duration assertion. No case is retried or omitted. This test-only
 change receives complete-file validation and another clean full gate.
+
+Exit-safety review also found that a native partner dialog could make the bar
+inert if another window locked the app. The new regression failed with the
+dialog still open; the shared lock now closes native dialogs without removing
+their draft controls. All fourteen shared state/UI cases and all five real-app/
+Settings cases passed, including the actual Chat dialog. In-progress Linux and
+Windows jobs were deliberately stopped before accepting their superseded source.
+Only the owned QA lease was cleaned up; the next payload includes this runtime fix.

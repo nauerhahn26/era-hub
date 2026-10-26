@@ -86,3 +86,17 @@ test('saving a passcode refreshes its offline hash immediately', async () => {
     await page.waitForFunction(hash => JSON.parse(localStorage.getItem('era.app-lock.settings.v1')).lockPasscodeHash === hash, expected, { timeout: 3000 });
   } finally { passcodeHash = ''; await context.close(); }
 });
+test('a lock closes the real Chat partner dialog while retaining its draft', async () => {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage(); await page.goto(base + '/chat/'); await page.locator('#stripLock').waitFor();
+    await page.evaluate(async () => {
+      const dialog = document.querySelector('#partnerDialog');
+      document.querySelector('#storyLabel').value = 'Keep this draft'; dialog.showModal();
+      await window.AppLock.get('chat').lock();
+    });
+    assert.equal(await page.locator('#partnerDialog').evaluate(dialog => dialog.open), false);
+    assert.equal(await page.locator('#storyLabel').inputValue(), 'Keep this draft');
+    assert.equal(await page.locator('#barDoor').isVisible(), true);
+  } finally { await context.close(); }
+});
