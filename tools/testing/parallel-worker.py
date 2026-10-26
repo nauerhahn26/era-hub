@@ -31,6 +31,13 @@ def stop_owned(process,record):
         if owned_alive(record):process.kill()
         process.wait(timeout=5)
 
+def release_owned_job(job,child,record,admitted):
+    # A failed worker must retain admission until its own launcher has exited.
+    if child is not None and child.poll() is None:stop_owned(child,record)
+    if admitted:
+        try:run_internal(job,'_release')
+        except Exception as error:write(job/'lease-release-error.json',{'error':str(error)})
+
 def sha(file):return hashlib.sha256(pathlib.Path(file).read_bytes()).hexdigest()
 
 def run_internal(job,command):
@@ -266,7 +273,7 @@ def worker(job):
     if os.getuid()==0:raise RuntimeError('Host worker must have a nonzero UID')
     (job/'worker.claim').mkdir()
     write(job/'worker.json',identity(os.getpid()))
-    admitted=False;start=time.monotonic();result={};monitor=None;sampling_stop=threading.Event();sampler=None
+    admitted=False;start=time.monotonic();result={};monitor=None;sampling_stop=threading.Event();sampler=None;child=None;namespace_record=None
     try:
         while True:
             pending=[]
@@ -297,8 +304,9 @@ def worker(job):
         # Do not fork a Python pre-exec callback while a sampling thread is live.
         sampling_stop.set();sampler.join();monitor.sample()
         child,output=start_namespace(job,masks_for(job,manifest))
+        namespace_record=identity(child.pid)
         sampling_stop.clear();sampler=threading.Thread(target=sample_memory,daemon=True);sampler.start()
-        status(job,'running',namespace=identity(child.pid))
+        status(job,'running',namespace=namespace_record)
         try:
             while child.poll() is None:time.sleep(2)
         finally:output.close()
@@ -316,9 +324,7 @@ def worker(job):
             sampling_stop.set();sampler.join();monitor.sample()
             observations=monitor.summary();write(job/'memory-observations.json',observations)
             result['memoryObservations']=observations;write(job/'result.json',result)
-        if admitted:
-            try:run_internal(job,'_release')
-            except Exception as error:write(job/'lease-release-error.json',{'error':str(error)})
+        release_owned_job(job,child,namespace_record,admitted)
         write(job/'done.json',{'status':read(job/'status.json')['status'],'finished':time.time()})
 
 if __name__=='__main__':

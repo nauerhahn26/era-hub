@@ -68,6 +68,8 @@ passes validation. Later estimates use completed full runs and can vary with hos
 load and candidate scope. There is no active cancellation command in this first
 version. A dead or unknown lease owner is retained for explicit owner review;
 the driver never steals leases or kills unrelated processes.
+Failure cleanup verifies and waits for its captured namespace launcher before
+releasing the isolated slot, so a failed worker cannot overlap the next one.
 
 Run the safeguards with:
 

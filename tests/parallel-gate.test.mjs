@@ -89,6 +89,33 @@ test('the actual Python worker imports its monitor without changing frozen contr
   assert.equal(verifyRuntime(control.directory,control.manifest).valid,true,'imports must not create bytecode inside frozen control');
 });
 
+test('worker cleanup joins only its captured child before releasing admission',()=>{
+  const program=`
+import pathlib,runpy,subprocess,sys,tempfile
+worker=runpy.run_path(sys.argv[1]);release=[]
+child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])
+record=worker['identity'](child.pid)
+def released(job,command):
+    assert command=='_release'
+    assert child.poll() is not None, 'lease released before owned child exit'
+    release.append(command)
+    return {'released':True}
+try:
+    function=worker['release_owned_job'];function.__globals__['run_internal']=released
+    wrong={**record,'startTicks':str(int(record['startTicks'])+1)}
+    try:function(pathlib.Path(tempfile.gettempdir()),child,wrong,True)
+    except RuntimeError:pass
+    else:raise AssertionError('changed child identity was accepted')
+    assert child.poll() is None and not release, 'unknown child was signalled or admission released'
+    function(pathlib.Path(tempfile.gettempdir()),child,record,True)
+    assert child.poll() is not None and release==['_release']
+finally:
+    worker['stop_owned'](child,record)
+`;
+  const result=spawnSync('python3',['-c',program,PYTHON],{encoding:'utf8',timeout:15000,env:{PATH:'/usr/sbin:/usr/bin:/sbin:/bin'}});
+  assert.equal(result.status,0,result.stderr || result.stdout || result.error?.message);
+});
+
 test('isolated legacy cleanup cannot see the host and keeps its port and temporary lock independent',t=>{
   const directory=fs.mkdtempSync(path.join(process.env.ERA_PARALLEL_JOB_DIR || stateDirectory(),'namespace-test-'));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
