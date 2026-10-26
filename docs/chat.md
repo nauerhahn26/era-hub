@@ -55,7 +55,9 @@ audio is sent to the configured cloud transcription service. Contextual replies
 may send the question and up to eight recent confirmed conversation entries to
 the configured text service. The browser receives no service credentials.
 
-The hub and worker do not save audio or transcripts. Conversation context stays
+The hub and worker do not save held microphone audio or recognition transcripts.
+The default device voice stays local. The optional saved voice uses the existing
+speech service and its local audio cache. Conversation context stays
 in page memory and is cleared when the page ends; manually entered stories stay
 in browser storage until removed. Cloud providers have their own retention
 policies. The prepared microphone may show the browser microphone indicator
