@@ -276,17 +276,17 @@ test("start-hub.bat wears the new name: window title, first line, hub window", (
 test("UNINSTALL.bat removes both names' shortcuts and stops the engine too", () => {
   assert.ok(uninstall, "UNINSTALL.bat found");
   const names = /for %%n in \(([^)]*)\) do/.exec(uninstall)?.[1] || "";
-  for (const n of ["Our Era Comms", "New ERA", "Making Words", "The Pencil", "Board", "Clothing Picker", "Music", "Movies", "Book Reader", "Math", "ERAgaze"])
+  for (const n of ["Our Era Comms", "New ERA", "Making Words", "The Pencil", "Board", "Clothing Picker", "Music", "Movies", "Book Reader", "Math", "Chat", "ERAgaze"])
     assert.ok(names.includes('"' + n + '"'), "the shortcut list names " + n + ": " + names);
   assert.ok(/^taskkill \/IM node\.exe \/F >nul 2>&1$/m.test(uninstall), "the hub is stopped");
   assert.ok(/^taskkill \/IM ERAgaze\.exe \/F >nul 2>&1$/m.test(uninstall), "the gaze engine is stopped too");
   assert.ok(/^echo UNINSTALL-OK: /m.test(uninstall), "the success line stays (scripts look for it)");
 });
 
-test("the signed uninstaller removes Math's Desktop and Start menu shortcuts", () => {
+test("the signed uninstaller removes Math and Chat Desktop and Start menu shortcuts", () => {
   const nsi = fs.readFileSync(new URL("../tools/installer.nsi", import.meta.url), "utf8");
-  for (const location of ["$DESKTOP", "$SMPROGRAMS"])
-    assert.ok(nsi.includes(`Delete "${location}\\Math.lnk"`), `${location} Math shortcut is removed`);
+  for (const location of ["$DESKTOP", "$SMPROGRAMS"]) for (const name of ["Math", "Chat"])
+    assert.ok(nsi.includes(`Delete "${location}\\${name}.lnk"`), `${location} ${name} shortcut is removed`);
 });
 
 test("build-payload.sh still parses (the heredoc is closed)", () => {

@@ -357,14 +357,24 @@ test("This Week order: weekOf, then publishedAt, then first-seen; ties alphabeti
     // no weekOf: publishedAt newest first, and it beats an exportedAt that re-publishes bumped
     W("Sort Pub New", { publishedAt: "2029-11-02T00:00:00Z", exportedAt: "2020-01-01T00:00:00Z" }),
     W("Sort Pub Old", { publishedAt: "2029-11-01T00:00:00Z", exportedAt: "2029-12-31T00:00:00Z" }),
-    // identical keys: alphabetical
-    W("Sort Tie B", { publishedAt: "2029-09-01T00:00:00Z" }),
-    W("Sort Tie A", { publishedAt: "2029-09-01T00:00:00Z" }),
+    // identical keys: exportedAt also seeds identical first-seen timestamps
+    W("Sort Tie B", { publishedAt: "2029-09-01T00:00:00Z", exportedAt: "2029-09-01T00:00:00Z" }),
+    W("Sort Tie A", { publishedAt: "2029-09-01T00:00:00Z", exportedAt: "2029-09-01T00:00:00Z" }),
     // neither field (an old manifest): the hub's first-seen, seeded from exportedAt
     W("Sort Old Z", { exportedAt: "2029-10-02T00:00:00Z" }),
     W("Sort Old A", { exportedAt: "2029-10-01T00:00:00Z" }),
   ];
   try {
+    const index = await (await fetch(`${BASE}/books/index.json`)).json();
+    const tieKeys = (title) => {
+      const book = index.find(b => b.title === title);
+      assert.ok(book, `${title} is indexed`);
+      return { weekOf: book.weekOf, publishedAt: book.publishedAt, firstSeen: book.firstSeen };
+    };
+    const tieA = tieKeys("Sort Tie A");
+    assert.deepEqual(tieA, { weekOf: null, publishedAt: "2029-09-01T00:00:00.000Z",
+      firstSeen: "2029-09-01T00:00:00.000Z" }, "the tie fixture seeds its first-seen timestamp");
+    assert.deepEqual(tieKeys("Sort Tie B"), tieA, "all date sort keys match before the alphabetical tie-break");
     const { ctx, page } = await makePage();
     assert.deepEqual((await pageTitles(page)).slice(0, 8), [
       "Sort Wk Late", "Sort Wk Early", "Sort Pub New", "Sort Pub Old",
@@ -491,11 +501,14 @@ test("a reload keeps the section and page; a fresh open starts on This Week", as
   await page.locator("#shelfMore").click();
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => window.Reader && window.Reader.state().shelfCount > 0);
+  // The index arrives before /content/status; wait for boot to restore and paint the shelf.
+  await page.locator("#shelfGrid [data-cell]").first().waitFor();
   let s = await state(page);
   assert.equal(s.section, "all"); assert.equal(s.shelfPage, 1, "the page survived the reload");
   // a fresh open — she came in through her home screen, not a reload
   await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
   await page.waitForFunction(() => window.Reader && window.Reader.state().shelfCount > 0);
+  await page.locator("#shelfGrid [data-cell]").first().waitFor();
   s = await state(page);
   assert.equal(s.section, "week"); assert.equal(s.shelfPage, 0, "opening the reader opens This Week");
   await ctx.close();

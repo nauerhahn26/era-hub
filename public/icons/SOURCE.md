@@ -3,6 +3,7 @@
 - `making-words`, `pencil`, `board`, `reader`, `eragaze`: Ellie's original i13 `.ico` files (dad 9/3), with `.png` twins for the home tiles.
 - `music`, `movies`: drawn to match (9/3).
 - `drawing`: drawn by `tools/drawing-icon.mjs` (9/30).
+- `chat`: original speech-bubble vector in `chat.svg`; PNG and multi-size ICO rendered from that source.
 - `this-week` (spec 2026-10-12 §1): Microsoft Fluent Emoji "Calendar", 3D style, MIT
   (license text: `public/drawing/stickers/LICENSE`, same repo and commit).
   - source: https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets/Calendar/3D/calendar_3d.png
