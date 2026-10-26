@@ -15,6 +15,11 @@ All protect distinct boundaries; none warrants deletion. Its registry metadata
 remains a draft until those sources merge, so the active inventory cannot claim
 files absent from its selected tuple.
 
+The [reuse eligibility record](../research/2026-10-26-gate-reuse-eligibility.md)
+distinguishes the avoidable fixture-only repeat cost from the new full
+integration required after the shared speech and sorting runtime landed.
+No composed or partial receipt has been accepted.
+
 ## Current priority: parallel full gates
 
 The maintainer has prioritized isolated complete gates over the smaller fixture
