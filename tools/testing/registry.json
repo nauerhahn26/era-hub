@@ -2074,6 +2074,25 @@
       "level": "hub process integration"
     },
     {
+      "id": "era-hub:tests/windows-parallel.test.mjs",
+      "purpose": "Independent Windows artifact inputs, complete case receipts, staged transport bindings and owned process cleanup",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "tools/windows-gate.mjs",
+        "tools/testing/windows-*.mjs",
+        "tools/testing/windows-*.py",
+        "tools/testing/test/windows_transport_test.py"
+      ],
+      "lane": "linux",
+      "resources": [
+        "synthetic-artifacts",
+        "synthetic-provider-and-ssh",
+        "owned-local-processes",
+        "owned-loopback-listeners"
+      ],
+      "level": "runner integration"
+    },
+    {
       "id": "era-hub:tests/words.test.mjs",
       "purpose": "Word timing alignment, malformed data and recorded narration regression",
       "group": "hub",
