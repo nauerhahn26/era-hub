@@ -17,14 +17,24 @@ Set `ERA_WT_SUFFIX=--wt-<feature>` when selecting matching sibling worktrees.
 The registry check refuses missing or unregistered suites, unsupported executable
 names and collection collisions. The registered parallel gate suite imports its
 capacity and snapshot tests and runs the Python memory-monitor tests.
-The public rollout baseline has six registered Chat suites; its speech wrapper
-owns two Python helper files. Games adds three suites for state, browser
-access/layout and browser audio lifecycle. The execution inventory is 147 suites,
-using the reviewed registry from `cea43bd` and the approved public source cohort.
-Four future Chat suites reviewed at `3105eec` remain draft metadata in the
+The historical public rollout baseline had six registered Chat suites and three
+Games suites, for 147 suites using the reviewed registry from `cea43bd`. Its Chat
+speech wrapper owns two Python helper files. Four later Chat suites reviewed at
+`3105eec` were draft metadata in the
 [audit supplement](../../docs/research/2026-10-26-queued-suite-audit.md), alongside
 their separate Windows boundary. The historical private 151-suite pass at
-`3536a18` does not verify this rollout tree or authorize those future features.
+`3536a18` verifies only its exact source, not the current candidate.
+
+The current combined Chat and Games candidate registers 155 Linux suites.
+Games adds durable state coverage; Chat adds the four reviewed browser, metrics,
+symbols and voice suites plus store, storage and storage UI suites. Chat's browser
+suite checks file-backed state across complete browser and store restarts and
+verifies that clearing remains effective. Its storage UI suite checks truthful
+unsaved fallback, Exit waiting for acknowledgement or its 850ms limit, and
+immediate Talk handoff. The Windows update leg and the three helper-contract
+cases in `tests-vm/chat-ui-smoke.test.mjs` remain separate from this flat Linux
+inventory. These counts classify coverage; they are not complete gate evidence.
+
 Unreviewed VM/helper changes retain the complete fallback. Registration
 classifies coverage and resources; Chat and Games product changes retain the
 complete fallback and gain no new omission rule.

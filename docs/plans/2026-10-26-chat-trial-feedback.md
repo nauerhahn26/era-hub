@@ -40,7 +40,7 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [x] Preserve timing-only privacy and ephemeral conversation/audio boundaries.
 - [x] Use the compatible bounded leave-flush barrier from the new shared core.
 - [x] Prove persistence after a full browser and hub/store restart on owned local fixtures.
-- [ ] Integrate the owning features' exact new frozen Game/core/tooling baseline.
+- [x] Integrate the owning features' exact new frozen Game/core/tooling baseline.
 - [ ] Run a fresh full gate and build after the new predecessor release timestamp.
 - [ ] Run full installed Windows acceptance on the replacement payload.
 - [ ] Record replacement source, hashes and limitations; retain the publication hold.
@@ -88,6 +88,15 @@ explicit voice save still allows the selected voice on the current page with a
 visible unsaved warning. Story success continues to require acknowledgement.
 The real Chat/shared-core interaction check verifies delayed-write ordering,
 an 850 ms Exit flush bound and immediate Talk while a write remains pending.
+
+The combined source merges the Games owner's exact `663978b` with the reviewed
+tooling and Reader readiness fixes. Matching siblings select core `3c908c9`,
+Board `2cb86de`, Words `9b2daa9`, Pencil `bd43dbb` and gaze `fc73172`.
+Post-merge checks pass 133/133 across Chat state/API/config/browser, Games state,
+Reader and Math. The actual registry check resolves all six selected worktrees
+and reports 155 suites; the planner's thirty regression cases pass. Seven Chat
+entries and their broad support consumers are registered without relaxing any
+complete-gate or selection rule. These checks do not replace the new full run.
 
 ## Existing measurements and limits
 
