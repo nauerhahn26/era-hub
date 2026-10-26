@@ -80,7 +80,7 @@ export function executionEnvironment({directory,manifest}) {
     LD_LIBRARY_PATH:path.join(runtime,'lib'),PLAYWRIGHT_BROWSERS_PATH:path.join(runtime,'browsers'),
     LANG:'C.UTF-8',LC_ALL:'C.UTF-8',TZ:'UTC',TMPDIR:'/tmp',
     XDG_CONFIG_HOME:'/tmp/config',XDG_CACHE_HOME:'/tmp/cache',
-    ERA_DATA_DIR:manifest.seedDir,ERA_WT_SUFFIX:manifest.suffix || '',ERA_TEST_PORT:'8378',
+    ERA_DATA_DIR:manifest.seedDir,ERA_WT_SUFFIX:manifest.suffix || '',ERA_TEST_PORT:'8388',
     ERA_GATE_STAMPS:path.join(directory,'issued-stamps'),
     ERA_PARALLEL_JOB_DIR:directory,ERA_GAZE_SRC:manifest.clones?.['era-gaze'] || path.join(manifest.workspace,'era-gaze'),
     ERA_CHAT_CONFIG_DISABLED:'1',
@@ -202,9 +202,11 @@ export async function internal(command,directory) {
   }
   throw Error('Unknown internal parallel command');
 }
-export function runPreflight(directory) {
+function runProbe(directory,mode) {
   fs.mkdirSync(directory,{recursive:true,mode:0o700});
-  const run=spawnSync('python3',[PYTHON,'preflight',directory,process.execPath],{encoding:'utf8',timeout:30000,env:{PATH:'/usr/sbin:/usr/bin:/sbin:/bin',LANG:'C.UTF-8',LC_ALL:'C.UTF-8',TZ:'UTC'}});
+  const run=spawnSync('python3',[PYTHON,mode,directory,process.execPath],{encoding:'utf8',timeout:30000,env:{PATH:'/usr/sbin:/usr/bin:/sbin:/bin',LANG:'C.UTF-8',LC_ALL:'C.UTF-8',TZ:'UTC'}});
   if(run.status!==0) throw Error(`Namespace preflight failed: ${run.stderr || run.stdout || run.error?.message}`);
   return JSON.parse(run.stdout);
 }
+export const runPreflight=directory=>runProbe(directory,'preflight');
+export const runReversePreflight=directory=>runProbe(directory,'reverse-preflight');

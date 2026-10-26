@@ -9,7 +9,7 @@ import '../tools/testing/test/parallel-capacity.test.mjs';
 import '../tools/testing/test/parallel-snapshot.test.mjs';
 import {
   jobPath, executionEnvironment, parseProgress, estimateQueue,
-  runtimeManifest, verifyRuntime, copyControlBundle, runPreflight, stateDirectory, readStatus, PYTHON,
+  runtimeManifest, verifyRuntime, copyControlBundle, runPreflight, runReversePreflight, stateDirectory, readStatus, PYTHON,
 } from '../tools/testing/parallel-worker.mjs';
 
 function scratch(t) {
@@ -40,7 +40,7 @@ test('candidate execution receives owned data, stamps and runtime without operat
   assert.equal(env.ERA_DATA_DIR,'/owned/job/workspace/era-family/test-data');
   assert.equal(env.ERA_GATE_STAMPS,'/owned/job/issued-stamps');
   assert.equal(env.ERA_WT_SUFFIX,'--wt-feature');
-  assert.equal(env.ERA_TEST_PORT,'8378');
+  assert.equal(env.ERA_TEST_PORT,'8388');
   assert.equal(env.PLAYWRIGHT_BROWSERS_PATH,'/owned/job/runtime/browsers');
   assert.ok(env.PATH.startsWith('/owned/job/runtime/bin:'));
   for(const key of ['HOME','NODE_OPTIONS','ERA_GATE_MODE','ERA_GATE_SELECTED','ERA_PRESENCE_HOOK','ERA_CHAT_RUNTIME','API_KEY'])
@@ -124,6 +124,17 @@ test('isolated legacy cleanup cannot see the host and keeps its port and tempora
   for(const key of ['freshProc','noEgress','fixedPortIndependent','temporaryLockIndependent','ownedInnerCanaryStopped','hostCanarySurvived','homeMasked','runMasked']) assert.equal(proof[key],true,key);
   assert.equal(proof.hostCanaryVisible,false);
   assert.equal(proof.hostHomeProbeVisible,false);
+});
+
+test('simulated host legacy cleanup leaves the isolated gate canary alive',t=>{
+  const directory=fs.mkdtempSync(path.join(process.env.ERA_PARALLEL_JOB_DIR || stateDirectory(),'reverse-test-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const proof=runReversePreflight(directory);
+  assert.equal(proof.hostLegacyPort,8378);assert.equal(proof.legacyControlPort,8387);assert.equal(proof.isolatedGatePort,8388);
+  assert.equal(proof.hostLegacyPatternMatched,false);
+  assert.equal(proof.legacyHostCanaryStopped,true);
+  assert.equal(proof.isolatedGateCanarySurvived,true);
+  assert.equal(proof.freshProc,true);assert.equal(proof.homeMasked,true);
 });
 
 test('changed pinned control inputs revoke exposed proof during status refresh',async t=>{

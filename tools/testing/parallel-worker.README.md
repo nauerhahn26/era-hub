@@ -48,6 +48,14 @@ and live data are inaccessible through their original home paths. Loopback and a
 dummy IPv4 interface allow network coverage without an egress route. The preflight
 proves that the old gate's process cleanup stops its inner canary while the owned
 host canary survives, and that fixed ports and temporary locks are independent.
+The isolated main hub uses port 8388; legacy gates retain 8378. An ancestor PID namespace
+can still see descendants, so the different command-line port also prevents an
+old host gate's 8378 cleanup expression from matching the isolated hub. The selected
+six-source suites were checked for a fixed 8388 listener before choosing this port.
+A separate synthetic outer-host check exercises the cleanup shape on an owned
+8387 control canary and proves the nested 8388 canary remains alive. It also checks
+the exact real 8378 expression against the nested canary's actual process arguments.
+It never runs a broad cleanup expression in the real host PID namespace.
 
 Candidates must provide deterministic closed provider fixtures. A candidate that
 requires a real network provider fails visibly; this capability does not silently
@@ -62,6 +70,17 @@ the original stamp bytes and issuance time. A source move makes that proof stale
 for current acceptance; the historical logs and result remain available. Stamps
 are never written to the shared host stamp directory. This capability does not
 land, publish, or deploy a release. Existing maintainer approval still applies.
+
+Before syncing an actual master that only adds documentation, the owner should
+run `status JOB` while the tested source tuple still matches. After it returns
+validated exposed stamps, copy those genuine bytes into a new owner-private stamp
+cache before changing any source checkout. A later status refresh can revoke the
+job's exposed directory when a source HEAD moves; it does not revoke the preserved
+historical receipt. Keep every original `at`, `head`, and other field unchanged,
+and pass the private cache through the normal existing stamp-reader mechanism.
+Those existing readers decide whether an ancestor proof is acceptable after the
+sync. A private copy creates no new acceptance policy, refreshes no proof, and
+must not overwrite the shared host stamp directory.
 
 Queue ETA is explicitly unknown until at least one actual complete isolated gate
 passes validation. Later estimates use completed full runs and can vary with host

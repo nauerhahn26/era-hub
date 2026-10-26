@@ -24,9 +24,9 @@ invalidate promotion. Final landing and publication remain serialized.
 | Release | Fixture stage | Queue / source coordination | Parallel adoption |
 | --- | --- | --- | --- |
 | Math | Existing run unchanged | Passed 132/0 and landed `e75e16c`; Windows acceptance follows separately | No migration requested |
-| YouTube Videos | `2597549` includes `fe2e9e7`; file hash verified | Owner synchronized actual Math as `6abdcf0`; corrected legacy gate is active | Awaiting explicit owner response through controller |
+| YouTube Videos | `2597549` includes `fe2e9e7`; file hash verified | Owner confirmed clean `6abdcf0` and active corrected legacy gate | Owner explicitly agrees to use the runner on a next necessary run after full pilot validation |
 | Chat | Owner confirmed `654af54` | Frozen clean hub `28fc5be`, board `395d02b`; includes actual Math and cumulative YouTube source | Owner consents to first full pilot; narrow isolation prerequisites adopted |
-| Games | Owner confirmed `783f083` | Frozen cumulative `de6634c`; owner awaits latest Chat prerequisite tuple before collection | Owner explicitly agrees to adopt after first full pilot validates |
+| Games | Owner confirmed `783f083` | Frozen cumulative hub `7929a5f`, board `fca7f91`; board tree matches Chat's tested source | Owner explicitly agrees to adopt after first full pilot validates |
 
 These are observations and acknowledgments at the time of writing, not a
 reservation of publication order or version numbers. Recheck the original
@@ -57,6 +57,14 @@ All 35 cases passed with zero failures, skips or cancellations; complete-file
 wall time was 420.499 seconds on one CPU at low priority. The connection-drop
 case took 15.498 seconds and the label-budget case 0.520 seconds. These fixture
 improvements are secondary to the parallel-gate work.
+
+The first full pilot started on 2026-10-26 at 00:06 UTC, job
+`gate-20261026T000616Z-e0a2d99d`, using the frozen Chat tuple in the table. Its
+complete expected inventory contains 139 suites. It runs alongside YouTube's
+existing legacy gate. This original pilot retains its collected port and code;
+new legacy starts are held while it runs. Future isolated jobs use 8388 so the
+host legacy gate's 8378 cleanup cannot match them. Both cleanup directions and
+nested namespace execution passed owned synthetic checks before that change.
 
 No measured complete parallel-gate duration is available yet. Record the first
 pilot's complete inventory, input verification, start/end times, peak resource

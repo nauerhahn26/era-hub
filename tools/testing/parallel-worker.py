@@ -164,17 +164,18 @@ def masks_for(job,manifest=None):
     masks=sorted(set(masks),key=lambda p:len(str(p)))
     return [p for p in masks if not any(p!=other and p.is_relative_to(other) for other in masks)]
 
-def parent_death():
+def parent_death(expected_parent):
     if ctypes.CDLL(None).prctl(1,signal.SIGKILL)!=0:os._exit(125)
-    if os.getppid()==1:os._exit(125)
+    if os.getppid()!=expected_parent:os._exit(125)
 
 def start_namespace(job,masks):
-    shutil.copyfile(HERE/'parallel-worker.py',job/'inside-worker.py')
+    shutil.copyfile(pathlib.Path(__file__).resolve(),job/'inside-worker.py')
     script=enter_script(job,masks)
     write(job/'masked-paths.json',{'emptyMasks':[str(p) for p in masks],'home':str(pathlib.Path.home().resolve())})
     args=['unshare','--user','--map-current-user','--keep-caps','--mount','--net','--pid','--fork','--mount-proc','--propagation','private','--kill-child=KILL','bash',str(script),str(job),DUMMY,str(pathlib.Path.home().resolve()),str(os.getuid()),str(os.getgid()),*map(str,masks)]
     output=(job/'namespace.log').open('w')
-    child=subprocess.Popen(args,stdout=output,stderr=subprocess.STDOUT,env={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C.UTF-8','TZ':'UTC'},preexec_fn=parent_death)
+    expected_parent=os.getpid()
+    child=subprocess.Popen(args,stdout=output,stderr=subprocess.STDOUT,env={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C.UTF-8','TZ':'UTC'},preexec_fn=lambda:parent_death(expected_parent))
     write(job/'namespace-launch.json',identity(child.pid));return child,output
 
 def inside(job):
@@ -189,6 +190,8 @@ def inside(job):
         cursor=cursor/name
     checks.update({'maskedPaths':len(masks)+1,'homeMasked':True,'runMasked':'/run' in masks});write(job/'namespace-proof.json',checks)
     if (job/'preflight.json').exists():return inside_preflight(job,checks)
+    if (job/'reverse-preflight.json').exists():return inside_reverse_preflight(job,checks)
+    if (job/'reverse-inner.json').exists():return inside_reverse_inner(job)
     manifest=read(job/'manifest.json');env=read(job/'gate-env.json')
     script=pathlib.Path(manifest['hub'])/'tools/era-gate.sh'
     before=sha(script);start=time.monotonic()
@@ -220,7 +223,7 @@ def preflight(job,node):
     owned_node=job/'probe-node';shutil.copyfile(node,owned_node);owned_node.chmod(0o755)
     home_probe=job.parent/('parallel-host-probe-'+uuid.uuid4().hex)
     home_probe.write_text('owned host-only probe')
-    canary=subprocess.Popen([node,str(script),'8378',str(port),str(ready),LOOPBACK],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    canary=subprocess.Popen([node,str(script),str(port),str(port),str(ready),LOOPBACK],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     record=identity(canary.pid)
     lock=pathlib.Path('/tmp')/('parallel-probe-'+uuid.uuid4().hex+'.lock')
     try:
@@ -231,7 +234,8 @@ def preflight(job,node):
         if not ready.exists():raise RuntimeError('Owned host canary did not become ready')
         with lock.open('x') as held:
             fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            write(job/'preflight.json',{'node':str(owned_node),'canary':record,'port':port,'lock':str(lock),'hostLockInode':os.fstat(held.fileno()).st_ino,'homeProbe':str(home_probe)})
+            lock_stat=os.fstat(held.fileno())
+            write(job/'preflight.json',{'node':str(owned_node),'canary':record,'port':port,'lock':str(lock),'hostLockIdentity':[lock_stat.st_dev,lock_stat.st_ino],'homeProbe':str(home_probe)})
             child,output=start_namespace(job,masks_for(job))
             try:code=child.wait(timeout=20)
             finally:output.close()
@@ -252,19 +256,83 @@ def inside_preflight(job,checks):
         listener.bind((LOOPBACK,request['port']));listener.listen()
         with pathlib.Path(request['lock']).open('w') as held:
             fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            if os.fstat(held.fileno()).st_ino==request['hostLockInode']:raise RuntimeError('Temporary lock inode was shared with host')
+            lock_stat=os.fstat(held.fileno())
+            if [lock_stat.st_dev,lock_stat.st_ino]==request['hostLockIdentity']:raise RuntimeError('Temporary lock inode was shared with host')
         ready=pathlib.Path('/tmp/inner-canary.ready')
-        inner=subprocess.Popen([request['node'],str(job/'server.js'),'8378','0',str(ready),LOOPBACK],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        inner=subprocess.Popen([request['node'],str(job/'server.js'),str(request['port']),'0',str(ready),LOOPBACK],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for _ in range(100):
             if ready.exists():break
             if inner.poll() is not None:raise RuntimeError('Inner canary failed')
             time.sleep(.02)
         if not ready.exists():raise RuntimeError('Inner canary did not become ready')
-        killed=subprocess.run(['pkill','-f','[n]ode .*server.js 8378'])
+        killed=subprocess.run(['pkill','-f','[n]ode .*server.js '+str(request['port'])])
         inner.wait(timeout=5)
         if killed.returncode or inner.returncode>=0:raise RuntimeError('Isolated legacy cleanup did not stop its own canary')
     write(job/'preflight-result.json',{**checks,'fixedPortIndependent':True,'temporaryLockIndependent':True,'hostCanaryVisible':False,'hostHomeProbeVisible':False,'ownedInnerCanaryStopped':True})
     return 0
+
+def reverse_preflight(job,node):
+    job.mkdir(parents=True,exist_ok=True)
+    shutil.copyfile(node,job/'probe-node');(job/'probe-node').chmod(0o755)
+    write(job/'reverse-preflight.json',{'node':str(job/'probe-node')})
+    child,output=start_namespace(job,masks_for(job));record=identity(child.pid)
+    try:
+        if child.wait(timeout=20):raise RuntimeError((job/'namespace.log').read_text())
+        print(json.dumps(read(job/'reverse-result.json')),flush=True)
+    finally:
+        stop_owned(child,record);output.close()
+
+def inside_reverse_preflight(job,checks):
+    # This simulated host has a fresh PID namespace containing only owned fixtures.
+    node=read(job/'reverse-preflight.json')['node'];script=job/'server.js'
+    script.write_text("const fs=require('node:fs'),net=require('node:net');let tick=0;const emit=()=>{fs.writeFileSync(process.argv[3]+'.tmp',String(++tick));fs.renameSync(process.argv[3]+'.tmp',process.argv[3]);};net.createServer(c=>c.end()).listen(Number(process.argv[2]),process.argv[4],()=>{emit();setInterval(emit,30);});\n")
+    # A different control marker keeps real host legacy cleanup from disturbing this proof.
+    control_port=8387
+    legacy_ready=job/'legacy-ready';legacy=subprocess.Popen([node,str(script),str(control_port),str(legacy_ready),LOOPBACK]);legacy_record=identity(legacy.pid)
+    inner=None;inner_record=None
+    try:
+        inner_job=job/'inner';inner_job.mkdir();shutil.copyfile(node,inner_job/'probe-node');(inner_job/'probe-node').chmod(0o755);shutil.copyfile(script,inner_job/'server.js')
+        write(inner_job/'reverse-inner.json',{'node':str(inner_job/'probe-node')})
+        inner,output=start_namespace(inner_job,masks_for(inner_job));inner_record=identity(inner.pid)
+        for _ in range(200):
+            if legacy_ready.exists() and (inner_job/'heartbeat').exists():break
+            if legacy.poll() is not None or inner.poll() is not None:raise RuntimeError('A reverse isolation canary exited before readiness')
+            time.sleep(.02)
+        if not legacy_ready.exists() or not (inner_job/'heartbeat').exists():raise RuntimeError('Reverse isolation canaries did not become ready')
+        expected=[str(inner_job/'probe-node'),str(inner_job/'server.js'),'8388',str(inner_job/'heartbeat'),LOOPBACK]
+        matches=[]
+        for entry in pathlib.Path('/proc').iterdir():
+            if not entry.name.isdigit():continue
+            try:arguments=(entry/'cmdline').read_bytes().rstrip(b'\0').decode().split('\0')
+            except (FileNotFoundError,ProcessLookupError):continue
+            if arguments==expected:matches.append(arguments)
+        if len(matches)!=1 or re.search(r'node .*server.js 8378',' '.join(matches[0])):raise RuntimeError('The isolated gate command can match real host legacy cleanup')
+        before=int((inner_job/'heartbeat').read_text())
+        cleaned=subprocess.run(['pkill','-f','[n]ode .*server.js '+str(control_port)])
+        legacy.wait(timeout=5)
+        if cleaned.returncode or legacy.returncode>=0:raise RuntimeError('Simulated host cleanup did not stop its own legacy canary')
+        time.sleep(.15)
+        if inner.poll() is not None or int((inner_job/'heartbeat').read_text())<=before:raise RuntimeError('Simulated host cleanup stopped the isolated gate canary')
+        write(inner_job/'finish.json',{'done':True})
+        if inner.wait(timeout=5):raise RuntimeError('Inner canary cleanup failed')
+        output.close()
+        write(job/'reverse-result.json',{**checks,'hostLegacyPort':8378,'legacyControlPort':control_port,'isolatedGatePort':8388,'hostLegacyPatternMatched':False,'legacyHostCanaryStopped':True,'isolatedGateCanarySurvived':True})
+        return 0
+    finally:
+        stop_owned(legacy,legacy_record)
+        if inner is not None:stop_owned(inner,inner_record)
+
+def inside_reverse_inner(job):
+    node=read(job/'reverse-inner.json')['node'];heartbeat=job/'heartbeat'
+    child=subprocess.Popen([node,str(job/'server.js'),'8388',str(heartbeat),LOOPBACK]);record=identity(child.pid)
+    try:
+        deadline=time.monotonic()+10
+        while not (job/'finish.json').exists():
+            if child.poll() is not None:raise RuntimeError('Isolated gate canary was stopped')
+            if time.monotonic()>deadline:raise RuntimeError('Simulated host proof did not finish')
+            time.sleep(.02)
+        return 0
+    finally:stop_owned(child,record)
 
 def worker(job):
     from parallel_monitor import HostMonitor
@@ -330,6 +398,7 @@ def worker(job):
 if __name__=='__main__':
     mode=sys.argv[1];job=pathlib.Path(sys.argv[2]).resolve()
     if mode=='preflight':preflight(job,sys.argv[3])
+    elif mode=='reverse-preflight':reverse_preflight(job,sys.argv[3])
     elif mode=='inside':raise SystemExit(inside(job))
     elif mode=='run':worker(job)
     else:raise SystemExit('Unknown owned worker mode')
