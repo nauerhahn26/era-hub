@@ -434,17 +434,20 @@
     <div class="desc" id="mvolDesc"></div>
   </div>
 
-  <!-- The board's lock (dad 9/14): in class, or when a sibling is poking the
+  <!-- Shared app locks: the original music interaction, available in every app.
+       In class, or when someone is poking the
        tablet and the music has to stop. Deterrence, not security — the
        passcode only stops someone repeating what they watched a grown-up do,
        so it is hashed in this page and the digits never go to Our Era Comms or
-       onto the disk. Four digits, to match the board's keypad. The box is a
+       onto the disk. Four digits, to match the shared keypad. The box is a
        text input masked in CSS, NOT type="password": on the tablet the
        password input scope beats inputmode and brings up the whole keyboard
        when all we want are the numbers. -->
   <div class="card" id="lock">
-    <h2>🔒 Lock</h2>
-    <p class="hint">Hold the 🔒 in the corner of the Music or Films board and the music and films stop. Everything else &mdash; her words, her books, her drawing &mdash; keeps working.</p>
+    <h2>🔒 App locks</h2>
+    <p class="hint">Hold the 🔒 in any app to lock that app, or use its Lock button below. Each app locks independently on this browser. Exit and communication doors stay available. Reopening a locked app keeps it locked.</p>
+    <div id="appLocks" aria-label="Individual app locks">Loading app locks…</div>
+    <h3>Duration for new locks</h3>
     <div class="stepper">
       <button id="lockDown">−</button>
       <div class="val" id="lockVal">45 minutes</div>
@@ -452,14 +455,14 @@
     </div>
     <div class="desc" id="lockDesc"></div>
     <div style="margin-top:16px; border-top:2px dashed var(--line); padding-top:16px">
-      <p class="hint" style="margin-bottom:8px">With no passcode, holding the 🔒 again unlocks the board. Set one and unlocking asks for it instead, so a curious sibling can&rsquo;t simply copy what they saw you do.</p>
+      <p class="hint" style="margin-bottom:8px">With no passcode, holding the 🔒 again unlocks the app. Set one and unlocking asks for it instead, so someone watching can&rsquo;t simply copy the hold. A passcode is recommended.</p>
       <div class="row">
         <input id="lockPass" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="Passcode (4 digits)"
                style="font-family:var(--font);font-size:17px;padding:12px 14px;border:2px solid var(--line);border-radius:12px;flex:1;min-width:240px;-webkit-text-security:disc">
         <button id="lockPassSave">Save</button>
         <button id="lockPassClear">Clear</button>
       </div>
-      <div class="status" id="lockPassStatus">No passcode &mdash; holding the 🔒 again unlocks the board.</div>
+      <div class="status" id="lockPassStatus">No passcode &mdash; holding the 🔒 again unlocks the app.</div>
     </div>
   </div>
 
@@ -626,8 +629,8 @@ function lockLabel(m){
 function lockDesc(){
   $("lockVal").textContent=lockLabel(lockMin);
   $("lockDesc").textContent = lockMin
-    ? "Music and films stop for "+lockLabel(lockMin).toLowerCase()+", then come back by themselves."
-    : "Music and films stay stopped until a grown-up unlocks it.";
+    ? "Each new lock lasts "+lockLabel(lockMin).toLowerCase()+". Unlocking makes the app available without restarting its activity."
+    : "Each locked app stays stopped until a grown-up unlocks it.";
 }
 async function saveLock(){
   lockDesc();
@@ -652,8 +655,8 @@ async function lockHash(digits){
 }
 function lockPassPaint(has){
   $("lockPassStatus").innerHTML = has
-    ? "<b>Passcode set ✓</b> Unlocking the board asks for it."
-    : "No passcode &mdash; holding the 🔒 again unlocks the board.";
+    ? "<b>Passcode set ✓</b> Unlocking any app asks for it."
+    : "No passcode &mdash; holding the 🔒 again unlocks the app.";
 }
 async function lockPassPost(hash){
   const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -1978,5 +1981,6 @@ document.addEventListener("era-settings-section",e=>{
 })();
 </script>
 <script src="settings-layout.js"></script>
+<script type="module" src="settings-locks.js"></script>
 </body>
 </html>

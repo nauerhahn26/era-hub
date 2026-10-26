@@ -32,8 +32,9 @@ function persist() {
   catch { recoveryNotice = 'Progress is available in this session. Local saving is unavailable.'; }
 }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
-function active() { return !gone && !S.paused && !S.hidden && document.visibilityState === 'visible'; }
+function active() { return !window.AppLock?.isLocked() && !gone && !S.paused && !S.hidden && document.visibilityState === 'visible'; }
 function speak(text) {
+  if (text && window.AppLock?.isLocked()) return;
   try { window.Speech?.stop(); if (text) void window.Speech?.say(text, 'long'); } catch {}
 }
 function suppress() {
@@ -475,6 +476,8 @@ function lifecycle(type, value) {
 document.addEventListener('dwell:activate', e => { if (e.target instanceof Element) origins.add(e.target); });
 bar = mountDoorBar(document.body, {
   appPath: '/games/',
+  onLock() { interrupt(); musicArmed = false; persist(); syncDwell(); },
+  onUnlock() { syncDwell(); },
   onLeave() { interrupt(); musicArmed = false; gone = true; persist(); syncDwell(); },
   onPause() { lifecycle('suspend', true); },
   onResume() { lifecycle('suspend', false); },

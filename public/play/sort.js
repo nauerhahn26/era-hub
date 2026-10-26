@@ -95,12 +95,14 @@ const reduced = () => { try { return matchMedia("(prefers-reduced-motion: reduce
 export function mountSort(host, sort, { say = () => {}, log = () => {}, sound = () => false, onItem = () => {},
                                         onDone = () => {}, idleMs = 20000, weekOf = "" } = {}) {
   injectCss();
+  let lockPaused = false, pendingNext = false, landingBin = null, chipAdded = false;
+  const blocked = () => lockPaused || window.AppLock?.isLocked();
   const { bins } = sort;
   const dealt = deal(sort.items.length, weekOf);   // dealt[k] = the manifest index of the k-th item up
   const items = dealt.map((m) => sort.items[m]);
   let idx = 0, strike = 0, busy = false, gone = false, idleUsed = false, idleTimer = null;
   const timers = new Set();
-  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!gone) fn(); }, ms); timers.add(t); return t; };
+  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!gone && !blocked()) fn(); }, ms); timers.add(t); return t; };
   const question = (i) => "Is " + items[i].label + " " + bins[0].label + " or " + bins[1].label + "?";
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
@@ -154,6 +156,7 @@ export function mountSort(host, sort, { say = () => {}, log = () => {}, sound = 
   }
   // the item slides into bin b's tray, then a small glyph stays there
   function land(b, after) {
+    landingBin = b; chipAdded = false;
     busy = true; setLive(false); clearTimeout(idleTimer);
     card.classList.remove("wobble");
     const from = card.getBoundingClientRect(), to = binEls[b].querySelector(".so-tray").getBoundingClientRect();
@@ -162,7 +165,7 @@ export function mountSort(host, sort, { say = () => {}, log = () => {}, sound = 
     card.classList.add("landing");
     later(() => {
       const chip = el("span", "so-chip", items[idx].glyph);
-      binEls[b].querySelector(".so-tray").appendChild(chip);
+      binEls[b].querySelector(".so-tray").appendChild(chip); chipAdded = true;
       after();
     }, reduced() ? 0 : SLIDE_MS);
   }
@@ -170,6 +173,13 @@ export function mountSort(host, sort, { say = () => {}, log = () => {}, sound = 
     later(() => { if (idx + 1 < items.length) show(idx + 1); else onDone(); }, ms);
   }
   function pick(b) {
+    if (blocked()) return;
+    if (pendingNext) {
+      pendingNext = false;
+      if (!chipAdded && landingBin !== null) binEls[landingBin].querySelector('.so-tray').appendChild(el('span', 'so-chip', items[idx].glyph));
+      if (idx + 1 < items.length) show(idx + 1); else onDone();
+      return;
+    }
     if (busy || gone) return;
     clearTimeout(idleTimer);
     const right = items[idx].bin;
@@ -200,6 +210,8 @@ export function mountSort(host, sort, { say = () => {}, log = () => {}, sound = 
 
   show(0);
   return {
+    pause() { lockPaused = true; pendingNext = busy; for (const t of timers) clearTimeout(t); timers.clear(); setLive(false); },
+    resume() { lockPaused = false; busy = false; setLive(true); },
     destroy() {
       gone = true;
       for (const t of timers) clearTimeout(t);

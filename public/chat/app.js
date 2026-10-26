@@ -5,6 +5,7 @@ import { mountDoorBar } from '/lib/doorbar.js';
 
 const $ = id => document.getElementById(id);
 const API = '/chat/api';
+const appLocked = () => window.AppLock?.isLocked() || false;
 const voice = createChatVoice();
 let screen = 'chat', config = null, session = null, events = null, mic = null;
 let lifecycle = 0, sequence = 0, workerGeneration = -1, uploadEpoch = 0;
@@ -59,12 +60,14 @@ const controller = createChatController({
   prefetch: choices => voice.prefetch(choices),
   beforeChoices: () => window.Dwell?.suppress(600),
   async speak(choice, { signal }) {
+    if (appLocked()) return;
     const mine = lifecycle, spoken = ++currentSpeech;
     captureIntent++; holding = false; askPending = false; pendingFrames = []; captureGeneration = null;
     clearTimeout(askTimer); $('ask').classList.remove('held'); mic?.cancel();
     setMode('blocked'); uploadEpoch++;
     const canceled = session ? control('cancel').catch(() => null) : Promise.resolve();
     if (signal.aborted || spoken !== currentSpeech) return;
+    if (appLocked()) return;
     await voice.say(choice.say, { signal });
     if (!signal.aborted && spoken === currentSpeech && mine === lifecycle) recentConversation = [...recentConversation, `Me: ${choice.say}`.slice(0, 500)].slice(-8);
     await canceled;
@@ -72,6 +75,7 @@ const controller = createChatController({
 });
 
 const bar = mountDoorBar($('app'), {
+  onLock: () => { void shutdown('close'); },
   onLeave: () => { shutdown('close'); },
   onPause: () => { shutdown('pause'); },
   onResume: () => { notice('Chat is off. A partner can start a new session.'); },
@@ -232,6 +236,7 @@ function receiveEvent(event) {
 }
 
 async function startChat() {
+  if (appLocked()) return;
   if (starting || closing || session || document.visibilityState !== 'visible') return;
   if (!config?.runtime?.available) { controller.fail('Speech is not set up. Prepared phrases and stories still work.'); return; }
   starting = true; const mine = ++lifecycle; sessionAbort = new AbortController();
@@ -256,6 +261,7 @@ async function startChat() {
   }
 }
 async function beginAsk() {
+  if (appLocked()) return;
   if (!session || !controller.state.engineReady || holding || askPending || mode === 'draining' || closing || !['Ready to ask', 'Your turn'].includes(controller.state.phase)) return;
   holding = true; askPending = true; captureGeneration = null; questionSending = false; const mine = lifecycle;
   const intent = ++captureIntent; pendingFrames = [];
@@ -275,6 +281,7 @@ async function beginAsk() {
   } catch (e) { if (mine === lifecycle && intent === captureIntent) failSession('Question capture could not start. Your phrases still work; start Chat again.'); }
 }
 async function finishAsk() {
+  if (appLocked()) return;
   clearTimeout(askTimer);
   if (!session || !['opening', 'capture'].includes(mode) || controller.state.phase !== 'Capturing question') return;
   if (finishedTurn === controller.state.turn) return;

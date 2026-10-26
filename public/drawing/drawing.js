@@ -31,6 +31,8 @@ const PER_PAGE = BOOK_CELLS.length;
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // v2 (spec 2026-10-02 §1): four modes, fixed forever; each palette fills the same eight seats.
+let lockGeneration = 0;
+const appLocked = () => window.AppLock?.isLocked() || false;
 const MODES = ["draw", "people", "stickers", "places"];
 const SEATS = [[1, 1], [2, 1], [3, 1], [4, 1], [1, 3], [2, 3], [3, 3], [4, 3]];
 const MODE_KEY = "drawing_mode";
@@ -59,7 +61,7 @@ function hush() { try { if (window.Speech) Speech.stop(); } catch {} }
 function say(text) {
   S.said.push(text);
   if (S.said.length > 20) S.said.shift();
-  if (S.paused || !window.Speech) return Promise.resolve();
+  if (appLocked() || S.paused || !window.Speech) return Promise.resolve();
   return Speech.say(text, "long");
 }
 function suppress(ms) { try { if (window.Dwell && Dwell.suppress) Dwell.suppress(ms); } catch {} }
@@ -159,6 +161,7 @@ function buildModes() {
 // A mode tile is her dwell. The active one does nothing; a switch speaks the mode word, swaps the
 // palette in its fixed seats and is remembered. A live stroke ends / a carried item goes back first.
 function setMode(m) {
+  if (appLocked()) return;
   if (!MODES.includes(m) || S.screen !== "ring" || !S.scene) return;
   settle();
   if (m === S.mode) return;
@@ -276,7 +279,7 @@ function placeCells() {
 // A dwell swaps her picture's place and keeps every item where it is (a horse in the sea is hers to
 // move). Undo restores the previous place. The current place: its word, nothing else.
 function pickPlace(id) {
-  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  if (S.screen !== "ring" || !S.scene || S.paused || appLocked()) return;
   settle();
   const b = S.table.backdrops.find((x) => x.id === id);
   if (!b) return;
@@ -303,7 +306,7 @@ function crayonCells() {
 }
 // A dwell picks the crayon for her next line, says its word and glows; the picture remembers it.
 function pickCrayon(cr) {
-  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  if (S.screen !== "ring" || !S.scene || S.paused || appLocked()) return;
   settle();
   hush();
   say(cr.word);
@@ -365,7 +368,8 @@ function followSpot(cx, cy) {
   const s = S.spot;
   if (!s || Math.abs(cx - s.cx) > s.F / 2 || Math.abs(cy - s.cy) > s.F / 2) placeSpot(cx, cy);
 }
-function land(at) { if (S.pen) endStroke(at); else if (S.carry) drop(at, "ellie"); }
+function land(at) {
+  if (appLocked()) return; if (S.pen) endStroke(at); else if (S.carry) drop(at, "ellie"); }
 // The rest tile is inert (no .dwell, ever): resting on it is watched here, for her dwell (deviation 5).
 function restWatch() {
   const r = $("restTile").getBoundingClientRect(), g = S.gaze;
@@ -387,7 +391,7 @@ function onSceneClick() {
   if (S.mode === "draw") startStroke(p);
 }
 function startStroke(p) {
-  if (S.paused || S.scene.items.length >= MAX_ITEMS) return;
+  if (appLocked() || S.paused || S.scene.items.length >= MAX_ITEMS) return;
   const room = SC.penRoom(JSON.stringify(S.scene).length);
   if (room < 2) { log("ink_full", {}); return; }                  // deviation 11: silent, like the 200 cap
   hush();
@@ -504,8 +508,9 @@ function paintHits() {
 }
 // LIFT: her full dwell on an item. It says its word, grows a little, and follows her gaze.
 function lift(i) {
+  if (appLocked()) return;
   if (Date.now() < S.swallowUntil) return;
-  if (S.screen !== "ring" || !S.scene || S.paused || S.mode === "draw" || S.pen || S.carry || S.trash) return;
+  if (S.screen !== "ring" || !S.scene || S.paused || appLocked() || S.mode === "draw" || S.pen || S.carry || S.trash) return;
   const it = S.scene.items[i];
   if (!it || it.s === "stroke") return;
   hush();
@@ -594,7 +599,8 @@ function buildTrash() {
 // One dwell turns it on (teal glow, "Trash on") — a live stroke ends and a carried item goes back
 // first; the next turns it off ("Trash off"). Per session: never remembered.
 function toggleTrash() {
-  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  if (appLocked()) return;
+  if (S.screen !== "ring" || !S.scene || S.paused || appLocked()) return;
   if (!S.trash) settle();
   hush();
   say(S.trash ? "Trash off" : "Trash on");
@@ -652,7 +658,7 @@ function byeWord(it) {
 }
 function removeItem(i) {
   if (Date.now() < S.swallowUntil) return;                 // a finger drag's release is not a tap
-  if (S.screen !== "ring" || !S.scene || S.paused || !S.trash || S.pen || S.carry) return;
+  if (S.screen !== "ring" || !S.scene || S.paused || appLocked() || !S.trash || S.pen || S.carry) return;
   const it = S.scene.items[i];
   if (!it) return;
   const op = it.s === "stroke" ? SC.strokeBounds(it) : SC.sceneOps({ items: [it] }, S.table, S.images)[0];
@@ -723,7 +729,7 @@ async function openRing(id) {
 function push(ev) { S.history.push(ev); if (S.history.length > HISTORY_MAX) S.history.shift(); }
 function place(id, tile) {
   settle();
-  if (S.screen !== "ring" || !S.scene || S.paused) return;
+  if (S.screen !== "ring" || !S.scene || S.paused || appLocked()) return;
   const st = SC.stickerById(S.table, id);
   if (!st || st.retired) return;                                      // a retired person is never added again
   hush();
@@ -764,6 +770,7 @@ function flyIn(tile, index) {
   } catch {}
 }
 function undo() {
+  if (appLocked()) return;
   settle();
   if (S.screen !== "ring" || !S.scene || !S.history.length) return;   // nothing, and silence (§2.2)
   hush();
@@ -809,6 +816,7 @@ async function save(opts = {}) {
 // ---------- the grown-up's finger (partner.js calls these; spec §2.4) — T9 ----------
 function itemAt(i) { const it = S.scene && S.scene.items[i]; return it ? { ...it } : null; }
 function moveItem(i, x, y) {
+  if (appLocked()) return;
   const it = S.scene && S.scene.items[i];
   if (!it) return;
   if (S.carry && S.carry.i === i) releaseCarry();
@@ -932,6 +940,7 @@ async function pollShelf() {
   tellPark();
 }
 async function newPicture() {
+  if (appLocked()) return;
   hush();
   try {
     const r = await fetch("/drawings", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -950,6 +959,8 @@ async function exportPng(scene) {
   return new Promise((res) => c.toBlob(res, "image/png"));
 }
 async function done() {
+  if (appLocked()) return;
+  const lockRun = lockGeneration;
   if (S.screen !== "ring" || !S.scene || S.finishing) return;
   settle();
   trashOff();
@@ -974,6 +985,7 @@ async function done() {
     await say(SC.describe(scene.items, S.table));        // what she DID
     await saved;
   } finally { S.finishing = false; }                     // Done can never stay latched
+  if (appLocked() || lockRun !== lockGeneration) return posted;
   go(null);                                               // the shelf: this picture first once the hub has its change
   return posted;
 }
@@ -1012,7 +1024,10 @@ if (window.__testHooks) Object.assign(window.Drawing, {
 async function boot() {
   // THE DOOR IS UP BEFORE ANY FETCH (the board's 9/3 rule): a hub that will not answer never
   // leaves her on a screen she cannot leave.
-  BAR = window.DoorBar.mountDoorBar(document.body, { onLeave, onPause, onResume });
+  BAR = window.DoorBar.mountDoorBar(document.body, {
+    onLock() { lockGeneration++; settle(); hush(); stash(); window.dispatchEvent(new Event('drawing:cancel-drag')); },
+    onLeave, onPause, onResume,
+  });
   try { if (window.Speech) Speech.init("Let's make a picture!"); } catch {}
   try { S.table = await (await fetch("stickers.json")).json(); } catch { S.table = { stickers: [], zones: {} }; }
   S.mode = readMode(); loadStickers(); await loadPeople(); buildModes(); buildTrash();

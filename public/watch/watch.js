@@ -28,6 +28,7 @@ import { mountDoorBar } from "../lib/doorbar.js";
 import { createSounds } from "../play/sounds.js";
 import { mountWhich } from "../play/which.js";
 
+const appLocked = () => window.AppLock?.isLocked() || false;
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^[A-Za-z0-9_-]{11}$/;
 const GRID = "/board/?recipe=this-week&board=watch";
@@ -43,6 +44,7 @@ let BAR = null, SOUNDS = createSounds({ volCap: 1 }), WHICH = null;
 // ---------- small things ----------
 function hush() { try { if (window.Speech) Speech.stop(); } catch {} }
 function say(text) {
+  if (appLocked()) return;
   if (window.__testHooks) (window.__speechLog = window.__speechLog || []).push({ call: "say", text });
   if (!window.Speech) return;
   hush();
@@ -82,9 +84,11 @@ function paint() {
   t.dataset.dwellSay = playing ? "Pause" : "Play";
 }
 function start() {
+  if (appLocked()) return;
   video.play().catch(() => {});   // the kiosk lets a video start with its sound; a refusal leaves "Play"
 }
 function toggle() {
+  if (appLocked()) return;
   if (S.phase !== "watching") return;
   if (video.paused) { start(); log("resumed"); }
   else { video.pause(); log("paused"); }
@@ -97,7 +101,7 @@ function watch() {
   video.hidden = false;
   paint();
   if (S.failed) { failed(); return; }
-  video.autoplay = true;
+  video.autoplay = false;
   start();
 }
 function failed() {
@@ -132,7 +136,7 @@ function runBefore(item) {
     sound: (name) => SOUNDS.play(name),
     log: (d) => log("before", d),
     onDone: () => {
-      if (S.phase !== "before") return;
+      if (appLocked() || S.phase !== "before") return;
       if (WHICH) { WHICH.destroy(); WHICH = null; }
       host.hidden = true;
       hush();
@@ -140,6 +144,7 @@ function runBefore(item) {
       watch();
     },
   });
+  if (appLocked()) WHICH.pause();
   try { if (window.Dwell && Dwell.suppress) Dwell.suppress(); } catch {}
 }
 
@@ -150,6 +155,7 @@ function onPause() {
   if (S.phase === "watching" && !video.paused) { S.talkPaused = true; video.pause(); log("paused", {}, true); }
 }
 function onResume() {
+  if (appLocked()) { S.talkPaused = false; return; }
   if (S.talkPaused && S.phase === "watching") { start(); log("resumed"); }
   S.talkPaused = false;
 }
@@ -158,7 +164,12 @@ function onResume() {
 async function boot() {
   if (window.__testHooks) window.__speechLog = window.__speechLog || [];
   // THE DOOR IS UP BEFORE ANY FETCH (the board's 9/3 rule)
-  BAR = mountDoorBar(document.body, { appPath: "/watch/", onLeave, onPause, onResume });
+  BAR = mountDoorBar(document.body, {
+    appPath: "/watch/",
+    onLock() { video.pause(); S.talkPaused = false; WHICH?.pause?.(); SOUNDS.stop(); hush(); },
+    onUnlock() { WHICH?.resume?.(); },
+    onLeave, onPause, onResume,
+  });
   paint();
   $("btnBack").addEventListener("click", toGrid);
   $("btnPause").addEventListener("click", toggle);
