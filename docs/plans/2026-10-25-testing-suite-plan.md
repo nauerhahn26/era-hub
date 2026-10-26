@@ -9,6 +9,12 @@ has passed all 35 cases in an isolated proof. Runner hardening and focused-job
 tools are being verified separately. Acceptance requirements and live services
 remain unchanged.
 
+The [queued-suite supplement](../research/2026-10-26-queued-suite-audit.md)
+reviews the six Chat and three Games files added since the original snapshot.
+All protect distinct boundaries; none warrants deletion. Its registry metadata
+remains a draft until those sources merge, so the active inventory cannot claim
+files absent from its selected tuple.
+
 ## Current priority: parallel full gates
 
 The maintainer has prioritized isolated complete gates over the smaller fixture
