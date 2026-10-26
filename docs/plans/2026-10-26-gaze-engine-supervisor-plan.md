@@ -17,10 +17,10 @@ freeze: push-device only, no publish, no landing until the freeze lifts.
 - [x] era-gaze: `StartBus()` retry; trailing-comma-tolerant config. Compiled with
       the device's csc into a scratch file (78 KB, clean).
 - [x] Docs: spec, this plan, dev-flow section, era-gaze README, bug-test index row.
-- [ ] Gate (one lane, `ERA_WT_SUFFIX`), detached with a sentinel.
-- [ ] push-device to tablet + home i13; verify: engine stopped by hand comes
-      back; reboot comes up `watching`.
-- [ ] School through the queue, idle gate respected.
+- [x] Gate (lane 8380, `ERA_WT_SUFFIX`), detached: 158 passed, 0 failed, both trees stamped 16:19 UTC.
+- [x] push-device to tablet + home i13 as build 20261026.1547: both recompiled the engine, bus up, `watching`. Engine killed by hand: back on the bus in 54 s (tablet) / 67 s (i13), restart #1 logged.
+- [ ] Tablet reboot → `watching`; i13 duplicate hand launch → bus bound after retries (running).
+- [x] School job `aac-board-builder/tools/school-queue/school-gaze-launcher.sh` armed (*/10, `# beacon: idle`, idle via /version idleMs ≥ 5 min); device not online yet today. push-device refuses a stamp > 2 h → re-gate on NEEDS-MANUAL.
 - [ ] Land both repos once the freeze lifts (era-gaze first, then era-hub).
 
 ## Retrospective
