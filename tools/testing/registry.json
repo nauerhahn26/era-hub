@@ -3239,7 +3239,8 @@
       "hub": "own",
       "ports": [
         8399,
-        8475
+        8475,
+        8489
       ],
       "browsers": 1,
       "heavy": false,

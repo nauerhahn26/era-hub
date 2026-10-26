@@ -230,6 +230,48 @@ test("response speed Settings opens without saving, persists an explicit save an
   }
 });
 
+test("response speed is independent on a second device and survives its hub restart", async () => {
+  const SECOND_PORT = 8489;
+  const base = `http://127.0.0.1:${SECOND_PORT}`;
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "era-speed-device-"));
+  let second;
+  const boot = async () => {
+    second = spawn(process.execPath, ["server.js", String(SECOND_PORT)], {
+      cwd: HUB, stdio: "ignore", env: { ...process.env, ERA_DATA_DIR: data,
+        ERA_BIND: "127.0.0.1", ERA_NO_UPDATE: "1", ELEVENLABS_API_KEY: "",
+        ERA_ELEVEN_URL: `http://127.0.0.1:${FAKE}`, ERA_AI_URL: `http://127.0.0.1:${FAKE}`,
+        ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1" },
+    });
+    for (let i = 0; i < 100; i++) {
+      if (second.exitCode !== null) throw new Error("second hub failed to start");
+      try { await fetch(base + "/settings"); return; } catch {}
+      await new Promise(r => setTimeout(r, 50));
+    }
+    throw new Error("second hub did not become ready");
+  };
+  const stop = async () => {
+    if (!second || second.exitCode !== null) return;
+    const ended = new Promise(resolve => second.once("exit", resolve));
+    second.kill(); // only this test's owned child PID
+    await ended;
+  };
+  try {
+    await boot();
+    assert.equal((await (await fetch(base + "/settings")).json()).responseVoiceSpeed, 0.8);
+    assert.equal((await fetch(base + "/settings", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ responseVoiceSpeed: 0.7 }) })).status, 204);
+    assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.8,
+      "changing another device leaves this device's speed alone");
+    await stop();
+    await boot();
+    assert.equal((await (await fetch(base + "/settings")).json()).responseVoiceSpeed, 0.7);
+    assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.8);
+  } finally {
+    await stop();
+    fs.rmSync(data, { recursive: true, force: true });
+  }
+});
+
 // The shape content.js:status() returns, with the parts a test cares about
 // overridden. Kept next to the tests so a change to that payload breaks here.
 function statusPayload(over) {

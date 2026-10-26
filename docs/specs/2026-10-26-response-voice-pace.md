@@ -16,5 +16,8 @@ the audio cache key so earlier, faster clips cannot satisfy these requests.
 Recorded book narration, songs and the local system voice retain their current
 behavior. The shared speech client and frozen Chat/Games sources are untouched.
 
-Implementation is staged only. Testing and release wait for the maintainer;
-coordinate with Testing suite before shared runtime landing or publishing.
+The maintainer authorized testing and release, explicitly preserving Book
+Reader pace. Regression coverage checks unchanged narration requests and word
+timings, device independence, hub restart persistence, cache separation and
+Settings save/error behavior. Coordinate with Testing suite before shared
+runtime landing or publishing; the release follows the accepted Lockout patch.
