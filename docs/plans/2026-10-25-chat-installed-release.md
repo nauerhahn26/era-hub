@@ -82,6 +82,12 @@ code changed. The failed run yields no release authorization or green stamp;
 a fresh complete run is required. Original failed job:
 `gate-20261026T000616Z-e0a2d99d` in the private parallel-gate job directory.
 
+A separate gate on an alternate test port exposed two negative-test literals
+being rewritten into valid preview ports by the gate's blanket port replacement.
+Those inputs now compute the protected port while preserving strict rejection
+assertions. Both complete files pass 48/48 after the actual replacement to each
+of two approved alternate ports. Application port validation is unchanged.
+
 Retain private real-service evidence under `~/.cache/era-chat/installed/`; never
 commit private credentials or recorded partner speech. Full gate logs and tree
 stamp are authoritative for landing. The patch pipeline must run Windows update
