@@ -12,14 +12,20 @@ export function createState() {
 export function restoreState(raw) {
   try {
     const s = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const partnerPicker = s?.returnView === 'partners';
+    // Existing installations kept ten on its own decade page. It now lives
+    // with zero through nine; the old range chooser becomes that same picker.
+    const rangeStart = partnerPicker && s?.rangeStart === 10 ? 0 : s?.rangeStart;
+    const view = partnerPicker && s?.view === 'ranges' ? 'picker' : s?.view;
+    const validRange = partnerPicker ? rangeStart === 0 || rangeStart === 11
+      : integerIn(rangeStart, 0, 50) && rangeStart % 10 === 0;
     if (!s || Array.isArray(s) || s.version !== 1 || !VIEWS.includes(s.view) ||
-        !integerIn(s.number, 0, 50) || !integerIn(s.whole, 0, 10) ||
+        !integerIn(s.number, 0, 50) || !integerIn(s.whole, 0, 20) ||
         !integerIn(s.left, 0, s.whole) || !WORKSPACES.includes(s.returnView) ||
-        !integerIn(s.rangeStart, 0, 50) || s.rangeStart % 10 !== 0 ||
-        (['picker', 'ranges'].includes(s.view) && s.returnView === 'partners' && s.rangeStart > 10))
+        !validRange)
       return createState();
-    return { version: 1, view: s.view, number: s.number, whole: s.whole,
-      left: s.left, returnView: s.returnView, rangeStart: s.rangeStart };
+    return { version: 1, view, number: s.number, whole: s.whole,
+      left: s.left, returnView: s.returnView, rangeStart };
   } catch { return createState(); }
 }
 
@@ -29,11 +35,13 @@ export function navigate(s, action, rangeStart) {
   if (WORKSPACES.includes(action)) return { ...s, view: action };
   if (action === 'pick' && WORKSPACES.includes(s.view)) {
     const n = s.view === 'partners' ? s.whole : s.number;
-    return { ...s, view: 'picker', returnView: s.view, rangeStart: Math.floor(n / 10) * 10 };
+    return { ...s, view: 'picker', returnView: s.view,
+      rangeStart: s.view === 'partners' ? (n <= 10 ? 0 : 11) : Math.floor(n / 10) * 10 };
   }
-  if (action === 'ranges' && s.view === 'picker') return { ...s, view: 'ranges' };
-  if (action === 'range' && s.view === 'ranges' && integerIn(rangeStart, 0,
-      s.returnView === 'partners' ? 10 : 50) && rangeStart % 10 === 0)
+  if (action === 'ranges' && s.view === 'picker') return s.returnView === 'partners'
+    ? { ...s, rangeStart: s.rangeStart === 0 ? 11 : 0 } : { ...s, view: 'ranges' };
+  if (action === 'range' && s.view === 'ranges' && s.returnView === 'numbers' &&
+      integerIn(rangeStart, 0, 50) && rangeStart % 10 === 0)
     return { ...s, view: 'picker', rangeStart };
   if (action === 'back') {
     if (s.view === 'ranges') return { ...s, view: 'picker' };
@@ -54,7 +62,7 @@ export function transfer(s, direction) {
 }
 
 export function selectNumber(s, n) {
-  if (s.view !== 'picker' || !integerIn(n, 0, s.returnView === 'partners' ? 10 : 50)) return s;
+  if (s.view !== 'picker' || !integerIn(n, 0, s.returnView === 'partners' ? 20 : 50)) return s;
   return s.returnView === 'partners'
     ? { ...s, view: 'partners', whole: n, left: Math.floor(n / 2) }
     : { ...s, view: 'numbers', number: n };
@@ -76,6 +84,10 @@ export function quantityGroups(n) {
 }
 
 export function pickerNumbers(start, mode) {
-  const max = mode === 'partners' ? 10 : 50;
-  return Array.from({ length: 10 }, (_, i) => integerIn(start, 0, max) && start % 10 === 0 && start + i <= max ? start + i : null);
+  if (mode === 'partners') {
+    if (start === 0) return Array.from({ length: 11 }, (_, i) => i);
+    if (start === 11) return Array.from({ length: 10 }, (_, i) => 11 + i);
+    return [];
+  }
+  return Array.from({ length: 10 }, (_, i) => integerIn(start, 0, 50) && start % 10 === 0 && start + i <= 50 ? start + i : null);
 }

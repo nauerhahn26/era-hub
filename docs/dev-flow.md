@@ -246,7 +246,7 @@ resolution limits: [song page design](specs/2026-10-25-music-player-ux-recruitme
 ## Math
 
 Math is a core app at `/math/`: Numbers explores 0–50, and Number partners
-keeps a whole within 10 while one object moves between its parts. Large
+keeps a whole within 20 while one object moves between its parts. Large
 commands handle all movement; the quantities themselves are passive.
 Existing explicit app selections are preserved, so enable Math in Settings
 when it is not already listed on the home screen. State stays local to each
