@@ -13,7 +13,8 @@ const gate = fs.readFileSync(path.join(HUB, 'tools/era-gate.sh'), 'utf8');
 const names = ['gate_error', 'gate_capabilities', 'gate_acquire_lock', 'gate_validate_port', 'gate_export_test_data',
   'gate_prepare_owned_data', 'gate_refresh_data_links', 'gate_refresh_farm',
   'gate_port_available', 'gate_process_identity', 'gate_process_matches',
-  'gate_wait_process', 'gate_cleanup_server', 'gate_listener_owned', 'gate_wait_server', 'gate_collect_entry',
+  'gate_wait_process', 'gate_cleanup_server', 'gate_listener_owned', 'gate_wait_server', 'gate_build_clothing',
+  'gate_collect_entry',
   'gate_collect_suites', 'gate_prepare_selection', 'gate_suite_selected',
   'gate_freeze_execution', 'gate_record_execution', 'gate_verify_execution'];
 function functions() {
@@ -200,6 +201,81 @@ for attempt in {1..50}; do [ -s "$PORT_FILE" ] && break; sleep 0.02; done
 port=$(cat "$PORT_FILE")
 gate_wait_server "$owned" "$identity" "$arguments" "$port" 3
 `, { FIXTURE: fixture, PORT_FILE: portFile }));
+});
+
+// The shared hub's clothing board (plan 1.3a). The hub starts with no clothing
+// schedule (ERA_CLOTHING_TICK_MS=0), so its today.json is not rewritten by a
+// 20 s or 15-minute timer while board suites read it; the gate builds it once
+// instead, after readiness, and waits for that build to finish before any
+// suite starts. The stand-in plays the hub's two clothing doors and writes down
+// every request it was sent, and what it answered.
+const clothingHub = `const fs=require('node:fs'),http=require('node:http');
+const [portFile,logFile,mode]=process.argv.slice(2);
+let posted=false,polls=0;
+const server=http.createServer((req,res)=>{
+  if(req.method==='POST'&&req.url==='/clothing/regenerate'){
+    fs.appendFileSync(logFile,'POST regenerate\\n');
+    if(mode==='refuses'){res.writeHead(500);res.end();return;}
+    posted=true;res.writeHead(202,{'Content-Type':'application/json'});res.end('{"started":true}');
+    if(mode==='dies')setTimeout(()=>process.exit(0),20);
+    return;
+  }
+  if(req.method==='GET'&&req.url==='/clothing/status'){
+    const building=posted&&(mode==='never'||++polls<=3);
+    fs.appendFileSync(logFile,'GET status '+building+'\\n');
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({building,ingesting:null,cataloged:0,photos:0}));return;
+  }
+  res.writeHead(404);res.end();
+});
+server.listen(0,'127.0.0.1',()=>fs.writeFileSync(portFile,String(server.address().port)));
+`;
+function buildClothing(t, mode, tries = '') {
+  const root = scratch(t);
+  const fixture = path.join(root, 'clothing-hub.cjs'), log = path.join(root, 'requests.log');
+  fs.writeFileSync(fixture, clothingHub);
+  const result = run(`
+node "$FIXTURE" "$PORT_FILE" "$LOG" "$MODE" & owned=$!
+trap 'kill "$owned" 2>/dev/null; wait "$owned" 2>/dev/null' EXIT
+for attempt in {1..100}; do [ -s "$PORT_FILE" ] && break; sleep 0.02; done
+gate_build_clothing "$(cat "$PORT_FILE")" ${tries}
+`, { FIXTURE: fixture, PORT_FILE: path.join(root, 'port'), LOG: log, MODE: mode });
+  const requests = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [];
+  return { result, requests };
+}
+
+test('the shared hub\'s clothing board is built once, and the gate waits until the build has finished', t => {
+  const { result, requests } = buildClothing(t, 'settles');
+  ok(result);
+  assert.equal(requests[0], 'POST regenerate', 'the build is asked for before anything is polled');
+  assert.equal(requests.filter(r => r === 'POST regenerate').length, 1, 'exactly one build');
+  assert.deepEqual(requests.slice(1), ['GET status true', 'GET status true', 'GET status true', 'GET status false'],
+    'polled while it built, and returned on the first answer that said it had finished');
+});
+
+test('a clothing build the shared hub refuses, never finishes or stops answering fails the gate', t => {
+  refused(buildClothing(t, 'refuses').result, /clothing build/i);
+  const never = buildClothing(t, 'never', 5);
+  refused(never.result, /clothing build.*(finish|settle)/i);
+  assert.equal(never.requests.filter(r => r.startsWith('GET')).length, 5, 'bounded by its tries');
+  refused(buildClothing(t, 'dies').result, /clothing build|stopped answering/i);
+});
+
+test('the shared hub runs without a clothing schedule and its board is built before the first suite', () => {
+  const launch = gate.match(/^([^\n]*\\)\n[ \t]*"\$NODE_BIN" "\$HUB\/server\.js" "\$PORT" >"\$GATE\/server\.log" 2>&1 &$/m);
+  assert.ok(launch, 'the shared hub launch, with its env prefix on the continuation line before it');
+  assert.match(launch[1], /(^|[ \t])ERA_CLOTHING_TICK_MS=0([ \t]|$)/, 'the shared hub starts with no clothing timers');
+  const unset = gate.match(/^unset [^\n]*$/m);
+  assert.ok(unset && /\bERA_CLOTHING_TICK_MS\b/.test(unset[0]),
+    "an operator's shell cannot hand the seam to a suite's own hubs");
+  assert.ok(unset.index < launch.index, 'cleared before the shared hub starts');
+  const ready = gate.indexOf('gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" ||');
+  const build = gate.indexOf('gate_build_clothing "$PORT"');
+  const loop = gate.indexOf('for index in "${!EXPECTED_FILES[@]}"');
+  assert.ok(ready > launch.index && build > ready && loop > build,
+    'launch, then readiness, then the one awaited build, then the suites');
+  assert.match(gate.slice(build, loop), /gate_build_clothing "\$PORT" \|\| \{[^}]*exit 1; \}/,
+    'a build that does not finish stops the gate');
 });
 
 const repos = ['era-core', 'era-making-words', 'era-pencil', 'era-board', 'era-hub'];

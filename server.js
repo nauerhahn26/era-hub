@@ -4067,7 +4067,14 @@ server.on("listening", () => {
     else console.log("[content] shelved " + b.slug + " (" + r.files + " file(s) copied)");
     if (failed) console.error("[content] " + b.slug + ": " + failed + " file(s) would not copy onto the shelf: " + r.errors.join("; "));
   };
-  clothing.start(DATA, { tz: () => TZ, deviceId: DEVICE_ID });  // the Clothing Picker generator (no-op without photos)
+  // The Clothing Picker generator (no-op without photos). ERA_CLOTHING_TICK_MS
+  // (gate-speed plan 1.3a): "0" starts it without its schedule, no build 20 s
+  // after boot and no 15-minute check, for the gate's shared hub, whose
+  // today.json the board suites read while it runs; the gate builds that board
+  // once, awaited, before the first suite. Any other value, or none (every
+  // family's hub), leaves the schedule exactly as it was.
+  clothing.start(DATA, { tz: () => TZ, deviceId: DEVICE_ID,
+    noTimers: process.env.ERA_CLOTHING_TICK_MS === "0" });
   openClothingLog();     // after drive.start: drive.js has no DATA before it (W10)
   // book jobs in the family's Drive folder (local mode only). DEVICE_ID is what
   // every claim this hub writes is signed with from here on (spec §14): two PCs

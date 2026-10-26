@@ -632,9 +632,9 @@ test("the contract audit is clean on a full shelf and a full ring, at both gate 
   const full = "2026-09-30-150000-test-dev";
   seed(full, SPACED, "2026-09-30T15:00:00Z");
   process.env.INVARIANTS_BASE = BASE;                    // read when invariants.mjs is first imported
-  const { auditPath } = await import("./invariants.mjs");
-  for (const state of [{ id: "/drawing/ (12 pictures)", path: "/drawing/" },
-                       { id: "/drawing/#ring (every sticker)", path: "/drawing/#p=" + full }]) {
+  const { auditPath, DRAWING_READY } = await import("./invariants.mjs");
+  for (const state of [{ id: "/drawing/ (12 pictures)", path: "/drawing/", ready: DRAWING_READY },
+                       { id: "/drawing/#ring (every sticker)", path: "/drawing/#p=" + full, ready: DRAWING_READY }]) {
     const r = await auditPath(browser, state);
     for (const v of r.viewports) assert.ok(v.nTargets >= 11, `${state.id} @${v.vp.w}: only ${v.nTargets} targets`);
     assert.deepEqual(r.violations, [], state.id + ":\n" + r.violations.join("\n"));
@@ -1557,15 +1557,18 @@ test("the contract audit is clean in every mode — with a library, items, ink a
   const id = "2026-10-02-160000-test-dev";
   seed(id, SPACED, "2026-10-02T16:00:00Z");
   process.env.INVARIANTS_BASE = BASE;
-  const { auditPath } = await import("./invariants.mjs");
+  const { auditPath, DRAWING_READY } = await import("./invariants.mjs");
   for (const m of ["draw", "people", "places", "stickers"]) {
-    const r = await auditPath(browser, { id: "/drawing/#" + m, path: `/drawing/#p=${id}&mode=${m}` });
+    const r = await auditPath(browser, { id: "/drawing/#" + m, path: `/drawing/#p=${id}&mode=${m}`, ready: DRAWING_READY });
     assert.deepEqual(r.violations, [], m + ":\n" + r.violations.join("\n"));
     for (const v of r.viewports) assert.ok(v.nTargets >= 9, `${m} @${v.vp.w}: ${v.nTargets} targets`);
   }
+  // __lift is synchronous DOM work and the carried item has no transition, so
+  // two painted frames are the whole settle.
   const r = await auditPath(browser, { id: "/drawing/#carried", path: `/drawing/#p=${id}&mode=stickers`,
-    setup: async () => {
-      window.Drawing.__lift(6); await new Promise((res) => setTimeout(res, 300));
+    ready: DRAWING_READY, setup: async () => {
+      window.Drawing.__lift(6);
+      await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
       if (!document.querySelector("#spot.dwell")) throw new Error("no landing spot while carrying");
     } });
   assert.deepEqual(r.violations, [], "carried:\n" + r.violations.join("\n"));
@@ -1980,11 +1983,14 @@ test("the contract audit is clean with trash on — stickers, a person and a str
   const id = "2026-10-04-093000-test-dev";
   seed(id, [...TRASHY, { s: "person:sam", x: 0.32, y: 0.78, w: 0.25, by: "ellie" }], "2026-10-04T09:30:00Z");
   process.env.INVARIANTS_BASE = BASE;
-  const { auditPath } = await import("./invariants.mjs");
+  const { auditPath, DRAWING_READY } = await import("./invariants.mjs");
   for (const m of ["stickers", "draw"]) {
+    // the trash tile's click turns trash on synchronously (toggleTrash -> setTrash ->
+    // trashMarks), so two painted frames are the whole settle
     const r = await auditPath(browser, { id: "/drawing/#trash-" + m, path: `/drawing/#p=${id}&mode=${m}`,
-      setup: async () => {
-        document.getElementById("trashTile").click(); await new Promise((res) => setTimeout(res, 300));
+      ready: DRAWING_READY, setup: async () => {
+        document.getElementById("trashTile").click();
+        await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
         if (document.querySelectorAll("#hits > .hit.dwell").length !== 5) throw new Error("not five trash targets");
       } });
     assert.deepEqual(r.violations, [], m + ":\n" + r.violations.join("\n"));

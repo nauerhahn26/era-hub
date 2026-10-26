@@ -1319,6 +1319,27 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/clothing-pacing.test.mjs",
+      "purpose": "The worker's provider pacing: 5 s per photo and 3 s per retry against a real provider, none against a loopback stand-in, an explicit start() option over both; ERA_AI_SPACING_MS reaches neither",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data"
+      ],
+      "level": "module unit: a recording worker stand-in, and the real worker over an empty data dir",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/clothing-rank.test.mjs",
       "purpose": "Ranking, history, weather eligibility, preferences and deterministic dealing",
       "group": "hub",
@@ -1387,6 +1408,31 @@
       "browsers": 0,
       "heavy": true,
       "solo": true,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/clothing-schedule.test.mjs",
+      "purpose": "ERA_CLOTHING_TICK_MS=0 starts a hub with no clothing schedule while a requested tick still builds",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
+      ],
+      "level": "hub process integration",
+      "hub": "own",
+      "ports": [
+        8425
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
       "quiet": false,
       "retry": false,
       "owner": ""
@@ -4112,6 +4158,7 @@
         "era-hub:tests/clothing-rank.test.mjs",
         "era-hub:tests/clothing-refit.test.mjs",
         "era-hub:tests/clothing-responsive.test.mjs",
+        "era-hub:tests/clothing-schedule.test.mjs",
         "era-hub:tests/clothing-share.test.mjs",
         "era-hub:tests/clothing-status.test.mjs",
         "era-hub:tests/clothing-sync-rebuild.test.mjs",
