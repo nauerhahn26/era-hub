@@ -18,6 +18,7 @@ const updater = require("./update");
 if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
+const chatApi = require("./chat-api.js").createChatApi();
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
 // the worker's whitelist, the pools and this hub's edit door all read it, so a
 // word cannot be a category here and a stranger three files away.
@@ -39,12 +40,16 @@ const aiConfig = require("./ai-config.js");
 const contentProviders = require("./content-providers.js");
 // For writeAtomic alone: a key file is written tmp-then-rename, never in place.
 const contentStore = require("./content-store.js");
+let gamesModel;
+const loadGamesModel = () => gamesModel ||= import("./public/games/state.js");
 
 const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
 const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
 const LOGS = path.join(DATA, "logs");
 const TTS_CACHE = path.join(DATA, "tts-cache");
+const GAMES_STATE = path.join(DATA, "games", "state.json");
+const GAMES_STATE_LIMIT = 524288;
 fs.mkdirSync(LOGS, { recursive: true });
 fs.mkdirSync(TTS_CACHE, { recursive: true });
 
@@ -123,8 +128,8 @@ fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
 
 // ---- app registry (install-with-checkboxes, 8/29): one engine, apps chosen
 // at install and togglable later from the home screen. Enabled set lives in
-// <DATA>/apps.json ({"enabled":[ids]}); absent file = everything (existing
-// installs keep all their apps). Settings is not an app — always present.
+// <DATA>/apps.json ({"enabled":[ids]}); absent file keeps established apps on;
+// experimental apps can opt out. Settings is not an app — always present.
 const APPS = [
   { id: "making-words", title: "Making Words", sub: "guided word building", path: "/", pack: null },
   { id: "pencil", title: "The Pencil", sub: "free writing with prediction", path: "/pencil/", pack: "pencil" },
@@ -138,6 +143,9 @@ const APPS = [
   // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
   { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
   { id: "math", title: "Math", sub: "explore numbers and number partners", path: "/math/", pack: null },
+  { id: "games", title: "Games", sub: "fashion, four in a row and number tiles", path: "/games/", pack: null },
+  // The Chat page is core; its speech activity runtime comes from the board pack.
+  { id: "chat", title: "Chat", sub: "experimental conversation · hold to ask", path: "/chat/", pack: "board", defaultEnabled: false },
   // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
   // on-device (Windows' built-in csc) and pairs it with the Tobii runtime
   // already on Tobii devices (official NuGet as fallback for other PCs)
@@ -226,10 +234,10 @@ function loadEnabledApps() {
     const j = JSON.parse(fs.readFileSync(path.join(DATA, "apps.json"), "utf8"));
     if (Array.isArray(j.enabled)) return j.enabled.filter(id => APPS.some(a => a.id === id));
   } catch {}
-  // no apps.json: every APP on, but never auto-enable the ENGINE — existing
+  // no apps.json: established apps on, but never auto-enable the ENGINE — existing
   // installs (and Ellie's device, which runs its own ERAgaze) must not grow
   // a second gaze engine uninvited
-  return APPS.filter(a => !a.engine).map(a => a.id);
+  return APPS.filter(a => !a.engine && a.defaultEnabled !== false).map(a => a.id);
 }
 // A gaze engine is "there" if ours is compiled OR any engine answers the bus
 // (Ellie's device runs the family build — never fight it).
@@ -558,8 +566,8 @@ function reconcileBootShortcuts() {
 }
 
 // ARASAAC lookup ported from packages/generator/aac_board_designer.py
-const ARASAAC_API = "https://api.arasaac.org/api/pictograms/en/bestsearch/";
-const ARASAAC_IMG = "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
+const ARASAAC_API = process.env.ERA_SYMBOL_SEARCH_URL || "https://api.arasaac.org/api/pictograms/en/bestsearch/";
+const ARASAAC_IMG = process.env.ERA_SYMBOL_IMAGE_URL || "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
 const PREWARM = ["sun", "cloud", "cold", "more", "shirt", "trousers", "13638", "dress",
                  "clothes", "house", "clock", "snack", "back", "yes"];
 
@@ -1095,7 +1103,7 @@ const THIS_WEEK_EXTS = [".json", ".mp4", ".webp", ".jpg", ".jpeg", ".png"];
 const THIS_WEEK_AV_EXTS = [".mp4"];
 const THIS_WEEK_DENY_DIRS = [".tmp"];   // the rail's download staging (B3)
 function serveThisWeekRecipe(req, res) {
-  // build() never throws: no week -> root-only + "none-r1", a broken manifest
+  // build() never throws: no week -> root-only + "none-r3", a broken manifest
   // -> root-only + "err-<now>" (the valid-empty degrade serveMoviesRecipe has)
   const out = thisWeek.build(DATA);
   if (out.error) console.error("[this-week] " + out.error);
@@ -1696,6 +1704,83 @@ function stampInteraction(req) {
 
 const server = http.createServer((req, res) => {
   stampInteraction(req);
+  if (chatApi.handle(req, res)) return;
+  if (req.url === "/games/state/recovery" && req.method === "GET") {
+    void loadGamesModel().then(({ readSavedState }) => {
+      let size;
+      try { size = fs.statSync(GAMES_STATE).size; }
+      catch { res.writeHead(404).end(); return; }
+      if (size <= GAMES_STATE_LIMIT && readSavedState(fs.readFileSync(GAMES_STATE, "utf8")).valid) {
+        res.writeHead(404).end(); return;
+      }
+      res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": 'attachment; filename="games-state-recovery.txt"', "Cache-Control": "no-store" });
+      const stream = fs.createReadStream(GAMES_STATE);
+      stream.on("error", () => res.destroy());
+      stream.pipe(res);
+    }).catch(() => res.writeHead(500).end());
+    return;
+  }
+  if (req.url === "/games/state" && req.method === "GET") {
+    void loadGamesModel().then(({ readSavedState }) => {
+      let raw;
+      try {
+        if (fs.statSync(GAMES_STATE).size > GAMES_STATE_LIMIT) {
+          res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+          res.end('{"error":"unreadable"}');
+          return;
+        }
+        raw = fs.readFileSync(GAMES_STATE);
+      }
+      catch (error) {
+        const code = error.code === "ENOENT" ? 404 : 500;
+        res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: code === 404 ? "missing" : "read-failed" }));
+        return;
+      }
+      if (raw.length > GAMES_STATE_LIMIT || !readSavedState(raw.toString("utf8")).valid) {
+        res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end('{"error":"unreadable"}');
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(raw);
+    }).catch(() => res.writeHead(500).end());
+    return;
+  }
+  if (req.url === "/games/state" && req.method === "PUT") {
+    if (!ownDoor(req, res)) return;
+    const chunks = []; let size = 0, over = false;
+    req.on("data", chunk => {
+      size += chunk.length;
+      if (size > GAMES_STATE_LIMIT) over = true;
+      else chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (over) { res.writeHead(413, { "Content-Type": "application/json" }).end('{"error":"too-large"}'); return; }
+      void loadGamesModel().then(({ readSavedState, serializeState }) => {
+        const incoming = readSavedState(Buffer.concat(chunks).toString("utf8"));
+        if (!incoming.valid) { res.writeHead(400, { "Content-Type": "application/json" }).end('{"error":"invalid"}'); return; }
+        try {
+          if (fs.statSync(GAMES_STATE).size > GAMES_STATE_LIMIT) {
+            res.writeHead(409, { "Content-Type": "application/json" }).end('{"error":"unreadable"}'); return;
+          }
+          const current = fs.readFileSync(GAMES_STATE);
+          if (current.length > GAMES_STATE_LIMIT || !readSavedState(current.toString("utf8")).valid) {
+            res.writeHead(409, { "Content-Type": "application/json" }).end('{"error":"unreadable"}'); return;
+          }
+        } catch (error) {
+          if (error.code !== "ENOENT") { res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"read-failed"}'); return; }
+        }
+        try {
+          contentStore.writeAtomic(GAMES_STATE, serializeState(incoming.state));
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end('{"ok":true}');
+        } catch {
+          res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"write-failed"}');
+        }
+      }).catch(() => res.writeHead(500).end());
+    });
+    return;
+  }
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
     let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
@@ -3946,4 +4031,5 @@ server.on("listening", () => {
     fetchSymbolToCache(name).then(f => { if (f) console.log("[symbol] pre-warmed " + name); });
   }
 });
+server.on("close", () => chatApi.close());
 server.listen(PORT, BIND);

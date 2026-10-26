@@ -42,6 +42,24 @@ same board laws as every other board: dwell 1200 ms default, doors 2×, fixed
 seats (D26), text first (D4), ≥32 pt, nothing auto-advances, ~15 minutes is a
 long session.
 
+**Amended 2026-10-25 — the small board.** Dad, after assessing phase 2: "the
+grid of 4x3 feels wrong for watch, play, talk. I could see us adding 1-2 more
+but not 6 more so maybe a different layout that works with fewer options." The
+root is now a **2×3 board, the triangle**: two doors up, one down, black in
+every other cell, so each door has a black neighbour and the centre-top cell
+is a rest spot that never fills.
+
+| seat | door |
+|---|---|
+| [1,1] | 🎬 Watch |
+| [1,3] | 💬 Talk |
+| [2,2] | 🎲 Play (absent when the week fills no engine; the cell is black) |
+| [2,1], [2,3] | a fourth and a fifth door, in that order, when one day there is one |
+| [1,2] | always black |
+
+The Watch grid becomes a 3×3 ring (§3.4). Talk keeps the full 3×4 board (eight
+words a page). The three-answer question pages share the triangle (§5.6).
+
 Behind each door she is one look from the content. Nothing on any page scores,
 counts down, or says "wrong".
 
@@ -152,6 +170,20 @@ allowlist `.mp4 .jpg .jpeg .webp .png .json`. The old "the hub never serves
 video" line in `movies-add.js` is about streaming services (D57) and says so.
 
 Downloaded videos play anywhere, home or school. That is the point of offline.
+
+### 3.4 The Watch grid (amended 2026-10-25)
+
+Back plus up to five videos is six cells, so the Watch grid is a **3×3 ring
+around a black centre** (the Drawing sticker ring's shape): Back [1,1], then
+videos in reading order around the centre — [1,2], [1,3], [2,1], [2,3], [3,1]
+— and every unused ring cell black. [2,2] is always black. A wide ring tile
+suits a landscape thumbnail; the picture and the title read as before.
+
+```
+│  Back   │  video  │  video  │
+│  video  │   ■■■   │  video  │
+│  video  │   ■■■   │   ■■■   │
+```
 
 ## 4. Talk
 
@@ -287,13 +319,49 @@ targets; the two doors hold 2× her dwell, everything else 1× (contract).
 entry and again after 20 s with no pick. Two or three answer tiles in fixed
 seats: left / right, or left / middle / right. For a yes-or-no item **yes is
 always the left seat and no the right one**, whatever order the manifest lists
-them (D5 in app form). Two-strike per §5.2. After the right answer comes alive
+them (D5 in app form). Two-strike per §5.2.
+
+*Amended 2026-10-25 (dad, after assessing):* "While I was waiting for the
+question and if there were 3 options I would start selecting things. I think
+the spacing is perfect when you have 2 options with the black in the middle."
+Two changes, both to Which one? wherever it is mounted (the Play page and a
+video's `before` question):
+
+- **Three answers sit in the triangle**, not three across: the first answer
+  top-left, the second top-right, the third bottom-centre, black in the other
+  three cells, so every tile has a black neighbour and the eye crosses only
+  black on its way down from the question. Two answers keep the single tall
+  row with the black middle, unchanged.
+- **Answers arm when the question has been read.** The tiles are painted at
+  once but inert and visibly muted while the first reading of the question
+  plays; the moment that reading ends they come alive together, with no added
+  beat beyond what the dwell engine needs to notice them (dad: "release arm as
+  rapidly as practical"). If speech is off or fails they arm at once; a reading
+  that never reports its end arms them after a short cap. The re-reading after
+  a miss and the idle re-reading do not disarm anything. A pick before arming
+  does nothing and logs nothing.
+
+**The voice (amended 2026-10-26).** Dad: "on occasion it fails to use the
+ElevenLabs voice … in particular on the question right before the video." The
+speech kit picks its voice by a silent probe at page start; the watch page spoke
+the `before` question in the same instant, before the probe had answered, so the
+kit fell back to the local voice. The kit (era-core `speech.js`) now lets a
+sentence wait for a probe in flight before choosing its voice, with a short cap
+so a stuck probe can never leave her silent; every page gets this for free.
+
+The Play **menu** uses the same triangle for its three engines: Which one?
+top-left, Sort it top-right, Play it bottom-centre; an engine the week does
+not fill leaves its cell black. After the right answer comes alive
 and the cheer, the next item appears by itself; after the last, the bigger
 cheer and back to the menu. Which-one items that a video carries as `before`
 are not in this set; they belong to the watch page (§3.3).
 
 **Sort it.** One thing in the middle, two bins left and right named by the
-property (label + glyph). A look at a bin slides the thing in. First miss: the
+property (label + glyph). *Amended 2026-10-26 (dad: "they go in order, there
+needs to be some randomness"):* the items are shuffled every time the game
+opens, and the first item is never the one the previous play opened with; the
+bins keep their seats (left and right are fixed, so her motor plan holds).
+Which one? keeps its written order — those questions build on each other. A look at a bin slides the thing in. First miss: the
 thing wobbles back to the middle and the question is said again with both bin
 names ("Is water a need or a want?"). Second miss: it slides into the right bin
 by itself with the cheer. A full set celebrates and returns to the menu.
@@ -521,6 +589,7 @@ nothing serves (harmless) and the engine must not delete it before then.
 |---|---|---|
 | 1 | §7 engine stage + eval harness on held-out weeks; §3 Watch (download rail, player, tiles); §4 Talk page; the mail section and words; hub release | `ellie-this-week--wt-youtube-videos` (engine), `era-hub--wt-youtube-videos` + `era-board--wt-youtube-videos` (hub) |
 | 2 | §5 Play, all three engines, synthesised sounds (§5.6), before-questions; §3.3 playback rework; `link`/`video` navigation | era-hub + era-board (+ one prompt line in ellie-this-week) — plan `docs/plans/2026-10-21-weekly-suite-phase2-plan.md` |
+| 2b | the small boards (§1 amended, §3.4) and the three-answer triangle + arming (§5.6 amended 2026-10-25); patch release | era-hub — plan `docs/plans/2026-10-25-weekly-suite-small-boards-plan.md` |
 | 3 | §8 the Sunday note | ellie-this-week |
 | any | a Talk page into TD Snap on `snap yes` | human session, editor harness |
 

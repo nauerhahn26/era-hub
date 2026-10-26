@@ -24,6 +24,8 @@ restarts live 8377; that stays an explicit act in the main checkout.
 Ports: `ERA_TEST_PORT` 8380-8389 for manual hubs, 8480+ scratch, 8500+ tunnels,
 never 8377/8378/8425/8427/8450-8462. Refusal messages → fixes are tabled in the
 aac-board-builder doc.
+The gate refuses an occupied test port without stopping its listener. Choose
+another test port or have the session that started that listener stop its own PID.
 
 A feature that spans repos keeps one worktree per repo, all on the same slug
 (`<repo>--wt-<slug>`), and `ERA_WT_SUFFIX=--wt-<slug>` is what makes
@@ -34,6 +36,14 @@ sibling worktree tree it sourced (each with its own `dirty=1` verdict), so
 `worktree.sh land` accepts each repo in turn; land in dependency order, in one
 sitting while the 2 h stamps hold: era-core → era-board → era-making-words →
 era-pencil → era-gaze → era-hub, and never restart the live 8377 hub in between.
+
+Symbol-provider tests use `ERA_SYMBOL_SEARCH_URL` and `ERA_SYMBOL_IMAGE_URL`
+to point the hub at an owned local service. The image template replaces `{id}`;
+normal installations retain the existing public-service defaults. The board
+route suite owns its data and provider so a complete gate can exercise cache
+misses without external network access. Standalone board routes must name the
+selected hub with `ERA_HUB_SRC`; matching feature worktrees retain the source
+selection rules above.
 
 ## The three release shapes
 
@@ -243,3 +253,22 @@ commands handle all movement; the quantities themselves are passive.
 Existing explicit app selections are preserved, so enable Math in Settings
 when it is not already listed on the home screen. State stays local to each
 computer. Usage and access behavior: [Math](math.md).
+
+## Games
+
+Games is a core app at `/games/`, with Fashion Studio, Four in a Row and
+Number Tiles. Fashion Studio keeps editable local looks and a runway show;
+both board games use commands around passive boards.
+The partner panel contains hosted-game references and local source credits.
+Existing explicit app selections are preserved, so enable Games in Settings
+when it is absent from the home screen. State and recovery stay in the local
+browser. Usage and access behavior: [Games](games.md).
+
+## Experimental Chat
+
+Chat is an optional app at `/chat/`, disabled by default and sharing the Board
+pack's portable speech activity runtime. A configured installed Node worker
+transcribes a partner's held question after release; optional contextual choices
+run through the hub. Service credentials stay in the operating account's private
+configuration file. Gates disable private configuration loading. Setup, cloud
+data boundaries and current acceptance limits: [Chat](chat.md).

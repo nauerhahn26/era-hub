@@ -8,6 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import * as vm from "./lib/vm.mjs";
 
 // vm.INSTDIR is live: the previous installer may be a New ERA one, and a
@@ -237,6 +238,34 @@ test("after the update: the picture worker and WebP decoder run without native t
     `"node\\node.exe" -e "${code}"`,
   ]);
   assert.match(out, /PICTURES=200x20;WORKER=needs-helper/, "the installed runtime decodes WebP and starts its picture worker");
+});
+
+test("after the update: enabling Chat installs its shared activity runtime and release-ended speech works", { timeout: 300000 }, async () => {
+  // Deliberately AFTER the removed-pack assertions: choosing Chat now must
+  // restore its shared board runtime through the normal install-later route.
+  const enabled = await vm.api(page, "/apps", "POST", { id: "chat", enabled: true });
+  assert.ok([200, 204].includes(enabled.status), "Chat can be enabled in the updated install");
+  await vm.waitFor(() => vm.hubGet("/apps")?.apps.find(app => app.id === "chat")?.installed && { ok: 1 },
+    { timeout: 180000, every: 3000, what: "Chat's shared pack to finish installing" });
+  for (const relative of ["chat-speech-worker.js", "vendor\\models\\chat-activity.onnx", "vendor\\onnxruntime-web\\dist\\ort.node.min.js"])
+    assert.ok(vm.exists(vm.INSTDIR + "\\" + relative), relative + " present in the installed payload");
+  vm.ship(fileURLToPath(new URL("lib/chat-speech-smoke.cjs", import.meta.url)));
+  vm.ship(fileURLToPath(new URL("fixtures/chat-choice.wav", import.meta.url)));
+  const out = vm.bat("chat-installed-speech", [
+    `"${vm.INSTDIR}\\node\\node.exe" "${GUEST_HOME}\\chat-speech-smoke.cjs" "${vm.INSTDIR}" "${GUEST_HOME}\\chat-choice.wav"`,
+  ]);
+  const line = out.split(/\r?\n/).find(line => line.startsWith('{"ok":'));
+  assert.ok(line, "the installed Node worker produced a smoke receipt");
+  const report = JSON.parse(line);
+  assert.equal(report.ok, true, "installed speech/activity smoke succeeds");
+  assert.equal(report.platform, "win32");
+  assert.equal(report.silenceRejected, true);
+  assert.equal(report.uploadsBeforeRelease, 0);
+  assert.equal(report.releaseFinals, 1);
+  assert.equal(report.cancelClosedTransport, true);
+  assert.equal(report.staleFinals, 0);
+  assert.equal(report.recoveredAfterCancel, true);
+  console.log("# installed Chat: actual activity inference and release/cancel transport verified; recognition is a local mock, not an accuracy test");
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {
