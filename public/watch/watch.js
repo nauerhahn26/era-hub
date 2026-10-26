@@ -46,7 +46,7 @@ function say(text) {
   if (window.__testHooks) (window.__speechLog = window.__speechLog || []).push({ call: "say", text });
   if (!window.Speech) return;
   hush();
-  try { Speech.say(text, "long"); } catch {}
+  try { return Speech.say(text, "long"); } catch {}
 }
 function playedMs() {
   let ms = 0;

@@ -68,29 +68,36 @@ const at = (b, row, col) => b.buttons.filter(c => c.row === row && c.col === col
 // ---------------------------------------------------------------- in-process
 
 const PLAY_DOOR = { type: "link", href: "/play/?w=" + WEEK, label: "Play", say: "play",
-                    glyph: "🎲", row: 3, col: 4 };
+                    glyph: "🎲", row: 2, col: 2 };
 
-test("root board: Watch [1,1] + Talk [1,4] + Play [3,4], say_on_load on the first", () => {
+// The small boards (spec 2026-10-12 §1 and §3.4, amended 2026-10-25): the root
+// is the 2×3 triangle, Watch a 3×3 ring around a black centre, Talk stays 3×4.
+test("root board: the 2×3 triangle — Watch [1,1] + Talk [1,3] + Play [2,2], say_on_load on the first", () => {
   const d = fs.mkdtempSync(path.join(TMP, "d-"));
   writeWeek(d, WEEK, manifest());
   const { recipe } = tw.build(d);
   assert.equal(recipe.root, "this-week");
   const root = board(recipe, "this-week");
-  assert.equal(root.rows, 3); assert.equal(root.columns, 4);
+  assert.equal(root.rows, 2); assert.equal(root.columns, 3);
   assert.equal(root.name, "Shadows!");
   assert.equal(root.buttons.length, 3);
   assert.deepEqual(root.buttons[0], { type: "show", board: "watch", label: "Watch", say: "watch",
     glyph: "🎬", row: 1, col: 1, say_on_load: "This week: Shadows!" });
   assert.deepEqual(root.buttons[1], { type: "show", board: "talk-1", label: "Talk", say: "talk",
-    glyph: "💬", row: 1, col: 4 });
+    glyph: "💬", row: 1, col: 3 });
   // the fixture's play holds only a playit: that alone opens the door
   assert.deepEqual(root.buttons[2], PLAY_DOOR);
+  for (const [row, col] of [[1, 2], [2, 1], [2, 3]])
+    assert.equal(at(root, row, col).length, 0, `[${row},${col}] stays black`);
+  for (const c of root.buttons)
+    assert.ok(c.row <= 2 && c.col <= 3, "every door inside the 2×3: " + JSON.stringify(c));
 });
 
-test("watch board: Back, one ready video, two 'not here yet' in seats", () => {
+test("watch board: the 3×3 ring — Back, one ready video, two 'not here yet' in seats", () => {
   const d = fs.mkdtempSync(path.join(TMP, "d-"));
   writeWeek(d, WEEK, manifest());
   const w = board(tw.build(d).recipe, "watch");
+  assert.equal(w.rows, 3); assert.equal(w.columns, 3);
   assert.equal(w.buttons.length, 4);
   assert.deepEqual(at(w, 1, 1)[0], { label: "Back", say: "back", type: "back", glyph: "←",
     load: "this-week", row: 1, col: 1 });
@@ -98,9 +105,31 @@ test("watch board: Back, one ready video, two 'not here yet' in seats", () => {
     image: `this-week/${WEEK}/${A}.webp`, row: 1, col: 2 });
   assert.deepEqual(at(w, 1, 3)[0], { type: "word", label: "Shadow video 2", say: "not here yet",
     glyph: "⏳", row: 1, col: 3 });
-  assert.deepEqual(at(w, 1, 4)[0], { type: "word", label: "Shadow video 3", say: "not here yet",
-    glyph: "⏳", row: 1, col: 4 });
-  assert.equal(at(w, 2, 2).length + at(w, 2, 3).length, 0, "centre stays black");
+  assert.deepEqual(at(w, 2, 1)[0], { type: "word", label: "Shadow video 3", say: "not here yet",
+    glyph: "⏳", row: 2, col: 1 });
+  assert.equal(at(w, 2, 2).length, 0, "centre stays black");
+  assert.equal(at(w, 2, 3).length + at(w, 3, 1).length, 0, "unused ring seats stay black");
+  for (const c of w.buttons)
+    assert.ok(c.row <= 3 && c.col <= 3, "every tile inside the 3×3: " + JSON.stringify(c));
+});
+
+test("watch board: five videos fill the ring in manifest order; fewer fill in that order", () => {
+  const RING = [[1, 2], [1, 3], [2, 1], [2, 3], [3, 1]];
+  assert.deepEqual(tw.WATCH_SEATS, RING);
+  const ids = ["aBcDeFgHiJk", "bBcDeFgHiJk", "cBcDeFgHiJk", "dBcDeFgHiJk", "eBcDeFgHiJk"];
+  for (let n = 1; n <= 5; n++) {
+    const m = manifest();
+    m.watch = ids.slice(0, n).map((id, i) => ({ ...m.watch[0], id, title: "Shadow video " + (i + 1) }));
+    const d = fs.mkdtempSync(path.join(TMP, "d-"));
+    writeWeek(d, WEEK, m);
+    const w = board(tw.build(d).recipe, "watch");
+    assert.equal(w.rows, 3); assert.equal(w.columns, 3);
+    const vids = w.buttons.filter(c => c.type !== "back");
+    assert.deepEqual(vids.map(c => c.label), ids.slice(0, n).map((_, i) => "Shadow video " + (i + 1)));
+    assert.deepEqual(vids.map(c => [c.row, c.col]), RING.slice(0, n), n + " videos");
+    assert.equal(at(w, 2, 2).length, 0, "centre stays black with " + n);
+    assert.deepEqual(at(w, 1, 1).map(c => c.type), ["back"]);
+  }
 });
 
 test("talk boards: 8 words + More on talk-1, 2 words + Back and no More on talk-2", () => {
@@ -108,6 +137,7 @@ test("talk boards: 8 words + More on talk-1, 2 words + Back and no More on talk-
   writeWeek(d, WEEK, manifest());
   const r = tw.build(d).recipe;
   const t1 = board(r, "talk-1"), t2 = board(r, "talk-2");
+  for (const t of [t1, t2]) { assert.equal(t.rows, 3); assert.equal(t.columns, 4); }
   const words1 = t1.buttons.filter(c => c.type === "word");
   assert.equal(words1.length, 8);
   assert.deepEqual(words1.map(c => [c.row, c.col]),
@@ -158,8 +188,8 @@ test("ETag changes when the zero-byte mp4 gains bytes, stable otherwise", () => 
   const dir = writeWeek(d, WEEK, manifest());
   const e1 = tw.build(d).etag, e2 = tw.build(d).etag;
   assert.equal(e1, e2);
-  assert.match(e1, /^"\d+-\d+-[0-9a-f]+-r2"$/);
-  assert.equal(tw.THIS_WEEK_REV, 2);
+  assert.match(e1, /^"\d+-\d+-[0-9a-f]+-r3"$/);
+  assert.equal(tw.THIS_WEEK_REV, 3);
   fs.writeFileSync(path.join(dir, B + ".mp4"), Buffer.alloc(512, 1));
   const e3 = tw.build(d).etag;
   assert.notEqual(e3, e1);
@@ -178,13 +208,17 @@ test("two week folders: the newest wins; an unparseable newer one is skipped", (
   assert.equal(tw.readWeek(d).week_of, "2026-01-12");
 });
 
-test("no folder: root-only valid board, etag none-r1", () => {
+test("no folder: root-only valid 2×3 board, etag none-r3", () => {
   const d = fs.mkdtempSync(path.join(TMP, "d-"));
   assert.equal(tw.readWeek(d), null);
   const out = tw.build(d);
-  assert.equal(out.etag, '"none-r1"');
+  assert.equal(out.etag, '"none-r3"');
   assert.equal(out.recipe.root, "this-week");
   assert.deepEqual(out.recipe.boards.map(b => b.id), ["this-week"]);
+  assert.equal(out.recipe.boards[0].rows, 2); assert.equal(out.recipe.boards[0].columns, 3);
+  assert.deepEqual(out.recipe.boards[0].buttons, []);
+  assert.deepEqual(tw.emptyRecipe().boards[0], { id: "this-week", name: "This week", rows: 2, columns: 3,
+                                                  buttons: [] });
 });
 
 test("a manifest with pages is refused: err etag, root-only", () => {
@@ -246,7 +280,7 @@ test("play.json: a full week validates whole, the root has the Play door", () =>
   assert.equal(pj.play.which[0].choices[0].label, "no", "the hub keeps manifest order; seating is the page's");
   assert.deepEqual(pj.before, { [A]: BEFORE });
   const root = board(tw.build(d).recipe, "this-week");
-  assert.deepEqual(at(root, 3, 4), [PLAY_DOOR]);
+  assert.deepEqual(at(root, 2, 2), [PLAY_DOOR]);
   // validatePlay is the same answer without the disk
   const v = tw.validatePlay(fullManifest());
   assert.deepEqual(v, { play: fullPlay(), before: { [A]: BEFORE }, dropped: [] });
@@ -284,7 +318,7 @@ test("play.json: each malformed item is dropped with a reason, the page intact",
   const r = tw.build(d).recipe;
   assert.equal(board(r, "watch").buttons.length, 4);
   assert.equal(board(r, "talk-1").buttons.filter(c => c.type === "word").length, 8);
-  assert.deepEqual(at(board(r, "this-week"), 3, 4), [PLAY_DOOR]);
+  assert.deepEqual(at(board(r, "this-week"), 2, 2), [PLAY_DOOR]);
 });
 
 test("validatePlay: the rest of the schema's rules, one item at a time", () => {
@@ -357,11 +391,12 @@ test("no play: no door, play.json carries empty engines; all-invalid play: no do
   assert.deepEqual(pj.dropped, []);
   const root = board(tw.build(d).recipe, "this-week");
   assert.equal(root.buttons.length, 2);
-  assert.equal(at(root, 3, 4).length, 0, "the seat stays black");
+  assert.deepEqual(root.buttons.map(c => [c.label, c.row, c.col]), [["Watch", 1, 1], ["Talk", 1, 3]]);
+  assert.equal(at(root, 2, 2).length, 0, "the seat stays black");
   const d2 = fs.mkdtempSync(path.join(TMP, "d-"));
   writeWeek(d2, WEEK, manifest({ play: { which: [which("x", "nope", "?", [])], sort: { bins: [] },
                                           playit: { instrument: "kazoo", q: "?", answer: 0 } } }));
-  assert.equal(at(board(tw.build(d2).recipe, "this-week"), 3, 4).length, 0);
+  assert.equal(at(board(tw.build(d2).recipe, "this-week"), 2, 2).length, 0);
   assert.equal(tw.playJson(d2, WEEK).dropped.length, 3);
   const d3 = fs.mkdtempSync(path.join(TMP, "d-"));
   writeWeek(d3, WEEK, manifest({ play: null }));
@@ -422,7 +457,7 @@ test("HTTP: recipe 200 + ETag, 304 on If-None-Match, unknown recipe 404", async 
   assert.equal(r.status, 200);
   assert.equal(r.headers.get("cache-control"), "no-cache");
   const etag = r.headers.get("etag");
-  assert.match(etag, /-r2"$/);
+  assert.match(etag, /-r3"$/);
   const body = await r.json();
   assert.equal(body.root, "this-week");
   assert.equal(board(body, "watch").buttons.filter(c => c.type === "video").length, 1);

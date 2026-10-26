@@ -5,6 +5,10 @@
 // hub serves play.json itself. Only /voices and /tts are routed (as the board suite does); /log
 // reaches the real hub and is read off the page's requests. Playwright at 1920x1080 unless a case
 // says otherwise. ERA_SHOTS=<dir> saves the menu and a Which-one item for a person to look at.
+// The small boards (spec §5.6 amended 2026-10-25): the menu is the triangle (Which one? top-left,
+// Sort it top-right, Play it bottom-centre, black elsewhere), three answers sit in the same
+// triangle, two keep the one tall row with the black middle, and the answers are inert and muted
+// until the question's first reading has ended (or ARM_CAP_MS when it never reports its end).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -48,9 +52,17 @@ const PI = {
   "string-telephone": { week: "2026-02-09", q: "Which string carries your voice, tight or loose?", answer: 0 },
   "shadow-puppet": { week: "2026-02-16", q: "Which makes the shadow bigger, closer to the lamp or farther?", answer: 0 },
 };
+// the full menu (2b): every engine in one week
+const ALL_WEEK = "2026-02-23";
+const ARM_CAP_MS = 8000;
 let child, browser;
 
 before(async () => {
+  const adir = path.join(TMP, "this-week", ALL_WEEK);
+  fs.mkdirSync(adir, { recursive: true });
+  fs.writeFileSync(path.join(adir, "manifest.json"), JSON.stringify({
+    week_of: ALL_WEEK, title: "Everything!", topic: "shadows", schema: 1, watch: [], talk: [],
+    play: { which: [ITEMS[1]], sort: SORT, playit: { instrument: "harmonica", q: PI.harmonica.q, answer: 0 } } }));
   const dir = path.join(TMP, "this-week", WEEK);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
@@ -106,10 +118,14 @@ async function playPage(opts = {}) {
       if (m.target.classList && m.target.classList.contains("wiggle")) window.__wiggled.push(m.target.getAttribute("aria-label")); })
       .observe(document, { attributes: true, attributeFilter: ["class"], subtree: true });
   }, [opts.idleMs || 0, opts.clockMs || 0]);
+  // arming: the answers' state when they first appear, and whether the question's `end` was in the
+  // speech engine's log at the moment they armed
+  if (opts.arming) await ctx.addInitScript(ARM_WATCH);
   await ctx.route("**/voices", (r) => r.fulfill({ status: 200, contentType: "application/json",
     body: JSON.stringify({ enabled: false, voices: [] }) }));
   await ctx.route("**/tts*", (r) => r.fulfill({ status: 503, body: "" }));
   const page = await ctx.newPage();
+  if (opts.clock) await page.clock.install();
   const logs = [], reqs = [], errors = [];
   page.on("request", (r) => {
     reqs.push(r.url());
@@ -144,6 +160,31 @@ async function openWhich(page) {
   await page.waitForFunction(() => window.Play.state().page === "which" && document.querySelector(".wh-tile"));
 }
 const tileFor = (label) => `.wh-tile[aria-label="${label}"]`;
+// every answer tile inert + muted (true) or armed (false)
+const waitingState = (page) => page.$$eval(".wh-tile", (els) => els.map((el) => [el.hasAttribute("data-dwell-disabled"), el.classList.contains("wh-waiting")]));
+async function waitArmed(page, ms = 3000) {
+  await page.waitForFunction(() => { const t = [...document.querySelectorAll(".wh-tile")];
+    return t.length > 0 && t.every((el) => !el.hasAttribute("data-dwell-disabled") && !el.classList.contains("wh-waiting")); }, null, { timeout: ms });
+}
+const ended = (page, text) => page.evaluate((t) => (window.__speechEngineLog || []).some((e) => e.ev === "end" && e.text === t.slice(0, 40)), text);
+// an init script (no closures): records the first answers' state and the arming moment
+function ARM_WATCH() {
+  window.__arm = { first: null, endAtArm: null };
+  new MutationObserver((ms) => {
+    for (const m of ms) {
+      if (m.type === "childList") for (const n of m.addedNodes) {
+        if (!n.querySelectorAll || window.__arm.first) continue;
+        const t = n.matches(".wh-tile") ? [n] : [...n.querySelectorAll(".wh-tile")];
+        if (t.length) window.__arm.first = t.map((el) => el.hasAttribute("data-dwell-disabled") && el.classList.contains("wh-waiting"));
+      }
+      if (m.type === "attributes" && m.target.classList.contains("wh-tile") && !m.target.hasAttribute("data-dwell-disabled") &&
+          window.__arm.endAtArm === null) {
+        const q = (document.querySelector(".wh-q") || {}).textContent || "";
+        window.__arm.endAtArm = (window.__speechEngineLog || []).some((e) => e.ev === "end" && e.text === q.slice(0, 40));
+      }
+    }
+  }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-dwell-disabled"] });
+}
 async function waitItem(page, id) {
   await page.waitForFunction((id) => window.Play.state().item === id && !document.querySelector(".wh-tile.alive"), id);
 }
@@ -155,7 +196,7 @@ async function neverATest(page) {
 }
 
 // ================================================================ the menu
-test("the menu: Back in the rail, only the Which one? tile, in its left seat; Sort and Play seats black", async () => {
+test("the menu: Back in the rail, only the Which one? tile, top-left of the triangle; every other seat black", async () => {
   const { ctx, page, errors, reqs } = await playPage();
   const g = await page.evaluate(() => {
     const b = (el) => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
@@ -168,14 +209,15 @@ test("the menu: Back in the rail, only the Which one? tile, in its left seat; So
     };
   });
   assert.deepEqual(g.tiles, ["tile-which"], "one engine tile: the week has which items only");
-  assert.deepEqual(g.seats.map((s) => s.seat), ["0", "1", "2"]);
+  assert.deepEqual(g.seats.map((s) => s.seat), ["0", "1", "2", "3", "4", "5"], "two rows of three, reading order");
   assert.equal(g.seats[0].id, "tile-which");
   assert.match(g.seats[0].text, /Which one\?/);
   for (const s of g.seats.slice(1)) {
-    assert.equal(s.bg, "rgb(0, 0, 0)", "an engine without content: its seat black");
+    assert.equal(s.bg, "rgb(0, 0, 0)", "an engine without content and every rest seat: black");
     assert.equal(s.dwell, false); assert.equal(s.text, "");
   }
-  assert.ok(g.seats[0].x + g.seats[0].w < g.seats[1].x && g.seats[1].x + g.seats[1].w < g.seats[2].x, "left, centre, right");
+  assert.ok(g.seats[0].x + g.seats[0].w < g.seats[1].x && g.seats[1].x + g.seats[1].w < g.seats[2].x, "row 1: left, centre, right");
+  assert.ok(g.seats[3].y >= g.seats[0].y + g.seats[0].h + 13.5, "row 2 under row 1");
   assert.ok(g.back.dwell && /Back/.test(g.back.text));
   assert.ok(g.back.x < g.seats[0].x, "Back is in the left rail");
   assert.ok(Math.min(g.seats[0].w, g.seats[0].h) >= 90 && Math.min(g.back.w, g.back.h) >= 90, "≥ 90 px at 1920");
@@ -188,16 +230,25 @@ test("the menu: Back in the rail, only the Which one? tile, in its left seat; So
   await ctx.close();
 });
 
-test("at 1280x720 the menu's tiles and every Which-one tile (three choices) are ≥ 60 px, gaps ≥ 14", async () => {
+test("at 1280x720 the menu's tiles and every Which-one tile (three choices, two rows) are ≥ 60 px, gaps ≥ 14, on screen", async () => {
   const { ctx, page } = await playPage({ viewport: { width: 1280, height: 720 } });
   const mins = (sel) => page.$$eval(sel, (els) => els.map((el) => { const r = el.getBoundingClientRect(); return Math.min(r.width, r.height); }));
+  const rects = (sel) => page.$$eval(sel, (els) => els.map((el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
+  // both triangles: two rows of three, each row's gaps ≥ 14, the rows ≥ 14 apart, nothing off screen
+  const triangle = (s, what) => {
+    assert.equal(s.length, 6, what + ": six seats");
+    for (const row of [s.slice(0, 3), s.slice(3)])
+      for (let k = 1; k < 3; k++) assert.ok(row[k].l - row[k - 1].r >= 13.5, what + " gap " + (row[k].l - row[k - 1].r));
+    assert.ok(s[3].t - s[0].b >= 13.5, what + " row gap " + (s[3].t - s[0].b));
+    for (const x of s) assert.ok(x.b <= 720 && x.r <= 1280, what + ": on screen");
+  };
   for (const m of await mins("#btnBack, #tile-which")) assert.ok(m >= 60, "menu " + m);
+  triangle(await rects("#stage .seat"), "menu");
   await openWhich(page);
   const tiles = await mins(".wh-tile");
   assert.equal(tiles.length, 3);
   for (const m of [...tiles, ...(await mins("#btnBack"))]) assert.ok(m >= 60, "which " + m);
-  const xs = await page.$$eval(".wh-seat", (els) => els.map((el) => { const r = el.getBoundingClientRect(); return [r.left, r.right]; }));
-  for (let k = 1; k < xs.length; k++) assert.ok(xs[k][0] - xs[k - 1][1] >= 13.5, "gap " + (xs[k][0] - xs[k - 1][1]));
+  triangle(await rects(".wh-seat"), "which");
   const fs32 = await page.$$eval(".wh-q, .wh-label", (els) => els.map((el) => parseFloat(getComputedStyle(el).fontSize)));
   for (const f of fs32) assert.ok(f >= 32 * 4 / 3, "text ≥ 32 pt: " + f);
   await ctx.close();
@@ -240,12 +291,14 @@ test("the sound cap is /settings' musicVolCap / 100", async () => {
 });
 
 // ================================================================ Which one?
-test("Which one?: the first question in the strip, spoken; three choices in left/middle/right in manifest order", async () => {
+test("Which one?: the first question in the strip, spoken; three choices in the triangle in manifest order", async () => {
   const { ctx, page, errors } = await playPage();
   await openWhich(page);
   assert.equal(await page.$eval(".wh-q", (el) => el.innerText.trim()), "What makes a shadow?");
   assert.ok(await until(async () => (await said(page)).includes("What makes a shadow?")), "the question was said");
-  const seats = await page.$$eval(".wh-seat", (els) => els.map((el) => ({ seat: el.dataset.seat, label: el.getAttribute("aria-label"),
+  assert.deepEqual(await page.$$eval(".wh-seats > *", (els) => els.map((el) => el.getAttribute("aria-label"))),
+    ["Water", null, "Light is blocked", null, "Wind", null]);
+  const seats = await page.$$eval(".wh-tile", (els) => els.map((el) => ({ seat: el.dataset.seat, label: el.getAttribute("aria-label"),
     dwell: el.matches(".dwell"), glyph: (el.querySelector(".wh-glyph") || {}).textContent, text: (el.querySelector(".wh-label") || {}).textContent })));
   assert.deepEqual(seats.map((s) => s.label), ["Water", "Light is blocked", "Wind"]);
   assert.deepEqual(seats.map((s) => s.glyph), ["💧", "🔦", "🍃"]);
@@ -264,6 +317,7 @@ test("Which one?: the first question in the strip, spoken; three choices in left
 test("a dwell on the right tile: it comes alive, its sound plays (pop for a name the library lacks), the pick is logged, the next question appears", async () => {
   const { ctx, page, logs } = await playPage();
   await openWhich(page);
+  await waitArmed(page);
   await page.evaluate(() => { window.__soundLog.length = 0; });
   await dwellOn(page, tileFor("Light is blocked"));
   await page.waitForSelector(tileFor("Light is blocked") + ".alive", { timeout: 3000 });
@@ -283,8 +337,10 @@ test("a dwell on the right tile: it comes alive, its sound plays (pop for a name
 test("two choices seat left + right; a miss wiggles and re-asks with 'Look for', a second miss brings the right one alive by itself", async () => {
   const { ctx, page, logs } = await playPage({ hash: "" });
   await openWhich(page);
+  await waitArmed(page);
   await page.locator(tileFor("Light is blocked")).click();
   await waitItem(page, "aBcDeFgHiJ2");
+  await waitArmed(page);
   const seats = await page.$$eval(".wh-seats > *", (els) => els.map((el) => ({ seat: el.dataset.seat, label: el.getAttribute("aria-label"),
     dwell: el.matches(".dwell"), bg: getComputedStyle(el).backgroundColor })));
   assert.deepEqual(seats.map((s) => s.label), ["Morning", null, "Noon"], "left + right, the middle seat empty");
@@ -322,10 +378,13 @@ test("two choices seat left + right; a miss wiggles and re-asks with 'Look for',
 test("a yes/no item listed no-first seats yes LEFT and no RIGHT; the pick logs the manifest index", async () => {
   const { ctx, page, logs } = await playPage();
   await openWhich(page);
+  await waitArmed(page);
   await page.locator(tileFor("Light is blocked")).click();
   await waitItem(page, "aBcDeFgHiJ2");
+  await waitArmed(page);
   await page.locator(tileFor("Morning")).click();
   await waitItem(page, "aBcDeFgHiJ3");
+  await waitArmed(page);
   const seats = await page.$$eval(".wh-seats > *", (els) => els.map((el) => el.getAttribute("aria-label")));
   assert.deepEqual(seats, ["Yes", null, "No"]);
   logs.length = 0;
@@ -340,6 +399,7 @@ test("after the last item: the bigger cheer, 'You did them all!', and the menu",
   const { ctx, page } = await playPage();
   await openWhich(page);
   for (const [label, next] of [["Light is blocked", "aBcDeFgHiJ2"], ["Morning", "aBcDeFgHiJ3"], ["Yes", null]]) {
+    await waitArmed(page);
     await page.locator(tileFor(label)).click();
     if (next) await waitItem(page, next);
   }
@@ -376,6 +436,7 @@ test("a reload on #which lands on the first item", async () => {
 test("reduced motion: the tiles have no transition and nothing animates", async () => {
   const { ctx, page } = await playPage({ reducedMotion: "reduce" });
   await openWhich(page);
+  await waitArmed(page);
   await page.locator(tileFor("Light is blocked")).click();
   const r = await page.$eval(tileFor("Light is blocked"), (el) => {
     const s = getComputedStyle(el);
@@ -384,6 +445,159 @@ test("reduced motion: the tiles have no transition and nothing animates", async 
   assert.ok(r.alive);
   assert.ok(r.t.split(",").every((d) => parseFloat(d) === 0), "no transition: " + r.t);
   assert.equal(r.a, "none");
+  await ctx.close();
+});
+
+// ================================================================ the small boards (2b): the triangle and arming
+test("three answers sit in the triangle: answer 0 top-left, 1 top-right, 2 bottom-centre, black in the other three", async () => {
+  const { ctx, page, errors } = await playPage();
+  await openWhich(page);
+  const g = await page.evaluate(() => {
+    const b = (el) => { const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, r: r.right, b: r.bottom, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
+    const row = document.querySelector(".wh-seats");
+    return { strip: b(document.querySelector(".wh-q")), row: b(row),
+      seats: [...row.children].map((el) => ({ seat: el.dataset.seat, i: el.dataset.i ?? null, dwell: el.matches(".dwell"),
+        bg: getComputedStyle(el).backgroundColor, ...b(el) })) };
+  });
+  assert.deepEqual(g.seats.map((s) => s.seat), ["0", "1", "2", "3", "4", "5"]);
+  assert.deepEqual(g.seats.map((s) => s.i), ["0", null, "1", null, "2", null], "row 1 col 1, row 1 col 3, row 2 col 2");
+  for (const k of [1, 3, 5]) {
+    assert.equal(g.seats[k].bg, "rgb(0, 0, 0)", "seat " + k + " black");
+    assert.equal(g.seats[k].dwell, false);
+  }
+  const [a0, m1, a1, l2, a2, r2] = g.seats;
+  assert.ok(Math.abs(a0.y - a1.y) < 1 && a0.r < m1.x && m1.r < a1.x, "answers 0 and 1 share the top row, black between them");
+  assert.ok(a2.y >= a0.b + 13.5, "answer 2 is a row below: " + a2.y + " vs " + a0.b);
+  assert.ok(Math.abs(a2.cx - g.strip.cx) < 4, "answer 2 is centred under the strip: " + a2.cx + " vs " + g.strip.cx);
+  assert.ok(l2.r < a2.x && a2.r < r2.x && Math.abs(l2.y - a2.y) < 1 && Math.abs(r2.y - a2.y) < 1, "black either side of answer 2");
+  assert.ok(a0.y > g.strip.b && a2.b <= g.row.b + 0.5, "under the question, inside the stage");
+  if (SHOTS) {
+    fs.mkdirSync(SHOTS, { recursive: true });
+    await page.screenshot({ path: path.join(SHOTS, "play-which-triangle-muted-1920.png") });
+    await waitArmed(page);
+    await page.screenshot({ path: path.join(SHOTS, "play-which-triangle-armed-1920.png") });
+  }
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test("two answers keep the one tall row with the black middle", async () => {
+  const { ctx, page } = await playPage();
+  await openWhich(page);
+  await waitArmed(page);
+  await page.locator(tileFor("Light is blocked")).click();
+  await waitItem(page, "aBcDeFgHiJ2");
+  const g = await page.evaluate(() => {
+    const row = document.querySelector(".wh-seats"), rr = row.getBoundingClientRect();
+    return { row: { y: rr.top, h: rr.height }, seats: [...row.children].map((el) => { const r = el.getBoundingClientRect();
+      return { seat: el.dataset.seat, i: el.dataset.i ?? null, y: r.top, h: r.height, bg: getComputedStyle(el).backgroundColor }; }) };
+  });
+  assert.deepEqual(g.seats.map((s) => [s.seat, s.i]), [["0", "0"], ["1", null], ["2", "1"]]);
+  assert.equal(g.seats[1].bg, "rgb(0, 0, 0)");
+  for (const s of g.seats) {
+    assert.ok(Math.abs(s.y - g.row.y) < 1, "one row");
+    assert.ok(Math.abs(s.h - g.row.h) < 1, "tall: the seat fills the row's height " + s.h + " vs " + g.row.h);
+  }
+  if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, "play-which-two-1920.png") }); }
+  await ctx.close();
+});
+
+test("arming: the answers are inert and muted while the question is read; a pick then does nothing; after its end they arm and a pick works", async () => {
+  const { ctx, page, logs } = await playPage({ arming: true });
+  // hold the question's reading open until the test lets it go (the real test-mode reading follows)
+  await page.evaluate(() => {
+    const orig = window.Speech.say;
+    window.Speech.say = (text, kind) => text === "What makes a shadow?" && !window.__held
+      ? (window.__held = true, new Promise((res) => { window.__release = () => orig(text, kind).then(res); }))
+      : orig(text, kind);
+  });
+  await openWhich(page);
+  assert.deepEqual(await page.evaluate(() => window.__arm.first), [true, true, true], "inert + muted when they appear");
+  assert.deepEqual(await waitingState(page), [[true, true], [true, true], [true, true]]);
+  const muted = await page.$eval(tileFor("Water"), (el) => { const s = getComputedStyle(el);
+    return { opacity: parseFloat(s.opacity), filter: s.filter, td: s.transitionDuration, tp: s.transitionProperty }; });
+  assert.ok(Math.abs(muted.opacity - 0.55) < 0.01, "muted: " + JSON.stringify(muted));
+  assert.match(muted.filter, /saturate\(0\.6\)/);
+  const props = muted.tp.split(",").map((p) => p.trim()), durs = muted.td.split(",").map((d) => parseFloat(d));
+  for (const p of ["opacity", "filter"]) { const k = props.indexOf(p); assert.ok(k < 0 || durs[k] <= 0.15, "arming fades in ≤ 150 ms: " + JSON.stringify(muted)); }
+  const sayN = (await said(page)).length;
+  await page.locator(tileFor("Light is blocked")).click();
+  await page.waitForTimeout(400);
+  assert.equal(await page.locator(".wh-tile.alive").count(), 0, "no alive before arming");
+  assert.deepEqual(logs, [], "no /log line before arming");
+  assert.equal((await said(page)).length, sayN, "no praise, no re-ask");
+  assert.deepEqual(await waitingState(page), [[true, true], [true, true], [true, true]], "still waiting");
+  await page.evaluate(() => window.__release());
+  await waitArmed(page);
+  assert.ok(await ended(page, "What makes a shadow?"), "the question's reading ended");
+  assert.equal(await page.evaluate(() => window.__arm.endAtArm), true, "armed only once its end was logged");
+  await page.locator(tileFor("Light is blocked")).click();
+  await page.waitForSelector(tileFor("Light is blocked") + ".alive", { timeout: 3000 });
+  assert.ok(await until(() => logs.length >= 1));
+  assert.deepEqual(logs[0], { app: "this-week", door: "play", week_of: WEEK, engine: "which",
+    item: "aBcDeFgHiJ1", pick: 1, right: true, strike: 0 });
+  await ctx.close();
+});
+
+test("arming: the real test-mode reading arms the answers at its end, and a miss's re-ask and the idle re-ask never disarm", async () => {
+  const { ctx, page, logs } = await playPage({ arming: true, idleMs: 900 });
+  await openWhich(page);
+  assert.deepEqual(await page.evaluate(() => window.__arm.first), [true, true, true]);
+  await waitArmed(page);
+  assert.equal(await page.evaluate(() => window.__arm.endAtArm), true, "armed when the question's end was logged");
+  await page.locator(tileFor("Water")).click();                       // a miss: the re-ask reads
+  assert.ok(await until(async () => (await said(page)).some((t) => /Look for Light is blocked/.test(t))));
+  assert.deepEqual(await waitingState(page), [[false, false], [false, false], [false, false]], "the re-ask does not disarm");
+  assert.ok(await until(async () => (await said(page)).filter((t) => t === "What makes a shadow?").length === 2, 3000), "the idle re-ask");
+  assert.deepEqual(await waitingState(page), [[false, false], [false, false], [false, false]], "the idle re-ask does not disarm");
+  await page.locator(tileFor("Light is blocked")).click();
+  await page.waitForSelector(tileFor("Light is blocked") + ".alive", { timeout: 3000 });
+  assert.ok(await until(() => logs.length >= 2));
+  await ctx.close();
+});
+
+test("arming: with speech off the answers are armed at once", async () => {
+  const { ctx, page } = await playPage();
+  await page.evaluate(() => { window.Speech.say = () => Promise.resolve(); window.Speech.mode = () => "off"; });
+  await openWhich(page);
+  assert.deepEqual(await waitingState(page), [[false, false], [false, false], [false, false]], "armed when they appear");
+  await ctx.close();
+});
+
+test("arming: a reading that never reports its end arms the answers at ARM_CAP_MS", async () => {
+  const { ctx, page } = await playPage({ clock: true });
+  await page.evaluate(() => { window.Speech.say = () => new Promise(() => {}); });
+  await openWhich(page);
+  assert.deepEqual(await waitingState(page), [[true, true], [true, true], [true, true]]);
+  await page.clock.fastForward(ARM_CAP_MS - 1000);
+  assert.deepEqual(await waitingState(page), [[true, true], [true, true], [true, true]], "still waiting before the cap");
+  await page.clock.fastForward(1100);
+  await waitArmed(page, 1000);
+  await ctx.close();
+});
+
+test("the menu with every engine: Which one? top-left, Sort it top-right, Play it bottom-centre, black in the other three", async () => {
+  const { ctx, page, errors } = await playPage({ query: "?w=" + ALL_WEEK });
+  const g = await page.evaluate(() => {
+    const strip = document.getElementById("strip").getBoundingClientRect();
+    return { stripCx: strip.left + strip.width / 2, stripB: strip.bottom,
+      seats: [...document.querySelectorAll("#stage .seats > *")].map((el) => { const r = el.getBoundingClientRect();
+        return { id: el.id, seat: el.dataset.seat, dwell: el.matches(".dwell"), bg: getComputedStyle(el).backgroundColor,
+                 x: r.left, y: r.top, r: r.right, b: r.bottom, cx: r.left + r.width / 2, w: r.width, h: r.height }; }) };
+  });
+  assert.deepEqual(g.seats.map((s) => s.id), ["tile-which", "", "tile-sort", "", "tile-playit", ""]);
+  assert.deepEqual(g.seats.map((s) => s.seat), ["0", "1", "2", "3", "4", "5"]);
+  for (const k of [1, 3, 5]) { assert.equal(g.seats[k].bg, "rgb(0, 0, 0)"); assert.equal(g.seats[k].dwell, false); }
+  const [w, , s, , p] = g.seats;
+  assert.ok(w.dwell && s.dwell && p.dwell);
+  assert.ok(Math.abs(w.y - s.y) < 1 && w.r < s.x, "Which one? and Sort it share the top row");
+  assert.ok(p.y >= w.b + 13.5, "Play it is a row below");
+  assert.ok(Math.abs(p.cx - g.stripCx) < 4, "Play it is centred under the strip");
+  assert.ok(w.y > g.stripB);
+  for (const t of [w, s, p]) assert.ok(Math.min(t.w, t.h) >= 90, "≥ 90 px at 1920");
+  if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, "play-menu-all-1920.png") }); }
+  assert.deepEqual(errors, []);
   await ctx.close();
 });
 
@@ -446,16 +660,16 @@ async function watchWobble(page) {
   });
 }
 
-test("Sort it: the menu seats its tile in the centre (🗂️); the Which one? and Play it seats black", async () => {
+test("Sort it: the menu seats its tile top-right of the triangle (🗂️); the Which one? and Play it seats black", async () => {
   const { ctx, page, errors } = await playPage({ query: SQ });
   const g = await page.$$eval("#stage .seat", (els) => els.map((el) => { const r = el.getBoundingClientRect();
     return { id: el.id, seat: el.dataset.seat, dwell: el.matches(".dwell"), bg: getComputedStyle(el).backgroundColor,
              text: el.innerText.trim(), w: r.width, h: r.height }; }));
-  assert.deepEqual(g.map((s) => s.id), ["", "tile-sort", ""]);
-  assert.equal(g[1].seat, "1");
-  assert.match(g[1].text, /🗂️/u); assert.match(g[1].text, /Sort it/);
-  assert.ok(g[1].dwell && Math.min(g[1].w, g[1].h) >= 90);
-  for (const s of [g[0], g[2]]) { assert.equal(s.bg, "rgb(0, 0, 0)"); assert.equal(s.dwell, false); }
+  assert.deepEqual(g.map((s) => s.id), ["", "", "tile-sort", "", "", ""]);
+  assert.equal(g[2].seat, "2");
+  assert.match(g[2].text, /🗂️/u); assert.match(g[2].text, /Sort it/);
+  assert.ok(g[2].dwell && Math.min(g[2].w, g[2].h) >= 90);
+  for (const s of g.filter((_, k) => k !== 2)) { assert.equal(s.bg, "rgb(0, 0, 0)"); assert.equal(s.dwell, false); }
   assert.deepEqual(await st(page).then((s) => s.engines), { which: false, sort: true, playit: false });
   assert.deepEqual(errors, []);
   await ctx.close();
@@ -653,17 +867,17 @@ async function wordsFit(page, what) {
 }
 const holds2x = (page) => page.evaluate(() => [...document.querySelectorAll("[data-dwell-ms]")].map((el) => el.id + "=" + el.dataset.dwellMs).sort());
 
-test("Play it: the menu seats its tile on the right with the instrument's glyph; the other seats black", async () => {
+test("Play it: the menu seats its tile bottom-centre of the triangle with the instrument's glyph; the other seats black", async () => {
   const glyph = { "harmonica": "🎵", "xylophone": "🎵", "string-telephone": "☎️", "shadow-puppet": "🔦" };
   for (const inst of Object.keys(PI)) {
     const { ctx, page, errors } = await playPage({ query: PQ(inst) });
     const g = await page.$$eval("#stage .seat", (els) => els.map((el) => ({ id: el.id, seat: el.dataset.seat,
       dwell: el.matches(".dwell"), bg: getComputedStyle(el).backgroundColor, text: el.innerText.trim() })));
-    assert.deepEqual(g.map((s) => s.id), ["", "", "tile-playit"], inst);
-    assert.equal(g[2].seat, "2");
-    assert.ok(g[2].text.includes(glyph[inst]), inst + ": " + g[2].text);
-    assert.match(g[2].text, /Play it/);
-    for (const s of g.slice(0, 2)) { assert.equal(s.bg, "rgb(0, 0, 0)"); assert.equal(s.dwell, false); }
+    assert.deepEqual(g.map((s) => s.id), ["", "", "", "", "tile-playit", ""], inst);
+    assert.equal(g[4].seat, "4");
+    assert.ok(g[4].text.includes(glyph[inst]), inst + ": " + g[4].text);
+    assert.match(g[4].text, /Play it/);
+    for (const s of g.filter((_, k) => k !== 4)) { assert.equal(s.bg, "rgb(0, 0, 0)"); assert.equal(s.dwell, false); }
     assert.deepEqual((await st(page)).engines, { which: false, sort: false, playit: true });
     assert.deepEqual(errors, []);
     await ctx.close();
