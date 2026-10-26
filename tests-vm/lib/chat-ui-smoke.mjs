@@ -51,6 +51,36 @@ export function assertContentFreeMetrics(value) {
   }
 }
 
+export function makeChatStateDiagnostic(state, ui = {}) {
+  const reasons = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
+  const rows = Array.isArray(state?.value?.timings) ? state.value.timings.slice(-40) : [];
+  const backendRows = rows.filter(row => row && ['hold', 'typed', 'fixed', 'reply'].includes(row.kind) && ['open', 'completed', 'cancelled', 'failed'].includes(row.status)).map(row => ({
+    kind: row.kind, status: row.status,
+    ...(['cancelled', 'failed'].includes(row.status) && reasons.includes(row.reason) ? { reason: row.reason } : {}),
+    timings: Object.fromEntries(Object.entries(row.timings && typeof row.timings === 'object' ? row.timings : {}).filter(([name, number]) => DURATIONS.includes(name) && typeof number === 'number' && Number.isFinite(number) && number >= 0 && number <= 3600000)),
+  }));
+  const counts = Object.fromEntries(['recent', 'completed', 'cancelled', 'failed', 'open'].filter(key => Number.isInteger(ui.counts?.[key]) && ui.counts[key] >= 0 && ui.counts[key] <= 40).map(key => [key, ui.counts[key]]));
+  return { version: 1, lastRevision: Number.isSafeInteger(state?.revision) && state.revision >= 0 ? state.revision : null, backendRows,
+    ui: { counts, storageState: ['loading', 'saving', 'saved', 'unsaved', 'conflict', 'unavailable'].includes(ui.storageState) ? ui.storageState : 'unknown' } };
+}
+
+async function stateWaitDiagnostic(page, state) {
+  let timer;
+  try {
+    const ui = await Promise.race([page.evaluate(() => {
+      const summary = document.querySelector('#timingSummary')?.textContent || '';
+      const match = /^(\d+) recent turns: (\d+) completed, (\d+) cancelled, (\d+) failed, (\d+) in progress\./.exec(summary);
+      const counts = match ? Object.fromEntries(['recent', 'completed', 'cancelled', 'failed', 'open'].map((key, i) => [key, Number(match[i + 1])])) : {};
+      const text = document.querySelector('#storageStatus')?.textContent || '';
+      const storageState = /another window/i.test(text) ? 'conflict' : /not.*saved|unsaved/i.test(text) ? 'unsaved'
+        : document.body.dataset.storageAvailable === 'false' ? 'unavailable' : /^Saving/i.test(text) ? 'saving' : /^Loading/i.test(text) ? 'loading'
+          : /up to date|saved on this computer|cleared on this computer/i.test(text) ? 'saved' : 'unknown';
+      return { counts, storageState };
+    }).catch(() => ({})), new Promise(resolve => { timer = setTimeout(() => resolve({}), 500); })]);
+    return makeChatStateDiagnostic(state, ui);
+  } finally { clearTimeout(timer); }
+}
+
 export async function readChatState(page) {
   const result = await page.evaluate(async () => {
     const response = await fetch('/chat/api/state', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
@@ -74,12 +104,27 @@ async function replaceChatState(page, value) {
 
 export async function waitForChatState(page, predicate, timeout = 30000) {
   const deadline = Date.now() + timeout;
-  for (;;) {
-    const state = await readChatState(page);
-    if (predicate(state.value)) return state;
-    assert.ok(Date.now() < deadline, 'timed out waiting for acknowledged durable Chat state');
-    await page.waitForTimeout(25);
+  let state;
+  try {
+    for (;;) {
+      state = await readChatState(page);
+      if (predicate(state.value)) return state;
+      assert.ok(Date.now() < deadline, 'timed out waiting for acknowledged durable Chat state');
+      await page.waitForTimeout(25);
+    }
+  } catch (error) {
+    const diagnostic = await stateWaitDiagnostic(page, state);
+    const failure = error instanceof Error ? error : new Error('Chat state wait failed');
+    failure.chatStateDiagnostic = diagnostic;
+    failure.message += '\nChat state diagnostic: ' + JSON.stringify(diagnostic);
+    console.error('Chat state wait diagnostic: ' + JSON.stringify(diagnostic));
+    throw failure;
   }
+}
+
+async function waitForVoiceSaved(page, timeout) {
+  await page.locator('#storageStatus').waitFor({ state: 'visible', timeout });
+  await page.waitForFunction(() => !document.querySelector('#voicePreference').disabled && document.querySelector('#storageStatus').textContent === 'Voice choice saved on this computer.', null, { timeout });
 }
 
 async function readyChat(page, timeout) {
@@ -173,10 +218,12 @@ export async function checkInstalledChatUI(page, options = {}) {
     assert.equal(await page.locator('#voicePreference').inputValue(), 'saved', 'saved voice is the default');
     assert.equal((await audio()).playCalls, 0, 'warming prepared phrases cannot play audio');
     await openPartner(); await page.locator('#voicePreference').selectOption('local', { timeout });
+    await waitForVoiceSaved(page, timeout);
     await waitForChatState(page, value => value.voicePreference === 'local', timeout);
     await openChat();
     assert.equal(await page.locator('#voicePreference').inputValue(), 'local', 'explicit device voice choice persists');
     await openPartner(); await page.locator('#voicePreference').selectOption('saved', { timeout });
+    await waitForVoiceSaved(page, timeout);
     await waitForChatState(page, value => value.voicePreference === 'saved', timeout);
     await openChat();
     assert.equal(await page.locator('#voicePreference').inputValue(), 'saved', 'saved voice choice persists');
@@ -243,7 +290,9 @@ export async function checkInstalledChatUI(page, options = {}) {
       await page.locator('#storyLabel').fill(RESTART_STORY.label, { timeout });
       await page.locator('#storyMessage').fill(RESTART_STORY.say, { timeout });
       await page.locator('#saveStory').click({ timeout });
+      await page.waitForFunction(() => !document.querySelector('#saveStory').disabled && document.querySelector('#storyNote').textContent === 'Story saved on this computer.', null, { timeout });
       await page.locator('#voicePreference').selectOption('local', { timeout });
+      await waitForVoiceSaved(page, timeout);
       restartState = (await waitForChatState(page, value => value.voicePreference === 'local' && value.stories.length === 1 && value.stories[0].say === RESTART_STORY.say, timeout)).value;
       assert.deepEqual(restartState.stories, [RESTART_STORY], 'the intended story label and full spoken message were saved');
       assert.deepEqual(restartState.timings, savedMetrics.turns);
@@ -296,8 +345,11 @@ export async function checkRestoredChatState(page, expected, options = {}) {
     assert.equal(await page.evaluate(() => window.__chatUISmoke.playCalls), 0, 'restoring state never speaks');
     if (options.clear) {
       await page.locator('#clearStories').click({ timeout });
+      await page.waitForFunction(() => !document.querySelector('#clearStories').disabled && document.querySelector('#storyNote').textContent === 'Saved stories cleared.', null, { timeout });
       await page.locator('#clearTimings').click({ timeout });
+      await page.waitForFunction(() => !document.querySelector('#clearTimings').disabled && document.querySelector('#storageStatus').textContent === 'Turn timings cleared on this computer.', null, { timeout });
       await page.locator('#voicePreference').selectOption('saved', { timeout });
+      await waitForVoiceSaved(page, timeout);
       const state = await waitForChatState(page, value => value.stories.length === 0 && value.timings.length === 0 && value.voicePreference === 'saved', timeout);
       assert.deepEqual(state.value, EMPTY_STATE, 'UI clear actions remove stories and timing rows from the real store');
       return state.value;

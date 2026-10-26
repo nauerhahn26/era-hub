@@ -94,3 +94,23 @@ recreates the hub/store on the same data directory, and opens a fresh private
 browser without restored browser storage. The installed Windows check must
 likewise verify data after a complete kiosk and hub restart. Reload-only
 evidence is retained as history and cannot certify this stronger contract.
+
+## Lost acknowledgement recovery
+
+A local state write can commit before its response reaches the page. A request
+timeout therefore leaves an uncertain outcome. Retain the last confirmed state
+separately from the latest local timings, and reconcile an uncertain write before
+sending a later revision. A bounded read may acknowledge that write only when
+both the exact next revision and the complete expected prior state plus sent
+patch match. Preserve newer pending measurements and clear operations while the
+read is in flight, then save them under the confirmed revision.
+
+A different revision or value remains a visible conflict. An unavailable read
+remains unsaved; it must not silently overwrite another window. Any retry of an
+unchanged base retains the original revision check and a finite retry budget.
+Recovery runs in the background and cannot extend the bounded Exit wait or delay
+communication. Legacy browser keys are removed only after durable confirmation.
+
+The Windows helper retains its exact completed-row assertion. It waits for the
+voice control's client acknowledgement before navigating and captures bounded,
+content-free state diagnostics before restoring fixtures on a failed wait.

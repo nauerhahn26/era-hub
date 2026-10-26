@@ -4,8 +4,11 @@ Status: the historical v1.0.18 / `20261026.0436` candidate remains unpublished
 and immutable with its original 147-suite and ten-case Windows evidence.
 A later kiosk persistence review found that closing the final private window
 can remove its browser-only timing history, stories and voice preference.
-Durable local state and full close/reopen acceptance are now required before
-a replacement candidate can be considered ready.
+The later v1.0.19 / `20261026.0754` candidate has a genuine 155-suite pass and
+verified payload, but remains unpublished after a Windows timing assertion
+failed. Independent local reproductions found a committed-write acknowledgement
+recovery bug. Its actual role in that Windows failure is unconfirmed. A new
+recovery candidate and fresh acceptance are required before readiness.
 
 Goal: prepare the next installed Chat candidate with pictograms, timing for
 every turn and reliable use of the configured saved voice. The maintainer
@@ -44,6 +47,21 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [ ] Run a fresh full gate and build after the new predecessor release timestamp.
 - [ ] Run full installed Windows acceptance on the replacement payload.
 - [ ] Record replacement source, hashes and limitations; retain the publication hold.
+
+### Lost acknowledgement follow-up
+
+- [x] Preserve the exact v1.0.19 payload and both failed Windows attempts.
+- [x] Reproduce a committed write with a delayed acknowledgement using unchanged code.
+- [x] Keep real external-writer conflicts protected in the reproduction controls.
+- [x] Integrate the reviewed Windows tooling through `defec579` before new collection.
+- [x] Reconcile only an exact next revision and complete expected committed value.
+- [x] Preserve newer timing/clear operations and bounded leave behavior during recovery.
+- [x] Retain strict Windows assertions and add bounded content-free failure diagnostics.
+- [ ] Include the Games owner's final master and documentation before freezing sources.
+- [ ] Derive the new complete inventory and pass a fresh full gate on the clean tuple.
+- [ ] Build the newly reserved private v1.0.20 without overwriting earlier candidates.
+- [ ] Pass every installed Windows case, native layout and owned cleanup check.
+- [ ] Record exact replacement evidence and keep publication separate.
 
 ## Ownership and coordination
 
@@ -97,6 +115,65 @@ Reader and Math. The actual registry check resolves all six selected worktrees
 and reports 155 suites; the planner's thirty regression cases pass. Seven Chat
 entries and their broad support consumers are registered without relaxing any
 complete-gate or selection rule. These checks do not replace the new full run.
+
+## Recovery findings and preserved Windows evidence
+
+The clean `b0bb259` source passed the actual complete 155-suite native run
+`2026-10-26T07-26-37-417Z-a071f1e3`, with zero failures, skips, TODO cases or
+cancellations. Original inputs, all report receipts, owned-process exits and all
+six original gate-issued stamps were independently validated and archived before
+source movement. The queue's `completeEvidence=false` field remains unchanged.
+Private archive: `~/.cache/era-chat/durable-final/proof-native-a071f1e3/`.
+
+Private v1.0.19, build `20261026.0754`, binds that source and its exact six-source
+tuple. The payload SHA-256 is
+`7bab145edab33c8375a15aefad56b7e36fb23589b3080dcfc2826a62614886d0`.
+An independent static check matched all 252 payload files and directories across
+the expanded tree, tarball and ZIP: 245 direct source files, two public binary
+cache files and five generated files. All eight distribution inputs, installer
+signature evidence and absence of private state were verified. These bytes stay
+unchanged; this is not the replacement recovery candidate.
+
+The first independent managed Windows attempt stopped during native display
+preparation before installation. The helper did not produce its result or exit
+sentinel within the bound. The actual cause remains unproven. The owner captured
+separate read-only diagnostics and stopped only its ancestry-proven baseline
+test process, leaving the manager to complete owned transport and resource
+cleanup. Original failure evidence and diagnostic supplements remain preserved.
+
+A fresh private preparation closure ran the stock desktop wake/preparation
+before the native helper and added progress checkpoints without changing native
+mode selection or success criteria. Its second actual run passed native
+1280-by-800 preparation, including the first successful width/height test, apply,
+OS readback and process exit. The canonical update run then passed ten of eleven
+cases, including full kiosk and hub restart persistence and clearing. The sole
+failure waited for exactly one completed timing row after native audio playback
+had completed. The separate post-baseline geometry phase did not run and no
+`VM-GREEN` was produced. Both failed attempts completed owned resource, tunnel,
+slot and process cleanup. Neither failure is relabelled as acceptance.
+
+Two independent local reproductions use the unchanged production client, real
+store and complete browser helper. Committing the initial open row while delaying
+its response beyond the client's three-second deadline reproduces the same wait:
+the page has a completed row while disk retains an open row. The client loses the
+acknowledged revision, and later saves can enter a permanent conflict. Immediate
+acknowledgement, shorter delays and genuine independent-writer controls pass.
+This establishes a reachable production defect; it does not prove the Windows
+attempt had that cause. The narrow recovery work follows the design above.
+Private diagnosis and browser evidence remain under
+`~/.cache/era-chat/durable-final/storage-ack-diagnosis/` and
+`~/.cache/era-chat/durable-final/state-wait-repro/`.
+
+The recovery implementation passes 240 combined focused checks with no failures,
+skips, TODO cases or cancellations. These include the real-store browser helper
+with an acknowledgement delayed beyond three seconds, external-writer and retry
+races, queued clear operations, migration, bounded leave recovery and the new
+Windows runner contracts. Recovery reads, retries and pending writes inherit a
+leave flush's keepalive flag without extending its 850 ms wait. The original
+request deadline and state schema remain unchanged. All eleven canonical Windows
+cases and the exact one-completed-row predicate remain intact. The registry
+resolves 156 suites, with no new omission rule. Private focused evidence:
+`~/.cache/era-chat/ack-recovery/targeted.log`.
 
 ## Existing measurements and limits
 

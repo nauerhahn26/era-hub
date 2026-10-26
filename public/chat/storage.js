@@ -7,6 +7,9 @@ const REASONS = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'tim
 const DURATIONS = new Set(['holdMs', 'releaseToDrainedMs', 'drainToFinishSentMs', 'finishRoundTripMs', 'finishToTranscriptMs', 'releaseToTranscriptMs', 'transcriptToChoicesMs', 'choicesToRevealMs', 'revealToSelectMs', 'selectionToPlaybackMs', 'playbackMs', 'releaseToPlaybackMs', 'workerActivityMs', 'workerCloudMs', 'workerFinalMs', 'audioMs', 'choicesServerMs', 'totalMs']);
 const clone = value => JSON.parse(JSON.stringify(value));
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const same = (a, b) => a === b || (Array.isArray(a) && Array.isArray(b)
+  ? a.length === b.length && a.every((value, index) => same(value, b[index]))
+  : object(a) && object(b) && Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(key => Object.hasOwn(b, key) && same(a[key], b[key])));
 const keys = (value, allowed) => object(value) && Object.keys(value).every(key => allowed.includes(key));
 const failure = code => Object.assign(new Error(code === 'revision_conflict' ? 'Saved Chat settings changed in another window. Reload Chat before saving.' : 'Chat changes were not saved. Try again or reload Chat.'), { code });
 function patchData(value) {
@@ -42,6 +45,7 @@ export function createChatStorage(options = {}) {
   let value = { voicePreference: 'saved', stories: [], timings: [] }, revision = 0, ready = false, loaded = false, available = false;
   let state = 'loading', error = '', pending = {}, waiters = [], active = null, timer = null, keepalive = false, hydration = null;
   let dirtyTimings = null;
+  let confirmed = null, uncertain = null;
   const snapshot = () => clone(value);
   const status = () => ({ ready, available, state, error });
   function changed(next, code = '') {
@@ -49,36 +53,68 @@ export function createChatStorage(options = {}) {
     for (const fn of listeners) try { fn(status()); } catch { /* Storage diagnostics cannot block communication. */ }
   }
   async function request(method, body, alive = false) {
-    const controller = new AbortController(); let rejectTimeout;
+    const controller = new AbortController(); let rejectTimeout, rejectedResponse = false;
     const stopped = new Promise((_, reject) => { rejectTimeout = () => reject(failure('state_unavailable')); });
     const deadline = setTimeout(() => { controller.abort(); rejectTimeout(); }, timeoutMs);
     try {
       return await Promise.race([(async () => {
-        const response = await fetcher(ROUTE, { method, cache: 'no-store', signal: controller.signal, ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: alive } : {}) });
+        const response = await fetcher(ROUTE, { method, cache: 'no-store', signal: controller.signal, keepalive: alive, ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
+        if (!response.ok) { rejectedResponse = true; throw failure(response.status === 409 ? 'revision_conflict' : 'state_unavailable'); }
         const result = await response.json();
-        if (!response.ok) throw failure(response.status === 409 ? 'revision_conflict' : 'state_unavailable');
         const canonical = stateData(result);
         if (method === 'PUT' && (!canonical.exists || canonical.revision !== body.expectedRevision + 1 || Object.keys(body.patch).some(key => JSON.stringify(canonical.value[key]) !== JSON.stringify(body.patch[key])))) throw failure('state_unavailable');
         return canonical;
       })(), stopped]);
-    } catch (cause) { throw failure(cause?.code === 'revision_conflict' ? 'revision_conflict' : 'state_unavailable'); }
+    } catch (cause) {
+      throw Object.assign(failure(cause?.code === 'revision_conflict' ? 'revision_conflict' : 'state_unavailable'), { ambiguous: method === 'PUT' && !rejectedResponse });
+    }
     finally { clearTimeout(deadline); }
+  }
+  function acknowledge(result) {
+    confirmed = clone(result); revision = result.revision; value = clone(result.value);
+    if (dirtyTimings !== null) value.timings = clone(dirtyTimings);
+  }
+  async function reconcile(operation, retry) {
+    const canonical = await request('GET', undefined, keepalive);
+    const base = operation.base;
+    if (canonical.exists && canonical.revision === base.revision + 1 && same(canonical.value, operation.expectedValue)) return canonical;
+    if (canonical.revision !== base.revision || canonical.exists !== base.exists || !same(canonical.value, base.value)) throw failure('revision_conflict');
+    if (!retry) throw failure('state_unavailable');
+    // The first request can still commit after this read. Retry the identical
+    // CAS once, then reconcile its conflict instead of overwriting a newer state.
+    try { return await request('PUT', operation.body, keepalive); }
+    catch (cause) {
+      if (cause.ambiguous || cause.code === 'revision_conflict') return reconcile(operation, false);
+      throw cause;
+    }
+  }
+  async function write(batch) {
+    if (uncertain) {
+      acknowledge(await reconcile(uncertain, true)); uncertain = null;
+    }
+    const operation = { base: clone(confirmed), body: { version: 1, expectedRevision: revision, patch: batch }, expectedValue: { ...clone(confirmed.value), ...batch } };
+    try { return await request('PUT', operation.body, keepalive); }
+    catch (cause) {
+      if (!cause.ambiguous) throw cause;
+      uncertain = operation;
+      const result = await reconcile(operation, true); uncertain = null;
+      return result;
+    }
   }
   function pump() {
     clearTimeout(timer); timer = null;
     if (active || !Object.keys(pending).length || !available || state === 'conflict') return active;
-    const batch = pending, batchWaiters = waiters, alive = keepalive;
-    pending = {}; waiters = []; keepalive = false; changed('saving');
-    const work = request('PUT', { version: 1, expectedRevision: revision, patch: batch }, alive).then(result => {
-      revision = result.revision; value = result.value;
+    const batch = pending, batchWaiters = waiters;
+    pending = {}; waiters = []; changed('saving');
+    const work = write(batch).then(result => {
       if (Object.hasOwn(batch, 'timings') && JSON.stringify(batch.timings) === JSON.stringify(dirtyTimings)) dirtyTimings = null;
-      if (dirtyTimings !== null) value.timings = clone(dirtyTimings);
+      acknowledge(result);
       batchWaiters.forEach(item => item.resolve(clone(result.value)));
       changed(Object.keys(pending).length ? 'saving' : dirtyTimings === null ? 'saved' : 'unsaved');
     }, cause => {
       batchWaiters.concat(waiters).forEach(item => item.reject(cause));
       pending = {}; waiters = []; changed(cause.code === 'revision_conflict' ? 'conflict' : 'unsaved', cause.code);
-    }).finally(() => { active = null; if (Object.keys(pending).length && state !== 'conflict') pump(); });
+    }).finally(() => { active = null; if (Object.keys(pending).length && state !== 'conflict') pump(); else keepalive = false; });
     active = work; return work;
   }
   function enqueue(patch, immediate) {
@@ -104,7 +140,7 @@ export function createChatStorage(options = {}) {
     if (hydration) return hydration;
     hydration = (async () => {
       try {
-        const result = await request('GET'); value = result.value; revision = result.revision; loaded = available = true;
+        const result = await request('GET'); acknowledge(result); loaded = available = true;
         if (!result.exists) {
           const raw = {}; let found = false;
           for (const [key, name] of Object.entries(KEYS)) { try { const text = legacy?.getItem(name); if (text !== null && text !== undefined) { found = true; if (text.length <= 65536) raw[key] = text; } } catch {} }
@@ -131,6 +167,7 @@ export function createChatStorage(options = {}) {
     let deadline;
     const settled = (async () => {
       while (active || Object.keys(pending).length) { if (!active) pump(); if (active) await active; else break; }
+      keepalive = false;
       return state === 'saved';
     })();
     try { return await Promise.race([settled, new Promise(resolve => { deadline = setTimeout(() => resolve(false), cap); })]); }

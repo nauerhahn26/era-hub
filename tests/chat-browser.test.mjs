@@ -15,10 +15,25 @@ const { createChatStore } = createRequire(import.meta.url)('../chat-store.js');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 const alternatives = { kind: 'alternatives', choices: [{ id: 'one', label: 'Music', say: 'Music' }, { id: 'two', label: 'A story', say: 'A story' }], timings: { totalMs: 7 } };
-function serve(dataDir) {
+function serve(dataDir, options = {}) {
   const store = createChatStore({ dataDir });
-  return http.createServer(async (req, res) => {
+  const timers = new Set();
+  const server = http.createServer(async (req, res) => {
     try {
+      if (req.method === 'PUT' && req.url === '/chat/api/state' && options.delayStateResponse) {
+        const end = res.end;
+        res.end = function (bytes, ...rest) {
+          const state = JSON.parse(String(bytes));
+          if (!Array.isArray(state.value?.timings)) return end.call(res, bytes, ...rest);
+          const delay = options.delayStateResponse(state);
+          let sent = false;
+          res.once('close', () => options.onStateResponseClose?.(state, !sent));
+          const send = () => { sent = true; return end.call(res, bytes, ...rest); };
+          if (!delay) return send();
+          const timer = setTimeout(() => { timers.delete(timer); send(); }, delay);
+          timers.add(timer); return res;
+        };
+      }
       if (store.handle(req, res)) return;
       const url = new URL(req.url, 'http://localhost');
       const json = value => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
@@ -35,6 +50,8 @@ function serve(dataDir) {
       res.writeHead(200, { 'Content-Type': mime[path.extname(relative)] }); res.end(bytes);
     } catch { if (!res.headersSent) res.writeHead(404); res.end(); }
   });
+  server.once('close', () => { for (const timer of timers) clearTimeout(timer); });
+  return server;
 }
 
 test('combined Chat page validates icons, deliberate saved playback, timing privacy, held capture and timeout recovery', { timeout: 90000 }, async t => {
@@ -156,6 +173,35 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     evidence: 'Owned local fixture only. Native browser saved-audio playback; real worklet with synthetic microphone input. Recognition, choices and voice services are mocked. No device, real service, voice-quality or speech-accuracy claim.',
     installedUIContracts: report, heldCapture: true, freshNeutralRequired: true, boundedUploadRecovery: true,
     cancelledAndFailedSeparate: true, numericExportOnly: true, screenshots: ['chat-1280.png', 'chat-1600.png'], counts: Object.fromEntries(['completed', 'cancelled', 'failed', 'open'].map(status => [status, stored.turns.filter(row => row.status === status).length])) }, null, 2));
+});
+
+test('the whole Chat UI recovers one completed turn after a committed timing acknowledgement exceeds its deadline', { timeout: 30000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-ack-'));
+  let delayed = false, foreign = 0, timingAckAbandoned = false, voiceAckAbandoned = false;
+  const server = serve(scratch, {
+    delayStateResponse(state) {
+      if (!delayed && state.value.timings.length) { delayed = true; return 3500; }
+      return state.revision > 1 && !state.value.timings.length ? 600 : 0;
+    },
+    onStateResponseClose(state, abandoned) {
+      if (state.value.timings.length) timingAckAbandoned ||= abandoned;
+      else voiceAckAbandoned ||= abandoned;
+    },
+  });
+  server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required'] });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.route(url => url.origin !== base, route => { foreign++; return route.abort('blockedbyclient'); });
+  const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(base + '/');
+  const report = await checkInstalledChatUI(page, { baseURL: base, timeout: 7000 });
+  assert.equal(report.ok, true); assert.equal(report.typedTurn.status, 'completed');
+  assert.deepEqual(report.actualAudio, { playCalls: 1, playing: 1, ended: 1, deviceCalls: 0, microphoneCalls: 0, nativeAudio: true });
+  assert.equal(delayed, true); assert.equal(timingAckAbandoned, true, 'the real store committed before the browser acknowledgement timed out');
+  assert.equal(voiceAckAbandoned, false, 'voice changes receive their client acknowledgement before navigation');
+  assert.deepEqual(errors, []); assert.equal(foreign, 0);
 });
 
 test('Chat stories, explicit voice and numeric timings survive a fresh browser and store, and clearing survives again', { timeout: 120000 }, async t => {

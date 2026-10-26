@@ -25,15 +25,18 @@ speech wrapper owns two Python helper files. Four later Chat suites reviewed at
 their separate Windows boundary. The historical private 151-suite pass at
 `3536a18` verifies only its exact source, not the current candidate.
 
-The current combined Chat and Games candidate registers 155 Linux suites.
+The current combined Chat, Games and Windows runner candidate registers 156
+Linux suites, including the Windows runner's local contract suite.
 Games adds durable state coverage; Chat adds the four reviewed browser, metrics,
 symbols and voice suites plus store, storage and storage UI suites. Chat's browser
 suite checks file-backed state across complete browser and store restarts and
-verifies that clearing remains effective. Its storage UI suite checks truthful
+verifies that clearing remains effective and committed writes recover after a
+lost acknowledgement. Its storage UI suite checks truthful
 unsaved fallback, Exit waiting for acknowledgement or its 850ms limit, and
-immediate Talk handoff. The Windows update leg and the three helper-contract
-cases in `tests-vm/chat-ui-smoke.test.mjs` remain separate from this flat Linux
-inventory. These counts classify coverage; they are not complete gate evidence.
+immediate Talk handoff. The Windows update leg and the helper-contract and
+failure-diagnostic privacy cases in `tests-vm/chat-ui-smoke.test.mjs` remain
+separate from this flat Linux inventory. These counts classify coverage; they
+are not complete gate evidence.
 
 Unreviewed VM/helper changes retain the complete fallback. Registration
 classifies coverage and resources; Chat and Games product changes retain the

@@ -46,6 +46,9 @@ or a conflicting change in another window produces a visible warning; reload
 Chat before relying on persistence. Device voice can still be selected for the
 current page when saving is unavailable. Timing writes are coalesced and flushed
 when ending or leaving Chat, with a bounded wait that cannot trap Exit.
+If a write's reply is lost, Chat checks the exact saved revision and complete
+value before continuing. A later clear or completed turn remains pending during
+that check. Changes from another window still require a reload.
 
 ## Private service setup
 
