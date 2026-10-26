@@ -57,7 +57,7 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [x] Reconcile only an exact next revision and complete expected committed value.
 - [x] Preserve newer timing/clear operations and bounded leave behavior during recovery.
 - [x] Retain strict Windows assertions and add bounded content-free failure diagnostics.
-- [ ] Include the Games owner's final master and documentation before freezing sources.
+- [x] Include the Games owner's final master and documentation before freezing sources.
 - [ ] Derive the new complete inventory and pass a fresh full gate on the clean tuple.
 - [ ] Build the newly reserved private v1.0.20 without overwriting earlier candidates.
 - [ ] Pass every installed Windows case, native layout and owned cleanup check.
@@ -174,6 +174,10 @@ request deadline and state schema remain unchanged. All eleven canonical Windows
 cases and the exact one-completed-row predicate remain intact. The registry
 resolves 156 suites, with no new omission rule. Private focused evidence:
 `~/.cache/era-chat/ack-recovery/targeted.log`.
+The final Games master `ce63f10` is merged before collection. Core selects its
+landed `c5f33cf` history with the same tested `44b0248` tree. The other four
+dependency trees remain unchanged. The new full run must bind this complete
+clean tuple; earlier 155-suite evidence remains historical.
 
 ## Existing measurements and limits
 
