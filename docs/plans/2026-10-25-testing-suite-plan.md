@@ -28,8 +28,9 @@ execution, and the genuine original Hub and Board stamps were archived with the
 reports and checksums. That historical pass qualifies only its exact source.
 It does not qualify this separate 147-suite rollout or authorize future Chat.
 
-The rollout will incorporate the exact reviewed Math fixture correction used by
-Games, then run a fresh complete 147-suite gate. Games' separate fresh 143-suite
+The rollout incorporates reviewed Math fixture blob
+`0666b15021d39374addaacea5c060139e410052d` before its fresh complete
+147-suite gate. Games is adopting the same exact fixture independently. Games' separate fresh 143-suite
 run on `0227f86` finished 142/143: the sole failure was a Math return-window test
 that treated response headers as the completed application acknowledgment.
 No green stamps were issued. The private fixture repair waits for consumption of
