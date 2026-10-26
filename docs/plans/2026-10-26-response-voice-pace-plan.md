@@ -13,6 +13,12 @@ Spec: [response voice pace](../specs/2026-10-26-response-voice-pace.md).
   0.7, 0.8 and 1.2.
 - [x] Verify second-device independence and persistence across restart.
 - [ ] Run the complete Linux gate and Windows patch acceptance.
+- [x] Preserve the first complete isolated run: 163 suites passed; the port
+  inventory failed because the new second-device test claimed reserved port
+  8489, already owned by another suite. This is not an acceptance receipt.
+- [x] Replace that test port with a kernel-selected port and wait for the owned
+  child's readiness before connecting. Product code is unchanged. The complete
+  Settings, port inventory and suite classification checks pass (98/98).
 - [x] Add an installed Windows save/reload smoke to normal patch leg B;
   existing VM contract checks pass (12/12). No private preparation hook.
 - [ ] Coordinate with Testing suite before shared runtime landing or publishing.

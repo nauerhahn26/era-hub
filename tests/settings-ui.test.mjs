@@ -239,20 +239,33 @@ test("response speed Settings opens without saving, persists an explicit save an
 });
 
 test("response speed is independent on a second device and survives its hub restart", async () => {
-  const SECOND_PORT = 8489;
-  const base = `http://127.0.0.1:${SECOND_PORT}`;
+  let base;
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "era-speed-device-"));
   let second;
   const boot = async () => {
-    second = spawn(process.execPath, ["server.js", String(SECOND_PORT)], {
-      cwd: HUB, stdio: "ignore", env: { ...process.env, ERA_DATA_DIR: data,
+    // Ask the kernel for a free port; fixed suite ports belong to other tests.
+    const probe = http.createServer();
+    await new Promise((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", resolve);
+    });
+    const secondPort = probe.address().port;
+    await new Promise(resolve => probe.close(resolve));
+    base = `http://127.0.0.1:${secondPort}`;
+    let output = "";
+    second = spawn(process.execPath, ["server.js", String(secondPort)], {
+      cwd: HUB, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ERA_DATA_DIR: data,
         ERA_BIND: "127.0.0.1", ERA_NO_UPDATE: "1", ELEVENLABS_API_KEY: "",
         ERA_ELEVEN_URL: `http://127.0.0.1:${FAKE}`, ERA_AI_URL: `http://127.0.0.1:${FAKE}`,
         ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1" },
     });
+    second.stdout.on("data", chunk => { output += chunk; });
+    second.stderr.on("data", chunk => { output += chunk; });
     for (let i = 0; i < 100; i++) {
-      if (second.exitCode !== null) throw new Error("second hub failed to start");
-      try { await fetch(base + "/settings"); return; } catch {}
+      if (second.exitCode !== null) throw new Error("second hub failed to start: " + output);
+      if (output.includes("era-hub on " + base)) {
+        await fetch(base + "/settings"); return;
+      }
       await new Promise(r => setTimeout(r, 50));
     }
     throw new Error("second hub did not become ready");
