@@ -596,6 +596,34 @@
       ]
     },
     {
+      "id": "era-hub:tests/chat-browser.test.mjs",
+      "purpose": "Rendered Chat symbols, deliberate native saved playback, private timing export, held-capture recovery and real file-backed browser/store restart and clearing",
+      "group": "chat",
+      "lane": "linux",
+      "level": "browser application integration",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/chat-store.js",
+        "era-hub/chat-api.js",
+        "era-hub/tests-vm/lib/chat-ui-smoke.mjs",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "private-browser-storage",
+        "synthetic-microphone-wav",
+        "real-audio-worklet",
+        "native-html-audio",
+        "cdp-touch-events",
+        "temporary-data",
+        "private-hub-data",
+        "fresh-browser-and-store-instances"
+      ]
+    },
+    {
       "id": "era-hub:tests/chat-choices-adapter.test.mjs",
       "purpose": "Bounded grounded choice generation, strict provider replies and direct adapter HTTP cancellation",
       "group": "chat",
@@ -621,6 +649,24 @@
       ],
       "resources": [
         "temporary-data"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-metrics.test.mjs",
+      "purpose": "Content-free turn stages, outcome-separated statistics, bounded retention and controller/drain/reveal timing contracts",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit and controller/VM helper integration",
+      "dependencies": [
+        "era-hub/public/chat/metrics.js",
+        "era-hub/public/chat/controller.js",
+        "era-hub/public/chat/app.js"
+      ],
+      "resources": [
+        "in-process-storage-doubles",
+        "injected-clock",
+        "vm-application-helpers",
+        "short-deadline-fixtures"
       ]
     },
     {
@@ -662,6 +708,80 @@
       ]
     },
     {
+      "id": "era-hub:tests/chat-storage-ui.test.mjs",
+      "purpose": "Explicit local voice with truthful unsaved status after durable failure, Exit acknowledgement and 850ms fallback ordering, and immediate Talk handoff",
+      "group": "chat",
+      "lane": "linux",
+      "level": "browser persistence and access integration",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "intercepted-owned-origin",
+        "private-browser-pages",
+        "speech-synthesis-double",
+        "deferred-state-acknowledgements",
+        "real-deadline-observation"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-storage.test.mjs",
+      "purpose": "Canonical hydration, one-time legacy migration, acknowledged updates, coalesced timing flushes, revision conflicts and unsaved recovery",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module async persistence",
+      "dependencies": [
+        "era-hub/public/chat/storage.js"
+      ],
+      "resources": [
+        "in-process-storage-doubles",
+        "fetch-doubles",
+        "deferred-promises",
+        "short-deadline-fixtures"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-store.test.mjs",
+      "purpose": "Strict profile-local state, atomic writes, revision conflicts, corruption and write failures, request authorization and payload privacy",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module/filesystem and HTTP integration",
+      "dependencies": [
+        "era-hub/chat-store.js",
+        "era-hub/chat-api.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-speech-worker.js",
+        "era-hub/tools/build-payload.sh"
+      ],
+      "resources": [
+        "temporary-data",
+        "owned-loopback-services",
+        "injected-filesystem-failures",
+        "owned-shell-child"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-symbols.test.mjs",
+      "purpose": "Unambiguous decorative symbols, inert rest space, safe native vectors and readable unchanged hitboxes at both Chat viewport sizes",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit and browser layout",
+      "dependencies": [
+        "era-hub/public/chat/symbols.js",
+        "era-hub/public/chat/chat.css"
+      ],
+      "resources": [
+        "in-process-dom-doubles",
+        "chromium",
+        "offline-rendered-scenes",
+        "private-browser-pages"
+      ]
+    },
+    {
       "id": "era-hub:tests/chat-ui.test.mjs",
       "purpose": "Conversation/voice generations, neutral gating, bounded PCM resampling and idle worklet retention",
       "group": "chat",
@@ -675,6 +795,23 @@
       "resources": [
         "in-process-voice-doubles",
         "vm-worklet-harness"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-voice.test.mjs",
+      "purpose": "Explicit saved/device voice preference, genuine playback events, cancellation, bounded preparation/cache/prefetch and safe audio-response handling",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module async/audio lifecycle",
+      "dependencies": [
+        "era-hub/public/chat/voice.js"
+      ],
+      "resources": [
+        "in-process-audio-doubles",
+        "fetch-doubles",
+        "storage-doubles",
+        "mock-timers",
+        "bounded-stream-fixtures"
       ]
     },
     {
@@ -2095,6 +2232,25 @@
       "level": "hub process integration"
     },
     {
+      "id": "era-hub:tests/windows-parallel.test.mjs",
+      "purpose": "Independent Windows artifact inputs, complete case receipts, staged transport bindings and owned process cleanup",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "tools/windows-gate.mjs",
+        "tools/testing/windows-*.mjs",
+        "tools/testing/windows-*.py",
+        "tools/testing/test/windows_transport_test.py"
+      ],
+      "lane": "linux",
+      "resources": [
+        "synthetic-artifacts",
+        "synthetic-provider-and-ssh",
+        "owned-local-processes",
+        "owned-loopback-listeners"
+      ],
+      "level": "runner integration"
+    },
+    {
       "id": "era-hub:tests/words.test.mjs",
       "purpose": "Word timing alignment, malformed data and recorded narration regression",
       "group": "hub",
@@ -2360,11 +2516,18 @@
         "era-hub:tests/books-share.test.mjs",
         "era-hub:tests/books.test.mjs",
         "era-hub:tests/chat-api.test.mjs",
+        "era-hub:tests/chat-browser.test.mjs",
         "era-hub:tests/chat-choices-adapter.test.mjs",
         "era-hub:tests/chat-config.test.mjs",
+        "era-hub:tests/chat-metrics.test.mjs",
         "era-hub:tests/chat-native-speech.test.mjs",
         "era-hub:tests/chat-speech.test.mjs",
+        "era-hub:tests/chat-storage-ui.test.mjs",
+        "era-hub:tests/chat-storage.test.mjs",
+        "era-hub:tests/chat-store.test.mjs",
+        "era-hub:tests/chat-symbols.test.mjs",
         "era-hub:tests/chat-ui.test.mjs",
+        "era-hub:tests/chat-voice.test.mjs",
         "era-hub:tests/clothing-accessories.test.mjs",
         "era-hub:tests/clothing-attrs.test.mjs",
         "era-hub:tests/clothing-diversity.test.mjs",
@@ -2458,6 +2621,7 @@
         "era-hub:tests/vm-e2e.test.mjs",
         "era-hub:tests/watch-ui.test.mjs",
         "era-hub:tests/weather-location.test.mjs",
+        "era-hub:tests/windows-parallel.test.mjs",
         "era-hub:tests/words.test.mjs",
         "era-making-words:tests/bargein.js",
         "era-making-words:tests/fltest.js",
@@ -2514,11 +2678,18 @@
         "era-hub:tests/books-share.test.mjs",
         "era-hub:tests/books.test.mjs",
         "era-hub:tests/chat-api.test.mjs",
+        "era-hub:tests/chat-browser.test.mjs",
         "era-hub:tests/chat-choices-adapter.test.mjs",
         "era-hub:tests/chat-config.test.mjs",
+        "era-hub:tests/chat-metrics.test.mjs",
         "era-hub:tests/chat-native-speech.test.mjs",
         "era-hub:tests/chat-speech.test.mjs",
+        "era-hub:tests/chat-storage-ui.test.mjs",
+        "era-hub:tests/chat-storage.test.mjs",
+        "era-hub:tests/chat-store.test.mjs",
+        "era-hub:tests/chat-symbols.test.mjs",
         "era-hub:tests/chat-ui.test.mjs",
+        "era-hub:tests/chat-voice.test.mjs",
         "era-hub:tests/clothing-accessories.test.mjs",
         "era-hub:tests/clothing-attrs.test.mjs",
         "era-hub:tests/clothing-diversity.test.mjs",
@@ -2612,6 +2783,7 @@
         "era-hub:tests/vm-e2e.test.mjs",
         "era-hub:tests/watch-ui.test.mjs",
         "era-hub:tests/weather-location.test.mjs",
+        "era-hub:tests/windows-parallel.test.mjs",
         "era-hub:tests/words.test.mjs",
         "era-making-words:tests/bargein.js",
         "era-making-words:tests/fltest.js",

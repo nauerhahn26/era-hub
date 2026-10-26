@@ -46,6 +46,7 @@ const loadGamesModel = () => gamesModel ||= import("./public/games/state.js");
 const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
 const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
+const chatStore = require("./chat-store.js").createChatStore({ dataDir: DATA });
 const LOGS = path.join(DATA, "logs");
 const TTS_CACHE = path.join(DATA, "tts-cache");
 const GAMES_STATE = path.join(DATA, "games", "state.json");
@@ -1704,6 +1705,7 @@ function stampInteraction(req) {
 
 const server = http.createServer((req, res) => {
   stampInteraction(req);
+  if (chatStore.handle(req, res)) return;
   if (chatApi.handle(req, res)) return;
   if (req.url === "/games/state/recovery" && req.method === "GET") {
     void loadGamesModel().then(({ readSavedState }) => {
