@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 
 const QUESTION = 'Would you like music or a story?';
 const STORAGE_KEYS = ['chat:voicePreference', 'chat:timings:v1', 'chat:stories'];
+const RESTART_STORY = { label: 'A library visit', say: 'We read a new story together.' };
+const EMPTY_STATE = { voicePreference: 'saved', stories: [], timings: [] };
 const DURATIONS = ['holdMs', 'releaseToDrainedMs', 'drainToFinishSentMs', 'finishRoundTripMs',
   'finishToTranscriptMs', 'releaseToTranscriptMs', 'transcriptToChoicesMs', 'choicesToRevealMs',
   'revealToSelectMs', 'selectionToPlaybackMs', 'playbackMs', 'releaseToPlaybackMs',
@@ -29,7 +31,7 @@ export function makeChatToneWav() {
 
 export function assertContentFreeMetrics(value) {
   assert.equal(value?.version, 1); assert.ok(Array.isArray(value.turns));
-  assert.ok(Number.isInteger(value.retention) && value.retention > 0 && value.retention <= 100);
+  assert.ok(Number.isInteger(value.retention) && value.retention > 0 && value.retention <= 40);
   function inspect(item) {
     if (item === null) return;
     if (typeof item === 'number') { assert.ok(Number.isFinite(item) && item >= 0); return; }
@@ -47,6 +49,42 @@ export function assertContentFreeMetrics(value) {
     assert.ok(row.timings && typeof row.timings === 'object');
     for (const [key, number] of Object.entries(row.timings)) assert.ok(DURATIONS.includes(key) && typeof number === 'number' && Number.isFinite(number) && number >= 0);
   }
+}
+
+export async function readChatState(page) {
+  const result = await page.evaluate(async () => {
+    const response = await fetch('/chat/api/state', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(result.status, 200, 'the real durable Chat state endpoint answers');
+  assert.equal(result.body.version, 1); assert.ok(Number.isInteger(result.body.revision));
+  assert.ok(Array.isArray(result.body.value?.stories)); assert.ok(Array.isArray(result.body.value?.timings));
+  return result.body;
+}
+
+async function replaceChatState(page, value) {
+  const state = await readChatState(page);
+  const result = await page.evaluate(async body => {
+    const response = await fetch('/chat/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return { status: response.status, body: await response.json() };
+  }, { version: 1, expectedRevision: state.revision, patch: value });
+  assert.equal(result.status, 200, 'the owned test state is saved without a revision conflict');
+  return result.body;
+}
+
+export async function waitForChatState(page, predicate, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const state = await readChatState(page);
+    if (predicate(state.value)) return state;
+    assert.ok(Date.now() < deadline, 'timed out waiting for acknowledged durable Chat state');
+    await page.waitForTimeout(25);
+  }
+}
+
+async function readyChat(page, timeout) {
+  await page.waitForFunction(() => document.body.dataset.storageReady === 'true', null, { timeout });
+  assert.equal(await page.locator('body').getAttribute('data-storage-available'), 'true', 'Chat has loaded the local durable store');
 }
 
 function installInstrumentation(origin) {
@@ -87,6 +125,7 @@ export async function checkInstalledChatUI(page, options = {}) {
   const base = new URL(options.baseURL || originalURL).origin;
   assert.equal(new URL(originalURL).origin, base, 'the UI check starts on the hub origin');
   const savedStorage = await page.evaluate(keys => Object.fromEntries(keys.map(key => [key, localStorage.getItem(key)])), STORAGE_KEYS);
+  const savedState = await readChatState(page);
   const wav = makeChatToneWav(), requests = { voices: 0, clips: 0, choices: 0, blocked: 0 };
   const cdp = await page.context().newCDPSession(page);
   let script;
@@ -101,6 +140,7 @@ export async function checkInstalledChatUI(page, options = {}) {
     }
     if (url.pathname.startsWith('/chat/api/')) {
       if (request.method() === 'GET' && url.pathname === '/chat/api/config') return route.continue();
+      if (['GET', 'PUT'].includes(request.method()) && url.pathname === '/chat/api/state') return route.continue();
       if (request.method() === 'POST' && url.pathname === '/chat/api/choices') {
         let input; try { input = request.postDataJSON(); } catch {}
         if (input?.text === QUESTION && Array.isArray(input.context) && input.context.length === 0) { requests.choices++; return route.continue(); }
@@ -115,6 +155,7 @@ export async function checkInstalledChatUI(page, options = {}) {
   }
   async function openChat() {
     await page.goto(new URL('/chat/', base).href, { waitUntil: 'load', timeout });
+    await readyChat(page, timeout);
     await page.locator('#grid .chat-symbol').first().waitFor({ state: 'visible', timeout });
   }
   const audio = () => page.evaluate(() => {
@@ -126,14 +167,17 @@ export async function checkInstalledChatUI(page, options = {}) {
     await cdp.send('Page.enable');
     ({ identifier: script } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(${installInstrumentation.toString()})(${JSON.stringify(base)})` }));
     await page.evaluate(keys => keys.forEach(key => localStorage.removeItem(key)), STORAGE_KEYS);
+    await replaceChatState(page, EMPTY_STATE);
     const warmed = page.waitForResponse(response => new URL(response.url()).pathname === '/tts', { timeout });
     await openChat(); await warmed;
     assert.equal(await page.locator('#voicePreference').inputValue(), 'saved', 'saved voice is the default');
     assert.equal((await audio()).playCalls, 0, 'warming prepared phrases cannot play audio');
     await openPartner(); await page.locator('#voicePreference').selectOption('local', { timeout });
+    await waitForChatState(page, value => value.voicePreference === 'local', timeout);
     await openChat();
     assert.equal(await page.locator('#voicePreference').inputValue(), 'local', 'explicit device voice choice persists');
     await openPartner(); await page.locator('#voicePreference').selectOption('saved', { timeout });
+    await waitForChatState(page, value => value.voicePreference === 'saved', timeout);
     await openChat();
     assert.equal(await page.locator('#voicePreference').inputValue(), 'saved', 'saved voice choice persists');
     assert.equal((await audio()).playCalls, 0, 'preference changes and reloads do not speak');
@@ -178,12 +222,14 @@ export async function checkInstalledChatUI(page, options = {}) {
     const actualAudio = await audio();
     assert.deepEqual(actualAudio, { playCalls: 1, playing: 1, ended: 1, deviceCalls: 0, microphoneCalls: 0, nativeAudio: true },
       'a deliberate selection plays the real saved clip to completion without device speech');
-    await page.waitForFunction(() => {
-      const value = JSON.parse(localStorage.getItem('chat:timings:v1') || '{}');
-      return value.turns?.length === 1 && value.turns[0].status === 'completed';
-    }, null, { timeout });
-    const savedMetrics = await page.evaluate(() => JSON.parse(localStorage.getItem('chat:timings:v1')));
+    const completedState = await waitForChatState(page, value => value.timings.length === 1 && value.timings[0].status === 'completed', timeout);
+    await openPartner(); await page.locator('#turnTimings > summary').click({ timeout });
+    await page.locator('#exportTimings').click({ timeout });
+    const exported = await page.evaluate(async () => ({ clicks: window.__chatUISmoke.exportClicks, values: await Promise.all(window.__chatUISmoke.exports) }));
+    assert.equal(exported.clicks, 1); assert.equal(exported.values.length, 1);
+    const savedMetrics = JSON.parse(exported.values[0]);
     assertContentFreeMetrics(savedMetrics);
+    assert.deepEqual(savedMetrics.turns, completedState.value.timings, 'the generated timing export contains exactly the durable content-free records');
     const typedTurn = savedMetrics.turns[0]; assert.equal(typedTurn.kind, 'typed');
     for (const name of ['transcriptToChoicesMs', 'choicesToRevealMs', 'revealToSelectMs', 'selectionToPlaybackMs', 'playbackMs', 'totalMs'])
       assert.ok(Number.isFinite(typedTurn.timings[name]) && typedTurn.timings[name] >= 0, name + ' is measured');
@@ -191,23 +237,75 @@ export async function checkInstalledChatUI(page, options = {}) {
     for (const name of ['holdMs', 'releaseToTranscriptMs', 'workerFinalMs', 'workerActivityMs', 'workerCloudMs'])
       assert.equal(typedTurn.timings[name], undefined, 'a typed turn must not claim recognition timing');
     for (const group of Object.values(savedMetrics.summary.groups.typed)) { assert.equal(group.medianMs, null); assert.equal(group.p95Ms, null); }
-    await openPartner(); await page.locator('#turnTimings > summary').click({ timeout });
-    await page.locator('#exportTimings').click({ timeout });
-    const exported = await page.evaluate(async () => ({ clicks: window.__chatUISmoke.exportClicks, values: await Promise.all(window.__chatUISmoke.exports) }));
-    assert.equal(exported.clicks, 1); assert.equal(exported.values.length, 1);
-    const exportMetrics = JSON.parse(exported.values[0]); assertContentFreeMetrics(exportMetrics);
-    assert.deepEqual(exportMetrics, savedMetrics, 'the generated timing export contains exactly the saved content-free records');
     assert.equal(requests.choices, 1); assert.equal(requests.blocked, 0); assert.ok(requests.voices > 0 && requests.clips > 0);
+    let restartState;
+    if (options.prepareRestart) {
+      await page.locator('#storyLabel').fill(RESTART_STORY.label, { timeout });
+      await page.locator('#storyMessage').fill(RESTART_STORY.say, { timeout });
+      await page.locator('#saveStory').click({ timeout });
+      await page.locator('#voicePreference').selectOption('local', { timeout });
+      restartState = (await waitForChatState(page, value => value.voicePreference === 'local' && value.stories.length === 1 && value.stories[0].say === RESTART_STORY.say, timeout)).value;
+      assert.deepEqual(restartState.stories, [RESTART_STORY], 'the intended story label and full spoken message were saved');
+      assert.deepEqual(restartState.timings, savedMetrics.turns);
+    }
     return { ok: true, evidence: 'Typed local alternatives; service audio mocked; native browser playback observed. No microphone or recognition accuracy test.',
       symbols: true, restUnchanged: true, savedDefaultAndPersistence: true, exportContentFree: true, typedTurn,
-      exportedTurns: exportMetrics.turns.length, actualAudio, microphoneCalls: actualAudio.microphoneCalls };
+      exportedTurns: savedMetrics.turns.length, actualAudio, microphoneCalls: actualAudio.microphoneCalls, ...(restartState ? { restartState } : {}) };
   } finally {
     if (script) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: script });
     try {
       await page.goto(originalURL, { waitUntil: 'load', timeout });
+      if (!options.prepareRestart) await replaceChatState(page, savedState.value);
       await page.evaluate(saved => {
         for (const [key, value] of Object.entries(saved)) if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value);
       }, savedStorage);
     } finally { await page.unroute('**/*', routeHandler); await cdp.detach(); }
+  }
+}
+
+// The caller owns a complete browser and hub restart between preparation and
+// this check. No browser profile or storageState is passed across that boundary.
+export async function checkRestoredChatState(page, expected, options = {}) {
+  const timeout = options.timeout || 30000, base = new URL(options.baseURL || page.url()).origin;
+  const originalURL = page.url(), cdp = await page.context().newCDPSession(page);
+  const routeHandler = route => {
+    const url = new URL(route.request().url());
+    if (url.origin !== base) return route.abort('blockedbyclient');
+    if (url.pathname === '/voices') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"enabled":true,"current":"configured"}' });
+    if (url.pathname === '/tts') return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() });
+    return route.continue();
+  };
+  let script;
+  try {
+    await page.route('**/*', routeHandler);
+    await cdp.send('Page.enable');
+    ({ identifier: script } = await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(${installInstrumentation.toString()})(${JSON.stringify(base)})` }));
+    assert.deepEqual((await readChatState(page)).value, expected, 'a fresh store instance serves the exact acknowledged state');
+    await page.goto(base + '/chat/', { waitUntil: 'load', timeout }); await readyChat(page, timeout);
+    assert.equal(await page.locator('#voicePreference').inputValue(), expected.voicePreference, 'the explicit voice choice survives a full browser restart');
+    await page.getByRole('button', { name: 'My news', exact: true }).click({ timeout });
+    for (const story of expected.stories) await page.getByRole('button', { name: story.label, exact: true }).waitFor({ state: 'visible', timeout });
+    if (!expected.stories.length) assert.equal(await page.locator('.emptyStory').first().textContent(), 'Your stories go here');
+    await page.locator('#partnerOpen').click({ timeout });
+    await page.locator('#turnTimings > summary').click({ timeout });
+    assert.ok((await page.locator('#timingSummary').textContent()).startsWith(`${expected.timings.length} recent turns:`), 'the UI restores the durable timing count');
+    await page.locator('#exportTimings').click({ timeout });
+    const values = await page.evaluate(() => Promise.all(window.__chatUISmoke.exports));
+    assert.equal(values.length, 1); const metrics = JSON.parse(values[0]); assertContentFreeMetrics(metrics);
+    assert.deepEqual(metrics.turns, expected.timings, 'a fresh browser exports the original timing rows');
+    assert.equal(await page.evaluate(() => window.__chatUISmoke.playCalls), 0, 'restoring state never speaks');
+    if (options.clear) {
+      await page.locator('#clearStories').click({ timeout });
+      await page.locator('#clearTimings').click({ timeout });
+      await page.locator('#voicePreference').selectOption('saved', { timeout });
+      const state = await waitForChatState(page, value => value.stories.length === 0 && value.timings.length === 0 && value.voicePreference === 'saved', timeout);
+      assert.deepEqual(state.value, EMPTY_STATE, 'UI clear actions remove stories and timing rows from the real store');
+      return state.value;
+    }
+    return expected;
+  } finally {
+    if (script) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: script });
+    try { await page.goto(originalURL, { waitUntil: 'load', timeout }); }
+    finally { await page.unroute('**/*', routeHandler); await cdp.detach(); }
   }
 }

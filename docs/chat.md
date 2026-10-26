@@ -26,7 +26,7 @@ positions.
 
 Chat defaults to the hub's configured saved voice. Conversation
 partner settings offers an explicit Device voice alternative, and the selection
-persists on this browser. Prepared phrases and new replies can warm audio
+persists in the hub's local data on this computer. Prepared phrases and new replies can warm audio
 silently; a deliberate selection is still required before speech. Changing the
 configured voice invalidates older prepared clips. Saved-voice failure leaves the
 words visible and reports the failure instead of silently using another voice.
@@ -37,8 +37,15 @@ drain, recognition, reply generation, waiting for a fresh move into the black
 center, selection and actual playback. Clear removes the records; export
 contains numeric durations and bounded status categories only. Records contain
 no audio, question, reply, person, credential or session identifier and are not
-uploaded. Successful summaries show their sample counts; median requires three
+uploaded to an external service. Successful summaries show their sample counts; median requires three
 samples and the 95th percentile requires twenty.
+
+Chat loads its saved state before enabling interaction. Stories and voice choices
+report success only after the hub acknowledges the write. An unavailable store
+or a conflicting change in another window produces a visible warning; reload
+Chat before relying on persistence. Device voice can still be selected for the
+current page when saving is unavailable. Timing writes are coalesced and flushed
+when ending or leaving Chat, with a bounded wait that cannot trap Exit.
 
 ## Private service setup
 
@@ -80,10 +87,14 @@ the configured text service. The browser receives no service credentials.
 
 The hub and worker do not save held microphone audio or recognition transcripts.
 The explicit device-voice option stays local. The saved voice uses the existing
-speech service and its local audio cache. Timing records stay in local browser
-storage until cleared or evicted by the bounded history. Conversation context stays
-in page memory and is cleared when the page ends; manually entered stories stay
-in browser storage until removed. Cloud providers have their own retention
+speech service and its local audio cache. The hub's local data directory retains
+the voice choice, up to four manually entered stories and forty timing records
+in `chat-state.json`. This state survives closing the private kiosk and restarting
+the hub; it is excluded from release payloads. Timing records remain until cleared
+or evicted by the bounded history, and explicit stories remain until removed.
+Older browser data migrates only when the local state file is missing, and its
+three legacy keys are removed after the hub acknowledges migration. Conversation
+context stays in page memory and is cleared when the page ends. Cloud providers have their own retention
 policies. The prepared microphone may show the browser microphone indicator
 between turns; End, hide and leave close it. Sessions have a thirty-minute hard
 limit.

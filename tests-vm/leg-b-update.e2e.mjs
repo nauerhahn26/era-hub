@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as vm from "./lib/vm.mjs";
-import { checkInstalledChatUI } from "./lib/chat-ui-smoke.mjs";
+import { checkInstalledChatUI, checkRestoredChatState } from "./lib/chat-ui-smoke.mjs";
 
 // vm.INSTDIR is live: the previous installer may be a New ERA one, and a
 // self-update never moves the folder (only the new installer's .onInit does)
@@ -280,6 +280,48 @@ test("after the update: Chat pictures, private timing export and deliberately se
   assert.equal(report.actualAudio.deviceCalls, 0);
   assert.equal(report.microphoneCalls, 0);
   console.log("# installed Chat UI: " + JSON.stringify(report));
+});
+
+test("after the update: Chat state survives closing the whole kiosk and restarting the installed hub", { timeout: 900000 }, async () => {
+  await vm.home(page);
+  const prepared = await checkInstalledChatUI(page, { timeout: 60000, prepareRestart: true });
+  const before = vm.hubGet("/version");
+  async function restart() {
+    // Capture and verify this install's hub identity before stopping its PID.
+    // The guest is disposable QA; no host or other installed runtime is touched.
+    const nodePath = vm.INSTDIR + "\\node\\node.exe";
+    const captured = vm.bat("chat-capture-hub", [
+      `powershell -NoProfile -Command "$p = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.ExecutablePath -eq '${nodePath}' -and $_.CommandLine -match 'server[.]js.*8377' }); if ($p.Count -ne 1) { throw 'Expected one owned installed hub' }; @{ pid = $p[0].ProcessId; created = $p[0].CreationDate.ToUniversalTime().ToString('o') } | ConvertTo-Json -Compress"`,
+    ]);
+    const line = captured.split(/\r?\n/).find(line => line.startsWith('{'));
+    assert.ok(line, "the installed hub PID and creation time were captured");
+    const identity = JSON.parse(line); assert.ok(Number.isInteger(identity.pid) && identity.pid > 0);
+    const session = await browser.newBrowserCDPSession();
+    // Browser.close closes every kiosk window and its InPrivate context. A
+    // mere page reload or a detached controller would leave the defect hidden.
+    await session.send("Browser.close").catch(error => {
+      if (!/closed|disconnected/i.test(error.message)) throw error;
+    });
+    try { await browser.close(); } catch {}
+    browser = null; page = null;
+    await vm.waitFor(() => !vm.processRunning("msedge.exe") && { ok: 1 },
+      { timeout: 60000, every: 2000, what: "all kiosk browser processes to close" });
+    vm.bat("chat-stop-owned-hub", [
+      `powershell -NoProfile -Command "$p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${identity.pid}'; if (!$p -or $p.ExecutablePath -ne '${nodePath}' -or $p.CreationDate.ToUniversalTime().ToString('o') -ne '${identity.created}' -or $p.CommandLine -notmatch 'server[.]js.*8377') { throw 'Owned hub identity changed' }; Stop-Process -Id ${identity.pid} -ErrorAction Stop"`,
+    ]);
+    await vm.waitFor(() => !vm.hubGet("/version") && { ok: 1 },
+      { timeout: 60000, every: 1000, what: "the captured installed hub process to stop" });
+    await vm.launchKiosk();
+    ({ browser, page } = await vm.kiosk());
+    assert.equal(vm.hubGet("/version")?.build, before.build, "the same installed candidate restarts");
+  }
+  await restart();
+  const disk = JSON.parse(vm.guestFile(vm.INSTDIR + "\\data\\chat-state.json"));
+  assert.deepEqual(disk.value, prepared.restartState, "the installed state file contains the UI's acknowledged preferences, story and numeric rows");
+  const cleared = await checkRestoredChatState(page, prepared.restartState, { timeout: 60000, clear: true });
+  await restart();
+  await checkRestoredChatState(page, cleared, { timeout: 60000 });
+  console.log("# installed Chat durability: full kiosk and hub restarted twice; state restored from the installed data file and UI clears remained cleared");
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {

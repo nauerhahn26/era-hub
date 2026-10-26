@@ -1,8 +1,11 @@
 # Chat trial feedback plan
 
-Status: v1.0.18 / `20261026.0436` is prepared and unpublished. The complete
-Linux gate passed 147/147 and the exact candidate passed all ten Windows
-update cases. The published release remains v1.0.16.
+Status: the historical v1.0.18 / `20261026.0436` candidate remains unpublished
+and immutable with its original 147-suite and ten-case Windows evidence.
+A later kiosk persistence review found that closing the final private window
+can remove its browser-only timing history, stories and voice preference.
+Durable local state and full close/reopen acceptance are now required before
+a replacement candidate can be considered ready.
 
 Goal: prepare the next installed Chat candidate with pictograms, timing for
 every turn and reliable use of the configured saved voice. The maintainer
@@ -27,6 +30,21 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [x] Record exact source, payload hash, tests and remaining maintainer checks.
 - [x] Keep the candidate unpublished; publication requires a later explicit instruction.
 
+### Persistence follow-up
+
+- [x] Confirm the installed kiosk flags and private-session storage lifecycle.
+- [x] Add a strict, bounded, atomic hub-local Chat state endpoint with revisions.
+- [x] Exclude private state and temporary files from all public payloads.
+- [x] Hydrate before interaction; serialize saves and expose acknowledgement failures.
+- [x] Migrate older browser state only once and prevent resurrection after clearing.
+- [x] Preserve timing-only privacy and ephemeral conversation/audio boundaries.
+- [x] Use the compatible bounded leave-flush barrier from the new shared core.
+- [x] Prove persistence after a full browser and hub/store restart on owned local fixtures.
+- [ ] Integrate the owning features' exact new frozen Game/core/tooling baseline.
+- [ ] Run a fresh full gate and build after the new predecessor release timestamp.
+- [ ] Run full installed Windows acceptance on the replacement payload.
+- [ ] Record replacement source, hashes and limitations; retain the publication hold.
+
 ## Ownership and coordination
 
 Three agents own symbols, voice and timing respectively; the timing agent
@@ -37,11 +55,39 @@ Markdown on master, alter shared scripts or use its QA rail until it explicitly
 clears. Choose the next private distribution directory after its reservation
 is released. No live operator hub restart and no further home-device probes.
 
-The Games owner permits its exact frozen `0227f86` source in a private
-cumulative candidate before collection. This is conditional on that feature's
-separately approved landing. Commit the Chat changes first, then merge that
-frozen predecessor and run the final combined checks before freezing all six
-sources. Do not land or publish the conditional dependency through Chat.
+The historical candidate used the Games owner's frozen `0227f86` source.
+That source was conditional on its separately approved landing; its inclusion
+did not authorize Chat to land or publish that feature.
+
+The replacement candidate must instead collect the new durable Games, shared
+core leave barrier and testing-tool baseline after their owners freeze the exact
+sources. Wait for their current QA handoff, then recut Chat with an updater build
+timestamp later than the new predecessor. The old private distribution remains
+immutable and must not be published as the replacement.
+
+## Durable-state local validation
+
+The reviewed follow-up passes 170 focused checks with no failures or skips,
+including backend state, recognition and choice adapters, capture/controller,
+voice, symbols, timing, storage, browser integration and Windows helper contracts.
+The selected shared core passes its fifteen door-bar cases. These are local
+checks, not the required replacement full gate or installed Windows run.
+Private focused evidence: `~/.cache/era-chat/durable-final/targeted.log`.
+
+Three separate browser processes and store instances restore the same explicit
+story, voice choice and numeric timing rows through the real scratch state file.
+UI clearing survives a second complete restart. Direct disk reads verify that
+acknowledged data reached the file; no browser storage state is carried across
+restarts. The existing held-capture, native browser playback, layout and privacy
+checks remain covered with owned synthetic services.
+
+An independent review reproduced timing loss after a failed timing write followed
+by an unrelated successful preference save. The client now retains dirty timing
+rows and merges them into the next save or flush; its regression passes. A failed
+explicit voice save still allows the selected voice on the current page with a
+visible unsaved warning. Story success continues to require acknowledgement.
+The real Chat/shared-core interaction check verifies delayed-write ordering,
+an 850 ms Exit flush bound and immediate Talk while a write remains pending.
 
 ## Existing measurements and limits
 
@@ -112,6 +158,9 @@ corrected clean candidate. Release copy is corrected before that run as well,
 so its saved-voice description matches the implemented default.
 
 ## Prepared candidate receipt
+
+The following receipt describes the historical browser-storage candidate. It
+does not certify the later durable-state runtime or restart behavior.
 
 The corrected clean source is `cbe7a54` (tree `0faa354`). Complete job
 `gate-20261026T034943Z-35b25ee9` ran all 147 unique collected suites unchanged

@@ -458,4 +458,4 @@ function createChatApi(options = {}) {
     close() { closed = true; inner.close(); },
   };
 }
-module.exports = { createChatApi, loadChatEnvironment };
+module.exports = { createChatApi, loadChatEnvironment, ownRequest };

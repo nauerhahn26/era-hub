@@ -2,13 +2,34 @@ import { createChatController, isPartnerTouch } from './controller.js';
 import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
+import { createChatStorage } from './storage.js';
 import { attachSymbol } from './symbols.js';
 import { mountDoorBar } from '/lib/doorbar.js';
 
 const $ = id => document.getElementById(id);
 const API = '/chat/api';
-const voice = createChatVoice();
-const metrics = createTurnMetrics();
+const persistence = createChatStorage();
+let appReady = false, pageOnlyVoice = false, voicePreferenceIntent = 0;
+document.body.dataset.storageReady = 'false';
+for (const id of ['startChat', 'desktopStart', 'desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = true;
+const storageStatus = document.createElement('p'); storageStatus.id = 'storageStatus'; storageStatus.setAttribute('role', 'status');
+$('engineNote').insertAdjacentElement('afterend', storageStatus);
+persistence.subscribe(state => {
+  document.body.dataset.storageAvailable = String(state.available);
+  storageStatus.textContent = state.state === 'conflict' ? 'Saved Chat settings changed in another window. Reload Chat before saving.'
+    : state.state === 'unsaved' ? 'Chat is using unsaved changes. They have not been saved on this computer. Try again or reload Chat.'
+      : state.state === 'saving' ? 'Saving Chat changes…' : state.state === 'loading' ? 'Loading saved Chat settings…' : 'Chat settings are up to date on this computer.';
+  if (pageOnlyVoice) storageStatus.textContent += ' The current voice choice applies to this page only; it has not been saved.';
+});
+const bar = mountDoorBar($('app'), {
+  onLeave: () => { if (appReady) void shutdown('close'); return persistence.flush({ keepalive: true, timeoutMs: 850 }); },
+  onPause: () => { if (appReady) void shutdown('pause'); },
+  onResume: () => { if (appReady) notice('Chat is off. A partner can start a new session.'); },
+});
+const savedSettings = await persistence.hydrate();
+const voice = createChatVoice({ storage: persistence.voiceStorage });
+const metrics = createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 });
+if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
 const AUDIO_POST_MS = 2000;
 let questionMetric = null, speechMetric = null, pendingSpeechMetric = null;
 let screen = 'chat', config = null, session = null, events = null, mic = null;
@@ -19,8 +40,7 @@ let askPending = false, askAcknowledged = Promise.resolve(), captureGeneration =
 let gridKey = '', currentSpeech = 0, captureIntent = 0, pendingFrames = [], heartbeat = null;
 let recentConversation = [];
 let remoteFinal = false, remoteStreaming = false, questionSending = false;
-let stories = [];
-try { stories = JSON.parse(localStorage.getItem('chat:stories') || '[]').filter(x => typeof x.label === 'string' && typeof x.say === 'string').slice(0, 4); } catch {}
+let stories = savedSettings.stories;
 
 const fixed = {
   chat: ["Hi!", "What's up?", 'How are you?', 'Come sit with me.'],
@@ -104,20 +124,16 @@ const controller = createChatController({
         onStart: () => { if (!signal.aborted && spoken === currentSpeech && mine === lifecycle) metrics.mark(timing, 'playbackStart'); },
         onEnd: () => { if (!signal.aborted && spoken === currentSpeech && mine === lifecycle) metrics.mark(timing, 'playbackEnd'); },
       });
-    } catch (error) { metrics.end(timing, 'failed', 'speech'); throw error; }
+    } catch (error) { metrics.end(timing, 'failed', 'speech'); void persistence.flush(); throw error; }
     if (completed === true && !signal.aborted && spoken === currentSpeech && mine === lifecycle) {
       metrics.end(timing, 'completed');
       recentConversation = [...recentConversation, `Me: ${choice.say}`.slice(0, 500)].slice(-8);
     } else metrics.end(timing, 'cancelled', 'interrupted');
+    void persistence.flush();
     await canceled;
   },
 });
 
-const bar = mountDoorBar($('app'), {
-  onLeave: () => { shutdown('close'); },
-  onPause: () => { shutdown('pause'); },
-  onResume: () => { notice('Chat is off. A partner can start a new session.'); },
-});
 fetch('/settings').then(r => r.json()).then(s => {
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
   window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
@@ -353,6 +369,7 @@ function cancelAsk() {
 }
 async function shutdown(type = 'close', preserveAnswers = false) {
   metrics.end(questionMetric, 'cancelled', 'closed'); metrics.end(speechMetric, 'cancelled', 'closed');
+  const saved = persistence.flush({ keepalive: true });
   pendingSpeechMetric = null;
   const id = session; session = null; lifecycle++; uploadEpoch++;
   const mine = lifecycle; closing = true;
@@ -373,6 +390,7 @@ async function shutdown(type = 'close', preserveAnswers = false) {
   voice.dispose(); queued = 0; uploadChain = Promise.resolve();
   diagnostic(''); $('ask').classList.remove('held'); $('ask').disabled = true;
   $('startChat').disabled = false; $('endChat').disabled = true;
+  return saved;
 }
 async function failSession(message, reason = 'connection') {
   metrics.end(questionMetric, 'failed', reason); metrics.end(speechMetric, 'failed', reason);
@@ -419,29 +437,51 @@ $('typedAsk').addEventListener('click', () => {
   go('chat'); $('partnerDialog').close(); controller.prepare(text); $('typedQuestion').value = '';
 });
 $('voicePreference').value = voice.getPreference();
-$('voicePreference').addEventListener('change', e => { voice.setPreference(e.target.value); warmPhrases(); });
+$('voicePreference').addEventListener('change', async e => {
+  const selected = e.target.value, intent = ++voicePreferenceIntent; e.target.disabled = true;
+  voice.setPreference(selected); warmPhrases(); pageOnlyVoice = true;
+  try {
+    await persistence.update({ voicePreference: selected });
+    if (intent === voicePreferenceIntent) { pageOnlyVoice = false; storageStatus.textContent = 'Voice choice saved on this computer.'; }
+  } catch { if (intent === voicePreferenceIntent) storageStatus.textContent = 'This voice choice works on this page only. It was not saved; try again or reload Chat.'; }
+  finally { if (intent === voicePreferenceIntent) e.target.disabled = false; }
+});
 warmPhrases();
 metrics.subscribe(value => {
   const counts = value.summary.counts;
   $('timingSummary').textContent = `${value.turns.length} recent turns: ${counts.completed} completed, ${counts.cancelled} cancelled, ${counts.failed} failed, ${counts.open} in progress. All durations below are milliseconds.`;
   $('timingDetails').textContent = JSON.stringify({ recent: value.turns.slice(-10), completedTurnAggregates: value.summary.groups }, null, 2);
 });
-$('clearTimings').addEventListener('click', () => metrics.clear());
+$('clearTimings').addEventListener('click', async e => {
+  e.target.disabled = true; metrics.clear();
+  const saved = await persistence.flush();
+  storageStatus.textContent = saved ? 'Turn timings cleared on this computer.' : 'Timing changes were not saved. Reload Chat before relying on the clear.';
+  e.target.disabled = false;
+});
 $('exportTimings').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([metrics.exportJSON()], { type: 'application/json' }));
   const link = document.createElement('a'); link.href = url; link.download = 'chat-timings.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
-$('saveStory').addEventListener('click', () => {
+$('saveStory').addEventListener('click', async () => {
   const label = $('storyLabel').value.trim(), say = $('storyMessage').value.trim();
   if (!label || !say) { $('storyNote').textContent = 'Add a label and the words to speak.'; return; }
   if (stories.length >= 4) { $('storyNote').textContent = 'Four stories are saved. Clear them before adding new stories.'; return; }
-  stories.push({ label, say });
-  warmPhrases();
-  try { localStorage.setItem('chat:stories', JSON.stringify(stories)); $('storyNote').textContent = 'Story saved on this browser.'; } catch { $('storyNote').textContent = 'Story is available until this page closes; browser storage is unavailable.'; }
-  $('storyLabel').value = ''; $('storyMessage').value = '';
+  $('saveStory').disabled = $('clearStories').disabled = true;
+  try {
+    const saved = await persistence.update({ stories: [...stories, { label, say }] });
+    stories = saved.stories; gridKey = ''; warmPhrases();
+    $('storyNote').textContent = 'Story saved on this computer.';
+    $('storyLabel').value = ''; $('storyMessage').value = '';
+  } catch { $('storyNote').textContent = 'Story was not saved. Your words remain here; try again or reload Chat.'; }
+  finally { $('saveStory').disabled = $('clearStories').disabled = false; }
 });
-$('clearStories').addEventListener('click', () => { stories = []; localStorage.removeItem('chat:stories'); $('storyNote').textContent = 'Saved stories cleared.'; });
+$('clearStories').addEventListener('click', async () => {
+  $('saveStory').disabled = $('clearStories').disabled = true;
+  try { const saved = await persistence.update({ stories: [] }); stories = saved.stories; gridKey = ''; $('storyNote').textContent = 'Saved stories cleared.'; }
+  catch { $('storyNote').textContent = 'Stories were not cleared. Try again or reload Chat.'; }
+  finally { $('saveStory').disabled = $('clearStories').disabled = false; }
+});
 document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') shutdown('pause'); });
 window.addEventListener('pagehide', () => shutdown('close'));
 window.addEventListener('resize', () => { window.Dwell?.suppress(600); fitLabels(); });
@@ -451,3 +491,7 @@ json(`${API}/config`).then(value => {
     ? (value.runtime.kind === 'built-in' ? 'Cloud speech is set up. Start Chat to check the microphone, then wait for Ready to ask.' : 'Speech is set up. Start Chat to check the microphone, then wait for Ready to ask.')
     : 'Speech is not set up on this computer. Prepared phrases and stories work. A maintainer can finish speech setup.';
 }).catch(() => { $('engineNote').textContent = 'Speech is unavailable. Prepared phrases and stories work.'; });
+appReady = true;
+document.body.dataset.storageReady = 'true';
+for (const id of ['startChat', 'desktopStart', 'desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = false;
+if (persistence.status().state === 'unsaved' || persistence.status().state === 'conflict') notice(storageStatus.textContent);

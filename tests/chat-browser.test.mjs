@@ -6,15 +6,20 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
-import { checkInstalledChatUI, makeChatToneWav, assertContentFreeMetrics } from '../tests-vm/lib/chat-ui-smoke.mjs';
+import { checkInstalledChatUI, checkRestoredChatState, waitForChatState, makeChatToneWav, assertContentFreeMetrics } from '../tests-vm/lib/chat-ui-smoke.mjs';
+
+const { createChatStore } = createRequire(import.meta.url)('../chat-store.js');
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 const alternatives = { kind: 'alternatives', choices: [{ id: 'one', label: 'Music', say: 'Music' }, { id: 'two', label: 'A story', say: 'A story' }], timings: { totalMs: 7 } };
-function serve() {
+function serve(dataDir) {
+  const store = createChatStore({ dataDir });
   return http.createServer(async (req, res) => {
     try {
+      if (store.handle(req, res)) return;
       const url = new URL(req.url, 'http://localhost');
       const json = value => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
       if (url.pathname === '/') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<!doctype html><title>Chat fixture</title>'); return; }
@@ -37,7 +42,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   const artifacts = process.env.ERA_CHAT_UI_OUT;
   if (artifacts) await fs.mkdir(artifacts, { recursive: true });
   const wav = path.join(scratch, 'microphone.wav'); await fs.writeFile(wav, makeChatToneWav());
-  const server = serve(); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch({ headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${wav}`, '--autoplay-policy=no-user-gesture-required'] });
   t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
@@ -67,6 +72,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   await page.route('**/tts', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }));
   await page.route('**/chat/api/**', async route => {
     const req = route.request(), url = new URL(req.url()); let result = {};
+    if (url.pathname === '/chat/api/state') return route.continue();
     if (url.pathname.endsWith('/config')) result = { runtime: { available: true, kind: 'built-in' }, choices: { available: true } };
     else if (url.pathname.endsWith('/sessions') && req.method() === 'POST') { generation = 0; sequence = 0; result = { id: 'private-browser-session' }; }
     else if (url.pathname.endsWith('/control')) {
@@ -80,7 +86,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     else result = { ready: true, mode: 'paused' };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) }).catch(() => {});
   });
-  await page.goto(base + '/chat/'); await page.waitForFunction(() => document.querySelector('#engineNote').textContent.includes('set up'));
+  await page.goto(base + '/chat/'); await page.waitForFunction(() => document.body.dataset.storageReady === 'true' && document.querySelector('#engineNote').textContent.includes('set up'));
   const cdp = await context.newCDPSession(page);
   async function down(selector) {
     const box = await page.locator(selector).boundingBox(); assert.ok(box);
@@ -105,12 +111,13 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   await page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'));
   assert.equal(await page.locator('#phase').textContent(), 'Replies ready');
   assert.equal(await page.locator('.response').count(), 0, 'completed replies still require a fresh neutral movement');
-  let stored = JSON.parse(await page.evaluate(() => localStorage.getItem('chat:timings:v1')));
-  const held = stored.turns.find(row => row.kind === 'hold'); assert.ok(held.timings.transcriptToChoicesMs >= 0); assert.equal(held.timings.choicesToRevealMs, undefined);
+  let state = await waitForChatState(page, value => value.timings.some(row => row.kind === 'hold' && Number.isFinite(row.timings.transcriptToChoicesMs)));
+  let stored = { version: 1, retention: 40, turns: state.value.timings };
+  const held = stored.turns.find(row => row.kind === 'hold'); assert.ok(held.timings.transcriptToChoicesMs >= 0, JSON.stringify(stored.turns)); assert.equal(held.timings.choicesToRevealMs, undefined);
   const rest = await page.locator('.rest').first().boundingBox(); await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
   await page.waitForSelector('.response'); await page.locator('.response').first().click();
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('chat:timings:v1')).turns.some(row => row.kind === 'hold' && row.status === 'completed'));
-  stored = JSON.parse(await page.evaluate(() => localStorage.getItem('chat:timings:v1'))); assertContentFreeMetrics(stored);
+  state = await waitForChatState(page, value => value.timings.some(row => row.kind === 'hold' && row.status === 'completed'));
+  stored = { version: 1, retention: 40, turns: state.value.timings }; assertContentFreeMetrics(stored);
   const completed = stored.turns.find(row => row.kind === 'hold' && row.status === 'completed');
   for (const name of ['releaseToDrainedMs', 'finishRoundTripMs', 'releaseToTranscriptMs', 'transcriptToChoicesMs', 'choicesToRevealMs', 'revealToSelectMs', 'selectionToPlaybackMs', 'playbackMs']) assert.ok(Number.isFinite(completed.timings[name]), name);
   assert.equal(completed.timings.workerActivityMs, 3); assert.equal(completed.timings.workerCloudMs, 30);
@@ -137,7 +144,8 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   stalled = false; releaseUpload(); assert.equal(controls.filter(type => type === 'finish').length, finishes);
   await start(); await finishHold(); assert.equal(controls.filter(type => type === 'finish').length, finishes + 1);
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
-  stored = JSON.parse(await page.evaluate(() => localStorage.getItem('chat:timings:v1'))); assertContentFreeMetrics(stored);
+  state = await waitForChatState(page, value => value.timings.some(row => row.status === 'cancelled' && row.reason === 'closed'));
+  stored = { version: 1, retention: 40, turns: state.value.timings }; assertContentFreeMetrics(stored);
   assert.ok(stored.turns.some(row => row.status === 'cancelled' && row.reason === 'cancel'));
   assert.ok(stored.turns.some(row => row.status === 'failed' && row.reason === 'timeout'));
   assert.ok(stored.turns.some(row => row.status === 'cancelled' && row.reason === 'closed'));
@@ -147,5 +155,47 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   if (artifacts) await fs.writeFile(path.join(artifacts, 'report.json'), JSON.stringify({ ok: true,
     evidence: 'Owned local fixture only. Native browser saved-audio playback; real worklet with synthetic microphone input. Recognition, choices and voice services are mocked. No device, real service, voice-quality or speech-accuracy claim.',
     installedUIContracts: report, heldCapture: true, freshNeutralRequired: true, boundedUploadRecovery: true,
-    cancelledAndFailedSeparate: true, numericExportOnly: true, screenshots: ['chat-1280.png', 'chat-1600.png'], counts: stored.summary.counts }, null, 2));
+    cancelledAndFailedSeparate: true, numericExportOnly: true, screenshots: ['chat-1280.png', 'chat-1600.png'], counts: Object.fromEntries(['completed', 'cancelled', 'failed', 'open'].map(status => [status, stored.turns.filter(row => row.status === status).length])) }, null, 2));
+});
+
+test('Chat stories, explicit voice and numeric timings survive a fresh browser and store, and clearing survives again', { timeout: 120000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-restart-'));
+  const errors = [];
+  let server, browser, context, page, base, port = 0, foreignRequests = 0;
+  async function stop() {
+    if (context) { await context.close(); context = null; }
+    if (browser) { const previous = browser; await previous.close(); assert.equal(previous.isConnected(), false); browser = null; }
+    if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); server = null; }
+  }
+  async function start() {
+    // A new store has no in-memory state from its predecessor. The origin and
+    // scratch data directory stay the same while browser profiles are fresh.
+    server = serve(scratch); server.listen(port, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+    port = server.address().port; base = `http://127.0.0.1:${port}`;
+    browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required'] });
+    context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, acceptDownloads: true });
+    await context.route(url => url.origin !== base, route => { foreignRequests++; return route.abort('blockedbyclient'); });
+    page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(base + '/');
+    assert.deepEqual(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('chat:'))), [], 'the fresh browser carries no Chat localStorage or injected storage state');
+  }
+  t.after(async () => { await stop(); await fs.rm(scratch, { recursive: true, force: true }); });
+  await start();
+  const prepared = await checkInstalledChatUI(page, { baseURL: base, prepareRestart: true });
+  assert.equal(prepared.restartState.voicePreference, 'local'); assert.equal(prepared.restartState.stories.length, 1);
+  assert.equal(prepared.restartState.timings.length, 1); assert.equal(prepared.restartState.timings[0].status, 'completed');
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(scratch, 'chat-state.json'), 'utf8')).value, prepared.restartState, 'the acknowledged state was written to the owned data file');
+  await stop(); await start();
+  const cleared = await checkRestoredChatState(page, prepared.restartState, { baseURL: base, clear: true });
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(scratch, 'chat-state.json'), 'utf8')).value, cleared, 'the UI clear was committed to the owned data file');
+  await stop(); await start();
+  await checkRestoredChatState(page, cleared, { baseURL: base });
+  assert.deepEqual(errors, []);
+  assert.equal(foreignRequests, 0, 'restart coverage never contacts a real provider');
+  if (process.env.ERA_CHAT_UI_OUT) {
+    await fs.mkdir(process.env.ERA_CHAT_UI_OUT, { recursive: true });
+    await fs.writeFile(path.join(process.env.ERA_CHAT_UI_OUT, 'restart-report.json'), JSON.stringify({ ok: true,
+      evidence: 'Three independent browser processes and store instances over one owned origin and scratch data directory. State is written through the UI and restored through the real local file API; voice services use synthetic fixtures.',
+      browserProcesses: 3, storeInstances: 3, explicitVoiceRestored: true, storyRestored: true,
+      numericTimingRowsRestored: prepared.restartState.timings.length, clearSurvivedRestart: true, foreignRequests }, null, 2));
+  }
 });
