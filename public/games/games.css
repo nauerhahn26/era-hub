@@ -406,6 +406,19 @@ to {
   margin:0 0 12px}
 .partner-panel a {
   color:#075F6D}
+#saveNotice {
+  position:fixed;
+  right:28px;
+  top:calc(var(--bar-h) + 12px);
+  z-index:4;
+  max-width:25vw;
+  padding:5px 9px;
+  border-radius:6px;
+  background:#F7F9F8E8;
+  color:#17272E;
+  font-size:44px;
+  text-align:right;
+  pointer-events:none}
 .partner-panel button {
   font-size:20px;
   padding:8px 14px}

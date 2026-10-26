@@ -1282,6 +1282,27 @@
       ]
     },
     {
+      "id": "era-hub:tests/games-save.test.mjs",
+      "purpose": "Durable Games state validation, atomic writes, migration, save acknowledgement, browser restart and Exit ordering",
+      "group": "games",
+      "lane": "linux",
+      "level": "hub and browser persistence integration",
+      "dependencies": [
+        "era-hub/server.js",
+        "era-hub/content-store.js",
+        "era-hub/public/games/**",
+        "era-core/lib/doorbar.js",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "private-browser-storage",
+        "private-hub-data"
+      ]
+    },
+    {
       "id": "era-hub:tests/games-state.test.mjs",
       "purpose": "Independent persisted workspaces, legal game rules, confirmations, deterministic randomness and reversible undo",
       "group": "games",
@@ -2384,6 +2405,7 @@
         "era-hub:tests/erabook.test.mjs",
         "era-hub:tests/fal-key.test.mjs",
         "era-hub:tests/games-audio.test.mjs",
+        "era-hub:tests/games-save.test.mjs",
         "era-hub:tests/games-state.test.mjs",
         "era-hub:tests/games-ui.test.mjs",
         "era-hub:tests/gate-safety.test.mjs",
@@ -2537,6 +2559,7 @@
         "era-hub:tests/erabook.test.mjs",
         "era-hub:tests/fal-key.test.mjs",
         "era-hub:tests/games-audio.test.mjs",
+        "era-hub:tests/games-save.test.mjs",
         "era-hub:tests/games-state.test.mjs",
         "era-hub:tests/games-ui.test.mjs",
         "era-hub:tests/gate-safety.test.mjs",

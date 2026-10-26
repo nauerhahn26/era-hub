@@ -193,3 +193,33 @@ of partial results. Core is pinned in `era-core--wt-games`, Board in
 `era-board--wt-games`; all other selected source heads and runtime versions
 are recorded in the new input fingerprint. Games product code remains
 unchanged from the reviewed playable implementation.
+
+## Kiosk restart durability, 2026-10-26
+
+The installed Edge kiosk uses InPrivate storage. Browser localStorage does not
+carry the wardrobe through a full kiosk close, so the next Games release moves
+the saved model into the hub data folder. This is a new source and release
+candidate; the earlier v1.0.17 artifact and its gate do not prove this change.
+
+- [x] Add a bounded, model-validated `GET`/`PUT /games/state` with same-origin
+  write guard and atomic replacement. A corrupt durable file remains intact
+  and has a fixed recovery download.
+- [x] Load durable state before Games is ready. Migrate a valid browser save
+  only when the durable file is missing. Keep play usable and show a visible
+  truthful failure state when loading or writing fails.
+- [x] Serialize writes so an older response cannot certify newer edits. Wait
+  briefly for the latest write before Exit while keeping Talk immediate.
+- [x] Test a new browser context and restarted hub using the same data folder;
+  validate all three game workspaces, three looks, draft and lineup, and cover
+  invalid, oversized, foreign, corrupt and failed writes.
+- [x] Extend the shared doorbar's optional leave callback with a bounded wait,
+  without changing synchronous callers; test completion, rejection, thrown
+  errors, timeout and retry after a completed close response.
+- [x] Add the new Games persistence suite to the exact test registry.
+- [ ] Run the fresh complete gate and installed Windows kiosk restart test on
+  the newly built artifact before release.
+
+The same new candidate also carries the test-only Reader empty-shelf readiness
+fix: the browser test waits for the visible empty shelf before its original
+assertions. It changes no Reader runtime. The complete gate must validate the
+combined source tree and its new 148-suite inventory.

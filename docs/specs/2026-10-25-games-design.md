@@ -45,6 +45,15 @@ Fashion Studio supports the complete create-to-show loop:
 
 Drafts, completed looks and game progress persist locally. No account,
 network, external generation key or subscription is needed in local play.
+The local save lives in the hub's `ERA_DATA_DIR/games/state.json`, beyond the
+kiosk browser's InPrivate lifetime. `GET /games/state` reads it before Games
+becomes ready; `PUT /games/state` accepts only a bounded, valid versioned model
+from the hub's own page and atomically replaces the file. A missing file permits
+one migration of a valid older browser save. An unreadable durable file remains
+untouched and can be exported for recovery; Games stays usable without claiming
+new work was saved. The visible save status says Saved only after the latest
+write is acknowledged. Exit waits briefly for an in-flight write, then leaves
+even if the hub cannot answer. Talk still takes the immediate communication path.
 New wardrobes, pets, larger collections and richer choreography follow the
 first complete loop rather than appearing as unavailable child choices.
 
