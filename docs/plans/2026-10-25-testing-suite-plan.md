@@ -5,8 +5,33 @@ authorized in stages, prioritizing the releases already waiting for the gate.
 The [audit](../research/2026-10-25-testing-suite-audit.md) and
 [proposed strategy](../specs/2026-10-25-testing-strategy-design.md) are reviewable
 recommendations. The first [test-only speedup stage](2026-10-25-testing-suite-speedups.md)
-is ready for full verification. Runner hardening and focused-job tools are being
-verified separately. Acceptance requirements and live services remain unchanged.
+has passed all 35 cases in an isolated proof. Runner hardening and focused-job
+tools are being verified separately. Acceptance requirements and live services
+remain unchanged.
+
+## Current priority: parallel full gates
+
+The maintainer has prioritized isolated complete gates over the smaller fixture
+savings. Deliver a standalone runner usable with an owning release's existing
+gate, without requiring that release to absorb the wider registry, selection or
+landing changes. Keep the existing active gate untouched. The initial capacity
+is one isolated worker alongside the legacy lane, with host resource admission;
+two complete gates is the total ceiling, not two additional gates.
+
+- [x] Prove namespace execution with all 35 clothing cases and no skipped cases.
+- [ ] Snapshot clean selected sibling sources, complete required Git history,
+  runtime and synthetic data; validate origins before and after execution.
+- [ ] Verify isolation, complete collection, resource admission and genuine
+  gate-issued receipts with negative and concurrent synthetic tests.
+- [ ] Run a consenting queued release's complete gate as the first real pilot.
+- [ ] Obtain owner acknowledgments of adoption, exact source tuple and ETA.
+- [ ] Coordinate cumulative source candidates and serialize final landing,
+  version selection and publication; retain all required Windows acceptance.
+- [ ] Measure actual overlap, memory and completion time before promising
+  throughput or increasing capacity.
+
+See the [adoption record](2026-10-25-parallel-gate-adoption.md). The implementation
+order below remains the wider strategy; this priority supersedes its sequencing.
 
 ## Audit receipt
 
