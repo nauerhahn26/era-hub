@@ -154,4 +154,25 @@ reader to match before relying on it. A suite whose samples have mixed sources
 reports the lowest-confidence source. Refresh on a green master gate and commit
 weekly.
 
+## Suite classes
+
+Every registry suite ends with the classes the lane scheduler and the result
+store read: `hub` (`none`, `own`, `shared-reader`, `shared-writer`), `ports`,
+`browsers`, `heavy`, `solo`, `quiet`, `retry` and `owner`. They are derived from
+the suite sources, never typed by hand:
+
+```sh
+node tools/testing/classify-suites.mjs          # rewrite registry.json in place
+node tools/testing/classify-suites.mjs --check  # list what differs, exit 1
+```
+
+Rerun it after any sync, merge or suite edit and review the diff;
+`tests/suite-classes.test.mjs` fails the gate while the registry and the sources
+disagree. Judgment calls (`solo`, `quiet`, segmentation reached through a hub,
+two hub corrections) live in the commented `OVERRIDES` table in the script,
+each with a witness pattern that must still match its suite. `retry` and
+`owner` are reviewed decisions the script keeps; it refuses either without the
+other. A `resources` list made only of derived words is rewritten from the
+classes; a list with any other word is a reviewer's and stays verbatim.
+
 Development and release requirements remain in [the development flow](../../docs/dev-flow.md).

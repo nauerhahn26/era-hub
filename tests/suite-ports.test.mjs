@@ -29,7 +29,9 @@
 //   FEED2_PORT = 8412;                (a bare assignment)
 // Comments, strings and regular expressions are blanked first, so a header
 // that documents a neighbour's port is not a claim. One file reusing its own
-// port for successive cases (update.test.mjs's 8412) is one claim.
+// port for successive cases (update.test.mjs's 8412) is one claim. The
+// extractor lives in tools/testing/suite-source.mjs so the registry's `ports`
+// field (tools/testing/classify-suites.mjs) is read by the same code.
 //
 // No shared-port allowlist: after the 10/26 moves no two suites share a fixed
 // listener on purpose. A harness that genuinely must would be named here with
@@ -42,11 +44,11 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { stopHubOnPort, listenerPid } from "./hub-port.mjs";
+import { blank, claims } from "../tools/testing/suite-source.mjs";
 
 const DIR = import.meta.dirname;
 const LIVE = 8300 + 77;                        // written as a sum: see the header
 const reserved = (p) => p === LIVE || p === 8378 || (p >= 8380 && p <= 8389) || p >= 8480;
-const BAND = [8300, 8599];                     // the house band a claim is read from
 const KILL_BY_NAME = /\b(?:pkill|killall)\b/;
 // Claims in the 8480+ band that predate this suite. 8480-8499 is
 // push-device.sh's feed range and 8500+ the device tunnels, so each is an
@@ -57,84 +59,6 @@ const KILL_BY_NAME = /\b(?:pkill|killall)\b/;
 // review, and an entry no longer claimed fails, so the list only shrinks.
 const PREDATING_HIGH = ["gaze-status.test.mjs:8489", "gaze-status.test.mjs:8491",
   "presence.test.mjs:8486", "presence.test.mjs:8487"];
-
-// Blank comments and regular-expression literals, and string and template
-// bodies unless keepStrings, keeping every newline so line numbers survive.
-export function blank(src, { keepStrings = false } = {}) {
-  const fill = (s) => s.replace(/[^\n]/g, " ");
-  const REGEX_BEFORE = "(,=:[!&|?{};+-*%<>~^";
-  let out = "", i = 0, prev = "";
-  while (i < src.length) {
-    const c = src[i], d = src[i + 1];
-    if (c === "/" && d === "/") {
-      const nl = src.indexOf("\n", i), end = nl < 0 ? src.length : nl;
-      out += fill(src.slice(i, end)); i = end; continue;
-    }
-    if (c === "/" && d === "*") {
-      const close = src.indexOf("*/", i + 2), end = close < 0 ? src.length : close + 2;
-      out += fill(src.slice(i, end)); i = end; continue;
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c) {
-        if (src[j] === "\\") j++;
-        else if (c !== "`" && src[j] === "\n") break;
-        j++;
-      }
-      const end = Math.min(j + 1, src.length), body = src.slice(i + 1, end - 1);
-      out += keepStrings ? src.slice(i, end) : c + fill(body) + (end - 1 > i ? src[end - 1] : "");
-      prev = c; i = end; continue;
-    }
-    if (c === "/" && (prev === "" || REGEX_BEFORE.includes(prev) ||
-        /\b(?:return|typeof|case|of|in|void|yield|await)$/.test(out.slice(-12).trimEnd()))) {
-      let j = i + 1, inClass = false;
-      while (j < src.length && src[j] !== "\n") {
-        if (src[j] === "\\") { j += 2; continue; }
-        if (src[j] === "[") inClass = true;
-        else if (src[j] === "]") inClass = false;
-        else if (src[j] === "/" && !inClass) break;
-        j++;
-      }
-      if (src[j] === "/") {
-        j++;
-        while (j < src.length && /[a-z]/i.test(src[j])) j++;
-        out += fill(src.slice(i, j)); prev = ")"; i = j; continue;
-      }
-    }
-    out += c;
-    if (!/\s/.test(c)) prev = c;
-    i++;
-  }
-  return out;
-}
-
-// Every fixed listener port the source claims: [{ port, name, line }].
-export function claims(src) {
-  const code = blank(src), found = [], named = new Map();
-  const END = String.raw`\s*\)?\s*(?=[;,)\]}\n]|$)`;
-  const forms = [
-    // const PORT = 8463;   PORT = Number(process.env.X) || 8469;   Number(process.env.X || 8390)
-    [new RegExp(String.raw`^\s*(?:(?:Number|parseInt)\s*\(\s*)?\+?\s*(?:process\.env\.[\w$]+\s*\)?\s*\|\|\s*)?(\d{4})` + END), (m) => Number(m[1])],
-    // const PORT2 = PORT + 1;
-    [new RegExp(String.raw`^\s*([A-Za-z_$][\w$]*)\s*\+\s*(\d{1,3})` + END), (m) => named.has(m[1]) ? named.get(m[1]) + Number(m[2]) : null],
-    // const A = makeHub("a", 8473);
-    [new RegExp(String.raw`^\s*(?:new\s+)?[A-Za-z_$][\w$.]*\s*\((?:[^()\n]*,)?\s*(\d{4})\s*\)\s*(?=[;,)\]}\n]|$)`), (m) => Number(m[1]), "call"],
-  ];
-  const target = /(?<![\w$])([A-Za-z_$][\w$]*)\s*=(?![=>])/g;
-  for (const m of code.matchAll(target)) {
-    const rest = code.slice(m.index + m[0].length, m.index + m[0].length + 200);
-    for (const [re, value, kind] of forms) {
-      const hit = rest.match(re);
-      if (!hit) continue;
-      const port = value(hit);
-      if (port === null || port < BAND[0] || port > BAND[1]) break;
-      if (kind !== "call") named.set(m[1], port);
-      found.push({ port, name: m[1], line: code.slice(0, m.index).split("\n").length });
-      break;
-    }
-  }
-  return found;
-}
 
 // The suite files beside this one: node --test suites, the legacy .js scripts
 // and the helper modules they import.
