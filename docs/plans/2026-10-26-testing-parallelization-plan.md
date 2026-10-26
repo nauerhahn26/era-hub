@@ -367,6 +367,18 @@ on the merged tree is the proof run and the landing gate at once.
 - [ ] 2.7 Land. Expected: a clean full gate in 19 to 21 min at 2 lanes, 14 to
       17 at 3 if 0.4 and the benchmark allow it.
 
+Landed 10/26 22:13 UTC as era-hub master e4d44c7: the first two-lane gate on
+the merged tree ran 164 suites green in 14 min 10 s (21:59:21 to 22:13:31),
+0 memory holds, host MemAvailable never under 2.95 GiB, gate tree RSS peak
+2.03 GiB; suite time 1661 s, so the two lanes were busy 98 % of the wall.
+The same day's serial gate after the suite speedups took 26 min 39 s and the
+morning's 33 min 16 s. One merge fix on the way: gate-safety's new ordering
+case had to learn that "the suites" now start at the lanes runner. A stopped
+gate marks the suites it killed as FAIL; a `stopped` state is a follow-up.
+`durations.json` still holds pre-speedup medians and must be regenerated
+from `results.jsonl` (`harvest-durations.mjs --results`) at the next landing
+that touches tools/; the mtime method is wrong under lanes.
+
 ## Phase 3: per-suite reuse, rerun-failed, restamp (three to four days)
 
 - [ ] 3.1 Run store under `$ERA_GATE_RUNS/<run-id>/` (seam, never `$HOME`;
@@ -503,4 +515,31 @@ on the merged tree is the proof run and the landing gate at once.
 
 ## Retrospective
 
-To be written at close.
+Interim, 10/26 evening, after phases 0, 1 and 2 landed in one day.
+
+- What moved the number: three things, in this order of size. Removing sleeps
+  that waited on nothing (a stand-in provider's rate limit, parks, settles,
+  speech self-tests that fail in 20 ms): 33 to 26.6 minutes serial. Lanes:
+  26.6 to 14.2. The hygiene before both (one port per suite, pid-only kills,
+  classes) made lanes safe rather than fast.
+- What the plan got wrong: the lane model was built on the pre-speedup
+  durations and on a three-lane hope that the heavy rule caps anyway; the
+  speedup audit's estimates ran 25 to 40 % high where a skeptic had not
+  measured; "six small landings" became three; the one-day Phase 0 was an
+  evening, the two-to-three-day Phase 2 a few hours in its own worktree once
+  the gate ran elsewhere. Dad's "that timeline is ridiculous" was right: the
+  padding was sequential gates and a benchmark night, not work.
+- What the process got right: adversarial review before building (the first
+  draft would have reversed a review ruling by env var and would have run the
+  weekly gate in the main checkout); a skeptic per profiler (four
+  overstatements caught, the 49155 door-probe hazard found); every builder
+  on the house laws, test first, nothing committed by an agent.
+- Windows leg B: a red that two sessions wrote off as "harness" was a QA
+  template booting at 1024x768 and a private setup step nobody had put in
+  the public harness. An assertion that prints nothing but "did not fit"
+  cost a day; it now prints every tile.
+- Still open: Phase 3 (reuse, rerun-failed, restamp) and Phase 4 (gate-wait,
+  no-polling law); the shrink-only list of four suites in the push-device
+  band; the pencil hold margins (about 16 s); the segmentation skip (about
+  60 s); a `stopped` state for killed suites; durations.json regeneration
+  from results.jsonl.
