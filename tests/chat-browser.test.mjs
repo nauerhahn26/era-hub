@@ -17,6 +17,7 @@ function serve() {
     try {
       const url = new URL(req.url, 'http://localhost');
       const json = value => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
+      if (url.pathname === '/') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<!doctype html><title>Chat fixture</title>'); return; }
       if (url.pathname === '/settings') return json({ dwellMs: 1200, pauseGoes: 'home' });
       if (url.pathname === '/chat/api/config') return json({ runtime: { available: true, kind: 'built-in' }, choices: { available: true } });
       if (url.pathname === '/chat/api/choices' && req.method === 'POST') {
@@ -41,9 +42,20 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   const browser = await chromium.launch({ headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${wav}`, '--autoplay-policy=no-user-gesture-required'] });
   t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, hasTouch: true, permissions: ['microphone'], acceptDownloads: true });
-  await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+  let negativeControlRequests = 0, unexpectedForeignRequests = 0;
+  // Allowed fixture requests need no context callback. A terminal continue on
+  // the same route as a page handler races removal of in-flight page routes.
+  await context.route(url => url.origin !== base, route => {
+    const url = new URL(route.request().url());
+    if (url.origin === 'https://blocked.invalid' && url.pathname === '/isolation-control') negativeControlRequests++;
+    else unexpectedForeignRequests++;
+    return route.abort('blockedbyclient');
+  });
   const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
-  await page.goto(base + '/chat/');
+  // Snapshot and cleanup on an inert owned page: no unscoped Chat prefetch.
+  await page.goto(base + '/');
+  assert.equal(await page.evaluate(() => fetch('https://blocked.invalid/isolation-control').then(() => false, () => true)), true);
+  assert.equal(negativeControlRequests, 1, 'the foreign request is intercepted and blocked');
   const report = await checkInstalledChatUI(page, { baseURL: base }); assert.equal(report.ok, true);
   // The shared installed-UI helper restores its routes/storage after its test.
   // This second pass owns a simulated recognizer with the real capture graph.
@@ -68,7 +80,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     else result = { ready: true, mode: 'paused' };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) }).catch(() => {});
   });
-  await page.reload(); await page.waitForFunction(() => document.querySelector('#engineNote').textContent.includes('set up'));
+  await page.goto(base + '/chat/'); await page.waitForFunction(() => document.querySelector('#engineNote').textContent.includes('set up'));
   const cdp = await context.newCDPSession(page);
   async function down(selector) {
     const box = await page.locator(selector).boundingBox(); assert.ok(box);
@@ -130,6 +142,8 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   assert.ok(stored.turns.some(row => row.status === 'failed' && row.reason === 'timeout'));
   assert.ok(stored.turns.some(row => row.status === 'cancelled' && row.reason === 'closed'));
   assert.deepEqual(errors, []);
+  assert.equal(negativeControlRequests, 1);
+  assert.equal(unexpectedForeignRequests, 0, 'no other foreign network attempts');
   if (artifacts) await fs.writeFile(path.join(artifacts, 'report.json'), JSON.stringify({ ok: true,
     evidence: 'Owned local fixture only. Native browser saved-audio playback; real worklet with synthetic microphone input. Recognition, choices and voice services are mocked. No device, real service, voice-quality or speech-accuracy claim.',
     installedUIContracts: report, heldCapture: true, freshNeutralRequired: true, boundedUploadRecovery: true,

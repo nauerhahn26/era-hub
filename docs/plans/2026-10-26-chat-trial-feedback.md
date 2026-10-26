@@ -90,3 +90,19 @@ expired on-demand work cannot play later. The existing shared speech proxy's
 upstream cancellation and disk-cache behavior are unchanged. These mocked
 checks establish behavior and execution, not live service latency or voice
 quality. Full gate and installed Windows acceptance remain required below.
+
+The first full follow-up run, `gate-20261026T032716Z-afce089a`, found a browser
+fixture cleanup race. Removing a page interceptor auto-continued an in-flight
+request while a context interceptor also tried to continue it. A private cold
+two-CPU reproduction with forty concurrent owned requests failed at that same
+point. The fixture now starts and returns on an inert owned page, and its
+context guard only denies foreign origins. An explicit intercepted external
+negative control retains the isolation check; no routing errors are ignored.
+The repaired complete browser/API files pass 39/39 in three cold stressed runs.
+Product code and the installed Windows helper did not change for this repair.
+
+The known-red full run was stopped through its verified owned namespace PID
+after 64 suites: 63 passing and the fixture failure. It produced no green stamp
+or completed full receipt. A new complete 147-suite run is required on the
+corrected clean candidate. Release copy is corrected before that run as well,
+so its saved-voice description matches the implemented default.
