@@ -289,6 +289,28 @@ without touching any pinned test.
 
 ## Phase 2: lanes inside one gate (two to three days)
 
+Progress 10/26 (built in one evening in its own worktree, `era-hub--wt-gate-lanes`,
+after dad's "what can we deploy today"): `tools/testing/lanes.mjs` replaces the
+serial loop; ERA_GATE_LANES default 2, 1 is the serial loop byte for byte;
+solo first, then longest known duration first; never two heavy, never quiet
+beside heavy, never two claimants of one fixed port including the gaze
+engine's bus 49155, which the classifier now records for kiosk-pause and
+routes; those two also run solo, because every hub's settings probe that
+port to place the door and a stand-in engine held by one suite would be seen
+by hubs in other lanes. MemAvailable floor 2 GiB holds a lane, never the
+last one running. Each suite is re-hashed against its frozen digest at
+start; RUN, PASS and FAIL lines, the summary and the stamp are unchanged;
+`results.jsonl` records one line per suite; TERM or INT stops every suite by
+pid within seconds. 13 scheduler tests with a fake node; every pinned gate
+shape green. Modelled on the pre-speedup durations: 35.5 min serial, 18.3 at
+two lanes, 14.4 at three, and three equals four because the heavy suites
+form a chain. Not built: the PSI pressure hold, the two-lane cap while an
+isolated lease is held, archiving results.jsonl into the job dir; the
+harvester must read results.jsonl once lanes are on (its mtime method
+assumes serial runs); the progress readers in parallel-worker and
+suite-runner show only the last RUN line (cosmetic). The first two-lane gate
+on the merged tree is the proof run and the landing gate at once.
+
 - [ ] 2.1 `tools/testing/lanes.mjs`: input plan + durations + lane count +
       classes; longest-first queue; per-suite re-hash before start; same
       command, cwd, timeout and env as the serial loop; `solo` drains lanes;
