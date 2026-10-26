@@ -15,7 +15,7 @@ speed and recovery recommendations afterward.
 - [x] Coordinate and validate a real second Windows host without disturbing Games.
 - [x] Add pinned native initialization after revert and application execution
   after complete baseline, preserving test assertions and separate outputs.
-- [x] Finish review and negative coverage:23 public checks (including33 Python
+- [x] Finish review and negative coverage:24 public checks (including33 Python
   transport checks),56 private manager checks, registry148 and syntax checks.
 - [x] Freeze the public/private implementation commits for owner review and adoption.
 - [ ] Report supported concurrency, measured overlap, blockers and adoption commands.
@@ -51,3 +51,7 @@ That attempt exposed a receipt issue: exec changed the waiting wrapper's argv
 at the same PID/start. A real-child regression now requires separate immutable
 launch and observed-execution receipts, with the intended argv explicitly pinned.
 The replacement driver does not alter the failed job's frozen controls.
+The port-refusal check now owns an OS-assigned ephemeral listener, and fake
+workers inject their preflight. These unit checks cannot collide with legitimate
+manual/VM tunnels in the8500–8599 range. The production range/refusal guard is
+unchanged; a negative proves busy preflight stops before provider allocation.

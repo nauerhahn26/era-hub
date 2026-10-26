@@ -243,12 +243,16 @@ export function claimWindowsJob(directory) {
   const descriptor=fs.openSync(file,'wx',0o600);
   fs.writeFileSync(descriptor,JSON.stringify({launcher:processIdentity(),at:new Date().toISOString()})+'\n');fs.closeSync(descriptor);
 }
-export async function requireFreeCdp(port) {
-  if(!Number.isSafeInteger(port) || port<8500 || port>8599)throw Error('Invalid managed CDP port');
+export async function probeFreeLoopback(port) {
+  if(!Number.isSafeInteger(port) || port<1 || port>65535)throw Error('Invalid loopback port');
   await new Promise((resolve,reject)=>{
     const probe=net.createServer();probe.once('error',reject);
     probe.listen({host:'127.0.0.1',port,exclusive:true},()=>probe.close(error=>error?reject(error):resolve()));
   });
+}
+export async function requireFreeCdp(port) {
+  if(!Number.isSafeInteger(port) || port<8500 || port>8599)throw Error('Invalid managed CDP port');
+  await probeFreeLoopback(port);
 }
 
 export function verifyWindowsInputs(job) {
@@ -326,7 +330,7 @@ export async function runWindowsPreparation(directory,{verifyInputs=verifyWindow
   atomicJSON(path.join(directory,'preparation.json'),result);return result;
 }
 
-export async function runWindowsJob(directory,{secretEnv,apiEnv,leaseDir,verifyInputs=verifyWindowsInputs,captureChildIdentity=processIdentity}) {
+export async function runWindowsJob(directory,{secretEnv,apiEnv,leaseDir,verifyInputs=verifyWindowsInputs,captureChildIdentity=processIdentity,checkCdp=requireFreeCdp}) {
   directory=absolute(directory);const job=JSON.parse(regular(path.join(directory,'job.json')));
   if(job.directory!==directory || job.version!==2 || job.only!=='b' || !['managed','legacy'].includes(job.slot))throw Error('Job identity or supported phase changed');
   const status=(state,extra={})=>atomicJSON(path.join(directory,'status.json'),{status:state,updated:new Date().toISOString(),...extra});
@@ -353,7 +357,7 @@ export async function runWindowsJob(directory,{secretEnv,apiEnv,leaseDir,verifyI
   };
   try {
     let checked=verifyInputs(job);if(!checked.valid)throw Error(checked.reasons.join('; '));
-    await requireFreeCdp(job.cdpPort);
+    await checkCdp(job.cdpPort);
     status('waiting',{started,owner});const deadline=Date.now()+7200000;
     while(true) {
       const result=call([manager,'up']);

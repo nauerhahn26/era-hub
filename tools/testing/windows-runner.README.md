@@ -97,6 +97,10 @@ was observed. The PID/start must remain unchanged. Do not replace a stored hash
 merely because it mismatches; validate the explicit transition and current
 identity before any owner-controlled individual-PID interruption.
 
+Local safeguards use owned ephemeral listeners, so running the tests does not
+occupy the production tunnel range. Worker unit doubles replace cloud/transport
+and port preflight; the CLI always uses the actual range and listener guard.
+
 Cleanup stops only captured individual process identities, then requests deletion
 of the exact owned provider resource. Accepted deletion is recorded before
 polling. Ambiguous inventory or changed identity retains the reservation for
