@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { freezeArtifacts, verifyArtifactCopies, freezeApplication, verifyApplication, validateWindowsTap, bindVmLibrary, bindVmRunner, bindVmEnvironment, bindVmRevert, claimWindowsJob, requireFreeCdp, runWindowsJob, runWindowsPreparation } from '../tools/testing/windows-runner.mjs';
+import { freezeArtifacts, verifyArtifactCopies, freezeApplication, verifyApplication, validateWindowsTap, bindVmLibrary, bindVmRunner, bindVmEnvironment, bindVmRevert, claimWindowsJob, probeFreeLoopback, requireFreeCdp, runWindowsJob, runWindowsPreparation } from '../tools/testing/windows-runner.mjs';
 import net from 'node:net';
 
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
@@ -116,8 +116,9 @@ test('Python transport and owned-process negative checks pass without cloud acce
 });
 test('job launch is claimed once and occupied CDP ports are refused without stopping listeners',async t=>{
   const f=fixture(t);claimWindowsJob(f.root);assert.throws(()=>claimWindowsJob(f.root));
-  const listener=net.createServer();await new Promise(resolve=>listener.listen(8596,'127.0.0.1',resolve));
-  t.after(()=>listener.close());await assert.rejects(requireFreeCdp(8596));assert.equal(listener.listening,true);
+  const listener=net.createServer();await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));
+  t.after(()=>listener.close());await assert.rejects(probeFreeLoopback(listener.address().port),{code:'EADDRINUSE'});assert.equal(listener.listening,true);
+  for(const port of [0,8499,8600])await assert.rejects(requireFreeCdp(port),/Invalid managed CDP port/);
 });
 function workerFixture(t,{skip=false,cleanupFailure=false,application=false,applicationFailure=false,applicationTamper=false,hold=false}={}) {
   const f=fixture(t),job=f.root,control=path.join(job,'control'),helpers=path.join(job,'helpers'),executionHub=path.join(job,'execution');
@@ -137,8 +138,13 @@ function workerFixture(t,{skip=false,cleanupFailure=false,application=false,appl
     meta.application={id:'fixture',root,entry:'run.mjs'};
   }
   fs.writeFileSync(path.join(job,'job.json'),JSON.stringify(meta));
-  return {job,options:{secretEnv:path.join(job,'secret.env'),apiEnv:path.join(job,'api.env'),leaseDir:path.join(job,'leases'),verifyInputs:()=>({valid:true,reasons:[]})}};
+  return {job,options:{secretEnv:path.join(job,'secret.env'),apiEnv:path.join(job,'api.env'),leaseDir:path.join(job,'leases'),verifyInputs:()=>({valid:true,reasons:[]}),checkCdp:async()=>{}}};
 }
+test('an occupied-port preflight failure stops the worker before any allocation',async t=>{
+  const f=workerFixture(t),result=await runWindowsJob(f.job,{...f.options,checkCdp:async()=>{throw Error('owned port busy');}});
+  assert.equal(result.valid,false);assert.equal(result.error,'owned port busy');assert.equal(fs.existsSync(path.join(f.job,'events')),false);
+  assert.equal(result.completeReleaseEvidence,false);
+});
 test('worker waits for its actual complete TAP then tears down transport before host',async t=>{
   const f=workerFixture(t),result=await runWindowsJob(f.job,f.options);
   assert.equal(result.valid,true,result.error);assert.equal(result.completeReleaseEvidence,false);
