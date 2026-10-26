@@ -9,8 +9,10 @@ alone may replace its own queued job. Existing running gates remain untouched.
 
 The source-isolation proof passed all 35 clothing cases. The standalone runner,
 source snapshot and resource admission safeguards pass their synthetic and real
-namespace preflight checks. A complete parallel gate pilot has not yet finished.
-Do not treat these checks as a full landing or release stamp. Commands and
+namespace preflight checks. Two complete 139-suite pilots finished red because
+of fixture defects; their results were never accepted as green. The current
+combined-runtime Chat and Games gates are running with all known fixture repairs.
+Do not treat preliminary checks as a full landing or release stamp. Commands and
 boundaries: [isolated full gates](../../tools/testing/parallel-worker.README.md).
 
 Initial capacity is one isolated gate plus the reserved legacy gate lane,
@@ -23,10 +25,11 @@ invalidate promotion. Final landing and publication remain serialized.
 
 | Release | Fixture stage | Queue / source coordination | Parallel adoption |
 | --- | --- | --- | --- |
-| Math | Existing run unchanged | Passed 132/0 and landed `e75e16c`; Windows acceptance follows separately | No migration requested |
-| YouTube Videos | `2597549` includes `fe2e9e7`; file hash verified | Owner confirmed clean `6abdcf0` and active corrected legacy gate | Owner explicitly agrees to use the runner on a next necessary run after full pilot validation |
-| Chat | Owner confirmed `654af54` | Frozen clean hub `28fc5be`, board `395d02b`; includes actual Math and cumulative YouTube source | Owner consents to first full pilot; narrow isolation prerequisites adopted |
-| Games | Owner confirmed `783f083` | Frozen cumulative hub `7929a5f`, board `fca7f91`; board tree matches Chat's tested source | Owner explicitly agrees to adopt after first full pilot validates |
+| Math | Existing run unchanged | v1.0.13 completed 132/0 plus Windows 8/8 | No migration requested |
+| YouTube Videos | `2597549` includes `fe2e9e7`; file hash verified | v1.0.14 completed 132/0 plus Windows 8/8 | Owner explicitly agrees to use the runner on a next necessary run after full pilot validation |
+| Speech and sorting follow-up | Existing legacy lane | v1.0.15 completed 133/0 plus Windows 8/8; actual Hub `cbfbb8d` and Core `02377c5` are now predecessors | Owner confirms no further repository landings during the Chat/Games batch |
+| Chat | Fixture stages and both Reader repairs adopted | Frozen Hub `81fcabb`, Core `02377c5`, Board `395d02b`; every dependency is pinned in matching worktrees | Full 140-suite isolated run started 01:54 UTC, port 8388, two CPUs |
+| Games | Same fixture repairs adopted before collection | Frozen Hub `c097524`, Core pin `02377c5`, Board `fca7f91`; 143-suite inventory verified | Full 143-suite legacy run started 01:56:53 UTC on 8381 alongside Chat |
 
 These are observations and acknowledgments at the time of writing, not a
 reservation of publication order or version numbers. Recheck the original
@@ -34,6 +37,12 @@ worktree's clean source tuple immediately before collection. A snapshot protects
 execution from source movement; it does not waive the requirement to include
 current master when landing. Candidates can overlap usefully when later ones
 already include the frozen earlier source, or when earlier changes have landed.
+
+The active Chat job is `gate-20261026T015400Z-b27fb428`. Games owns its separate
+legacy job and completion sentinel. The initial intended ordering changed when
+the speech/sorting release was authorized and shipped first. Both candidates
+now include that actual runtime. New publication still requires each owner's
+authorization; Games publication has not been inferred from test coordination.
 
 ## Verification and timing
 
