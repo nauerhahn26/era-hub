@@ -19,6 +19,12 @@ Spec: [response voice pace](../specs/2026-10-26-response-voice-pace.md).
 - [x] Replace that test port with a kernel-selected port and wait for the owned
   child's readiness before connecting. Product code is unchanged. The complete
   Settings, port inventory and suite classification checks pass (98/98).
+- [x] Preserve interrupted corrective run after Reader UI exposed an existing
+  startup race: the book index had arrived but the initial content status had
+  not, so the poll was not yet armed. Wait for that initial answer in the test;
+  retain exact 60000/20000 interval assertions. Full Reader file passes (49/49),
+  and disabling only initial poll scheduling still fails the exact assertion.
+  Reader product code and narration pace remain unchanged.
 - [x] Add an installed Windows save/reload smoke to normal patch leg B;
   existing VM contract checks pass (12/12). No private preparation hook.
 - [ ] Coordinate with Testing suite before shared runtime landing or publishing.

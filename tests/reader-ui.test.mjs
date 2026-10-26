@@ -1265,6 +1265,9 @@ test("the poll runs on a shelf that already has books — a pile dropped on a fu
   let st = contentStatus({});
   const { ctx, page, tick } = await shelfWith(() => st, full);
   await page.waitForFunction(() => window.Reader.state().shelfCount === 1);
+  // The index arrives before /content/status. Wait for that initial answer,
+  // which completes shelf boot and arms its poll, before checking the clock.
+  await page.waitForFunction(() => window.Reader.state().drive === true);
   assert.equal(await page.evaluate(() => window.Reader.state().buildingCount), 0);
   // Nothing is in flight, so the shelf looks on the slower clock — but it DOES
   // look: before §13 the interval was never armed at all once the shelf had a
