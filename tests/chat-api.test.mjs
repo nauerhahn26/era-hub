@@ -254,7 +254,7 @@ test('SSE timestamps events, drops cancelled generations and sanitizes runtime e
   child.stdout.write(JSON.stringify({ type: 'final', text: 'obsolete', generation: old }) + '\n');
   child.stdout.write(JSON.stringify({ type: 'partial', text: 'A question', generation }) + '\n');
   child.stdout.write(JSON.stringify({ type: 'final', text: 'A question?', generation,
-    timings: { audioMs: 250, finalDecodeMs: 20, firstPartialMs: null, private: '/private/path' } }) + '\n');
+    timings: { audioMs: 250, activityMs: 3, cloudMs: 17, finalDecodeMs: 20, firstPartialMs: null, private: '/private/path' } }) + '\n');
   child.stdout.write(JSON.stringify({ type: 'error', error: '/private/path secret', generation }) + '\n');
   while (!received.includes('runtime-error')) received += new TextDecoder().decode((await reader.read()).value);
   assert.ok(!received.includes('obsolete') && !received.includes('/private/path'));
@@ -262,7 +262,7 @@ test('SSE timestamps events, drops cancelled generations and sanitizes runtime e
   assert.ok(events.some(event => event.type === 'partial' && event.text === 'A question'));
   assert.deepEqual(events.find(event => event.type === 'ready').capabilities,
     { wake: true, partial: false, automaticEndpoint: false, remoteFinal: true, remoteStreaming: false });
-  assert.deepEqual(events.find(event => event.type === 'final').timings, { audioMs: 250, finalDecodeMs: 20, firstPartialMs: null });
+  assert.deepEqual(events.find(event => event.type === 'final').timings, { audioMs: 250, activityMs: 3, cloudMs: 17, finalDecodeMs: 20, firstPartialMs: null });
   assert.ok(events.every(event => Number.isFinite(event.at) && event.elapsedMs >= 0));
   controller.abort();
   await new Promise(resolve => setTimeout(resolve, 10));

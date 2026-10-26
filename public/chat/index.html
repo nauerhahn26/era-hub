@@ -28,7 +28,7 @@
     <h1 id="partnerTitle">Conversation partner</h1>
     <p id="engineNote">Checking question capture…</p>
     <p>Start Chat with a finger and wait for <strong>Ready to ask</strong>. Then hold <strong>Hold to ask</strong> while speaking; release to finish. Pauses do not end the held question. Voice activation is off. Only audio from the held question is submitted; release finishes it.</p>
-    <label>Voice <select id="voicePreference"><option value="local">Device voice · fastest</option><option value="saved">Saved voice · prepares audio first</option></select></label>
+    <label>Voice <select id="voicePreference"><option value="saved">Saved voice</option><option value="local">Device voice (choose explicitly)</option></select></label>
     <section class="partnerSection">
       <h2>My news</h2>
       <p>Add a real story together. A short label can speak a longer message. Stories stay on this browser.</p>
@@ -45,6 +45,16 @@
       <button id="desktopStart" type="button">Keyboard: start Chat</button>
       <button id="desktopAsk" type="button">Keyboard: hold to ask</button>
       <pre id="diagnostics"></pre>
+    </details>
+    <details class="partnerSection" id="turnTimings">
+      <summary>Turn timings</summary>
+      <p>Only timing numbers and outcome categories are saved on this browser, for up to 40 recent turns. No questions, replies, audio or identities are included. Clear them at any time.</p>
+      <p>Release to transcript includes audio draining and recognition. Replies ready to revealed measures the wait for a fresh movement into the black space. Selection to playback measures the wait until the actual voice start event, including any voice preparation. Worker final time combines activity detection and recognition unless separate measurements are available.</p>
+      <p>Medians need three completed measurements in the same turn category; p95 needs twenty. Cancelled and failed turns are counted separately. Missing timings are left out.</p>
+      <p id="timingSummary"></p>
+      <button id="exportTimings" type="button">Download timing numbers</button>
+      <button id="clearTimings" type="button">Clear timing numbers</button>
+      <pre id="timingDetails"></pre>
     </details>
   </dialog>
   <script src="/dwell.js"></script>

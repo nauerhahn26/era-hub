@@ -89,18 +89,22 @@ function createSpeechWorker(options = {}) {
     (async () => {
       try {
         const voiced = await activity.voiced(job.pcm, job.controller.signal);
+        const activityMs = performance.now() - before;
         if (!current(job)) return;
         if (job.controller.signal.aborted) throw new Error('decode_failed');
         if (!voiced) { fail('no_speech'); return; }
+        const cloudBefore = performance.now();
         const body = new FormData();
         body.set('model', env.ERA_CHAT_SPEECH_MODEL);
         body.set('language', env.ERA_CHAT_SPEECH_LANGUAGE || 'en');
         body.set('file', new Blob([wave(job.pcm)], { type: 'audio/wav' }), 'question.wav');
         const response = await fetcher(url.href, { method: 'POST', headers: { Authorization: 'Bearer ' + env.ERA_CHAT_SPEECH_TOKEN }, body, redirect: 'error', signal: job.controller.signal });
         const text = await responseText(response);
+        const cloudMs = performance.now() - cloudBefore;
         if (!current(job)) return;
         if (!text) { fail('no_transcript'); return; }
         event('final', { text, timings: { audioMs: job.pcm.length / 32, captureWallMs: job.captureMs,
+          activityMs: +activityMs.toFixed(2), cloudMs: +cloudMs.toFixed(2),
           firstPartialMs: null, finalDecodeMs: +(performance.now() - before).toFixed(2), turnMs: +(performance.now() - job.started).toFixed(2) } });
       } catch {
         if (current(job)) fail('decode_failed');
