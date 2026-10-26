@@ -1520,6 +1520,33 @@
       "level": "hub process integration"
     },
     {
+      "id": "era-hub:tests/gaze-status.test.mjs",
+      "purpose": "Gaze engine supervisor through the hub: restart with backoff, /status, stop/start routes, stop marker across a restart",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "gate-lock",
+        "shared-assembly",
+        "fixed-ports"
+      ],
+      "level": "hub process integration"
+    },
+    {
+      "id": "era-hub:tests/gaze-supervisor.test.mjs",
+      "purpose": "Gaze engine supervisor state machine on a fake clock",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/gaze-supervisor.js",
+        "era-hub/tests/gaze-supervisor.test.mjs"
+      ],
+      "lane": "linux",
+      "resources": [],
+      "level": "unit"
+    },
+    {
       "id": "era-hub:tests/home-tiles.test.mjs",
       "purpose": "Enabled app home tiles, empty libraries and correct icons",
       "group": "hub",
