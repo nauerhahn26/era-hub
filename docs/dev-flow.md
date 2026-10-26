@@ -169,6 +169,21 @@ and destroys it on exit; `release.sh` holds one host across all of a cut's legs
 creation before a VM leg starts. Details, the reaper cron and how to change the
 template: `aac-board-builder/docs/vm-e2e.md`.
 
+The legs drive one of two guest profiles (`vm-e2e.sh --profile`):
+
+- **`full`**: the template's pristine snapshot, Defender on, with its
+  post-restore signature update and scan waited out (about 7 minutes). Every
+  signed cut drives it for legs A, B and C.
+- **`quiet`**: a separately named snapshot with Defender and Windows Update off,
+  where a readiness check of at most 2 minutes replaces the wait. `release.sh
+  --patch` drives it, because a patch ships no installer.
+
+`release.sh --vm-profile=full|quiet` overrides the shape's default, but a signed
+cut takes `quiet` only on a `--dry-run`. `VM-GREEN` records `profile=`, and the
+signed publish and `--resume-sign` accept only `full`. The quiet snapshot and how
+to remake it: the runbook above. `tests-vm/lib/guest-profile.mjs` says why it is a
+snapshot rather than a switch.
+
 ## Push to one device
 
 ```

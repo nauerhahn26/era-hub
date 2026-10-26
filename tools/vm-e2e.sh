@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vm-e2e.sh <candidate dist dir> [<previous installer .exe>] [--only a|b] [--post-publish]
+# vm-e2e.sh <candidate dist dir> [<previous installer .exe>] [--only a|b] [--post-publish] [--profile full|quiet]
 # Tier 2 of the deploy gate (docs/e2e-deploy-gate-plan.md, dad 9/3): the
 # candidate release installed on a pristine Windows 10 VM and driven through
 # the REAL kiosk window — install, welcome wizard, apps, door, settings,
@@ -37,13 +37,27 @@
 #                        step skips and says so.
 #   --post-publish     leg C only (the published download fetched in Edge on the
 #                      guest and opened by the shell): run AFTER gh release create
+#   --profile full|quiet  the Windows guest the legs drive (default full).
+#                      full  = the pristine template snapshot as a family PC has it:
+#                              Defender on, its post-restore signature update and scan
+#                              waited out (vm.quiet(), ~7 min). Every SIGNED cut, legs
+#                              A, B and C: a signed installer was hash-flagged once.
+#                      quiet = the template's separately named quiet snapshot: the
+#                              same Windows with Defender (real-time protection,
+#                              scheduled and update scans, signature updates) and
+#                              Windows Update off for the life of the leg; the wait is a
+#                              bounded readiness check. release.sh --patch picks it: a
+#                              patch ships no installer, only app files under the signed
+#                              one. Leg C refuses it. tests-vm/lib/guest-profile.mjs.
 # Needs era-family/data/vm.env (QA host + guest credentials) and the driver
 # scripts in era-family/tools/vm. Output: gate/vm-e2e/ (screenshots, logs).
 #
 # VM-GREEN — the marker release.sh will not publish without. A run that finishes
 # with 0 failed writes $DIST/VM-GREEN naming the legs that actually ran
 # (legs=a,b for a full run, legs=b for the patch shape's --only b), the sha256 of
-# the new-era-suite-<V>.tar.gz those legs drove, and the epoch it happened. Every
+# the new-era-suite-<V>.tar.gz those legs drove, the epoch it happened and the
+# guest profile they drove (profile=full|quiet; a signed cut publishes only on
+# full, and a marker without the line predates profiles, so it was full). Every
 # run except --post-publish deletes a stale marker BEFORE it starts, so the file
 # can only ever describe the run that just finished. release.sh refuses to sign
 # (--resume-sign) or to publish (step 5/5 and 4/4) without one whose sha is the
@@ -53,9 +67,15 @@ set -uo pipefail
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 VMT="$ROOT/era-family/tools/vm"
-DIST="${1:?usage: vm-e2e.sh <candidate dist dir> [prev Setup.exe] [--only a|b] [--post-publish]}"; shift
-PREV=""; ONLY=""; PREV_UNTAGGED=""; PREV_LIVE=""; POST=0
-while [ $# -gt 0 ]; do case "$1" in --only) ONLY="${2:?--only needs a|b|c}"; shift 2;; --post-publish) POST=1; ONLY=c; shift;; *) PREV="$1"; shift;; esac; done
+DIST="${1:?usage: vm-e2e.sh <candidate dist dir> [prev Setup.exe] [--only a|b] [--post-publish] [--profile full|quiet]}"; shift
+# ---- arguments (tests/vm-e2e.test.mjs runs this block as bash) ----
+PREV=""; ONLY=""; PREV_UNTAGGED=""; PREV_LIVE=""; POST=0; PROFILE=full
+while [ $# -gt 0 ]; do case "$1" in --only) ONLY="${2:?--only needs a|b|c}"; shift 2;; --post-publish) POST=1; ONLY=c; shift;; --profile) PROFILE="${2:-}"; shift $(( $# > 1 ? 2 : 1 ));; *) PREV="$1"; shift;; esac; done
+case "$PROFILE" in full|quiet) ;; *) echo "vm-e2e: --profile is full or quiet, not '$PROFILE'"; exit 2;; esac
+if [ "$POST" = 1 ] && [ "$PROFILE" != full ]; then
+  echo "vm-e2e: leg C (--post-publish) measures what Windows shows a family, SmartScreen and Defender included: it runs on the full profile only"; exit 2
+fi
+# ---- end of arguments ----
 FEED_PORT=8427
 OUT="$HUB/gate/vm-e2e"; rm -rf "$OUT"; mkdir -p "$OUT"
 # The marker describes the run that is about to happen and nothing else: a stale
@@ -171,6 +191,12 @@ trap cleanup EXIT
 
 export VM_OUT="$OUT" VM_GUEST_USER VM_CANDIDATE_VERSION="${VER:-}" VM_CANDIDATE_BUILD="${BUILD:-}" VM_FEED_PORT="$FEED_PORT"
 export VM_DIST="$DIST"   # leg C reads the expected sha256 out of $DIST/checksums.txt
+export VM_GUEST_PROFILE="$PROFILE"   # vm.mjs reverts and readies the guest by it
+case "$PROFILE" in
+  quiet) PROFILE_NOTE="the template's quiet snapshot: Defender and Windows Update off, a bounded readiness check instead of the quiet wait";;
+  *)     PROFILE_NOTE="the template's pristine snapshot: Defender on, its post-restore update and scan waited out";;
+esac
+echo "-- guest profile: $PROFILE ($PROFILE_NOTE)"
 # leg C: the file name the published latest.json names (the site's button must
 # point at exactly it); leg A: whether $DIST/prev/ holds an old-name installer
 export VM_INSTALLER_FILE="$(exe_of "$DIST")" VM_UPGRADE_OLD="${VM_UPGRADE_OLD:-}"
@@ -202,8 +228,8 @@ echo "== vm-e2e: $pass passed, $fail failed =="
 # rebuild of the same version changes the tarball's sha and the marker stops
 # matching, so a publish of those new bytes needs a new VM run.
 if [ "$POST" != 1 ] && [ $fail -eq 0 ] && [ -n "$RAN" ]; then
-  printf 'legs=%s\ntarball=%s\nat=%s\n' \
-    "$RAN" "$(sha256sum "$DIST/new-era-suite-$VER.tar.gz" | cut -d' ' -f1)" "$(date +%s)" > "$DIST/VM-GREEN"
-  echo "vm-e2e: wrote $DIST/VM-GREEN (legs=$RAN)"
+  printf 'legs=%s\ntarball=%s\nat=%s\nprofile=%s\n' \
+    "$RAN" "$(sha256sum "$DIST/new-era-suite-$VER.tar.gz" | cut -d' ' -f1)" "$(date +%s)" "$PROFILE" > "$DIST/VM-GREEN"
+  echo "vm-e2e: wrote $DIST/VM-GREEN (legs=$RAN, profile=$PROFILE)"
 fi
 [ $fail -eq 0 ]
