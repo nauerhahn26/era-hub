@@ -1,144 +1,128 @@
 # ERA Hub testing suite audit and rollout plan
 
-Branch: `feat/testing-suite`. Research and audit are complete; implementation is
-authorized in stages, prioritizing the releases already waiting for the gate.
-The [audit](../research/2026-10-25-testing-suite-audit.md) and
-[proposed strategy](../specs/2026-10-25-testing-strategy-design.md) are reviewable
-recommendations. The first [test-only speedup stage](2026-10-25-testing-suite-speedups.md)
-has passed all 35 cases in an isolated proof. Runner hardening and focused-job
-tools are being verified separately. Acceptance requirements and live services
-remain unchanged.
+This research branch retains unpublished future Chat ancestry. Do not land it
+into master. The independently scoped public rollout is `feat/testing-suite-rollout`;
+its own fresh complete gate must qualify its exact source. Historical private
+151-suite evidence remains archived without any changed stamp fields.
 
-The [queued-suite supplement](../research/2026-10-26-queued-suite-audit.md)
-reviews the original six Chat and three Games files, plus four later Chat
-suites at frozen `3105eec`. All protect distinct boundaries; none warrants
-deletion. Entries are registered after their sources merge into this cumulative
-worktree, so the active inventory claims only files present in its selected tuple.
+The maintainer authorized staged testing improvements and coordination with the
+queued release owners. Bug detection remains the priority. Complete landing and
+release acceptance is retained; conservative selection is for development.
+The [audit](../research/2026-10-25-testing-suite-audit.md),
+[strategy](../specs/2026-10-25-testing-strategy-design.md) and
+[queued-suite review](../research/2026-10-26-queued-suite-audit.md) record the
+research, coverage boundaries and maintenance rules. No entire suite was shown
+to be unnecessary.
+
+## Current rollout source
+
+The public tooling candidate is prepared separately on `feat/testing-suite-rollout`
+in the matching worktree. Its base is conditionally approved Games `0227f86`,
+which already includes published Chat v1.0.16 and current master `67ff162`.
+It extracts only testing infrastructure, tests and their documentation from the
+research branch. It introduces no future Chat application code. Its inventory
+is 147 suites, with six public Chat suites, three Games suites and four testing
+infrastructure suites. Four future Chat suites remain reviewed draft metadata;
+they become active only when their application sources are independently approved.
+
+The original `feat/testing-suite` branch includes unpublished future Chat source.
+Its complete native job at `3536a18` passed 151/151 on 2026-10-26, finishing at
+05:03 UTC in about 34 minutes, with every suite once and zero modern failures,
+skips, cancellations or todos. Its selected inputs matched before and after
+execution, and the genuine original Hub and Board stamps were archived with the
+reports and checksums. That historical pass qualifies only its exact source.
+It does not qualify this separate 147-suite rollout or authorize future Chat.
+
+The rollout incorporates reviewed Math fixture blob
+`0666b15021d39374addaacea5c060139e410052d` before its fresh complete
+147-suite gate. Games is adopting the same exact fixture independently. Games' separate fresh 143-suite
+run on `0227f86` finished 142/143: the sole failure was a Math return-window test
+that treated response headers as the completed application acknowledgment.
+No green stamps were issued. The private fixture repair waits for consumption of
+the real JSON response, then performs one return event and a synchronous duration
+assertion with a restored monotonic clock. All 23 cases pass; forced ACK delay and
+scheduler-stall checks pass, while the original 250 ms regression, missing shared
+suppression and missing resume all fail. It changes no application runtime.
+Whole-file diagnostics are not substitutes for the next complete candidate gates.
+
+Games must finish its independently authorized source landing and exact-artifact
+Windows acceptance before this tooling lands. Final landing, version choice and
+publication remain serialized. Chat's next private preparation is complete with
+147/147 Linux and 10/10 Windows; its maintainer instruction is prepare only.
+Neither this tooling rollout nor Games may publish that future Chat feature.
+
+## Parallel full gates
+
+The standalone runner is available by absolute path to an owning clean worktree;
+using it does not require merging the wider registry or development runner.
+Initial capacity is one isolated gate alongside the reserved native lane: two
+complete Linux gates total, subject to RAM/CPU admission. Each isolated job owns
+its source snapshot, runtime, data, network, processes, temporary files and output.
+It freezes all six selected repositories and validates originals before and after.
+The candidate's actual complete gate must issue genuine clean-tree stamps.
+
+- [x] Prove all 35 clothing cases with external network access unavailable.
+- [x] Verify isolation, collection, source identity, admission and genuine stamps
+  with negative checks and concurrent synthetic jobs; safeguards pass 40/40.
+- [x] Run and obtain owner verification for Chat 140/140 isolated concurrently
+  with Games 143/143 native, preserving all original receipts.
+- [x] Measure overlap: about 36 minutes for the pair versus about 66 minutes
+  summed individual durations, suggesting roughly 30 minutes saved for a pair.
+  This is an observed estimate, not a controlled serial benchmark.
+- [x] Coordinate Windows handoffs: published Chat v1.0.16 is complete; the next
+  Chat private preparation finished and explicitly handed QA back to Games.
+- [ ] Finish Games' required complete Linux/Windows evidence and serialized
+  source/publication transaction, then land this separately tested tooling.
+
+The isolated pilot took 34.03 minutes, sampled peak process-tree RSS 1.36 GiB and
+minimum host available RAM 2.53 GiB. Memory budgets are admission checks, not
+hard memory limits. Recheck at least 3 GiB available RAM before admitting the
+second worker. Use native CPUs 0–1 at low priority beside isolated CPUs 2–3 on
+the current four-CPU host. Linux gates do not acquire the Windows QA/release
+locks; that remote native stage remains single-owner.
+
+Current commands, original source pins, owner acknowledgments and Windows
+limitations are in the [adoption record](2026-10-25-parallel-gate-adoption.md) and
+[runner instructions](../../tools/testing/parallel-worker.README.md).
+
+## Conservative development tools
+
+The reviewed registry, complete-file planner, serialized development queue,
+input verification, reporting and gate hardening are implemented. The clean
+rollout's inventory check passes at 147; existing planner regressions pass 30/30.
+The historical 151-suite complete gate also exercised the four infrastructure
+suites. The rollout's own complete acceptance remains required after finalizing
+its source; these checks cannot authorize a different tree.
+
+Reviewed Math paths and Markdown under `docs/` can narrow development runs.
+Changed suites, declared helper consumers, unresolved previous failures and
+shared access smoke are included. Unknown paths, shared runtime, tooling,
+uncertain helpers or fixtures and missing baselines select the full inventory.
+The real documentation-only development job passed its six selected smoke and
+scanner suites in about 28 seconds, with matching complete inputs and no full
+stamp. This demonstrates development feedback, not release selection accuracy.
+
+Every development-queue outcome deliberately retains `completeEvidence: false`,
+including full jobs. Genuine complete gate outputs and original stamps checked
+by the existing landing/release readers remain the acceptance authority. Preserve
+both records without relabeling or rewriting their issue times.
+
+A previous cumulative 147-suite job finished 146/147 because a Chat privacy test
+searched only for a literal executable name. The corrected test verifies the
+actual background launch and environment-clearing order for both supported
+forms; its whole-file proof reproduced old 37/38 and corrected 38/38. The real
+subprocess environment check remains. That failed job issued no accepted stamps.
+
+The optional verification/landing transaction and compatible house helper were
+tested on synthetic repositories. House reservation regressions passed 8/8 and
+existing helper cases 131/131 with controlled fake session operations. The helper
+is independent of the standalone parallel lane and has not been landed by this
+rollout. Usage: [test planning](../../tools/testing/suite-runner.README.md).
 
 The [reuse eligibility record](../research/2026-10-26-gate-reuse-eligibility.md)
-distinguishes the avoidable fixture-only repeat cost from the new full
-integration required after the shared speech and sorting runtime landed.
-No composed or partial receipt has been accepted.
-
-## Current priority: parallel full gates
-
-The maintainer has prioritized isolated complete gates over the smaller fixture
-savings. Deliver a standalone runner usable with an owning release's existing
-gate, without requiring that release to absorb the wider registry, selection or
-landing changes. Keep the existing active gate untouched. The initial capacity
-is one isolated worker alongside the legacy lane, with host resource admission;
-two complete gates is the total ceiling, not two additional gates.
-
-- [x] Prove namespace execution with all 35 clothing cases and no skipped cases.
-- [x] Snapshot clean selected sibling sources, complete required Git history,
-  runtime and synthetic data; validate origins before and after execution.
-- [x] Verify isolation, complete collection, resource admission and genuine
-  gate-issued receipts with negative and concurrent synthetic tests.
-- [x] Run a consenting queued release's complete gate as the first real pilot:
-  Chat passed 140/140 alongside Games 143/143 on 2026-10-26.
-- [x] Obtain owner acknowledgments of adoption and exact source tuples; both
-  owners verified their complete receipts before changing tested sources.
-- [ ] Coordinate cumulative source candidates and serialize final landing,
-  version selection and publication; retain all required Windows acceptance.
-- [x] Measure actual overlap, memory and completion time. The pair completed in
-  about 36 minutes; the isolated gate took 34.03 minutes with sampled peak tree
-  RSS 1.36 GiB and minimum host available memory 2.53 GiB. Retain two total lanes.
-
-Chat now holds the shared landing/release and Windows VM locks for its patch
-build and full Windows acceptance. Games waits for that handoff; its Linux proof
-is preserved. Testing infrastructure will not land into master during their
-release window. The remaining coordination checkbox includes that Windows and
-publication handoff, with each owner's existing publication authorization.
-
-See the [adoption record](2026-10-25-parallel-gate-adoption.md). The implementation
-order below remains the wider strategy; this priority supersedes its sequencing.
-
-## Development-tool stage
-
-The separate conservative planner, registry, serialized development queue and
-gate hardening are implemented. After integrating the cumulative frozen Chat
-and Games preparation, inventory validation covers 151 suites on
-this branch. The targeted planner, gate, integration and provider checks pass;
-the parallel safeguards separately passed 40/40 and their nested namespace proof.
-These checks do not replace this branch's eventual complete acceptance gate.
-Do not migrate the queued releases to the wider development-tool stage merely
-to use the standalone parallel capability.
-
-The complete 147-suite run used this worktree's frozen cumulative
-candidate and the separate isolated lane while Chat and Games use the Windows
-VM in series. It includes Games `c097524` with that owner's acknowledgment so
-its later landing does not invalidate this validation. It cannot land ahead of
-Games' separately approved landing; withdrawal or changed runtime would require
-reconsidering this candidate. No master moves during their release window. The
-selected Board worktree includes its already-landed fixture changes; the owning
-release candidates remain unchanged.
-
-The first 144-suite tooling request omitted that Games predecessor. The owner
-stopped only its captured, identity-verified namespace launcher after about
-three minutes, before any complete receipt, and verified that its worker and
-lease cleared. Its durable outcome is failed, with no accepted green stamp.
-The replacement used the complete cumulative 147-suite candidate. The merge
-retains both the occupied-listener refusal and Games' bindability probe, with
-the existing owned-child readiness and cleanup. The corresponding 52 gate and
-integration regressions, plus 30 planner regressions, passed without skips.
-
-That complete run executed every expected suite once: 146 passed, one failed,
-with all modern skipped and todo counters zero. The sole failure was Chat API's
-privacy-order assertion searching for the old literal `node` launch; the gate
-already correctly clears configuration before its resolved executable starts.
-No genuine stamps were issued or accepted. Owned processes exited and the
-isolated lease cleared. Complete gate time was 2,066.754 seconds.
-
-The narrow test correction requires an actual background hub launch, supports
-both invocation forms, checks clearing and disabling before every launch, and
-retains the real subprocess environment proof. Its separate complete-file
-no-egress verification reproduced the old 37/38 result and passed the corrected
-38/38 with no skipped or todo cases. A fresh complete green gate remains required.
-
-The maintainer's next Chat preparation has priority for the isolated lane.
-Its owner acknowledged the test correction and conditional frozen Games source
-before collection. Reconcile exact committed source tuples and landing order
-before the next tooling run; neither preparation authorizes those application
-releases to land or publish through this feature.
-
-That next Chat source is `3105eec`, with ten Chat Linux files and three Games
-files in its own derived 147-suite collector. This worktree includes those same
-runtime bytes plus four infrastructure suites, giving 151. The four new Chat
-files were individually reviewed; planner regressions pass 30/30 and inventory
-validation passes at 151. A change to the shared Windows/browser UI helper still
-selects the complete 151-suite fallback. Its three separate helper-contract tests
-passed explicitly; they are outside the Linux gate and Windows leg execution.
-
-The Chat 147-suite run exposed a routing race in the new browser fixture. Its
-owner preserved the failed evidence and stopped only its captured namespace after
-the private repair passed three cold two-CPU stress runs. The corrected frozen
-source `cbe7a54` changes only the browser fixture, release-note copy and plan;
-product and shared VM-helper bytes are unchanged. API/browser/packs checks pass
-57/57. This worktree incorporates that exact correction before its fresh full
-151-suite native gate; Chat's own fresh isolated gate collects all 147 suites.
-
-Resource review found the second native Linux lane independent of Games' remote
-Windows retry: only host 9222 belongs to that VM transport; its feed and other
-forward are remote. Linux tests use owned local ports, data, farm and outputs,
-and do not acquire VM/release locks. Recheck at least 3 GiB available RAM and all
-required host ports immediately before starting native port 8381. Use CPUs 0–1
-at low priority beside the isolated worker's CPUs 2–3; retain two total Linux
-gates. No master landing occurs during the current artifact window.
-
-The real development queue passed its six selected smoke/scanner suites for a
-documentation-only change in about 28 seconds. It verified matching complete
-inputs before and after, zero missing/failed suites, and explicitly recorded
-`completeEvidence: false` with no complete green stamp. This is development
-feedback; complete landing and release evidence still requires the full gate.
-
-The optional hub-only verification/landing transaction and compatible house
-helper were tested against synthetic repositories. They retain serialized
-verification and are separate from parallel release preparation. The house
-reservation tests passed 8/8 and the existing helper tests passed 131/131 with
-session operations replaced by controlled fakes. No actual landing or session
-operation occurred during those tests.
-
-Usage and limitations: [test planning](../../tools/testing/suite-runner.README.md).
+distinguishes avoidable fixture-only repeats from actual shared runtime changes.
+No composed, partial or relabeled receipt has been accepted. Existing recent
+`docs/**/*.md`-only landing fallback remains the only narrow landing exception.
 
 ## Audit receipt
 
