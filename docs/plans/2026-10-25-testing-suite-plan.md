@@ -19,12 +19,13 @@ is one isolated worker alongside the legacy lane, with host resource admission;
 two complete gates is the total ceiling, not two additional gates.
 
 - [x] Prove namespace execution with all 35 clothing cases and no skipped cases.
-- [ ] Snapshot clean selected sibling sources, complete required Git history,
+- [x] Snapshot clean selected sibling sources, complete required Git history,
   runtime and synthetic data; validate origins before and after execution.
-- [ ] Verify isolation, complete collection, resource admission and genuine
+- [x] Verify isolation, complete collection, resource admission and genuine
   gate-issued receipts with negative and concurrent synthetic tests.
 - [ ] Run a consenting queued release's complete gate as the first real pilot.
-- [ ] Obtain owner acknowledgments of adoption, exact source tuple and ETA.
+- [x] Obtain owner acknowledgments of adoption and exact source tuples; timing
+  remains provisional until the first complete pilot finishes.
 - [ ] Coordinate cumulative source candidates and serialize final landing,
   version selection and publication; retain all required Windows acceptance.
 - [ ] Measure actual overlap, memory and completion time before promising
@@ -32,6 +33,25 @@ two complete gates is the total ceiling, not two additional gates.
 
 See the [adoption record](2026-10-25-parallel-gate-adoption.md). The implementation
 order below remains the wider strategy; this priority supersedes its sequencing.
+
+## Development-tool stage
+
+The separate conservative planner, registry, serialized development queue and
+gate hardening are implemented. Inventory validation covers 137 suites on this
+branch. The combined targeted checks passed 84/84 with no skipped or todo cases;
+the parallel safeguards separately passed 37/37 and their nested namespace proof.
+These checks do not replace this branch's eventual complete acceptance gate.
+Do not migrate the queued releases to the wider development-tool stage merely
+to use the standalone parallel capability.
+
+The optional hub-only verification/landing transaction and compatible house
+helper were tested against synthetic repositories. They retain serialized
+verification and are separate from parallel release preparation. The house
+reservation tests passed 8/8 and the existing helper tests passed 131/131 with
+session operations replaced by controlled fakes. No actual landing or session
+operation occurred during those tests.
+
+Usage and limitations: [test planning](../../tools/testing/suite-runner.README.md).
 
 ## Audit receipt
 
