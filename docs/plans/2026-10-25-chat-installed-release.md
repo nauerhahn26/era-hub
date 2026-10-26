@@ -2,8 +2,8 @@
 
 Current status: v1.0.16 is published and all six public assets are verified.
 The complete Linux gate passed 140/140 and Windows update validation passed 9/9.
-Private device configuration is provisioned; the home device has reconnected,
-and normal update delivery and live verification are in progress. This
+Private device configuration and normal update delivery are verified. The
+home device runs the published build with Chat and its services enabled. This
 supersedes the development-only setup in the earlier prototype
 plan. Design: [installed Chat](../specs/2026-10-25-chat-installed-release.md).
 Usage and private setup: [Chat](../chat.md).
@@ -25,7 +25,7 @@ Usage and private setup: [Chat](../chat.md).
 - [x] Land, publish the patch and verify all public assets.
 - [x] Provision private configuration in the running device account's profile.
 - [x] Queue normal public-feed delivery and Chat enablement for the next connection.
-- [ ] Verify the running device build, enabled Chat and configured services after delivery.
+- [x] Verify the running device build, enabled Chat and configured services after delivery.
 - [x] Record final evidence and the remaining physical acceptance checks.
 
 Agents own separate speech, backend and packaging changes; the overseer reviews,
@@ -165,17 +165,21 @@ debug tunnel closed and both release locks verified free.
 
 Private service settings were provisioned into the profile belonging to the
 running device hub, with restricted file permissions and no hub restart.
-The device later disconnected. A bounded 72-hour helper now waits for it,
-requests the normal public update, waits for the running build, enables Chat
-while preserving all other app selections and verifies the page and service
-configuration. Its exact target is v1.0.16 / `20261026.0231`; a later running
-build is accepted without downgrade. The helper does not open a page, start
-the microphone or play audio. Delivery is queued, not confirmed installed.
+The device later disconnected and reconnected. The bounded delivery helper
+requested the normal public update and verified running build
+`20261026.0231`, enabled Chat, preserved all other app selections and checked
+the page and both service configurations. The completed receipt is
+`delivery-receipt.json` in the private installed evidence directory. The helper
+did not open a page, start the microphone or play audio, and has exited.
 
 Physical microphone quality, audible playback, gaze and natural conversation
 remain the live trial above. The optional installed synthetic performance
-probe can measure the real device runtime and configured services after
-delivery; no device latency or field accuracy is claimed by this release.
+probe subsequently measured one synthetic file through the installed worker:
+1871 ms from release to final and 2063 ms to simple replies. A separate
+contextual request took 2469 ms. These are individual synthetic observations,
+not the maintainer's real turn or field accuracy. Further home-device
+validation belongs to the maintainer. The live trial follow-up is scoped in
+[the next candidate plan](2026-10-26-chat-trial-feedback.md).
 
 ## Retrospective
 
