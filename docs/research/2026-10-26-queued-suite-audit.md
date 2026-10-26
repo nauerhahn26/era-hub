@@ -1,6 +1,6 @@
 # Queued Chat and Games suite audit
 
-All nine added suite files protect useful, distinct boundaries. Retain them;
+All nine originally added suite files protect useful, distinct boundaries. Retain them;
 the overlap does not justify deleting a file. Keep focused development execution
 separate from complete landing and release evidence. Games browser coverage is
 the clearest candidate for affected execution because it is broader and more
@@ -8,6 +8,8 @@ expensive than the pure state checks.
 
 This supplement compares master `3f8655c` with frozen Chat `28fc5be` and cumulative
 Games `7929a5f`. It extends the [original audit](2026-10-25-testing-suite-audit.md).
+The later frozen Chat supplement below reviews four more Linux suites at
+`3105eecbd67a6521d1596ae4a919a38a9185f194` and a separate Windows boundary.
 The Games candidate already contains Chat, so its six Chat suites are counted
 once. The two Python files are children of `chat-speech.test.mjs`, not additional
 gate suite entries. `symbol-provider.test.mjs` is also new relative to that master,
@@ -62,11 +64,11 @@ measure real recognition accuracy or conversational usefulness.
   viewport checks and the rendered catalog distinctions. A correct state value
   cannot establish that a visible option differs or a target remains reachable.
 
-These suites leave meaningful acceptance work elsewhere. Chat's controller/VM
-tests do not establish rendered layout, actual gaze activation, browser microphone
-permissions, the live AudioWorklet connection or installed handoffs. Retain the
-owner's browser/device acceptance evidence; a stable rendered Chat smoke is a
-useful future coverage addition. The real speech-activity case tests silence,
+The original Chat controller/VM suites do not establish rendered layout, actual
+gaze activation, browser microphone permissions, the live AudioWorklet connection
+or installed handoffs. The later browser and Windows checks below add rendered,
+native playback and synthetic capture coverage while retaining those unit suites.
+Retain the owner's device acceptance evidence. The real speech-activity case tests silence,
 tone and noise rejection; a licensed nonpersonal positive speech fixture would
 also detect an activity implementation that rejects everything. Provider doubles
 cannot prove acoustic recognition quality, and the Games audio double cannot
@@ -95,8 +97,8 @@ The three Games entries are now applied after frozen, complete-green candidate
 byte-identical to the originally audited Games versions. The state dependency
 metadata explicitly includes its two imported rule engines; audio's volume
 contract is exercised through the Games implementation and its controlled settings
-fixture. These applied entries, including the Python helpers above, bring the
-current inventory to 147 suites.
+fixture. These applied entries, including the Python helpers above, brought the
+inventory to 147 suites before the later Chat supplement.
 
 Register each suite only when its source exists in the selected source tuple.
 The inventory must not declare files that have not merged. These entries introduce
@@ -208,3 +210,56 @@ The registry refused the new executable suite before classification. Its exact
 speech dependency, browser resources and conservative helper consumer membership
 are now registered, with review date 2026-10-26. Core changes still select the
 complete gate. Chat and Games are now registered without new omission rules.
+
+## Frozen Chat pictures, metrics and saved voice supplement
+
+Reviewed the complete four new Linux suites and changed existing Chat tests at
+`3105eecbd67a6521d1596ae4a919a38a9185f194`. Their files match the cumulative
+testing worktree. Retain all four: their 39 top-level cases cover different
+failure boundaries, and none justifies removing an existing suite.
+
+| Added Linux suite | Cases | Necessary coverage and resources |
+| --- | ---: | --- |
+| `chat-browser.test.mjs` | 1 | Whole page rendering, saved preference persistence, native HTML audio events, private timing export, fresh neutral reveal, held capture, touch cancellation and bounded upload recovery. Chromium, owned ephemeral static service, private browser storage, synthetic microphone WAV, actual AudioWorklet and CDP touch input. Services and recognition are closed fixtures. One journey has a 90-second ceiling; no duration is claimed here. |
+| `chat-metrics.test.mjs` | 12 | Separate timing stages, finite content-free storage/export, outcome-separated medians/tails, bounded retention, stale callbacks, explicit voice retries and audio-drain/reveal behavior. In-process clocks/storage/controller doubles and application helpers exercised in a VM context; no browser or provider. |
+| `chat-symbols.test.mjs` | 9 | Familiar unambiguous symbols, safe native vectors, negation, unchanged labels/hitboxes and black rest slots. Eight module/DOM-double cases plus one actual offline Chromium layout case at 1280×800 and 1600×1000. This isolates catalog detail from the whole-page journey. |
+| `chat-voice.test.mjs` | 17 | Explicit saved/device preference, no silent fallback, actual-start event semantics, cancellation, selected-word priority, bounded cache/streaming/preparation and disposal. Controlled fetch/audio/storage doubles and clocks; no browser, real service or speaker. Detailed failure races belong here, while the browser case verifies native playback wiring. |
+
+The existing API suite still has 38 cases and the same dependency edges; it now
+checks the worker's numeric timing whitelist and validates configuration isolation
+against actual supported launch commands. The native worker suite grows from 13
+to 14 cases by separating activity inference and cloud finalization timings;
+its worker/runtime/model dependencies remain unchanged. The existing controller
+suite keeps 17 cases and now requires an explicit device-voice choice after saved
+voice failure. It still directly exercises controller, voice and PCM worklet
+sources. These are useful integration checks alongside the new detailed suites.
+
+`chat-browser` imports `tests-vm/lib/chat-ui-smoke.mjs`; its suite dependency
+records that edge. The helper also serves Windows leg B, so it has no Linux-only
+helper-consumer selection rule. Changing this shared VM path retains the complete
+fallback and the separate Windows coverage boundary.
+The separate `tests-vm/chat-ui-smoke.test.mjs` has three Node helper-contract
+cases for the WAV fixture and privacy validator. Run those explicitly with
+`node --test tests-vm/chat-ui-smoke.test.mjs`; they are outside the flat Linux gate
+and are not invoked merely by running the VM leg. Windows leg B adds one
+installed, post-update UI case using the shared helper through the installed
+kiosk browser, with restored storage/routes and mocked voice services. Retain
+that installed boundary separately; none of these Windows files adds a Linux
+suite to the count.
+
+The new browser journey closes part of the earlier rendered/capture gap. It does
+not establish physical microphone quality, speech recognition accuracy, provider
+voice quality, actual gaze hardware or Windows installation/update behavior.
+The shared Windows journey uses a typed local question and synthetic native
+playback; it does not test microphone recognition. The existing real activity
+silence/tone/noise check still needs a separate positive speech fixture before
+it can rule out rejecting every input.
+
+The registry now contains 151 Linux suites, with the new purposes, dependency
+edges, resources and conservative existing-helper memberships classified. Existing
+planner regressions pass 30/30 and the completeness check passes at 151. A manual
+fixture using the actual registry and copied suite bytes changed only the shared
+VM helper: the planner selected full, all 151 suites, with the explicit reason
+`Unknown changed path: era-hub:tests-vm/lib/chat-ui-smoke.mjs`. No rules,
+complete-fallback paths or always-run smoke entries changed; metadata does not
+create permission to omit Chat or shared-runtime coverage.

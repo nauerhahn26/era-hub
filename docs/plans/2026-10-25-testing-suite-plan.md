@@ -10,10 +10,10 @@ tools are being verified separately. Acceptance requirements and live services
 remain unchanged.
 
 The [queued-suite supplement](../research/2026-10-26-queued-suite-audit.md)
-reviews the six Chat and three Games files added since the original snapshot.
-All protect distinct boundaries; none warrants deletion. All nine entries are
-registered after their sources merged into this cumulative worktree, so the
-active inventory claims only files present in its selected tuple.
+reviews the original six Chat and three Games files, plus four later Chat
+suites at frozen `3105eec`. All protect distinct boundaries; none warrants
+deletion. Entries are registered after their sources merge into this cumulative
+worktree, so the active inventory claims only files present in its selected tuple.
 
 The [reuse eligibility record](../research/2026-10-26-gate-reuse-eligibility.md)
 distinguishes the avoidable fixture-only repeat cost from the new full
@@ -56,8 +56,8 @@ order below remains the wider strategy; this priority supersedes its sequencing.
 ## Development-tool stage
 
 The separate conservative planner, registry, serialized development queue and
-gate hardening are implemented. After integrating landed Chat source and the
-frozen full-green Games predecessor, inventory validation covers 147 suites on
+gate hardening are implemented. After integrating the cumulative frozen Chat
+and Games preparation, inventory validation covers 151 suites on
 this branch. The targeted planner, gate, integration and provider checks pass;
 the parallel safeguards separately passed 40/40 and their nested namespace proof.
 These checks do not replace this branch's eventual complete acceptance gate.
@@ -100,6 +100,28 @@ Its owner acknowledged the test correction and conditional frozen Games source
 before collection. Reconcile exact committed source tuples and landing order
 before the next tooling run; neither preparation authorizes those application
 releases to land or publish through this feature.
+
+That next Chat source is `3105eec`, with ten Chat Linux files and three Games
+files in its own derived 147-suite collector. This worktree includes those same
+runtime bytes plus four infrastructure suites, giving 151. The four new Chat
+files were individually reviewed; planner regressions pass 30/30 and inventory
+validation passes at 151. A change to the shared Windows/browser UI helper still
+selects the complete 151-suite fallback. Its three separate helper-contract tests
+passed explicitly; they are outside the Linux gate and Windows leg execution.
+
+The Chat 147-suite run exposed a routing race in the new browser fixture.
+No known-failing duplicate tooling gate will be started. Its owner is proving a
+private repair and will include both that repair and release-note copy correction
+before the next committed collector. The next tooling source must incorporate
+that exact corrected snapshot before its fresh full gate.
+
+Resource review found the second native Linux lane independent of Games' remote
+Windows retry: only host 9222 belongs to that VM transport; its feed and other
+forward are remote. Linux tests use owned local ports, data, farm and outputs,
+and do not acquire VM/release locks. Recheck at least 3 GiB available RAM and all
+required host ports immediately before starting native port 8381. Use CPUs 0–1
+at low priority beside the isolated worker's CPUs 2–3; retain two total Linux
+gates. No master landing occurs during the current artifact window.
 
 The optional hub-only verification/landing transaction and compatible house
 helper were tested against synthetic repositories. They retain serialized

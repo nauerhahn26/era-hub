@@ -17,9 +17,14 @@ Set `ERA_WT_SUFFIX=--wt-<feature>` when selecting matching sibling worktrees.
 The registry check refuses missing or unregistered suites, unsupported executable
 names and collection collisions. The registered parallel gate suite imports its
 capacity and snapshot tests and runs the Python memory-monitor tests.
-The merged Chat feature has six registered suites and two Python helper files
-owned by its speech wrapper. The cumulative Games feature adds three registered
-suites for state, browser access/layout and browser audio lifecycle. Registration
+The cumulative Chat feature has ten registered suites, including the four frozen
+at `3105eec` for whole-browser integration, metrics, symbols and saved voice.
+Its speech wrapper owns two Python helper files. The Games feature adds three
+registered suites for state, browser access/layout and browser audio lifecycle.
+The resulting Linux inventory is 151 suites. Windows leg B's installed Chat
+journey and its three helper-contract cases remain separate. The browser suite
+records the shared UI helper dependency, while changes to that VM path retain the
+complete fallback and Windows boundary. Registration
 classifies coverage and resources; Chat and Games product changes retain the
 complete fallback and gain no new omission rule.
 

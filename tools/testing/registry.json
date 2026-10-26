@@ -574,7 +574,7 @@
     },
     {
       "id": "era-hub:tests/chat-api.test.mjs",
-      "purpose": "Local Chat authorization, bounded sessions, runtime/configuration lifecycle and choice-service integration",
+      "purpose": "Local Chat authorization, bounded sessions, runtime/configuration lifecycle, numeric event timing whitelist and choice-service integration",
       "group": "chat",
       "lane": "linux",
       "level": "HTTP module integration",
@@ -593,6 +593,30 @@
         "temporary-data",
         "synthetic-runtime-children",
         "shared-static-farm"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-browser.test.mjs",
+      "purpose": "Rendered Chat symbols, deliberate native saved playback, private timing export and real held-capture recovery with closed provider fixtures",
+      "group": "chat",
+      "lane": "linux",
+      "level": "browser application integration",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/tests-vm/lib/chat-ui-smoke.mjs",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "private-browser-storage",
+        "synthetic-microphone-wav",
+        "real-audio-worklet",
+        "native-html-audio",
+        "cdp-touch-events",
+        "temporary-data"
       ]
     },
     {
@@ -624,8 +648,26 @@
       ]
     },
     {
+      "id": "era-hub:tests/chat-metrics.test.mjs",
+      "purpose": "Content-free turn stages, outcome-separated statistics, bounded retention and controller/drain/reveal timing contracts",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit and controller/VM helper integration",
+      "dependencies": [
+        "era-hub/public/chat/metrics.js",
+        "era-hub/public/chat/controller.js",
+        "era-hub/public/chat/app.js"
+      ],
+      "resources": [
+        "in-process-storage-doubles",
+        "injected-clock",
+        "vm-application-helpers",
+        "short-deadline-fixtures"
+      ]
+    },
+    {
       "id": "era-hub:tests/chat-native-speech.test.mjs",
-      "purpose": "Release-only speech capture, actual activity refusal, cancellation, bounded transport and safe child protocol",
+      "purpose": "Release-only speech capture, actual activity refusal, separated activity/cloud timings, cancellation, bounded transport and safe child protocol",
       "group": "chat",
       "lane": "linux",
       "level": "worker and inference integration",
@@ -662,8 +704,25 @@
       ]
     },
     {
+      "id": "era-hub:tests/chat-symbols.test.mjs",
+      "purpose": "Unambiguous decorative symbols, inert rest space, safe native vectors and readable unchanged hitboxes at both Chat viewport sizes",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit and browser layout",
+      "dependencies": [
+        "era-hub/public/chat/symbols.js",
+        "era-hub/public/chat/chat.css"
+      ],
+      "resources": [
+        "in-process-dom-doubles",
+        "chromium",
+        "offline-rendered-scenes",
+        "private-browser-pages"
+      ]
+    },
+    {
       "id": "era-hub:tests/chat-ui.test.mjs",
-      "purpose": "Conversation/voice generations, neutral gating, bounded PCM resampling and idle worklet retention",
+      "purpose": "Conversation/voice generations, explicit device-voice choice, neutral gating, bounded PCM resampling and idle worklet retention",
       "group": "chat",
       "lane": "linux",
       "level": "controller and VM worklet unit",
@@ -675,6 +734,23 @@
       "resources": [
         "in-process-voice-doubles",
         "vm-worklet-harness"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-voice.test.mjs",
+      "purpose": "Explicit saved/device voice preference, genuine playback events, cancellation, bounded preparation/cache/prefetch and safe audio-response handling",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module async/audio lifecycle",
+      "dependencies": [
+        "era-hub/public/chat/voice.js"
+      ],
+      "resources": [
+        "in-process-audio-doubles",
+        "fetch-doubles",
+        "storage-doubles",
+        "mock-timers",
+        "bounded-stream-fixtures"
       ]
     },
     {
@@ -2339,11 +2415,15 @@
         "era-hub:tests/books-share.test.mjs",
         "era-hub:tests/books.test.mjs",
         "era-hub:tests/chat-api.test.mjs",
+        "era-hub:tests/chat-browser.test.mjs",
         "era-hub:tests/chat-choices-adapter.test.mjs",
         "era-hub:tests/chat-config.test.mjs",
+        "era-hub:tests/chat-metrics.test.mjs",
         "era-hub:tests/chat-native-speech.test.mjs",
         "era-hub:tests/chat-speech.test.mjs",
+        "era-hub:tests/chat-symbols.test.mjs",
         "era-hub:tests/chat-ui.test.mjs",
+        "era-hub:tests/chat-voice.test.mjs",
         "era-hub:tests/clothing-accessories.test.mjs",
         "era-hub:tests/clothing-attrs.test.mjs",
         "era-hub:tests/clothing-diversity.test.mjs",
@@ -2492,11 +2572,15 @@
         "era-hub:tests/books-share.test.mjs",
         "era-hub:tests/books.test.mjs",
         "era-hub:tests/chat-api.test.mjs",
+        "era-hub:tests/chat-browser.test.mjs",
         "era-hub:tests/chat-choices-adapter.test.mjs",
         "era-hub:tests/chat-config.test.mjs",
+        "era-hub:tests/chat-metrics.test.mjs",
         "era-hub:tests/chat-native-speech.test.mjs",
         "era-hub:tests/chat-speech.test.mjs",
+        "era-hub:tests/chat-symbols.test.mjs",
         "era-hub:tests/chat-ui.test.mjs",
+        "era-hub:tests/chat-voice.test.mjs",
         "era-hub:tests/clothing-accessories.test.mjs",
         "era-hub:tests/clothing-attrs.test.mjs",
         "era-hub:tests/clothing-diversity.test.mjs",
