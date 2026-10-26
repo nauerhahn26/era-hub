@@ -45,6 +45,39 @@ misses without external network access. Standalone board routes must name the
 selected hub with `ERA_HUB_SRC`; matching feature worktrees retain the source
 selection rules above.
 
+## The gate runs in lanes; focused runs for the dev loop
+
+Since 2026-10-26 `era-gate.sh` runs the frozen suites two at a time
+(`ERA_GATE_LANES`, default 2; `ERA_GATE_LANES=1` is the old serial loop byte for
+byte). The scheduler (`tools/testing/lanes.mjs`) starts the longest known suite
+first and keeps apart what cannot share the host: solo suites run alone, two
+heavy suites never overlap, a quiet suite never sits beside a heavy one, and two
+claimants of one fixed port (the gaze engine's bus 49155 included) never run
+together. Under 2 GiB of free memory a lane holds; the last running lane never
+does. The classes live in `tools/testing/registry.json`, written by
+`node tools/testing/classify-suites.mjs` from the suite sources (re-run it after
+a sync; `tests/suite-classes.test.mjs` fails the gate when they drift).
+Measured 10/26: 164 suites, 14 min 10 s at two lanes, 26 min 39 s serial after
+the same day's suite speedups, 33 min before them. A TERM to the gate's pid now
+stops every suite within seconds. Each gate leaves `gate/results.jsonl`, one
+line per suite with its lane and seconds.
+
+Stand-in providers never wait: the clothing worker's 5 s photo spacing and 3 s
+retry gap are 0 when `ERA_AI_URL` names this machine (there is no real provider
+to protect) and unchanged for every family hub; no environment variable can
+change them (`tests/clothing-pacing.test.mjs`).
+
+For the dev loop, run only what a change touches, with no stamp:
+
+```
+node tools/test-suite.mjs plan --base master            # which suites, and why
+node tools/test-suite.mjs queue --affected --base master # run them, in series, under the gate lock
+node tools/test-suite.mjs status                        # jobs under ~/.local/state/era-tests/
+```
+
+A change to `server.js`, shared runtime or tooling expands to the complete set;
+landing still wants the full gate's stamp.
+
 ## The three release shapes
 
 A dist lives at `~/new-era/dist/release-<V>/` (sibling of the
