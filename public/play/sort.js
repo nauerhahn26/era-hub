@@ -1,7 +1,12 @@
 /*
  * sort.js — Sort it (spec 2026-10-12 §5.1, §5.2, §5.6): the week's card sort, one thing at a time.
  *
- *   mountSort(host, sort, { say, log, sound, onItem, onDone, idleMs }) -> { destroy() }
+ *   mountSort(host, sort, { say, log, sound, onItem, onDone, idleMs, weekOf }) -> { destroy() }
+ *
+ * The items are dealt afresh every time the game opens (amended 2026-10-26: "they go in order,
+ * there needs to be some randomness"): a Fisher–Yates shuffle, and if it would open on the item
+ * the previous play of this week opened with (sessionStorage "era-sort-first:<weekOf>") the order
+ * is rotated by one. The bins never move — left and right are fixed so her motor plan holds.
  *
  * The question in a strip across the top (text first, >= 32 pt): "Is <item> <bin 0> or <bin 1>?".
  * Under it three fixed seats: bin 0 LEFT, the current item in the CENTRE (glyph + its word, inert —
@@ -15,9 +20,10 @@
  * "cheer"), then the next item. Nothing says "no", nothing is red, nothing is counted on screen.
  * After the last item, onDone() — the page owns the bigger cheer and the way back to the menu.
  *
- * Every pick is handed to log({item, pick, right, strike}) — item is the MANIFEST index, pick the
- * bin's index, strike the misses so far on this item (0, 1, or 2 on the second miss).
- * onItem(i) runs whenever item i is up. The question is said on each item and once more after
+ * Every pick is handed to log({item, pick, right, strike}) — item is the MANIFEST index (so the dealt
+ * order is reconstructible from the log), pick the bin's index, strike the misses so far on this
+ * item (0, 1, or 2 on the second miss). onItem(k, m) runs whenever the k-th dealt item is up; m is
+ * its manifest index. The question is said on each item and once more after
  * idleMs (20 s) with no pick; any pick restarts that wait.
  *
  * A module with no page globals (as which.js); its styles are injected once.
@@ -66,12 +72,32 @@ function injectCss() {
   document.head.appendChild(s);
 }
 
+// a pinned draw for the suites, Math.random on the devices
+const rng = () => (typeof window !== "undefined" && window.__testHooks && typeof window.__rng === "function" ? window.__rng : Math.random)();
+
+// the manifest indices in a fresh order, never opening on the previous play's first item
+function deal(n, weekOf) {
+  const order = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.min(i, Math.floor(rng() * (i + 1)));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const key = "era-sort-first:" + weekOf;
+  let last = null;
+  try { last = sessionStorage.getItem(key); } catch {}
+  if (n > 1 && last !== null && String(order[0]) === last) order.push(order.shift());
+  try { sessionStorage.setItem(key, String(order[0])); } catch {}
+  return order;
+}
+
 const reduced = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 
 export function mountSort(host, sort, { say = () => {}, log = () => {}, sound = () => false, onItem = () => {},
-                                        onDone = () => {}, idleMs = 20000 } = {}) {
+                                        onDone = () => {}, idleMs = 20000, weekOf = "" } = {}) {
   injectCss();
-  const { bins, items } = sort;
+  const { bins } = sort;
+  const dealt = deal(sort.items.length, weekOf);   // dealt[k] = the manifest index of the k-th item up
+  const items = dealt.map((m) => sort.items[m]);
   let idx = 0, strike = 0, busy = false, gone = false, idleUsed = false, idleTimer = null;
   const timers = new Set();
   const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!gone) fn(); }, ms); timers.add(t); return t; };
@@ -122,7 +148,7 @@ export function mountSort(host, sort, { say = () => {}, log = () => {}, sound = 
     cWord.textContent = items[i].label;
     q.textContent = question(i);
     setLive(true);
-    onItem(i);
+    onItem(i, dealt[i]);
     say(question(i));
     armIdle();
   }
@@ -148,12 +174,12 @@ export function mountSort(host, sort, { say = () => {}, log = () => {}, sound = 
     clearTimeout(idleTimer);
     const right = items[idx].bin;
     if (b === right) {
-      log({ item: idx, pick: b, right: true, strike });
+      log({ item: dealt[idx], pick: b, right: true, strike });
       land(b, () => { sound("pop"); next(NEXT_MS); });
       return;
     }
     strike += 1;
-    log({ item: idx, pick: b, right: false, strike });
+    log({ item: dealt[idx], pick: b, right: false, strike });
     if (strike >= 2) {
       land(right, () => {
         sound("cheer");
