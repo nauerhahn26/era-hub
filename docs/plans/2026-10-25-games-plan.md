@@ -185,3 +185,11 @@ Games now uses a matching Core worktree pinned to actual master `02377c5`
 The complete inventory is therefore 143 suites (130 modern and 13 legacy).
 Keep all checks. Fresh full-run artifacts belong in
 `/tmp/era-games-gate-20261026-143/`; originals and previous logs remain intact.
+
+Before this collection Games also synchronized actual Hub master `cbfbb8d`,
+which contains the preceding Sort shuffle runtime change and its regression
+checks. This integration is part of the fresh 143-suite scope, with no reuse
+of partial results. Core is pinned in `era-core--wt-games`, Board in
+`era-board--wt-games`; all other selected source heads and runtime versions
+are recorded in the new input fingerprint. Games product code remains
+unchanged from the reviewed playable implementation.
