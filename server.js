@@ -18,6 +18,7 @@ const updater = require("./update");
 if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
+const chatApi = require("./chat-api.js").createChatApi();
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
 // the worker's whitelist, the pools and this hub's edit door all read it, so a
 // word cannot be a category here and a stranger three files away.
@@ -39,12 +40,17 @@ const aiConfig = require("./ai-config.js");
 const contentProviders = require("./content-providers.js");
 // For writeAtomic alone: a key file is written tmp-then-rename, never in place.
 const contentStore = require("./content-store.js");
+let gamesModel;
+const loadGamesModel = () => gamesModel ||= import("./public/games/state.js");
 
 const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
 const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
+const chatStore = require("./chat-store.js").createChatStore({ dataDir: DATA });
 const LOGS = path.join(DATA, "logs");
 const TTS_CACHE = path.join(DATA, "tts-cache");
+const GAMES_STATE = path.join(DATA, "games", "state.json");
+const GAMES_STATE_LIMIT = 524288;
 fs.mkdirSync(LOGS, { recursive: true });
 fs.mkdirSync(TTS_CACHE, { recursive: true });
 
@@ -123,8 +129,8 @@ fs.mkdirSync(SYMBOLS_CACHE, { recursive: true });
 
 // ---- app registry (install-with-checkboxes, 8/29): one engine, apps chosen
 // at install and togglable later from the home screen. Enabled set lives in
-// <DATA>/apps.json ({"enabled":[ids]}); absent file = everything (existing
-// installs keep all their apps). Settings is not an app — always present.
+// <DATA>/apps.json ({"enabled":[ids]}); absent file keeps established apps on;
+// experimental apps can opt out. Settings is not an app — always present.
 const APPS = [
   { id: "making-words", title: "Making Words", sub: "guided word building", path: "/", pack: null },
   { id: "pencil", title: "The Pencil", sub: "free writing with prediction", path: "/pencil/", pack: "pencil" },
@@ -138,6 +144,9 @@ const APPS = [
   // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
   { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
   { id: "math", title: "Math", sub: "explore numbers and number partners", path: "/math/", pack: null },
+  { id: "games", title: "Games", sub: "fashion, four in a row and number tiles", path: "/games/", pack: null },
+  // The Chat page is core; its speech activity runtime comes from the board pack.
+  { id: "chat", title: "Chat", sub: "experimental conversation · hold to ask", path: "/chat/", pack: "board", defaultEnabled: false },
   // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs
   // on-device (Windows' built-in csc) and pairs it with the Tobii runtime
   // already on Tobii devices (official NuGet as fallback for other PCs)
@@ -226,16 +235,18 @@ function loadEnabledApps() {
     const j = JSON.parse(fs.readFileSync(path.join(DATA, "apps.json"), "utf8"));
     if (Array.isArray(j.enabled)) return j.enabled.filter(id => APPS.some(a => a.id === id));
   } catch {}
-  // no apps.json: every APP on, but never auto-enable the ENGINE — existing
+  // no apps.json: established apps on, but never auto-enable the ENGINE — existing
   // installs (and Ellie's device, which runs its own ERAgaze) must not grow
   // a second gaze engine uninvited
-  return APPS.filter(a => !a.engine).map(a => a.id);
+  return APPS.filter(a => !a.engine && a.defaultEnabled !== false).map(a => a.id);
 }
 // A gaze engine is "there" if ours is compiled OR any engine answers the bus
 // (Ellie's device runs the family build — never fight it).
+// ERA_GAZE_BUS_PORT: the tests' stand-in engine; a device always has 49155.
+const GAZE_PORT = Number(process.env.ERA_GAZE_BUS_PORT) || 49155;
 function gazeBusAlive() {
   return new Promise((resolve) => {
-    const req2 = http.get({ host: "127.0.0.1", port: 49155, path: "/status", timeout: 900 },
+    const req2 = http.get({ host: "127.0.0.1", port: GAZE_PORT, path: "/status", timeout: 900 },
       (r) => { r.resume(); resolve(true); });
     req2.on("error", () => resolve(false));
     req2.on("timeout", () => { req2.destroy(); resolve(false); });
@@ -338,11 +349,16 @@ async function installGaze() {
   }
   // 3. shortcuts + autostart + start it (skip start when another engine runs)
   appShortcut({ id: "eragaze", title: "ERAgaze", path: null, exe: path.join(GAZE_DIR, "ERAgaze.exe") }, true);
-  if (!(await gazeBusAlive())) {
-    spawn(path.join(GAZE_DIR, "ERAgaze.exe"), [], { cwd: GAZE_DIR, detached: true, stdio: "ignore", windowsHide: true })
-      .on("error", (e) => console.error("[gaze] start: " + e.message)).unref();
-  }
+  if (!(await gazeBusAlive())) startGazeProcess();
   console.log("[gaze] installed");
+}
+// Start OUR build, detached: the install's step 3, the supervisor's restart,
+// and POST /gaze/start all come through here.
+function startGazeProcess() {
+  try {
+    require("child_process").spawn(path.join(GAZE_DIR, "ERAgaze.exe"), [], { cwd: GAZE_DIR, detached: true, stdio: "ignore", windowsHide: true })
+      .on("error", (e) => console.error("[gaze] start: " + e.message)).unref();
+  } catch (e) { console.error("[gaze] start: " + e.message); }
 }
 // The engine turned OFF (wizard or Settings): stop OUR running build and its
 // autostart, or the next door still hands the screen to it (VM 9/3: the
@@ -370,6 +386,29 @@ function stopGazeProcess() {
     { stdio: "ignore", windowsHide: true, timeout: 20000 });
   if (r.error) console.error("[gaze] stop: " + r.error.message);
 }
+// The engine's keeper (dad 10/26: "it should already have a restart function
+// if it turns itself off, unless purposely deactivated"). gaze-supervisor.js
+// holds the rules; this is what they act on: the bus probe, our process by
+// path, the enabled list, and a stop marker in DATA that outlives a hub
+// restart. The poll seams (ERA_GAZE_*_MS) exist for the tests' clock.
+const GAZE_STOP_MARKER = path.join(DATA, "gaze-stopped.json");
+const gazeSupervisor = require("./gaze-supervisor.js").createGazeSupervisor({
+  enabled: () => gazeCanCompile() && gazeCompiled() && loadEnabledApps().includes("eragaze"),
+  busy: () => !!appInstalling.eragaze,
+  isAlive: gazeBusAlive,
+  stopOurs: () => stopGazeProcess(),
+  start: () => startGazeProcess(),
+  marker: {
+    read: () => { try { return JSON.parse(fs.readFileSync(GAZE_STOP_MARKER, "utf8")); } catch { return null; } },
+    write: (m) => fs.writeFileSync(GAZE_STOP_MARKER, JSON.stringify(m)),
+    clear: () => { try { fs.rmSync(GAZE_STOP_MARKER, { force: true }); } catch {} },
+  },
+  log: (m) => console.log("[gaze] " + m),
+  ...(process.env.ERA_GAZE_GRACE_MS ? { graceMs: Number(process.env.ERA_GAZE_GRACE_MS) } : {}),
+  ...(process.env.ERA_GAZE_DOWN_MS ? { downMs: Number(process.env.ERA_GAZE_DOWN_MS) } : {}),
+  ...(process.env.ERA_GAZE_BACKOFF_MS ? { backoffMs: process.env.ERA_GAZE_BACKOFF_MS.split(",").map(Number) } : {}),
+});
+const GAZE_POLL_MS = Number(process.env.ERA_GAZE_POLL_MS) || 10000;
 // Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
 // best-effort — the home tile is the source of truth, the .lnk a convenience).
 // Minimize our kiosk windows so an externally opened window (browser page,
@@ -558,8 +597,8 @@ function reconcileBootShortcuts() {
 }
 
 // ARASAAC lookup ported from packages/generator/aac_board_designer.py
-const ARASAAC_API = "https://api.arasaac.org/api/pictograms/en/bestsearch/";
-const ARASAAC_IMG = "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
+const ARASAAC_API = process.env.ERA_SYMBOL_SEARCH_URL || "https://api.arasaac.org/api/pictograms/en/bestsearch/";
+const ARASAAC_IMG = process.env.ERA_SYMBOL_IMAGE_URL || "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
 const PREWARM = ["sun", "cloud", "cold", "more", "shirt", "trousers", "13638", "dress",
                  "clothes", "house", "clock", "snack", "back", "yes"];
 
@@ -1511,7 +1550,7 @@ function exitTarget() {
 // there (dev box, family without ERAgaze) or slow — never throws.
 function enginePost(p, body) {
   return new Promise((resolve) => {
-    const r = http.request({ host: "127.0.0.1", port: 49155, path: p, method: "POST", timeout: 1500,
+    const r = http.request({ host: "127.0.0.1", port: GAZE_PORT, path: p, method: "POST", timeout: 1500,
       headers: { "Content-Length": Buffer.byteLength(body) } }, (rs) => {
       rs.resume(); resolve(rs.statusCode >= 200 && rs.statusCode < 300);
     });
@@ -1526,7 +1565,7 @@ function enginePost(p, body) {
 // on (talk door 9/17: ForegroundApp from /config, TD Snap if the bus is quiet).
 function engineGet(p, ms = 1500) {
   return new Promise((resolve) => {
-    const r = http.get({ host: "127.0.0.1", port: 49155, path: p, timeout: ms }, (rs) => {
+    const r = http.get({ host: "127.0.0.1", port: GAZE_PORT, path: p, timeout: ms }, (rs) => {
       if (rs.statusCode < 200 || rs.statusCode >= 300) { rs.resume(); resolve(null); return; }
       let body = "";
       rs.setEncoding("utf8");
@@ -1707,6 +1746,84 @@ function stampInteraction(req) {
 
 const server = http.createServer((req, res) => {
   stampInteraction(req);
+  if (chatStore.handle(req, res)) return;
+  if (chatApi.handle(req, res)) return;
+  if (req.url === "/games/state/recovery" && req.method === "GET") {
+    void loadGamesModel().then(({ readSavedState }) => {
+      let size;
+      try { size = fs.statSync(GAMES_STATE).size; }
+      catch { res.writeHead(404).end(); return; }
+      if (size <= GAMES_STATE_LIMIT && readSavedState(fs.readFileSync(GAMES_STATE, "utf8")).valid) {
+        res.writeHead(404).end(); return;
+      }
+      res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": 'attachment; filename="games-state-recovery.txt"', "Cache-Control": "no-store" });
+      const stream = fs.createReadStream(GAMES_STATE);
+      stream.on("error", () => res.destroy());
+      stream.pipe(res);
+    }).catch(() => res.writeHead(500).end());
+    return;
+  }
+  if (req.url === "/games/state" && req.method === "GET") {
+    void loadGamesModel().then(({ readSavedState }) => {
+      let raw;
+      try {
+        if (fs.statSync(GAMES_STATE).size > GAMES_STATE_LIMIT) {
+          res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+          res.end('{"error":"unreadable"}');
+          return;
+        }
+        raw = fs.readFileSync(GAMES_STATE);
+      }
+      catch (error) {
+        const code = error.code === "ENOENT" ? 404 : 500;
+        res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: code === 404 ? "missing" : "read-failed" }));
+        return;
+      }
+      if (raw.length > GAMES_STATE_LIMIT || !readSavedState(raw.toString("utf8")).valid) {
+        res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end('{"error":"unreadable"}');
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(raw);
+    }).catch(() => res.writeHead(500).end());
+    return;
+  }
+  if (req.url === "/games/state" && req.method === "PUT") {
+    if (!ownDoor(req, res)) return;
+    const chunks = []; let size = 0, over = false;
+    req.on("data", chunk => {
+      size += chunk.length;
+      if (size > GAMES_STATE_LIMIT) over = true;
+      else chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (over) { res.writeHead(413, { "Content-Type": "application/json" }).end('{"error":"too-large"}'); return; }
+      void loadGamesModel().then(({ readSavedState, serializeState }) => {
+        const incoming = readSavedState(Buffer.concat(chunks).toString("utf8"));
+        if (!incoming.valid) { res.writeHead(400, { "Content-Type": "application/json" }).end('{"error":"invalid"}'); return; }
+        try {
+          if (fs.statSync(GAMES_STATE).size > GAMES_STATE_LIMIT) {
+            res.writeHead(409, { "Content-Type": "application/json" }).end('{"error":"unreadable"}'); return;
+          }
+          const current = fs.readFileSync(GAMES_STATE);
+          if (current.length > GAMES_STATE_LIMIT || !readSavedState(current.toString("utf8")).valid) {
+            res.writeHead(409, { "Content-Type": "application/json" }).end('{"error":"unreadable"}'); return;
+          }
+        } catch (error) {
+          if (error.code !== "ENOENT") { res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"read-failed"}'); return; }
+        }
+        try {
+          contentStore.writeAtomic(GAMES_STATE, serializeState(incoming.state));
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end('{"ok":true}');
+        } catch {
+          res.writeHead(500, { "Content-Type": "application/json" }).end('{"error":"write-failed"}');
+        }
+      }).catch(() => res.writeHead(500).end());
+    });
+    return;
+  }
   // shared app settings (dwell time, chosen voice) — apps read at boot
   if (req.method === "GET" && req.url === "/settings") {
     let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
@@ -3715,6 +3832,35 @@ const server = http.createServer((req, res) => {
                              idleMs: lastInteractionAt == null ? null : Date.now() - lastInteractionAt }));
     return;
   }
+  // ---- the hub's health, the engine's keeper included (spec 2026-10-26) ----
+  if (req.method === "GET" && urlPath === "/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ build: updater.runningBuild, pid: process.pid, uptimeMs: Math.round(process.uptime() * 1000),
+                             gaze: { ...gazeSupervisor.status(), pollMs: GAZE_POLL_MS, port: GAZE_PORT } }));
+    return;
+  }
+  // Settings' "Stop ERAgaze completely" and its way back. Through the hub, not
+  // straight to the engine, so the supervisor knows the stop was meant and
+  // the memory of it survives a hub restart. Loopback only: the page runs on
+  // the device; nobody on a school network stops her engine.
+  if (req.method === "POST" && (urlPath === "/gaze/stop" || urlPath === "/gaze/start")) {
+    if (!updater.isLoopback(req.socket && req.socket.remoteAddress)) { res.writeHead(403).end(); return; }
+    req.resume();
+    (async () => {
+      let out;
+      if (urlPath === "/gaze/stop") {
+        gazeSupervisor.stopOnPurpose("settings");
+        const answered = await enginePost("/shutdown", "{}");
+        out = { ok: true, stopped: true, engineAnswered: answered };
+      } else {
+        const started = await gazeSupervisor.resume("settings");
+        out = { ok: true, stopped: false, started };
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify(out));
+    })().catch((e) => { try { res.writeHead(500).end(e.message); } catch {} });
+    return;
+  }
   // ---- presence (spec 2026-10-20 §4.5): the receiving end of the beacon ----
   // Runs on the operator's hub (ERA_BIND open to its private network); its
   // callers are other devices, so it is not loopback-gated — it changes
@@ -3938,7 +4084,14 @@ server.on("listening", () => {
     else console.log("[content] shelved " + b.slug + " (" + r.files + " file(s) copied)");
     if (failed) console.error("[content] " + b.slug + ": " + failed + " file(s) would not copy onto the shelf: " + r.errors.join("; "));
   };
-  clothing.start(DATA, { tz: () => TZ, deviceId: DEVICE_ID });  // the Clothing Picker generator (no-op without photos)
+  // The Clothing Picker generator (no-op without photos). ERA_CLOTHING_TICK_MS
+  // (gate-speed plan 1.3a): "0" starts it without its schedule, no build 20 s
+  // after boot and no 15-minute check, for the gate's shared hub, whose
+  // today.json the board suites read while it runs; the gate builds that board
+  // once, awaited, before the first suite. Any other value, or none (every
+  // family's hub), leaves the schedule exactly as it was.
+  clothing.start(DATA, { tz: () => TZ, deviceId: DEVICE_ID,
+    noTimers: process.env.ERA_CLOTHING_TICK_MS === "0" });
   openClothingLog();     // after drive.start: drive.js has no DATA before it (W10)
   // book jobs in the family's Drive folder (local mode only). DEVICE_ID is what
   // every claim this hub writes is signed with from here on (spec §14): two PCs
@@ -3957,10 +4110,13 @@ server.on("listening", () => {
     reconcileApps();
     reconcileBootShortcuts();
   }, 5000).unref();
+  // and from here on, the engine is kept on its bus (gaze-supervisor.js)
+  setInterval(() => { gazeSupervisor.tick(); }, GAZE_POLL_MS).unref();
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;
     fetchSymbolToCache(name).then(f => { if (f) console.log("[symbol] pre-warmed " + name); });
   }
 });
+server.on("close", () => chatApi.close());
 server.listen(PORT, BIND);

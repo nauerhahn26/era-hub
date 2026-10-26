@@ -279,6 +279,10 @@ function MEASURE(C) {
 // page.evaluate — it may only use the page's own globals (same entry calls the
 // legacy suites use: sortfix.js drives startSort() this way). States let the
 // audit measure the screens she actually works in, not just front doors.
+// The drawing app says when it has booted (state().ready, set once its first
+// route has rendered), so its states settle on that instead of a fixed 400 ms
+// (settle() below); drawing-ui.test.mjs's own audits use the same predicate.
+export const DRAWING_READY = () => window.Drawing && window.Drawing.state().ready;
 export const STATES = [
   { id: "/", path: "/" },
   { id: "/#spell", path: "/", setup: async () => {         // mid-lesson spelling: stage + letter tray
@@ -310,17 +314,17 @@ export const STATES = [
   { id: "/board/", path: "/board/" },
   // Drawing (spec 2026-09-30 §8): the shelf, and the ring on a never-saved id — the ring opens
   // empty and nothing is written to the gate hub's data dir (a PUT only follows a change).
-  { id: "/drawing/", path: "/drawing/" },
-  { id: "/drawing/#ring", path: "/drawing/#p=2026-01-01-000000-fixture" },
+  { id: "/drawing/", path: "/drawing/", ready: DRAWING_READY },
+  { id: "/drawing/#ring", path: "/drawing/#p=2026-01-01-000000-fixture", ready: DRAWING_READY },
   // Drawing v2 (spec 2026-10-02 §9): each mode's palette on the same never-saved id (&mode= is
   // honoured only under __testHooks, which measureAt sets before any script), the item hit boxes and a
   // carried item. __show paints a scene WITHOUT a PUT: the gate hub's data dir stays untouched.
   // (Choices are not counted by this audit — the ring's 14 <= CONTRACT.maxChoices.cap is pinned in
   // drawing-ui.test.mjs.)
-  { id: "/drawing/#ring-draw", path: "/drawing/#p=2026-01-01-000000-fixture&mode=draw" },
-  { id: "/drawing/#ring-people", path: "/drawing/#p=2026-01-01-000000-fixture&mode=people" },
-  { id: "/drawing/#ring-places", path: "/drawing/#p=2026-01-01-000000-fixture&mode=places" },
-  { id: "/drawing/#ring-items", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", setup: async () => {
+  { id: "/drawing/#ring-draw", path: "/drawing/#p=2026-01-01-000000-fixture&mode=draw", ready: DRAWING_READY },
+  { id: "/drawing/#ring-people", path: "/drawing/#p=2026-01-01-000000-fixture&mode=people", ready: DRAWING_READY },
+  { id: "/drawing/#ring-places", path: "/drawing/#p=2026-01-01-000000-fixture&mode=places", ready: DRAWING_READY },
+  { id: "/drawing/#ring-items", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", ready: DRAWING_READY, setup: async () => {
       window.Drawing.__show({ items: [
         { s: "house", x: 0.15, y: 0.70, w: 0.26, by: "ellie" }, { s: "horse", x: 0.42, y: 0.80, w: 0.20, by: "ellie" },
         { s: "tree", x: 0.68, y: 0.70, w: 0.28, by: "ellie" }, { s: "person", x: 0.90, y: 0.80, w: 0.22, by: "ellie" },
@@ -329,7 +333,7 @@ export const STATES = [
         { s: "stroke", c: "#6a4fb3", w: 0.014, pts: [[0.05, 0.45], [0.95, 0.45]], by: "ellie" }] });
       await new Promise((r) => setTimeout(r, 400));
     } },
-  { id: "/drawing/#ring-carried", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", setup: async () => {
+  { id: "/drawing/#ring-carried", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", ready: DRAWING_READY, setup: async () => {
       window.Drawing.__show({ items: [
         { s: "horse", x: 0.42, y: 0.80, w: 0.20, by: "ellie" }, { s: "star", x: 0.62, y: 0.15, w: 0.10, by: "ellie" }] });
       window.Drawing.__lift(1);
@@ -337,7 +341,7 @@ export const STATES = [
     } },
   // Trash mode (dad 10/4): the 🗑 tile in the bar's top-right corner, on — every sticker AND stroke is
   // a target (a stroke's box = its bounds grown to the floor). A click is her dwell; nothing is removed.
-  { id: "/drawing/#ring-trash", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", setup: async () => {
+  { id: "/drawing/#ring-trash", path: "/drawing/#p=2026-01-01-000000-fixture&mode=stickers", ready: DRAWING_READY, setup: async () => {
       window.Drawing.__show({ items: [
         { s: "house", x: 0.15, y: 0.70, w: 0.26, by: "ellie" }, { s: "horse", x: 0.50, y: 0.80, w: 0.20, by: "ellie" },
         { s: "sun", x: 0.12, y: 0.18, w: 0.16, by: "ellie" },
@@ -347,7 +351,35 @@ export const STATES = [
     } },
 ];
 
-async function measureAt(browser, path, vp, setup, dwellMs) {
+// The settle before measuring. A state may name `ready`: an in-page predicate
+// that is true once the app has booted (for the drawing app, its own
+// state().ready, set when the first route has rendered). Then the audit waits
+// for exactly that, for the fonts and every picture to load, and for two frames
+// to paint, instead of a guess. Without one, as for every other app here, the
+// old settle stands: the first .dwell target, then 400 ms. That .dwell wait is
+// a weak guard (a door bar is mounted before any fetch), which is why an app
+// that can say "ready" should.
+async function settle(page, ready) {
+  if (ready) {
+    await page.waitForFunction(ready, null, { timeout: 8000 });
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      // every picture loaded or failed; one that does neither within 8 s is measured as it stands
+      await Promise.race([new Promise((r) => setTimeout(r, 8000)),
+        Promise.all([...document.images].filter((img) => !img.complete).map((img) => new Promise((r) => {
+          img.addEventListener("load", r, { once: true }); img.addEventListener("error", r, { once: true });
+        })))]);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    });
+    return;
+  }
+  // wait for at least one dwell target if the page renders any (non-fatal)
+  await page.waitForFunction(() => document.querySelectorAll(".dwell").length > 0, null, { timeout: 8000 })
+    .catch(() => {});
+  await page.waitForTimeout(400); // let fit/layout + any async render finish
+}
+
+async function measureAt(browser, path, vp, setup, dwellMs, ready) {
   const ctx = await browser.newContext({ viewport: { width: vp.w, height: vp.h } });
   // hermetic: no ElevenLabs, no logging, deterministic speech
   await ctx.route("**/log", (r) => r.fulfill({ status: 204, body: "" }));
@@ -360,10 +392,7 @@ async function measureAt(browser, path, vp, setup, dwellMs) {
   page.on("pageerror", (e) => pageErrors.push(String(e.message)));
   const url = BASE + (path.startsWith("/") ? path : "/" + path);
   await page.goto(url, { waitUntil: "load" });
-  // settle: wait for at least one dwell target if the page renders any (non-fatal)
-  await page.waitForFunction(() => document.querySelectorAll(".dwell").length > 0, null, { timeout: 8000 })
-    .catch(() => {});
-  await page.waitForTimeout(400); // let fit/layout + any async render finish
+  await settle(page, ready);
   if (setup) await page.evaluate(setup);   // drive into an in-lesson state
   const m = await page.evaluate(MEASURE, measureConfig(vp, dwellMs));
   for (const e of pageErrors) m.violations.push({ code: "PAGEERROR", detail: e.slice(0, 120) });
@@ -376,7 +405,9 @@ const fmt = (arr) => arr.map((x) => `${x.code} ${x.detail}`);
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-// Audit one path across all CONTRACT.gateViewports.
+// Audit one path across all CONTRACT.gateViewports. A state is a path, or
+// { id, path, setup?, ready? }: `setup` runs in the page before measuring and
+// `ready` replaces the fixed settle (see settle() above).
 // -> { path, viewports: [{ vp, nTargets, violations:[str], warns:[str] }],
 //      violations:[str], warns:[str] }   (flat arrays tagged with @WxH)
 export async function auditPath(browser, pathOrState) {
@@ -385,7 +416,7 @@ export async function auditPath(browser, pathOrState) {
   const violations = [], warns = [];
   const dwellMs = await hubDwellMs();   // her dwell, once per run (law 2)
   for (const vp of CONTRACT.gateViewports) {
-    const m = await measureAt(browser, st.path, vp, st.setup, dwellMs);
+    const m = await measureAt(browser, st.path, vp, st.setup, dwellMs, st.ready);
     const tag = `@${vp.w}x${vp.h}`;
     const v = fmt(m.violations), w = fmt(m.warns);
     viewports.push({ vp, nTargets: m.nTargets, violations: v, warns: w });

@@ -1,6 +1,6 @@
 // apps.test.mjs — app-picker contract (8/29 ruling: install everything, one,
 // or a few). GET /apps lists the registry with enabled flags; absent
-// data/apps.json = everything enabled (existing installs keep their apps);
+// data/apps.json = established apps enabled; experimental Chat stays off;
 // POST /apps toggles one app and persists the set; unknown ids are refused.
 // Shortcut side effects are Windows-only and not exercised here.
 import { test, before, after } from "node:test";
@@ -10,6 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+const { shortcutScript } = createRequire(import.meta.url)("../shortcuts.js");
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 8413; // never live 8377; 8391-8412 held by sibling suites
@@ -30,10 +32,11 @@ before(async () => {
 });
 after(() => { if (child) child.kill("SIGKILL"); });
 
-test("fresh install: every APP enabled; the gaze ENGINE stays off by default", async () => {
+test("fresh install: established apps enabled; experimental Chat and the gaze engine stay off", async () => {
   const { apps } = await (await fetch(`${BASE}/apps`)).json();
   assert.ok(apps.length >= 7);
-  assert.ok(apps.filter(a => !a.engine).every(a => a.enabled === true));
+  assert.ok(apps.filter(a => !a.engine && a.id !== "chat").every(a => a.enabled === true));
+  assert.equal(apps.find(a => a.id === "chat")?.enabled, false, "Chat requires a deliberate app choice");
   const gaze = apps.find(a => a.id === "eragaze");
   assert.equal(gaze.engine, true);
   assert.equal(gaze.enabled, false, "second engines are never auto-enabled");
@@ -41,6 +44,7 @@ test("fresh install: every APP enabled; the gaze ENGINE stays off by default", a
   assert.equal(pencil.title, "The Pencil");
   assert.equal(pencil.path, "/pencil/");
   assert.equal(apps.find(a => a.id === "math")?.enabled, true, "Math is available on a default install");
+  assert.equal(apps.find(a => a.id === "games")?.enabled, true, "Games is available on a default install");
   assert.ok(apps.every(a => a.title && a.sub && (a.path || a.engine)));   // engines have no page
 });
 
@@ -130,4 +134,52 @@ test("Math is an installed core app with a usable icon and respects the app choo
   const remove = await fetch(`${BASE}/apps/delete`, { method: "POST", body: JSON.stringify({ id: "math" }) });
   assert.equal(remove.status, 400);
   assert.equal(await remove.text(), "core app");
+});
+
+test("Games is an installed core app and preserves explicit app choices", async () => {
+  const { apps } = await (await fetch(`${BASE}/apps`)).json();
+  const games = apps.find(a => a.id === "games");
+  assert.ok(games, "Games appears in the shared app registry");
+  assert.deepEqual({title:games.title,path:games.path,engine:games.engine,installed:games.installed,icon:games.icon},
+    {title:"Games",path:"/games/",engine:false,installed:true,icon:"/icons/games.png"});
+  assert.equal(games.enabled,false,"existing explicit app choices do not silently grow");
+  const icon=await fetch(`${BASE}${games.icon}`);
+  assert.equal(icon.status,200);
+  assert.deepEqual([...new Uint8Array(await icon.arrayBuffer()).slice(0,8)],[137,80,78,71,13,10,26,10]);
+  const enable=await fetch(`${BASE}/apps`,{method:"POST",body:JSON.stringify({id:"games",enabled:true})});
+  assert.equal(enable.status,204);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(TMP,"apps.json"),"utf8")).enabled.includes("games"));
+  assert.equal((await fetch(`${BASE}/apps`,{method:"POST",body:JSON.stringify({id:"games",enabled:false})})).status,204);
+  const remove=await fetch(`${BASE}/apps/delete`,{method:"POST",body:JSON.stringify({id:"games"})});
+  assert.equal(remove.status,400);assert.equal(await remove.text(),"core app");
+});
+
+test("Games ships with the core payload and has a desktop icon", () => {
+  const payload=fs.readFileSync(path.join(HUB,"tools/build-payload.sh"),"utf8");
+  assert.match(payload,/cp -r "\$HUB\/public\/games" "\$OUT\/public\/games"/);
+  assert.deepEqual([...fs.readFileSync(path.join(HUB,"public/icons/games.ico")).subarray(0,4)],[0,0,1,0]);
+});
+
+test("Chat is an opt-in installed page with icons and the normal kiosk shortcut", async () => {
+  const { apps } = await (await fetch(`${BASE}/apps`)).json();
+  const chat = apps.find(a => a.id === "chat");
+  assert.ok(chat, "Chat appears in the app chooser");
+  assert.deepEqual({ title: chat.title, sub: chat.sub, path: chat.path, engine: chat.engine, installed: chat.installed, icon: chat.icon, enabled: chat.enabled },
+    { title: "Chat", sub: "experimental conversation · hold to ask", path: "/chat/", engine: false, installed: true, icon: "/icons/chat.png", enabled: false });
+  for (const [ext, signature] of [["png", [137, 80, 78, 71, 13, 10, 26, 10]], ["ico", [0, 0, 1, 0]]]) {
+    const icon = await fetch(`${BASE}/icons/chat.${ext}`); assert.equal(icon.status, 200);
+    assert.deepEqual([...new Uint8Array(await icon.arrayBuffer()).slice(0, signature.length)], signature);
+  }
+  const enable = await fetch(`${BASE}/apps`, { method: "POST", body: JSON.stringify({ id: "chat", enabled: true }) });
+  assert.equal(enable.status, 204);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(TMP, "apps.json"), "utf8")).enabled.includes("chat"));
+  const script = shortcutScript(chat, true, { dir: "C:\\suite", port: PORT, iconFor: () => "C:\\suite\\public\\icons\\chat.ico" });
+  assert.ok(script.includes("Chat.lnk")); assert.ok(script.includes("start-hub.bat"));
+  assert.ok(script.includes(`${PORT} \"/chat/\"`), "the existing launcher gets Chat's page path for kiosk resume/return");
+  assert.ok(script.includes("chat.ico"));
+  assert.equal((await fetch(`${BASE}/chat/`)).status, 200);
+  const disable = await fetch(`${BASE}/apps`, { method: "POST", body: JSON.stringify({ id: "chat", enabled: false }) });
+  assert.equal(disable.status, 204);
+  const remove = await fetch(`${BASE}/apps/delete`, { method: "POST", body: JSON.stringify({ id: "chat" }) });
+  assert.equal(remove.status, 409); assert.equal(await remove.text(), "pack in use", "Chat's board-pack dependency remains while the other board apps are enabled");
 });

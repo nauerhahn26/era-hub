@@ -845,7 +845,9 @@ const REVERSE5 = [0.1, 0.375, 0.99, 0.75];
 const order = (page) => page.evaluate(() => { try { return sessionStorage.getItem("era-sort-first:2026-01-12"); } catch { return "throws"; } });
 
 test("Sort it shuffles: a reversing draw opens on the manifest's last item; the questions and the logs follow the dealt order; the bins keep their seats", async () => {
-  const { ctx, page, logs, errors } = await playPage({ query: SQ, rng: REVERSE5 });
+  // reduced motion: the dealing is the subject here, not the slide (land() takes 0 ms instead of
+  // SLIDE_MS; the animated slide stays pinned by the Sort it cases above)
+  const { ctx, page, logs, errors } = await playPage({ query: SQ, rng: REVERSE5, reducedMotion: "reduce" });
   await openSort(page);
   const dealt = [4, 3, 2, 1, 0];
   const bins = await page.$$eval(".so-bin", (els) => els.map((el) => [el.id, el.dataset.seat, el.getAttribute("aria-label"),
@@ -870,7 +872,8 @@ test("Sort it shuffles: a reversing draw opens on the manifest's last item; the 
 });
 
 test("Sort it shuffles: an open whose deal would repeat the last play's first item rotates it away; the next open is free again", async () => {
-  const { ctx, page, errors } = await playPage({ query: SQ });       // identity draws: the sun every time
+  // identity draws: the sun every time; reduced motion, as above
+  const { ctx, page, errors } = await playPage({ query: SQ, reducedMotion: "reduce" });
   await openSort(page);
   assert.equal(await itemLabel(page), "the sun");
   assert.equal(await order(page), "0");

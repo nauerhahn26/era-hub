@@ -5,11 +5,447 @@
 # NEVER the live 8377), runs the suites, reports.
 # Flow: docs/dev-flow.md
 set -uo pipefail
+
+# These guards are also exercised against synthetic workspaces and owned local
+# stand-ins. They do not acquire the real gate lock when tested independently.
+gate_error() {
+  printf 'FATAL: %s\n' "$*" >&2
+  return 1
+}
+
+gate_capabilities() {
+  printf '%s\n' '{"inheritedGateLock":1}'
+}
+
+# Capability discovery must be read-only even on an unassembled checkout.
+if [ "${1:-}" = --capabilities ]; then gate_capabilities; exit 0; fi
+
+gate_acquire_lock() {
+  local descriptor="${ERA_GATE_LOCK_FD:-}" expected actual
+  if [ -n "$descriptor" ]; then
+    [[ "$descriptor" =~ ^[0-9]{1,6}$ ]] && [ "$descriptor" -ge 3 ] || {
+      gate_error "invalid inherited gate lock descriptor"; return 1;
+    }
+    expected="$(stat -Lc '%d:%i' -- "$LOCK" 2>/dev/null)" &&
+      actual="$(stat -Lc '%d:%i' -- "/proc/$$/fd/$descriptor" 2>/dev/null)" &&
+      [ "$actual" = "$expected" ] || {
+        gate_error "inherited gate lock descriptor does not name the gate lock"; return 1;
+      }
+    flock -n "$descriptor" || { gate_error "inherited gate lock cannot establish an exclusive lease"; return 1; }
+    return 0
+  fi
+  exec 9>"$LOCK" || { gate_error "cannot open gate lock"; return 1; }
+  if flock -n 9; then return 0; fi
+  echo "== era-gate: another gate run is active — queued, waiting… =="
+  flock 9 || { gate_error "cannot acquire gate lock"; return 1; }
+}
+
+gate_validate_port() {
+  case "$1" in
+    8378|838[0-9]) return 0 ;;
+    *) gate_error "test port must be 8378 or 8380-8389" ;;
+  esac
+}
+
+gate_export_test_data() {
+  local resolved live candidate
+  [ -n "$DATA" ] || { gate_error "unsafe data directory: empty path"; return 1; }
+  resolved="$(realpath -m -- "$DATA")" || { gate_error "unsafe data directory"; return 1; }
+  for candidate in "$ROOT/era-family/data" "$ROOT/era-hub/data" "$HUB/data"; do
+    live="$(realpath -m -- "$candidate")" || return 1
+    case "$resolved/" in "$live/"*) gate_error "live data directory is forbidden for tests"; return 1 ;; esac
+    case "$live/" in "$resolved/"*) gate_error "unsafe data directory contains a live-data path"; return 1 ;; esac
+  done
+  DATA="$resolved"
+  export ERA_DATA_DIR="$DATA"
+}
+
+gate_prepare_owned_data() {
+  local unsupported
+  [ -d "$DATA" ] || { gate_error "test seed directory is missing"; return 1; }
+  unsupported="$(find "$DATA" \( -type l -o \( ! -type f ! -type d \) \) -print -quit)" || {
+    gate_error "cannot inspect test seed"; return 1;
+  }
+  [ -z "$unsupported" ] || { gate_error "test seed contains a symlink or unsupported entry"; return 1; }
+  export ERA_GATE_SEED_DIR="$DATA"
+  OWN_DATA="$(mktemp -d "${TMPDIR:-/tmp}/era-gate-data.XXXXXX")" || return 1
+  cp -a -- "$ERA_GATE_SEED_DIR/." "$OWN_DATA/" && chmod 700 "$OWN_DATA" || {
+    gate_error "cannot copy test seed"; return 1;
+  }
+  diff -qr -- "$ERA_GATE_SEED_DIR" "$OWN_DATA" >/dev/null || {
+    gate_error "test seed changed while copying"; return 1;
+  }
+  DATA="$OWN_DATA"
+  export ERA_DATA_DIR="$DATA"
+}
+
+gate_refresh_data_links() {
+  local directory="$1" link target
+  for link in lessons.json sentences.json runway.json; do
+    if [ -e "$HUB/public/$link" ] && [ ! -L "$HUB/public/$link" ]; then
+      gate_error "unowned generated content link: $link"; return 1;
+    fi
+    [ ! -L "$HUB/public/$link" ] || rm -- "$HUB/public/$link" || return 1
+    target="$directory/content/$link"
+    if [ -f "$target" ]; then
+      ln -s -- "$target" "$HUB/public/$link" || return 1
+    fi
+  done
+}
+
+gate_refresh_farm() {
+  local pair link repo want
+  [ ! -L "$HUB/public" ] || { gate_error "unowned served farm directory"; return 1; }
+  mkdir -p "$HUB/public" || return 1
+  for pair in "pencil:era-pencil" "board:era-board" "lib:era-core" "studio.js:era-making-words" \
+              "dwell.js:era-core" "speech.js:era-core" "index.html:era-making-words"; do
+    link="${pair%%:*}"; repo="${pair#*:}"
+    want="../../$(basename "$(sib "$repo")")"
+    case "$link" in pencil|board) want="$want/app" ;; lib) want="$want/lib" ;;
+      studio.js) want="$want/app/studio.js" ;; index.html) want="$want/app/index.html" ;;
+      *) want="$want/$link" ;; esac
+    [ -e "$HUB/public/$want" ] || { gate_error "selected farm source is missing: $link"; return 1; }
+    if [ -e "$HUB/public/$link" ] && [ ! -L "$HUB/public/$link" ]; then
+      gate_error "unowned generated runtime link: $link"; return 1;
+    fi
+    if [ ! -L "$HUB/public/$link" ] || [ "$(readlink "$HUB/public/$link")" != "$want" ]; then
+      ln -sfn -- "$want" "$HUB/public/$link" || return 1
+    fi
+  done
+  gate_refresh_data_links "$DATA"
+}
+
+gate_port_available() {
+  local listeners
+  listeners="$(ss -H -ltn "sport = :$1")" || { gate_error "cannot inspect test port"; return 1; }
+  [ -z "$listeners" ] || { gate_error "test port is occupied; its owner was left running"; return 1; }
+}
+
+gate_process_identity() {
+  local pid="$1" stat rest
+  local -a fields
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  [ -r "/proc/$pid/stat" ] || return 1
+  IFS= read -r stat <"/proc/$pid/stat" || return 1
+  rest="${stat##*) }"
+  read -r -a fields <<<"$rest"
+  [ "${#fields[@]}" -ge 20 ] || return 1
+  [ "${fields[0]}" != Z ] || return 1
+  printf '%s:%s\n' "${fields[1]}" "${fields[19]}"
+}
+
+gate_process_matches() {
+  local pid="$1" expected="$2" arguments="$3" identity current
+  [ -n "$expected" ] && [ -n "$arguments" ] || return 1
+  identity="$(gate_process_identity "$pid")" || return 1
+  [ "$identity" = "$expected" ] || return 1
+  # A matching command alone cannot authorize taking over another session's PID.
+  case "$identity" in "$$":*) ;; *) return 1 ;; esac
+  current="$(ps -ww -p "$pid" -o args=)" || return 1
+  [ "$current" = "$arguments" ]
+}
+
+gate_wait_process() {
+  local pid="$1" identity="$2" arguments="$3" tries="${4:-50}" attempt current
+  for ((attempt=0; attempt<tries; attempt++)); do
+    current="$(gate_process_identity "$pid")" || return 1
+    [ "$current" = "$identity" ] || return 1
+    case "$current" in "$$":*) ;; *) return 1 ;; esac
+    gate_process_matches "$pid" "$identity" "$arguments" && return 0
+    sleep 0.02
+  done
+  return 1
+}
+
+gate_cleanup_server() {
+  local pid="$1" identity="$2" arguments="$3" attempt
+  gate_wait_process "$pid" "$identity" "$arguments" 20 || return 0
+  kill "$pid" 2>/dev/null || return 0
+  for attempt in {1..20}; do
+    gate_process_matches "$pid" "$identity" "$arguments" || break
+    sleep 0.05
+  done
+  if gate_process_matches "$pid" "$identity" "$arguments"; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
+gate_listener_owned() {
+  local port="$1" pid="$2" listeners line
+  listeners="$(ss -H -ltnp "sport = :$port")" || return 1
+  [ -n "$listeners" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in *"pid=$pid,"*) ;; *) return 1 ;; esac
+  done <<<"$listeners"
+}
+
+gate_wait_server() {
+  local pid="$1" identity="$2" arguments="$3" port="$4" tries="${5:-30}" attempt
+  for ((attempt=0; attempt<tries; attempt++)); do
+    gate_process_matches "$pid" "$identity" "$arguments" || {
+      gate_error "owned test server exited or changed before readiness"; return 1;
+    }
+    if gate_listener_owned "$port" "$pid" &&
+       curl --max-time 1 -sf "http://127.0.0.1:$port/settings" >/dev/null &&
+       gate_process_matches "$pid" "$identity" "$arguments" &&
+       gate_listener_owned "$port" "$pid"; then return 0; fi
+    sleep 0.1
+  done
+  gate_error "owned test server readiness could not be established"
+}
+
+# The shared hub starts with ERA_CLOTHING_TICK_MS=0: no clothing build 20 s
+# after boot and no 15-minute check, because a build at a moment no suite chose
+# can rewrite recipes/today.json (and its ETag) under the board suites reading
+# it (gate-speed plan 1.3a). Its board is built here instead: once, after
+# readiness, before the first suite, and the gate waits for that build to
+# finish. One POST and one round of polling are enough: unless a Drive folder
+# is connected through the API, drive.sync() returns without waiting, so the
+# hub spawns the worker in the same turn that answers the POST and the first
+# status already says building; and a queued run respawns on the old worker's
+# exit, so "not building" is never the gap between two builds.
+gate_build_clothing() {
+  local port="$1" tries="${2:-3000}" attempt status
+  curl --max-time 5 -sf -X POST "http://127.0.0.1:$port/clothing/regenerate" >/dev/null || {
+    gate_error "the shared hub refused the clothing build"; return 1;
+  }
+  for ((attempt=0; attempt<tries; attempt++)); do
+    status="$(curl --max-time 2 -sf "http://127.0.0.1:$port/clothing/status")" || {
+      gate_error "the shared hub stopped answering during the clothing build"; return 1;
+    }
+    case "$status" in *'"building":false'*) return 0 ;; esac
+    sleep 0.1
+  done
+  gate_error "the shared hub's clothing build did not finish"
+}
+
+gate_collect_entry() {
+  local src="$1" dest="$2" repo="$3" relative="$4" child base
+  if [ -d "$src" ] && [ ! -L "$src" ]; then
+    [ ! -e "$dest" ] || [ -d "$dest" ] || {
+      gate_error "duplicate collected path: $relative"; return 1;
+    }
+    [ ! -L "$dest" ] || { gate_error "duplicate collected path: $relative"; return 1; }
+    mkdir -p "$dest" || { gate_error "cannot create collection directory"; return 1; }
+    for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+      [ -e "$child" ] || [ -L "$child" ] || continue
+      base="$(basename "$child")"
+      gate_collect_entry "$child" "$dest/$base" "$repo" "$relative/$base" || return 1
+    done
+  else
+    [ ! -e "$dest" ] && [ ! -L "$dest" ] || {
+      gate_error "duplicate collected path: $relative"; return 1;
+    }
+    cp -r -- "$src" "$dest" || { gate_error "copy failed while collecting $repo/tests/$relative"; return 1; }
+    printf '%s\t%s\n' "$repo:tests/$relative" "$relative" >>"$GATE/.source-map.tsv" || return 1
+  fi
+}
+
+gate_collect_suites() {
+  local repo src f base name
+  : >"$GATE/.source-map.tsv" || { gate_error "cannot write collection source map"; return 1; }
+  for repo in era-core era-making-words era-pencil era-board era-hub; do
+    src="$(sib "$repo")"; [ "$repo" = "era-hub" ] && src="$HUB"
+    [ -d "$src/tests" ] || { gate_error "missing required tests directory: $repo/tests"; return 1; }
+    for f in "$src/tests"/* "$src/tests"/.[!.]* "$src/tests"/..?*; do
+      [ -e "$f" ] || [ -L "$f" ] || continue
+      base="$(basename "$f")"
+      gate_collect_entry "$f" "$GATE/$base" "$repo" "$base" || return 1
+    done
+  done
+  for name in run parts transfer mistakes pencil narrow sortfix fltest bargein sortbugs rhymecount transfercount phonetic; do
+    [ -f "$GATE/$name.js" ] || { gate_error "missing required legacy suite: $name.js"; return 1; }
+  done
+}
+
+gate_prepare_selection() {
+  case "${ERA_GATE_MODE:-full}" in
+    full)
+      [ -z "${ERA_GATE_SELECTED:-}" ] || { gate_error "selection requires affected mode"; return 1; }
+      return 0 ;;
+    affected) ;;
+    *) gate_error "unknown gate selection mode"; return 1 ;;
+  esac
+  [ -n "${ERA_GATE_SELECTED:-}" ] || { gate_error "selection file is required"; return 1; }
+  node - "$ERA_GATE_SELECTED" "$GATE/.source-map.tsv" "$GATE/.selected-basename" <<'JS'
+const fs = require('node:fs'), path = require('node:path');
+try {
+  const [file, mapFile, output] = process.argv.slice(2);
+  if (!path.isAbsolute(file)) throw Error('selection file must be absolute');
+  const wanted = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Array.isArray(wanted) || !wanted.length) throw Error('selection must be a nonempty array');
+  const legacy = new Set(['run','parts','transfer','mistakes','pencil','narrow','sortfix',
+    'fltest','bargein','sortbugs','rhymecount','transfercount','phonetic'].map(x => x + '.js'));
+  const known = new Map(fs.readFileSync(mapFile, 'utf8').trim().split('\n').map(line => line.split('\t')));
+  const selected = new Set();
+  for (const id of wanted) {
+    const name = known.get(id);
+    if (typeof id !== 'string' || !name || name.includes('/') ||
+      (!name.endsWith('.test.mjs') && !legacy.has(name))) throw Error('selection names an unknown executable suite');
+    if (selected.has(name)) throw Error('selection contains a duplicate suite');
+    selected.add(name);
+  }
+  fs.writeFileSync(output, [...selected].join('\n') + '\n');
+  } catch (error) {
+  process.stderr.write('FATAL: invalid selection: ' + error.message + '\n');
+  process.exitCode = 1;
+  }
+JS
+}
+
+gate_suite_selected() {
+  [ "${ERA_GATE_MODE:-full}" = full ] || grep -Fxq -- "$1" "$GATE/.selected-basename"
+}
+
+gate_freeze_execution() {
+  local id name digest
+  node - "$HUB/tools/testing/registry.json" "$GATE" "${ERA_GATE_MODE:-full}" <<'JS'
+const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+try {
+  const [registryFile, directory, mode] = process.argv.slice(2);
+  const registry = JSON.parse(fs.readFileSync(registryFile, 'utf8'));
+  const required = new Set(registry.suites.map(suite => suite.id));
+  const legacy = ['run','parts','transfer','mistakes','pencil','narrow','sortfix',
+    'fltest','bargein','sortbugs','rhymecount','transfercount','phonetic'].map(name => name + '.js');
+  const rows = fs.readFileSync(path.join(directory, '.source-map.tsv'), 'utf8').trim().split('\n')
+    .map(line => line.split('\t')).filter(([, name]) => name && !name.includes('/') &&
+      (name.endsWith('.test.mjs') || legacy.includes(name)));
+  const collected = new Set(rows.map(([id]) => id));
+  if (collected.size !== rows.length || collected.size !== required.size ||
+    [...required].some(id => !collected.has(id))) throw Error('registered suite collection is incomplete');
+  const selected = mode === 'full' ? null : new Set(fs.readFileSync(path.join(directory, '.selected-basename'), 'utf8').trim().split('\n'));
+  const planned = rows.filter(([, name]) => !selected || selected.has(name)).sort((a, b) => {
+    const ai = legacy.indexOf(a[1]), bi = legacy.indexOf(b[1]);
+    return ai >= 0 || bi >= 0 ? (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) : a[1].localeCompare(b[1]);
+  });
+  if (!planned.length) throw Error('no executable suites selected');
+  const lines = planned.map(([id, name]) => {
+    if (/\s|\\/.test(name)) throw Error('unsupported executable suite name');
+    const digest = crypto.createHash('sha256').update(fs.readFileSync(path.join(directory, name))).digest('hex');
+    return [id, name, digest].join('\t');
+  });
+  fs.writeFileSync(path.join(directory, '.execution-plan.tsv'), lines.join('\n') + '\n');
+  } catch (error) {
+    process.stderr.write('FATAL: cannot freeze execution: ' + error.message + '\n');
+    process.exitCode = 1;
+  }
+JS
+  [ "$?" = 0 ] || return 1
+  EXPECTED_IDS=(); EXPECTED_FILES=(); EXPECTED_HASHES=()
+  declare -gA EXECUTED_COUNT=()
+  while IFS=$'\t' read -r id name digest; do
+    EXPECTED_IDS+=("$id"); EXPECTED_FILES+=("$name"); EXPECTED_HASHES+=("$digest")
+  done <"$GATE/.execution-plan.tsv"
+}
+
+# $2: the digest the lane runner hashed as it started the suite. Without it
+# the collected copy is hashed here, now.
+gate_record_execution() {
+  local index="$1" started="${2:-}" id name digest
+  [[ "$index" =~ ^[0-9]+$ ]] && [ -n "${EXPECTED_FILES[$index]:-}" ] || {
+    gate_error "unexpected suite execution"; return 1;
+  }
+  id="${EXPECTED_IDS[$index]}"; name="${EXPECTED_FILES[$index]}"
+  [ "${EXECUTED_COUNT["$id"]:-0}" = 0 ] || { gate_error "duplicate suite execution: $id"; return 1; }
+  if [ -n "$started" ]; then
+    digest="$started"
+  else
+    [ -f "$GATE/$name" ] || { gate_error "missing collected suite: $id"; return 1; }
+    digest="$(sha256sum -- "$GATE/$name")" || return 1
+  fi
+  [ "${digest%% *}" = "${EXPECTED_HASHES[$index]}" ] || { gate_error "collected suite changed before execution: $id"; return 1; }
+  EXECUTED_COUNT["$id"]=1
+}
+
+gate_verify_execution() {
+  local id
+  for id in "${EXPECTED_IDS[@]}"; do
+    [ "${EXECUTED_COUNT["$id"]:-0}" = 1 ] || { gate_error "missing suite execution: $id"; return 1; }
+  done
+  [ "${#EXECUTED_COUNT[@]}" = "${#EXPECTED_IDS[@]}" ] || { gate_error "unexpected suite execution count"; return 1; }
+}
+
+# The lane runner's tally (tools/testing/lanes.mjs writes .lane-results.tsv: one
+# row per suite it reached, in the frozen order: state, plan index, the digest
+# it hashed at start or "missing", source ID), counted exactly as the serial
+# loop counted: a pass once; a failure once, by its label; a copy refused as
+# missing or changed once, by its file name, and never recorded as executed.
+# $1 is the runner's exit status: anything but 0 or 1 means it did not finish.
+gate_record_results() {
+  local status="$1" state index digest id t label
+  if [ -f "$GATE/.lane-results.tsv" ]; then
+    while IFS=$'\t' read -r state index digest id; do
+      t=""; [[ "$index" =~ ^[0-9]+$ ]] && t="${EXPECTED_FILES[$index]:-}"
+      [ -n "$t" ] && [ "$id" = "${EXPECTED_IDS[$index]}" ] || {
+        gate_error "unexpected lane result: $id"; fail=$((fail+1)); failed="$failed lanes"; continue;
+      }
+      if [[ "$t" = *.test.mjs ]]; then label="$t"; else label="${t%.js}"; fi
+      case "$state" in
+        pass|fail)
+          gate_record_execution "$index" "$digest" || { fail=$((fail+1)); failed="$failed $t"; continue; }
+          if [ "$state" = pass ]; then pass=$((pass+1)); else fail=$((fail+1)); failed="$failed $label"; fi ;;
+        changed)
+          if [ "$digest" = missing ]; then gate_error "missing collected suite: $id"
+          else gate_error "collected suite changed before execution: $id"; fi
+          fail=$((fail+1)); failed="$failed $t" ;;
+        *) gate_error "unknown lane result for $id: $state"; fail=$((fail+1)); failed="$failed lanes" ;;
+      esac
+    done <"$GATE/.lane-results.tsv"
+  fi
+  [ "$status" = 0 ] || [ "$status" = 1 ] || { fail=$((fail+1)); failed="$failed lanes"; }
+}
+
+# An early exit (TERM or INT while suites run) stops the lane runner: only the
+# pid this gate started, while it is still this shell's child, never by name or
+# group. The runner stops its suites by their pids and exits; it gets ten
+# seconds before KILL.
+gate_stop_lanes() {
+  local pid="${LANES_PID:-}" identity="${LANES_ID:-}" attempt
+  [ -n "$pid" ] && [ -n "$identity" ] || return 0
+  case "$identity" in "$$":*) ;; *) return 0 ;; esac
+  [ "$(gate_process_identity "$pid")" = "$identity" ] || return 0
+  kill -TERM "$pid" 2>/dev/null || return 0
+  for attempt in {1..100}; do
+    [ "$(gate_process_identity "$pid")" = "$identity" ] || break
+    sleep 0.1
+  done
+  if [ "$(gate_process_identity "$pid")" = "$identity" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+  wait "$pid" 2>/dev/null || true
+}
+
+gate_archive_reports() {
+  local file
+  [ -n "${ERA_GATE_JOB_DIR:-}" ] || return 0
+  [ "${GATE_PREPARED:-0}" = 1 ] || return 0
+  case "$ERA_GATE_JOB_DIR" in /*) ;; *) gate_error "job report directory must be absolute"; return 1 ;; esac
+  mkdir -p "$ERA_GATE_JOB_DIR/suites" || return 1
+  for file in "$GATE"/*.out "$GATE"/server.log; do
+    [ -f "$file" ] || continue
+    cp -- "$file" "$ERA_GATE_JOB_DIR/suites/" || return 1
+  done
+}
+
+gate_finish() {
+  local status="$1"
+  gate_stop_lanes
+  gate_cleanup_server "${SRV:-}" "${SRV_ID:-}" "${SRV_ARGS:-}"
+  if [ "${REPORTS_SAVED:-0}" != 1 ]; then gate_archive_reports || status=1; fi
+  [ -z "${OWN_INPUTS:-}" ] || rm -f -- "$OWN_INPUTS"
+  if [ -n "${OWN_DATA:-}" ]; then
+    gate_refresh_data_links "$ERA_GATE_SEED_DIR" || status=1
+    rm -rf -- "$OWN_DATA" || status=1
+  fi
+  trap - EXIT
+  exit "$status"
+}
+
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
-DATA="${ERA_DATA_DIR:-$ROOT/era-family/test-data}"  # gate NEVER points at live data
+DATA="${ERA_GATE_SEED_DIR:-${ERA_DATA_DIR:-$ROOT/era-family/test-data}}"  # immutable seed, never live data
 PORT="${ERA_TEST_PORT:-8378}"
 GATE="$HUB/gate"
+OWN_DATA=""; OWN_INPUTS=""; SRV=""; SRV_ID=""; SRV_ARGS=""; GATE_PREPARED=0; LANES_PID=""; LANES_ID=""
 # ERA_WT_SUFFIX (9/17): a multi-repo feature keeps sibling worktrees
 # (<repo>--wt-<slug>); when set and that directory exists, source the
 # sibling from there, else from the main checkout as before. Without it a
@@ -20,6 +456,15 @@ sib() { local d="$ROOT/$1${ERA_WT_SUFFIX:-}"; [ -d "$d" ] && echo "$d" || echo "
 # optional private env (e.g. ERA_GAZE_SRC until era-gaze is imported)
 [ -f "$ROOT/era-family/gate-env.sh" ] && . "$ROOT/era-family/gate-env.sh"
 export ERA_GAZE_SRC="$(sib era-gaze)"
+export ERA_HUB_SRC="$HUB"
+# How many suites run at once (tools/testing/lanes.mjs). 1 is the serial loop
+# exactly: the frozen order, one suite at a time. Validated here, before the
+# lock, and exported so the runner reads the value this gate checked.
+export ERA_GATE_LANES="${ERA_GATE_LANES:-2}"
+[[ "$ERA_GATE_LANES" =~ ^[1-8]$ ]] || { gate_error "ERA_GATE_LANES must be a whole number from 1 to 8"; exit 1; }
+gate_validate_port "$PORT" || exit 1
+gate_export_test_data || exit 1
+export ERA_GATE_SEED_DIR="$DATA"
 
 # one gate at a time, machine-wide: concurrent runs (e.g. two feature worktrees)
 # thrash CPU and can fight over default ports — the second run WAITS its turn.
@@ -32,8 +477,19 @@ export ERA_GAZE_SRC="$(sib era-gaze)"
 # all read it, and they honour the same ERA_GATE_STAMPS seam so a test run can
 # point the whole rail at a scratch dir.
 LOCK="/tmp/era-gate.lock"
-exec 9>"$LOCK"
-flock -n 9 || { echo "== era-gate: another gate run is active — queued, waiting… =="; flock 9; }
+gate_acquire_lock || exit 1
+echo "== era-gate: lock acquired =="
+[ -z "${ERA_GATE_CANCEL_FILE:-}" ] || [ ! -f "$ERA_GATE_CANCEL_FILE" ] || {
+  echo "== era-gate: cancelled before execution =="; exit 130;
+}
+gate_port_available "$PORT" || exit 1
+if [ -n "${ERA_GATE_INPUTS:-}" ]; then
+  node "$HUB/tools/test-suite.mjs" verify-inputs "$ERA_GATE_INPUTS" || exit 1
+fi
+trap 'gate_finish "$?"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+node "$HUB/tools/test-suite.mjs" check --json || exit 1
 
 # the green stamp (dev-flow spec §3.1): called ONLY on a fully green run, so a
 # red gate never writes one and never disturbs another tree's. Keyed by the
@@ -107,46 +563,30 @@ write_green_stamp() {
   return 0
 }
 
-# a fresh worktree checkout has a bare public/ (the symlink farm is untracked)
-# — assemble it against the gate's data dir so the test hub serves the apps.
-# It is re-assembled when the farm points at the WRONG siblings too: with
-# ERA_WT_SUFFIX set, a public/ left behind by an earlier unsuffixed run still
-# exists, so the old "is it there?" test alone would serve MASTER's apps to
-# every browser suite while the collector below read the worktrees' (9/17).
-# 9/26: the pencil link alone was the sentinel — a feature with worktrees for
-# board/core/making-words but NOT pencil matched master's farm and served
-# master's board to the board suites (the rename gate failed on text the
-# worktree's board had already changed). Now every farm link is checked.
-farm_stale=0
-for pair in "pencil:era-pencil" "board:era-board" "lib:era-core" "studio.js:era-making-words"; do
-  link="${pair%%:*}"; repo="${pair#*:}"
-  want="../../$(basename "$(sib "$repo")")"
-  case "$link" in pencil|board) want="$want/app" ;; lib) want="$want/lib" ;; studio.js) want="$want/app/studio.js" ;; esac
-  if [ ! -e "$HUB/public/$link" ] ||
-     { [ -L "$HUB/public/$link" ] && [ "$(readlink "$HUB/public/$link")" != "$want" ]; }; then farm_stale=1; fi
-done
-if [ "$farm_stale" = 1 ]; then
-  ERA_DATA_DIR="$DATA" bash "$HUB/tools/assemble.sh"
+# Each run owns its mutable data. All generated served links are checked, and
+# content absent from the seed cannot leave a link to another data directory.
+gate_prepare_owned_data || exit 1
+gate_refresh_farm || exit 1
+if [ -n "${ERA_GATE_INPUTS:-}" ]; then
+  node "$HUB/tools/test-suite.mjs" verify-inputs "$ERA_GATE_INPUTS" || exit 1
+else
+  OWN_INPUTS="$(mktemp /tmp/era-gate-inputs.XXXXXX.json)" || exit 1
+  ERA_GATE_INPUTS="$OWN_INPUTS"
+  node "$HUB/tools/test-suite.mjs" capture-inputs "$ERA_GATE_INPUTS" || exit 1
 fi
 
-rm -rf "$GATE"; mkdir -p "$GATE"
+rm -rf "$GATE" && mkdir -p "$GATE" || exit 1
+GATE_PREPARED=1
 # era-hub's own suites come from THIS checkout ($HUB) so a feature-worktree
 # gate runs the worktree's new/changed suites, not the main checkout's copy
 # (identical when run from the main checkout, where $HUB = $ROOT/era-hub).
-for repo in era-core era-making-words era-pencil era-board era-hub; do
-  # era-hub's suites come from THIS checkout — in a worktree gate, a suite
-  # added on the feature branch must run too (8/28: routes.test.mjs silently
-  # skipped because the collector only looked at the main checkout).
-  src="$(sib "$repo")"; [ "$repo" = "era-hub" ] && src="$HUB"
-  [ -d "$src/tests" ] || continue
-  for f in "$src"/tests/*; do
-    base="$(basename "$f")"
-    [ -d "$f" ] && { cp -r "$f" "$GATE/$base"; continue; }
-    cp "$f" "$GATE/$base"
-  done
-done
+gate_collect_suites || exit 1
+gate_prepare_selection || exit 1
 # re-point the live-server port in the gate copies only
-grep -rlZ "8377" "$GATE" 2>/dev/null | xargs -0 -r sed -i "s/8377/$PORT/g"
+grep -rlZ "8377" "$GATE" >"$GATE/.port-files"; rewrite_status=$?
+[ "$rewrite_status" -le 1 ] || { gate_error "cannot inspect test port references"; exit 1; }
+xargs -0 -r sed -i "s/8377/$PORT/g" <"$GATE/.port-files" || { gate_error "test port rewrite failed"; exit 1; }
+gate_freeze_execution || exit 1
 
 # Every provider seam points at a closed port, gate-wide: the gate's data dir
 # holds a REAL ElevenLabs credential, and a hub reaches out on its own — the
@@ -165,46 +605,81 @@ export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
   ERA_GEO_URL="http://127.0.0.1:1/geo" ERA_WEATHER_URL="http://127.0.0.1:1" \
   ERA_GEOCODE_URL="http://127.0.0.1:1/geocode" ERA_NWS_URL="http://127.0.0.1:1" \
   ERA_RESEND_URL="http://127.0.0.1:1" ERA_TMDB_URL="http://127.0.0.1:1" \
-  ERA_STREAMING_URL="http://127.0.0.1:1"
+  ERA_STREAMING_URL="http://127.0.0.1:1" \
+  ERA_SYMBOL_SEARCH_URL="http://127.0.0.1:1/search/" \
+  ERA_SYMBOL_IMAGE_URL="http://127.0.0.1:1/images/{id}.png"
 # Updater timing seams (spec 2026-10-20 §4.1/§4.4) and the presence beacon's
 # seam and hook (§4.5) never leak from the shell that runs the gate: a suite
 # that needs one sets it on the hub it spawns. An operator's shell that names
 # ERA_PRESENCE_HOOK would otherwise run its real queue hook from test hubs.
-unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS ERA_PRESENCE_HOOK
+# ERA_CLOTHING_TICK_MS likewise: the shared hub below gets it on its own
+# command line, and a suite's own hub keeps the clothing schedule a family has.
+unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS ERA_PRESENCE_HOOK ERA_CLOTHING_TICK_MS
+# Test hubs never inherit a real speech runtime or generation adapter.
+for chat_setting in "${!ERA_CHAT_@}"; do unset "$chat_setting"; done
+export ERA_CHAT_CONFIG_DISABLED=1
 
 # ERA_DEVICE_ID: the gate's DATA is era-family/test-data (a PRIVATE repo's
 # working tree). Without a name given here the hub would generate one from
 # this build box's hostname and write <DATA>/device-id into that repo — a
 # side effect the clothing-migration plan forbids (device-id.js, plan T4.1).
-# start the hub test instance (killing any stale holder of the TEST port first —
-# a survivor from a killed session otherwise fails every live-server suite with
-# EADDRINUSE; bracket trick so pkill never matches this script's own cmdline)
-pkill -f "[n]ode .*server.js $PORT" 2>/dev/null; sleep 0.5
-ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate \
-  node "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
+# Refuse a race for the test endpoint. A stale or foreign hub belongs to its
+# owner; neither its command name nor its port authorizes this run to kill it.
+gate_port_available "$PORT" || exit 1
+# Also prove that the endpoint is bindable before launching our owned child.
+require_free_test_port() {
+  node -e '
+    const server = require("node:net").createServer();
+    server.once("error", () => {
+      console.error("FATAL: test port " + process.argv[1] + " in use or unavailable; choose another test port");
+      process.exitCode = 1;
+    });
+    server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close());
+  ' "$PORT"
+}
+require_free_test_port || exit 1
+NODE_BIN="$(type -P node)" || exit 1
+SRV_ARGS="$NODE_BIN $HUB/server.js $PORT"
+# ERA_CLOTHING_TICK_MS=0: the shared hub's clothing board is built once, by
+# gate_build_clothing below, never by its own timers mid-run.
+ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate ERA_CLOTHING_TICK_MS=0 \
+  "$NODE_BIN" "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
 SRV=$!
-trap 'kill $SRV 2>/dev/null' EXIT
-for i in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/settings" >/dev/null && break; sleep 0.3; done
-curl -sf "http://127.0.0.1:$PORT/settings" >/dev/null || { echo "FATAL: test server did not start"; cat "$GATE/server.log"; exit 1; }
+SRV_ID="$(gate_process_identity "$SRV")" || SRV_ID=""
+gate_wait_process "$SRV" "$SRV_ID" "$SRV_ARGS" || { gate_error "owned test server did not enter its expected command"; exit 1; }
+gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" || { cat "$GATE/server.log"; exit 1; }
+gate_build_clothing "$PORT" || { cat "$GATE/server.log"; exit 1; }
 
 cd "$GATE"
 pass=0; fail=0; failed=""
-# legacy CJS playwright suites (same set as aac-studio tests/all.sh)
-for t in run parts transfer mistakes pencil narrow sortfix fltest bargein sortbugs rhymecount transfercount phonetic; do
-  [ -f "$t.js" ] || continue
-  if timeout 420 node "$t.js" >"$t.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
-  else fail=$((fail+1)); failed="$failed $t"; echo "FAIL $t (see gate/$t.out)"; fi
-done
-# node:test suites
-# 900 s, not 600: clothing.test.mjs decodes and re-encodes real photographs and
-# takes ~607 s on this box, so the old ceiling cut it mid-subtest and the gate
-# went red with no `not ok` and no assertion in the .out file — a failure that
-# looks like a bug and is only a stopwatch. A suite that genuinely wedges still
-# stops the gate, five minutes later.
-for t in *.test.mjs; do
-  if timeout 900 node --test "$t" >"${t%.mjs}.out" 2>&1; then pass=$((pass+1)); echo "PASS $t";
-  else fail=$((fail+1)); failed="$failed $t"; echo "FAIL $t (see gate/${t%.mjs}.out)"; fi
-done
-[ "$fail" -eq 0 ] && write_green_stamp
-echo "== era-gate: $pass passed, $fail failed${failed:+ →$failed} =="
+# The complete executable set was frozen before any suite ran. A previous
+# suite cannot delete or rewrite a later file and silently shrink acceptance:
+# the lane runner re-hashes each copy against its frozen digest as it starts
+# it and refuses a missing or changed one. It runs ERA_GATE_LANES suites at
+# once, each with the serial loop's command (timeout 900 node --test ./X.test.mjs,
+# timeout 420 node ./X.js), cwd, environment, stdin and X.out, prints RUN/PASS/
+# FAIL, and writes results.jsonl and .lane-results.tsv (header of
+# tools/testing/lanes.mjs). It runs in the background so a TERM or INT reaches
+# this shell at once; gate_finish then stops it by its pid.
+node "$HUB/tools/testing/lanes.mjs" "$GATE" <&0 &
+LANES_PID=$!
+LANES_ID="$(gate_process_identity "$LANES_PID")" || LANES_ID=""
+wait "$LANES_PID"; lanes_status=$?
+LANES_PID=""; LANES_ID=""
+gate_record_results "$lanes_status"
+gate_verify_execution || { fail=$((fail+1)); failed="$failed execution-set"; }
+node "$HUB/tools/test-suite.mjs" verify-inputs "$ERA_GATE_INPUTS" --phase running || {
+  fail=$((fail+1)); failed="$failed inputs-changed";
+}
+gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" 1 || {
+  fail=$((fail+1)); failed="$failed shared-hub-identity";
+}
+gate_archive_reports || { fail=$((fail+1)); failed="$failed report-archive"; }
+REPORTS_SAVED=1
+if [ "${ERA_GATE_MODE:-full}" = full ]; then
+  [ "$fail" -eq 0 ] && write_green_stamp
+  echo "== era-gate: $pass passed, $fail failed${failed:+ →$failed} =="
+else
+  echo "== affected tests: $pass passed; failures=$fail; no full stamp${failed:+ →$failed} =="
+fi
 [ "$fail" -eq 0 ]

@@ -491,7 +491,8 @@
       <div class="ic">⏻</div>
       <div>
         <p class="ti">ERAgaze stopped.</p>
-        <p class="bd">To restart: tap the <b>ERAgaze</b> icon on the desktop, or ask the AI assistant.</p>
+        <p class="bd">To restart: tap <b>Start ERAgaze again</b>, tap the <b>ERAgaze</b> icon on the desktop, or ask the AI assistant. The hub stops watching over the engine until then (or for eight hours).</p>
+        <button id="startBtn" class="stopbtn" style="margin-top:8px">▶ Start ERAgaze again</button>
       </div>
     </div>
   </div>
@@ -854,14 +855,27 @@ $("stopBtn").onclick=async()=>{
     return;
   }
   if(stopTimer){clearTimeout(stopTimer); stopTimer=null;}   // second tap: fire
+  // Through the hub (10/26): it remembers the stop was MEANT, or its keeper
+  // would start the engine again half a minute later. The hub posts the
+  // engine's /shutdown itself.
   try{
-    const r=await fetch(ENGINE+"/shutdown",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const r=await fetch("/gaze/stop",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
     if(r.ok){ showStopped(); return; }
-    disarmStop(); $("stopHint").textContent="Could not stop ERAgaze — it answered but refused. Try again.";
+    disarmStop(); $("stopHint").textContent="Could not stop ERAgaze — the hub refused. Try again.";
   }catch(e){
-    // The process exits right after replying, so the socket may drop mid-response.
-    // Either way ERAgaze is now gone — show the stopped state.
-    showStopped();
+    disarmStop(); $("stopHint").textContent="Could not reach the hub to stop ERAgaze. Try again.";
+  }
+};
+$("startBtn").onclick=async()=>{
+  const b=$("startBtn"); b.disabled=true; b.textContent="Starting…";
+  try{
+    const r=await fetch("/gaze/start",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    if(!r.ok) throw new Error("hub "+r.status);
+    toast("ERAgaze starting");
+    setTimeout(()=>location.reload(),2500);      // the page reads the engine's state on load
+  }catch(e){
+    b.disabled=false; b.textContent="▶ Start ERAgaze again";
+    toast("Could not start ERAgaze — try the desktop icon");
   }
 };
 

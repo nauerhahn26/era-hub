@@ -34,7 +34,11 @@ const HUB = path.resolve(__dirname, "..");
 const PORT = 8402;   // never live 8377; 8392/8398 books, 8393/8394 pool
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-music-"));
-let child;
+let child, symbolProvider;
+let symbolEnv;
+const symbolRequests = [];
+const SYMBOL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
 
 const JPEG = Buffer.from(
   "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof" +
@@ -79,9 +83,25 @@ before(async () => {
     JSON.stringify({ schemaVersion: 1, songs }, null, 2));
   fs.writeFileSync(path.join(TMP, "secret.json"), '{"secret":true}');
 
+  symbolProvider = http.createServer((req, res) => {
+    symbolRequests.push(req.url);
+    if (req.url === "/images/8289/8289.png") {
+      res.writeHead(200, { "Content-Type": "image/png" }).end(SYMBOL_PNG);
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  await new Promise((resolve, reject) => {
+    symbolProvider.once("error", reject);
+    symbolProvider.listen(0, "127.0.0.1", resolve);
+  });
+  const symbolOrigin = `http://127.0.0.1:${symbolProvider.address().port}`;
+  symbolEnv = { ERA_SYMBOL_SEARCH_URL: symbolOrigin + "/search/",
+    ERA_SYMBOL_IMAGE_URL: symbolOrigin + "/images/{id}/{id}.png" };
+
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1", ERA_DEVICE_ID: "test-dev" },
+    env: { ...process.env, ...symbolEnv, ERA_DATA_DIR: TMP, ERA_BIND: "127.0.0.1", ERA_DEVICE_ID: "test-dev" },
   });
   for (let i = 0; i < 100; i++) {
     try { await fetch(`${BASE}/settings`); return; } catch {}
@@ -89,7 +109,18 @@ before(async () => {
   }
   throw new Error("server never came up");
 });
-after(() => { if (child) child.kill("SIGKILL"); });
+after(async () => {
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const stopped = new Promise(resolve => child.once("exit", resolve));
+    child.kill("SIGKILL");
+    await stopped;
+  }
+  if (symbolProvider?.listening) {
+    symbolProvider.closeAllConnections();
+    await new Promise(resolve => symbolProvider.close(resolve));
+  }
+  fs.rmSync(TMP, { recursive: true, force: true });
+});
 
 function btnAt(board, row, col) {
   return board.buttons.find(b => b.row === row && b.col === col) || null;
@@ -209,11 +240,23 @@ test("musicVolCap: /settings round-trip with clamping (default 100)", async () =
   assert.equal((await (await fetch(`${BASE}/settings`)).json()).musicVolCap, 1, "clamped low");
 });
 
-test("GET /symbol/<numeric-id> serves the exact ARASAAC pictogram (cached)", async () => {
+test("GET /symbol/<numeric-id> downloads exact image bytes without search, then uses the cache", async () => {
+  const cacheFile = path.join(TMP, "symbols-cache", "8289.png");
+  assert.equal(fs.existsSync(cacheFile), false, "the numeric symbol starts uncached");
   const r = await fetch(`${BASE}/symbol/8289`);
   assert.equal(r.status, 200);
   assert.equal(r.headers.get("content-type"), "image/png");
-  assert.ok((await r.arrayBuffer()).byteLength > 500, "real PNG bytes");
+  assert.equal(r.headers.get("x-symbol-cache"), "miss");
+  assert.deepEqual(Buffer.from(await r.arrayBuffer()), SYMBOL_PNG, "the exact numeric image bytes are served");
+  assert.deepEqual(fs.readFileSync(cacheFile), SYMBOL_PNG, "the image bytes reached the disk cache");
+  assert.deepEqual(symbolRequests.filter(url => url.includes("8289")), ["/images/8289/8289.png"],
+    "a numeric ID downloads its exact image path without a search lookup");
+  const cached = await fetch(`${BASE}/symbol/8289`);
+  assert.equal(cached.status, 200);
+  assert.equal(cached.headers.get("x-symbol-cache"), "hit");
+  assert.deepEqual(Buffer.from(await cached.arrayBuffer()), SYMBOL_PNG);
+  assert.deepEqual(symbolRequests.filter(url => url.includes("8289")), ["/images/8289/8289.png"],
+    "the second request makes no provider call");
 });
 
 test("songs.json ETag: 304 on If-None-Match, HEAD supported, CORS open", async () => {
@@ -303,7 +346,7 @@ test("LAW: no music dir -> songs.json 404 and the server stays alive", async () 
   const PORT2 = 8403;
   const c2 = spawn("node", ["server.js", String(PORT2)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, ERA_DATA_DIR: TMP2, ERA_BIND: "127.0.0.1" },
+    env: { ...process.env, ...symbolEnv, ERA_DATA_DIR: TMP2, ERA_BIND: "127.0.0.1" },
   });
   try {
     let up = false;

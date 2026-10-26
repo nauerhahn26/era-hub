@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 const require = createRequire(import.meta.url);
 const { PACKS, packInstalled, packOf, ytDlp } = require("../packs.js");
 const NSI = fs.readFileSync(new URL("../tools/installer.nsi", import.meta.url), "utf8");
@@ -91,6 +92,54 @@ test("build-payload refuses to cut a payload with a piece of the cut-out engine 
     assert.equal(bad.status, 1, "one missing file stops the cut");
     assert.match(bad.stdout, /ort-wasm-simd-threaded\.wasm is missing/, "and says which one");
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test("Chat modules are copied before the payload dependency check and its page stays core", () => {
+  const begin = PAYLOAD.indexOf('cp "$HUB/server.js"');
+  const vendor = PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"');
+  const validation = PAYLOAD.indexOf('workers=');
+  for (const file of ['chat-api.js', 'chat-choices.js', 'chat-speech-worker.js']) {
+    const copy = PAYLOAD.indexOf(`"$HUB/${file}"`);
+    assert.ok(copy >= begin && copy < validation, `${file} is present before required-module validation`);
+  }
+  assert.ok(PAYLOAD.includes('cp -r "$HUB/public/chat" "$OUT/public/chat"'));
+  assert.ok(!/\/x chat\b/.test(NSI), 'Chat page rides with the core');
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'era-chat-modules-'));
+  try {
+    const run = spawnSync('bash', ['-eu', '-c', PAYLOAD.slice(begin, vendor)], {
+      env: { ...process.env, HUB: path.resolve(new URL('..', import.meta.url).pathname), OUT: out }, encoding: 'utf8',
+    });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    for (const file of ['chat-api.js', 'chat-choices.js', 'chat-speech-worker.js']) assert.ok(fs.statSync(path.join(out, file)).size > 0);
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test("Chat activity model and license are present and the payload rejects missing or changed bytes", () => {
+  const files = ['vendor/models/chat-activity.onnx', 'vendor/models/chat-activity.LICENSE'];
+  const digest = '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6';
+  for (const file of files) assert.ok(fs.statSync(new URL('../' + file, import.meta.url)).size > 0);
+  assert.equal(createHash('sha256').update(fs.readFileSync(new URL('../' + files[0], import.meta.url))).digest('hex'), digest);
+  const guard = PAYLOAD.match(/# Chat speech activity assets\n([\s\S]*?)# End Chat speech activity assets/);
+  assert.ok(guard, 'the payload has an isolated activity asset guard');
+  assert.ok(guard.index > PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'era-chat-assets-'));
+  const run = () => spawnSync('bash', ['-eu', '-c', guard[1]], { env: { ...process.env, OUT: out }, encoding: 'utf8' });
+  const restore = () => { for (const file of files) { fs.mkdirSync(path.dirname(path.join(out, file)), { recursive: true }); fs.copyFileSync(new URL('../' + file, import.meta.url), path.join(out, file)); } };
+  try {
+    restore(); assert.equal(run().status, 0);
+    fs.writeFileSync(path.join(out, files[0]), 'changed model'); assert.equal(run().status, 1, 'changed model stops the cut');
+    restore(); fs.rmSync(path.join(out, files[0])); assert.equal(run().status, 1, 'missing model stops the cut');
+    restore(); fs.writeFileSync(path.join(out, files[1]), ''); assert.equal(run().status, 1, 'empty license stops the cut');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test("release copy describes optional configured Chat cloud processing without a blanket privacy claim", () => {
+  const release = fs.readFileSync(new URL('../tools/release.sh', import.meta.url), 'utf8');
+  const copy = release.match(/^APPS="([^\n]+)"$/m)?.[1];
+  assert.ok(copy); assert.ok(/Chat/.test(copy));
+  assert.ok(/optional|opt-in/i.test(copy)); assert.ok(/experimental/i.test(copy));
+  assert.ok(/cloud/.test(copy) && /held question/.test(copy)); assert.ok(/device voice/.test(copy));
+  assert.ok(!/nothing about your child leaves the machine/i.test(copy));
 });
 
 test("packInstalled reads the pack's presence marker", () => {

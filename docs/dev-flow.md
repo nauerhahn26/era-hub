@@ -24,6 +24,8 @@ restarts live 8377; that stays an explicit act in the main checkout.
 Ports: `ERA_TEST_PORT` 8380-8389 for manual hubs, 8480+ scratch, 8500+ tunnels,
 never 8377/8378/8425/8427/8450-8462. Refusal messages → fixes are tabled in the
 aac-board-builder doc.
+The gate refuses an occupied test port without stopping its listener. Choose
+another test port or have the session that started that listener stop its own PID.
 
 A feature that spans repos keeps one worktree per repo, all on the same slug
 (`<repo>--wt-<slug>`), and `ERA_WT_SUFFIX=--wt-<slug>` is what makes
@@ -34,6 +36,47 @@ sibling worktree tree it sourced (each with its own `dirty=1` verdict), so
 `worktree.sh land` accepts each repo in turn; land in dependency order, in one
 sitting while the 2 h stamps hold: era-core → era-board → era-making-words →
 era-pencil → era-gaze → era-hub, and never restart the live 8377 hub in between.
+
+Symbol-provider tests use `ERA_SYMBOL_SEARCH_URL` and `ERA_SYMBOL_IMAGE_URL`
+to point the hub at an owned local service. The image template replaces `{id}`;
+normal installations retain the existing public-service defaults. The board
+route suite owns its data and provider so a complete gate can exercise cache
+misses without external network access. Standalone board routes must name the
+selected hub with `ERA_HUB_SRC`; matching feature worktrees retain the source
+selection rules above.
+
+## The gate runs in lanes; focused runs for the dev loop
+
+Since 2026-10-26 `era-gate.sh` runs the frozen suites two at a time
+(`ERA_GATE_LANES`, default 2; `ERA_GATE_LANES=1` is the old serial loop byte for
+byte). The scheduler (`tools/testing/lanes.mjs`) starts the longest known suite
+first and keeps apart what cannot share the host: solo suites run alone, two
+heavy suites never overlap, a quiet suite never sits beside a heavy one, and two
+claimants of one fixed port (the gaze engine's bus 49155 included) never run
+together. Under 2 GiB of free memory a lane holds; the last running lane never
+does. The classes live in `tools/testing/registry.json`, written by
+`node tools/testing/classify-suites.mjs` from the suite sources (re-run it after
+a sync; `tests/suite-classes.test.mjs` fails the gate when they drift).
+Measured 10/26: 164 suites, 14 min 10 s at two lanes, 26 min 39 s serial after
+the same day's suite speedups, 33 min before them. A TERM to the gate's pid now
+stops every suite within seconds. Each gate leaves `gate/results.jsonl`, one
+line per suite with its lane and seconds.
+
+Stand-in providers never wait: the clothing worker's 5 s photo spacing and 3 s
+retry gap are 0 when `ERA_AI_URL` names this machine (there is no real provider
+to protect) and unchanged for every family hub; no environment variable can
+change them (`tests/clothing-pacing.test.mjs`).
+
+For the dev loop, run only what a change touches, with no stamp:
+
+```
+node tools/test-suite.mjs plan --base master            # which suites, and why
+node tools/test-suite.mjs queue --affected --base master # run them, in series, under the gate lock
+node tools/test-suite.mjs status                        # jobs under ~/.local/state/era-tests/
+```
+
+A change to `server.js`, shared runtime or tooling expands to the complete set;
+landing still wants the full gate's stamp.
 
 ## The three release shapes
 
@@ -249,3 +292,37 @@ commands handle all movement; the quantities themselves are passive.
 Existing explicit app selections are preserved, so enable Math in Settings
 when it is not already listed on the home screen. State stays local to each
 computer. Usage and access behavior: [Math](math.md).
+
+## Games
+
+Games is a core app at `/games/`, with Fashion Studio, Four in a Row and
+Number Tiles. Fashion Studio keeps editable local looks and a runway show;
+both board games use commands around passive boards.
+The partner panel contains hosted-game references and local source credits.
+Existing explicit app selections are preserved, so enable Games in Settings
+when it is absent from the home screen. State and recovery stay in the local
+browser. Usage and access behavior: [Games](games.md).
+
+## Experimental Chat
+
+Chat is an optional app at `/chat/`, disabled by default and sharing the Board
+pack's portable speech activity runtime. A configured installed Node worker
+transcribes a partner's held question after release; optional contextual choices
+run through the hub. Service credentials stay in the operating account's private
+configuration file. Gates disable private configuration loading. Setup, cloud
+data boundaries and current acceptance limits: [Chat](chat.md).
+
+## Gaze engine supervision
+
+When ERAgaze is enabled and the hub's own build is compiled, the hub polls the
+engine's bus (`127.0.0.1:49155/status`) every 10 s. Silent for 30 s after a
+60 s boot grace, the hub stops its own build by path and starts it again, then
+backs off 30 → 60 → 120 → 300 → 600 s while it stays silent; two minutes of
+answers reset the ladder. `GET /status` shows `gaze.state`, `restarts`,
+`nextRetry` and `stoppedOnPurpose`. Settings' "Stop ERAgaze completely" goes
+through `POST /gaze/stop` (loopback only), which writes `<DATA>/gaze-stopped.json`
+and holds the supervisor off until `POST /gaze/start` ("Start ERAgaze again"),
+the engine reappears by hand, or eight hours pass; the marker survives a hub
+restart. Turning the engine off in the apps list is simply unsupervised. The
+engine side (era-gaze `StartBus()`) retries a failed bus bind instead of running
+deaf. Design: [gaze engine supervisor](specs/2026-10-26-gaze-engine-supervisor-design.md).

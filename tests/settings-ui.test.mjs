@@ -29,7 +29,7 @@ import { chromium } from "playwright";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 8475;       // never live 8377; 8391-8422 held by sibling suites; 8423 was shared with update-boot (moved 9/26)
-const FAKE = 8424;       // stand-in for api.elevenlabs.io
+const FAKE = 8399;       // the stand-in speech provider (off 8424 10/26: that is update-boot's feed)
 const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-settings-ui-"));
 let child, fake, browser;
