@@ -122,6 +122,13 @@
     <div class="row" id="voices"></div>
     <div class="status" id="voiceStatus"></div>
     <div style="margin-top:16px">
+      <label for="responseVoiceSpeed">Response voice speed on this device (%)</label>
+      <p class="hint">70–120%; 100% is normal and 80% is the default. Open Settings on the device you want to change. Applies to premium spoken responses across apps. Reopen an app after saving to refresh its cached speech. Songs, recorded books and the built-in computer voice keep their current pace.</p>
+      <input id="responseVoiceSpeed" type="number" min="70" max="120" step="1" value="80" disabled>
+      <button id="responseVoiceSpeedSave" disabled>Save response speed</button>
+      <p id="responseVoiceSpeedStatus" class="status" role="status"></p>
+    </div>
+    <div style="margin-top:16px">
       <p class="hint" style="margin-bottom:8px">Premium voices need a free ElevenLabs account. Without a key the built-in computer voice is used.</p>
       <div class="row" style="margin-bottom:10px">
         <button id="elevenOpen" style="border:2px solid var(--teal);color:var(--teal-deep)">🔑 Open my ElevenLabs API keys page</button>
@@ -498,6 +505,36 @@ const $ = id => document.getElementById(id);
 function toast(msg, ok=true){ const t=$("toast"); t.textContent=msg; t.style.background=ok?"#2E7D5B":"#B23A48"; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1600); }
 
 // ---- Voice ----
+async function loadResponseVoiceSpeed(){
+  try{
+    const r=await fetch("/settings",{cache:"no-store"});
+    if(!r.ok) throw new Error("settings");
+    const s=await r.json();
+    if(!Number.isFinite(s.responseVoiceSpeed)) throw new Error("unsupported");
+    $("responseVoiceSpeed").value=Math.round(s.responseVoiceSpeed*100);
+    $("responseVoiceSpeed").disabled=false;
+    $("responseVoiceSpeedSave").disabled=false;
+  }catch(e){ $("responseVoiceSpeedStatus").textContent="Could not load response speed. Update or reconnect to this device's hub."; }
+}
+$("responseVoiceSpeedSave").onclick=async()=>{
+  const input=$("responseVoiceSpeed"), button=$("responseVoiceSpeedSave");
+  if(!input.reportValidity()) return;
+  const percent=Number(input.value);
+  if(!Number.isInteger(percent)||percent<70||percent>120){
+    $("responseVoiceSpeedStatus").textContent="Enter a whole percentage from 70 to 120."; return;
+  }
+  button.disabled=true;
+  try{
+    const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({responseVoiceSpeed:percent/100})});
+    if(!r.ok) throw new Error("save");
+    const check=await fetch("/settings",{cache:"no-store"});
+    if(!check.ok || Math.round((await check.json()).responseVoiceSpeed*100)!==percent) throw new Error("verify");
+    $("responseVoiceSpeedStatus").textContent="Saved on this device: "+percent+"%. Reopen the app to refresh its speech.";
+  }catch(e){ $("responseVoiceSpeedStatus").textContent="Could not confirm the saved speed. Try again."; }
+  finally{ button.disabled=false; }
+};
+loadResponseVoiceSpeed();
 async function loadVoices(){
   try{
     const v = await (await fetch("/voices")).json();
