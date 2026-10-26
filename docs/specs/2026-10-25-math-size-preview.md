@@ -1,6 +1,6 @@
 # Math sizing preview
 
-Status: reviewed and approved for deployment. The maintainer requested larger
+Status: reviewed, approved and published in v1.0.21. The maintainer requested larger
 numerals and modestly larger side controls while keeping ample whitespace,
 reviewed the rendered preview, and then explicitly requested deployment.
 
