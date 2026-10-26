@@ -217,11 +217,19 @@ test("response speed Settings opens without saving, persists an explicit save an
     await page.reload();
     await page.waitForFunction(() => !document.getElementById("responseVoiceSpeedSave").disabled);
     assert.equal(await page.inputValue("#responseVoiceSpeed"), "90");
+    let saveStatus = 204;
     await ctx.route("**/settings", route => route.request().method() === "POST"
-      ? route.fulfill({ status: 500, body: "unavailable" }) : route.continue());
+      ? route.fulfill({ status: saveStatus, body: "" }) : route.continue());
     await page.fill("#responseVoiceSpeed", "100");
     await page.click("#responseVoiceSpeedSave");
     await page.waitForFunction(() => document.getElementById("responseVoiceSpeedStatus").textContent.includes("Could not confirm"));
+    assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.9,
+      "a successful response without persistence must not show Saved");
+    saveStatus = 500;
+    await page.fill("#responseVoiceSpeed", "110");
+    await page.click("#responseVoiceSpeedSave");
+    await page.waitForFunction(() => !document.getElementById("responseVoiceSpeedSave").disabled);
+    assert.match(await page.textContent("#responseVoiceSpeedStatus"), /Could not confirm/);
     assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.9);
   } finally {
     await ctx.close();

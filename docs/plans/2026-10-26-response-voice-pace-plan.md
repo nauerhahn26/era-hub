@@ -13,9 +13,14 @@ Spec: [response voice pace](../specs/2026-10-26-response-voice-pace.md).
   0.7, 0.8 and 1.2.
 - [x] Verify second-device independence and persistence across restart.
 - [ ] Run the complete Linux gate and Windows patch acceptance.
+- [x] Add an installed Windows save/reload smoke to normal patch leg B;
+  existing VM contract checks pass (12/12). No private preparation hook.
 - [ ] Coordinate with Testing suite before shared runtime landing or publishing.
 - [ ] Release only on the maintainer's explicit instruction.
 
 The initial implementation hold was lifted by the maintainer's explicit request
 to test and release. Testing suite has Lockout ahead of this candidate; sync
 that accepted predecessor before the final gate and publication transaction.
+Testing suite's subsequent monitoring update reported an interrupted Lockout
+gate without acceptance. Full Voice collection remains on hold pending that
+owner's settled source tuple. Focused checks grant no release eligibility.
