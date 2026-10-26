@@ -139,6 +139,7 @@ const APPS = [
   // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
   { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
   { id: "math", title: "Math", sub: "explore numbers and number partners", path: "/math/", pack: null },
+  { id: "games", title: "Games", sub: "fashion, four in a row and number tiles", path: "/games/", pack: null },
   // The Chat page is core; its speech activity runtime comes from the board pack.
   { id: "chat", title: "Chat", sub: "experimental conversation · hold to ask", path: "/chat/", pack: "board", defaultEnabled: false },
   // engine, not a page: no home tile; enabling compiles our public ERAgaze.cs

@@ -148,6 +148,8 @@ cp -r "$HUB/public/watch" "$OUT/public/watch"
 cp -r "$HUB/public/play" "$OUT/public/play"
 # Math's local number exploration rides with the core, including its state model.
 cp -r "$HUB/public/math" "$OUT/public/math"
+# Games includes its local models, original artwork and source attributions.
+cp -r "$HUB/public/games" "$OUT/public/games"
 cp "$HUB/public/favicon.ico" "$OUT/public/favicon.ico"
 cp -r "$HUB/public/icons" "$OUT/public/icons"   # per-app icons (tiles + shortcuts)
 
