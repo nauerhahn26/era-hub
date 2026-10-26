@@ -1547,6 +1547,21 @@
       "level": "unit"
     },
     {
+      "id": "era-hub:tests/harvest-durations.test.mjs",
+      "purpose": "Per-suite wall times harvested from green gate directories for longest-first lanes",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/testing/harvest-durations.mjs",
+        "era-hub/tests/harvest-durations.test.mjs"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data",
+        "owned-node-child"
+      ],
+      "level": "module and filesystem"
+    },
+    {
       "id": "era-hub:tests/home-tiles.test.mjs",
       "purpose": "Enabled app home tiles, empty libraries and correct icons",
       "group": "hub",
@@ -2108,6 +2123,22 @@
         "fixed-ports"
       ],
       "level": "build/static contract and local behavior"
+    },
+    {
+      "id": "era-hub:tests/suite-ports.test.mjs",
+      "purpose": "Every fixed listener port claimed by one suite only, none in a reserved band, and no kill-by-name in any suite",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tests/**",
+        "collected suite sources of all five repositories"
+      ],
+      "lane": "linux",
+      "resources": [
+        "collected-suite-sources",
+        "owned-node-child",
+        "ephemeral-loopback-ports"
+      ],
+      "level": "static contract and local process behavior"
     },
     {
       "id": "era-hub:tests/symbol-provider.test.mjs",
@@ -2826,6 +2857,16 @@
         "era-making-words:tests/transfer.js",
         "era-making-words:tests/transfercount.js",
         "era-pencil:tests/pencil.js"
+      ]
+    },
+    {
+      "id": "era-hub:tests/hub-port.mjs",
+      "purpose": "Stops the hub holding a suite's own fixed port by its verified pid, never by command-line pattern",
+      "consumers": [
+        "era-hub:tests/presence.test.mjs",
+        "era-hub:tests/suite-ports.test.mjs",
+        "era-hub:tests/update-boot.test.mjs",
+        "era-hub:tests/update.test.mjs"
       ]
     },
     {

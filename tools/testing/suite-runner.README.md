@@ -123,4 +123,35 @@ not prepare a parallel release train. Use the snapshot queue for concurrent
 verification preparation, and keep final release publication separate under the
 maintainer's authorization.
 
+## Suite durations
+
+`tools/testing/durations.json` holds each registered suite's median, mean, min
+and max wall seconds and sample count. The lane scheduler reads it for
+longest-first ordering; a suite with no sample gets `default_s`, the mean of
+all medians. Regenerate it from green gate directories:
+
+```sh
+node tools/testing/harvest-durations.mjs --out tools/testing/durations.json \
+  ~/.local/state/era-parallel-gates/jobs/*/workspace/era-hub*/gate
+```
+
+A parallel job counts only when its `status.json` says `passed`. A legacy
+serial gate dir (`<hub-worktree>/gate`) counts only when its outputs are green by the
+parallel validator's rules. Any dir with a `.execution-plan.tsv` must also be
+complete. A run that fails any of these is skipped whole. Symlinked aliases
+count once. Modern suites use the TAP trailer `# duration_ms` (`source: "tap"`).
+Legacy `.js` scripts use the gap from the previous suite's `.out` mtime, which is
+lower confidence (`source: "mtime"`). The first suite is anchored on the plan's
+mtime, and a run without a plan yields no sample for its first suite. Warnings
+name registry suites with no sample and samples with no registry entry; the
+latter are left out of the table. Keys are sorted and `--generated-at ISO` pins
+the timestamp, so the same inputs give identical bytes.
+
+`--results FILE` (repeatable) also reads one JSON object per line,
+`{"suite", "status", "seconds"}`, keeping `pass`/`passed` lines
+(`source: "results"`). Phase 2 fixes the `results.jsonl` fields; adjust this
+reader to match before relying on it. A suite whose samples have mixed sources
+reports the lowest-confidence source. Refresh on a green master gate and commit
+weekly.
+
 Development and release requirements remain in [the development flow](../../docs/dev-flow.md).
