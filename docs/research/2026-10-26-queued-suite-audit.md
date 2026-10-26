@@ -81,12 +81,19 @@ Games also extends `gate-stamp.test.mjs` with a busy-port listener-survival
 regression. Keep those existing files and their added boundary checks; this
 supplement does not count modifications as new suite files.
 
-## Draft registry metadata for application after merge
+## Registry metadata: Chat applied, Games pending
 
-This is a draft outside the execution registry. Register each suite only when
-its source file exists in the selected source tuple. The current staging
-inventory must not declare files that have not merged. These entries do not
-introduce a new omission rule: Chat, Games, shared runtime and unknown source
+The six Chat entries and their two Python helper declarations are now applied
+to the execution registry after Chat master `e1caf6b` merged into the testing
+worktree. Comparing the merged files with the audited Chat commit found only
+the two already-reviewed forbidden-port fixture repairs; case counts and runtime
+boundaries remain unchanged. Applied dependencies use repository-qualified paths
+and include the API's shared loopback helper and preview's served dwell source.
+
+The three Games entries below remain drafts until their files merge. Register
+each suite only when its source exists in the selected source tuple. The inventory
+must not declare files that have not merged. These entries introduce no new
+omission rule: Chat, Games, shared runtime and unknown source
 changes retain the existing conservative complete fallback until their impact
 boundaries are explicitly reviewed.
 
@@ -164,11 +171,12 @@ boundaries are explicitly reviewed.
 }
 ```
 
-After the feature files merge, reconcile this draft with the actual source
-tuple, update the execution registry and shared-helper consumer lists, and run
-its completeness check. Keep measured suite durations and initial outcomes in
-run receipts. Do not remove cases or split stateful files merely to reduce the
-reported suite count.
+After Games files merge, reconcile their draft with the actual source tuple,
+update the execution registry and shared-helper consumer lists, and run its
+completeness check. Chat classification brought the current inventory from 138
+to 144 suites, with the existing 30 planner regressions passing. Keep measured
+suite durations and initial outcomes in run receipts. Do not remove cases or
+split stateful files merely to reduce the reported suite count.
 
 ## Published shared speech readiness supplement
 
@@ -192,4 +200,4 @@ or a substitute for complete gate evidence.
 The registry refused the new executable suite before classification. Its exact
 speech dependency, browser resources and conservative helper consumer membership
 are now registered, with review date 2026-10-26. Core changes still select the
-complete gate. Unmerged Chat and Games entries above remain drafts.
+complete gate. Chat is now registered; the unmerged Games entries remain drafts.

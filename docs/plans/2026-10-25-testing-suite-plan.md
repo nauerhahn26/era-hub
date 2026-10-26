@@ -11,9 +11,10 @@ remain unchanged.
 
 The [queued-suite supplement](../research/2026-10-26-queued-suite-audit.md)
 reviews the six Chat and three Games files added since the original snapshot.
-All protect distinct boundaries; none warrants deletion. Its registry metadata
-remains a draft until those sources merge, so the active inventory cannot claim
-files absent from its selected tuple.
+All protect distinct boundaries; none warrants deletion. The six Chat entries
+are registered after their sources merged into this worktree. The three Games
+entries remain draft until their sources merge, so the active inventory cannot
+claim files absent from its selected tuple.
 
 The [reuse eligibility record](../research/2026-10-26-gate-reuse-eligibility.md)
 distinguishes the avoidable fixture-only repeat cost from the new full
@@ -56,12 +57,19 @@ order below remains the wider strategy; this priority supersedes its sequencing.
 ## Development-tool stage
 
 The separate conservative planner, registry, serialized development queue and
-gate hardening are implemented. Inventory validation covers 138 suites on this
-branch. The combined targeted checks passed 84/84 with no skipped or todo cases;
+gate hardening are implemented. After integrating landed Chat source, inventory
+validation covers 144 suites on this branch. The combined targeted checks
+passed 84/84 again with no skipped or todo cases;
 the parallel safeguards separately passed 40/40 and their nested namespace proof.
 These checks do not replace this branch's eventual complete acceptance gate.
 Do not migrate the queued releases to the wider development-tool stage merely
 to use the standalone parallel capability.
+
+The next complete acceptance run uses this worktree's frozen candidate and the
+separate isolated lane while Chat and Games use the Windows VM in series. It
+does not land or move master during their release window. The selected Board
+worktree includes its already-landed fixture changes; no unlanded application
+dependency is being substituted into their candidates.
 
 The optional hub-only verification/landing transaction and compatible house
 helper were tested against synthetic repositories. They retain serialized

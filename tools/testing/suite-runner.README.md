@@ -17,6 +17,10 @@ Set `ERA_WT_SUFFIX=--wt-<feature>` when selecting matching sibling worktrees.
 The registry check refuses missing or unregistered suites, unsupported executable
 names and collection collisions. The registered parallel gate suite imports its
 capacity and snapshot tests and runs the Python memory-monitor tests.
+The merged Chat feature has six registered suites and two Python helper files
+owned by its speech wrapper. Games metadata remains a draft until those files
+merge. Registration classifies coverage and resources; Chat product changes
+retain the complete fallback and gain no new omission rule.
 
 ## Conservative development selection
 

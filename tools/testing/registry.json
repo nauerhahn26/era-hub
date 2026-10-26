@@ -573,6 +573,111 @@
       "level": "hub process integration"
     },
     {
+      "id": "era-hub:tests/chat-api.test.mjs",
+      "purpose": "Local Chat authorization, bounded sessions, runtime/configuration lifecycle and choice-service integration",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-speech-worker.js",
+        "era-hub/tools/chat-preview.mjs",
+        "era-hub/tools/chat-choices-adapter.mjs",
+        "era-hub/tools/era-gate.sh",
+        "era-hub/update.js",
+        "era-core/dwell.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "temporary-data",
+        "synthetic-runtime-children",
+        "shared-static-farm"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-choices-adapter.test.mjs",
+      "purpose": "Bounded grounded choice generation, strict provider replies and direct adapter HTTP cancellation",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module and HTTP integration",
+      "dependencies": [
+        "era-hub/tools/chat-choices-adapter.mjs",
+        "era-hub/chat-choices.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "provider-doubles"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-config.test.mjs",
+      "purpose": "Literal private configuration parsing, precedence, bounds and disabled behavior",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module and filesystem",
+      "dependencies": [
+        "era-hub/chat-api.js"
+      ],
+      "resources": [
+        "temporary-data"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-native-speech.test.mjs",
+      "purpose": "Release-only speech capture, actual activity refusal, cancellation, bounded transport and safe child protocol",
+      "group": "chat",
+      "lane": "linux",
+      "level": "worker and inference integration",
+      "dependencies": [
+        "era-hub/chat-speech-worker.js",
+        "era-hub/vendor/models/chat-activity.onnx",
+        "era-hub/vendor/onnxruntime-web/**"
+      ],
+      "resources": [
+        "wasm-cpu",
+        "bundled-activity-assets",
+        "owned-loopback-services",
+        "owned-node-child",
+        "provider-doubles"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-speech.test.mjs",
+      "purpose": "Optional Python speech-runtime protocol and evaluation-tool metric contracts",
+      "group": "chat-tools",
+      "lane": "linux",
+      "level": "subprocess protocol and metrics",
+      "dependencies": [
+        "era-hub/tests/chat-speech-runtime.py",
+        "era-hub/tests/chat-speech-benchmark.py",
+        "era-hub/tools/chat-speech-worker.py",
+        "era-hub/tools/chat-benchmark.py"
+      ],
+      "resources": [
+        "python3",
+        "owned-loopback-services",
+        "owned-python-children",
+        "synthetic-audio"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-ui.test.mjs",
+      "purpose": "Conversation/voice generations, neutral gating, bounded PCM resampling and idle worklet retention",
+      "group": "chat",
+      "lane": "linux",
+      "level": "controller and VM worklet unit",
+      "dependencies": [
+        "era-hub/public/chat/controller.js",
+        "era-hub/public/chat/voice.js",
+        "era-hub/public/chat/pcm-worklet.js"
+      ],
+      "resources": [
+        "in-process-voice-doubles",
+        "vm-worklet-harness"
+      ]
+    },
+    {
       "id": "era-hub:tests/clothing-accessories.test.mjs",
       "purpose": "Accessory classification, edits, shared tags and board navigation",
       "group": "hub",
@@ -2179,6 +2284,12 @@
         "era-hub:tests/book-sharing-e2e.test.mjs",
         "era-hub:tests/books-share.test.mjs",
         "era-hub:tests/books.test.mjs",
+        "era-hub:tests/chat-api.test.mjs",
+        "era-hub:tests/chat-choices-adapter.test.mjs",
+        "era-hub:tests/chat-config.test.mjs",
+        "era-hub:tests/chat-native-speech.test.mjs",
+        "era-hub:tests/chat-speech.test.mjs",
+        "era-hub:tests/chat-ui.test.mjs",
         "era-hub:tests/clothing-accessories.test.mjs",
         "era-hub:tests/clothing-attrs.test.mjs",
         "era-hub:tests/clothing-diversity.test.mjs",
@@ -2323,6 +2434,12 @@
         "era-hub:tests/book-sharing-e2e.test.mjs",
         "era-hub:tests/books-share.test.mjs",
         "era-hub:tests/books.test.mjs",
+        "era-hub:tests/chat-api.test.mjs",
+        "era-hub:tests/chat-choices-adapter.test.mjs",
+        "era-hub:tests/chat-config.test.mjs",
+        "era-hub:tests/chat-native-speech.test.mjs",
+        "era-hub:tests/chat-speech.test.mjs",
+        "era-hub:tests/chat-ui.test.mjs",
         "era-hub:tests/clothing-accessories.test.mjs",
         "era-hub:tests/clothing-attrs.test.mjs",
         "era-hub:tests/clothing-diversity.test.mjs",
@@ -2427,6 +2544,20 @@
         "era-making-words:tests/transfer.js",
         "era-making-words:tests/transfercount.js",
         "era-pencil:tests/pencil.js"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-speech-runtime.py",
+      "purpose": "Optional speech runtime protocol checks",
+      "consumers": [
+        "era-hub:tests/chat-speech.test.mjs"
+      ]
+    },
+    {
+      "id": "era-hub:tests/chat-speech-benchmark.py",
+      "purpose": "Evaluation metric and replay checks",
+      "consumers": [
+        "era-hub:tests/chat-speech.test.mjs"
       ]
     }
   ]
