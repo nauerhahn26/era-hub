@@ -69,3 +69,13 @@ nested namespace execution passed owned synthetic checks before that change.
 No measured complete parallel-gate duration is available yet. Record the first
 pilot's complete inventory, input verification, start/end times, peak resource
 use and receipt location before giving a firm revised queue completion time.
+
+The first pilot completed all 139 suites with 137 passing and two failing; no
+green stamp was issued or accepted. Music still required an external numeric
+symbol image, and the Reader reload case inspected the populated index before
+the shelf rendered and restored its saved position. The narrow fixes retain all
+12 Music and 17 Reader cases: Music owns its provider and verifies exact image
+identity plus cache behavior; Reader waits for independent rendered-grid
+readiness after both navigations while retaining the original state assertions.
+Both complete files passed in fresh no-egress namespaces. These test changes
+require a fresh complete candidate gate under the existing acceptance policy.

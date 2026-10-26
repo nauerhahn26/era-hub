@@ -491,11 +491,14 @@ test("a reload keeps the section and page; a fresh open starts on This Week", as
   await page.locator("#shelfMore").click();
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => window.Reader && window.Reader.state().shelfCount > 0);
+  // The index arrives before /content/status; wait for boot to restore and paint the shelf.
+  await page.locator("#shelfGrid [data-cell]").first().waitFor();
   let s = await state(page);
   assert.equal(s.section, "all"); assert.equal(s.shelfPage, 1, "the page survived the reload");
   // a fresh open — she came in through her home screen, not a reload
   await page.goto(`${BASE}/reader/`, { waitUntil: "load" });
   await page.waitForFunction(() => window.Reader && window.Reader.state().shelfCount > 0);
+  await page.locator("#shelfGrid [data-cell]").first().waitFor();
   s = await state(page);
   assert.equal(s.section, "week"); assert.equal(s.shelfPage, 0, "opening the reader opens This Week");
   await ctx.close();
