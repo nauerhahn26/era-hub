@@ -154,13 +154,25 @@ async function makePage(opts = {}) {
 // the latter only taps. touchStart -> pointerdown{pointerType:"touch"} in the
 // page, which is precisely what reader-share.js filters on.
 async function hold(page, selector, ms, midway) {
+  await touchHold(page, selector, midway, () => page.waitForTimeout(Math.max(0, ms - (midway ? 400 : 0))), ms);
+}
+// A finger held until the sheet opens, then let go: the positive holds. The
+// sheet is drawn by the hold's own timer (reader-share.js HOLD_MS) with no
+// entrance animation, and the click-swallow window is timed from the RELEASE,
+// so letting go the moment it is there is the same gesture as holding on past
+// it, minus the wait. Bounded at `ms` + 2 s: a hold that never fires fails here.
+async function holdOpen(page, selector, ms, midway) {
+  await touchHold(page, selector, midway,
+    () => page.locator("#shareSheet").waitFor({ timeout: ms + 2000 }), ms);
+}
+async function touchHold(page, selector, midway, keep, ms) {
   const box = await page.locator(selector).boundingBox();
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
   const cdp = await page.context().newCDPSession(page);
   try {
     await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
-    if (midway) { await page.waitForTimeout(Math.min(400, ms)); await midway({ cdp, x, y }); await page.waitForTimeout(Math.max(0, ms - 400)); }
-    else await page.waitForTimeout(ms);
+    if (midway) { await page.waitForTimeout(Math.min(400, ms)); await midway({ cdp, x, y }); }
+    await keep();
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   } finally { await cdp.detach().catch(() => {}); }
 }
@@ -211,7 +223,7 @@ const NO_SHARE = () => {
 test("a FINGER held on a finished book opens the grown-up's sheet: cover, title, ♥ and Send to a friend, then three outs in spec order", async () => {
   const { ctx, page } = await makePage({ init: CAN_SHARE });
   await page.locator(CARD).waitFor();
-  await hold(page, CARD, HOLD);
+  await holdOpen(page, CARD, HOLD);
   const sheet = page.locator("#shareSheet");
   await sheet.waitFor({ timeout: 3000 });
   assert.equal(await sheet.locator(".share-title").textContent(), "Luna the Fox");
@@ -272,7 +284,7 @@ test("the card's button leaves `.dwell` while the finger is down and has it back
   await btn.waitFor();
   assert.equal(await btn.evaluate(el => el.classList.contains("dwell")), true, "awake before");
   let midway = null;
-  await hold(page, CARD, HOLD, async () => {
+  await holdOpen(page, CARD, HOLD, async () => {
     midway = await btn.evaluate(el => ({
       dwell: el.classList.contains("dwell"),
       disabled: el.hasAttribute("data-dwell-disabled"),
@@ -307,7 +319,7 @@ test("the card's button leaves `.dwell` while the finger is down and has it back
 test("a finger that drifts 30px during the hold still opens the sheet — a firm press rolls, and rolling is not a pan (dad 9/27)", async () => {
   const { ctx, page } = await makePage({ init: CAN_SHARE });
   await page.locator(CARD).waitFor();
-  await hold(page, CARD, 2000, async ({ cdp, x, y }) => {
+  await holdOpen(page, CARD, 2000, async ({ cdp, x, y }) => {
     for (const dy of [10, 20, 30]) {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y - dy }] });
       await page.waitForTimeout(60);
@@ -341,7 +353,7 @@ test("a hold on a card that is NOT a finished book says only that it isn't finis
   const { ctx, page } = await makePage({ init: CAN_SHARE, status: pileStatus });
   await toStorybooks(page);
   await page.locator(PILE).waitFor();
-  await hold(page, PILE, HOLD);
+  await holdOpen(page, PILE, HOLD);
   const sheet = page.locator("#shareSheet");
   await sheet.waitFor({ timeout: 3000 });
   assert.equal((await sheet.locator(".share-msg").textContent()).trim(),
@@ -362,7 +374,7 @@ test("holding an unfinished card leaves it exactly as asleep as it was born", as
   await toStorybooks(page);
   const box = page.locator(PILE + " .shelf-card-box");
   await box.waitFor();
-  await hold(page, PILE, HOLD);
+  await holdOpen(page, PILE, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
   await page.evaluate(() => window.__shareTest.close());
   await page.waitForTimeout(100);
@@ -384,7 +396,7 @@ test("while the sheet is open the shelf and BOTH of the bar's doors are asleep, 
   assert.ok(before.cardsAwake >= 1, "a live card to start with");
   assert.equal(before.doorsAwake, before.doors, "and live doors");
 
-  await hold(page, CARD, HOLD);
+  await holdOpen(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
   const open = await shelfState(page);
   assert.equal(open.cardsAwake, 0, "a card is still a live gaze target under the sheet");
@@ -412,7 +424,7 @@ test("while the sheet is open the shelf and BOTH of the bar's doors are asleep, 
 test("'Send it now' is absent when navigator.canShare says no", async () => {
   const { ctx, page } = await makePage({ init: NO_SHARE });
   await page.locator(CARD).waitFor();
-  await hold(page, CARD, HOLD);
+  await holdOpen(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
   await toFriend(page);
   assert.equal(await page.locator("#shareSend").count(), 0,
@@ -435,7 +447,7 @@ test("the canShare question is asked with a real .erabook File, never bare", asy
     navigator.share = async () => {};
   } });
   await page.locator(CARD).waitFor();
-  await hold(page, CARD, HOLD);
+  await holdOpen(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
   await toFriend(page);
   const args = await page.evaluate(() => window.__canShareArgs);
@@ -452,7 +464,7 @@ test("the canShare question is asked with a real .erabook File, never bare", asy
 test("'Put it in my Drive' writes the file and says where to find it", async () => {
   const { ctx, page } = await makePage({ init: NO_SHARE });
   await page.locator(CARD).waitFor();
-  await hold(page, CARD, HOLD);
+  await holdOpen(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
   await toFriend(page);
   await page.locator("#shareDrive").click();
@@ -476,7 +488,7 @@ test("a refusal from the hub stays on the sheet as its own sentence", async () =
     c.route("**/share-to-drive", r => r.fulfill({ status: 409, contentType: "application/json",
       body: JSON.stringify({ error: "write-failed", message: "There wasn't room to save the book." }) })) });
   await page.locator(CARD).waitFor();
-  await hold(page, CARD, HOLD);
+  await holdOpen(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
   await toFriend(page);
   await page.locator("#shareDrive").click();
@@ -494,7 +506,7 @@ test("a refusal from the hub stays on the sheet as its own sentence", async () =
 test("nothing on the send sheet is a dwell target or claims a hold", async () => {
   const { ctx, page } = await makePage({ init: CAN_SHARE });
   await page.locator(CARD).waitFor();
-  await hold(page, CARD, HOLD);
+  await holdOpen(page, CARD, HOLD);
   await page.locator("#shareSheet").waitFor({ timeout: 3000 });
   // both faces of the sheet: the two choices, then the three outs
   for (const face of ["choices", "outs"]) {

@@ -195,6 +195,31 @@ gate_wait_server() {
   gate_error "owned test server readiness could not be established"
 }
 
+# The shared hub starts with ERA_CLOTHING_TICK_MS=0: no clothing build 20 s
+# after boot and no 15-minute check, because a build at a moment no suite chose
+# can rewrite recipes/today.json (and its ETag) under the board suites reading
+# it (gate-speed plan 1.3a). Its board is built here instead: once, after
+# readiness, before the first suite, and the gate waits for that build to
+# finish. One POST and one round of polling are enough: unless a Drive folder
+# is connected through the API, drive.sync() returns without waiting, so the
+# hub spawns the worker in the same turn that answers the POST and the first
+# status already says building; and a queued run respawns on the old worker's
+# exit, so "not building" is never the gap between two builds.
+gate_build_clothing() {
+  local port="$1" tries="${2:-3000}" attempt status
+  curl --max-time 5 -sf -X POST "http://127.0.0.1:$port/clothing/regenerate" >/dev/null || {
+    gate_error "the shared hub refused the clothing build"; return 1;
+  }
+  for ((attempt=0; attempt<tries; attempt++)); do
+    status="$(curl --max-time 2 -sf "http://127.0.0.1:$port/clothing/status")" || {
+      gate_error "the shared hub stopped answering during the clothing build"; return 1;
+    }
+    case "$status" in *'"building":false'*) return 0 ;; esac
+    sleep 0.1
+  done
+  gate_error "the shared hub's clothing build did not finish"
+}
+
 gate_collect_entry() {
   local src="$1" dest="$2" repo="$3" relative="$4" child base
   if [ -d "$src" ] && [ ! -L "$src" ]; then
@@ -587,7 +612,9 @@ export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
 # seam and hook (§4.5) never leak from the shell that runs the gate: a suite
 # that needs one sets it on the hub it spawns. An operator's shell that names
 # ERA_PRESENCE_HOOK would otherwise run its real queue hook from test hubs.
-unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS ERA_PRESENCE_HOOK
+# ERA_CLOTHING_TICK_MS likewise: the shared hub below gets it on its own
+# command line, and a suite's own hub keeps the clothing schedule a family has.
+unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS ERA_PRESENCE_HOOK ERA_CLOTHING_TICK_MS
 # Test hubs never inherit a real speech runtime or generation adapter.
 for chat_setting in "${!ERA_CHAT_@}"; do unset "$chat_setting"; done
 export ERA_CHAT_CONFIG_DISABLED=1
@@ -613,12 +640,15 @@ require_free_test_port() {
 require_free_test_port || exit 1
 NODE_BIN="$(type -P node)" || exit 1
 SRV_ARGS="$NODE_BIN $HUB/server.js $PORT"
-ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate \
+# ERA_CLOTHING_TICK_MS=0: the shared hub's clothing board is built once, by
+# gate_build_clothing below, never by its own timers mid-run.
+ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate ERA_CLOTHING_TICK_MS=0 \
   "$NODE_BIN" "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
 SRV=$!
 SRV_ID="$(gate_process_identity "$SRV")" || SRV_ID=""
 gate_wait_process "$SRV" "$SRV_ID" "$SRV_ARGS" || { gate_error "owned test server did not enter its expected command"; exit 1; }
 gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" || { cat "$GATE/server.log"; exit 1; }
+gate_build_clothing "$PORT" || { cat "$GATE/server.log"; exit 1; }
 
 cd "$GATE"
 pass=0; fail=0; failed=""

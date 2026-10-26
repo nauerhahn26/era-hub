@@ -26,6 +26,20 @@ const DEFAULT_TZ = "America/Los_Angeles";
 let tzOf = () => DEFAULT_TZ;
 let deviceId = "hub";
 let badZone = "";   // the last unusable zone we complained about
+// Test code's explicit provider pacing, { photoMs?, retryMs? }, handed to every
+// worker. The waits themselves, their defaults and the rule that picks them
+// (5 s and 3 s for a real provider, 0 for a loopback stand-in) live in
+// clothing-worker.js beside PHOTO_SPACING_MS; this only carries an option the
+// worker lets win. server.js never passes one. Like tz and deviceId it is
+// authoritative: a start() without it hands the next worker nothing.
+let aiPacing = null;
+function pacingOf(o) {
+  if (!o || typeof o !== "object") return null;
+  const out = {};
+  for (const k of ["photoMs", "retryMs"])
+    if (typeof o[k] === "number" && Number.isFinite(o[k]) && o[k] >= 0) out[k] = o[k];
+  return out;
+}
 // The zone the next build is seeded with. profile.json can hold a zone this
 // computer does not know — "Pacific Time" and "America/Los_Angelos" are not
 // IANA names — and dayKey throws RangeError on those. The deal is seeded with
@@ -413,7 +427,7 @@ function regenerate(force, opts = {}) {
       // them yet (they are consumed in T4.3), the zone it seeds the deal with
       // is live from this build on.
       { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly,
-                      refit: !!opts.refit, weatherRetry, tz: zone(), deviceId, driveFolder } });
+                      refit: !!opts.refit, weatherRetry, tz: zone(), deviceId, driveFolder, aiPacing } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
       if ("attrs" in m) attrs = m.attrs;
@@ -596,8 +610,9 @@ function tick(reason) {
 // outlives the 20 s startup tick (a slow parallel gate on this two-CPU box)
 // would otherwise get a surprise full build, AI requests and all (9/5).
 // opts.tz: () => the family's IANA zone; opts.deviceId: this hub's name (both
-// from server.js). Both are AUTHORITATIVE: a start() without them puts the
-// module back on its own defaults, so a suite can hand a zone back (it used to
+// from server.js); opts.aiPacing: test code's provider pacing (pacingOf above,
+// never from server.js). All three are AUTHORITATIVE: a start() without them
+// puts the module back on its own defaults, so a suite can hand a zone back (it used to
 // assign only when the option was present, and the caller that thought it had
 // reset the zone had not — review r2). A zone this computer cannot resolve is
 // never honoured at either history.json door — zone() falls back to the
@@ -611,6 +626,7 @@ function start(dataDir, opts = {}) {
   DATA = dataDir;
   tzOf = typeof opts.tz === "function" ? opts.tz : () => DEFAULT_TZ;
   deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
+  aiPacing = pacingOf(opts.aiPacing);
   seenPhotos = storedPhotoSet(dataDir);
   ingesting = null; attrs = null;
   // The read-out's memo is keyed on the day and two files' stats, and a data

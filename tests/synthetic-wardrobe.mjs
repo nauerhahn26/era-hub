@@ -178,12 +178,23 @@ export const idFor = (rel) => "item_" + crypto.createHash("md5").update(rel).dig
 
 // A flat colour JPEG. Every garment gets its own colour, so no two photos
 // share a byte-for-byte body — a hash-keyed match must not collide (I15).
+// The encoder is deterministic and a garment's colour depends only on its
+// index, so each size+colour is encoded once per process and its bytes reused:
+// the files are byte-identical to encoding every time, and the suites that
+// materialize a wardrobe again and again stop paying jpeg-js for it.
+const encoded = new Map();
 function makeJpg(file, w, h, r, g, b) {
-  const jpeg = require("./vendor/jpeg-js");
-  const data = Buffer.alloc(w * h * 4);
-  for (let i = 0; i < w * h; i++) { data[i * 4] = r; data[i * 4 + 1] = g; data[i * 4 + 2] = b; data[i * 4 + 3] = 255; }
+  const key = `${w}x${h}:${r},${g},${b}`;
+  let bytes = encoded.get(key);
+  if (!bytes) {
+    const jpeg = require("./vendor/jpeg-js");
+    const data = Buffer.alloc(w * h * 4);
+    for (let i = 0; i < w * h; i++) { data[i * 4] = r; data[i * 4 + 1] = g; data[i * 4 + 2] = b; data[i * 4 + 3] = 255; }
+    bytes = jpeg.encode({ data, width: w, height: h }, 85).data;
+    encoded.set(key, bytes);
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, jpeg.encode({ data, width: w, height: h }, 85).data);
+  fs.writeFileSync(file, bytes);
 }
 const rgbFor = (i) => [(i * 37) % 200 + 20, (i * 71) % 200 + 20, (i * 113) % 200 + 20];
 
