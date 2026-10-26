@@ -272,3 +272,18 @@ transcribes a partner's held question after release; optional contextual choices
 run through the hub. Service credentials stay in the operating account's private
 configuration file. Gates disable private configuration loading. Setup, cloud
 data boundaries and current acceptance limits: [Chat](chat.md).
+
+## Gaze engine supervision
+
+When ERAgaze is enabled and the hub's own build is compiled, the hub polls the
+engine's bus (`127.0.0.1:49155/status`) every 10 s. Silent for 30 s after a
+60 s boot grace, the hub stops its own build by path and starts it again, then
+backs off 30 → 60 → 120 → 300 → 600 s while it stays silent; two minutes of
+answers reset the ladder. `GET /status` shows `gaze.state`, `restarts`,
+`nextRetry` and `stoppedOnPurpose`. Settings' "Stop ERAgaze completely" goes
+through `POST /gaze/stop` (loopback only), which writes `<DATA>/gaze-stopped.json`
+and holds the supervisor off until `POST /gaze/start` ("Start ERAgaze again"),
+the engine reappears by hand, or eight hours pass; the marker survives a hub
+restart. Turning the engine off in the apps list is simply unsupervised. The
+engine side (era-gaze `StartBus()`) retries a failed bus bind instead of running
+deaf. Design: [gaze engine supervisor](specs/2026-10-26-gaze-engine-supervisor-design.md).
