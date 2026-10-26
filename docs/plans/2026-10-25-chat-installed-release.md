@@ -98,6 +98,14 @@ unchanged. The full Reader file passes 17/17 under the adversarial clock.
 This second failed run also yields no green authorization; retain its receipt
 under `gate-20261026T005503Z-5d020d05` and require another complete run.
 
+Before a fixture-only reuse proposal was accepted, shared speech and Sort it
+runtime changes landed. The Chat branch now includes that actual hub predecessor,
+and matching Chat worktrees pin every dependency, including the new shared speech
+revision. This changes application inputs and adds a speech regression suite, so
+the next complete acceptance run must cover all 140 suites. The fixture-only
+evidence cannot certify those new runtime inputs. No reuse policy or fabricated
+green receipt is used.
+
 Retain private real-service evidence under `~/.cache/era-chat/installed/`; never
 commit private credentials or recorded partner speech. Full gate logs and tree
 stamp are authoritative for landing. The patch pipeline must run Windows update
