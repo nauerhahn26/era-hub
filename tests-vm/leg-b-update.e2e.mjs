@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as vm from "./lib/vm.mjs";
+import { checkInstalledChatUI } from "./lib/chat-ui-smoke.mjs";
 
 // vm.INSTDIR is live: the previous installer may be a New ERA one, and a
 // self-update never moves the folder (only the new installer's .onInit does)
@@ -266,6 +267,19 @@ test("after the update: enabling Chat installs its shared activity runtime and r
   assert.equal(report.staleFinals, 0);
   assert.equal(report.recoveredAfterCancel, true);
   console.log("# installed Chat: actual activity inference and release/cancel transport verified; recognition is a local mock, not an accuracy test");
+});
+
+test("after the update: Chat pictures, private timing export and deliberately selected saved audio work", { timeout: 240000 }, async () => {
+  await vm.home(page);
+  const report = await checkInstalledChatUI(page, { timeout: 60000, screenshot: () => vm.shot("chat-ui-after-update") });
+  assert.equal(report.ok, true);
+  assert.equal(report.typedTurn.status, "completed");
+  assert.equal(report.actualAudio.playCalls, 1);
+  assert.equal(report.actualAudio.playing, 1);
+  assert.equal(report.actualAudio.ended, 1);
+  assert.equal(report.actualAudio.deviceCalls, 0);
+  assert.equal(report.microphoneCalls, 0);
+  console.log("# installed Chat UI: " + JSON.stringify(report));
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {

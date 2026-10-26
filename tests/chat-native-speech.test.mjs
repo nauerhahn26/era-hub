@@ -61,6 +61,18 @@ test('activity rejection or inference failure prevents upload with no energy-onl
   }
 });
 
+test('final timings separate activity inference from cloud finalization without transcript metadata', async () => {
+  const s = setup(async () => { await new Promise(resolve => setTimeout(resolve, 25)); return Response.json({ text: 'a question' }); },
+    { activity: { voiced: async () => { await new Promise(resolve => setTimeout(resolve, 20)); return true; } } });
+  s.send('ask'); s.send('audio', { pcm: pcm() }); s.send('finish');
+  await new Promise(resolve => setTimeout(resolve, 90));
+  const final = s.events.find(event => event.type === 'final'); assert.ok(final);
+  assert.ok(final.timings.activityMs >= 15); assert.ok(final.timings.cloudMs >= 20);
+  assert.ok(final.timings.finalDecodeMs + .05 >= final.timings.activityMs + final.timings.cloudMs);
+  assert.ok(Object.values(final.timings).every(value => value === null || Number.isFinite(value)));
+  s.worker.close();
+});
+
 test('activity recurrent tensors reset per question and require at least 120ms probability above threshold', async () => {
   const inputs = [];
   const ort = { Tensor: class { constructor(type, data, dims) { this.data = data; this.dims = dims; } } };

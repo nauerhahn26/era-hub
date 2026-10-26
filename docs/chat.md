@@ -12,10 +12,33 @@ seconds abandons the question. Voice activation is off. Bluetooth controls await
 hardware testing.
 
 Replies appear only after a fresh move into the black center. The communicator
-chooses a reply using gaze or touch, and the device voice speaks that selection.
+chooses a reply using gaze or touch, and the selected voice speaks that selection.
 Yes, No, reactions and repair phrases remain available without recognition.
 The page never automatically speaks an AI suggestion. Personal stories require
 explicit local entry; they are not invented from questions.
+
+Communication buttons pair bundled pictures with labels. Unknown
+concepts use a neutral communication picture; the words remain authoritative.
+Pictures require no image service and preserve the black rest cells and tile
+positions.
+
+## Voice and timing diagnostics
+
+Chat defaults to the hub's configured saved voice. Conversation
+partner settings offers an explicit Device voice alternative, and the selection
+persists on this browser. Prepared phrases and new replies can warm audio
+silently; a deliberate selection is still required before speech. Changing the
+configured voice invalidates older prepared clips. Saved-voice failure leaves the
+words visible and reports the failure instead of silently using another voice.
+
+Partner diagnostics retain the latest forty attempted turns locally, with
+separate completed, cancelled and failed outcomes. Durations separate audio
+drain, recognition, reply generation, waiting for a fresh move into the black
+center, selection and actual playback. Clear removes the records; export
+contains numeric durations and bounded status categories only. Records contain
+no audio, question, reply, person, credential or session identifier and are not
+uploaded. Successful summaries show their sample counts; median requires three
+samples and the 95th percentile requires twenty.
 
 ## Private service setup
 
@@ -56,8 +79,9 @@ may send the question and up to eight recent confirmed conversation entries to
 the configured text service. The browser receives no service credentials.
 
 The hub and worker do not save held microphone audio or recognition transcripts.
-The default device voice stays local. The optional saved voice uses the existing
-speech service and its local audio cache. Conversation context stays
+The explicit device-voice option stays local. The saved voice uses the existing
+speech service and its local audio cache. Timing records stay in local browser
+storage until cleared or evicted by the bounded history. Conversation context stays
 in page memory and is cleared when the page ends; manually entered stories stay
 in browser storage until removed. Cloud providers have their own retention
 policies. The prepared microphone may show the browser microphone indicator
@@ -71,4 +95,6 @@ partner speech on the intended device and network before relying on it.
 
 Design and receipts: [hold interaction](specs/2026-10-25-chat-hold-button.md),
 [installed design](specs/2026-10-25-chat-installed-release.md),
-[installed plan](plans/2026-10-25-chat-installed-release.md).
+[installed plan](plans/2026-10-25-chat-installed-release.md),
+[next candidate design](specs/2026-10-26-chat-trial-feedback.md),
+[next candidate plan](plans/2026-10-26-chat-trial-feedback.md).

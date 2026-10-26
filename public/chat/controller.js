@@ -5,6 +5,7 @@ export function createChatController(deps = {}) {
   let turn = 0, pending = null, abort = null, speechAbort = null, utterance = 0;
   const listeners = new Set();
   let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, error: '', turn });
+  function timing(name) { try { deps.onTiming?.(name); } catch { /* Diagnostics never interrupt communication. */ } }
   function patch(p) { state = Object.freeze({ ...state, ...p }); for (const fn of listeners) fn(state); }
   function invalidate() {
     turn++; utterance++; abort?.abort(); speechAbort?.abort(); abort = new AbortController(); pending = null;
@@ -32,6 +33,7 @@ export function createChatController(deps = {}) {
           .map((x, i) => Object.freeze({ id: `${mine}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600) }));
         if (!clean.length) throw new Error('No suggestions available. Your phrases still work.');
         pending = Object.freeze(clean);
+        timing('choicesReady');
         patch({ staged: true });
         // Preparation is silent. Audio can warm without speaking a suggestion.
         deps.prefetch?.(pending);
@@ -47,6 +49,7 @@ export function createChatController(deps = {}) {
       if (!pending || state.phase !== 'Preparing') return false;
       const next = pending; pending = null;
       deps.beforeChoices?.();
+      timing('revealed');
       patch({ choices: next, staged: false, phase: 'Your turn' });
       return true;
     },
@@ -54,16 +57,20 @@ export function createChatController(deps = {}) {
       if (expectedTurn !== turn || !['Your turn', 'Speaking'].includes(state.phase)) return false;
       const c = state.choices.find(x => x.id === id);
       if (!c) return false;
+      timing('selected');
       return api.sayFixed(c.say);
     },
     async sayFixed(text) {
       const mine = turn, spoken = ++utterance;
       speechAbort?.abort(); speechAbort = new AbortController();
       deps.stopSpeech?.();
+      timing('speechRequested');
       const back = state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off';
-      patch({ phase: 'Speaking' });
+      patch({ phase: 'Speaking', error: '' });
       try { await deps.speak?.({ say: text }, { signal: speechAbort.signal }); }
-      catch { if (mine === turn && spoken === utterance) patch({ error: 'Sound unavailable. The words are still here.' }); }
+      catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'
+        ? 'Saved voice is unavailable. Choose Device voice in partner settings to use it instead. The words are still here.'
+        : 'Sound unavailable. The words are still here.' }); }
       if (mine === turn && spoken === utterance && state.phase === 'Speaking') patch({ phase: pending ? 'Preparing' : back });
       return true;
     },
