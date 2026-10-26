@@ -11,6 +11,7 @@ import {
   jobPath, executionEnvironment, parseProgress, estimateQueue, recordedGateStats,
   runtimeManifest, verifyRuntime, copyControlBundle, runPreflight, runReversePreflight, stateDirectory, readStatus, PYTHON,
 } from '../tools/testing/parallel-worker.mjs';
+import { inspectCapacity } from '../tools/testing/parallel-capacity.mjs';
 
 function scratch(t) {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'parallel-gate-test-'));
@@ -45,6 +46,14 @@ test('candidate execution receives owned data, stamps and runtime without operat
   assert.ok(env.PATH.startsWith('/owned/job/runtime/bin:'));
   for(const key of ['HOME','NODE_OPTIONS','ERA_GATE_MODE','ERA_GATE_SELECTED','ERA_PRESENCE_HOOK','ERA_CHAT_RUNTIME','API_KEY'])
     assert.equal(Object.hasOwn(env,key),false,key+' must not be inherited');
+});
+
+test('the isolated gate runs one lane, the lane count its admission budget records',()=>{
+  // era-gate.sh defaults to two lanes; a second two-lane gate beside the legacy one would swap.
+  const env=executionEnvironment({directory:'/owned/job',manifest:{workspace:'/owned/job/workspace',hub:'/owned/job/workspace/era-hub',suffix:'',seedDir:'/owned/job/workspace/era-family/test-data'}});
+  assert.equal(env.ERA_GATE_LANES,'1');
+  const admission=inspectCapacity({meminfoText:'MemTotal: 8388608 kB\nMemAvailable: 4194304 kB\n',allowedCpusText:'0-3',freeDiskBytes:4*1024**3});
+  assert.equal(env.ERA_GATE_LANES,String(admission.resources.gateLanes));
 });
 
 test('progress keeps source gate outcomes and never treats a partial summary as complete',()=>{

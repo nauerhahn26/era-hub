@@ -38,7 +38,10 @@ One isolated lane permanently reserves the second lane for the existing legacy
 gate. The driver does not acquire, signal, reorder, or edit legacy jobs. Isolated
 jobs wait in enqueue order and require at least three GiB available RAM and three
 GiB free disk. Admission budgets two GiB for the worker plus one GiB host reserve;
-this is not an enforced memory cap. The worker uses up to two CPUs at nice19,
+this is not an enforced memory cap. That budget covers one suite at a time, so the
+worker hands the gate `ERA_GATE_LANES=1` (recorded as `resources.gateLanes`): a
+second two-lane gate beside a legacy one would push the host into swap. Legacy
+gates keep `era-gate.sh`'s default of two. The worker uses up to two CPUs at nice19,
 leaving at least half the allowed CPUs outside its affinity. Hosts with only two
 or three allowed CPUs use one worker CPU. Its sampled
 descendant RSS, host minimum available memory, swap, and memory pressure are
