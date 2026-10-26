@@ -48,6 +48,31 @@ let chosenModel = null;   // sticky once a model answers
 const spentModels = new Set();   // models whose daily allowance is gone
 
 const DATA = workerData.dataDir;
+// The provider pacing: 5 s after every photo the photo loop asked the AI
+// provider about (dad 9/1-9/2: at 1.5 s a family on a free key tripped 429/503
+// all day) and 3 s before the one quick retry of a call that met a 5xx or a
+// dropped connection (the 9/1 503 storm). Both are a rate-limit defence for a
+// REAL provider, and review r1 ruled that no environment variable meant to
+// shorten a suite may take them from a family: ERA_AI_SPACING_MS reaches
+// neither. The maintainer ruled on 10/26 "Don't wait 5s in the testing
+// environment", so the defaults follow the provider this worker will actually
+// call. ERA_AI_URL is the stand-in seam (callModel's base): when it names this
+// machine (127.0.0.1, localhost, [::1]) there is no real provider to protect
+// and both defaults are 0, for in-process suites and for every hub a suite or
+// the gate spawns alike. A family's hub never sets ERA_AI_URL, so it keeps
+// 5000 and 3000. An explicit clothing.start({ aiPacing }) from test code wins
+// over either default, half by half; server.js never passes one.
+// (tests/clothing-pacing.test.mjs pins every branch.)
+const PACE = workerData.aiPacing || {};
+const STAND_IN = (() => {
+  try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(process.env.ERA_AI_URL).hostname); }
+  catch { return false; }   // unset or not a URL: a real provider's base
+})();
+const paced = (ms, otherwise) => (Number.isFinite(ms) && ms >= 0 ? ms : otherwise);
+const PHOTO_SPACING_MS = paced(PACE.photoMs, STAND_IN ? 0 : 5000);
+const RETRY_GAP_MS = paced(PACE.retryMs, STAND_IN ? 0 : 3000);
+// Said once, first: the shell ignores it; the pacing suite reads it.
+if (parentPort) parentPort.postMessage({ pacing: { photoMs: PHOTO_SPACING_MS, retryMs: RETRY_GAP_MS } });
 let ingesting = null; // {done, total} while naming photos — relayed to the shell
 
 const CLOTHING = () => path.join(DATA, "clothing");
@@ -561,10 +586,13 @@ async function callModel(cfg, jpgFile, model, prompt) {
   // Providers throttle (Google 503 "high demand" hit EVERY call on the free
   // tier, live QA 9/1) and a whole wardrobe must not die on a transient.
   // Retry with backoff on 429/5xx; a permanent error (bad key, 404 model)
-  // fails fast so the family sees a real message.
+  // fails fast so the family sees a real message. The gap is RETRY_GAP_MS:
+  // 3 s on every family's hub, 0 against a loopback stand-in (see its rule at
+  // the top of this file); the attrs and refit passes reach the provider
+  // through here too, so it spaces their retries as well.
   let last = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt) await new Promise(r => setTimeout(r, 3000));   // one quick retry, then next model
+    if (attempt) await new Promise(r => setTimeout(r, RETRY_GAP_MS));   // one quick retry, then next model
     let r;
     try {
       r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body),
@@ -623,9 +651,13 @@ function prune(files) {
 // 429 or 503 alike — so the ladder is spent at most once per garment per day
 // across every intra-day door: a regenerate, a Sync now, the morning tick
 // (plan A4-8).
-// The pass's spacing, and its test seam. The PHOTO loop keeps its literal 5 s
-// (`namePhotos`): that one is a rate-limit defence with an incident behind it,
-// and an env var meant to shorten a suite must not be able to take it away.
+// The pass's spacing, and its test seam. The PHOTO loop's 5 s (`namePhotos`)
+// and the quick retry's 3 s (`callModel`) are not on this seam: they are a
+// rate-limit defence with an incident behind them, and an env var meant to
+// shorten a suite must not be able to take them away from a family (review
+// r1). They follow the provider instead: 0 only when ERA_AI_URL is a loopback
+// stand-in (maintainer 10/26), or when test code passes clothing.start() an
+// explicit aiPacing (PHOTO_SPACING_MS and RETRY_GAP_MS at the top of this file).
 const ATTRS_SPACING_MS = Number(process.env.ERA_AI_SPACING_MS) || 5000;
 // How many garments in a row may fail through a healthy-looking ladder before
 // the pass calls the PROVIDER the problem and stops for the day. A 429 retires
@@ -1047,9 +1079,12 @@ async function namePhotos(cfg, cat, todo) {
       // comfortably under it: a 40-item wardrobe still finishes in ~5 minutes,
       // once, in the background.
       // ...but a tile repair asked nobody anything, so it need not wait.
-      // Literal, not the pass's seam: this 5 s is the defence, and a stray
-      // ERA_AI_SPACING_MS must not be able to remove it (review r1).
-      if (usedAi) await new Promise(r => setTimeout(r, 5000));
+      // Not the pass's seam: this 5 s is the family's defence, and a stray
+      // ERA_AI_SPACING_MS must not remove it (review r1). It is 0 only against
+      // a loopback stand-in, where no real provider is asked (maintainer 10/26:
+      // no 5 s in the testing environment), or under test code's explicit
+      // clothing.start({ aiPacing }) (PHOTO_SPACING_MS at the top of this file).
+      if (usedAi) await new Promise(r => setTimeout(r, PHOTO_SPACING_MS));
 
       if (parentPort) parentPort.postMessage({ ingesting });
     }

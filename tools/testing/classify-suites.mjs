@@ -79,7 +79,7 @@ const suite = (name) => `era-hub:tests/${name}.test.mjs`;
 export const OVERRIDES = [
   // solo: drain the other lanes first.
   { id: suite('clothing-responsive'), set: { solo: true, heavy: true },
-    why: 'asserts every page answers under 900 ms while a slow-AI ingest of six photos runs (six segmentation cut-outs, measured 10/26); a neighbour lane is exactly the load it measures',
+    why: 'asserts every page answers under 900 ms while a slow-AI ingest runs (two photos since the 10/26 speedups, each with a segmentation cut-out; six before); a neighbour lane is exactly the load it measures',
     witness: /slowest\s*<\s*900/ },
   // heavy: segmentation reached through a hub or clothing.js build, which a
   // static read cannot see. Measured 10/26 with a preload hook that logged every
