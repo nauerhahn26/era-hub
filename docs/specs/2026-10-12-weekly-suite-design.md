@@ -341,6 +341,14 @@ video's `before` question):
   a miss and the idle re-reading do not disarm anything. A pick before arming
   does nothing and logs nothing.
 
+**The voice (amended 2026-10-26).** Dad: "on occasion it fails to use the
+ElevenLabs voice … in particular on the question right before the video." The
+speech kit picks its voice by a silent probe at page start; the watch page spoke
+the `before` question in the same instant, before the probe had answered, so the
+kit fell back to the local voice. The kit (era-core `speech.js`) now lets a
+sentence wait for a probe in flight before choosing its voice, with a short cap
+so a stuck probe can never leave her silent; every page gets this for free.
+
 The Play **menu** uses the same triangle for its three engines: Which one?
 top-left, Sort it top-right, Play it bottom-centre; an engine the week does
 not fill leaves its cell black. After the right answer comes alive
@@ -349,7 +357,11 @@ cheer and back to the menu. Which-one items that a video carries as `before`
 are not in this set; they belong to the watch page (§3.3).
 
 **Sort it.** One thing in the middle, two bins left and right named by the
-property (label + glyph). A look at a bin slides the thing in. First miss: the
+property (label + glyph). *Amended 2026-10-26 (dad: "they go in order, there
+needs to be some randomness"):* the items are shuffled every time the game
+opens, and the first item is never the one the previous play opened with; the
+bins keep their seats (left and right are fixed, so her motor plan holds).
+Which one? keeps its written order — those questions build on each other. A look at a bin slides the thing in. First miss: the
 thing wobbles back to the middle and the question is said again with both bin
 names ("Is water a need or a want?"). Second miss: it slides into the right bin
 by itself with the cheer. A full set celebrates and returns to the menu.
