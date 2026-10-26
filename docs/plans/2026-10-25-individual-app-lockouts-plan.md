@@ -162,3 +162,11 @@ visible and reachable exits, independent trusted-finger Music/Pencil locks, a
 wrong passcode followed by the correct one, and the Exit request. No page errors
 were observed. Video, screenshots and the structured receipt are retained in the
 private qualification directory.
+
+The subsequent full run completed 167 suites: 166 passed and one Play UI file
+failed its transient xylophone highlight observation. All previous failures were
+green. The existing class-transition observer was extended to capture actual
+visible note start/end edges before the real dwell. The test keeps MIDI 60, exact
+pick telemetry, all geometry assertions, the three-second deadline and a minimum
+450 ms feedback-duration assertion. No case is retried or omitted. This test-only
+change receives complete-file validation and another clean full gate.
