@@ -138,3 +138,17 @@ Board tree exactly. Its six pure model checks pass, and its app source is
 unchanged. Fixed-port route checks remain for the isolated combined gate.
 Use `ERA_WT_SUFFIX=--wt-games` so that gate sources the paired fixture worktree.
 There is still no active Games gate pending the coordinator's pilot proof.
+
+The coordinator approved the existing full gate in the host legacy lane on
+port 8381 while the other full pilot remains in separate namespaces. The
+preceding Video run exited green (132 suites) and landed as master `3f8655c`.
+Games synchronized that actual master; the merge adds only the final Math
+delivery receipt. No runtime or Games acceptance changes resulted.
+
+Launch preconditions are a free legacy lock, clear selected fixed test ports
+and at least 3 GiB available memory. Run with the matching worktree suffix and
+explicit private test-data directory. Preserve all 142 selected suites (129
+modern and 13 legacy). The frozen source tuple, runtime and inventory belong
+in `/tmp/era-games-gate-20261026-8381/inputs.json`; the same directory holds the
+owned `pid`, `gate.log` and completion `exit` sentinel. This is the ordinary
+full gate with its genuine stamps; it grants no Games publication or delivery.
