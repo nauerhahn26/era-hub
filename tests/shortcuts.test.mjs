@@ -173,3 +173,15 @@ test("the wizard path still spawns one PowerShell for the home door (hub link in
     spawn: () => { calls.push(1); return { on() { return this; } }; } });
   assert.equal(calls.length, 1);
 });
+
+test("an engine link WRITES an empty Arguments — a stale `8377 \"null\"` on an existing .lnk is cleared (tablet 10/25)", () => {
+  // CreateShortcut on an existing .lnk keeps every property the script does
+  // not set. Both home devices' ERAgaze links still carried the arguments a
+  // 9/14 write gave them; a hand launch of the icon passed `8377 "null"` to
+  // the engine. The engine's link must set Arguments, to nothing.
+  const engine = shortcutScript(APPS[2], true, { dir: DIR, port: 8377 });
+  assert.match(engine, /\$l\.Arguments = '';/, "exe link: Arguments written empty");
+  assert.doesNotMatch(engine, /null/);
+  const page = shortcutScript(APPS[1], true, { dir: DIR, port: 8377 });
+  assert.match(page, /\$l\.Arguments = '8377 "\/reader\/"';/, "page link: port + quoted path, as before");
+});

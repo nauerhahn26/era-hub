@@ -75,7 +75,12 @@ function shortcutScript(app, enabled, { dir, port, iconFor } = {}) {
     `foreach ($d in ${dirs}) {` +
     `$l = $w.CreateShortcut((Join-Path $d ${lnk}));` +
     `$l.TargetPath = ${psQuote(targetOf(app, dir))};` +
-    (app.exe ? `` : `$l.Arguments = ${psQuote(port + ' "' + app.path + '"')};`) +
+    // CreateShortcut on an EXISTING .lnk keeps every property the script does
+    // not set: the engine's links on both home devices still carried
+    // `8377 "null"` from a 9/14 write (tablet 10/25: that is what a hand
+    // launch of the icon passed to the engine). An exe link gets an empty
+    // Arguments, written, not skipped.
+    `$l.Arguments = ${psQuote(app.exe ? "" : port + ' "' + app.path + '"')};` +
     `$l.WorkingDirectory = ${psQuote(dir)};` +
     // every shortcut wore a generic gear (QA 9/1) — carry an icon so a
     // parent can find the app on a crowded desktop
