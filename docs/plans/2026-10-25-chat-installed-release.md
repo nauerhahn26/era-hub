@@ -1,7 +1,7 @@
 # Installed Chat release plan
 
-Current status: implementation complete; release validation and publication in
-progress. This supersedes the development-only setup in the earlier prototype
+Current status: the complete Linux gate passed 140/140; Windows update validation
+and publication are in progress. This supersedes the development-only setup in the earlier prototype
 plan. Design: [installed Chat](../specs/2026-10-25-chat-installed-release.md).
 Usage and private setup: [Chat](../chat.md).
 
@@ -18,7 +18,7 @@ Usage and private setup: [Chat](../chat.md).
 - [x] Adopt owned symbol fixtures so the complete gate can run without network access.
 - [x] Probe the actual configured service through the browser audio graph.
 - [ ] Validate the installed worker and model on Windows during update leg B.
-- [ ] Commit, synchronize master and run the complete gate on the clean tree.
+- [x] Commit, synchronize master and run the complete gate on the clean tree.
 - [ ] Land, publish the patch, provision private device configuration and verify.
 - [ ] Record final evidence and the remaining physical acceptance checks.
 
@@ -105,6 +105,24 @@ revision. This changes application inputs and adds a speech regression suite, so
 the next complete acceptance run must cover all 140 suites. The fixture-only
 evidence cannot certify those new runtime inputs. No reuse policy or fabricated
 green receipt is used.
+
+## Complete Linux acceptance
+
+The final pinned candidate passes all 140 suites with zero failures, skips or
+TODO cases. The unchanged full gate ran in an isolated namespace and exited
+successfully; the owner validated source, runtime, suite and stamp identities
+after namespace exit. Job: `gate-20261026T015400Z-b27fb428`, 2042 seconds.
+Tested hub commit `81fcabb` (tree `f5d89bae`), shared core `02377c5`, Board
+`395d02b`, and the other matching Chat dependency worktrees were clean.
+
+While all six source origins were still frozen, exact original proof and stamp
+bytes were archived privately under
+`~/.cache/era-chat/installed/parallel-proof-gate-20261026T015400Z-b27fb428/`.
+The archive retains original tree filenames, head, timestamp and byte hashes;
+no stamp was relabelled or renewed. Standard landing and release readers use
+that directory through `ERA_GATE_STAMPS`. Subsequent Markdown-only receipts use
+the existing documented eligibility rules. Windows update validation remains
+mandatory on the exact release payload before publication.
 
 Retain private real-service evidence under `~/.cache/era-chat/installed/`; never
 commit private credentials or recorded partner speech. Full gate logs and tree
