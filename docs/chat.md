@@ -102,7 +102,13 @@ policies. The prepared microphone may show the browser microphone indicator
 between turns; End, hide and leave close it. Sessions have a thirty-minute hard
 limit.
 
-This release supports a supervised live trial. Synthetic browser checks and
+The prepared private replacement is v1.0.20, build `20261026.1045`. It passed
+156 regression suites and all eleven installed Windows cases, including whole
+kiosk and hub restarts, followed by a separate native 1280 by 800 geometry check.
+It remains unpublished; exact sources, artifacts and original evidence are
+recorded in the [trial feedback plan](plans/2026-10-26-chat-trial-feedback.md).
+
+This candidate supports a supervised live trial. Synthetic browser checks and
 installed Windows checks do not establish recognition accuracy in a classroom,
 native voice audibility, gaze comfort or microphone quality. Test natural
 partner speech on the intended device and network before relying on it.

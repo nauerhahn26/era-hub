@@ -1,14 +1,11 @@
 # Chat trial feedback plan
 
-Status: the historical v1.0.18 / `20261026.0436` candidate remains unpublished
-and immutable with its original 147-suite and ten-case Windows evidence.
-A later kiosk persistence review found that closing the final private window
-can remove its browser-only timing history, stories and voice preference.
-The later v1.0.19 / `20261026.0754` candidate has a genuine 155-suite pass and
-verified payload, but remains unpublished after a Windows timing assertion
-failed. Independent local reproductions found a committed-write acknowledgement
-recovery bug. Its actual role in that Windows failure is unconfirmed. A new
-recovery candidate and fresh acceptance are required before readiness.
+Status: private v1.0.20 / `20261026.1045` is prepared and unpublished. The exact
+replacement passed all 156 regression suites, all eleven installed Windows
+cases, native display preparation, separate browser geometry and owned cleanup.
+Original evidence and six genuine stamps are archived. Earlier v1.0.18 and
+v1.0.19 candidates remain immutable history; their evidence does not certify
+this replacement. Publication and further device validation remain separate.
 
 Goal: prepare the next installed Chat candidate with pictograms, timing for
 every turn and reliable use of the configured saved voice. The maintainer
@@ -44,9 +41,9 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [x] Use the compatible bounded leave-flush barrier from the new shared core.
 - [x] Prove persistence after a full browser and hub/store restart on owned local fixtures.
 - [x] Integrate the owning features' exact new frozen Game/core/tooling baseline.
-- [ ] Run a fresh full gate and build after the new predecessor release timestamp.
-- [ ] Run full installed Windows acceptance on the replacement payload.
-- [ ] Record replacement source, hashes and limitations; retain the publication hold.
+- [x] Run a fresh full gate and build after the new predecessor release timestamp.
+- [x] Run full installed Windows acceptance on the replacement payload.
+- [x] Record replacement source, hashes and limitations; retain the publication hold.
 
 ### Lost acknowledgement follow-up
 
@@ -58,30 +55,30 @@ validation. Design: [trial feedback](../specs/2026-10-26-chat-trial-feedback.md)
 - [x] Preserve newer timing/clear operations and bounded leave behavior during recovery.
 - [x] Retain strict Windows assertions and add bounded content-free failure diagnostics.
 - [x] Include the Games owner's final master and documentation before freezing sources.
-- [ ] Derive the new complete inventory and pass a fresh full gate on the clean tuple.
-- [ ] Build the newly reserved private v1.0.20 without overwriting earlier candidates.
-- [ ] Pass every installed Windows case, native layout and owned cleanup check.
-- [ ] Record exact replacement evidence and keep publication separate.
+- [x] Derive the new complete inventory and pass a fresh full gate on the clean tuple.
+- [x] Build the newly reserved private v1.0.20 without overwriting earlier candidates.
+- [x] Pass every installed Windows case, native layout and owned cleanup check.
+- [x] Record exact replacement evidence and keep publication separate.
 
 ## Ownership and coordination
 
 Three agents own symbols, voice and timing respectively; the timing agent
 integrates their browser hooks. The overseer scopes, reviews, records receipts
 and prepares the distribution. All edits remain in the Chat feature worktree.
-Games owns the current release/Windows artifact window; do not land even
-Markdown on master, alter shared scripts or use its QA rail until it explicitly
-clears. Choose the next private distribution directory after its reservation
-is released. No live operator hub restart and no further home-device probes.
+The Games release completed before replacement preparation. Its owner and the
+testing coordinator cleared an independent managed QA host for Chat. Sources,
+artifacts and controls stayed frozen through both runs and archival; the
+coordination hold was released afterward. No master landing, live operator hub
+restart or further home-device probes are part of this preparation.
 
 The historical candidate used the Games owner's frozen `0227f86` source.
 That source was conditional on its separately approved landing; its inclusion
 did not authorize Chat to land or publish that feature.
 
-The replacement candidate must instead collect the new durable Games, shared
-core leave barrier and testing-tool baseline after their owners freeze the exact
-sources. Wait for their current QA handoff, then recut Chat with an updater build
-timestamp later than the new predecessor. The old private distribution remains
-immutable and must not be published as the replacement.
+The replacement collected the new durable Games, shared core leave barrier and
+reviewed testing-tool baseline after their owners froze the exact sources.
+Its updater build follows the published predecessor. The old private
+distributions remain immutable and must not be published as the replacement.
 
 ## Durable-state local validation
 
@@ -183,6 +180,88 @@ from its test fixtures while retaining the production port guard. Its combined
 Windows-runner and registry checks pass 54/54, and the final inventory remains
 156. This is included before freezing the new complete run.
 
+## Prepared durable replacement
+
+The prepared artifact binds Hub `f2d6d2d` (tree `6887652`), Core `c5f33cf`
+(tree `44b0248`), Board `2cb86de`, Words `9b2daa9`, Pencil `bd43dbb` and
+Gaze `fc73172`. Reviewed public testing tooling is `d642995`; private transport
+tooling is `fb69b29`. All six selected sources were clean and unchanged through
+both runs and independent archival. This receipt-only documentation commit is
+outside that artifact and does not replace its source identity.
+
+Genuine full job `2026-10-26T10-32-56-229Z-01d6f04e` finished at 11:07:14 UTC
+after 34 minutes 18 seconds. All 156 unique suites ran once: 143 modern reports
+contain 2657 passing tests and thirteen legacy reports contain 138 passing
+assertions, with zero failures or exclusions. The original physical input hash is
+`456e315f024501f8801248a3e3ed8c6e81bab1c16b739b82a8d188ffae7af5e7`.
+The initial file, kind, executable-mode and index snapshots match the committed
+heads. A separate status observation was taken during the run; it is not
+represented as a contemporaneous pre-run status command.
+
+All original outputs and six exact stamp bytes are preserved under
+`~/.cache/era-chat/ack-recovery/proof-native-01d6f04e/`. Its original archive
+receipt has SHA-256
+`1d0065e92640da653985fc2bdd94f62f6b44145bdbd713a85dbfb3dfbabac7ee`.
+The separate supplement explicitly checks initial snapshot cleanliness and every
+positive legacy summary without rewriting the original validator or receipt.
+Stamps were issued at 11:07:13 UTC and expire at 13:07:13 UTC; no stamp was
+renewed or fabricated. The queue's `completeEvidence` flag remains false.
+
+The normal patch builder ran in an independent six-source build farm while the
+full gate used the original worktrees. Working files, indexes, scanner inputs,
+public binary caches and output paths were separate; original and copied source
+pins matched before and after. No assembly or generated files beneath the active
+gate were changed. Private distribution `~/new-era/dist/release-v1.0.20/`
+contains build `20261026.1045`, retaining the verified signed v1.0.0 installer.
+Stable and versioned payload SHA-256 is
+`20f87330d324ec8b7efb270ec26c6aab3fb5c3cb3f0182e9dea5d45b27018253`.
+Independent verification compared all 252 payload files and 35 directories
+across the expanded payload, TAR and ZIP: 245 selected-source files, two cached
+public binaries and five generated files. All eight distribution files and
+checksums agree; private state, credential files and temporary private paths are
+excluded. The normal payload scan passed with its retained warnings.
+
+Fresh managed Windows job `win-20261026T104912Z-fbfb490a` finished at 11:06:40
+UTC after sixteen minutes seven seconds, inside the Linux run. All eleven
+canonical cases retain their exact bodies and order and pass without exclusions.
+They include real local speech activity inference, strict one-completed-row
+timing export, symbols, deliberate native audio playback and two complete kiosk
+and hub restarts, including persisted clears. The previously failing ninth case
+passes on this replacement; the actual cause of the older Windows failure
+remains unconfirmed.
+
+Native preparation reports successful mode test, application and readback at
+1280 by 800. A separate post-baseline application receipt verifies the actual
+desktop screenshot, screen, window and visual viewport at those dimensions,
+pixel ratio and zoom one, null browser viewport emulation, readable labels,
+two inert black rest cells and no microphone, session or speech activity.
+The temporary host, exact resource lease, tunnel and owned processes were
+cleaned up. This geometry receipt does not establish native visibility behavior
+or dimensions during each earlier restart.
+
+Original Windows evidence is preserved under
+`~/.cache/era-chat/ack-recovery/proof-windows-fbfb490a/`; archive receipt SHA-256 is
+`d62d8ef8261cda7c6c48e1a3cc643a95f2fd29d98b87c4837d2d531237256051`.
+Its private credential directory was neither read nor archived by reviewers.
+After independent review, the owner copied the genuine leg-B `VM-GREEN` bytes
+and original timestamp to the distribution. No marker was synthesized and
+`completeReleaseEvidence` remains false. The final private adoption receipt is
+`~/.cache/era-chat/ack-recovery/prepared-v20-receipt.json`.
+
+No master landing, tag, publication, public-feed change or further device contact
+occurred. Future integration or publication must check the exact source/master
+state and original stamp freshness again. Automated recognition and voice
+services were mocked; native browser audio events were real. No classroom
+accuracy, physical audibility, gaze comfort or live latency improvement is
+claimed. The maintainer's natural held-question and saved-voice trial remains
+the field check after a later release.
+
+Nonblocking copy follow-up: two inline help descriptions still say that stories
+or timings stay on the browser. Durable state actually stays on this computer;
+the runtime save status and this guide describe that behavior correctly. Keep
+the prepared artifact immutable. Timing export includes the current memory
+snapshot, so heed any visible unsaved warning before relying on persistence.
+
 ## Existing measurements and limits
 
 The initial release is v1.0.16 / `20261026.0231`. The home device's running build,
@@ -203,14 +282,14 @@ That repair changes only the private probe, not the installed app. A previously
 started silent saved-voice preparation returned audio successfully in 549 ms,
 without playback. No further device validation is authorized for this work.
 
-The current client discards worker/API timings. It also waits for fresh rest
-movement before displaying a prepared batch, and audio drain has no deadline.
-The new measurements must distinguish these from remote recognition and reply
-generation. Do not claim a speed improvement until the corresponding stage is
-measured on the candidate. Natural speech quality and eye gaze remain the
-maintainer's acceptance checks.
+The initial client discarded worker/API timings. It also waited for fresh rest
+movement before displaying a prepared batch, and audio drain had no deadline.
+The replacement separates those stages from recognition and reply generation
+and bounds drain. Do not claim a speed improvement until the corresponding
+stage is measured in the live trial. Natural speech quality and eye gaze remain
+the maintainer's acceptance checks.
 
-## Candidate validation
+## Initial candidate validation
 
 The final combined focused run passes 111/111 with no skips or failures.
 It covers the backend timing whitelist and privacy ordering, native speech
