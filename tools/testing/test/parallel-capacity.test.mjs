@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { inspectCapacity, acquireLease, readLease, releaseLease, readHostResources, LIMITS } from '../parallel-capacity.mjs';
 
 const GiB=1024**3;
@@ -17,10 +19,11 @@ function fixture(t) {
   return {root,leaseDir,options};
 }
 
-test('fixed admission leaves one legacy slot, one CPU and one GiB headroom',()=>{
+test('fixed admission leaves one legacy slot, half the CPUs and one GiB headroom',()=>{
   const check=inspectCapacity(resources());
   assert.equal(check.admissible,true);
   assert.equal(check.resources.cpu,3); assert.deepEqual(check.resources.allowedCpus,[0,1,2,3]);
+  assert.deepEqual(check.resources.cpus,[2,3]); assert.deepEqual(check.resources.reservedCpus,[0,1]);
   assert.equal(check.resources.nice,19); assert.equal(check.resources.memoryLimitBytes,2*GiB);
   assert.equal(check.resources.memoryReserveBytes,GiB);
   assert.equal(check.limits.maxIsolatedWorkers,1); assert.equal(check.limits.reservedLegacySlots,1);
@@ -44,11 +47,59 @@ test('unknown, inconsistent and malformed host observations fail closed',()=>{
   ]) assert.equal(inspectCapacity(resources(change)).admissible,false,JSON.stringify(change));
 });
 
-test('sparse CPU affinity chooses its highest member and a single CPU cannot admit a worker',()=>{
+test('sparse CPU affinity chooses up to two highest members and a single CPU cannot admit a worker',()=>{
   const check=inspectCapacity(resources({allowedCpusText:'Cpus_allowed_list:\t0,2,7-8'}));
   assert.equal(check.admissible,true); assert.equal(check.resources.cpu,8);
+  assert.deepEqual(check.resources.cpus,[7,8]); assert.deepEqual(check.resources.reservedCpus,[0,2]);
   assert.equal(inspectCapacity(resources({allowedCpusText:'3'})).admissible,false);
   assert.equal(Object.isFrozen(LIMITS),true);
+});
+
+test('two or three allowed CPUs use one worker CPU; larger sets retain at least half and two others',()=>{
+  for(const [list,chosen,reserved] of [
+    ['4-5',[5],[4]], ['0,3,8',[8],[0,3]], ['0-3',[2,3],[0,1]],
+    ['1,4,8,9,13',[9,13],[1,4,8]], ['0-7',[6,7],[0,1,2,3,4,5]],
+  ]) {
+    const decision=inspectCapacity(resources({allowedCpusText:list}));
+    assert.equal(decision.admissible,true,list);
+    assert.deepEqual(decision.resources.cpus,chosen,list);
+    assert.deepEqual(decision.resources.reservedCpus,reserved,list);
+    assert.equal(decision.resources.cpu,chosen.at(-1),'legacy single CPU field remains compatible');
+    assert.ok(chosen.length<=2);
+    assert.ok(reserved.length>=Math.ceil((chosen.length+reserved.length)/2));
+    if(chosen.length+reserved.length>=4) assert.ok(reserved.length>=2);
+    assert.equal(decision.resources.nice,19);
+    assert.equal(decision.resources.memoryBudgetBytes,2*GiB);
+    assert.equal(decision.limits.maxIsolatedWorkers,1);
+  }
+});
+
+test('the production affinity call applies the chosen set only to an owned short child and accepts old leases',()=>{
+  const observed=readHostResources({diskPath:os.tmpdir()}), decision=inspectCapacity(resources({allowedCpusText:observed.allowedCpusText}));
+  const selected=decision.resources.cpus.length?decision.resources.cpus:[decision.resources.allowedCpus.at(-1)];
+  const worker=fileURLToPath(new URL('../parallel-worker.py',import.meta.url));
+  const before=fs.readFileSync('/proc/self/status','utf8').match(/^Cpus_allowed_list:.*$/m)[0];
+  const program=`
+import ast,json,os,pathlib,sys
+tree=ast.parse(pathlib.Path(sys.argv[1]).read_text())
+calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='os' and n.func.attr=='sched_setaffinity']
+assert len(calls)==1, 'worker must have one explicit affinity application'
+statement=ast.fix_missing_locations(ast.Module(body=[ast.Expr(value=calls[0])],type_ignores=[]))
+compiled=compile(statement,'owned-worker-affinity','exec')
+original=os.sched_getaffinity(0);wanted=set(json.loads(sys.argv[2]))
+assert wanted and wanted.issubset(original)
+resources={'cpus':sorted(wanted),'cpu':max(wanted)}
+exec(compiled,{'os':os,'resources':resources})
+assert os.sched_getaffinity(0)==wanted, 'worker ignored its admitted CPU set'
+os.sched_setaffinity(0,original)
+exec(compiled,{'os':os,'resources':{'cpu':max(wanted)}})
+assert os.sched_getaffinity(0)=={max(wanted)}, 'old CPU-only lease is incompatible'
+print(json.dumps({'applied':sorted(wanted),'legacyCpu':max(wanted)}))
+`;
+  const result=spawnSync('python3',['-B','-c',program,worker,JSON.stringify(selected)],{encoding:'utf8',timeout:5000});
+  assert.equal(result.status,0,result.stderr || result.stdout || result.error?.message);
+  assert.deepEqual(JSON.parse(result.stdout).applied,selected);
+  assert.equal(fs.readFileSync('/proc/self/status','utf8').match(/^Cpus_allowed_list:.*$/m)[0],before,'parent CPU affinity remains unchanged');
 });
 
 test('one lease is admitted and a second cannot consume the legacy reservation',t=>{

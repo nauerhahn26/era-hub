@@ -357,7 +357,7 @@ def worker(job):
             if lease['acquired']:admitted=True;break
             status(job,'waiting',reason=lease.get('reason','Resource admission is pending'));time.sleep(10)
         # Admission observes all allowed host CPUs before restriction is applied.
-        resources=lease['lease']['resources'];os.sched_setaffinity(0,{resources['cpu']})
+        resources=lease['lease']['resources'];os.sched_setaffinity(0,set(resources.get('cpus',[resources['cpu']])))
         current=os.getpriority(os.PRIO_PROCESS,0)
         if current<resources['nice']:os.nice(resources['nice']-current)
         status(job,'preparing',resources=resources,started=time.time())

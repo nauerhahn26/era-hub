@@ -36,7 +36,9 @@ One isolated lane permanently reserves the second lane for the existing legacy
 gate. The driver does not acquire, signal, reorder, or edit legacy jobs. Isolated
 jobs wait in enqueue order and require at least three GiB available RAM and three
 GiB free disk. Admission budgets two GiB for the worker plus one GiB host reserve;
-this is not an enforced memory cap. The worker uses one CPU at nice19. Its sampled
+this is not an enforced memory cap. The worker uses up to two CPUs at nice19,
+leaving at least half the allowed CPUs outside its affinity. Hosts with only two
+or three allowed CPUs use one worker CPU. Its sampled
 descendant RSS, host minimum available memory, swap, and memory pressure are
 reported so the pilot can establish whether the shared-host budget is adequate.
 RSS samples can miss intervening peaks and count shared pages more than once.

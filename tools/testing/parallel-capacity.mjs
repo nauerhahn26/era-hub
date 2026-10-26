@@ -64,9 +64,13 @@ export function inspectCapacity(observed={}) {
   } catch(error) {reasons.push(error.message);}
   if(!safeInteger(observed.freeDiskBytes)) reasons.push('Available disk capacity is unknown or invalid');
   else if(observed.freeDiskBytes<LIMITS.minFreeDiskBytes) reasons.push('Available disk capacity must be at least 3 GiB before creating a snapshot');
+  // Four or more allowed CPUs can share at most two with an isolated worker.
+  // Keep at least half (and at least two on that host size) outside its affinity.
+  const cpuCount=Math.min(2,Math.floor(allowed.length/2));
+  const cpus=cpuCount?allowed.slice(-cpuCount):[];
   return {
     admissible:reasons.length===0,reasons,limits:LIMITS,
-    resources:{cpu:allowed.length?allowed.at(-1):null,allowedCpus:allowed,nice:NICE,memoryBudgetBytes:MEMORY_LIMIT,memoryLimitBytes:MEMORY_LIMIT,memoryReserveBytes:MEMORY_RESERVE,memAvailableBytes:available ?? null,memTotalBytes:total ?? null,freeDiskBytes:safeInteger(observed.freeDiskBytes)?observed.freeDiskBytes:null},
+    resources:{cpu:cpus.length?cpus.at(-1):null,cpus,reservedCpus:allowed.filter(cpu=>!cpus.includes(cpu)),allowedCpus:allowed,nice:NICE,memoryBudgetBytes:MEMORY_LIMIT,memoryLimitBytes:MEMORY_LIMIT,memoryReserveBytes:MEMORY_RESERVE,memAvailableBytes:available ?? null,memTotalBytes:total ?? null,freeDiskBytes:safeInteger(observed.freeDiskBytes)?observed.freeDiskBytes:null},
   };
 }
 
