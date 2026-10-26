@@ -127,3 +127,14 @@ before/after its run; final acceptance still requires the isolated combined
 full run. No other test processes were stopped. The isolated full command is
 still awaiting the testing coordinator's validation and exact input tuple;
 source preparation alone authorizes no landing, publication or device update.
+
+The isolated pilot required owned symbol-provider fixtures. Updated frozen
+candidate `28fc5beb71887d15090b8e8a4f450b011ca8b600` adds two optional server
+URL seams with unchanged defaults, closed reader-test endpoints and three
+provider regressions. Those three checks pass. A matching Board worktree
+adopts fixture-only `cd841f3` as `fca7f91`; its tree
+`2e0b35d7b910779628bb36df098062ec8fd916bb` matches the preceding candidate's
+Board tree exactly. Its six pure model checks pass, and its app source is
+unchanged. Fixed-port route checks remain for the isolated combined gate.
+Use `ERA_WT_SUFFIX=--wt-games` so that gate sources the paired fixture worktree.
+There is still no active Games gate pending the coordinator's pilot proof.

@@ -15,6 +15,7 @@ Usage and private setup: [Chat](../chat.md).
 - [x] Add optional Chat tile, icons, pack dependency and shortcut cleanup.
 - [x] Test release-only transcription, silence rejection, cancellation and limits.
 - [x] Prevent the gate from loading private settings or using paid services.
+- [x] Adopt owned symbol fixtures so the complete gate can run without network access.
 - [x] Probe the actual configured service through the browser audio graph.
 - [ ] Validate the installed worker and model on Windows during update leg B.
 - [ ] Commit, synchronize master and run the complete gate on the clean tree.
@@ -59,6 +60,15 @@ updated hub starts. Private settings now reload at idle config/session boundarie
 without a restart. Three regressions cover file creation, an active session and
 an active generation request; none interrupts existing work or reads a file in
 the PCM upload path.
+
+The isolated full-gate pilot also requires two optional operator-configured
+symbol endpoint seams, retaining the existing production defaults. The matching
+Board worktree owns synthetic model/route fixtures and a local symbol service;
+it retains cache-miss, disk-write, hit and request-count assertions without
+reading a live wardrobe or relying on the public network. Independent review
+finds no weakened contract. Three provider checks and eleven Board checks pass.
+The Board changes affect tests and their README only. The full run must stamp
+both Chat worktrees; land Board before the hub, then publish the exact candidate.
 
 Retain private real-service evidence under `~/.cache/era-chat/installed/`; never
 commit private credentials or recorded partner speech. Full gate logs and tree
