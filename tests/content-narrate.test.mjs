@@ -122,6 +122,26 @@ test("narratePage posts with-timestamps and returns mp3 bytes plus word timings"
   assert.equal(r.words[1].start, 0.2);
 });
 
+test("interactive response speed cannot alter book narration requests or word timings", async () => {
+  const previous = process.env.ERA_DATA_DIR;
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "era-narration-pace-"));
+  process.env.ERA_DATA_DIR = data;
+  try {
+    for (const responseVoiceSpeed of [0.7, 0.8, 1.2]) {
+      fs.writeFileSync(path.join(data, "app-settings.json"), JSON.stringify({ responseVoiceSpeed }));
+      calls = [];
+      const r = await narrate.narratePage("A busy bee.", { ...cfg(), responseVoiceSpeed });
+      assert.equal(calls.length, 1);
+      assert.deepEqual(calls[0].body, { text: "A busy bee.", model_id: narrate.DEFAULT_MODEL_ID });
+      assert.equal(r.words[1].start, 0.2);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.ERA_DATA_DIR;
+    else process.env.ERA_DATA_DIR = previous;
+    fs.rmSync(data, { recursive: true, force: true });
+  }
+});
+
 test("narratePage falls back to normalized_alignment", async () => {
   calls = []; mode = "normalized";
   try {

@@ -1352,8 +1352,19 @@ function loadTtsCfg() {
   return cfg;
 }
 function saveTtsCfg(cfg) { fs.writeFileSync(TTS_CFG_PATH, JSON.stringify(cfg, null, 2)); }
+// Active responses use a gentler pace across apps; book narration is separate.
+const RESPONSE_VOICE_SPEED = 0.8;
+function responseVoiceSpeed() {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
+    if (Number.isFinite(s.responseVoiceSpeed) && s.responseVoiceSpeed >= 0.7 && s.responseVoiceSpeed <= 1.2)
+      return s.responseVoiceSpeed;
+  } catch {}
+  return RESPONSE_VOICE_SPEED;
+}
 async function elevenTts(cfg, text) {
-  const key = crypto.createHash("sha1").update(cfg.voiceId + "|" + cfg.modelId + "|" + text).digest("hex");
+  const speed = responseVoiceSpeed();
+  const key = crypto.createHash("sha1").update(cfg.voiceId + "|" + cfg.modelId + "|" + speed + "|" + text).digest("hex");
   const file = path.join(TTS_CACHE, key + ".mp3");
   if (fs.existsSync(file)) return fs.readFileSync(file);       // repeat lines are free
   const r = await fetch(ELEVEN_URL + "/v1/text-to-speech/" + cfg.voiceId +
@@ -1361,7 +1372,7 @@ async function elevenTts(cfg, text) {
     method: "POST",
     headers: { "xi-api-key": cfg.apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ text, model_id: cfg.modelId,
-      voice_settings: { stability: 0.5, similarity_boost: 0.75 } })
+      voice_settings: { stability: 0.5, similarity_boost: 0.75, speed } })
   });
   if (!r.ok) throw new Error("elevenlabs " + r.status);
   const buf = Buffer.from(await r.arrayBuffer());
@@ -1827,6 +1838,7 @@ const server = http.createServer((req, res) => {
     } catch {}
     try { s = { ...s, ...JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")) }; } catch {}
     s.voiceId = loadTtsCfg().voiceId;
+    s.responseVoiceSpeed = responseVoiceSpeed();
     // the pool device id: the name the presence receiver files this hub under
     // (spec 2026-10-20 §4.5), so the operator can tell which file is whose
     s.deviceId = DEVICE_ID;
@@ -1899,6 +1911,10 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const inc = JSON.parse(body);
+        if ("responseVoiceSpeed" in inc && !(Number.isFinite(inc.responseVoiceSpeed) &&
+            inc.responseVoiceSpeed >= 0.7 && inc.responseVoiceSpeed <= 1.2)) {
+          res.writeHead(400).end("responseVoiceSpeed must be between 0.7 and 1.2"); return;
+        }
         // The presence beacon's two operator settings (spec 2026-10-20 §4.5),
         // set by the ops job on a running hub. Unlike the family's knobs a bad
         // value is a 400 that stores nothing: the caller is a script that must
@@ -1918,6 +1934,7 @@ const server = http.createServer((req, res) => {
         else if (typeof inc.beaconUrl === "string") s.beaconUrl = inc.beaconUrl;
         if (Array.isArray(inc.idleWatchFiles)) s.idleWatchFiles = inc.idleWatchFiles.slice();
         if (typeof inc.dwellMs === "number") s.dwellMs = Math.max(600, Math.min(3000, inc.dwellMs));
+        if (Number.isFinite(inc.responseVoiceSpeed)) s.responseVoiceSpeed = inc.responseVoiceSpeed;
         if (Number.isFinite(inc.pencilDwellMs)) s.pencilDwellMs = Math.max(600, Math.min(3000, Math.round(inc.pencilDwellMs)));
         if (typeof inc.settleMs === "number") s.settleMs = Math.max(0, Math.min(2000, inc.settleMs));
         // music loudness cap, % of speaker volume (Songs Board; dad 8/24)

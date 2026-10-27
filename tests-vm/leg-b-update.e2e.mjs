@@ -168,6 +168,28 @@ test("after the update: Settings sections, search and legacy links work in the i
   } finally { await vm.home(page); }
 });
 
+test("after the update: response voice pace saves and reloads on this device", { timeout: 120000 }, async () => {
+  const original = vm.hubGet("/settings").responseVoiceSpeed;
+  assert.equal(original, 0.8, "a new device defaults to the gentler response pace");
+  try {
+    await page.goto(new URL("/settings/#sound", page.url()).href, { waitUntil: "load", timeout: 60000 });
+    await page.locator("#settings-section-sound").waitFor({ state: "visible" });
+    await page.waitForFunction(() => !document.getElementById("responseVoiceSpeedSave").disabled);
+    assert.equal(await page.inputValue("#responseVoiceSpeed"), "80");
+    await page.fill("#responseVoiceSpeed", "90");
+    await page.click("#responseVoiceSpeedSave");
+    await page.waitForFunction(() => document.getElementById("responseVoiceSpeedStatus").textContent.includes("Saved on this device: 90%"));
+    assert.equal(vm.hubGet("/settings").responseVoiceSpeed, 0.9);
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => !document.getElementById("responseVoiceSpeedSave").disabled);
+    assert.equal(await page.inputValue("#responseVoiceSpeed"), "90");
+    vm.shot("response-voice-pace-after-update");
+  } finally {
+    await vm.api(page, "/settings", "POST", { responseVoiceSpeed: original });
+    await vm.home(page);
+  }
+});
+
 test("after the update: Math opens from Home and preserves a number partition", { timeout: 180000 }, async () => {
   const appsBefore = vm.hubGet("/apps").apps;
   const math = appsBefore.find(a => a.id === "math");
