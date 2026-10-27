@@ -2,6 +2,7 @@ import { mountDoorBar } from '../lib/doorbar.js';
 import { createState, restoreState, serializeState, navigate, step, transfer,
   selectNumber, numberWord, quantityGroups, pickerNumbers, STORAGE_KEY } from './state.js';
 
+const appLocked = () => window.AppLock?.isLocked() || false;
 const screen = document.getElementById('mathScreen');
 const dwellOrigins = new WeakSet();
 let S = createState();
@@ -41,6 +42,7 @@ function visualBeat() {
 }
 
 async function say(text, model = false) {
+  if (appLocked()) return;
   try {
     if (window.Speech) await window.Speech.say(text, 'long');
   } catch { /* quantities and written words remain available */ }
@@ -61,7 +63,7 @@ function syncDwell() {
   // A pending Talk request can leave this page visible. Freeze its math while
   // keeping the shared Exit door available by gaze if the request never finishes.
   for (const control of screen.querySelectorAll('.math-control')) {
-    if (paused || control.disabled) control.setAttribute('data-dwell-disabled', '');
+    if (appLocked() || paused || control.disabled) control.setAttribute('data-dwell-disabled', '');
     else control.removeAttribute('data-dwell-disabled');
   }
   if (gone || document.visibilityState !== 'visible') window.Dwell.disable();
@@ -208,6 +210,7 @@ function render(force = false) {
 }
 
 async function count(input) {
+  if (appLocked()) return;
   const myGeneration = generation, total = S.view === 'partners' ? S.whole : S.number;
   counting = true;
   log('count', input, { support: 'model', total });
@@ -229,7 +232,7 @@ async function count(input) {
 }
 
 function actionFor(action, arg, input = 'unknown') {
-  if (paused || gone || document.visibilityState !== 'visible') return;
+  if (appLocked() || paused || gone || document.visibilityState !== 'visible') return;
   stopActivity();
   if (action === 'count') {
     if (S.view === 'numbers' || S.view === 'partners') void count(input);
@@ -256,6 +259,8 @@ document.addEventListener('dwell:activate', event => { if (event.target instance
 
 bar = mountDoorBar(document.body, {
   appPath: '/math/',
+  onLock() { stopActivity(); persist(); syncDwell(); },
+  onUnlock() { syncDwell(); },
   onLeave() { stopActivity(); gone = true; syncDwell(); persist(); log('exit', 'unknown', {}, true); },
   onPause() { stopActivity(); paused = true; syncDwell(); persist(); log('talk', 'unknown', {}, true); },
   onResume() { stopActivity(); paused = false; syncDwell(); log('resume'); },

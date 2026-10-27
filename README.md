@@ -29,3 +29,6 @@ The child deliberately selects what to say. Setup and validation are recorded in
 [the installed Chat plan](docs/plans/2026-10-25-chat-installed-release.md).
 
 License: MPL-2.0.
+
+- [Individual app locks](docs/app-locks.md) — independent locks with shared adult
+  controls and passcode handling.

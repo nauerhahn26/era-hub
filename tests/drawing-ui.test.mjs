@@ -393,7 +393,7 @@ async function finger(page, from, to, steps = 6) {
 const centreOf = async (page, sel) => { const b = await page.locator(sel).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
 
 // dad 10/5: "remove the grown-up settings — no utility". No tab, no sheet: the bar holds 🚪, 💬 and 🗑.
-test("no grown-ups tab or sheet: the bar holds 🚪, 💬 and the 🗑 only, and nothing on the page is asleep (dad 10/5)", async () => {
+test("no grown-ups tab or sheet: the bar has its doors, adult lock and Trash, with content awake", async () => {
   const { ctx, page } = await openRing();
   const r = await page.evaluate(() => ({
     bar: [...document.querySelector(".msgbar").children].map((el) => el.id),
@@ -403,7 +403,8 @@ test("no grown-ups tab or sheet: the bar holds 🚪, 💬 and the 🗑 only, and
     asleep: document.querySelectorAll("[data-dwell-disabled]").length,
     api: ["freeze", "thaw", "tuneDwell", "clearPicture", "mailLine", "onMail"].filter((k) => k in window.Drawing),
   }));
-  assert.deepEqual(r, { bar: ["barDoor", "barTalk", "trashTile"], gone: [], words: false, asleep: 0, api: [] });
+  assert.deepEqual(r, { bar: ["barDoor", "barTalk", "stripLock", "trashTile"], gone: [], words: false, asleep: 0, api: [] });
+  assert.equal(await page.locator("#stripLock").evaluate(el => el.matches("button[data-app-lock-ui]") && !el.classList.contains("dwell")), true);
   await ctx.close();
 });
 

@@ -88,7 +88,7 @@ async function watchPage(query, opts = {}) {
     contentType: "application/json", body: '{"action":"paused"}' }); });
   if (opts.settings) await ctx.route("**/settings", async (r) => {
     const res = await r.fetch();
-    r.fulfill({ response: res, json: { ...(await res.json()), ...opts.settings } });
+    await r.fulfill({ response: res, json: { ...(await res.json()), ...opts.settings } });
   });
   const page = await ctx.newPage();
   page.on("request", (r) => reqs.push(r.url()));
@@ -187,7 +187,7 @@ test("the page: the bar, Back and Pause in the left rail at board size, the vide
     await neverATest(page);
     if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, "watch-playing-1920.png") }); }
     assert.deepEqual(errors, []);
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("a dwell on Pause pauses (the tile says Play ▶, /log paused); again plays (Pause ⏸, /log resumed)", async () => {
@@ -207,7 +207,7 @@ test("a dwell on Pause pauses (the tile says Play ▶, /log paused); again plays
     assert.match(t, /Pause/); assert.match(t, /⏸/);
     assert.ok(await until(() => logs.some((l) => l.event === "resumed")), "resumed logged");
     assert.deepEqual(events(logs), ["open", "paused", "resumed"]);
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("the video plays to its end: /log ended (ms ≈ a second), then the page goes back to the Watch grid", async () => {
@@ -218,7 +218,7 @@ test("the video plays to its end: /log ended (ms ≈ a second), then the page go
     assert.ok(ended, "ended logged: " + JSON.stringify(logs));
     assert.ok(ended.ms >= 500 && ended.ms <= 3000, "about a second played: " + ended.ms);
     assert.deepEqual(events(logs), ["open", "ended"], "the log goes before the navigation");
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("a video that cannot play: /log error, then the Watch grid after about a second", async () => {
@@ -231,7 +231,7 @@ test("a video that cannot play: /log error, then the Watch grid after about a se
     await page.waitForURL(GRID, { waitUntil: "commit", timeout: 4000 });
     const at = Date.now() - err.t;
     assert.ok(at >= 800, "a second after the error: " + at);
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("Back goes to the Watch grid", async () => {
@@ -239,7 +239,7 @@ test("Back goes to the Watch grid", async () => {
   try {
     await playing(page);
     await Promise.all([page.waitForURL(GRID, { waitUntil: "commit" }), dwellOn(page, "#btnBack")]);
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("bad params: no video source, nothing logged, the Watch grid after about a second", async () => {
@@ -252,7 +252,7 @@ test("bad params: no video source, nothing logged, the Watch grid after about a 
       const at = Date.now() - t0;
       assert.ok(at >= 900 && at <= 3000, `${q}: after about a second (${at} ms)`);
       assert.deepEqual(logs, [], q);
-    } finally { await ctx.close(); }
+    } finally { await closeContext(ctx); }
   }
 });
 
@@ -290,7 +290,7 @@ test("a video with a before question: the question first (spoken), the video pau
     assert.ok(await page.$eval("#btnPause", (el) => el.matches(".dwell") && !el.hasAttribute("data-dwell-disabled")), "Pause is live again");
     assert.deepEqual(events(logs), ["open", "before"]);
     assert.deepEqual(errors, []);
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("before, two-strike: a miss re-asks with 'Look for', a second miss lights the right one by itself, then the video plays", async () => {
@@ -310,7 +310,7 @@ test("before, two-strike: a miss re-asks with 'Look for', a second miss lights t
     await neverATest(page);
     await playing(page);
     assert.ok((await vid(page)).visible);
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("before: the answers are inert and muted on mount and arm when the question's reading has ended", async () => {
@@ -327,7 +327,7 @@ test("before: the answers are inert and muted on mount and arm when the question
     await page.waitForFunction(() => document.querySelector(".wh-tile.alive"));
     assert.ok(await until(() => logs.some((l) => l.event === "before")), "armed: a right dwell logs");
     assert.deepEqual(errors, []);
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 // ================================================================ the doors
@@ -349,7 +349,7 @@ test("the 💬 with pauseGoes tdsnap: /kiosk/pause posted with /watch/, the vide
     });
     await page.waitForFunction((at) => { const v = document.querySelector("video"); return !v.paused && v.currentTime >= at; }, at);
     assert.ok(await until(() => logs.some((l) => l.event === "resumed")), "resumed logged");
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("the two doors are the only 2x holds; Back and Pause hold her dwell", async () => {
@@ -359,7 +359,7 @@ test("the two doors are the only 2x holds; Back and Pause hold her dwell", async
     const holds = () => page.evaluate(() => [...document.querySelectorAll("[data-dwell-ms]")].map((el) => el.id + "=" + el.dataset.dwellMs).sort());
     assert.deepEqual(await holds(), ["barDoor=2400", "barTalk=2400"], "during the question");
     assert.equal(await page.evaluate(() => window.Dwell.config.ms), 1200, "her dwell, 1x, on everything else");
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("at 1280x720 Back and Pause are ≥ 60 px, gaps ≥ 14; reduced motion: the rail tiles have no transition", async () => {
@@ -374,7 +374,7 @@ test("at 1280x720 Back and Pause are ≥ 60 px, gaps ≥ 14; reduced motion: the
     assert.ok(pause.y - back.b >= 13.5 && v.x - back.r >= 13.5, "gaps ≥ 14");
     const tr = await page.$$eval("#rail .railTile", (els) => els.map((el) => { const s = getComputedStyle(el); return [s.transitionDuration, s.animationName]; }));
     for (const [t, a] of tr) { assert.ok(t.split(",").every((d) => parseFloat(d) === 0), "no transition: " + t); assert.equal(a, "none"); }
-  } finally { await ctx.close(); }
+  } finally { await closeContext(ctx); }
 });
 
 test("the source: no gaze-engine call, no fullscreen, local scripts only, Which one? is the Play app's module", () => {
@@ -390,3 +390,10 @@ test("the source: no gaze-engine call, no fullscreen, local scripts only, Which 
   assert.match(js, /keepalive:\s*true/);
   assert.match(css, /prefers-reduced-motion/);
 });
+
+// Drain context-owned asynchronous route handlers before tearing down their
+// page. Late Settings refreshes retain their errors rather than being ignored.
+async function closeContext(context) {
+  await context.unrouteAll({ behavior: 'wait' });
+  await context.close();
+}
