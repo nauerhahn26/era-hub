@@ -16,9 +16,11 @@ the audio cache key so earlier, faster clips cannot satisfy these requests.
 Recorded book narration, songs and the local system voice retain their current
 behavior. The shared speech client and frozen Chat/Games sources are untouched.
 
-The maintainer authorized testing and release, explicitly preserving Book
-Reader pace. Regression coverage checks unchanged narration requests and word
+Released in [v1.0.23](https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.0.23)
+after explicit maintainer authorization and coordination with Testing suite.
+Voice shipped first on the accepted baseline, excluding unpublished Lockout
+changes. Regression coverage checks unchanged narration requests and word
 timings, device independence, hub restart persistence, cache separation and
-Settings save/error behavior. Coordinate with Testing suite before shared
-runtime landing or publishing. The maintainer changed the release order to
-Voice first on the accepted baseline, excluding unpublished Lockout changes.
+Settings save/error behavior. All 164 Linux suites and 12 Windows update checks
+passed; all six public downloads matched the tested artifacts. See the
+[release receipt](../plans/2026-10-26-response-voice-pace-plan.md#release-receipt).
