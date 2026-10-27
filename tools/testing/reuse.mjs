@@ -43,6 +43,14 @@
 //               port is not evidence for another)
 //   registry    the suite's own registry entry; the whole registry and
 //               durations.json for a suite whose source names either file
+//   scans       only for a suite whose registry entry has `keyInputs`: the
+//               manifest's entries (content and mode) for every file that
+//               matches one of its "<repo>:<glob>" patterns. tests/ is outside
+//               `runtime` so an unrelated test edit reruns nothing else, but a
+//               suite that reads the other suites (suite-ports, suite-classes)
+//               has them as inputs: without this a neighbour's fix left it
+//               refused on an unchanged key, and its pass would be reused past
+//               a newly added pkill or duplicate port.
 //
 // A pass qualifies for reuse when its key is identical, it passed first time
 // (never a FLAKY pass), it ended under 24 h ago and after every recorded
@@ -52,7 +60,8 @@
 // never qualify.
 //
 // The retry ledger is the store: a suite that has failed twice on one key (not
-// counting resource failures) is not run again on that key; one that failed
+// counting resource failures) is not run again on that key, and the plan and
+// the lanes say what its key covers and how to run it anyway (`refusal`); one that failed
 // once is run, and a pass then is FLAKY. lanes.mjs does the one in-gate retry.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -82,6 +91,7 @@ export const GUARD_ALLOW = ['logs/**', 'pool/devices/*.json', 'pool/version', 'r
 export const PART_NAMES = {
   runtime: 'product files', external: 'the private scanner', helpers: 'test helpers', harness: 'the gate harness',
   node: 'node', playwright: 'playwright', env: 'the environment', suite: 'the suite', registry: 'its registry entry',
+  scans: 'the files it scans',
 };
 const PARTS = Object.keys(PART_NAMES);
 
@@ -191,10 +201,26 @@ export function sharedParts({ gate, hub, manifest, env, node = process.version }
   };
 }
 const READS_REGISTRY = /registry\.json|durations\.json/;
-export function suiteParts({ row, entry, gate, wholeRegistry }) {
+// keyInputs: "<repo>:<glob>" over the inputs manifest's files (** any depth, *
+// within one path segment). Sorted paths, content and mode, like `runtime`.
+export const KEY_INPUT = /^[a-z][a-z0-9-]*:[^\0\s:]+$/;
+export function scansDigest(manifest, patterns) {
+  const tests = patterns.map((p) => { const at = p.indexOf(':'); return { repo: p.slice(0, at), re: globRegex(p.slice(at + 1)) }; });
+  const files = {};
+  for (const [repo, value] of Object.entries(manifest.repositories || {})) {
+    for (const [name, file] of Object.entries(value.files || {})) {
+      if (tests.some((t) => t.repo === repo && t.re.test(name))) files[`${repo}:${name}`] = file;
+    }
+  }
+  return sha(canonical({ patterns: [...patterns].sort(), files }));
+}
+export function suiteParts({ row, entry, gate, wholeRegistry, manifest = {} }) {
   let source = '';
   try { source = fs.readFileSync(path.join(gate, row.name), 'utf8'); } catch { /* the runner refuses a missing copy */ }
-  return { suite: row.digest, registry: READS_REGISTRY.test(source) ? `whole:${wholeRegistry}` : sha(canonical(entry ?? null)) };
+  const own = { suite: row.digest, registry: READS_REGISTRY.test(source) ? `whole:${wholeRegistry}` : sha(canonical(entry ?? null)) };
+  // absent, not null, without keyInputs: such a suite keeps the key it always had
+  if (Array.isArray(entry?.keyInputs) && entry.keyInputs.length) own.scans = scansDigest(manifest, entry.keyInputs);
+  return own;
 }
 export const suiteKey = (shared, own) => sha(canonical({ v: 1, ...shared, ...own }));
 
@@ -210,7 +236,7 @@ export function computeKeys({ gate, hub, manifest, env, registryFile, node }) {
   const suites = {};
   for (const row of planRows(gate)) {
     const entry = byId.get(row.id);
-    const own = suiteParts({ row, entry, gate, wholeRegistry });
+    const own = suiteParts({ row, entry, gate, wholeRegistry, manifest });
     suites[row.id] = { file: row.name, key: suiteKey(shared, own), ...own, hub: entry?.hub || 'none' };
   }
   return { shared, suites };
@@ -328,6 +354,24 @@ export function explain({ id, key, own, shared, hub, runs, now, maxAgeMs, ledger
   return 'no earlier run of it';
 }
 
+// Why a suite is refused (two failures on this key), in words the lanes repeat:
+// what changed since its last pass on another key, and the way out when the
+// fix is something its key cannot see.
+export function refusal({ id, key, own, shared, runs, ledger, label }) {
+  const last = (ledger.get(key) || [])[0];
+  let since = '';
+  for (const run of runs) {
+    const line = [...run.results].reverse().find((l) => l.suite === id && l.status === 'pass' && l.key && l.key !== key);
+    if (!line) continue;
+    const before = { ...(run.keys?.shared || {}), ...(run.keys?.suites?.[id] || {}) }, current = { ...shared, ...own };
+    const parts = PARTS.filter((p) => before[p] !== current[p]).map((p) => PART_NAMES[p]);
+    since = `; since its last pass (${run.id}) ${parts.length ? listNames(parts) : 'its key'} changed`;
+    break;
+  }
+  return `its key is the same at both failures${last ? ` (last in ${last.run})` : ''}${since}; ` +
+    `if what you fixed is not in its key, run it with --only ${label} or the gate with --no-cache`;
+}
+
 // One suite's decision: reuse (a qualifying pass), blocked (two failures on this
 // key), or run (priorFailures > 0 makes its pass FLAKY and its failure final).
 export function decide({ id, key, hub, runs, ledger, noCache = false, now = Date.now(), maxAgeMs = MAX_AGE_MS }) {
@@ -383,6 +427,9 @@ export function planGate({ gate, inputs, hub = path.resolve(HERE, '../..'), regi
     decisions[suiteId] = decide({ id: suiteId, key: s.key, hub: s.hub, runs, ledger, noCache, now, maxAgeMs });
   }
   const label = (suiteId) => labelOf(suites[suiteId].file);
+  for (const [suiteId, d] of Object.entries(decisions)) {
+    if (d.decision === 'blocked') d.refusal = refusal({ id: suiteId, key: suites[suiteId].key, own: suites[suiteId], shared, runs, ledger, label: label(suiteId) });
+  }
   const why = (suiteId) => explain({ id: suiteId, key: suites[suiteId].key, own: suites[suiteId], shared, hub: suites[suiteId].hub, runs, now, maxAgeMs, ledger });
 
   if (rerun) {
@@ -432,9 +479,10 @@ export function planGate({ gate, inputs, hub = path.resolve(HERE, '../..'), regi
   out.push(`reuse: store ${store}; this run ${id}${from ? ` (${mode} from ${from.id})` : ''}`);
   out.push(`reuse: key = runtime ${short(shared.runtime)} + external ${short(shared.external)} + helpers ${short(shared.helpers)}` +
     ` + harness ${short(shared.harness)} + node ${shared.node} + playwright ${shared.playwright} + env ${short(shared.env)}` +
-    ' + each suite\'s collected copy and registry entry');
+    ' + each suite\'s collected copy and registry entry (and the files its keyInputs name)');
   out.push(`reuse: ${counts.reuse} suite${counts.reuse === 1 ? '' : 's'} reused, ${counts.run} to run` +
     `${counts.blocked ? `, ${counts.blocked} refused (failed twice on these inputs)` : ''}`);
+  for (const [suiteId, d] of Object.entries(decisions)) if (d.refusal) out.push(`reuse: refused ${label(suiteId)}: ${d.refusal}`);
   for (const [reason, names] of [...reasons].sort((a, b) => b[1].length - a[1].length)) out.push(`reuse: to run, ${reason}: ${listNames(names)}`);
   if (restamp) out.push(`reuse: restamp: every suite has a qualifying pass; nothing runs`);
   return { ok: true, out, active: true, reuse, keys };

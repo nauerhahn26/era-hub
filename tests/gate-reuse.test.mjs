@@ -175,7 +175,7 @@ test("the key's parts are printed once per gate, short enough to compare by eye"
   const r = plan(w);
   assert.equal(r.status, 0, r.stderr);
   const key = lines(r.stdout).find((l) => l.startsWith("reuse: key = "));
-  assert.match(key, /^reuse: key = runtime [0-9a-f]{8} \+ external [0-9a-f]{8} \+ helpers [0-9a-f]{8} \+ harness [0-9a-f]{8} \+ node v\d+\.\d+\.\d+ \+ playwright 1\.0\.0\/1\.0\.0\/chromium-100\/headless-100 \+ env [0-9a-f]{8} \+ each suite's collected copy and registry entry$/);
+  assert.match(key, /^reuse: key = runtime [0-9a-f]{8} \+ external [0-9a-f]{8} \+ helpers [0-9a-f]{8} \+ harness [0-9a-f]{8} \+ node v\d+\.\d+\.\d+ \+ playwright 1\.0\.0\/1\.0\.0\/chromium-100\/headless-100 \+ env [0-9a-f]{8} \+ each suite's collected copy and registry entry \(and the files its keyInputs name\)$/);
 });
 
 // ---- what qualifies --------------------------------------------------------------
@@ -330,6 +330,108 @@ test("two failures on one key end its retries: the third gate refuses it without
   finish(u, plan(u), { "a.test.mjs": "pass", "b.test.mjs": "pass", "c.test.mjs": "pass" }, { endedAt: new Date(Date.now() - 3 * HOUR).toISOString() });
   finish(u, plan(u, ["--no-cache"]), { "a.test.mjs": "fail", "b.test.mjs": "pass", "c.test.mjs": "pass" });
   assert.equal(plan(u).decision("a.test.mjs").decision, "run");
+});
+
+// ---- keyInputs: a suite that reads other suites' files ----------------------------
+// tests/** is outside the runtime part on purpose: an unrelated test edit must
+// not rerun every product suite. A suite that SCANS the other suites
+// (suite-ports reads every collected suite for port claims and kill-by-name
+// text; suite-classes derives the registry from every registered source)
+// names what it reads in its registry entry, and those files' content joins
+// its key alone. Without it, a fixed neighbour left suite-ports refused on an
+// unchanged key, and a green suite-ports would be reused past a new pkill.
+
+const SCANS = ["era-hub:tests/**", "era-board:tests/**"];
+function scanningWorld(t) {
+  const w = world(t);
+  w.registry.suites[0].keyInputs = [...SCANS];
+  w.saveRegistry();
+  const file = (hash) => ({ kind: "file", hash, executable: false });
+  Object.assign(w.manifest.repositories["era-hub"].files, { "tests/vm-e2e.test.mjs": file("vm-1"), "tests/fixtures/x.json": file("fx-1") });
+  w.manifest.repositories["era-board"].files["tests/board.test.mjs"] = file("bt-1");
+  w.manifest.repositories["era-core"] = { root: path.join(w.root, "era-core"), head: "h3", index: "i3", files: { "tests/core.test.mjs": file("ct-1") } };
+  w.saveManifest();
+  return w;
+}
+
+test("a suite with keyInputs re-keys when a matching file elsewhere changes, and only then", (t) => {
+  const base = keysOf(scanningWorld(t)).suites;
+  const changed = (mutate) => {
+    const w = scanningWorld(t);
+    mutate(w);
+    const after = keysOf(w).suites;
+    return Object.keys(base).filter((id) => base[id].key !== after[id].key).map((id) => path.basename(id)).sort();
+  };
+  const files = (w, repo) => w.manifest.repositories[repo].files;
+  assert.deepEqual(changed((w) => { files(w, "era-hub")["tests/vm-e2e.test.mjs"].hash = "vm-2"; }), ["a.test.mjs"],
+    "another suite's text in a scanned repo (tonight's fix in vm-e2e)");
+  assert.deepEqual(changed((w) => { files(w, "era-board")["tests/board.test.mjs"].hash = "bt-2"; }), ["a.test.mjs"], "a scanned sibling repo");
+  assert.deepEqual(changed((w) => { files(w, "era-hub")["tests/new.test.mjs"] = { kind: "file", hash: "new-1" }; }), ["a.test.mjs"],
+    "a new test file (a kill by name or a duplicate port) can never ride a reused pass");
+  assert.deepEqual(changed((w) => { delete files(w, "era-board")["tests/board.test.mjs"]; }), ["a.test.mjs"], "a removed one");
+  assert.deepEqual(changed((w) => { files(w, "era-hub")["tests/fixtures/x.json"].executable = true; }), ["a.test.mjs"], "by content and mode, like the manifest");
+  assert.deepEqual(changed((w) => { files(w, "era-core")["tests/core.test.mjs"].hash = "ct-2"; }), [], "a repo it does not name");
+  assert.deepEqual(changed((w) => { files(w, "era-hub")["docs/notes.md"].hash = "docs-2"; }), [], "a file outside its patterns");
+});
+
+test("a suite without keyInputs keeps today's key for the same edits", (t) => {
+  const w = scanningWorld(t);
+  const before = keysOf(w);
+  for (const id of ["era-hub:tests/b.test.mjs", "era-hub:tests/c.test.mjs"]) {
+    const s = before.suites[id];
+    assert.equal("scans" in s, false, `${id}: no scans part`);
+    assert.equal(s.key, reuse.suiteKey(before.shared, { suite: s.suite, registry: s.registry }), `${id}: the key it had before keyInputs existed`);
+  }
+  w.manifest.repositories["era-hub"].files["tests/vm-e2e.test.mjs"].hash = "vm-2";
+  w.manifest.repositories["era-board"].files["tests/board.test.mjs"].hash = "bt-2";
+  const after = keysOf(w);
+  assert.equal(after.suites["era-hub:tests/b.test.mjs"].key, before.suites["era-hub:tests/b.test.mjs"].key);
+  assert.equal(after.suites["era-hub:tests/c.test.mjs"].key, before.suites["era-hub:tests/c.test.mjs"].key);
+  assert.match(after.suites["era-hub:tests/a.test.mjs"].scans, /^[0-9a-f]{64}$/);
+  assert.equal(reuse.PART_NAMES.scans, "the files it scans");
+});
+
+test("a scanner whose neighbour changed reruns, and the plan says why", (t) => {
+  const w = scanningWorld(t);
+  const r1 = finish(w, plan(w), { "a.test.mjs": "pass", "b.test.mjs": "pass", "c.test.mjs": "pass" });
+  w.manifest.repositories["era-hub"].files["tests/new.test.mjs"] = { kind: "file", hash: "new-1" }; w.saveManifest();
+  const next = plan(w);
+  assert.equal(next.status, 0, next.stderr);
+  assert.deepEqual(SUITES.map((n) => next.decision(n).decision), ["run", "reuse", "reuse"]);
+  assert.match(next.stdout, new RegExp(`^reuse: to run, the files it scans changed since ${r1}: a\\.test\\.mjs$`, "m"));
+});
+
+test("the registry check accepts keyInputs and refuses a malformed one; the scanners carry it", async () => {
+  const { validateClasses } = await import("../tools/testing/classify-suites.mjs");
+  const entry = (keyInputs) => ({ version: 1, suites: [{ id: "era-hub:tests/x.test.mjs", retry: false, owner: "", keyInputs }] });
+  assert.deepEqual(validateClasses(entry(["era-hub:tests/**", "era-board:tests/*.test.mjs"])), []);
+  assert.deepEqual(validateClasses({ version: 1, suites: [{ id: "era-hub:tests/x.test.mjs", retry: false, owner: "" }] }), [], "absent is fine");
+  for (const bad of [[], "era-hub:tests/**", ["tests/**"], ["era-hub:"], [7], ["era-hub:tests/**", "era-hub:tests/**"]]) {
+    assert.equal(validateClasses(entry(bad)).length, 1, `refused: ${JSON.stringify(bad)}`);
+  }
+  const registry = JSON.parse(fs.readFileSync(path.join(HUB, "tools/testing/registry.json"), "utf8"));
+  const every = ["era-board", "era-core", "era-hub", "era-making-words", "era-pencil"].map((r) => `${r}:tests/**`);
+  const scanners = registry.suites.filter((s) => s.keyInputs).map((s) => s.id).sort();
+  assert.deepEqual(scanners, ["era-hub:tests/suite-classes.test.mjs", "era-hub:tests/suite-ports.test.mjs"]);
+  for (const id of scanners) assert.deepEqual(registry.suites.find((s) => s.id === id).keyInputs, every, id);
+});
+
+test("a refused suite's message names what its key covers and the way out", (t) => {
+  const w = world(t);
+  const r0 = finish(w, plan(w), { "a.test.mjs": "pass", "b.test.mjs": "pass", "c.test.mjs": "pass" }, { endedAt: new Date(Date.now() - 3 * HOUR).toISOString() });
+  put(path.join(w.gate, "c.test.mjs"), "// reads tools/testing/registry.json, edited\n"); w.freeze();
+  const r1 = finish(w, plan(w), { "c.test.mjs": "fail" }, { endedAt: new Date(Date.now() - 2 * HOUR).toISOString() });
+  const r2 = finish(w, plan(w), { "c.test.mjs": "fail" });
+  const third = plan(w);
+  assert.equal(third.decision("c.test.mjs").decision, "blocked");
+  assert.match(third.stdout, /^reuse: 2 suites reused, 0 to run, 1 refused \(failed twice on these inputs\)$/m, "the count line keeps its shape");
+  const line = lines(third.stdout).find((l) => l.startsWith("reuse: refused c.test.mjs: "));
+  assert.ok(line, third.stdout);
+  assert.ok(line.includes(`last in ${r2}`), line);
+  assert.ok(line.includes(`since its last pass (${r0}) the suite changed`), line);
+  assert.ok(line.includes("--only c.test.mjs") && line.includes("--no-cache"), line);
+  assert.equal(third.decision("c.test.mjs").refusal, line.slice("reuse: refused c.test.mjs: ".length), "the lanes print the same words");
+  void r1;
 });
 
 test("--rerun-failed reruns exactly what failed or did not finish, and refuses when a pass there no longer stands", (t) => {
@@ -493,6 +595,11 @@ test("a second failure on one key is red with no retry, in this run or a stored 
   assert.ok(blocked.out.includes("FAIL done.test.mjs (failed twice on these inputs, last in RUN-BEFORE; not run until it or what it tests changes)"), blocked.stdout);
   assert.ok(!blocked.out.includes("RUN done.test.mjs"));
   assert.equal(stateOf(blocked, "done.test.mjs"), "blocked");
+  const at = blocked.out.indexOf("FAIL done.test.mjs (failed twice on these inputs, last in RUN-BEFORE; not run until it or what it tests changes)");
+  assert.equal(blocked.out[at + 1], "refused: done.test.mjs: its key is the same at both failures; if what you fixed is not in its key," +
+    " run it with --only done.test.mjs or the gate with --no-cache", "the way out, right under the refusal");
+  const told = lanesGate(t, [{ name: "done.test.mjs" }], { "done.test.mjs": { decision: "blocked", priorFailures: 2, lastFailure: { run: "R" }, refusal: "the plan's words" } });
+  assert.ok(told.out.includes("refused: done.test.mjs: the plan's words"), told.stdout);
 });
 
 test("one retry per gate: two failures retry nothing, and a second FLAKY pass is red", (t) => {

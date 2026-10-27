@@ -584,6 +584,15 @@ and `--resume-sign` paths accepting only fresh evidence.
       copies it after that; pruned to this and the previous build, cap 400,
       any cache failure draws. `tests/clothing-composite.test.mjs` pins it;
       clothing.test.mjs 124 s to 47 s run alone.
+- [x] Scanner suites keyed by what they scan (built 10/27 in
+      `era-hub--wt-reuse-scanner-key`): a registry entry's `keyInputs`
+      ("<repo>:<glob>" patterns) folds those files' content into that suite's
+      reuse key as part `scans`. suite-ports and suite-classes carry the five
+      collected repos' `tests/**`, so a fix in another test file reruns them
+      and a new kill-by-name or duplicate port can never ride a reused pass;
+      every other suite keeps its key. A refused suite now prints
+      `refused: X: ...` (what changed since its last pass, and `--only X` or
+      `--no-cache` as the way out) under its unchanged FAIL line.
 
 ## Recovery under specific circumstances (what dad can expect)
 
