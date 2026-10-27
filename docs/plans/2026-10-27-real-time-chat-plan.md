@@ -53,27 +53,33 @@ once phase 1 has landed.
 
 ## Phase 2 — streaming pipeline
 
-- [ ] Hub WebSocket upgrade on the session audio route; binary PCM frames with
+Built 10/27 on `feat/real-time-chat` (spec §3.5 "Decided shapes").
+
+- [x] Hub WebSocket upgrade on the session audio route; binary PCM frames with
       generation; page switches from per-frame POST to the socket; the POST
-      path stays for the one-shot fallback.
-- [ ] Streaming transcription client in the hub (Node 22 WebSocket), warm
+      path stays for the one-shot fallback (`chat-ws.js`, `chat-api.js`).
+- [x] Streaming transcription client in the hub (Node 22 WebSocket), warm
       socket per session with bounded idle close/reopen; keyterm list from
-      private settings; partials → SSE; finalize on release; cancel paths.
-- [ ] Private settings `ERA_CHAT_STREAM_*` read the way the speech settings
-      are; delivered to devices by the same receipt flow.
-- [ ] Speculative choices on stable partials; keep/discard rule; never shown.
-- [ ] Streamed structured choices parsed as they complete; page stages one by
+      private settings; partials → SSE; finalize on release; cancel paths
+      (`chat-stream.js`, two wire shapes ported from the bake-off).
+- [x] Private settings `ERA_CHAT_STREAM_*` read the way the speech settings
+      are; delivered to devices by the same operator-managed `ai.env` (the
+      keyterm file travels beside it).
+- [x] Speculative choices on stable partials; keep/discard rule; never shown.
+- [x] Streamed structured choices parsed as they complete; page stages one by
       one; batch sealed at reveal; fast reply setting from phase 0.
-- [ ] Keep-alive agents for reply and saved-voice services; saved-voice
+- [x] Keep-alive agents for reply and saved-voice services; saved-voice
       streaming endpoint; prefetch all staged choices; voice list on a timer.
-- [ ] Reveal gate per dad's decision (§Decisions 2).
-- [ ] Tests: socket ordering and generation checks, mid-turn socket failure
+- [x] Reveal gate per dad's decision (§Decisions 2).
+- [x] Tests: socket ordering and generation checks, mid-turn socket failure
       falls back without a lost turn, speculative batch never reaches the page,
       partial never mutates a tile, sealed batch immutable, playback and
       capture exclusion unchanged, 15 s hold, cancel/hide/leave, keyterms
       never logged outside test mode, no credential in the page.
-- [ ] Browser test with local fixture services exercising a streamed turn
-      end to end (partials, speculation, streamed choices, saved voice).
+- [x] Browser test with local fixture services exercising a streamed turn
+      end to end (partials, speculation, streamed choices, saved voice)
+      (`tests/chat-stream-browser.test.mjs`).
+- [x] Host real runs with the private settings (spec §3.5 numbers).
 - [ ] Gate green, VM leg B on the payload, unsigned patch, dad's word, home
       device; phase-1 numbers compared to the §2 targets.
 

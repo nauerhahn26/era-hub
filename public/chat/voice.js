@@ -10,10 +10,13 @@ export function createChatVoice(options = {}) {
   const makeUtterance = options.makeUtterance || (text => new SpeechSynthesisUtterance(text));
   const createUrl = options.createObjectURL || (blob => URL.createObjectURL(blob));
   const revokeUrl = options.revokeObjectURL || (url => URL.revokeObjectURL(url));
-  const limits = { concurrent: 2, queued: 32, cached: 64, fetchMs: 10000, prepareMs: 8000, ...options.limits };
+  // Background warm-up runs two clips at a time; a staged choice or the
+  // selected words (urgent) start at once, up to `urgent` in flight (spec §3.4).
+  const limits = { concurrent: 2, urgent: 6, queued: 32, cached: 64, fetchMs: 10000, prepareMs: 8000, voiceRefreshMs: 600000, ...options.limits };
+  const now = options.now || (() => Date.now());
   const cache = new Map(), pending = new Map(), queue = [], fetching = new Set();
   let generation = 0, current = null, finish = null, preference = 'saved', cacheEpoch = 0;
-  let voiceId = null, metadata = null, metadataController = null, metadataEpoch = 0, active = 0;
+  let voiceId = null, metadata = null, metadataController = null, metadataEpoch = 0, active = 0, voiceAt = -Infinity;
   let storage;
   try {
     storage = options.storage === undefined ? globalThis.localStorage : options.storage;
@@ -42,7 +45,15 @@ export function createChatVoice(options = {}) {
     for (const url of cache.values()) revokeUrl(url);
     cache.clear();
   }
+  // The hub's voice is read once and refreshed every ten minutes (or on
+  // refresh(), at Start Chat), never once per say. A stale value is used while
+  // its refresh runs in the background.
   async function savedVoice() {
+    if (voiceId && now() - voiceAt < limits.voiceRefreshMs) return voiceId;
+    if (voiceId) { if (!metadata) fetchVoice().catch(() => {}); return voiceId; }
+    return fetchVoice();
+  }
+  async function fetchVoice() {
     if (metadata) return metadata;
     const controller = new AbortController(), epoch = metadataEpoch;
     metadataController = controller;
@@ -52,13 +63,18 @@ export function createChatVoice(options = {}) {
       const result = await response.json();
       if (controller.signal.aborted || epoch !== metadataEpoch || result?.enabled !== true || typeof result.current !== 'string' || !result.current || result.current.length > 256) throw savedUnavailable();
       if (voiceId !== result.current) { voiceId = result.current; clearClips(); }
+      voiceAt = now();
       return voiceId;
     }).finally(() => { if (metadata === work) { metadata = null; metadataController = null; } });
     metadata = work; return work;
   }
+  function startable() {
+    return queue.findIndex(job => active < (job.background && !job.urgent ? limits.concurrent : limits.urgent));
+  }
   function pump() {
-    while (active < limits.concurrent && queue.length) {
-      const job = queue.shift(), controller = new AbortController();
+    let index;
+    while (queue.length && (index = startable()) >= 0) {
+      const [job] = queue.splice(index, 1), controller = new AbortController();
       job.controller = controller;
       active++; fetching.add(controller);
       // Test mode counts the characters sent to the saved-voice service.
@@ -93,24 +109,28 @@ export function createChatVoice(options = {}) {
       });
     }
   }
-  function clip(text, priority = false) {
+  function clip(text, priority = false, urgent = false) {
     if (cache.has(text)) {
       const url = cache.get(text); cache.delete(text); cache.set(text, url); return Promise.resolve(url);
     }
     if (pending.has(text)) {
       const job = pending.get(text), index = queue.indexOf(job);
       if (!priority) job.background = true;
-      if (priority && index > 0) { queue.splice(index, 1); queue.unshift(job); }
+      if (urgent) job.urgent = true;
+      if ((priority || urgent) && index > 0) { queue.splice(index, 1); queue.splice(priority ? 0 : queue.filter(item => !item.background || item.urgent).length, 0, job); }
+      pump();
       return job.promise;
     }
     if (queue.length >= limits.queued) {
       if (!priority) return Promise.reject(savedUnavailable());
       const dropped = queue.pop(); pending.delete(dropped.text); dropped.reject(savedUnavailable());
     }
-    const job = { text, epoch: cacheEpoch, background: !priority };
+    const job = { text, epoch: cacheEpoch, background: !priority, urgent };
     job.promise = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
     pending.set(text, job);
-    if (priority) queue.unshift(job); else queue.push(job);
+    if (priority) queue.unshift(job);
+    else if (urgent) queue.splice(queue.filter(item => !item.background || item.urgent).length, 0, job);
+    else queue.push(job);
     pump(); return job.promise;
   }
   function selectedClip(text, signal) {
@@ -181,14 +201,16 @@ export function createChatVoice(options = {}) {
       preference = value;
       try { storage?.setItem(PREFERENCE_KEY, value); } catch { /* The selection still applies for this page. */ }
     },
-    prefetch(choices) {
+    prefetch(choices, { urgent = false } = {}) {
       if (preference !== 'saved' || !Array.isArray(choices)) return;
       const epoch = metadataEpoch;
       savedVoice().then(() => {
         if (preference !== 'saved' || epoch !== metadataEpoch) return;
-        for (const item of choices.slice(0, 64)) if (typeof item?.say === 'string' && item.say.trim() && item.say.length <= 600) clip(item.say).catch(() => {});
+        for (const item of choices.slice(0, 64)) if (typeof item?.say === 'string' && item.say.trim() && item.say.length <= 600) clip(item.say, false, urgent).catch(() => {});
       }).catch(() => {});
     },
-    dispose() { stop(); metadataEpoch++; metadataController?.abort(); metadata = null; metadataController = null; voiceId = null; clearClips(); },
+    // Read the hub's voice again before the next clip (Start Chat).
+    refresh() { voiceAt = -Infinity; },
+    dispose() { stop(); metadataEpoch++; metadataController?.abort(); metadata = null; metadataController = null; voiceId = null; voiceAt = -Infinity; clearClips(); },
   };
 }

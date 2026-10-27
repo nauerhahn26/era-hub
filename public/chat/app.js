@@ -57,6 +57,15 @@ let askPending = false, askAcknowledged = Promise.resolve(), captureGeneration =
 let gridKey = '', currentSpeech = 0, captureIntent = 0, pendingFrames = [], heartbeat = null;
 let recentConversation = [];
 let remoteFinal = false, remoteStreaming = false, questionSending = false;
+// The held question's audio travels on one WebSocket per session when the hub
+// offers it (spec 2026-10-27 §3.1); per-frame POSTs remain for an older hub.
+let audioSocket = null, socketSeq = 0;
+// Streaming sessions (spec §3.3): the hub prepares a held question's replies
+// itself and stages them over the event stream; the page reveals only the
+// sealed batch. `staging` is the current held turn's batch in the making.
+let stagedChoices = false, staging = null;
+const STAGING_MS = 20000;
+const SOCKET_BUFFER_LIMIT = 256000;
 let stories = savedSettings.stories;
 
 const fixed = {
@@ -122,7 +131,9 @@ const controller = createChatController({
     const context = recentConversation.slice(-8);
     recentConversation = [...recentConversation, `Partner: ${text}`.slice(0, 500)].slice(-8);
     let result;
-    try { result = await json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context }), signal }); }
+    const held = staging && !staging.claimed && staging.text === text ? staging : null;
+    if (held) held.claimed = true;
+    try { result = held ? await stagedBatch(held, signal) : await json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context }), signal }); }
     catch (error) { turnLog.error(timing, error.message); throw error; }
     metrics.observe(timing, { choicesServerMs: result.timings?.totalMs });
     stagedMeta = { handle: timing, kind: result.kind, usage: result.usage };
@@ -136,7 +147,8 @@ const controller = createChatController({
     if (stagedMeta?.handle === questionMetric) stageChoices(turnLog, questionMetric, choices, stagedMeta,
       choice => choice.symbol || resolveSymbol({ label: choice.label, type: 'response', say: choice.say }));
   },
-  beforeChoices: () => window.Dwell?.suppress(600),
+  // The reveal redraw settles for the contract's 250 ms (spec §4).
+  beforeChoices: () => { revealRender = true; window.Dwell?.suppress(REVEAL_SETTLE_MS); },
   async speak(choice, { signal }) {
     if (appLocked()) return;
     const mine = lifecycle, spoken = ++currentSpeech;
@@ -170,6 +182,8 @@ fetch('/settings').then(r => r.json()).then(s => {
   window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
 
+const REVEAL_SETTLE_MS = 250;
+let revealRender = false;
 const pictureOf = new WeakMap();
 function tile(label, type, action, position, say, pick = {}) {
   const el = document.createElement(action ? 'button' : 'div');
@@ -197,7 +211,7 @@ function renderGrid(state) {
   const key = `${screen}|${state.turn}|${state.choices.map(c => c.id).join(',')}|${state.phase === 'Capturing question' || state.phase === 'Preparing'}|${stories.length}`;
   if (key === gridKey) return;
   gridKey = key;
-  window.Dwell?.suppress(600);
+  window.Dwell?.suppress(revealRender ? REVEAL_SETTLE_MS : 600); revealRender = false;
   const grid = $('grid'); grid.replaceChildren();
   grid.append(tile('yes', 'yes', () => controller.sayFixed('Yes.'), [0, 0]), tile('no', 'no', () => controller.sayFixed('No.'), [3, 0]));
   grid.append(tile('', 'rest', null, [1, 1]), tile('', 'rest', null, [2, 1]));
@@ -238,12 +252,28 @@ controller.subscribe(state => {
   renderGrid(state);
 });
 
-// Only an actual movement into the inert rest area releases a staged batch.
-// A newly arrived batch cannot inherit a gaze that was already on a response.
+// The reveal gate (spec 2026-10-27 §4, dad's decision): a staged batch is
+// revealed by a gaze in the black centre. A gaze already resting there when
+// the batch seals counts as the neutral boundary; a gaze on any tile cell must
+// still move into the centre. A batch never lands under a dwelling gaze.
+let pointerAt = null;
+const restingInCentre = () => {
+  if (!pointerAt) return false;
+  const el = document.elementFromPoint(pointerAt.x, pointerAt.y);
+  return !!el?.closest?.('#grid .rest');
+};
 document.addEventListener('pointermove', e => {
+  // The partner's finger is not her gaze: only gaze and mouse pointers rest.
+  if (e.pointerType !== 'touch') pointerAt = { x: e.clientX, y: e.clientY };
   if (screen !== 'chat' || !controller.state.staged) return;
   if (e.target.closest?.('.rest')) controller.neutral();
 }, { passive: true });
+document.documentElement.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') pointerAt = null; });
+let wasStaged = false;
+controller.subscribe(state => {
+  const sealed = state.staged && !wasStaged; wasStaged = state.staged;
+  if (sealed) queueMicrotask(() => { if (screen === 'chat' && controller.state.staged && restingInCentre()) controller.neutral(); });
+});
 
 function sendFrame(bytes) {
   if (!session) return;
@@ -255,6 +285,7 @@ function sendFrame(bytes) {
   if (mode === 'capture' || mode === 'draining') queueFrame(bytes);
 }
 function queueFrame(bytes) {
+  if (audioSocket) { socketFrame(bytes); return; }
   const mine = lifecycle, epoch = uploadEpoch, id = session;
   if (++queued > 20) { queued--; failSession('Question capture could not keep up. Start again when ready.'); return; }
   uploadChain = uploadChain.then(async () => {
@@ -274,6 +305,44 @@ function queueFrame(bytes) {
   }).catch(e => { if (mine === lifecycle && e.name !== 'AbortError') failSession(e.name === 'TimeoutError' ? 'The audio connection took too long. Start Chat again.' : e.message, e.name === 'TimeoutError' ? 'timeout' : 'connection'); })
     .finally(() => { if (mine === lifecycle) queued--; });
 }
+// One frame: an 8-byte header {generation, seq} (little endian) and the PCM16.
+function socketFrame(bytes) {
+  if (mode === 'blocked' || !Number.isFinite(captureGeneration)) return;
+  if (audioSocket.readyState !== WebSocket.OPEN) { failSession('The audio connection stopped. Start Chat again.'); return; }
+  if (audioSocket.bufferedAmount > SOCKET_BUFFER_LIMIT) { failSession('Question capture could not keep up. Start again when ready.'); return; }
+  const frame = new Uint8Array(8 + bytes.byteLength), header = new DataView(frame.buffer);
+  header.setUint32(0, captureGeneration, true); header.setUint32(4, socketSeq++, true);
+  frame.set(new Uint8Array(bytes), 8);
+  audioSocket.send(frame.buffer);
+}
+// Settles once: true when the socket is open, false when the hub refused it or
+// it did not open in time (the POST path is used for this session instead).
+function openAudioSocket(id) {
+  const mine = lifecycle;
+  return new Promise(resolve => {
+    let ws;
+    try { ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${API}/sessions/${encodeURIComponent(id)}/audio`); }
+    catch { resolve(false); return; }
+    ws.binaryType = 'arraybuffer';
+    let opened = false;
+    const timer = setTimeout(() => { if (!opened) { try { ws.close(); } catch {} resolve(false); } }, 2000);
+    ws.onopen = () => {
+      clearTimeout(timer);
+      if (mine !== lifecycle || id !== session) { try { ws.close(1000); } catch {} resolve(false); return; }
+      opened = true; audioSocket = ws; socketSeq = 0; resolve(true);
+    };
+    ws.onerror = () => {};
+    ws.onclose = () => {
+      clearTimeout(timer);
+      if (!opened) { resolve(false); return; }
+      if (audioSocket === ws) { audioSocket = null; if (mine === lifecycle && session) failSession('The audio connection closed. Your phrases still work; start Chat again.'); }
+    };
+  });
+}
+function closeAudioSocket() {
+  const ws = audioSocket; audioSocket = null; socketSeq = 0;
+  if (ws) { ws.onclose = null; try { ws.close(1000, 'closed'); } catch {} }
+}
 function startHeartbeat() {
   clearTimeout(heartbeat);
   const mine = lifecycle, id = session;
@@ -288,11 +357,56 @@ function startHeartbeat() {
   }
   heartbeat = setTimeout(tick, 30000);
 }
+// The sealed batch of a held turn, as the hub sealed it; staged choices before
+// it only warm their voice clips. Cancelled with the turn.
+function stagedBatch(record, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => settle(new Error('Replies took too long. Your phrases still work.')), STAGING_MS);
+    const settle = error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); if (record.settled) return; record.settled = true; error ? reject(error) : resolve(record.sealed); };
+    const abort = () => settle(Object.assign(new Error('Cancelled'), { name: 'AbortError' }));
+    signal?.addEventListener('abort', abort, { once: true });
+    record.done = settle;
+    if (record.sealed || record.error) settle(record.error);
+  });
+}
+function stagingEvent(data) {
+  const record = staging;
+  if (!record || data.generation !== record.generation || record.sealed || record.error) return;
+  if (data.type === 'choice-staged') {
+    const choice = data.choice;
+    if (!choice || typeof choice.say !== 'string' || typeof choice.label !== 'string') return;
+    record.choices.push(choice);
+    // Invisible: the clip warms now so the voice is ready before she looks.
+    voice.prefetch([choice], { urgent: true });
+    turnLog.stagedOne(questionMetric, choice);
+  } else if (data.type === 'batch-sealed') {
+    record.sealed = { kind: data.kind, generated: data.generated, choices: data.choices, usage: data.usage, timings: data.timings };
+    record.done?.();
+  } else if (data.type === 'choices-error') {
+    record.error = new Error('Replies are unavailable. Your phrases still work.');
+    record.done?.(record.error);
+  }
+}
+function announceReady() {
+  $('engineNote').textContent = 'Voice activation is off. Audio is collected only while you hold Ask. '
+    + (remoteStreaming ? 'The held question is sent for live transcription. Release stops collection and finishes the question.'
+      : remoteFinal ? 'The held question is captured here, then sent for transcription after release. Audio outside the hold is not sent.'
+        : 'Question recognition also stays on this device.');
+  controller.ready();
+}
 function receiveEvent(event) {
   let data; try { data = JSON.parse(event.data); } catch { return; }
   // Voice activation is disabled for the hold-only pilot. An unsolicited wake
   // cannot change capture state OR poison a later turn's generation check.
   if (data.type === 'wake') return;
+  if (['choice-staged', 'batch-sealed', 'choices-error'].includes(data.type)) { stagingEvent(data); return; }
+  if (['socket', 'settled', 'speculation'].includes(data.type)) {
+    if (askPending || captureGeneration === null || data.generation !== captureGeneration) return;
+    if (data.type === 'socket') turnLog.mark(questionMetric, 'socketConnect');
+    else if (data.type === 'settled') turnLog.mark(questionMetric, 'settled');
+    else if (['start', 'keep', 'discard'].includes(data.state)) turnLog.mark(questionMetric, 'speculative' + data.state[0].toUpperCase() + data.state.slice(1));
+    return;
+  }
   if (['partial', 'final'].includes(data.type) && (askPending || controller.state.phase !== 'Capturing question' || captureGeneration === null)) return;
   if (Number.isFinite(data.generation)) {
     if (data.generation < workerGeneration) return;
@@ -302,12 +416,15 @@ function receiveEvent(event) {
     clearTimeout(readyTimer);
     remoteFinal = data.capabilities?.remoteFinal === true;
     remoteStreaming = data.capabilities?.remoteStreaming === true;
-    $('engineNote').textContent = 'Voice activation is off. Audio is collected only while you hold Ask. '
-      + (remoteStreaming ? 'The held question is sent for live transcription. Release stops collection and finishes the question.'
-        : remoteFinal ? 'The held question is captured here, then sent for transcription after release. Audio outside the hold is not sent.'
-          : 'Question recognition also stays on this device.');
-    controller.ready();
-  } else if (data.type === 'partial') {
+    stagedChoices = data.capabilities?.stagedChoices === true;
+    if (data.capabilities?.audioSocket === true && typeof WebSocket === 'function' && !audioSocket) {
+      const mine = lifecycle;
+      openAudioSocket(session).then(() => { if (mine === lifecycle && session) announceReady(); });
+      return;
+    }
+    announceReady();
+  }
+  else if (data.type === 'partial') {
     if (askPending || (Number.isFinite(captureGeneration) && data.generation !== captureGeneration)) return;
     controller.partial(data.text); turnLog.partial(questionMetric, data.text);
     diagnostic(`Heard so far: ${String(data.text || '').slice(0, 600)}`);
@@ -319,6 +436,10 @@ function receiveEvent(event) {
     setMode('blocked'); uploadEpoch++;
     metrics.mark(questionMetric, 'transcript'); metrics.observe(questionMetric, data.timings);
     turnLog.content(questionMetric, { transcript: String(data.text || '') });
+    if (['stream', 'one-shot'].includes(data.mode)) turnLog.set(questionMetric, { mode: data.mode, setting: data.setting });
+    if (data.usage) turnLog.usage(questionMetric, { stream: data.usage });
+    const question = String(data.text || '').trim().slice(0, 600);
+    staging = stagedChoices ? { generation: data.generation, text: question, choices: [], sealed: null, error: null, claimed: false, settled: false, done: null } : null;
     diagnostic(`Question: ${String(data.text || '').slice(0, 600)}`);
     controller.prepare(data.text);
   } else if (data.type === 'error') {
@@ -336,6 +457,7 @@ async function startChat() {
   try {
     mic = createMicrophone({ onFrame: sendFrame, onError: e => { if (mine === lifecycle) failSession(e.message); } });
     await mic.start(); // Called directly by the explicit partner gesture.
+    voice.refresh(); // the hub's voice is read again once per Chat start
     if (mine !== lifecycle) return;
     const reply = await json(`${API}/sessions`, { method: 'POST', body: '{}', signal: sessionAbort.signal });
     if (mine !== lifecycle) { fetch(`${API}/sessions/${encodeURIComponent(reply.id)}`, { method: 'DELETE', keepalive: true }); return; }
@@ -367,7 +489,7 @@ async function beginAsk() {
   clearTimeout(askTimer);
   askTimer = setTimeout(() => { if (mine === lifecycle && intent === captureIntent) failSession('That question was too long. Release and try a shorter question.', 'timeout'); }, 15000);
   try {
-    askAcknowledged = control('ask');
+    askAcknowledged = control('ask', stagedChoices ? { context: recentConversation.slice(-8) } : {});
     const reply = await askAcknowledged;
     if (reply && mine === lifecycle && intent === captureIntent && questionTurn === controller.state.turn) {
       askPending = false; captureGeneration = reply.generation;
@@ -398,7 +520,13 @@ async function finishAsk() {
   setMode('blocked');
   if (remoteFinal) { questionSending = true; $('phase').textContent = 'Sending question'; }
   metrics.mark(timing, 'finishSent');
-  try { await control('finish'); metrics.mark(timing, 'finishAck'); } catch (e) { if (mine === lifecycle && intent === captureIntent) failSession(e.message); }
+  try { await control('finish', audioSocket ? { seq: socketSeq } : {}); metrics.mark(timing, 'finishAck'); }
+  catch (e) {
+    // The hub had already ended this hold (cancelled, over budget, frames lost):
+    // the partner sees the recovery steps, never a hub code.
+    if (mine === lifecycle && intent === captureIntent) failSession(/^(?:capture-inactive|audio-sequence)$/.test(e.message)
+      ? 'That question did not finish. Your phrases still work; start Chat again and wait for Ready to ask.' : e.message);
+  }
 }
 function cancelAsk() {
   if (finishedTurn === controller.state.turn) return;
@@ -416,9 +544,10 @@ async function shutdown(type = 'close', preserveAnswers = false) {
   recentConversation = [];
   captureIntent++; pendingFrames = [];
   setMode('blocked'); starting = false; holding = false; askPending = false; captureGeneration = null;
-  remoteFinal = false; remoteStreaming = false; questionSending = false;
+  remoteFinal = false; remoteStreaming = false; questionSending = false; stagedChoices = false;
+  if (staging) { const record = staging; staging = null; record.error ||= new Error('Chat is off.'); record.done?.(record.error); }
   clearTimeout(askTimer); clearTimeout(readyTimer); clearTimeout(heartbeat); heartbeat = null; sessionAbort?.abort();
-  events?.close(); events = null;
+  events?.close(); events = null; closeAudioSocket();
   if (id) {
     fetch(`${API}/sessions/${encodeURIComponent(id)}/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }), keepalive: true }).catch(() => {});
     fetch(`${API}/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true }).catch(() => {});

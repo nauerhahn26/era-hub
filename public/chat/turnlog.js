@@ -5,8 +5,8 @@
 // its full timeline, usage, device health and (for a released hold) its audio,
 // and post them to the hub's /chat/api/turns route at the turn's end.
 const TURNS = '/chat/api/turns';
-const MULTI = new Set(['partial', 'choiceStaged']);
-const WORKER = ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs', 'choicesServerMs'];
+const MULTI = new Set(['partial', 'choiceStaged', 'speculativeStart', 'speculativeDiscard']);
+const WORKER = ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs', 'choicesServerMs', 'connectMs', 'settledMs', 'wordsSettledMs'];
 const LIMITS = { audioBytes: 480000, partials: 100, stages: 300, recent: 10, healthWaitMs: 1500, bodyBytes: 60000 };
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g;
 const text = (value, max) => typeof value === 'string' ? value.replace(CONTROL, ' ').slice(0, max) : undefined;
@@ -58,14 +58,15 @@ export function createTurnLog(options = {}) {
     turn.stages.push({ name, ms: Math.min(3600000, tenth(Math.max(0, now() - turn.began))), ...extra });
   }
   function assemble(turn) {
-    const record = { version: 1, id: turn.id, kind: turn.kind, mode: turn.mode, session: turn.session, startedAt: turn.startedAt,
+    const record = { version: 1, id: turn.id, kind: turn.kind, mode: turn.mode, ...(turn.mode === 'stream' && turn.setting ? { setting: turn.setting } : {}), session: turn.session, startedAt: turn.startedAt,
       outcome: turn.outcome, ...(turn.outcome !== 'completed' ? { reason: turn.reason } : {}), ...(turn.error ? { error: turn.error } : {}),
       stages: turn.stages.map(stage => ({ ...stage })) };
     if (Object.keys(turn.worker).length) record.worker = { ...turn.worker };
-    record.content = { ...turn.content, keyterms: null };
+    // Keyterms are counted, never listed: the list holds family names.
+    record.content = { ...turn.content, keyterms: null, ...(Number.isSafeInteger(turn.keytermsFired) ? { keytermsFired: turn.keytermsFired } : {}) };
     const usage = {};
     if (turn.reply) usage.reply = { ...turn.reply };
-    if (finite(turn.worker.audioMs)) { usage.audioSeconds = Math.round(turn.worker.audioMs) / 1000; usage.socketSeconds = null; }
+    if (finite(turn.worker.audioMs)) { usage.audioSeconds = Math.round(turn.worker.audioMs) / 1000; usage.socketSeconds = turn.socketSeconds; }
     if (turn.voice || turn.fetchedChars) usage.voice = { ...turn.voice, ...(turn.fetchedChars ? { fetchedChars: turn.fetchedChars } : {}) };
     if (Object.keys(usage).length) record.usage = usage;
     if (Object.keys(turn.health).length) record.health = { ...turn.health };
@@ -104,15 +105,16 @@ export function createTurnLog(options = {}) {
       if (!handle || !enabled()) return;
       const turn = { id: randomId(), kind, mode: kind === 'hold' ? 'one-shot' : kind === 'typed' ? 'typed' : 'none', session: null,
         began: now(), startedAt: new Date(wallClock()).toISOString(), stages: [], marks: new Set(), worker: {}, content: {},
-        reply: null, voice: null, fetchedChars: 0, health: {}, healthPending: new Set(), audio: [], audioBytes: 0,
+        reply: null, voice: null, fetchedChars: 0, socketSeconds: null, keytermsFired: null, health: {}, healthPending: new Set(), audio: [], audioBytes: 0,
         mic: { peakRms: 0, clipped: 0, frames: 0 }, partials: 0, submitted: false, outcome: null, reason: null, error: '' };
       turns.set(handle, turn); latest = handle;
       push(turn, 'begin'); api.set(handle, extra); notify();
     },
     tracking(handle) { return turns.has(handle); },
-    set(handle, { mode, session } = {}) {
+    set(handle, { mode, session, setting } = {}) {
       const turn = turns.get(handle); if (!turn) return;
       if (['one-shot', 'stream', 'local', 'typed', 'none'].includes(mode)) turn.mode = mode;
+      if (['primary', 'fallback'].includes(setting)) turn.setting = setting;
       if (typeof session === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(session)) turn.session = session;
     },
     mark(handle, stage, extra = {}) {
@@ -136,7 +138,8 @@ export function createTurnLog(options = {}) {
     staged(handle, choices, { kind, usage } = {}) {
       const turn = turns.get(handle); if (!turn || !Array.isArray(choices)) return;
       const clean = choices.map(cleanChoice).filter(Boolean).slice(0, 6);
-      clean.forEach((choice, index) => {
+      // A streamed batch was marked choice by choice as it staged.
+      if (!turn.marks.has('firstChoiceStaged')) clean.forEach((choice, index) => {
         if (index === 0) { turn.marks.add('firstChoiceStaged'); push(turn, 'firstChoiceStaged', { text: choice.label }); }
         push(turn, 'choiceStaged', { text: choice.label });
       });
@@ -144,6 +147,15 @@ export function createTurnLog(options = {}) {
       if (typeof kind === 'string') turn.content.choiceKind = kind.slice(0, 32);
       if (usage && ['inputTokens', 'cachedTokens', 'outputTokens'].every(key => Number.isSafeInteger(usage[key]) && usage[key] >= 0))
         turn.reply = { model: typeof usage.model === 'string' ? usage.model.slice(0, 128) : null, inputTokens: usage.inputTokens, cachedTokens: usage.cachedTokens, outputTokens: usage.outputTokens };
+      notify();
+    },
+    // One streamed choice staged (spec §3.3): marked as it arrives.
+    stagedOne(handle, choice) {
+      const turn = turns.get(handle), clean = cleanChoice(choice); if (!turn || !clean) return;
+      if (turn.stagedOne >= 6) return;
+      turn.stagedOne = (turn.stagedOne || 0) + 1;
+      if (!turn.marks.has('firstChoiceStaged')) { turn.marks.add('firstChoiceStaged'); push(turn, 'firstChoiceStaged', { text: clean.label }); }
+      push(turn, 'choiceStaged', { text: clean.label });
       notify();
     },
     content(handle, patch = {}) {
@@ -160,8 +172,12 @@ export function createTurnLog(options = {}) {
         else if (key === 'firstPartialMs' && timings[key] === null) turn.worker[key] = null;
       }
     },
-    usage(handle, { voice } = {}) {
+    usage(handle, { voice, stream } = {}) {
       const turn = turns.get(handle); if (!turn) return;
+      if (stream && typeof stream === 'object') {
+        if (Number.isFinite(stream.socketSeconds) && stream.socketSeconds >= 0 && stream.socketSeconds <= 86400) turn.socketSeconds = Math.round(stream.socketSeconds * 1000) / 1000;
+        if (Number.isSafeInteger(stream.keytermsFired) && stream.keytermsFired >= 0) turn.keytermsFired = Math.min(stream.keytermsFired, 100);
+      }
       if (voice && Number.isSafeInteger(voice.chars) && ['hit', 'pending', 'miss', 'device'].includes(voice.cache))
         turn.voice = { chars: Math.min(voice.chars, 10000), cache: voice.cache };
     },

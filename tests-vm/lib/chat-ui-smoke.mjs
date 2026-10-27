@@ -288,9 +288,12 @@ export async function checkInstalledChatUI(page, options = {}) {
 
     await openPartner(); await page.locator('#testing > summary').click({ timeout });
     await page.locator('#typedQuestion').fill(QUESTION, { timeout });
-    await page.locator('#typedAsk').click({ timeout });
+    // The pointer stays off the black centre (spec 2026-10-27 §4: a pointer
+    // already resting there when the batch seals reveals it at once).
+    await page.mouse.move(0, 0);
+    await page.locator('#typedAsk').focus({ timeout }); await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelector('#notice')?.textContent.includes('Replies ready'), null, { timeout });
-    assert.equal(await page.locator('.response').count(), 0, 'ready replies remain hidden before a fresh neutral movement');
+    assert.equal(await page.locator('.response').count(), 0, 'ready replies remain hidden before a move into the black centre');
     assert.equal((await audio()).playCalls, 0, 'preparing replies cannot play their cached audio');
     const rest = await page.locator('.tile.rest').first().boundingBox(); assert.ok(rest);
     await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);

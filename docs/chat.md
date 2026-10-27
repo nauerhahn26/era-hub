@@ -75,6 +75,23 @@ unknown personal history produces repair choices. Unconfigured speech leaves
 prepared phrases usable. Configured does not guarantee credentials or network
 availability; failures leave restart controls and prepared phrases available.
 
+Streaming transcription (real-time chat spec 2026-10-27 §3) is optional and
+rides on the speech worker above, which stays the fallback for any hold the
+stream cannot finish. Configure `ERA_CHAT_STREAM_PROTOCOL` (a wire shape:
+`ws-streaming-turns` or `ws-listen-query`), `ERA_CHAT_STREAM_URL` (`wss://`),
+`ERA_CHAT_STREAM_MODEL`, `ERA_CHAT_STREAM_TOKEN`, `ERA_CHAT_STREAM_BILLING`
+(`connection`: idle sockets close after a minute; `audio`: after five) and
+`ERA_CHAT_STREAM_KEYTERMS`, the path of a private JSON file
+`{"keyterms": [...]}` (at most 100 words or short phrases; copy it to the
+device beside `ai.env`). An optional `ERA_CHAT_STREAM_QUERY` JSON object adds
+service settings to the connection. The same names with `ERA_CHAT_STREAM_FALLBACK_`
+configure a second service used when the first refuses a connection. With
+streaming on, the hub prepares the replies itself, starting a hidden request
+when the question has been stable for `ERA_CHAT_SPECULATE_MS` (300 by default,
+0 turns speculation off). `ERA_CHAT_TEXT_SERVICE_TIER` names the reply
+service's processing tier when one is bought. Keyterms are only ever counted in
+test mode, never listed.
+
 Explicit external runtime and choice-adapter settings remain supported for
 development. Do not carry those settings into a bundled installation unless
 their external services exist on that computer. Automated gates set

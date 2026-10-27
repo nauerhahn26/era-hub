@@ -261,7 +261,7 @@ test('SSE timestamps events, drops cancelled generations and sanitizes runtime e
   const events = received.split('\n').filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5)));
   assert.ok(events.some(event => event.type === 'partial' && event.text === 'A question'));
   assert.deepEqual(events.find(event => event.type === 'ready').capabilities,
-    { wake: true, partial: false, automaticEndpoint: false, remoteFinal: true, remoteStreaming: false });
+    { wake: true, partial: false, automaticEndpoint: false, remoteFinal: true, remoteStreaming: false, audioSocket: true, stagedChoices: false });
   assert.deepEqual(events.find(event => event.type === 'final').timings, { audioMs: 250, activityMs: 3, cloudMs: 17, finalDecodeMs: 20, firstPartialMs: null });
   assert.ok(events.every(event => Number.isFinite(event.at) && event.elapsedMs >= 0));
   controller.abort();
@@ -696,4 +696,19 @@ test('standalone preview serves only the prototype and has inert app handoffs', 
   assert.equal((await fetch(base + '/tts')).status, 503);
   await new Promise(resolve => server.close(resolve));
   assert.equal(stopped, true);
+});
+
+test('either/or shortcuts keep the alternatives and drop a trailing clause or a shared leading verb', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const labels = async text => (await (await s.request('/choices', { text })).json()).choices.map(choice => choice.label);
+  assert.deepEqual(await labels('Do you want mom or dad to feed you?'), ['Mom', 'Dad']);
+  assert.deepEqual(await labels('Would you like mom or the teacher to help you?'), ['Mom', 'The teacher']);
+  assert.deepEqual(await labels('Do you want chicken and rice or sushi tonight?'), ['Chicken and rice', 'Sushi']);
+  assert.deepEqual(await labels('Would you like pizza tonight or pasta tonight?'), ['Pizza', 'Pasta']);
+  assert.deepEqual(await labels('Do you want to eat now or later?'), ['Now', 'Later']);
+  assert.deepEqual(await labels('Do you want to play with mom or dad?'), ['Mom', 'Dad']);
+  assert.deepEqual(await labels('Would you like juice or water?'), ['Juice', 'Water']);
+  assert.deepEqual(await labels('Would you like sushi or chicken and rice?'), ['Sushi', 'Chicken and rice']);
+  assert.deepEqual(await labels('Would you like park or library?'), ['Park', 'Library']);
+  assert.deepEqual(await labels('Would you like to read a book or play outside?'), ['Read a book', 'Play outside']);
 });

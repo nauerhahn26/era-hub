@@ -8,12 +8,23 @@ const path = require('node:path');
 const { isLoopback } = require('./update.js');
 const { createChoicesAdapter } = require('./chat-choices.js');
 const { withSymbols } = require('./chat-symbols.js');
+const { acceptWebSocket, refuseUpgrade } = require('./chat-ws.js');
+const { createStreamTranscriber, streamSettings, loadKeyterms, keytermsFired } = require('./chat-stream.js');
+const { createKeepAliveFetch } = require('./keepalive-fetch.js');
 
 const PREFIX = '/chat/api';
 const DEFAULTS = Object.freeze({ sessions: 2, idleMs: 90000, lifetimeMs: 1800000,
   bodyBytes: 8192, audioBytes: 64000, utteranceBytes: 640000, sessionBytes: 19200000,
   runtimeLineBytes: 16384, runtimeQueueBytes: 256000, adapterBytes: 32768,
-  adapterMs: 15000, choices: 2, writeMs: 3000 });
+  adapterMs: 15000, choices: 2, writeMs: 3000,
+  // The audio socket (spec 2026-10-27 §3.1): one hold may carry 16 s of PCM16
+  // at 16 kHz (the page stops at 15 s); finish waits this long for frames.
+  turnBytes: 512000, drainMs: 2000,
+  // The streaming transcription socket (§3.1): closed after this long idle
+  // (null: 60 s for a connection-billed service, 5 min otherwise); the final
+  // must arrive this long after release or the hold falls back to one-shot.
+  streamIdleMs: null, streamFinalMs: 4000, streamKeepAliveMs: 5000 });
+const FRAME_HEADER = 8;
 
 function chatVariables(env) {
   const result = {};
@@ -60,7 +71,8 @@ function speechEnvironment(chat, system, builtIn) {
   for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'ComSpec', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PYTHONPATH', 'VIRTUAL_ENV'])
     if (typeof system[key] === 'string') result[key] = system[key];
   for (const [key, value] of Object.entries(chat))
-    if (builtIn ? key.startsWith('ERA_CHAT_SPEECH_') : !/^ERA_CHAT_(?:TEXT|CHOICES)_/.test(key)) result[key] = value;
+    // The streaming service's credentials and keyterms stay in the hub (spec §3.1).
+    if (builtIn ? key.startsWith('ERA_CHAT_SPEECH_') : !/^ERA_CHAT_(?:TEXT|CHOICES|STREAM)_/.test(key)) result[key] = value;
   return result;
 }
 function transportUrl(value) {
@@ -125,7 +137,7 @@ function choiceList(items) {
 function safeTimings(value) {
   const result = {};
   if (!value || typeof value !== 'object') return result;
-  for (const key of ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs']) {
+  for (const key of ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs', 'connectMs', 'settledMs', 'wordsSettledMs']) {
     if (Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 3600000) result[key] = value[key];
     else if (key === 'firstPartialMs' && value[key] === null) result[key] = null;
   }
@@ -138,6 +150,31 @@ function cleanUsage(value) {
   if (!value || typeof value !== 'object' || !count(value.inputTokens) || !count(value.cachedTokens) || !count(value.outputTokens)) return null;
   return { model: typeof value.model === 'string' && value.model.length <= 128 ? value.model : null,
     inputTokens: value.inputTokens, cachedTokens: value.cachedTokens, outputTokens: value.outputTokens };
+}
+// The alternatives of an either/or are the things offered, not the sentence
+// around them: "mom or dad to feed you" offers Mom and Dad; "to eat now or
+// later" offers Now and Later; "pizza tonight or pasta tonight" Pizza and Pasta.
+// A leading verb only the first alternative carries is shared and dropped (with
+// a following preposition); in every alternative a clause or time word after
+// its first word ends it.
+const SHARED_VERB = /^(?:eat|drink|have|play|go|read|watch|listen|sing|do|make|see|visit|wear|sit|take|get|draw|paint|build|write|run|swim|ride|dance|cook|bake)$/i;
+const OBJECT = /^(?:a|an|the|some|my|your|this|that|these|those)$/i;
+const PARTICLE = /^(?:with|to|for|at|in|on)$/i;
+const TAIL = /^(?:to|for|at|in|on|with|from|after|before|tonight|today|tomorrow|now|later|first|next|please|because|so|when|feed|feeds|help|helps|read|reads|play|plays|take|takes|come|comes|bring|brings|sit|sits)$/i;
+function alternativesOf(parts) {
+  const words = parts.map(part => part.trim().split(/\s+/).filter(Boolean));
+  if (words.length >= 2 && words[0].length > 1 && SHARED_VERB.test(words[0][0]) && words.slice(1).every(w => w.length && !SHARED_VERB.test(w[0]))) {
+    // Shared only when what follows the verb is the same kind of thing as the
+    // other alternatives (as long, and not the verb's own object: "play a
+    // game or draw pictures" offers two activities).
+    let rest = words[0].slice(1);
+    if (rest.length > 1 && PARTICLE.test(rest[0])) rest = rest.slice(1);
+    if (!OBJECT.test(rest[0]) && words.slice(1).every(w => w.length === rest.length)) words[0] = rest;
+  }
+  return words.map(list => {
+    const cut = list.findIndex((word, index) => index > 0 && TAIL.test(word));
+    return (cut > 0 ? list.slice(0, cut) : list).join(' ');
+  });
 }
 function localChoices(text) {
   let trimmed = text.replace(/[?.!]+$/, '').trim();
@@ -162,7 +199,7 @@ function localChoices(text) {
       return null;
     }
     const stripped = trimmed.replace(prefix, '');
-    const parts = stripped.split(/\s+or\s+/i);
+    const parts = alternativesOf(stripped.split(/\s+or\s+/i));
     if (parts.length >= 2 && parts.length <= 4 && parts.every(p => p.length > 0 && p.length <= 55 && !/[.!?;:]/.test(p))) {
       return { kind: 'alternatives', choices: choiceList(parts.map(p => p[0].toUpperCase() + p.slice(1))) };
     }
@@ -179,7 +216,18 @@ function localChoices(text) {
 
 function createFixedChatApi(options = {}, env = chatVariables(options.env === undefined ? process.env : options.env)) {
   const spawn = options.spawn || spawnProcess;
-  const fetcher = options.fetch || globalThis.fetch;
+  // The reply service is reached over connections kept warm for the hub's
+  // lifetime (spec 2026-10-27 §3.3), and warmed at Start Chat and touch-down.
+  const ownFetch = options.fetch ? null : createKeepAliveFetch();
+  const fetcher = options.fetch || ownFetch;
+  let warmedAt = -Infinity;
+  function warmReply() {
+    if (!choicesCore.available || adapterUrl || clock() - warmedAt < 30000) return;
+    warmedAt = clock();
+    let origin; try { origin = new URL(env.ERA_CHAT_TEXT_URL).origin + '/'; } catch { return; }
+    Promise.resolve().then(() => fetcher(origin, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(5000) }))
+      .then(response => response?.body?.cancel?.() ?? response?.body?.resume?.(), () => {});
+  }
   const clock = options.clock || Date.now;
   const limits = { ...DEFAULTS, ...options.limits };
   const sessions = new Map(), requests = new Set();
@@ -203,11 +251,18 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   const runtimeCommand = externalRuntime ? env.ERA_CHAT_RUNTIME : process.execPath;
   if (builtIn) runtimeArgs = [workerPath];
   const childEnv = speechEnvironment(env, options.env || process.env, builtIn);
+  // Streaming transcription (spec 2026-10-27 §3): rides on the one-shot
+  // recognizer, which stays the fallback for any hold the stream cannot finish.
+  const streams = runtimeAvailable ? streamSettings(env) : [];
+  const streamConnect = options.streamConnect;
   const adapterRequested = typeof env.ERA_CHAT_CHOICES_URL === 'string' && !!env.ERA_CHAT_CHOICES_URL.trim();
   const adapterUrl = transportUrl(env.ERA_CHAT_CHOICES_URL);
   // Chat test mode only (spec 2026-10-27 §5): the model id and token counts reach the page while the switch is on.
   const reportUsage = () => { try { return options.reportUsage?.() === true; } catch { return false; } };
-  const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices, timeoutMs: Math.min(limits.adapterMs, 12000) } });
+  // Two more than the HTTP route's own limit: a streaming session's speculative
+  // request and its fresh one may overlap for a moment while one aborts.
+  const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices + 2, timeoutMs: Math.min(limits.adapterMs, 12000) } });
+  const speculateMs = (() => { const value = Number(env.ERA_CHAT_SPECULATE_MS ?? 300); return Number.isFinite(value) && value >= 0 && value <= 5000 ? value : 300; })();
 
   function emit(session, event) {
     if (session.closed) return;
@@ -223,6 +278,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     session.closed = true; sessions.delete(session.id);
     clearTimeout(session.killTimer);
     if (session.events) session.events.end();
+    if (session.socket) { session.socket.close(1001, 'session-ended'); session.socket = null; }
+    abortChoices(session);
+    if (session.stream) { session.stream.close(); session.stream = null; }
+    session.turn = null;
+    for (const waiter of session.frameWaiters) waiter.fail();
     try { session.child.stdin.end(JSON.stringify({ type: 'close', generation: session.generation }) + '\n'); } catch {}
     // Only this session's child is signalled. No process group or session kill.
     session.killTimer = setTimeout(() => { try { session.child.kill('SIGKILL'); } catch {} }, 2000);
@@ -259,8 +319,12 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     try { child = spawn(runtimeCommand, runtimeArgs, { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: childEnv }); }
     catch { throw fault(503, 'runtime-unavailable'); }
     const session = { id: randomUUID(), child, created: clock(), touched: clock(), generation: 0,
-      mode: 'paused', seq: 0, bytes: 0, utteranceBytes: 0, uploading: false, events: null, runtimeReady: false, closed: false };
+      mode: 'paused', seq: 0, bytes: 0, utteranceBytes: 0, uploading: false, events: null, runtimeReady: false, closed: false,
+      socket: null, socketSeq: 0, turnBytes: 0, frameWaiters: new Set(), stream: null, streamIndex: 0, turn: null, keyterms: [],
+      staged: streams.length > 0, context: [], choiceJob: null };
     sessions.set(session.id, session);
+    if (streams.length) { session.keyterms = loadKeyterms(env.ERA_CHAT_STREAM_KEYTERMS); startStream(session, 0); }
+    warmReply();
     let pending = '';
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', chunk => {
@@ -279,9 +343,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         if (event.type === 'ready') {
           session.runtimeReady = true;
           const caps = event.capabilities || {};
+          const streaming = !!session.stream;
           emit(session, { type: 'ready', sampleRate: 16000, capabilities: {
-            wake: caps.wake === true, partial: caps.partial === true, automaticEndpoint: caps.automaticEndpoint === true,
-            remoteFinal: caps.remoteFinal === true, remoteStreaming: caps.remoteStreaming === true,
+            wake: caps.wake === true, partial: caps.partial === true || streaming, automaticEndpoint: caps.automaticEndpoint === true,
+            remoteFinal: caps.remoteFinal === true, remoteStreaming: caps.remoteStreaming === true || streaming,
+            audioSocket: true, stagedChoices: session.staged,
           } });
         } else if (event.type === 'error') {
           session.mode = 'paused';
@@ -294,9 +360,10 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
           if (!['capturing', 'finishing'].includes(session.mode)) continue;
           const text = cleanText(event.text, 2000);
           if (!text) { if (event.type === 'final') { session.mode = 'paused'; emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); } continue; }
-          if (event.type === 'final') session.mode = 'paused';
+          if (event.type === 'final') { session.mode = 'paused'; if (session.turn) session.turn.done = true; }
           emit(session, { type: event.type, text, generation: session.generation,
-            ...(event.type === 'final' ? { timings: safeTimings(event.timings) } : {}) });
+            ...(event.type === 'final' ? { timings: safeTimings(event.timings), ...(session.staged ? { mode: 'one-shot' } : {}) } : {}) });
+          if (event.type === 'final') choicesForFinal(session, text);
         }
       }
     });
@@ -315,39 +382,182 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   }
   const timer = setInterval(sweep, Math.min(limits.idleMs, 10000)); timer.unref();
 
-  async function generate(req, res) {
-    const began = clock();
-    const input = await readJson(req, limits.bodyBytes);
-    const text = cleanText(input.text, 2000);
-    if (!text) throw fault(400, 'invalid-text');
-    let context;
-    if (input.context !== undefined) {
-      if (!Array.isArray(input.context) || input.context.length > 8 || !input.context.every(x => cleanText(x, 500))) throw fault(400, 'invalid-context');
-      context = input.context.map(x => cleanText(x, 500));
+  // ---- streaming transcription per session ----
+  function startStream(session, index) {
+    const settings = streams[index];
+    if (!settings || session.closed) { session.stream = null; return; }
+    session.streamIndex = index;
+    const stream = createStreamTranscriber({ ...settings, keyterms: session.keyterms, connect: streamConnect,
+      idleCloseMs: limits.streamIdleMs ?? (settings.billing === 'connection' ? 60000 : 300000),
+      finalTimeoutMs: limits.streamFinalMs, keepAliveMs: limits.streamKeepAliveMs });
+    session.stream = stream;
+    const current = () => session.stream === stream && session.turn && session.turn.mode === 'stream' && !session.turn.done && session.turn.generation === session.generation;
+    stream.on('socket', value => { if (current()) emit(session, { type: 'socket', warm: value.warm, connectMs: value.connectMs, generation: session.generation }); });
+    stream.on('partial', ({ text }) => {
+      const clean = cleanText(text, 2000);
+      if (current() && clean && ['capturing', 'finishing'].includes(session.mode)) { emit(session, { type: 'partial', text: clean, generation: session.generation }); speculate(session, clean, false); }
+    });
+    stream.on('settled', ({ text }) => {
+      const clean = cleanText(text, 2000);
+      if (current() && clean) { emit(session, { type: 'settled', text: clean, generation: session.generation }); speculate(session, clean, true); }
+    });
+    stream.on('final', ({ text, timings }) => {
+      if (!current()) return;
+      const turn = session.turn; turn.done = true; turn.pcm = null;
+      const socketSeconds = stream.takeSocketSeconds();
+      session.mode = 'paused';
+      const clean = cleanText(text, 2000);
+      if (!clean) { emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); return; }
+      emit(session, { type: 'final', text: clean, generation: session.generation, mode: 'stream', setting: index === 0 ? 'primary' : 'fallback', timings: safeTimings(timings),
+        ...(reportUsage() ? { usage: { socketSeconds, keytermsFired: keytermsFired(clean, session.keyterms) } } : {}) });
+      choicesForFinal(session, clean);
+    });
+    stream.on('error', ({ code, beforeAudio }) => {
+      if (code === 'open-failed' && beforeAudio && streams[index + 1] && session.stream === stream) {
+        // The next holds use the fallback stream setting; this one goes one-shot.
+        stream.close(); startStream(session, index + 1);
+      }
+      if (session.turn && session.turn.mode === 'stream' && !session.turn.done && session.turn.transcriber === stream) fallBack(session);
+    });
+    stream.open().catch(() => {
+      if (session.stream === stream && streams[index + 1] && !(session.turn && session.turn.transcriber === stream && !session.turn.done)) { stream.close(); startStream(session, index + 1); }
+    });
+  }
+  // The stream could not finish this hold: the one-shot recognizer gets every
+  // frame of it, in order, and the release if it already happened.
+  // The replay waits for each write to flush (back-pressure): a whole hold
+  // written at once could overrun the recognizer's input queue. Live frames
+  // and the release queue behind it, in order.
+  function fallBack(session) {
+    const turn = session.turn;
+    turn.mode = 'one-shot';
+    const pcm = turn.pcm || []; turn.pcm = null;
+    if (!session.runtimeReady || session.closed) { cancelTurn(session, 'recognition-failed'); return; }
+    turn.chain = Promise.resolve();
+    for (const piece of pcm) queueWrite(session, turn, { type: 'audio', pcm: piece.toString('base64') });
+    if (turn.released) queueWrite(session, turn, { type: 'finish' });
+  }
+  function queueWrite(session, turn, message) {
+    turn.chain = turn.chain.then(() => {
+      if (session.turn !== turn || turn.failed || session.closed) return;
+      return write(session, message);
+    }).catch(() => { if (session.turn === turn && !turn.failed) { turn.failed = true; cancelTurn(session, 'runtime-busy'); } });
+  }
+  function endStreamTurn(session) {
+    const turn = session.turn;
+    if (turn && turn.mode === 'stream' && !turn.done && session.stream) { turn.done = true; session.stream.cancel(); }
+    session.turn = null;
+  }
+  function beginTurn(session) {
+    endStreamTurn(session);
+    const stream = session.stream;
+    session.turn = { generation: session.generation, mode: stream ? 'stream' : 'one-shot', transcriber: stream, pcm: [], released: false, done: false };
+    if (stream) stream.begin();
+  }
+  function acceptPcm(session, pcm) {
+    const turn = session.turn;
+    if (turn && turn.chain && turn.generation === session.generation) { queueWrite(session, turn, { type: 'audio', pcm: pcm.toString('base64') }); return; }
+    if (turn && turn.mode === 'stream' && !turn.done && turn.generation === session.generation) {
+      turn.pcm.push(Buffer.from(pcm)); turn.transcriber.sendPcm(pcm); return;
     }
+    forwardPcm(session, pcm);
+  }
+
+  // ---- the audio socket (spec 2026-10-27 §3.1) ----
+  // A hold that cannot be completed honestly is cancelled: a new generation, the
+  // recognizer told to drop it, never a short submit.
+  function cancelTurn(session, error) {
+    if (session.closed) return;
+    const active = ['capturing', 'finishing'].includes(session.mode);
+    abortChoices(session); endStreamTurn(session);
+    session.generation++; session.mode = 'paused'; session.turnBytes = 0;
+    write(session, { type: 'cancel' }).catch(() => {});
+    if (error && active) emit(session, { type: 'error', error, generation: session.generation });
+  }
+  function forwardPcm(session, pcm) {
+    write(session, { type: 'audio', pcm: pcm.toString('base64') }).catch(error => {
+      if (error.status === 429) cancelTurn(session, 'runtime-busy');
+    });
+  }
+  function waitForFrames(session, count) {
+    if (session.socketSeq >= count) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        check() { if (session.socketSeq >= count) { this.done(); resolve(); } },
+        fail() { this.done(); reject(fault(409, 'audio-sequence')); },
+        done() { clearTimeout(this.timer); session.frameWaiters.delete(this); },
+      };
+      waiter.timer = setTimeout(() => waiter.fail(), limits.drainMs);
+      waiter.timer.unref?.();
+      session.frameWaiters.add(waiter);
+    });
+  }
+  function attachSocket(session, ws) {
+    session.socket = ws; session.socketSeq = 0;
+    const broken = (code, reason) => {
+      if (session.socket === ws) { session.socket = null; if (['capturing', 'finishing'].includes(session.mode)) cancelTurn(session); }
+      ws.close(code, reason);
+    };
+    ws.on('message', (data, binary) => {
+      if (session.closed || session.socket !== ws) return;
+      if (!binary) { broken(1003, 'binary-only'); return; }
+      if (data.length < FRAME_HEADER + 2 || (data.length - FRAME_HEADER) % 2 || data.length - FRAME_HEADER > limits.audioBytes) { broken(1008, 'invalid-pcm'); return; }
+      const generation = data.readUInt32LE(0), seq = data.readUInt32LE(4);
+      if (seq !== session.socketSeq) { broken(1008, 'audio-sequence'); return; }
+      session.socketSeq++; session.touched = clock();
+      for (const waiter of [...session.frameWaiters]) waiter.check();
+      // Another generation's frame, or any frame outside a hold, is dropped here.
+      if (generation !== session.generation || session.mode !== 'capturing') return;
+      const pcm = data.subarray(FRAME_HEADER);
+      if (session.bytes + pcm.length > limits.sessionBytes || session.turnBytes + pcm.length > limits.turnBytes) { cancelTurn(session, 'audio-limit'); return; }
+      session.bytes += pcm.length; session.turnBytes += pcm.length;
+      acceptPcm(session, pcm);
+    });
+    ws.on('close', () => {
+      if (session.socket !== ws) return;
+      session.socket = null;
+      if (['capturing', 'finishing'].includes(session.mode)) cancelTurn(session);
+    });
+  }
+  function upgrade(req, socket, head) {
+    let url;
+    try { url = new URL(req.url, 'http://localhost'); } catch { return false; }
+    if (url.pathname !== PREFIX && !url.pathname.startsWith(PREFIX + '/')) return false;
+    if (closed) { refuseUpgrade(socket, 503); return true; }
+    if (!ownRequest(req)) { refuseUpgrade(socket, 403); return true; }
+    const match = /^\/sessions\/([a-f0-9-]+)\/audio$/.exec(url.pathname.slice(PREFIX.length));
+    const session = match && sessions.get(match[1]);
+    if (!session || session.closed) { refuseUpgrade(socket, 404); return true; }
+    if (session.socket) { refuseUpgrade(socket, 409); return true; }
+    const ws = acceptWebSocket(req, socket, head, { maxPayload: limits.audioBytes + FRAME_HEADER });
+    if (ws) { session.touched = clock(); attachSocket(session, ws); }
+    return true;
+  }
+
+  // The one choice path: local shortcuts first, then the external adapter or
+  // the built-in reply core (streamed when `onChoice` listens), then the
+  // published post-checks. Returns the page's body; throws a fault.
+  async function produceChoices(text, context, signal, onChoice) {
+    const began = clock();
     const local = localChoices(text);
-    if (local) return json(res, 200, { ...local, timings: { totalMs: Math.max(0, clock() - began) } });
+    if (local) return { ...local, timings: { totalMs: Math.max(0, clock() - began) } };
     if (adapterRequested && !adapterUrl) throw fault(503, 'choices-unavailable');
-    if (!adapterUrl && !choicesCore.available) return json(res, 200, { kind: 'fallback', choices: choiceList([
+    if (!adapterUrl && !choicesCore.available) return { kind: 'fallback', choices: choiceList([
       'Tell me more', "I'm not sure", 'Please say that again', "I don't want to answer",
-    ]), timings: { totalMs: Math.max(0, clock() - began) } });
-    if (requests.size >= limits.choices) throw fault(429, 'choices-busy');
-    const controller = new AbortController(); requests.add(controller);
-    const cancel = () => { if (!res.writableEnded) controller.abort(); };
-    res.once('close', cancel);
-    const timeout = setTimeout(() => controller.abort(), limits.adapterMs); timeout.unref();
+    ]), timings: { totalMs: Math.max(0, clock() - began) } };
     try {
       let result;
-      if (!adapterUrl) result = await choicesCore.generate({ text, ...(context ? { context } : {}) }, { signal: controller.signal });
+      const input = { text, ...(context && context.length ? { context } : {}) };
+      if (!adapterUrl) result = onChoice ? await choicesCore.generateStream(input, { signal, onChoice }) : await choicesCore.generate(input, { signal });
       else {
-        const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal: controller.signal,
+        const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal,
           headers: { 'Content-Type': 'application/json', ...(env.ERA_CHAT_CHOICES_TOKEN ? { Authorization: 'Bearer ' + env.ERA_CHAT_CHOICES_TOKEN } : {}) },
-          body: JSON.stringify({ text, ...(context ? { context } : {}) }) });
+          body: JSON.stringify(input) });
         if (!response.ok || !response.body) throw fault(502, 'choices-unavailable');
         let size = 0, chunks = [];
         for await (const chunk of response.body) {
           size += chunk.length;
-          if (size > limits.adapterBytes) { controller.abort(); throw fault(502, 'choices-invalid'); }
+          if (size > limits.adapterBytes) throw fault(502, 'choices-invalid');
           chunks.push(Buffer.from(chunk));
         }
         try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fault(502, 'choices-invalid'); }
@@ -357,14 +567,99 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         item && cleanText(item.label, 60) && cleanText(item.say, 300))) throw fault(502, 'choices-invalid');
       const unique = new Set(items.map(item => cleanText(item.say, 300).toLowerCase()));
       if (unique.size !== items.length) throw fault(502, 'choices-invalid');
-      if (controller.signal.aborted) throw fault(502, 'choices-unavailable');
-      json(res, 200, { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
+      if (signal.aborted) throw fault(502, 'choices-unavailable');
+      return { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
         choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol }))),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
-        timings: { totalMs: Math.max(0, clock() - began) } });
+        timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }
+  }
+  function cleanContext(value) {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length > 8 || !value.every(x => cleanText(x, 500))) throw fault(400, 'invalid-context');
+    return value.map(x => cleanText(x, 500));
+  }
+  async function generate(req, res) {
+    const input = await readJson(req, limits.bodyBytes);
+    const text = cleanText(input.text, 2000);
+    if (!text) throw fault(400, 'invalid-text');
+    const context = cleanContext(input.context);
+    if (requests.size >= limits.choices && !localChoices(text)) throw fault(429, 'choices-busy');
+    const controller = new AbortController(); requests.add(controller);
+    const cancel = () => { if (!res.writableEnded) controller.abort(); };
+    res.once('close', cancel);
+    const timeout = setTimeout(() => controller.abort(), limits.adapterMs); timeout.unref();
+    try { json(res, 200, await produceChoices(text, context, controller.signal)); }
     finally { clearTimeout(timeout); requests.delete(controller); res.off('close', cancel); }
+  }
+
+  // ---- hub-staged choices for streaming sessions (spec 2026-10-27 §3.3) ----
+  // A job runs one choice request. While unattached (speculative) nothing of
+  // it leaves the hub. Attached, each choice is staged to the page as it
+  // completes and the checked batch is sealed once; a newer generation drops it.
+  const normalized = text => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  function runChoices(session, text) {
+    const job = { text, norm: normalized(text), generation: session.generation, controller: new AbortController(), staged: [],
+      stagedCount: 0, result: null, error: null, done: false, attached: false, sealed: false };
+    const timeout = setTimeout(() => job.controller.abort(), limits.adapterMs); timeout.unref?.();
+    produceChoices(text, session.context, job.controller.signal, choice => { job.staged.push(choice); if (job.attached) stageChoice(session, job, choice); })
+      .then(result => { job.result = result; }, error => { job.error = error; })
+      .finally(() => { clearTimeout(timeout); job.done = true; if (job.attached) sealChoices(session, job); });
+    return job;
+  }
+  const liveJob = (session, job) => !session.closed && session.choiceJob === job && job.generation === session.generation && !job.sealed;
+  function stageChoice(session, job, choice) {
+    if (!liveJob(session, job)) return;
+    const index = job.stagedCount++;
+    const [pick] = choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}) }]);
+    emit(session, { type: 'choice-staged', generation: job.generation, index, choice: { ...pick, id: `choice-${index + 1}` } });
+  }
+  function sealChoices(session, job) {
+    if (!liveJob(session, job)) return;
+    if (job.error) { job.sealed = true; emit(session, { type: 'choices-error', error: job.error.code || 'choices-unavailable', generation: job.generation }); return; }
+    // A batch that arrived whole (a shortcut, the adapter) stages each choice now.
+    if (!job.stagedCount) for (const choice of job.result.choices) stageChoice(session, job, choice);
+    job.sealed = true;
+    emit(session, { type: 'batch-sealed', generation: job.generation, ...job.result });
+  }
+  function attachChoices(session, job) {
+    session.choiceJob = job; job.attached = true;
+    for (const choice of job.staged) stageChoice(session, job, choice);
+    if (job.done) sealChoices(session, job);
+  }
+  function abortChoices(session) {
+    const turn = session.turn;
+    if (turn) { clearTimeout(turn.stableTimer); if (turn.speculation && !turn.speculation.attached) turn.speculation.controller.abort(); turn.speculation = null; }
+    if (session.choiceJob) { session.choiceJob.controller.abort(); session.choiceJob = null; }
+  }
+  // Speculation: a partial unchanged for ERA_CHAT_SPECULATE_MS (or words the
+  // service says are settled) starts a hidden request on that text.
+  function speculate(session, text, now) {
+    const turn = session.turn;
+    if (!speculateMs || !turn || turn.mode !== 'stream' || turn.done || turn.generation !== session.generation) return;
+    clearTimeout(turn.stableTimer);
+    const start = () => {
+      if (session.turn !== turn || turn.done || session.closed || turn.generation !== session.generation) return;
+      const norm = normalized(text);
+      if (!norm || (turn.speculation && turn.speculation.norm === norm)) return;
+      if (turn.speculation) { turn.speculation.controller.abort(); emit(session, { type: 'speculation', state: 'discard', generation: turn.generation }); }
+      turn.speculation = runChoices(session, text);
+      emit(session, { type: 'speculation', state: 'start', generation: turn.generation });
+    };
+    if (now) start(); else { turn.stableTimer = setTimeout(start, speculateMs); turn.stableTimer.unref?.(); }
+  }
+  // The final transcript is the only thing the choices commit to.
+  function choicesForFinal(session, text) {
+    if (!session.staged) return;
+    const turn = session.turn, spec = turn && turn.speculation;
+    if (turn) { clearTimeout(turn.stableTimer); turn.speculation = null; }
+    if (spec && spec.norm === normalized(text) && spec.generation === session.generation && !(spec.done && spec.error)) {
+      emit(session, { type: 'speculation', state: 'keep', generation: session.generation });
+      attachChoices(session, spec); return;
+    }
+    if (spec) { spec.controller.abort(); emit(session, { type: 'speculation', state: 'discard', generation: session.generation }); }
+    attachChoices(session, runChoices(session, text));
   }
   async function route(req, res, url) {
     if (closed) throw fault(503, 'chat-unavailable');
@@ -399,9 +694,32 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       if (!['arm', 'ask', 'finish', 'cancel', 'pause', 'close'].includes(body.type) ||
         (body.type === 'arm' && typeof body.enabled !== 'boolean')) throw fault(400, 'invalid-control');
       if (body.type === 'close') { dispose(session); return json(res, 200, { closed: true }); }
-      if (body.type !== 'finish') session.generation++;
+      if (body.type === 'finish' && body.seq !== undefined) {
+        if (!Number.isSafeInteger(body.seq) || body.seq < 0) throw fault(400, 'invalid-control');
+        // The page's frames travel on the socket, this request on another
+        // connection: finish waits for every frame the page says it sent.
+        const generation = session.generation;
+        try { await waitForFrames(session, body.seq); }
+        catch (error) { if (generation === session.generation) cancelTurn(session); throw error; }
+        if (session.closed || generation !== session.generation) throw fault(409, 'capture-inactive');
+      }
+      // A hold the hub already ended (cancelled, failed, over budget) is never finished.
+      if (body.type === 'finish' && session.mode !== 'capturing') throw fault(409, 'capture-inactive');
+      const context = body.type === 'ask' ? cleanContext(body.context) || [] : null;
+      if (body.type !== 'finish') { abortChoices(session); endStreamTurn(session); session.generation++; }
+      if (context) session.context = context;
       session.mode = body.type === 'ask' ? 'capturing' : body.type === 'arm' && body.enabled ? 'armed' : body.type === 'finish' ? 'finishing' : 'paused';
-      if (body.type !== 'finish') session.utteranceBytes = 0;
+      if (body.type !== 'finish') { session.utteranceBytes = 0; session.turnBytes = 0; }
+      if (body.type === 'ask') { beginTurn(session); warmReply(); }
+      if (body.type === 'finish' && session.turn && session.turn.generation === session.generation) {
+        session.turn.released = true;
+        if (session.turn.mode === 'stream' && !session.turn.done) {
+          // Release finalizes the stream; the recognizer's own capture is left unused.
+          session.turn.transcriber.finalize();
+          return json(res, 200, { ok: true, generation: session.generation });
+        }
+        if (session.turn.chain) { queueWrite(session, session.turn, { type: 'finish' }); return json(res, 200, { ok: true, generation: session.generation }); }
+      }
       await write(session, { type: body.type, ...(body.type === 'arm' ? { enabled: body.enabled } : {}) });
       return json(res, 200, { ok: true, generation: session.generation });
     }
@@ -421,7 +739,9 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         }
         session.bytes += audio.length;
         if (session.mode === 'capturing') session.utteranceBytes += audio.length;
-        await write(session, { type: 'audio', pcm: audio.toString('base64') });
+        const turn = session.turn;
+        if (turn && turn.generation === session.generation && (turn.chain || (turn.mode === 'stream' && !turn.done))) acceptPcm(session, audio);
+        else await write(session, { type: 'audio', pcm: audio.toString('base64') });
         session.seq++; return json(res, 200, { ok: true, seq: session.seq });
       } finally { session.uploading = false; }
     }
@@ -437,9 +757,10 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         .finally(() => { activeRoutes--; });
       return true;
     },
+    upgrade,
     sweep,
     isIdle() { return sessions.size === 0 && requests.size === 0 && activeRoutes === 0; },
-    close() { closed = true; clearInterval(timer); for (const session of sessions.values()) dispose(session); for (const request of requests) request.abort(); choicesCore.close(); },
+    close() { closed = true; clearInterval(timer); for (const session of sessions.values()) dispose(session); for (const request of requests) request.abort(); choicesCore.close(); ownFetch?.close(); },
   };
 }
 
@@ -467,6 +788,7 @@ function createChatApi(options = {}) {
       }
       return inner.handle(req, res);
     },
+    upgrade(req, socket, head) { return inner.upgrade(req, socket, head); },
     sweep() { inner.sweep(); },
     close() { closed = true; inner.close(); },
   };

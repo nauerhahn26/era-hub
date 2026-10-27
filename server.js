@@ -1411,22 +1411,21 @@ function responseVoiceSpeed() {
   } catch {}
   return RESPONSE_VOICE_SPEED;
 }
-async function elevenTts(cfg, text) {
-  const speed = responseVoiceSpeed();
+function ttsCacheFile(cfg, speed, text) {
   const key = crypto.createHash("sha1").update(cfg.voiceId + "|" + cfg.modelId + "|" + speed + "|" + text).digest("hex");
-  const file = path.join(TTS_CACHE, key + ".mp3");
-  if (fs.existsSync(file)) return fs.readFileSync(file);       // repeat lines are free
-  const r = await fetch(ELEVEN_URL + "/v1/text-to-speech/" + cfg.voiceId +
-                        "?output_format=mp3_22050_32", {
-    method: "POST",
+  return path.join(TTS_CACHE, key + ".mp3");
+}
+// The saved voice's connection stays warm for the hub's lifetime (spec
+// 2026-10-27 §3.3); /tts streams the service's bytes to the page as they
+// arrive and caches the whole clip when it is complete (tts-stream.js).
+const voiceFetch = require("./keepalive-fetch.js").createKeepAliveFetch();
+const { streamSpeech } = require("./tts-stream.js");
+function streamTts(cfg, text, res) {
+  const speed = responseVoiceSpeed();
+  return streamSpeech({ fetch: voiceFetch, cacheFile: ttsCacheFile(cfg, speed, text), res,
+    url: ELEVEN_URL + "/v1/text-to-speech/" + cfg.voiceId + "/stream?output_format=mp3_22050_32",
     headers: { "xi-api-key": cfg.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ text, model_id: cfg.modelId,
-      voice_settings: { stability: 0.5, similarity_boost: 0.75, speed } })
-  });
-  if (!r.ok) throw new Error("elevenlabs " + r.status);
-  const buf = Buffer.from(await r.arrayBuffer());
-  fs.writeFileSync(file, buf);
-  return buf;
+    body: JSON.stringify({ text, model_id: cfg.modelId, voice_settings: { stability: 0.5, similarity_boost: 0.75, speed } }) });
 }
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
@@ -2139,10 +2138,8 @@ const server = http.createServer((req, res) => {
         const { text } = JSON.parse(body);
         const cfg = loadTtsCfg();
         if (!cfg.apiKey || !text || text.length > 600) { res.writeHead(503).end(); return; }
-        const buf = await elevenTts(cfg, String(text));
-        res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "max-age=86400" });
-        res.end(buf);
-      } catch (e) { res.writeHead(502).end(); }
+        await streamTts(cfg, String(text), res);
+      } catch (e) { if (!res.headersSent) res.writeHead(502).end(); else res.destroy(); }
     });
     return;
   }
@@ -4178,5 +4175,8 @@ server.on("listening", () => {
   }
   if (loadEnabledApps().includes("chat")) warmChatSymbols();
 });
+// The Chat page's held-question audio socket (spec 2026-10-27 §3.1). Every
+// other upgrade request is refused: the hub serves no other WebSocket.
+server.on("upgrade", (req, socket, head) => { if (!chatApi.upgrade(req, socket, head)) socket.destroy(); });
 server.on("close", () => { chatApi.close(); chatTurns.close(); });
 server.listen(PORT, BIND);

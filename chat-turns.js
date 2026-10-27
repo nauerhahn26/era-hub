@@ -32,9 +32,9 @@ const REASONS = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'tim
 // the speculative marks are reserved for the streaming pipeline (phase 2).
 const STAGES = ['begin', 'release', 'drained', 'finishSent', 'finishAck', 'transcript', 'choicesReady', 'revealed', 'selected',
   'playbackStart', 'playbackEnd', 'socketConnect', 'firstPartial', 'partial', 'speculativeStart', 'speculativeKeep',
-  'speculativeDiscard', 'firstChoiceStaged', 'choiceStaged', 'batchSealed', 'firstAudio'];
+  'speculativeDiscard', 'firstChoiceStaged', 'choiceStaged', 'batchSealed', 'firstAudio', 'settled'];
 const TEXT_STAGES = new Set(['firstPartial', 'partial', 'firstChoiceStaged', 'choiceStaged']);
-const WORKER = ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs', 'choicesServerMs'];
+const WORKER = ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs', 'choicesServerMs', 'connectMs', 'settledMs', 'wordsSettledMs'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
 
@@ -55,12 +55,12 @@ const choice = shape({ id: str(32), label: str(100), say: str(600), symbol: null
 const stage = v => isObject(v) && oneOf(STAGES)(v.name) && num()(v.ms) &&
   Object.keys(v).every(key => key === 'name' || key === 'ms' || (key === 'text' && TEXT_STAGES.has(v.name) && str(2000)(v.text)));
 const RECORD = shape({
-  version: v => v === 1, id: str(36, UUID), kind: oneOf(KINDS), mode: oneOf(MODES), session: nullable(str(64, /^[A-Za-z0-9-]+$/)),
+  version: v => v === 1, id: str(36, UUID), kind: oneOf(KINDS), mode: oneOf(MODES), setting: oneOf(['primary', 'fallback']), session: nullable(str(64, /^[A-Za-z0-9-]+$/)),
   startedAt: str(30, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/), outcome: oneOf(OUTCOMES), reason: oneOf(REASONS), error: str(300),
   stages: list(stage, 300),
-  worker: shape(Object.fromEntries(WORKER.map(key => [key, key === 'firstPartialMs' ? nullable(num()) : num()]))),
+  worker: shape(Object.fromEntries(WORKER.map(key => [key, key === 'firstPartialMs' || key === 'connectMs' ? nullable(num()) : num()]))),
   content: shape({ transcript: str(2000), partials: list(str(2000), 100), choiceKind: str(32), choices: list(choice, 6),
-    selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)) }),
+    selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100) }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),
@@ -299,7 +299,9 @@ function createChatTurns(options = {}) {
     const turn = validateTurn(value), chat = env() || {};
     const id = (key) => typeof chat[key] === 'string' && chat[key] && chat[key].length <= 128 ? chat[key] : null;
     const now = new Date(clock());
-    const transcription = turn.mode === 'stream' ? id('ERA_CHAT_STREAM_MODEL') : turn.mode === 'one-shot' ? id('ERA_CHAT_SPEECH_MODEL') : null;
+    // The stream setting the hold actually used (spec §3.5): primary or fallback.
+    const transcription = turn.mode === 'stream' ? id(turn.setting === 'fallback' ? 'ERA_CHAT_STREAM_FALLBACK_MODEL' : 'ERA_CHAT_STREAM_MODEL')
+      : turn.mode === 'one-shot' ? id('ERA_CHAT_SPEECH_MODEL') : null;
     const stamped = { ...turn, receivedAt: now.toISOString(), day: localDay(now), build: build() || null, device: options.deviceId || null,
       models: { reply: id('ERA_CHAT_TEXT_MODEL'), transcription } };
     stamped.cost = estimateCost(stamped, readPrices(dataDir));

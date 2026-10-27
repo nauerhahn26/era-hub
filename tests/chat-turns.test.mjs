@@ -358,3 +358,14 @@ test('a pool file that cannot be replaced is named in the answer, and the rest s
   assert.equal(await fs.readFile(path.join(mine, '2026-10-03.jsonl'), 'utf8'), stuck);
   assert.deepEqual((await fs.readdir(mine)).filter(name => !name.endsWith('.jsonl')), [], 'the temporary file is cleaned up');
 });
+
+test('a streamed turn is stamped with the transcription setting it actually used: primary, fallback, or the one-shot model', async t => {
+  const env = { ERA_CHAT_TEXT_MODEL: 'reply-model-x', ERA_CHAT_SPEECH_MODEL: 'speech-model-y', ERA_CHAT_STREAM_MODEL: 'stream-primary-z', ERA_CHAT_STREAM_FALLBACK_MODEL: 'stream-fallback-w' };
+  const s = await service(t, { env });
+  const ids = ['0f8fad5b-d9cb-469f-a165-70867728950a', '0f8fad5b-d9cb-469f-a165-70867728950b', '0f8fad5b-d9cb-469f-a165-70867728950c'];
+  const shapes = [{ mode: 'stream', setting: 'primary' }, { mode: 'stream', setting: 'fallback' }, { mode: 'one-shot', setting: 'fallback' }];
+  for (const [i, shape] of shapes.entries()) assert.equal((await s.post({ ...turnRecord(), id: ids[i], ...shape })).status, 201);
+  assert.equal((await s.post({ ...turnRecord(), id: '0f8fad5b-d9cb-469f-a165-70867728950d', mode: 'stream', setting: 'other' })).status, 400);
+  const lines = (await fs.readFile(path.join(s.logDir, day() + '.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(lines.map(line => line.models.transcription), ['stream-primary-z', 'stream-fallback-w', 'speech-model-y']);
+});

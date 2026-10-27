@@ -132,6 +132,87 @@ benchmark alone.
 - Drop the per-say voice-list refetch; refresh the list on a timer.
 - Playback speed stays the partner's setting (default 0.8 since 10/26).
 
+### 3.5 Decided shapes (phase 2 build, 10/27)
+
+- *Audio socket* (`chat-ws.js`, the hub's own RFC 6455, both sides; no
+  dependency). `GET /chat/api/sessions/<id>/audio` upgrades only for a live
+  session, from loopback, same origin (Origin and `Sec-Fetch-Site` as for the
+  HTTP routes), one socket per session (409 for a second). A binary frame is an
+  8-byte little-endian header `{generation u32, seq u32}` and PCM16 at 16 kHz;
+  text frames close it (1003), a sequence gap or malformed frame closes it
+  (1008), fragmented messages are refused (1003). Frames of another generation
+  or outside a hold are dropped. A hold's budget is 512 000 bytes (16 s; the
+  page stops at 15 s), past it the hold is cancelled with an `audio-limit`
+  event. `finish` carries `seq` (frames sent) and waits up to 2 s for them,
+  else the hold is cancelled (409), never submitted short. A socket closed
+  mid-hold cancels the hold. The ready event advertises `audioSocket`; the page
+  opens the socket before Ready to ask and falls back to per-frame POSTs only
+  when the hub does not offer it or it fails to open (old hubs, tests).
+- *Streaming client* (`chat-stream.js`): `{open, begin, sendPcm, finalize,
+  cancel, close}` with events `partial`, `settled`, `final`, `error`, `socket`;
+  wire shapes `ws-streaming-turns` and `ws-listen-query` ported from the
+  bake-off. Messages carry 20–1000 ms of audio (shorter pieces join the next;
+  the release tail is padded to 20 ms: the turn service closes the socket on a
+  9 ms message). Keyterms go on open only (one JSON list, or repeated query
+  params) from the file `ERA_CHAT_STREAM_KEYTERMS` names (≤ 100 terms of ≤ 50
+  characters); test mode counts the ones that fired (`keytermsFired`), the
+  words are never logged. Settings: `ERA_CHAT_STREAM_{PROTOCOL, URL (wss://,
+  or ws:// to loopback), MODEL, TOKEN, BILLING (connection|audio), KEYTERMS,
+  QUERY}` and the same with `_FALLBACK_`; `ERA_CHAT_SPECULATE_MS` (300, 0 off);
+  `ERA_CHAT_TEXT_SERVICE_TIER`. Absent or incomplete stream settings leave the
+  one-shot path exactly as published.
+- *Turn service, per-turn Terminate.* A host probe (10/27) showed a forced
+  endpoint alone on a warm socket drops a short question (0.9 s of speech gave
+  no turn until the next question's audio arrived). So release sends the forced
+  endpoint and Terminate together, the final is every turn of the hold joined
+  at Termination, and a fresh socket is opened at once for the next hold
+  (closed after 60 s idle for a connection-billed service; reopened at
+  touch-down, 115–170 ms measured). `settled` is the moment no turn is open
+  after the forced endpoint: it starts speculation at once but commits
+  nothing. The listen service keeps one socket across holds (Finalize always
+  answers; KeepAlive every 5 s idle; closed after 5 min idle).
+- *Fallback.* The hub keeps the hold's PCM in memory (never on disk) while it
+  streams. A refused open, a lost socket, a service error or no final within
+  4 s hands the whole hold to the one-shot worker (`mode: "one-shot"` on the
+  final); if the worker cannot take it the hold fails with an error event,
+  never a final. A primary that refuses a connection moves the session's later
+  holds to the fallback stream setting.
+- *Staged choices* (`stagedChoices` capability, streaming sessions only). The
+  page sends its last eight confirmed context entries with `ask`; the hub runs
+  the choices itself: speculative requests on a partial stable for 300 ms or on
+  settled words, kept when the final's normalized text (case, punctuation,
+  spacing) equals theirs, else aborted and replaced; shortcuts run on partials
+  the same way. Events: `speculation` {state start|keep|discard} (no content),
+  `choice-staged` {index, choice} as each streamed choice completes,
+  `batch-sealed` {the checked batch} once, `choices-error`. Nothing of a
+  speculative request leaves the hub before it is kept; a new hold, cancel or
+  end aborts every request of the old generation. The page warms each staged
+  choice's voice at once and reveals only the sealed batch; typed questions
+  still use `POST /chat/api/choices`. The reply core streams
+  (`generateStream`, the bake-off parser) with `service_tier` when set; the
+  ownership and duplicate checks still judge the whole batch.
+- *Speech.* `voice.js`: staged choices and the selected words fetch at once
+  (up to 6 in flight) beside the two-at-a-time warm-up; the hub voice is read
+  at Start Chat and every 10 minutes, not per say. `/tts` reads the saved
+  voice's streaming endpoint and passes bytes on as they arrive, caching the
+  clip only when complete (`tts-stream.js`); the reply and saved-voice services
+  are reached over keep-alive connections for the hub's lifetime
+  (`keepalive-fetch.js`), the reply origin warmed at Start Chat and touch-down
+  (at most every 30 s).
+- *Telemetry* (stage names added to §5.1): `socketConnect`, `settled`,
+  `speculativeStart/Keep/Discard`, `firstChoiceStaged`/`choiceStaged` per
+  streamed choice; worker `connectMs`, `settledMs`, `wordsSettledMs`; usage
+  `socketSeconds` (open time since the previous final, idle included: what a
+  connection-billed service charges); content `keytermsFired`; a streamed
+  record's `setting` (primary|fallback) picks the transcription model the hub
+  stamps on it.
+- *Host numbers* (10/27, scratch hub, real page, the 26 recorded clips as the
+  fake microphone, test mode, release 0.35 s after the words; each turn its own
+  Chat session, so every socket was warm). Primary turn service, 26 turns, all
+  `stream`, all completed: release → final 418 / 911 ms p50 / p95; → first
+  choice staged 436 / 984; → all staged 478 / 1061; speculation kept 26/26.
+  Fallback listen service, 5 turns: 143 / 161, 145 / 164, 147 / 165.
+
 ## 4. The reveal gate (dad's decision)
 
 The fresh-movement rule exists so a batch never lands under a gaze that is
@@ -146,6 +227,12 @@ plus 600 ms. Options, with the recommended one first:
 3. Keep everything as published.
 
 Dwell stays the partner's setting (default 1200 ms).
+
+**Built (phase 2, 10/27): option 1.** The page remembers where the last gaze
+or mouse pointer rested (a partner's finger never counts). When a batch seals
+with that point on a black centre cell, it is revealed at once; on any tile
+cell, it waits for a move into the centre, as before. The reveal redraw
+suppresses dwell for 250 ms instead of 600.
 
 ## 5. Telemetry: a test mode that records everything, off by default
 
@@ -257,8 +344,8 @@ pool), while the held-question audio stays on the device only.
   `revealed`, `selected`, `playbackStart`, `playbackEnd`) plus `begin`,
   `firstPartial`, `partial`, `firstChoiceStaged`, `choiceStaged`,
   `batchSealed` (just before `revealed`: the batch is sealed at reveal),
-  `firstAudio` (the playback start until the streaming voice lands in phase 2)
-  and, reserved for phase 2, `socketConnect` and `speculativeStart/Keep/Discard`.
+  `firstAudio` (the playback start), and from phase 2 (§3.5) `socketConnect`,
+  `settled` and `speculativeStart/Keep/Discard`.
 - **Audio** is kept only for a hold that was released and submitted
   (`finishSent`); a cancelled hold keeps none. It is uploaded after the record.
 - **Usage.** The in-process reply core returns the service's token counts

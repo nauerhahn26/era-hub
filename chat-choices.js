@@ -91,6 +91,57 @@ function parseChoices(response) {
   return choices;
 }
 
+// ---- streamed replies (spec 2026-10-27 §3.3; parser ported from tools/chat-reply-bakeoff.mjs) ----
+// Incremental parse of {"choices":[{...},{...}]}: each choice object is handed
+// over the moment it closes; the whole text is validated again at the end.
+function createChoiceStream({ onChoice = () => {}, onClose = () => {} } = {}) {
+  let buffer = '', stack = [], inString = false, escaped = false, start = -1, closed = false;
+  return {
+    push(chunk) {
+      const from = buffer.length; buffer += chunk;
+      for (let i = from; i < buffer.length; i++) {
+        const ch = buffer[i];
+        if (inString) { if (escaped) escaped = false; else if (ch === '\\') escaped = true; else if (ch === '"') inString = false; continue; }
+        if (ch === '"') { inString = true; continue; }
+        if (ch === '{' || ch === '[') {
+          if (ch === '{' && stack.length === 2 && stack[1] === '[') start = i;
+          stack.push(ch);
+        } else if (ch === '}' || ch === ']') {
+          stack.pop();
+          if (ch === '}' && stack.length === 2 && start >= 0) {
+            let value = null;
+            try { value = JSON.parse(buffer.slice(start, i + 1)); } catch { /* left for the final check */ }
+            start = -1;
+            if (value && typeof value.label === 'string' && typeof value.say === 'string') onChoice(value);
+          } else if (ch === ']' && stack.length === 1 && !closed) { closed = true; onClose(); }
+        }
+      }
+    },
+    text: () => buffer,
+  };
+}
+// Server-sent events from a fetch body, bounded in total size.
+async function* serverEvents(body, cap, controller) {
+  const decoder = new TextDecoder(); let pending = '', bytes = 0;
+  // A cancelled request stops reading at once, even from a body that stalls.
+  const reader = body.getReader ? body.getReader() : null;
+  const stop = () => { reader?.cancel().catch(() => {}); };
+  controller.signal.addEventListener('abort', stop, { once: true });
+  const chunks = reader ? (async function* () { while (true) { const { value, done } = await reader.read(); if (done) return; yield value; } })() : body;
+  try { for await (const chunk of chunks) {
+    bytes += chunk.length;
+    if (bytes > cap) { controller.abort(); throw failure('generation-invalid'); }
+    pending += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, '\n');
+    let cut;
+    while ((cut = pending.indexOf('\n\n')) >= 0) {
+      const block = pending.slice(0, cut); pending = pending.slice(cut + 2);
+      const data = block.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n');
+      if (data) yield data;
+    }
+  } } finally { controller.signal.removeEventListener('abort', stop); }
+  if (pending.trim().startsWith('data:') && !controller.signal.aborted) yield pending.trim().slice(5).trim();
+}
+
 // Token counts as the reply service reported them, with the configured model id
 // (an id, never a credential). Used only for Chat test mode's cost estimate.
 function replyUsage(response, model) {
@@ -111,37 +162,79 @@ function createChoicesAdapter(options = {}) {
   } catch { /* disabled until explicitly configured */ }
   const available = !!(url && env.ERA_CHAT_TEXT_MODEL && env.ERA_CHAT_TEXT_TOKEN);
   const active = new Set();
+  // The fast processing tier is one body field, set only by a private setting.
+  const tier = /^[a-z_]{1,20}$/.test(env.ERA_CHAT_TEXT_SERVICE_TIER || '') ? env.ERA_CHAT_TEXT_SERVICE_TIER : null;
+  const requestBody = (data, stream) => JSON.stringify({ model: env.ERA_CHAT_TEXT_MODEL, store: false, instructions: INSTRUCTIONS,
+    input: JSON.stringify(data), max_output_tokens: 450,
+    ...(['none', 'low', 'medium', 'high'].includes(env.ERA_CHAT_TEXT_REASONING) ? { reasoning: { effort: env.ERA_CHAT_TEXT_REASONING } } : {}),
+    ...(tier ? { service_tier: tier } : {}), ...(stream ? { stream: true } : {}),
+    text: { format: { type: 'json_schema', name: 'choices', strict: true, schema: SCHEMA } } });
+  const finished = (data, choices, usage, before) => {
+    const guarded = changesOwnership(data, choices);
+    return { ...(usage ? { usage } : {}), choices: guarded ? [{ label: 'Offer help', say: 'Can I help you?' }, { label: 'Tell me more', say: 'Tell me more.' },
+      { label: 'A moment', say: 'I need a moment.' }] : choices, kind: guarded ? 'guarded' : 'generated', generated: !guarded,
+      timings: { totalMs: Math.round((clock() - before) * 100) / 100 } };
+  };
+  // One request at a time per controller: bounded concurrency, a timeout, and
+  // the caller's cancel. `work` gets the abort signal and the start time.
+  async function bounded(input, signal, work) {
+    if (!available) throw failure('generation-unavailable', 503);
+    const data = inputData(input);
+    if (signal?.aborted) throw failure('generation-cancelled', 499);
+    const guarded = guardedChoices(data);
+    if (guarded) return { choices: guarded, kind: 'guarded', generated: false, timings: { totalMs: 0 } };
+    if (active.size >= limits.concurrent) throw failure('generation-busy', 429);
+    const controller = new AbortController(); active.add(controller);
+    const abort = () => controller.abort(); signal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(abort, limits.timeoutMs);
+    try { return await work(data, controller, clock()); }
+    catch (error) {
+      if (signal?.aborted) throw failure('generation-cancelled', 499);
+      throw error.code && error.status ? error : failure('generation-unavailable');
+    } finally { clearTimeout(timer); active.delete(controller); signal?.removeEventListener('abort', abort); }
+  }
   return {
     available,
     async generate(input, { signal } = {}) {
-      if (!available) throw failure('generation-unavailable', 503);
-      const data = inputData(input);
-      if (signal?.aborted) throw failure('generation-cancelled', 499);
-      const guarded = guardedChoices(data);
-      if (guarded) return { choices: guarded, kind: 'guarded', generated: false, timings: { totalMs: 0 } };
-      if (active.size >= limits.concurrent) throw failure('generation-busy', 429);
-      const controller = new AbortController(); active.add(controller);
-      const abort = () => controller.abort(); signal?.addEventListener('abort', abort, { once: true });
-      const timer = setTimeout(abort, limits.timeoutMs);
-      const before = clock();
-      try {
+      return bounded(input, signal, async (data, controller, before) => {
         const response = await fetcher(url, { method: 'POST', redirect: 'error', signal: controller.signal,
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.ERA_CHAT_TEXT_TOKEN },
-          body: JSON.stringify({ model: env.ERA_CHAT_TEXT_MODEL, store: false, instructions: INSTRUCTIONS,
-            input: JSON.stringify(data), max_output_tokens: 450,
-            ...(['none', 'low', 'medium', 'high'].includes(env.ERA_CHAT_TEXT_REASONING) ? { reasoning: { effort: env.ERA_CHAT_TEXT_REASONING } } : {}),
-            text: { format: { type: 'json_schema', name: 'choices', strict: true, schema: SCHEMA } } }) });
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.ERA_CHAT_TEXT_TOKEN }, body: requestBody(data, false) });
         if (!response.ok) throw failure('generation-unavailable');
         const parsed = await boundedResponse(response, limits.outputBytes, controller);
         if (controller.signal.aborted) throw failure('generation-unavailable');
-        const choices = parseChoices(parsed), guarded = changesOwnership(data, choices), usage = replyUsage(parsed, env.ERA_CHAT_TEXT_MODEL);
-        return { ...(usage ? { usage } : {}), choices: guarded ? [{ label: 'Offer help', say: 'Can I help you?' }, { label: 'Tell me more', say: 'Tell me more.' },
-          { label: 'A moment', say: 'I need a moment.' }] : choices, kind: guarded ? 'guarded' : 'generated', generated: !guarded,
-          timings: { totalMs: Math.round((clock() - before) * 100) / 100 } };
-      } catch (error) {
-        if (signal?.aborted) throw failure('generation-cancelled', 499);
-        throw error.code && error.status ? error : failure('generation-unavailable');
-      } finally { clearTimeout(timer); active.delete(controller); signal?.removeEventListener('abort', abort); }
+        return finished(data, parseChoices(parsed), replyUsage(parsed, env.ERA_CHAT_TEXT_MODEL), before);
+      });
+    },
+    // The streamed reply: onChoice hears each choice as it completes (staging
+    // only; nothing is shown or spoken from it); the result is the checked batch.
+    async generateStream(input, { signal, onChoice } = {}) {
+      return bounded(input, signal, async (data, controller, before) => {
+        const response = await fetcher(url, { method: 'POST', redirect: 'error', signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Authorization: 'Bearer ' + env.ERA_CHAT_TEXT_TOKEN }, body: requestBody(data, true) });
+        if (!response.ok || !response.body) throw failure('generation-unavailable');
+        let firstChoiceMs = null, usage = null, fault = null, completed = false;
+        const parser = createChoiceStream({ onChoice: value => {
+          if (firstChoiceMs === null) firstChoiceMs = Math.round((clock() - before) * 100) / 100;
+          const label = clean(value.label, 40), say = clean(value.say, 180);
+          if (!label || !say || controller.signal.aborted) return;
+          try { onChoice?.({ label, say, ...(SYMBOLS.has(value.symbol) ? { symbol: value.symbol } : {}) }); } catch { /* staging never breaks the reply */ }
+        } });
+        for await (const raw of serverEvents(response.body, limits.outputBytes, controller)) {
+          if (raw === '[DONE]') break;
+          let event; try { event = JSON.parse(raw); } catch { throw failure('generation-invalid'); }
+          if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') parser.push(event.delta);
+          else if (event.type === 'response.refusal.delta') fault = fault || 'generation-refused';
+          else if (event.type === 'response.completed') { completed = true; usage = replyUsage(event.response, env.ERA_CHAT_TEXT_MODEL); }
+          else if (event.type === 'response.incomplete' || event.type === 'response.failed' || event.type === 'error') fault = fault || 'generation-invalid';
+        }
+        if (controller.signal.aborted) throw failure('generation-unavailable');
+        if (fault) throw failure(fault);
+        if (!completed) throw failure('generation-invalid');
+        const choices = parseChoices({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: parser.text() }] }] });
+        const result = finished(data, choices, usage, before);
+        result.timings.firstChoiceMs = firstChoiceMs ?? result.timings.totalMs;
+        return result;
+      });
     },
     close() { for (const controller of active) controller.abort(); },
   };
@@ -181,4 +274,4 @@ function adapterPort(env = process.env) {
   if (!Number.isInteger(port) || port < 8380 || port > 8389) throw Error('Use ERA_CHAT_TEXT_PORT between 8380 and 8389.');
   return port;
 }
-module.exports = { createChoicesAdapter, createChoicesServer, adapterPort };
+module.exports = { createChoicesAdapter, createChoicesServer, adapterPort, createChoiceStream };

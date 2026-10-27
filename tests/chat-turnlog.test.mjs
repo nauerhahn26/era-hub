@@ -219,3 +219,31 @@ test('staged choices keep the hub picture word and pictogram id, and the hub sch
   assert.deepEqual(validateTurn(record), record);
   assert.throws(() => validateTurn({ ...record, content: { ...record.content, choices: [{ label: 'x', say: 'x', symbolId: -1 }] } }), /invalid-turn/);
 });
+
+test('a streamed turn records the phase-2 marks: socket, settled, speculation, each staged choice once, socket seconds and the keyterm count', async () => {
+  const s = setup(), m = s.wrapped, h = m.begin('hold');
+  s.log.set(h, { mode: 'stream', session: '9b2c1a7e-1111-4222-8333-944455556666' });
+  s.tick(20); s.log.mark(h, 'socketConnect');
+  s.tick(300); s.log.partial(h, 'what should we');
+  s.tick(300); s.log.mark(h, 'speculativeStart'); s.tick(100); s.log.mark(h, 'speculativeDiscard'); s.log.mark(h, 'speculativeStart');
+  s.tick(200); m.mark(h, 'release'); m.mark(h, 'drained'); m.mark(h, 'finishSent'); s.tick(10); m.mark(h, 'finishAck');
+  s.tick(120); s.log.mark(h, 'settled'); s.tick(200); m.mark(h, 'transcript');
+  m.observe(h, { audioMs: 1100, firstPartialMs: 300, finalizeMs: 320, connectMs: 0, settledMs: 120, wordsSettledMs: 100, turnMs: 1450 });
+  s.log.set(h, { mode: 'stream', setting: 'fallback' }); s.log.usage(h, { stream: { socketSeconds: 41.5, keytermsFired: 2 } });
+  s.log.mark(h, 'speculativeKeep');
+  s.tick(30); s.log.stagedOne(h, { label: 'Play', say: 'Let us play.' }); s.tick(40); s.log.stagedOne(h, { label: 'Read', say: 'I want to read.' });
+  s.tick(5); m.mark(h, 'choicesReady');
+  s.log.staged(h, [{ id: '4:0', label: 'Play', say: 'Let us play.' }, { id: '4:1', label: 'Read', say: 'I want to read.' }], { kind: 'generated' });
+  m.mark(h, 'revealed'); m.end(h, 'cancelled', 'superseded');
+  await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.deepEqual(validateTurn(record), record);
+  const names = record.stages.map(x => x.name);
+  assert.deepEqual(names.filter(n => /^speculative/.test(n)), ['speculativeStart', 'speculativeDiscard', 'speculativeStart', 'speculativeKeep']);
+  assert.ok(names.includes('socketConnect') && names.includes('settled'));
+  assert.deepEqual(record.stages.filter(x => x.name === 'choiceStaged').map(x => [x.ms, x.text]), [[1280, 'Play'], [1320, 'Read']]);
+  assert.equal(names.filter(n => n === 'firstChoiceStaged').length, 1);
+  assert.equal(record.mode, 'stream'); assert.equal(record.setting, 'fallback');
+  assert.equal(record.usage.socketSeconds, 41.5); assert.equal(record.content.keytermsFired, 2); assert.equal(record.content.keyterms, null, 'counts only, never the words');
+  assert.equal(record.worker.connectMs, 0); assert.equal(record.worker.settledMs, 120);
+});
