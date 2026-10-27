@@ -1,1278 +1,1362 @@
 {
-  "default_s": 13.155,
-  "generatedAt": "2026-10-26T19:07:45.906Z",
+  "default_s": 10.464,
+  "generatedAt": "2026-10-27T02:05:18.558Z",
   "sources": [
-    "~/.local/state/era-parallel-gates/jobs/gate-20261026T015400Z-b27fb428/workspace/era-hub/gate",
-    "~/.local/state/era-parallel-gates/jobs/gate-20261026T034943Z-35b25ee9/workspace/era-hub/gate",
-    "~/.local/state/era-parallel-gates/jobs/gate-20261026T071217Z-be7dc76d/workspace/era-hub/gate",
-    "~/.local/state/era-parallel-gates/jobs/gate-20261026T085929Z-47c2d4de/workspace/era-hub/gate",
-    "~/.local/state/era-parallel-gates/jobs/gate-20261026T150437Z-980ab1c3/workspace/era-hub/gate",
-    "~/new-era/era-hub--wt-era-gaze-launcher/gate"
+    "~/.local/state/era-gate-runs/2026-10-27T01-18-35Z-1bec2fb/results.jsonl",
+    "~/.local/state/era-gate-runs/2026-10-27T01-43-42Z-47ab167/results.jsonl"
   ],
   "suites": {
     "era-board:tests/board-arrange.test.mjs": {
-      "max_s": 10.655,
-      "mean_s": 9.801,
-      "median_s": 9.832,
-      "min_s": 8.59,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 10.394,
+      "mean_s": 9.963,
+      "median_s": 9.963,
+      "min_s": 9.531,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-clothing-coach.test.mjs": {
-      "max_s": 18.287,
-      "mean_s": 17.815,
-      "median_s": 17.784,
-      "min_s": 17.476,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 18.649,
+      "mean_s": 18.566,
+      "median_s": 18.566,
+      "min_s": 18.482,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-clothing-visuals.test.mjs": {
-      "max_s": 6.509,
-      "mean_s": 6.267,
-      "median_s": 6.262,
-      "min_s": 5.928,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 6.51,
+      "mean_s": 6.478,
+      "median_s": 6.478,
+      "min_s": 6.446,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-content-note.test.mjs": {
-      "max_s": 2.491,
-      "mean_s": 2.335,
-      "median_s": 2.319,
-      "min_s": 2.171,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 2.6,
+      "mean_s": 2.463,
+      "median_s": 2.463,
+      "min_s": 2.326,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-edit.test.mjs": {
-      "max_s": 33.75,
-      "mean_s": 33.227,
-      "median_s": 33.385,
-      "min_s": 31.907,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 33.069,
+      "mean_s": 33.01,
+      "median_s": 33.01,
+      "min_s": 32.95,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-events.test.mjs": {
-      "max_s": 0.503,
-      "mean_s": 0.484,
-      "median_s": 0.484,
-      "min_s": 0.462,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.605,
+      "mean_s": 0.584,
+      "median_s": 0.584,
+      "min_s": 0.563,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-input.test.mjs": {
-      "max_s": 10.131,
-      "mean_s": 9.642,
-      "median_s": 9.756,
-      "min_s": 8.64,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 10.014,
+      "mean_s": 9.698,
+      "median_s": 9.698,
+      "min_s": 9.381,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-lock.test.mjs": {
-      "max_s": 29.638,
-      "mean_s": 28.128,
-      "median_s": 28.154,
-      "min_s": 26.368,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 14.653,
+      "mean_s": 14.376,
+      "median_s": 14.376,
+      "min_s": 14.098,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-model.test.mjs": {
-      "max_s": 0.102,
-      "mean_s": 0.096,
-      "median_s": 0.097,
-      "min_s": 0.088,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.149,
+      "mean_s": 0.149,
+      "median_s": 0.149,
+      "min_s": 0.148,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-movies.test.mjs": {
-      "max_s": 20.916,
-      "mean_s": 20.171,
-      "median_s": 20.351,
-      "min_s": 18.691,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 20.639,
+      "mean_s": 20.425,
+      "median_s": 20.425,
+      "min_s": 20.21,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-music.test.mjs": {
-      "max_s": 18.063,
-      "mean_s": 16.551,
-      "median_s": 16.248,
-      "min_s": 15.468,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 16.079,
+      "mean_s": 16.068,
+      "median_s": 16.068,
+      "min_s": 16.056,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-partner-strip.test.mjs": {
-      "max_s": 19.7,
-      "mean_s": 16.892,
-      "median_s": 16.506,
-      "min_s": 14.919,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 17.242,
+      "mean_s": 16.501,
+      "median_s": 16.501,
+      "min_s": 15.759,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-pixel.test.mjs": {
-      "max_s": 6.328,
-      "mean_s": 5.92,
-      "median_s": 5.928,
-      "min_s": 5.529,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 6.407,
+      "mean_s": 6.147,
+      "median_s": 6.147,
+      "min_s": 5.887,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-resilience.test.mjs": {
-      "max_s": 7.636,
-      "mean_s": 6.964,
-      "median_s": 6.952,
-      "min_s": 6.308,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 6.871,
+      "mean_s": 6.666,
+      "median_s": 6.666,
+      "min_s": 6.461,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-routes.test.mjs": {
-      "max_s": 0.643,
-      "mean_s": 0.543,
-      "median_s": 0.527,
-      "min_s": 0.448,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.573,
+      "mean_s": 0.557,
+      "median_s": 0.557,
+      "min_s": 0.541,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-splash-door.test.mjs": {
-      "max_s": 3.461,
-      "mean_s": 2.873,
-      "median_s": 2.811,
-      "min_s": 2.618,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 2.913,
+      "mean_s": 2.874,
+      "median_s": 2.874,
+      "min_s": 2.835,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-talk-door.test.mjs": {
-      "max_s": 13.234,
-      "mean_s": 11.622,
-      "median_s": 11.439,
-      "min_s": 10.282,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 11.542,
+      "mean_s": 11.474,
+      "median_s": 11.474,
+      "min_s": 11.406,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-this-week.test.mjs": {
-      "max_s": 12.967,
-      "mean_s": 11.595,
-      "median_s": 11.514,
-      "min_s": 10.723,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 10.388,
+      "mean_s": 10.072,
+      "median_s": 10.072,
+      "min_s": 9.756,
+      "samples": 2,
+      "source": "results"
     },
     "era-board:tests/board-wardrobe-note.test.mjs": {
-      "max_s": 3.092,
-      "mean_s": 2.909,
-      "median_s": 2.889,
-      "min_s": 2.669,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 3.097,
+      "mean_s": 3.051,
+      "median_s": 3.051,
+      "min_s": 3.004,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-core:tests/app-lock-state.test.mjs": {
+      "max_s": 0.15,
+      "mean_s": 0.149,
+      "median_s": 0.149,
+      "min_s": 0.147,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-core:tests/app-lock-ui.test.mjs": {
+      "max_s": 53.098,
+      "mean_s": 53.073,
+      "median_s": 53.073,
+      "min_s": 53.047,
+      "samples": 2,
+      "source": "results"
     },
     "era-core:tests/doorbar.test.mjs": {
-      "max_s": 11.412,
-      "mean_s": 7.504,
-      "median_s": 7.976,
-      "min_s": 4.398,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 7.939,
+      "mean_s": 7.924,
+      "median_s": 7.924,
+      "min_s": 7.908,
+      "samples": 2,
+      "source": "results"
     },
     "era-core:tests/dwell-engine.test.mjs": {
-      "max_s": 16.135,
-      "mean_s": 15.503,
-      "median_s": 15.442,
-      "min_s": 14.953,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 15.469,
+      "mean_s": 15.395,
+      "median_s": 15.395,
+      "min_s": 15.322,
+      "samples": 2,
+      "source": "results"
     },
     "era-core:tests/lib-contract.test.mjs": {
-      "max_s": 0.114,
-      "mean_s": 0.103,
-      "median_s": 0.104,
-      "min_s": 0.09,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.152,
+      "mean_s": 0.148,
+      "median_s": 0.148,
+      "min_s": 0.143,
+      "samples": 2,
+      "source": "results"
     },
     "era-core:tests/speech-barge-in.test.mjs": {
-      "max_s": 1.186,
-      "mean_s": 1.104,
-      "median_s": 1.103,
-      "min_s": 1.014,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.193,
+      "mean_s": 1.16,
+      "median_s": 1.16,
+      "min_s": 1.127,
+      "samples": 2,
+      "source": "results"
     },
     "era-core:tests/speech-engine.test.mjs": {
-      "max_s": 3.946,
-      "mean_s": 3.727,
-      "median_s": 3.716,
-      "min_s": 3.462,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 3.763,
+      "mean_s": 3.724,
+      "median_s": 3.724,
+      "min_s": 3.684,
+      "samples": 2,
+      "source": "results"
     },
     "era-core:tests/speech-overlap.test.mjs": {
-      "max_s": 2.914,
-      "mean_s": 2.718,
-      "median_s": 2.668,
-      "min_s": 2.6,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 3.045,
+      "mean_s": 2.897,
+      "median_s": 2.897,
+      "min_s": 2.748,
+      "samples": 2,
+      "source": "results"
     },
     "era-core:tests/speech-ready.test.mjs": {
-      "max_s": 1.663,
-      "mean_s": 1.504,
-      "median_s": 1.455,
-      "min_s": 1.418,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.717,
+      "mean_s": 1.699,
+      "median_s": 1.699,
+      "min_s": 1.68,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/ai-config.test.mjs": {
-      "max_s": 0.112,
-      "mean_s": 0.104,
-      "median_s": 0.105,
-      "min_s": 0.097,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.17,
+      "mean_s": 0.169,
+      "median_s": 0.169,
+      "min_s": 0.167,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/ai-key.test.mjs": {
-      "max_s": 0.533,
-      "mean_s": 0.453,
-      "median_s": 0.432,
-      "min_s": 0.418,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.592,
+      "mean_s": 0.562,
+      "median_s": 0.562,
+      "min_s": 0.532,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/app-lock-apps.test.mjs": {
+      "max_s": 2.484,
+      "mean_s": 2.242,
+      "median_s": 2.242,
+      "min_s": 2.001,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/apps.test.mjs": {
-      "max_s": 0.41,
-      "mean_s": 0.39,
-      "median_s": 0.391,
-      "min_s": 0.367,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.515,
+      "mean_s": 0.497,
+      "median_s": 0.497,
+      "min_s": 0.479,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/assemble-suffix.test.mjs": {
-      "max_s": 0.259,
-      "mean_s": 0.247,
-      "median_s": 0.249,
-      "min_s": 0.232,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.383,
+      "mean_s": 0.357,
+      "median_s": 0.357,
+      "min_s": 0.33,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/book-review-ui.test.mjs": {
-      "max_s": 18.978,
-      "mean_s": 16.768,
-      "median_s": 16.921,
-      "min_s": 14.086,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 16.581,
+      "mean_s": 16.264,
+      "median_s": 16.264,
+      "min_s": 15.948,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/book-sharing-e2e.test.mjs": {
-      "max_s": 2.648,
-      "mean_s": 2.154,
-      "median_s": 2.088,
-      "min_s": 1.824,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 2.543,
+      "mean_s": 2.316,
+      "median_s": 2.316,
+      "min_s": 2.088,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/books-share.test.mjs": {
-      "max_s": 0.579,
-      "mean_s": 0.537,
-      "median_s": 0.53,
-      "min_s": 0.505,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.688,
+      "mean_s": 0.672,
+      "median_s": 0.672,
+      "min_s": 0.656,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/books.test.mjs": {
-      "max_s": 0.916,
-      "mean_s": 0.794,
-      "median_s": 0.775,
-      "min_s": 0.7,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.938,
+      "mean_s": 0.892,
+      "median_s": 0.892,
+      "min_s": 0.846,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-api.test.mjs": {
-      "max_s": 1.359,
-      "mean_s": 1.27,
-      "median_s": 1.275,
-      "min_s": 1.188,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.425,
+      "mean_s": 1.392,
+      "median_s": 1.392,
+      "min_s": 1.358,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-browser.test.mjs": {
-      "max_s": 18.244,
-      "mean_s": 13.596,
-      "median_s": 15.705,
-      "min_s": 6.839,
-      "samples": 3,
-      "source": "tap"
+      "max_s": 18.511,
+      "mean_s": 18.401,
+      "median_s": 18.401,
+      "min_s": 18.291,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-choices-adapter.test.mjs": {
-      "max_s": 0.724,
-      "mean_s": 0.715,
-      "median_s": 0.714,
-      "min_s": 0.704,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.812,
+      "mean_s": 0.805,
+      "median_s": 0.805,
+      "min_s": 0.798,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-config.test.mjs": {
-      "max_s": 0.105,
-      "mean_s": 0.097,
-      "median_s": 0.098,
-      "min_s": 0.088,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.154,
+      "mean_s": 0.152,
+      "median_s": 0.152,
+      "min_s": 0.149,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-metrics.test.mjs": {
-      "max_s": 0.152,
-      "mean_s": 0.137,
-      "median_s": 0.13,
-      "min_s": 0.128,
-      "samples": 3,
-      "source": "tap"
+      "max_s": 0.212,
+      "mean_s": 0.211,
+      "median_s": 0.211,
+      "min_s": 0.209,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-native-speech.test.mjs": {
-      "max_s": 2.523,
-      "mean_s": 2.216,
-      "median_s": 2.203,
-      "min_s": 2.014,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 2.432,
+      "mean_s": 2.415,
+      "median_s": 2.415,
+      "min_s": 2.397,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-speech.test.mjs": {
-      "max_s": 1.137,
-      "mean_s": 1.066,
-      "median_s": 1.054,
-      "min_s": 1.025,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.187,
+      "mean_s": 1.175,
+      "median_s": 1.175,
+      "min_s": 1.162,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-storage-ui.test.mjs": {
-      "max_s": 3.09,
-      "mean_s": 2.933,
-      "median_s": 2.933,
-      "min_s": 2.776,
+      "max_s": 3.273,
+      "mean_s": 3.262,
+      "median_s": 3.262,
+      "min_s": 3.25,
       "samples": 2,
-      "source": "tap"
+      "source": "results"
     },
     "era-hub:tests/chat-storage.test.mjs": {
-      "max_s": 4.929,
-      "mean_s": 4.906,
-      "median_s": 4.906,
-      "min_s": 4.883,
+      "max_s": 4.992,
+      "mean_s": 4.975,
+      "median_s": 4.975,
+      "min_s": 4.957,
       "samples": 2,
-      "source": "tap"
+      "source": "results"
     },
     "era-hub:tests/chat-store.test.mjs": {
-      "max_s": 0.407,
-      "mean_s": 0.385,
-      "median_s": 0.385,
-      "min_s": 0.364,
+      "max_s": 0.484,
+      "mean_s": 0.462,
+      "median_s": 0.462,
+      "min_s": 0.439,
       "samples": 2,
-      "source": "tap"
+      "source": "results"
     },
     "era-hub:tests/chat-symbols.test.mjs": {
-      "max_s": 1.085,
-      "mean_s": 0.964,
-      "median_s": 0.936,
-      "min_s": 0.869,
-      "samples": 3,
-      "source": "tap"
+      "max_s": 1.098,
+      "mean_s": 1.043,
+      "median_s": 1.043,
+      "min_s": 0.987,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-ui.test.mjs": {
-      "max_s": 0.935,
-      "mean_s": 0.525,
-      "median_s": 0.532,
-      "min_s": 0.115,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.218,
+      "mean_s": 0.197,
+      "median_s": 0.197,
+      "min_s": 0.175,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/chat-voice.test.mjs": {
-      "max_s": 0.238,
-      "mean_s": 0.227,
-      "median_s": 0.224,
-      "min_s": 0.218,
-      "samples": 3,
-      "source": "tap"
+      "max_s": 0.328,
+      "mean_s": 0.317,
+      "median_s": 0.317,
+      "min_s": 0.306,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-accessories.test.mjs": {
-      "max_s": 206.546,
-      "mean_s": 192.366,
-      "median_s": 193.249,
-      "min_s": 174.27,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 135.973,
+      "mean_s": 133.394,
+      "median_s": 133.394,
+      "min_s": 130.814,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-attrs.test.mjs": {
-      "max_s": 42.562,
-      "mean_s": 38.941,
-      "median_s": 38.815,
-      "min_s": 36.769,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 21.414,
+      "mean_s": 21.071,
+      "median_s": 21.071,
+      "min_s": 20.727,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-diversity.test.mjs": {
-      "max_s": 2.416,
-      "mean_s": 2.005,
-      "median_s": 1.923,
-      "min_s": 1.78,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 2.113,
+      "mean_s": 2.073,
+      "median_s": 2.073,
+      "min_s": 2.033,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-fit.test.mjs": {
-      "max_s": 10.194,
-      "mean_s": 9.442,
-      "median_s": 9.443,
-      "min_s": 8.666,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 10.68,
+      "mean_s": 10.376,
+      "median_s": 10.376,
+      "min_s": 10.072,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-item.test.mjs": {
-      "max_s": 9.678,
-      "mean_s": 9.564,
-      "median_s": 9.563,
-      "min_s": 9.471,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.587,
+      "mean_s": 1.58,
+      "median_s": 1.58,
+      "min_s": 1.573,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-log.test.mjs": {
-      "max_s": 0.241,
-      "mean_s": 0.204,
-      "median_s": 0.204,
-      "min_s": 0.181,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.323,
+      "mean_s": 0.299,
+      "median_s": 0.299,
+      "min_s": 0.274,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/clothing-pacing.test.mjs": {
+      "max_s": 1.211,
+      "mean_s": 1.101,
+      "median_s": 1.101,
+      "min_s": 0.99,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-rank.test.mjs": {
-      "max_s": 0.639,
-      "mean_s": 0.555,
-      "median_s": 0.538,
-      "min_s": 0.495,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.681,
+      "mean_s": 0.645,
+      "median_s": 0.645,
+      "min_s": 0.608,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-refit.test.mjs": {
-      "max_s": 20.53,
-      "mean_s": 19.48,
-      "median_s": 19.5,
-      "min_s": 18.843,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 8.358,
+      "mean_s": 8.239,
+      "median_s": 8.239,
+      "min_s": 8.119,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-responsive.test.mjs": {
-      "max_s": 59.708,
-      "mean_s": 58.851,
-      "median_s": 58.802,
-      "min_s": 58.241,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 11.117,
+      "mean_s": 11.061,
+      "median_s": 11.061,
+      "min_s": 11.005,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/clothing-schedule.test.mjs": {
+      "max_s": 22.727,
+      "mean_s": 22.71,
+      "median_s": 22.71,
+      "min_s": 22.692,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-share.test.mjs": {
-      "max_s": 61.539,
-      "mean_s": 58.24,
-      "median_s": 58.268,
-      "min_s": 53.68,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 54.208,
+      "mean_s": 53.653,
+      "median_s": 53.653,
+      "min_s": 53.098,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-status.test.mjs": {
-      "max_s": 6.199,
-      "mean_s": 5.8,
-      "median_s": 5.686,
-      "min_s": 5.558,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 6.364,
+      "mean_s": 6.316,
+      "median_s": 6.316,
+      "min_s": 6.267,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-sync-rebuild.test.mjs": {
-      "max_s": 16.94,
-      "mean_s": 15.892,
-      "median_s": 15.646,
-      "min_s": 15.507,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 16.332,
+      "mean_s": 16.276,
+      "median_s": 16.276,
+      "min_s": 16.22,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-variety.test.mjs": {
-      "max_s": 1.301,
-      "mean_s": 0.788,
-      "median_s": 0.686,
-      "min_s": 0.655,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.853,
+      "mean_s": 0.81,
+      "median_s": 0.81,
+      "min_s": 0.766,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing-weather.test.mjs": {
-      "max_s": 53.944,
-      "mean_s": 47.077,
-      "median_s": 45.771,
-      "min_s": 43.308,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 30.571,
+      "mean_s": 30.367,
+      "median_s": 30.367,
+      "min_s": 30.162,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/clothing.test.mjs": {
-      "max_s": 380.067,
-      "mean_s": 363.535,
-      "median_s": 362.168,
-      "min_s": 350.229,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 204.424,
+      "mean_s": 204.153,
+      "median_s": 204.153,
+      "min_s": 203.881,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-allowance.test.mjs": {
-      "max_s": 4.193,
-      "mean_s": 4.079,
-      "median_s": 4.094,
-      "min_s": 3.931,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 4.212,
+      "mean_s": 4.148,
+      "median_s": 4.148,
+      "min_s": 4.083,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-animate.test.mjs": {
-      "max_s": 1.796,
-      "mean_s": 1.339,
-      "median_s": 1.295,
-      "min_s": 1.083,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.43,
+      "mean_s": 1.43,
+      "median_s": 1.43,
+      "min_s": 1.429,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-build.test.mjs": {
-      "max_s": 0.348,
-      "mean_s": 0.277,
-      "median_s": 0.266,
-      "min_s": 0.248,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.416,
+      "mean_s": 0.364,
+      "median_s": 0.364,
+      "min_s": 0.312,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-claim.test.mjs": {
-      "max_s": 0.411,
-      "mean_s": 0.341,
-      "median_s": 0.326,
-      "min_s": 0.291,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.42,
+      "mean_s": 0.401,
+      "median_s": 0.401,
+      "min_s": 0.383,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-imprint.test.mjs": {
-      "max_s": 0.112,
-      "mean_s": 0.104,
-      "median_s": 0.104,
-      "min_s": 0.095,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.16,
+      "mean_s": 0.158,
+      "median_s": 0.158,
+      "min_s": 0.155,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-ingest.test.mjs": {
-      "max_s": 1.571,
-      "mean_s": 1.405,
-      "median_s": 1.473,
-      "min_s": 1.067,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.562,
+      "mean_s": 1.488,
+      "median_s": 1.488,
+      "min_s": 1.413,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-loose.test.mjs": {
-      "max_s": 0.237,
-      "mean_s": 0.224,
-      "median_s": 0.228,
-      "min_s": 0.207,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.347,
+      "mean_s": 0.333,
+      "median_s": 0.333,
+      "min_s": 0.319,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-narrate.test.mjs": {
-      "max_s": 0.4,
-      "mean_s": 0.366,
-      "median_s": 0.37,
-      "min_s": 0.319,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.498,
+      "mean_s": 0.462,
+      "median_s": 0.462,
+      "min_s": 0.425,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-publish.test.mjs": {
-      "max_s": 0.54,
-      "mean_s": 0.493,
-      "median_s": 0.491,
-      "min_s": 0.447,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.634,
+      "mean_s": 0.6,
+      "median_s": 0.6,
+      "min_s": 0.566,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-routes.test.mjs": {
-      "max_s": 1.176,
-      "mean_s": 1.133,
-      "median_s": 1.136,
-      "min_s": 1.071,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.275,
+      "mean_s": 1.264,
+      "median_s": 1.264,
+      "min_s": 1.253,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-store.test.mjs": {
-      "max_s": 0.152,
-      "mean_s": 0.131,
-      "median_s": 0.129,
-      "min_s": 0.111,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.206,
+      "mean_s": 0.196,
+      "median_s": 0.196,
+      "min_s": 0.185,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-transcribe.test.mjs": {
-      "max_s": 7.026,
-      "mean_s": 6.934,
-      "median_s": 6.919,
-      "min_s": 6.859,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 7.239,
+      "mean_s": 7.163,
+      "median_s": 7.163,
+      "min_s": 7.087,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/content-worker.test.mjs": {
-      "max_s": 3.313,
-      "mean_s": 2.988,
-      "median_s": 2.957,
-      "min_s": 2.657,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 3.141,
+      "mean_s": 3.129,
+      "median_s": 3.129,
+      "min_s": 3.117,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/device-id.test.mjs": {
-      "max_s": 0.138,
-      "mean_s": 0.112,
-      "median_s": 0.112,
-      "min_s": 0.087,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.167,
+      "mean_s": 0.163,
+      "median_s": 0.163,
+      "min_s": 0.159,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/device-volume.test.mjs": {
-      "max_s": 0.243,
-      "mean_s": 0.135,
-      "median_s": 0.119,
-      "min_s": 0.091,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.205,
+      "mean_s": 0.182,
+      "median_s": 0.182,
+      "min_s": 0.159,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/drawing-scene.test.mjs": {
-      "max_s": 0.151,
-      "mean_s": 0.136,
-      "median_s": 0.137,
-      "min_s": 0.12,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.208,
+      "mean_s": 0.202,
+      "median_s": 0.202,
+      "min_s": 0.195,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/drawing-ui.test.mjs": {
-      "max_s": 128.314,
-      "mean_s": 119.13,
-      "median_s": 121.235,
-      "min_s": 102.86,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 106.482,
+      "mean_s": 106.209,
+      "median_s": 106.209,
+      "min_s": 105.937,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/drawings.test.mjs": {
-      "max_s": 1.13,
-      "mean_s": 1.036,
-      "median_s": 1.042,
-      "min_s": 0.947,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.222,
+      "mean_s": 1.164,
+      "median_s": 1.164,
+      "min_s": 1.105,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/drive-launch.test.mjs": {
-      "max_s": 6.345,
-      "mean_s": 6.118,
-      "median_s": 6.106,
-      "min_s": 5.941,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 2.881,
+      "mean_s": 2.862,
+      "median_s": 2.862,
+      "min_s": 2.843,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/drive-localfolder.test.mjs": {
-      "max_s": 1.852,
-      "mean_s": 1.802,
-      "median_s": 1.819,
-      "min_s": 1.739,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 2.07,
+      "mean_s": 2.008,
+      "median_s": 2.008,
+      "min_s": 1.947,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/drive-mirror.test.mjs": {
-      "max_s": 0.387,
-      "mean_s": 0.35,
-      "median_s": 0.343,
-      "min_s": 0.325,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.48,
+      "mean_s": 0.48,
+      "median_s": 0.48,
+      "min_s": 0.479,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/era-scan-parity.test.mjs": {
-      "max_s": 0.115,
-      "mean_s": 0.099,
-      "median_s": 0.101,
-      "min_s": 0.079,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.151,
+      "mean_s": 0.147,
+      "median_s": 0.147,
+      "min_s": 0.142,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/erabook.test.mjs": {
-      "max_s": 0.422,
-      "mean_s": 0.337,
-      "median_s": 0.317,
-      "min_s": 0.295,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.449,
+      "mean_s": 0.418,
+      "median_s": 0.418,
+      "min_s": 0.387,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/fal-key.test.mjs": {
-      "max_s": 0.739,
-      "mean_s": 0.662,
-      "median_s": 0.648,
-      "min_s": 0.61,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.798,
+      "mean_s": 0.739,
+      "median_s": 0.739,
+      "min_s": 0.68,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/games-audio.test.mjs": {
-      "max_s": 3.36,
-      "mean_s": 2.904,
-      "median_s": 2.895,
-      "min_s": 2.405,
-      "samples": 5,
-      "source": "tap"
+      "max_s": 2.947,
+      "mean_s": 2.891,
+      "median_s": 2.891,
+      "min_s": 2.836,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/games-save.test.mjs": {
-      "max_s": 11.41,
-      "mean_s": 10.21,
-      "median_s": 10.42,
-      "min_s": 8.589,
-      "samples": 4,
-      "source": "tap"
+      "max_s": 10.807,
+      "mean_s": 10.69,
+      "median_s": 10.69,
+      "min_s": 10.573,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/games-state.test.mjs": {
-      "max_s": 0.201,
-      "mean_s": 0.191,
-      "median_s": 0.196,
-      "min_s": 0.176,
-      "samples": 5,
-      "source": "tap"
+      "max_s": 0.26,
+      "mean_s": 0.254,
+      "median_s": 0.254,
+      "min_s": 0.248,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/games-ui.test.mjs": {
-      "max_s": 50.76,
-      "mean_s": 46.332,
-      "median_s": 46.197,
-      "min_s": 42.857,
-      "samples": 5,
-      "source": "tap"
+      "max_s": 46.103,
+      "mean_s": 45.317,
+      "median_s": 45.317,
+      "min_s": 44.531,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/gate-admission.test.mjs": {
+      "max_s": 3.482,
+      "mean_s": 3.463,
+      "median_s": 3.463,
+      "min_s": 3.444,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/gate-reuse.test.mjs": {
+      "max_s": 4.533,
+      "mean_s": 4.431,
+      "median_s": 4.431,
+      "min_s": 4.329,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/gate-safety.test.mjs": {
-      "max_s": 5.941,
-      "mean_s": 5.704,
-      "median_s": 5.666,
-      "min_s": 5.545,
-      "samples": 4,
-      "source": "tap"
+      "max_s": 8.093,
+      "mean_s": 7.636,
+      "median_s": 7.636,
+      "min_s": 7.179,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/gate-stamp.test.mjs": {
-      "max_s": 0.884,
-      "mean_s": 0.803,
-      "median_s": 0.833,
-      "min_s": 0.686,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.089,
+      "mean_s": 1.043,
+      "median_s": 1.043,
+      "min_s": 0.998,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/gaze-recompile.test.mjs": {
-      "max_s": 27.138,
-      "mean_s": 27.064,
-      "median_s": 27.105,
-      "min_s": 26.834,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 27.15,
+      "mean_s": 27.148,
+      "median_s": 27.148,
+      "min_s": 27.146,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/gaze-status.test.mjs": {
-      "max_s": 14.99,
-      "mean_s": 14.99,
-      "median_s": 14.99,
-      "min_s": 14.99,
-      "samples": 1,
-      "source": "tap"
+      "max_s": 15.081,
+      "mean_s": 15.073,
+      "median_s": 15.073,
+      "min_s": 15.064,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/gaze-supervisor.test.mjs": {
-      "max_s": 0.12,
-      "mean_s": 0.12,
-      "median_s": 0.12,
-      "min_s": 0.12,
-      "samples": 1,
-      "source": "tap"
+      "max_s": 0.201,
+      "mean_s": 0.185,
+      "median_s": 0.185,
+      "min_s": 0.168,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/harvest-durations.test.mjs": {
+      "max_s": 0.635,
+      "mean_s": 0.597,
+      "median_s": 0.597,
+      "min_s": 0.558,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/home-tiles.test.mjs": {
-      "max_s": 2.473,
-      "mean_s": 2.2,
-      "median_s": 2.177,
-      "min_s": 1.794,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 2.456,
+      "mean_s": 2.309,
+      "median_s": 2.309,
+      "min_s": 2.162,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/icons.test.mjs": {
-      "max_s": 1.103,
-      "mean_s": 0.996,
-      "median_s": 0.995,
-      "min_s": 0.846,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.156,
+      "mean_s": 1.038,
+      "median_s": 1.038,
+      "min_s": 0.92,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/image-orient.test.mjs": {
-      "max_s": 0.162,
-      "mean_s": 0.141,
-      "median_s": 0.137,
-      "min_s": 0.127,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.212,
+      "mean_s": 0.211,
+      "median_s": 0.211,
+      "min_s": 0.21,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/image-util.test.mjs": {
-      "max_s": 0.324,
-      "mean_s": 0.299,
-      "median_s": 0.304,
-      "min_s": 0.246,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.377,
+      "mean_s": 0.349,
+      "median_s": 0.349,
+      "min_s": 0.321,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/integration-queue.test.mjs": {
-      "max_s": 4.641,
-      "mean_s": 4.367,
-      "median_s": 4.317,
-      "min_s": 4.192,
-      "samples": 4,
-      "source": "tap"
+      "max_s": 4.901,
+      "mean_s": 4.89,
+      "median_s": 4.89,
+      "min_s": 4.879,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/invariants.test.mjs": {
-      "max_s": 29.042,
-      "mean_s": 27.161,
-      "median_s": 27.142,
-      "min_s": 25.131,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 24.64,
+      "mean_s": 24.324,
+      "median_s": 24.324,
+      "min_s": 24.008,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/kiosk-pause.test.mjs": {
-      "max_s": 1.225,
-      "mean_s": 1.034,
-      "median_s": 0.99,
-      "min_s": 0.934,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.054,
+      "mean_s": 1.036,
+      "median_s": 1.036,
+      "min_s": 1.018,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/lanes.test.mjs": {
+      "max_s": 7.338,
+      "mean_s": 7.308,
+      "median_s": 7.308,
+      "min_s": 7.277,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/mail.test.mjs": {
-      "max_s": 0.626,
-      "mean_s": 0.545,
-      "median_s": 0.53,
-      "min_s": 0.497,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.654,
+      "mean_s": 0.605,
+      "median_s": 0.605,
+      "min_s": 0.556,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/maker-drop.test.mjs": {
-      "max_s": 0.573,
-      "mean_s": 0.534,
-      "median_s": 0.552,
-      "min_s": 0.468,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.655,
+      "mean_s": 0.601,
+      "median_s": 0.601,
+      "min_s": 0.546,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/math-state.test.mjs": {
-      "max_s": 0.136,
-      "mean_s": 0.107,
-      "median_s": 0.1,
-      "min_s": 0.096,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.168,
+      "mean_s": 0.159,
+      "median_s": 0.159,
+      "min_s": 0.15,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/math-ui.test.mjs": {
-      "max_s": 32.113,
-      "mean_s": 30.787,
-      "median_s": 30.897,
-      "min_s": 29.135,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 31.591,
+      "mean_s": 30.804,
+      "median_s": 30.804,
+      "min_s": 30.017,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/movies-add.test.mjs": {
-      "max_s": 1.057,
-      "mean_s": 0.986,
-      "median_s": 1.017,
-      "min_s": 0.849,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.233,
+      "mean_s": 1.155,
+      "median_s": 1.155,
+      "min_s": 1.077,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/movies-lookup.test.mjs": {
-      "max_s": 1.066,
-      "mean_s": 0.964,
-      "median_s": 0.955,
-      "min_s": 0.874,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.136,
+      "mean_s": 1.099,
+      "median_s": 1.099,
+      "min_s": 1.061,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/movies.test.mjs": {
-      "max_s": 0.912,
-      "mean_s": 0.849,
-      "median_s": 0.876,
-      "min_s": 0.736,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.012,
+      "mean_s": 0.977,
+      "median_s": 0.977,
+      "min_s": 0.942,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/music-add.test.mjs": {
-      "max_s": 3.348,
-      "mean_s": 3.231,
-      "median_s": 3.217,
-      "min_s": 3.161,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 3.256,
+      "mean_s": 3.23,
+      "median_s": 3.23,
+      "min_s": 3.204,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/music-pictures.test.mjs": {
-      "max_s": 0.843,
-      "mean_s": 0.766,
-      "median_s": 0.762,
-      "min_s": 0.692,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.877,
+      "mean_s": 0.861,
+      "median_s": 0.861,
+      "min_s": 0.846,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/music.test.mjs": {
-      "max_s": 0.816,
-      "mean_s": 0.727,
-      "median_s": 0.73,
-      "min_s": 0.654,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.841,
+      "mean_s": 0.82,
+      "median_s": 0.82,
+      "min_s": 0.798,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/packs.test.mjs": {
-      "max_s": 0.226,
-      "mean_s": 0.194,
-      "median_s": 0.19,
-      "min_s": 0.173,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.289,
+      "mean_s": 0.273,
+      "median_s": 0.273,
+      "min_s": 0.257,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/parallel-gate.test.mjs": {
-      "max_s": 24.458,
-      "mean_s": 22.88,
-      "median_s": 23.387,
-      "min_s": 20.286,
-      "samples": 4,
-      "source": "tap"
+      "max_s": 27.334,
+      "mean_s": 27.024,
+      "median_s": 27.024,
+      "min_s": 26.713,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/pencil-ui.test.mjs": {
-      "max_s": 13.833,
-      "mean_s": 12.223,
-      "median_s": 12.326,
-      "min_s": 10.29,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 12.384,
+      "mean_s": 12.281,
+      "median_s": 12.281,
+      "min_s": 12.177,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/play-ui.test.mjs": {
-      "max_s": 89.127,
-      "mean_s": 86.129,
-      "median_s": 86.286,
-      "min_s": 81.914,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 81.872,
+      "mean_s": 81.559,
+      "median_s": 81.559,
+      "min_s": 81.246,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/pool.test.mjs": {
-      "max_s": 1.12,
-      "mean_s": 1.034,
-      "median_s": 1.047,
-      "min_s": 0.874,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 1.144,
+      "mean_s": 1.134,
+      "median_s": 1.134,
+      "min_s": 1.124,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/predict.test.mjs": {
-      "max_s": 0.281,
-      "mean_s": 0.258,
-      "median_s": 0.252,
-      "min_s": 0.239,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.385,
+      "mean_s": 0.35,
+      "median_s": 0.35,
+      "min_s": 0.314,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/presence.test.mjs": {
-      "max_s": 22.032,
-      "mean_s": 21.733,
-      "median_s": 21.627,
-      "min_s": 21.495,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 22.236,
+      "mean_s": 21.921,
+      "median_s": 21.921,
+      "min_s": 21.605,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/reader-share.test.mjs": {
-      "max_s": 35.058,
-      "mean_s": 34.208,
-      "median_s": 34.241,
-      "min_s": 33.004,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 30.591,
+      "mean_s": 30.557,
+      "median_s": 30.557,
+      "min_s": 30.523,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/reader-shelf.test.mjs": {
-      "max_s": 17.401,
-      "mean_s": 16.38,
-      "median_s": 16.709,
-      "min_s": 14.493,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 15.825,
+      "mean_s": 15.702,
+      "median_s": 15.702,
+      "min_s": 15.578,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/reader-sizing.test.mjs": {
-      "max_s": 3.847,
-      "mean_s": 3.672,
-      "median_s": 3.725,
-      "min_s": 3.255,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 3.624,
+      "mean_s": 3.554,
+      "median_s": 3.554,
+      "min_s": 3.483,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/reader-strip.test.mjs": {
-      "max_s": 5.379,
-      "mean_s": 4.859,
-      "median_s": 4.902,
-      "min_s": 4.096,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 5.59,
+      "mean_s": 5.304,
+      "median_s": 5.304,
+      "min_s": 5.018,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/reader-ui.test.mjs": {
-      "max_s": 44.002,
-      "mean_s": 41.136,
-      "median_s": 41.585,
-      "min_s": 36.223,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 43.293,
+      "mean_s": 43.117,
+      "median_s": 43.117,
+      "min_s": 42.94,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/reconcile.test.mjs": {
-      "max_s": 26.802,
-      "mean_s": 26.648,
-      "median_s": 26.643,
-      "min_s": 26.53,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 26.872,
+      "mean_s": 26.838,
+      "median_s": 26.838,
+      "min_s": 26.804,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/routes.test.mjs": {
-      "max_s": 0.869,
-      "mean_s": 0.787,
-      "median_s": 0.791,
-      "min_s": 0.731,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.812,
+      "mean_s": 0.794,
+      "median_s": 0.794,
+      "min_s": 0.775,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/settings-library.test.mjs": {
-      "max_s": 6.823,
-      "mean_s": 5.116,
-      "median_s": 4.881,
-      "min_s": 4.116,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 5.883,
+      "mean_s": 5.526,
+      "median_s": 5.526,
+      "min_s": 5.168,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/settings-navigation.test.mjs": {
-      "max_s": 13.065,
-      "mean_s": 9.892,
-      "median_s": 9.343,
-      "min_s": 8.786,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 10.186,
+      "mean_s": 10.125,
+      "median_s": 10.125,
+      "min_s": 10.065,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/settings-ui.test.mjs": {
-      "max_s": 39.008,
-      "mean_s": 32.983,
-      "median_s": 32.006,
-      "min_s": 27.861,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 36.792,
+      "mean_s": 35.709,
+      "median_s": 35.709,
+      "min_s": 34.626,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/setup.test.mjs": {
-      "max_s": 0.448,
-      "mean_s": 0.4,
-      "median_s": 0.391,
-      "min_s": 0.367,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.485,
+      "mean_s": 0.458,
+      "median_s": 0.458,
+      "min_s": 0.43,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/shortcuts.test.mjs": {
-      "max_s": 0.12,
-      "mean_s": 0.111,
-      "median_s": 0.11,
-      "min_s": 0.1,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.177,
+      "mean_s": 0.174,
+      "median_s": 0.174,
+      "min_s": 0.171,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/start-hub-bat.test.mjs": {
-      "max_s": 0.137,
-      "mean_s": 0.117,
-      "median_s": 0.116,
-      "min_s": 0.106,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.183,
+      "mean_s": 0.179,
+      "median_s": 0.179,
+      "min_s": 0.175,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/suite-classes.test.mjs": {
+      "max_s": 6.007,
+      "mean_s": 5.886,
+      "median_s": 5.886,
+      "min_s": 5.765,
+      "samples": 2,
+      "source": "results"
+    },
+    "era-hub:tests/suite-ports.test.mjs": {
+      "max_s": 1.829,
+      "mean_s": 1.702,
+      "median_s": 1.702,
+      "min_s": 1.574,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/symbol-provider.test.mjs": {
-      "max_s": 0.109,
-      "mean_s": 0.098,
-      "median_s": 0.096,
-      "min_s": 0.088,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.159,
+      "mean_s": 0.155,
+      "median_s": 0.155,
+      "min_s": 0.151,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/test-suite.test.mjs": {
-      "max_s": 10.442,
-      "mean_s": 7.724,
-      "median_s": 6.881,
-      "min_s": 6.692,
-      "samples": 4,
-      "source": "tap"
+      "max_s": 12.036,
+      "mean_s": 11.807,
+      "median_s": 11.807,
+      "min_s": 11.577,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/this-week-fetch.test.mjs": {
-      "max_s": 4.478,
-      "mean_s": 4.314,
-      "median_s": 4.322,
-      "min_s": 4.149,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 4.515,
+      "mean_s": 4.482,
+      "median_s": 4.482,
+      "min_s": 4.449,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/this-week-recipe.test.mjs": {
       "max_s": 0.556,
-      "mean_s": 0.474,
-      "median_s": 0.467,
-      "min_s": 0.425,
-      "samples": 6,
-      "source": "tap"
+      "mean_s": 0.555,
+      "median_s": 0.555,
+      "min_s": 0.554,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/update-boot.test.mjs": {
-      "max_s": 18.345,
-      "mean_s": 18.221,
-      "median_s": 18.213,
-      "min_s": 18.118,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 17.978,
+      "mean_s": 17.931,
+      "median_s": 17.931,
+      "min_s": 17.883,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/update-wake.test.mjs": {
-      "max_s": 0.117,
-      "mean_s": 0.098,
-      "median_s": 0.1,
-      "min_s": 0.08,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.147,
+      "mean_s": 0.147,
+      "median_s": 0.147,
+      "min_s": 0.147,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/update.test.mjs": {
-      "max_s": 4.572,
-      "mean_s": 4.354,
-      "median_s": 4.303,
-      "min_s": 4.209,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 4.153,
+      "mean_s": 4.13,
+      "median_s": 4.13,
+      "min_s": 4.107,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/vm-e2e.test.mjs": {
-      "max_s": 3.838,
-      "mean_s": 3.363,
-      "median_s": 3.238,
-      "min_s": 3.162,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 4.067,
+      "mean_s": 3.928,
+      "median_s": 3.928,
+      "min_s": 3.789,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/watch-ui.test.mjs": {
-      "max_s": 22.124,
-      "mean_s": 20.122,
-      "median_s": 20.034,
-      "min_s": 18.397,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 20.338,
+      "mean_s": 20.252,
+      "median_s": 20.252,
+      "min_s": 20.166,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/weather-location.test.mjs": {
-      "max_s": 18.825,
-      "mean_s": 16.576,
-      "median_s": 16.169,
-      "min_s": 14.933,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 17.306,
+      "mean_s": 17.044,
+      "median_s": 17.044,
+      "min_s": 16.782,
+      "samples": 2,
+      "source": "results"
     },
     "era-hub:tests/windows-parallel.test.mjs": {
-      "max_s": 2.613,
-      "mean_s": 2.498,
-      "median_s": 2.498,
-      "min_s": 2.383,
+      "max_s": 2.791,
+      "mean_s": 2.713,
+      "median_s": 2.713,
+      "min_s": 2.634,
       "samples": 2,
-      "source": "tap"
+      "source": "results"
     },
     "era-hub:tests/words.test.mjs": {
-      "max_s": 0.116,
-      "mean_s": 0.098,
-      "median_s": 0.095,
-      "min_s": 0.091,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 0.16,
+      "mean_s": 0.157,
+      "median_s": 0.157,
+      "min_s": 0.154,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/bargein.js": {
-      "max_s": 4.517,
-      "mean_s": 4.462,
-      "median_s": 4.462,
-      "min_s": 4.384,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 4.552,
+      "mean_s": 4.55,
+      "median_s": 4.55,
+      "min_s": 4.548,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/fltest.js": {
-      "max_s": 1.89,
-      "mean_s": 1.777,
-      "median_s": 1.77,
-      "min_s": 1.701,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 1.973,
+      "mean_s": 1.932,
+      "median_s": 1.932,
+      "min_s": 1.89,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/layout.test.mjs": {
-      "max_s": 25.363,
-      "mean_s": 24.752,
-      "median_s": 24.834,
-      "min_s": 23.831,
-      "samples": 6,
-      "source": "tap"
+      "max_s": 24.956,
+      "mean_s": 24.937,
+      "median_s": 24.937,
+      "min_s": 24.917,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/mistakes.js": {
-      "max_s": 17.486,
-      "mean_s": 17.407,
-      "median_s": 17.398,
-      "min_s": 17.335,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 17.474,
+      "mean_s": 17.461,
+      "median_s": 17.461,
+      "min_s": 17.448,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/narrow.js": {
-      "max_s": 25.842,
-      "mean_s": 25.65,
-      "median_s": 25.668,
-      "min_s": 25.404,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 2.938,
+      "mean_s": 2.937,
+      "median_s": 2.937,
+      "min_s": 2.935,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/parts.js": {
-      "max_s": 25.838,
-      "mean_s": 25.625,
-      "median_s": 25.58,
-      "min_s": 25.485,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 4.866,
+      "mean_s": 4.854,
+      "median_s": 4.854,
+      "min_s": 4.841,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/phonetic.js": {
-      "max_s": 1.742,
-      "mean_s": 1.696,
-      "median_s": 1.719,
-      "min_s": 1.615,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 1.968,
+      "mean_s": 1.89,
+      "median_s": 1.89,
+      "min_s": 1.812,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/rhymecount.js": {
-      "max_s": 1.809,
-      "mean_s": 1.707,
-      "median_s": 1.699,
-      "min_s": 1.612,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 1.95,
+      "mean_s": 1.858,
+      "median_s": 1.858,
+      "min_s": 1.766,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/run.js": {
-      "max_s": 34.779,
-      "mean_s": 34.146,
-      "median_s": 34.106,
-      "min_s": 33.594,
-      "samples": 4,
-      "source": "mtime"
+      "max_s": 10.944,
+      "mean_s": 10.916,
+      "median_s": 10.916,
+      "min_s": 10.887,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/sortbugs.js": {
-      "max_s": 4.556,
-      "mean_s": 4.39,
-      "median_s": 4.397,
-      "min_s": 4.209,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 4.399,
+      "mean_s": 4.336,
+      "median_s": 4.336,
+      "min_s": 4.273,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/sortfix.js": {
-      "max_s": 7.784,
-      "mean_s": 7.514,
-      "median_s": 7.471,
-      "min_s": 7.349,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 7.53,
+      "mean_s": 7.505,
+      "median_s": 7.505,
+      "min_s": 7.479,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/transfer.js": {
-      "max_s": 2.072,
-      "mean_s": 1.965,
-      "median_s": 1.956,
-      "min_s": 1.888,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 2.221,
+      "mean_s": 2.161,
+      "median_s": 2.161,
+      "min_s": 2.1,
+      "samples": 2,
+      "source": "results"
     },
     "era-making-words:tests/transfercount.js": {
-      "max_s": 1.738,
-      "mean_s": 1.661,
-      "median_s": 1.657,
-      "min_s": 1.607,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 1.862,
+      "mean_s": 1.797,
+      "median_s": 1.797,
+      "min_s": 1.732,
+      "samples": 2,
+      "source": "results"
     },
     "era-pencil:tests/pencil.js": {
-      "max_s": 84.372,
-      "mean_s": 84.298,
-      "median_s": 84.304,
-      "min_s": 84.188,
-      "samples": 6,
-      "source": "mtime"
+      "max_s": 73.393,
+      "mean_s": 73.382,
+      "median_s": 73.382,
+      "min_s": 73.371,
+      "samples": 2,
+      "source": "results"
     }
   }
 }

@@ -25,6 +25,9 @@ page is the era-hub half, so a fresh session here is not blind. Read in order:
 - Agents write all code and tests, test first; the overseer scopes, reviews and
   decides. A full gate outruns a 10-minute tool call — run it detached with a
   sentinel file.
+- An agent never polls a running gate: it starts the gate detached with its pid
+  recorded and waits with one `bash tools/gate-wait.sh <pid>` call (or is
+  re-invoked when that call ends); no sleep loop, no watching sub-agent.
 - Publishing a release waits for the maintainer's explicit word.
 
 ## Layout

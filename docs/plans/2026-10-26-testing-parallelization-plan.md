@@ -539,12 +539,12 @@ freshness mark the release script checks.
 
 ## Phase 4: agents stop polling; dev loop (one day)
 
-- [ ] 4.1 `tools/testing/gate-wait.sh <run-id|latest> [--max 570]`: blocks on
+- [x] 4.1 (built 10/27 in `era-hub--wt-gate-wait` as `tools/gate-wait.sh <pid> | --latest | --run DIR [--timeout 570]` over `tools/testing/gate-wait.mjs`: waits for the gate's pid and slot rather than a sentinel file, sleeping on inotify through node's fs.watch since inotify-tools is not installed, rechecking every 15 s; the run records the gate pid in keys.json, the summary and receipt lines in receipt.json and each verdict line in results.jsonl so the report is the gate's own words; the timeout line gives done count and failures, not an ETA. durations.json regenerated from the store's green fresh runs; FLAKY passes no longer count as samples.) `tools/testing/gate-wait.sh <run-id|latest> [--max 570]`: blocks on
       the run's done sentinel, prints one line; `status.json` carries the ETA.
       Test with a synthetic run dir.
 - [ ] 4.2 `era-gate.sh --only <suite...>`: named suites in lanes, no stamp,
       no reuse writes. Test: never stamps; refuses unknown ids.
-- [ ] 4.3 No-polling law in `AGENTS.md` here and in the house router: never
+- [ ] 4.3 (here: built 10/27, AGENTS law line, dev-flow "Waiting for a gate", static sleep-loop check in gate-wait.test; the house router still to do) No-polling law in `AGENTS.md` here and in the house router: never
       poll a gate more often than every five minutes; never give a sub-agent
       a watch loop; use `gate-wait` or a background task with a sentinel; a
       full gate is started detached (reconciled with parallel-worktrees rule

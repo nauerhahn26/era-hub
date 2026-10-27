@@ -18,7 +18,11 @@
 // script's wall time is its .out mtime minus the previous suite .out's mtime,
 // or minus .execution-plan.tsv's mtime for the first suite (source "mtime",
 // lower confidence; no anchor, no sample). --results reads one JSON object per
-// line ({suite, status, seconds}); only "pass"/"passed" lines count.
+// line ({suite, status, seconds}, as tools/testing/lanes.mjs writes into
+// gate/results.jsonl and the run store); only plain "pass"/"passed" lines
+// count, never a FLAKY one (flaky: true, or attempt 2). Regenerate from the
+// store's green runs with fresh suites (receipt.json green, counts.fresh > 0):
+//   --results $ERA_GATE_RUNS/<run>/results.jsonl, once per run.
 //
 // Output keys are sorted at every level, so the table diffs cleanly; pass
 // --generated-at to pin the only field that otherwise changes between runs.
@@ -127,6 +131,9 @@ function readResults(file) {
     let row;
     try { row = JSON.parse(line); } catch { throw new Error(`${file}:${index + 1}: not JSON`); }
     if (row.status !== 'pass' && row.status !== 'passed') return;
+    // a FLAKY pass (a retry, or a pass after a failure on its key) is not a
+    // representative time: only a plain first-attempt pass counts
+    if (row.flaky === true || (Number.isInteger(row.attempt) && row.attempt > 1)) return;
     const name = row.suite ?? row.id;
     if (typeof name !== 'string' || !Number.isFinite(row.seconds) || row.seconds <= 0) {
       throw new Error(`${file}:${index + 1}: a pass needs suite and positive seconds`);

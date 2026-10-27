@@ -678,7 +678,8 @@ gate_record_run() {
   [ "${ERA_GATE_MODE:-full}" = full ] || return 0
   [ -f "$GATE/.reuse.json" ] || return 0
   node "$HUB/tools/testing/reuse.mjs" record "$GATE" --data "$DATA" \
-    --checks "inputs=$CHECK_INPUTS,hub=$CHECK_HUB,execution=$CHECK_EXECUTION" --pass "$pass" --fail "$fail" ||
+    --checks "inputs=$CHECK_INPUTS,hub=$CHECK_HUB,execution=$CHECK_EXECUTION" --pass "$pass" --fail "$fail" \
+    --summary "== era-gate: $pass passed, $fail failed${failed:+ →$failed} ==" ||
     echo "reuse: WARNING: this run's record could not be written; later gates will not reuse it"
 }
 
@@ -966,7 +967,8 @@ export ERA_CHAT_CONFIG_DISABLED=1
 # affected runs neither read nor write the store.
 GATE_HUB=1
 if [ "${ERA_GATE_MODE:-full}" = full ]; then
-  GATE_REUSE_ARGS=()
+  # the gate's pid goes into the run's keys.json: tools/gate-wait.sh <pid>
+  GATE_REUSE_ARGS=(--gate-pid "$$")
   [ "$GATE_NO_CACHE" = 0 ] || GATE_REUSE_ARGS+=(--no-cache)
   [ -z "$GATE_RERUN" ] || GATE_REUSE_ARGS+=(--rerun-failed "$GATE_RERUN")
   [ -z "$GATE_RESTAMP" ] || GATE_REUSE_ARGS+=(--restamp "$GATE_RESTAMP")

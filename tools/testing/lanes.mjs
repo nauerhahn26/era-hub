@@ -42,7 +42,8 @@
 //
 // Outputs: <gate>/results.jsonl, one line per suite as it finishes
 // ({suite, file, status pass|fail|changed, exit, seconds, lane, startedAt,
-// endedAt}), and <gate>/.lane-results.tsv for era-gate.sh's tally (state,
+// endedAt, line: the PASS/FAIL/FLAKY line it printed}; tools/gate-wait.sh
+// prints the FAIL and FLAKY ones from the run store), and <gate>/.lane-results.tsv for era-gate.sh's tally (state,
 // plan index, the digest hashed at start or "missing", source ID; frozen
 // order). Exit 0 when every suite passed, 1 otherwise, 2 on bad input.
 //
@@ -272,9 +273,10 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
     try { digest = crypto.createHash('sha256').update(fs.readFileSync(path.join(gate, suite.name))).digest('hex'); }
     catch { digest = 'missing'; }
     if (digest !== suite.digest) {
-      print(`FAIL ${suite.name} (collected suite missing or changed)`);
+      const line = `FAIL ${suite.name} (collected suite missing or changed)`;
+      print(line);
       const at = new Date().toISOString();
-      record(suite, { status: 'changed', exit: null, seconds: 0, lane: null, startedAt: at, endedAt: at, ...keyed(suite, attempt) }, digest);
+      record(suite, { status: 'changed', exit: null, seconds: 0, lane: null, startedAt: at, endedAt: at, ...keyed(suite, attempt), line }, digest);
       return;
     }
     const lane = freeLane(), { argv, label, output } = command(suite.name);
@@ -310,6 +312,7 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
         if (kind.resource) { row.resource = true; resourceWhy.set(suite.index, kind.why); }
       }
       print(line);
+      row.line = line;
       record(suite, row, digest, state);
       if (!stopping) dispatch();
       else if (swept && !running.size) done(stopping === 'SIGINT' ? 130 : 143);
@@ -396,9 +399,10 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
       print(`REUSE ${label} (from ${d.from} at ${String(d.endedAt).replace(/\.\d{3}Z$/, 'Z')})`);
       verdicts[suite.index] = ['reused', suite.digest];
     } else {
-      print(`FAIL ${label} (failed twice on these inputs, last in ${lastFailureRun(suite)}; not run until it or what it tests changes)`);
+      const line = `FAIL ${label} (failed twice on these inputs, last in ${lastFailureRun(suite)}; not run until it or what it tests changes)`;
+      print(line);
       const at = new Date().toISOString();
-      record(suite, { status: 'blocked', exit: null, seconds: 0, lane: null, startedAt: at, endedAt: at, key: d.key ?? null, attempt: 0 }, suite.digest, 'blocked');
+      record(suite, { status: 'blocked', exit: null, seconds: 0, lane: null, startedAt: at, endedAt: at, key: d.key ?? null, attempt: 0, line }, suite.digest, 'blocked');
     }
   }
   dispatch();
