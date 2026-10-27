@@ -73,6 +73,12 @@ const PHOTO_SPACING_MS = paced(PACE.photoMs, STAND_IN ? 0 : 5000);
 const RETRY_GAP_MS = paced(PACE.retryMs, STAND_IN ? 0 : 3000);
 // Said once, first: the shell ignores it; the pacing suite reads it.
 if (parentPort) parentPort.postMessage({ pacing: { photoMs: PHOTO_SPACING_MS, retryMs: RETRY_GAP_MS } });
+// Test code's cut-out shortcut (clothing.start({ skipSolidCutOut: true }), never
+// server.js, never an environment variable): a photo with nothing in it skips
+// the garment model, which would only decline it, and goes straight to the
+// colour flood that draws its tile either way. Said once, for the same suite.
+const SKIP_SOLID_CUT_OUT = workerData.skipSolidCutOut === true;
+if (parentPort) parentPort.postMessage({ cutOutSeam: { skipSolid: SKIP_SOLID_CUT_OUT } });
 let ingesting = null; // {done, total} while naming photos — relayed to the shell
 
 const CLOTHING = () => path.join(DATA, "clothing");
@@ -165,7 +171,7 @@ let libheif = null;
 function ensureHeif() {
   if (!libheif) libheif = require("./vendor/libheif.js")();
 }
-const { decodeJpg, scaleRgba, writeJpg } = require("./image-util.js");
+const { decodeJpg, scaleRgba, writeJpg, isFlat } = require("./image-util.js");
 
 function cropRgba(img, frac) {
   const { data, width: w, height: h } = img;
@@ -1015,7 +1021,8 @@ async function namePhotos(cfg, cat, todo) {
         // without the runtime, where it trims what it safely can.
         const rotated = rotateRgba(work, rot);
         let cutOut = null;
-        try { cutOut = await segment.cutOut(rotated); } catch (e) { console.error("[segment] " + e.message); }
+        if (SKIP_SOLID_CUT_OUT && isFlat(rotated)) console.log("[segment] " + f + ": a flat test photo, no cut-out (skipSolidCutOut)");
+        else try { cutOut = await segment.cutOut(rotated); } catch (e) { console.error("[segment] " + e.message); }
         const cut = cutOut || removeBackground(rotated);
         const trimmed = cutOut ? cropToContent(cut, WHITE_BG.tol, WHITE_BG.need) : cropToContent(cut);
         // A cut-out already IS the garment: the box around its pixels is the

@@ -214,7 +214,13 @@ before(async () => {
   // start builds nobody awaited (r3), exactly as clothing-weather.test.mjs
   // avoids. The zone is the suite's: the module otherwise defaults to LA and
   // this box is UTC (plan T2.1/T2.4).
-  clothing.start(TMP, { noTimers: true, tz: () => ZONE });
+  // skipSolidCutOut: most photos here are one flat colour (makeJpg), where the
+  // garment model finds nothing and the colour flood draws the tile anyway;
+  // the option skips ~2.4 s of inference per such photo (CPU audit 10/27).
+  // Every photo with something in it — the garment fixtures whose cut-out
+  // geometry the sideways and over-trimmed cases assert, the turned phone
+  // photo — still meets the real model (tests/clothing-pacing.test.mjs).
+  clothing.start(TMP, { noTimers: true, tz: () => ZONE, skipSolidCutOut: true });
 });
 after(() => { if (ai) ai.close(); delete process.env.ERA_AI_URL;
   delete process.env.ERA_GEO_URL; delete process.env.ERA_WEATHER_URL; });
@@ -871,7 +877,7 @@ test("start() seeds the photo memory from the last build: a removal while the hu
   // suite's history.json — inside 00:00-07:00 UTC that key is the suite's
   // OWN yesterday, and every later build would read it as the yesterday bar
   // (review r2). This case is about the photo memory, not the zone.
-  booted.start(TMP, { noTimers: true, tz: () => ZONE });
+  booted.start(TMP, { noTimers: true, tz: () => ZONE, skipSolidCutOut: true });
   fs.rmSync(path.join(TMP, "clothing", "photo_k.jpg"));
   const p = booted.tick("test");
   assert.ok(p, "the removal was noticed on the very first tick after boot");
@@ -1127,9 +1133,23 @@ const todayKey = () => (_today ??= dayKey(Date.now(), ZONE));
 const dayAgo = n => { let k = todayKey(); for (let i = 0; i < n; i++) k = yesterdayOf(k); return k; };
 const TOPS = ["Sunny tee", "Cloud tee", "Pond tee", "Maple tee", "Berry tee", "Fern tee", "Dune tee", "Coral tee"];
 const BOTTOMS = ["Sky leggings", "Moss jeans", "Sand pants", "Ruby leggings", "Lake jeans", "Cocoa pants", "Mint leggings"];
+// The fifteen garments share ONE small tile: these cases assert which looks are
+// dealt and in what order, never a pixel, and every build here draws 22
+// outfit pictures — two tile decodes each. A 640 px catalogue tile cost ~70 ms
+// of decoding per picture, ~30 CPU-s over the block (CPU audit 10/27); a
+// 48×64 one costs next to nothing and deals the very same looks. The pictures
+// themselves are proven on the small wardrobe (the board case) and by the tie
+// case's pixels.
 function eightBySeven() {
-  const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
-  const src = path.join(TMP, "wardrobe-items", Object.values(cat.items).find(i => i.ok).id + ".jpg");
+  const src = path.join(TMP, "eight-by-seven-tile.jpg");
+  {
+    const jpeg = require("./vendor/jpeg-js");
+    const w = 48, h = 64, data = Buffer.alloc(w * h * 4, 255);
+    for (let y = 8; y < h - 8; y++) for (let x = 8; x < w - 8; x++) {
+      const o = (y * w + x) * 4; data[o] = 90; data[o + 1] = 120; data[o + 2] = 200;
+    }
+    fs.writeFileSync(src, jpeg.encode({ data, width: w, height: h }, 85).data);
+  }
   const items = {};
   const mk = (id, name, category) => {
     fs.copyFileSync(src, path.join(TMP, "wardrobe-items", id + ".jpg"));

@@ -33,6 +33,12 @@ let badZone = "";   // the last unusable zone we complained about
 // worker lets win. server.js never passes one. Like tz and deviceId it is
 // authoritative: a start() without it hands the next worker nothing.
 let aiPacing = null;
+// Test code's cut-out shortcut, handed to every worker: true lets the worker
+// skip the garment model for a photo with nothing in it (image-util.js isFlat), the
+// solid-colour stand-ins a suite makes. Exactly `true` or nothing; server.js
+// never passes it, no environment variable reaches it, and like aiPacing it is
+// authoritative (tests/clothing-pacing.test.mjs).
+let skipSolidCutOut = false;
 function pacingOf(o) {
   if (!o || typeof o !== "object") return null;
   const out = {};
@@ -427,7 +433,8 @@ function regenerate(force, opts = {}) {
       // them yet (they are consumed in T4.3), the zone it seeds the deal with
       // is live from this build on.
       { workerData: { dataDir: DATA, force: !!force, rebuildOnly: !!opts.rebuildOnly,
-                      refit: !!opts.refit, weatherRetry, tz: zone(), deviceId, driveFolder, aiPacing } });
+                      refit: !!opts.refit, weatherRetry, tz: zone(), deviceId, driveFolder, aiPacing,
+                      skipSolidCutOut } });
     worker.on("message", (m) => {
       if ("ingesting" in m) ingesting = m.ingesting;
       if ("attrs" in m) attrs = m.attrs;
@@ -611,7 +618,8 @@ function tick(reason) {
 // would otherwise get a surprise full build, AI requests and all (9/5).
 // opts.tz: () => the family's IANA zone; opts.deviceId: this hub's name (both
 // from server.js); opts.aiPacing: test code's provider pacing (pacingOf above,
-// never from server.js). All three are AUTHORITATIVE: a start() without them
+// never from server.js); opts.skipSolidCutOut: test code's cut-out shortcut
+// (above, never from server.js). All four are AUTHORITATIVE: a start() without them
 // puts the module back on its own defaults, so a suite can hand a zone back (it used to
 // assign only when the option was present, and the caller that thought it had
 // reset the zone had not — review r2). A zone this computer cannot resolve is
@@ -627,6 +635,7 @@ function start(dataDir, opts = {}) {
   tzOf = typeof opts.tz === "function" ? opts.tz : () => DEFAULT_TZ;
   deviceId = opts.deviceId ? String(opts.deviceId) : "hub";
   aiPacing = pacingOf(opts.aiPacing);
+  skipSolidCutOut = opts.skipSolidCutOut === true;
   seenPhotos = storedPhotoSet(dataDir);
   ingesting = null; attrs = null;
   // The read-out's memo is keyed on the day and two files' stats, and a data
@@ -637,7 +646,10 @@ function start(dataDir, opts = {}) {
   memoryBlind = false; memoryRedeals = 0; redealDay = ""; offerUnrecorded = false;
   weatherBlind = false; weatherTriedAt = 0;
   if (opts.noTimers) return;
-  setTimeout(() => tick("startup/wake"), 20 * 1000).unref();
+  // ERA_CLOTHING_BOOT_MS: a suite's seam for the 20 s before the "just woke
+  // up" build (tests/clothing-schedule.test.mjs); unset, 0 or not a number, as
+  // on every family's hub, it is 20000. The gate unsets it.
+  setTimeout(() => tick("startup/wake"), Number(process.env.ERA_CLOTHING_BOOT_MS) || 20 * 1000).unref();
   setInterval(() => tick("morning check"), 15 * 60 * 1000).unref();
 }
 

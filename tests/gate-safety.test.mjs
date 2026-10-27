@@ -269,6 +269,11 @@ test('the shared hub runs without a clothing schedule and its board is built bef
   assert.ok(unset && /\bERA_CLOTHING_TICK_MS\b/.test(unset[0]),
     "an operator's shell cannot hand the seam to a suite's own hubs");
   assert.ok(unset.index < launch.index, 'cleared before the shared hub starts');
+  // the two boot-timer seams (CPU audit 10/27) are cleared the same way: only
+  // the suite that shortens one sets it, on the hub it spawns
+  for (const seam of ['ERA_RECONCILE_DELAY_MS', 'ERA_CLOTHING_BOOT_MS'])
+    assert.ok(new RegExp('\\b' + seam + '\\b').test(unset[0]), seam + ' never leaks from the operator shell into a hub');
+  assert.doesNotMatch(launch[1], /ERA_RECONCILE_DELAY_MS|ERA_CLOTHING_BOOT_MS/, 'the shared hub keeps the family timing');
   const ready = gate.indexOf('gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" ||');
   const build = gate.indexOf('gate_build_clothing "$PORT"');
   // the suites start when the lane runner does (tools/testing/lanes.mjs); a

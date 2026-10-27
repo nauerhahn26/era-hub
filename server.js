@@ -4105,11 +4105,13 @@ server.on("listening", () => {
   // VM 9/3: a silent install ticks everything, the engine compiled and STARTED
   // before the family unticked it, and the first door handed their kiosk to
   // an engine they never chose.
+  // ERA_RECONCILE_DELAY_MS: a suite's seam for the 5 s (tests/reconcile.test.mjs);
+  // unset, 0 or not a number, as on every family's hub, it is 5000. The gate unsets it.
   setTimeout(() => {
     if (!HAS_PROFILE) { console.log("[apps] reconcile deferred until the wizard is answered"); return; }
     reconcileApps();
     reconcileBootShortcuts();
-  }, 5000).unref();
+  }, Number(process.env.ERA_RECONCILE_DELAY_MS) || 5000).unref();
   // and from here on, the engine is kept on its bus (gaze-supervisor.js)
   setInterval(() => { gazeSupervisor.tick(); }, GAZE_POLL_MS).unref();
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).

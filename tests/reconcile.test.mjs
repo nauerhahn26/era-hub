@@ -23,7 +23,11 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-rec-"));
 const INSTALL = path.join(TMP, "install");
 const DATA = path.join(TMP, "data");
 const READER = path.join(INSTALL, "public", "reader", "index.html");
-let feed, child, log = "", tarball;
+let feed, child, log = "", tarball, arrived = [];
+// The boot reconcile's delay, through its seam (server.js, ERA_RECONCILE_DELAY_MS;
+// 5000 on every family's hub). The cases wait for the line reconcile writes,
+// not for a fixed 7.5 s.
+const RECONCILE_MS = 300;
 
 // The hub's own modules, read from build-payload.sh's copy list instead of
 // duplicated here. A hand-kept fourth copy of that list is a fourth way for a
@@ -35,14 +39,18 @@ const HUB_MODULES = [...fs.readFileSync(path.join(HUB, "tools", "build-payload.s
   .matchAll(/"\$HUB\/([A-Za-z0-9._-]+\.(?:json|js))"/g)].map(m => m[1]);
 
 function boot() {
-  log = "";
+  log = ""; arrived = [];
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: INSTALL, stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ERA_DATA_DIR: DATA, ERA_BIND: "127.0.0.1",
-           ERA_UPDATE_URL: `http://127.0.0.1:${FEED_PORT}`, ERA_NO_UPDATE: "1" },
+           ERA_UPDATE_URL: `http://127.0.0.1:${FEED_PORT}`, ERA_NO_UPDATE: "1",
+           ERA_RECONCILE_DELAY_MS: String(RECONCILE_MS) },
   });
-  child.stdout.on("data", (d) => { log += d; });
-  child.stderr.on("data", (d) => { log += d; });
+  // when each stretch of the log arrived, so a case can tell how long after
+  // the listen line a later line came
+  const take = (d) => { log += d; arrived.push([Date.now(), log.length]); };
+  child.stdout.on("data", take);
+  child.stderr.on("data", take);
   return (async () => {
     for (let i = 0; i < 100; i++) {
       try { await fetch(`${BASE}/settings`); return; } catch {}
@@ -50,6 +58,15 @@ function boot() {
     }
     throw new Error("hub never came up");
   })();
+}
+// The moment the log first matched `re` (ms since the epoch), waiting up to `ms`.
+async function logAt(re, ms) {
+  for (const t0 = Date.now(); Date.now() - t0 < ms;) {
+    const m = re.exec(log);
+    if (m) return arrived.find(([, len]) => len >= m.index + m[0].length)[0];
+    await new Promise(r => setTimeout(r, 25));
+  }
+  throw new Error(`no ${re} in the log after ${ms} ms — ` + log);
 }
 const stop = () => new Promise((r) => { if (!child) return r(); child.once("exit", r); child.kill("SIGKILL"); });
 const readerInstalled = async () =>
@@ -90,7 +107,9 @@ before(async () => {
 after(async () => { await stop(); if (feed) feed.close(); });
 
 test("before the wizard is answered the installer's ticks install nothing — not the engine (VM 9/3)", async () => {
-  await new Promise(r => setTimeout(r, 7500));          // boot reconcile would fire at +5 s
+  // the line the boot reconcile writes when it runs: after it nothing more is
+  // coming from that timer, so the absences below are final
+  await logAt(/\[apps\] reconcile deferred/, 10000);
   assert.equal(await readerInstalled(), false, "reader pack not pulled yet");
   assert.ok(!fs.existsSync(READER));
   assert.match(log, /\[apps\] reconcile deferred/, log);
@@ -125,7 +144,7 @@ test("boot reconcile stops an engine that is compiled but not chosen (left by an
   fs.mkdirSync(path.join(INSTALL, "gaze"), { recursive: true });
   fs.writeFileSync(path.join(INSTALL, "gaze", "ERAgaze.exe"), "stand-in");   // "compiled"
   await boot();
-  await new Promise(r => setTimeout(r, 7500));          // boot reconcile at +5 s
+  await logAt(/\[gaze\] turned off/, 10000);          // the boot reconcile ran
   assert.match(log, /\[gaze\] turned off/, "the unchosen engine is stopped at boot — " + log);
   assert.doesNotMatch(log, /reconcile eragaze/, log);
   fs.rmSync(path.join(INSTALL, "gaze"), { recursive: true, force: true });
@@ -153,4 +172,20 @@ test("a pack installs from a tarball whose top folder is our-era-comms/", async 
   await boot();
   assert.ok(await waitReader(true, 30000), "reader pack installed from the our-era-comms/ tarball — " + log);
   assert.equal(fs.readFileSync(READER, "utf8"), "<p>reader, renamed</p>");
+});
+
+// The seam itself. The cases above wait for reconcile's own lines, so a seam
+// that did nothing would only make them slower — this case is what shows the
+// delay really moved: the deferral comes well inside the family's 5 s of the
+// listen line. And the family's default is pinned at its source.
+test("ERA_RECONCILE_DELAY_MS moves the boot reconcile; unset it is 5 s", async () => {
+  await stop();
+  fs.rmSync(path.join(DATA, "profile.json"), { force: true });   // back to the wizard
+  await boot();
+  const listened = await logAt(/era-hub on http/, 10000);
+  const deferred = await logAt(/\[apps\] reconcile deferred/, 10000);
+  assert.ok(deferred - listened < 2500, `reconcile ran ${deferred - listened} ms after listen (seam ${RECONCILE_MS}, family 5000)`);
+  const src = fs.readFileSync(path.join(HUB, "server.js"), "utf8");
+  assert.match(src, /\}, Number\(process\.env\.ERA_RECONCILE_DELAY_MS\) \|\| 5000\)\.unref\(\);/,
+    "unset, 0 or not a number: the family's 5000");
 });
