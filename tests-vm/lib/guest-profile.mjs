@@ -37,14 +37,20 @@ export function guestProfile(env = process.env) {
 export const BUSY_IMAGES = Object.freeze(["MpSigStub.exe", "OneDriveSetup.exe", "TiWorker.exe"]);
 export const READY_BUDGET_MS = 120000;
 
-/** the readiness verdict from one guest readout: `tasklist /fo csv /nh` rows
- *  plus a `DEFENDER_RTP=<True|False|unavailable>` line. Real-time protection
- *  on means the guest is not the quiet snapshot; a missing readback is
- *  unknown, never off. Images match by exact name: every row opens with it. */
+/** the readiness verdict from one guest readout: `tasklist /fo csv /nh` rows,
+ *  a `QUIET_POLICY=<1|0>` line (1 only where the quiet snapshot's policy turns
+ *  real-time protection off) and a `DEFENDER_RTP=<True|False|unavailable>` line.
+ *  notQuiet = the guest is not the quiet snapshot: no policy marker, or real-time
+ *  protection on. The marker decides, because the readback alone can lie: the
+ *  pristine guest read RTP False while Defender was still starting (10/27). A
+ *  missing line is unknown, never a pass. Images match by exact name: every
+ *  tasklist row opens with it. */
 export function readiness(text) {
   const t = String(text || "");
+  const policy = (t.match(/^QUIET_POLICY=([01])/m) || [])[1] || "unknown";
   const rtp = (t.match(/^DEFENDER_RTP=(\S+)/m) || [])[1] || "unknown";
   const defenderOn = /^true$/i.test(rtp);
+  const notQuiet = policy === "0" || defenderOn;
   const busy = BUSY_IMAGES.filter((exe) => new RegExp('^"' + exe.replace(/\./g, "\\.") + '"', "im").test(t)).sort();
-  return { ready: !defenderOn && rtp !== "unknown" && busy.length === 0, defenderOn, rtp, busy };
+  return { ready: policy === "1" && !defenderOn && rtp !== "unknown" && busy.length === 0, notQuiet, policy, defenderOn, rtp, busy };
 }
