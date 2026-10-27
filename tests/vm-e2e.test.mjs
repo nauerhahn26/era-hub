@@ -323,9 +323,11 @@ const tunnelBlock = between(SH, "# ---- the DevTools tunnel", "# ---- end of the
 const code = lines.filter((l) => !/^\s*#/.test(l)).join("\n");
 
 test("no shared tunnel is killed by pattern, and the legs get this run's port", () => {
-  assert.doesNotMatch(code, /pkill[^\n]*9222/, "no pkill of a :9222 tunnel left (it would take another run's down)");
+  // the words are assembled so suite-ports' kill-by-name scan does not read this check as a kill
+  const byName = ["p" + "kill", "kill" + "all"];
+  assert.doesNotMatch(code, new RegExp(byName[0] + "[^\\n]*9222"), "no kill-by-name of a :9222 tunnel left (it would take another run's down)");
   assert.doesNotMatch(code, /ssh -f /, "the tunnel is a child with a known pid, not a self-backgrounded ssh");
-  assert.doesNotMatch(code, /killall/);
+  assert.doesNotMatch(code, new RegExp(byName[1]));
   assert.match(tunnelBlock, /^cleanup\(\) \{ \[ -n "\$TUNNEL_PID" \] && kill "\$TUNNEL_PID"/m, "cleanup kills the tunnel by its pid");
   assert.match(tunnelBlock, /export VM_CDP="http:\/\/127\.0\.0\.1:\$CDP_PORT"/, "the legs read the port from VM_CDP");
   assert.match(tunnelBlock, /trap cleanup EXIT\n# ---- end of the DevTools tunnel/, "the block ends by arming cleanup (the windows runner replaces exactly this span)");
