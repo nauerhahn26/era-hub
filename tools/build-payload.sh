@@ -139,6 +139,8 @@ cp -r "$HUB/public/book-review" "$OUT/public/book-review"
 # and the vendored Fluent Emoji (MIT, LICENSE beside them). No /x in installer.nsi.
 cp -r "$HUB/public/drawing" "$OUT/public/drawing"
 cp -r "$HUB/public/chat" "$OUT/public/chat"
+# Chat's picture table rides with the page (chat-symbols.js reads it on first use).
+[ -f "$OUT/public/chat/vocabulary.json" ] || { echo "build-payload: public/chat/vocabulary.json is missing"; exit 1; }
 # This week's watch page (spec 2026-10-12 §3.3): ERAgaze's watch mode opens it
 # to play one downloaded video. CORE like book-review: a few hundred bytes, no
 # /x in installer.nsi (every /x there belongs to a pack).

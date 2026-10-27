@@ -355,6 +355,9 @@ More and Stop tiles use it. Chat will too.
   English keyword list, every candidate reviewed on a contact sheet
   (`tools/chat-vocabulary-sheet.mjs`, which also prints ids that return no
   image: 0 of 389 on 10/27). Wrong picks are corrected by id in the table.
+  The hub reads it on first use, never at require time: without the file it
+  warns once, boots, and every choice gets the bubble word with no picture id;
+  `build-payload.sh` refuses a payload without it.
 - *Schema.* Each choice is `{label ≤40, say ≤180, symbol}`, all required
   (strict); `symbol` is an enum of every concept word (389, "chat" included;
   capped at 400 in `chat-symbols.js`), about 3.3 kB / ~830 tokens of schema per

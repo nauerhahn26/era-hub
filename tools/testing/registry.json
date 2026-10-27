@@ -4396,7 +4396,7 @@
       "resources": [
         "owned-loopback-services"
       ],
-      "hub": "none",
+      "hub": "own",
       "ports": [],
       "browsers": 0,
       "heavy": false,

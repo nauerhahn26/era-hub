@@ -4,22 +4,39 @@
 // guesses from the words when the model gave none. Pictures are decorative:
 // the words stay authoritative and nothing here changes a label or a say.
 'use strict';
-const VOCABULARY = require('./public/chat/vocabulary.json');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const ENUM_CAP = 400;   // structured-output enums stay well inside the services' limits
-const FALLBACK = VOCABULARY.fallback || 'chat';
-const concepts = VOCABULARY.concepts;
-const byWord = new Map(concepts.map(concept => [concept.word, concept]));
+const FALLBACK = 'chat';
 
 function normal(value) {
   if (typeof value !== 'string' || value.length > 800 || /[<>\x00-\x1f]/.test(value)) return '';
   return value.normalize('NFKC').toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
-const phrases = new Map(Object.entries(VOCABULARY.phrases).map(([phrase, word]) => [normal(phrase), word]));
-// Every spoken form of a concept, normalised, longest first so "ice cream" beats "cream".
-const forms = concepts.flatMap(concept => [concept.word, ...(concept.alt || [])].map(form => [normal(form), concept.word]))
-  .filter(([form]) => form).sort((a, b) => b[0].length - a[0].length);
-const patterns = forms.map(([form, word]) => [new RegExp(`\\b${form.replace(/ /g, '\\s+')}s?\\b`), word, form]);
+// The table is read on first use, never at require time: an install without
+// public/chat/vocabulary.json (a partial copy, a damaged update) still boots,
+// warns once, and every choice gets the bubble word with no picture id.
+let table = null;
+function vocabulary() {
+  if (table) return table;
+  let data = null;
+  try {
+    data = JSON.parse(fs.readFileSync(path.join(__dirname, 'public', 'chat', 'vocabulary.json'), 'utf8'));
+    if (!Array.isArray(data.concepts) || !data.phrases || typeof data.phrases !== 'object') throw new Error('unexpected shape');
+  } catch (error) {
+    console.error('[chat] picture vocabulary unavailable (' + (error.code || error.message) + '): replies get no pictures until public/chat/vocabulary.json is restored');
+    data = { concepts: [], phrases: {} };
+  }
+  const concepts = data.concepts;
+  // Every spoken form of a concept, normalised, longest first so "ice cream" beats "cream".
+  const forms = concepts.flatMap(concept => [concept.word, ...(concept.alt || [])].map(form => [normal(form), concept.word]))
+    .filter(([form]) => form).sort((a, b) => b[0].length - a[0].length);
+  table = { concepts, byWord: new Map(concepts.map(concept => [concept.word, concept])),
+    phrases: new Map(Object.entries(data.phrases).map(([phrase, word]) => [normal(phrase), word])),
+    patterns: forms.map(([form, word]) => [new RegExp(`\\b${form.replace(/ /g, '\\s+')}s?\\b`), word, form]) };
+  return table;
+}
 // Broad words never erase a clear subject: "I am happy to play music" is music.
 const BROAD = new Set(['me', 'you', 'want', 'need', 'like', 'love', 'happy', 'sad', 'tired', 'good', 'fun', 'play', 'go', 'look',
   'more', 'now', 'today', 'time', 'day', 'friend', 'family', 'people', 'please', 'ok', 'make', 'give', 'tell', 'think', 'know',
@@ -32,15 +49,18 @@ const NEGATION = /\b(?:no|nope|nah|not|never|dont|doesnt|didnt|isnt|arent|wasnt|
 const REFUSAL = /^(?:no|nope|nah)$|^no\s+(?!(?:i|im|we|you|it|its|thats|that|way|problem|worries)\b)(?:(?:a|an|the|any|more)\s+)?[a-z ]+?(?:\s+(?:please|thanks|thank you))?$|^no thanks?\b|^no thank you\b|\b(?:dont|do not)\s+(?:want|need|choose|prefer)\b/;
 const DISLIKE = /\b(?:dont|do not|didnt|doesnt|wouldnt)\s+like\b|\b(?:hate|hates|dislike|dislikes)\b/;
 
-function symbolWords() { return concepts.slice(0, ENUM_CAP).map(concept => concept.word); }
-function isNegative(word) { return byWord.get(word)?.tone === 'negative'; }
+function symbolWords() {
+  const words = vocabulary().concepts.slice(0, ENUM_CAP).map(concept => concept.word);
+  return words.includes(FALLBACK) ? words : [...words, FALLBACK];
+}
+function isNegative(word) { return word === FALLBACK || vocabulary().byWord.get(word)?.tone === 'negative'; }
 
-function curated(text) { return text && phrases.has(text) ? phrases.get(text) : null; }
+function curated(text) { const { phrases } = vocabulary(); return text && phrases.has(text) ? phrases.get(text) : null; }
 function guess(text) {
   if (!text) return null;
   const found = [];
   let rest = ` ${text} `;
-  for (const [pattern, word] of patterns) {
+  for (const [pattern, word] of vocabulary().patterns) {
     if (!pattern.test(rest)) continue;
     if (!found.includes(word)) found.push(word);
     rest = rest.replace(pattern, ' ');   // "ice cream" is not also "cream"
@@ -65,18 +85,18 @@ function pickSymbol({ label = '', say = '', symbol } = {}) {
   // ("I'm good" / "No thanks, I am good." is a refusal).
   if (curated(l)) return NEGATION.test(l) ? curated(l) : negationGuard('', s, curated(l));
   if (curated(s)) return NEGATION.test(s) ? curated(s) : negationGuard(l, '', curated(s));
-  const picked = typeof symbol === 'string' && byWord.has(symbol) ? symbol : guess(l) || guess(s) || FALLBACK;
+  const picked = typeof symbol === 'string' && vocabulary().byWord.has(symbol) ? symbol : guess(l) || guess(s) || FALLBACK;
   return negationGuard(l, s, picked);
 }
 function withSymbols(choices) {
   return choices.map(choice => {
-    const symbol = pickSymbol(choice);
-    return { ...choice, symbol, symbolId: byWord.get(symbol).id };
+    const symbol = pickSymbol(choice), id = vocabulary().byWord.get(symbol)?.id;
+    return { ...choice, symbol, ...(id ? { symbolId: id } : {}) };
   });
 }
 function vocabularyIds() {
   const ids = [];
-  for (const concept of concepts) for (const id of [concept.id, concept.altId]) if (id && !ids.includes(String(id))) ids.push(String(id));
+  for (const concept of vocabulary().concepts) for (const id of [concept.id, concept.altId]) if (id && !ids.includes(String(id))) ids.push(String(id));
   return ids;
 }
 

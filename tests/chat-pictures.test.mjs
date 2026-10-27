@@ -192,3 +192,54 @@ test('the vocabulary contact sheet shows every word with its picture and lists i
   assert.ok(!/https?:\/\//.test(sheet.html), 'the sheet is self-contained');
   assert.match(sheet.html, /NO IMAGE/);
 });
+
+test('without public/chat/vocabulary.json the module loads, warns once and falls back to the bubble with no picture id', async t => {
+  const os = await import('node:os'), path = await import('node:path'), { execFileSync } = await import('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'era-chat-novocab-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.copyFileSync(new URL('../chat-symbols.js', import.meta.url), path.join(dir, 'chat-symbols.js'));
+  const probe = `const p = require('./chat-symbols.js');
+    const a = p.withSymbols([{ label: 'Pizza', say: 'Pizza please.', symbol: 'pizza' }, { label: 'No', say: 'No.' }]);
+    console.log(JSON.stringify({ words: p.symbolWords(), ids: p.vocabularyIds(), a, pick: p.pickSymbol({ label: 'Not now' }) }));`;
+  const run = () => execFileSync(process.execPath, ['-e', probe], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const out = JSON.parse(run());
+  assert.deepEqual(out.words, ['chat'], 'the strict enum still has its one fallback value');
+  assert.deepEqual(out.ids, []);
+  assert.deepEqual(out.a.map(choice => [choice.symbol, choice.symbolId]), [['chat', undefined], ['chat', undefined]]);
+  assert.equal(out.pick, 'chat');
+  const { spawnSync } = await import('node:child_process');
+  const warned = spawnSync(process.execPath, ['-e', probe], { cwd: dir, encoding: 'utf8' }).stderr;
+  assert.equal(warned.split('\n').filter(line => /picture vocabulary unavailable/.test(line)).length, 1, 'one clear warning: ' + warned);
+});
+
+test('a hub installed without the vocabulary file still boots and answers /status and Chat choices', { timeout: 60000 }, async t => {
+  const os = await import('node:os'), path = await import('node:path'), { spawn } = await import('node:child_process');
+  const HUB = new URL('..', import.meta.url).pathname;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'era-chat-novocab-hub-'));
+  const modules = [...fs.readFileSync(path.join(HUB, 'tools', 'build-payload.sh'), 'utf8').matchAll(/"\$HUB\/([A-Za-z0-9._-]+\.(?:json|js))"/g)].map(m => m[1]);
+  assert.ok(modules.includes('chat-symbols.js'));
+  fs.mkdirSync(path.join(dir, 'install', 'public', 'home'), { recursive: true });
+  for (const file of modules) fs.copyFileSync(path.join(HUB, file), path.join(dir, 'install', file));
+  assert.equal(fs.existsSync(path.join(dir, 'install', 'public', 'chat', 'vocabulary.json')), false);
+  const probe = http.createServer(); await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+  const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
+  const child = spawn(process.execPath, ['server.js', String(port)], { cwd: path.join(dir, 'install'), stdio: ['ignore', 'ignore', 'pipe'],
+    env: { ...process.env, ERA_DATA_DIR: path.join(dir, 'data'), ERA_BIND: '127.0.0.1', ERA_CHAT_CONFIG_DISABLED: '1', ERA_UPDATE_URL: 'http://127.0.0.1:1',
+      ERA_SYMBOL_SEARCH_URL: 'http://127.0.0.1:1/search/', ERA_SYMBOL_IMAGE_URL: 'http://127.0.0.1:1/images/{id}.png' } });
+  let stderr = ''; child.stderr.on('data', chunk => { stderr += chunk; });
+  t.after(async () => { if (child.exitCode === null) { const gone = new Promise(resolve => child.once('exit', resolve)); child.kill('SIGTERM'); await gone; } fs.rmSync(dir, { recursive: true, force: true }); });
+  let status = 0;
+  for (let i = 0; i < 150 && child.exitCode === null; i++) {
+    try { status = (await fetch(`http://127.0.0.1:${port}/status`)).status; if (status === 200) break; } catch {}
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(status, 200, 'the hub serves /status: ' + stderr.slice(0, 400));
+  const reply = await (await fetch(`http://127.0.0.1:${port}/chat/api/choices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Did you like it?' }) })).json();
+  assert.deepEqual(reply.choices.map(choice => choice.say), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+});
+
+test('the payload ships the vocabulary with the Chat page', () => {
+  const payload = fs.readFileSync(new URL('../tools/build-payload.sh', import.meta.url), 'utf8');
+  assert.ok(payload.includes('cp -r "$HUB/public/chat" "$OUT/public/chat"'));
+  assert.match(payload, /public\/chat\/vocabulary\.json/, 'the payload refuses a tree without the vocabulary');
+});
