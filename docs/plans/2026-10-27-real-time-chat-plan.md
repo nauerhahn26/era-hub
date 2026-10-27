@@ -78,19 +78,23 @@ once phase 1 has landed.
 
 ## Phase 3 — pictures
 
-- [ ] Vocabulary table (words → approved pictogram ids) seeded from her board
+Built 10/27 in `era-hub--wt-real-time-chat-pictures` (spec §6 "Decided shapes").
+
+- [x] Vocabulary table (words → approved pictogram ids) seeded from her board
       labels, the fixed phrases and the library's core set; review tool prints
-      a contact sheet.
-- [ ] Preview page on a scratch hub: colour vs black-and-white vs emoji
-      backup, at board size; dad picks the style.
-- [ ] `symbol` enum in the choice schema; server maps word → id; negation
+      a contact sheet (`tools/chat-vocabulary-sheet.mjs`; 389 concepts, 0 misses).
+- [x] Preview page on a scratch hub: colour vs black-and-white vs emoji
+      backup, at board size (`tools/chat-preview.mjs --pictures`).
+- [ ] Dad picks the style from the preview PNGs.
+- [x] `symbol` enum in the choice schema; server maps word → id; negation
       check server-side; emoji backup; bubble last.
-- [ ] Tile layout per board law (picture beside word, 42%/82%, 74 px label
+- [x] Tile layout per board law (picture beside word, 42%/82%, 74 px label
       floor, stacked fallback marked); Chat page CSS; `symbols.js` licence
       header fixed.
-- [ ] Pre-warm the vocabulary's images on enable; offline test.
-- [ ] Credit on the About page; dad's non-commercial ruling recorded.
-- [ ] Tests: schema rejects unknown symbols, every vocabulary id resolves,
+- [x] Pre-warm the vocabulary's images on enable; offline test.
+- [x] Credit on the About page (settings "About the pictures"); dad's
+      non-commercial ruling recorded in spec §6 (his own words still to quote).
+- [x] Tests: schema rejects unknown symbols, every vocabulary id resolves,
       no two tiles share a symbol, negation never gets an affirmative picture,
       layout geometry, offline render from cache.
 - [ ] Gate, patch, dad's word, home device.

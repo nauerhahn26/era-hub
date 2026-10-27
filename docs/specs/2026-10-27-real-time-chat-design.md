@@ -218,6 +218,64 @@ More and Stop tiles use it. Chat will too.
   replies in the library's colour and black-and-white variants and the emoji
   backup, side by side, for dad to judge before the vocabulary is frozen.
 
+**Decided shapes (phase 3 build, 10/27).**
+
+- *Licence.* The maintainer's non-commercial ruling is recorded: the
+  foundation's free app is non-commercial use of the library's BY-NC-SA
+  pictures (plan decision 4; his own words and date to be quoted here when he
+  gives them). The images stay out of the repository and are fetched by the
+  hub into its cache; the credit the licence requires is the "About the
+  pictures" card on the settings page, beside the Drawing stickers' MIT credit.
+- *Vocabulary* `public/chat/vocabulary.json`: `phrases` (51 normalised fixed
+  phrases, routes, shortcuts and guarded templates → a concept word) and
+  `concepts` (389 rows `{word, id, alt?, altId?, tone?}`: one approved
+  pictogram id, alternative spoken forms, an optional alternate picture for a
+  repeat, `tone: "negative"` for refusal, negation and uncertainty). Seeded
+  from her board labels (no person names), the fixed phrases and the library's
+  English keyword list, every candidate reviewed on a contact sheet
+  (`tools/chat-vocabulary-sheet.mjs`, which also prints ids that return no
+  image: 0 of 389 on 10/27). Wrong picks are corrected by id in the table.
+- *Schema.* Each choice is `{label ≤40, say ≤180, symbol}`, all required
+  (strict); `symbol` is an enum of every concept word (389, "chat" included;
+  capped at 400 in `chat-symbols.js`), about 3.3 kB / ~830 tokens of schema per
+  request. The instruction gains one sentence: pick the symbol whose meaning
+  matches the reply, never an affirmative picture for a refusal or negation,
+  "chat" when unsure.
+- *Hub pick* (`chat-symbols.js`, every choice the hub returns, shortcuts and
+  guarded templates included): curated phrase → the model's symbol → the hub's
+  text guess (one clear subject wins; broad words such as like, happy, play,
+  listen never erase one; two subjects or none is "chat") → "chat". A reply
+  whose label or say is negated (not, no, nope, never, n't forms, hate,
+  dislike …) keeps only a `negative` picture — a refusal, negation or
+  uncertainty, never a feeling: "Not sad" is not the sad face; otherwise "no"
+  for a refusal ("no music", "no thanks", "don't want/need"), "don't like" for
+  a dislike, else "chat". A curated phrase is guarded on the other field too. An unknown or missing model symbol never fails the batch. The hub
+  attaches `{symbol, symbolId}`; labels and says are never changed.
+- *Page.* Pictures are planned for the whole page: yes/no, then routes, then
+  fixed phrases, then replies claim pictures; a repeat takes the concept's
+  `altId`, then the bubble concept, then no picture. Images are
+  `<img src="/symbol/<id>">` from the hub only; on error the Drawing emoji
+  sticker for the concept (11 keyword matches), then the in-house drawing.
+  Without the table the in-house drawings stay as in v1.0.20. `?pictures=bw` and
+  `?pictures=emoji` show the other styles on the live page.
+- *Layout* (`public/chat/tile-fit.js`, board-render.js constants): beside when
+  the label is ≤16 characters and the tile ≥190 px wide, picture 42% of the
+  content width (30% only if the word needs it) and 82% of its height, label
+  ≥74 px; otherwise stacked (label may take 55%, then 80% of the height, both
+  tried at 74 px first), then shrinking at 80% to the 44 px floor marked
+  `data-font-reduced="1"`; words that do
+  not fit even then keep the tile and the picture is set aside.
+- *Pre-warm.* Enabling Chat, and every boot while it is enabled, fetches every
+  vocabulary id (and alternate) missing from `data/symbols-cache`, one at a
+  time, `ERA_SYMBOL_WARM_MS` apart (250 ms default, about 100 s for a cold
+  cache), stopping after 5 failures in a row and retrying every 30 minutes
+  while pictures are missing. `GET /symbol/<id>?color=false` serves the
+  black-and-white variant (`ERA_SYMBOL_IMAGE_BW_URL`, cached as `<id>-bw.png`).
+- *Preview.* `node tools/chat-preview.mjs --pictures` (scratch hub,
+  `ERA_TEST_PORT` 8480–8499, default 8493) writes one PNG per board — 12 boards
+  of the 46 fixed phrases and 8 of 30 sample replies — with colour, black and
+  white and emoji side by side, to `~/.cache/era-chat/pictures-preview/`.
+
 ## 7. Local and school
 
 - No recognition model ships today; only the activity model, on a single

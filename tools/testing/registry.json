@@ -850,7 +850,9 @@
         "era-hub/tools/chat-choices-adapter.mjs",
         "era-hub/tools/era-gate.sh",
         "era-hub/update.js",
-        "era-core/dwell.js"
+        "era-core/dwell.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/vocabulary.json"
       ],
       "resources": [
         "owned-loopback-services",
@@ -911,7 +913,9 @@
       "level": "module and HTTP integration",
       "dependencies": [
         "era-hub/tools/chat-choices-adapter.mjs",
-        "era-hub/chat-choices.js"
+        "era-hub/chat-choices.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/vocabulary.json"
       ],
       "resources": [
         "owned-loopback-services",
@@ -934,7 +938,9 @@
       "level": "module and HTTP integration",
       "dependencies": [
         "era-hub/tools/chat-reply-bakeoff.mjs",
-        "era-hub/chat-choices.js"
+        "era-hub/chat-choices.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/vocabulary.json"
       ],
       "resources": [
         "owned-loopback-services",
@@ -1139,7 +1145,9 @@
         "era-hub/chat-api.js",
         "era-hub/chat-choices.js",
         "era-hub/chat-speech-worker.js",
-        "era-hub/tools/build-payload.sh"
+        "era-hub/tools/build-payload.sh",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/vocabulary.json"
       ],
       "resources": [
         "temporary-data",
@@ -4181,6 +4189,111 @@
       ],
       "level": "browser integration",
       "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-vocabulary.test.mjs",
+      "purpose": "Chat picture vocabulary: 300-600 concepts with one approved pictogram id each, unique words and ids, curated fixed phrases, negative tones, no images or names in the repo, and the library credit on the settings page",
+      "group": "chat",
+      "lane": "linux",
+      "level": "data contract",
+      "dependencies": [
+        "era-hub/public/chat/vocabulary.json",
+        "era-hub/public/settings/index.html"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-pictures.test.mjs",
+      "purpose": "Chat pictures on the hub: symbol enum in the strict choice schema, word to id mapping, negation guard, text-guess fallback, curated shortcut pictures, throttled resumable pre-warm, preview and contact-sheet tools",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module unit and loopback route",
+      "dependencies": [
+        "era-hub/chat-symbols.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-api.js",
+        "era-hub/public/chat/vocabulary.json",
+        "era-hub/tools/chat-pictures-preview.mjs",
+        "era-hub/tools/chat-vocabulary-sheet.mjs",
+        "era-hub/tools/chat-preview.mjs"
+      ],
+      "resources": [
+        "owned-loopback-services"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-picture-layout.test.mjs",
+      "purpose": "Chat tiles by board law: picture beside the word at 42%/82%, stacked before shrinking, 74 px target and marked 44 px floor, black rest cells and yes/no untouched, no repeated picture on a page, pictures only from the hub, fallback chain",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit and browser layout",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/chat-store.js",
+        "era-hub/chat-symbols.js",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 3,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-pictures-offline.test.mjs",
+      "purpose": "Enabling Chat pre-warms every vocabulary picture once from an owned fixture provider, a restart fetches nothing, the black-and-white variant passes through, and Chat tiles render from the cache with the provider gone and outside requests blocked",
+      "group": "chat",
+      "lane": "linux",
+      "level": "hub and browser integration",
+      "dependencies": [
+        "era-hub/server.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/**",
+        "era-core/lib/**",
+        "era-core/dwell.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "temporary-data",
+        "private-hub-data"
+      ],
+      "hub": "own",
       "ports": [],
       "browsers": 1,
       "heavy": false,

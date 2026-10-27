@@ -599,8 +599,35 @@ function reconcileBootShortcuts() {
 // ARASAAC lookup ported from packages/generator/aac_board_designer.py
 const ARASAAC_API = process.env.ERA_SYMBOL_SEARCH_URL || "https://api.arasaac.org/api/pictograms/en/bestsearch/";
 const ARASAAC_IMG = process.env.ERA_SYMBOL_IMAGE_URL || "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
+// The library's black-and-white rendering of one pictogram id (Chat's picture
+// preview, /symbol/<id>?color=false), cached beside the colour one as <id>-bw.png.
+const ARASAAC_IMG_BW = process.env.ERA_SYMBOL_IMAGE_BW_URL || "https://api.arasaac.org/api/pictograms/{id}?color=false&resolution=500&download=false";
 const PREWARM = ["sun", "cloud", "cold", "more", "shirt", "trousers", "13638", "dress",
                  "clothes", "house", "clock", "snack", "back", "yes"];
+
+// Chat's pictures (spec 2026-10-27 §6): enabling Chat, and every boot while it
+// is enabled, pre-warms the whole vocabulary into the symbol cache so school,
+// where outside hosts are unproven, still shows them. One request at a time,
+// ERA_SYMBOL_WARM_MS apart (250 by default); cached pictures are never fetched
+// again; a pass that keeps failing stops and the next one resumes, every 30
+// minutes while pictures are missing and Chat stays enabled.
+const chatSymbols = require("./chat-symbols.js");
+const chatSymbolWarmer = chatSymbols.createSymbolWarmer({
+  ids: chatSymbols.vocabularyIds(),
+  isCached: (id) => fs.existsSync(path.join(SYMBOLS_CACHE, id + ".png")),
+  fetchOne: (id) => fetchSymbolToCache(id),
+  delayMs: Number.isFinite(Number(process.env.ERA_SYMBOL_WARM_MS)) && process.env.ERA_SYMBOL_WARM_MS !== ""
+    ? Math.max(0, Number(process.env.ERA_SYMBOL_WARM_MS)) : 250,
+});
+let chatSymbolRetry = null;
+function warmChatSymbols() {
+  chatSymbolWarmer.run().then((r) => {
+    if (r.fetched || r.failed) console.log("[symbol] chat pictures: " + r.fetched + " fetched, " + r.cached + " cached, " + r.remaining + " missing");
+    clearTimeout(chatSymbolRetry);
+    if (r.remaining && loadEnabledApps().includes("chat"))
+      chatSymbolRetry = setTimeout(warmChatSymbols, 30 * 60 * 1000).unref();
+  }).catch((e) => console.error("[symbol] chat pictures: " + e.message));
+}
 
 // Serve a file from a jail dir if it exists, has an allowed extension, and does
 // not escape the jail. `rest` is the raw (already URL-decoded) sub-path.
@@ -1227,13 +1254,27 @@ async function fetchSymbolToCache(name) {
   }
 }
 
+async function fetchBwSymbolToCache(id) {
+  const file = path.join(SYMBOLS_CACHE, id + "-bw.png");
+  try {
+    const img = await fetch(ARASAAC_IMG_BW.replace(/\{id\}/g, String(id)));
+    if (!img.ok) return null;
+    fs.writeFileSync(file, Buffer.from(await img.arrayBuffer()));
+    return file;
+  } catch (e) {
+    console.error("[symbol] black-and-white lookup failed for '" + id + "': " + e.message);
+    return null;
+  }
+}
+
 // GET /symbol/:name — cached PNG, fetching from ARASAAC on a miss.
-async function serveSymbol(res, name) {
-  if (!/^[a-z0-9-]+$/.test(name)) { res.writeHead(404).end("not found"); return; }
-  const file = path.join(SYMBOLS_CACHE, name + ".png");
+// ?color=false (pinned numeric ids only): the black-and-white variant.
+async function serveSymbol(res, name, bw = false) {
+  if (!/^[a-z0-9-]+$/.test(name) || (bw && !/^\d+$/.test(name))) { res.writeHead(404).end("not found"); return; }
+  const file = path.join(SYMBOLS_CACHE, name + (bw ? "-bw" : "") + ".png");
   let cached = fs.existsSync(file);
   if (!cached) {
-    const got = await fetchSymbolToCache(name);
+    const got = await (bw ? fetchBwSymbolToCache(name) : fetchSymbolToCache(name));
     if (!got) { console.error("[symbol] no match for '" + name + "'"); res.writeHead(404).end("not found"); return; }
   }
   fs.readFile(file, (err, data) => {
@@ -2911,7 +2952,8 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && urlPath.startsWith("/symbol/")) {
-    serveSymbol(res, urlPath.slice("/symbol/".length)).catch((e) => {
+    const bw = new URL(req.url, "http://localhost").searchParams.get("color") === "false";
+    serveSymbol(res, urlPath.slice("/symbol/".length), bw).catch((e) => {
       console.error("[symbol] route error: " + e.message);
       try { res.writeHead(500).end(); } catch {}
     });
@@ -2943,6 +2985,7 @@ const server = http.createServer((req, res) => {
         fs.writeFileSync(path.join(DATA, "apps.json"),
           JSON.stringify({ enabled: APPS.map(a => a.id).filter(x => set.includes(x)) }, null, 2));
         appShortcut(app, enabled);   // Windows: desktop/start-menu .lnk follows the toggle
+        if (app.id === "chat" && enabled) warmChatSymbols();
         if (app.engine && !enabled) stopGaze();
         // enabling an app whose files were never installed REALLY installs it
         if (enabled && !appInstalled(app) && !appInstalling[app.id]) {
@@ -4119,6 +4162,7 @@ server.on("listening", () => {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;
     fetchSymbolToCache(name).then(f => { if (f) console.log("[symbol] pre-warmed " + name); });
   }
+  if (loadEnabledApps().includes("chat")) warmChatSymbols();
 });
 server.on("close", () => chatApi.close());
 server.listen(PORT, BIND);

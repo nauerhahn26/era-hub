@@ -3,7 +3,8 @@ import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
 import { createChatStorage } from './storage.js';
-import { attachSymbol } from './symbols.js';
+import { attachSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture } from './symbols.js';
+import { fitTile } from './tile-fit.js';
 import { mountDoorBar } from '/lib/doorbar.js';
 
 const $ = id => document.getElementById(id);
@@ -29,6 +30,10 @@ const bar = mountDoorBar($('app'), {
   onResume: () => { if (appReady) notice('Chat is off. A partner can start a new session.'); },
 });
 const savedSettings = await persistence.hydrate();
+// Library pictures (spec 2026-10-27 §6); without the table the drawn pictures stay.
+// ?pictures=bw|emoji shows the black-and-white or emoji style for comparison.
+await loadVocabulary();
+const pictureVariant = ['bw', 'emoji'].find(name => name === new URLSearchParams(location.search).get('pictures')) || 'color';
 const voice = createChatVoice({ storage: persistence.voiceStorage });
 const metrics = createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 });
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
@@ -142,28 +147,28 @@ fetch('/settings').then(r => r.json()).then(s => {
   window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
 
-function tile(label, type, action, position, say) {
+const pictureOf = new WeakMap();
+function tile(label, type, action, position, say, pick = {}) {
   const el = document.createElement(action ? 'button' : 'div');
   el.className = `tile ${type}${action ? ' dwell' : ''}`;
   el.style.gridColumn = String(position[0] + 1); el.style.gridRow = String(position[1] + 1);
   if (action) { el.type = 'button'; el.addEventListener('click', action); }
   const text = document.createElement('span'); text.className = 'label'; text.textContent = label;
-  el.appendChild(text); attachSymbol(el, { label, type, say }); return el;
+  el.appendChild(text);
+  if (hasVocabulary()) pictureOf.set(el, { label, type, say, symbol: pick.symbol, symbolId: pick.symbolId });
+  else attachSymbol(el, { label, type, say });
+  return el;
+}
+// Pictures are planned for the whole page at once so no two tiles share one.
+function paintPictures(grid) {
+  if (!hasVocabulary()) return;
+  const tiles = [...grid.children];
+  const plan = planPictures(tiles.map(el => pictureOf.get(el) || { type: 'rest' }), { variant: pictureVariant });
+  tiles.forEach((el, i) => attachPicture(el, plan[i], fitTile));
 }
 function go(next) { screen = next; gridKey = ''; renderGrid(controller.state); }
 function fitLabels() {
-  for (const el of $('grid').querySelectorAll('.tile:not(.rest)')) {
-    const label = el.querySelector('.label');
-    el.style.fontSize = ''; delete el.dataset.fontReduced;
-    const style = getComputedStyle(el), padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-    const symbolHeight = el.querySelector('.chat-symbol')?.getBoundingClientRect().height || 0;
-    const symbolSpace = symbolHeight ? symbolHeight + (parseFloat(style.rowGap) || 0) : 0;
-    let size = parseFloat(style.fontSize);
-    while (size > 44 && (label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > el.clientHeight - padding - symbolSpace + 1)) {
-      size = Math.max(44, size - 2); el.style.fontSize = `${size}px`;
-    }
-    if (size < 74) el.dataset.fontReduced = 'true';
-  }
+  for (const el of $('grid').querySelectorAll('.tile:not(.rest)')) fitTile(el);
 }
 function renderGrid(state) {
   const key = `${screen}|${state.turn}|${state.choices.map(c => c.id).join(',')}|${state.phase === 'Capturing question' || state.phase === 'Preparing'}|${stories.length}`;
@@ -186,7 +191,7 @@ function renderGrid(state) {
       const selectedTurn = state.turn;
       const el = tile(item.label, screen === 'chat' && state.choices.length ? 'response' : 'static', () => {
         if (item.id) controller.select(item.id, selectedTurn); else controller.sayFixed(item.say);
-      }, positions[i], item.say);
+      }, positions[i], item.say, item);
       if (item.id) el.dataset.choiceId = item.id;
       grid.append(el);
     } else grid.append(tile(screen === 'news' && i === 0 ? 'Your stories go here' : '', screen === 'news' ? 'emptyStory' : 'waiting', null, positions[i]));
@@ -195,6 +200,7 @@ function renderGrid(state) {
     ? [['Tell me more', () => controller.sayFixed('Tell me more.')], ['Reactions', () => go('reactions')], ['My news', () => go('news')], ['Help me say it', () => go('repair')]]
     : [['Tell me more', () => controller.sayFixed('Tell me more.')], ['Reactions', () => go('reactions')], ['My news', () => go('news')], ['Back to Chat', () => go('chat')]];
   bottom.forEach(([label, action], i) => grid.append(tile(label, i === 0 ? 'static' : 'route', action, [i, 2])));
+  paintPictures(grid);
   requestAnimationFrame(fitLabels);
 }
 controller.subscribe(state => {

@@ -144,8 +144,10 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     assert.equal(await page.locator('.rest .chat-symbol').count(), 0); assert.equal(await page.locator('.response .chat-symbol').count(), 2);
     const bad = await page.locator('.tile:not(.rest):not(.waiting) .label').evaluateAll(labels => labels.filter(label => {
       const tile = label.parentElement, style = getComputedStyle(tile), icon = tile.querySelector('.chat-symbol');
-      const height = tile.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - (icon?.getBoundingClientRect().height || 0) - (icon ? parseFloat(style.rowGap) || 0 : 0);
-      return parseFloat(style.fontSize) < 44 || label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > height + 1;
+      // A picture beside the words takes width, not height (public/chat/tile-fit.js).
+      const art = icon && !tile.classList.contains('beside') ? icon.getBoundingClientRect().height + (parseFloat(style.rowGap) || 0) : 0;
+      const height = tile.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - art;
+      return parseFloat(style.fontSize) < 44 || label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > label.clientHeight + 1 || label.getBoundingClientRect().height > height + 1;
     }).map(label => label.textContent));
     assert.deepEqual(bad, []);
     const screenshot = `chat-${size.width}.png`;

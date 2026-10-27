@@ -183,11 +183,15 @@ export async function measureChatTiles(page) {
     viewport: { innerWidth, innerHeight, screenWidth: screen.width, screenHeight: screen.height, devicePixelRatio, frame },
     tiles: [...document.querySelectorAll('#grid button.tile')].map(node => {
       const label = node.querySelector('.label'), icon = node.querySelector('.chat-symbol'), style = getComputedStyle(node);
-      const available = node.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
-        - (icon ? icon.getBoundingClientRect().height + parseFloat(style.rowGap) : 0);
+      // A picture BESIDE the words (board law, public/chat/tile-fit.js) takes width, not height;
+      // a stacked or column picture takes height. Fractional boxes, so rounding never decides.
+      const art = icon && getComputedStyle(icon).display !== 'none' ? icon.getBoundingClientRect() : null;
+      const available = node.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+        - (art && !node.classList.contains('beside') ? art.height + parseFloat(style.rowGap || 0) : 0);
+      const height = label ? label.getBoundingClientRect().height : 0;
       return { text: (label?.textContent || '').trim().slice(0, 40), font: parseFloat(style.fontSize),
         clientWidth: label?.clientWidth ?? 0, scrollWidth: label?.scrollWidth ?? 0, available: Math.round(available * 10) / 10, scrollHeight: label?.scrollHeight ?? 0,
-        fits: !!label && label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= available + 1 };
+        fits: !!label && label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= label.clientHeight + 1 && height <= available + 1 };
     }),
   }), frame);
 }

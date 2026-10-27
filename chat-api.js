@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { isLoopback } = require('./update.js');
 const { createChoicesAdapter } = require('./chat-choices.js');
+const { withSymbols } = require('./chat-symbols.js');
 
 const PREFIX = '/chat/api';
 const DEFAULTS = Object.freeze({ sessions: 2, idleMs: 90000, lifetimeMs: 1800000,
@@ -115,10 +116,11 @@ function cleanText(value, cap) {
   if (typeof value !== 'string' || !value.trim() || value.length > cap || /[\x00-\x08\x0b-\x1f<>]/.test(value)) return null;
   return value.trim().replace(/\s+/g, ' ');
 }
+// Every choice leaves the hub with a decorative picture: { symbol, symbolId }.
 function choiceList(items) {
-  return items.map((item, index) => typeof item === 'string' ?
+  return withSymbols(items.map((item, index) => typeof item === 'string' ?
     { id: `choice-${index + 1}`, label: item, say: item } :
-    { id: `choice-${index + 1}`, label: item.label, say: item.say });
+    { id: `choice-${index + 1}`, label: item.label, say: item.say, ...(typeof item.symbol === 'string' ? { symbol: item.symbol } : {}) }));
 }
 function safeTimings(value) {
   const result = {};
@@ -348,7 +350,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       if (controller.signal.aborted) throw fault(502, 'choices-unavailable');
       json(res, 200, { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
-        choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300) }))),
+        choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol }))),
         timings: { totalMs: Math.max(0, clock() - began) } });
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }
     finally { clearTimeout(timeout); requests.delete(controller); res.off('close', cancel); }
