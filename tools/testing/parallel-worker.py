@@ -40,6 +40,29 @@ def release_owned_job(job,child,record,admitted):
 
 def sha(file):return hashlib.sha256(pathlib.Path(file).read_bytes()).hexdigest()
 
+# Host gates (tools/era-gate.sh) admit by slot: one file per running gate under
+# GATE_SLOTS, counted toward ERA_GATE_MAX_GATES, a young one's lanes set aside
+# from MemAvailable. The gate in this job runs behind a private /tmp and PID
+# namespace, so it cannot write one the host can check; the host worker writes
+# it, keyed by the namespace launcher's host pid and start ticks, in the
+# gate's own format and under its registry lock.
+GATE_SLOTS=pathlib.Path('/tmp/era-gate-slots')
+def register_gate_slot(record,lanes,hub,job_id,slots=GATE_SLOTS):
+    slots=pathlib.Path(slots);slots.mkdir(parents=True,exist_ok=True)
+    fields=[('pid',record['pid']),('start',record['startTicks']),('lanes',lanes),('at',int(time.time())),('hub',hub),('isolated',1),('runner',job_id)]
+    with (slots/'.lock').open('a') as held:
+        fcntl.flock(held,fcntl.LOCK_EX)
+        temp=slots/('.'+str(record['pid'])+'.tmp');temp.write_text(''.join(f'{key}={value}\n' for key,value in fields))
+        temp.replace(slots/str(record['pid']))
+    return slots/str(record['pid'])
+
+def release_gate_slot(record,slots=GATE_SLOTS):
+    # Only the slot that still names this exact launcher: never another gate's.
+    file=pathlib.Path(slots)/str(record['pid'])
+    try:
+        if file.read_text().splitlines()[:2]==['pid='+str(record['pid']),'start='+str(record['startTicks'])]:file.unlink()
+    except FileNotFoundError:pass
+
 def run_internal(job,command):
     request=read(job/'request.json');cli=job/'control/parallel-gate.mjs'
     result=subprocess.run([request['runtime']['node'],str(cli),command,str(job)],text=True,capture_output=True,env={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C.UTF-8','TZ':'UTC'})
@@ -373,6 +396,8 @@ def worker(job):
         sampling_stop.set();sampler.join();monitor.sample()
         child,output=start_namespace(job,masks_for(job,manifest))
         namespace_record=identity(child.pid)
+        try:register_gate_slot(namespace_record,resources.get('gateLanes',1),manifest['hub'],request['id'])
+        except Exception as error:write(job/'gate-slot-error.json',{'error':str(error)})
         sampling_stop.clear();sampler=threading.Thread(target=sample_memory,daemon=True);sampler.start()
         status(job,'running',namespace=namespace_record)
         try:
@@ -393,6 +418,7 @@ def worker(job):
             observations=monitor.summary();write(job/'memory-observations.json',observations)
             result['memoryObservations']=observations;write(job/'result.json',result)
         release_owned_job(job,child,namespace_record,admitted)
+        if namespace_record:release_gate_slot(namespace_record)
         write(job/'done.json',{'status':read(job/'status.json')['status'],'finished':time.time()})
 
 if __name__=='__main__':

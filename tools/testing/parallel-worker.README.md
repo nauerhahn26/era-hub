@@ -34,19 +34,24 @@ and their linked libraries are copied and hashed at preparation time. The copied
 control code is frozen at enqueue. Every Git clone has its own complete objects;
 the gate cannot change the original source repositories.
 
-One isolated lane permanently reserves the second lane for the existing legacy
-gate. The driver does not acquire, signal, reorder, or edit legacy jobs. Isolated
-jobs wait in enqueue order and require at least three GiB available RAM and three
-GiB free disk. Admission budgets two GiB for the worker plus one GiB host reserve;
-this is not an enforced memory cap. That budget covers one suite at a time, so the
-worker hands the gate `ERA_GATE_LANES=1` (recorded as `resources.gateLanes`): a
-second two-lane gate beside a legacy one would push the host into swap. Legacy
-gates keep `era-gate.sh`'s default of two. The worker uses up to two CPUs at nice19,
-leaving at least half the allowed CPUs outside its affinity. Hosts with only two
-or three allowed CPUs use one worker CPU. Its sampled
-descendant RSS, host minimum available memory, swap, and memory pressure are
-reported so the pilot can establish whether the shared-host budget is adequate.
-RSS samples can miss intervening peaks and count shared pages more than once.
+A running isolated job shares one gate count with the host's gates: while its
+namespace runs, the host worker holds a slot for it in `/tmp/era-gate-slots` (the
+namespace launcher's host pid, one lane, marked isolated), so host gates count it
+toward `ERA_GATE_MAX_GATES` (default 2) and set its lane's memory aside for its
+first two minutes. The gate inside takes no host lock and never waits on host
+admission. The driver does not acquire, signal, reorder, or edit legacy jobs.
+Isolated jobs wait in enqueue order and require at least three GiB available RAM
+and three GiB free disk. Admission budgets two GiB for the worker plus one GiB
+host reserve; this is not an enforced memory cap. That budget covers one suite at
+a time, so the worker hands the gate `ERA_GATE_LANES=1` (recorded as
+`resources.gateLanes`): a second two-lane gate beside a legacy one would push the
+host into swap. Legacy gates keep `era-gate.sh`'s default of two. The worker uses
+up to two CPUs at nice19, leaving at least half the allowed CPUs outside its
+affinity. Hosts with only two or three allowed CPUs use one worker CPU. Its
+sampled descendant RSS, host minimum available memory, swap, and memory pressure
+are reported so the pilot can establish whether the shared-host budget is
+adequate. RSS samples can miss intervening peaks and count shared pages more than
+once.
 
 The worker has private PID, mount, network, `/proc`, `/tmp`, `/var/tmp`, and shared
 memory mounts. It uses the same nonzero UID with all capabilities dropped. Its

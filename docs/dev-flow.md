@@ -62,6 +62,27 @@ the same day's suite speedups, 33 min before them. A TERM to the gate's pid now
 stops every suite within seconds. Each gate leaves `gate/results.jsonl`, one
 line per suite with its lane and seconds.
 
+Gates no longer lock each other out (10/27). Each gate re-executes itself in a
+private network namespace (loopback plus a test link, no route out, no
+capabilities), so its 8378 hub and every suite's fixed port are its own, and it
+starts when admitted: fewer than `ERA_GATE_MAX_GATES` (default 2) other gates
+running, none in the same checkout, and `MemAvailable` of 1 GiB per lane plus
+1 GiB (with room for one lane only it runs one lane and says so). Otherwise it
+waits and prints `== era-gate: waiting for a slot: N gates running, M GiB free
+(why) ==` once a minute; a gate admitted under 2 minutes ago has its lanes'
+memory set aside first, since it has not reached its peak. Running gates are
+files in `/tmp/era-gate-slots/<pid>`, and a job of the isolated runner holds one
+too, so it counts. An admitted gate holds `/tmp/era-gate.lock` shared; a gate
+that cannot unshare says so and falls back to holding it exclusively (it waits
+for every other gate and runs alone), and so does every branch whose
+`era-gate.sh` predates this: sync master before gating beside other sessions.
+A running gate's hub and suite ports live in that gate's network namespace; to
+reach them from a shell, as the same user, run
+`nsenter --user --net --preserve-credentials -t <gate pid> curl -s http://127.0.0.1:8378/settings`
+(the gate pid is its file name in `/tmp/era-gate-slots`; without
+`--preserve-credentials` nsenter tries to become root inside and stops at
+"setgroups failed").
+
 Stand-in providers never wait: the clothing worker's 5 s photo spacing and 3 s
 retry gap are 0 when `ERA_AI_URL` names this machine (there is no real provider
 to protect) and unchanged for every family hub; no environment variable can
@@ -71,7 +92,7 @@ For the dev loop, run only what a change touches, with no stamp:
 
 ```
 node tools/test-suite.mjs plan --base master            # which suites, and why
-node tools/test-suite.mjs queue --affected --base master # run them, in series, under the gate lock
+node tools/test-suite.mjs queue --affected --base master # run them, in series, through gate admission
 node tools/test-suite.mjs status                        # jobs under ~/.local/state/era-tests/
 ```
 

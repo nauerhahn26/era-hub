@@ -146,6 +146,37 @@ finally:
   assert.equal(result.status,0,result.stderr || result.stdout || result.error?.message);
 });
 
+test('a running isolated job holds a host gate slot, and cleanup removes only its own',t=>{
+  // Host gates (tools/era-gate.sh) count it toward ERA_GATE_MAX_GATES; the gate
+  // inside cannot write it, behind a private /tmp and PID namespace.
+  const slots=path.join(scratch(t),'slots');
+  const program=`
+import pathlib,runpy,subprocess,sys
+worker=runpy.run_path(sys.argv[1]);slots=pathlib.Path(sys.argv[2])
+child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])
+try:
+    record=worker['identity'](child.pid)
+    file=worker['register_gate_slot'](record,1,'/owned/job/workspace/era-hub','gate-x',slots)
+    lines=file.read_text().splitlines()
+    assert file==slots/str(child.pid),file
+    assert lines[:3]==['pid='+str(child.pid),'start='+record['startTicks'],'lanes=1'],lines
+    for line in ['hub=/owned/job/workspace/era-hub','isolated=1','runner=gate-x']:assert line in lines,lines
+    assert any(line.startswith('at=') and line[3:].isdigit() for line in lines),lines
+    worker['release_gate_slot']({**record,'startTicks':str(int(record['startTicks'])+1)},slots)
+    assert file.exists(),'a slot naming another process was removed'
+    worker['release_gate_slot'](record,slots);assert not file.exists()
+    worker['release_gate_slot'](record,slots)
+finally:
+    child.kill();child.wait()
+`;
+  const result=spawnSync('python3',['-c',program,PYTHON,slots],{encoding:'utf8',timeout:15000,env:{PATH:'/usr/sbin:/usr/bin:/sbin:/bin'}});
+  assert.equal(result.status,0,result.stderr || result.stdout || result.error?.message);
+  const source=fs.readFileSync(PYTHON,'utf8'),worker=source.slice(source.indexOf('def worker('));
+  const launched=worker.indexOf('namespace_record=identity(child.pid)'),registered=worker.indexOf('register_gate_slot(');
+  assert.ok(launched>0 && registered>launched,'the job registers once its namespace launcher is captured');
+  assert.ok(worker.indexOf('release_gate_slot(',worker.indexOf('finally:'))>0,'and releases its slot in cleanup');
+});
+
 test('isolated legacy cleanup cannot see the host and keeps its port and temporary lock independent',t=>{
   const directory=fs.mkdtempSync(path.join(process.env.ERA_PARALLEL_JOB_DIR || stateDirectory(),'namespace-test-'));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));

@@ -2245,6 +2245,31 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/gate-admission.test.mjs",
+      "purpose": "Gate admission instead of exclusion: slot registry, memory-sized lanes, starting gates' memory set aside, stale slots, the shared and exclusive gate lock, a private network namespace per gate, and isolated-runner jobs counted but not re-admitted",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/era-gate.sh",
+        "era-hub/tools/testing/parallel-worker.py"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data",
+        "owned-process-tree",
+        "owned-namespace-canary",
+        "private-mount-network-namespaces"
+      ],
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/gate-safety.test.mjs",
       "purpose": "Reject unsafe ports/data, preserve process ownership and full-gate evidence",
       "group": "test-infrastructure",
