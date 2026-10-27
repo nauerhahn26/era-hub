@@ -927,6 +927,29 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-reply-bakeoff.test.mjs",
+      "purpose": "Reply-model bake-off tool: streamed choice parsing, quality scoring, cost summary and a self-test against a fake streaming server",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module and HTTP integration",
+      "dependencies": [
+        "era-hub/tools/chat-reply-bakeoff.mjs",
+        "era-hub/chat-choices.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "provider-doubles"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-config.test.mjs",
       "purpose": "Literal private configuration parsing, precedence, bounds and disabled behavior",
       "group": "chat",
@@ -1014,6 +1037,31 @@
       ],
       "resources": [
         "python3",
+        "owned-loopback-services",
+        "owned-python-children",
+        "synthetic-audio"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-bakeoff-selftest.test.mjs",
+      "purpose": "Streaming transcription bake-off tool: every wire protocol against loopback fakes, release/finalize/close order, partial and final timing, word/meaning/name scoring and cost",
+      "group": "chat-tools",
+      "lane": "linux",
+      "level": "subprocess protocol and metrics",
+      "dependencies": [
+        "era-hub/tools/chat-bakeoff.py",
+        "era-hub/tools/chat-benchmark.py"
+      ],
+      "resources": [
+        "uv-offline-cache",
         "owned-loopback-services",
         "owned-python-children",
         "synthetic-audio"
@@ -4184,6 +4232,7 @@
         "era-hub:tests/chat-api.test.mjs",
         "era-hub:tests/chat-browser.test.mjs",
         "era-hub:tests/chat-choices-adapter.test.mjs",
+        "era-hub:tests/chat-reply-bakeoff.test.mjs",
         "era-hub:tests/chat-config.test.mjs",
         "era-hub:tests/chat-metrics.test.mjs",
         "era-hub:tests/chat-native-speech.test.mjs",
@@ -4346,6 +4395,7 @@
         "era-hub:tests/chat-api.test.mjs",
         "era-hub:tests/chat-browser.test.mjs",
         "era-hub:tests/chat-choices-adapter.test.mjs",
+        "era-hub:tests/chat-reply-bakeoff.test.mjs",
         "era-hub:tests/chat-config.test.mjs",
         "era-hub:tests/chat-metrics.test.mjs",
         "era-hub:tests/chat-native-speech.test.mjs",
