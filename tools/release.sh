@@ -101,8 +101,13 @@ ROOT="$(dirname "$HUB")"
 # The Windows QA host is an on-demand server (10/5, era-family/tools/vm/qa.sh). Hold ONE
 # host across this cut's VM legs — including leg C after signing — and destroy it however
 # release.sh exits (green, red, dry-run or Ctrl-C), so a release never leaves it billing.
+# Two releases at once (10/27) each hold a host of their own: qa.sh's lease is release-<pid>,
+# and qa.sh up makes a second host when the first is held (QA_MAX_HOSTS). The VM run's log
+# is per release too, never one /tmp file two releases would grep each other's verdict in.
 export QA_KEEP=1
 trap 'QA_KEEP=0 bash "$ROOT/era-family/tools/vm/qa.sh" down || true' EXIT
+VMLOG="/tmp/era-release-vm-e2e.$$.txt"
+
 DIST="$ROOT/dist/release-$V"
 HEAD="$(git -C "$HUB" rev-parse HEAD)"
 TREE="$(git -C "$HUB" rev-parse 'HEAD^{tree}')"
@@ -248,8 +253,8 @@ if [ "$PATCH" = 1 ]; then
   TAG="$(python3 -c "import json;print(json.load(open('$DIST/latest.json'))['installer'])")"
 
   echo "== 3/4 VM e2e (leg B: $TAG's installer fresh on a pristine Windows 10, self-updating to $V — the only path a patch takes; guest profile $VMPROFILE) =="
-  bash "$HUB/tools/vm-e2e.sh" "$DIST" --only b --profile "$VMPROFILE" | tee /tmp/era-release-vm-e2e.txt | tail -20
-  grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
+  bash "$HUB/tools/vm-e2e.sh" "$DIST" --only b --profile "$VMPROFILE" | tee "$VMLOG" | tail -20
+  grep -q "^== vm-e2e: .* 0 failed ==" "$VMLOG" || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
 
   if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V (patch, installer $TAG) in $DIST — not tagged, not published."; exit 0; fi
   echo "== 4/4 tag + release =="
@@ -280,8 +285,8 @@ else
     fi
 
     echo "== 3/5 VM e2e (the candidate installed and driven on a pristine Windows 10; the previous release self-updating to it; guest profile $VMPROFILE) =="
-    bash "$HUB/tools/vm-e2e.sh" "$DIST" --profile "$VMPROFILE" | tee /tmp/era-release-vm-e2e.txt | tail -20
-    grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
+    bash "$HUB/tools/vm-e2e.sh" "$DIST" --profile "$VMPROFILE" | tee "$VMLOG" | tail -20
+    grep -q "^== vm-e2e: .* 0 failed ==" "$VMLOG" || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
 
     if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V in $DIST with an UNSIGNED installer — signing not attempted, not published."; exit 0; fi
   fi

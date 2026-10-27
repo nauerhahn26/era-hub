@@ -52,6 +52,16 @@
 # Needs era-family/data/vm.env (QA host + guest credentials) and the driver
 # scripts in era-family/tools/vm. Output: gate/vm-e2e/ (screenshots, logs).
 #
+# TWO RUNS AT ONCE (10/27): up to QA_MAX_HOSTS (default 2) runs from different trees
+# go side by side, each on its own QA host (qa.sh up makes a second host when the first
+# is held). A run takes a numbered run slot (/tmp/era-vm-e2e.lock is slot 1, as before;
+# slot n>1 is /tmp/era-vm-e2e.<n>.lock), drives THE host qa.sh up named on its last line
+# (QA_HOST=..., exported as VM_DROPLET, which env.sh keeps over data/vm.env's), and opens
+# its own DevTools tunnel on a local port of its own (9222 for slot 1, 9232 for slot 2,
+# the next free one when taken), handed to the legs as VM_CDP; cleanup kills that
+# tunnel's pid and nothing else. One run at a time per tree (gate/vm-e2e) and per dist
+# dir ($DIST/VM-GREEN): a second one waits.
+#
 # VM-GREEN — the marker release.sh will not publish without. A run that finishes
 # with 0 failed writes $DIST/VM-GREEN naming the legs that actually ran
 # (legs=a,b for a full run, legs=b for the patch shape's --only b), the sha256 of
@@ -77,6 +87,13 @@ if [ "$POST" = 1 ] && [ "$PROFILE" != full ]; then
 fi
 # ---- end of arguments ----
 FEED_PORT=8427
+# one run at a time per tree (it owns gate/vm-e2e) and per dist dir (it owns $DIST/VM-GREEN)
+VM_LOCKS="${ERA_VM_E2E_LOCKS:-/tmp}"   # a seam for tests/vm-e2e.test.mjs; the real locks live in /tmp
+lock_key() { printf '%s' "$(realpath -m "$1")" | sha256sum | cut -c1-16; }
+exec 7>"$VM_LOCKS/era-vm-e2e-tree-$(lock_key "$HUB").lock"
+flock -w 7200 7 || { echo "vm-e2e: another run from this tree ($HUB) holds gate/vm-e2e"; exit 1; }
+exec 8>"$VM_LOCKS/era-vm-e2e-dist-$(lock_key "$DIST").lock"
+flock -w 7200 8 || { echo "vm-e2e: another run on $DIST holds its VM-GREEN"; exit 1; }
 OUT="$HUB/gate/vm-e2e"; rm -rf "$OUT"; mkdir -p "$OUT"
 # The marker describes the run that is about to happen and nothing else: a stale
 # one from an earlier cut of the same version would otherwise vouch for bytes
@@ -87,9 +104,25 @@ OUT="$HUB/gate/vm-e2e"; rm -rf "$OUT"; mkdir -p "$OUT"
 # that predates the field (before the 9/26 rename) is a New-ERA-Setup.exe cut.
 exe_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("installer_file") or "New-ERA-Setup.exe")' "$1/latest.json" 2>/dev/null || echo New-ERA-Setup.exe; }
 
-# machine-wide: one VM, one run at a time (the 8/24 two-session lesson)
-exec 9>/tmp/era-vm-e2e.lock
-flock -w 7200 9 || { echo "vm-e2e: another run holds the VM lock"; exit 1; }
+# ---- run slot (tests/vm-e2e.test.mjs runs this block as bash) ----
+# One run per QA host (the 8/24 two-session lesson), up to QA_MAX_HOSTS hosts at once:
+# a run holds slot n's lock for its whole life (slot 1 = the historic /tmp/era-vm-e2e.lock,
+# which the windows runner's legacy slot also holds); all slots busy = wait, up to 2 h.
+SLOTS="${QA_MAX_HOSTS:-2}"; SLOT=""; slot_t0=$(date +%s); slot_said=""; slot_wait="${ERA_VM_SLOT_WAIT:-7200}"
+while :; do
+  for n in $(seq 1 "$SLOTS"); do
+    if [ "$n" = 1 ]; then slot_lock="${VM_LOCKS:-/tmp}/era-vm-e2e.lock"; else slot_lock="${VM_LOCKS:-/tmp}/era-vm-e2e.$n.lock"; fi
+    exec 9>"$slot_lock"
+    if flock -n 9; then SLOT=$n; break; fi
+    exec 9>&-
+  done
+  [ -n "$SLOT" ] && break
+  [ -n "$slot_said" ] || { echo "vm-e2e: all $SLOTS VM run slots are busy (QA_MAX_HOSTS=$SLOTS) - waiting"; slot_said=1; }
+  [ $(( $(date +%s) - slot_t0 )) -ge "$slot_wait" ] && { echo "vm-e2e: all $SLOTS VM run slots stayed busy for $(( slot_wait / 60 )) min (QA_MAX_HOSTS=$SLOTS)"; exit 1; }
+  sleep 20
+done
+echo "-- vm-e2e run slot $SLOT of $SLOTS"
+# ---- end of run slot ----
 
 if [ "$POST" = 1 ]; then
   # leg C downloads the PUBLISHED asset from the real website; all it needs from
@@ -140,9 +173,24 @@ fi
 # The Windows QA host is an on-demand server (10/5, era-family/tools/vm/qa.sh): bring it
 # up (reuses one that is already running) BEFORE env.sh reads its address, and destroy it
 # on any exit — unless the caller holds it (release.sh sets QA_KEEP=1 across its legs).
-bash "$VMT/qa.sh" up || { echo "vm-e2e: could not bring the QA host up (era-family/tools/vm/qa.sh)"; exit 3; }
+QA_UP="$OUT/qa-up.txt"
+bash "$VMT/qa.sh" up | tee "$QA_UP" || { echo "vm-e2e: could not bring the QA host up (era-family/tools/vm/qa.sh)"; exit 3; }
 qa_release(){ bash "$VMT/qa.sh" down || true; }
 trap qa_release EXIT
+# ---- the QA host this run leased (tests/vm-e2e.test.mjs runs this block as bash) ----
+# qa.sh up's last line names THE host it leased to this run; exported, VM_DROPLET beats
+# data/vm.env's in env.sh (a scripted up no longer rewrites that shared file: two runs
+# would point each other at the wrong host). No such line: env.sh's file value stands.
+QA_LINE="$(grep '^QA_HOST=' "$QA_UP" | tail -1)"
+QA_HOST="$(sed -n 's/^QA_HOST=\([^ ]*\).*/\1/p' <<< "$QA_LINE")"
+QA_HOST_ID="$(sed -n 's/.* QA_HOST_ID=\([^ ]*\).*/\1/p' <<< "$QA_LINE")"
+if [ -n "$QA_HOST" ]; then
+  export VM_DROPLET="$QA_HOST"
+  echo "-- QA host ${QA_HOST_ID:-?} leased to this run"
+else
+  echo "vm-e2e: qa.sh up named no host (no QA_HOST= line) - env.sh takes the address from data/vm.env"
+fi
+# ---- end of the QA host this run leased ----
 . "$VMT/env.sh" || exit 2
 if [ "$POST" = 1 ]; then
   echo "== vm-e2e: post-publish leg C only — the published download, fetched and opened on the guest; expected sha from $DIST/checksums.txt =="
@@ -181,13 +229,32 @@ else
     | grep -q "$VER" || { echo "vm-e2e: feed did not come up"; exit 3; }
 fi
 
-# local :9222 -> QA host :9223 -> (vm.sh cdp-forward, through the guest's sshd,
-# re-made after every kiosk launch) -> the kiosk's DevTools port
-echo "-- DevTools tunnel :9222 (local) -> QA host :9223"
-pkill -f "^ssh -f -N -L 9222:127.0.0.1:9223" 2>/dev/null; sleep 0.5
-ssh -f -N -L 9222:127.0.0.1:9223 -o ExitOnForwardFailure=yes -i "$VM_SSH_KEY" root@$VM_DROPLET || { echo "vm-e2e: tunnel failed"; exit 3; }
-cleanup() { pkill -f "^ssh -f -N -L 9222:127.0.0.1:9223" 2>/dev/null; $DROP "pkill -f '^python3 /root/qa/feed.py'; pkill -f '^ssh -p $VM_GUEST_SSH_PORT .*-L 9223:'" 2>/dev/null; qa_release; }
+# ---- the DevTools tunnel (tests/vm-e2e.test.mjs runs this block as bash) ----
+# local :CDP_PORT -> QA host :9223 -> (vm.sh cdp-forward, through the guest's sshd,
+# re-made after every kiosk launch) -> the kiosk's DevTools port. The local port is this
+# run's own (9222 for slot 1, 9232 for slot 2; the next free one when taken, checked with
+# ss) and the tunnel is this run's own ssh child: cleanup kills THAT pid and nothing else
+# (a pattern kill would take another run's tunnel down). The QA host side (feed.py, the
+# guest -L 9223 forward) is per host, so its pkill over $DROP touches this run's host only.
+cdp_port_free() { ! ss -Hltn "sport = :$1" 2>/dev/null | grep -q .; }
+TUNNEL_PID=""; CDP_PORT=$(( ${VM_CDP_BASE:-9222} + 10 * (${SLOT:-1} - 1) ))
+
+for try in 1 2 3 4 5; do
+  while ! cdp_port_free "$CDP_PORT"; do CDP_PORT=$((CDP_PORT + 1)); done
+  ssh -N -L "127.0.0.1:$CDP_PORT:127.0.0.1:9223" -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+    -i "$VM_SSH_KEY" root@$VM_DROPLET </dev/null &
+  TUNNEL_PID=$!
+  for i in $(seq 1 100); do cdp_port_free "$CDP_PORT" || break; kill -0 "$TUNNEL_PID" 2>/dev/null || break; sleep 0.2; done
+  kill -0 "$TUNNEL_PID" 2>/dev/null && ! cdp_port_free "$CDP_PORT" && break
+  kill "$TUNNEL_PID" 2>/dev/null; TUNNEL_PID=""; CDP_PORT=$((CDP_PORT + 1))   # taken under us: next port
+done
+[ -n "$TUNNEL_PID" ] || { echo "vm-e2e: tunnel failed"; exit 3; }
+echo "-- DevTools tunnel :$CDP_PORT (local, ssh pid $TUNNEL_PID) -> QA host :9223"
+export VM_CDP="http://127.0.0.1:$CDP_PORT"
+cleanup() { [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null; $DROP "pkill -f '^python3 /root/qa/feed.py'; pkill -f '^ssh -p $VM_GUEST_SSH_PORT .*-L 9223:'" 2>/dev/null; qa_release; }
 trap cleanup EXIT
+# ---- end of the DevTools tunnel ----
+
 
 export VM_OUT="$OUT" VM_GUEST_USER VM_CANDIDATE_VERSION="${VER:-}" VM_CANDIDATE_BUILD="${BUILD:-}" VM_FEED_PORT="$FEED_PORT"
 export VM_DIST="$DIST"   # leg C reads the expected sha256 out of $DIST/checksums.txt

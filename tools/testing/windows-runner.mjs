@@ -134,7 +134,8 @@ export function bindVmRunner(source) {
     if(matches!==1)throw Error('Unsupported Windows control format');
     source=source.replace(pattern,replacement);
   };
-  replace('exec 9>/tmp/era-vm-e2e.lock','exec 9>"$WINDOWS_JOB_DIR/vm.lock"');
+  // the stock run-slot block (shared /tmp slot locks) becomes the job's own lock
+  replace(/^# ---- run slot [^\n]*\n[\s\S]*?^# ---- end of run slot ----$/m,'exec 9>"$WINDOWS_JOB_DIR/vm.lock"\nflock -w 7200 9 || { echo "vm-e2e: another run holds the VM lock"; exit 1; }');
   replace('OUT="$HUB/gate/vm-e2e"; rm -rf "$OUT"; mkdir -p "$OUT"','OUT="$WINDOWS_JOB_DIR/vm-out"; [ ! -e "$OUT" ] || { echo "owned output already exists"; exit 2; }; mkdir -p "$OUT"');
   replace(/^bash "\$VMT\/qa.sh" up[^\n]*$/m,line=>line+'\npython3 -B "$WINDOWS_TRANSPORT" bootstrap || exit 3');
   replace('qa_release(){ bash "$VMT/qa.sh" down || true; }','qa_release(){ :; } # The managed worker owns host teardown after every required phase.');
@@ -142,7 +143,8 @@ export function bindVmRunner(source) {
   if(source.split(bareRsync).length<3)throw Error('Unsupported Windows artifact transport');
   source=source.replaceAll(bareRsync,'rsync -q -e "ssh -F /dev/null -i $VM_SSH_KEY -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -o UserKnownHostsFile=$QA_KNOWN_HOSTS -o GlobalKnownHostsFile=/dev/null"');
   replace(/^  \$DROP "pkill -f[^\n]*\n    \| grep[^\n]*$/m,'  python3 -B "$WINDOWS_TRANSPORT" feed || { echo "owned feed failed"; exit 3; }');
-  const start=source.indexOf('echo "-- DevTools tunnel :9222 (local) -> QA host :9223"');
+  const start=source.indexOf('# ---- the DevTools tunnel ');
+
   const end=source.indexOf('trap cleanup EXIT',start);
   if(start<0 || end<start)throw Error('Unsupported Windows tunnel lifecycle');
   const replacement=`# windows-transport.py owns this job's tunnel and feed exclusively.

@@ -306,3 +306,143 @@ test("release.sh's gate runs fully fresh for a signed cut and cache-aware for a 
     assert.equal(out.trim(), `[${args}]`, patch === "1" ? "a patch" : "a signed cut");
   }
 });
+
+// ---- two QA hosts at once (10/27) ----
+// Two vm-e2e runs (two worktrees, or two releases) go side by side, each on its
+// own QA host. What used to be machine-wide is now per run: the run slot (one
+// numbered lock per host, up to QA_MAX_HOSTS), the host's address (qa.sh up's
+// last line, exported as VM_DROPLET, never the shared vm.env), and the local
+// DevTools tunnel (a port of its own, an ssh child whose pid is the only thing
+// cleanup kills). qa.sh's own rule — a second host when every one is held by a
+// live run, up to QA_MAX_HOSTS — lives in the private repo and is tested there
+// (era-family tools/vm/qa-test.sh, a stub doctl); here the hub side is run as
+// bash against scratch locks, a stub ssh and OS-chosen loopback ports.
+const slotBlock = between(SH, "# ---- run slot", "# ---- end of run slot");
+const hostBlock = between(SH, "# ---- the QA host this run leased", "# ---- end of the QA host this run leased");
+const tunnelBlock = between(SH, "# ---- the DevTools tunnel", "# ---- end of the DevTools tunnel");
+const code = lines.filter((l) => !/^\s*#/.test(l)).join("\n");
+
+test("no shared tunnel is killed by pattern, and the legs get this run's port", () => {
+  assert.doesNotMatch(code, /pkill[^\n]*9222/, "no pkill of a :9222 tunnel left (it would take another run's down)");
+  assert.doesNotMatch(code, /ssh -f /, "the tunnel is a child with a known pid, not a self-backgrounded ssh");
+  assert.doesNotMatch(code, /killall/);
+  assert.match(tunnelBlock, /^cleanup\(\) \{ \[ -n "\$TUNNEL_PID" \] && kill "\$TUNNEL_PID"/m, "cleanup kills the tunnel by its pid");
+  assert.match(tunnelBlock, /export VM_CDP="http:\/\/127\.0\.0\.1:\$CDP_PORT"/, "the legs read the port from VM_CDP");
+  assert.match(tunnelBlock, /trap cleanup EXIT\n# ---- end of the DevTools tunnel/, "the block ends by arming cleanup (the windows runner replaces exactly this span)");
+});
+
+// a scratch run: stub ssh on PATH that serves the -L port it was given until killed
+function scratchTunnel() {
+  const T = fs.mkdtempSync(path.join(os.tmpdir(), "era-vm-tunnel-"));
+  const bin = path.join(T, "bin"); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "ssh"), `#!/bin/bash
+for a in "$@"; do case "$a" in 127.0.0.1:*:127.0.0.1:9223) port="\${a#127.0.0.1:}"; port="\${port%%:*}";; esac; done
+echo "$$ $port" >> ${JSON.stringify(path.join(T, "ssh.log"))}
+exec python3 -c 'import socket,sys,time
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(600)' "$port"
+`, { mode: 0o755 });
+  return { T, bin };
+}
+// a loopback port the OS hands out, held open by a listener for the test's life
+function holdPort() {
+  const r = spawnSync("python3", ["-c", "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])"], { encoding: "utf8" });
+  return Number(r.stdout.trim());
+}
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test("the tunnel takes this run's own port, skips one in use, and cleanup kills only its own pid", async () => {
+  const { T, bin } = scratchTunnel();
+  // occupy a base port with a real listener, so the block must step past it
+  const net = await import("node:net");
+  const busy = net.createServer(); await new Promise((ok) => busy.listen(0, "127.0.0.1", ok));
+  const base = busy.address().port;
+  // a decoy shaped like the OLD shared tunnel: the old pkill pattern would hit it
+  const decoy = spawnSync("bash", ["-c", "(exec -a 'ssh -f -N -L 9222:127.0.0.1:9223 root@qa' sleep 30) >/dev/null 2>&1 & echo $!"], { encoding: "utf8" });
+  const decoyPid = Number(decoy.stdout.trim());
+  try {
+    const script = `set -uo pipefail\nPATH=${JSON.stringify(bin)}:$PATH\nSLOT=1 VM_CDP_BASE=${base} VM_SSH_KEY=/dev/null VM_DROPLET=qa.invalid VM_GUEST_SSH_PORT=2222\n` +
+      `DROP=true; qa_release(){ echo QA_RELEASED; }\n${tunnelBlock}\necho "PORT=$CDP_PORT PID=$TUNNEL_PID CDP=$VM_CDP"\n` +
+      `ss -Hltn "sport = :$CDP_PORT" | grep -q . && echo LISTENING\ntrap - EXIT; cleanup; sleep 0.3; kill -0 "$TUNNEL_PID" 2>/dev/null && echo STILL_UP || echo TUNNEL_GONE`;
+    const r = bash(script);
+    const m = r.out.match(/PORT=(\d+) PID=(\d+) CDP=(\S+)/);
+    assert.ok(m, r.out);
+    const port = Number(m[1]);
+    assert.ok(port > base, `a port in use (${base}) is skipped: got ${port}`);
+    assert.equal(m[3], `http://127.0.0.1:${port}`, "VM_CDP names the run's port");
+    assert.match(r.out, /LISTENING/, "the block waited until the tunnel listened");
+    assert.match(fs.readFileSync(path.join(T, "ssh.log"), "utf8"), new RegExp(`^${m[2]} ${port}$`, "m"), "its pid is the ssh child serving that port");
+    assert.match(r.out, /TUNNEL_GONE/, "cleanup killed the tunnel");
+    assert.match(r.out, /QA_RELEASED/, "and released the host");
+    assert.ok(alive(decoyPid), "a tunnel-shaped process that is not this run's survived cleanup");
+  } finally {
+    busy.close(); try { process.kill(decoyPid); } catch {}
+  }
+});
+
+test("slot 2 starts its tunnel ten ports above slot 1, so two runs never race for one port", () => {
+  const { bin } = scratchTunnel();
+  const base = holdPort();   // free a moment ago; slot 2 asks for base+10
+  const r = bash(`set -uo pipefail\nPATH=${JSON.stringify(bin)}:$PATH\nSLOT=2 VM_CDP_BASE=${base} VM_SSH_KEY=/dev/null VM_DROPLET=qa.invalid VM_GUEST_SSH_PORT=2222\nDROP=true; qa_release(){ :; }\n${tunnelBlock}\necho "PORT=$CDP_PORT"; trap - EXIT; cleanup`);
+  const port = Number((r.out.match(/PORT=(\d+)/) || [])[1]);
+  assert.ok(port >= base + 10 && port < base + 20, r.out);
+});
+
+const slot = (dir, env = "") => bash(`set -uo pipefail\nVM_LOCKS=${JSON.stringify(dir)}\n${env}\n${slotBlock}\necho "SLOT=$SLOT"`);
+test("a run takes the first free run slot; at QA_MAX_HOSTS it waits, then gives up", () => {
+  const D = fs.mkdtempSync(path.join(os.tmpdir(), "era-vm-slot-"));
+  assert.match(slot(D).out, /^SLOT=1$/m, "nothing running: slot 1");
+  assert.match(SH, /slot_lock="\$\{VM_LOCKS:-\/tmp\}\/era-vm-e2e\.lock"/, "slot 1 is the historic lock file (the windows runner's legacy slot holds it)");
+  // hold slot 1 the way a running vm-e2e.sh does, in a child process for the test's life
+  const hold = (n) => {
+    const f = path.join(D, n === 1 ? "era-vm-e2e.lock" : `era-vm-e2e.${n}.lock`);
+    const p = spawnSync("bash", ["-c", `(exec 9>${JSON.stringify(f)}; flock -n 9 && exec sleep 30) >/dev/null 2>&1 & echo $!`], { encoding: "utf8" });
+    return Number(p.stdout.trim());
+  };
+  const h1 = hold(1);
+  try {
+    spawnSync("sleep", ["0.3"]);
+    assert.match(slot(D).out, /^SLOT=2$/m, "slot 1 busy: a second run takes slot 2");
+    const one = slot(D, "QA_MAX_HOSTS=1 ERA_VM_SLOT_WAIT=0");
+    assert.equal(one.code, 1, one.out);
+    assert.match(one.out, /busy \(QA_MAX_HOSTS=1\)/, "QA_MAX_HOSTS=1 is the old one-run rule: " + one.out);
+    const h2 = hold(2);
+    try {
+      spawnSync("sleep", ["0.3"]);
+      const full = slot(D, "ERA_VM_SLOT_WAIT=0");
+      assert.equal(full.code, 1, "both slots busy: no third run: " + full.out);
+    } finally { process.kill(h2); }
+  } finally { process.kill(h1); }
+});
+
+test("the run drives THE host qa.sh up leased it, exported over data/vm.env", () => {
+  const D = fs.mkdtempSync(path.join(os.tmpdir(), "era-vm-host-"));
+  const up = path.join(D, "qa-up.txt");
+  fs.writeFileSync(up, "qa: up: every QA host is held (by 1001:vm-e2e-1) — a host of my own\nqa: up: QA host 192.0.2.2 ready in 90s\nQA_HOST=192.0.2.2 QA_HOST_ID=1002 QA_LEASE=vm-e2e-7\n");
+  const r = bash(`set -uo pipefail\nQA_UP=${JSON.stringify(up)}\nVM_DROPLET=192.0.2.99\n${hostBlock}\ndeclare -p VM_DROPLET`);
+  assert.match(r.out, /declare -x VM_DROPLET="192\.0\.2\.2"/, "exported, so env.sh keeps it over the file: " + r.out);
+  assert.match(r.out, /QA host 1002 leased to this run/);
+  fs.writeFileSync(up, "qa: status line only\n");
+  const none = bash(`set -uo pipefail\nQA_UP=${JSON.stringify(up)}\nunset VM_DROPLET\n${hostBlock}\necho "[\${VM_DROPLET:-unset}]"`);
+  assert.match(none.out, /no QA_HOST= line/, "a qa.sh without the line (an older private repo) says so: " + none.out);
+  assert.match(none.out, /\[unset\]/, "and leaves the address to env.sh's file value");
+  // the order: up (its output kept), then this block, then env.sh reads the address
+  const at = (s) => SH.indexOf(s);
+  assert.ok(at('bash "$VMT/qa.sh" up | tee "$QA_UP"') > 0, "qa.sh up's output is kept in the run's own dir");
+  assert.ok(at('bash "$VMT/qa.sh" up | tee "$QA_UP"') < at("# ---- the QA host this run leased") &&
+    at("# ---- end of the QA host this run leased") < at('. "$VMT/env.sh"'), "up → export → env.sh");
+});
+
+test("one run per tree and per dist; the gate output and VM-GREEN are never shared", () => {
+  assert.match(SH, /exec 7>"\$VM_LOCKS\/era-vm-e2e-tree-\$\(lock_key "\$HUB"\)\.lock"/);
+  assert.match(SH, /exec 8>"\$VM_LOCKS\/era-vm-e2e-dist-\$\(lock_key "\$DIST"\)\.lock"/);
+  assert.ok(SH.indexOf("exec 7>") < SH.indexOf('rm -rf "$OUT"'), "the tree lock is held before gate/vm-e2e is wiped");
+});
+
+test("two releases never share the VM run's verdict file", () => {
+  assert.doesNotMatch(REL, /\/tmp\/era-release-vm-e2e\.txt/, "no fixed /tmp file another release could overwrite mid-grep");
+  assert.match(REL, /^VMLOG="\/tmp\/era-release-vm-e2e\.\$\$\.txt"$/m);
+  const calls = relLines.filter((l) => /tools\/vm-e2e\.sh" "\$DIST" (--only|--profile)/.test(l));
+  assert.equal(calls.length, 2); for (const c of calls) assert.match(c, /\| tee "\$VMLOG" \|/);
+  assert.match(REL, /^export QA_KEEP=1$/m, "release.sh still holds its host across its legs");
+  assert.match(REL, /trap 'QA_KEEP=0 bash "\$ROOT\/era-family\/tools\/vm\/qa\.sh" down \|\| true' EXIT/, "and tears it down on exit");
+});
