@@ -27,6 +27,7 @@ import {
   serialize, sourceReader,
 } from "../tools/testing/classify-suites.mjs";
 import { resolveRoots } from "../tools/testing/suite-runner.mjs";
+import { conflicts } from "../tools/testing/lanes.mjs";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REGISTRY = path.join(HUB, "tools", "testing", "registry.json");
@@ -43,8 +44,16 @@ const ids = (registry, field) => registry.suites.filter((s) => s[field] === true
 // clothing suite under a preload hook that logged every cutOut call:
 // clothing.test.mjs 24 in 350 s (it also requires segment.js itself),
 // clothing-accessories 11 in 181 s, clothing-responsive 6 in 58 s. clothing-share (2) and
-// clothing-weather (1) touch it for a second or two and are not heavy.
+// clothing-weather (1) touch it for a second or two and are not heavy for that.
 const SEGMENTATION = [id("clothing"), id("clothing-accessories"), id("clothing-responsive")].sort();
+// Heavy by memory (measured 10/27, peak RSS of the suite and everything it
+// started): clothing-share about 440 MB (in-process builds plus a hub of its
+// own), drawing-ui and play-ui 650-880 MB each (one Chromium plus a hub of
+// their own for the whole file). Before, clothing-share could run beside
+// clothing.test or clothing-accessories, and the two browser suites (quiet,
+// which keeps a heavy suite away but not another quiet one) beside each
+// other: 1.84 GiB together.
+const MEMORY = [id("clothing-share"), id("drawing-ui"), id("play-ui")].sort();
 const QUIET = ["drawing-ui", "games-ui", "math-ui", "play-ui", "presence", "update-boot"].map(id).sort();
 
 function tool(args, opts = {}) {
@@ -254,7 +263,7 @@ test("every registered suite carries every class field with the right type", () 
   assert.deepEqual(validateClasses(registry), []);
 });
 
-test("solo is clothing-responsive and the two stand-in engines; quiet is the six timing-sensitive suites; heavy holds the segmentation suites", () => {
+test("solo is clothing-responsive and the two stand-in engines; quiet is the six timing-sensitive suites; heavy holds the segmentation suites and the three heavy by memory", () => {
   const registry = committed();
   // clothing-responsive measures latency on a loaded host; kiosk-pause and
   // routes hold a stand-in engine on 49155, which every hub's GET /settings
@@ -263,8 +272,21 @@ test("solo is clothing-responsive and the two stand-in engines; quiet is the six
   assert.deepEqual(ids(registry, "quiet"), QUIET);
   const heavy = ids(registry, "heavy");
   for (const s of SEGMENTATION) assert.ok(heavy.includes(s), `${s} runs the segmentation runtime but is not heavy`);
-  const quietHeavy = registry.suites.filter((s) => s.quiet && (s.heavy || s.solo)).map((s) => s.id);
-  assert.deepEqual(quietHeavy, [], "a quiet suite that is also heavy or solo cannot be scheduled");
+  for (const s of MEMORY) assert.ok(heavy.includes(s), `${s} was measured heavy by memory but is not heavy`);
+  // A solo suite already runs alone: quiet on it would say nothing.
+  const quietSolo = registry.suites.filter((s) => s.quiet && s.solo).map((s) => s.id);
+  assert.deepEqual(quietSolo, [], "a quiet suite is never solo");
+  // A heavy suite already keeps every heavy and every quiet suite away, so a
+  // suite that is both (drawing-ui and play-ui: timing-sensitive, and heavy
+  // by memory) schedules exactly as a heavy one. If a lane rule ever tells the
+  // two apart, this fails and the pair needs a fresh look.
+  const quietHeavy = registry.suites.filter((s) => s.quiet && s.heavy);
+  assert.deepEqual(quietHeavy.map((s) => s.id).sort(), [id("drawing-ui"), id("play-ui")]);
+  const lane = (s) => ({ heavy: s.heavy, solo: s.solo, quiet: s.quiet, ports: [] });
+  for (const s of quietHeavy) for (const other of registry.suites) {
+    if (other.id === s.id) continue;
+    assert.equal(conflicts(lane(s), lane(other)), conflicts({ ...lane(s), quiet: false }, lane(other)), `${s.id} beside ${other.id}`);
+  }
 });
 
 test("a reviewed resources list agrees with the derived browser count", () => {

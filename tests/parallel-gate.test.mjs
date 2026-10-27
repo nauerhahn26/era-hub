@@ -44,6 +44,8 @@ test('candidate execution receives owned data, stamps and runtime without operat
   assert.equal(env.ERA_TEST_PORT,'8388');
   assert.equal(env.PLAYWRIGHT_BROWSERS_PATH,'/owned/job/runtime/browsers');
   assert.ok(env.PATH.startsWith('/owned/job/runtime/bin:'));
+  // the host gate's malloc settings (tools/era-gate.sh, before the runner) reach an isolated gate's suites too
+  assert.equal(env.MALLOC_MMAP_THRESHOLD_,'131072');assert.equal(env.MALLOC_TRIM_THRESHOLD_,'131072');
   for(const key of ['HOME','NODE_OPTIONS','ERA_GATE_MODE','ERA_GATE_SELECTED','ERA_PRESENCE_HOOK','ERA_CHAT_RUNTIME','API_KEY'])
     assert.equal(Object.hasOwn(env,key),false,key+' must not be inherited');
 });

@@ -1457,7 +1457,7 @@
         8459
       ],
       "browsers": 0,
-      "heavy": false,
+      "heavy": true,
       "solo": false,
       "quiet": false,
       "retry": false,
@@ -1966,7 +1966,7 @@
         8478
       ],
       "browsers": 1,
-      "heavy": false,
+      "heavy": true,
       "solo": false,
       "quiet": true,
       "retry": false,
@@ -2940,7 +2940,7 @@
         8466
       ],
       "browsers": 1,
-      "heavy": false,
+      "heavy": true,
       "solo": false,
       "quiet": true,
       "retry": false,

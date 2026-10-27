@@ -923,6 +923,17 @@ gate_build_clothing "$PORT" || { cat "$GATE/server.log"; exit 1; }
 
 cd "$GATE"
 pass=0; fail=0; failed=""
+# glibc malloc, for every suite the runner starts (and what they start): a
+# block from 128 KiB up is its own mapping, unmapped when freed, and free
+# space above 128 KiB at the top of a heap is trimmed. With the defaults a
+# suite process kept the native memory its earlier work had freed: measured
+# 10/27 on clothing.test.mjs, 350-440 MB of malloc arenas held at its peak;
+# with these, peak 1115 MB to 870 MB alone, and 770 MB to 613 MB (high-water
+# mark 781 to 647) once its segmentation check ran in a thread of its own;
+# the same 35 cases pass. The Linux test environment only: the product and
+# the Windows legs never read it. The isolated runner's environment list
+# carries the same two (tools/testing/parallel-worker.mjs executionEnvironment).
+export MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072
 # The complete executable set was frozen before any suite ran. A previous
 # suite cannot delete or rewrite a later file and silently shrink acceptance:
 # the lane runner re-hashes each copy against its frozen digest as it starts

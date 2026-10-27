@@ -42,7 +42,8 @@ function scratch(t) {
 
 // ---- synthetic suites -------------------------------------------------------
 // A suite: { name, id?, seconds (the "run" time), exit, heavy, solo, quiet,
-// ports (registry), code (extra source lines), estimate (durations.json) }.
+// ports (registry), code (extra source lines), estimate (durations.json),
+// printEnv (it prints its environment into its .out) }.
 function gateDir(t, suites, { defaultS = 1 } = {}) {
   const root = scratch(t), gate = path.join(root, "gate"), bin = path.join(root, "bin");
   fs.mkdirSync(gate); fs.mkdirSync(bin);
@@ -54,6 +55,7 @@ for a; do f="$a"; done
 echo "argv: $*"
 echo "cwd: $(pwd)"
 s=$(sed -n 's|^// SLEEP=||p' "$f"); e=$(sed -n 's|^// EXIT=||p' "$f")
+if grep -q '^// PRINTENV' "$f"; then env; fi
 if grep -q '^// DETACH' "$f"; then
   setsid sleep 30 & echo $! >"$f.grandchild"
   echo $$ >"$f.child"
@@ -65,7 +67,7 @@ exit "\${e:-0}"
   const registry = { suites: [] }, durations = { default_s: defaultS, suites: {} }, plan = [];
   for (const s of suites) {
     const id = s.id || `era-hub:tests/${s.name}`;
-    const body = [`// SLEEP=${s.seconds ?? 0.1}`, `// EXIT=${s.exit ?? 0}`, ...(s.detach ? ["// DETACH"] : []), ...(s.code || [])].join("\n") + "\n";
+    const body = [`// SLEEP=${s.seconds ?? 0.1}`, `// EXIT=${s.exit ?? 0}`, ...(s.detach ? ["// DETACH"] : []), ...(s.printEnv ? ["// PRINTENV"] : []), ...(s.code || [])].join("\n") + "\n";
     fs.writeFileSync(path.join(gate, s.name), body);
     const digest = crypto.createHash("sha256").update(s.changed ? "something else" : body).digest("hex");
     plan.push([id, s.name, digest].join("\t"));
@@ -426,6 +428,33 @@ test("a TERM to the gate reaches the runner at once and leaves no suite process 
     const pid = Number(fs.readFileSync(file, "utf8"));
     assert.ok(!fs.existsSync(`/proc/${pid}`) || / Z /.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")), `${n}'s detached grandchild is gone`);
   }
+});
+
+// The glibc malloc settings the gate gives every suite (10/27): measured on
+// clothing.test.mjs, freed native memory went back to the kernel instead of
+// staying with the process (peak 1115 MB to 870 MB alone). The gate's own
+// text from the export to the runner's wait runs here against the real
+// lanes.mjs, and a suite that prints its environment must see both values,
+// with neither in the environment the gate itself was started with.
+test("every suite the runner starts inherits the gate's malloc settings", (t) => {
+  const g = gateDir(t, [{ name: "env.test.mjs", printEnv: true }]);
+  const fn = (name) => GATE_SCRIPT.match(new RegExp(`^${name}\\(\\)\\s*\\{[\\s\\S]*?\\n\\}`, "m"))[0];
+  const from = GATE_SCRIPT.search(/^export MALLOC_MMAP_THRESHOLD_=/m), launch = GATE_SCRIPT.indexOf('node "$HUB/tools/testing/lanes.mjs"');
+  const to = GATE_SCRIPT.indexOf('LANES_PID=""; LANES_ID=""\n', launch);
+  assert.ok(from > 0 && launch > from && to > launch, "the gate exports them before it starts the runner");
+  const script = [
+    "set -uo pipefail", fn("gate_process_identity"),
+    // the runner is the real node; the suite gets the fake one on PATH
+    'node() { exec "$REAL_NODE" "$@"; }', 'cd "$GATE"', GATE_SCRIPT.slice(from, to), 'exit "$lanes_status"',
+  ].join("\n");
+  const env = runnerEnv(g, { ERA_GATE_LANES: "1", HUB, GATE: g.gate, REAL_NODE: process.execPath });
+  delete env.MALLOC_MMAP_THRESHOLD_; delete env.MALLOC_TRIM_THRESHOLD_;
+  const r = spawnSync("bash", ["-c", script], { env, encoding: "utf8", timeout: 60_000 });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const printed = fs.readFileSync(path.join(g.gate, "env.test.out"), "utf8");
+  assert.match(printed, /^argv: --test \.\/env\.test\.mjs$/m, "the suite ran as the gate runs it");
+  assert.match(printed, /^MALLOC_MMAP_THRESHOLD_=131072$/m);
+  assert.match(printed, /^MALLOC_TRIM_THRESHOLD_=131072$/m);
 });
 
 test("era-gate.sh hands its frozen plan to the runner and keeps the serial tally", () => {

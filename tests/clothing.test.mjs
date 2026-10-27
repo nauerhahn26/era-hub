@@ -11,6 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -476,6 +477,33 @@ test("preferred-LLM: a Google key ingests through generateContent with x-goog-ap
 // The garment cut-out ships as a real model (dad 9/1: "add the 50mb so trim is
 // nice looking"). The payload must actually carry it, and the code must fall
 // back rather than fail when a machine lacks the runtime.
+//
+// The cut-out itself runs in a throwaway thread (10/27). Run here, in the
+// suite's own thread, its session lived to the end of the file: about 196 MB
+// of wasm memory for 78 % of the run, and a second copy whenever a build's
+// worker held its own (peak 1115-1140 MB). The thread loads segment.js afresh,
+// answers with what cutOut returned and whether the runtime initialized, and
+// is ended; its session and memory go with it.
+const CUT_OUT_IN_THREAD = `
+const { parentPort, workerData } = require("node:worker_threads");
+const seg = require(workerData.segment);
+seg.cutOut(workerData.image).then(
+  (out) => parentPort.postMessage({ out: out && { kept: out.kept }, available: seg.available() }),
+  (error) => parentPort.postMessage({ error: String((error && error.stack) || error) }));
+`;
+function cutOutInThread(image) {
+  return new Promise((resolve, reject) => {
+    const thread = new Worker(CUT_OUT_IN_THREAD, { eval: true, workerData: { segment: path.join(HUB, "segment.js"), image } });
+    let answer = null;
+    thread.once("message", (m) => { answer = m; thread.terminate(); });
+    thread.once("error", reject);
+    thread.once("exit", (code) => {
+      if (!answer) reject(new Error(`the cut-out thread ended (exit ${code}) without an answer`));
+      else if (answer.error) reject(new Error(answer.error));
+      else resolve(answer);
+    });
+  });
+}
 test("the segmentation model and its runtime are present and loadable", async () => {
   const seg = require("./segment.js");
   assert.ok(fs.existsSync(seg.modelPath()), "u2netp.onnx ships beside the app");
@@ -484,9 +512,11 @@ test("the segmentation model and its runtime are present and loadable", async ()
   // than hand back a blank tile
   const w = 200, h = 200, data = Buffer.alloc(w * h * 4, 128);
   for (let i = 3; i < data.length; i += 4) data[i] = 255;
-  const out = await seg.cutOut({ data, width: w, height: h });
-  assert.equal(seg.available(), true, "the bundled runtime initialized even when the empty scene is declined");
+  const { out, available } = await cutOutInThread({ data, width: w, height: h });
+  assert.equal(available, true, "the bundled runtime initialized even when the empty scene is declined");
   assert.ok(out === null || (out.kept > 0.02 && out.kept < 0.97), "no blank tiles");
+  assert.ok(!Object.keys(require.cache).some(f => f.includes(`${path.sep}onnxruntime-web${path.sep}`)),
+    "the suite's own thread never loaded the runtime, so no session outlives the check");
 });
 
 // Dad 9/3: "some extra pieces in places that need to be cleaned up" — the
