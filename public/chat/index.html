@@ -15,9 +15,8 @@
   <main id="app">
     <div id="sessionStatus" role="status"><span id="statusDot"></span><span id="phase">Off</span></div>
     <div id="partnerStrip" aria-label="Conversation partner controls">
-      <button id="startChat" type="button">Start Chat</button>
-      <button id="ask" type="button" disabled>Hold to ask</button>
-      <button id="endChat" type="button" disabled>End</button>
+      <button id="ask" type="button" disabled>Preparing…</button>
+      <button id="retryChat" type="button" hidden>Try again</button>
       <button id="partnerOpen" type="button" aria-label="Partner settings">•••</button>
     </div>
     <section id="grid" aria-label="Chat words"></section>
@@ -28,7 +27,8 @@
     <form method="dialog"><button class="close" aria-label="Close partner settings">Close</button></form>
     <h1 id="partnerTitle">Conversation partner</h1>
     <p id="engineNote">Checking question capture…</p>
-    <p>Start Chat with a finger and wait for <strong>Ready to ask</strong>. Then hold <strong>Hold to ask</strong> while speaking; release to finish. Pauses do not end the held question. Voice activation is off. Only audio from the held question is submitted; release finishes it.</p>
+    <p>Chat gets the microphone ready by itself when it opens; wait for <strong>Ready to ask</strong>. Then hold <strong>Hold to ask</strong> while speaking; release to finish. Pauses do not end the held question. Voice activation is off. Only audio from the held question is submitted; release finishes it. Leaving Chat closes the microphone.</p>
+    <p><button id="pauseMic" type="button">Pause microphone</button> Closes the microphone while Chat stays open. The next hold on Ask turns it back on.</p>
     <label>Voice <select id="voicePreference"><option value="saved">Saved voice</option><option value="local">Device voice (choose explicitly)</option></select></label>
     <section class="partnerSection">
       <h2>My news</h2>
@@ -49,8 +49,7 @@
       <p>These controls test suggestions and input handling. A typed question does not test microphone recognition.</p>
       <label>Test question <textarea id="typedQuestion" rows="2" maxlength="600"></textarea></label>
       <button id="typedAsk" type="button">Prepare test replies</button>
-      <p>For desktop microphone testing, focus a button below and use Space. Hold Space on Ask; release to finish.</p>
-      <button id="desktopStart" type="button">Keyboard: start Chat</button>
+      <p>For desktop microphone testing, focus the button below and use Space. Hold Space on Ask; release to finish.</p>
       <button id="desktopAsk" type="button">Keyboard: hold to ask</button>
       <pre id="diagnostics"></pre>
     </details>

@@ -69,6 +69,26 @@ function revealProbe() {
   });
 }
 const probe = page => page.evaluate(() => ({ sealed: window.__sealed, staged: window.__staged, reveals: window.__reveals }));
+// In the page: every microphone the page opened (and whether it is still live),
+// a switch that refuses the next request as a browser permission refusal does,
+// and every look the Ask button had (its words, enabled or not, shown or not).
+function micProbe() {
+  window.__gum = 0; window.__tracks = []; window.__deny = false; window.__askLooks = [];
+  const native = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getUserMedia = async constraints => {
+    window.__gum++;
+    if (window.__deny) throw new DOMException('Permission denied', 'NotAllowedError');
+    const stream = await native(constraints); window.__tracks.push(...stream.getTracks()); return stream;
+  };
+  document.addEventListener('DOMContentLoaded', () => {
+    const ask = document.querySelector('#ask');
+    const look = () => { const value = { text: ask.textContent, disabled: ask.disabled, hidden: ask.hidden }, last = window.__askLooks.at(-1);
+      if (!last || last.text !== value.text || last.disabled !== value.disabled || last.hidden !== value.hidden) window.__askLooks.push(value); };
+    look(); new MutationObserver(look).observe(ask, { attributes: true, childList: true, characterData: true, subtree: true });
+  });
+}
+const sessionsOpened = f => f.requests.filter(line => line === 'POST /chat/api/sessions').length;
+const liveTracks = page => page.evaluate(() => window.__tracks.filter(track => track.readyState === 'live').length);
 // The reveal shows the sealed batch within the 250 ms settle (plus scheduling slack).
 const REVEAL_SLACK_MS = 300;
 
@@ -102,7 +122,7 @@ async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {}, answers 
   t.after(async () => { await browser.close(); api.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, hasTouch: true, permissions: ['microphone'] });
   await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
-  await context.addInitScript(revealProbe);
+  await context.addInitScript(revealProbe); await context.addInitScript(micProbe);
   const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
   const sockets = []; page.on('websocket', ws => { const entry = { url: ws.url(), sent: 0, closed: false }; sockets.push(entry); ws.on('framesent', () => entry.sent++); ws.on('close', () => { entry.closed = true; }); });
   const cdp = await context.newCDPSession(page);
@@ -112,19 +132,26 @@ async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {}, answers 
   };
   const lift = () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   const touchCancel = () => cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+  // No Start Chat (maintainer, 10/27 evening): opening Chat prepares it, with no touch at all.
   async function start() {
     await page.goto(base + '/chat/');
     await page.waitForFunction(() => document.body.dataset.storageReady === 'true' && document.querySelector('#engineNote').textContent.includes('set up'));
-    await press('#startChat'); await lift();
-    await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask' && !document.querySelector('#ask').disabled, null, { timeout: 10000 });
   }
   async function hold(ms = 500) { await press('#ask'); await page.waitForTimeout(ms); await lift(); }
   return { page, base, requests, ttsTexts, sockets, errors, runtimeLog, start, hold, press, lift, touchCancel, api, scratch };
 }
 
-test('a held question travels over the session socket, not per-frame POSTs, and End closes the socket', { timeout: 60000 }, async t => {
+test('Chat prepares itself on load (Preparing…, then Hold to ask); a held question travels over the session socket; leaving the page closes it', { timeout: 60000 }, async t => {
   const f = await fixture(t);
   await f.start();
+  for (const id of ['startChat', 'desktopStart', 'endChat']) assert.equal(await f.page.locator('#' + id).count(), 0, `no #${id}: Chat starts itself`);
+  const looks = await f.page.evaluate(() => window.__askLooks);
+  const preparing = looks.findIndex(look => look.text === 'Preparing…' && look.disabled), ready = looks.findIndex(look => look.text === 'Hold to ask' && !look.disabled);
+  assert.ok(preparing >= 0 && ready > preparing, 'Ask reads Preparing… until Ready to ask: ' + JSON.stringify(looks));
+  assert.equal(looks.slice(0, ready).some(look => !look.disabled), false, 'Ask is never enabled while preparing');
+  assert.equal(sessionsOpened(f), 1, 'one session, opened with no partner action');
+  assert.equal(await liveTracks(f.page), 1, 'the microphone is open between turns');
   await f.page.waitForTimeout(150);
   assert.equal(f.sockets.length, 1, 'one audio socket per session');
   assert.match(f.sockets[0].url, /\/chat\/api\/sessions\/[a-f0-9-]+\/audio$/);
@@ -136,11 +163,12 @@ test('a held question travels over the session socket, not per-frame POSTs, and 
   const audio = f.runtimeLog.filter(type => type === 'audio').length;
   assert.ok(audio > 0);
   assert.ok(f.runtimeLog.lastIndexOf('audio') < f.runtimeLog.indexOf('finish'), 'every frame reached the recognizer before finish');
-  await f.press('#endChat'); await f.lift();
-  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Off');
-  for (let i = 0; i < 50 && !f.sockets[0].closed; i++) await f.page.waitForTimeout(20);
-  assert.equal(f.sockets[0].closed, true, 'End closes the audio socket');
-  assert.deepEqual(f.errors, []);
+  const errors = [...f.errors];
+  await f.page.goto(f.base + '/');
+  for (let i = 0; i < 100 && !(f.sockets[0].closed && f.requests.some(line => /^DELETE \/chat\/api\/sessions\//.test(line))); i++) await new Promise(r => setTimeout(r, 20));
+  assert.equal(f.sockets[0].closed, true, 'leaving closes the audio socket');
+  assert.ok(f.requests.some(line => /^DELETE \/chat\/api\/sessions\//.test(line)), 'leaving ends the session');
+  assert.deepEqual(errors, []);
 });
 
 test('hiding the page closes the socket and cancels a hold in progress', { timeout: 60000 }, async t => {
@@ -153,6 +181,21 @@ test('hiding the page closes the socket and cancels a hold in progress', { timeo
   await f.lift();
   await f.page.waitForTimeout(200);
   assert.equal(f.runtimeLog.includes('finish'), false, 'a hidden hold never submits');
+  assert.equal(await liveTracks(f.page), 0, 'hiding closes the microphone');
+  // Coming back prepares Chat again by itself: a new session, the microphone, Ready to ask.
+  const show = () => f.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await show();
+  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask' && !document.querySelector('#ask').disabled, null, { timeout: 10000 });
+  assert.equal(sessionsOpened(f), 2); assert.equal(f.sockets.length, 2); assert.equal(await liveTracks(f.page), 1);
+  // A page restored from the back/forward cache (pageshow) prepares too.
+  await f.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  for (let i = 0; i < 50 && !f.sockets[1].closed; i++) await f.page.waitForTimeout(20);
+  await f.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })); });
+  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask' && !document.querySelector('#ask').disabled, null, { timeout: 10000 });
+  assert.equal(sessionsOpened(f), 3);
+  await f.hold(600);
+  await f.page.waitForSelector('.response', { timeout: 10000 });
+  assert.deepEqual(f.errors, []);
 });
 
 // A turn-streaming fake service: partials as frames arrive, the question's words at the forced endpoint.
@@ -289,17 +332,18 @@ test('a finish the hub refuses (409) shows the partner the recovery wording, nev
   });
   await f.start();
   await f.hold(500);
-  await f.page.waitForFunction(() => /start Chat again/i.test(document.querySelector('#notice').textContent), null, { timeout: 10000 });
+  await f.page.waitForFunction(() => /did not finish/i.test(document.querySelector('#notice').textContent), null, { timeout: 10000 });
   const notice = await f.page.locator('#notice').textContent();
   assert.doesNotMatch(notice, /capture-inactive/);
-  assert.match(notice, /Ready to ask/);
+  assert.doesNotMatch(notice, /start Chat/i, 'there is no Start Chat to point at');
+  assert.match(notice, /hold Ask/i);
+  assert.equal(await f.page.locator('#ask').isDisabled(), false, 'the next hold starts Chat again by itself');
 });
 
 // ---- a slip on Ask never ends the session (touchscreen field report 10/27) ----
 // A finger that rolls off, a palm, a long press or a too-quick tap cancels only
 // that hold: back to Ready to ask with a hint, the same session and socket, and
 // the cancelled hold's audio is dropped (never a short submit).
-const sessionsOpened = f => f.requests.filter(line => line === 'POST /chat/api/sessions').length;
 const notice = f => f.page.locator('#notice').textContent();
 async function holdRow(f, predicate) {
   for (let i = 0; i < 200; i++) {
@@ -314,7 +358,7 @@ async function stillOn(f) {
   assert.equal(sessionsOpened(f), 1, 'the same Chat session');
   assert.equal(f.sockets.length, 1); assert.equal(f.sockets[0].closed, false, 'the audio socket stays open');
   assert.equal(await f.page.locator('#ask').isDisabled(), false, 'Ask stays armed');
-  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'no Start Chat needed');
+  assert.equal(await f.page.locator('#startChat').count(), 0, 'there is no Start Chat');
 }
 async function nextHoldWorks(f) {
   await f.hold(600);
@@ -385,6 +429,130 @@ test('Ask keeps its finger: no long-press menu, no selection or drag, touch-acti
   await f.press('#ask'); await f.page.waitForTimeout(300);
   await f.page.evaluate(() => document.querySelector('#ask').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
   await f.page.waitForTimeout(300); await f.lift();
+  await f.page.waitForSelector('.response', { timeout: 10000 });
+  assert.deepEqual(f.errors, []);
+});
+
+// ---- no Start Chat (maintainer, 10/27 evening: "It adds one more unnecessary step") ----
+// The hub's own clock, frozen until the test moves it: the idle sweep runs every
+// second, and nothing expires until the clock jumps past the 30-minute lifetime.
+function hubClock() {
+  const frozen = Date.now(); let offset = 0;
+  return { clock: () => frozen + offset, jump: ms => { offset += ms; } };
+}
+const askReady = page => page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask' && !document.querySelector('#ask').disabled, null, { timeout: 10000 });
+const framesHeard = f => f.runtimeLog.filter(type => type === 'audio').length;
+
+test('the 30-minute lifetime still ends a session; the next hold re-creates it silently and its whole question is heard', { timeout: 60000 }, async t => {
+  const time = hubClock();
+  const f = await fixture(t, { apiOptions: { clock: time.clock, limits: { idleMs: 1000 } } });
+  await f.start();
+  time.jump(31 * 60 * 1000);
+  for (let i = 0; i < 150 && !f.sockets[0].closed; i++) await f.page.waitForTimeout(20);
+  assert.equal(f.sockets[0].closed, true, 'the hub ended the expired session');
+  await f.page.waitForTimeout(300);
+  assert.equal(await f.page.locator('#phase').textContent(), 'Ready to ask', 'standing by, not Off');
+  assert.equal(await f.page.locator('#ask').isDisabled(), false);
+  assert.doesNotMatch(await notice(f), /ended|closed|unavailable|again/i, 'the lifetime ending is silent');
+  assert.equal(sessionsOpened(f), 1, 'no new session until a hold asks for one');
+  assert.equal(await liveTracks(f.page), 1, 'the prepared microphone stays open between turns');
+  const before = framesHeard(f);
+  await f.hold(800);
+  await f.page.waitForSelector('.response', { timeout: 10000 });
+  assert.equal(sessionsOpened(f), 2, 'the hold re-created the session');
+  assert.equal(await f.page.evaluate(() => window.__gum), 1, 'the same microphone carried the hold');
+  assert.ok(framesHeard(f) - before >= 7, `the whole held question reached the recognizer (${framesHeard(f) - before} frames for 800 ms)`);
+  assert.equal(f.runtimeLog.filter(type => type === 'finish').length, 1, 'submitted once');
+  assert.deepEqual(f.errors, []);
+});
+
+test('a hold whose session cannot start is dropped with a hint, submits nothing, and the page stays usable; the next hold works', { timeout: 60000 }, async t => {
+  const time = hubClock();
+  const f = await fixture(t, { apiOptions: { clock: time.clock, limits: { idleMs: 1000 } } });
+  await f.start();
+  time.jump(31 * 60 * 1000);
+  for (let i = 0; i < 150 && !f.sockets[0].closed; i++) await f.page.waitForTimeout(20);
+  let refused = 0;
+  await f.page.route('**/chat/api/sessions', route => { if (route.request().method() !== 'POST' || refused) return route.continue(); refused++;
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'runtime-unavailable' }) }); });
+  await f.hold(800);
+  await f.page.waitForFunction(() => /could not get ready/i.test(document.querySelector('#notice').textContent), null, { timeout: 10000 });
+  assert.equal(refused, 1);
+  assert.equal(await f.page.locator('#phase').textContent(), 'Ready to ask');
+  assert.equal(await f.page.locator('#ask').isDisabled(), false, 'Ask stays usable');
+  assert.equal(f.runtimeLog.includes('finish'), false, 'nothing was submitted');
+  assert.equal(await f.page.locator('#grid .tile.static').count() > 0, true, 'phrases are still on the board');
+  const row = await holdRow(f, value => ['cancelled', 'failed'].includes(value.status));
+  assert.equal(row?.status, 'failed');
+  await f.hold(700);
+  await f.page.waitForSelector('.response', { timeout: 10000 });
+  assert.equal(sessionsOpened(f), 2);
+  assert.deepEqual(f.errors, []);
+});
+
+test('a refused microphone shows the truthful message; Ask gives way to a touch-only Try again that prepares Chat', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await f.page.addInitScript(() => { window.__deny = true; });
+  await f.page.goto(f.base + '/chat/');
+  await f.page.waitForFunction(() => /Microphone permission was not granted/.test(document.querySelector('#notice').textContent), null, { timeout: 10000 });
+  assert.ok(await f.page.evaluate(() => window.__gum) >= 1, 'the page asked for the microphone by itself');
+  assert.equal(await f.page.locator('#ask').isVisible(), false, 'Ask is not offered');
+  assert.equal(await f.page.locator('#ask').isDisabled(), true);
+  assert.equal(await f.page.locator('#retryChat').isVisible(), true);
+  assert.equal(await f.page.locator('#retryChat').textContent(), 'Try again');
+  assert.equal(sessionsOpened(f), 0, 'no session without a microphone');
+  await f.page.evaluate(() => { window.__deny = false; });
+  await f.page.locator('#retryChat').click(); await f.page.waitForTimeout(400);
+  assert.equal(sessionsOpened(f), 0, 'a gaze or mouse click cannot try again');
+  await f.press('#retryChat'); await f.lift();
+  await askReady(f.page);
+  assert.equal(await f.page.locator('#retryChat').isVisible(), false);
+  assert.equal(sessionsOpened(f), 1);
+  await f.hold(600);
+  await f.page.waitForSelector('.response', { timeout: 10000 });
+  assert.deepEqual(f.errors, []);
+});
+
+test('Pause microphone (partner settings, touch only) closes capture and the session; the next hold prepares Chat again', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await f.start();
+  await f.page.locator('#partnerOpen').click();
+  await f.page.locator('#pauseMic').click(); await f.page.waitForTimeout(300);
+  assert.equal(await liveTracks(f.page), 1, 'a gaze or mouse click does not pause');
+  await f.press('#pauseMic'); await f.lift();
+  for (let i = 0; i < 100 && (await liveTracks(f.page)) > 0; i++) await f.page.waitForTimeout(20);
+  assert.equal(await liveTracks(f.page), 0, 'the microphone is closed');
+  for (let i = 0; i < 50 && !f.sockets[0].closed; i++) await f.page.waitForTimeout(20);
+  assert.equal(f.sockets[0].closed, true);
+  await f.page.locator('#partnerDialog .close').click();
+  assert.match(await notice(f), /paused/i);
+  assert.equal(await f.page.locator('#ask').isDisabled(), false, 'a hold turns it back on');
+  await f.page.waitForTimeout(300);
+  assert.equal(sessionsOpened(f), 1, 'paused stays paused until a hold');
+  await f.hold(900);
+  await f.page.waitForSelector('.response', { timeout: 10000 });
+  assert.equal(sessionsOpened(f), 2); assert.equal(await f.page.evaluate(() => window.__gum), 2);
+  assert.equal(await liveTracks(f.page), 1);
+  assert.deepEqual(f.errors, []);
+});
+
+test('a hold waits on the device for a session start for about 3 s at most, then is dropped whole, never submitted short', { timeout: 60000 }, async t => {
+  const time = hubClock();
+  const f = await fixture(t, { apiOptions: { clock: time.clock, limits: { idleMs: 1000 } } });
+  await f.start();
+  time.jump(31 * 60 * 1000);
+  for (let i = 0; i < 150 && !f.sockets[0].closed; i++) await f.page.waitForTimeout(20);
+  let slowed = 0;
+  await f.page.route('**/chat/api/sessions', async route => { if (route.request().method() !== 'POST' || slowed) return route.continue(); slowed++;
+    await new Promise(resolve => setTimeout(resolve, 4500)); return route.continue(); });
+  await f.press('#ask');
+  await f.page.waitForFunction(() => /could not get ready/i.test(document.querySelector('#notice').textContent), null, { timeout: 6000 });
+  await f.lift();
+  assert.equal(slowed, 1);
+  await askReady(f.page); // the slow session still arrives, ready for the next hold
+  assert.equal(f.runtimeLog.includes('finish'), false, 'the over-long wait submitted nothing');
+  assert.equal(framesHeard(f), 0, 'no frame of the dropped hold left the device');
+  await f.hold(700);
   await f.page.waitForSelector('.response', { timeout: 10000 });
   assert.deepEqual(f.errors, []);
 });

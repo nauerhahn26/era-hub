@@ -5,7 +5,8 @@ export const isPartnerTouch = e => e?.isTrusted === true && e.pointerType === 't
 export function createChatController(deps = {}) {
   let turn = 0, preparing = false, abort = null, speechAbort = null, utterance = 0;
   const listeners = new Set();
-  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), error: '', hint: '', turn });
+  // standby: no session is live, but a hold starts one (no Start Chat, 10/27 evening).
+  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, standby: false, question: '', partial: '', choices: Object.freeze([]), error: '', hint: '', turn });
   function timing(name) { try { deps.onTiming?.(name); } catch { /* Diagnostics never interrupt communication. */ } }
   function patch(p) { state = Object.freeze({ ...state, ...p }); for (const fn of listeners) fn(state); }
   function invalidate() {
@@ -16,7 +17,13 @@ export function createChatController(deps = {}) {
   const api = {
     get state() { return state; },
     subscribe(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
-    ready(wakeEnabled = false) { patch({ engineReady: true, wakeEnabled, phase: state.phase === 'Off' ? (wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.phase, error: '' }); },
+    ready(wakeEnabled = false) { patch({ engineReady: true, wakeEnabled, standby: false, phase: state.phase === 'Off' ? (wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.phase, error: '' }); },
+    // The session ended by itself (lifetime, hub restart) with no hold in progress:
+    // nothing to report; the next hold starts a new one. Answers on the board stay.
+    standby() {
+      patch({ engineReady: false, wakeEnabled: false, standby: true, error: '',
+        phase: ['Off', 'Ready to ask', 'Local wake listening'].includes(state.phase) ? 'Ready to ask' : state.phase });
+    },
     ask() {
       invalidate();
       patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: Object.freeze([]), error: '', hint: '' });
@@ -25,7 +32,7 @@ export function createChatController(deps = {}) {
     // only that hold is dropped. The engine stays ready and the partner sees a hint.
     retry(hint) {
       invalidate();
-      patch({ turn, phase: state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off', question: '', partial: '', error: '', hint: String(hint || '').slice(0, 200) });
+      patch({ turn, phase: state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.standby ? 'Ready to ask' : 'Off', question: '', partial: '', error: '', hint: String(hint || '').slice(0, 200) });
     },
     partial(text) { if (state.phase === 'Capturing question') patch({ partial: String(text || '').slice(0, 600) }); },
     async prepare(text) {
@@ -74,7 +81,7 @@ export function createChatController(deps = {}) {
       speechAbort?.abort(); speechAbort = new AbortController();
       deps.stopSpeech?.();
       timing('speechRequested');
-      const back = state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off';
+      const back = state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.standby ? 'Ready to ask' : 'Off';
       patch({ phase: 'Speaking', error: '', hint: '' });
       try { await deps.speak?.({ say: text }, { signal: speechAbort.signal }); }
       catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'
@@ -85,11 +92,11 @@ export function createChatController(deps = {}) {
     },
     fail(message) {
       invalidate();
-      patch({ turn, engineReady: false, wakeEnabled: false, hint: '', error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length ? 'Your turn' : 'Off' });
+      patch({ turn, engineReady: false, wakeEnabled: false, standby: false, hint: '', error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length ? 'Your turn' : 'Off' });
     },
     stop() {
       invalidate();
-      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), error: '', hint: '' });
+      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, standby: false, question: '', partial: '', choices: Object.freeze([]), error: '', hint: '' });
     },
   };
   return api;

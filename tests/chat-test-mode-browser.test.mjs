@@ -93,11 +93,11 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   const paths = []; page.on('request', request => paths.push(new URL(request.url()).pathname));
   const finishes = () => controls.filter(type => type === 'finish').length;
   async function heldTurn() {
-    if (!(await page.evaluate(() => window.__events && !window.__events.closed))) {
-      await page.waitForFunction(() => !document.querySelector('#startChat').disabled); await touch('#startChat'); await lift();
+    // No Start Chat: the page opened its session by itself; the simulated recognizer says ready.
+    if (await page.locator('#ask').isDisabled()) {
       await page.waitForFunction(() => window.__events && !window.__events.closed);
       await page.evaluate(() => window.__events.onmessage({ data: JSON.stringify({ type: 'ready', capabilities: { remoteFinal: true } }) }));
-      await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask');
+      await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask' && !document.querySelector('#ask').disabled);
     }
     const asks = controls.filter(type => type === 'ask').length, before = finishes();
     await touch('#ask');

@@ -233,3 +233,24 @@ test('a dropped hold returns to Ready to ask with a partner hint, keeps the engi
   // Without a ready engine there is nothing to return to.
   const off = createChatController(); off.retry('Hold while you speak, let go when done.'); assert.equal(off.state.phase, 'Off');
 });
+
+// No Start Chat (maintainer, 10/27 evening): a session that ended by itself
+// (the 30-minute lifetime, a hub restart) leaves Chat standing by. A hold there
+// starts a new session; a hold dropped while it starts keeps Ready to ask and its hint.
+test('a quietly ended session stands by at Ready to ask; a dropped hold there keeps its hint; stop and fail end the standby', async () => {
+  const c = createChatController({ speak: async () => {} });
+  c.ready(); c.standby();
+  assert.equal(c.state.phase, 'Ready to ask'); assert.equal(c.state.engineReady, false, 'no session is live');
+  assert.equal(c.state.error, '');
+  c.ask(); assert.equal(c.state.phase, 'Capturing question');
+  c.retry('Chat could not get ready. Hold Ask again while you speak.');
+  assert.equal(c.state.phase, 'Ready to ask'); assert.match(c.state.hint, /could not get ready/);
+  await c.sayFixed('Yes.'); assert.equal(c.state.phase, 'Ready to ask', 'a phrase spoken while standing by returns there');
+  c.ready(); assert.equal(c.state.engineReady, true); assert.equal(c.state.phase, 'Ready to ask');
+  c.stop(); c.retry('x'); assert.equal(c.state.phase, 'Off', 'a stopped Chat has nothing to stand by for');
+  c.standby(); c.fail('Speech stopped.'); c.retry('x'); assert.equal(c.state.phase, 'Off', 'a failure ends the standby');
+  // Answers already on the board stay hers.
+  const shown = createChatController({ requestChoices: async () => ({ choices: [{ label: 'Yes', say: 'Yes.' }] }) });
+  shown.ready(); await shown.prepare('Do you want to?'); shown.standby();
+  assert.equal(shown.state.phase, 'Your turn'); assert.equal(shown.state.choices.length, 1);
+});

@@ -144,7 +144,9 @@ function installInstrumentation(origin) {
     return nativePlay.apply(this, args);
   };
   if (window.speechSynthesis) speechSynthesis.speak = () => { state.deviceCalls++; throw new Error('Unexpected device voice in saved voice check'); };
-  if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => { state.microphoneCalls++; return Promise.reject(new Error('This check uses a typed question')); };
+  // Chat asks for the microphone by itself when it opens (no Start Chat since
+  // 10/27 evening); this check refuses as a partner refusing the browser prompt would.
+  if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => { state.microphoneCalls++; return Promise.reject(new DOMException('This check uses a typed question', 'NotAllowedError')); };
   const blobs = new Map(), nativeURL = URL.createObjectURL;
   URL.createObjectURL = function (blob) {
     const url = nativeURL.call(URL, blob);
@@ -219,7 +221,7 @@ export async function checkInstalledChatUI(page, options = {}) {
   assert.equal(new URL(originalURL).origin, base, 'the UI check starts on the hub origin');
   const savedStorage = await page.evaluate(keys => Object.fromEntries(keys.map(key => [key, localStorage.getItem(key)])), STORAGE_KEYS);
   const savedState = await readChatState(page);
-  const wav = makeChatToneWav(), requests = { voices: 0, clips: 0, choices: 0, blocked: 0 };
+  const wav = makeChatToneWav(), requests = { voices: 0, clips: 0, choices: 0, blocked: 0, sessions: 0 };
   const cdp = await page.context().newCDPSession(page);
   let script;
   const routeHandler = async route => {
@@ -234,6 +236,7 @@ export async function checkInstalledChatUI(page, options = {}) {
     if (url.pathname.startsWith('/chat/api/')) {
       if (request.method() === 'GET' && url.pathname === '/chat/api/config') return route.continue();
       if (['GET', 'PUT'].includes(request.method()) && url.pathname === '/chat/api/state') return route.continue();
+      if (request.method() === 'POST' && url.pathname === '/chat/api/sessions') requests.sessions++;
       if (request.method() === 'POST' && url.pathname === '/chat/api/choices') {
         let input; try { input = request.postDataJSON(); } catch {}
         if (input?.text === QUESTION && Array.isArray(input.context) && input.context.length === 0) { requests.choices++; return route.continue(); }
@@ -308,8 +311,10 @@ export async function checkInstalledChatUI(page, options = {}) {
     await page.getByRole('button', { name: 'Music', exact: true }).click({ timeout });
     await page.waitForFunction(() => window.__chatUISmoke.ended === 1 || document.querySelector('#notice')?.textContent.includes('unavailable'), null, { timeout });
     const actualAudio = await audio();
-    assert.deepEqual(actualAudio, { playCalls: 1, playing: 1, ended: 1, deviceCalls: 0, microphoneCalls: 0, nativeAudio: true },
+    const { microphoneCalls, ...played } = actualAudio;
+    assert.deepEqual(played, { playCalls: 1, playing: 1, ended: 1, deviceCalls: 0, nativeAudio: true },
       'a deliberate selection plays the real saved clip to completion without device speech');
+    assert.equal(requests.sessions, 0, 'with the microphone refused, Chat opens no audio session');
     const completedState = await waitForChatState(page, value => value.timings.length === 1 && value.timings[0].status === 'completed', timeout);
     await openPartner(); await page.locator('#turnTimings > summary').click({ timeout });
     await page.locator('#exportTimings').click({ timeout });
@@ -340,7 +345,7 @@ export async function checkInstalledChatUI(page, options = {}) {
     }
     return { ok: true, evidence: 'Typed local alternatives; service audio mocked; native browser playback observed. No microphone or recognition accuracy test.',
       symbols: true, restUnchanged: true, savedDefaultAndPersistence: true, exportContentFree: true, fit, typedTurn,
-      exportedTurns: savedMetrics.turns.length, actualAudio, microphoneCalls: actualAudio.microphoneCalls, ...(restartState ? { restartState } : {}) };
+      exportedTurns: savedMetrics.turns.length, actualAudio: played, microphoneCalls, audioSessions: requests.sessions, ...(restartState ? { restartState } : {}) };
   } finally {
     if (script) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: script });
     try {

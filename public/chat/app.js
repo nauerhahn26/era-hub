@@ -14,7 +14,7 @@ const appLocked = () => window.AppLock?.isLocked() || false;
 const persistence = createChatStorage();
 let appReady = false, pageOnlyVoice = false, voicePreferenceIntent = 0;
 document.body.dataset.storageReady = 'false';
-for (const id of ['startChat', 'desktopStart', 'desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = true;
+for (const id of ['desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = true;
 const storageStatus = document.createElement('p'); storageStatus.id = 'storageStatus'; storageStatus.setAttribute('role', 'status');
 $('engineNote').insertAdjacentElement('afterend', storageStatus);
 persistence.subscribe(state => {
@@ -28,7 +28,8 @@ const bar = mountDoorBar($('app'), {
   onLock: () => { if (appReady) void shutdown('close'); },
   onLeave: () => { if (appReady) void shutdown('close'); return persistence.flush({ keepalive: true, timeoutMs: 850 }); },
   onPause: () => { if (appReady) void shutdown('pause'); },
-  onResume: () => { if (appReady) notice('Chat is off. A partner can start a new session.'); },
+  onResume: () => autoPrepare(),
+  onUnlock: () => autoPrepare(),
 });
 const savedSettings = await persistence.hydrate();
 // Library pictures (spec 2026-10-27 §6); without the table the drawn pictures stay.
@@ -56,6 +57,14 @@ let uploadChain = Promise.resolve(), queued = 0, sessionAbort = null, readyTimer
 let askPending = false, askAcknowledged = Promise.resolve(), captureGeneration = null;
 let gridKey = '', currentSpeech = 0, captureIntent = 0, pendingFrames = [], heartbeat = null;
 let recentConversation = [];
+// No Start Chat (maintainer, 10/27 evening): Chat prepares itself. `preparation`
+// is the one session start in flight; `readyGate` settles when its speech is ready.
+let preparation = null, readyGate = null, micRefused = false, micPaused = false, closed = Promise.resolve();
+// A held question's first frames wait on the device, bounded, for the Ask
+// acknowledgement or for a session the hold itself started: about 3 s.
+const PENDING_FRAMES = 30;
+const HINT_NOT_READY = 'Chat could not get ready. Hold Ask again while you speak.';
+const MIC_REFUSED = 'Microphone permission was not granted. Your phrases still work.';
 // A hold shorter than this, or one that ended before any audio, is a slip, never a question.
 const SHORT_HOLD_MS = 400;
 const HINT_SLIP = 'Hold while you speak, let go when done.', HINT_SHORT = 'Let go too soon — hold while you speak.';
@@ -98,7 +107,7 @@ function timingEvent(name) {
 function waitForAudioDrain(pending, timeoutMs = 4000) {
   let timer;
   return Promise.race([pending, new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('The audio connection did not finish. Start Chat again.')), timeoutMs);
+    timer = setTimeout(() => reject(new Error('The audio connection did not finish. Hold Ask to try again.')), timeoutMs);
   })]).finally(() => clearTimeout(timer));
 }
 
@@ -255,11 +264,12 @@ controller.subscribe(state => {
 });
 
 function sendFrame(bytes) {
-  if (!session) return;
+  if (!session && mode !== 'opening') return;
   if (holding && ['opening', 'capture'].includes(mode)) holdFrames++;
   turnLog.audio(questionMetric, bytes);
   if (mode === 'opening') {
-    if (pendingFrames.length >= 20) { failSession('Capture did not become ready. Release and start Chat again.'); return; }
+    // Past the bound the whole hold is dropped: never a truncated question.
+    if (pendingFrames.length >= PENDING_FRAMES) { dropHold({ outcome: 'failed', reason: 'capture', hint: HINT_NOT_READY }); return; }
     pendingFrames.push(bytes); return;
   }
   if (mode === 'capture' || mode === 'draining') queueFrame(bytes);
@@ -267,7 +277,7 @@ function sendFrame(bytes) {
 function queueFrame(bytes) {
   if (audioSocket) { socketFrame(bytes); return; }
   const mine = lifecycle, epoch = uploadEpoch, id = session;
-  if (++queued > 20) { queued--; failSession('Question capture could not keep up. Start again when ready.'); return; }
+  if (++queued > 20) { queued--; failSession('Question capture could not keep up. Hold Ask to try again.'); return; }
   uploadChain = uploadChain.then(async () => {
     if (mine !== lifecycle || epoch !== uploadEpoch || mode === 'blocked') return;
     const r = await fetch(`${API}/sessions/${encodeURIComponent(id)}/audio?seq=${sequence}`, {
@@ -278,18 +288,18 @@ function queueFrame(bytes) {
     if (mine !== lifecycle || epoch !== uploadEpoch) return;
     if (r.status === 409) {
       const error = await r.json().catch(() => ({}));
-      if (error.error === 'capture-inactive') throw new Error('Question capture stopped. Release and start Chat again.');
-      throw new Error('Audio sequence changed. Start a new listening session.');
+      if (error.error === 'capture-inactive') throw new Error('Question capture stopped. Release and hold Ask to try again.');
+      throw new Error('Audio sequence changed. Hold Ask to try again.');
     }
     if (!r.ok) throw new Error('The audio connection stopped.');
-  }).catch(e => { if (mine === lifecycle && e.name !== 'AbortError') failSession(e.name === 'TimeoutError' ? 'The audio connection took too long. Start Chat again.' : e.message, e.name === 'TimeoutError' ? 'timeout' : 'connection'); })
+  }).catch(e => { if (mine === lifecycle && e.name !== 'AbortError') failSession(e.name === 'TimeoutError' ? 'The audio connection took too long. Hold Ask to try again.' : e.message, e.name === 'TimeoutError' ? 'timeout' : 'connection'); })
     .finally(() => { if (mine === lifecycle) queued--; });
 }
 // One frame: an 8-byte header {generation, seq} (little endian) and the PCM16.
 function socketFrame(bytes) {
   if (mode === 'blocked' || !Number.isFinite(captureGeneration)) return;
-  if (audioSocket.readyState !== WebSocket.OPEN) { failSession('The audio connection stopped. Start Chat again.'); return; }
-  if (audioSocket.bufferedAmount > SOCKET_BUFFER_LIMIT) { failSession('Question capture could not keep up. Start again when ready.'); return; }
+  if (audioSocket.readyState !== WebSocket.OPEN) { failSession('The audio connection stopped. Hold Ask to try again.'); return; }
+  if (audioSocket.bufferedAmount > SOCKET_BUFFER_LIMIT) { failSession('Question capture could not keep up. Hold Ask to try again.'); return; }
   const frame = new Uint8Array(8 + bytes.byteLength), header = new DataView(frame.buffer);
   header.setUint32(0, captureGeneration, true); header.setUint32(4, socketSeq++, true);
   frame.set(new Uint8Array(bytes), 8);
@@ -315,7 +325,7 @@ function openAudioSocket(id) {
     ws.onclose = () => {
       clearTimeout(timer);
       if (!opened) { resolve(false); return; }
-      if (audioSocket === ws) { audioSocket = null; if (mine === lifecycle && session) failSession('The audio connection closed. Your phrases still work; start Chat again.'); }
+      if (audioSocket === ws) { audioSocket = null; if (mine === lifecycle && session) sessionLost('The audio connection closed. Your phrases still work; hold Ask to try again.'); }
     };
   });
 }
@@ -332,7 +342,7 @@ function startHeartbeat() {
       await json(`${API}/sessions/${encodeURIComponent(id)}`, { signal: AbortSignal.any([sessionAbort.signal, AbortSignal.timeout(2000)]) });
       if (mine === lifecycle && id === session) heartbeat = setTimeout(tick, 30000);
     } catch (e) {
-      if (mine === lifecycle && id === session) failSession('This Chat session ended. Your phrases still work; start Chat again when ready.');
+      if (mine === lifecycle && id === session) sessionLost('This Chat session ended. Your phrases still work; hold Ask to start again.');
     }
   }
   heartbeat = setTimeout(tick, 30000);
@@ -373,6 +383,7 @@ function announceReady() {
       : remoteFinal ? 'The held question is captured here, then sent for transcription after release. Audio outside the hold is not sent.'
         : 'Question recognition also stays on this device.');
   controller.ready();
+  readyGate?.resolve(true); readyGate = null; paintAsk();
 }
 function receiveEvent(event) {
   let data; try { data = JSON.parse(event.data); } catch { return; }
@@ -410,7 +421,7 @@ function receiveEvent(event) {
     diagnostic(`Heard so far: ${String(data.text || '').slice(0, 600)}`);
   } else if (data.type === 'final') {
     if (askPending || controller.state.phase !== 'Capturing question' || (Number.isFinite(captureGeneration) && data.generation !== captureGeneration)) return;
-    if (holding || finishedTurn !== controller.state.turn) { failSession('Capture ended before release. Your phrases still work; start Chat again.'); return; }
+    if (holding || finishedTurn !== controller.state.turn) { failSession('Capture ended before release. Your phrases still work; hold Ask to try again.'); return; }
     clearTimeout(askTimer); holding = false; $('ask').classList.remove('held');
     questionSending = false;
     setMode('blocked'); uploadEpoch++;
@@ -436,74 +447,137 @@ function receiveEvent(event) {
   }
 }
 
-async function startChat() {
-    if (appLocked()) return;
-  if (starting || closing || session || document.visibilityState !== 'visible') return;
-  if (!config?.runtime?.available) { controller.fail('Speech is not set up. Prepared phrases and stories still work.'); return; }
+function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
+// Ask reads Preparing… while Chat gets ready by itself, Hold to ask once it is
+// (or once a hold can start a session itself). A refused microphone puts a
+// touch-only Try again in its place.
+function paintAsk() {
+  const ask = $('ask'), held = holding || askPending || mode !== 'blocked';
+  ask.hidden = micRefused; $('retryChat').hidden = !micRefused;
+  const waiting = !held && (!config || !!preparation || closing);
+  ask.textContent = waiting && config?.runtime?.available !== false ? 'Preparing…' : 'Hold to ask';
+  ask.disabled = micRefused || !appReady || !config?.runtime?.available || waiting;
+}
+const autoPrepare = () => { if (appReady && !micPaused) void prepare(); };
+// Chat prepares itself (no Start Chat, maintainer 10/27 evening): microphone,
+// worklet, hub session, speech ready and audio socket, with no partner action.
+// On load, on every return to the page, from Try again, and from a hold when no
+// session is live. Settles true once Ready to ask. Preparation submits no audio.
+function prepare({ forHold = false } = {}) {
+  if (preparation) return preparation;
+  if (session) return Promise.resolve(controller.state.engineReady);
+  if (!forHold && micPaused) return Promise.resolve(false);
+  if (appLocked() || document.visibilityState !== 'visible' || !config?.runtime?.available) return Promise.resolve(false);
+  micPaused = false;
+  preparation = openSession(forHold).finally(() => { preparation = null; paintAsk(); });
+  paintAsk();
+  return preparation;
+}
+async function openSession(forHold) {
+  if (closing) await closed;
+  if (session || appLocked() || document.visibilityState !== 'visible') return false;
   starting = true; const mine = ++lifecycle; sessionAbort = new AbortController();
-  $('startChat').disabled = true; notice('Starting the microphone…');
+  const gate = readyGate = deferred();
+  let micBroke = false;
   try {
-    mic = createMicrophone({ onFrame: sendFrame, onError: e => { if (mine === lifecycle) failSession(e.message); } });
-    await mic.start(); // Called directly by the explicit partner gesture.
-    voice.refresh(); // the hub's voice is read again once per Chat start
-    if (mine !== lifecycle) return;
+    if (!mic) {
+      const m = createMicrophone({ onFrame: sendFrame, onError: e => { if (mic === m) failSession(e.message, 'capture'); } });
+      mic = m;
+      // No partner gesture: the browser shows its own permission prompt once.
+      try { await m.start(); } catch (e) { micBroke = true; throw e; }
+      if (mic !== m) return false;
+      micRefused = false;
+      if (holding && mode === 'opening') m.begin(); // the hold that started this collects from now
+    }
+    if (mine !== lifecycle) return false;
+    voice.refresh(); // the hub's voice is read again once per session start
     const reply = await json(`${API}/sessions`, { method: 'POST', body: '{}', signal: sessionAbort.signal });
-    if (mine !== lifecycle) { fetch(`${API}/sessions/${encodeURIComponent(reply.id)}`, { method: 'DELETE', keepalive: true }); return; }
+    if (mine !== lifecycle) { fetch(`${API}/sessions/${encodeURIComponent(reply.id)}`, { method: 'DELETE', keepalive: true }); return false; }
     session = reply.id; sequence = 0; workerGeneration = -1; uploadEpoch++; queued = 0; uploadChain = Promise.resolve();
     startHeartbeat();
     events = new EventSource(`${API}/sessions/${encodeURIComponent(session)}/events`);
     events.onmessage = event => { if (mine === lifecycle && session) receiveEvent(event); };
-    events.onerror = () => { if (mine === lifecycle) failSession('The speech connection closed. Your phrases still work.'); };
-    readyTimer = setTimeout(() => failSession('Speech did not become ready. Your phrases still work.'), 20000);
-    $('endChat').disabled = false; notice('Waiting for speech to become ready…');
+    events.onerror = () => { if (mine === lifecycle) sessionLost('The speech connection closed. Your phrases still work.'); };
+    readyTimer = setTimeout(() => { if (mine === lifecycle) failSession('Speech did not become ready. Your phrases still work.'); }, 20000);
+    return await gate.promise;
   } catch (e) {
-    if (mine === lifecycle) { await shutdown('close'); controller.fail(e.name === 'NotAllowedError' ? 'Microphone permission was not granted. Your phrases still work.' : e.message); }
+    if (mine !== lifecycle) return false;
+    const refused = e?.name === 'NotAllowedError' || e?.name === 'SecurityError';
+    endSession('close');
+    // A hub that could not start a session leaves the prepared microphone open; a microphone that failed is closed.
+    if (micBroke) { micRefused = refused; const old = mic; mic = null; await old?.stop(); }
+    if (!forHold) controller.fail(refused ? MIC_REFUSED : e.message);
+    return false;
   } finally {
-    if (mine === lifecycle) { starting = false; $('startChat').disabled = !!session; }
+    if (mine === lifecycle) starting = false;
   }
 }
 async function beginAsk() {
     if (appLocked()) return;
-  if (!session || !controller.state.engineReady || holding || askPending || mode === 'draining' || closing || !['Ready to ask', 'Your turn'].includes(controller.state.phase)) return;
-  holding = true; askPending = true; captureGeneration = null; questionSending = false; const mine = lifecycle;
+  if (holding || askPending || mode === 'draining' || closing || micRefused) return;
+  const live = !!session && controller.state.engineReady;
+  if (live ? !['Ready to ask', 'Your turn'].includes(controller.state.phase)
+    : !config?.runtime?.available || !['Off', 'Ready to ask', 'Your turn'].includes(controller.state.phase)) return;
+  holding = true; askPending = true; captureGeneration = null; questionSending = false;
   holdStartedAt = performance.now(); holdFrames = 0;
   const intent = ++captureIntent; pendingFrames = [];
   metrics.end(questionMetric, 'cancelled', 'superseded'); questionMetric = metrics.begin('hold');
-  turnLog.set(questionMetric, { mode: remoteStreaming ? 'stream' : remoteFinal ? 'one-shot' : 'local', session });
+  const record = () => turnLog.set(questionMetric, { mode: remoteStreaming ? 'stream' : remoteFinal ? 'one-shot' : 'local', session });
+  if (live) record();
   // Test mode: measure the service round trips now, at touch-down, not while the question is sent (cached 30 s).
   if (turnLog.tracking(questionMetric)) fetch(`${API}/health/warm`, { cache: 'no-store' }).catch(() => {});
-  setMode('opening'); uploadEpoch++; controller.ask(); finishedTurn = -1; $('ask').classList.add('held');
+  setMode('opening'); uploadEpoch++;
+  if (!live) controller.standby();
+  controller.ask(); finishedTurn = -1; $('ask').classList.add('held');
   const questionTurn = controller.state.turn;
-  if (!mic?.begin()) { failSession('The microphone is not ready. Start Chat again.'); return; }
+  if (live) { if (!mic?.begin()) { failSession('The microphone is not ready. Hold Ask to try again.'); return; } }
+  else mic?.begin(); // an open microphone collects at once; one still opening, as soon as it opens
   clearTimeout(askTimer);
-  askTimer = setTimeout(() => { if (mine === lifecycle && intent === captureIntent) failSession('That question was too long. Release and try a shorter question.', 'timeout'); }, 15000);
+  askTimer = setTimeout(() => { if (intent === captureIntent) failSession('That question was too long. Release and try a shorter question.', 'timeout'); }, 15000);
+  // With no live session (the lifetime ended, the hub restarted, a failure, a
+  // pause) this hold starts one; its audio waits on the device until it is ready.
+  // An earlier dropped hold's cancel reaches the hub before this ask (never this
+  // hold's own cancel: that one waits for this acknowledgement).
+  const earlier = cancelling;
+  askAcknowledged = (live ? Promise.resolve(true) : prepare({ forHold: true })).then(async started => {
+    if (!started) return { started: false };
+    if (intent !== captureIntent) return null;
+    await earlier;
+    if (intent !== captureIntent || !session) return null;
+    if (!live) record(); // the session id may differ from the last hold's
+    return control('ask', stagedChoices ? { context: recentConversation.slice(-8) } : {});
+  });
   try {
-    // A dropped hold's cancel reaches the hub before this ask.
-    const context = stagedChoices ? { context: recentConversation.slice(-8) } : {};
-    askAcknowledged = cancelling.then(() => (mine === lifecycle ? control('ask', context) : null));
     const reply = await askAcknowledged;
-    if (reply && mine === lifecycle && intent === captureIntent && questionTurn === controller.state.turn) {
+    if (intent !== captureIntent) return;
+    if (reply?.started === false) {
+      dropHold({ outcome: 'failed', reason: 'connection', hint: HINT_NOT_READY, tellHub: false });
+      if (micRefused) controller.fail(MIC_REFUSED);
+      return;
+    }
+    if (reply && questionTurn === controller.state.turn) {
       askPending = false; captureGeneration = reply.generation;
       setMode(holding ? 'capture' : 'draining');
       const frames = pendingFrames; pendingFrames = []; frames.forEach(queueFrame);
     }
-  } catch (e) { if (mine === lifecycle && intent === captureIntent) failSession('Question capture could not start. Your phrases still work; start Chat again.'); }
+  } catch (e) { if (intent === captureIntent) failSession('Question capture could not start. Your phrases still work; hold Ask to try again.'); }
 }
 async function finishAsk() {
     if (appLocked()) return;
   clearTimeout(askTimer);
-  if (!session || !['opening', 'capture'].includes(mode) || controller.state.phase !== 'Capturing question') return;
+  if (!['opening', 'capture'].includes(mode) || controller.state.phase !== 'Capturing question') return;
   if (finishedTurn === controller.state.turn) return;
   finishedTurn = controller.state.turn;
   if (performance.now() - holdStartedAt < SHORT_HOLD_MS || holdFrames === 0) { dropHold({ reason: 'short', hint: HINT_SHORT }); return; }
   const timing = questionMetric; metrics.mark(timing, 'release'); turnLog.sample(timing, 'release');
   holding = false; $('ask').classList.remove('held');
-  const mine = lifecycle, intent = captureIntent;
-  // Stop collecting at release, even if the local Ask acknowledgement is slow.
+  const intent = captureIntent;
+  // Stop collecting at release, even if the local Ask acknowledgement (or the session start) is slow.
   try { await mic?.flush(); }
-  catch (e) { if (mine === lifecycle && intent === captureIntent) failSession(e.message); return; }
+  catch (e) { if (intent === captureIntent) failSession(e.message); return; }
   await askAcknowledged.catch(() => {});
-  if (mine !== lifecycle || intent !== captureIntent || !session) return;
+  if (intent !== captureIntent || !session) return;
+  const mine = lifecycle;
   setMode('draining');
   try { await waitForAudioDrain(uploadChain); }
   catch (error) { if (mine === lifecycle && intent === captureIntent) failSession(error.message, 'timeout'); return; }
@@ -517,7 +591,7 @@ async function finishAsk() {
     // The hub had already ended this hold (cancelled, over budget, frames lost):
     // the partner sees the recovery steps, never a hub code.
     if (mine === lifecycle && intent === captureIntent) failSession(/^(?:capture-inactive|audio-sequence)$/.test(e.message)
-      ? 'That question did not finish. Your phrases still work; start Chat again and wait for Ready to ask.' : e.message);
+      ? 'That question did not finish. Your phrases still work; hold Ask to ask again.' : e.message);
   }
 }
 // A touch the browser took away (pointercancel, lost capture while holding): a slip.
@@ -537,31 +611,49 @@ function dropHold({ outcome = 'cancelled', reason, hint, tellHub = true }) {
   metrics.end(questionMetric, outcome, reason);
   if (tellHub) cancelling = askAcknowledged.catch(() => {}).then(() => (mine === lifecycle && session ? control('cancel') : null)).catch(() => null);
   controller.retry(hint);
+  paintAsk();
 }
-async function shutdown(type = 'close', preserveAnswers = false) {
-  metrics.end(questionMetric, 'cancelled', 'closed'); metrics.end(speechMetric, 'cancelled', 'closed');
-  const saved = persistence.flush({ keepalive: true });
-  pendingSpeechMetric = null;
-  const id = session; session = null; lifecycle++; uploadEpoch++;
-  const mine = lifecycle; closing = true;
-  recentConversation = [];
-  captureIntent++; pendingFrames = [];
-  setMode('blocked'); starting = false; holding = false; askPending = false; captureGeneration = null;
-  remoteFinal = false; remoteStreaming = false; questionSending = false; stagedChoices = false;
+// Ends the hub session only; the held question and the microphone are the caller's.
+function endSession(type = 'close') {
+  const id = session; session = null; lifecycle++; uploadEpoch++; starting = false;
+  remoteFinal = false; remoteStreaming = false; stagedChoices = false;
   if (staging) { const record = staging; staging = null; record.error ||= new Error('Chat is off.'); record.done?.(record.error); }
-  clearTimeout(askTimer); clearTimeout(readyTimer); clearTimeout(heartbeat); heartbeat = null; sessionAbort?.abort();
+  clearTimeout(readyTimer); clearTimeout(heartbeat); heartbeat = null; sessionAbort?.abort();
   events?.close(); events = null; closeAudioSocket();
+  readyGate?.resolve(false); readyGate = null;
+  queued = 0; uploadChain = Promise.resolve();
   if (id) {
     fetch(`${API}/sessions/${encodeURIComponent(id)}/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }), keepalive: true }).catch(() => {});
     fetch(`${API}/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true }).catch(() => {});
   }
+}
+// The hub ended the session by itself (the 30-minute lifetime, a restart, a
+// closed connection). A question in progress is lost and the partner is told.
+// Otherwise nothing is reported: the prepared microphone stays open and the
+// next hold starts a new session.
+function sessionLost(message) {
+  if (holding || askPending || mode !== 'blocked' || controller.state.phase === 'Capturing question' || !controller.state.engineReady) { failSession(message); return; }
+  endSession('close'); controller.standby(); paintAsk();
+}
+// Closes everything: the session, the held question and the microphone (end, pause, hide, leave, failure).
+async function shutdown(type = 'close', preserveAnswers = false) {
+  metrics.end(questionMetric, 'cancelled', 'closed'); metrics.end(speechMetric, 'cancelled', 'closed');
+  const saved = persistence.flush({ keepalive: true });
+  pendingSpeechMetric = null;
+  closing = true;
+  recentConversation = [];
+  captureIntent++; pendingFrames = [];
+  setMode('blocked'); holding = false; askPending = false; captureGeneration = null; questionSending = false;
+  clearTimeout(askTimer);
+  endSession(type);
+  const mine = lifecycle;
   if (!preserveAnswers) controller.stop();
-  const oldMic = mic; mic = null; await oldMic?.stop();
-  if (mine !== lifecycle) return;
-  closing = false;
-  voice.dispose(); queued = 0; uploadChain = Promise.resolve();
-  diagnostic(''); $('ask').classList.remove('held'); $('ask').disabled = true;
-  $('startChat').disabled = false; $('endChat').disabled = true;
+  const oldMic = mic; mic = null;
+  const done = closed = Promise.resolve(oldMic?.stop()).catch(() => {});
+  await done;
+  if (closed === done) closing = false;
+  if (mine === lifecycle) { voice.dispose(); diagnostic(''); }
+  $('ask').classList.remove('held'); paintAsk();
   return saved;
 }
 async function failSession(message, reason = 'connection') {
@@ -570,7 +662,7 @@ async function failSession(message, reason = 'connection') {
   controller.fail(message); await shutdown('cancel', true);
 }
 
-controller.subscribe(state => { $('ask').disabled = !session || !state.engineReady; });
+controller.subscribe(() => paintAsk());
 function touchButton(el, down, up, cancel) {
   let pointer = null;
   el.addEventListener('pointerdown', e => {
@@ -590,10 +682,10 @@ function touchButton(el, down, up, cancel) {
   for (const type of ['contextmenu', 'selectstart', 'dragstart']) el.addEventListener(type, e => e.preventDefault());
   // No click handler: both app gaze clicks and native mouse injection are inert.
 }
-touchButton($('startChat'), startChat);
 touchButton($('ask'), beginAsk, finishAsk, cancelAsk);
-touchButton($('endChat'), () => shutdown());
-for (const [id, down, up] of [['desktopStart', startChat, null], ['desktopAsk', beginAsk, finishAsk]]) {
+// Try again (a refused microphone) is a partner touch, like Ask.
+touchButton($('retryChat'), () => { micPaused = false; void prepare(); });
+for (const [id, down, up] of [['desktopAsk', beginAsk, finishAsk]]) {
   $(id).addEventListener('keydown', e => { if (e.isTrusted && e.code === 'Space' && !e.repeat) { e.preventDefault(); down(); } });
   $(id).addEventListener('keyup', e => { if (e.isTrusted && e.code === 'Space') { e.preventDefault(); up?.(); } });
 }
@@ -677,6 +769,11 @@ function partnerAction(el, action) {
   touchButton(el, null, action);
   el.addEventListener('keydown', e => { if (e.isTrusted && (e.code === 'Space' || e.code === 'Enter') && !e.repeat) { e.preventDefault(); action(); } });
 }
+// Pause microphone: closes capture and the session while Chat stays open; the next hold prepares again.
+partnerAction($('pauseMic'), () => {
+  micPaused = true;
+  void shutdown('pause').then(() => { if (micPaused) notice('Microphone paused. Hold Ask to turn it back on.'); });
+});
 let testModeBusy = false, deleteArmed = null;
 partnerAction($('testModeToggle'), async () => {
   if (testModeBusy) return;
@@ -735,16 +832,20 @@ $('clearStories').addEventListener('click', async () => {
   catch { $('storyNote').textContent = 'Stories were not cleared. Try again or reload Chat.'; }
   finally { $('saveStory').disabled = $('clearStories').disabled = false; }
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') shutdown('pause'); });
+// Hiding or leaving closes the microphone and the session; every return prepares Chat again.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') shutdown('pause'); else autoPrepare(); });
+window.addEventListener('pageshow', () => autoPrepare());
 window.addEventListener('pagehide', () => shutdown('close'));
 window.addEventListener('resize', () => { window.Dwell?.suppress(600); fitLabels(); });
 json(`${API}/config`).then(value => {
   config = value;
   $('engineNote').textContent = value.runtime?.available
-    ? (value.runtime.kind === 'built-in' ? 'Cloud speech is set up. Start Chat to check the microphone, then wait for Ready to ask.' : 'Speech is set up. Start Chat to check the microphone, then wait for Ready to ask.')
+    ? (value.runtime.kind === 'built-in' ? 'Cloud speech is set up. Chat gets the microphone ready by itself; wait for Ready to ask.' : 'Speech is set up. Chat gets the microphone ready by itself; wait for Ready to ask.')
     : 'Speech is not set up on this computer. Prepared phrases and stories work. A maintainer can finish speech setup.';
-}).catch(() => { $('engineNote').textContent = 'Speech is unavailable. Prepared phrases and stories work.'; });
+  paintAsk(); autoPrepare();
+}).catch(() => { config = { runtime: { available: false } }; $('engineNote').textContent = 'Speech is unavailable. Prepared phrases and stories work.'; paintAsk(); });
 appReady = true;
 document.body.dataset.storageReady = 'true';
-for (const id of ['startChat', 'desktopStart', 'desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = false;
+for (const id of ['desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = false;
+paintAsk();
 if (persistence.status().state === 'unsaved' || persistence.status().state === 'conflict') notice(storageStatus.textContent);
