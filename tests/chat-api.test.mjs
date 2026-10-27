@@ -773,3 +773,32 @@ test('two verb-phrase alternatives keep each head verb and its object, never a p
   const pictures = (await ask('Do you want to go outside to play or stay inside?')).map(choice => choice.symbol);
   assert.deepEqual(pictures, ['outside', 'home']);
 });
+
+test('a question stem repeated in a later alternative is stripped before the alternatives are cleaned', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const labels = async text => {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'alternatives', text);
+    return result.choices.map(choice => choice.label);
+  };
+  assert.deepEqual(await labels('Do you want to go outside to play, or do you want to stay inside?'), ['Go outside', 'Stay inside']);
+  assert.deepEqual(await labels('Would you like to read a book, or would you rather play outside?'), ['Read a book', 'Play outside']);
+  assert.deepEqual(await labels('Should we go to the park, or should we stay home?'), ['Go to the park', 'Stay home']);
+  assert.deepEqual(await labels('Do you want juice, or do you want milk?'), ['Juice', 'Milk']);
+  assert.deepEqual(await labels('Is it hot or is it cold?'), ['Hot', 'Cold']);
+  assert.deepEqual(await labels('Are you hot or are you cold?'), ['Hot', 'Cold']);
+  assert.deepEqual(await labels('Do you wanna draw, or do you need to rest?'), ['Draw', 'Rest']);
+  assert.deepEqual(await labels('Shall we sing, or can we dance?'), ['Sing', 'Dance']);
+});
+
+test('"is it" and "are you" are stripped only when every alternative carries one', async t => {
+  const seen = [];
+  const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body).text);
+    return new Response(JSON.stringify({ choices: [{ label: 'Hungry', say: 'I am hungry.' }, { label: 'Thirsty', say: 'I am thirsty.' }] }));
+  } });
+  const result = await (await s.request('/choices', { text: 'Are you hungry or thirsty?' })).json();
+  assert.equal(result.kind, 'adapter');
+  const mixed = await (await s.request('/choices', { text: 'Is it hot or cold or is it windy?' })).json();
+  assert.ok(mixed.choices.every(choice => !/^Is it\b/i.test(choice.label)), 'never a tile that repeats the stem');
+});
