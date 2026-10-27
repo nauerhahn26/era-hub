@@ -135,7 +135,7 @@ export function createTurnLog(options = {}) {
       turn.content.partials = [...(turn.content.partials || []), words].slice(-limits.partials);
       notify();
     },
-    staged(handle, choices, { kind, usage } = {}) {
+    staged(handle, choices, { kind, usage, symbolRejected } = {}) {
       const turn = turns.get(handle); if (!turn || !Array.isArray(choices)) return;
       const clean = choices.map(cleanChoice).filter(Boolean).slice(0, 6);
       // A streamed batch was marked choice by choice as it staged.
@@ -145,6 +145,9 @@ export function createTurnLog(options = {}) {
       });
       turn.content.choices = clean;
       if (typeof kind === 'string') turn.content.choiceKind = kind.slice(0, 32);
+      // Model pictures the hub refused for the label's own: a count, never the words.
+      if (Number.isSafeInteger(symbolRejected) && symbolRejected > 0 && symbolRejected <= 6) turn.content.symbolRejected = symbolRejected;
+      else delete turn.content.symbolRejected;
       if (usage && ['inputTokens', 'cachedTokens', 'outputTokens'].every(key => Number.isSafeInteger(usage[key]) && usage[key] >= 0))
         turn.reply = { model: typeof usage.model === 'string' ? usage.model.slice(0, 128) : null, inputTokens: usage.inputTokens, cachedTokens: usage.cachedTokens, outputTokens: usage.outputTokens };
       notify();

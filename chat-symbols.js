@@ -55,21 +55,73 @@ function symbolWords() {
 }
 function isNegative(word) { return word === FALLBACK || vocabulary().byWord.get(word)?.tone === 'negative'; }
 
+// Concept families. A food, drink, place or person label takes a picture of its
+// own family; a model picture from another known family (a weekday for a dish,
+// the weather for a drink) is rejected for the label's own picture.
+const FAMILIES = {
+  food: ['food', 'breakfast', 'lunch', 'dinner', 'snack', 'fruit', 'apple', 'banana', 'orange', 'grapes', 'strawberry', 'watermelon',
+    'blueberries', 'pear', 'vegetables', 'carrot', 'broccoli', 'corn', 'potato', 'salad', 'bread', 'toast', 'sandwich', 'pizza', 'pasta',
+    'rice', 'soup', 'egg', 'pancake', 'cereal', 'cheese', 'yogurt', 'chicken', 'fish fingers', 'meat', 'hamburger', 'hot dog', 'fries',
+    'crackers', 'cookie', 'cake', 'chocolate', 'candy', 'ice cream', 'popcorn', 'pretzel', 'avocado', 'hummus'],
+  drink: ['drink', 'milk', 'juice', 'water', 'hot chocolate', 'tea'],
+  place: ['school', 'home', 'outside', 'park', 'playground', 'beach', 'swimming pool', 'zoo', 'farm', 'library', 'shop', 'restaurant',
+    'cinema', 'garden', 'bedroom', 'kitchen', 'bathroom', 'living room', 'classroom', 'hospital', 'church', 'synagogue', 'museum',
+    'mountains', 'forest'],
+  person: ['mom', 'dad', 'grandma', 'grandpa', 'sister', 'brother', 'baby', 'family', 'friend', 'teacher', 'doctor', 'boy', 'girl', 'people'],
+  time: ['time', 'now', 'today', 'tomorrow', 'yesterday', 'weekend', 'morning', 'afternoon', 'night', 'day', 'week',
+    'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+  weather: ['weather', 'sunny', 'cloudy', 'rain', 'snow', 'windy', 'hot', 'cold', 'storm', 'umbrella', 'rainbow'],
+};
+const FAMILY = new Map(Object.entries(FAMILIES).flatMap(([family, words]) => words.map(word => [word, family])));
+const CATEGORIES = new Set(['food', 'drink', 'place', 'person']);
+// Several things of one family show the family's own picture: "Chicken and rice" is food.
+const GENERIC = { food: 'food', drink: 'drink', person: 'people' };
+
 function curated(text) { const { phrases } = vocabulary(); return text && phrases.has(text) ? phrases.get(text) : null; }
-function guess(text) {
-  if (!text) return null;
+// Every concept named by whole words, never part of a word ("meatballs" is not "me").
+function conceptsIn(text) {
   const found = [];
+  if (!text) return found;
   let rest = ` ${text} `;
   for (const [pattern, word] of vocabulary().patterns) {
     if (!pattern.test(rest)) continue;
     if (!found.includes(word)) found.push(word);
     rest = rest.replace(pattern, ' ');   // "ice cream" is not also "cream"
   }
+  return found;
+}
+function guess(text) {
+  if (!text) return null;
+  const found = conceptsIn(text);
   const concrete = found.filter(word => !BROAD.has(word));
   if (concrete.length === 1) return concrete[0];
   if (concrete.length > 1) return FALLBACK;
   return found.length === 1 ? found[0] : found.length ? FALLBACK : null;
 }
+// The whole label is one concept's word or alternative word ("Spaghetti", "The teacher").
+function exact(text) {
+  const { patterns } = vocabulary(), bare = text.replace(/^(?:a|an|the|some)\s+/, '');
+  const hit = patterns.find(([, , form]) => form === bare || form + 's' === bare || form + 'es' === bare);
+  return hit ? hit[1] : null;
+}
+// The label's food, drink, place or person category: every concrete thing it
+// names is in those families. Returns the families named and the picture.
+function category(text) {
+  // "Wine" is the drink concept itself, broad elsewhere but a category here.
+  const concrete = conceptsIn(text).filter(word => CATEGORIES.has(FAMILY.get(word)) || !BROAD.has(word));
+  const families = new Set(concrete.map(word => FAMILY.get(word)));
+  if (!concrete.length || ![...families].every(family => CATEGORIES.has(family))) return null;
+  if (concrete.length === 1) return { families, word: concrete[0] };
+  const main = families.has('food') ? 'food' : families.size === 1 ? [...families][0] : null;
+  return { families, word: (families.size === 1 || main === 'food') && GENERIC[main] || FALLBACK };
+}
+function fromWords(l, s) { return exact(l) || category(l)?.word || guess(l) || guess(s) || FALLBACK; }
+// A model picture from another known family than the label's category.
+function rejects(l, symbol) {
+  const family = FAMILY.get(symbol), labelled = family && category(l);
+  return !!labelled && !labelled.families.has(family);
+}
+function modelSymbol(symbol) { return typeof symbol === 'string' && vocabulary().byWord.has(symbol) ? symbol : null; }
 // A refusal or negated reply keeps only a picture that is itself a refusal,
 // negation or uncertainty; otherwise "no" for a clear refusal, else the bubble.
 function negationGuard(label, say, word) {
@@ -85,8 +137,15 @@ function pickSymbol({ label = '', say = '', symbol } = {}) {
   // ("I'm good" / "No thanks, I am good." is a refusal).
   if (curated(l)) return NEGATION.test(l) ? curated(l) : negationGuard('', s, curated(l));
   if (curated(s)) return NEGATION.test(s) ? curated(s) : negationGuard(l, '', curated(s));
-  const picked = typeof symbol === 'string' && vocabulary().byWord.has(symbol) ? symbol : guess(l) || guess(s) || FALLBACK;
+  const model = modelSymbol(symbol);
+  const picked = model && !rejects(l, model) ? model : fromWords(l, s);
   return negationGuard(l, s, picked);
+}
+// True when the model named a picture the hub refused for the label's own
+// (test mode counts these; the words are never changed).
+function symbolRejected({ label = '', say = '', symbol } = {}) {
+  const l = normal(label), s = normal(say), model = modelSymbol(symbol);
+  return !!model && !curated(l) && !curated(s) && rejects(l, model);
 }
 function withSymbols(choices) {
   return choices.map(choice => {
@@ -132,4 +191,4 @@ function createSymbolWarmer({ ids, isCached, fetchOne, delayMs = 250, maxFailure
   };
 }
 
-module.exports = { symbolWords, pickSymbol, withSymbols, vocabularyIds, createSymbolWarmer, normal };
+module.exports = { symbolWords, pickSymbol, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal };

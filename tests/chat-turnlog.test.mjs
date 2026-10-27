@@ -247,3 +247,21 @@ test('a streamed turn records the phase-2 marks: socket, settled, speculation, e
   assert.equal(record.usage.socketSeconds, 41.5); assert.equal(record.content.keytermsFired, 2); assert.equal(record.content.keyterms, null, 'counts only, never the words');
   assert.equal(record.worker.connectMs, 0); assert.equal(record.worker.settledMs, 120);
 });
+
+test('a batch whose model pictures the hub rejected records the count only, and the hub schema accepts it', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  const choices = [{ id: '1:0', label: 'Meatballs', say: 'Meatballs, please.', symbol: 'meat', symbolId: 2316 },
+    { id: '1:1', label: 'Beef mushrooms', say: 'Beef and mushrooms, please.', symbol: 'food', symbolId: 4610 }];
+  stageChoices(s.log, h, choices, { kind: 'generated', symbolRejected: 1 }, choice => choice.symbol);
+  s.wrapped.mark(h, 'selected'); s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.symbolRejected, 1);
+  assert.deepEqual(validateTurn(record), record);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, symbolRejected: 'monday' } }), /invalid-turn/);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, symbolRejected: 7 } }), /invalid-turn/);
+  // No rejection, no field.
+  const t2 = setup(), h2 = t2.wrapped.begin('typed');
+  stageChoices(t2.log, h2, choices, { kind: 'generated', symbolRejected: 0 }, choice => choice.symbol);
+  t2.wrapped.end(h2, 'completed'); await flush();
+  assert.equal('symbolRejected' in JSON.parse(t2.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
+});

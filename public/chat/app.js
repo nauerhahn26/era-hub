@@ -135,7 +135,7 @@ const controller = createChatController({
     try { result = held ? await stagedBatch(held, signal) : await json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context }), signal }); }
     catch (error) { turnLog.error(timing, error.message); throw error; }
     metrics.observe(timing, { choicesServerMs: result.timings?.totalMs });
-    stagedMeta = { handle: timing, kind: result.kind, usage: result.usage };
+    stagedMeta = { handle: timing, kind: result.kind, usage: result.usage, symbolRejected: result.symbolRejected };
     return result;
   },
   onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
@@ -355,7 +355,7 @@ function stagingEvent(data) {
     voice.prefetch([choice], { urgent: true });
     turnLog.stagedOne(questionMetric, choice);
   } else if (data.type === 'batch-sealed') {
-    record.sealed = { kind: data.kind, generated: data.generated, choices: data.choices, usage: data.usage, timings: data.timings };
+    record.sealed = { kind: data.kind, generated: data.generated, choices: data.choices, usage: data.usage, symbolRejected: data.symbolRejected, timings: data.timings };
     record.done?.();
   } else if (data.type === 'choices-error') {
     record.error = new Error('Replies are unavailable. Your phrases still work.');

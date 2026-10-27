@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { isLoopback } = require('./update.js');
 const { createChoicesAdapter } = require('./chat-choices.js');
-const { withSymbols } = require('./chat-symbols.js');
+const { withSymbols, symbolRejected } = require('./chat-symbols.js');
 const { acceptWebSocket, refuseUpgrade } = require('./chat-ws.js');
 const { createStreamTranscriber, streamSettings, loadKeyterms, keytermsFired } = require('./chat-stream.js');
 const { createKeepAliveFetch } = require('./keepalive-fetch.js');
@@ -157,27 +157,54 @@ function cleanUsage(value) {
 // A leading verb only the first alternative carries is shared and dropped (with
 // a following preposition); in every alternative a clause or time word after
 // its first word ends it.
-const SHARED_VERB = /^(?:eat|drink|have|play|go|read|watch|listen|sing|do|make|see|visit|wear|sit|take|get|draw|paint|build|write|run|swim|ride|dance|cook|bake)$/i;
+const SHARED_VERB = /^(?:eat|drink|have|play|go|read|watch|listen|sing|do|make|see|visit|wear|sit|take|get|draw|paint|build|write|run|swim|ride|dance|cook|bake|stay|come|sleep|rest|walk|jump|climb)$/i;
 const OBJECT = /^(?:a|an|the|some|my|your|this|that|these|those)$/i;
 const PARTICLE = /^(?:with|to|for|at|in|on)$/i;
 const TAIL = /^(?:to|for|at|in|on|with|from|after|before|tonight|today|tomorrow|now|later|first|next|please|because|so|when|feed|feeds|help|helps|read|reads|play|plays|take|takes|come|comes|bring|brings|sit|sits)$/i;
 function alternativesOf(parts) {
   const words = parts.map(part => part.trim().split(/\s+/).filter(Boolean));
+  let shared = false;
   if (words.length >= 2 && words[0].length > 1 && SHARED_VERB.test(words[0][0]) && words.slice(1).every(w => w.length && !SHARED_VERB.test(w[0]))) {
     // Shared only when what follows the verb is the same kind of thing as the
     // other alternatives (as long, and not the verb's own object: "play a
     // game or draw pictures" offers two activities).
     let rest = words[0].slice(1);
     if (rest.length > 1 && PARTICLE.test(rest[0])) rest = rest.slice(1);
-    if (!OBJECT.test(rest[0]) && words.slice(1).every(w => w.length === rest.length)) words[0] = rest;
+    if (!OBJECT.test(rest[0]) && words.slice(1).every(w => w.length === rest.length)) { words[0] = rest; shared = true; }
   }
-  return words.map(list => {
-    const cut = list.findIndex((word, index) => index > 0 && TAIL.test(word));
-    return (cut > 0 ? list.slice(0, cut) : list).join(' ');
+  return words.map((list, index) => {
+    // A verb phrase keeps its verb, a preposition and article right after it,
+    // and its object: "go to the park so we can run" is "go to the park",
+    // "go outside to play" is "go outside". Elsewhere a clause or time word
+    // after the first word ends the alternative.
+    let from = 1;
+    if (!(shared && index === 0) && list.length > 1 && SHARED_VERB.test(list[0])) {
+      while (from < list.length - 1 && (PARTICLE.test(list[from]) || OBJECT.test(list[from]))) from++;
+      from++;
+    }
+    const cut = list.findIndex((word, i) => i >= from && TAIL.test(word));
+    const kept = cut > 0 ? list.slice(0, cut) : list;
+    // Never a dangling "to", "the" or "a".
+    while (kept.length > 1 && (PARTICLE.test(kept.at(-1)) || OBJECT.test(kept.at(-1)))) kept.pop();
+    return kept.join(' ');
   });
 }
+// A partner who restarts ("You want chicken and fruit? Chicken and rice.
+// Meatballs or beef and mushrooms?") is read from the last question sentence
+// on, together with an opener sentence just before it ("What do you like?
+// Music or a story?"). Words after that question still count: they may refuse.
+function lastQuestion(text, opener) {
+  const sentences = text.match(/[^.?!]+[.?!]*\s*/g) || [text];
+  let index = -1;
+  sentences.forEach((sentence, i) => { if (/\?\s*$/.test(sentence)) index = i; });
+  if (index <= 0) return text;
+  if (opener.test(sentences[index - 1].trim())) index--;
+  return sentences.slice(index).join('').trim();
+}
+const CHOICE_PROMPT = String.raw`(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)`;
+const OPENER = new RegExp(String.raw`^(?:(?:hey[\s,!.?:]+)?ellie[\s,!.?:]+)?` + CHOICE_PROMPT + String.raw`\s*[:,.!?]*$`, 'i');
 function localChoices(text) {
-  let trimmed = text.replace(/[?.!]+$/, '').trim();
+  let trimmed = lastQuestion(text, OPENER).replace(/[?.!]+$/, '').trim();
   const explicitAddress = /^hey[\s,!.?:]+ellie[\s,!.?:]+(.+)$/i.exec(trimmed) ||
     /^ellie\s*[,!.?:]+\s*(.+)$/i.exec(trimmed);
   const questionAddress = /^ellie\s+(.+)$/i.exec(trimmed);
@@ -188,7 +215,7 @@ function localChoices(text) {
   else if (questionAddress && /^(?:(?:what|which|why|where|when|how|who|hi|hello|hey)\b|(?:do|does|did|can|could|would|will|have|has|had|shall|should|may|are|were)\s+(?:you|we)\b|(?:is|was)\s+(?:it|this|that|there)\b)/i.test(questionAddress[1]))
     trimmed = questionAddress[1];
   if (/\bor\b/i.test(trimmed)) {
-    const prefix = /^(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)\s*[:,.!?]?\s+/i;
+    const prefix = new RegExp('^' + CHOICE_PROMPT + String.raw`\s*[:,.!?]?\s+`, 'i');
     // Unrecognised question forms need context and factual grounding. Splitting
     // them can turn half a question into the communicator's spoken answer.
     if (!prefix.test(trimmed)) {
@@ -198,8 +225,11 @@ function localChoices(text) {
         ]) };
       return null;
     }
-    const stripped = trimmed.replace(prefix, '');
-    const parts = alternativesOf(stripped.split(/\s+or\s+/i));
+    const stripped = trimmed.replace(prefix, '').replace(/^either\s+/i, '');
+    // "A, B, or C", "A, B or C", "A or B or C": commas list alternatives only
+    // before the last "or"; after it a comma starts a clause ("dad, to help").
+    const ors = stripped.split(/\s+or\s+/i), last = ors.pop().replace(/\s*,.*$/, '');
+    const parts = alternativesOf([...ors.flatMap(part => part.replace(/\s*,\s*$/, '').split(/\s*,\s*/)), last].map(part => part.replace(/[,;:]+$/, '').trim()));
     if (parts.length >= 2 && parts.length <= 4 && parts.every(p => p.length > 0 && p.length <= 55 && !/[.!?;:]/.test(p))) {
       return { kind: 'alternatives', choices: choiceList(parts.map(p => p[0].toUpperCase() + p.slice(1))) };
     }
@@ -568,9 +598,12 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const unique = new Set(items.map(item => cleanText(item.say, 300).toLowerCase()));
       if (unique.size !== items.length) throw fault(502, 'choices-invalid');
       if (signal.aborted) throw fault(502, 'choices-unavailable');
+      // How many model pictures the hub refused for the label's own (test mode counts them).
+      const rejected = items.filter(item => symbolRejected({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol })).length;
       return { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
         choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol }))),
+        ...(rejected ? { symbolRejected: rejected } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }

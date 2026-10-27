@@ -243,3 +243,53 @@ test('the payload ships the vocabulary with the Chat page', () => {
   assert.ok(payload.includes('cp -r "$HUB/public/chat" "$OUT/public/chat"'));
   assert.match(payload, /public\/chat\/vocabulary\.json/, 'the payload refuses a tree without the vocabulary');
 });
+
+test('shortcut food, drink, place and person tiles get their own concept, else the category concept, never a part-word match', () => {
+  const pick = label => pictures.pickSymbol({ label, say: label });
+  for (const [label, word] of [['Spaghetti', 'pasta'], ['Chicken', 'chicken'], ['Meatballs', 'meat'], ['Beef', 'meat'],
+    ['Wine', 'drink'], ['Sushi', 'food'], ['Mushrooms', 'food'], ['Juice', 'juice'], ['Water', 'water'],
+    ['Chicken and rice', 'food'], ['Beef and mushrooms', 'food'], ['Juice and milk', 'drink'],
+    ['Park', 'park'], ['Library', 'library'], ['Stay inside', 'home'], ['Go outside', 'outside'],
+    ['Mom', 'mom'], ['Dad', 'dad'], ['The teacher', 'teacher']])
+    assert.equal(pick(label), word, label);
+  // Never a partial-word or prefix match: "Meatballs" is not "me", "Carpet" is not "car".
+  for (const label of ['Carpet', 'Mondays meeting room', 'Pineapple tart']) assert.notEqual(pick(label), label.toLowerCase().slice(0, 3), label);
+  assert.equal(pick('Carpet'), 'chat');
+});
+
+test('a model symbol from another concept family than the food label is rejected for the category picture (recorded batch)', () => {
+  // The device's recorded choice set: the model named "monday" for a dish.
+  const recorded = [{ label: 'Chicken and rice', say: 'Chicken and rice, please.', symbol: 'chicken' },
+    { label: 'Meatballs', say: 'Meatballs, please.', symbol: 'meat' },
+    { label: 'Beef mushrooms', say: 'Beef and mushrooms, please.', symbol: 'monday' }];
+  const placed = pictures.withSymbols(recorded);
+  assert.deepEqual(placed.map(choice => choice.symbol), ['chicken', 'meat', 'food']);
+  assert.equal(placed[2].symbolId, byWord.get('food').id);
+  assert.deepEqual(recorded.map(pictures.symbolRejected), [false, false, true]);
+  // Weather and time pictures never stand for a food or drink; other families and the same family stay the model's.
+  assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'sunny' }), 'drink');
+  assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'tomorrow' }), 'pizza');
+  assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'yummy' }), 'yummy');
+  assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'drink' }), 'drink');
+  assert.equal(pictures.pickSymbol({ label: 'Go to the park', say: 'Let us go to the park.', symbol: 'friday' }), 'park');
+  assert.equal(pictures.pickSymbol({ label: 'Saturday', say: 'On Saturday.', symbol: 'saturday' }), 'saturday');
+  assert.equal(pictures.symbolRejected({ label: 'Saturday', say: 'On Saturday.', symbol: 'saturday' }), false);
+  // Negation still wins over the category.
+  assert.equal(pictures.pickSymbol({ label: 'No beef', say: 'No beef, thanks.', symbol: 'monday' }), 'no');
+});
+
+test('the hub counts rejected model symbols for test mode and the prompt says the symbol names the thing in the label', async t => {
+  let instructions;
+  const recorded = { choices: [{ label: 'Chicken and rice', say: 'Chicken and rice, please.', symbol: 'chicken' },
+    { label: 'Meatballs', say: 'Meatballs, please.', symbol: 'meat' }, { label: 'Beef mushrooms', say: 'Beef and mushrooms, please.', symbol: 'monday' }] };
+  const api = createChatApi({ env, fetch: async (_, options) => { ({ instructions } = JSON.parse(options.body)); return response(recorded); } });
+  const server = http.createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); });
+  await new Promise(resolve => server.listen(0, 'localhost', resolve));
+  t.after(async () => { api.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const result = await (await fetch(`http://localhost:${server.address().port}/chat/api/choices`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'What would you like for dinner tonight, my love?' }) })).json();
+  assert.deepEqual(result.choices.map(choice => choice.symbol), ['chicken', 'meat', 'food']);
+  assert.ok(result.choices.every(choice => choice.symbolId !== 37730), 'never the weekday picture');
+  assert.equal(result.symbolRejected, 1);
+  assert.match(instructions, /the symbol must name the thing in the label; a dish or food uses its food word or "food"/i);
+});
