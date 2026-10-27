@@ -393,8 +393,13 @@ More and Stop tiles use it. Chat will too.
   black-and-white variant (`ERA_SYMBOL_IMAGE_BW_URL`, cached as `<id>-bw.png`).
 - *Preview.* `node tools/chat-preview.mjs --pictures` (scratch hub,
   `ERA_TEST_PORT` 8480–8499, default 8493) writes one PNG per board — 12 boards
-  of the 46 fixed phrases and 8 of 30 sample replies — with colour, black and
-  white and emoji side by side, to `~/.cache/era-chat/pictures-preview/`.
+  of the 46 fixed phrases and 8 of 30 sample replies — at 1280x800 and the
+  device's 1920x1080, with colour, black and white, emoji and "stacked-big"
+  side by side, to `~/.cache/era-chat/pictures-preview/<size>/`. Stacked-big
+  (`fitTile(tile, { profile: 'stacked-big' })`, preview only, not the
+  default): a stacked label takes at most 70% of the height, so the picture
+  keeps 30%, stepping down through 60 px to the 44 px floor. The maintainer
+  picks.
 
 ## 7. Local and school
 

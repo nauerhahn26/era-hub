@@ -238,3 +238,31 @@ test('a stacked label tries every height share at the 74 px target before shrink
   assert.ok(result.size >= 74, `two lines at 74 px fit in 80% of the height, got ${result.size}px`);
   assert.equal(result.reduced, null);
 });
+
+test('the stacked-big preview profile keeps a real picture on a stacked tile; the default stays board law', async t => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.route('**/*', route => route.abort());
+  const css = (await fs.readFile(new URL('../public/chat/chat.css', import.meta.url), 'utf8')).replace(/^@import[^;]+;/m, '');
+  const fit = await fs.readFile(new URL('../public/chat/tile-fit.js', import.meta.url), 'utf8');
+  await page.setContent(`<style>${css}</style><main id="app"><div id="grid"></div></main>`);
+  const run = profile => page.evaluate(async ({ moduleURL, profile }) => {
+    const { fitTile } = await import(moduleURL);
+    const grid = document.querySelector('#grid'); grid.replaceChildren();
+    const tile = document.createElement('button'); tile.className = 'tile static has-symbol';
+    tile.style.cssText = 'position:absolute;left:0;top:0;width:296px;height:219px';
+    const picture = document.createElement('div'); picture.className = 'chat-symbol';
+    const label = document.createElement('span'); label.className = 'label'; label.textContent = 'Tell me more';
+    tile.append(picture, label); grid.append(tile);
+    const out = fitTile(tile, profile ? { profile } : undefined);
+    const style = getComputedStyle(tile), content = tile.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    return { ...out, share: picture.getBoundingClientRect().height / content, reduced: tile.dataset.fontReduced || null,
+      fits: label.scrollWidth <= label.clientWidth + 1 && label.getBoundingClientRect().bottom <= tile.getBoundingClientRect().bottom };
+  }, { moduleURL: `data:text/javascript;base64,${Buffer.from(fit).toString('base64')}`, profile });
+  const law = await run(), big = await run('stacked-big');
+  assert.equal(law.layout, 'stacked'); assert.ok(law.share < 0.3, 'board law keeps the label first: ' + JSON.stringify(law));
+  assert.equal(big.layout, 'stacked'); assert.ok(big.share >= 0.27, `picture ${big.share.toFixed(2)} of the height`);
+  assert.ok(big.size >= 44 && big.fits, JSON.stringify(big));
+  assert.equal(big.reduced, big.size < 74 ? '1' : null);
+});

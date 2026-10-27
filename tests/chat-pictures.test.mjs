@@ -171,6 +171,9 @@ test('the pictures preview covers the 46 fixed phrases and 30 sample replies on 
   for (const word of scenes.filter(scene => scene.type === 'response').flatMap(scene => scene.words))
     assert.equal(word.symbolId, byWord.get(word.symbol).id, word.label);
   assert.equal(scratchPort({}), 8493);
+  const { PREVIEW_SIZES, PREVIEW_STYLES } = await import('../tools/chat-pictures-preview.mjs');
+  assert.deepEqual(PREVIEW_SIZES.map(size => `${size.width}x${size.height}`), ['1280x800', '1920x1080']);
+  assert.deepEqual(PREVIEW_STYLES.map(style => style.id), ['color', 'bw', 'emoji', 'stacked-big']);
   for (const port of ['8377', '8378', '8386', '8500']) assert.throws(() => scratchPort({ ERA_TEST_PORT: port }), port);
   const { previewArguments } = await import('../tools/chat-preview.mjs');
   assert.deepEqual(previewArguments(['--pictures', '--out', '/tmp/x']), { pictures: true, out: '/tmp/x', data: undefined });

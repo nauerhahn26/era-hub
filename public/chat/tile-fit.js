@@ -7,6 +7,10 @@
 // Word integrity outranks the picture: when even 44 px cannot fit, the picture
 // is set aside and the words keep the whole tile.
 // Stacked labels may take 55% of the height, then 80% (board-render.js applyFit tiers).
+// The "stacked-big" profile is a preview candidate for the maintainer, not the
+// default: a stacked picture keeps at least 30% of the height and the label
+// steps down toward 60 px before the 44 px floor.
+export const STACKED_BIG = Object.freeze({ labelShare: 0.70 });
 export const FIT = Object.freeze({ target: 74, floor: 44, iconShare: 0.42, iconShareMin: 0.30, besideMaxChars: 16, besideMinWidth: 190, stackedShares: [0.55, 0.80] });
 
 function fits(tile, label, layout, share = 1) {
@@ -25,7 +29,7 @@ function shrink(tile, label, layout, from, to, share = 1) {
   }
 }
 
-export function fitTile(tile) {
+export function fitTile(tile, { profile } = {}) {
   const label = tile.querySelector('.label');
   if (!label || tile.classList.contains('rest')) return null;
   const picture = tile.querySelector('.chat-symbol');
@@ -53,14 +57,20 @@ export function fitTile(tile) {
     tile.classList.remove('beside');
   }
   tile.classList.add('stacked');
-  // Every height share at the 74 px target first; only the last share shrinks below it.
-  for (const share of FIT.stackedShares) {
-    const size = shrink(tile, label, 'stacked', start, FIT.target, share);
+  if (profile === 'stacked-big') {
+    // The label never takes more than 70%: sizes step down through 60 px to the floor.
+    const size = shrink(tile, label, 'stacked', start, FIT.floor, STACKED_BIG.labelShare);
+    if (size) return done(size, 'stacked');
+  } else {
+    // Every height share at the 74 px target first; only the last share shrinks below it.
+    for (const share of FIT.stackedShares) {
+      const size = shrink(tile, label, 'stacked', start, FIT.target, share);
+      if (size) return done(size, 'stacked');
+    }
+    const last = FIT.stackedShares[FIT.stackedShares.length - 1];
+    const size = shrink(tile, label, 'stacked', FIT.target - 2, FIT.floor, last);
     if (size) return done(size, 'stacked');
   }
-  const last = FIT.stackedShares[FIT.stackedShares.length - 1];
-  const size = shrink(tile, label, 'stacked', FIT.target - 2, FIT.floor, last);
-  if (size) return done(size, 'stacked');
   tile.classList.remove('stacked'); tile.classList.add('picture-set-aside');
   return done(shrink(tile, label, 'plain', start, FIT.floor) ?? FIT.floor, 'plain');
 }

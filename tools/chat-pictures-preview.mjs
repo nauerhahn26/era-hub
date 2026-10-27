@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Chat pictures preview for dad (spec 2026-10-27 §6): the fixed phrases and 30
-// sample replies on Chat boards at board size, in three styles side by side —
-// the library in colour, the library in black and white, and the emoji backup.
+// sample replies on Chat boards at board size, in four styles side by side —
+// the library in colour, the library in black and white, the emoji backup, and
+// "stacked-big" (colour; a stacked picture keeps at least 30% of the height, a
+// candidate layout for the maintainer, not the default) — at the device's
+// 1920x1080 and the smallest supported 1280x800.
 // A scratch hub (this checkout's server.js, its own data dir, never 8377) serves
 // the page modules and the /symbol/<id> cache; screenshots go outside the repo.
 //   node tools/chat-preview.mjs --pictures [--out DIR] [--data DIR]
@@ -87,24 +90,34 @@ export function previewScenes() {
   return scenes;
 }
 
+export const PREVIEW_SIZES = [{ width: 1280, height: 800 }, { width: 1920, height: 1080 }];
+export const PREVIEW_STYLES = [
+  { id: 'color', title: 'Library, colour', variant: 'color' },
+  { id: 'bw', title: 'Library, black and white', variant: 'bw' },
+  { id: 'emoji', title: 'Emoji backup (then drawn)', variant: 'emoji' },
+  { id: 'stacked-big', title: 'Library, colour, stacked-big (candidate)', variant: 'color', profile: 'stacked-big' },
+];
+const BAR = 90;   // the Chat page's message bar; the grid starts 12 px under it
+
 const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Chat pictures preview</title>
 <link rel="stylesheet" href="/chat/chat.css"><style>
 body{overflow:auto;background:#222;margin:0;padding:16px;font-family:Arial,sans-serif}
-.row{display:flex;gap:24px;align-items:flex-start}.board{position:relative;width:1280px;height:822px;background:#000;flex:none}
-.board h2{margin:0;height:22px;font-size:16px;color:#ddd;font-weight:700}
-.grid{position:absolute;inset:34px 28px 12px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));gap:14px}
+.row{display:flex;gap:24px;align-items:flex-start}.board{position:relative;background:#000;flex:none}
+.board h2{margin:0;padding:0 28px;height:${BAR}px;line-height:${BAR}px;font-size:22px;color:#ddd;font-weight:700;background:#111b20}
+.grid{position:absolute;inset:${BAR + 12}px 28px 12px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));gap:14px}
 </style></head><body><div class="row" id="row"></div></body></html>`;
 
-async function renderScene(page, scene) {
-  await page.evaluate(async scene => {
+async function renderScene(page, scene, size) {
+  await page.evaluate(async ({ scene, size, styles }) => {
     const { setVocabulary, planPictures, attachPicture } = await import('/chat/symbols.js');
     const { fitTile } = await import('/chat/tile-fit.js');
     setVocabulary(await (await fetch('/chat/vocabulary.json')).json());
     const row = document.getElementById('row'); row.replaceChildren();
-    const styles = [['color', 'Library, colour'], ['bw', 'Library, black and white'], ['emoji', 'Emoji backup (then drawn)']];
-    for (const [variant, title] of styles) {
+    const fitted = [];
+    for (const { title, variant, profile } of styles) {
       const board = document.createElement('section'); board.className = 'board';
-      const heading = document.createElement('h2'); heading.textContent = `${title} · ${scene.name}`; board.append(heading);
+      board.style.width = size.width + 'px'; board.style.height = size.height + 'px';
+      const heading = document.createElement('h2'); heading.textContent = `${title} · ${scene.name} · ${size.width}x${size.height}`; board.append(heading);
       const grid = document.createElement('div'); grid.className = 'grid'; board.append(grid); row.append(board);
       const cells = [['yes', 'yes', [0, 0]], ['no', 'no', [3, 0]], ['', 'rest', [1, 1]], ['', 'rest', [2, 1]],
         ...scene.words.map((word, i) => [word.label, scene.type, [[1, 0], [2, 0], [0, 1], [3, 1]][i], word]),
@@ -116,12 +129,13 @@ async function renderScene(page, scene) {
         grid.append(tile); return [tile, { label, type, say: word.say || label, symbol: word.symbol, symbolId: word.symbolId }];
       });
       const plan = planPictures(tiles.map(([, options]) => options), { variant });
-      tiles.forEach(([tile], i) => attachPicture(tile, plan[i], fitTile));
+      const fit = tile => fitTile(tile, { profile });
+      tiles.forEach(([tile], i) => { attachPicture(tile, plan[i], fit); fitted.push([tile, fit]); });
     }
     await Promise.all([...document.images].map(img => img.complete ? null : new Promise(resolve => { img.onload = img.onerror = resolve; })));
     await new Promise(resolve => setTimeout(resolve, 50));
-    for (const tile of document.querySelectorAll('.tile:not(.rest)')) fitTile(tile);
-  }, scene);
+    for (const [tile, fit] of fitted) if (!tile.classList.contains('rest')) fit(tile);
+  }, { scene, size, styles: PREVIEW_STYLES });
 }
 
 export async function runPicturesPreview({ out = path.join(os.homedir(), '.cache', 'era-chat', 'pictures-preview'),
@@ -132,14 +146,19 @@ export async function runPicturesPreview({ out = path.join(os.homedir(), '.cache
   const browser = await chromium.launch({ headless: true });
   const written = [];
   try {
-    const page = await browser.newPage({ viewport: { width: 3920, height: 860 } });
-    await page.goto(hub.base + '/chat/vocabulary.json');
-    await page.setContent(PAGE, { waitUntil: 'load' });
-    for (const scene of previewScenes()) {
-      await renderScene(page, scene);
-      const file = path.join(out, `${scene.name}.png`);
-      await page.screenshot({ path: file, fullPage: true });
-      written.push(file);
+    for (const size of PREVIEW_SIZES) {
+      const folder = path.join(out, `${size.width}x${size.height}`);
+      fs.mkdirSync(folder, { recursive: true });
+      const page = await browser.newPage({ viewport: { width: PREVIEW_STYLES.length * (size.width + 24) + 32, height: size.height + 40 } });
+      await page.goto(hub.base + '/chat/vocabulary.json');
+      await page.setContent(PAGE, { waitUntil: 'load' });
+      for (const scene of previewScenes()) {
+        await renderScene(page, scene, size);
+        const file = path.join(folder, `${scene.name}.png`);
+        await page.screenshot({ path: file, fullPage: true });
+        written.push(file);
+      }
+      await page.close();
     }
   } finally { await browser.close(); await hub.stop(); }
   return written;
