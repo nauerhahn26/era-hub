@@ -261,7 +261,7 @@ test('SSE timestamps events, drops cancelled generations and sanitizes runtime e
   const events = received.split('\n').filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5)));
   assert.ok(events.some(event => event.type === 'partial' && event.text === 'A question'));
   assert.deepEqual(events.find(event => event.type === 'ready').capabilities,
-    { wake: true, partial: false, automaticEndpoint: false, remoteFinal: true, remoteStreaming: false });
+    { wake: true, partial: false, automaticEndpoint: false, remoteFinal: true, remoteStreaming: false, audioSocket: true, stagedChoices: false });
   assert.deepEqual(events.find(event => event.type === 'final').timings, { audioMs: 250, activityMs: 3, cloudMs: 17, finalDecodeMs: 20, firstPartialMs: null });
   assert.ok(events.every(event => Number.isFinite(event.at) && event.elapsedMs >= 0));
   controller.abort();
@@ -562,6 +562,21 @@ test('configured text generation works in process without a standalone adapter',
   assert.ok(!JSON.stringify(result).includes('private-value'));
 });
 
+test('the Chat API passes the reply usage through to the page only in test mode, and shortcuts report none', async t => {
+  let testMode = true;
+  const s = await service(t, { reportUsage: () => testMode, env: { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' },
+    fetch: async () => new Response(JSON.stringify({ status: 'completed', usage: { input_tokens: 700, input_tokens_details: { cached_tokens: 0 }, output_tokens: 40 },
+      output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
+        choices: [{ label: 'Space', say: 'We could talk about space.' }, { label: 'Something else', say: 'Let us choose something else.' }] }) }] }] })) });
+  const result = await (await s.request('/choices', { text: 'What shall we talk about?' })).json();
+  assert.deepEqual(result.usage, { model: 'configured', inputTokens: 700, cachedTokens: 0, outputTokens: 40 });
+  const shortcut = await (await s.request('/choices', { text: 'Would you like music or a story?' })).json();
+  assert.equal(shortcut.kind, 'alternatives'); assert.equal('usage' in shortcut, false);
+  testMode = false;
+  const off = await (await s.request('/choices', { text: 'What shall we talk about?' })).json();
+  assert.equal(off.kind, 'generated'); assert.equal('usage' in off, false, 'off: no model id or token counts reach the page');
+});
+
 test('explicit external choices override built-in generation and invalid overrides fail without a paid fallback', async t => {
   const textEnv = { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' };
   const s = await service(t, { env: { ...textEnv, ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (url) => {
@@ -681,4 +696,19 @@ test('standalone preview serves only the prototype and has inert app handoffs', 
   assert.equal((await fetch(base + '/tts')).status, 503);
   await new Promise(resolve => server.close(resolve));
   assert.equal(stopped, true);
+});
+
+test('either/or shortcuts keep the alternatives and drop a trailing clause or a shared leading verb', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const labels = async text => (await (await s.request('/choices', { text })).json()).choices.map(choice => choice.label);
+  assert.deepEqual(await labels('Do you want mom or dad to feed you?'), ['Mom', 'Dad']);
+  assert.deepEqual(await labels('Would you like mom or the teacher to help you?'), ['Mom', 'The teacher']);
+  assert.deepEqual(await labels('Do you want chicken and rice or sushi tonight?'), ['Chicken and rice', 'Sushi']);
+  assert.deepEqual(await labels('Would you like pizza tonight or pasta tonight?'), ['Pizza', 'Pasta']);
+  assert.deepEqual(await labels('Do you want to eat now or later?'), ['Now', 'Later']);
+  assert.deepEqual(await labels('Do you want to play with mom or dad?'), ['Mom', 'Dad']);
+  assert.deepEqual(await labels('Would you like juice or water?'), ['Juice', 'Water']);
+  assert.deepEqual(await labels('Would you like sushi or chicken and rice?'), ['Sushi', 'Chicken and rice']);
+  assert.deepEqual(await labels('Would you like park or library?'), ['Park', 'Library']);
+  assert.deepEqual(await labels('Would you like to read a book or play outside?'), ['Read a book', 'Play outside']);
 });

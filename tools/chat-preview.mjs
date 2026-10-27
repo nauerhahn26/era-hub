@@ -14,6 +14,11 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.ico': 'image/x-icon',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 
+// --pictures: the picture-style preview on a scratch hub (tools/chat-pictures-preview.mjs).
+export function previewArguments(argv) {
+  const value = flag => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
+  return { pictures: argv.includes('--pictures'), out: value('--out'), data: value('--data') };
+}
 export function previewPort(env = process.env) {
   const port = Number(env.ERA_TEST_PORT || 8386);
   if (!Number.isInteger(port) || port < 8380 || port > 8389) throw Error('Use ERA_TEST_PORT between 8380 and 8389.');
@@ -73,8 +78,16 @@ export function createPreviewServer(options = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = previewArguments(process.argv.slice(2));
   if (process.argv.includes('--help')) {
-    console.log('node tools/chat-preview.mjs\nERA_TEST_PORT: 8380–8389 (default 8386)\nOptional: ERA_CHAT_RUNTIME, ERA_CHAT_RUNTIME_ARGS, ERA_CHAT_CHOICES_URL, ERA_CHAT_CHOICES_TOKEN.');
+    console.log('node tools/chat-preview.mjs\nERA_TEST_PORT: 8380–8389 (default 8386)\nOptional: ERA_CHAT_RUNTIME, ERA_CHAT_RUNTIME_ARGS, ERA_CHAT_CHOICES_URL, ERA_CHAT_CHOICES_TOKEN.'
+      + '\nnode tools/chat-preview.mjs --pictures [--out DIR] [--data DIR]: picture styles side by side on a scratch hub, ERA_TEST_PORT 8480–8499 (default 8493);'
+      + ' PNGs default to ~/.cache/era-chat/pictures-preview/.');
+  } else if (args.pictures) {
+    const { runPicturesPreview } = await import('./chat-pictures-preview.mjs');
+    try {
+      for (const file of await runPicturesPreview({ ...(args.out ? { out: args.out } : {}), ...(args.data ? { data: args.data } : {}) })) console.log(file);
+    } catch (error) { console.error(error.message); process.exitCode = 1; }
   } else {
     try {
       const port = previewPort();

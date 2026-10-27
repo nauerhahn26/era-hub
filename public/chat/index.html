@@ -22,6 +22,7 @@
     </div>
     <section id="grid" aria-label="Chat words"></section>
     <div id="notice" role="status"></div>
+    <div id="testModeBanner" role="status" hidden>Test mode: this computer is recording Chat turns</div>
   </main>
   <dialog id="partnerDialog" aria-labelledby="partnerTitle">
     <form method="dialog"><button class="close" aria-label="Close partner settings">Close</button></form>
@@ -36,6 +37,13 @@
       <label>What the button says <textarea id="storyMessage" rows="3" maxlength="600" placeholder="The words she wants to share"></textarea></label>
       <button id="saveStory" type="button">Add story</button><button id="clearStories" type="button">Clear saved stories</button>
       <p id="storyNote"></p>
+    </section>
+    <section class="partnerSection" id="testModeSection">
+      <h2>Test mode</h2>
+      <p>Off unless a partner turns it on here. While on, this computer keeps each Chat turn's words, timings and held-question audio for testing, and copies the words and timings to the family data folder. Turning it off stops recording and keeps what was recorded.</p>
+      <button id="testModeToggle" type="button" aria-pressed="false">Turn on test mode</button>
+      <button id="deleteRecordings" type="button">Delete test recordings</button>
+      <p id="testModeNote" role="status"></p>
     </section>
     <details class="partnerSection" id="testing"><summary>Desktop testing and diagnostics</summary>
       <p>These controls test suggestions and input handling. A typed question does not test microphone recognition.</p>
@@ -55,6 +63,14 @@
       <button id="exportTimings" type="button">Download timing numbers</button>
       <button id="clearTimings" type="button">Clear timing numbers</button>
       <pre id="timingDetails"></pre>
+      <section id="testModePanel" hidden>
+        <h2>Test mode: this turn</h2>
+        <pre id="liveTimeline"></pre>
+        <h2>Last ten turns</h2>
+        <pre id="recentTurns"></pre>
+        <h2>Per build, milliseconds from release</h2>
+        <pre id="buildSummary"></pre>
+      </section>
     </details>
   </dialog>
   <script src="/dwell.js"></script>

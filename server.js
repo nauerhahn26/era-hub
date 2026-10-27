@@ -18,7 +18,11 @@ const updater = require("./update");
 if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
-const chatApi = require("./chat-api.js").createChatApi();
+// Chat test mode (spec 2026-10-27 §5): a separate route and schema, off by default.
+const { createChatTurns, applyTestModeSetting, testModeOn } = require("./chat-turns.js");
+// The reply usage (model id, token counts) reaches the page only while this
+// device's test-mode switch is on. DATA is read when a request asks, not here.
+const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA) });
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
 // the worker's whitelist, the pools and this hub's edit door all read it, so a
 // word cannot be a category here and a stranger three files away.
@@ -409,6 +413,10 @@ const gazeSupervisor = require("./gaze-supervisor.js").createGazeSupervisor({
   ...(process.env.ERA_GAZE_BACKOFF_MS ? { backoffMs: process.env.ERA_GAZE_BACKOFF_MS.split(",").map(Number) } : {}),
 });
 const GAZE_POLL_MS = Number(process.env.ERA_GAZE_POLL_MS) || 10000;
+// One record per Chat turn while THIS device's chatTestMode is on; the gaze
+// state in its health sample is the supervisor's (spec 2026-10-27 §5).
+const chatTurns = createChatTurns({ dataDir: DATA, pool, deviceId: DEVICE_ID, build: () => updater.runningBuild,
+                                    gaze: () => gazeSupervisor.status().state });
 // Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
 // best-effort — the home tile is the source of truth, the .lnk a convenience).
 // Minimize our kiosk windows so an externally opened window (browser page,
@@ -599,8 +607,35 @@ function reconcileBootShortcuts() {
 // ARASAAC lookup ported from packages/generator/aac_board_designer.py
 const ARASAAC_API = process.env.ERA_SYMBOL_SEARCH_URL || "https://api.arasaac.org/api/pictograms/en/bestsearch/";
 const ARASAAC_IMG = process.env.ERA_SYMBOL_IMAGE_URL || "https://static.arasaac.org/pictograms/{id}/{id}_300.png";
+// The library's black-and-white rendering of one pictogram id (Chat's picture
+// preview, /symbol/<id>?color=false), cached beside the colour one as <id>-bw.png.
+const ARASAAC_IMG_BW = process.env.ERA_SYMBOL_IMAGE_BW_URL || "https://api.arasaac.org/api/pictograms/{id}?color=false&resolution=500&download=false";
 const PREWARM = ["sun", "cloud", "cold", "more", "shirt", "trousers", "13638", "dress",
                  "clothes", "house", "clock", "snack", "back", "yes"];
+
+// Chat's pictures (spec 2026-10-27 §6): enabling Chat, and every boot while it
+// is enabled, pre-warms the whole vocabulary into the symbol cache so school,
+// where outside hosts are unproven, still shows them. One request at a time,
+// ERA_SYMBOL_WARM_MS apart (250 by default); cached pictures are never fetched
+// again; a pass that keeps failing stops and the next one resumes, every 30
+// minutes while pictures are missing and Chat stays enabled.
+const chatSymbols = require("./chat-symbols.js");
+const chatSymbolWarmer = chatSymbols.createSymbolWarmer({
+  ids: chatSymbols.vocabularyIds(),
+  isCached: (id) => fs.existsSync(path.join(SYMBOLS_CACHE, id + ".png")),
+  fetchOne: (id) => fetchSymbolToCache(id),
+  delayMs: Number.isFinite(Number(process.env.ERA_SYMBOL_WARM_MS)) && process.env.ERA_SYMBOL_WARM_MS !== ""
+    ? Math.max(0, Number(process.env.ERA_SYMBOL_WARM_MS)) : 250,
+});
+let chatSymbolRetry = null;
+function warmChatSymbols() {
+  chatSymbolWarmer.run().then((r) => {
+    if (r.fetched || r.failed) console.log("[symbol] chat pictures: " + r.fetched + " fetched, " + r.cached + " cached, " + r.remaining + " missing");
+    clearTimeout(chatSymbolRetry);
+    if (r.remaining && loadEnabledApps().includes("chat"))
+      chatSymbolRetry = setTimeout(warmChatSymbols, 30 * 60 * 1000).unref();
+  }).catch((e) => console.error("[symbol] chat pictures: " + e.message));
+}
 
 // Serve a file from a jail dir if it exists, has an allowed extension, and does
 // not escape the jail. `rest` is the raw (already URL-decoded) sub-path.
@@ -1227,13 +1262,27 @@ async function fetchSymbolToCache(name) {
   }
 }
 
+async function fetchBwSymbolToCache(id) {
+  const file = path.join(SYMBOLS_CACHE, id + "-bw.png");
+  try {
+    const img = await fetch(ARASAAC_IMG_BW.replace(/\{id\}/g, String(id)));
+    if (!img.ok) return null;
+    fs.writeFileSync(file, Buffer.from(await img.arrayBuffer()));
+    return file;
+  } catch (e) {
+    console.error("[symbol] black-and-white lookup failed for '" + id + "': " + e.message);
+    return null;
+  }
+}
+
 // GET /symbol/:name — cached PNG, fetching from ARASAAC on a miss.
-async function serveSymbol(res, name) {
-  if (!/^[a-z0-9-]+$/.test(name)) { res.writeHead(404).end("not found"); return; }
-  const file = path.join(SYMBOLS_CACHE, name + ".png");
+// ?color=false (pinned numeric ids only): the black-and-white variant.
+async function serveSymbol(res, name, bw = false) {
+  if (!/^[a-z0-9-]+$/.test(name) || (bw && !/^\d+$/.test(name))) { res.writeHead(404).end("not found"); return; }
+  const file = path.join(SYMBOLS_CACHE, name + (bw ? "-bw" : "") + ".png");
   let cached = fs.existsSync(file);
   if (!cached) {
-    const got = await fetchSymbolToCache(name);
+    const got = await (bw ? fetchBwSymbolToCache(name) : fetchSymbolToCache(name));
     if (!got) { console.error("[symbol] no match for '" + name + "'"); res.writeHead(404).end("not found"); return; }
   }
   fs.readFile(file, (err, data) => {
@@ -1362,22 +1411,21 @@ function responseVoiceSpeed() {
   } catch {}
   return RESPONSE_VOICE_SPEED;
 }
-async function elevenTts(cfg, text) {
-  const speed = responseVoiceSpeed();
+function ttsCacheFile(cfg, speed, text) {
   const key = crypto.createHash("sha1").update(cfg.voiceId + "|" + cfg.modelId + "|" + speed + "|" + text).digest("hex");
-  const file = path.join(TTS_CACHE, key + ".mp3");
-  if (fs.existsSync(file)) return fs.readFileSync(file);       // repeat lines are free
-  const r = await fetch(ELEVEN_URL + "/v1/text-to-speech/" + cfg.voiceId +
-                        "?output_format=mp3_22050_32", {
-    method: "POST",
+  return path.join(TTS_CACHE, key + ".mp3");
+}
+// The saved voice's connection stays warm for the hub's lifetime (spec
+// 2026-10-27 §3.3); /tts streams the service's bytes to the page as they
+// arrive and caches the whole clip when it is complete (tts-stream.js).
+const voiceFetch = require("./keepalive-fetch.js").createKeepAliveFetch();
+const { streamSpeech } = require("./tts-stream.js");
+function streamTts(cfg, text, res) {
+  const speed = responseVoiceSpeed();
+  return streamSpeech({ fetch: voiceFetch, cacheFile: ttsCacheFile(cfg, speed, text), res,
+    url: ELEVEN_URL + "/v1/text-to-speech/" + cfg.voiceId + "/stream?output_format=mp3_22050_32",
     headers: { "xi-api-key": cfg.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ text, model_id: cfg.modelId,
-      voice_settings: { stability: 0.5, similarity_boost: 0.75, speed } })
-  });
-  if (!r.ok) throw new Error("elevenlabs " + r.status);
-  const buf = Buffer.from(await r.arrayBuffer());
-  fs.writeFileSync(file, buf);
-  return buf;
+    body: JSON.stringify({ text, model_id: cfg.modelId, voice_settings: { stability: 0.5, similarity_boost: 0.75, speed } }) });
 }
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
@@ -1747,6 +1795,7 @@ function stampInteraction(req) {
 const server = http.createServer((req, res) => {
   stampInteraction(req);
   if (chatStore.handle(req, res)) return;
+  if (chatTurns.handle(req, res)) return;
   if (chatApi.handle(req, res)) return;
   if (req.url === "/games/state/recovery" && req.method === "GET") {
     void loadGamesModel().then(({ readSavedState }) => {
@@ -1829,6 +1878,7 @@ const server = http.createServer((req, res) => {
     let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
               lockMinutes: 45, lockPasscodeHash: "",
               downloadWeekVideos: true,   // this device fetches the week's videos (spec 2026-10-12 §3.2)
+              chatTestMode: false,        // Chat test mode: one device's explicit choice (spec 2026-10-27 §5)
               voiceId: loadTtsCfg().voiceId,
               childName: PROFILE.childName || "friend", hasProfile: HAS_PROFILE,
               personalWords: [] };
@@ -1990,6 +2040,10 @@ const server = http.createServer((req, res) => {
             s.location = { ...loc, lat, lon, at: new Date().toISOString() };
           }
         }
+        // Chat test mode (spec 2026-10-27 §5): only a real boolean moves it.
+        // A page on another site steering the browser never moves it (the
+        // Sec-Fetch-Site rule of ownDoor above); the Chat page and tools do.
+        s = applyTestModeSetting(s, inc, req.headers["sec-fetch-site"]);
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // A new window makes the cached weather an answer to the old question,
         // and today's board a board for the wrong hours: throw the cache away
@@ -2084,10 +2138,8 @@ const server = http.createServer((req, res) => {
         const { text } = JSON.parse(body);
         const cfg = loadTtsCfg();
         if (!cfg.apiKey || !text || text.length > 600) { res.writeHead(503).end(); return; }
-        const buf = await elevenTts(cfg, String(text));
-        res.writeHead(200, { "Content-Type": "audio/mpeg", "Cache-Control": "max-age=86400" });
-        res.end(buf);
-      } catch (e) { res.writeHead(502).end(); }
+        await streamTts(cfg, String(text), res);
+      } catch (e) { if (!res.headersSent) res.writeHead(502).end(); else res.destroy(); }
     });
     return;
   }
@@ -2911,7 +2963,8 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && urlPath.startsWith("/symbol/")) {
-    serveSymbol(res, urlPath.slice("/symbol/".length)).catch((e) => {
+    const bw = new URL(req.url, "http://localhost").searchParams.get("color") === "false";
+    serveSymbol(res, urlPath.slice("/symbol/".length), bw).catch((e) => {
       console.error("[symbol] route error: " + e.message);
       try { res.writeHead(500).end(); } catch {}
     });
@@ -2943,6 +2996,7 @@ const server = http.createServer((req, res) => {
         fs.writeFileSync(path.join(DATA, "apps.json"),
           JSON.stringify({ enabled: APPS.map(a => a.id).filter(x => set.includes(x)) }, null, 2));
         appShortcut(app, enabled);   // Windows: desktop/start-menu .lnk follows the toggle
+        if (app.id === "chat" && enabled) warmChatSymbols();
         if (app.engine && !enabled) stopGaze();
         // enabling an app whose files were never installed REALLY installs it
         if (enabled && !appInstalled(app) && !appInstalling[app.id]) {
@@ -4119,6 +4173,10 @@ server.on("listening", () => {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;
     fetchSymbolToCache(name).then(f => { if (f) console.log("[symbol] pre-warmed " + name); });
   }
+  if (loadEnabledApps().includes("chat")) warmChatSymbols();
 });
-server.on("close", () => chatApi.close());
+// The Chat page's held-question audio socket (spec 2026-10-27 §3.1). Every
+// other upgrade request is refused: the hub serves no other WebSocket.
+server.on("upgrade", (req, socket, head) => { if (!chatApi.upgrade(req, socket, head)) socket.destroy(); });
+server.on("close", () => { chatApi.close(); chatTurns.close(); });
 server.listen(PORT, BIND);

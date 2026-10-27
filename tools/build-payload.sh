@@ -26,8 +26,8 @@ RELEASE=0
 if [ "${1:-}" = "--with-node" ] || [ "${2:-}" = "--with-node" ]; then RELEASE=1; fi
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/outfit-cache.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/music-pictures.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/gaze-supervisor.js" "$HUB/predict-model.json" "$OUT/"
-cp "$HUB/chat-api.js" "$HUB/chat-choices.js" "$HUB/chat-speech-worker.js" "$HUB/chat-store.js" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/outfit-cache.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/music-pictures.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/gaze-supervisor.js" "$HUB/keepalive-fetch.js" "$HUB/tts-stream.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/chat-api.js" "$HUB/chat-ws.js" "$HUB/chat-stream.js" "$HUB/chat-choices.js" "$HUB/chat-symbols.js" "$HUB/chat-speech-worker.js" "$HUB/chat-store.js" "$HUB/chat-turns.js" "$OUT/"
 # every local require of the hub's modules must resolve INSIDE the payload —
 # a module added to the repo but not to the list above shipped a hub that
 # died on its first line (packs.js, caught by the VM e2e 9/3, never by the
@@ -139,6 +139,8 @@ cp -r "$HUB/public/book-review" "$OUT/public/book-review"
 # and the vendored Fluent Emoji (MIT, LICENSE beside them). No /x in installer.nsi.
 cp -r "$HUB/public/drawing" "$OUT/public/drawing"
 cp -r "$HUB/public/chat" "$OUT/public/chat"
+# Chat's picture table rides with the page (chat-symbols.js reads it on first use).
+[ -f "$OUT/public/chat/vocabulary.json" ] || { echo "build-payload: public/chat/vocabulary.json is missing"; exit 1; }
 # This week's watch page (spec 2026-10-12 §3.3): ERAgaze's watch mode opens it
 # to play one downloaded video. CORE like book-review: a few hundred bytes, no
 # /x in installer.nsi (every /x there belongs to a pack).
@@ -159,6 +161,16 @@ if [ -n "$(find "$OUT" \( -name 'chat-state.json' -o -name '.chat-state-*.tmp' \
   exit 1
 fi
 # END Chat private-state guard
+# BEGIN Chat test-mode guard
+# Chat test mode is one device's explicit choice (spec 2026-10-27 §5): no
+# settings file, private price table or turn recording ships, and no shipped
+# file switches it on.
+if [ -n "$(find "$OUT" \( -name 'app-settings.json' -o -name 'chat-prices.json' -o -path '*/chat-turns/*' \) -print -quit)" ] ||
+   grep -rqE --include='*.json' --include='*.js' --include='*.mjs' --include='*.html' "[\"']?chatTestMode[\"']?[[:space:]]*[:=][[:space:]]*true" "$OUT"; then
+  echo "build-payload: Chat test mode data or an enabled switch found in payload; refusing to ship."
+  exit 1
+fi
+# END Chat test-mode guard
 
 # --with-node: bundle a portable Windows Node runtime (no install needed)
 if [ "${2:-}" = "--with-node" ] || [ "${1:-}" = "--with-node" ]; then

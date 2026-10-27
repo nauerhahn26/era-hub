@@ -850,7 +850,12 @@
         "era-hub/tools/chat-choices-adapter.mjs",
         "era-hub/tools/era-gate.sh",
         "era-hub/update.js",
-        "era-core/dwell.js"
+        "era-core/dwell.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/vocabulary.json",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
       ],
       "resources": [
         "owned-loopback-services",
@@ -859,6 +864,184 @@
         "shared-static-farm"
       ],
       "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-ws.test.mjs",
+      "purpose": "The hub's own RFC 6455 WebSocket: handshake, masking both ways, ordering, ping/pong, close, refused fragments, oversize and invalid text",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit with loopback sockets",
+      "dependencies": [
+        "era-hub/chat-ws.js"
+      ],
+      "resources": [
+        "owned-loopback-services"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-audio-socket.test.mjs",
+      "purpose": "Chat audio socket: loopback, same-origin and session checks on upgrade, {generation, seq} PCM frames, per-turn budget, finish waits for frames, close cancels a hold, the real hub wires the upgrade",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP/WebSocket module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-ws.js",
+        "era-hub/server.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "synthetic-runtime-children",
+        "temporary-data"
+      ],
+      "hub": "own",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-stream.test.mjs",
+      "purpose": "Streaming transcription client: both wire shapes against bake-off fakes, keyterms on open, partial order, split-and-join, settled vs final, chunk sizes, idle close/reopen, failures, cancel, settings and keyterm file bounds, payload module list",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit with loopback fake services",
+      "dependencies": [
+        "era-hub/chat-stream.js",
+        "era-hub/chat-ws.js",
+        "era-hub/tools/build-payload.sh"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-stream-hub.test.mjs",
+      "purpose": "Streaming Chat through the hub module: warm socket at Start Chat, partials over SSE, one-shot fallback with the whole hold, stream setting failover, hub-staged streamed and speculative choices sealed once, nothing private in events",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP/WebSocket module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/keepalive-fetch.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "synthetic-runtime-children",
+        "fetch-doubles",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-choices-stream.test.mjs",
+      "purpose": "Streamed structured choices: incremental parser, fast-tier field, each choice handed over before the reply ends, whole-batch post-checks, cancel",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit with fetch doubles",
+      "dependencies": [
+        "era-hub/chat-choices.js"
+      ],
+      "resources": [
+        "fetch-doubles"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-stream-browser.test.mjs",
+      "purpose": "Real Chat page against the real hub Chat module: audio over the session socket, a streamed turn end to end with speculation and warmed voices, the reveal gate (resting counts, tile cell waits, 250 ms settle)",
+      "group": "chat",
+      "lane": "linux",
+      "level": "browser application integration",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/chat-api.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-store.js",
+        "era-hub/keepalive-fetch.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "synthetic-microphone-wav",
+        "real-audio-worklet",
+        "cdp-touch-events",
+        "synthetic-runtime-children",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-voice-stream.test.mjs",
+      "purpose": "Speech ready before she looks: keep-alive service connections, /tts streams bytes as they arrive and caches only complete clips, the real hub uses the streaming endpoint",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP module integration",
+      "dependencies": [
+        "era-hub/keepalive-fetch.js",
+        "era-hub/tts-stream.js",
+        "era-hub/server.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "temporary-data"
+      ],
+      "hub": "own",
       "ports": [],
       "browsers": 0,
       "heavy": false,
@@ -880,7 +1063,10 @@
         "era-hub/tests-vm/lib/chat-ui-smoke.mjs",
         "era-core/lib/**",
         "era-core/dwell.js",
-        "era-core/speech.js"
+        "era-core/speech.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
       ],
       "resources": [
         "chromium",
@@ -911,7 +1097,34 @@
       "level": "module and HTTP integration",
       "dependencies": [
         "era-hub/tools/chat-choices-adapter.mjs",
-        "era-hub/chat-choices.js"
+        "era-hub/chat-choices.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/vocabulary.json"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "provider-doubles"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-reply-bakeoff.test.mjs",
+      "purpose": "Reply-model bake-off tool: streamed choice parsing, quality scoring, cost summary and a self-test against a fake streaming server",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module and HTTP integration",
+      "dependencies": [
+        "era-hub/tools/chat-reply-bakeoff.mjs",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/vocabulary.json"
       ],
       "resources": [
         "owned-loopback-services",
@@ -933,7 +1146,10 @@
       "lane": "linux",
       "level": "module and filesystem",
       "dependencies": [
-        "era-hub/chat-api.js"
+        "era-hub/chat-api.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
       ],
       "resources": [
         "temporary-data"
@@ -1028,6 +1244,31 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-bakeoff-selftest.test.mjs",
+      "purpose": "Streaming transcription bake-off tool: every wire protocol against loopback fakes, release/finalize/close order, partial and final timing, word/meaning/name scoring and cost",
+      "group": "chat-tools",
+      "lane": "linux",
+      "level": "subprocess protocol and metrics",
+      "dependencies": [
+        "era-hub/tools/chat-bakeoff.py",
+        "era-hub/tools/chat-benchmark.py"
+      ],
+      "resources": [
+        "uv-offline-cache",
+        "owned-loopback-services",
+        "owned-python-children",
+        "synthetic-audio"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-storage-ui.test.mjs",
       "purpose": "Explicit local voice with truthful unsaved status after durable failure, Exit acknowledgement and 850ms fallback ordering, and immediate Talk handoff",
       "group": "chat",
@@ -1091,7 +1332,12 @@
         "era-hub/chat-api.js",
         "era-hub/chat-choices.js",
         "era-hub/chat-speech-worker.js",
-        "era-hub/tools/build-payload.sh"
+        "era-hub/tools/build-payload.sh",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/vocabulary.json",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
       ],
       "resources": [
         "temporary-data",
@@ -1172,6 +1418,174 @@
         "storage-doubles",
         "mock-timers",
         "bounded-stream-fixtures"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-turns.test.mjs",
+      "purpose": "Chat test mode hub module: strict turn schema, off-by-default 404s, day file plus pool line, bounded files, audio wav rotation, delete control, price-table cost, health sample and summaries",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module/filesystem and HTTP integration",
+      "dependencies": [
+        "era-hub/chat-turns.js",
+        "era-hub/chat-api.js",
+        "era-hub/pool.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
+      ],
+      "resources": [
+        "temporary-data",
+        "owned-loopback-services"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-turnlog.test.mjs",
+      "purpose": "Chat test mode client record: full stage timeline, words, usage, health and mic level accepted by the hub schema; production timing rows unchanged and content-free on and off",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit with schema cross-check",
+      "dependencies": [
+        "era-hub/public/chat/turnlog.js",
+        "era-hub/public/chat/metrics.js",
+        "era-hub/chat-turns.js"
+      ],
+      "resources": [
+        "in-process-storage-doubles",
+        "fetch-doubles",
+        "injected-clock",
+        "mock-timers"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-test-mode-payload.test.mjs",
+      "purpose": "Chat test mode is off by default in what ships: no shipped file enables it, the installer seeds no settings, the payload copies the module and its guard refuses settings, prices, recordings or an enabled switch (any quoting, .mjs included)",
+      "group": "chat",
+      "lane": "linux",
+      "level": "source contract and payload guard",
+      "dependencies": [
+        "era-hub/server.js",
+        "era-hub/chat-turns.js",
+        "era-hub/tools/build-payload.sh",
+        "era-hub/tools/installer.nsi",
+        "era-hub/public/**"
+      ],
+      "resources": [
+        "temporary-data",
+        "owned-shell-child"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-test-mode-hub.test.mjs",
+      "purpose": "Chat test mode through the real hub on a kernel-assigned port: GET /settings default off, only a real boolean from a same-origin or header-less request moves it, test-mode routes answer before the Chat API, a recorded turn reaches the day file and the pool, off keeps what was written",
+      "group": "chat",
+      "lane": "linux",
+      "level": "hub HTTP integration",
+      "dependencies": [
+        "era-hub/server.js",
+        "era-hub/chat-turns.js",
+        "era-hub/chat-api.js",
+        "era-hub/pool.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
+      ],
+      "resources": [
+        "own-hub",
+        "temporary-data"
+      ],
+      "hub": "own",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-test-mode-browser.test.mjs",
+      "purpose": "Chat page in test mode: touch-only switch and banner, one held turn recorded through the real hub module with stages, words, usage, health and audio, content-free production rows, unmoved tiles, panel and delete control",
+      "group": "chat",
+      "lane": "linux",
+      "level": "browser application integration",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/chat-turns.js",
+        "era-hub/chat-api.js",
+        "era-hub/chat-store.js",
+        "era-hub/pool.js",
+        "era-hub/tests-vm/lib/chat-ui-smoke.mjs",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "synthetic-microphone-wav",
+        "real-audio-worklet",
+        "native-html-audio",
+        "cdp-touch-events",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-turns-tools.test.mjs",
+      "purpose": "Host tools over Chat test-mode records: per-build stage p50/p95, outcomes, cost per day and one-turn timeline from device logs or a synced pool; replay manifest and bake-off command",
+      "group": "chat",
+      "lane": "linux",
+      "level": "CLI integration on fixtures",
+      "dependencies": [
+        "era-hub/tools/chat-turns.mjs",
+        "era-hub/tools/chat-replay.mjs",
+        "era-hub/chat-turns.js"
+      ],
+      "resources": [
+        "temporary-data",
+        "owned-node-children"
       ],
       "hub": "none",
       "ports": [],
@@ -4140,6 +4554,114 @@
       "quiet": false,
       "retry": false,
       "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-vocabulary.test.mjs",
+      "purpose": "Chat picture vocabulary: 300-600 concepts with one approved pictogram id each, unique words and ids, curated fixed phrases, negative tones, no images or names in the repo, and the library credit on the settings page",
+      "group": "chat",
+      "lane": "linux",
+      "level": "data contract",
+      "dependencies": [
+        "era-hub/public/chat/vocabulary.json",
+        "era-hub/public/settings/index.html"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-pictures.test.mjs",
+      "purpose": "Chat pictures on the hub: symbol enum in the strict choice schema, word to id mapping, negation guard, text-guess fallback, curated shortcut pictures, throttled resumable pre-warm, preview and contact-sheet tools",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module unit and loopback route",
+      "dependencies": [
+        "era-hub/chat-symbols.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-api.js",
+        "era-hub/public/chat/vocabulary.json",
+        "era-hub/tools/chat-pictures-preview.mjs",
+        "era-hub/tools/chat-vocabulary-sheet.mjs",
+        "era-hub/tools/chat-preview.mjs",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/keepalive-fetch.js"
+      ],
+      "resources": [
+        "owned-loopback-services"
+      ],
+      "hub": "own",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-picture-layout.test.mjs",
+      "purpose": "Chat tiles by board law: picture beside the word at 42%/82%, stacked before shrinking, 74 px target and marked 44 px floor, black rest cells and yes/no untouched, no repeated picture on a page, pictures only from the hub, fallback chain",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit and browser layout",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/chat-store.js",
+        "era-hub/chat-symbols.js",
+        "era-core/lib/**",
+        "era-core/dwell.js",
+        "era-core/speech.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 4,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-pictures-offline.test.mjs",
+      "purpose": "Enabling Chat pre-warms every vocabulary picture once from an owned fixture provider, a restart fetches nothing, the black-and-white variant passes through, and Chat tiles render from the cache with the provider gone and outside requests blocked",
+      "group": "chat",
+      "lane": "linux",
+      "level": "hub and browser integration",
+      "dependencies": [
+        "era-hub/server.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/**",
+        "era-core/lib/**",
+        "era-core/dwell.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "temporary-data",
+        "private-hub-data"
+      ],
+      "hub": "own",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
     }
   ],
   "support": [
@@ -4184,6 +4706,7 @@
         "era-hub:tests/chat-api.test.mjs",
         "era-hub:tests/chat-browser.test.mjs",
         "era-hub:tests/chat-choices-adapter.test.mjs",
+        "era-hub:tests/chat-reply-bakeoff.test.mjs",
         "era-hub:tests/chat-config.test.mjs",
         "era-hub:tests/chat-metrics.test.mjs",
         "era-hub:tests/chat-native-speech.test.mjs",
@@ -4346,6 +4869,7 @@
         "era-hub:tests/chat-api.test.mjs",
         "era-hub:tests/chat-browser.test.mjs",
         "era-hub:tests/chat-choices-adapter.test.mjs",
+        "era-hub:tests/chat-reply-bakeoff.test.mjs",
         "era-hub:tests/chat-config.test.mjs",
         "era-hub:tests/chat-metrics.test.mjs",
         "era-hub:tests/chat-native-speech.test.mjs",

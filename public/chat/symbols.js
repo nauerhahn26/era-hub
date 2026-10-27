@@ -1,7 +1,11 @@
-// Bundled decorative communication pictures. Words remain the source of meaning.
-// Selection and drawing are synchronous: no lookup service, image request or AI.
-// Source: original native vector drawings, covered by the repository MIT LICENSE.
-// No third-party artwork, symbol library or external attribution is required.
+// Decorative communication pictures for Chat tiles. Words remain the source of meaning.
+// Library pictures (spec 2026-10-27 §6): the vocabulary table (public/chat/vocabulary.json,
+// concept words and pictogram ids only) names one picture per concept; the image comes
+// from this hub's own /symbol/<id> cache, never from another host. When a picture
+// cannot load, the Drawing app's emoji stickers stand in, then the drawings below.
+// The drawings below are original native vector drawings, part of this project and
+// covered by the repository's MPL-2.0 LICENSE. Library pictures and the emoji stickers
+// keep their own licences and credit (settings page, public/drawing/stickers/LICENSE).
 const NS = 'http://www.w3.org/2000/svg';
 const path = d => ['path', { d }];
 const circle = (cx, cy, r, extra = {}) => ['circle', { cx, cy, r, ...extra }];
@@ -130,4 +134,118 @@ export function attachSymbol(tile, options = {}) {
   tile.insertBefore(svg, tile.querySelector('.label'));
   tile.classList.add('has-symbol'); tile.dataset.symbol = resolveSymbol(options);
   return svg;
+}
+
+// ---- library pictures --------------------------------------------------------
+let library = null;
+const PICTURE_TYPES = new Set(['rest', 'waiting', 'emptyStory']);
+// Drawing's shipped emoji stickers (MIT), reused by keyword as the backup.
+const EMOJI = {
+  home: 'house', horse: 'horse', tree: 'tree', forest: 'tree', nature: 'tree', garden: 'tree', sun: 'sun', sunny: 'sun', hot: 'sun',
+  cloudy: 'cloud', weather: 'cloud', rain: 'cloud', star: 'star', favourite: 'star', people: 'person', me: 'person', boy: 'person',
+  girl: 'person', draw: 'mode-draw', write: 'mode-draw', pencil: 'mode-draw', friend: 'mode-people', family: 'mode-people',
+  hug: 'mode-people', outside: 'mode-places', park: 'mode-places', mountains: 'mode-places', camping: 'mode-places',
+};
+// The drawn shape that stands for a concept when neither picture loads.
+const DRAWN = {
+  wow: 'reactions', funny: 'laugh', angry: 'unfair', wait: 'time', mistake: 'clarify', question: 'yes-no', 'not sure': 'unsure',
+  "don't know": 'unsure', 'say again': 'repeat', eat: 'food', friend: 'friends', game: 'play', 'not now': 'time',
+};
+const FROM_DRAWN = { reactions: 'wow', repair: 'help', laugh: 'funny', unfair: 'angry', clarify: 'mistake', 'yes-no': 'question',
+  unsure: 'not sure', repeat: 'say again', friends: 'friend' };
+
+export function setVocabulary(table) {
+  if (!table || !Array.isArray(table.concepts) || !table.concepts.length || !table.phrases) { library = null; return false; }
+  const byWord = new Map(table.concepts.map(concept => [concept.word, concept]));
+  const byId = new Map(table.concepts.map(concept => [concept.id, concept]));
+  const forms = new Map();
+  for (const concept of table.concepts) for (const form of [concept.word, ...(concept.alt || [])]) forms.set(normal(form), concept.word);
+  library = { byWord, byId, forms, phrases: new Map(Object.entries(table.phrases)), fallback: byWord.get(table.fallback || 'chat') };
+  return !!library.fallback;
+}
+export async function loadVocabulary(fetcher = globalThis.fetch, url = '/chat/vocabulary.json') {
+  try {
+    const response = await fetcher(url, { signal: AbortSignal.timeout(3000) });
+    return response.ok ? setVocabulary(await response.json()) : setVocabulary(null);
+  } catch { return setVocabulary(null); }
+}
+export function hasVocabulary() { return !!library; }
+
+function conceptFor({ label = '', type = '', say = '', symbol, symbolId } = {}) {
+  if (PICTURE_TYPES.has(type)) return null;
+  if (type === 'yes' || type === 'no') return library.byWord.get(type) || null;
+  const picked = library.byId.get(Number(symbolId));
+  if (picked && (!symbol || picked.word === symbol)) return picked;
+  if (typeof symbol === 'string' && library.byWord.has(symbol)) return library.byWord.get(symbol);
+  const title = normal(label), spoken = normal(say);
+  const word = library.phrases.get(title) || library.phrases.get(spoken) ||
+    library.forms.get(title) || library.forms.get(title.replace(/^(?:a|an|the|some)\s+/, ''));
+  if (word) return library.byWord.get(word);
+  if (label && !title) return library.fallback;
+  const drawn = resolveSymbol({ label, type, say });
+  return library.byWord.get(FROM_DRAWN[drawn] || drawn) || library.fallback;
+}
+function sourceFor(id, variant) { return `/symbol/${id}${variant === 'bw' ? '?color=false' : ''}`; }
+function emojiFor(word) { return EMOJI[word] ? `/drawing/stickers/${EMOJI[word]}.png` : null; }
+function drawnFor(word) { return shapes[DRAWN[word] || word] ? DRAWN[word] || word : 'chat'; }
+
+// One page of tiles: the corner yes/no tiles, then routes and fixed phrases,
+// then replies claim pictures, so a reply never takes a picture from a tile
+// whose place she has learned. A repeat takes the concept's alternate
+// picture, then the bubble; when both are taken the tile shows its words alone.
+export function planPictures(entries, { variant = 'color' } = {}) {
+  if (!library) return entries.map(() => null);
+  const rank = entry => entry.type === 'yes' || entry.type === 'no' ? 0 : entry.type === 'route' ? 1 : entry.type === 'response' ? 3 : 2;
+  const order = entries.map((entry, index) => index).sort((a, b) => rank(entries[a]) - rank(entries[b]) || a - b);
+  const used = new Set(), shown = new Set(), plan = entries.map(() => null);
+  for (const index of order) {
+    const concept = conceptFor(entries[index]);
+    if (!concept) continue;
+    const options = [[concept.id, concept.word], [concept.altId, concept.word], [library.fallback.id, library.fallback.word]];
+    const [id, word] = options.find(([candidate]) => candidate && !used.has(candidate)) || [];
+    if (!id) continue;
+    const emoji = emojiFor(word);
+    const kind = variant === 'emoji' ? (emoji ? 'emoji' : 'drawn') : 'library';
+    // The emoji style shows stickers and drawings, which repeat across concepts.
+    const look = kind === 'emoji' ? emoji : kind === 'drawn' ? 'drawn:' + drawnFor(word) : id;
+    if (shown.has(look)) continue;
+    used.add(id); shown.add(look);
+    plan[index] = { word, id, kind, src: kind === 'library' ? sourceFor(id, variant) : kind === 'emoji' ? emoji : null, emoji, drawn: drawnFor(word) };
+  }
+  return plan;
+}
+
+function drawnPicture(name, document) {
+  const svg = createSymbol({ label: '', say: '' }, document);
+  svg.replaceChildren();
+  for (const [tag, attributes] of shapes[name] || shapes.chat) {
+    const element = document.createElementNS(NS, tag);
+    for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+    svg.appendChild(element);
+  }
+  return svg;
+}
+export function attachPicture(tile, plan, onChange) {
+  tile.querySelector('.chat-symbol')?.remove();
+  tile.classList.remove('has-symbol');
+  for (const key of ['symbol', 'symbolId', 'picture']) delete tile.dataset[key];
+  if (!plan) return null;
+  const document = tile.ownerDocument;
+  const place = element => { tile.insertBefore(element, tile.querySelector('.label')); return element; };
+  const drawn = () => {
+    tile.querySelector('.chat-symbol')?.remove();
+    place(drawnPicture(plan.drawn, document)); tile.dataset.picture = 'drawn'; onChange?.(tile);
+  };
+  tile.classList.add('has-symbol');
+  tile.dataset.symbol = plan.word; tile.dataset.symbolId = String(plan.id);
+  if (!plan.src) { drawn(); return tile.querySelector('.chat-symbol'); }
+  const img = document.createElement('img');
+  img.className = 'chat-symbol'; img.alt = ''; img.setAttribute('aria-hidden', 'true'); img.draggable = false; img.decoding = 'async';
+  tile.dataset.picture = plan.kind;
+  img.addEventListener('error', () => {
+    if (tile.dataset.picture === 'library' && plan.emoji) { tile.dataset.picture = 'emoji'; img.src = plan.emoji; onChange?.(tile); }
+    else drawn();
+  });
+  img.src = plan.src;
+  return place(img);
 }

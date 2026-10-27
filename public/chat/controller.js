@@ -30,7 +30,10 @@ export function createChatController(deps = {}) {
         const result = await deps.requestChoices?.({ text: question, signal: abort.signal });
         if (mine !== turn) return;
         const clean = (result?.choices || []).filter(x => x && typeof x.label === 'string' && typeof x.say === 'string' && x.say.trim()).slice(0, 4)
-          .map((x, i) => Object.freeze({ id: `${mine}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600) }));
+          .map((x, i) => Object.freeze({ id: `${mine}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600),
+            // The hub's decorative picture pick (spec §6) rides along; it never changes the words.
+            ...(typeof x.symbol === 'string' && x.symbol.length <= 64 ? { symbol: x.symbol } : {}),
+            ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}) }));
         if (!clean.length) throw new Error('No suggestions available. Your phrases still work.');
         pending = Object.freeze(clean);
         timing('choicesReady');

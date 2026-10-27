@@ -183,11 +183,15 @@ export async function measureChatTiles(page) {
     viewport: { innerWidth, innerHeight, screenWidth: screen.width, screenHeight: screen.height, devicePixelRatio, frame },
     tiles: [...document.querySelectorAll('#grid button.tile')].map(node => {
       const label = node.querySelector('.label'), icon = node.querySelector('.chat-symbol'), style = getComputedStyle(node);
-      const available = node.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
-        - (icon ? icon.getBoundingClientRect().height + parseFloat(style.rowGap) : 0);
+      // A picture BESIDE the words (board law, public/chat/tile-fit.js) takes width, not height;
+      // a stacked or column picture takes height. Fractional boxes, so rounding never decides.
+      const art = icon && getComputedStyle(icon).display !== 'none' ? icon.getBoundingClientRect() : null;
+      const available = node.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+        - (art && !node.classList.contains('beside') ? art.height + parseFloat(style.rowGap || 0) : 0);
+      const height = label ? label.getBoundingClientRect().height : 0;
       return { text: (label?.textContent || '').trim().slice(0, 40), font: parseFloat(style.fontSize),
         clientWidth: label?.clientWidth ?? 0, scrollWidth: label?.scrollWidth ?? 0, available: Math.round(available * 10) / 10, scrollHeight: label?.scrollHeight ?? 0,
-        fits: !!label && label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= available + 1 };
+        fits: !!label && label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= label.clientHeight + 1 && height <= available + 1 };
     }),
   }), frame);
 }
@@ -284,9 +288,12 @@ export async function checkInstalledChatUI(page, options = {}) {
 
     await openPartner(); await page.locator('#testing > summary').click({ timeout });
     await page.locator('#typedQuestion').fill(QUESTION, { timeout });
-    await page.locator('#typedAsk').click({ timeout });
+    // The pointer stays off the black centre (spec 2026-10-27 §4: a pointer
+    // already resting there when the batch seals reveals it at once).
+    await page.mouse.move(0, 0);
+    await page.locator('#typedAsk').focus({ timeout }); await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelector('#notice')?.textContent.includes('Replies ready'), null, { timeout });
-    assert.equal(await page.locator('.response').count(), 0, 'ready replies remain hidden before a fresh neutral movement');
+    assert.equal(await page.locator('.response').count(), 0, 'ready replies remain hidden before a move into the black centre');
     assert.equal((await audio()).playCalls, 0, 'preparing replies cannot play their cached audio');
     const rest = await page.locator('.tile.rest').first().boundingBox(); assert.ok(rest);
     await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);

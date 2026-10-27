@@ -64,15 +64,23 @@ test('disabled saved setup fails without any clip request or automatic fallback'
   s.voice.dispose();
 });
 
-test('current hub voice is checked before cache reuse and changed selection invalidates clips', async () => {
-  const s = setup();
+test('the hub voice is read once, not per say; a refresh (Start Chat or the 10-minute timer) invalidates clips of a changed voice', async () => {
+  let now = 0;
+  const s = setup({ now: () => now });
   await s.voice.say('The same words');
   await s.voice.say('The same words');
   assert.equal(s.calls.filter(x => x.url === '/tts').length, 1);
+  assert.equal(s.calls.filter(x => x.url === '/voices').length, 1, 'no voice-list fetch per say');
   s.select('configured-second');
   await s.voice.say('The same words');
+  assert.equal(s.calls.filter(x => x.url === '/voices').length, 1);
+  now += 600001;
+  await s.voice.say('The same words'); await flush(); await flush();
+  assert.equal(s.calls.filter(x => x.url === '/voices').length, 2, 'refreshed after ten minutes');
+  s.voice.refresh();
+  await s.voice.say('The same words');
   assert.equal(s.calls.filter(x => x.url === '/tts').length, 2);
-  assert.deepEqual(s.played, ['prepared-1', 'prepared-1', 'prepared-2']);
+  assert.equal(s.played.at(-1), 'prepared-2');
   assert.deepEqual(s.revoked, ['prepared-1']);
   s.voice.dispose();
 });
@@ -123,7 +131,7 @@ test('ended without an actual playback start never confirms a spoken response', 
 
 test('prefetch is silent, deduplicated, bounded and gives selected words queue priority', async () => {
   const waiting = [], texts = []; let active = 0, peak = 0;
-  const s = setup({ limits: { concurrent: 1, queued: 3 }, fetch: (url, init) => {
+  const s = setup({ limits: { concurrent: 1, urgent: 1, queued: 3 }, fetch: (url, init) => {
     if (url === '/voices') return Promise.resolve(Response.json({ enabled: true, current: 'configured' }));
     texts.push(JSON.parse(init.body).text); active++; peak = Math.max(peak, active);
     return new Promise(resolve => { waiting.push(() => { active--; resolve(new Response(new Blob(['audio'], { type: 'audio/mpeg' }))); }); });
@@ -209,7 +217,7 @@ test('selected preparation has one overall deadline across metadata, queued work
 
 test('expired queued selected words never start a later request when background capacity returns', async t => {
   const background = deferred(), texts = [];
-  const s = setup({ limits: { concurrent: 1, prepareMs: 10, fetchMs: 1000 }, fetch: (url, init) => {
+  const s = setup({ limits: { concurrent: 1, urgent: 1, prepareMs: 10, fetchMs: 1000 }, fetch: (url, init) => {
     if (url === '/voices') return Promise.resolve(Response.json({ enabled: true, current: 'configured' }));
     texts.push(JSON.parse(init.body).text); return background.promise;
   } });
@@ -218,4 +226,52 @@ test('expired queued selected words never start a later request when background 
   await assert.rejects(s.voice.say('Expired selected words'), error => error.code === 'saved-voice-unavailable');
   background.resolve(new Response(new Blob(['audio'], { type: 'audio/mpeg' }))); await flush();
   assert.deepEqual(texts, ['Background words']); assert.deepEqual(s.played, []);
+});
+
+test('test mode usage: every saved-voice fetch reports its characters and each say reports hit, pending, miss or device', async () => {
+  const fetched = [], clips = [];
+  const s = setup({ onFetch: chars => fetched.push(chars) });
+  s.voice.prefetch([{ say: 'Warm words' }]);
+  for (let i = 0; i < 20 && !fetched.length; i++) await flush();
+  for (let i = 0; i < 20; i++) await flush();
+  assert.equal(await s.voice.say('Warm words', { onClip: value => clips.push(value) }), true);
+  assert.equal(await s.voice.say('Cold words', { onClip: value => clips.push(value) }), true);
+  assert.deepEqual(fetched, [10, 10]);
+  assert.deepEqual(clips, [{ chars: 10, cache: 'hit' }, { chars: 10, cache: 'miss' }]);
+  s.voice.dispose();
+
+  const waiting = deferred(), pending = [];
+  const slow = setup({ fetch: url => url === '/voices' ? Promise.resolve(Response.json({ enabled: true, current: 'configured' })) : waiting.promise });
+  slow.voice.prefetch([{ say: 'Slow words' }]);
+  for (let i = 0; i < 20; i++) await flush();
+  const saying = slow.voice.say('Slow words', { onClip: value => pending.push(value) });
+  for (let i = 0; i < 20; i++) await flush();
+  waiting.resolve(new Response(new Blob(['audio'], { type: 'audio/mpeg' })));
+  assert.equal(await saying, true);
+  assert.deepEqual(pending, [{ chars: 10, cache: 'pending' }]);
+  slow.voice.dispose();
+
+  const device = [], local = setup({ onFetch: chars => fetched.push(chars) });
+  local.voice.setPreference('local');
+  assert.equal(await local.voice.say('Device words', { onClip: value => device.push(value) }), true);
+  assert.deepEqual(device, [{ chars: 12, cache: 'device' }]); assert.equal(fetched.length, 2);
+  local.voice.dispose();
+});
+
+test('staged choices prefetch at once: urgent clips run beside the background warm-up, as many as the batch', async () => {
+  const waiting = []; let active = 0, peak = 0;
+  const s = setup({ limits: { concurrent: 2 }, fetch: (url, init) => {
+    if (url === '/voices') return Promise.resolve(Response.json({ enabled: true, current: 'configured' }));
+    active++; peak = Math.max(peak, active);
+    return new Promise(resolve => { waiting.push(() => { active--; resolve(new Response(new Blob(['audio'], { type: 'audio/mpeg' }))); }); });
+  } });
+  s.voice.prefetch(Array.from({ length: 10 }, (_, i) => ({ say: `Warm ${i}` })));
+  await flush(); await flush();
+  assert.equal(active, 2, 'background warm-up keeps its two');
+  for (const say of ['One', 'Two', 'Three', 'Four']) s.voice.prefetch([{ say }], { urgent: true });
+  await flush(); await flush();
+  assert.equal(active, 6, 'all four staged choices fetch now, none waits behind the warm-up');
+  while (waiting.length) { waiting.shift()(); await flush(); }
+  assert.deepEqual(s.played, []); assert.deepEqual(s.spoken, []);
+  s.voice.dispose();
 });

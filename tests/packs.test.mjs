@@ -98,7 +98,7 @@ test("Chat modules are copied before the payload dependency check and its page s
   const begin = PAYLOAD.indexOf('cp "$HUB/server.js"');
   const vendor = PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"');
   const validation = PAYLOAD.indexOf('workers=');
-  for (const file of ['chat-api.js', 'chat-choices.js', 'chat-speech-worker.js']) {
+  for (const file of ['chat-api.js', 'chat-choices.js', 'chat-symbols.js', 'chat-speech-worker.js']) {
     const copy = PAYLOAD.indexOf(`"$HUB/${file}"`);
     assert.ok(copy >= begin && copy < validation, `${file} is present before required-module validation`);
   }
@@ -110,7 +110,7 @@ test("Chat modules are copied before the payload dependency check and its page s
       env: { ...process.env, HUB: path.resolve(new URL('..', import.meta.url).pathname), OUT: out }, encoding: 'utf8',
     });
     assert.equal(run.status, 0, run.stdout + run.stderr);
-    for (const file of ['chat-api.js', 'chat-choices.js', 'chat-speech-worker.js']) assert.ok(fs.statSync(path.join(out, file)).size > 0);
+    for (const file of ['chat-api.js', 'chat-choices.js', 'chat-symbols.js', 'chat-speech-worker.js']) assert.ok(fs.statSync(path.join(out, file)).size > 0);
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
