@@ -178,6 +178,24 @@ test('results.jsonl passes add samples; other statuses are ignored; mixed source
   assert.doesNotMatch(result.stderr, /no sample: era-hub:tests\/never-ran/);
 });
 
+test('a FLAKY pass (a retry, or a pass after a failure on its key) is never a sample', t => {
+  const { dir, registry } = scratch(t);
+  const results = path.join(dir, 'results.jsonl');
+  fs.writeFileSync(results, [
+    { suite: 'era-hub:tests/alpha.test.mjs', file: 'alpha.test.mjs', status: 'pass', seconds: 5, attempt: 1, line: 'PASS alpha.test.mjs' },
+    { suite: 'era-hub:tests/never-ran.test.mjs', file: 'never-ran.test.mjs', status: 'fail', seconds: 30, attempt: 1 },
+    { suite: 'era-hub:tests/never-ran.test.mjs', file: 'never-ran.test.mjs', status: 'pass', seconds: 40, attempt: 2, flaky: true },
+    { suite: 'era-pencil:tests/pencil.js', file: 'pencil.js', status: 'pass', seconds: 50, attempt: 1, flaky: true },
+  ].map(line => JSON.stringify(line)).join('\n') + '\n');
+  const out = path.join(dir, 'durations.json');
+  const result = harvest(registry, ['--out', out, '--results', results]);
+  assert.equal(result.status, 0, result.stderr);
+  const table = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.deepEqual(Object.keys(table.suites), ['era-hub:tests/alpha.test.mjs']);
+  assert.equal(table.suites['era-hub:tests/alpha.test.mjs'].median_s, 5);
+  assert.match(result.stderr, /no sample: era-hub:tests\/never-ran\.test\.mjs/);
+});
+
 test('nothing qualifying leaves the existing table untouched and exits non-zero', t => {
   const { dir, registry } = scratch(t);
   const out = path.join(dir, 'durations.json');

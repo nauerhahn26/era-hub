@@ -4,9 +4,9 @@
 // era-gate.sh calls it; the rules are pure functions so a test can hold each
 // one without running a gate.
 //
-//   reuse.mjs plan <gate-dir> <inputs.json> [--no-cache] [--rerun-failed RUN | --restamp RUN]
+//   reuse.mjs plan <gate-dir> <inputs.json> [--no-cache] [--rerun-failed RUN | --restamp RUN] [--gate-pid PID]
 //   reuse.mjs guard <data-dir> <snapshot.json>
-//   reuse.mjs record <gate-dir> [--data DIR] [--checks inputs=ok,hub=ok,execution=ok] [--pass N] [--fail N]
+//   reuse.mjs record <gate-dir> [--data DIR] [--checks inputs=ok,hub=ok,execution=ok] [--pass N] [--fail N] [--summary LINE]
 //   reuse.mjs select <suite[,suite...]> <selection.json>
 //   [--hub DIR] [--registry FILE] [--store DIR]                    other inputs (tests)
 //
@@ -357,7 +357,7 @@ const short = (value) => (/^[0-9a-f]{64}$/.test(value) ? value.slice(0, 8) : val
 
 export function planGate({ gate, inputs, hub = path.resolve(HERE, '../..'), registryFile = path.join(HERE, 'registry.json'),
   env = process.env, store = storeDir(env), noCache = false, rerun = null, restamp = null, now = Date.now(), node,
-  maxAgeMs = MAX_AGE_MS }) {
+  maxAgeMs = MAX_AGE_MS, gatePid = null }) {
   const out = [], refuse = (lines) => ({ ok: false, out, errors: lines });
   if (!store || !storeWritable(store)) {
     if (rerun || restamp) return refuse([`${rerun ? '--rerun-failed' : '--restamp'} needs the run store, and ${store || '$ERA_GATE_RUNS (HOME is not set)'} is not available here`]);
@@ -404,7 +404,9 @@ export function planGate({ gate, inputs, hub = path.resolve(HERE, '../..'), regi
   // The run's record starts now: a gate that dies still leaves its keys.
   const runDir = path.join(store, id);
   fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
-  const keys = { version: 1, run: id, checkout: hub, tree, head, createdAt: iso(now), mode, from: from?.id ?? null, noCache, shared, suites };
+  // pid: the gate's own, so tools/gate-wait.sh finds this run from the pid a
+  // detached launch recorded, also after the gate has ended
+  const keys = { version: 1, run: id, checkout: hub, pid: gatePid, tree, head, createdAt: iso(now), mode, from: from?.id ?? null, noCache, shared, suites };
   fs.writeFileSync(path.join(runDir, 'keys.json'), JSON.stringify(keys, null, 1) + '\n');
   fs.copyFileSync(inputs, path.join(runDir, 'inputs.json'));
   fs.copyFileSync(path.join(gate, '.execution-plan.tsv'), path.join(runDir, 'plan.tsv'));
@@ -471,7 +473,7 @@ function tail(file, count = 20) {
   try { return fs.readFileSync(file, 'utf8').split('\n').filter((l, i, all) => l || i < all.length - 1).slice(-count); } catch { return []; }
 }
 
-export function recordRun({ gate, data = null, checks = {}, pass = null, fail = null, now = Date.now() }) {
+export function recordRun({ gate, data = null, checks = {}, pass = null, fail = null, summary = null, now = Date.now() }) {
   const reuse = readJSON(path.join(gate, '.reuse.json'));
   const runDir = reuse.runDir, out = [];
   fs.mkdirSync(path.join(runDir, 'suites'), { recursive: true });
@@ -523,12 +525,17 @@ export function recordRun({ gate, data = null, checks = {}, pass = null, fail = 
     checks: { inputs: checks.inputs || 'unknown', hub: checks.hub || 'unknown', execution: checks.execution || 'unknown' },
     guard: { changed }, counts: { suites: values.length, reused: reused.length, fresh: values.length - reused.length, flaky },
     oldestEvidence: oldest, suites };
+  const age = oldest ? ` (${((now - Date.parse(oldest)) / 3600_000).toFixed(1)} h old)` : '';
+  const line = `receipt: ${reused.length} reused, ${values.length - reused.length} run fresh${flaky ? ` (${flaky} FLAKY)` : ''}` +
+    `${oldest ? `; oldest reused evidence ${oldest}${age}` : ''}; ${path.join(runDir, 'receipt.json')}`;
+  // the gate's summary line and this receipt line, as printed: what
+  // tools/gate-wait.sh repeats once the gate has ended
+  receipt.summary = summary;
+  receipt.line = line;
   const text = JSON.stringify(receipt, null, 1) + '\n';
   fs.writeFileSync(path.join(runDir, 'receipt.json'), text);
   fs.writeFileSync(path.join(gate, 'receipt.json'), text);
-  const age = oldest ? ` (${((now - Date.parse(oldest)) / 3600_000).toFixed(1)} h old)` : '';
-  out.push(`receipt: ${reused.length} reused, ${values.length - reused.length} run fresh${flaky ? ` (${flaky} FLAKY)` : ''}` +
-    `${oldest ? `; oldest reused evidence ${oldest}${age}` : ''}; ${path.join(runDir, 'receipt.json')}`);
+  out.push(line);
   return { out, receipt, flakes };
 }
 
@@ -549,7 +556,8 @@ export function selectSuites(list, registry) {
 function main(argv) {
   const [command, ...rest] = argv;
   const option = (name) => { const at = rest.indexOf(name); return at < 0 ? null : rest[at + 1]; };
-  const valued = new Set(['--rerun-failed', '--restamp', '--hub', '--registry', '--store', '--data', '--checks', '--pass', '--fail']);
+  const valued = new Set(['--rerun-failed', '--restamp', '--hub', '--registry', '--store', '--data', '--checks', '--pass', '--fail',
+    '--gate-pid', '--summary']);
   const positional = rest.filter((arg, i) => !arg.startsWith('--') && !valued.has(rest[i - 1]));
   const registryFile = option('--registry') || path.join(HERE, 'registry.json');
   const print = (lines, stream = process.stdout) => { if (lines.length) stream.write(lines.join('\n') + '\n'); };
@@ -558,7 +566,8 @@ function main(argv) {
     if (!gate || !inputs) throw new Error('usage: reuse.mjs plan <gate-dir> <inputs.json> [--no-cache] [--rerun-failed RUN | --restamp RUN]');
     const env = option('--store') ? { ...process.env, ERA_GATE_RUNS: option('--store') } : process.env;
     const result = planGate({ gate: path.resolve(gate), inputs: path.resolve(inputs), hub: option('--hub') ? path.resolve(option('--hub')) : undefined,
-      registryFile, env, store: storeDir(env), noCache: rest.includes('--no-cache'), rerun: option('--rerun-failed'), restamp: option('--restamp') });
+      registryFile, env, store: storeDir(env), noCache: rest.includes('--no-cache'), rerun: option('--rerun-failed'), restamp: option('--restamp'),
+      gatePid: /^[1-9]\d*$/.test(option('--gate-pid') || '') ? Number(option('--gate-pid')) : null });
     print(result.out);
     if (!result.ok) { print(result.errors.map((l, i) => (i ? l : `FATAL: ${l}`)), process.stderr); return 1; }
     return 0;
@@ -574,7 +583,8 @@ function main(argv) {
     if (!gate) throw new Error('usage: reuse.mjs record <gate-dir> [--data DIR] [--checks ...] [--pass N] [--fail N]');
     const checks = Object.fromEntries((option('--checks') || '').split(',').filter(Boolean).map((kv) => kv.split('=')));
     const number = (name) => (option(name) == null ? null : Number(option(name)));
-    print(recordRun({ gate: path.resolve(gate), data: option('--data'), checks, pass: number('--pass'), fail: number('--fail') }).out);
+    print(recordRun({ gate: path.resolve(gate), data: option('--data'), checks, pass: number('--pass'), fail: number('--fail'),
+      summary: option('--summary') }).out);
     return 0;
   }
   if (command === 'select') {

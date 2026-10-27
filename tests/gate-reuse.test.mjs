@@ -565,7 +565,8 @@ test("the record writes the receipt, the flake ledger with the first failure's l
   ].map((l) => JSON.stringify(l)).join("\n") + "\n");
   put(path.join(gate, "racy.test.out.attempt1"), Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n") + "\n");
   put(path.join(gate, "racy.test.out"), "ok\n");
-  const r = spawnSync(process.execPath, [REUSE, "record", gate, "--data", data, "--checks", "inputs=ok,hub=ok,execution=ok", "--pass", "3", "--fail", "0"], { encoding: "utf8" });
+  const r = spawnSync(process.execPath, [REUSE, "record", gate, "--data", data, "--checks", "inputs=ok,hub=ok,execution=ok", "--pass", "3", "--fail", "0",
+    "--summary", "== era-gate: 3 passed, 0 failed =="], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   const out = lines(r.stdout);
   assert.equal(out[0], "guard: the shared hub's data changed during the run (writings/one.json); this run's shared-reader passes will not be reused");
@@ -574,6 +575,7 @@ test("the record writes the receipt, the flake ledger with the first failure's l
   assert.deepEqual(receipt.suites["era-hub:tests/kept.test.mjs"], { result: "reused", run: "RUN-BEFORE", endedAt: kept });
   assert.equal(receipt.suites["era-hub:tests/racy.test.mjs"].result, "flaky");
   assert.deepEqual([receipt.green, receipt.counts, receipt.oldestEvidence, receipt.guard.changed], [true, { suites: 3, reused: 1, fresh: 2, flaky: 1 }, kept, ["writings/one.json"]]);
+  assert.deepEqual([receipt.summary, receipt.line], ["== era-gate: 3 passed, 0 failed ==", out[1]], "the summary and receipt lines, for tools/gate-wait.sh");
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(gate, "receipt.json"), "utf8")), receipt, "and a copy in gate/");
   const [flake] = fs.readFileSync(path.join(store, "flakes.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(flake.suite, "era-hub:tests/racy.test.mjs");
@@ -703,6 +705,10 @@ test("end to end through the gate's own text: a restamp starts no hub, reuses ev
   const receipt = JSON.parse(fs.readFileSync(path.join(w.gate, "receipt.json"), "utf8"));
   assert.deepEqual([receipt.mode, receipt.from, receipt.checks, receipt.green], ["restamp", r1, { inputs: "ok", hub: "none", execution: "ok" }, true]);
   assert.ok(!fs.existsSync(path.join(w.gate, "server.log")), "no shared hub was started");
+  // what tools/gate-wait.sh reads back: the gate's pid in keys.json, its summary and receipt lines in receipt.json
+  const keys = JSON.parse(fs.readFileSync(path.join(w.store, receipt.run, "keys.json"), "utf8"));
+  assert.ok(Number.isInteger(keys.pid) && keys.pid > 1, "the gate's pid");
+  assert.deepEqual([receipt.summary, receipt.line], [out.at(-1), out[receiptAt]]);
 
   // a refusal stops the gate before any hub or suite
   put(path.join(w.gate, "b.test.mjs"), "// b, edited\n"); w.freeze();

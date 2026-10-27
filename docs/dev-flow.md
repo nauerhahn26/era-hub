@@ -135,6 +135,32 @@ reused; `--restamp` refuses unless every suite can; both say which and why.
 `--no-cache` runs everything fresh and reads no earlier run. The isolated
 runner has no writable home: its gates say so and run fresh, without retries.
 
+## Waiting for a gate
+
+An agent never polls a running gate: no sleep loop over its log, no
+sub-agent told to watch it, no `tail` every minute. Agents spent a quarter to
+a third of their tokens doing that the week of 10/20. Start a full gate
+detached with its pid recorded, then make one blocking call:
+
+```
+setsid nohup bash tools/era-gate.sh >"$LOG" 2>&1 & echo $! >"$PIDFILE"
+bash tools/gate-wait.sh "$(cat "$PIDFILE")"     # or --latest, or --run <run dir>
+```
+
+`gate-wait.sh` sleeps on inotify (the slot directory, the run store, the run
+directory), looks again every 15 s for a gate killed outright, and returns
+when the gate has ended with exactly what matters: the summary line, the
+`receipt:` line, every FAIL and FLAKY line with its `see gate/...` path, and
+`stamp: <path>` when green. Exit 0 green, 1 red (a gate that died without a
+receipt prints its last results and log lines), 2 no such gate, 124 still
+running after `--timeout` seconds (default 570, inside a 10-minute tool call:
+call it again; a 15-minute gate is two calls). It finds an ended gate by the
+pid its run recorded, so a late call still gets the verdict. A session that
+can be re-invoked when a background task ends may run `gate-wait.sh` there
+instead and do other work meanwhile. `tests/gate-wait.test.mjs` pins the
+behaviour and fails the gate if a script under `tools/` sleeps in a loop
+watching a gate.
+
 ## The three release shapes
 
 A dist lives at `~/new-era/dist/release-<V>/` (sibling of the

@@ -274,6 +274,9 @@ test("a failing suite is one FAIL, one results line, and one failure in the gate
   assert.ok(!lines(r.stdout).includes("RUN d.test.mjs"), "and never started");
   assert.deepEqual(r.results.filter((x) => x.file === "b.test.mjs").map((x) => [x.status, x.exit]), [["fail", 1]]);
   assert.deepEqual(r.results.filter((x) => x.file === "d.test.mjs").map((x) => x.status), ["changed"]);
+  assert.deepEqual(r.results.filter((x) => /^[bd]\./.test(x.file)).map((x) => x.line).sort(),
+    ["FAIL b.test.mjs (see gate/b.test.out)", "FAIL d.test.mjs (collected suite missing or changed)"],
+    "each results line carries the verdict line it printed (tools/gate-wait.sh repeats it)");
   assert.deepEqual(r.summary.map((row) => [row[0], row[1], row[3]]), [
     ["pass", "0", "era-hub:tests/a.test.mjs"], ["fail", "1", "era-hub:tests/b.test.mjs"],
     ["pass", "2", "era-hub:tests/c.test.mjs"], ["changed", "3", "era-hub:tests/d.test.mjs"],

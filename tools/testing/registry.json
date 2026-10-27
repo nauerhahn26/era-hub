@@ -2340,6 +2340,32 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/gate-wait.test.mjs",
+      "purpose": "Agents wait for a gate without polling: gate-wait blocks on a stand-in gate until it ends and prints the summary, receipt, FAIL/FLAKY lines and stamp; a gate killed without a receipt, a timeout, unknown pids; no tools/ script sleeps in a loop watching a gate",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/gate-wait.sh",
+        "era-hub/tools/testing/gate-wait.mjs",
+        "era-hub/tools/testing/reuse.mjs",
+        "era-hub/tools/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data",
+        "owned-node-child",
+        "owned-process-tree"
+      ],
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/gaze-recompile.test.mjs",
       "purpose": "Source hash compilation, reuse, atomic replacement and failure rollback",
       "group": "hub",
