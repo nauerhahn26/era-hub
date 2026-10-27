@@ -343,10 +343,14 @@ export async function runJob(directory,{registry=loadRegistry(),roots,watchInter
       if(line==='== era-gate: lock acquired ==') {running=true;if(!staleWhileWaiting) updateStatus(directory,'running');}
       const started=/^RUN ([^ ]+)/.exec(line);
       if(started) {executing=true;updateStatus(directory,'running',{activeSuite:started[1]});}
-      const match=/^(PASS|FAIL) ([^ ]+)/.exec(line);
+      // REUSE (a qualifying earlier pass) and FLAKY (a pass after a failure on
+      // the same inputs; it replaces that suite's first FAIL) are passes.
+      const match=/^(PASS|FAIL|REUSE|FLAKY) ([^ ]+)/.exec(line);
       if(match) {
         const suite=registry.suites.find(s=>path.basename(splitID(s.id).relative)===match[2] || path.basename(splitID(s.id).relative,'.js')===match[2]);
-        outcomes.push({id:suite?.id || match[2],status:match[1].toLowerCase()});
+        const id=suite?.id || match[2];
+        if(match[1]==='FLAKY') { const first=outcomes.findIndex(o=>o.id===id && o.status==='fail'); if(first>=0) outcomes.splice(first,1); }
+        outcomes.push({id,status:match[1]==='FAIL'?'fail':'pass',...(match[1]==='REUSE'?{reused:true}:{}),...(match[1]==='FLAKY'?{flaky:true}:{})});
         updateStatus(directory,readJSON(path.join(directory,'status.json')).status,{activeSuite:null,lastSuite:match[2],completedSuites:outcomes.length});
       }
     }

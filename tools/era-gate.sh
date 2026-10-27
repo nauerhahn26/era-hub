@@ -4,6 +4,19 @@
 # to the test instance), starts the hub server on $ERA_TEST_PORT (default 8378,
 # NEVER the live 8377), runs the suites, reports.
 # Flow: docs/dev-flow.md
+#
+# A full gate is cache-aware (design 2026-10-26 3.2; tools/testing/reuse.mjs):
+# every frozen suite gets a key, a suite whose key holds a qualifying pass in
+# the run store ($ERA_GATE_RUNS, default ~/.local/state/era-gate-runs) prints
+# REUSE instead of running, the rest run in lanes, one failed suite may run
+# once more at the end (FLAKY), and the 4-line stamp is composed from both.
+#   --no-cache            run every suite fresh (the run is still recorded)
+#   --rerun-failed RUN    run only what failed or did not finish in RUN (a run
+#                         id under the store, its directory, or latest); refused
+#                         when a suite that passed there cannot be reused now
+#   --restamp RUN         every suite reused from RUN's evidence: no hub, no
+#                         suite, a fresh stamp; refused otherwise
+#   --only SUITE[,...]    those suites (IDs or file names) only; no stamp, no store
 set -uo pipefail
 
 # These guards are also exercised against synthetic workspaces and owned local
@@ -19,6 +32,29 @@ gate_capabilities() {
 
 # Capability discovery must be read-only even on an unassembled checkout.
 if [ "${1:-}" = --capabilities ]; then gate_capabilities; exit 0; fi
+
+gate_parse_options() {
+  local chosen=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --no-cache) GATE_NO_CACHE=1 ;;
+      --rerun-failed|--restamp|--only)
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || { gate_error "$1 needs a value"; return 1; }
+        case "$1" in --rerun-failed) GATE_RERUN="$2" ;; --restamp) GATE_RESTAMP="$2" ;; *) GATE_ONLY="$2" ;; esac
+        shift ;;
+      *) gate_error "unknown option: $1"; return 1 ;;
+    esac
+    shift
+  done
+  [ -z "$GATE_RERUN" ] || chosen=$((chosen+1))
+  [ -z "$GATE_RESTAMP" ] || chosen=$((chosen+1))
+  [ -z "$GATE_ONLY" ] || chosen=$((chosen+1))
+  [ "$chosen" -le 1 ] || { gate_error "--rerun-failed, --restamp and --only exclude one another"; return 1; }
+  [ "$GATE_NO_CACHE" = 0 ] || [ -z "$GATE_RERUN$GATE_RESTAMP" ] || {
+    gate_error "--no-cache reads no earlier run; it cannot rerun or restamp one"; return 1;
+  }
+  [ "$chosen" = 0 ] || [ "${ERA_GATE_MODE:-full}" = full ] || { gate_error "an option names its own selection; ERA_GATE_MODE must stay full"; return 1; }
+}
 
 gate_acquire_lock() {
   local descriptor="${ERA_GATE_LOCK_FD:-}" expected actual
@@ -371,6 +407,8 @@ gate_verify_execution() {
 # it hashed at start or "missing", source ID), counted exactly as the serial
 # loop counted: a pass once; a failure once, by its label; a copy refused as
 # missing or changed once, by its file name, and never recorded as executed.
+# A reused pass (its key holds the frozen digest) and a FLAKY pass count as
+# passes; a suite refused for two failures on its key counts as a failure.
 # $1 is the runner's exit status: anything but 0 or 1 means it did not finish.
 gate_record_results() {
   local status="$1" state index digest id t label
@@ -382,9 +420,12 @@ gate_record_results() {
       }
       if [[ "$t" = *.test.mjs ]]; then label="$t"; else label="${t%.js}"; fi
       case "$state" in
-        pass|fail)
+        pass|fail|reused|flaky|blocked)
           gate_record_execution "$index" "$digest" || { fail=$((fail+1)); failed="$failed $t"; continue; }
-          if [ "$state" = pass ]; then pass=$((pass+1)); else fail=$((fail+1)); failed="$failed $label"; fi ;;
+          case "$state" in
+            pass|reused|flaky) pass=$((pass+1)) ;;
+            *) fail=$((fail+1)); failed="$failed $label" ;;
+          esac ;;
         changed)
           if [ "$digest" = missing ]; then gate_error "missing collected suite: $id"
           else gate_error "collected suite changed before execution: $id"; fi
@@ -394,6 +435,19 @@ gate_record_results() {
     done <"$GATE/.lane-results.tsv"
   fi
   [ "$status" = 0 ] || [ "$status" = 1 ] || { fail=$((fail+1)); failed="$failed lanes"; }
+}
+
+# The run's record in the store (tools/testing/reuse.mjs record): outputs, the
+# guard's second look at the shared hub's data, the flake ledger, receipt.json
+# and the receipt line, all before the summary line. Only a full gate whose
+# plan found a writable store; a record that cannot be written costs later
+# gates their reuse, never this gate its verdict.
+gate_record_run() {
+  [ "${ERA_GATE_MODE:-full}" = full ] || return 0
+  [ -f "$GATE/.reuse.json" ] || return 0
+  node "$HUB/tools/testing/reuse.mjs" record "$GATE" --data "$DATA" \
+    --checks "inputs=$CHECK_INPUTS,hub=$CHECK_HUB,execution=$CHECK_EXECUTION" --pass "$pass" --fail "$fail" ||
+    echo "reuse: WARNING: this run's record could not be written; later gates will not reuse it"
 }
 
 # An early exit (TERM or INT while suites run) stops the lane runner: only the
@@ -446,6 +500,12 @@ DATA="${ERA_GATE_SEED_DIR:-${ERA_DATA_DIR:-$ROOT/era-family/test-data}}"  # immu
 PORT="${ERA_TEST_PORT:-8378}"
 GATE="$HUB/gate"
 OWN_DATA=""; OWN_INPUTS=""; SRV=""; SRV_ID=""; SRV_ARGS=""; GATE_PREPARED=0; LANES_PID=""; LANES_ID=""
+GATE_NO_CACHE=0; GATE_RERUN=""; GATE_RESTAMP=""; GATE_ONLY=""
+gate_parse_options "$@" || exit 1
+# --only is the affected mode with a selection written once gate/ exists.
+if [ -n "$GATE_ONLY" ]; then
+  export ERA_GATE_MODE=affected ERA_GATE_SELECTED="$GATE/.only-selection.json"
+fi
 # ERA_WT_SUFFIX (9/17): a multi-repo feature keeps sibling worktrees
 # (<repo>--wt-<slug>); when set and that directory exists, source the
 # sibling from there, else from the main checkout as before. Without it a
@@ -577,6 +637,9 @@ fi
 
 rm -rf "$GATE" && mkdir -p "$GATE" || exit 1
 GATE_PREPARED=1
+if [ -n "$GATE_ONLY" ]; then
+  node "$HUB/tools/testing/reuse.mjs" select "$GATE_ONLY" "$ERA_GATE_SELECTED" || exit 1
+fi
 # era-hub's own suites come from THIS checkout ($HUB) so a feature-worktree
 # gate runs the worktree's new/changed suites, not the main checkout's copy
 # (identical when run from the main checkout, where $HUB = $ROOT/era-hub).
@@ -619,13 +682,23 @@ unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS E
 for chat_setting in "${!ERA_CHAT_@}"; do unset "$chat_setting"; done
 export ERA_CHAT_CONFIG_DISABLED=1
 
-# ERA_DEVICE_ID: the gate's DATA is era-family/test-data (a PRIVATE repo's
-# working tree). Without a name given here the hub would generate one from
-# this build box's hostname and write <DATA>/device-id into that repo — a
-# side effect the clothing-migration plan forbids (device-id.js, plan T4.1).
-# Refuse a race for the test endpoint. A stale or foreign hub belongs to its
-# owner; neither its command name nor its port authorizes this run to kill it.
-gate_port_available "$PORT" || exit 1
+# Reuse (design 3.2; tools/testing/reuse.mjs plan): with the suites' environment
+# now final, a full gate keys every frozen suite, prints the key's parts, and
+# decides per suite: reuse a qualifying pass from the run store, run it, or
+# refuse it (two failures on its key). It writes gate/.reuse.json for the lane
+# runner. Without a writable store it says so and plans nothing. --only and
+# affected runs neither read nor write the store.
+GATE_HUB=1
+if [ "${ERA_GATE_MODE:-full}" = full ]; then
+  GATE_REUSE_ARGS=()
+  [ "$GATE_NO_CACHE" = 0 ] || GATE_REUSE_ARGS+=(--no-cache)
+  [ -z "$GATE_RERUN" ] || GATE_REUSE_ARGS+=(--rerun-failed "$GATE_RERUN")
+  [ -z "$GATE_RESTAMP" ] || GATE_REUSE_ARGS+=(--restamp "$GATE_RESTAMP")
+  node "$HUB/tools/testing/reuse.mjs" plan "$GATE" "$ERA_GATE_INPUTS" "${GATE_REUSE_ARGS[@]}" || exit 1
+  # nothing left to run (every suite reused, as a restamp is): no shared hub
+  [ "$(cat "$GATE/.reuse-to-run" 2>/dev/null)" != 0 ] || GATE_HUB=0
+fi
+
 # Also prove that the endpoint is bindable before launching our owned child.
 require_free_test_port() {
   node -e '
@@ -637,18 +710,32 @@ require_free_test_port() {
     server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close());
   ' "$PORT"
 }
-require_free_test_port || exit 1
-NODE_BIN="$(type -P node)" || exit 1
-SRV_ARGS="$NODE_BIN $HUB/server.js $PORT"
-# ERA_CLOTHING_TICK_MS=0: the shared hub's clothing board is built once, by
-# gate_build_clothing below, never by its own timers mid-run.
-ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate ERA_CLOTHING_TICK_MS=0 \
-  "$NODE_BIN" "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
-SRV=$!
-SRV_ID="$(gate_process_identity "$SRV")" || SRV_ID=""
-gate_wait_process "$SRV" "$SRV_ID" "$SRV_ARGS" || { gate_error "owned test server did not enter its expected command"; exit 1; }
-gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" || { cat "$GATE/server.log"; exit 1; }
-gate_build_clothing "$PORT" || { cat "$GATE/server.log"; exit 1; }
+# ERA_DEVICE_ID: the gate's DATA is era-family/test-data (a PRIVATE repo's
+# working tree). Without a name given here the hub would generate one from
+# this build box's hostname and write <DATA>/device-id into that repo — a
+# side effect the clothing-migration plan forbids (device-id.js, plan T4.1).
+# Refuse a race for the test endpoint. A stale or foreign hub belongs to its
+# owner; neither its command name nor its port authorizes this run to kill it.
+if [ "$GATE_HUB" = 1 ]; then
+  gate_port_available "$PORT" || exit 1
+  require_free_test_port || exit 1
+  NODE_BIN="$(type -P node)" || exit 1
+  SRV_ARGS="$NODE_BIN $HUB/server.js $PORT"
+  # ERA_CLOTHING_TICK_MS=0: the shared hub's clothing board is built once, by
+  # gate_build_clothing below, never by its own timers mid-run.
+  ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate ERA_CLOTHING_TICK_MS=0 \
+    "$NODE_BIN" "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
+  SRV=$!
+  SRV_ID="$(gate_process_identity "$SRV")" || SRV_ID=""
+  gate_wait_process "$SRV" "$SRV_ID" "$SRV_ARGS" || { gate_error "owned test server did not enter its expected command"; exit 1; }
+  gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" || { cat "$GATE/server.log"; exit 1; }
+  gate_build_clothing "$PORT" || { cat "$GATE/server.log"; exit 1; }
+  # The shared-state guard's first look: the owned data after the one awaited
+  # build, before the first suite. The record takes the second after the last.
+  [ ! -f "$GATE/.reuse.json" ] || node "$HUB/tools/testing/reuse.mjs" guard "$DATA" "$GATE/.guard-start.json" || exit 1
+else
+  echo "reuse: nothing to run; the shared hub is not started"
+fi
 
 cd "$GATE"
 pass=0; fail=0; failed=""
@@ -667,16 +754,21 @@ LANES_ID="$(gate_process_identity "$LANES_PID")" || LANES_ID=""
 wait "$LANES_PID"; lanes_status=$?
 LANES_PID=""; LANES_ID=""
 gate_record_results "$lanes_status"
-gate_verify_execution || { fail=$((fail+1)); failed="$failed execution-set"; }
+CHECK_INPUTS=ok; CHECK_HUB=none; CHECK_EXECUTION=ok
+gate_verify_execution || { fail=$((fail+1)); failed="$failed execution-set"; CHECK_EXECUTION=incomplete; }
 node "$HUB/tools/test-suite.mjs" verify-inputs "$ERA_GATE_INPUTS" --phase running || {
-  fail=$((fail+1)); failed="$failed inputs-changed";
+  fail=$((fail+1)); failed="$failed inputs-changed"; CHECK_INPUTS=changed;
 }
-gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" 1 || {
-  fail=$((fail+1)); failed="$failed shared-hub-identity";
-}
+if [ "$GATE_HUB" = 1 ]; then
+  gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" 1 || {
+    fail=$((fail+1)); failed="$failed shared-hub-identity"; CHECK_HUB=lost;
+  }
+  [ "$CHECK_HUB" = lost ] || CHECK_HUB=ok
+fi
 gate_archive_reports || { fail=$((fail+1)); failed="$failed report-archive"; }
 REPORTS_SAVED=1
 if [ "${ERA_GATE_MODE:-full}" = full ]; then
+  gate_record_run
   [ "$fail" -eq 0 ] && write_green_stamp
   echo "== era-gate: $pass passed, $fail failed${failed:+ →$failed} =="
 else

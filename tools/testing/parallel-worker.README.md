@@ -61,6 +61,11 @@ A separate synthetic outer-host check exercises the cleanup shape on an owned
 the exact real 8378 expression against the nested canary's actual process arguments.
 It never runs a broad cleanup expression in the real host PID namespace.
 
+The worker's home is hidden, so a candidate gate finds no run store
+(`$ERA_GATE_RUNS`): it says so in one line and runs every suite fresh, with no
+REUSE or FLAKY lines and no retry. Giving it a store means bind-mounting one and
+teaching `validateGateResults` those lines first (plan 3.7).
+
 Candidates must provide deterministic closed provider fixtures. A candidate that
 requires a real network provider fails visibly; this capability does not silently
 skip network or permission cases. Every expected suite must execute once with a
