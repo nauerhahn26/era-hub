@@ -537,6 +537,23 @@ freshness mark the release script checks.
 - [ ] 3.12 Land. Expected: fixture-only fix or single flake recovers in about
       1 min plus the suite; restamp under 1 min.
 
+Landed 10/27 01:35 UTC as era-hub master f73d5ed (via the landing worktree
+`era-hub--wt-gate-landing`, because the plan's own worktree held a builder's
+unfinished tests-vm edits): Phase 2b admission with per-gate namespaces, Phase
+3 reuse, retry, rerun-failed, restamp and `--only`, the memory cuts, the
+one-lane isolated runner and the VM guest profiles, merged with master's
+Voice and Lockout landings. Evidence: the full gate on the synced tree ran
+169 suites green in 15 min 25 s at two lanes in its own namespace (tree RSS
+peak 1.76 GiB, host floor 3.52 GiB, no guard trip); a second gate on the same
+tree reused all 169 in 3 s and started no hub; `--restamp latest` wrote the
+stamp in 4 s. The first pre-sync gate of the merged branch had been red
+(157/10): every sibling master had just landed the app locks, so era-board's
+master tests met a pre-lock hub, and suite-classes caught the registry drift,
+both as designed. Still open: the quiet template's leg B proof and its
+tests-vm follow-up; land and release printing the receipt (house repo); the
+isolated runner's validator learning REUSE and FLAKY; the signed `--skip-gate`
+and `--resume-sign` paths accepting only fresh evidence.
+
 ## Phase 4: agents stop polling; dev loop (one day)
 
 - [ ] 4.1 `tools/testing/gate-wait.sh <run-id|latest> [--max 570]`: blocks on
