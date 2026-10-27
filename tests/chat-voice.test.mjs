@@ -219,3 +219,33 @@ test('expired queued selected words never start a later request when background 
   background.resolve(new Response(new Blob(['audio'], { type: 'audio/mpeg' }))); await flush();
   assert.deepEqual(texts, ['Background words']); assert.deepEqual(s.played, []);
 });
+
+test('test mode usage: every saved-voice fetch reports its characters and each say reports hit, pending, miss or device', async () => {
+  const fetched = [], clips = [];
+  const s = setup({ onFetch: chars => fetched.push(chars) });
+  s.voice.prefetch([{ say: 'Warm words' }]);
+  for (let i = 0; i < 20 && !fetched.length; i++) await flush();
+  for (let i = 0; i < 20; i++) await flush();
+  assert.equal(await s.voice.say('Warm words', { onClip: value => clips.push(value) }), true);
+  assert.equal(await s.voice.say('Cold words', { onClip: value => clips.push(value) }), true);
+  assert.deepEqual(fetched, [10, 10]);
+  assert.deepEqual(clips, [{ chars: 10, cache: 'hit' }, { chars: 10, cache: 'miss' }]);
+  s.voice.dispose();
+
+  const waiting = deferred(), pending = [];
+  const slow = setup({ fetch: url => url === '/voices' ? Promise.resolve(Response.json({ enabled: true, current: 'configured' })) : waiting.promise });
+  slow.voice.prefetch([{ say: 'Slow words' }]);
+  for (let i = 0; i < 20; i++) await flush();
+  const saying = slow.voice.say('Slow words', { onClip: value => pending.push(value) });
+  for (let i = 0; i < 20; i++) await flush();
+  waiting.resolve(new Response(new Blob(['audio'], { type: 'audio/mpeg' })));
+  assert.equal(await saying, true);
+  assert.deepEqual(pending, [{ chars: 10, cache: 'pending' }]);
+  slow.voice.dispose();
+
+  const device = [], local = setup({ onFetch: chars => fetched.push(chars) });
+  local.voice.setPreference('local');
+  assert.equal(await local.voice.say('Device words', { onClip: value => device.push(value) }), true);
+  assert.deepEqual(device, [{ chars: 12, cache: 'device' }]); assert.equal(fetched.length, 2);
+  local.voice.dispose();
+});

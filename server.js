@@ -18,7 +18,11 @@ const updater = require("./update");
 if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
-const chatApi = require("./chat-api.js").createChatApi();
+// Chat test mode (spec 2026-10-27 §5): a separate route and schema, off by default.
+const { createChatTurns, applyTestModeSetting, testModeOn } = require("./chat-turns.js");
+// The reply usage (model id, token counts) reaches the page only while this
+// device's test-mode switch is on. DATA is read when a request asks, not here.
+const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA) });
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
 // the worker's whitelist, the pools and this hub's edit door all read it, so a
 // word cannot be a category here and a stranger three files away.
@@ -409,6 +413,10 @@ const gazeSupervisor = require("./gaze-supervisor.js").createGazeSupervisor({
   ...(process.env.ERA_GAZE_BACKOFF_MS ? { backoffMs: process.env.ERA_GAZE_BACKOFF_MS.split(",").map(Number) } : {}),
 });
 const GAZE_POLL_MS = Number(process.env.ERA_GAZE_POLL_MS) || 10000;
+// One record per Chat turn while THIS device's chatTestMode is on; the gaze
+// state in its health sample is the supervisor's (spec 2026-10-27 §5).
+const chatTurns = createChatTurns({ dataDir: DATA, pool, deviceId: DEVICE_ID, build: () => updater.runningBuild,
+                                    gaze: () => gazeSupervisor.status().state });
 // Keep desktop/start-menu shortcuts in step with an app toggle (Windows only,
 // best-effort — the home tile is the source of truth, the .lnk a convenience).
 // Minimize our kiosk windows so an externally opened window (browser page,
@@ -1747,6 +1755,7 @@ function stampInteraction(req) {
 const server = http.createServer((req, res) => {
   stampInteraction(req);
   if (chatStore.handle(req, res)) return;
+  if (chatTurns.handle(req, res)) return;
   if (chatApi.handle(req, res)) return;
   if (req.url === "/games/state/recovery" && req.method === "GET") {
     void loadGamesModel().then(({ readSavedState }) => {
@@ -1829,6 +1838,7 @@ const server = http.createServer((req, res) => {
     let s = { dwellMs: 1200, pencilDwellMs: 1500, settleMs: 250, musicVolCap: 100, exitTo: "tdsnap",
               lockMinutes: 45, lockPasscodeHash: "",
               downloadWeekVideos: true,   // this device fetches the week's videos (spec 2026-10-12 §3.2)
+              chatTestMode: false,        // Chat test mode: one device's explicit choice (spec 2026-10-27 §5)
               voiceId: loadTtsCfg().voiceId,
               childName: PROFILE.childName || "friend", hasProfile: HAS_PROFILE,
               personalWords: [] };
@@ -1990,6 +2000,10 @@ const server = http.createServer((req, res) => {
             s.location = { ...loc, lat, lon, at: new Date().toISOString() };
           }
         }
+        // Chat test mode (spec 2026-10-27 §5): only a real boolean moves it.
+        // A page on another site steering the browser never moves it (the
+        // Sec-Fetch-Site rule of ownDoor above); the Chat page and tools do.
+        s = applyTestModeSetting(s, inc, req.headers["sec-fetch-site"]);
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // A new window makes the cached weather an answer to the old question,
         // and today's board a board for the wrong hours: throw the cache away
@@ -4120,5 +4134,5 @@ server.on("listening", () => {
     fetchSymbolToCache(name).then(f => { if (f) console.log("[symbol] pre-warmed " + name); });
   }
 });
-server.on("close", () => chatApi.close());
+server.on("close", () => { chatApi.close(); chatTurns.close(); });
 server.listen(PORT, BIND);

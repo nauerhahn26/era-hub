@@ -86,6 +86,16 @@ function parseChoices(response) {
   return choices;
 }
 
+// Token counts as the reply service reported them, with the configured model id
+// (an id, never a credential). Used only for Chat test mode's cost estimate.
+function replyUsage(response, model) {
+  const usage = response && response.usage, count = value => Number.isSafeInteger(value) && value >= 0;
+  if (!usage || typeof usage !== 'object' || !count(usage.input_tokens) || !count(usage.output_tokens)) return null;
+  const cached = usage.input_tokens_details && usage.input_tokens_details.cached_tokens;
+  return { model: typeof model === 'string' && model.length <= 128 ? model : null, inputTokens: usage.input_tokens,
+    cachedTokens: count(cached) ? Math.min(cached, usage.input_tokens) : 0, outputTokens: usage.output_tokens };
+}
+
 function createChoicesAdapter(options = {}) {
   const env = options.env || process.env, fetcher = options.fetch || globalThis.fetch;
   const limits = { ...DEFAULTS, ...options.limits }, clock = options.clock || performance.now.bind(performance);
@@ -119,8 +129,8 @@ function createChoicesAdapter(options = {}) {
         if (!response.ok) throw failure('generation-unavailable');
         const parsed = await boundedResponse(response, limits.outputBytes, controller);
         if (controller.signal.aborted) throw failure('generation-unavailable');
-        const choices = parseChoices(parsed), guarded = changesOwnership(data, choices);
-        return { choices: guarded ? [{ label: 'Offer help', say: 'Can I help you?' }, { label: 'Tell me more', say: 'Tell me more.' },
+        const choices = parseChoices(parsed), guarded = changesOwnership(data, choices), usage = replyUsage(parsed, env.ERA_CHAT_TEXT_MODEL);
+        return { ...(usage ? { usage } : {}), choices: guarded ? [{ label: 'Offer help', say: 'Can I help you?' }, { label: 'Tell me more', say: 'Tell me more.' },
           { label: 'A moment', say: 'I need a moment.' }] : choices, kind: guarded ? 'guarded' : 'generated', generated: !guarded,
           timings: { totalMs: Math.round((clock() - before) * 100) / 100 } };
       } catch (error) {

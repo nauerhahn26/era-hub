@@ -562,6 +562,21 @@ test('configured text generation works in process without a standalone adapter',
   assert.ok(!JSON.stringify(result).includes('private-value'));
 });
 
+test('the Chat API passes the reply usage through to the page only in test mode, and shortcuts report none', async t => {
+  let testMode = true;
+  const s = await service(t, { reportUsage: () => testMode, env: { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' },
+    fetch: async () => new Response(JSON.stringify({ status: 'completed', usage: { input_tokens: 700, input_tokens_details: { cached_tokens: 0 }, output_tokens: 40 },
+      output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
+        choices: [{ label: 'Space', say: 'We could talk about space.' }, { label: 'Something else', say: 'Let us choose something else.' }] }) }] }] })) });
+  const result = await (await s.request('/choices', { text: 'What shall we talk about?' })).json();
+  assert.deepEqual(result.usage, { model: 'configured', inputTokens: 700, cachedTokens: 0, outputTokens: 40 });
+  const shortcut = await (await s.request('/choices', { text: 'Would you like music or a story?' })).json();
+  assert.equal(shortcut.kind, 'alternatives'); assert.equal('usage' in shortcut, false);
+  testMode = false;
+  const off = await (await s.request('/choices', { text: 'What shall we talk about?' })).json();
+  assert.equal(off.kind, 'generated'); assert.equal('usage' in off, false, 'off: no model id or token counts reach the page');
+});
+
 test('explicit external choices override built-in generation and invalid overrides fail without a paid fallback', async t => {
   const textEnv = { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' };
   const s = await service(t, { env: { ...textEnv, ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (url) => {

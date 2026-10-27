@@ -150,3 +150,20 @@ test('disconnect aborts an in-flight upstream call and releases capacity', async
   await began; controller.abort(); await pending;
   await Promise.race([aborted, new Promise((_, reject) => setTimeout(() => reject(Error('not cancelled')), 500))]);
 });
+
+test('a generated batch reports the reply model\'s token usage and the configured model id, never the credential', async () => {
+  const withUsage = (value, usage) => new Response(JSON.stringify({ status: 'completed', usage,
+    output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(value) }] }] }));
+  const adapter = createChoicesAdapter({ env, fetch: async () => withUsage({ choices }, { input_tokens: 812, input_tokens_details: { cached_tokens: 128 }, output_tokens: 57, total_tokens: 869 }) });
+  const result = await adapter.generate({ text: 'What next?' });
+  assert.deepEqual(result.usage, { model: 'configured', inputTokens: 812, cachedTokens: 128, outputTokens: 57 });
+  assert.ok(!JSON.stringify(result).includes('private-value'));
+  const noDetails = createChoicesAdapter({ env, fetch: async () => withUsage({ choices }, { input_tokens: 10, output_tokens: 5 }) });
+  assert.deepEqual((await noDetails.generate({ text: 'What next?' })).usage, { model: 'configured', inputTokens: 10, cachedTokens: 0, outputTokens: 5 });
+  for (const usage of [undefined, { input_tokens: -1, output_tokens: 5 }, { input_tokens: '10', output_tokens: 5 }]) {
+    const adapter = createChoicesAdapter({ env, fetch: async () => withUsage({ choices }, usage) });
+    assert.equal('usage' in await adapter.generate({ text: 'What next?' }), false, 'no usage is reported when the service gave none we can trust');
+  }
+  const guarded = await createChoicesAdapter({ env, fetch: () => { throw Error('must not call'); } }).generate({ text: 'What did you do last weekend?' });
+  assert.equal('usage' in guarded, false, 'no paid call, no usage');
+});

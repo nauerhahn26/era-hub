@@ -129,6 +129,14 @@ function safeTimings(value) {
   }
   return result;
 }
+// The built-in reply core's token usage, for Chat test mode only: numbers and
+// the configured model id. Production timing rows never take it.
+function cleanUsage(value) {
+  const count = x => Number.isSafeInteger(x) && x >= 0;
+  if (!value || typeof value !== 'object' || !count(value.inputTokens) || !count(value.cachedTokens) || !count(value.outputTokens)) return null;
+  return { model: typeof value.model === 'string' && value.model.length <= 128 ? value.model : null,
+    inputTokens: value.inputTokens, cachedTokens: value.cachedTokens, outputTokens: value.outputTokens };
+}
 function localChoices(text) {
   let trimmed = text.replace(/[?.!]+$/, '').trim();
   const explicitAddress = /^hey[\s,!.?:]+ellie[\s,!.?:]+(.+)$/i.exec(trimmed) ||
@@ -195,6 +203,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   const childEnv = speechEnvironment(env, options.env || process.env, builtIn);
   const adapterRequested = typeof env.ERA_CHAT_CHOICES_URL === 'string' && !!env.ERA_CHAT_CHOICES_URL.trim();
   const adapterUrl = transportUrl(env.ERA_CHAT_CHOICES_URL);
+  // Chat test mode only (spec 2026-10-27 §5): the model id and token counts reach the page while the switch is on.
+  const reportUsage = () => { try { return options.reportUsage?.() === true; } catch { return false; } };
   const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices, timeoutMs: Math.min(limits.adapterMs, 12000) } });
 
   function emit(session, event) {
@@ -349,6 +359,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       json(res, 200, { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
         choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300) }))),
+        ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began) } });
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }
     finally { clearTimeout(timeout); requests.delete(controller); res.off('close', cancel); }
