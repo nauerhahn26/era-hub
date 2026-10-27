@@ -16,7 +16,7 @@ const FIELDS = new Set(['version', 'retention', 'turns', 'summary', 'counts', 'g
   'p95MinimumSamples', 'kind', 'status', 'reason', 'timings', 'open', 'completed', 'cancelled', 'failed',
   'hold', 'typed', 'fixed', 'reply', 'samples', 'medianMs', 'p95Ms', ...DURATIONS]);
 const CATEGORIES = new Set(['hold', 'typed', 'fixed', 'reply', 'open', 'completed', 'cancelled', 'failed',
-  'cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices',
+  'cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices',
   'speech', 'connection', 'other']);
 
 export function makeChatToneWav() {
@@ -52,7 +52,7 @@ export function assertContentFreeMetrics(value) {
 }
 
 export function makeChatStateDiagnostic(state, ui = {}) {
-  const reasons = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
+  const reasons = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
   const rows = Array.isArray(state?.value?.timings) ? state.value.timings.slice(-40) : [];
   const backendRows = rows.filter(row => row && ['hold', 'typed', 'fixed', 'reply'].includes(row.kind) && ['open', 'completed', 'cancelled', 'failed'].includes(row.status)).map(row => ({
     kind: row.kind, status: row.status,

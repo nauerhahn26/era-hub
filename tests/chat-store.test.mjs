@@ -145,3 +145,19 @@ test('payload Chat copy ships the store module and rejects any private state acc
   await fs.writeFile(path.join(out, 'data', '.chat-state-owned.tmp'), 'unfinished private sentinel');
   const temporary = run(); assert.notEqual(temporary.status, 0); assert.match(temporary.stdout + temporary.stderr, /private Chat state/);
 });
+
+test('a timing row cancelled as "short" (a hold let go too soon) is stored by the hub and by the page store', async t => {
+  const dataDir = await directory(t), store = createChatStore({ dataDir });
+  const short = { kind: 'hold', status: 'cancelled', reason: 'short', timings: { totalMs: 241 } };
+  assert.deepEqual((await store.put(update(0, { timings: [short] }))).value.timings, [short]);
+  const { createChatStorage } = await import('../public/chat/storage.js');
+  let state = { version: 1, revision: 0, exists: false, value: defaults };
+  const page = createChatStorage({ legacyStorage: { getItem: () => null, removeItem() {} }, debounceMs: 0, fetch: async (_url, options = {}) => {
+    if (options.method !== 'PUT') return Response.json(state);
+    const body = JSON.parse(options.body); state = { version: 1, revision: state.revision + 1, exists: true, value: { ...state.value, ...body.patch } };
+    return Response.json(state);
+  } });
+  await page.hydrate(); page.stageTimings([short]);
+  assert.equal(await page.flush(), true);
+  assert.deepEqual(state.value.timings, [short]);
+});

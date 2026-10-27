@@ -56,6 +56,10 @@ let uploadChain = Promise.resolve(), queued = 0, sessionAbort = null, readyTimer
 let askPending = false, askAcknowledged = Promise.resolve(), captureGeneration = null;
 let gridKey = '', currentSpeech = 0, captureIntent = 0, pendingFrames = [], heartbeat = null;
 let recentConversation = [];
+// A hold shorter than this, or one that ended before any audio, is a slip, never a question.
+const SHORT_HOLD_MS = 400;
+const HINT_SLIP = 'Hold while you speak, let go when done.', HINT_SHORT = 'Let go too soon — hold while you speak.';
+let holdStartedAt = 0, holdFrames = 0, cancelling = Promise.resolve();
 let remoteFinal = false, remoteStreaming = false, questionSending = false;
 // The held question's audio travels on one WebSocket per session when the hub
 // offers it (spec 2026-10-27 §3.1); per-frame POSTs remain for an older hub.
@@ -245,13 +249,14 @@ controller.subscribe(state => {
   document.body.dataset.ready = String(state.engineReady && ['Ready to ask', 'Your turn'].includes(state.phase));
   if (state.error) notice(state.error);
   else if (state.phase === 'Capturing question') notice('Keep holding while you speak. Release to finish.');
-  else if (state.phase === 'Ready to ask') notice('Hold to ask. Voice activation is off.');
+  else if (state.phase === 'Ready to ask') notice(state.hint || 'Hold to ask. Voice activation is off.');
   else if (state.phase === 'Your turn') notice('');
   renderGrid(state);
 });
 
 function sendFrame(bytes) {
   if (!session) return;
+  if (holding && ['opening', 'capture'].includes(mode)) holdFrames++;
   turnLog.audio(questionMetric, bytes);
   if (mode === 'opening') {
     if (pendingFrames.length >= 20) { failSession('Capture did not become ready. Release and start Chat again.'); return; }
@@ -419,7 +424,15 @@ function receiveEvent(event) {
     controller.prepare(data.text);
   } else if (data.type === 'error') {
     diagnostic(`Listening: ${String(data.message || data.error || 'unavailable').slice(0, 300)}`);
-    failSession(data.error === 'no-speech' ? 'No question was heard. Start again, or use a phrase.' : 'Speech recognition stopped. Your phrases still work.', 'recognition');
+    if (data.error === 'no-speech') {
+      // Nothing was heard: only this hold ends. The session stays on for the next one.
+      if (controller.state.phase !== 'Capturing question') return; // no hold left to end
+      const message = 'No question was heard. Hold Ask while you speak, or use a phrase.';
+      turnLog.error(questionMetric, message);
+      dropHold({ outcome: 'failed', reason: 'recognition', hint: message, tellHub: false });
+      return;
+    }
+    failSession('Speech recognition stopped. Your phrases still work.', 'recognition');
   }
 }
 
@@ -453,6 +466,7 @@ async function beginAsk() {
     if (appLocked()) return;
   if (!session || !controller.state.engineReady || holding || askPending || mode === 'draining' || closing || !['Ready to ask', 'Your turn'].includes(controller.state.phase)) return;
   holding = true; askPending = true; captureGeneration = null; questionSending = false; const mine = lifecycle;
+  holdStartedAt = performance.now(); holdFrames = 0;
   const intent = ++captureIntent; pendingFrames = [];
   metrics.end(questionMetric, 'cancelled', 'superseded'); questionMetric = metrics.begin('hold');
   turnLog.set(questionMetric, { mode: remoteStreaming ? 'stream' : remoteFinal ? 'one-shot' : 'local', session });
@@ -464,7 +478,9 @@ async function beginAsk() {
   clearTimeout(askTimer);
   askTimer = setTimeout(() => { if (mine === lifecycle && intent === captureIntent) failSession('That question was too long. Release and try a shorter question.', 'timeout'); }, 15000);
   try {
-    askAcknowledged = control('ask', stagedChoices ? { context: recentConversation.slice(-8) } : {});
+    // A dropped hold's cancel reaches the hub before this ask.
+    const context = stagedChoices ? { context: recentConversation.slice(-8) } : {};
+    askAcknowledged = cancelling.then(() => (mine === lifecycle ? control('ask', context) : null));
     const reply = await askAcknowledged;
     if (reply && mine === lifecycle && intent === captureIntent && questionTurn === controller.state.turn) {
       askPending = false; captureGeneration = reply.generation;
@@ -479,6 +495,7 @@ async function finishAsk() {
   if (!session || !['opening', 'capture'].includes(mode) || controller.state.phase !== 'Capturing question') return;
   if (finishedTurn === controller.state.turn) return;
   finishedTurn = controller.state.turn;
+  if (performance.now() - holdStartedAt < SHORT_HOLD_MS || holdFrames === 0) { dropHold({ reason: 'short', hint: HINT_SHORT }); return; }
   const timing = questionMetric; metrics.mark(timing, 'release'); turnLog.sample(timing, 'release');
   holding = false; $('ask').classList.remove('held');
   const mine = lifecycle, intent = captureIntent;
@@ -503,12 +520,23 @@ async function finishAsk() {
       ? 'That question did not finish. Your phrases still work; start Chat again and wait for Ready to ask.' : e.message);
   }
 }
+// A touch the browser took away (pointercancel, lost capture while holding): a slip.
 function cancelAsk() {
   if (finishedTurn === controller.state.turn) return;
   if (!holding && !askPending) return;
-  mic?.cancel(); pendingFrames = []; captureIntent++;
-  metrics.end(questionMetric, 'cancelled', 'cancel');
-  failSession('Question canceled. Your phrases still work; start Chat again.');
+  dropHold({ reason: 'cancel', hint: HINT_SLIP });
+}
+// Ends only the current hold: its audio and generation are dropped (never a
+// short submit), the hub is told to cancel it, and the session stays on at
+// Ready to ask with a partner hint.
+function dropHold({ outcome = 'cancelled', reason, hint, tellHub = true }) {
+  const mine = lifecycle;
+  clearTimeout(askTimer); mic?.cancel();
+  captureIntent++; pendingFrames = []; holding = false; askPending = false; captureGeneration = null; questionSending = false;
+  $('ask').classList.remove('held'); setMode('blocked'); uploadEpoch++;
+  metrics.end(questionMetric, outcome, reason);
+  if (tellHub) cancelling = askAcknowledged.catch(() => {}).then(() => (mine === lifecycle && session ? control('cancel') : null)).catch(() => null);
+  controller.retry(hint);
 }
 async function shutdown(type = 'close', preserveAnswers = false) {
   metrics.end(questionMetric, 'cancelled', 'closed'); metrics.end(speechMetric, 'cancelled', 'closed');
@@ -558,6 +586,8 @@ function touchButton(el, down, up, cancel) {
     if (!isPartnerTouch(e) || e.pointerId !== pointer) return;
     pointer = null; cancel?.();
   });
+  // A long press opens no menu and starts no selection or drag (each would steal the finger).
+  for (const type of ['contextmenu', 'selectstart', 'dragstart']) el.addEventListener(type, e => e.preventDefault());
   // No click handler: both app gaze clicks and native mouse injection are inert.
 }
 touchButton($('startChat'), startChat);

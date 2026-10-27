@@ -25,14 +25,15 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 const QUESTION = 'Would you like music or a story?';
 
-// A recognizer child that answers finish with the scripted question.
-function scriptedRuntime(log) {
+// A recognizer child that answers finish with the scripted question (or, while
+// `answers` lasts, the next scripted words: '' is a hold where nothing was heard).
+function scriptedRuntime(log, answers = []) {
   const child = new EventEmitter();
   child.stdout = new PassThrough(); child.stderr = new PassThrough();
   child.stdin = new Writable({ write(chunk, _, next) {
     for (const line of String(chunk).split('\n').filter(Boolean)) {
       const message = JSON.parse(line); log.push(message.type);
-      if (message.type === 'finish') setTimeout(() => child.stdout.write(JSON.stringify({ type: 'final', generation: message.generation, text: QUESTION,
+      if (message.type === 'finish') setTimeout(() => child.stdout.write(JSON.stringify({ type: 'final', generation: message.generation, text: answers.length ? answers.shift() : QUESTION,
         timings: { audioMs: 400, activityMs: 2, cloudMs: 20, finalDecodeMs: 22 } }) + '\n'), 20);
     }
     next();
@@ -71,10 +72,10 @@ const probe = page => page.evaluate(() => ({ sealed: window.__sealed, staged: wi
 // The reveal shows the sealed batch within the 250 ms settle (plus scheduling slack).
 const REVEAL_SLACK_MS = 300;
 
-async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {} } = {}) {
+async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {}, answers = [] } = {}) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-stream-browser-'));
   const store = createChatStore({ dataDir: scratch });
-  const api = createChatApi({ env: { ERA_CHAT_RUNTIME: 'scripted', ERA_CHAT_RUNTIME_ARGS: '[]', ...env }, spawn: () => scriptedRuntime(runtimeLog), ...apiOptions });
+  const api = createChatApi({ env: { ERA_CHAT_RUNTIME: 'scripted', ERA_CHAT_RUNTIME_ARGS: '[]', ...env }, spawn: () => scriptedRuntime(runtimeLog, answers), ...apiOptions });
   const requests = [];
   const ttsTexts = [];
   const server = http.createServer(async (req, res) => {
@@ -110,6 +111,7 @@ async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {} } = {}) {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
   };
   const lift = () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  const touchCancel = () => cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
   async function start() {
     await page.goto(base + '/chat/');
     await page.waitForFunction(() => document.body.dataset.storageReady === 'true' && document.querySelector('#engineNote').textContent.includes('set up'));
@@ -117,7 +119,7 @@ async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {} } = {}) {
     await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 10000 });
   }
   async function hold(ms = 500) { await press('#ask'); await page.waitForTimeout(ms); await lift(); }
-  return { page, base, requests, ttsTexts, sockets, errors, runtimeLog, start, hold, press, lift, api };
+  return { page, base, requests, ttsTexts, sockets, errors, runtimeLog, start, hold, press, lift, touchCancel, api, scratch };
 }
 
 test('a held question travels over the session socket, not per-frame POSTs, and End closes the socket', { timeout: 60000 }, async t => {
@@ -286,9 +288,103 @@ test('a finish the hub refuses (409) shows the partner the recovery wording, nev
     return route.continue();
   });
   await f.start();
-  await f.hold(400);
+  await f.hold(500);
   await f.page.waitForFunction(() => /start Chat again/i.test(document.querySelector('#notice').textContent), null, { timeout: 10000 });
   const notice = await f.page.locator('#notice').textContent();
   assert.doesNotMatch(notice, /capture-inactive/);
   assert.match(notice, /Ready to ask/);
+});
+
+// ---- a slip on Ask never ends the session (touchscreen field report 10/27) ----
+// A finger that rolls off, a palm, a long press or a too-quick tap cancels only
+// that hold: back to Ready to ask with a hint, the same session and socket, and
+// the cancelled hold's audio is dropped (never a short submit).
+const sessionsOpened = f => f.requests.filter(line => line === 'POST /chat/api/sessions').length;
+const notice = f => f.page.locator('#notice').textContent();
+async function holdRow(f, predicate) {
+  for (let i = 0; i < 200; i++) {
+    const state = await fs.readFile(path.join(f.scratch, 'chat-state.json'), 'utf8').then(JSON.parse, () => null);
+    const row = (state?.value.timings || []).find(value => value.kind === 'hold' && predicate(value));
+    if (row) return row;
+    await f.page.waitForTimeout(50);
+  }
+  return null;
+}
+async function stillOn(f) {
+  assert.equal(sessionsOpened(f), 1, 'the same Chat session');
+  assert.equal(f.sockets.length, 1); assert.equal(f.sockets[0].closed, false, 'the audio socket stays open');
+  assert.equal(await f.page.locator('#ask').isDisabled(), false, 'Ask stays armed');
+  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'no Start Chat needed');
+}
+async function nextHoldWorks(f) {
+  await f.hold(600);
+  await f.page.waitForSelector('.response', { timeout: 10000 });
+  assert.equal(await f.page.locator('#phase').textContent(), 'Your turn');
+  assert.equal(sessionsOpened(f), 1);
+}
+
+test('a cancelled touch on Ask returns to Ready to ask with a hint; the session stays and the next hold works', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await f.start();
+  await f.press('#ask'); await f.page.waitForTimeout(600);
+  await f.touchCancel();
+  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 5000 });
+  assert.match(await notice(f), /Hold while you speak, let go when done/);
+  await f.page.waitForTimeout(200);
+  assert.equal(f.runtimeLog.includes('finish'), false, 'a cancelled hold never submits');
+  assert.ok(f.runtimeLog.includes('cancel'), 'the recognizer dropped the hold');
+  await stillOn(f);
+  const row = await holdRow(f, value => ['cancelled', 'failed'].includes(value.status));
+  assert.deepEqual([row?.status, row?.reason], ['cancelled', 'cancel']);
+  await nextHoldWorks(f);
+  assert.equal(f.runtimeLog.filter(type => type === 'finish').length, 1);
+  assert.deepEqual(f.errors, []);
+});
+
+test('a hold let go too soon (under 400 ms) never submits: Ready to ask with "Let go too soon", cancelled as short', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await f.start();
+  await f.hold(150);
+  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 5000 });
+  assert.match(await notice(f), /Let go too soon — hold while you speak/);
+  await f.page.waitForTimeout(300);
+  assert.equal(f.runtimeLog.includes('finish'), false, 'a too-short hold never submits');
+  await stillOn(f);
+  const row = await holdRow(f, value => ['cancelled', 'failed'].includes(value.status));
+  assert.deepEqual([row?.status, row?.reason], ['cancelled', 'short']);
+  await nextHoldWorks(f);
+  assert.deepEqual(f.errors, []);
+});
+
+test('no question heard returns to Ready to ask with the session kept, and the next hold works', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { answers: [''] });
+  await f.start();
+  await f.hold(600);
+  await f.page.waitForFunction(() => /No question was heard/.test(document.querySelector('#notice').textContent), null, { timeout: 10000 });
+  assert.equal(await f.page.locator('#phase').textContent(), 'Ready to ask');
+  await stillOn(f);
+  const row = await holdRow(f, value => ['cancelled', 'failed'].includes(value.status));
+  assert.deepEqual([row?.status, row?.reason], ['failed', 'recognition']);
+  await nextHoldWorks(f);
+  assert.equal(f.runtimeLog.filter(type => type === 'finish').length, 2);
+  assert.deepEqual(f.errors, []);
+});
+
+test('Ask keeps its finger: no long-press menu, no selection or drag, touch-action none', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await f.start();
+  const prevented = await f.page.evaluate(() => Object.fromEntries(['contextmenu', 'selectstart', 'dragstart'].map(type => {
+    const event = type === 'dragstart' ? new DragEvent(type, { bubbles: true, cancelable: true }) : type === 'contextmenu'
+      ? new MouseEvent(type, { bubbles: true, cancelable: true }) : new Event(type, { bubbles: true, cancelable: true });
+    document.querySelector('#ask').dispatchEvent(event); return [type, event.defaultPrevented];
+  })));
+  assert.deepEqual(prevented, { contextmenu: true, selectstart: true, dragstart: true });
+  const style = await f.page.evaluate(() => { const s = getComputedStyle(document.querySelector('#ask')); return { touchAction: s.touchAction, userSelect: s.userSelect }; });
+  assert.deepEqual(style, { touchAction: 'none', userSelect: 'none' });
+  // A menu event never cancels a hold in progress either.
+  await f.press('#ask'); await f.page.waitForTimeout(300);
+  await f.page.evaluate(() => document.querySelector('#ask').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
+  await f.page.waitForTimeout(300); await f.lift();
+  await f.page.waitForSelector('.response', { timeout: 10000 });
+  assert.deepEqual(f.errors, []);
 });

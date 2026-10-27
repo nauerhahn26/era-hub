@@ -802,3 +802,23 @@ test('"is it" and "are you" are stripped only when every alternative carries one
   const mixed = await (await s.request('/choices', { text: 'Is it hot or cold or is it windy?' })).json();
   assert.ok(mixed.choices.every(choice => !/^Is it\b/i.test(choice.label)), 'never a tile that repeats the stem');
 });
+
+test('a verb phrase only the first alternative carries is shared when the rest parallels, and a shared leading possessive or article leaves the labels', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const ask = async text => {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'alternatives', text);
+    return result.choices.map(choice => [choice.label, choice.say]);
+  };
+  // The partner's "my" is her "your": she never claims the partner's things.
+  assert.deepEqual(await ask('Do you want to play with my dinosaurs or my Magna-Tiles?'),
+    [['Dinosaurs', 'Your dinosaurs'], ['Magna-Tiles', 'Your Magna-Tiles']]);
+  assert.deepEqual(await ask('Do you want to read the dinosaur book or the truck book?'), [['Dinosaur book', 'Dinosaur book'], ['Truck book', 'Truck book']]);
+  assert.deepEqual(await ask('Do you want to go to the park or the beach?'), [['Park', 'Park'], ['Beach', 'Beach']]);
+  assert.deepEqual(await ask('Would you like my apple or my pear?'), [['Apple', 'Your apple'], ['Pear', 'Your pear']]);
+  assert.deepEqual(await ask('Do you want to play with mom or dad?'), [['Mom', 'Mom'], ['Dad', 'Dad']]);
+  // Not shared by every alternative: the words stay, the ownership still flips.
+  assert.deepEqual(await ask('Do you want my apple or a pear?'), [['Your apple', 'Your apple'], ['A pear', 'A pear']]);
+  assert.deepEqual(await ask('Would you like music or a story?'), [['Music', 'Music'], ['A story', 'A story']]);
+  assert.deepEqual(await ask('Shall we play a game or draw pictures?'), [['Play a game', 'Play a game'], ['Draw pictures', 'Draw pictures']]);
+});

@@ -216,3 +216,20 @@ test('a revealed choice keeps the hub picture word and id; anything else about t
     { id: `${c.state.turn}:1`, label: 'Odd', say: 'Odd.' }, { id: `${c.state.turn}:2`, label: 'Long', say: 'Long.' }]);
   assert.ok(Object.isFrozen(c.state.choices[0]));
 });
+
+test('a dropped hold returns to Ready to ask with a partner hint, keeps the engine ready, and the next hold clears the hint', async () => {
+  let stops = 0;
+  const c = createChatController({ speak: async () => {}, stopSpeech: () => { stops++; } });
+  c.ready(); c.ask(); const held = c.state.turn;
+  c.retry('Let go too soon — hold while you speak.');
+  assert.equal(c.state.phase, 'Ready to ask'); assert.equal(c.state.engineReady, true);
+  assert.equal(c.state.hint, 'Let go too soon — hold while you speak.'); assert.equal(c.state.error, '');
+  assert.ok(c.state.turn > held, 'the dropped hold is invalidated'); assert.deepEqual(c.state.choices, []);
+  assert.ok(stops >= 2, 'nothing keeps speaking from the dropped hold');
+  c.ask(); assert.equal(c.state.hint, '');
+  c.retry('Hold while you speak, let go when done.'); await c.sayFixed('Yes.');
+  assert.equal(c.state.phase, 'Ready to ask'); assert.equal(c.state.hint, '', 'speaking clears the hint');
+  c.fail('Speech stopped.'); assert.equal(c.state.hint, '');
+  // Without a ready engine there is nothing to return to.
+  const off = createChatController(); off.retry('Hold while you speak, let go when done.'); assert.equal(off.state.phase, 'Off');
+});

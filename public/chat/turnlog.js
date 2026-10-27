@@ -212,7 +212,7 @@ export function createTurnLog(options = {}) {
       const turn = turns.get(handle); if (!turn || !['completed', 'cancelled', 'failed'].includes(outcome)) return;
       turns.delete(handle); if (latest === handle) latest = null;
       turn.outcome = outcome;
-      if (outcome !== 'completed') turn.reason = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'].includes(reason) ? reason : 'other';
+      if (outcome !== 'completed') turn.reason = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'].includes(reason) ? reason : 'other';
       void send(turn);
     },
     live() {

@@ -118,7 +118,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   }
   async function finishHold() {
     const before = controls.filter(type => type === 'finish').length;
-    await down('#ask'); await page.waitForTimeout(240); await up();
+    await down('#ask'); await page.waitForTimeout(450); await up(); // a hold under 400 ms is a slip, never a question
     for (let i = 0; i < 100 && controls.filter(type => type === 'finish').length === before; i++) await page.waitForTimeout(20);
     assert.equal(controls.filter(type => type === 'finish').length, before + 1);
   }
@@ -152,11 +152,14 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     if (artifacts) await fs.copyFile(path.join(scratch, screenshot), path.join(artifacts, screenshot));
   }
   const finishes = controls.filter(type => type === 'finish').length;
+  // A cancelled touch drops only that hold: Ready to ask again on the same session, nothing submitted.
   await down('#ask'); await page.waitForTimeout(120); await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
-  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Off'); assert.equal(controls.filter(type => type === 'finish').length, finishes);
-  await start(); stalled = true; await down('#ask');
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask'); assert.equal(controls.filter(type => type === 'finish').length, finishes);
+  assert.equal(await page.locator('#startChat').isDisabled(), true, 'the session stays on');
+  stalled = true; await down('#ask');
   for (let i = 0; i < 100 && !releaseUpload; i++) await page.waitForTimeout(20);
-  assert.ok(releaseUpload); await up(); await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Off', null, { timeout: 6000 });
+  assert.ok(releaseUpload); await page.waitForTimeout(450); await up(); // a real hold (past 400 ms) whose upload stalls
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Off', null, { timeout: 6000 });
   stalled = false; releaseUpload(); assert.equal(controls.filter(type => type === 'finish').length, finishes);
   await start(); await finishHold(); assert.equal(controls.filter(type => type === 'finish').length, finishes + 1);
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });

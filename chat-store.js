@@ -9,7 +9,7 @@ const MAX_BYTES = 65536;
 const queues = new Map();
 const KINDS = new Set(['hold', 'typed', 'fixed', 'reply']);
 const STATUSES = new Set(['open', 'completed', 'cancelled', 'failed']);
-const REASONS = new Set(['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other']);
+const REASONS = new Set(['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other']);
 const DURATIONS = new Set(['holdMs', 'releaseToDrainedMs', 'drainToFinishSentMs', 'finishRoundTripMs',
   'finishToTranscriptMs', 'releaseToTranscriptMs', 'transcriptToChoicesMs', 'choicesToRevealMs',
   'revealToSelectMs', 'selectionToPlaybackMs', 'playbackMs', 'releaseToPlaybackMs', 'workerActivityMs',
