@@ -146,4 +146,20 @@ function parseExifStamp(s) {
   return Number.isFinite(ms) ? ms : null;
 }
 
-module.exports = { ensureCodecs, decodeJpg, readJpg, scaleRgba, encodeJpg, writeJpg, exifDate };
+// A picture with nothing in it: every pixel within FLAT_RANGE of the first on
+// each channel (every pixel, not a stride — a small dark speck must count).
+// clothing-worker.js asks this ONLY behind test code's clothing.start({
+// skipSolidCutOut: true }): a suite's solid-colour stand-in photos, where the
+// model has nothing to find, declines, and the colour flood draws the tile
+// anyway. A family's hub never asks it (tests/clothing-pacing.test.mjs).
+const FLAT_RANGE = 6;
+function isFlat(img) {
+  const d = img.data, n = img.width * img.height * 4;
+  const r = d[0], g = d[1], b = d[2];
+  for (let o = 0; o < n; o += 4)
+    if (Math.abs(d[o] - r) > FLAT_RANGE || Math.abs(d[o + 1] - g) > FLAT_RANGE || Math.abs(d[o + 2] - b) > FLAT_RANGE)
+      return false;
+  return true;
+}
+
+module.exports = { ensureCodecs, decodeJpg, readJpg, scaleRgba, encodeJpg, writeJpg, exifDate, isFlat };

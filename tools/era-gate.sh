@@ -954,7 +954,11 @@ export ERA_ELEVEN_URL="http://127.0.0.1:1" ERA_FAL_URL="http://127.0.0.1:1" \
 # ERA_PRESENCE_HOOK would otherwise run its real queue hook from test hubs.
 # ERA_CLOTHING_TICK_MS likewise: the shared hub below gets it on its own
 # command line, and a suite's own hub keeps the clothing schedule a family has.
-unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS ERA_PRESENCE_HOOK ERA_CLOTHING_TICK_MS
+# ERA_RECONCILE_DELAY_MS and ERA_CLOTHING_BOOT_MS (the boot reconcile's 5 s and
+# the clothing startup build's 20 s) too: a suite that shortens one sets it on
+# the hub it spawns (reconcile, clothing-schedule), every other hub keeps the
+# family's timing.
+unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS ERA_PRESENCE_HOOK ERA_CLOTHING_TICK_MS ERA_RECONCILE_DELAY_MS ERA_CLOTHING_BOOT_MS
 # Test hubs never inherit a real speech runtime or generation adapter.
 for chat_setting in "${!ERA_CHAT_@}"; do unset "$chat_setting"; done
 export ERA_CHAT_CONFIG_DISABLED=1

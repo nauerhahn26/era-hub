@@ -137,3 +137,80 @@ test("server.js never passes the option: a family's hub is paced by the rule alo
   const src = fs.readFileSync(path.join(HUB, "server.js"), "utf8");
   assert.doesNotMatch(src, /aiPacing/);
 });
+
+// ---- the cut-out seam: test code's solid-colour stand-in photos ---------------
+// Most of clothing.test.mjs's photos are one flat colour (makeJpg). The
+// garment model has nothing to find in a flat field and declines, so the
+// colour-flood fallback draws those tiles anyway — after ~2.4 s of inference
+// each, about a quarter of that suite's CPU (CPU audit 10/27). An explicit
+// clothing.start({ skipSolidCutOut: true }) from test code lets the worker go
+// straight to the fallback for a photo with nothing in it. It is an OPTION,
+// never an environment variable a family's hub could inherit; it is
+// authoritative like aiPacing; and a photo with anything in it (the garment
+// fixtures whose cut-out geometry clothing.test asserts) still meets the model.
+async function handedSkip(opts) {
+  clothing.start(TMP, { noTimers: true, ...opts });
+  const before = spawned.length;
+  await clothing.regenerate(true);
+  assert.equal(spawned.length, before + 1, "the build spawned one worker");
+  return spawned.at(-1).workerData.skipSolidCutOut;
+}
+
+test("the shell hands the worker skipSolidCutOut only when test code says exactly true", async () => {
+  assert.equal(await handedSkip({}), false, "no option: every photo meets the model");
+  assert.equal(await handedSkip({ skipSolidCutOut: true }), true);
+  assert.equal(await handedSkip({}), false, "authoritative: absent means absent again");
+  for (const v of ["1", 1, "true", {}, null])
+    assert.equal(await handedSkip({ skipSolidCutOut: v }), false, JSON.stringify(v));
+});
+
+function workerCutOutSeam(skipSolidCutOut) {
+  const dataDir = path.join(TMP, "s" + dirs++);
+  fs.mkdirSync(dataDir);
+  const w = new RealWorker(path.join(HUB, "clothing-worker.js"), { workerData: {
+    dataDir, force: true, rebuildOnly: true, refit: false, weatherRetry: false,
+    tz: "UTC", deviceId: "dev-pace", driveFolder: null, aiPacing: null,
+    ...(skipSolidCutOut === undefined ? {} : { skipSolidCutOut }) } });
+  return new Promise((resolve, reject) => {
+    let seam = null;
+    w.on("message", (m) => { if (m && m.cutOutSeam && !seam) seam = m.cutOutSeam; });
+    w.on("error", reject);
+    w.on("exit", () => seam ? resolve(seam) : reject(new Error("the worker never said its cut-out seam")));
+  });
+}
+
+test("the worker runs the model on every photo unless handed skipSolidCutOut === true", async () => {
+  assert.deepEqual(await workerCutOutSeam(undefined), { skipSolid: false }, "a family's hub: the default");
+  assert.deepEqual(await workerCutOutSeam(false), { skipSolid: false });
+  assert.deepEqual(await workerCutOutSeam("true"), { skipSolid: false }, "only the boolean counts");
+  assert.deepEqual(await workerCutOutSeam(true), { skipSolid: true });
+});
+
+test("a solid-colour photo is flat; a garment on a floor, or one odd speck, is not", () => {
+  const { isFlat } = require("./image-util.js");   // not segment.js: no runtime in this suite
+  const jpeg = require("./vendor/jpeg-js");
+  const roundTrip = (w, h, paint) => {
+    const data = Buffer.alloc(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const [r, g, b] = paint(x, y), o = (y * w + x) * 4;
+      data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255;
+    }
+    // through a JPEG, the way a photo reaches the worker
+    return jpeg.decode(jpeg.encode({ data, width: w, height: h }, 85).data, { formatAsRGBA: true });
+  };
+  assert.equal(isFlat(roundTrip(320, 480, () => [30, 140, 200])), true, "clothing.test's makeJpg shape");
+  assert.equal(isFlat(roundTrip(200, 200, () => [128, 128, 128])), true);
+  const garment = (x, y) => (x > 30 && x < 170 && y > 30 && y < 170 ? [220, 30, 30] : [150, 150, 150]);
+  assert.equal(isFlat(roundTrip(200, 200, garment)), false, "a garment on a floor meets the model");
+  const speck = (x, y) => (x >= 101 && x < 109 && y >= 101 && y < 109 ? [20, 20, 20] : [128, 128, 128]);
+  assert.equal(isFlat(roundTrip(211, 211, speck)), false, "an 8 px speck off any stride still counts");
+});
+
+test("the model is skipped only behind the option AND a flat photo; server.js never passes the option", () => {
+  const src = fs.readFileSync(path.join(HUB, "clothing-worker.js"), "utf8");
+  assert.match(src, /const SKIP_SOLID_CUT_OUT = workerData\.skipSolidCutOut === true;/);
+  assert.match(src, /if \(SKIP_SOLID_CUT_OUT && isFlat\(rotated\)\)/);
+  assert.equal((src.match(/segment\.cutOut\(/g) || []).length, 1, "one call site, the guarded one");
+  assert.doesNotMatch(fs.readFileSync(path.join(HUB, "server.js"), "utf8"), /skipSolidCutOut/);
+  assert.doesNotMatch(fs.readFileSync(path.join(HUB, "clothing.js"), "utf8"), /process\.env\.[A-Z_]*CUT/);
+});

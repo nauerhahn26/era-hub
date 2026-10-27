@@ -11,10 +11,15 @@ async function deadline(work, ms) {
   finally { clearTimeout(timer); }
 }
 
+// One Chromium for the file (CPU audit 10/27). browser.newPage() opens every
+// page in a context of its own, so no storage or route crosses cases.
+let browser;
+test.before(async () => { browser = await chromium.launch({ headless: true }); });
+test.after(async () => { await browser?.close(); });
+
 test('explicit device voice still works for this page when durable state is unavailable, without claiming saved', async t => {
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  t.after(() => page.close());   // and with it the context newPage() opened for it
   const errors = []; let foreign = 0;
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
@@ -54,7 +59,6 @@ test('explicit device voice still works for this page when durable state is unav
 });
 
 test('Chat Exit waits for timing acknowledgement or its bounded fallback while Talk stays immediate', async t => {
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
   for (const scenario of ['ack', 'timeout', 'talk']) {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
     let release, put, action, actionResolve, putResolve;

@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -48,6 +48,13 @@ async function stop() {
 async function request(method, body, headers = {}) {
   return fetch(base + '/games/state', { method, headers: { 'Content-Type': 'application/json', ...headers }, body });
 }
+// One Chromium for the file, a fresh context per case (CPU audit 10/27: seven
+// launches here, ~0.3 s of CPU each). Every case opens its pages through
+// browserPage's own newContext and closes that context in its finally, so no
+// cookie, storage or route outlives the case that set it.
+let browser;
+before(async () => { browser = await chromium.launch(); });
+after(async () => { await browser?.close(); });
 async function browserPage(browser, local, { holdBody = false } = {}) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   await context.addInitScript(({ local }) => {
@@ -137,7 +144,6 @@ test('Games state route refuses malformed, oversize, foreign and corrupt writes 
 
 test('fresh browser storage and a restarted hub restore all Games progress from the same data folder', async () => {
   await start();
-  const browser = await chromium.launch();
   let context;
   try {
     let page;
@@ -177,12 +183,11 @@ test('fresh browser storage and a restarted hub restore all Games progress from 
     assert.deepEqual(restored.tiles, saved.tiles);
     assert.equal(restored.paused, false);
     assert.equal(restored.hidden, false);
-  } finally { await context?.close(); await browser.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });
 
 test('valid browser progress migrates once only when durable progress is missing', async () => {
   await start();
-  const browser = await chromium.launch();
   let context;
   try {
     let legacy = reduce(createState(), { type: 'open', value: 'fashion' });
@@ -195,12 +200,11 @@ test('valid browser progress migrates once only when durable progress is missing
     const replacement = reduce(createState(), { type: 'open', value: 'tiles' });
     ({ context } = await browserPage(browser, serializeState(replacement)));
     assert.equal((await context.pages()[0].evaluate(() => window.GamesApp.state())).fashion.draft.color, 'plum', 'server wins when it already exists');
-  } finally { await context?.close(); await browser.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });
 
 test('a held save fails visibly, stays playable, and a later choice retries without stale success', async () => {
   await start();
-  const browser = await chromium.launch();
   let context;
   try {
     const opened = await browserPage(browser);
@@ -230,12 +234,11 @@ test('a held save fails visibly, stays playable, and a later choice retries with
     await page.locator('[data-action="fashion-new"]').click();
     await page.waitForFunction(() => document.querySelector('#saveNotice')?.textContent?.includes('Saved'), {}, { timeout: 3000 });
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).fashion.view, 'workbench');
-  } finally { await context?.close(); await browser.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });
 
 test('rapid edits serialize writes and an older acknowledgement cannot mark the latest edit saved', async () => {
   await start();
-  const browser = await chromium.launch();
   let context;
   try {
     const opened = await browserPage(browser);
@@ -257,14 +260,13 @@ test('rapid edits serialize writes and an older acknowledgement cannot mark the 
     await held[1].continue();
     await page.waitForFunction(() => document.querySelector('#saveNotice')?.textContent === 'Saved');
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).fashion.view, 'workbench');
-  } finally { await context?.close(); await browser.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });
 
 test('corrupt durable bytes block migration and writes but remain downloadable', async () => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, '{broken durable bytes');
   await start();
-  const browser = await chromium.launch();
   let context;
   try {
     const local = reduce(createState(), { type: 'open', value: 'tiles' });
@@ -278,12 +280,11 @@ test('corrupt durable bytes block migration and writes but remain downloadable',
     assert.equal(await (await page.request.get(base + '/games/state/recovery')).text(), '{broken durable bytes');
     await page.locator('[data-action="open"][data-value="fashion"]').click();
     assert.equal(fs.readFileSync(file, 'utf8'), '{broken durable bytes');
-  } finally { await context?.close(); await browser.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });
 
 test('Exit waits for the pending save acknowledgement before requesting kiosk close', async () => {
   await start();
-  const browser = await chromium.launch();
   let context;
   try {
     const opened = await browserPage(browser);
@@ -305,12 +306,11 @@ test('Exit waits for the pending save acknowledgement before requesting kiosk cl
     await page.waitForTimeout(100);
     assert.equal(exits, 1);
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).view, 'fashion');
-  } finally { await context?.close(); await browser.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });
 
 test('a held GET body times out and its late response cannot replace live work', async () => {
   await start();
-  const browser = await chromium.launch();
   let context;
   try {
     const opened = await browserPage(browser, null, { holdBody: true });
@@ -323,5 +323,5 @@ test('a held GET body times out and its late response cannot replace live work',
     await page.waitForTimeout(100);
     assert.equal((await page.evaluate(() => window.GamesApp.state())).view, 'fashion');
     assert.equal(fs.existsSync(file), false);
-  } finally { await context?.close(); await browser.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });

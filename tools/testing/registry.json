@@ -1049,7 +1049,7 @@
       ],
       "hub": "none",
       "ports": [],
-      "browsers": 2,
+      "browsers": 1,
       "heavy": false,
       "solo": false,
       "quiet": false,
@@ -1414,7 +1414,7 @@
     },
     {
       "id": "era-hub:tests/clothing-schedule.test.mjs",
-      "purpose": "ERA_CLOTHING_TICK_MS=0 starts a hub with no clothing schedule while a requested tick still builds",
+      "purpose": "ERA_CLOTHING_TICK_MS=0 starts a hub with no clothing schedule while a requested tick still builds; ERA_CLOTHING_BOOT_MS moves the startup build",
       "group": "hub",
       "dependencies": [
         "era-hub/**"
@@ -2186,7 +2186,7 @@
       ],
       "hub": "own",
       "ports": [],
-      "browsers": 7,
+      "browsers": 1,
       "heavy": false,
       "solo": false,
       "quiet": false,
