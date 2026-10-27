@@ -120,3 +120,14 @@ at implementation kickoff. Do not alter sibling worktrees.
 Implementation detail: cached duration and passcode hash support offline use.
 Interrupted transitions can register an explicit Continue action with the shared
 controller; unlocking alone never invokes that action.
+
+
+## Release acceptance — 2026-10-27
+
+Implemented and published in v1.0.24 (build `20261027.0034`). The final combined
+source passed 167 complete Linux suites and twelve canonical Windows update
+cases, with no failed, cancelled, skipped or TODO cases. Independent review
+bound the source tuple, original gate stamps, collected test bodies, payload
+files and installed Windows evidence. All six public assets matched the tested
+bytes. Full receipts and the original negative attempts are recorded in the
+[implementation plan](../plans/2026-10-25-individual-app-lockouts-plan.md).
