@@ -190,3 +190,15 @@ test('microphone worklet retains no idle audio and release flushes one bounded h
   processor.process([[new Float32Array(2048).fill(-0.5)]]);
   assert.equal(sent.at(-1).turn, 8); assert.ok(sent.at(-1).samples.every(x => x === -0.5));
 });
+
+test('a revealed choice keeps the hub picture word and id; anything else about the picture is dropped', async () => {
+  const c = createChatController({ requestChoices: async () => ({ choices: [
+    { label: 'Pizza', say: 'Pizza please.', symbol: 'pizza', symbolId: 2527 },
+    { label: 'Odd', say: 'Odd.', symbol: 42, symbolId: 'x', extra: 'dropped' },
+    { label: 'Long', say: 'Long.', symbol: 'x'.repeat(65), symbolId: -3 }] }) });
+  await c.prepare('question'); c.neutral();
+  assert.deepEqual(c.state.choices.map(x => ({ ...x })), [
+    { id: `${c.state.turn}:0`, label: 'Pizza', say: 'Pizza please.', symbol: 'pizza', symbolId: 2527 },
+    { id: `${c.state.turn}:1`, label: 'Odd', say: 'Odd.' }, { id: `${c.state.turn}:2`, label: 'Long', say: 'Long.' }]);
+  assert.ok(Object.isFrozen(c.state.choices[0]));
+});

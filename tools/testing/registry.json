@@ -1239,6 +1239,165 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-turns.test.mjs",
+      "purpose": "Chat test mode hub module: strict turn schema, off-by-default 404s, day file plus pool line, bounded files, audio wav rotation, delete control, price-table cost, health sample and summaries",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module/filesystem and HTTP integration",
+      "dependencies": [
+        "era-hub/chat-turns.js",
+        "era-hub/chat-api.js",
+        "era-hub/pool.js"
+      ],
+      "resources": [
+        "temporary-data",
+        "owned-loopback-services"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-turnlog.test.mjs",
+      "purpose": "Chat test mode client record: full stage timeline, words, usage, health and mic level accepted by the hub schema; production timing rows unchanged and content-free on and off",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit with schema cross-check",
+      "dependencies": [
+        "era-hub/public/chat/turnlog.js",
+        "era-hub/public/chat/metrics.js",
+        "era-hub/chat-turns.js"
+      ],
+      "resources": [
+        "in-process-storage-doubles",
+        "fetch-doubles",
+        "injected-clock",
+        "mock-timers"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-test-mode-payload.test.mjs",
+      "purpose": "Chat test mode is off by default in what ships: no shipped file enables it, the installer seeds no settings, the payload copies the module and its guard refuses settings, prices, recordings or an enabled switch (any quoting, .mjs included)",
+      "group": "chat",
+      "lane": "linux",
+      "level": "source contract and payload guard",
+      "dependencies": [
+        "era-hub/server.js",
+        "era-hub/chat-turns.js",
+        "era-hub/tools/build-payload.sh",
+        "era-hub/tools/installer.nsi",
+        "era-hub/public/**"
+      ],
+      "resources": [
+        "temporary-data",
+        "owned-shell-child"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-test-mode-hub.test.mjs",
+      "purpose": "Chat test mode through the real hub on a kernel-assigned port: GET /settings default off, only a real boolean from a same-origin or header-less request moves it, test-mode routes answer before the Chat API, a recorded turn reaches the day file and the pool, off keeps what was written",
+      "group": "chat",
+      "lane": "linux",
+      "level": "hub HTTP integration",
+      "dependencies": [
+        "era-hub/server.js",
+        "era-hub/chat-turns.js",
+        "era-hub/chat-api.js",
+        "era-hub/pool.js"
+      ],
+      "resources": [
+        "own-hub",
+        "temporary-data"
+      ],
+      "hub": "own",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-test-mode-browser.test.mjs",
+      "purpose": "Chat page in test mode: touch-only switch and banner, one held turn recorded through the real hub module with stages, words, usage, health and audio, content-free production rows, unmoved tiles, panel and delete control",
+      "group": "chat",
+      "lane": "linux",
+      "level": "browser application integration",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/chat-turns.js",
+        "era-hub/chat-api.js",
+        "era-hub/chat-store.js",
+        "era-hub/pool.js",
+        "era-hub/tests-vm/lib/chat-ui-smoke.mjs",
+        "era-core/lib/**",
+        "era-core/dwell.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "synthetic-microphone-wav",
+        "real-audio-worklet",
+        "native-html-audio",
+        "cdp-touch-events",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-turns-tools.test.mjs",
+      "purpose": "Host tools over Chat test-mode records: per-build stage p50/p95, outcomes, cost per day and one-turn timeline from device logs or a synced pool; replay manifest and bake-off command",
+      "group": "chat",
+      "lane": "linux",
+      "level": "CLI integration on fixtures",
+      "dependencies": [
+        "era-hub/tools/chat-turns.mjs",
+        "era-hub/tools/chat-replay.mjs",
+        "era-hub/chat-turns.js"
+      ],
+      "resources": [
+        "temporary-data",
+        "owned-node-children"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/clothing-accessories.test.mjs",
       "purpose": "Accessory classification, edits, shared tags and board navigation",
       "group": "hub",

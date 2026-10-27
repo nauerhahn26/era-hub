@@ -61,6 +61,8 @@ export function createChatVoice(options = {}) {
       const job = queue.shift(), controller = new AbortController();
       job.controller = controller;
       active++; fetching.add(controller);
+      // Test mode counts the characters sent to the saved-voice service.
+      try { options.onFetch?.(job.text.length, job.text); } catch { /* Diagnostics never block a clip. */ }
       bounded(controller, async () => {
         const response = await fetcher('/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: job.text }), signal: controller.signal });
         if (!response.ok) throw savedUnavailable();
@@ -123,7 +125,7 @@ export function createChatVoice(options = {}) {
     signal.addEventListener('abort', abort, { once: true });
     return work.finally(() => signal.removeEventListener('abort', abort));
   }
-  async function say(text, { signal, onStart, onEnd } = {}) {
+  async function say(text, { signal, onStart, onEnd, onClip } = {}) {
     stop(); const mine = generation, selected = preference;
     const fresh = () => mine === generation && !signal?.aborted;
     if (!fresh()) return false;
@@ -135,11 +137,14 @@ export function createChatVoice(options = {}) {
     const began = () => { if (fresh() && !started && !ended) { started = true; notify(onStart); } };
     const completed = () => { if (fresh() && !ended) { ended = true; if (started) notify(onEnd); return started; } return false; };
     const preparation = new AbortController();
+    // Test mode: was the chosen words' clip ready (hit), on its way (pending) or not asked for yet (miss)?
+    const clipUsage = cache => { try { onClip?.({ chars: text.length, cache }); } catch { /* Diagnostics never block speech. */ } };
     const cancelled = new Promise(resolve => { finish = () => { preparation.abort(); resolve(false); }; });
     try {
       if (selected === 'saved') {
         const preparing = bounded(preparation, async () => {
           await savedVoice(); if (!fresh() || preparation.signal.aborted) return null;
+          clipUsage(cache.has(text) ? 'hit' : pending.has(text) ? 'pending' : 'miss');
           return selectedClip(text, preparation.signal);
         }, limits.prepareMs);
         const url = await Promise.race([preparing, cancelled]);
@@ -154,6 +159,7 @@ export function createChatVoice(options = {}) {
         });
       }
       if (!synth) throw new Error('Device voice unavailable. The words are still here.');
+      clipUsage('device');
       return await new Promise((resolve, reject) => {
         const utterance = makeUtterance(text), voices = synth.getVoices();
         utterance.voice = voices.find(v => /^en/i.test(v.lang) && v.localService) || voices.find(v => /^en/i.test(v.lang)) || null;

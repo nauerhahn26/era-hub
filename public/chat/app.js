@@ -3,8 +3,9 @@ import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
 import { createChatStorage } from './storage.js';
-import { attachSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture } from './symbols.js';
+import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture } from './symbols.js';
 import { fitTile } from './tile-fit.js';
+import { createTurnLog, observeMetrics, stageChoices } from './turnlog.js';
 import { mountDoorBar } from '/lib/doorbar.js';
 
 const $ = id => document.getElementById(id);
@@ -34,8 +35,17 @@ const savedSettings = await persistence.hydrate();
 // ?pictures=bw|emoji shows the black-and-white or emoji style for comparison.
 await loadVocabulary();
 const pictureVariant = ['bw', 'emoji'].find(name => name === new URLSearchParams(location.search).get('pictures')) || 'color';
-const voice = createChatVoice({ storage: persistence.voiceStorage });
-const metrics = createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 });
+// Test mode (spec 2026-10-27 §5): a separate record per turn while this
+// device's switch is on. The production rows below are written exactly as
+// before and stay content-free in both modes.
+let testMode = false, stagedMeta = null;
+const turnLog = createTurnLog({ enabled: () => testMode,
+  health: () => fetch(`${API}/health`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+  onPosted: () => { if (testMode) refreshTestSummary(); } });
+const voice = createChatVoice({ storage: persistence.voiceStorage,
+  // Characters are charged to the turn whose choices or spoken words they are; warming the fixed phrases is no turn's.
+  onFetch: (chars, words) => { turnLog.fetched(speechMetric, chars, words) || turnLog.fetched(questionMetric, chars, words); } });
+const metrics = observeMetrics(createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 }), turnLog);
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
 const AUDIO_POST_MS = 2000;
 let questionMetric = null, speechMetric = null, pendingSpeechMetric = null;
@@ -59,7 +69,10 @@ function warmPhrases() {
   voice.prefetch([...Object.values(fixed).flat(), 'Yes.', 'No.', 'Tell me more.', ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })));
 }
 function timingEvent(name) {
-  if (name === 'choicesReady' || name === 'revealed') metrics.mark(questionMetric, name);
+  if (name === 'choicesReady' || name === 'revealed') {
+    metrics.mark(questionMetric, name);
+    if (name === 'revealed') turnLog.sample(questionMetric, 'reveal'); // never awaited: the reveal is not delayed
+  }
   else if (name === 'selected') {
     pendingSpeechMetric = metrics.isActive(questionMetric) && speechMetric !== questionMetric ? questionMetric : metrics.begin('reply');
     metrics.mark(pendingSpeechMetric, 'selected');
@@ -108,13 +121,21 @@ const controller = createChatController({
     const timing = questionMetric;
     const context = recentConversation.slice(-8);
     recentConversation = [...recentConversation, `Partner: ${text}`.slice(0, 500)].slice(-8);
-    const result = await json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context }), signal });
+    let result;
+    try { result = await json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context }), signal }); }
+    catch (error) { turnLog.error(timing, error.message); throw error; }
     metrics.observe(timing, { choicesServerMs: result.timings?.totalMs });
+    stagedMeta = { handle: timing, kind: result.kind, usage: result.usage };
     return result;
   },
   onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
   stopSpeech: () => { currentSpeech++; metrics.end(speechMetric, 'cancelled', 'interrupted'); speechMetric = null; voice.stop(); },
-  prefetch: choices => voice.prefetch(choices),
+  prefetch: choices => {
+    voice.prefetch(choices);
+    // Test mode only, after the real work, and never able to throw into prepare().
+    if (stagedMeta?.handle === questionMetric) stageChoices(turnLog, questionMetric, choices, stagedMeta,
+      choice => choice.symbol || resolveSymbol({ label: choice.label, type: 'response', say: choice.say }));
+  },
   beforeChoices: () => window.Dwell?.suppress(600),
   async speak(choice, { signal }) {
     if (appLocked()) return;
@@ -127,8 +148,9 @@ const controller = createChatController({
     const canceled = session ? control('cancel').catch(() => null) : Promise.resolve();
     if (signal.aborted || spoken !== currentSpeech) return;
     let completed;
+    turnLog.content(timing, { spoken: choice.say });
     try {
-      completed = await voice.say(choice.say, { signal,
+      completed = await voice.say(choice.say, { signal, onClip: value => turnLog.usage(timing, { voice: value }),
         onStart: () => { if (!signal.aborted && spoken === currentSpeech && mine === lifecycle) metrics.mark(timing, 'playbackStart'); },
         onEnd: () => { if (!signal.aborted && spoken === currentSpeech && mine === lifecycle) metrics.mark(timing, 'playbackEnd'); },
       });
@@ -143,6 +165,7 @@ const controller = createChatController({
 });
 
 fetch('/settings').then(r => r.json()).then(s => {
+  testMode = s.chatTestMode === true; paintTestMode();
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
   window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
@@ -190,7 +213,7 @@ function renderGrid(state) {
     if (item) {
       const selectedTurn = state.turn;
       const el = tile(item.label, screen === 'chat' && state.choices.length ? 'response' : 'static', () => {
-        if (item.id) controller.select(item.id, selectedTurn); else controller.sayFixed(item.say);
+        if (item.id) { turnLog.content(questionMetric, { selected: item }); controller.select(item.id, selectedTurn); } else controller.sayFixed(item.say);
       }, positions[i], item.say, item);
       if (item.id) el.dataset.choiceId = item.id;
       grid.append(el);
@@ -224,6 +247,7 @@ document.addEventListener('pointermove', e => {
 
 function sendFrame(bytes) {
   if (!session) return;
+  turnLog.audio(questionMetric, bytes);
   if (mode === 'opening') {
     if (pendingFrames.length >= 20) { failSession('Capture did not become ready. Release and start Chat again.'); return; }
     pendingFrames.push(bytes); return;
@@ -285,7 +309,7 @@ function receiveEvent(event) {
     controller.ready();
   } else if (data.type === 'partial') {
     if (askPending || (Number.isFinite(captureGeneration) && data.generation !== captureGeneration)) return;
-    controller.partial(data.text);
+    controller.partial(data.text); turnLog.partial(questionMetric, data.text);
     diagnostic(`Heard so far: ${String(data.text || '').slice(0, 600)}`);
   } else if (data.type === 'final') {
     if (askPending || controller.state.phase !== 'Capturing question' || (Number.isFinite(captureGeneration) && data.generation !== captureGeneration)) return;
@@ -294,6 +318,7 @@ function receiveEvent(event) {
     questionSending = false;
     setMode('blocked'); uploadEpoch++;
     metrics.mark(questionMetric, 'transcript'); metrics.observe(questionMetric, data.timings);
+    turnLog.content(questionMetric, { transcript: String(data.text || '') });
     diagnostic(`Question: ${String(data.text || '').slice(0, 600)}`);
     controller.prepare(data.text);
   } else if (data.type === 'error') {
@@ -333,6 +358,9 @@ async function beginAsk() {
   holding = true; askPending = true; captureGeneration = null; questionSending = false; const mine = lifecycle;
   const intent = ++captureIntent; pendingFrames = [];
   metrics.end(questionMetric, 'cancelled', 'superseded'); questionMetric = metrics.begin('hold');
+  turnLog.set(questionMetric, { mode: remoteStreaming ? 'stream' : remoteFinal ? 'one-shot' : 'local', session });
+  // Test mode: measure the service round trips now, at touch-down, not while the question is sent (cached 30 s).
+  if (turnLog.tracking(questionMetric)) fetch(`${API}/health/warm`, { cache: 'no-store' }).catch(() => {});
   setMode('opening'); uploadEpoch++; controller.ask(); finishedTurn = -1; $('ask').classList.add('held');
   const questionTurn = controller.state.turn;
   if (!mic?.begin()) { failSession('The microphone is not ready. Start Chat again.'); return; }
@@ -354,7 +382,7 @@ async function finishAsk() {
   if (!session || !['opening', 'capture'].includes(mode) || controller.state.phase !== 'Capturing question') return;
   if (finishedTurn === controller.state.turn) return;
   finishedTurn = controller.state.turn;
-  const timing = questionMetric; metrics.mark(timing, 'release');
+  const timing = questionMetric; metrics.mark(timing, 'release'); turnLog.sample(timing, 'release');
   holding = false; $('ask').classList.remove('held');
   const mine = lifecycle, intent = captureIntent;
   // Stop collecting at release, even if the local Ask acknowledgement is slow.
@@ -405,6 +433,7 @@ async function shutdown(type = 'close', preserveAnswers = false) {
   return saved;
 }
 async function failSession(message, reason = 'connection') {
+  turnLog.error(questionMetric, message); turnLog.error(speechMetric, message);
   metrics.end(questionMetric, 'failed', reason); metrics.end(speechMetric, 'failed', reason);
   controller.fail(message); await shutdown('cancel', true);
 }
@@ -438,7 +467,7 @@ $('desktopAsk').addEventListener('blur', cancelAsk);
 $('partnerOpen').addEventListener('click', () => {
   // The dialog itself is not a gaze shield: remove underlying dwell targets.
   for (const el of $('grid').querySelectorAll('.dwell')) { el.classList.remove('dwell'); el.dataset.dwellDisabled = ''; }
-  $('partnerDialog').showModal();
+  $('partnerDialog').showModal(); renderTestPanel();
 });
 $('partnerDialog').addEventListener('close', () => { gridKey = ''; renderGrid(controller.state); });
 $('typedAsk').addEventListener('click', () => {
@@ -446,6 +475,7 @@ $('typedAsk').addEventListener('click', () => {
   captureIntent++; holding = false; askPending = false; pendingFrames = []; mic?.cancel(); clearTimeout(askTimer);
   setMode('blocked'); uploadEpoch++; if (session) control('cancel').catch(() => {});
   metrics.end(questionMetric, 'cancelled', 'superseded'); questionMetric = metrics.begin('typed'); metrics.mark(questionMetric, 'transcript');
+  turnLog.content(questionMetric, { transcript: text });
   go('chat'); $('partnerDialog').close(); controller.prepare(text); $('typedQuestion').value = '';
 });
 $('voicePreference').value = voice.getPreference();
@@ -463,6 +493,83 @@ metrics.subscribe(value => {
   const counts = value.summary.counts;
   $('timingSummary').textContent = `${value.turns.length} recent turns: ${counts.completed} completed, ${counts.cancelled} cancelled, ${counts.failed} failed, ${counts.open} in progress. All durations below are milliseconds.`;
   $('timingDetails').textContent = JSON.stringify({ recent: value.turns.slice(-10), completedTurnAggregates: value.summary.groups }, null, 2);
+});
+// ---- test mode: the partner's switch, the banner, the live panel ----
+function paintTestMode() {
+  $('testModeBanner').hidden = !testMode; $('testModePanel').hidden = !testMode;
+  $('testModeToggle').textContent = testMode ? 'Turn off test mode' : 'Turn on test mode';
+  $('testModeToggle').setAttribute('aria-pressed', String(testMode));
+  if (testMode) refreshTestSummary();
+}
+const since = stage => stage.sinceRelease !== null ? `+${stage.sinceRelease} ms` : `${stage.ms} ms from start`;
+function stageAt(record, name) {
+  const release = record.stages.find(stage => stage.name === 'release'), stage = record.stages.find(item => item.name === name);
+  return stage ? `${Math.round(stage.ms - (release && stage.ms >= release.ms ? release.ms : 0))} ms` : '–';
+}
+// Drawn only while a partner is looking at the timings panel.
+function renderTestPanel() {
+  if (!testMode || !$('partnerDialog').open || !$('turnTimings').open) return;
+  const live = turnLog.live(), recent = turnLog.recent();
+  $('liveTimeline').textContent = live ? live.stages.map(stage => `${stage.name.padEnd(18)} ${since(stage)}${stage.text ? `  “${stage.text}”` : ''}`).join('\n') : 'No turn in progress.';
+  $('recentTurns').textContent = recent.slice().reverse().map(record => [
+    `${record.startedAt.slice(11, 19)} ${record.kind} ${record.outcome}${record.reason ? ` (${record.reason})` : ''}${record.error ? `: ${record.error}` : ''}`,
+    `  heard: ${record.content?.transcript || '–'}`,
+    `  replies: ${(record.content?.choices || []).map(choice => choice.label).join(' | ') || '–'}`,
+    `  chose: ${record.content?.selected?.label || '–'}; said: ${record.content?.spoken || '–'}`,
+    `  transcript ${stageAt(record, 'transcript')}, first choice ${stageAt(record, 'firstChoiceStaged')}, revealed ${stageAt(record, 'revealed')}, first audio ${stageAt(record, 'firstAudio')}`,
+    ...(record.cost ? [`  estimated cost ${record.cost.total} ${record.cost.currency}${record.cost.complete ? '' : ' (some parts unpriced)'}`] : []),
+  ].join('\n')).join('\n\n') || 'No recorded turns yet.';
+}
+turnLog.subscribe(() => renderTestPanel());
+$('turnTimings').addEventListener('toggle', renderTestPanel);
+let summaryRequest = 0;
+async function refreshTestSummary() {
+  const mine = ++summaryRequest;
+  try {
+    const value = await json(`${API}/turns`);
+    if (mine !== summaryRequest || !testMode) return;
+    const lines = [];
+    for (const [build, kinds] of Object.entries(value.summary?.builds || {})) for (const [kind, group] of Object.entries(kinds)) {
+      lines.push(`${build} · ${kind} · ${group.turns} turns`);
+      for (const [stage, stat] of Object.entries(group.stages)) lines.push(`  ${stage.padEnd(18)} p50 ${stat.p50}  p95 ${stat.p95}  (n=${stat.n})`);
+    }
+    for (const [day, cost] of Object.entries(value.summary?.costPerDay || {})) lines.push(`${day}: estimated ${cost.usd} for ${cost.turns} turns${cost.unpriced ? `, ${cost.unpriced} unpriced` : ''}`);
+    $('buildSummary').textContent = lines.join('\n') || 'No recorded turns yet.';
+  } catch { if (mine === summaryRequest) $('buildSummary').textContent = 'Recorded turns are unavailable.'; }
+}
+// Partner controls stay touch-only (gaze and injected mouse clicks are inert);
+// a trusted keyboard press is the desktop tester's way, as for the Ask button.
+function partnerAction(el, action) {
+  touchButton(el, null, action);
+  el.addEventListener('keydown', e => { if (e.isTrusted && (e.code === 'Space' || e.code === 'Enter') && !e.repeat) { e.preventDefault(); action(); } });
+}
+let testModeBusy = false, deleteArmed = null;
+partnerAction($('testModeToggle'), async () => {
+  if (testModeBusy) return;
+  testModeBusy = true; $('testModeToggle').disabled = true;
+  const next = !testMode;
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatTestMode: next }) });
+    if (!saved.ok) throw new Error();
+    testMode = (await (await fetch('/settings', { cache: 'no-store' })).json()).chatTestMode === true;
+    $('testModeNote').textContent = testMode ? 'Test mode is on. Chat turns on this computer are being recorded.' : 'Test mode is off. Nothing new is recorded; earlier recordings are kept until you delete them.';
+  } catch { $('testModeNote').textContent = 'Test mode was not changed. Try again.'; }
+  finally { testModeBusy = false; $('testModeToggle').disabled = false; paintTestMode(); }
+});
+partnerAction($('deleteRecordings'), async () => {
+  if (!deleteArmed) {
+    $('deleteRecordings').textContent = 'Touch again to delete test recordings';
+    deleteArmed = setTimeout(() => { deleteArmed = null; $('deleteRecordings').textContent = 'Delete test recordings'; }, 5000);
+    return;
+  }
+  clearTimeout(deleteArmed); deleteArmed = null; $('deleteRecordings').textContent = 'Delete test recordings';
+  try {
+    const result = await json(`${API}/turns`, { method: 'DELETE' });
+    const failed = result.deleted.failed || [];
+    $('testModeNote').textContent = `Deleted ${result.deleted.days} days of test records, ${result.deleted.recordings} recordings and ${result.deleted.poolLines} turn lines this computer had copied to the family data folder.`
+      + (failed.length ? ` ${failed.length} family data file${failed.length === 1 ? ' was' : 's were'} busy and still hold${failed.length === 1 ? 's' : ''} turn lines (${failed.join(', ')}). Try again in a moment.` : '');
+    if (testMode) refreshTestSummary();
+  } catch { $('testModeNote').textContent = 'Test recordings were not deleted. Try again.'; }
 });
 $('clearTimings').addEventListener('click', async e => {
   e.target.disabled = true; metrics.clear();

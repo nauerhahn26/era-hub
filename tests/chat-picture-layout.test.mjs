@@ -130,7 +130,8 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
   await context.route(url => url.origin !== base, route => { foreign++; return route.abort('blockedbyclient'); });
   const replies = withSymbols([
     { id: 'choice-1', label: 'Yes', say: 'Yes.', symbol: 'yes' },
-    { id: 'choice-2', label: 'Pizza', say: 'I would like pizza.', symbol: 'pizza' },
+    // the model's pick, which the page could not guess from these words
+    { id: 'choice-2', label: 'That one', say: 'I choose that one.', symbol: 'pizza' },
     { id: 'choice-3', label: 'Let me tell you another way', say: 'Let me tell you another way.', symbol: 'different' },
     { id: 'choice-4', label: 'Tell me more', say: 'Tell me more.', symbol: 'more' }]);
   const page = await context.newPage(), errors = [];
@@ -189,10 +190,10 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
     law(tiles, `${viewport.width} replies`);
     const responses = Object.fromEntries(tiles.filter(tile => tile.type === 'response').map(tile => [tile.text, tile]));
     assert.equal(Number(responses.Yes.symbolId), vocabulary.concepts.find(concept => concept.word === 'yes').altId, 'the reply "Yes" shows the alternate yes picture');
-    assert.equal(Number(responses.Pizza.symbolId), id('pizza'));
+    assert.equal(Number(responses['That one'].symbolId), id('pizza'), 'the hub pick reaches the tile');
     assert.ok(responses['Let me tell you another way'].stacked);
     assert.equal(responses['Tell me more'].symbolId === String(id('more')), false, 'the bottom row keeps "more"; the reply yields');
-    if (viewport.width === 1600) assert.ok(responses.Pizza.beside);
+    if (viewport.width === 1600) assert.ok(responses['That one'].beside);
     if (viewport.width === 1280) assert.ok(tiles.some(tile => tile.reduced === '1'), 'the small board marks the labels it had to shrink');
   }
   assert.equal(foreign, 0, 'no picture or anything else is requested from another host');

@@ -1,7 +1,7 @@
 # Real-time chat — plan (2026-10-27)
 
 Status: dad said "Go" 10/27 on the recommended decisions; phase 0 DONE 10/27
-(spec §9); phase 1 building.
+(spec §9); phase 1 built 10/27 (spec §5.1), awaiting review and the gate.
 Design: [real-time chat](../specs/2026-10-27-real-time-chat-design.md).
 Worktree `era-hub--wt-real-time-chat`, branch `feat/real-time-chat`, from
 master `dca6ba5` (which already contains Chat v1.0.20). Builders: agents, test
@@ -30,22 +30,23 @@ once phase 1 has landed.
 
 ## Phase 1 — telemetry test mode
 
-- [ ] Spec amendment landed: test mode is a separate route and schema; the
+- [x] Spec amendment landed: test mode is a separate route and schema; the
       production allowlists and their tests stay byte for byte.
-- [ ] Partner settings switch + banner; off by default; absent from payload
+- [x] Partner settings switch + banner; off by default; absent from payload
       defaults (`tests/start-hub-bat` style pin that no payload file enables it).
-- [ ] Hub `chat-turns` writer: one line per turn to `data/logs/chat-turns/`
+- [x] Hub `chat-turns` writer: one line per turn to `data/logs/chat-turns/`
       and the pool; bounded PCM retention while on; delete control.
-- [ ] Client timeline marks for every stage in the spec §5, including each
+      Socket seconds and keyterms are null until phase 2 has a socket.
+- [x] Client timeline marks for every stage in the spec §5, including each
       partial, each staged choice, batch sealed.
-- [ ] Usage capture: reply-model token usage, audio seconds, socket seconds,
+- [x] Usage capture: reply-model token usage, audio seconds, socket seconds,
       saved-voice characters and cache hit; private price table → cost per turn.
-- [ ] Device health sampler (CPU, memory, event-loop lag, gaze state, mic
+- [x] Device health sampler (CPU, memory, event-loop lag, gaze state, mic
       level, service round trip) at release and reveal.
-- [ ] Diagnostics panel: live turn timeline, last ten, summaries per build.
-- [ ] `tools/chat-turns.mjs` host report over the synced pool; `tools/chat-replay.mjs`
+- [x] Diagnostics panel: live turn timeline, last ten, summaries per build.
+- [x] `tools/chat-turns.mjs` host report over the synced pool; `tools/chat-replay.mjs`
       re-runs a recorded turn through any configured transcription setting.
-- [ ] Tests: schema, bounded files, off-by-default, no content in production
+- [x] Tests: schema, bounded files, off-by-default, no content in production
       rows while test mode is off, pool line shape, report tool on fixtures.
 - [ ] Gate green, unsigned patch, dad's word, home device, dad tests one evening
       and we read the numbers.

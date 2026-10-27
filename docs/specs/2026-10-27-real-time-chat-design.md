@@ -187,6 +187,126 @@ Turning test mode off stops writing, keeps what was written, and the hub
 never deletes those files itself; the partner panel has a "delete test
 recordings" control.
 
+### 5.1 Test mode as built (phase 1, 10/27)
+
+Test mode is a separate route and schema. `public/chat/metrics.js`,
+`public/chat/storage.js`, `chat-store.js` and their tests are unchanged byte
+for byte; the page taps the same marks through `observeMetrics` in
+`public/chat/turnlog.js`, and the production rows stay content-free whether
+test mode is on or off (`tests/chat-turnlog.test.mjs`, the browser suite).
+The trial-feedback privacy contract (production rows; context, questions,
+replies and audio ephemeral) holds while the switch is off; with it on, by
+dad's decision 3 in the plan, the turn's words and timings are kept on the
+device AND their text lines sync to the family data folder (the Drive-synced
+pool), while the held-question audio stays on the device only.
+
+- **Switch.** `chatTestMode` in `app-settings.json`, read by `GET /settings`
+  (default `false`), moved only by a real boolean on `POST /settings`, and
+  never by a request a page on another site steered (`Sec-Fetch-Site` other
+  than `same-origin` or `none` is ignored, as for the hub's other doors). The
+  partner settings show a "Test mode" section with a touch-only switch (a
+  trusted keyboard press is the desktop path; gaze and injected clicks are
+  inert) and a two-touch "Delete test recordings" control. While on, the
+  banner "Test mode: this computer is recording Chat turns" sits at the top
+  of the message bar, outside the grid. The payload guard refuses any
+  `app-settings.json`, `chat-prices.json`, `chat-turns/` file or a shipped
+  file that sets the switch true.
+- **Routes** (`chat-turns.js`, loopback and same-origin like `chat-store.js`,
+  dispatched before the Chat API):
+  `POST /chat/api/turns` (one record, JSON, at most 64 KB; 201 with the
+  estimated cost), `PUT /chat/api/turns/<uuid>/audio` (PCM16, 16 kHz mono,
+  1 byte to 15 s, stored as `logs/chat-turns/audio/<uuid>.wav`; only for a
+  turn this hub recorded (404 otherwise, so no orphan recordings); 409 if
+  that turn already has one; the newest 200 kept), `GET /chat/api/turns` (the
+  last ten records and per-build summaries over the last 500), `GET
+  /chat/api/health`, `GET /chat/api/health/warm` and `DELETE /chat/api/turns`.
+  With the switch off every route but DELETE answers 404 and writes nothing.
+  DELETE works on or off: it removes `logs/chat-turns/*.jsonl`, the audio
+  folder, every `chat-turn` line in this device's own pool folder, and, in a
+  folder of an earlier id of this device, the `chat-turn` lines of turns this
+  device recorded (their ids come from the day files being deleted). Each
+  pool file is rewritten tmp-then-rename in one synchronous step; other
+  kinds, torn lines and other devices' turns are never touched; copies a
+  syncer already carried elsewhere follow when it syncs the rewrite. A file
+  that cannot be replaced is listed in the answer (`failed`) and named on the
+  page. A day file stops at 16 MB (507).
+- **Record** (strict: unknown fields, unknown stages, out-of-range numbers and
+  control characters are rejected). Posted by the page:
+  `version` 1, `id` (uuid), `kind` hold/typed/fixed/reply, `mode`
+  one-shot/stream/local/typed/none, `session` (the Chat session id or null),
+  `startedAt`, `outcome` completed/cancelled/failed, `reason` (the v1.0.20
+  reasons; required unless completed), `error` (≤ 300 characters),
+  `stages` [{`name`, `ms` from the turn's start, `text` on partials and staged
+  choices}] up to 300, `worker` {audioMs, captureWallMs, activityMs, cloudMs,
+  firstPartialMs, finalDecodeMs, turnMs, finalizeMs, choicesServerMs},
+  `content` {transcript, partials (≤ 100), choiceKind, choices [{id, label,
+  say, symbol}], selected, spoken, keyterms (null until phase 2)}, `usage`
+  {reply {model, inputTokens, cachedTokens, outputTokens}, audioSeconds,
+  socketSeconds (null until phase 2), voice {chars, cache hit/pending/miss/device,
+  fetchedChars}}, `health` {release, reveal}, `mic` {peakRms, clipped,
+  frames}. Stage times past the one-hour bound are clamped by the page. The
+  hub adds `receivedAt`, `day` (the device's local calendar day), `build`,
+  `device`, `models` {reply, transcription: the model configured for the
+  turn's mode, null for local or no recognition} (ids only, never a URL or
+  credential) and `cost`, writes the line to `logs/chat-turns/<day>.jsonl`
+  and appends
+  `{t, device, kind: "chat-turn", turn: <the same record>}` to the pool. Audio
+  never enters the pool.
+- **Stage names.** The v1.0.20 marks (`release`, `drained`, `finishSent` = the
+  finalize, `finishAck`, `transcript` = the final's arrival, `choicesReady`,
+  `revealed`, `selected`, `playbackStart`, `playbackEnd`) plus `begin`,
+  `firstPartial`, `partial`, `firstChoiceStaged`, `choiceStaged`,
+  `batchSealed` (just before `revealed`: the batch is sealed at reveal),
+  `firstAudio` (the playback start until the streaming voice lands in phase 2)
+  and, reserved for phase 2, `socketConnect` and `speculativeStart/Keep/Discard`.
+- **Audio** is kept only for a hold that was released and submitted
+  (`finishSent`); a cancelled hold keeps none. It is uploaded after the record.
+- **Usage.** The in-process reply core returns the service's token counts
+  and the configured model id; `/chat/api/choices` passes them to the page
+  only while the switch is on (never through an external adapter), and the
+  production rows never take them. No usage is reported when the service gave
+  none or a shortcut answered. Audio seconds are the worker's `audioMs`. The
+  saved voice reports the chosen clip's characters and whether it was ready,
+  and the characters of each clip fetched for this turn's own staged choices
+  or spoken words (`fetchedChars`; warming the fixed phrases is no turn's; an
+  upper bound, since the hub's TTS disk cache may answer without a paid call).
+- **Price table** `<data>/chat-prices.json` (private, never in the repo or a
+  payload; absent or unreadable means `cost: null`):
+
+  ```json
+  { "version": 1, "currency": "USD",
+    "reply": { "<model id>": { "inputPerMillion": 0, "cachedInputPerMillion": 0, "outputPerMillion": 0 } },
+    "transcription": { "<model id>": { "perAudioMinute": 0, "perSocketMinute": 0 } },
+    "voice": { "perThousandChars": 0 } }
+  ```
+
+  Cost per turn: `{currency, reply, transcription, voice, total, complete}`;
+  transcription is priced by the turn's mode (one-shot and stream by their
+  configured models; local, typed and fixed turns cost 0); a part whose model
+  has no price is null and `complete` false.
+- **Health** (`GET /chat/api/health`, sampled by the page at release and at
+  reveal, never awaited by either): `cpuBusy` (0–1 from an `os.cpus()` delta
+  over 200 ms, all platforms), `load1` (null on Windows), free and total
+  memory, `eventLoopLagMs` (the worst lateness of a 100 ms timer over the last
+  ~5 s; the timer runs only from the first sample with the switch on until
+  the switch reads off), `gaze` (the supervisor's state) and `rtt`
+  {transcription, reply}: the last measured HEAD to each configured service's
+  origin, milliseconds or null, never the URL. The HEADs are sent only by
+  `/health/warm`, which the page calls at a hold's touch-down (at most once
+  per 30 s per origin), never at release. Microphone level and clipping are
+  measured on the held question's 16 kHz frames as they leave the capture path.
+- **Panel.** With test mode on, "Turn timings" adds the live timeline of the
+  current turn (stage, milliseconds from release, partial and choice text),
+  the last ten turns with their words and p50/p95 per stage per build with
+  cost per day, drawn only while the panel is open (changes are coalesced
+  after the current task, so a reveal or selection does no extra synchronous
+  work). Off, the panel is as published.
+- **Host tools.** `node tools/chat-turns.mjs [--dir DATA|LOGS|POOL] [--json]
+  [--turn ID]`; `node tools/chat-replay.mjs --turn ID --configs NAMES
+  [--dir DATA] [--dry-run]` writes a one-clip manifest (reference: the turn's
+  own transcript) and runs `uv run tools/chat-bakeoff.py --configs NAMES
+  --manifest FILE --clips turn-ID`.
+
 ## 6. Pictures: a real pictogram library, at board size
 
 The v1.0.20 pictures are 34 hand-drawn one-colour line icons, stacked above
