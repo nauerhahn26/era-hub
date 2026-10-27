@@ -50,9 +50,21 @@ const AI_GOOD = "AQ.stand-in-good-key-0123456789";
 const AI_SLOW = "AQ.stand-in-slow-key-0123456789";
 const AI_DEAD = "AQ.stand-in-unplugged";
 let aiHold = null;      // the parked answer for AI_SLOW: call it to let the probe finish
+const responseCalls = [];
 
 before(async () => {
   fake = http.createServer((req, res) => {
+    if (req.url.startsWith("/v1/text-to-speech/")) {
+      let body = "";
+      req.on("data", c => body += c);
+      req.on("end", () => {
+        const request = JSON.parse(body);
+        responseCalls.push(request);
+        res.writeHead(200, { "Content-Type": "audio/mpeg" })
+          .end(Buffer.from("response-speed-" + request.voice_settings.speed));
+      });
+      return;
+    }
     if (req.url.startsWith("/v1beta/models")) {
       const key = req.headers["x-goog-api-key"];
       if (key === AI_DEAD) { req.socket.destroy(); return; }
@@ -147,6 +159,139 @@ async function settingsSection(page, fragment) {
     return document.getElementById("settings-section-" + (aliases[id] || id))?.hidden === false;
   }, fragment);
 }
+
+test("response speed saves locally, rejects invalid writes, and separates cached audio by pace", async () => {
+  const saved = fs.existsSync(path.join(TMP, "tts-config.json"))
+    ? fs.readFileSync(path.join(TMP, "tts-config.json")) : null;
+  const post = (route, body) => fetch(BASE + route, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    fs.writeFileSync(path.join(TMP, "tts-config.json"), JSON.stringify({ apiKey: GOOD_KEY }));
+    assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.8);
+    const spoken = async () => {
+      const r = await post("/tts", { text: "A comfortable response." });
+      assert.equal(r.status, 200);
+      return r.text();
+    };
+    const start = responseCalls.length;
+    assert.equal(await spoken(), "response-speed-0.8");
+    assert.equal(await spoken(), "response-speed-0.8");
+    assert.equal(responseCalls.length, start + 1, "repeat line uses the cache");
+    for (const speed of [0.7, 1, 1.2]) {
+      assert.equal((await post("/settings", { responseVoiceSpeed: speed })).status, 204);
+      assert.equal(await spoken(), "response-speed-" + speed);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(TMP, "app-settings.json"))).responseVoiceSpeed, speed);
+    }
+    assert.equal(responseCalls.length, start + 4, "each new pace gets its own audio");
+    assert.equal((await post("/settings", { responseVoiceSpeed: 0.8 })).status, 204);
+    assert.equal(await spoken(), "response-speed-0.8");
+    assert.equal(responseCalls.length, start + 4, "returning to a pace reuses its audio");
+    const before = fs.readFileSync(path.join(TMP, "app-settings.json"), "utf8");
+    for (const bad of [0.69, 1.21, "0.8", null]) {
+      assert.equal((await post("/settings", { responseVoiceSpeed: bad, dwellMs: 2100 })).status, 400);
+      assert.equal(fs.readFileSync(path.join(TMP, "app-settings.json"), "utf8"), before,
+        "invalid speed must not save unrelated settings either");
+    }
+  } finally {
+    if (saved) fs.writeFileSync(path.join(TMP, "tts-config.json"), saved);
+    else fs.rmSync(path.join(TMP, "tts-config.json"), { force: true });
+    await post("/settings", { responseVoiceSpeed: 0.8 });
+  }
+});
+
+test("response speed Settings opens without saving, persists an explicit save and reports failures", async () => {
+  const { ctx, page } = await settingsPage(null, { fragment: "sound" });
+  const writes = [];
+  await ctx.route("**/settings", route => {
+    if (route.request().method() === "POST") writes.push(route.request().postDataJSON());
+    return route.continue();
+  });
+  try {
+    await page.waitForFunction(() => !document.getElementById("responseVoiceSpeedSave").disabled);
+    assert.equal(await page.inputValue("#responseVoiceSpeed"), "80");
+    assert.deepEqual(writes, [], "loading and navigating settings do not save");
+    await page.fill("#responseVoiceSpeed", "90");
+    await page.click("#responseVoiceSpeedSave");
+    await page.waitForFunction(() => document.getElementById("responseVoiceSpeedStatus").textContent.includes("Saved on this device: 90%"));
+    assert.deepEqual(writes, [{ responseVoiceSpeed: 0.9 }]);
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById("responseVoiceSpeedSave").disabled);
+    assert.equal(await page.inputValue("#responseVoiceSpeed"), "90");
+    let saveStatus = 204;
+    await ctx.route("**/settings", route => route.request().method() === "POST"
+      ? route.fulfill({ status: saveStatus, body: "" }) : route.continue());
+    await page.fill("#responseVoiceSpeed", "100");
+    await page.click("#responseVoiceSpeedSave");
+    await page.waitForFunction(() => document.getElementById("responseVoiceSpeedStatus").textContent.includes("Could not confirm"));
+    assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.9,
+      "a successful response without persistence must not show Saved");
+    saveStatus = 500;
+    await page.fill("#responseVoiceSpeed", "110");
+    await page.click("#responseVoiceSpeedSave");
+    await page.waitForFunction(() => !document.getElementById("responseVoiceSpeedSave").disabled);
+    assert.match(await page.textContent("#responseVoiceSpeedStatus"), /Could not confirm/);
+    assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.9);
+  } finally {
+    await ctx.close();
+    await fetch(BASE + "/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ responseVoiceSpeed: 0.8 }) });
+  }
+});
+
+test("response speed is independent on a second device and survives its hub restart", async () => {
+  let base;
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "era-speed-device-"));
+  let second;
+  const boot = async () => {
+    // Ask the kernel for a free port; fixed suite ports belong to other tests.
+    const probe = http.createServer();
+    await new Promise((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", resolve);
+    });
+    const secondPort = probe.address().port;
+    await new Promise(resolve => probe.close(resolve));
+    base = `http://127.0.0.1:${secondPort}`;
+    let output = "";
+    second = spawn(process.execPath, ["server.js", String(secondPort)], {
+      cwd: HUB, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ERA_DATA_DIR: data,
+        ERA_BIND: "127.0.0.1", ERA_NO_UPDATE: "1", ELEVENLABS_API_KEY: "",
+        ERA_ELEVEN_URL: `http://127.0.0.1:${FAKE}`, ERA_AI_URL: `http://127.0.0.1:${FAKE}`,
+        ERA_GEO_URL: "http://127.0.0.1:1/geo", ERA_WEATHER_URL: "http://127.0.0.1:1" },
+    });
+    second.stdout.on("data", chunk => { output += chunk; });
+    second.stderr.on("data", chunk => { output += chunk; });
+    for (let i = 0; i < 100; i++) {
+      if (second.exitCode !== null) throw new Error("second hub failed to start: " + output);
+      if (output.includes("era-hub on " + base)) {
+        await fetch(base + "/settings"); return;
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+    throw new Error("second hub did not become ready");
+  };
+  const stop = async () => {
+    if (!second || second.exitCode !== null) return;
+    const ended = new Promise(resolve => second.once("exit", resolve));
+    second.kill(); // only this test's owned child PID
+    await ended;
+  };
+  try {
+    await boot();
+    assert.equal((await (await fetch(base + "/settings")).json()).responseVoiceSpeed, 0.8);
+    assert.equal((await fetch(base + "/settings", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ responseVoiceSpeed: 0.7 }) })).status, 204);
+    assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.8,
+      "changing another device leaves this device's speed alone");
+    await stop();
+    await boot();
+    assert.equal((await (await fetch(base + "/settings")).json()).responseVoiceSpeed, 0.7);
+    assert.equal((await (await fetch(BASE + "/settings")).json()).responseVoiceSpeed, 0.8);
+  } finally {
+    await stop();
+    fs.rmSync(data, { recursive: true, force: true });
+  }
+});
 
 // The shape content.js:status() returns, with the parts a test cares about
 // overridden. Kept next to the tests so a change to that payload breaks here.

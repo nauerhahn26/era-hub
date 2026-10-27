@@ -51,6 +51,10 @@
     drag.nx = c.x; drag.ny = c.y; drag.moved = true;
     drag.el.style.transform = `translate(${(c.x - drag.it.x) * drag.r.width}px, ${(c.y - drag.it.y) * drag.r.height}px)`;
   });
+  window.addEventListener('drawing:cancel-drag', () => {
+    if (!drag) return;
+    drag.el.style.transform = ''; drag = null; D.repaint();
+  });
   const end = (commit) => (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     const d = drag;
@@ -61,7 +65,7 @@
     // review 10/3 #4). A plain tap (up, unmoved) keeps its click: touch parity.
     const moved = d.moved || d.wasCarried;
     if (!commit || moved) D.swallowClicks(400);
-    if (commit && moved) D.moveItem(d.i, d.nx, d.ny);
+    if (commit && moved && !window.AppLock?.isLocked()) D.moveItem(d.i, d.nx, d.ny);
     else D.repaint();
   };
   scene.addEventListener("pointerup", end(true));

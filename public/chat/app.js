@@ -8,6 +8,7 @@ import { mountDoorBar } from '/lib/doorbar.js';
 
 const $ = id => document.getElementById(id);
 const API = '/chat/api';
+const appLocked = () => window.AppLock?.isLocked() || false;
 const persistence = createChatStorage();
 let appReady = false, pageOnlyVoice = false, voicePreferenceIntent = 0;
 document.body.dataset.storageReady = 'false';
@@ -22,6 +23,7 @@ persistence.subscribe(state => {
   if (pageOnlyVoice) storageStatus.textContent += ' The current voice choice applies to this page only; it has not been saved.';
 });
 const bar = mountDoorBar($('app'), {
+  onLock: () => { if (appReady) void shutdown('close'); },
   onLeave: () => { if (appReady) void shutdown('close'); return persistence.flush({ keepalive: true, timeoutMs: 850 }); },
   onPause: () => { if (appReady) void shutdown('pause'); },
   onResume: () => { if (appReady) notice('Chat is off. A partner can start a new session.'); },
@@ -110,6 +112,7 @@ const controller = createChatController({
   prefetch: choices => voice.prefetch(choices),
   beforeChoices: () => window.Dwell?.suppress(600),
   async speak(choice, { signal }) {
+    if (appLocked()) return;
     const mine = lifecycle, spoken = ++currentSpeech;
     const timing = speechMetric;
     if (holding || askPending) metrics.end(questionMetric, 'cancelled', 'interrupted');
@@ -294,6 +297,7 @@ function receiveEvent(event) {
 }
 
 async function startChat() {
+    if (appLocked()) return;
   if (starting || closing || session || document.visibilityState !== 'visible') return;
   if (!config?.runtime?.available) { controller.fail('Speech is not set up. Prepared phrases and stories still work.'); return; }
   starting = true; const mine = ++lifecycle; sessionAbort = new AbortController();
@@ -318,6 +322,7 @@ async function startChat() {
   }
 }
 async function beginAsk() {
+    if (appLocked()) return;
   if (!session || !controller.state.engineReady || holding || askPending || mode === 'draining' || closing || !['Ready to ask', 'Your turn'].includes(controller.state.phase)) return;
   holding = true; askPending = true; captureGeneration = null; questionSending = false; const mine = lifecycle;
   const intent = ++captureIntent; pendingFrames = [];
@@ -338,6 +343,7 @@ async function beginAsk() {
   } catch (e) { if (mine === lifecycle && intent === captureIntent) failSession('Question capture could not start. Your phrases still work; start Chat again.'); }
 }
 async function finishAsk() {
+    if (appLocked()) return;
   clearTimeout(askTimer);
   if (!session || !['opening', 'capture'].includes(mode) || controller.state.phase !== 'Capturing question') return;
   if (finishedTurn === controller.state.turn) return;

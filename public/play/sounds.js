@@ -142,6 +142,7 @@ export function createSounds({ volCap = 1 } = {}) {
     return ctx;
   }
   function run(fn) {
+    if (typeof window !== "undefined" && window.AppLock?.isLocked()) return;
     const c = ensure();
     if (!c) return;
     try {
@@ -150,12 +151,14 @@ export function createSounds({ volCap = 1 } = {}) {
     } catch { /* a voice that cannot sound is silent, never a throw */ }
   }
   function play(name) {
+    if (typeof window !== "undefined" && window.AppLock?.isLocked()) return false;
     if (typeof name !== "string" || !Object.prototype.hasOwnProperty.call(VOICES, name)) return false;
     record(name);
     run(VOICES[name]);
     return true;
   }
   function note(midi, voice = "harmonica") {
+    if (typeof window !== "undefined" && window.AppLock?.isLocked()) return false;
     if (!Number.isFinite(midi)) return false;
     record(midi);
     const f = hz(midi);
@@ -168,9 +171,14 @@ export function createSounds({ volCap = 1 } = {}) {
     if (muff && ctx) try { muff.frequency.setValueAtTime(isMuffled ? 700 : 20000, ctx.currentTime); } catch {}
   }
   function unlock() {
+    if (typeof window !== "undefined" && window.AppLock?.isLocked()) return;
     const c = ensure();
     if (c && c.state === "suspended") try { c.resume().catch(() => {}); } catch {}
   }
   function state() { return { ctx: !!ctx, gain: master ? master.gain.value : null, volCap: cap, muffled: isMuffled }; }
-  return { play, note, muffled, unlock, state };
+  function stop() {
+    const old = ctx; ctx = null; master = null; muff = null;
+    if (old && old.state !== 'closed') try { old.close().catch(() => {}); } catch {}
+  }
+  return { play, note, muffled, unlock, state, stop };
 }

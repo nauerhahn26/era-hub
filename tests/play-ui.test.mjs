@@ -912,8 +912,19 @@ const playLogs = (logs) => logs.filter((l) => l.engine === "playit");
 async function watchClasses(page) {
   await page.evaluate(() => {
     window.__seen = [];
+    window.__classFeedback = [];
+    const aliveState = new WeakMap();
     new MutationObserver((ms) => { for (const m of ms) {
       const t = m.target; if (!t.classList) continue;
+      if (t.matches('.pi-pos')) {
+        const alive = t.classList.contains('alive');
+        if ((aliveState.get(t) || false) !== alive) {
+          aliveState.set(t, alive);
+          const rect = t.getBoundingClientRect();
+          window.__classFeedback.push({ i: Number(t.dataset.i), alive, at: performance.now(),
+            visible: rect.width > 0 && rect.height > 0 && getComputedStyle(t).visibility === 'visible' });
+        }
+      }
       for (const c of ["alive", "wave"]) if (t.classList.contains(c)) window.__seen.push((t.dataset.i != null ? t.dataset.i : (t.id || t.className)) + "." + c);
     } }).observe(document.getElementById("stage"), { attributes: true, attributeFilter: ["class"], subtree: true });
   });
@@ -1016,9 +1027,12 @@ test("Play it, xylophone: ten bars, longest to shortest left to right; bar 0 rin
     assert.ok(pos[k].h < pos[k - 1].h, "each bar shorter than the one before: " + pos.map((p) => Math.round(p.h)).join(" "));
   }
   assert.ok(pos.every((p) => p.dwell && Math.min(p.w, p.h) >= 90));
+  await watchClasses(page);
   await page.evaluate(() => { window.__soundLog.length = 0; });
   await dwellOn(page, '.pi-pos[data-i="0"]');
-  await page.waitForSelector('.pi-pos[data-i="0"].alive', { timeout: 3000 });
+  // The highlight lasts 500 ms. Latch its actual visible class transition
+  // before the real dwell rather than racing it from a subsequent poll.
+  await page.waitForFunction(() => window.__classFeedback.some(e => e.i === 0 && e.alive && e.visible), null, { timeout: 3000 });
   assert.deepEqual(await sounds(page), [60]);
   assert.ok(await until(() => playLogs(logs).length >= 1));
   assert.deepEqual(playLogs(logs)[0], { app: "this-week", door: "play", week_of: PI.xylophone.week, engine: "playit",
@@ -1026,6 +1040,11 @@ test("Play it, xylophone: ten bars, longest to shortest left to right; bar 0 rin
   await neverATest(page);
   if (SHOTS) await page.screenshot({ path: path.join(SHOT_DIR(), "playit-xylophone-1920.png") });
   assert.deepEqual(errors, []);
+  await page.waitForFunction(() => window.__classFeedback.some(e => e.i === 0 && !e.alive), null, { timeout: 3000 });
+  const feedback = await page.evaluate(() => window.__classFeedback.filter(e => e.i === 0));
+  assert.equal(feedback[0].alive, true);
+  assert.equal(feedback[1].alive, false);
+  assert.ok(feedback[1].at - feedback[0].at >= 450, 'the visible note feedback retains its half-second duration');
   await ctx.close();
 });
 
