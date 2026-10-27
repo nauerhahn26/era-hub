@@ -1,6 +1,7 @@
 # Individual app locks
 
-Validation and release receipts are recorded in the linked implementation plan.
+Released in v1.0.24. Validation and release receipts are recorded in the linked
+implementation plan.
 
 Hold the lock in an app's top bar with a finger for 1.6 seconds to lock that
 app. Hold it again to unlock. Settings → Apps & navigation → App locks also

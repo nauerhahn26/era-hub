@@ -1,6 +1,6 @@
 # Individual app lockouts — implementation plan
 
-Date: 2026-10-25. Status: original Linux qualification green; combined release qualification pending.
+Date: 2026-10-25. Status: released v1.0.24; all eleven app locks qualified.
 Design: [individual app lockouts](../specs/2026-10-25-individual-app-lockouts-design.md).
 Worktree: era-hub--wt-lockout; branch: fix/lockout.
 
@@ -200,3 +200,41 @@ The payload is built once; Windows drives those exact bytes while Linux runs.
 Publication waits for both genuine green results and independent evidence review.
 The earlier candidate and intentionally interrupted attempts remain historical
 evidence and are never substituted for these combined release checks.
+
+
+## Released — 2026-10-27
+
+- Published [v1.0.24](https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.0.24),
+  build `20261027.0034`, from frozen hub commit `bd21f119e458dbddccc9574d74cc5b21425a7cc5`.
+- The combined full Linux gate passed all 167 suites: 2,748 modern cases and
+  138 legacy checks, with zero failures, cancellations, skips or TODOs.
+  Original input captures matched at every bookend; five original clean stamps
+  and all suite bodies, start digests and reports were independently reviewed.
+- All twelve canonical Windows update cases passed with zero exclusions.
+  The real desktop read back 1280×800. The installed candidate retained settings,
+  app state, doors and Chat state across two complete kiosk/hub restarts.
+  Its owned QA lease and temporary host were removed after the run.
+- The payload was built once. Its SHA-256 is
+  `c0a8910891ba509321c2f38b2dc90b38fc011576698f3e25fd95aab46b0bf336`.
+  All 257 TAR/ZIP files matched; all 250 source-mapped payload files matched
+  their frozen Git blobs. The retained v1.0.0 installer signature verified.
+- All five feature repositories landed through the normal worktree helper in
+  dependency order. The source tag points to the tested commit. Anonymous
+  downloads of all six public assets matched their as-built fingerprints, and
+  the latest feed confirmed version, build and payload hash.
+- Durable private evidence is retained under
+  `dist/qa/2026-10-26-lockout-validation/`, including the recorded eleven-app
+  touch journey, original negative attempts, Linux attempt 7, Windows attempt 5,
+  independent reviews and the public verification receipt.
+
+A foreign fixture-port collision interrupted the first combined Linux attempt
+before Clothing tests ran. A foreign QA reservation also prevented that Windows
+attempt from starting. Only owned jobs were stopped; other owners released their
+resources through coordination. The final retry used the unchanged frozen source
+and the same payload bytes. No failed or interrupted result qualified the release.
+
+The live development hub was not restarted and no device-specific push was made.
+Installed copies receive the patch through their normal updater. Individual
+controls are in Settings → Apps & navigation → App locks, or the app's touch-hold
+lock in its top bar. Browser/device locality and the external-player limitation
+remain documented in [app locks](../app-locks.md).
