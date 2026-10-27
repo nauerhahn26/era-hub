@@ -2270,6 +2270,32 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/gate-reuse.test.mjs",
+      "purpose": "Gate restart intelligence: the per-suite key (one negative test per part), the 24 h bound, FLAKY never reused, the shared-state guard, --rerun-failed and --restamp refusals, the one in-gate retry and its budget, resource failures never retried, the tally and the receipt, the stamp shape",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/testing/reuse.mjs",
+        "era-hub/tools/testing/lanes.mjs",
+        "era-hub/tools/era-gate.sh",
+        "era-hub/tools/testing/registry.json"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data",
+        "owned-node-child",
+        "synthetic-git-repositories"
+      ],
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/gate-safety.test.mjs",
       "purpose": "Reject unsafe ports/data, preserve process ownership and full-gate evidence",
       "group": "test-infrastructure",

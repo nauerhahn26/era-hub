@@ -99,6 +99,42 @@ node tools/test-suite.mjs status                        # jobs under ~/.local/st
 A change to `server.js`, shared runtime or tooling expands to the complete set;
 landing still wants the full gate's stamp.
 
+## Recovering from a red gate: reuse, FLAKY, rerun-failed, restamp
+
+Since 2026-10-27 a full gate records every run under `$ERA_GATE_RUNS` (default
+`~/.local/state/era-gate-runs`) and keys each suite by what it can observe:
+product files by content (not `tests/` or `docs/`), the private scanner, every
+collected helper and fixture, the gate's own code, node, playwright and its
+chromium, the suites' environment, the suite's collected copy and its registry
+entry (`reuse: key = ...` prints the parts). A suite whose key holds a pass
+under 24 h old prints `REUSE X (from <run> at <time>)` instead of running;
+`reuse: to run, <why>: ...` says why the rest run. Any product change reruns
+everything, a helper or fixture change reruns everything, a fixed test reruns
+that suite, a docs-only change (`docs/`, or a repo root's `*.md`) reruns
+nothing. The summary line counts reused passes, the stamp keeps its four
+lines, and the `receipt:` line just before the summary names how many were
+reused, the oldest evidence and the run's `receipt.json`.
+
+One failed suite runs once more, alone, at the end: a pass is `FLAKY X (passed
+on retry)`, counts for the stamp, goes to `$ERA_GATE_RUNS/flakes.jsonl`, and is
+never reused. No retry (a `retry:` line says why) for a resource failure
+(timeout, killed, out of memory, EADDRINUSE), a suite that already failed on
+the same key, or a gate with more than one failure. Twice failed on one key, a
+suite is refused without running until it or what it tests changes.
+
+| After | Run | Runs |
+| --- | --- | --- |
+| a wrong fixture or test, now fixed | `bash tools/era-gate.sh` | that suite (a helper: all) |
+| a failure with nothing changed | `bash tools/era-gate.sh --rerun-failed latest` | what failed or never finished there |
+| a gate that died half way | `bash tools/era-gate.sh` | what did not pass (shared readers rerun) |
+| a stamp that expired, nothing changed | `bash tools/era-gate.sh --restamp latest` | nothing; no hub; under a minute |
+| the dev loop | `bash tools/era-gate.sh --only lanes,gate-reuse` | those suites; no stamp, no store |
+
+`--rerun-failed` refuses when a suite that passed in that run can no longer be
+reused; `--restamp` refuses unless every suite can; both say which and why.
+`--no-cache` runs everything fresh and reads no earlier run. The isolated
+runner has no writable home: its gates say so and run fresh, without retries.
+
 ## The three release shapes
 
 A dist lives at `~/new-era/dist/release-<V>/` (sibling of the
@@ -130,7 +166,7 @@ up the new tarball on their next check.
 ### Signed — `bash tools/release.sh vX.Y.0`
 
 ```
-1/5 gate
+1/5 gate     era-gate.sh --no-cache: every suite fresh, nothing reused
 2/5 build    build-dist.sh --unsigned: same payload, plus an UNSIGNED Setup.exe
 3/5 VM e2e   legs A + B on those very files (neither leg reads a signature)
 4/5 sign     "VM green — ready for the SimplySign code (stage it now)."

@@ -45,6 +45,23 @@
 // endedAt}), and <gate>/.lane-results.tsv for era-gate.sh's tally (state,
 // plan index, the digest hashed at start or "missing", source ID; frozen
 // order). Exit 0 when every suite passed, 1 otherwise, 2 on bad input.
+//
+// Reuse (design 3.2): when the gate's plan step left <gate>/.reuse.json
+// (tools/testing/reuse.mjs; only a full gate with a writable run store does),
+// each suite carries its key and a decision. `reuse`: `REUSE X (from RUN at
+// TIME)`, never started, tallied `reused` with its frozen digest. `blocked`
+// (two failures on this key): `FAIL X (failed twice ...)`, never started.
+// `run`: as above, and every results line also carries key and attempt and is
+// appended to the run's results.jsonl in the store as it ends. A pass after a
+// stored failure on its key (priorFailures > 0) is `FLAKY X (passed after a
+// failure on these inputs in RUN)`. Once the queue is empty, one failed suite
+// runs once more, alone (the first attempt's output kept as X.out.attempt1):
+// only when it is the gate's only failure, the budget of one FLAKY pass per
+// gate is unspent, its key has no stored failure and its failure is not a
+// resource failure (exit 124 or 137, 'out of memory', EADDRINUSE). A pass then
+// is `FLAKY X (passed on retry)`, tallied `flaky`; a second failure stays red.
+// Each decision not to retry is said in one `retry:` line. Without the file
+// nothing here changes.
 // Once lanes are on, harvest-durations.mjs must read gate/results.jsonl
 // (--results): its .out-mtime method for legacy scripts assumes serial runs.
 //
@@ -58,6 +75,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { claimsEngine, ENGINE_PORT } from './suite-source.mjs';
+import { classifyFailure, RETRY_BUDGET } from './reuse.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_LANES = 2;
@@ -188,6 +206,23 @@ export function command(name) {
   return { argv: ['timeout', '420', 'node', `./${name}`], label, output: `${label}.out` };
 }
 
+// The gate's reuse plan (tools/testing/reuse.mjs), when it wrote one.
+export function readReuse(gate) {
+  const file = path.join(gate, '.reuse.json');
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+}
+function outputTail(file, bytes = 256 * 1024) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size, buffer = Buffer.alloc(Math.min(size, bytes));
+      fs.readSync(fd, buffer, 0, buffer.length, size - buffer.length);
+      return buffer.toString('utf8');
+    } finally { fs.closeSync(fd); }
+  } catch { return ''; }
+}
+const PASSED = new Set(['pass', 'reused', 'flaky']);
+
 // ---- the runner ------------------------------------------------------------------
 
 const writeLine = (line) => { try { fs.writeSync(1, line + '\n'); } catch { /* nobody is listening */ } };
@@ -196,16 +231,27 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
   holdMs = HOLD_MS, graceMs = GRACE_MS, env = process.env, print = writeLine }) {
   const plan = readPlan(gate);
   const suites = estimate(classesFor(plan, { registry, sourceOf: (name) => fs.readFileSync(path.join(gate, name), 'utf8') }), durations);
-  const queue = queueOrder(suites, lanes), running = new Map(), verdicts = new Array(plan.length).fill(null);
+  const reuse = readReuse(gate), decided = reuse?.suites || {};
+  const budget = reuse ? (Number.isInteger(reuse.budget) ? reuse.budget : RETRY_BUDGET) : 0;
+  const mirror = reuse?.runDir ? path.join(reuse.runDir, 'results.jsonl') : null;
+  const settledEarly = (suite) => ['reuse', 'blocked'].includes(decided[suite.id]?.decision);
+  const queue = queueOrder(suites, lanes).filter((suite) => !settledEarly(suite));
+  const running = new Map(), verdicts = new Array(plan.length).fill(null);
   const resultsFile = path.join(gate, 'results.jsonl');
   fs.writeFileSync(resultsFile, '');
-  let failures = 0, holding = false, holdTimer = null, stopping = null, swept = false, settle;
+  let holding = false, holdTimer = null, stopping = null, swept = false, settle, flaky = 0, retried = false;
   const finished = new Promise((resolve) => { settle = resolve; });
+  const firstAttempt = new Map(), resourceWhy = new Map();
+  const failed = () => plan.filter((row) => verdicts[row.index] && !PASSED.has(verdicts[row.index][0]));
+  const keyed = (suite, attempt) => (reuse ? { key: decided[suite.id]?.key ?? null, attempt } : {});
+  const lastFailureRun = (suite) => decided[suite.id]?.lastFailure?.run ?? 'an earlier run';
 
-  const record = (suite, row, digest) => {
-    fs.appendFileSync(resultsFile, JSON.stringify({ suite: suite.id, file: suite.name, ...row }) + '\n');
-    verdicts[suite.index] = [row.status, digest];
-    if (row.status !== 'pass') failures++;
+  const record = (suite, row, digest, state = row.status) => {
+    const text = JSON.stringify({ suite: suite.id, file: suite.name, ...row }) + '\n';
+    fs.appendFileSync(resultsFile, text);
+    if (mirror) { try { fs.appendFileSync(mirror, text); } catch { /* the store is advisory; the gate's tally is not */ } }
+    verdicts[suite.index] = [state, digest];
+    if (row.attempt === 1) firstAttempt.set(suite.index, row);
   };
   const writeTally = () => {
     const rows = plan.filter((row) => verdicts[row.index])
@@ -221,17 +267,18 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
   };
   const freeLane = () => { for (let lane = 1; lane <= lanes; lane++) if (!running.has(lane)) return lane; return 0; };
 
-  const start = (suite) => {
+  const start = (suite, attempt = 1) => {
     let digest;
     try { digest = crypto.createHash('sha256').update(fs.readFileSync(path.join(gate, suite.name))).digest('hex'); }
     catch { digest = 'missing'; }
     if (digest !== suite.digest) {
       print(`FAIL ${suite.name} (collected suite missing or changed)`);
       const at = new Date().toISOString();
-      record(suite, { status: 'changed', exit: null, seconds: 0, lane: null, startedAt: at, endedAt: at }, digest);
+      record(suite, { status: 'changed', exit: null, seconds: 0, lane: null, startedAt: at, endedAt: at, ...keyed(suite, attempt) }, digest);
       return;
     }
     const lane = freeLane(), { argv, label, output } = command(suite.name);
+    if (attempt > 1) { try { fs.renameSync(path.join(gate, output), path.join(gate, `${output}.attempt1`)); } catch { /* nothing to keep */ } }
     print(`RUN ${suite.name}`);
     const startedAt = new Date(), fd = fs.openSync(path.join(gate, output), 'w');
     let child;
@@ -244,9 +291,26 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
       ended = true;
       running.delete(lane);
       const endedAt = new Date(), exit = code ?? (signal ? 128 + (os.constants.signals[signal] || 0) : 1);
-      print(exit === 0 ? `PASS ${label}` : `FAIL ${label} (see gate/${output})`);
-      record(suite, { status: exit === 0 ? 'pass' : 'fail', exit, seconds: (endedAt - startedAt) / 1000, lane,
-        startedAt: startedAt.toISOString(), endedAt: endedAt.toISOString() }, digest);
+      const row = { status: exit === 0 ? 'pass' : 'fail', exit, seconds: (endedAt - startedAt) / 1000, lane,
+        startedAt: startedAt.toISOString(), endedAt: endedAt.toISOString(), ...keyed(suite, attempt) };
+      let state = row.status, line = exit === 0 ? `PASS ${label}` : `FAIL ${label} (see gate/${output})`;
+      if (exit === 0 && reuse && (attempt > 1 || (decided[suite.id]?.priorFailures ?? 0) > 0)) {
+        // a pass that followed a failure on this key: FLAKY, within the gate's budget
+        row.flaky = true;
+        if (flaky < budget) {
+          flaky++; state = 'flaky';
+          line = attempt > 1 ? `FLAKY ${label} (passed on retry)` : `FLAKY ${label} (passed after a failure on these inputs in ${lastFailureRun(suite)})`;
+        } else {
+          state = 'fail';
+          line = `FAIL ${label} (passed only after a failure on these inputs; this gate's one retry is spent)`;
+        }
+      } else if (exit !== 0 && reuse) {
+        if (attempt > 1) line = `FAIL ${label} (failed again on retry; see gate/${output})`;
+        const kind = classifyFailure({ exit, output: outputTail(path.join(gate, output)) });
+        if (kind.resource) { row.resource = true; resourceWhy.set(suite.index, kind.why); }
+      }
+      print(line);
+      record(suite, row, digest, state);
       if (!stopping) dispatch();
       else if (swept && !running.size) done(stopping === 'SIGINT' ? 130 : 143);
     };
@@ -271,7 +335,30 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
       }
       start(queue.splice(at, 1)[0]);
     }
-    if (!queue.length && !running.size) done(failures ? 1 : 0);
+    if (!queue.length && !running.size) {
+      const again = retryCandidate();
+      if (again) { start(again, 2); return; }
+      done(failed().length ? 1 : 0);
+    }
+  };
+
+  // Once, when the queue is empty: the one failed suite that may run again.
+  const retryCandidate = () => {
+    if (!reuse || retried || stopping) return null;
+    retried = true;
+    const rows = failed();
+    if (!rows.length) return null;
+    const no = (text) => { print(`retry: ${text}`); return null; };
+    if (flaky >= budget) return no(`this gate's retry budget of ${budget} is spent; nothing is retried`);
+    if (rows.length > budget) return no(`${rows.length} suites failed, more than this gate's retry budget of ${budget}; none is retried`);
+    const suite = suites.find((s) => s.index === rows[0].index), { label } = command(suite.name);
+    const state = verdicts[suite.index][0], first = firstAttempt.get(suite.index);
+    if (state === 'blocked') return no(`${label} is not retried: it failed twice on these inputs`);
+    if (state !== 'fail' || first?.status !== 'fail') return no(`${label} is not retried: ${state === 'changed' ? 'its collected copy was missing or changed' : 'it passed only after a failure on these inputs'}`);
+    if (first.resource) return no(`${label} is not retried: ${resourceWhy.get(suite.index)}`);
+    if ((decided[suite.id]?.priorFailures ?? 0) > 0) return no(`${label} failed before on these inputs (${lastFailureRun(suite)}); not retried`);
+    print(`retry: ${label} failed once; running it again, alone, at the end of the gate`);
+    return suite;
   };
 
   const stop = (signal) => {
@@ -303,6 +390,17 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
   process.on('SIGTERM', onTerm); process.on('SIGINT', onInt);
 
   if (lanes > 1) print(`lanes: ${lanes} (memory floor ${floorMiB} MiB)`);
+  for (const suite of suites.filter(settledEarly)) {
+    const d = decided[suite.id], { label } = command(suite.name);
+    if (d.decision === 'reuse') {
+      print(`REUSE ${label} (from ${d.from} at ${String(d.endedAt).replace(/\.\d{3}Z$/, 'Z')})`);
+      verdicts[suite.index] = ['reused', suite.digest];
+    } else {
+      print(`FAIL ${label} (failed twice on these inputs, last in ${lastFailureRun(suite)}; not run until it or what it tests changes)`);
+      const at = new Date().toISOString();
+      record(suite, { status: 'blocked', exit: null, seconds: 0, lane: null, startedAt: at, endedAt: at, key: d.key ?? null, attempt: 0 }, suite.digest, 'blocked');
+    }
+  }
   dispatch();
   return finished;
 }

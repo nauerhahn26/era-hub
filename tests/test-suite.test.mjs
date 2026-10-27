@@ -173,6 +173,26 @@ test('complete jobs keep separate logs, owned child identities and complete outc
   assert.equal(fs.existsSync(path.join(job.directory,'outcome.json')),true);
 });
 
+test('a cache-aware gate\'s REUSE and FLAKY lines are passes, and FLAKY replaces its own first FAIL', async t => {
+  const f=fixture(t);
+  f.write(path.join(f.hub,'tools/era-gate.sh'),'#!/bin/bash\necho "== era-gate: lock acquired =="\n'+
+    'echo "REUSE math.test.mjs (from 2026-10-27T03-15-22Z-abc1234 at 2026-10-27T03:31:07Z)"\n'+
+    'echo "RUN other.test.mjs"\necho "FAIL other.test.mjs (see gate/other.test.out)"\necho "RUN access.test.mjs"\necho "PASS access.test.mjs"\n'+
+    'echo "retry: other.test.mjs failed once; running it again, alone, at the end of the gate"\n'+
+    'echo "RUN other.test.mjs"\necho "FLAKY other.test.mjs (passed on retry)"\necho "== era-gate: 3 passed, 0 failed =="\n');
+  const job=enqueueJob({...f,baseline:'master',startWorker:false});
+  await runJob(job.directory,{registry:f.registry,roots:f.roots});
+  const result=readJob(job.directory);
+  assert.equal(result.status,'passed');
+  assert.deepEqual(result.outcome.suites.map(s=>[s.id,s.status,!!s.reused,!!s.flaky]).sort(),[
+    ['era-core:tests/access.test.mjs','pass',false,false],
+    ['era-hub:tests/math.test.mjs','pass',true,false],
+    ['era-hub:tests/other.test.mjs','pass',false,true],
+  ]);
+  assert.deepEqual(result.outcome.failedSuites,[]);
+  assert.equal(result.completedSuites,3);
+});
+
 test('a changing source invalidates an otherwise successful run', async t => {
   const f=fixture(t);
   f.write(path.join(f.hub,'tools/era-gate.sh'),'#!/bin/bash\necho "== era-gate: lock acquired =="\necho changed > public/math/state.js\nexit 0\n');

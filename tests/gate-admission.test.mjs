@@ -491,6 +491,22 @@ test('end to end: the gate is admitted, enters its namespace keeping its pid, an
   assert.match(r.stdout, /^slots:\.lock $/m, 'the slot went with the gate');
 });
 
+// The gate that plans reuse is the one re-executed in the namespace, so the
+// options it was started with must reach it: a signed cut's --no-cache dropped
+// at the exec would let it reuse earlier passes. A stand-in test-suite.mjs, the
+// first tool the namespaced gate runs, prints that gate's own command line; an
+// --only exported before the exec would make the namespaced gate refuse it.
+test('end to end: the namespaced gate keeps the options it was started with', { skip: NS_SKIP }, () => {
+  const stub = 'import fs from "node:fs"; const argv = fs.readFileSync(`/proc/${process.ppid}/cmdline`, "utf8").split("\\0").filter(Boolean);\n' +
+    'console.log("gate-argv: " + argv.slice(1).join(" ")); process.exit(1);\n';
+  const r = endToEnd(4 * GIB, 'printf "%s" "$STUB" >tools/test-suite.mjs && bash tools/era-gate.sh --no-cache --only lanes', { STUB: stub });
+  assert.match(r.stdout, /^== era-gate: entering a private network namespace/m, r.all);
+  assert.match(r.stdout, /^== era-gate: lock acquired ==$/m, r.all);
+  assert.doesNotMatch(r.all, /ERA_GATE_MODE must stay full/, 'the namespaced gate parsed --only again without an inherited affected mode');
+  assert.match(r.stdout, /^gate-argv: \S*tools\/era-gate\.sh --no-cache --only lanes$/m, r.all);
+  assert.match(r.stdout, /^gate-exit=1$/m);
+});
+
 test('end to end: too little memory for two lanes runs one, and says so', { skip: NS_SKIP }, () => {
   const r = endToEnd(2.5 * GIB, 'bash tools/era-gate.sh');
   assert.match(r.stdout, /^== era-gate: memory admits 1 of 2 lanes: this gate runs 1 lane ==$/m, r.all);
