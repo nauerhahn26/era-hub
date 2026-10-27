@@ -129,13 +129,15 @@ function revertTo(snap) {
   const out = sh(["vm.sh", "host", `bash /root/vm-revert.sh ${snap}`], { timeout: 300000 });
   return out + "\n" + sh(["vm.sh", "wait-guest", "180"], { timeout: 240000 });
 }
-/** one readout for readiness(): the guest's processes and Defender's real-time
- *  protection (a stopped Defender has no status to read: "unavailable") */
+/** one readout for readiness(): the guest's processes, the quiet snapshot's
+ *  policy marker, and Defender's real-time protection (a stopped Defender has
+ *  no status to read: "unavailable") */
 const readout = () => bat("ready", ["tasklist /fo csv /nh",
+  `reg query "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Real-Time Protection" /v DisableRealtimeMonitoring 2>nul | findstr /c:"0x1" >nul && (echo QUIET_POLICY=1) || (echo QUIET_POLICY=0)`,
   `powershell -NoProfile -Command "try { 'DEFENDER_RTP=' + (Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { 'DEFENDER_RTP=unavailable' }"`],
   { soft: true, timeout: 120000 });
 function notQuietGuard(r) {
-  if (r.defenderOn) throw new Error("profile quiet, but the guest is not the quiet snapshot: Defender's real-time protection is on. "
+  if (r.notQuiet) throw new Error(`profile quiet, but the guest is not the quiet snapshot (policy marker ${r.policy}, real-time protection ${r.rtp}). `
     + "This QA template has no `quiet` snapshot or it regressed: remake it (aac-board-builder/docs/vm-e2e.md, "
     + "era-family/tools/vm/qa-quiet-template.py), or run on the full guest (vm-e2e.sh --profile full, release.sh --vm-profile=full)");
   return r;
