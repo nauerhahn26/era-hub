@@ -1231,6 +1231,27 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/clothing-composite.test.mjs",
+      "purpose": "The outfit composite cache: content keys, reuse across builds and indexes, pruning to two builds and a hard cap, fallback to drawing on a broken store, plain files",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data"
+      ],
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/clothing-diversity.test.mjs",
       "purpose": "Preference rotation, repeats, daily determinism and sparse wardrobes",
       "group": "hub",

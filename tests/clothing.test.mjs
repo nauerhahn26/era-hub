@@ -411,6 +411,40 @@ test("second regenerate makes no further AI calls (catalog is durable)", async (
   assert.deepEqual(wireErrors, [], "every request so far carried the provider's own picture field");
 });
 
+// The composite cache (outfit-cache.js) through the real worker and the real
+// drawing: a rebuild of the same wardrobe draws nothing and serves the same
+// bytes, and a cold store draws exactly the bytes the cache was serving — a
+// hit is never a different picture. The store's own rules (keys, pruning,
+// fallback) are pinned in tests/clothing-composite.test.mjs.
+test("a rebuild reuses every outfit picture byte for byte; a cold store draws the same bytes", async () => {
+  const outfits = path.join(TMP, "wardrobe-outfits");
+  const looks = () => {
+    const recipe = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+    const imgs = new Set();
+    for (const b of recipe.boards) for (const t of b.buttons)
+      if (t.type === "outfit") imgs.add(t.image.replace(/^wardrobe-outfits\//, ""));
+    return [...imgs].sort();
+  };
+  const warm = await clothing.regenerate(true);
+  const names = looks();
+  assert.ok(names.length > 0, "the board has looks");
+  assert.equal(warm.composites.drawn + warm.composites.reused, names.length);
+  const bytes = Object.fromEntries(names.map(n => [n, fs.readFileSync(path.join(outfits, n))]));
+  const again = await clothing.regenerate(true);
+  assert.deepEqual(looks(), names, "a same-day rebuild deals the same looks");
+  assert.deepEqual(again.composites, { drawn: 0, reused: names.length });
+  for (const n of names) {
+    assert.ok(fs.readFileSync(path.join(outfits, n)).equals(bytes[n]), n + " unchanged");
+    assert.equal(fs.statSync(path.join(outfits, n)).nlink, 1, n + " is a plain file");
+  }
+  fs.rmSync(path.join(outfits, ".cache"), { recursive: true, force: true });
+  fs.rmSync(path.join(outfits, ".composites.json"), { force: true });
+  const cold = await clothing.regenerate(true);
+  assert.deepEqual(cold.composites, { drawn: names.length, reused: 0 });
+  for (const n of names)
+    assert.ok(fs.readFileSync(path.join(outfits, n)).equals(bytes[n]), n + ": drawn fresh = what the cache served");
+});
+
 test("preferred-LLM: an OpenAI key ingests new photos through their wire format", async () => {
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
     JSON.stringify({ provider: "openai", apiKey: "sk-oa-test" }));

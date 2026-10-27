@@ -172,6 +172,7 @@ function ensureHeif() {
   if (!libheif) libheif = require("./vendor/libheif.js")();
 }
 const { decodeJpg, scaleRgba, writeJpg, isFlat } = require("./image-util.js");
+const { openCompositeCache } = require("./outfit-cache.js");
 
 function cropRgba(img, frac) {
   const { data, width: w, height: h } = img;
@@ -420,17 +421,24 @@ function exactScale(img, nw, nh) {
   return { data: out, width: nw, height: nh };
 }
 
-function composite(fileA, fileB, dest) {
-  const W = 840, H = 560;
+// One look's picture from its tiles' BYTES (the cache has already read them to
+// key the look). COMPOSITE_LAYOUT is part of that key: change anything below
+// that changes the pixels — size, split, fitBox's padding or crop, quality —
+// and bump it, or every family hub keeps serving the old drawing.
+const COMPOSITE_W = 840, COMPOSITE_H = 560, COMPOSITE_Q = 88;
+const COMPOSITE_LAYOUT = "outfit-composite/1 " + COMPOSITE_W + "x" + COMPOSITE_H +
+  " q" + COMPOSITE_Q + " split420 fitpad6 whitebg" + WHITE_BG.tol + "/" + WHITE_BG.need;
+function drawComposite(bufA, bufB, dest) {
+  const W = COMPOSITE_W, H = COMPOSITE_H;
   const out = { data: Buffer.alloc(W * H * 4, 255), width: W, height: H };
-  const place = (file, ox, boxW) => {
-    const f = fitBox(decodeJpg(fs.readFileSync(file)), boxW, H);
+  const place = (buf, ox, boxW) => {
+    const f = fitBox(decodeJpg(buf), boxW, H);
     for (let y = 0; y < H; y++)
       f.data.copy(out.data, (y * W + ox) * 4, y * boxW * 4, (y + 1) * boxW * 4);
   };
-  if (fileB) { place(fileA, 0, 420); place(fileB, 420, 420); }
-  else place(fileA, 0, 840);
-  writeJpg(out, dest, 88);
+  if (bufB) { place(bufA, 0, 420); place(bufB, 420, 420); }
+  else place(bufA, 0, 840);
+  writeJpg(out, dest, COMPOSITE_Q);
 }
 
 // ---- ingest: one small vision call per new photo ----
@@ -1666,6 +1674,11 @@ async function buildCataloged(cat, known) {
   if (page1.length) log().appendOffer(seed, { band, page1 });
 
   fs.mkdirSync(OUTFITS(), { recursive: true });
+  // Most looks are the picture the last build drew (a re-sort, a sync,
+  // tomorrow's deal sharing today's pairs): outfit-cache.js draws each one
+  // once per tile CONTENT and copies it after that, and draws anything it
+  // cannot vouch for, as before.
+  const composites = openCompositeCache(OUTFITS(), { layout: COMPOSITE_LAYOUT });
   // Approved clothing layout: eight looks on page 1, seven thereafter with
   // Back top-left. Weather spans the centre pair and speaks without navigating.
   // More and Full wardrobe keep their bottom corners. Browse centres stay black.
@@ -1715,8 +1728,8 @@ async function buildCataloged(cat, known) {
       const say = c.one ? c.one.name : c.top.name + " and " + c.bottom.name;
       const img = "outfit_" + i + ".jpg";
       try {
-        composite(path.join(ITEMS(), (c.one || c.top).id + ".jpg"),
-          c.one ? null : path.join(ITEMS(), c.bottom.id + ".jpg"), path.join(OUTFITS(), img));
+        composites.produce(path.join(ITEMS(), (c.one || c.top).id + ".jpg"),
+          c.one ? null : path.join(ITEMS(), c.bottom.id + ".jpg"), path.join(OUTFITS(), img), drawComposite);
       } catch (e) { console.error("[clothing] composite: " + e.message); return; }
       const combo = c.one ? [c.one.id] : [c.top.id, c.bottom.id];
       // The same two halves the label is made of, as objects: `combo` is what
@@ -1798,7 +1811,9 @@ async function buildCataloged(cat, known) {
     boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
       ? items.filter(isFancy).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       : accessoryOrder(items.filter(i => i.category === k.id), band), "build", door));
-  return { boards, present, weatherless: !w, weatherStale: !!(w && w.stale) };
+  const drawn = composites.finish();
+  console.log("[clothing] composites: " + drawn.drawn + " drawn, " + drawn.reused + " reused");
+  return { boards, present, weatherless: !w, weatherStale: !!(w && w.stale), composites: drawn };
 }
 
 // No catalog yet -> no board. Decide which coaching state the splash shows.
@@ -1893,7 +1908,7 @@ async function regenerate(force) {
     return { rebuildOnly: true, weatherless: true, retried: true, photos: photos.length };
   if (workerData.weatherRetry && known.stale)
     return { rebuildOnly: true, weatherStale: true, retried: true, photos: photos.length };
-  const { boards, present, weatherless, weatherStale } = await buildCataloged(cat, known);
+  const { boards, present, weatherless, weatherStale, composites } = await buildCataloged(cat, known);
   fs.mkdirSync(RECIPES(), { recursive: true });
   // `categories` is the whole filing cabinet, not this wardrobe's corner of
   // it: the board's hold sheet names its chips from here (spec §4.2), and a
@@ -1911,7 +1926,7 @@ async function regenerate(force) {
   // `present`), reported the way every other build fact is — the shell hands
   // the whole object back to whoever asked for the build.
   return { built: boards.length, mode: "cataloged", photos: photos.length, ...tally,
-           accessories: present,
+           accessories: present, composites,
            // weatherless only when it really happened: the shell reads it as
            // "dealt with no weather at all, try the ladder again" (spec §7.3)
            ...(weatherless ? { weatherless: true } : {}),

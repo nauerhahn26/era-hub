@@ -579,6 +579,11 @@ and `--resume-sign` paths accepting only fresh evidence.
 - Per-suite port injection for the 50 suites with fixed listeners, so the
   same suite can run twice on one host outside a namespace.
 - Splitting clothing.test, only if the host ever runs six or more lanes.
+- [x] Composite cache (built 10/27 in `era-hub--wt-composite-cache`, design
+      3.4): `outfit-cache.js` draws each outfit once per tile content and
+      copies it after that; pruned to this and the previous build, cap 400,
+      any cache failure draws. `tests/clothing-composite.test.mjs` pins it;
+      clothing.test.mjs 124 s to 47 s run alone.
 
 ## Recovery under specific circumstances (what dad can expect)
 
