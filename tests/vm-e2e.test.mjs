@@ -446,3 +446,16 @@ test("two releases never share the VM run's verdict file", () => {
   assert.match(REL, /^export QA_KEEP=1$/m, "release.sh still holds its host across its legs");
   assert.match(REL, /trap 'QA_KEEP=0 bash "\$ROOT\/era-family\/tools\/vm\/qa\.sh" down \|\| true' EXIT/, "and tears it down on exit");
 });
+
+test("under ERA_WT_SUFFIX the run and its legs use the era-family worktree's VM tools", () => {
+  const D = fs.mkdtempSync(path.join(os.tmpdir(), "era-vm-sfx-"));
+  fs.mkdirSync(path.join(D, "era-family--wt-x", "tools", "vm"), { recursive: true });
+  const block = lines.slice(lines.findIndex((l) => l.startsWith('VMT="$ROOT/era-family/tools/vm"')),
+    lines.findIndex((l) => l.trim().startsWith('VMT="$ROOT/era-family${ERA_WT_SUFFIX}/tools/vm"')) + 2).join("\n");
+  const run = (sfx) => bash(`ROOT=${JSON.stringify(D)}\nunset ERA_VM_TOOLS\n${sfx}\n${block}\necho "VMT=$VMT TOOLS=\${ERA_VM_TOOLS:-}"`).out;
+  assert.match(run(""), new RegExp(`VMT=${D}/era-family/tools/vm TOOLS=$`, "m"), "no suffix: the sibling checkout, nothing exported");
+  assert.match(run("ERA_WT_SUFFIX=--wt-x"), new RegExp(`VMT=${D}/era-family--wt-x/tools/vm TOOLS=${D}/era-family--wt-x/tools/vm`), "the worktree, exported for the legs");
+  assert.match(run("ERA_WT_SUFFIX=--wt-none"), new RegExp(`VMT=${D}/era-family/tools/vm TOOLS=$`, "m"), "a suffix with no such worktree falls back");
+  const VMLIB = fs.readFileSync(new URL("../tests-vm/lib/vm.mjs", import.meta.url), "utf8");
+  assert.match(VMLIB, /path\.join\(process\.env\.ERA_VM_TOOLS \|\| VMTOOLS, args\[0\]\)/, "vm.mjs runs vm.sh from the same place");
+});

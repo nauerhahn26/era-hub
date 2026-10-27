@@ -61,7 +61,9 @@ fs.mkdirSync(OUT, { recursive: true });
 
 let shotN = Number(process.env.VM_SHOT_START || 0);
 function sh(args, opts = {}) {
-  const r = spawnSync("bash", [path.join(VMTOOLS, args[0]), ...args.slice(1)],
+  // ERA_VM_TOOLS: vm-e2e.sh's era-family worktree under ERA_WT_SUFFIX; unset, the sibling checkout
+  const r = spawnSync("bash", [path.join(process.env.ERA_VM_TOOLS || VMTOOLS, args[0]), ...args.slice(1)],
+
     { encoding: "utf8", timeout: opts.timeout || 60000, env: { ...process.env, VM_OUT: OUT } });
   if (r.status !== 0 && !opts.soft) throw new Error(args.join(" ") + " failed: " + (r.stderr || r.stdout));
   return (r.stdout || "").trim();

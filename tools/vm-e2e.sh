@@ -77,6 +77,12 @@ set -uo pipefail
 HUB="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(dirname "$HUB")"
 VMT="$ROOT/era-family/tools/vm"
+# ERA_WT_SUFFIX (era-gate.sh's sibling-worktree rule): a feature that changes the private VM
+# tools as well drives ITS era-family worktree's copy, and the legs follow (ERA_VM_TOOLS).
+if [ -n "${ERA_WT_SUFFIX:-}" ] && [ -d "$ROOT/era-family${ERA_WT_SUFFIX}/tools/vm" ]; then
+  VMT="$ROOT/era-family${ERA_WT_SUFFIX}/tools/vm"; export ERA_VM_TOOLS="$VMT"
+fi
+
 DIST="${1:?usage: vm-e2e.sh <candidate dist dir> [prev Setup.exe] [--only a|b] [--post-publish] [--profile full|quiet]}"; shift
 # ---- arguments (tests/vm-e2e.test.mjs runs this block as bash) ----
 PREV=""; ONLY=""; PREV_UNTAGGED=""; PREV_LIVE=""; POST=0; PROFILE=full
@@ -173,7 +179,9 @@ fi
 # The Windows QA host is an on-demand server (10/5, era-family/tools/vm/qa.sh): bring it
 # up (reuses one that is already running) BEFORE env.sh reads its address, and destroy it
 # on any exit — unless the caller holds it (release.sh sets QA_KEEP=1 across its legs).
+[ -n "${ERA_VM_TOOLS:-}" ] && echo "-- VM tools from $VMT (ERA_WT_SUFFIX)"
 QA_UP="$OUT/qa-up.txt"
+
 bash "$VMT/qa.sh" up | tee "$QA_UP" || { echo "vm-e2e: could not bring the QA host up (era-family/tools/vm/qa.sh)"; exit 3; }
 qa_release(){ bash "$VMT/qa.sh" down || true; }
 trap qa_release EXIT
