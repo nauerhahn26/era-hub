@@ -54,7 +54,7 @@ Measured on the home device, over at least 20 real partner turns, in test mode
 | Release → all choices staged | 1.2 s | 2.0 s |
 | With speculation on partials, choices ready at release | often | — |
 | Selection → first audio | 0.15 s | 0.4 s |
-| Staged → selectable (the reveal gate) | bounded by Ellie, see §4 | — |
+| Sealed → shown and selectable (the reveal) | 0.25 s settle, no gaze wait, see §4 | 0.3 s |
 
 Quality takes precedence over speed (prototype spec §Evaluation). A faster
 transcript that changes the question is a failure, so the transcription choice
@@ -213,26 +213,33 @@ benchmark alone.
   choice staged 436 / 984; → all staged 478 / 1061; speculation kept 26/26.
   Fallback listen service, 5 turns: 143 / 161, 145 / 164, 147 / 165.
 
-## 4. The reveal gate (dad's decision)
+## 4. The reveal (dad's decision, amended 10/27 evening)
 
-The fresh-movement rule exists so a batch never lands under a gaze that is
-already dwelling (nothing selects by accident). Today it costs an unbounded wait
-plus 600 ms. Options, with the recommended one first:
+**Rule (10/27 evening), in dad's words: "show replies, don't get cute with the
+gate."** A batch is revealed the moment it is sealed: the hub's
+`batch-sealed` event on a streamed turn, or the one-shot path's choices ready.
+There is no neutral-boundary wait of any kind, whether her gaze is on a tile
+cell, on the black centre, or off the screen.
 
-1. **Resting counts.** A gaze already inside the black centre when the batch
-   seals is the neutral boundary; no fresh move is required. Suppress drops to
-   the contract's 250 ms redraw settle. A gaze on a tile cell when the batch
-   seals still waits for a move into the centre.
-2. Keep the fresh move, shorten the suppress to 250 ms.
-3. Keep everything as published.
+- The reveal redraw suppresses dwell for the contract's 250 ms settle
+  (`Dwell.suppress(250)`), set before the new tiles land, so nothing under her
+  gaze can arm or select during the settle.
+- One reveal per turn. Streamed choices stage invisibly (their voices warm);
+  the hub seals once, when the reply stream ends, and the page shows the whole
+  sealed batch. A slow stream never shows a partial batch. A choice arriving
+  after the seal is dropped. Partials never touch tiles; speculative batches
+  never show.
+- The sealed batch is immutable once shown; the reveal speaks nothing. A batch
+  sealed while a fixed phrase plays is shown at once and the phrase keeps
+  playing; the turn becomes "Your turn" when it ends.
+- The two black centre cells stay black rest cells, with no picture and no
+  action. Dwell stays the partner's setting (default 1200 ms).
 
-Dwell stays the partner's setting (default 1200 ms).
-
-**Built (phase 2, 10/27): option 1.** The page remembers where the last gaze
-or mouse pointer rested (a partner's finger never counts). When a batch seals
-with that point on a black centre cell, it is revealed at once; on any tile
-cell, it waits for a move into the centre, as before. The reveal redraw
-suppresses dwell for 250 ms instead of 600.
+**History.** v1.0.24 and earlier required a fresh gaze movement into the black
+centre plus a 600 ms suppress. The phase 2 variant ("resting counts": a gaze
+already resting in the centre when the batch sealed revealed it at once; a
+gaze on a tile cell still waited for a move into the centre; 250 ms settle)
+lived only in v1.0.25. Both are retired by the rule above.
 
 ## 5. Telemetry: a test mode that records everything, off by default
 

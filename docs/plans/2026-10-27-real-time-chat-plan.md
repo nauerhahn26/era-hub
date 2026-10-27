@@ -122,7 +122,7 @@ Built 10/27 in `era-hub--wt-real-time-chat-pictures` (spec §6 "Decided shapes")
    published reply model streamed on the fast tier. Trial accounts created
    10/27 (keys in the private bake-off env file); production keys and the
    fast tier are dad's to fund.
-2. **Reveal gate.** Resting in the black centre counts; 250 ms settle.
+2. **Reveal gate.** Dad 10/27 evening: "show replies, don't get cute with the gate" — the batch shows the moment it is sealed, 250 ms settle only (v1.0.26); the "resting counts" variant lived only in v1.0.25.
 3. **Test mode content.** Transcripts, choices and the turn's audio kept on
    the device while on; text lines sync to Drive; banner; off by default.
 4. **Pictogram library.** The AAC library the hub already uses, fetched at

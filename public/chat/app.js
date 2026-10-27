@@ -62,7 +62,7 @@ let remoteFinal = false, remoteStreaming = false, questionSending = false;
 let audioSocket = null, socketSeq = 0;
 // Streaming sessions (spec §3.3): the hub prepares a held question's replies
 // itself and stages them over the event stream; the page reveals only the
-// sealed batch. `staging` is the current held turn's batch in the making.
+// sealed batch, at once (spec §4). `staging` is the current held turn's batch in the making.
 let stagedChoices = false, staging = null;
 const STAGING_MS = 20000;
 const SOCKET_BUFFER_LIMIT = 256000;
@@ -106,8 +106,7 @@ async function json(url, options = {}) {
 }
 const notice = text => { $('notice').textContent = text || ''; };
 function paintPhase(state = controller.state) {
-  $('phase').textContent = state.staged && state.phase === 'Preparing' ? 'Replies ready'
-    : state.phase === 'Capturing question' && ((remoteStreaming && mode !== 'opening') || questionSending) ? 'Sending question' : state.phase;
+  $('phase').textContent = state.phase === 'Capturing question' && ((remoteStreaming && mode !== 'opening') || questionSending) ? 'Sending question' : state.phase;
 }
 function setMode(value) {
   mode = value; document.body.dataset.listening = 'false';
@@ -245,34 +244,10 @@ controller.subscribe(state => {
   paintPhase(state);
   document.body.dataset.ready = String(state.engineReady && ['Ready to ask', 'Your turn'].includes(state.phase));
   if (state.error) notice(state.error);
-  else if (state.staged) notice('Replies ready. Look at the black space.');
   else if (state.phase === 'Capturing question') notice('Keep holding while you speak. Release to finish.');
   else if (state.phase === 'Ready to ask') notice('Hold to ask. Voice activation is off.');
   else if (state.phase === 'Your turn') notice('');
   renderGrid(state);
-});
-
-// The reveal gate (spec 2026-10-27 §4, dad's decision): a staged batch is
-// revealed by a gaze in the black centre. A gaze already resting there when
-// the batch seals counts as the neutral boundary; a gaze on any tile cell must
-// still move into the centre. A batch never lands under a dwelling gaze.
-let pointerAt = null;
-const restingInCentre = () => {
-  if (!pointerAt) return false;
-  const el = document.elementFromPoint(pointerAt.x, pointerAt.y);
-  return !!el?.closest?.('#grid .rest');
-};
-document.addEventListener('pointermove', e => {
-  // The partner's finger is not her gaze: only gaze and mouse pointers rest.
-  if (e.pointerType !== 'touch') pointerAt = { x: e.clientX, y: e.clientY };
-  if (screen !== 'chat' || !controller.state.staged) return;
-  if (e.target.closest?.('.rest')) controller.neutral();
-}, { passive: true });
-document.documentElement.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') pointerAt = null; });
-let wasStaged = false;
-controller.subscribe(state => {
-  const sealed = state.staged && !wasStaged; wasStaged = state.staged;
-  if (sealed) queueMicrotask(() => { if (screen === 'chat' && controller.state.staged && restingInCentre()) controller.neutral(); });
 });
 
 function sendFrame(bytes) {
