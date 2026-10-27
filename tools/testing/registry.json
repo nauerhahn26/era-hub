@@ -3430,6 +3430,13 @@
         "temporary-data"
       ],
       "level": "static contract and local process behavior",
+      "keyInputs": [
+        "era-board:tests/**",
+        "era-core:tests/**",
+        "era-hub:tests/**",
+        "era-making-words:tests/**",
+        "era-pencil:tests/**"
+      ],
       "hub": "none",
       "ports": [],
       "browsers": 0,
@@ -3455,6 +3462,13 @@
         "ephemeral-loopback-ports"
       ],
       "level": "static contract and local process behavior",
+      "keyInputs": [
+        "era-board:tests/**",
+        "era-core:tests/**",
+        "era-hub:tests/**",
+        "era-making-words:tests/**",
+        "era-pencil:tests/**"
+      ],
       "hub": "none",
       "ports": [],
       "browsers": 0,

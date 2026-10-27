@@ -51,7 +51,8 @@
 // (tools/testing/reuse.mjs; only a full gate with a writable run store does),
 // each suite carries its key and a decision. `reuse`: `REUSE X (from RUN at
 // TIME)`, never started, tallied `reused` with its frozen digest. `blocked`
-// (two failures on this key): `FAIL X (failed twice ...)`, never started.
+// (two failures on this key): `FAIL X (failed twice ...)`, never started,
+// then `refused: X: <what its key covers and the way out>`.
 // `run`: as above, and every results line also carries key and attempt and is
 // appended to the run's results.jsonl in the store as it ends. A pass after a
 // stored failure on its key (priorFailures > 0) is `FLAKY X (passed after a
@@ -401,6 +402,8 @@ export function runLanes({ gate, lanes, registry, durations, meminfo = '/proc/me
     } else {
       const line = `FAIL ${label} (failed twice on these inputs, last in ${lastFailureRun(suite)}; not run until it or what it tests changes)`;
       print(line);
+      // the way out, under the unchanged FAIL line: reuse.mjs's words when the plan wrote them
+      print(`refused: ${label}: ${d.refusal || `its key is the same at both failures; if what you fixed is not in its key, run it with --only ${label} or the gate with --no-cache`}`);
       const at = new Date().toISOString();
       record(suite, { status: 'blocked', exit: null, seconds: 0, lane: null, startedAt: at, endedAt: at, key: d.key ?? null, attempt: 0, line }, suite.digest, 'blocked');
     }

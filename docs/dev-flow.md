@@ -120,7 +120,22 @@ on retry)`, counts for the stamp, goes to `$ERA_GATE_RUNS/flakes.jsonl`, and is
 never reused. No retry (a `retry:` line says why) for a resource failure
 (timeout, killed, out of memory, EADDRINUSE), a suite that already failed on
 the same key, or a gate with more than one failure. Twice failed on one key, a
-suite is refused without running until it or what it tests changes.
+suite is refused without running until it or what it tests changes; under its
+`FAIL X (failed twice ...)` line a `refused: X: ...` line (and a `reuse: refused`
+line in the plan) names what changed since its last pass and the way out when
+the fix is something its key cannot see: `--only X` (it alone, fresh) or
+`--no-cache`.
+
+`tests/` is outside every suite's product part, so a test edit reruns only that
+suite. A suite that reads the other suites (suite-ports scans every collected
+suite for port claims and kill-by-name text; suite-classes derives the registry
+from every registered source) declares them in its registry entry as
+`"keyInputs": ["era-hub:tests/**", ...]` (`<repo>:<glob>`, checked by
+`classify-suites.mjs`): those files' content joins its key as part `scans`, so
+a fix in a neighbour reruns it and a new violation in any test file cannot ride
+a reused pass. Give a new suite the field only when it reads other suites'
+files; lanes, gate-reuse and harvest-durations read the registry, which the
+key already carries whole for any suite whose source names it.
 
 | After | Run | Runs |
 | --- | --- | --- |

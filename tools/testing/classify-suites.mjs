@@ -333,6 +333,14 @@ export function validateClasses(registry) {
     const owner = typeof s.owner === 'string' ? s.owner.trim() : '';
     if (s.retry === true && !owner) problems.push(`${s.id}: retry is true but no owner is named`);
     if (s.retry !== true && owner) problems.push(`${s.id}: owner ${JSON.stringify(s.owner)} is set but retry is not`);
+    // keyInputs (reviewed, never derived): "<repo>:<glob>" files whose content
+    // joins this suite's reuse key (tools/testing/reuse.mjs, part `scans`)
+    if ('keyInputs' in s) {
+      const k = s.keyInputs;
+      if (!Array.isArray(k) || !k.length || !k.every((p) => typeof p === 'string' && /^[a-z][a-z0-9-]*:[^\0\s:]+$/.test(p)) || new Set(k).size !== k.length) {
+        problems.push(`${s.id}: keyInputs must be a non-empty list of distinct "<repo>:<glob>" patterns`);
+      }
+    }
   }
   return problems;
 }
