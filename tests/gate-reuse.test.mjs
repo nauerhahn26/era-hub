@@ -120,6 +120,11 @@ test("every part of the key changes the keys it should and nothing else does", (
     ["the served farm's contents", ALL, (w) => { w.manifest.servedFarm["public/board"].content.hash = "farm-2"; }],
     ["the private gate environment file", ALL, (w) => { w.manifest.configuration.gateEnvironment = "env-file-2"; }],
     ["a docs file", [], (w) => { w.manifest.repositories["era-hub"].files["docs/notes.md"].hash = "docs-2"; }],
+    ["a repo root's markdown (README.md, AGENTS.md, CONTRIBUTING.md)", [], (w) => {
+      Object.assign(w.manifest.repositories["era-hub"].files, { "README.md": { kind: "file", hash: "readme-2" }, "AGENTS.md": { kind: "file", hash: "agents-2" } });
+      w.manifest.repositories["era-board"].files["CONTRIBUTING.md"] = { kind: "file", hash: "pointer-2" };
+    }],
+    ["markdown below a repo root is not docs", ALL, (w) => { w.manifest.repositories["era-board"].files["app/help.md"] = { kind: "file", hash: "help-2" }; }],
     ["a tests/ file seen through the manifest (its content is in the collected copies)", [],
       (w) => { w.manifest.repositories["era-hub"].files["tests/a.test.mjs"].hash = "test-2"; }],
     ["the registry and durations as manifest files", [], (w) => {

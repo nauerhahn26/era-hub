@@ -24,7 +24,8 @@
 // and it does not:
 //   runtime     the gate's inputs manifest by content only: every file of the six
 //               repos except tests/ of the five collected ones (their content is
-//               in `suite` and `helpers`), docs/ of all six, registry.json and
+//               in `suite` and `helpers`), docs/ and every repo root's *.md
+//               (README.md, AGENTS.md and the like) of all six, registry.json and
 //               durations.json; the seed's contents; the served farm's contents;
 //               the private gate-env.sh digest. No root path, port or mode.
 //   external    files outside the six roots that a suite reads: the private
@@ -120,7 +121,8 @@ export function runtimeView(manifest) {
   for (const [repo, value] of Object.entries(manifest.repositories || {})) {
     const files = {};
     for (const [name, file] of Object.entries(value.files || {})) {
-      if (name.startsWith('docs/') || (COLLECTED.has(repo) && name.startsWith('tests/')) || SCHEDULING.has(`${repo}:${name}`)) continue;
+      const docs = name.startsWith('docs/') || (!name.includes('/') && name.endsWith('.md'));
+      if (docs || (COLLECTED.has(repo) && name.startsWith('tests/')) || SCHEDULING.has(`${repo}:${name}`)) continue;
       files[name] = file;
     }
     repositories[repo] = files;

@@ -183,3 +183,19 @@ test("no installer name is matched loosely (the 9/9 OneDriveSetup.exe lesson)", 
   assert.doesNotMatch(SH, /New-ERA-Setup\.exe missing/, "the candidate check names the installer by variable, not the old literal");
   assert.match(SH, /"\$DIST\/\$CAND_EXE" root@\$VM_DROPLET:\/root\/qa\/candidate\.exe/, "leg A installs the candidate by its recorded name");
 });
+
+// A signed cut ships a new installer, so its gate runs every suite fresh: no
+// pass reused from an earlier run (era-gate.sh --no-cache; design 2026-10-26
+// 3.2, the maintainer's decision 10/27). A patch takes the cache-aware gate.
+test("release.sh's gate runs fully fresh for a signed cut and cache-aware for a patch", () => {
+  const REL = fs.readFileSync(new URL("../tools/release.sh", import.meta.url), "utf8");
+  const choose = REL.match(/^[ \t]*GATE_ARGS=\(\); \[ "\$PATCH" = 1 \] \|\| GATE_ARGS=\(--no-cache\)$/m);
+  assert.ok(choose, "release.sh chooses the gate's arguments from the cut's shape");
+  const call = REL.match(/^[ \t]*bash "\$HUB\/tools\/era-gate\.sh" "\$\{GATE_ARGS\[@\]\}" \| tail -1 \| tee \/tmp\/era-release-gate\.txt$/m);
+  assert.ok(call && call.index > choose.index, "and the one gate call passes them");
+  assert.equal(REL.match(/tools\/era-gate\.sh"/g).length, 1, "there is no other gate call");
+  for (const [patch, args] of [["0", "--no-cache"], ["1", ""]]) {
+    const out = execFileSync("bash", ["-c", `set -euo pipefail\nPATCH=${patch}\n${choose[0].trim()}\necho "[\${GATE_ARGS[*]}]"`], { encoding: "utf8" });
+    assert.equal(out.trim(), `[${args}]`, patch === "1" ? "a patch" : "a signed cut");
+  }
+});

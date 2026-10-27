@@ -89,10 +89,10 @@ entry (`reuse: key = ...` prints the parts). A suite whose key holds a pass
 under 24 h old prints `REUSE X (from <run> at <time>)` instead of running;
 `reuse: to run, <why>: ...` says why the rest run. Any product change reruns
 everything, a helper or fixture change reruns everything, a fixed test reruns
-that suite, a docs-only change reruns nothing. The summary line counts reused
-passes, the stamp keeps its four lines, and the `receipt:` line just before
-the summary names how many were reused, the oldest evidence and the run's
-`receipt.json`.
+that suite, a docs-only change (`docs/`, or a repo root's `*.md`) reruns
+nothing. The summary line counts reused passes, the stamp keeps its four
+lines, and the `receipt:` line just before the summary names how many were
+reused, the oldest evidence and the run's `receipt.json`.
 
 One failed suite runs once more, alone, at the end: a pass is `FLAKY X (passed
 on retry)`, counts for the stamp, goes to `$ERA_GATE_RUNS/flakes.jsonl`, and is
@@ -145,7 +145,7 @@ up the new tarball on their next check.
 ### Signed — `bash tools/release.sh vX.Y.0`
 
 ```
-1/5 gate
+1/5 gate     era-gate.sh --no-cache: every suite fresh, nothing reused
 2/5 build    build-dist.sh --unsigned: same payload, plus an UNSIGNED Setup.exe
 3/5 VM e2e   legs A + B on those very files (neither leg reads a signature)
 4/5 sign     "VM green — ready for the SimplySign code (stage it now)."

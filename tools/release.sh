@@ -3,7 +3,8 @@
 # Two shapes (docs/specs/2026-09-15-dev-flow-worktrees-and-patch-releases-design.md §4):
 #
 #   SIGNED (default, normally vX.Y.0 — a new installer)
-#     1/5 gate       era-gate fully green (no release on a red gate, ever)
+#     1/5 gate       era-gate fully green (no release on a red gate, ever), every
+#                    suite run fresh (--no-cache: no pass reused from an earlier run)
 #     2/5 build      build-dist.sh --unsigned: payload WITH bundled node, tarball,
 #                    zip, checksums, latest.json, and an UNSIGNED Setup.exe
 #     3/5 VM e2e     legs A+B on those very files, pristine Windows 10 (vm-e2e.sh);
@@ -20,8 +21,9 @@
 #                    it deletes nothing, because a pulled release 404s the website
 #
 #   PATCH (--patch, vX.Y.Z with Z>=1 — a new tarball under the SAME installer)
-#     1/4 gate    2/4 build (build-dist.sh --patch: no makensis; the signed installer
-#     named by the live latest.json is downloaded and re-attached, signature verified)
+#     1/4 gate    cache-aware: a pass reused from an earlier run counts
+#     2/4 build   build-dist.sh --patch: no makensis; the signed installer
+#     named by the live latest.json is downloaded and re-attached, signature verified
 #     3/4 VM e2e  vm-e2e.sh --only b: that installer, fresh on the VM, self-updating to
 #     the candidate tarball — the only path a patch takes on any device
 #     4/4 publish tag + Release with notes naming the installer tag. No signing, no code.
@@ -201,7 +203,10 @@ if [ "$SKIPGATE" = 1 ] || [ "$RESUME" = 1 ]; then
   ST="$(basename "$S")"; SH="$(awk -F= '/^head=/{print $2; exit}' "$S")"; SAT="$(awk -F= '/^at=/{print $2; exit}' "$S")"
   echo "gated tree ${ST:0:7} from ${SH:0:7}, green $(date -d "@$SAT" +%H:%M) — gate skipped: $(head -1 "$S")"
 else
-  bash "$HUB/tools/era-gate.sh" | tail -1 | tee /tmp/era-release-gate.txt
+  # A signed cut ships a new installer: every suite runs fresh (--no-cache), no
+  # pass reused from an earlier run. A patch takes the cache-aware gate.
+  GATE_ARGS=(); [ "$PATCH" = 1 ] || GATE_ARGS=(--no-cache)
+  bash "$HUB/tools/era-gate.sh" "${GATE_ARGS[@]}" | tail -1 | tee /tmp/era-release-gate.txt
   grep -q " 0 failed" /tmp/era-release-gate.txt || { echo "GATE NOT GREEN — no release."; exit 1; }
   # DEPRECATED, written one more release because the i13 runbooks name these two
   # files: the truth is now era-gate.sh's /tmp/era-gate-green/<tree> stamp.
