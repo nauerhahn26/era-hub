@@ -1,6 +1,6 @@
 # Individual app lockouts — implementation plan
 
-Date: 2026-10-25. Status: qualification and release authorized; final full gate pending.
+Date: 2026-10-25. Status: original Linux qualification green; combined release qualification pending.
 Design: [individual app lockouts](../specs/2026-10-25-individual-app-lockouts-design.md).
 Worktree: era-hub--wt-lockout; branch: fix/lockout.
 
@@ -178,3 +178,25 @@ their draft controls. All fourteen shared state/UI cases and all five real-app/
 Settings cases passed, including the actual Chat dialog. In-progress Linux and
 Windows jobs were deliberately stopped before accepting their superseded source.
 Only the owned QA lease was cleaned up; the next payload includes this runtime fix.
+
+
+## Combined release qualification — 2026-10-27
+
+The original frozen candidate completed all 167 Linux suites with zero failures,
+skips, cancellations or TODOs: 2,744 modern cases and 138 legacy checks. Original
+reports, exact execution plan, input capture and five genuine stamps were retained.
+The maintainer then requested Voice first. Its Windows attempt was stopped by
+its owner and cleaned up; it is not a Windows qualification or release.
+
+Voice v1.0.23 is now published. Its runtime and final documentation were merged
+through the normal worktree sync. All five focused integration suites passed
+133 checks, covering Settings, actual app locks, narration and harness contracts.
+The final documentation-only Voice sync changed no runtime. Other canonical
+sources remain at the coordinated baseline.
+
+A new frozen combined candidate now requires the complete Linux gate and all
+twelve canonical Windows update cases, including the response voice setting.
+The payload is built once; Windows drives those exact bytes while Linux runs.
+Publication waits for both genuine green results and independent evidence review.
+The earlier candidate and intentionally interrupted attempts remain historical
+evidence and are never substituted for these combined release checks.
