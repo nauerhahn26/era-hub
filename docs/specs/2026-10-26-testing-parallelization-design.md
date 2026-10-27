@@ -317,6 +317,25 @@ parallel-worktrees corollary "never park a gate in a chat you're leaving" was
 written when this box slept; it has been up for ten days, so the corollary is
 re-verified and reconciled in the same change).
 
+### 3.4 Composite cache
+
+Product-side, not gate-side: 659 of 712 outfit composites a gate drew were
+byte-identical redraws (about 90-130 CPU-s a gate), and every family rebuild
+redraws the same looks. `outfit-cache.js` keys a look on its content: a
+sha256 of a layout constant (size, split, padding, white-background crop,
+quality; bump it when the drawing changes), tile A's bytes and tile B's bytes
+or "solo", so a re-ingested or re-rotated tile is a new key. Pictures live in
+`wardrobe-outfits/.cache/<key>.jpg`, written to a temp name and renamed;
+`outfit_<i>.jpg` is a plain copy of one (no hardlinks), and the store is never
+fed from an `outfit_<i>.jpg`, which the build overwrites in place while looks
+swap places. `wardrobe-outfits/.composites.json` (written atomically) records
+the keys this build and the build before it used; after a build everything
+else is pruned (a rebuild of the same set does not start a new generation, so
+yesterday survives a re-sort) and at most 400 files stay, this build's first,
+then the oldest-used go. A torn index, a missing, empty or wrong-sized stored
+file, or a store that cannot be written means drawing the look as before;
+the build logs `[clothing] composites: N drawn, M reused`.
+
 ## 4. What changes where
 
 | Piece | Change | Tests pinning it today |
