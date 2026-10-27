@@ -1,14 +1,15 @@
 // Pure session state. Displayed choices are immutable until a new explicit turn.
+// A sealed batch is shown the moment it arrives (spec 2026-10-27 §4): no gaze gate.
 export const isPartnerTouch = e => e?.isTrusted === true && e.pointerType === 'touch';
 
 export function createChatController(deps = {}) {
-  let turn = 0, pending = null, abort = null, speechAbort = null, utterance = 0;
+  let turn = 0, preparing = false, abort = null, speechAbort = null, utterance = 0;
   const listeners = new Set();
-  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, error: '', turn });
+  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), error: '', turn });
   function timing(name) { try { deps.onTiming?.(name); } catch { /* Diagnostics never interrupt communication. */ } }
   function patch(p) { state = Object.freeze({ ...state, ...p }); for (const fn of listeners) fn(state); }
   function invalidate() {
-    turn++; utterance++; abort?.abort(); speechAbort?.abort(); abort = new AbortController(); pending = null;
+    turn++; utterance++; abort?.abort(); speechAbort?.abort(); abort = new AbortController(); preparing = false;
     deps.stopSpeech?.();
     return turn;
   }
@@ -18,14 +19,15 @@ export function createChatController(deps = {}) {
     ready(wakeEnabled = false) { patch({ engineReady: true, wakeEnabled, phase: state.phase === 'Off' ? (wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.phase, error: '' }); },
     ask() {
       invalidate();
-      patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: Object.freeze([]), staged: false, error: '' });
+      patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: Object.freeze([]), error: '' });
     },
     partial(text) { if (state.phase === 'Capturing question') patch({ partial: String(text || '').slice(0, 600) }); },
     async prepare(text) {
       const question = String(text || '').trim().slice(0, 600);
       if (!question) { api.fail('No question heard. Try again, or use a phrase.'); return; }
       const mine = invalidate();
-      patch({ turn, phase: 'Preparing', question, partial: '', choices: Object.freeze([]), staged: false, error: '' });
+      preparing = true;
+      patch({ turn, phase: 'Preparing', question, partial: '', choices: Object.freeze([]), error: '' });
       try {
         const result = await deps.requestChoices?.({ text: question, signal: abort.signal });
         if (mine !== turn) return;
@@ -35,11 +37,17 @@ export function createChatController(deps = {}) {
             ...(typeof x.symbol === 'string' && x.symbol.length <= 64 ? { symbol: x.symbol } : {}),
             ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}) }));
         if (!clean.length) throw new Error('No suggestions available. Your phrases still work.');
-        pending = Object.freeze(clean);
+        const next = Object.freeze(clean);
+        preparing = false;
         timing('choicesReady');
-        patch({ staged: true });
         // Preparation is silent. Audio can warm without speaking a suggestion.
-        deps.prefetch?.(pending);
+        try { deps.prefetch?.(next); } catch { /* Warming never holds the reveal back. */ }
+        // Shown at once, wherever her gaze is. Dwell settles first (250 ms), so
+        // nothing under her gaze can select as the batch lands. A phrase still
+        // playing keeps playing; the reveal itself speaks nothing.
+        deps.beforeChoices?.();
+        timing('revealed');
+        patch({ choices: next, phase: state.phase === 'Speaking' ? 'Speaking' : 'Your turn' });
       } catch (e) {
         if (mine !== turn) return;
         // Final recognition has already paused capture. A failed reply request
@@ -47,14 +55,6 @@ export function createChatController(deps = {}) {
         api.fail('Replies are unavailable. Chat is off. Your phrases still work.');
         await deps.onChoicesError?.();
       }
-    },
-    neutral() {
-      if (!pending || state.phase !== 'Preparing') return false;
-      const next = pending; pending = null;
-      deps.beforeChoices?.();
-      timing('revealed');
-      patch({ choices: next, staged: false, phase: 'Your turn' });
-      return true;
     },
     async select(id, expectedTurn = turn) {
       if (expectedTurn !== turn || !['Your turn', 'Speaking'].includes(state.phase)) return false;
@@ -74,16 +74,16 @@ export function createChatController(deps = {}) {
       catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'
         ? 'Saved voice is unavailable. Choose Device voice in partner settings to use it instead. The words are still here.'
         : 'Sound unavailable. The words are still here.' }); }
-      if (mine === turn && spoken === utterance && state.phase === 'Speaking') patch({ phase: pending ? 'Preparing' : back });
+      if (mine === turn && spoken === utterance && state.phase === 'Speaking') patch({ phase: state.choices.length ? 'Your turn' : preparing ? 'Preparing' : back });
       return true;
     },
     fail(message) {
       invalidate();
-      patch({ turn, staged: false, engineReady: false, wakeEnabled: false, error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length ? 'Your turn' : 'Off' });
+      patch({ turn, engineReady: false, wakeEnabled: false, error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length ? 'Your turn' : 'Off' });
     },
     stop() {
       invalidate();
-      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, error: '' });
+      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), error: '' });
     },
   };
   return api;

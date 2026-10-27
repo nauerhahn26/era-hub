@@ -1,7 +1,7 @@
 // The real Chat page against the real hub Chat module (real-time chat spec
 // 2026-10-27 §3, §4): held-question audio over the session WebSocket, a
 // streamed turn end to end (partials, speculation, streamed choices, saved
-// voice), and the reveal gate. Every service is an owned loopback fixture: a
+// voice), and the reveal: a sealed batch shows at once wherever the gaze is. Every service is an owned loopback fixture: a
 // scripted recognizer child, a fake streaming transcription service, a fake
 // streamed reply service and a fake saved voice. No credentials, no paid calls.
 import test from 'node:test';
@@ -42,6 +42,35 @@ function scriptedRuntime(log) {
   return child;
 }
 
+// In the page: when the sealed batch reached it (the hub's batch-sealed event,
+// or the one-shot /choices answer), each staged choice, and every change of the
+// reply tiles with the dwell settle at that instant. A reveal is a new set.
+function revealProbe() {
+  const now = () => performance.now();
+  window.__sealed = []; window.__staged = []; window.__reveals = [];
+  const Native = window.EventSource;
+  window.EventSource = class extends Native {
+    constructor(...args) {
+      super(...args);
+      this.addEventListener('message', event => { try { const data = JSON.parse(event.data);
+        if (data.type === 'batch-sealed') window.__sealed.push(now()); if (data.type === 'choice-staged') window.__staged.push(now()); } catch { /* not ours */ } });
+    }
+  };
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => { const r = await nativeFetch(...args); if (String(args[0]).includes('/chat/api/choices')) window.__sealed.push(now()); return r; };
+  document.addEventListener('DOMContentLoaded', () => {
+    let last = '';
+    new MutationObserver(() => {
+      const labels = [...document.querySelectorAll('#grid .response .label')].map(label => label.textContent), key = labels.join('|');
+      if (key && key !== last) { const dwell = window.Dwell?.state() || {}; window.__reveals.push({ at: now(), labels, suppressedMs: dwell.suppressedMs, target: dwell.target }); }
+      last = key;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+}
+const probe = page => page.evaluate(() => ({ sealed: window.__sealed, staged: window.__staged, reveals: window.__reveals }));
+// The reveal shows the sealed batch within the 250 ms settle (plus scheduling slack).
+const REVEAL_SLACK_MS = 300;
+
 async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {} } = {}) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-stream-browser-'));
   const store = createChatStore({ dataDir: scratch });
@@ -72,6 +101,7 @@ async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {} } = {}) {
   t.after(async () => { await browser.close(); api.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, hasTouch: true, permissions: ['microphone'] });
   await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+  await context.addInitScript(revealProbe);
   const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
   const sockets = []; page.on('websocket', ws => { const entry = { url: ws.url(), sent: 0, closed: false }; sockets.push(entry); ws.on('framesent', () => entry.sent++); ws.on('close', () => { entry.closed = true; }); });
   const cdp = await context.newCDPSession(page);
@@ -87,11 +117,7 @@ async function fixture(t, { env = {}, runtimeLog = [], apiOptions = {} } = {}) {
     await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 10000 });
   }
   async function hold(ms = 500) { await press('#ask'); await page.waitForTimeout(ms); await lift(); }
-  async function restOnCentre() {
-    const rest = await page.locator('.rest').first().boundingBox();
-    await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
-  }
-  return { page, base, requests, ttsTexts, sockets, errors, runtimeLog, start, hold, restOnCentre, press, lift, api };
+  return { page, base, requests, ttsTexts, sockets, errors, runtimeLog, start, hold, press, lift, api };
 }
 
 test('a held question travels over the session socket, not per-frame POSTs, and End closes the socket', { timeout: 60000 }, async t => {
@@ -102,14 +128,12 @@ test('a held question travels over the session socket, not per-frame POSTs, and 
   assert.match(f.sockets[0].url, /\/chat\/api\/sessions\/[a-f0-9-]+\/audio$/);
   assert.equal(f.sockets[0].sent, 0, 'no audio is sent before a hold');
   await f.hold(600);
-  await f.page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'), null, { timeout: 10000 });
+  await f.page.waitForSelector('.response', { timeout: 10000 });
   assert.ok(f.sockets[0].sent > 0, 'frames were sent on the socket');
   assert.equal(f.requests.filter(line => /\/audio$/.test(line) && line.startsWith('POST')).length, 0, 'no per-frame POSTs');
   const audio = f.runtimeLog.filter(type => type === 'audio').length;
   assert.ok(audio > 0);
   assert.ok(f.runtimeLog.lastIndexOf('audio') < f.runtimeLog.indexOf('finish'), 'every frame reached the recognizer before finish');
-  await f.restOnCentre();
-  await f.page.waitForSelector('.response');
   await f.press('#endChat'); await f.lift();
   await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Off');
   for (let i = 0; i < 50 && !f.sockets[0].closed; i++) await f.page.waitForTimeout(20);
@@ -164,20 +188,25 @@ function replyService() {
   return { fetcher, calls };
 }
 
-test('a streamed turn end to end: partials heard so far, staged voices warm before the reveal, a resting gaze reveals the sealed batch', { timeout: 60000 }, async t => {
+test('a streamed turn end to end: partials heard so far, staged voices warm before the reveal, the sealed batch shows once with no gaze on the page', { timeout: 60000 }, async t => {
   const words = 'What should we do after lunch?';
   const service = await turnsService(t, words), reply = replyService();
   const f = await fixture(t, { env: { ERA_CHAT_STREAM_PROTOCOL: 'ws-streaming-turns', ERA_CHAT_STREAM_URL: service.url, ERA_CHAT_STREAM_MODEL: 'stream-model',
     ERA_CHAT_STREAM_TOKEN: 'stream-secret', ERA_CHAT_SPECULATE_MS: '50',
     ERA_CHAT_TEXT_URL: 'https://reply.invalid/responses', ERA_CHAT_TEXT_MODEL: 'reply-model', ERA_CHAT_TEXT_TOKEN: 'reply-secret' }, apiOptions: { fetch: reply.fetcher } });
-  await f.start();
-  await f.restOnCentre(); // her gaze rests in the black centre throughout
+  await f.start(); // no gaze or mouse ever moves on the page
   await f.press('#ask');
   await f.page.waitForFunction(() => document.querySelector('#diagnostics').textContent.startsWith('Heard so far'), null, { timeout: 10000 });
   await f.page.waitForTimeout(400);
   await f.lift();
   await f.page.waitForSelector('.response', { timeout: 10000 });
   assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Play outside', 'Read', 'Not sure']);
+  await f.page.waitForTimeout(400);
+  const { sealed, staged, reveals } = await probe(f.page);
+  assert.equal(staged.length, 3, 'the choices streamed one by one'); assert.equal(sealed.length, 1, 'the hub sealed once, when the stream ended');
+  assert.ok(sealed[0] >= Math.max(...staged), 'the seal follows the last staged choice');
+  assert.deepEqual(reveals.map(r => r.labels), [['Play outside', 'Read', 'Not sure']], 'one reveal per turn, never a partial batch');
+  assert.ok(reveals[0].at - sealed[0] <= REVEAL_SLACK_MS, `revealed ${Math.round(reveals[0].at - sealed[0])} ms after the seal`);
   assert.equal(f.requests.filter(line => line.startsWith('POST /chat/api/choices')).length, 0, 'the hub staged the replies; the page asked for none');
   // Speculation ran on the stable partials; the last one matched the final and was kept (no request after it).
   assert.equal(reply.calls.at(-1), 'what should we do after lunch', 'the kept speculation was on the stable partial');
@@ -188,21 +217,65 @@ test('a streamed turn end to end: partials heard so far, staged voices warm befo
   assert.deepEqual(f.errors, []);
 });
 
-test('the reveal gate: a gaze on a tile cell when the batch seals waits for a move into the centre; the reveal settles 250 ms', { timeout: 60000 }, async t => {
+// The cell where the first reply lands ([1,0]): a waiting tile while replies prepare.
+const firstReplyCell = page => page.evaluate(() => {
+  const r = [...document.querySelectorAll('#grid .tile')].find(el => el.style.gridColumn === '2' && el.style.gridRow === '1').getBoundingClientRect();
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+});
+// Slow the one-shot replies so the gaze is parked before they seal.
+const slowChoices = (page, ms = 400) => page.route('**/chat/api/choices', async route => { await new Promise(r => setTimeout(r, ms)); await route.continue(); });
+
+test('the batch shows at once with the gaze parked on a tile cell; dwell cannot select during the 250 ms settle', { timeout: 60000 }, async t => {
   const f = await fixture(t);
+  await slowChoices(f.page);
   await f.start();
-  await f.page.evaluate(() => { window.__suppress = []; const original = window.Dwell.suppress; window.Dwell.suppress = ms => { window.__suppress.push(ms); return original(ms); }; });
-  const yes = await f.page.locator('.tile.yes').boundingBox();
-  await f.page.mouse.move(yes.x + yes.width / 2, yes.y + yes.height / 2);
+  await f.page.evaluate(() => {
+    window.__suppress = []; const original = window.Dwell.suppress; window.Dwell.suppress = ms => { window.__suppress.push(ms); return original(ms); };
+    window.Dwell.set({ ms: 100 }); // a fast dwell, so only the settle can hold a selection back
+    window.__activations = []; document.addEventListener('dwell:activate', () => window.__activations.push(performance.now()));
+  });
   await f.hold(500);
-  await f.page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'), null, { timeout: 10000 });
-  await f.page.waitForTimeout(600);
-  assert.equal(await f.page.locator('.response').count(), 0, 'a gaze on a tile cell never inherits the new batch');
-  await f.page.evaluate(() => { window.__suppress = []; });
-  await f.restOnCentre();
-  await f.page.waitForSelector('.response');
-  assert.ok((await f.page.evaluate(() => window.__suppress)).length >= 1);
-  assert.ok((await f.page.evaluate(() => window.__suppress)).every(ms => ms === 250), 'the reveal redraw settles 250 ms, not 600');
+  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Preparing', null, { timeout: 10000 });
+  const cell = await firstReplyCell(f.page);
+  await f.page.mouse.move(cell.x, cell.y); // her gaze sits on the tile cell where a reply will land
+  await f.page.evaluate(({ x, y }) => {
+    // From the reveal on, her gaze keeps moving on that cell, as an eye tracker's samples do.
+    const watch = new MutationObserver(() => {
+      if (!document.querySelector('#grid .response')) return;
+      watch.disconnect();
+      const until = performance.now() + 800;
+      const timer = setInterval(() => { document.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y, bubbles: true }));
+        if (performance.now() > until) clearInterval(timer); }, 16);
+    });
+    watch.observe(document.querySelector('#grid'), { childList: true });
+  }, cell);
+  await f.page.waitForSelector('.response', { timeout: 5000 });
+  await f.page.waitForTimeout(900);
+  const { sealed, reveals } = await probe(f.page);
+  assert.equal(reveals.length, 1);
+  assert.ok(reveals[0].at - sealed.at(-1) <= REVEAL_SLACK_MS, `revealed ${Math.round(reveals[0].at - sealed.at(-1))} ms after the replies arrived`);
+  assert.ok(reveals[0].suppressedMs > 150 && reveals[0].suppressedMs <= 250, `the reveal redraw settles 250 ms (${reveals[0].suppressedMs})`);
+  assert.equal(reveals[0].target, null, 'nothing is armed as the batch lands');
+  assert.ok((await f.page.evaluate(() => window.__suppress)).includes(250));
+  const activations = await f.page.evaluate(() => window.__activations);
+  assert.ok(activations.length >= 1, 'after the settle the gaze can select (the probe is live)');
+  assert.ok(activations[0] - reveals[0].at >= 250, `no selection inside the settle (first at ${Math.round(activations[0] - reveals[0].at)} ms)`);
+  assert.deepEqual(f.errors, []);
+});
+
+test('the batch shows at once with no gaze on the page at all', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await slowChoices(f.page);
+  await f.start();
+  await f.page.mouse.move(5, 5); await f.page.mouse.move(-50, -50); // the cursor left the page
+  await f.page.evaluate(() => document.documentElement.dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'mouse' })));
+  await f.hold(500);
+  await f.page.waitForSelector('.response', { timeout: 5000 });
+  const { sealed, reveals } = await probe(f.page);
+  assert.equal(reveals.length, 1);
+  assert.ok(reveals[0].at - sealed.at(-1) <= REVEAL_SLACK_MS, `revealed ${Math.round(reveals[0].at - sealed.at(-1))} ms after the replies arrived`);
+  assert.equal(await f.page.locator('#phase').textContent(), 'Your turn');
+  assert.deepEqual(f.errors, []);
 });
 
 test('a finish the hub refuses (409) shows the partner the recovery wording, never a raw code', { timeout: 60000 }, async t => {

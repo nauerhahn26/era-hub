@@ -136,9 +136,7 @@ test('with the provider gone and outside requests blocked, Chat tiles show cache
     await page.locator('#testing > summary').click();
     await page.locator('#typedQuestion').fill('Would you like music or a story?');
     await page.locator('#typedAsk').click();
-    await page.waitForFunction(() => document.querySelector('#notice')?.textContent.includes('Replies ready'));
-    const rest = await page.locator('.tile.rest').first().boundingBox();
-    await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
+    // The sealed batch shows at once (spec §4): no gaze move is needed.
     await page.locator('.response').first().waitFor();
     await page.waitForFunction(() => [...document.querySelectorAll('.response img.chat-symbol')].every(img => img.complete && img.naturalWidth > 0));
     const replies = await page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.querySelector('.label').textContent, node.dataset.symbol, node.dataset.picture]));

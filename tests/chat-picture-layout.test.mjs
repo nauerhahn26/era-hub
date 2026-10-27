@@ -179,9 +179,7 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
   await page.locator('#testing > summary').click();
   await page.locator('#typedQuestion').fill('What would you like?');
   await page.locator('#typedAsk').click();
-  await page.waitForFunction(() => document.querySelector('#notice')?.textContent.includes('Replies ready'));
-  const rest = await page.locator('.tile.rest').first().boundingBox();
-  await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
+  // The sealed batch shows at once (spec §4): no gaze move is needed.
   await page.locator('.response').first().waitFor();
   await page.waitForFunction(() => [...document.querySelectorAll('#grid img.chat-symbol')].every(img => img.complete && img.naturalWidth > 0));
   for (const viewport of [{ width: 1600, height: 1000 }, { width: 1280, height: 800 }]) {

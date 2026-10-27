@@ -125,16 +125,13 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   await start(); await page.waitForTimeout(150); assert.equal(uploaded.length, 0, 'ready state sends no audio');
   await finishHold(); assert.ok(uploaded.length > 0); assert.equal(controls.includes('arm'), false);
   await page.evaluate(generation => window.__timingEvents.onmessage({ data: JSON.stringify({ type: 'final', generation, text: 'Would you like music or a story?', timings: { activityMs: 3, cloudMs: 30, finalDecodeMs: 33, audioMs: 240 } }) }), generation);
-  await page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'));
-  assert.equal(await page.locator('#phase').textContent(), 'Replies ready');
-  assert.equal(await page.locator('.response').count(), 0, 'completed replies still require a fresh neutral movement');
-  let state = await waitForChatState(page, value => value.timings.some(row => row.kind === 'hold' && Number.isFinite(row.timings.transcriptToChoicesMs)));
-  let stored = { version: 1, retention: 40, turns: state.value.timings };
-  const held = stored.turns.find(row => row.kind === 'hold'); assert.ok(held.timings.transcriptToChoicesMs >= 0, JSON.stringify(stored.turns)); assert.equal(held.timings.choicesToRevealMs, undefined);
-  const rest = await page.locator('.rest').first().boundingBox(); await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
-  await page.waitForSelector('.response'); await page.locator('.response').first().click();
-  state = await waitForChatState(page, value => value.timings.some(row => row.kind === 'hold' && row.status === 'completed'));
-  stored = { version: 1, retention: 40, turns: state.value.timings }; assertContentFreeMetrics(stored);
+  // The sealed batch shows at once, with no gaze move (spec §4, 10/27 evening).
+  await page.waitForSelector('.response', { timeout: 5000 });
+  assert.equal(await page.locator('#phase').textContent(), 'Your turn');
+  assert.equal(await page.locator('.response').count(), 2);
+  await page.locator('.response').first().click();
+  let state = await waitForChatState(page, value => value.timings.some(row => row.kind === 'hold' && row.status === 'completed'));
+  let stored = { version: 1, retention: 40, turns: state.value.timings }; assertContentFreeMetrics(stored);
   const completed = stored.turns.find(row => row.kind === 'hold' && row.status === 'completed');
   for (const name of ['releaseToDrainedMs', 'finishRoundTripMs', 'releaseToTranscriptMs', 'transcriptToChoicesMs', 'choicesToRevealMs', 'revealToSelectMs', 'selectionToPlaybackMs', 'playbackMs']) assert.ok(Number.isFinite(completed.timings[name]), name);
   assert.equal(completed.timings.workerActivityMs, 3); assert.equal(completed.timings.workerCloudMs, 30);
