@@ -48,8 +48,8 @@ once phase 1 has landed.
       re-runs a recorded turn through any configured transcription setting.
 - [x] Tests: schema, bounded files, off-by-default, no content in production
       rows while test mode is off, pool line shape, report tool on fixtures.
-- [ ] Gate green, unsigned patch, dad's word, home device, dad tests one evening
-      and we read the numbers.
+- [x] Gate green (190/0), patch v1.0.25, dad's word, home device nudged; dad
+      tests one evening and we read the numbers (open).
 
 ## Phase 2 — streaming pipeline
 
@@ -80,8 +80,8 @@ Built 10/27 on `feat/real-time-chat` (spec §3.5 "Decided shapes").
       end to end (partials, speculation, streamed choices, saved voice)
       (`tests/chat-stream-browser.test.mjs`).
 - [x] Host real runs with the private settings (spec §3.5 numbers).
-- [ ] Gate green, VM leg B on the payload, unsigned patch, dad's word, home
-      device; phase-1 numbers compared to the §2 targets.
+- [x] Gate green, VM leg B 12/12, patch v1.0.25, dad's word, home device nudged;
+      device numbers against §2 targets still to read (open).
 
 ## Phase 3 — pictures
 
@@ -104,7 +104,7 @@ Built 10/27 in `era-hub--wt-real-time-chat-pictures` (spec §6 "Decided shapes")
 - [x] Tests: schema rejects unknown symbols, every vocabulary id resolves,
       no two tiles share a symbol, negation never gets an affirmative picture,
       layout geometry, offline render from cache.
-- [ ] Gate, patch, dad's word, home device.
+- [x] Gate, patch v1.0.25, dad's word, home device nudged.
 
 ## Phase 4 — school and local (after dad's go)
 
@@ -133,6 +133,27 @@ Built 10/27 in `era-hub--wt-real-time-chat-pictures` (spec §6 "Decided shapes")
 Open for dad: correct the 26 draft references; fund or drop the
 token-streaming trial; a teacher's and a child's voice clips when possible.
 
-## Retrospective
+## Retrospective (10/27, same day)
 
-(to be written)
+- Five read-only recon agents, then four builders in parallel, then three
+  phase builders in sequence with one independent reviewer each; one calendar
+  day from "way too slow" to a published patch. Agents wrote every line; the
+  overseer scoped, reviewed, squashed, gated, landed and released.
+- The sibling worktree for pictures kept two builders off one tree; the merge
+  caught a real bug (the model's picture pick never reached the page) that
+  both suites had passed around.
+- The full gate caught what focused suites could not: a require of the
+  vocabulary file killed every installed hub at boot. Installed-copy suites
+  build from the payload module list, so a new hub module must never require
+  a `public/` file at load time.
+- A gate on a tree that an agent is still editing reports `inputs-changed`
+  and may fail on half-written code; gate only a committed tree.
+- The "333 ms smaller reply setting" in the earlier plan timed failed
+  requests. Benchmarks must refuse rows whose status is not success.
+- Trial accounts: one signup passed its bot check only in a headed browser on
+  a virtual screen; two needed dad's hand; one trial refused for balance.
+- Open: device-side numbers under test mode, the stacked-big picture layout
+  choice, dad's transcript corrections, a teacher's and a child's voice,
+  school reachability (phase 4), and the deferred review nits (page buffers
+  the whole voice clip on a miss; socket edge cases; retry on the reply
+  service's concurrency limit).
