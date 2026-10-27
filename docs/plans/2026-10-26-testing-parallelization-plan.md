@@ -409,7 +409,40 @@ rather than by the tool. The lock-out is the main lane's exclusive flock.
       side by side. Landing stays merge-only: the second lander syncs and
       re-gates (14 min now; minutes after Phase 3 for test-only merges).
 
-## Phase 3: per-suite reuse, rerun-failed, restamp (three to four days)
+## Phase 3: per-suite reuse, rerun-failed, restamp
+
+Progress 10/27 01:00 (built in one sitting in `era-hub--wt-gate-reuse`,
+committed there, not landed): `tools/testing/reuse.mjs` holds the run store
+under `$ERA_GATE_RUNS`, a nine-part key per suite (runtime manifest by
+content, the private scanner copies, collected helpers, harness, node and
+Playwright with browser revisions, suite environment, the suite's frozen
+digest, its registry entry or the whole registry for suites that read it),
+the qualifying rule (identical key, a plain pass, under 24 h, no guard
+change), the failure ledger and the shared-hub guard. `era-gate.sh` gains
+`--no-cache`, `--rerun-failed RUN`, `--restamp RUN`, `--only`; the hub starts
+only when something runs; a receipt line and receipt.json precede the
+unchanged stamp and summary. `lanes.mjs` skips REUSE and refused suites,
+retries one failed suite once, alone, at the end (never a timeout, a kill,
+an out-of-memory or an EADDRINUSE), prints FLAKY and appends flakes.jsonl.
+24 tests with fake suites; every pinned gate shape green. A real gate has
+not run it yet. Decisions taken: a FLAKY on a key that failed in an
+earlier gate uses the one retry and stays FLAKY until the key changes or a
+`--no-cache` gate passes it; `--no-cache` ignores the ledger; the coarse
+helper rule stays (any helper change reruns everything; per-consumer
+invalidation is v2); root-level *.md count as docs; the signed release
+flow passes `--no-cache`. Costs now: a wrong suite file, fixed, is a minute
+plus that suite; a race on identical inputs costs the suite once more
+inside the same gate; a resource failure `--rerun-failed`; an expired stamp
+`--restamp` in seconds; a shared helper or fixture change is still a full
+14 minute gate. The retry fields `retry`/`owner` in the registry are
+unused: every suite gets the one retry, by dad's decision. Still to do:
+land and release print the receipt (house repo); the isolated runner's
+validator learns REUSE and FLAKY before its jobs get a store; a signed cut
+run with `--skip-gate` or `--resume-sign` accepts any green stamp under 2 h,
+which may have been composed from reused passes, so "signed cuts run fresh"
+holds only on the normal signed path until the stamp or receipt carries a
+freshness mark the release script checks.
+ (three to four days)
 
 - [ ] 3.1 Run store under `$ERA_GATE_RUNS/<run-id>/` (seam, never `$HOME`;
       unset means no store and no reuse): `inputs.json`, `plan.tsv`,
