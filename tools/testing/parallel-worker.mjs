@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { GATE_LANES } from './parallel-capacity.mjs';
 
 const HERE=path.dirname(fileURLToPath(import.meta.url));
 export const CLI=path.resolve(HERE,'../parallel-gate.mjs');
@@ -83,8 +84,12 @@ export function executionEnvironment({directory,manifest}) {
     ERA_DATA_DIR:manifest.seedDir,ERA_WT_SUFFIX:manifest.suffix || '',ERA_TEST_PORT:'8388',
     ERA_GATE_STAMPS:path.join(directory,'issued-stamps'),
     ERA_PARALLEL_JOB_DIR:directory,ERA_GAZE_SRC:manifest.clones?.['era-gaze'] || path.join(manifest.workspace,'era-gaze'),
-    ERA_CHAT_CONFIG_DISABLED:'1',
+    ERA_CHAT_CONFIG_DISABLED:'1',ERA_GATE_LANES:String(GATE_LANES),
     GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',
+    // glibc malloc returns freed native memory to the kernel (era-gate.sh sets the same two
+    // before its runner; measured 10/27: clothing.test.mjs peak 1115 MB to 870 MB). Linux test
+    // environment only: the product and the Windows legs never read it.
+    MALLOC_MMAP_THRESHOLD_:'131072',MALLOC_TRIM_THRESHOLD_:'131072',
   };
 }
 export function parseProgress(text) {

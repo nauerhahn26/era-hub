@@ -2,8 +2,23 @@
 # era-gate.sh — the L0/L1 parity gate for the Our Era Comms workspace.
 # Collects every sibling repo's test suite into gate/ (copies, port re-pointed
 # to the test instance), starts the hub server on $ERA_TEST_PORT (default 8378,
-# NEVER the live 8377), runs the suites, reports.
+# NEVER the live 8377), runs the suites, reports. Each gate runs in its own
+# network namespace and starts when admitted (a free slot and the memory for
+# its lanes), so gates in different worktrees run side by side.
 # Flow: docs/dev-flow.md
+#
+# A full gate is cache-aware (design 2026-10-26 3.2; tools/testing/reuse.mjs):
+# every frozen suite gets a key, a suite whose key holds a qualifying pass in
+# the run store ($ERA_GATE_RUNS, default ~/.local/state/era-gate-runs) prints
+# REUSE instead of running, the rest run in lanes, one failed suite may run
+# once more at the end (FLAKY), and the 4-line stamp is composed from both.
+#   --no-cache            run every suite fresh (the run is still recorded)
+#   --rerun-failed RUN    run only what failed or did not finish in RUN (a run
+#                         id under the store, its directory, or latest); refused
+#                         when a suite that passed there cannot be reused now
+#   --restamp RUN         every suite reused from RUN's evidence: no hub, no
+#                         suite, a fresh stamp; refused otherwise
+#   --only SUITE[,...]    those suites (IDs or file names) only; no stamp, no store
 set -uo pipefail
 
 # These guards are also exercised against synthetic workspaces and owned local
@@ -19,6 +34,29 @@ gate_capabilities() {
 
 # Capability discovery must be read-only even on an unassembled checkout.
 if [ "${1:-}" = --capabilities ]; then gate_capabilities; exit 0; fi
+
+gate_parse_options() {
+  local chosen=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --no-cache) GATE_NO_CACHE=1 ;;
+      --rerun-failed|--restamp|--only)
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#--}" = "$2" ] || { gate_error "$1 needs a value"; return 1; }
+        case "$1" in --rerun-failed) GATE_RERUN="$2" ;; --restamp) GATE_RESTAMP="$2" ;; *) GATE_ONLY="$2" ;; esac
+        shift ;;
+      *) gate_error "unknown option: $1"; return 1 ;;
+    esac
+    shift
+  done
+  [ -z "$GATE_RERUN" ] || chosen=$((chosen+1))
+  [ -z "$GATE_RESTAMP" ] || chosen=$((chosen+1))
+  [ -z "$GATE_ONLY" ] || chosen=$((chosen+1))
+  [ "$chosen" -le 1 ] || { gate_error "--rerun-failed, --restamp and --only exclude one another"; return 1; }
+  [ "$GATE_NO_CACHE" = 0 ] || [ -z "$GATE_RERUN$GATE_RESTAMP" ] || {
+    gate_error "--no-cache reads no earlier run; it cannot rerun or restamp one"; return 1;
+  }
+  [ "$chosen" = 0 ] || [ "${ERA_GATE_MODE:-full}" = full ] || { gate_error "an option names its own selection; ERA_GATE_MODE must stay full"; return 1; }
+}
 
 gate_acquire_lock() {
   local descriptor="${ERA_GATE_LOCK_FD:-}" expected actual
@@ -38,6 +76,236 @@ gate_acquire_lock() {
   if flock -n 9; then return 0; fi
   echo "== era-gate: another gate run is active — queued, waiting… =="
   flock 9 || { gate_error "cannot acquire gate lock"; return 1; }
+}
+
+# ---- admission and isolation (gate-speed plan phase 2b) ----------------------
+# A gate no longer holds LOCK exclusively for its whole run. It re-executes
+# itself inside a private network namespace (gate_namespace_argv), where its
+# hub and every suite's fixed port are its own, and a slot registry decides
+# when it may start: one file per running gate under SLOTS (pid, start ticks,
+# lanes, start time, checkout, isolated), pruned and written under SLOTS/.lock,
+# which is held for milliseconds. Rules (gate_admission_decision): fewer than
+# ERA_GATE_MAX_GATES (default 2) other gates run, none in this checkout (gate/
+# and public/ belong to the checkout), and MemAvailable covers the lanes at
+# 1 GiB each plus a 1 GiB reserve; room for fewer lanes than asked runs fewer
+# (one lane needs 2 GiB), room for none waits. A gate admitted under
+# GATE_ADMIT_RAMP (120) seconds ago has its lanes' 1 GiB each taken off
+# MemAvailable first: it has not reached its peak yet. Jobs of the isolated
+# runner hold slots too (its host worker writes them), so they count. A
+# waiting gate polls every GATE_ADMIT_POLL seconds and says why every
+# GATE_ADMIT_LOG_EVERY seconds.
+# An admitted isolated gate holds LOCK shared for its run, so a gate that runs
+# unisolated (the fallback when unshare is refused, or a branch whose
+# era-gate.sh predates admission) still takes LOCK exclusively and waits for
+# every isolated gate, exactly as one gate waited for another before; while
+# such a gate is queued for LOCK, new isolated gates stand back so it is not
+# starved (flock grants new shared holds past a queued exclusive request).
+
+gate_start_ticks() {
+  local identity
+  identity="$(gate_process_identity "$1")" || return 1
+  printf '%s\n' "${identity#*:}"
+}
+
+gate_mem_available_kib() {
+  local key value rest
+  while read -r key value rest; do
+    if [ "$key" = MemAvailable: ] && [[ "$value" =~ ^[0-9]+$ ]]; then printf '%s\n' "$value"; return 0; fi
+  done <"$MEMINFO"
+  gate_error "cannot read MemAvailable"
+}
+
+gate_gib() {
+  printf '%d.%d\n' "$(($1 / 1048576))" "$(($1 * 10 / 1048576 % 10))"
+}
+
+# Prints "<other gates running> <1 when one runs in this checkout, else 0>
+# <lanes of those admitted under GATE_ADMIT_RAMP seconds ago>". A young gate
+# has not reached its peak yet (collection, the clothing build), so the caller
+# sets 1 GiB a lane of its memory aside: two gates admitted a minute apart do
+# not both count the same free memory. A slot whose pid has ended, is a
+# zombie, or now names another process (its start ticks differ) is a gate
+# that died without cleaning up: dropped.
+gate_live_slots() {
+  local file pid key value start hub at lanes current now running=0 same=0 young=0
+  now="$(date +%s)"
+  for file in "$SLOTS"/*; do
+    pid="${file##*/}"
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [ -f "$file" ] && [ "$pid" != "$$" ] || continue
+    start=""; hub=""; at=""; lanes=""
+    while IFS='=' read -r key value; do
+      case "$key" in start) start="$value" ;; hub) hub="$value" ;; at) at="$value" ;; lanes) lanes="$value" ;; esac
+    done <"$file"
+    current="$(gate_start_ticks "$pid")" || current=""
+    if [ -z "$current" ] || [ "$current" != "$start" ]; then rm -f -- "$file"; continue; fi
+    running=$((running + 1))
+    [ "$hub" != "$HUB" ] || same=1
+    [[ "$lanes" =~ ^[1-9]$ ]] || lanes=1
+    if [[ "$at" =~ ^[0-9]+$ ]] && [ $((now - at)) -lt "$GATE_ADMIT_RAMP" ]; then young=$((young + lanes)); fi
+  done
+  printf '%s %s %s\n' "$running" "$same" "$young"
+}
+
+# $1 other gates running, $2 1 when one runs in this checkout, $3 MemAvailable
+# in kB, $4 lanes asked, $5 ERA_GATE_MAX_GATES. Prints "admit <lanes>" or
+# "wait <reason>".
+gate_admission_decision() {
+  local running="$1" same="$2" available="$3" asked="$4" max="$5" fit
+  if [ "$same" = 1 ]; then echo "wait another gate is running in this checkout"; return 0; fi
+  if [ $((running + 1)) -gt "$max" ]; then echo "wait ERA_GATE_MAX_GATES=$max reached"; return 0; fi
+  fit=$((available / 1048576 - 1))
+  if [ "$fit" -lt 1 ]; then echo "wait one lane needs 2 GiB free"; return 0; fi
+  [ "$fit" -lt "$asked" ] || fit="$asked"
+  echo "admit $fit"
+}
+
+# True while a process is blocked asking for LOCK exclusively (an unisolated
+# gate, a verify-and-land run): /proc/locks lists a blocked request with "->".
+gate_exclusive_waiting() {
+  local inode
+  inode="$(stat -Lc %i -- "$LOCK" 2>/dev/null)" || return 1
+  grep -Eq "^[0-9]+: -> FLOCK +ADVISORY +WRITE +[^ ]+ +[0-9a-f]+:[0-9a-f]+:$inode " /proc/locks
+}
+
+gate_register_slot() {
+  local start temp="$SLOTS/.$$.tmp"
+  start="$(gate_start_ticks "$$")" || { gate_error "cannot read this gate's process identity"; return 1; }
+  if ! printf 'pid=%s\nstart=%s\nlanes=%s\nat=%s\nhub=%s\nisolated=%s\n' \
+      "$$" "$start" "$1" "$(date +%s)" "$HUB" "$2" >"$temp" || ! mv -f -- "$temp" "$SLOTS/$$"; then
+    rm -f -- "$temp"; gate_error "cannot write the gate slot registry"; return 1
+  fi
+  GATE_SLOT="$SLOTS/$$"
+}
+
+# Only this gate's own slot, by its own pid: never another gate's.
+gate_release_slot() {
+  if [ -n "${GATE_SLOT:-}" ] && [ "$GATE_SLOT" = "$SLOTS/$$" ]; then rm -f -- "$GATE_SLOT"; fi
+  GATE_SLOT=""
+  return 0
+}
+
+# The re-executed gate inside its namespace has the pid that registered.
+gate_adopt_slot() {
+  local start
+  if ! start="$(gate_start_ticks "$$")" || [ ! -f "$SLOTS/$$" ] || ! grep -qx "start=$start" "$SLOTS/$$"; then
+    gate_error "this namespaced gate has no admission slot of its own"; return 1
+  fi
+  GATE_SLOT="$SLOTS/$$"
+}
+
+# $1 1 when this gate already holds LOCK exclusively (the fallback, or an
+# inherited integration lock), else 0: an admitted gate then holds LOCK shared
+# on GATE_SHARED_FD, which stays open across the exec into its namespace.
+# $2 1 when the gate will run isolated (recorded in its slot). Exports the
+# admitted ERA_GATE_LANES.
+gate_admit() {
+  local held="$1" isolated="$2" asked="$ERA_GATE_LANES" max="${ERA_GATE_MAX_GATES:-2}"
+  local registry live running same young available usable kept decision lanes reason logged="" s
+  [[ "$max" =~ ^[1-9]$ ]] || { gate_error "ERA_GATE_MAX_GATES must be a whole number from 1 to 9"; return 1; }
+  mkdir -p "$SLOTS" || { gate_error "cannot create the gate slot registry"; return 1; }
+  while :; do
+    if [ -n "${ERA_GATE_CANCEL_FILE:-}" ] && [ -f "$ERA_GATE_CANCEL_FILE" ]; then
+      echo "== era-gate: cancelled before execution =="; exit 130
+    fi
+    running="?"; available=""; kept=""; reason=""
+    exec {registry}>"$SLOTS/.lock" || { gate_error "cannot open the gate slot registry"; return 1; }
+    if flock -w "$GATE_ADMIT_POLL" "$registry"; then
+      read -r running same young <<<"$(gate_live_slots)"
+      available="$(gate_mem_available_kib)" || { exec {registry}>&-; return 1; }
+      usable=$((available - young * 1048576)); [ "$usable" -ge 0 ] || usable=0
+      [ "$young" = 0 ] || kept=", $young GiB kept for gates still starting"
+      decision="$(gate_admission_decision "$running" "$same" "$usable" "$asked" "$max")"
+      lanes="${decision#admit }"
+      if [ "$decision" != "admit $lanes" ]; then
+        reason="${decision#wait }"
+      elif [ "$held" != 1 ]; then
+        if gate_exclusive_waiting; then
+          reason="an unisolated gate is queued for the gate lock"
+        else
+          exec {GATE_SHARED_FD}>"$LOCK" || { exec {registry}>&-; gate_error "cannot open the gate lock"; return 1; }
+          if ! flock -s -n "$GATE_SHARED_FD"; then
+            exec {GATE_SHARED_FD}>&-; GATE_SHARED_FD=""
+            reason="an unisolated gate holds the gate lock"
+          fi
+        fi
+      fi
+      if [ -z "$reason" ]; then
+        gate_register_slot "$lanes" "$isolated" || { exec {registry}>&-; return 1; }
+        exec {registry}>&-
+        export ERA_GATE_LANES="$lanes"
+        s=s; [ "$lanes" != 1 ] || s=""
+        echo "== era-gate: admitted: $lanes lane$s; $running other gate$([ "$running" = 1 ] || echo s) running, $(gate_gib "$available") GiB free$kept =="
+        [ "$lanes" = "$asked" ] || echo "== era-gate: memory admits $lanes of $asked lanes: this gate runs $lanes lane$s =="
+        return 0
+      fi
+    else
+      reason="the slot registry is busy"
+    fi
+    exec {registry}>&-
+    if [ -z "$logged" ] || [ $((SECONDS - logged)) -ge "$GATE_ADMIT_LOG_EVERY" ]; then
+      echo "== era-gate: waiting for a slot: $running gate$([ "$running" = 1 ] || echo s) running, $([ -n "$available" ] && gate_gib "$available" || echo '?') GiB free$kept ($reason) =="
+      logged="$SECONDS"
+    fi
+    sleep "$GATE_ADMIT_POLL"
+  done
+}
+
+# "entered": this gate re-executed itself into its namespace (the marker names
+# the network it is in). "runner": the isolated runner started it inside its
+# own namespaces, private /tmp and admission (tools/testing/parallel-worker.py
+# sets ERA_PARALLEL_JOB_DIR; a user namespace confirms it). "host" otherwise.
+gate_isolation_state() {
+  local net first second count
+  net="$(readlink /proc/self/ns/net 2>/dev/null)" || net=""
+  if [ -n "${ERA_GATE_ISOLATED:-}" ] && [ "$ERA_GATE_ISOLATED" = "$net" ]; then echo entered; return 0; fi
+  if [ -n "${ERA_PARALLEL_JOB_DIR:-}" ] && read -r first second count <"$UID_MAP" &&
+     ! { [ "$first" = 0 ] && [ "$second" = 0 ] && [ "$count" = 4294967295 ]; }; then
+    echo runner; return 0
+  fi
+  echo host
+}
+
+# The namespace, built as the isolated runner builds its own
+# (tools/testing/parallel-worker.py): a user namespace that maps only this
+# uid, a network namespace with loopback up plus a dummy test link on a
+# documentation address (TEST-NET-1, so the LAN-socket cases have a
+# non-loopback IPv4 and still no route out), then every capability dropped
+# under no_new_privs, so permission cases are not bypassed. No PID or mount
+# namespace: the gate stops only pids it started, stamps and job dirs stay on
+# the host's paths, and unshare and setpriv exec in place, so the gate keeps
+# its pid (a detached launch's pid file stays true). Sets GATE_NS_ARGV, to be
+# followed by the slot to drop if setup fails ('' for none) and the command.
+gate_namespace_argv() {
+  local tool ip_bin address
+  GATE_NS_ARGV=()
+  for tool in unshare setpriv readlink; do
+    type -P "$tool" >/dev/null || { GATE_ISOLATION_REFUSED="$tool is not installed"; return 1; }
+  done
+  ip_bin="$(PATH="$PATH:/usr/sbin:/sbin" type -P ip)" || { GATE_ISOLATION_REFUSED="ip is not installed"; return 1; }
+  printf -v address '%d.%d.%d.%d' 192 0 2 1
+  GATE_NS_ARGV=(unshare --user --map-current-user --keep-caps --net -- bash -c '
+ip_bin="$1" address="$2" slot="$3"; shift 3
+if "$ip_bin" link set lo up && "$ip_bin" link add test-link type dummy &&
+   "$ip_bin" addr add "$address/24" dev test-link && "$ip_bin" link set test-link up &&
+   ERA_GATE_ISOLATED="$(readlink /proc/self/ns/net)"; then
+  export ERA_GATE_ISOLATED
+  exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs -- "$@"
+fi
+[ -z "$slot" ] || rm -f -- "$slot"
+echo "FATAL: cannot prepare the gate network namespace" >&2
+exit 1' era-gate-namespace "$ip_bin" "$address")
+}
+
+# Rehearses the exact entry with `true` in place of the gate. On refusal
+# GATE_ISOLATION_REFUSED says why (the first line the refusal printed).
+gate_isolation_probe() {
+  local output
+  GATE_ISOLATION_REFUSED=""
+  gate_namespace_argv || return 1
+  if output="$("${GATE_NS_ARGV[@]}" "" true 2>&1)"; then return 0; fi
+  GATE_ISOLATION_REFUSED="${output%%$'\n'*}"
+  [ -n "$GATE_ISOLATION_REFUSED" ] || GATE_ISOLATION_REFUSED="the namespace probe failed"
+  return 1
 }
 
 gate_validate_port() {
@@ -371,6 +639,8 @@ gate_verify_execution() {
 # it hashed at start or "missing", source ID), counted exactly as the serial
 # loop counted: a pass once; a failure once, by its label; a copy refused as
 # missing or changed once, by its file name, and never recorded as executed.
+# A reused pass (its key holds the frozen digest) and a FLAKY pass count as
+# passes; a suite refused for two failures on its key counts as a failure.
 # $1 is the runner's exit status: anything but 0 or 1 means it did not finish.
 gate_record_results() {
   local status="$1" state index digest id t label
@@ -382,9 +652,12 @@ gate_record_results() {
       }
       if [[ "$t" = *.test.mjs ]]; then label="$t"; else label="${t%.js}"; fi
       case "$state" in
-        pass|fail)
+        pass|fail|reused|flaky|blocked)
           gate_record_execution "$index" "$digest" || { fail=$((fail+1)); failed="$failed $t"; continue; }
-          if [ "$state" = pass ]; then pass=$((pass+1)); else fail=$((fail+1)); failed="$failed $label"; fi ;;
+          case "$state" in
+            pass|reused|flaky) pass=$((pass+1)) ;;
+            *) fail=$((fail+1)); failed="$failed $label" ;;
+          esac ;;
         changed)
           if [ "$digest" = missing ]; then gate_error "missing collected suite: $id"
           else gate_error "collected suite changed before execution: $id"; fi
@@ -394,6 +667,19 @@ gate_record_results() {
     done <"$GATE/.lane-results.tsv"
   fi
   [ "$status" = 0 ] || [ "$status" = 1 ] || { fail=$((fail+1)); failed="$failed lanes"; }
+}
+
+# The run's record in the store (tools/testing/reuse.mjs record): outputs, the
+# guard's second look at the shared hub's data, the flake ledger, receipt.json
+# and the receipt line, all before the summary line. Only a full gate whose
+# plan found a writable store; a record that cannot be written costs later
+# gates their reuse, never this gate its verdict.
+gate_record_run() {
+  [ "${ERA_GATE_MODE:-full}" = full ] || return 0
+  [ -f "$GATE/.reuse.json" ] || return 0
+  node "$HUB/tools/testing/reuse.mjs" record "$GATE" --data "$DATA" \
+    --checks "inputs=$CHECK_INPUTS,hub=$CHECK_HUB,execution=$CHECK_EXECUTION" --pass "$pass" --fail "$fail" ||
+    echo "reuse: WARNING: this run's record could not be written; later gates will not reuse it"
 }
 
 # An early exit (TERM or INT while suites run) stops the lane runner: only the
@@ -436,6 +722,7 @@ gate_finish() {
     gate_refresh_data_links "$ERA_GATE_SEED_DIR" || status=1
     rm -rf -- "$OWN_DATA" || status=1
   fi
+  gate_release_slot
   trap - EXIT
   exit "$status"
 }
@@ -446,6 +733,11 @@ DATA="${ERA_GATE_SEED_DIR:-${ERA_DATA_DIR:-$ROOT/era-family/test-data}}"  # immu
 PORT="${ERA_TEST_PORT:-8378}"
 GATE="$HUB/gate"
 OWN_DATA=""; OWN_INPUTS=""; SRV=""; SRV_ID=""; SRV_ARGS=""; GATE_PREPARED=0; LANES_PID=""; LANES_ID=""
+GATE_NO_CACHE=0; GATE_RERUN=""; GATE_RESTAMP=""; GATE_ONLY=""
+# Parsed (and refused) before admission, so a wrong option never waits for a
+# slot. A gate that enters its namespace hands the same options on and parses
+# them again there; what --only implies is exported after admission.
+gate_parse_options "$@" || exit 1
 # ERA_WT_SUFFIX (9/17): a multi-repo feature keeps sibling worktrees
 # (<repo>--wt-<slug>); when set and that directory exists, source the
 # sibling from there, else from the main checkout as before. Without it a
@@ -458,18 +750,26 @@ sib() { local d="$ROOT/$1${ERA_WT_SUFFIX:-}"; [ -d "$d" ] && echo "$d" || echo "
 export ERA_GAZE_SRC="$(sib era-gaze)"
 export ERA_HUB_SRC="$HUB"
 # How many suites run at once (tools/testing/lanes.mjs). 1 is the serial loop
-# exactly: the frozen order, one suite at a time. Validated here, before the
-# lock, and exported so the runner reads the value this gate checked.
+# exactly: the frozen order, one suite at a time. Validated here, before
+# admission (which lowers it to what free memory admits), and exported so the
+# runner reads the value this gate checked.
 export ERA_GATE_LANES="${ERA_GATE_LANES:-2}"
 [[ "$ERA_GATE_LANES" =~ ^[1-8]$ ]] || { gate_error "ERA_GATE_LANES must be a whole number from 1 to 8"; exit 1; }
 gate_validate_port "$PORT" || exit 1
 gate_export_test_data || exit 1
 export ERA_GATE_SEED_DIR="$DATA"
 
-# one gate at a time, machine-wide: concurrent runs (e.g. two feature worktrees)
-# thrash CPU and can fight over default ports — the second run WAITS its turn.
-# (Born of the 8/24 two-session collision; see aac-board-builder
-# docs/parallel-worktrees.md.)
+# Admission, not exclusion (10/27; functions and rules under "admission and
+# isolation" above). Until then one gate ran at a time, machine-wide, because
+# concurrent runs fought over the fixed suite ports and the 8378 hub (the 8/24
+# two-session collision; aac-board-builder docs/parallel-worktrees.md). Now each
+# gate runs in its own network namespace, where those ports are its own, and
+# starts when a slot is free: ERA_GATE_MAX_GATES gates (default 2) and the
+# memory for their lanes; otherwise it WAITS its turn and says why once a
+# minute. Where unshare is refused the gate says so and falls back to the old
+# exclusive lock: it waits for every other gate and runs alone. Inside the
+# isolated runner it does neither (the runner isolated and admitted it). There
+# is no mount namespace: stamps, gate/ and job dirs are the host's own paths.
 # A green run leaves a stamp at $ERA_GATE_STAMPS/<HEAD^{tree}> (default
 # /tmp/era-gate-green; see write_green_stamp below) so anything that needs "is
 # THIS tree gated?" can ask by tree sha instead of trusting one global file two
@@ -477,7 +777,43 @@ export ERA_GATE_SEED_DIR="$DATA"
 # all read it, and they honour the same ERA_GATE_STAMPS seam so a test run can
 # point the whole rail at a scratch dir.
 LOCK="/tmp/era-gate.lock"
-gate_acquire_lock || exit 1
+SLOTS="/tmp/era-gate-slots"
+MEMINFO="/proc/meminfo"
+UID_MAP="/proc/self/uid_map"
+GATE_ADMIT_POLL=10
+GATE_ADMIT_LOG_EVERY=60
+GATE_ADMIT_RAMP=120
+GATE_SLOT=""
+case "$(gate_isolation_state)" in
+  entered)
+    # The re-executed gate: the same pid, so its slot and shared hold came along.
+    gate_adopt_slot || exit 1 ;;
+  runner)
+    # The runner's /tmp is private: this lock is the job's own, as before.
+    gate_acquire_lock || exit 1 ;;
+  *)
+    gate_held=0
+    if [ -n "${ERA_GATE_LOCK_FD:-}" ]; then gate_acquire_lock || exit 1; gate_held=1; fi
+    if gate_isolation_probe; then gate_isolated=1; else
+      gate_isolated=0
+      echo "== era-gate: network isolation unavailable ($GATE_ISOLATION_REFUSED); falling back to the exclusive lock =="
+      if [ "$gate_held" = 0 ]; then gate_acquire_lock || exit 1; gate_held=1; fi
+    fi
+    trap 'gate_release_slot' EXIT
+    gate_admit "$gate_held" "$gate_isolated" || exit 1
+    if [ "$gate_isolated" = 1 ]; then
+      echo "== era-gate: entering a private network namespace: the $PORT hub and every suite port are this gate's own =="
+      exec "${GATE_NS_ARGV[@]}" "$GATE_SLOT" bash "$HUB/tools/era-gate.sh" "$@"
+    fi ;;
+esac
+trap 'gate_release_slot' EXIT
+# --only is the affected mode with a selection written once gate/ exists.
+# Exported only here, past the exec above: the re-executed gate parses --only
+# again, and an inherited ERA_GATE_MODE=affected would refuse it.
+if [ -n "$GATE_ONLY" ]; then
+  export ERA_GATE_MODE=affected ERA_GATE_SELECTED="$GATE/.only-selection.json"
+fi
+# The line tools/testing/suite-runner.mjs reads as "this gate is now running".
 echo "== era-gate: lock acquired =="
 [ -z "${ERA_GATE_CANCEL_FILE:-}" ] || [ ! -f "$ERA_GATE_CANCEL_FILE" ] || {
   echo "== era-gate: cancelled before execution =="; exit 130;
@@ -577,6 +913,9 @@ fi
 
 rm -rf "$GATE" && mkdir -p "$GATE" || exit 1
 GATE_PREPARED=1
+if [ -n "$GATE_ONLY" ]; then
+  node "$HUB/tools/testing/reuse.mjs" select "$GATE_ONLY" "$ERA_GATE_SELECTED" || exit 1
+fi
 # era-hub's own suites come from THIS checkout ($HUB) so a feature-worktree
 # gate runs the worktree's new/changed suites, not the main checkout's copy
 # (identical when run from the main checkout, where $HUB = $ROOT/era-hub).
@@ -619,13 +958,23 @@ unset ERA_UPDATE_EVERY_MS ERA_UPDATE_QUIET_MS ERA_BEACON_MS ERA_BEACON_IDLE_MS E
 for chat_setting in "${!ERA_CHAT_@}"; do unset "$chat_setting"; done
 export ERA_CHAT_CONFIG_DISABLED=1
 
-# ERA_DEVICE_ID: the gate's DATA is era-family/test-data (a PRIVATE repo's
-# working tree). Without a name given here the hub would generate one from
-# this build box's hostname and write <DATA>/device-id into that repo — a
-# side effect the clothing-migration plan forbids (device-id.js, plan T4.1).
-# Refuse a race for the test endpoint. A stale or foreign hub belongs to its
-# owner; neither its command name nor its port authorizes this run to kill it.
-gate_port_available "$PORT" || exit 1
+# Reuse (design 3.2; tools/testing/reuse.mjs plan): with the suites' environment
+# now final, a full gate keys every frozen suite, prints the key's parts, and
+# decides per suite: reuse a qualifying pass from the run store, run it, or
+# refuse it (two failures on its key). It writes gate/.reuse.json for the lane
+# runner. Without a writable store it says so and plans nothing. --only and
+# affected runs neither read nor write the store.
+GATE_HUB=1
+if [ "${ERA_GATE_MODE:-full}" = full ]; then
+  GATE_REUSE_ARGS=()
+  [ "$GATE_NO_CACHE" = 0 ] || GATE_REUSE_ARGS+=(--no-cache)
+  [ -z "$GATE_RERUN" ] || GATE_REUSE_ARGS+=(--rerun-failed "$GATE_RERUN")
+  [ -z "$GATE_RESTAMP" ] || GATE_REUSE_ARGS+=(--restamp "$GATE_RESTAMP")
+  node "$HUB/tools/testing/reuse.mjs" plan "$GATE" "$ERA_GATE_INPUTS" "${GATE_REUSE_ARGS[@]}" || exit 1
+  # nothing left to run (every suite reused, as a restamp is): no shared hub
+  [ "$(cat "$GATE/.reuse-to-run" 2>/dev/null)" != 0 ] || GATE_HUB=0
+fi
+
 # Also prove that the endpoint is bindable before launching our owned child.
 require_free_test_port() {
   node -e '
@@ -637,21 +986,46 @@ require_free_test_port() {
     server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close());
   ' "$PORT"
 }
-require_free_test_port || exit 1
-NODE_BIN="$(type -P node)" || exit 1
-SRV_ARGS="$NODE_BIN $HUB/server.js $PORT"
-# ERA_CLOTHING_TICK_MS=0: the shared hub's clothing board is built once, by
-# gate_build_clothing below, never by its own timers mid-run.
-ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate ERA_CLOTHING_TICK_MS=0 \
-  "$NODE_BIN" "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
-SRV=$!
-SRV_ID="$(gate_process_identity "$SRV")" || SRV_ID=""
-gate_wait_process "$SRV" "$SRV_ID" "$SRV_ARGS" || { gate_error "owned test server did not enter its expected command"; exit 1; }
-gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" || { cat "$GATE/server.log"; exit 1; }
-gate_build_clothing "$PORT" || { cat "$GATE/server.log"; exit 1; }
+# ERA_DEVICE_ID: the gate's DATA is era-family/test-data (a PRIVATE repo's
+# working tree). Without a name given here the hub would generate one from
+# this build box's hostname and write <DATA>/device-id into that repo — a
+# side effect the clothing-migration plan forbids (device-id.js, plan T4.1).
+# Refuse a race for the test endpoint. A stale or foreign hub belongs to its
+# owner; neither its command name nor its port authorizes this run to kill it.
+if [ "$GATE_HUB" = 1 ]; then
+  gate_port_available "$PORT" || exit 1
+  require_free_test_port || exit 1
+  NODE_BIN="$(type -P node)" || exit 1
+  SRV_ARGS="$NODE_BIN $HUB/server.js $PORT"
+  # ERA_CLOTHING_TICK_MS=0: the shared hub's clothing board is built once, by
+  # gate_build_clothing below, never by its own timers mid-run.
+  ERA_DATA_DIR="$DATA" ERA_BIND=127.0.0.1 ERA_AI_URL="http://127.0.0.1:1" ERA_DEVICE_ID=gate ERA_CLOTHING_TICK_MS=0 \
+    "$NODE_BIN" "$HUB/server.js" "$PORT" >"$GATE/server.log" 2>&1 &
+  SRV=$!
+  SRV_ID="$(gate_process_identity "$SRV")" || SRV_ID=""
+  gate_wait_process "$SRV" "$SRV_ID" "$SRV_ARGS" || { gate_error "owned test server did not enter its expected command"; exit 1; }
+  gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" || { cat "$GATE/server.log"; exit 1; }
+  gate_build_clothing "$PORT" || { cat "$GATE/server.log"; exit 1; }
+  # The shared-state guard's first look: the owned data after the one awaited
+  # build, before the first suite. The record takes the second after the last.
+  [ ! -f "$GATE/.reuse.json" ] || node "$HUB/tools/testing/reuse.mjs" guard "$DATA" "$GATE/.guard-start.json" || exit 1
+else
+  echo "reuse: nothing to run; the shared hub is not started"
+fi
 
 cd "$GATE"
 pass=0; fail=0; failed=""
+# glibc malloc, for every suite the runner starts (and what they start): a
+# block from 128 KiB up is its own mapping, unmapped when freed, and free
+# space above 128 KiB at the top of a heap is trimmed. With the defaults a
+# suite process kept the native memory its earlier work had freed: measured
+# 10/27 on clothing.test.mjs, 350-440 MB of malloc arenas held at its peak;
+# with these, peak 1115 MB to 870 MB alone, and 770 MB to 613 MB (high-water
+# mark 781 to 647) once its segmentation check ran in a thread of its own;
+# the same 35 cases pass. The Linux test environment only: the product and
+# the Windows legs never read it. The isolated runner's environment list
+# carries the same two (tools/testing/parallel-worker.mjs executionEnvironment).
+export MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072
 # The complete executable set was frozen before any suite ran. A previous
 # suite cannot delete or rewrite a later file and silently shrink acceptance:
 # the lane runner re-hashes each copy against its frozen digest as it starts
@@ -667,16 +1041,21 @@ LANES_ID="$(gate_process_identity "$LANES_PID")" || LANES_ID=""
 wait "$LANES_PID"; lanes_status=$?
 LANES_PID=""; LANES_ID=""
 gate_record_results "$lanes_status"
-gate_verify_execution || { fail=$((fail+1)); failed="$failed execution-set"; }
+CHECK_INPUTS=ok; CHECK_HUB=none; CHECK_EXECUTION=ok
+gate_verify_execution || { fail=$((fail+1)); failed="$failed execution-set"; CHECK_EXECUTION=incomplete; }
 node "$HUB/tools/test-suite.mjs" verify-inputs "$ERA_GATE_INPUTS" --phase running || {
-  fail=$((fail+1)); failed="$failed inputs-changed";
+  fail=$((fail+1)); failed="$failed inputs-changed"; CHECK_INPUTS=changed;
 }
-gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" 1 || {
-  fail=$((fail+1)); failed="$failed shared-hub-identity";
-}
+if [ "$GATE_HUB" = 1 ]; then
+  gate_wait_server "$SRV" "$SRV_ID" "$SRV_ARGS" "$PORT" 1 || {
+    fail=$((fail+1)); failed="$failed shared-hub-identity"; CHECK_HUB=lost;
+  }
+  [ "$CHECK_HUB" = lost ] || CHECK_HUB=ok
+fi
 gate_archive_reports || { fail=$((fail+1)); failed="$failed report-archive"; }
 REPORTS_SAVED=1
 if [ "${ERA_GATE_MODE:-full}" = full ]; then
+  gate_record_run
   [ "$fail" -eq 0 ] && write_green_stamp
   echo "== era-gate: $pass passed, $fail failed${failed:+ →$failed} =="
 else

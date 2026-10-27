@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# release.sh <version> [--patch] [--prerelease] [--dry-run] [--skip-gate] [--resume-sign] — cut an Our Era Comms suite release.
+# release.sh <version> [--patch] [--prerelease] [--dry-run] [--skip-gate] [--resume-sign] [--vm-profile=full|quiet] — cut an Our Era Comms suite release.
 # Two shapes (docs/specs/2026-09-15-dev-flow-worktrees-and-patch-releases-design.md §4):
 #
 #   SIGNED (default, normally vX.Y.0 — a new installer)
-#     1/5 gate       era-gate fully green (no release on a red gate, ever)
+#     1/5 gate       era-gate fully green (no release on a red gate, ever), every
+#                    suite run fresh (--no-cache: no pass reused from an earlier run)
 #     2/5 build      build-dist.sh --unsigned: payload WITH bundled node, tarball,
 #                    zip, checksums, latest.json, and an UNSIGNED Setup.exe
-#     3/5 VM e2e     legs A+B on those very files, pristine Windows 10 (vm-e2e.sh);
+#     3/5 VM e2e     legs A+B on those very files, pristine Windows 10 (vm-e2e.sh
+#                    --profile full: Defender on, as a family PC has it);
 #                    the LIVE installer (the published latest.json's installer_file)
 #                    is downloaded into $DIST/prev/ first: leg B starts from it, and
 #                    when it is the old New-ERA-Setup.exe leg A also runs the
@@ -20,10 +22,13 @@
 #                    it deletes nothing, because a pulled release 404s the website
 #
 #   PATCH (--patch, vX.Y.Z with Z>=1 — a new tarball under the SAME installer)
-#     1/4 gate    2/4 build (build-dist.sh --patch: no makensis; the signed installer
-#     named by the live latest.json is downloaded and re-attached, signature verified)
-#     3/4 VM e2e  vm-e2e.sh --only b: that installer, fresh on the VM, self-updating to
-#     the candidate tarball — the only path a patch takes on any device
+#     1/4 gate    cache-aware: a pass reused from an earlier run counts
+#     2/4 build   build-dist.sh --patch: no makensis; the signed installer
+#     named by the live latest.json is downloaded and re-attached, signature verified
+#     3/4 VM e2e  vm-e2e.sh --only b --profile quiet: that installer, fresh on the VM,
+#     self-updating to the candidate tarball — the only path a patch takes on any device.
+#     Quiet = Defender and Windows Update off for the leg: a patch ships no installer,
+#     so nothing in it meets Defender's download or install checks (10/26: skips the ~7 min quiet wait)
 #     4/4 publish tag + Release with notes naming the installer tag. No signing, no code.
 #
 # Flags
@@ -61,13 +66,27 @@
 #                     Windows box ever installed (P4/P5 review, 9/15).
 #                 Anything else: re-run the whole cut (with --skip-gate if the gate is
 #                 still green), VM legs included.
+#   --vm-profile=full|quiet  the VM guest profile (tools/vm-e2e.sh --profile), overriding
+#                 the shape's default: PATCH quiet, SIGNED full. A patch may take full (the
+#                 slower, Defender-on guest); a signed cut takes quiet only with --dry-run —
+#                 it publishes only on full evidence, and VM-GREEN records which it holds
+#                 (--resume-sign refuses a quiet marker).
 #   --gate-check  (hidden, with --skip-gate) evaluate the gate step only and exit 0/1 —
 #                 nothing is built, signed or published.
 # The website's download links point at the latest release assets.
 set -euo pipefail
-V="${1:?usage: release.sh vX.Y.Z [--patch] [--prerelease] [--dry-run] [--skip-gate] [--resume-sign]}"; shift
-PRE=""; DRY=0; SKIPGATE=0; GATECHECK=0; PATCH=0; RESUME=0
-for a in "$@"; do case "$a" in --prerelease) PRE=1;; --dry-run) DRY=1;; --skip-gate) SKIPGATE=1;; --gate-check) GATECHECK=1;; --patch) PATCH=1;; --resume-sign) RESUME=1;; *) echo "release.sh: unknown flag $a"; exit 2;; esac; done
+V="${1:?usage: release.sh vX.Y.Z [--patch] [--prerelease] [--dry-run] [--skip-gate] [--resume-sign] [--vm-profile=full|quiet]}"; shift
+PRE=""; DRY=0; SKIPGATE=0; GATECHECK=0; PATCH=0; RESUME=0; VMPROFILE=""
+for a in "$@"; do case "$a" in --prerelease) PRE=1;; --dry-run) DRY=1;; --skip-gate) SKIPGATE=1;; --gate-check) GATECHECK=1;; --patch) PATCH=1;; --resume-sign) RESUME=1;; --vm-profile=*) VMPROFILE="${a#--vm-profile=}";; *) echo "release.sh: unknown flag $a"; exit 2;; esac; done
+# ---- the VM guest profile (tests/vm-e2e.test.mjs runs this block as bash) ----
+# full = Defender on, as a family PC has it; quiet = Defender and Windows Update off
+# for the leg (tools/vm-e2e.sh --profile). A patch defaults to quiet, a signed cut to full.
+[ -n "$VMPROFILE" ] || { if [ "$PATCH" = 1 ]; then VMPROFILE=quiet; else VMPROFILE=full; fi; }
+case "$VMPROFILE" in full|quiet) ;; *) echo "release.sh: --vm-profile is full or quiet, not '$VMPROFILE'"; exit 2;; esac
+if [ "$PATCH" = 0 ] && [ "$VMPROFILE" != full ] && [ "$DRY" = 0 ]; then
+  echo "release.sh: a signed cut publishes only on the full (Defender-on) VM profile — a signed installer was hash-flagged once; --vm-profile=quiet is for a --dry-run rehearsal"; exit 2
+fi
+# ---- end of the VM guest profile ----
 if [ "$GATECHECK" = 1 ] && [ "$SKIPGATE" = 0 ]; then
   echo "release.sh: --gate-check only makes sense with --skip-gate (it must never start a gate)"; exit 2
 fi
@@ -99,18 +118,24 @@ if [ "$PATCH" = 1 ]; then N=4; else N=5; fi
 # nothing publishes without one that names the bytes in hand, so no path reaches
 # `gh release create` on a dist the VM never saw. Prints its own reason and
 # returns 1; the caller only has to add "no release".
-#   want=a,b  the signed flow (a full vm-e2e run)
-#   want=b    the patch flow (vm-e2e.sh --only b, which is the shape by design)
+#   want=a,b  the signed flow (a full vm-e2e run, on the full guest profile)
+#   want=b    the patch flow (vm-e2e.sh --only b, which is the shape by design; either profile)
+# On success it prints the evidence it holds (legs, profile), so a log says which.
 vm_green() {
-  local want="$1" legs tsha now feed
+  local want="$1" legs tsha now feed prof
   [ -f "$DIST/VM-GREEN" ] || {
     echo "no $DIST/VM-GREEN — no VM run has ever finished green on this dist. The marker is written by tools/vm-e2e.sh (a --dry-run cut writes it too); a build alone never does."
     return 1; }
   legs="$(awk -F= '/^legs=/{print $2; exit}' "$DIST/VM-GREEN")"
   tsha="$(awk -F= '/^tarball=/{print $2; exit}' "$DIST/VM-GREEN")"
+  # a marker written before guest profiles existed (10/26) came from a full run
+  prof="$(awk -F= '/^profile=/{print $2; exit}' "$DIST/VM-GREEN")"; prof="${prof:-full}"
   case "$want" in
     a,b) [ "$legs" = "a,b" ] || {
            echo "$DIST/VM-GREEN records legs=${legs:-<none>} — a signed release publishes only what legs A (fresh install) AND B (self-update) both drove; run the full tools/vm-e2e.sh."
+           return 1; }
+         [ "$prof" = full ] || {
+           echo "$DIST/VM-GREEN records profile=$prof — a signed release publishes only what the full (Defender-on) guest drove; run tools/vm-e2e.sh again with --profile full."
            return 1; };;
     b)   case ",${legs}," in
            *,b,*) ;;
@@ -125,6 +150,7 @@ vm_green() {
   [ "$feed" = "$now" ] || {
     echo "latest.json names sha256 ${feed:-<none>}, the tarball the VM drove is $now — the feed and the payload disagree; no release."
     return 1; }
+  echo "VM evidence: legs=$legs profile=$prof on tarball ${now:0:12}"
 }
 
 # --resume-sign preconditions, checked BEFORE anything else so a hopeless
@@ -201,7 +227,10 @@ if [ "$SKIPGATE" = 1 ] || [ "$RESUME" = 1 ]; then
   ST="$(basename "$S")"; SH="$(awk -F= '/^head=/{print $2; exit}' "$S")"; SAT="$(awk -F= '/^at=/{print $2; exit}' "$S")"
   echo "gated tree ${ST:0:7} from ${SH:0:7}, green $(date -d "@$SAT" +%H:%M) — gate skipped: $(head -1 "$S")"
 else
-  bash "$HUB/tools/era-gate.sh" | tail -1 | tee /tmp/era-release-gate.txt
+  # A signed cut ships a new installer: every suite runs fresh (--no-cache), no
+  # pass reused from an earlier run. A patch takes the cache-aware gate.
+  GATE_ARGS=(); [ "$PATCH" = 1 ] || GATE_ARGS=(--no-cache)
+  bash "$HUB/tools/era-gate.sh" "${GATE_ARGS[@]}" | tail -1 | tee /tmp/era-release-gate.txt
   grep -q " 0 failed" /tmp/era-release-gate.txt || { echo "GATE NOT GREEN — no release."; exit 1; }
   # DEPRECATED, written one more release because the i13 runbooks name these two
   # files: the truth is now era-gate.sh's /tmp/era-gate-green/<tree> stamp.
@@ -218,8 +247,8 @@ if [ "$PATCH" = 1 ]; then
   bash "$HUB/tools/build-dist.sh" "$V" "$DIST" --patch
   TAG="$(python3 -c "import json;print(json.load(open('$DIST/latest.json'))['installer'])")"
 
-  echo "== 3/4 VM e2e (leg B: $TAG's installer fresh on a pristine Windows 10, self-updating to $V — the only path a patch takes) =="
-  bash "$HUB/tools/vm-e2e.sh" "$DIST" --only b | tee /tmp/era-release-vm-e2e.txt | tail -20
+  echo "== 3/4 VM e2e (leg B: $TAG's installer fresh on a pristine Windows 10, self-updating to $V — the only path a patch takes; guest profile $VMPROFILE) =="
+  bash "$HUB/tools/vm-e2e.sh" "$DIST" --only b --profile "$VMPROFILE" | tee /tmp/era-release-vm-e2e.txt | tail -20
   grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
 
   if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V (patch, installer $TAG) in $DIST — not tagged, not published."; exit 0; fi
@@ -250,8 +279,8 @@ else
       rm -rf "$DIST/prev"
     fi
 
-    echo "== 3/5 VM e2e (the candidate installed and driven on a pristine Windows 10; the previous release self-updating to it) =="
-    bash "$HUB/tools/vm-e2e.sh" "$DIST" | tee /tmp/era-release-vm-e2e.txt | tail -20
+    echo "== 3/5 VM e2e (the candidate installed and driven on a pristine Windows 10; the previous release self-updating to it; guest profile $VMPROFILE) =="
+    bash "$HUB/tools/vm-e2e.sh" "$DIST" --profile "$VMPROFILE" | tee /tmp/era-release-vm-e2e.txt | tail -20
     grep -q "^== vm-e2e: .* 0 failed ==" /tmp/era-release-vm-e2e.txt || { echo "VM E2E NOT GREEN — no release. Evidence: $HUB/gate/vm-e2e/"; exit 1; }
 
     if [ "$DRY" = 1 ]; then echo "DRY RUN: built + gated $V in $DIST with an UNSIGNED installer — signing not attempted, not published."; exit 0; fi

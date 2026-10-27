@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 const SH = fs.readFileSync(new URL("../tools/vm-e2e.sh", import.meta.url), "utf8");
 const lines = SH.split("\n");
@@ -182,4 +182,127 @@ test("no installer name is matched loosely (the 9/9 OneDriveSetup.exe lesson)", 
   assert.doesNotMatch(code, /\*Setup\*?\.exe|Setup\*\.exe/, "no glob around Setup.exe");
   assert.doesNotMatch(SH, /New-ERA-Setup\.exe missing/, "the candidate check names the installer by variable, not the old literal");
   assert.match(SH, /"\$DIST\/\$CAND_EXE" root@\$VM_DROPLET:\/root\/qa\/candidate\.exe/, "leg A installs the candidate by its recorded name");
+});
+
+// ---- the guest profile (10/26): which Windows guest the legs drive ----
+// full  = the pristine template as a family PC has it, Defender on and its
+//         post-restore signature update and scan waited out. Every SIGNED cut
+//         (legs A, B and C): a signed installer was once hash-flagged by Defender.
+// quiet = the same guest with Defender and Windows Update kept out of the leg.
+//         A patch ships no installer, only app files under the signed one, so
+//         its leg B needs no Defender behaviour and skips the ~7 min quiet wait.
+// Both scripts keep the decision in a block between marker comments; the blocks
+// run here as bash, like the picker above. Nothing touches the VM.
+const REL = fs.readFileSync(new URL("../tools/release.sh", import.meta.url), "utf8");
+const relLines = REL.split("\n");
+const between = (src, from, to) => {
+  const ls = src.split("\n");
+  const a = ls.findIndex((l) => l.startsWith(from));
+  const b = ls.findIndex((l, i) => i > a && l.startsWith(to));
+  assert.ok(a >= 0 && b > a, `block "${from}" … "${to}" found`);
+  return ls.slice(a, b + 1).join("\n");
+};
+const bash = (script, args = []) => {
+  const r = spawnSync("bash", ["-c", script, "t", ...args], { encoding: "utf8" });
+  return { code: r.status, out: (r.stdout || "") + (r.stderr || "") };
+};
+
+// vm-e2e.sh <dist> [prev] [--only a|b] [--post-publish] [--profile full|quiet]
+const vmArgs = (...argv) => bash(`set -uo pipefail\nDIST=/d\n${between(SH, "# ---- arguments", "# ---- end of arguments")}\n` +
+  'echo "ONLY=$ONLY POST=$POST PROFILE=$PROFILE PREV=$PREV"', argv);
+
+test("vm-e2e.sh drives the full guest unless told otherwise, and says which", () => {
+  assert.match(vmArgs().out, /PROFILE=full/, "no flag: today's pristine, Defender-on guest");
+  assert.match(vmArgs("--only", "b").out, /ONLY=b POST=0 PROFILE=full/);
+  assert.match(vmArgs("--only", "b", "--profile", "quiet").out, /ONLY=b POST=0 PROFILE=quiet/);
+  assert.match(vmArgs("/x/prev.exe", "--profile", "full", "--only", "a").out, /ONLY=a POST=0 PROFILE=full PREV=\/x\/prev\.exe/,
+    "the previous installer argument still lands where it did");
+  assert.match(SH, /export [^\n]*VM_GUEST_PROFILE="\$PROFILE"/, "the legs read the profile from VM_GUEST_PROFILE");
+  assert.match(SH, /^echo "-- guest profile: \$PROFILE/m, "the run log names the profile on a line of its own");
+});
+
+test("vm-e2e.sh refuses an unknown profile, and a quiet leg C, before it touches anything", () => {
+  const bad = vmArgs("--profile", "fast");
+  assert.equal(bad.code, 2, bad.out); assert.match(bad.out, /full or quiet/);
+  assert.equal(vmArgs("--profile").code, 2, "a bare --profile is refused, not read as the next flag");
+  const c = vmArgs("--post-publish", "--profile", "quiet");
+  assert.equal(c.code, 2, c.out);
+  assert.match(c.out, /leg C/i, "leg C measures what Windows shows a family: Defender stays on: " + c.out);
+  assert.match(vmArgs("--post-publish").out, /ONLY=c POST=1 PROFILE=full/);
+  // the refusals sit before the run deletes gate/vm-e2e or a stale VM-GREEN
+  assert.ok(SH.indexOf("# ---- end of arguments") < SH.indexOf('rm -rf "$OUT"'), "argument checks come before any deletion");
+});
+
+test("VM-GREEN names the profile the legs drove", () => {
+  assert.match(SH, /printf 'legs=%s\\ntarball=%s\\nat=%s\\nprofile=%s\\n'/, "a profile= line in the marker");
+  assert.match(SH, /"\$\(date \+%s\)" "\$PROFILE" > "\$DIST\/VM-GREEN"/, "…holding the profile this run used");
+});
+
+// release.sh: patch → quiet, signed → full, --vm-profile=… overrides; a signed
+// cut never publishes on quiet evidence.
+const relParse = relLines.find((l) => l.startsWith('for a in "$@"; do case "$a" in'));
+const relInit = relLines.find((l) => l.startsWith('PRE=""; DRY=0;'));
+const relProfile = (...argv) => bash(`set -uo pipefail\n${relInit}\n${relParse}\n` +
+  `${between(REL, "# ---- the VM guest profile", "# ---- end of the VM guest profile")}\necho "VMPROFILE=$VMPROFILE"`, argv);
+
+test("release.sh: a patch drives the quiet guest, a signed cut the full one", () => {
+  assert.ok(relParse && relInit, "the flag loop and its defaults are one line each");
+  assert.match(relProfile("--patch").out, /^VMPROFILE=quiet$/m);
+  assert.match(relProfile().out, /^VMPROFILE=full$/m);
+  assert.match(relProfile("--dry-run").out, /^VMPROFILE=full$/m);
+});
+
+test("release.sh: --vm-profile overrides either way, but a signed cut publishes only on full", () => {
+  assert.match(relProfile("--patch", "--vm-profile=full").out, /^VMPROFILE=full$/m, "a patch may take the slow, Defender-on guest");
+  assert.match(relProfile("--dry-run", "--vm-profile=quiet").out, /^VMPROFILE=quiet$/m, "a signed dry run may rehearse on quiet");
+  const s = relProfile("--vm-profile=quiet");
+  assert.equal(s.code, 2, s.out); assert.match(s.out, /signed/i); assert.match(s.out, /full/);
+  const bad = relProfile("--vm-profile=fast");
+  assert.equal(bad.code, 2, bad.out); assert.match(bad.out, /full or quiet/);
+});
+
+test("release.sh hands the profile to both VM runs and leaves leg C on the full guest", () => {
+  const calls = relLines.filter((l) => /tools\/vm-e2e\.sh"/.test(l));
+  const patch = calls.find((l) => /--only b/.test(l)), signed = calls.find((l) => !/--only|--post-publish/.test(l)), c = calls.find((l) => /--post-publish/.test(l));
+  assert.ok(patch && signed && c, "three vm-e2e.sh calls: patch, signed, leg C");
+  assert.match(patch, /--profile "\$VMPROFILE"/); assert.match(signed, /--profile "\$VMPROFILE"/);
+  assert.doesNotMatch(c, /--profile/, "leg C runs on vm-e2e.sh's default, the full guest");
+});
+
+// vm_green() is lifted whole and run against a scratch dist
+const vmGreenFn = between(REL, "vm_green() {", "}");
+function green(want, marker) {
+  const D = fs.mkdtempSync(path.join(os.tmpdir(), "era-vm-green-"));
+  fs.writeFileSync(path.join(D, "new-era-suite-v9.tar.gz"), "bytes");
+  const sha = execFileSync("sha256sum", [path.join(D, "new-era-suite-v9.tar.gz")], { encoding: "utf8" }).split(" ")[0];
+  fs.writeFileSync(path.join(D, "latest.json"), JSON.stringify({ version: "v9", sha256: sha }));
+  fs.writeFileSync(path.join(D, "VM-GREEN"), marker.replace("SHA", sha));
+  return bash(`DIST=${JSON.stringify(D)}; V=v9\n${vmGreenFn}\nvm_green ${want} && echo ACCEPTED`);
+}
+
+test("a signed cut accepts only full-guest evidence; a patch accepts either", () => {
+  assert.match(green("a,b", "legs=a,b\ntarball=SHA\nat=1\nprofile=full\n").out, /ACCEPTED/);
+  const q = green("a,b", "legs=a,b\ntarball=SHA\nat=1\nprofile=quiet\n");
+  assert.equal(q.code, 1); assert.doesNotMatch(q.out, /ACCEPTED/);
+  assert.match(q.out, /profile=quiet/, "the refusal names the evidence it holds: " + q.out);
+  assert.match(green("a,b", "legs=a,b\ntarball=SHA\nat=1\n").out, /ACCEPTED/, "a marker from before profiles was a full run");
+  assert.match(green("b", "legs=b\ntarball=SHA\nat=1\nprofile=quiet\n").out, /ACCEPTED/);
+  assert.match(green("b", "legs=b\ntarball=SHA\nat=1\nprofile=full\n").out, /ACCEPTED/);
+  assert.match(green("b", "legs=b\ntarball=SHA\nat=1\nprofile=quiet\n").out, /profile=quiet/, "and says which evidence it is publishing on");
+});
+
+// A signed cut ships a new installer, so its gate runs every suite fresh: no
+// pass reused from an earlier run (era-gate.sh --no-cache; design 2026-10-26
+// 3.2, the maintainer's decision 10/27). A patch takes the cache-aware gate.
+test("release.sh's gate runs fully fresh for a signed cut and cache-aware for a patch", () => {
+  const REL = fs.readFileSync(new URL("../tools/release.sh", import.meta.url), "utf8");
+  const choose = REL.match(/^[ \t]*GATE_ARGS=\(\); \[ "\$PATCH" = 1 \] \|\| GATE_ARGS=\(--no-cache\)$/m);
+  assert.ok(choose, "release.sh chooses the gate's arguments from the cut's shape");
+  const call = REL.match(/^[ \t]*bash "\$HUB\/tools\/era-gate\.sh" "\$\{GATE_ARGS\[@\]\}" \| tail -1 \| tee \/tmp\/era-release-gate\.txt$/m);
+  assert.ok(call && call.index > choose.index, "and the one gate call passes them");
+  assert.equal(REL.match(/tools\/era-gate\.sh"/g).length, 1, "there is no other gate call");
+  for (const [patch, args] of [["0", "--no-cache"], ["1", ""]]) {
+    const out = execFileSync("bash", ["-c", `set -euo pipefail\nPATCH=${patch}\n${choose[0].trim()}\necho "[\${GATE_ARGS[*]}]"`], { encoding: "utf8" });
+    assert.equal(out.trim(), `[${args}]`, patch === "1" ? "a patch" : "a signed cut");
+  }
 });

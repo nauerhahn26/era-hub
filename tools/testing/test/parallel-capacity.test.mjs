@@ -26,6 +26,7 @@ test('fixed admission leaves one legacy slot, half the CPUs and one GiB headroom
   assert.deepEqual(check.resources.cpus,[2,3]); assert.deepEqual(check.resources.reservedCpus,[0,1]);
   assert.equal(check.resources.nice,19); assert.equal(check.resources.memoryLimitBytes,2*GiB);
   assert.equal(check.resources.memoryReserveBytes,GiB);
+  assert.equal(check.resources.gateLanes,1,'the 2 GiB budget is one lane of suites');
   assert.equal(check.limits.maxIsolatedWorkers,1); assert.equal(check.limits.reservedLegacySlots,1);
   assert.equal(check.limits.totalSlots,2);
   assert.equal(inspectCapacity(resources({meminfoText:'MemTotal: 8388608 kB\nMemAvailable: 3145728 kB\n',freeDiskBytes:3*GiB})).admissible,true);
@@ -106,6 +107,7 @@ test('one lease is admitted and a second cannot consume the legacy reservation',
   const f=fixture(t), first=acquireLease(f.options);
   assert.equal(first.acquired,true); assert.match(first.lease.token,/^[a-f0-9]{64}$/);
   assert.equal(first.lease.resources.cpu,3); assert.equal(first.lease.limits.maxIsolatedWorkers,1);
+  assert.equal(first.lease.resources.gateLanes,1);
   const second=acquireLease({...f.options,jobId:'job-b'});
   assert.equal(second.acquired,false); assert.match(second.reason,/occupied|reserved/i);
   assert.equal(readLease({leaseDir:f.leaseDir,readOwner:active}).lease.jobId,'job-a');

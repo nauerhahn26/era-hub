@@ -62,6 +62,27 @@ the same day's suite speedups, 33 min before them. A TERM to the gate's pid now
 stops every suite within seconds. Each gate leaves `gate/results.jsonl`, one
 line per suite with its lane and seconds.
 
+Gates no longer lock each other out (10/27). Each gate re-executes itself in a
+private network namespace (loopback plus a test link, no route out, no
+capabilities), so its 8378 hub and every suite's fixed port are its own, and it
+starts when admitted: fewer than `ERA_GATE_MAX_GATES` (default 2) other gates
+running, none in the same checkout, and `MemAvailable` of 1 GiB per lane plus
+1 GiB (with room for one lane only it runs one lane and says so). Otherwise it
+waits and prints `== era-gate: waiting for a slot: N gates running, M GiB free
+(why) ==` once a minute; a gate admitted under 2 minutes ago has its lanes'
+memory set aside first, since it has not reached its peak. Running gates are
+files in `/tmp/era-gate-slots/<pid>`, and a job of the isolated runner holds one
+too, so it counts. An admitted gate holds `/tmp/era-gate.lock` shared; a gate
+that cannot unshare says so and falls back to holding it exclusively (it waits
+for every other gate and runs alone), and so does every branch whose
+`era-gate.sh` predates this: sync master before gating beside other sessions.
+A running gate's hub and suite ports live in that gate's network namespace; to
+reach them from a shell, as the same user, run
+`nsenter --user --net --preserve-credentials -t <gate pid> curl -s http://127.0.0.1:8378/settings`
+(the gate pid is its file name in `/tmp/era-gate-slots`; without
+`--preserve-credentials` nsenter tries to become root inside and stops at
+"setgroups failed").
+
 Stand-in providers never wait: the clothing worker's 5 s photo spacing and 3 s
 retry gap are 0 when `ERA_AI_URL` names this machine (there is no real provider
 to protect) and unchanged for every family hub; no environment variable can
@@ -71,12 +92,48 @@ For the dev loop, run only what a change touches, with no stamp:
 
 ```
 node tools/test-suite.mjs plan --base master            # which suites, and why
-node tools/test-suite.mjs queue --affected --base master # run them, in series, under the gate lock
+node tools/test-suite.mjs queue --affected --base master # run them, in series, through gate admission
 node tools/test-suite.mjs status                        # jobs under ~/.local/state/era-tests/
 ```
 
 A change to `server.js`, shared runtime or tooling expands to the complete set;
 landing still wants the full gate's stamp.
+
+## Recovering from a red gate: reuse, FLAKY, rerun-failed, restamp
+
+Since 2026-10-27 a full gate records every run under `$ERA_GATE_RUNS` (default
+`~/.local/state/era-gate-runs`) and keys each suite by what it can observe:
+product files by content (not `tests/` or `docs/`), the private scanner, every
+collected helper and fixture, the gate's own code, node, playwright and its
+chromium, the suites' environment, the suite's collected copy and its registry
+entry (`reuse: key = ...` prints the parts). A suite whose key holds a pass
+under 24 h old prints `REUSE X (from <run> at <time>)` instead of running;
+`reuse: to run, <why>: ...` says why the rest run. Any product change reruns
+everything, a helper or fixture change reruns everything, a fixed test reruns
+that suite, a docs-only change (`docs/`, or a repo root's `*.md`) reruns
+nothing. The summary line counts reused passes, the stamp keeps its four
+lines, and the `receipt:` line just before the summary names how many were
+reused, the oldest evidence and the run's `receipt.json`.
+
+One failed suite runs once more, alone, at the end: a pass is `FLAKY X (passed
+on retry)`, counts for the stamp, goes to `$ERA_GATE_RUNS/flakes.jsonl`, and is
+never reused. No retry (a `retry:` line says why) for a resource failure
+(timeout, killed, out of memory, EADDRINUSE), a suite that already failed on
+the same key, or a gate with more than one failure. Twice failed on one key, a
+suite is refused without running until it or what it tests changes.
+
+| After | Run | Runs |
+| --- | --- | --- |
+| a wrong fixture or test, now fixed | `bash tools/era-gate.sh` | that suite (a helper: all) |
+| a failure with nothing changed | `bash tools/era-gate.sh --rerun-failed latest` | what failed or never finished there |
+| a gate that died half way | `bash tools/era-gate.sh` | what did not pass (shared readers rerun) |
+| a stamp that expired, nothing changed | `bash tools/era-gate.sh --restamp latest` | nothing; no hub; under a minute |
+| the dev loop | `bash tools/era-gate.sh --only lanes,gate-reuse` | those suites; no stamp, no store |
+
+`--rerun-failed` refuses when a suite that passed in that run can no longer be
+reused; `--restamp` refuses unless every suite can; both say which and why.
+`--no-cache` runs everything fresh and reads no earlier run. The isolated
+runner has no writable home: its gates say so and run fresh, without retries.
 
 ## The three release shapes
 
@@ -109,7 +166,7 @@ up the new tarball on their next check.
 ### Signed — `bash tools/release.sh vX.Y.0`
 
 ```
-1/5 gate
+1/5 gate     era-gate.sh --no-cache: every suite fresh, nothing reused
 2/5 build    build-dist.sh --unsigned: same payload, plus an UNSIGNED Setup.exe
 3/5 VM e2e   legs A + B on those very files (neither leg reads a signature)
 4/5 sign     "VM green — ready for the SimplySign code (stage it now)."
@@ -168,6 +225,21 @@ and destroys it on exit; `release.sh` holds one host across all of a cut's legs
 (`QA_KEEP=1`) and destroys it in its EXIT trap. Expect a few minutes of server
 creation before a VM leg starts. Details, the reaper cron and how to change the
 template: `aac-board-builder/docs/vm-e2e.md`.
+
+The legs drive one of two guest profiles (`vm-e2e.sh --profile`):
+
+- **`full`**: the template's pristine snapshot, Defender on, with its
+  post-restore signature update and scan waited out (about 7 minutes). Every
+  signed cut drives it for legs A, B and C.
+- **`quiet`**: a separately named snapshot with Defender and Windows Update off,
+  where a readiness check of at most 2 minutes replaces the wait. `release.sh
+  --patch` drives it, because a patch ships no installer.
+
+`release.sh --vm-profile=full|quiet` overrides the shape's default, but a signed
+cut takes `quiet` only on a `--dry-run`. `VM-GREEN` records `profile=`, and the
+signed publish and `--resume-sign` accept only `full`. The quiet snapshot and how
+to remake it: the runbook above. `tests-vm/lib/guest-profile.mjs` says why it is a
+snapshot rather than a switch.
 
 ## Push to one device
 

@@ -38,7 +38,8 @@
 //             launches: one in a loop counts once.
 //   heavy     loads the garment segmentation runtime directly (a require,
 //             import or Worker of segment.js or clothing-worker.js), or has at
-//             least HEAVY_BROWSERS launch sites, or is named in OVERRIDES.
+//             least HEAVY_BROWSERS launch sites, or is named in OVERRIDES
+//             (segmentation through a build, or a measured peak memory).
 //   solo      only from OVERRIDES: suites that assert latency on a loaded host,
 //             or hold a host-wide resource other suites' hubs read (the gaze
 //             engine's bus).
@@ -103,11 +104,28 @@ export const OVERRIDES = [
   // 350 s, requires segment.js itself and is derived). Not heavy on that measurement: clothing-weather (1
   // cut-out in 44 s), clothing-share (2 in 55 s), clothing-attrs, -refit,
   // -status, -sync-rebuild, -item (0), and chat-native-speech (loads the ONNX
-  // runtime for its 2 s activity model, no segmentation).
+  // runtime for its 2 s activity model, no segmentation). clothing-share is
+  // heavy below, by memory.
   { id: suite('clothing-accessories'), set: { heavy: true },
     why: 'drives full clothing builds with a live fake AI, so every new photo goes through the wasm cut-out',
     witness: /ERA_AI_URL:\s*`http:\/\/127\.0\.0\.1:\$\{AI_PORT\}`/ },
-  // quiet: at most one at a time, never beside a heavy suite.
+  // heavy by memory: measured 10/27, peak RSS of the suite process and
+  // everything it started, sampled every half second under a gate. One
+  // Chromium with one page is about 460 MB summed RSS. Not heavy, these ran
+  // beside a clothing suite (clothing-share) or beside each other (the two
+  // browser suites are quiet, which keeps a heavy suite away but not another
+  // quiet one: 1.84 GiB together).
+  { id: suite('clothing-share'), set: { heavy: true },
+    why: 'about 440 MB: in-process clothing builds (two cut-outs, so a build worker loads the wasm runtime) plus a hub of its own; as a plain suite it ran beside clothing.test or clothing-accessories',
+    witness: /return\s+clothing\.regenerate\(true\)/ },
+  { id: suite('drawing-ui'), set: { heavy: true },
+    why: 'one Chromium plus a hub of its own, both held for the whole file: 650-880 MB',
+    witness: /browser\s*=\s*await\s+chromium\.launch\(\)/ },
+  { id: suite('play-ui'), set: { heavy: true },
+    why: 'one Chromium plus a hub of its own, both held for the whole file: 650-880 MB',
+    witness: /browser\s*=\s*await\s+chromium\.launch\(\)/ },
+  // quiet: never beside a heavy suite (lanes.mjs conflicts(); two quiet suites
+  // may run together, though the plan's item 2.1 said at most one).
   { id: suite('games-ui'), set: { quiet: true },
     why: 'real dwell engine at a 900 ms dwell and 17 fixed waits; a starved page misses its window',
     witness: /dwellMs\s*:\s*900/ },

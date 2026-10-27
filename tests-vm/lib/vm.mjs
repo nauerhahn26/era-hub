@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { NATIVE_DISPLAY, checkNativeDisplay } from "./native-display.mjs";
+import { PROFILES, guestProfile, readiness, READY_BUDGET_MS } from "./guest-profile.mjs";
 
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VMTOOLS = path.join(path.dirname(HUB), "era-family", "tools", "vm");
@@ -53,6 +54,9 @@ export function desktopLink({ allowOld = false } = {}) {
 // A window title that is one of ours: the kiosk's pages (home says Our Era; a
 // previous release's still says New ERA) and Settings, titled ERAgaze Settings.
 export const KIOSK_TITLE = /Our Era|New ERA|ERAgaze/;
+// the guest this run drives (VM_GUEST_PROFILE from vm-e2e.sh --profile): full =
+// the pristine snapshot, Defender on; quiet = the quiet snapshot. guest-profile.mjs
+export const PROFILE = guestProfile();
 fs.mkdirSync(OUT, { recursive: true });
 
 let shotN = Number(process.env.VM_SHOT_START || 0);
@@ -106,15 +110,43 @@ export const host = (cmd, opts) => sh(["vm.sh", "host", cmd], opts);
 /** wake a display Windows has turned off (an Edge launched onto a dark one sat
  *  as a 9 MB stub with no window, 9/3) */
 export const wake = () => sh(["vm.sh", "wake"], { soft: true });
-/** roll the VM back to the pristine snapshot, wait for the guest's ssh, and
- *  take the VM's own noise out of the run (prepGuest) */
-export function revert() { const out = sh(["revert.sh"], { timeout: 400000 }); prepped = false; INSTDIR = NEW_INSTDIR; prepGuest(); return out; }
+/** roll the VM back to the profile's snapshot (full: the pristine one, through
+ *  revert.sh as ever; quiet: the quiet one), wait for the guest's ssh, and take
+ *  the VM's own noise out of the run (prepGuest). A quiet revert is proven quiet
+ *  at once: a Defender-on guest stops the run here, before the install, rather
+ *  than vouch for quiet evidence it does not have. */
+export function revert() {
+  const snap = PROFILES[PROFILE].snapshot;
+  const out = snap ? revertTo(snap) : sh(["revert.sh"], { timeout: 400000 });
+  prepped = false; INSTDIR = NEW_INSTDIR;
+  if (snap) notQuietGuard(readiness(readout()));
+  prepGuest(); return out;
+}
+/** revert.sh's three steps with the snapshot named: the template's
+ *  /root/vm-revert.sh takes it as its argument (no argument: the pristine one) */
+function revertTo(snap) {
+  sh(["qa.sh", "up"], { timeout: 400000 });
+  const out = sh(["vm.sh", "host", `bash /root/vm-revert.sh ${snap}`], { timeout: 300000 });
+  return out + "\n" + sh(["vm.sh", "wait-guest", "180"], { timeout: 240000 });
+}
+/** one readout for readiness(): the guest's processes and Defender's real-time
+ *  protection (a stopped Defender has no status to read: "unavailable") */
+const readout = () => bat("ready", ["tasklist /fo csv /nh",
+  `powershell -NoProfile -Command "try { 'DEFENDER_RTP=' + (Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { 'DEFENDER_RTP=unavailable' }"`],
+  { soft: true, timeout: 120000 });
+function notQuietGuard(r) {
+  if (r.defenderOn) throw new Error("profile quiet, but the guest is not the quiet snapshot: Defender's real-time protection is on. "
+    + "This QA template has no `quiet` snapshot or it regressed: remake it (aac-board-builder/docs/vm-e2e.md, "
+    + "era-family/tools/vm/qa-quiet-template.py), or run on the full guest (vm-e2e.sh --profile full, release.sh --vm-profile=full)");
+  return r;
+}
 /** the pristine snapshot (8/31) is a disk image cold-booted on every revert:
  *  Windows Update wants its backlog straight away and TrustedInstaller/TiWorker
  *  then own the emulated disk for the better part of an hour — Edge crawled
  *  for 12 min without a window and the Pencil never painted its door (9/3).
  *  The display also goes dark after 10 idle minutes. Neither is an Our Era
- *  Comms property, so the run switches both off; Defender (quiet()) stays real. */
+ *  Comms property, so the run switches both off; Defender (quiet()) stays real
+ *  on the full profile, and the quiet profile's snapshot has it off already. */
 let prepped = false;
 export function prepGuest() {
   if (prepped) return;
@@ -285,8 +317,10 @@ export const cdpForward = (timeout = 60000) =>
     { timeout, every: 5000, what: "the kiosk's DevTools port (forwarded through the guest's sshd)" });
 /** wait until the guest is not busy with Defender's signature update / first
  *  scan (MpSigStub) — it pegs every vCPU for minutes after a revert of the
- *  pristine snapshot and made an 8-minute Edge start look like a hang (9/3) */
+ *  pristine snapshot and made an 8-minute Edge start look like a hang (9/3).
+ *  The quiet profile has none of that to wait for: ready() stands in. */
 export async function quiet() {
+  if (PROFILE === "quiet") return ready();
   const t0 = Date.now();
   // TiWorker: a servicing job already running when prepGuest stopped Windows
   // Update finishes on its own — it is what starved Edge for 12 min (9/3)
@@ -295,6 +329,22 @@ export async function quiet() {
   try { await waitFor(() => !busy() && { ok: 1 }, { timeout: 900000, every: 10000, what: "Defender's signature update / a servicing job to finish" }); }
   catch { console.log("# still busy after 15 min — carrying on"); }
   console.log(`# waited ${((Date.now() - t0) / 1000).toFixed(0)} s for the guest to go quiet`);
+}
+/** the quiet profile's bounded readiness check, in place of quiet()'s wait of
+ *  up to 15 min: the guest must still be the quiet snapshot (real-time
+ *  protection off), and boot work still running (BUSY_IMAGES) gets
+ *  READY_BUDGET_MS, then the leg carries on. The time is logged either way. */
+export async function ready() {
+  const t0 = Date.now();
+  let r = notQuietGuard(readiness(readout()));
+  while (!r.ready && Date.now() - t0 < READY_BUDGET_MS) {
+    await new Promise((res) => setTimeout(res, 5000));
+    r = notQuietGuard(readiness(readout()));
+  }
+  const s = ((Date.now() - t0) / 1000).toFixed(0);
+  console.log(r.ready ? `# quiet guest ready in ${s} s (Defender real-time protection ${r.rtp === "False" ? "off" : r.rtp}, nothing busy)`
+    : `# quiet guest not settled after ${s} s (busy: ${r.busy.join(", ") || "none"}; real-time protection readback: ${r.rtp}) — carrying on`);
+  return r;
 }
 /** read Edge's binaries once so the guest's page cache holds them. The first
  *  Edge start after a boot of the emulated guest pages ~250 MB of msedge.dll

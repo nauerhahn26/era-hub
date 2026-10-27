@@ -379,7 +379,70 @@ gate marks the suites it killed as FAIL; a `stopped` state is a follow-up.
 from `results.jsonl` (`harvest-durations.mjs --results`) at the next landing
 that touches tools/; the mtime method is wrong under lanes.
 
-## Phase 3: per-suite reuse, rerun-failed, restamp (three to four days)
+## Phase 2b: gates in their own namespaces; admission instead of exclusion (added 10/26 23:40)
+
+Dad, after two sessions queued behind each other for an evening: "This locking
+out is really annoying ... figure out how we get to two lanes already." The
+testing-suite session's isolated runner already gives a second gate lane in
+private namespaces, but on two CPUs at the lowest priority, one job at a time,
+with the choice of who gets which lane and the landing order made in a chat
+rather than by the tool. The lock-out is the main lane's exclusive flock.
+
+- [x] 2b.1 (built 10/27 00:30: `unshare --user --map-current-user --keep-caps --net`, loopback up plus a dummy link with a test address so the LAN-socket case still runs, then `setpriv` dropping every capability; the process is replaced, so a detached launch's pid file stays right; no PID or mount namespace. Refused unshare falls back to the exclusive lock, loudly. A gate inside the isolated runner neither unshares again nor takes a slot.) `era-gate.sh` re-executes itself inside a private network namespace
+      (the isolated runner's approach and preflight), so two main-lane gates
+      never collide on suite ports or the 8378 hub; stamps still land on the
+      host; a gate already inside the isolated runner does not unshare again.
+      Refused unshare falls back to today's exclusive lock, loudly.
+- [x] 2b.2 (built: the registry lock is `/tmp/era-gate-slots/.lock`; admitted gates hold `/tmp/era-gate.lock` SHARED for the run, so a gate from a branch older than tonight, or one that cannot isolate, still takes it exclusively and queues as before; this matters because branches before feafab0 still `pkill` hubs by name, which without a PID namespace could reach another gate's hubs. New gates stand back while an exclusive request is queued. Lanes = min(asked, floor(MemAvailable/1 GiB) - 1): two lanes need 3 GiB, one needs 2; one more gate in the same checkout is refused; slots of dead pids are dropped; ERA_GATE_CANCEL_FILE honoured while waiting.) Admission replaces exclusion: the flock guards only a slot registry
+      (`/tmp/era-gate-slots/<pid>`); a gate starts when fewer than
+      ERA_GATE_MAX_GATES (default 2) run and MemAvailable covers its lanes
+      (1 GiB a lane plus 1 GiB reserve; measured: one lane peaks 1.3 GiB, two
+      lanes 2 GiB); otherwise it waits and says so once a minute; when memory
+      admits one lane it runs one lane rather than waiting. The lane
+      scheduler's 2 GiB floor stays as the in-flight guard.
+- [x] 2b.3 (gate-admission 19 cases; gate-safety, gate-stamp, chat-api, assemble-suffix, lanes, parallel-gate, suite-ports, suite-classes, test-suite, integration-queue all green, also from inside a gate's own namespace. Follow-ups in flight: young slots' lane budgets subtracted at admission (ramp-up race), the isolated runner's gate counted as a slot, operator access through `nsenter --user --net -t <pid>`, house-repo docs.) Tests: gate-admission (fake meminfo, temp slot dir, stale pids,
+      namespace smoke with two listeners on one port), every pinned gate shape
+      green, the isolated runner unchanged.
+- [ ] 2b.4 Memory is the ceiling: two gates at two lanes each need about 4 GiB
+      free; resident agent sessions hold about 3 GiB in swap. Dad closes idle
+      sessions during release windows; then two features gate at 14 min each,
+      side by side. Landing stays merge-only: the second lander syncs and
+      re-gates (14 min now; minutes after Phase 3 for test-only merges).
+
+## Phase 3: per-suite reuse, rerun-failed, restamp
+
+Progress 10/27 01:00 (built in one sitting in `era-hub--wt-gate-reuse`,
+committed there, not landed): `tools/testing/reuse.mjs` holds the run store
+under `$ERA_GATE_RUNS`, a nine-part key per suite (runtime manifest by
+content, the private scanner copies, collected helpers, harness, node and
+Playwright with browser revisions, suite environment, the suite's frozen
+digest, its registry entry or the whole registry for suites that read it),
+the qualifying rule (identical key, a plain pass, under 24 h, no guard
+change), the failure ledger and the shared-hub guard. `era-gate.sh` gains
+`--no-cache`, `--rerun-failed RUN`, `--restamp RUN`, `--only`; the hub starts
+only when something runs; a receipt line and receipt.json precede the
+unchanged stamp and summary. `lanes.mjs` skips REUSE and refused suites,
+retries one failed suite once, alone, at the end (never a timeout, a kill,
+an out-of-memory or an EADDRINUSE), prints FLAKY and appends flakes.jsonl.
+24 tests with fake suites; every pinned gate shape green. A real gate has
+not run it yet. Decisions taken: a FLAKY on a key that failed in an
+earlier gate uses the one retry and stays FLAKY until the key changes or a
+`--no-cache` gate passes it; `--no-cache` ignores the ledger; the coarse
+helper rule stays (any helper change reruns everything; per-consumer
+invalidation is v2); root-level *.md count as docs; the signed release
+flow passes `--no-cache`. Costs now: a wrong suite file, fixed, is a minute
+plus that suite; a race on identical inputs costs the suite once more
+inside the same gate; a resource failure `--rerun-failed`; an expired stamp
+`--restamp` in seconds; a shared helper or fixture change is still a full
+14 minute gate. The retry fields `retry`/`owner` in the registry are
+unused: every suite gets the one retry, by dad's decision. Still to do:
+land and release print the receipt (house repo); the isolated runner's
+validator learns REUSE and FLAKY before its jobs get a store; a signed cut
+run with `--skip-gate` or `--resume-sign` accepts any green stamp under 2 h,
+which may have been composed from reused passes, so "signed cuts run fresh"
+holds only on the normal signed path until the stamp or receipt carries a
+freshness mark the release script checks.
+ (three to four days)
 
 - [ ] 3.1 Run store under `$ERA_GATE_RUNS/<run-id>/` (seam, never `$HOME`;
       unset means no store and no reuse): `inputs.json`, `plan.tsv`,

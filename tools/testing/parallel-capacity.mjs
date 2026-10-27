@@ -10,6 +10,9 @@ export const LIMITS=Object.freeze({totalSlots:2,reservedLegacySlots:1,maxIsolate
 // These are admission budgets. The child runner owns enforcement and peak-RSS
 // measurement; a successful read-only check is not a hard host memory limit.
 const MEMORY_LIMIT=2*GiB, MEMORY_RESERVE=GiB, NICE=19;
+// The budget covers one suite at a time: era-gate.sh defaults to two lanes, and a second
+// two-lane gate beside the legacy one would push the host into swap.
+export const GATE_LANES=1;
 export const defaultLeaseDir=()=>path.join(os.homedir(),'.local','state','era-parallel-gates','parallel-capacity');
 const safeInteger=value=>Number.isSafeInteger(value) && value>=0;
 const ownUid=()=>typeof process.getuid==='function'?process.getuid():null;
@@ -70,7 +73,7 @@ export function inspectCapacity(observed={}) {
   const cpus=cpuCount?allowed.slice(-cpuCount):[];
   return {
     admissible:reasons.length===0,reasons,limits:LIMITS,
-    resources:{cpu:cpus.length?cpus.at(-1):null,cpus,reservedCpus:allowed.filter(cpu=>!cpus.includes(cpu)),allowedCpus:allowed,nice:NICE,memoryBudgetBytes:MEMORY_LIMIT,memoryLimitBytes:MEMORY_LIMIT,memoryReserveBytes:MEMORY_RESERVE,memAvailableBytes:available ?? null,memTotalBytes:total ?? null,freeDiskBytes:safeInteger(observed.freeDiskBytes)?observed.freeDiskBytes:null},
+    resources:{cpu:cpus.length?cpus.at(-1):null,cpus,reservedCpus:allowed.filter(cpu=>!cpus.includes(cpu)),allowedCpus:allowed,nice:NICE,gateLanes:GATE_LANES,memoryBudgetBytes:MEMORY_LIMIT,memoryLimitBytes:MEMORY_LIMIT,memoryReserveBytes:MEMORY_RESERVE,memAvailableBytes:available ?? null,memTotalBytes:total ?? null,freeDiskBytes:safeInteger(observed.freeDiskBytes)?observed.freeDiskBytes:null},
   };
 }
 

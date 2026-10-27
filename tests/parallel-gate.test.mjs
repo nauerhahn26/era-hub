@@ -11,6 +11,7 @@ import {
   jobPath, executionEnvironment, parseProgress, estimateQueue, recordedGateStats,
   runtimeManifest, verifyRuntime, copyControlBundle, runPreflight, runReversePreflight, stateDirectory, readStatus, PYTHON,
 } from '../tools/testing/parallel-worker.mjs';
+import { inspectCapacity } from '../tools/testing/parallel-capacity.mjs';
 
 function scratch(t) {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'parallel-gate-test-'));
@@ -43,8 +44,18 @@ test('candidate execution receives owned data, stamps and runtime without operat
   assert.equal(env.ERA_TEST_PORT,'8388');
   assert.equal(env.PLAYWRIGHT_BROWSERS_PATH,'/owned/job/runtime/browsers');
   assert.ok(env.PATH.startsWith('/owned/job/runtime/bin:'));
+  // the host gate's malloc settings (tools/era-gate.sh, before the runner) reach an isolated gate's suites too
+  assert.equal(env.MALLOC_MMAP_THRESHOLD_,'131072');assert.equal(env.MALLOC_TRIM_THRESHOLD_,'131072');
   for(const key of ['HOME','NODE_OPTIONS','ERA_GATE_MODE','ERA_GATE_SELECTED','ERA_PRESENCE_HOOK','ERA_CHAT_RUNTIME','API_KEY'])
     assert.equal(Object.hasOwn(env,key),false,key+' must not be inherited');
+});
+
+test('the isolated gate runs one lane, the lane count its admission budget records',()=>{
+  // era-gate.sh defaults to two lanes; a second two-lane gate beside the legacy one would swap.
+  const env=executionEnvironment({directory:'/owned/job',manifest:{workspace:'/owned/job/workspace',hub:'/owned/job/workspace/era-hub',suffix:'',seedDir:'/owned/job/workspace/era-family/test-data'}});
+  assert.equal(env.ERA_GATE_LANES,'1');
+  const admission=inspectCapacity({meminfoText:'MemTotal: 8388608 kB\nMemAvailable: 4194304 kB\n',allowedCpusText:'0-3',freeDiskBytes:4*1024**3});
+  assert.equal(env.ERA_GATE_LANES,String(admission.resources.gateLanes));
 });
 
 test('progress keeps source gate outcomes and never treats a partial summary as complete',()=>{
@@ -135,6 +146,37 @@ finally:
 `;
   const result=spawnSync('python3',['-c',program,PYTHON],{encoding:'utf8',timeout:15000,env:{PATH:'/usr/sbin:/usr/bin:/sbin:/bin'}});
   assert.equal(result.status,0,result.stderr || result.stdout || result.error?.message);
+});
+
+test('a running isolated job holds a host gate slot, and cleanup removes only its own',t=>{
+  // Host gates (tools/era-gate.sh) count it toward ERA_GATE_MAX_GATES; the gate
+  // inside cannot write it, behind a private /tmp and PID namespace.
+  const slots=path.join(scratch(t),'slots');
+  const program=`
+import pathlib,runpy,subprocess,sys
+worker=runpy.run_path(sys.argv[1]);slots=pathlib.Path(sys.argv[2])
+child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])
+try:
+    record=worker['identity'](child.pid)
+    file=worker['register_gate_slot'](record,1,'/owned/job/workspace/era-hub','gate-x',slots)
+    lines=file.read_text().splitlines()
+    assert file==slots/str(child.pid),file
+    assert lines[:3]==['pid='+str(child.pid),'start='+record['startTicks'],'lanes=1'],lines
+    for line in ['hub=/owned/job/workspace/era-hub','isolated=1','runner=gate-x']:assert line in lines,lines
+    assert any(line.startswith('at=') and line[3:].isdigit() for line in lines),lines
+    worker['release_gate_slot']({**record,'startTicks':str(int(record['startTicks'])+1)},slots)
+    assert file.exists(),'a slot naming another process was removed'
+    worker['release_gate_slot'](record,slots);assert not file.exists()
+    worker['release_gate_slot'](record,slots)
+finally:
+    child.kill();child.wait()
+`;
+  const result=spawnSync('python3',['-c',program,PYTHON,slots],{encoding:'utf8',timeout:15000,env:{PATH:'/usr/sbin:/usr/bin:/sbin:/bin'}});
+  assert.equal(result.status,0,result.stderr || result.stdout || result.error?.message);
+  const source=fs.readFileSync(PYTHON,'utf8'),worker=source.slice(source.indexOf('def worker('));
+  const launched=worker.indexOf('namespace_record=identity(child.pid)'),registered=worker.indexOf('register_gate_slot(');
+  assert.ok(launched>0 && registered>launched,'the job registers once its namespace launcher is captured');
+  assert.ok(worker.indexOf('release_gate_slot(',worker.indexOf('finally:'))>0,'and releases its slot in cleanup');
 });
 
 test('isolated legacy cleanup cannot see the host and keeps its port and temporary lock independent',t=>{

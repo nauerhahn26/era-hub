@@ -163,6 +163,7 @@ test("a busy gate port is refused without stopping its existing listener", async
     assert.match(result.output,/port.*in use/i);
     assert.equal(await (await fetch(`http://127.0.0.1:${port}`)).text(),"still running");
     assert.doesNotMatch(GATE,/^\s*(?:pkill|killall)\b/m,"the gate never stops another session's listener");
-    assert.match(GATE,/^require_free_test_port \|\| exit 1$/m,"the shipped gate refuses when its port guard fails");
+    // indented since 10/27: the guard sits in the block that starts the shared hub only when a suite will run
+    assert.match(GATE,/^\s*require_free_test_port \|\| exit 1$/m,"the shipped gate refuses when its port guard fails");
   } finally {await new Promise(resolve=>listener.close(resolve));}
 });

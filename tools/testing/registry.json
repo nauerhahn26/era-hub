@@ -1457,7 +1457,7 @@
         8459
       ],
       "browsers": 0,
-      "heavy": false,
+      "heavy": true,
       "solo": false,
       "quiet": false,
       "retry": false,
@@ -1966,7 +1966,7 @@
         8478
       ],
       "browsers": 1,
-      "heavy": false,
+      "heavy": true,
       "solo": false,
       "quiet": true,
       "retry": false,
@@ -2241,6 +2241,57 @@
       "heavy": false,
       "solo": false,
       "quiet": true,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/gate-admission.test.mjs",
+      "purpose": "Gate admission instead of exclusion: slot registry, memory-sized lanes, starting gates' memory set aside, stale slots, the shared and exclusive gate lock, a private network namespace per gate, and isolated-runner jobs counted but not re-admitted",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/era-gate.sh",
+        "era-hub/tools/testing/parallel-worker.py"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data",
+        "owned-process-tree",
+        "owned-namespace-canary",
+        "private-mount-network-namespaces"
+      ],
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/gate-reuse.test.mjs",
+      "purpose": "Gate restart intelligence: the per-suite key (one negative test per part), the 24 h bound, FLAKY never reused, the shared-state guard, --rerun-failed and --restamp refusals, the one in-gate retry and its budget, resource failures never retried, the tally and the receipt, the stamp shape",
+      "group": "test-infrastructure",
+      "dependencies": [
+        "era-hub/tools/testing/reuse.mjs",
+        "era-hub/tools/testing/lanes.mjs",
+        "era-hub/tools/era-gate.sh",
+        "era-hub/tools/testing/registry.json"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data",
+        "owned-node-child",
+        "synthetic-git-repositories"
+      ],
+      "level": "runner integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
       "retry": false,
       "owner": ""
     },
@@ -2915,7 +2966,7 @@
         8466
       ],
       "browsers": 1,
-      "heavy": false,
+      "heavy": true,
       "solo": false,
       "quiet": true,
       "retry": false,
