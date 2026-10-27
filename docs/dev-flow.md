@@ -299,6 +299,12 @@ use matching feature worktrees and `ERA_WT_SUFFIX` as described above.
 
 ## Per-device speaker limit
 
+Settings → Voice & sound → Voice also has Response voice speed on this device
+(70–120%, default 80%). Save on the device being adjusted, then reopen the app
+to refresh cached speech. The preference stays in that hub's local settings;
+Drive does not synchronize it. This adjusts premium active responses across
+apps; recorded books, songs and the built-in computer voice keep their pace.
+
 Settings → Volume cap for this device saves On/Off and a whole percentage
 (0–100, default 45) to the local gaze engine through `/volcap`
 (`deviceEnabled`, `deviceCap`). Open Settings on the device being adjusted.

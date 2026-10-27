@@ -46,6 +46,8 @@
 // app (8/19 law). Every page render suppresses dwell for the settle window
 // (D51) — a fresh page never inherits her gaze.
 "use strict";
+let lockGeneration = 0;
+const appLocked = () => window.AppLock?.isLocked() || false;
 
 const S = {
   session: "r" + Date.now(),
@@ -842,6 +844,7 @@ function onTalkPause() {
 // from the top — a half-read sentence is not a place a child wants to resume
 // at (spec §6).
 function onTalkResume() {
+  if (appLocked()) { S.talkResume = null; S.paused = true; return; }
   const what = S.talkResume;
   S.talkResume = null;
   // "paused" hands her own pause BACK to her. Clearing S.paused there flipped
@@ -851,11 +854,11 @@ function onTalkResume() {
   // stopped at on purpose. Every other answer means she was not stopped.
   S.paused = what === "paused";
   if (what === "video") {
-    video.play().catch(() => {});
+    if (!appLocked()) video.play().catch(() => {});
   } else if (what === "narration") {
     resetHighlight();
     try { narration.currentTime = 0; } catch {}
-    narration.play().catch(() => {});
+    if (!appLocked()) narration.play().catch(() => {});
   } else if (what === null && S.finished && !S.playingOutro) {
     // She stepped out with the big ready-arrow waiting for her. pauseMedia()
     // cleared its pulse (no arrow pulsing at a screen she isn't looking at) and
@@ -867,10 +870,13 @@ function onTalkResume() {
 }
 
 async function openBook(slug) {
+  if (appLocked()) return;
+  const lockRun = lockGeneration;
   stopMedia();
   let m;
   try { m = await (await fetch("/books/" + slug + "/manifest.json")).json(); }
   catch { log("book-open-failed", { slug }); return; }   // stay on the shelf, never break
+  if (appLocked() || lockRun !== lockGeneration) return;
   if (!m || !Array.isArray(m.pages) || !m.pages.length) { log("book-open-failed", { slug }); return; }
   S.manifest = m; S.slug = slug;
   // ?v= cache-bust: media is served immutable, so a re-exported package must
@@ -992,7 +998,7 @@ function renderPage() {
 
   if (p.audio) {
     narration.src = base + p.audio + S.vq;     // auto-read: the page reads as it appears
-    narration.play().catch(() => {
+    if (!appLocked()) narration.play().catch(() => {
       // autoplay blocked: show the way forward (ready arrow) instead of a stuck page
       if (gen === S.renderGen) markReadyForNext();
     });
@@ -1011,6 +1017,7 @@ function renderPage() {
 // video auto-plays if there is one (no arrow left to trigger it), otherwise
 // the book is finished and the Library button becomes the invitation.
 function markReadyForNext() {
+  if (appLocked()) return;
   clearPulse();
   const m = S.manifest;
   if (!m) return;
@@ -1028,6 +1035,7 @@ function markReadyForNext() {
 }
 
 function setBookFinished() {
+  if (appLocked()) return;
   S.finished = false;
   S.playingOutro = false;
   S.bookFinished = true;
@@ -1089,11 +1097,13 @@ narration.addEventListener("ended", () => {
 
 // ---------- controls (old reader semantics) ----------
 function advance() {
+  if (appLocked()) return;
   if (!S.manifest || S.page >= S.manifest.pages.length - 1) return;
   S.page++;
   renderPage();                                // stops old narration; new page auto-reads
 }
 function goNext() {
+  if (appLocked()) return;
   const m = S.manifest;
   if (!m || S.page >= m.pages.length - 1) return;   // last page: Library finishes the book
   const p = m.pages[S.page];
@@ -1103,27 +1113,30 @@ function goNext() {
   advance();                                   // mid-narration: the arrow PAUSES the story
 }
 function goPrev() {
+  if (appLocked()) return;
   if (!S.manifest || S.page === 0) return;
   S.page--;
   renderPage();
 }
 function toggleRead() {
+  if (appLocked()) return;
   const p = S.manifest && S.manifest.pages[S.page];
   if (!p || !p.audio) return;
   if (S.reading && !S.paused) { narration.pause(); return; }
   clearPulse();
   S.finished = false;
   if (S.paused && narration.src && !narration.ended && narration.currentTime > 0) {
-    narration.play().catch(() => {});          // resume exactly where she paused
+    if (!appLocked()) narration.play().catch(() => {});          // resume exactly where she paused
   } else {
     resetHighlight();                          // read it again from the top
     try { narration.currentTime = 0; } catch {}
-    narration.play().catch(() => {});
+    if (!appLocked()) narration.play().catch(() => {});
     log("repeat", { slug: S.slug, page: S.page });
   }
   updateUi();
 }
 function goLibrary() {
+  if (appLocked()) return;
   stopMedia();
   S.manifest = null; S.slug = null;
   S.finished = false; S.bookFinished = false;
@@ -1132,14 +1145,15 @@ function goLibrary() {
 
 // ---------- per-page video (old outro presentation: overlaid on the page
 // image inside the frame; the video's end turns the page) ----------
-function startOutro(p) {
+function startOutro(p, resume = false) {
+  if (appLocked()) return;
   S.playingOutro = true;
   clearPulse();
   updateUi();                                  // big arrow shrinks back to the corner
   suppress();
   const gen = S.renderGen;
   const done = () => {
-    if (gen !== S.renderGen) return;           // page changed under the video
+    if (appLocked() || gen !== S.renderGen) return;           // page changed or locked under the video
     S.playingOutro = false;
     video.onended = video.onerror = null;
     try { video.pause(); } catch {}
@@ -1150,9 +1164,9 @@ function startOutro(p) {
   };
   video.onended = done;
   video.onerror = done;                        // a broken video never strands her
-  video.src = "/books/" + S.slug + "/" + p.video + S.vq;
+  if (!resume) video.src = "/books/" + S.slug + "/" + p.video + S.vq;
   video.classList.add("reader-outro-video-playing");
-  video.play().catch(done);
+  if (!appLocked()) video.play().catch(done);
   log("video", { slug: S.slug, page: S.page });
 }
 
@@ -1241,6 +1255,12 @@ function mountBar() {
   const DB = window.DoorBar, mount = $("bar");
   if (!DB || !mount) return { setDwell() {}, setPause() {} };   // never a dead app (8/19)
   const door = DB.mountDoorBar(mount, {
+    onLock() {
+      lockGeneration++;
+      const outro = S.playingOutro && S.manifest ? S.manifest.pages[S.page] : null;
+      S.renderGen++; pauseMedia(); S.talkResume = null; S.paused = true; updateUi();
+      if (outro) window.AppLock.get('reader').deferResume(() => startOutro(outro, true));
+    },
     onLeave: onDoorLeave, onPause: onTalkPause, onResume: onTalkResume,
   });
   const size = () => {

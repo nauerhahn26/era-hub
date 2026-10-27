@@ -233,8 +233,8 @@
       "level": "browser access/integration",
       "hub": "shared-reader",
       "ports": [],
-      "browsers": 13,
-      "heavy": true,
+      "browsers": 6,
+      "heavy": false,
       "solo": false,
       "quiet": false,
       "retry": false,
@@ -4006,6 +4006,72 @@
       ],
       "level": "legacy browser integration",
       "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-core:tests/app-lock-state.test.mjs",
+      "purpose": "Independent app state, identity, expiry and legacy migration",
+      "group": "engine",
+      "dependencies": [
+        "era-core/**",
+        "era-hub/public/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "in-process"
+      ],
+      "level": "unit",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-core:tests/app-lock-ui.test.mjs",
+      "purpose": "Shared lock gestures, passcodes, tabs, exits and explicit continuation",
+      "group": "engine",
+      "dependencies": [
+        "era-core/**",
+        "era-hub/public/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "browser"
+      ],
+      "level": "browser integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/app-lock-apps.test.mjs",
+      "purpose": "Real app entrypoints and independent Settings controls",
+      "group": "settings",
+      "dependencies": [
+        "era-core/**",
+        "era-hub/public/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "browser"
+      ],
+      "level": "browser integration",
+      "hub": "none",
       "ports": [],
       "browsers": 1,
       "heavy": false,

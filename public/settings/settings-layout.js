@@ -196,7 +196,7 @@
     ['sound','settings-music','Music volume cap','Songs, music, volume, loudness'],
     ['apps','settings-apps','Apps on this computer','Apps, shortcuts, hide, install'],
     ['apps','exit','Where the door goes','Exit, door, home, talker'],
-    ['apps','lock','Media lock','Passcode, pin, music, films, duration'],
+    ['apps','lock','App locks','Passcode, pin, music, films, books, drawing, math, games, chat, duration'],
     ['books','content','Book library','Books, reading, review, rename, build'],
     ['clothing','weather','Weather for outfits','Weather, location, place, town, zip, hours'],
     ['clothing','wardrobe','Wardrobe and outfits','Clothes, clothing, favourites, accessories, photos'],

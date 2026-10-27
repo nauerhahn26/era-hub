@@ -162,13 +162,15 @@ function cupSvg(flip) {
 
 export function mountPlayit(host, playit, { say = () => {}, log = () => {}, sound = {}, clockMs = 60000 } = {}) {
   injectCss();
+  let lockPaused = false;
+  const blocked = () => lockPaused || window.AppLock?.isLocked();
   const instrument = playit.instrument, answer = playit.answer, q = playit.q;
   const S = { play: (n) => { try { return sound.play && sound.play(n); } catch { return false; } },
               note: (m, v) => { try { return sound.note && sound.note(m, v); } catch { return false; } },
               muffled: (on) => { try { if (sound.muffled) sound.muffled(on); } catch {} } };
   let gone = false, started = false, phase = "free", strike = 0, qEl = null;
   const timers = new Set();
-  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!gone) fn(); }, ms); timers.add(t); return t; };
+  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!gone && !blocked()) fn(); }, ms); timers.add(t); return t; };
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const reduced = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
 
@@ -260,6 +262,7 @@ export function mountPlayit(host, playit, { say = () => {}, log = () => {}, soun
     }
     draw();
     cup.addEventListener("click", () => {
+      if (blocked()) return;
       touched();
       if (calling) return;
       calling = true;
@@ -286,6 +289,7 @@ export function mountPlayit(host, playit, { say = () => {}, log = () => {}, soun
       tiles,
       sound(i, ms) { state = i; draw(); S.play(i === 0 ? "string-pluck" : "drum-low"); light(tiles[i], ms || MOVE_MS); },
       hint: "Try the " + STATES[answer] + " string",
+      pause() { calling = false; afterCall = null; S.muffled(false); },
       destroy() { if (calling || afterCall) S.muffled(false); },
     };
   }
@@ -364,7 +368,7 @@ export function mountPlayit(host, playit, { say = () => {}, log = () => {}, soun
     retire();
   }
   function pickPos(i) {
-    if (gone) return;
+    if (gone || blocked()) return;
     touched();
     if (phase !== "ask") {
       log({ instrument, pick: i });
@@ -389,6 +393,8 @@ export function mountPlayit(host, playit, { say = () => {}, log = () => {}, soun
   }
 
   return {
+    pause() { lockPaused = true; for (const t of timers) clearTimeout(t); timers.clear(); if (R.pause) R.pause(); if (phase === 'free') started = false; },
+    resume() { lockPaused = false; },
     destroy() {
       gone = true;
       for (const t of timers) clearTimeout(t);

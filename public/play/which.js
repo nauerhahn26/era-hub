@@ -86,11 +86,13 @@ export function seatsFor(choices) {
 
 export function mountWhich(host, item, { say = () => {}, log = () => {}, sound = () => false, onDone = () => {}, idleMs = 20000 } = {}) {
   injectCss();
+  let lockPaused = false, pendingDone = false;
+  const blocked = () => lockPaused || window.AppLock?.isLocked();
   const choices = item.choices;
   const rightIdx = choices.findIndex((c) => c.right === true);
   let strike = 0, finished = false, idleUsed = false, idleTimer = null, doneTimer = null, armed = false;
   const timers = new Set();
-  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
+  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!blocked()) fn(); }, ms); timers.add(t); return t; };
 
   host.textContent = "";
   const root = document.createElement("div");
@@ -141,7 +143,7 @@ export function mountWhich(host, item, { say = () => {}, log = () => {}, sound =
   }
   function freeze() { for (const t of tiles) if (t) t.setAttribute("data-dwell-disabled", ""); }
   function arm() {
-    if (armed || finished) return;
+    if (blocked() || armed || finished) return;
     armed = true;
     for (const t of tiles) if (t) { t.classList.remove("wh-waiting"); t.removeAttribute("data-dwell-disabled"); }
   }
@@ -155,6 +157,8 @@ export function mountWhich(host, item, { say = () => {}, log = () => {}, sound =
     doneTimer = later(() => onDone(), DONE_MS);
   }
   function pick(idx) {
+    if (blocked()) return;
+    if (pendingDone) { pendingDone = false; onDone(); return; }
     if (finished || !armed) return;
     clearTimeout(idleTimer);
     if (idx === rightIdx) {
@@ -188,6 +192,8 @@ export function mountWhich(host, item, { say = () => {}, log = () => {}, sound =
   } else arm();
   armIdle();
   return {
+    pause() { lockPaused = true; pendingDone = finished; for (const t of timers) clearTimeout(t); timers.clear(); freeze(); },
+    resume() { lockPaused = false; armed = false; finished = false; arm(); },
     destroy() {
       finished = true;
       for (const t of timers) clearTimeout(t);

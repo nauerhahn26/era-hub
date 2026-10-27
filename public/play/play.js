@@ -26,6 +26,7 @@ import { mountWhich } from "./which.js";
 import { mountSort } from "./sort.js";
 import { mountPlayit } from "./playit.js";
 
+const appLocked = () => window.AppLock?.isLocked() || false;
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 const BOARD = "/board/?recipe=this-week";
 const PAGES = ["menu", "which", "sort", "playit"];
@@ -44,7 +45,7 @@ function hush() { try { if (window.Speech) Speech.stop(); } catch {} }
 // nothing is read
 function say(text) {
   if (window.__testHooks) (window.__speechLog = window.__speechLog || []).push({ call: "say", text });
-  if (S.paused || !window.Speech) return;
+  if (appLocked() || S.paused || !window.Speech) return;
   hush();
   try { return Speech.say(text, "long"); } catch { return undefined; }
 }
@@ -136,7 +137,7 @@ function mountItem() {
     sound: (name) => SOUNDS.play(name),
     idleMs: idleMs(),
     onDone: () => {
-      if (S.page !== "which" || S.item !== item.id) return;
+      if (appLocked() || S.page !== "which" || S.item !== item.id) return;
       if (S.idx + 1 < items.length) { S.mounted = null; S.idx += 1; mountItem(); return; }
       try { confetti(60); } catch {}
       say("You did them all!");
@@ -196,6 +197,7 @@ function renderPlayit() {
 }
 
 function route() {
+  if (appLocked()) return;
   const h = (location.hash || "").replace(/^#/, "");
   const page = PAGES.includes(h) && has(h) ? h : "menu";
   if (page !== h && h !== "") { history.replaceState(null, "", location.pathname + location.search + "#menu"); }
@@ -214,7 +216,12 @@ function onResume() { S.paused = false; }
 async function boot() {
   if (window.__testHooks) window.__speechLog = window.__speechLog || [];
   // THE DOOR IS UP BEFORE ANY FETCH (the board's 9/3 rule)
-  BAR = mountDoorBar(document.body, { appPath: "/play/", onLeave, onPause, onResume });
+  BAR = mountDoorBar(document.body, {
+    appPath: "/play/",
+    onLock() { if (S.mounted && S.mounted.pause) S.mounted.pause(); SOUNDS.stop(); hush(); },
+    onUnlock() { if (S.mounted && S.mounted.resume) S.mounted.resume(); else if (S.ready) renderMenu(); },
+    onLeave, onPause, onResume,
+  });
   try { if (window.Speech) Speech.init("Let's play!"); } catch {}
   try {
     const st = await (await fetch("/settings")).json();
