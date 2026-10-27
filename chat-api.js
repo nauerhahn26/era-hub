@@ -201,7 +201,8 @@ function lastQuestion(text, opener) {
   if (opener.test(sentences[index - 1].trim())) index--;
   return sentences.slice(index).join('').trim();
 }
-const CHOICE_PROMPT = String.raw`(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)`;
+const STEM = /^(?:or\s+)?(?:do you (?:want|need)(?: to)?|do you wanna|would you (?:like|prefer)(?: to)?|would you rather|should we|shall we|can we)\s+/i;
+const CHOICE_PROMPT = String.raw`(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|do you wanna|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)`;
 const OPENER = new RegExp(String.raw`^(?:(?:hey[\s,!.?:]+)?ellie[\s,!.?:]+)?` + CHOICE_PROMPT + String.raw`\s*[:,.!?]*$`, 'i');
 function localChoices(text) {
   let trimmed = lastQuestion(text, OPENER).replace(/[?.!]+$/, '').trim();
@@ -218,18 +219,28 @@ function localChoices(text) {
     const prefix = new RegExp('^' + CHOICE_PROMPT + String.raw`\s*[:,.!?]?\s+`, 'i');
     // Unrecognised question forms need context and factual grounding. Splitting
     // them can turn half a question into the communicator's spoken answer.
-    if (!prefix.test(trimmed)) {
+    // "Are you hot or are you cold?": a stem that pairs every alternative.
+    const paired = /^(is it|are you)\s+/i.exec(trimmed)?.[1].toLowerCase();
+    const pairedStem = paired && new RegExp(String.raw`^${paired}\s+`, 'i');
+    const later = trimmed.split(/\s+or\s+/i).slice(1);
+    const everyPaired = !!paired && later.every(part => pairedStem.test(part.replace(/^[\s,]+/, '')));
+    if (paired && !everyPaired && later.some(part => pairedStem.test(part))) return null;
+    if (!prefix.test(trimmed) && !(paired === 'are you' && everyPaired)) {
       if (/^(?:did|have|had|were|was)\s+you\b/i.test(trimmed))
         return { kind: 'guarded', generated: false, choices: choiceList([
           'Can you give me a clue?', 'Let me tell you another way.', "I don't want to answer now.",
         ]) };
       return null;
     }
-    const stripped = trimmed.replace(prefix, '').replace(/^either\s+/i, '');
+    const stripped = (paired === 'are you' && everyPaired ? trimmed.replace(pairedStem, '') : trimmed.replace(prefix, '')).replace(/^either\s+/i, '');
     // "A, B, or C", "A, B or C", "A or B or C": commas list alternatives only
     // before the last "or"; after it a comma starts a clause ("dad, to help").
     const ors = stripped.split(/\s+or\s+/i), last = ors.pop().replace(/\s*,.*$/, '');
-    const parts = alternativesOf([...ors.flatMap(part => part.replace(/\s*,\s*$/, '').split(/\s*,\s*/)), last].map(part => part.replace(/[,;:]+$/, '').trim()));
+    // A question stem repeated in a later alternative ("…, or do you want to
+    // stay inside?") is not part of what is offered.
+    const unstem = part => part.replace(STEM, '').replace(everyPaired ? pairedStem : /^$/, '');
+    const parts = alternativesOf([...ors.flatMap(part => part.replace(/\s*,\s*$/, '').split(/\s*,\s*/)), last]
+      .map(part => unstem(part.replace(/[,;:]+$/, '').trim())));
     if (parts.length >= 2 && parts.length <= 4 && parts.every(p => p.length > 0 && p.length <= 55 && !/[.!?;:]/.test(p))) {
       return { kind: 'alternatives', choices: choiceList(parts.map(p => p[0].toUpperCase() + p.slice(1))) };
     }
