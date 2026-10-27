@@ -265,3 +265,15 @@ test('a batch whose model pictures the hub rejected records the count only, and 
   t2.wrapped.end(h2, 'completed'); await flush();
   assert.equal('symbolRejected' in JSON.parse(t2.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
 });
+
+// A hold let go too soon (under 400 ms, or before any audio) is cancelled with its own reason, "short",
+// in the production timing row and the test-mode record alike; the hub schema accepts it.
+test('a hold let go too soon is cancelled with reason "short" in the timing row and the posted record', async () => {
+  const s = setup(), m = s.wrapped;
+  const h = m.begin('hold'); s.log.set(h, { mode: 'stream', session: '9b2c1a7e-1111-4222-8333-944455556666' }); s.tick(241);
+  m.end(h, 'cancelled', 'short'); await flush();
+  const record = s.requests.filter(r => r.url === '/chat/api/turns').map(r => JSON.parse(r.init.body))[0];
+  assert.equal(record.outcome, 'cancelled'); assert.equal(record.reason, 'short');
+  assert.deepEqual(validateTurn(record), record);
+  assert.equal(s.metrics.snapshot().turns.at(-1).reason, 'short');
+});

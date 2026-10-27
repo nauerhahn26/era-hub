@@ -170,7 +170,10 @@ function alternativesOf(parts) {
     // game or draw pictures" offers two activities).
     let rest = words[0].slice(1);
     if (rest.length > 1 && PARTICLE.test(rest[0])) rest = rest.slice(1);
-    if (!OBJECT.test(rest[0]) && words.slice(1).every(w => w.length === rest.length)) { words[0] = rest; shared = true; }
+    // A leading article or possessive is parallel only when every other
+    // alternative starts with the same one ("play with my X or my Y").
+    const parallel = !OBJECT.test(rest[0]) || words.slice(1).every(w => w[0].toLowerCase() === rest[0].toLowerCase());
+    if (parallel && words.slice(1).every(w => w.length === rest.length)) { words[0] = rest; shared = true; }
   }
   return words.map((list, index) => {
     // A verb phrase keeps its verb, a preposition and article right after it,
@@ -187,6 +190,22 @@ function alternativesOf(parts) {
     // Never a dangling "to", "the" or "a".
     while (kept.length > 1 && (PARTICLE.test(kept.at(-1)) || OBJECT.test(kept.at(-1)))) kept.pop();
     return kept.join(' ');
+  });
+}
+// The partner's "my" is the communicator's "your" (and the other way round):
+// she never claims the partner's things. A leading possessive or article that
+// every alternative shares leaves the labels ("my dinosaurs or my blocks" is
+// Dinosaurs / Blocks); the say keeps a flipped possessive ("Your dinosaurs").
+function spokenAlternatives(parts) {
+  const capital = text => text[0].toUpperCase() + text.slice(1);
+  const flip = text => text.replace(/\b(my|your)\b/gi, word => /^my$/i.test(word) ? 'your' : 'my');
+  const lists = parts.map(part => part.split(' '));
+  const lead = lists[0][0].toLowerCase();
+  const shared = OBJECT.test(lead) && lists.every(list => list.length > 1 && list[0].toLowerCase() === lead);
+  return lists.map(list => {
+    if (!shared) { const text = capital(flip(list.join(' '))); return { label: text, say: text }; }
+    const rest = flip(list.slice(1).join(' '));
+    return { label: capital(rest), say: /^(?:my|your)$/.test(lead) ? capital(flip(lead) + ' ' + rest) : capital(rest) };
   });
 }
 // A partner who restarts ("You want chicken and fruit? Chicken and rice.
@@ -242,7 +261,7 @@ function localChoices(text) {
     const parts = alternativesOf([...ors.flatMap(part => part.replace(/\s*,\s*$/, '').split(/\s*,\s*/)), last]
       .map(part => unstem(part.replace(/[,;:]+$/, '').trim())));
     if (parts.length >= 2 && parts.length <= 4 && parts.every(p => p.length > 0 && p.length <= 55 && !/[.!?;:]/.test(p))) {
-      return { kind: 'alternatives', choices: choiceList(parts.map(p => p[0].toUpperCase() + p.slice(1))) };
+      return { kind: 'alternatives', choices: choiceList(spokenAlternatives(parts)) };
     }
     return null;
   }

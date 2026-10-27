@@ -26,7 +26,7 @@ const LIMITS = Object.freeze({ bodyBytes: 65536, audioBytes: 480000, audioTurns:
 const KINDS = ['hold', 'typed', 'fixed', 'reply'];
 const MODES = ['one-shot', 'stream', 'local', 'typed', 'none'];
 const OUTCOMES = ['completed', 'cancelled', 'failed'];
-const REASONS = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
+const REASONS = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
 // Every v1.0.20 timing mark plus the spec §5 additions. "transcript" is the
 // final transcript's arrival and "finishSent" the finalize; socketConnect and
 // the speculative marks are reserved for the streaming pipeline (phase 2).

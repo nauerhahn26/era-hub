@@ -102,9 +102,9 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
     const asks = controls.filter(type => type === 'ask').length, before = finishes();
     await touch('#ask');
     for (let i = 0; i < 100 && controls.filter(type => type === 'ask').length === asks; i++) await page.waitForTimeout(20);
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(250); // past the 400 ms floor: a shorter hold is a slip, never a question
     await page.evaluate(g => window.__events.onmessage({ data: JSON.stringify({ type: 'partial', generation: g, text: 'would you like' }) }), generation);
-    await page.waitForTimeout(150); await lift();
+    await page.waitForTimeout(250); await lift();
     for (let i = 0; i < 100 && finishes() === before; i++) await page.waitForTimeout(20);
     assert.equal(finishes(), before + 1);
     await page.evaluate(([g, text]) => window.__events.onmessage({ data: JSON.stringify({ type: 'final', generation: g, text,

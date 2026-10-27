@@ -5,7 +5,7 @@ export const isPartnerTouch = e => e?.isTrusted === true && e.pointerType === 't
 export function createChatController(deps = {}) {
   let turn = 0, preparing = false, abort = null, speechAbort = null, utterance = 0;
   const listeners = new Set();
-  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), error: '', turn });
+  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), error: '', hint: '', turn });
   function timing(name) { try { deps.onTiming?.(name); } catch { /* Diagnostics never interrupt communication. */ } }
   function patch(p) { state = Object.freeze({ ...state, ...p }); for (const fn of listeners) fn(state); }
   function invalidate() {
@@ -19,7 +19,13 @@ export function createChatController(deps = {}) {
     ready(wakeEnabled = false) { patch({ engineReady: true, wakeEnabled, phase: state.phase === 'Off' ? (wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.phase, error: '' }); },
     ask() {
       invalidate();
-      patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: Object.freeze([]), error: '' });
+      patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: Object.freeze([]), error: '', hint: '' });
+    },
+    // A hold that ended without a question (a slip, a too-quick tap, nothing heard):
+    // only that hold is dropped. The engine stays ready and the partner sees a hint.
+    retry(hint) {
+      invalidate();
+      patch({ turn, phase: state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off', question: '', partial: '', error: '', hint: String(hint || '').slice(0, 200) });
     },
     partial(text) { if (state.phase === 'Capturing question') patch({ partial: String(text || '').slice(0, 600) }); },
     async prepare(text) {
@@ -27,7 +33,7 @@ export function createChatController(deps = {}) {
       if (!question) { api.fail('No question heard. Try again, or use a phrase.'); return; }
       const mine = invalidate();
       preparing = true;
-      patch({ turn, phase: 'Preparing', question, partial: '', choices: Object.freeze([]), error: '' });
+      patch({ turn, phase: 'Preparing', question, partial: '', choices: Object.freeze([]), error: '', hint: '' });
       try {
         const result = await deps.requestChoices?.({ text: question, signal: abort.signal });
         if (mine !== turn) return;
@@ -69,7 +75,7 @@ export function createChatController(deps = {}) {
       deps.stopSpeech?.();
       timing('speechRequested');
       const back = state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off';
-      patch({ phase: 'Speaking', error: '' });
+      patch({ phase: 'Speaking', error: '', hint: '' });
       try { await deps.speak?.({ say: text }, { signal: speechAbort.signal }); }
       catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'
         ? 'Saved voice is unavailable. Choose Device voice in partner settings to use it instead. The words are still here.'
@@ -79,11 +85,11 @@ export function createChatController(deps = {}) {
     },
     fail(message) {
       invalidate();
-      patch({ turn, engineReady: false, wakeEnabled: false, error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length ? 'Your turn' : 'Off' });
+      patch({ turn, engineReady: false, wakeEnabled: false, hint: '', error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length ? 'Your turn' : 'Off' });
     },
     stop() {
       invalidate();
-      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), error: '' });
+      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), error: '', hint: '' });
     },
   };
   return api;

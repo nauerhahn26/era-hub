@@ -2,7 +2,7 @@
 const KEY = 'chat:timings:v1';
 const KINDS = ['hold', 'typed', 'fixed', 'reply'];
 const STATUSES = ['open', 'completed', 'cancelled', 'failed'];
-const REASONS = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
+const REASONS = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
 const PAIRS = {
   holdMs: ['begin', 'release'], releaseToDrainedMs: ['release', 'drained'], drainToFinishSentMs: ['drained', 'finishSent'],
   finishRoundTripMs: ['finishSent', 'finishAck'], finishToTranscriptMs: ['finishSent', 'transcript'], releaseToTranscriptMs: ['release', 'transcript'],

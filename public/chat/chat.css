@@ -1,6 +1,6 @@
 @import url('/lib/tokens.css');
 :root{color-scheme:dark;font-family:Arial,Helvetica,sans-serif;background:#000;color:#fff;--teal:#0f7c8a;--ink:#17272e}
-*{box-sizing:border-box}body{margin:0;overflow:hidden}button,input,textarea,select{font:inherit}button{cursor:pointer;touch-action:none}button:disabled{cursor:default;opacity:.45}button:focus-visible{outline:4px solid #f5c85b;outline-offset:3px}
+*{box-sizing:border-box}body{margin:0;overflow:hidden}button,input,textarea,select{font:inherit}button{cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}button:disabled{cursor:default;opacity:.45}button:focus-visible{outline:4px solid #f5c85b;outline-offset:3px}
 #app{height:100dvh;background:#000}.msgbar{background:#111b20!important;border-bottom:1px solid #29383e}
 #sessionStatus{position:fixed;z-index:12;left:max(190px,13%);top:0;height:var(--bar-h,90px);display:flex;align-items:center;gap:10px;font-size:clamp(19px,1.8vw,30px);font-weight:700;pointer-events:none;max-width:33%;line-height:1.1}
 #statusDot{width:12px;height:12px;flex:none;border-radius:50%;background:#718086}body[data-ready="true"] #statusDot{background:#6ecaa8;box-shadow:0 0 0 5px #6ecaa81c}body[data-phase="Capturing question"] #statusDot{background:#f5c85b;box-shadow:0 0 0 5px #f5c85b24}body[data-phase="Speaking"] #statusDot{background:#75b5dc}
