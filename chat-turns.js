@@ -94,6 +94,36 @@ function applyTestModeSetting(stored, incoming, fetchSite) {
   if (typeof incoming?.chatTestMode === 'boolean') next.chatTestMode = incoming.chatTestMode;
   return next;
 }
+// ---- what she likes (dad, 10/28): sent with an open-ended question only ----
+// Up to twelve short phrases, edited in Chat's partner dialog; a generic
+// default until a partner saves a list. The family's own words stay on the device.
+const DEFAULT_LIKES = Object.freeze(['play outside', 'draw', 'read a book', 'watch a show', 'play a game', 'listen to music', 'have a snack', 'see a friend']);
+function likesList(value) {
+  if (!Array.isArray(value) || value.length > 12) return null;
+  const seen = new Set(), list = [];
+  for (const item of value) {
+    if (typeof item !== 'string') return null;
+    const text = item.trim();
+    if (!text || text.length > 30 || CONTROL.test(text) || /[\u007f<>]/.test(text)) return null;
+    if (!seen.has(text.toLowerCase())) { seen.add(text.toLowerCase()); list.push(text); }
+  }
+  return list;
+}
+function chatLikes(dataDir) {
+  try {
+    const stored = likesList(JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')).chatLikes);
+    if (stored) return stored;
+  } catch { /* the default */ }
+  return [...DEFAULT_LIKES];
+}
+// The same door as the test-mode switch: only the hub's own pages or a tool.
+function applyLikesSetting(stored, incoming, fetchSite) {
+  const next = { ...stored };
+  if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
+  const list = incoming && Object.hasOwn(incoming, 'chatLikes') ? likesList(incoming.chatLikes) : null;
+  if (list) next.chatLikes = list;
+  return next;
+}
 // Day files and summaries use the device's local calendar day.
 const two = n => String(n).padStart(2, '0');
 function localDay(date = new Date()) { return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`; }
@@ -467,4 +497,4 @@ function createChatTurns(options = {}) {
   };
 }
 
-module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, localDay, wavFromPcm, STAGES };
+module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, applyLikesSetting, chatLikes, DEFAULT_LIKES, localDay, wavFromPcm, STAGES };
