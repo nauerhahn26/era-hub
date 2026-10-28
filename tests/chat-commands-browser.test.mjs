@@ -306,7 +306,9 @@ test('two tones per window, rising then falling, and nothing is spoken while lis
   await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
   const toneAt = Date.now();
   await f.page.waitForFunction(() => document.querySelector('#diagnostics').textContent.startsWith('Question:'), null, { timeout: 10000 });
-  assert.equal(f.ttsTexts.filter(entry => entry.at >= toneAt).length, 0, 'no voice is fetched between the tone and the first seal');
+  // The sealed batch's own clips warm the moment it is staged, which can beat this check; any other voice would be one fetched while listening.
+  const fetched = f.ttsTexts.filter(entry => entry.at >= toneAt && !['Chicken', 'Fish'].includes(entry.text)).map(entry => entry.text);
+  assert.deepEqual(fetched, [], 'no voice is fetched between the tone and the first seal');
   await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 10000 });
   await f.page.waitForFunction(() => window.__tones.length === 2, null, { timeout: 2000 });
   const tones = await f.page.evaluate(() => window.__tones.map(({ from, to }) => [from, to]));
