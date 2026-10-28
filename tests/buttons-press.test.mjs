@@ -160,11 +160,11 @@ test("Chat turned off: 409 chat-off and nothing is relaunched", async () => {
 test("/status.buttons: the listener fields (unsupported off Windows) and the last press with its dispatch", async () => {
   await press({ key: "F14", action: "cancel" });
   const b = await status();
-  assert.deepEqual(Object.keys(b).sort(), ["keys", "lastError", "lastPress", "micPolicy", "pid", "restarts", "state"]);
+  assert.deepEqual(Object.keys(b).sort(), ["keys", "lastError", "lastPress", "micPolicy", "micPolicyError", "pid", "restarts", "state"]);
   assert.equal(b.state, "unsupported");
   assert.equal(b.pid, null);
   assert.deepEqual(b.keys, { registered: [], failed: [] });
-  assert.equal(b.restarts, 0); assert.equal(b.lastError, null); assert.equal(b.micPolicy, "n/a");
+  assert.equal(b.restarts, 0); assert.equal(b.lastError, null); assert.equal(b.micPolicy, "n/a"); assert.equal(b.micPolicyError, null);
   assert.deepEqual({ ...b.lastPress, at: undefined }, { at: undefined, key: "F14", action: "cancel", dispatch: "none" });
   assert.ok(Date.now() - Date.parse(b.lastPress.at) < 5000);
   const all = await (await fetch(`${BASE}/status`)).json();

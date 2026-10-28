@@ -135,9 +135,10 @@ function createButtons(options = {}) {
   // listener at all.
   function status() {
     const listener = options.listener ? options.listener.status()
-      : { state: platform === 'win32' ? 'stopped' : 'unsupported', pid: null, keys: { registered: [], failed: [] }, restarts: 0, lastError: null, micPolicy: 'n/a' };
+      : { state: platform === 'win32' ? 'stopped' : 'unsupported', pid: null, keys: { registered: [], failed: [] }, restarts: 0, lastError: null, micPolicy: 'n/a', micPolicyError: null };
     return { state: listener.state, pid: listener.pid, keys: listener.keys,
-      lastPress: lastPress && { ...lastPress }, restarts: listener.restarts, lastError: listener.lastError, micPolicy: listener.micPolicy };
+      lastPress: lastPress && { ...lastPress }, restarts: listener.restarts, lastError: listener.lastError,
+      micPolicy: listener.micPolicy, micPolicyError: listener.micPolicyError ?? null };
   }
 
   return { press, status, readBody };
@@ -176,6 +177,11 @@ const FILES = Object.freeze({ source: 'EraButtons.cs', exe: 'EraButtons.exe', ne
 function cscArgs(out, source) {
   return ['/nologo', '/target:winexe', '/platform:x64', '/out:' + out, '/r:System.Windows.Forms.dll', source];
 }
+// reg.exe by its full path: never whatever a PATH lookup finds first.
+const REG = 'C:\\Windows\\System32\\reg.exe';
+// A refused policy write is tried once more this long after (a profile not yet
+// loaded at boot is a plausible cause), then left alone until the next boot.
+const POLICY_RETRY_MS = 30 * 1000;
 function micPolicyArgs(port) {
   return POLICY_KEYS.map(key => ['add', key, '/v', '1', '/t', 'REG_SZ', '/d', 'http://127.0.0.1:' + port, '/f']);
 }
@@ -228,7 +234,7 @@ function createListener(options = {}) {
   const supported = platform === 'win32' || !!options.csc;
   const cscCmd = options.csc || CSC;
   const canPolicy = platform === 'win32' || !!options.reg;
-  const regCmd = options.reg || 'reg.exe';
+  const regCmd = options.reg || REG;
   const source = path.join(dir, FILES.source), exe = path.join(dir, FILES.exe);
   const next = path.join(dir, FILES.next), hashFile = path.join(dir, FILES.hash);
   const empty = () => ({ registered: [], failed: [] });
@@ -237,7 +243,7 @@ function createListener(options = {}) {
   let state = supported ? 'stopped' : 'unsupported';
   let child = null, pid = null, keys = empty(), startedAt = 0;
   let restarts = 0, step = 0, nextAt = 0, lastError = null;
-  let micPolicy = 'n/a', policyWriting = null;
+  let micPolicy = 'n/a', micPolicyError = null, policyWriting = null, policyFailedAt = 0, policyRetried = false;
   let compiling = null, failedHash = null;
 
   const sourceHash = () => crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
@@ -247,13 +253,20 @@ function createListener(options = {}) {
   }
 
   function writePolicy() {
-    if (policyWriting || !canPolicy) return policyWriting;
+    if (!canPolicy) return policyWriting;
+    // one retry, POLICY_RETRY_MS after a refusal; then the refusal stands
+    if (policyWriting && micPolicy === 'failed' && !policyRetried && now() - policyFailedAt >= POLICY_RETRY_MS) {
+      policyRetried = true; policyWriting = null;
+      log('microphone policy: trying once more');
+    }
+    if (policyWriting) return policyWriting;
     policyWriting = Promise.all(micPolicyArgs(port).map(args => Promise.resolve(run(regCmd, args, { timeout: 20000 }))
       .catch(error => ({ status: 1, stdout: '', stderr: '', error }))))
       .then(results => {
         const bad = results.find(r => r.status !== 0);
         micPolicy = bad ? 'failed' : 'written';
-        if (bad) log('microphone policy not written: ' + ((String(bad.stdout || '') + String(bad.stderr || '')).trim() || (bad.error && bad.error.message) || 'status ' + bad.status).replace(/\s+/g, ' ').slice(0, 200));
+        micPolicyError = bad ? ((String(bad.stdout || '') + String(bad.stderr || '')).trim() || (bad.error && bad.error.message) || 'status ' + bad.status).replace(/\s+/g, ' ').trim().slice(0, 200) : null;
+        if (bad) { policyFailedAt = now(); log('microphone policy not written: ' + micPolicyError); }
         else log('microphone policy written for http://127.0.0.1:' + port);
       });
     return policyWriting;
@@ -376,9 +389,9 @@ function createListener(options = {}) {
   function start() { started = true; return tick(); }
   function stop() { started = false; stopChild(); if (supported) state = 'stopped'; }
   function status() {
-    return { state, pid, keys: { registered: [...keys.registered], failed: [...keys.failed] }, restarts, lastError, micPolicy };
+    return { state, pid, keys: { registered: [...keys.registered], failed: [...keys.failed] }, restarts, lastError, micPolicy, micPolicyError };
   }
   return { start, tick, stop, status, compile, paths: { source, exe, next, hash: hashFile } };
 }
 
-module.exports = { createButtons, KEYS, readBody, createListener, cscArgs, micPolicyArgs, parseRegistration, stopScript, CSC, BACKOFF_MS, HEALTHY_MS, POLICY_KEYS };
+module.exports = { createButtons, KEYS, readBody, createListener, cscArgs, micPolicyArgs, parseRegistration, stopScript, CSC, REG, POLICY_RETRY_MS, BACKOFF_MS, HEALTHY_MS, POLICY_KEYS };

@@ -19,20 +19,21 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { createListener, micPolicyArgs, cscArgs, parseRegistration, stopScript, CSC, BACKOFF_MS, HEALTHY_MS } = require('../buttons.js');
+const { createListener, micPolicyArgs, cscArgs, parseRegistration, stopScript, CSC, REG, POLICY_RETRY_MS, BACKOFF_MS, HEALTHY_MS } = require('../buttons.js');
 const HUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRATCH = process.env.ERA_TEST_TMP || os.tmpdir();
 const ALL = ['F13', 'F14', 'Ctrl+Alt+F9', 'Ctrl+Alt+F10', 'Ctrl+Alt+F11'];
 const LINE = JSON.stringify({ registered: ALL, failed: [] }) + '\r\n';
 const sha = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const settle = () => new Promise((r) => setImmediate(r));
+const regFailsClear = (h) => h.regFails.splice(0);
 
 function harness({ platform = 'win32', chat = true, csc = null, reg = null, exe = true, source = '// listener v1\n', compileFails = false, regFails = [] } = {}) {
   fs.mkdirSync(SCRATCH, { recursive: true });
   const dir = fs.mkdtempSync(path.join(SCRATCH, 'era-buttons-keeper-'));
   fs.writeFileSync(path.join(dir, 'EraButtons.cs'), source);
   if (exe) { fs.writeFileSync(path.join(dir, 'EraButtons.exe'), 'built from ' + source); fs.writeFileSync(path.join(dir, 'EraButtons.exe.src-sha256'), sha(source) + '\n'); }
-  const h = { t: 1_000_000, chat, dir, children: [], runs: [], stops: [], logs: [] };
+  const h = { t: 1_000_000, chat, dir, children: [], runs: [], stops: [], logs: [], regFails };
   h.listener = createListener({
     dir, port: 8377, hubPid: 4242, platform, csc, reg,
     enabled: () => h.chat, now: () => h.t, log: (m) => h.logs.push(m),
@@ -162,7 +163,7 @@ test('off Windows with no stub compiler: unsupported, nothing compiled, run or w
   const h = harness({ platform: 'linux', exe: false });
   await h.listener.start(); await h.tick(60000);
   assert.deepEqual(h.runs, []); assert.equal(h.children.length, 0);
-  assert.deepEqual(h.listener.status(), { state: 'unsupported', pid: null, keys: { registered: [], failed: [] }, restarts: 0, lastError: null, micPolicy: 'n/a' });
+  assert.deepEqual(h.listener.status(), { state: 'unsupported', pid: null, keys: { registered: [], failed: [] }, restarts: 0, lastError: null, micPolicy: 'n/a', micPolicyError: null });
 });
 
 test('a fresh install compiles to EraButtons.new.exe, swaps it in, records the source hash, then runs it', async () => {
@@ -234,11 +235,13 @@ test('microphone policy: reg.exe add for Chrome and Edge, value 1 = this hub\'s 
   ]);
   const h = harness();
   await h.listener.start(); await settle();
-  const regs = h.runs.filter((r) => r[0] === 'reg.exe');
-  assert.deepEqual(regs, micPolicyArgs(8377).map((a) => ['reg.exe', ...a]));
+  assert.equal(REG, 'C:\\Windows\\System32\\reg.exe', 'reg.exe by its full path, never found on PATH');
+  const regs = h.runs.filter((r) => r[0] === REG);
+  assert.deepEqual(regs, micPolicyArgs(8377).map((a) => [REG, ...a]));
   assert.equal(h.listener.status().micPolicy, 'written');
+  assert.equal(h.listener.status().micPolicyError, null);
   await h.tick(60000);
-  assert.equal(h.runs.filter((r) => r[0] === 'reg.exe').length, 2, 'written once per boot');
+  assert.equal(h.runs.filter((r) => r[0] === REG).length, 2, 'written once per boot');
   assert.ok(!h.runs.some((r) => /powershell/i.test(r.join(' '))));
 });
 
@@ -246,12 +249,52 @@ test('microphone policy: a refused write says failed; Chat turned on later write
   const h = harness({ regFails: ['HKCU\\Software\\Policies\\Microsoft\\Edge\\AudioCaptureAllowedUrls'] });
   await h.listener.start(); await settle();
   assert.equal(h.listener.status().micPolicy, 'failed');
+  assert.equal(h.listener.status().micPolicyError, 'ERROR: Access is denied.', 'the reg output, trimmed, in /status.buttons');
   assert.ok(h.logs.some((l) => /microphone policy/.test(l) && /Access is denied/.test(l)), h.logs.join('\n'));
   const later = harness({ chat: false });
   await later.listener.start(); await settle();
   assert.equal(later.listener.status().micPolicy, 'n/a');
   later.chat = true; await later.tick(5000);
   assert.equal(later.listener.status().micPolicy, 'written');
+});
+
+test('microphone policy: a failed write is tried once more 30 s later, then left alone', async () => {
+  const edge = 'HKCU\\Software\\Policies\\Microsoft\\Edge\\AudioCaptureAllowedUrls';
+  const regFails = [edge];
+  const h = harness({ regFails });
+  const regs = () => h.runs.filter((r) => r[0] === REG).length;
+  await h.listener.start(); await settle();
+  assert.equal(POLICY_RETRY_MS, 30000);
+  assert.equal(regs(), 2); assert.equal(h.listener.status().micPolicy, 'failed');
+  await h.tick(POLICY_RETRY_MS - 1);
+  assert.equal(regs(), 2, 'not before 30 s');
+  await h.tick(1);
+  assert.equal(regs(), 4, 'the retry writes both keys again');
+  assert.equal(h.listener.status().micPolicy, 'failed', 'still refused');
+  for (let i = 0; i < 5; i++) await h.tick(POLICY_RETRY_MS);
+  assert.equal(regs(), 4, 'one retry, then left alone');
+  // a retry that succeeds clears the error
+  const ok = harness({ regFails: [edge] });
+  await ok.listener.start(); await settle();
+  regFailsClear(ok);
+  await ok.tick(POLICY_RETRY_MS);
+  assert.equal(ok.listener.status().micPolicy, 'written');
+  assert.equal(ok.listener.status().micPolicyError, null);
+});
+
+test('microphone policy: an error from reg itself (not its output) surfaces, at most 200 characters', async () => {
+  const h = harness();
+  const listener = createListener({
+    dir: h.dir, port: 8377, platform: 'win32', enabled: () => true, now: () => h.t, log: () => {},
+    run: async (cmd) => cmd === REG ? { status: 1, stdout: '', stderr: '', error: new Error('spawn ' + REG + ' ENOENT ' + 'x'.repeat(300)) } : { status: 0, stdout: '', stderr: '' },
+    spawn: () => { const c = new EventEmitter(); c.stdout = new EventEmitter(); c.kill = () => true; return c; },
+    stopByPath: () => {},
+  });
+  await listener.start(); await settle();
+  const s = listener.status();
+  assert.equal(s.micPolicy, 'failed');
+  assert.match(s.micPolicyError, /^spawn C:\\Windows\\System32\\reg\.exe ENOENT/);
+  assert.equal(s.micPolicyError.length, 200);
 });
 
 test('the seams: a stub compiler stands for csc and a stub reg for reg.exe off Windows', async () => {
