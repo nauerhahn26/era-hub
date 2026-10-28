@@ -1051,3 +1051,69 @@ test('GET /chat/api/world serves the digest for the partner dialog, to the hub\'
   const broken = await service(t, { world: () => { throw Error('unreadable'); } });
   assert.deepEqual(await (await fetch(broken.base + '/world')).json(), { text: '', weeks: 0, days: 0, chars: 0, about: [], week: [] });
 });
+
+// Ask a question / Make a comment and Something else (stable frame §3).
+test('POST /choices with a mode sends the question, context, likes, world and the mode to the model, never a local shortcut; the result echoes the mode', async t => {
+  const seen = [];
+  const env = { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' };
+  const reply = async (_, options) => { seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'What kind?', say: 'What kind of chicken?' }, { label: 'Rice too?', say: 'Can I have rice too?' },
+      { label: 'Who cooked?', say: 'Who cooked it?' }, { label: 'When?', say: 'When do we eat?' }] })); };
+  const s = await service(t, { world: { digest: () => WORLD }, likes: () => ['draw', 'music'], env, fetch: reply });
+  const asked = await (await s.request('/choices', { text: 'Do you want chicken or fish?', context: ['Partner: Hi.', 'Me: Hi!'], mode: 'ask' })).json();
+  assert.deepEqual(seen.at(-1), { text: 'Do you want chicken or fish?', context: ['Partner: Hi.', 'Me: Hi!'], likes: ['draw', 'music'], world: WORLD.text, mode: 'ask' },
+    'an alternatives question goes to the model with a mode, and no shape');
+  assert.equal(asked.mode, 'ask'); assert.equal(asked.choices.length, 4); assert.equal('shape' in asked, false);
+  assert.deepEqual(asked.world, { weeks: 1, days: 1, chars: 80 });
+  const commented = await (await s.request('/choices', { text: 'I got a new puppy.', mode: 'comment', avoid: ["That's cool!", 'No way!'] })).json();
+  assert.deepEqual(seen.at(-1), { text: 'I got a new puppy.', likes: ['draw', 'music'], world: WORLD.text, mode: 'comment', avoid: ["That's cool!", 'No way!'] });
+  assert.equal(commented.mode, 'comment');
+  // A bare Today line is no world, with a mode as without.
+  const bare = await service(t, { world: () => ({ text: 'Today: Wednesday, October 28.', weeks: 0, chars: 29 }), env, fetch: reply });
+  await bare.request('/choices', { text: 'Look!', mode: 'comment' });
+  assert.equal('world' in seen.at(-1), false); assert.equal('likes' in seen.at(-1), false, 'no likes provider, no likes');
+});
+
+test('Something else: avoid goes to the model and skips the local shortcut; without a mode the result has none', async t => {
+  const seen = [];
+  const env = { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' };
+  const s = await service(t, { env, fetch: async (_, options) => { seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'Neither', say: 'Neither, thanks.' }, { label: 'Both', say: 'Both, please.' }] })); } });
+  const local = await (await s.request('/choices', { text: 'Do you want apples or pears?' })).json();
+  assert.equal(local.kind, 'alternatives'); assert.equal(seen.length, 0);
+  const again = await (await s.request('/choices', { text: 'Do you want apples or pears?', avoid: ['Apples.', 'Pears.'] })).json();
+  assert.deepEqual(seen.at(-1), { text: 'Do you want apples or pears?', avoid: ['Apples.', 'Pears.'] });
+  assert.equal(again.kind, 'adapter'); assert.equal('mode' in again, false);
+});
+
+test('without a reply model a mode answers its fixed set; bad modes and avoid lists are refused', async t => {
+  const s = await service(t);
+  const ask = await (await s.request('/choices', { text: 'We are going to the park.', mode: 'ask' })).json();
+  assert.equal(ask.kind, 'fallback'); assert.equal(ask.mode, 'ask');
+  assert.deepEqual(ask.choices.map(choice => choice.say), ['Why?', 'What do you mean?', 'Can you tell me more?', 'What happens next?']);
+  const comment = await (await s.request('/choices', { text: 'We are going to the park.', mode: 'comment', avoid: ['Fun!'] })).json();
+  assert.equal(comment.kind, 'fallback'); assert.equal(comment.mode, 'comment');
+  assert.deepEqual(comment.choices.map(choice => choice.say), ["That's cool!", "I'm not sure", 'I like that', 'No way!']);
+  const plain = await (await s.request('/choices', { text: 'We are going to the park.' })).json();
+  assert.equal('mode' in plain, false);
+  for (const mode of ['tell', 'ASK', 7, null, ['ask']]) {
+    const response = await s.request('/choices', { text: 'Hello there.', mode });
+    assert.equal(response.status, 400, JSON.stringify(mode)); assert.deepEqual(await response.json(), { error: 'invalid-mode' });
+  }
+  for (const avoid of ['Yes', [7], [''], ['x'.repeat(301)], ['bad\u0007'], Array(9).fill('a'), {}]) {
+    const response = await s.request('/choices', { text: 'Hello there.', avoid });
+    assert.equal(response.status, 400, JSON.stringify(avoid).slice(0, 40)); assert.deepEqual(await response.json(), { error: 'invalid-avoid' });
+  }
+  assert.equal((await s.request('/choices', { text: 'Hello there.', avoid: [] })).status, 200, 'an empty list is no avoid');
+});
+
+test('the built-in reply core gets mode, likes, world and avoid in its model input', async t => {
+  let input;
+  const s = await service(t, { world: () => WORLD, likes: () => ['draw'], env: { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' },
+    fetch: async (_, options) => { input = JSON.parse(JSON.parse(options.body).input);
+      return new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
+        choices: [{ label: 'Magnets', say: 'I like magnets.' }, { label: 'Cool', say: "That's cool!" }] }) }] }] })); } });
+  const result = await (await s.request('/choices', { text: 'Magnets stick to the fridge.', mode: 'comment', avoid: ['Wow!'] })).json();
+  assert.deepEqual(input, { question: 'Magnets stick to the fridge.', context: [], mode: 'comment', likes: ['draw'], world: WORLD.text, avoid: ['Wow!'] });
+  assert.equal(result.kind, 'generated'); assert.equal(result.mode, 'comment');
+});
