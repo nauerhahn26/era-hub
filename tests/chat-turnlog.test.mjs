@@ -326,3 +326,59 @@ test('a hold let go too soon is cancelled with reason "short" in the timing row 
   assert.deepEqual(validateTurn(record), record);
   assert.equal(s.metrics.snapshot().turns.at(-1).reason, 'short');
 });
+
+test('an open-ended question\'s shape and a thrown-out recall batch are category words in the record, and the hub schema bounds them', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  const choices = [{ id: '1:0', label: 'Give me a clue', say: 'Can you give me a clue?', symbol: 'clue', symbolId: 6531 }];
+  stageChoices(s.log, h, choices, { kind: 'guarded', shape: 'recall', recallRejected: true, likes: ['draw'] }, choice => choice.symbol);
+  s.wrapped.mark(h, 'selected'); s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.shape, 'recall');
+  assert.equal(record.content.recallRejected, true);
+  assert.ok(!JSON.stringify(record).includes('draw'), 'the likes never go in a record');
+  assert.deepEqual(validateTurn(record), record);
+  assert.deepEqual(validateTurn({ ...record, content: { ...record.content, shape: null } }).content.shape, null);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, shape: 'wonder' } }), /invalid-turn/);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, recallRejected: 'yes' } }), /invalid-turn/);
+  const t2 = setup(), h2 = t2.wrapped.begin('typed');
+  stageChoices(t2.log, h2, choices, { kind: 'generated', shape: 'wonder', recallRejected: 'yes' }, choice => choice.symbol);
+  t2.wrapped.end(h2, 'completed'); await flush();
+  const plain = JSON.parse(t2.requests.find(r => r.url === '/chat/api/turns').init.body).content;
+  assert.equal('shape' in plain, false); assert.equal('recallRejected' in plain, false);
+});
+
+test('her world\'s size, never its text, is in the record, and the hub schema bounds it', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  const choices = [{ id: '1:0', label: 'Magnets', say: 'Learning about magnets.', symbol: 'chat', symbolId: 6531 }];
+  stageChoices(s.log, h, choices, { kind: 'generated', shape: 'open', world: { weeks: 2, days: 3, chars: 5900, text: 'Magnets!' } }, choice => choice.symbol);
+  s.wrapped.mark(h, 'selected'); s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.deepEqual(record.content.world, { weeks: 2, days: 3, chars: 5900 });
+  assert.ok(!JSON.stringify(record).includes('Magnets!'), 'the text never goes in a record');
+  assert.deepEqual(validateTurn(record), record);
+  assert.deepEqual(validateTurn({ ...record, content: { ...record.content, world: { weeks: 1, chars: 10 } } }).content.world, { weeks: 1, chars: 10 }, 'days may be absent');
+  for (const world of [{ weeks: 2 }, { weeks: -1, chars: 1 }, { weeks: 1, chars: 6001 }, { weeks: 1, days: -1, chars: 5 }, { weeks: 1, days: 32, chars: 5 }, { weeks: 1, chars: 10, text: 'x' }, 'Magnets'])
+    assert.throws(() => validateTurn({ ...record, content: { ...record.content, world } }), /invalid-turn/, JSON.stringify(world));
+  const t2 = setup(), h2 = t2.wrapped.begin('typed');
+  stageChoices(t2.log, h2, choices, { kind: 'generated', world: { weeks: 'two', chars: 5 } }, choice => choice.symbol);
+  t2.wrapped.end(h2, 'completed'); await flush();
+  assert.equal('world' in JSON.parse(t2.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
+});
+
+test('the stable frame\'s uses are in the record: the mode she swapped to, the page she opened, Something else (spec 2026-10-28 §4)', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  s.log.content(h, { mode: 'ask' }); s.log.content(h, { page: 'about' }); s.log.content(h, { again: true });
+  s.log.content(h, { mode: 'comment' }); // the last swap wins
+  s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.mode, 'comment'); assert.equal(record.content.page, 'about'); assert.equal(record.content.again, true);
+  const t = setup(), h2 = t.wrapped.begin('typed');
+  t.log.content(h2, { mode: 'shout', page: 'diary', again: 'yes' });
+  t.log.content(h2, { mode: 7, page: null, again: false });
+  t.wrapped.end(h2, 'completed'); await flush();
+  const plain = JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body).content;
+  for (const key of ['mode', 'page', 'again']) assert.equal(key in plain, false, key);
+  const off = setup({ on: false }), h3 = off.wrapped.begin('typed');
+  off.log.content(h3, { mode: 'ask', page: 'questions', again: true }); off.wrapped.end(h3, 'completed'); await flush();
+  assert.equal(off.requests.length, 0, 'nothing is written in production mode');
+});

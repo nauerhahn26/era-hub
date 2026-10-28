@@ -140,7 +140,7 @@ export function createTurnLog(options = {}) {
       turn.content.partials = [...(turn.content.partials || []), words].slice(-limits.partials);
       notify();
     },
-    staged(handle, choices, { kind, usage, symbolRejected, pictureWarm } = {}) {
+    staged(handle, choices, { kind, usage, symbolRejected, pictureWarm, shape, recallRejected, world } = {}) {
       const turn = turns.get(handle); if (!turn || !Array.isArray(choices)) return;
       const clean = choices.map(cleanChoice).filter(Boolean).slice(0, 6);
       // A streamed batch was marked choice by choice as it staged.
@@ -156,6 +156,14 @@ export function createTurnLog(options = {}) {
       // Pictures the hub warmed into its cache for this hold (spec §6): a count only.
       if (Number.isSafeInteger(pictureWarm) && pictureWarm >= 0 && pictureWarm <= 12) turn.content.pictureWarm = pictureWarm;
       else delete turn.content.pictureWarm;
+      // An open question's shape and the recall check's verdict (dad, 10/28): category words only.
+      if (['want', 'recall', 'feel', 'open'].includes(shape)) turn.content.shape = shape; else delete turn.content.shape;
+      if (recallRejected === true) turn.content.recallRejected = true; else delete turn.content.recallRejected;
+      // Her world's size when it went with the question: counts, never the text.
+      const count = (n, max) => Number.isSafeInteger(n) && n >= 0 && n <= max;
+      if (world && count(world.weeks, 520) && count(world.chars, 6000) && (world.days === undefined || count(world.days, 31)))
+        turn.content.world = { weeks: world.weeks, ...(world.days === undefined ? {} : { days: world.days }), chars: world.chars };
+      else delete turn.content.world;
       if (usage && ['inputTokens', 'cachedTokens', 'outputTokens'].every(key => Number.isSafeInteger(usage[key]) && usage[key] >= 0))
         turn.reply = { model: typeof usage.model === 'string' ? usage.model.slice(0, 128) : null, inputTokens: usage.inputTokens, cachedTokens: usage.cachedTokens, outputTokens: usage.outputTokens };
       notify();
@@ -174,6 +182,10 @@ export function createTurnLog(options = {}) {
       if (typeof patch.transcript === 'string') turn.content.transcript = text(patch.transcript, 2000);
       if (typeof patch.spoken === 'string') turn.content.spoken = text(patch.spoken, 600);
       if ('selected' in patch) turn.content.selected = cleanChoice(patch.selected);
+      // The stable frame (spec 2026-10-28 §4): the middle swapped to a mode, a page opened, Something else used.
+      if (['ask', 'comment'].includes(patch.mode)) turn.content.mode = patch.mode;
+      if (['questions', 'comments', 'about'].includes(patch.page)) turn.content.page = patch.page;
+      if (patch.again === true) turn.content.again = true;
       notify();
     },
     worker(handle, timings) {

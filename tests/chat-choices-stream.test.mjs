@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createChoicesAdapter, createChoiceStream } = require('../chat-choices.js');
 const env = { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'reply-model', ERA_CHAT_TEXT_TOKEN: 'private-value' };
-const reply = { choices: [{ label: 'Music', say: 'Music, please.', symbol: 'music' }, { label: 'A story', say: 'A story, please.', symbol: 'book' }, { label: 'Not sure', say: 'I am not sure.', symbol: 'chat' }] };
+const reply = { choices: [{ label: 'Music', say: 'Music, please.', symbol: 'music', picture: 'headphones' }, { label: 'A story', say: 'A story, please.', symbol: 'book' }, { label: 'Not sure', say: 'I am not sure.', symbol: 'chat', picture: 'shrug' }] };
 
 // A streamed reply the test releases piece by piece.
 function streamed(events) {
@@ -47,6 +47,8 @@ test('streaming asks for a stream on the fast tier and hands each choice over be
   stream.push(completed); stream.end();
   const result = await working;
   assert.deepEqual(seen.map(c => c.label), ['Music', 'A story', 'Not sure']);
+  assert.deepEqual(seen.map(c => c.picture), ['headphones', undefined, 'shrug'], 'each staged choice carries the model\'s picture words');
+  assert.deepEqual(result.choices.map(c => c.picture), ['headphones', undefined, 'shrug']);
   assert.deepEqual(result.choices.map(c => c.say), reply.choices.map(c => c.say));
   assert.equal(result.kind, 'generated'); assert.equal(result.generated, true);
   assert.deepEqual(result.usage, { model: 'reply-model', inputTokens: 900, cachedTokens: 0, outputTokens: 60 });
@@ -88,4 +90,34 @@ test('cancelling a streamed request aborts it and reports cancelled', async () =
   controller.abort();
   await assert.rejects(working, error => error.code === 'generation-cancelled');
   assert.equal(signal.aborted, true);
+});
+
+test('a streamed recall batch that asserts a past activity is sealed as the four fixed repairs', async () => {
+  const invented = { choices: [{ label: 'The park', say: 'I went to the park.', symbol: 'chat' }, { label: 'Fun', say: 'It was fun.', symbol: 'chat' }, { label: 'Not now', say: 'Not now.', symbol: 'chat' }] };
+  let body;
+  const adapter = createChoicesAdapter({ env, fetch: async (url, init) => { body = JSON.parse(init.body); const s = streamed(); for (const e of deltas(JSON.stringify(invented))) s.push(e); s.push(completed); s.end(); return s.response; } });
+  const seen = [];
+  const result = await adapter.generateStream({ text: 'What did you do last weekend?', shape: 'recall' }, { onChoice: c => seen.push(c) });
+  assert.equal(JSON.parse(body.input).shape, 'recall');
+  assert.equal(seen.length, 3, 'staged as they came; only the sealed batch is ever shown');
+  assert.equal(result.kind, 'guarded'); assert.equal(result.generated, false); assert.equal(result.recallRejected, true);
+  assert.deepEqual(result.choices.map(c => c.say), ['Can you give me a clue?', 'Let me tell you another way.', "I don't remember.", "I don't want to answer now."]);
+  assert.deepEqual(result.usage, { model: 'reply-model', inputTokens: 900, cachedTokens: 0, outputTokens: 60 });
+  assert.ok(Number.isFinite(result.timings.firstChoiceMs));
+});
+
+test('a streamed recall batch that names something from world is kept; world travels in the streamed request', async () => {
+  const world = 'Today: Wednesday, October 28.\nLast week at school: "Magnets!". Science: magnets. Words: magnet, pull, push.';
+  const known = { choices: [{ label: 'Magnets', say: 'I learned about magnets.', symbol: 'chat' }, { label: 'Fun', say: 'It was fun.', symbol: 'chat' }, { label: 'Not now', say: 'Not now.', symbol: 'chat' }] };
+  const run = async (value, input) => {
+    let body;
+    const adapter = createChoicesAdapter({ env, fetch: async (url, init) => { body = JSON.parse(init.body); const s = streamed(); for (const e of deltas(JSON.stringify(value))) s.push(e); s.push(completed); s.end(); return s.response; } });
+    return { result: await adapter.generateStream(input, { onChoice: () => {} }), input: JSON.parse(body.input) };
+  };
+  const kept = await run(known, { text: 'What did you learn last week?', shape: 'recall', world });
+  assert.equal(kept.input.world, world);
+  assert.equal(kept.result.kind, 'generated'); assert.equal('recallRejected' in kept.result, false);
+  assert.deepEqual(kept.result.choices.map(c => c.say), known.choices.map(c => c.say));
+  const zoo = { choices: [{ label: 'Zoo', say: 'I went to the zoo.', symbol: 'chat' }, { label: 'Fun', say: 'It was fun.', symbol: 'chat' }] };
+  assert.equal((await run(zoo, { text: 'What did you learn last week?', shape: 'recall', world })).result.recallRejected, true);
 });

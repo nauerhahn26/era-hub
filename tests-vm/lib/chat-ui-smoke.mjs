@@ -171,7 +171,7 @@ function installInstrumentation(origin) {
 // its complete words inside the tile (public/chat/app.js fitLabels shrinks from
 // 74 px down to this floor and no further). The smallest supported Chat viewport
 // is 1280x800 (tests/chat-symbols.test.mjs); on the QA template's native
-// 1024x768 "Reactions" cannot fit at 44 px, which is why leg B sets the guest's
+// 1024x768 the bottom row cannot fit at 44 px, which is why leg B sets the guest's
 // real desktop mode first (tests-vm/lib/native-display.mjs).
 const FONT_FLOOR = 44, SMALLEST_VIEWPORT = { width: 1280, height: 800 };
 
@@ -183,7 +183,8 @@ export async function measureChatTiles(page) {
   const frame = await page.evaluate(() => new Promise(resolve => { requestAnimationFrame(() => resolve(true)); setTimeout(() => resolve(false), 1000); }));
   return page.evaluate(frame => ({
     viewport: { innerWidth, innerHeight, screenWidth: screen.width, screenHeight: screen.height, devicePixelRatio, frame },
-    tiles: [...document.querySelectorAll('#grid button.tile')].map(node => {
+    // The question strip is the partner's words at its own smaller size (public/chat/tile-fit.js STRIP), checked on its own.
+    tiles: [...document.querySelectorAll('#grid button.tile:not(.question)')].map(node => {
       const label = node.querySelector('.label'), icon = node.querySelector('.chat-symbol'), style = getComputedStyle(node);
       // A picture BESIDE the words (board law, public/chat/tile-fit.js) takes width, not height;
       // a stacked or column picture takes height. Fractional boxes, so rounding never decides.
@@ -215,13 +216,20 @@ export function assertChatTilesFit({ viewport = {}, tiles = [] } = {}) {
     + `; every tile: [${tiles.map(report).join(',')}]`);
 }
 
+// The fixed tiles of the stable frame, in frame order, with their boxes.
+function fixedFrame(page) {
+  return page.locator('#grid .tile.yes, #grid .tile.question, #grid .tile.no, #grid .tile.page, #grid .tile.static, #grid .tile.mode')
+    .evaluateAll(nodes => nodes.filter(node => node.classList.contains('static') ? ['Tell me more', 'Something else'].includes(node.textContent.trim()) : true)
+      .map(node => ({ text: node.textContent.trim(), bounds: node.getBoundingClientRect().toJSON() })));
+}
+
 export async function checkInstalledChatUI(page, options = {}) {
   const timeout = options.timeout || 30000, originalURL = page.url();
   const base = new URL(options.baseURL || originalURL).origin;
   assert.equal(new URL(originalURL).origin, base, 'the UI check starts on the hub origin');
   const savedStorage = await page.evaluate(keys => Object.fromEntries(keys.map(key => [key, localStorage.getItem(key)])), STORAGE_KEYS);
   const savedState = await readChatState(page);
-  const wav = makeChatToneWav(), requests = { voices: 0, clips: 0, choices: 0, blocked: 0, sessions: 0 };
+  const wav = makeChatToneWav(), requests = { voices: 0, clips: 0, choices: 0, modes: 0, blocked: 0, sessions: 0 };
   const cdp = await page.context().newCDPSession(page);
   let script;
   const routeHandler = async route => {
@@ -235,6 +243,8 @@ export async function checkInstalledChatUI(page, options = {}) {
     }
     if (url.pathname.startsWith('/chat/api/')) {
       if (request.method() === 'GET' && url.pathname === '/chat/api/config') return route.continue();
+      // The partner dialog's read-only "What Chat knows this week" preview.
+      if (request.method() === 'GET' && url.pathname === '/chat/api/world') return route.continue();
       if (['GET', 'PUT'].includes(request.method()) && url.pathname === '/chat/api/state') return route.continue();
       // The page's command stream for the partner's button (design 2026-10-27 §4.2): open at load.
       if (request.method() === 'GET' && url.pathname === '/chat/api/commands') return route.continue();
@@ -243,6 +253,9 @@ export async function checkInstalledChatUI(page, options = {}) {
       if (request.method() === 'POST' && url.pathname === '/chat/api/choices') {
         let input; try { input = request.postDataJSON(); } catch {}
         if (input?.text === QUESTION && Array.isArray(input.context) && input.context.length === 0) { requests.choices++; return route.continue(); }
+        // The stable frame asks for both made sets once the batch is revealed (spec 2026-10-28 §3).
+        if (input?.text === QUESTION && ['ask', 'comment'].includes(input.mode) && Array.isArray(input.context)
+          && input.context.length === 1 && input.context[0] === `Partner: ${QUESTION}`) { requests.modes++; return route.continue(); }
       }
       requests.blocked++; return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unexpected-test-request"}' });
     }
@@ -283,14 +296,13 @@ export async function checkInstalledChatUI(page, options = {}) {
     assert.equal(await page.locator('#voicePreference').inputValue(), 'saved', 'saved voice choice persists');
     assert.equal((await audio()).playCalls, 0, 'preference changes and reloads do not speak');
 
-    const restBefore = await page.locator('.tile.rest').evaluateAll(nodes => nodes.map(node => ({
-      bounds: node.getBoundingClientRect().toJSON(), background: getComputedStyle(node).backgroundColor,
-      symbols: node.querySelectorAll('.chat-symbol').length,
-    })));
-    assert.equal(restBefore.length, 2);
-    for (const rest of restBefore) { assert.equal(rest.background, 'rgb(0, 0, 0)'); assert.equal(rest.symbols, 0); }
-    const iconCount = await page.locator('#grid button.tile').evaluateAll(nodes => nodes.map(node => node.querySelectorAll('.chat-symbol').length));
-    assert.ok(iconCount.length >= 10 && iconCount.every(count => count === 1), 'each fixed phrase and route has one symbol');
+    // The stable frame (spec 2026-10-28 §1): no rest cells; nine fixed tiles that never move.
+    assert.equal(await page.locator('.tile.rest').count(), 0, 'the stable frame has no rest cells');
+    const frameBefore = await fixedFrame(page);
+    assert.deepEqual(frameBefore.map(tile => tile.text), ['yes', 'Ask me something', 'no', 'My questions', 'My comments', 'About me', 'Tell me more', 'Ask a question', 'Make a comment', 'Something else']);
+    const iconCount = await page.locator('#grid .tile:not(.question)').evaluateAll(nodes => nodes.map(node => node.querySelectorAll('.chat-symbol').length));
+    assert.ok(iconCount.length >= 13 && iconCount.every(count => count === 1), 'each fixed tile and opener has one symbol');
+    assert.equal(await page.locator('#grid .tile.question .chat-symbol').count(), 0, 'the question strip has no picture');
 
     await openPartner(); await page.locator('#testing > summary').click({ timeout });
     await page.locator('#typedQuestion').fill(QUESTION, { timeout });
@@ -302,15 +314,24 @@ export async function checkInstalledChatUI(page, options = {}) {
     assert.deepEqual((await page.locator('.response .label').allTextContents()).map(text => text.trim()), ['Music', 'A story']);
     assert.equal(await page.getByRole('button', { name: 'Music', exact: true }).getAttribute('data-symbol'), 'music');
     assert.equal(await page.getByRole('button', { name: 'A story', exact: true }).getAttribute('data-symbol'), 'book');
-    const restAfter = await page.locator('.tile.rest').evaluateAll(nodes => nodes.map(node => ({
-      bounds: node.getBoundingClientRect().toJSON(), background: getComputedStyle(node).backgroundColor,
-      symbols: node.querySelectorAll('.chat-symbol').length,
-    })));
-    assert.deepEqual(restAfter, restBefore, 'revealing replies does not change the black rest slots');
+    const frameAfter = await fixedFrame(page);
+    assert.deepEqual(frameAfter.map(tile => tile.bounds), frameBefore.map(tile => tile.bounds), 'revealing replies moves no fixed tile');
+    assert.equal(frameAfter[1].text, QUESTION, 'the strip shows the question');
+    assert.equal(await page.locator('#grid .tile.question .label').evaluate(label => label.scrollWidth <= label.clientWidth + 1
+      && label.getBoundingClientRect().bottom <= label.parentElement.getBoundingClientRect().bottom + 1), true, 'the whole question shows in the strip');
     const fit = await measureChatTiles(page);
     assertChatTilesFit(fit);
     await options.screenshot?.();
     assert.equal((await audio()).playCalls, 0, 'revealing replies does not speak');
+    // A mode swap and back (spec 2026-10-28 §3): the middle shows the made set, the lit tile returns the replies.
+    await page.locator('#grid .tile.mode[data-mode="comment"]').click({ timeout });
+    await page.locator('#grid .tile.mode.on[data-mode="comment"]').waitFor({ state: 'visible', timeout });
+    await page.locator('#grid .tile.made').first().waitFor({ state: 'visible', timeout });
+    assert.equal(await page.locator('.response').count(), 0, 'the made set takes the middle');
+    await page.locator('#grid .tile.mode[data-mode="comment"]').click({ timeout });
+    await page.locator('.response').first().waitFor({ state: 'visible', timeout });
+    assert.equal(await page.locator('#grid .tile.made').count(), 0);
+    assert.equal((await audio()).playCalls, 0, 'a mode swap does not speak');
     await page.getByRole('button', { name: 'Music', exact: true }).click({ timeout });
     await page.waitForFunction(() => window.__chatUISmoke.ended === 1 || document.querySelector('#notice')?.textContent.includes('unavailable'), null, { timeout });
     const actualAudio = await audio();
@@ -333,7 +354,7 @@ export async function checkInstalledChatUI(page, options = {}) {
     for (const name of ['holdMs', 'releaseToTranscriptMs', 'workerFinalMs', 'workerActivityMs', 'workerCloudMs'])
       assert.equal(typedTurn.timings[name], undefined, 'a typed turn must not claim recognition timing');
     for (const group of Object.values(savedMetrics.summary.groups.typed)) { assert.equal(group.medianMs, null); assert.equal(group.p95Ms, null); }
-    assert.equal(requests.choices, 1); assert.equal(requests.blocked, 0); assert.ok(requests.voices > 0 && requests.clips > 0);
+    assert.equal(requests.choices, 1); assert.equal(requests.modes, 2); assert.equal(requests.blocked, 0); assert.ok(requests.voices > 0 && requests.clips > 0);
     let restartState;
     if (options.prepareRestart) {
       await page.locator('#storyLabel').fill(RESTART_STORY.label, { timeout });
@@ -381,9 +402,14 @@ export async function checkRestoredChatState(page, expected, options = {}) {
     assert.deepEqual((await readChatState(page)).value, expected, 'a fresh store instance serves the exact acknowledged state');
     await page.goto(base + '/chat/', { waitUntil: 'load', timeout }); await readyChat(page, timeout);
     assert.equal(await page.locator('#voicePreference').inputValue(), expected.voicePreference, 'the explicit voice choice survives a full browser restart');
-    await page.getByRole('button', { name: 'My news', exact: true }).click({ timeout });
-    for (const story of expected.stories) await page.getByRole('button', { name: story.label, exact: true }).waitFor({ state: 'visible', timeout });
-    if (!expected.stories.length) assert.equal(await page.locator('.emptyStory').first().textContent(), 'Your stories go here');
+    // About me (spec 2026-10-28 §2): the saved stories first, then the device's lines; Back closes it.
+    await page.getByRole('button', { name: 'About me', exact: true }).click({ timeout });
+    await page.locator('#grid .tile.page.on[data-page="about"]').waitFor({ state: 'visible', timeout });
+    await page.getByRole('button', { name: 'Back', exact: true }).waitFor({ state: 'visible', timeout });
+    const items = await page.locator('#grid .tile.item .label').allTextContents();
+    assert.deepEqual(items.slice(0, expected.stories.length), expected.stories.map(story => story.label), 'the saved stories come first');
+    await page.getByRole('button', { name: 'Back', exact: true }).click({ timeout });
+    await page.locator('#grid .tile.page.on').waitFor({ state: 'detached', timeout });
     await page.locator('#partnerOpen').click({ timeout });
     await page.locator('#turnTimings > summary').click({ timeout });
     assert.ok((await page.locator('#timingSummary').textContent()).startsWith(`${expected.timings.length} recent turns:`), 'the UI restores the durable timing count');

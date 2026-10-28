@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { makeChatToneWav } from '../tests-vm/lib/chat-ui-smoke.mjs';
+import { replyAreas } from '../public/chat/frame.js';
 
 const require = createRequire(import.meta.url);
 const { createChatApi } = require('../chat-api.js');
@@ -28,6 +29,11 @@ const { createChatStore } = require('../chat-store.js');
 const { acceptWebSocket } = require('../chat-ws.js');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
+// Where the frame stands replies (spec 2026-10-28 §1): a first batch by its count, a
+// swapped-in window batch by cell (design 2026-10-27 §4.5), an empty cell a waiting tile.
+const HALVES = replyAreas(2), CELLS = replyAreas(4);
+const twoByCount = (a, b) => [[a, '0', HALVES[0]], [b, '1', HALVES[1]]];
+const byCell = (...labels) => labels.map((label, i) => [label, String(i), CELLS[i]]);
 const turn = (text, { end = false, order = 0 } = {}) => ({ type: 'Turn', turn_order: order, end_of_turn: end, turn_is_formatted: end, transcript: text });
 
 function scriptedRuntime() {
@@ -144,9 +150,12 @@ async function fixture(t, { script = {}, streaming = true, limits = {}, deny = f
   }
   const until = async (check, ms = 10000) => { const end = Date.now() + ms; while (!(await check())) { if (Date.now() > end) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); } };
   const ask = () => api.commands.push({ type: 'ask', pressAt: Date.now(), key: 'F13' });
-  async function restOnCentre() {
-    const rest = await page.locator('.rest').first().boundingBox();
-    await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
+  // Her gaze on no tile (the stable frame has no black rest cells): the status line in the
+  // door bar. Two moves, so a gaze already there still raises a pointer move.
+  async function restOffTiles() {
+    const box = await page.locator('#phase').boundingBox(); assert.ok(box, '#phase');
+    await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   }
   const sessions = () => requests.filter(line => line === 'POST /chat/api/sessions').length;
   // Her gaze resting on one spot: the mouse at an element's centre.
@@ -156,12 +165,12 @@ async function fixture(t, { script = {}, streaming = true, limits = {}, deny = f
   }
   // A dwell that never completes inside a test: a gaze on a tile fills it and never picks it.
   const slowDwell = () => page.evaluate(() => { const set = window.Dwell.set; window.Dwell.set = o => set({ ...o, ms: 600000 }); set({ ms: 600000 }); });
-  // Each shown reply: [label, grid column, grid row].
+  // Each shown reply: [label, cell, grid area].
   // A sealed batch shows at once behind a 250 ms dwell settle (spec 2026-10-27 §4): a gaze that
   // lands inside the settle starts no dwell until it moves again, so a test looks after it.
   const settled = () => page.waitForTimeout(400);
-  const shown = () => page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.textContent, node.style.gridColumn, node.style.gridRow]));
-  return { page, base, api, service, requests, controls, ttsTexts, errors, press, lift, load, until, ask, restOnCentre, sessions, lookAt, slowDwell, settled, shown };
+  const shown = () => page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.textContent, node.dataset.cell, node.style.gridArea]));
+  return { page, base, api, service, requests, controls, ttsTexts, errors, press, lift, load, until, ask, restOffTiles, sessions, lookAt, slowDwell, settled, shown };
 }
 
 // ---- T2.1 the command stream ----
@@ -268,16 +277,17 @@ test('no stream settings: "Streaming speech is not set up on this device", no to
   assert.ok(f.sessions() <= 1, 'at most the session Chat prepared by itself');
 });
 
-test('no stream settings while another screen shows: the press goes to Chat, then shows the line (review fix)', { timeout: 60000 }, async t => {
+test('no stream settings while a page is open: the press returns to the replies, then shows the line (review fix)', { timeout: 60000 }, async t => {
   const f = await fixture(t, { streaming: false });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
-  await f.page.locator('.route', { hasText: 'Reactions' }).click();
-  await f.page.waitForFunction(() => [...document.querySelectorAll('.route')].some(el => el.textContent === 'Back to Chat'));
+  await f.page.locator('.tile.page[data-page="questions"]').click();
+  await f.page.waitForFunction(() => [...document.querySelectorAll('.tile.nav')].some(el => el.textContent === 'Back'));
   f.ask();
   await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Streaming speech is not set up on this device', null, { timeout: 10000 });
-  assert.ok(await f.page.locator('.route', { hasText: 'Help me say it' }).count(), 'the Chat screen is showing');
-  assert.equal(await f.page.locator('.route', { hasText: 'Back to Chat' }).count(), 0);
+  assert.ok(await f.page.locator('.tile.static', { hasText: 'Something else' }).count(), 'the replies frame is showing');
+  assert.equal(await f.page.locator('.tile.nav').count(), 0, 'the page closed');
+  assert.equal(await f.page.locator('.tile.page.on').count(), 0);
   assert.equal(f.controls.includes('window'), false);
   assert.deepEqual(f.errors, []);
 });
@@ -374,7 +384,7 @@ test('her pick while the window listens: pick reaches the hub before anything sp
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 });
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'still listening after the first batch');
@@ -410,7 +420,7 @@ test('with no end of turn from the service, 1.5 s of real quiet after speech sea
     script: { 3: [turn('is it time for lunch')], 8: [turn('is it time for lunch')] } });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 20000 });
   assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
@@ -424,10 +434,10 @@ test('the first batch shows at once wherever her gaze is; a second utterance is 
   await f.page.mouse.move(5, 5); // her gaze is off the board
   f.ask();
   await f.page.waitForFunction(() => document.querySelectorAll('.response').length === 2, null, { timeout: 15000 });
-  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1']], 'the first batch, at once, with no gaze move');
+  assert.deepEqual(await f.shown(), twoByCount('Chicken', 'Fish'), 'the first batch, at once, with no gaze move');
   // Her gaze off every tile is a neutral moment: the replacement swaps in by itself.
   await f.page.waitForFunction(() => document.querySelectorAll('.response').length === 3, null, { timeout: 15000 });
-  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1'], ['Pasta', '1', '2']], 'chicken and fish stayed put');
+  assert.deepEqual(await f.shown(), byCell('Chicken', 'Fish', 'Pasta'), 'chicken and fish kept their cells; pasta took a free one');
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'still listening after both seals');
   assert.deepEqual(f.errors, []);
 });
@@ -436,24 +446,24 @@ test('the first batch shows at once wherever her gaze is; a second utterance is 
 
 const pastaLater = { 4: [turn('do you want chicken or fish', { end: true })], 25: [turn('or pasta', { order: 1 })], 27: [turn('or pasta', { order: 1, end: true })] };
 
-test('a replacement waits with no upper bound while her gaze rests on a tile, and swaps when it leaves for the black centre', { timeout: 60000 }, async t => {
+test('a replacement waits with no upper bound while her gaze rests on a tile, and swaps when it leaves every tile', { timeout: 60000 }, async t => {
   const f = await fixture(t, { script: pastaLater });
   await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
   const before = await f.shown();
-  assert.deepEqual(before, [['Chicken', '2', '1'], ['Fish', '3', '1']]);
+  assert.deepEqual(before, twoByCount('Chicken', 'Fish'));
   await f.lookAt('.response >> text=Chicken');
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
   assert.notEqual(await f.page.evaluate(() => window.Dwell.state().target), null, 'a dwell is filling Chicken');
   await f.page.waitForTimeout(5000);
   assert.deepEqual(await f.shown(), before, 'five seconds on a tile: nothing changed or appeared');
   assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'true', 'still waiting');
-  await f.restOnCentre();
+  await f.restOffTiles();
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'false', null, { timeout: 5000 });
-  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1'], ['Pasta', '1', '2']], 'chicken and fish stayed put; pasta took a free cell');
+  assert.deepEqual(await f.shown(), byCell('Chicken', 'Fish', 'Pasta'), 'chicken and fish kept their cells; pasta took a free one');
   assert.deepEqual(f.errors, []);
 });
 
@@ -469,19 +479,19 @@ test('a second utterance replaces the batch only after a neutral move', { timeou
   const f = await fixture(t, { script: pastaLater });
   await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
   await f.lookAt('.response >> text=Fish');
   await watchRedraws(f.page);
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
   await f.page.waitForTimeout(1000);
-  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1']], 'her gaze is on Fish: nothing moves');
+  assert.deepEqual(await f.shown(), twoByCount('Chicken', 'Fish'), 'her gaze is on Fish: nothing moves');
   assert.deepEqual(await f.page.evaluate(() => window.__redraws), [], 'not one redraw while she dwells');
   // Her gaze leaves the board for the status line: no tile, and the dwell she left fades out first.
   await f.lookAt('#phase');
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'false', null, { timeout: 5000 });
-  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1'], ['Pasta', '1', '2']]);
+  assert.deepEqual(await f.shown(), byCell('Chicken', 'Fish', 'Pasta'));
   const redraws = await f.page.evaluate(() => window.__redraws);
   assert.ok(redraws.length >= 1 && redraws.every(target => target === null), `every redraw with no dwell in progress: ${JSON.stringify(redraws)}`);
   assert.deepEqual(await f.page.evaluate(() => [window.__plays, window.__speaks]), [0, 0], 'the swap speaks nothing');
@@ -492,7 +502,7 @@ test('a pick during a pending replacement wins: the shown tile is spoken, the re
   const f = await fixture(t, { script: pastaLater });
   await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
   await f.lookAt('.response >> text=Chicken');
@@ -507,9 +517,9 @@ test('a pick during a pending replacement wins: the shown tile is spoken, the re
   assert.equal(await f.page.evaluate(() => window.__plays), plays + 1, 'one clip played: the picked tile, nothing after it');
   assert.ok(f.controls.includes('pick'), f.controls.join(','));
   await f.until(() => f.api.window() === null);
-  await f.restOnCentre();
+  await f.restOffTiles();
   await f.page.waitForTimeout(600);
-  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1']], 'the black centre brings nothing back');
+  assert.deepEqual(await f.shown(), twoByCount('Chicken', 'Fish'), 'a neutral moment brings nothing back');
   assert.deepEqual(f.errors, []);
 });
 
@@ -518,12 +528,12 @@ test('a press while her gaze rests on a tile from the last turn: the tiles stay 
   const f = await fixture(t, { script, limits: { windowSilenceMs: 4000 } });
   await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 });
   await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 15000 });
   const before = await f.shown();
-  assert.deepEqual(before, [['Chicken', '2', '1'], ['Fish', '3', '1']]);
+  assert.deepEqual(before, twoByCount('Chicken', 'Fish'));
   await f.lookAt('.response >> text=Chicken');
   await f.page.waitForFunction(() => window.Dwell.state().target != null, null, { timeout: 5000 });
   await f.page.evaluate(() => { for (const el of document.querySelectorAll('#grid .tile')) el.__before = true; });
@@ -547,7 +557,7 @@ test('a dwell that completes on an old tile after a press speaks it as her pick:
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 4000 } });
   await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 });
   await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 15000 });
@@ -559,7 +569,7 @@ test('a dwell that completes on an old tile after a press speaks it as her pick:
   cdp.on('Network.eventSourceMessageReceived', ({ data }) => { try { events.push(JSON.parse(data)); } catch { /* not an event */ } });
   f.ask();
   await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
-  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1']], 'the old tiles still show under her gaze');
+  assert.deepEqual(await f.shown(), twoByCount('Chicken', 'Fish'), 'the old tiles still show under her gaze');
   const plays = await f.page.evaluate(() => window.__plays);
   const pickAt = f.controls.length;
   // Her dwell on Fish completes now.
@@ -584,7 +594,7 @@ test('a partner touch on Hold to ask during a listening window does nothing: no 
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 });
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true');
@@ -608,7 +618,7 @@ test('a trusted Space on the keyboard Ask during a listening window does nothing
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 });
   assert.equal(await f.page.evaluate(() => document.body.dataset.phase), 'Your turn', 'the first batch shows; the window still listens');
@@ -638,7 +648,7 @@ test('the second press ends the window: the done tone fires, the microphone clos
     kiosk: { foreground: async () => false, relaunch: async () => ({ ok: true }) } });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
-  await f.restOnCentre();
+  await f.restOffTiles();
   assert.equal((await buttons.press({ key: 'F13', action: 'ask' })).dispatch, 'visible');
   await f.page.waitForSelector('.response', { timeout: 15000 });
   assert.equal((await buttons.press({ key: 'F13', action: 'ask' })).dispatch, 'end', 'the second press');

@@ -265,7 +265,8 @@ test('the payload ships every hub module the Chat API loads, transitively', asyn
   const fs = await import('node:fs'), path = await import('node:path');
   const hub = new URL('../', import.meta.url).pathname;
   const copied = new Set([...fs.readFileSync(path.join(hub, 'tools', 'build-payload.sh'), 'utf8').matchAll(/"\$HUB\/([A-Za-z0-9._-]+\.js)"/g)].map(m => m[1]));
-  const seen = new Set(), queue = ['chat-api.js'];
+  // chat-world.js is loaded by the hub beside the Chat API and handed to it.
+  const seen = new Set(), queue = ['chat-api.js', 'chat-world.js'];
   while (queue.length) {
     const file = queue.shift(); if (seen.has(file)) continue; seen.add(file);
     for (const [, name] of fs.readFileSync(path.join(hub, file), 'utf8').matchAll(/require\('\.\/([A-Za-z0-9._-]+\.js)'\)/g)) queue.push(name);

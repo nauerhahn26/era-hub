@@ -19,13 +19,20 @@ if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
 // Chat test mode (spec 2026-10-27 §5): a separate route and schema, off by default.
-const { createChatTurns, applyTestModeSetting, testModeOn } = require("./chat-turns.js");
+const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSetting, testModeOn, chatLikes, chatLists } = require("./chat-turns.js");
 // The reply usage (model id, token counts) reaches the page only while this
 // device's test-mode switch is on. DATA is read when a request asks, not here.
 // Pictures the partner names while speaking, and each staged choice's picture,
 // are warmed into the symbol cache in the background (spec §6, lexicon layer).
 // SYMBOLS_CACHE and the fetch are read when a hold asks, not here.
-const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA),
+// What she likes (dad, 10/28) goes with an open-ended question to the reply
+// model, read from app-settings.json when a question asks.
+// A who question also carries the family's own names: the Drawing library's
+// people still on her board (the list chat-symbols.setPeople pictures).
+const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA), likes: () => chatLikes(DATA),
+  people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
+  // Her world (chat-world.js): built below once DATA exists, read when an open question asks.
+  world: () => chatWorld.digest(),
   pictures: { isCached: (id) => fs.existsSync(path.join(SYMBOLS_CACHE, id + ".png")),
               fetchOne: (id, { signal }) => fetchSymbolToCache(String(id), { signal }) } });
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
@@ -44,6 +51,9 @@ const booksIndex_ = require("./books-index.js");
 const booksShare = require("./books-share.js");
 const booksShelf = require("./books-shelf.js");
 const drawings = require("./drawings.js");   // Drawing's pictures (spec 2026-09-30 §4-§5)
+// A Chat tile that is one of the family shows their own picture (/characters/<slug>.png);
+// the library is read when a batch of choices asks, never here.
+require("./chat-symbols.js").setPeople(() => drawings.charactersLibrary().people);
 const aiConfig = require("./ai-config.js");
 // For baseFor alone: the provider's real base, or the ERA_AI_URL stand-in.
 const contentProviders = require("./content-providers.js");
@@ -56,6 +66,14 @@ const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
 const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
 const chatStore = require("./chat-store.js").createChatStore({ dataDir: DATA });
+// Her world for open-ended Chat questions (plan "Her world as context", dad 10/28):
+// the week packages under DATA/this-week, the shelf, the people and the likes.
+// Every provider is read lazily (booksIndex and drawings are wired further down)
+// and the digest looks at them at most once a minute.
+const chatWorld = require("./chat-world.js").createWorld({ dataDir: DATA,
+  books: () => booksIndex().map((b) => ({ title: b.title, weekOf: b.weekOf, publishedAt: b.publishedAt })),
+  people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
+  likes: () => chatLikes(DATA) });
 const LOGS = path.join(DATA, "logs");
 const TTS_CACHE = path.join(DATA, "tts-cache");
 const GAMES_STATE = path.join(DATA, "games", "state.json");
@@ -1965,6 +1983,8 @@ const server = http.createServer((req, res) => {
               lockMinutes: 45, lockPasscodeHash: "",
               downloadWeekVideos: true,   // this device fetches the week's videos (spec 2026-10-12 §3.2)
               chatTestMode: false,        // Chat test mode: one device's explicit choice (spec 2026-10-27 §5)
+              chatLikes: chatLikes(DATA), // what she likes, for open-ended Chat questions (dad, 10/28)
+              ...chatLists(DATA),         // the rail's pages: chatQuestions, chatComments, chatAbout (stable frame §2)
               voiceId: loadTtsCfg().voiceId,
               childName: PROFILE.childName || "friend", hasProfile: HAS_PROFILE,
               personalWords: [] };
@@ -1974,6 +1994,7 @@ const server = http.createServer((req, res) => {
     } catch {}
     try { s = { ...s, ...JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")) }; } catch {}
     s.voiceId = loadTtsCfg().voiceId;
+    Object.assign(s, chatLists(DATA)); // a hand-edited list that is not clean reads as its default
     s.responseVoiceSpeed = responseVoiceSpeed();
     // the pool device id: the name the presence receiver files this hub under
     // (spec 2026-10-20 §4.5), so the operator can tell which file is whose
@@ -2130,6 +2151,12 @@ const server = http.createServer((req, res) => {
         // A page on another site steering the browser never moves it (the
         // Sec-Fetch-Site rule of ownDoor above); the Chat page and tools do.
         s = applyTestModeSetting(s, inc, req.headers["sec-fetch-site"]);
+        // What she likes (dad, 10/28): a list of up to twelve short phrases,
+        // through the same door; anything else leaves the stored list alone.
+        s = applyLikesSetting(s, inc, req.headers["sec-fetch-site"]);
+        // Her lists (stable frame §2): each of chatQuestions, chatComments and
+        // chatAbout on its own, through the same door.
+        s = applyListsSetting(s, inc, req.headers["sec-fetch-site"]);
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // A new window makes the cached weather an answer to the old question,
         // and today's board a board for the wrong hours: throw the cache away

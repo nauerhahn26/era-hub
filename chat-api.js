@@ -206,11 +206,20 @@ function cleanText(value, cap) {
   if (typeof value !== 'string' || !value.trim() || value.length > cap || /[\x00-\x08\x0b-\x1f<>]/.test(value)) return null;
   return value.trim().replace(/\s+/g, ' ');
 }
+// Ask a question / Make a comment without a reply model (stable frame §3).
+const MODES = ['ask', 'comment'];
+const MODE_FALLBACK = Object.freeze({ ask: ['Why?', 'What do you mean?', 'Can you tell me more?', 'What happens next?'],
+  comment: ["That's cool!", "I'm not sure", 'I like that', 'No way!'] });
 // Every choice leaves the hub with a decorative picture: { symbol, symbolId }.
+// A glyph choice (a letter or a number, spec §3) has no picture: the page
+// shows the character itself, big.
 function choiceList(items) {
-  return withSymbols(items.map((item, index) => typeof item === 'string' ?
+  const choices = items.map((item, index) => typeof item === 'string' ?
     { id: `choice-${index + 1}`, label: item, say: item } :
-    { id: `choice-${index + 1}`, label: item.label, say: item.say, ...(typeof item.symbol === 'string' ? { symbol: item.symbol } : {}) }));
+    { id: `choice-${index + 1}`, label: item.label, say: item.say, ...(item.glyph === true ? { glyph: true } : {
+      ...(typeof item.symbol === 'string' ? { symbol: item.symbol } : {}), ...(typeof item.picture === 'string' ? { picture: item.picture } : {}) }) });
+  const pictured = withSymbols(choices.filter(choice => !choice.glyph));
+  return choices.map(choice => choice.glyph ? choice : pictured.shift());
 }
 function safeTimings(value) {
   const result = {};
@@ -263,10 +272,15 @@ function alternativesOf(parts) {
       while (from < list.length - 1 && (PARTICLE.test(list[from]) || OBJECT.test(list[from]))) from++;
       from++;
     }
-    const cut = list.findIndex((word, i) => i >= from && TAIL.test(word));
+    // A clause word right after "and" (or "and then") is joined, not a clause:
+    // "go outside and play" stays whole.
+    const joined = i => /^and$/i.test(list[i - 1] || '') || (/^then$/i.test(list[i - 1] || '') && /^and$/i.test(list[i - 2] || ''));
+    const cut = list.findIndex((word, i) => i >= from && TAIL.test(word) && !joined(i));
     const kept = cut > 0 ? list.slice(0, cut) : list;
-    // Never a dangling "to", "the" or "a".
-    while (kept.length > 1 && (PARTICLE.test(kept.at(-1)) || OBJECT.test(kept.at(-1)))) kept.pop();
+    // Never a dangling "to", "the", "a", "and", "or" or "and then".
+    const dangling = () => PARTICLE.test(kept.at(-1)) || OBJECT.test(kept.at(-1)) || /^(?:and|or)$/i.test(kept.at(-1)) ||
+      (/^then$/i.test(kept.at(-1)) && /^and$/i.test(kept.at(-2) || ''));
+    while (kept.length > 1 && dangling()) kept.pop();
     return kept.join(' ');
   });
 }
@@ -298,10 +312,49 @@ function lastQuestion(text, opener) {
   if (opener.test(sentences[index - 1].trim())) index--;
   return sentences.slice(index).join('').trim();
 }
+// A trailing list of two to four single letters or numbers ("Is the answer A,
+// B, C, or D?", "A or B?", "Which one, 1, 2 or 3?"), under any stem or none.
+// Each item stands alone between commas, "or" and the end, and the list starts
+// the sentence or follows a comma, a colon or a stem word, so "a" the article
+// ("a cookie or a banana") is never a letter. Offered as glyphs: no picture.
+const GLYPH = String.raw`(?:[a-z]|\d{1,2})`;
+const GLYPH_LIST = new RegExp(String.raw`(?:^|[,:]\s*|\b(?:answer|one|it|is|be|was|pick|choose|between|either|want|like|need|prefer|rather|number|letter|plan|option|options|choice|choices|group|team|door|box|card|or)\s+)` +
+  String.raw`(${GLYPH}(?:\s*,\s*(?:or\s+)?${GLYPH}|\s+or\s+${GLYPH}){1,3})$`, 'i');
+function glyphChoices(text) {
+  const match = GLYPH_LIST.exec(text);
+  if (!match) return null;
+  const items = match[1].split(/\s*,\s*(?:or\s+)?|\s+or\s+/i).map(item => /^\d+$/.test(item) ? String(Number(item)) : item.toUpperCase());
+  if (items.length < 2 || items.length > 4 || new Set(items).size !== items.length) return null;
+  return { kind: 'alternatives', choices: choiceList(items.map(item => ({ label: item, say: item, glyph: true }))) };
+}
+// "Who do you want, Mom, Dad, Lisa, or Sam?", "Which one do you want: the red
+// one or the blue one?": a who / which / what question that ends, after a
+// comma or colon, in an either/or list of two to four short items (one to
+// three words, no question stem or auxiliary inside) offers those items.
+const NAMED_STEM = /^(?:who|whom|which|what)\b/i;
+const NAMED_STOP = /^(?:do|does|did|is|are|am|was|were|be|would|should|could|can|will|shall|may|might|must|want|wanna|need|like|prefer|have|has|had|to|you|we|it|if)$/i;
+function namedChoices(text) {
+  if (!NAMED_STEM.test(text)) return null;
+  for (const separator of text.matchAll(/[,:]/g)) {
+    const tail = text.slice(separator.index + 1).trim();
+    const ors = tail.split(/\s+or\s+/i);
+    if (ors.length < 2) continue;
+    const last = ors.pop().replace(/\s*,.*$/, '');
+    const items = [...ors.flatMap(part => part.replace(/\s*,\s*$/, '').split(/\s*,\s*/)), last].map(item => item.trim());
+    // The first separator after which every item is a short name decides:
+    // five or more of them is the model's, never a shorter tail of the list.
+    if (!items.every(item => item && item.length <= 30 && !/[.!?;:]/.test(item) && item.split(/\s+/).length <= 3 &&
+      !item.split(/\s+/).some(word => NAMED_STOP.test(word)))) continue;
+    return items.length >= 2 && items.length <= 4 ? { kind: 'alternatives', choices: choiceList(spokenAlternatives(items)) } : null;
+  }
+  return null;
+}
 const STEM = /^(?:or\s+)?(?:do you (?:want|need)(?: to)?|do you wanna|would you (?:like|prefer)(?: to)?|would you rather|should we|shall we|can we)\s+/i;
 const CHOICE_PROMPT = String.raw`(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|do you wanna|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)`;
 const OPENER = new RegExp(String.raw`^(?:(?:hey[\s,!.?:]+)?ellie[\s,!.?:]+)?` + CHOICE_PROMPT + String.raw`\s*[:,.!?]*$`, 'i');
-function localChoices(text) {
+// The question as the shortcuts read it: the last question sentence (with its
+// opener), no closing punctuation, and no leading wake address.
+function addressed(text) {
   let trimmed = lastQuestion(text, OPENER).replace(/[?.!]+$/, '').trim();
   const explicitAddress = /^hey[\s,!.?:]+ellie[\s,!.?:]+(.+)$/i.exec(trimmed) ||
     /^ellie\s*[,!.?:]+\s*(.+)$/i.exec(trimmed);
@@ -312,7 +365,36 @@ function localChoices(text) {
   if (explicitAddress) trimmed = explicitAddress[1];
   else if (questionAddress && /^(?:(?:what|which|why|where|when|how|who|hi|hello|hey)\b|(?:do|does|did|can|could|would|will|have|has|had|shall|should|may|are|were)\s+(?:you|we)\b|(?:is|was)\s+(?:it|this|that|there)\b)/i.test(questionAddress[1]))
     trimmed = questionAddress[1];
+  return trimmed;
+}
+// An open-ended question's shape (dad, 10/28): what the model is asked for
+// when no shortcut answers. want: something to do, eat, play; feel: how she
+// is or how it was; recall: what she did (checked, never invented); open: any
+// other question word or "tell me". A statement has no shape. Only consulted
+// after localChoices has found nothing.
+const WANT = [/\b(?:what|which|where)\b.*\b(?:do you want|would you like|do you feel like|should we|shall we|are we (?:going to|gonna)|do you wanna|you want to)\b/,
+  /\bwhat (?:do you want|would you like|should we|shall we) to (?:do|play|eat|watch|read|make|have|wear)\b/,
+  /\bwhat do you want for (?:lunch|dinner|breakfast|snack)\b/, /\bwhat (?:game|book|show|song) (?:do you want|should we)\b/];
+const FEEL = [/^how are you\b/, /\bhow was your \w+/, /\bhow do you feel\b/, /\bhow was it\b/, /\bdid you (?:like|enjoy) \w+/];
+const RECALL = [/\b(?:what|where|who|when|how)\b.*\b(?:did you|have you|were you|you do|you went|you see)\b/, /\bwhat happened\b/,
+  /\bwhat was your (?:favourite|favorite) part\b/, /\btell me about your (?:day|weekend|holiday|birthday|book|story|trip)\b/];
+const OPEN = /^(?:who|what|where|when|why|how|which|tell me|tell us|say|describe|what about)\b/;
+function openShape(text) {
+  if (typeof text !== 'string') return null;
+  const question = addressed(text).toLowerCase().replace(/[’]/g, "'").replace(/[?.!,;:]+$/, '').trim();
+  if (!question) return null;
+  if (WANT.some(pattern => pattern.test(question))) return 'want';
+  if (FEEL.some(pattern => pattern.test(question))) return 'feel';
+  if (RECALL.some(pattern => pattern.test(question))) return 'recall';
+  return OPEN.test(question) ? 'open' : null;
+}
+function localChoices(text) {
+  let trimmed = addressed(text);
+  const glyphs = glyphChoices(trimmed);
+  if (glyphs) return glyphs;
   if (/\bor\b/i.test(trimmed)) {
+    const named = namedChoices(trimmed);
+    if (named) return named;
     const prefix = new RegExp('^' + CHOICE_PROMPT + String.raw`\s*[:,.!?]?\s+`, 'i');
     // Unrecognised question forms need context and factual grounding. Splitting
     // them can turn half a question into the communicator's spoken answer.
@@ -399,6 +481,31 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   const adapterUrl = transportUrl(env.ERA_CHAT_CHOICES_URL);
   // Chat test mode only (spec 2026-10-27 §5): the model id and token counts reach the page while the switch is on.
   const reportUsage = () => { try { return options.reportUsage?.() === true; } catch { return false; } };
+  // What she likes (the device's chatLikes setting): sent with an open-ended
+  // question only, read when a question asks; an unreadable list costs nothing.
+  const listFrom = (provider, max) => {
+    try {
+      const list = provider?.();
+      return Array.isArray(list) ? list.filter(item => typeof item === 'string' && item.trim() && item.trim().length <= max && !/[\x00-\x1f<>]/.test(item))
+        .map(item => item.trim()).slice(0, 12) : [];
+    } catch { return []; }
+  };
+  const likes = () => listFrom(options.likes, 30);
+  // The family's own names (the Drawing library's people), for a who question only.
+  const people = () => listFrom(options.people, 20);
+  // Her world (chat-world.js): the device's digest of week packages, shelf,
+  // people and likes; `world` is the object from createWorld or a provider of
+  // { text, weeks, chars }. Anything unreadable is no world at all.
+  const worldDigest = () => {
+    try {
+      const value = typeof options.world === 'function' ? options.world() : typeof options.world?.digest === 'function' ? options.world.digest() : null;
+      if (!value || typeof value.text !== 'string' || value.text.length > 6000) return null;
+      const count = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
+      // The About me page's lines (stable frame §2): clean short strings, six at most.
+      const lines = list => (Array.isArray(list) ? list : []).filter(item => typeof item === 'string' && item.trim() && item.length <= 300 && !/[\x00-\x1f<>]/.test(item)).slice(0, 6);
+      return { text: value.text, weeks: count(value.weeks), days: count(value.days), chars: value.text.length, about: lines(value.about), week: lines(value.week) };
+    } catch { return null; }
+  };
   // Two more than the HTTP route's own limit: a streaming session's speculative
   // request and its fresh one may overlap for a moment while one aborts.
   const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices + 2, timeoutMs: Math.min(limits.adapterMs, 12000) } });
@@ -710,17 +817,27 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // The one choice path: local shortcuts first, then the external adapter or
   // the built-in reply core (streamed when `onChoice` listens), then the
   // published post-checks. Returns the page's body; throws a fault.
-  async function produceChoices(text, context, signal, onChoice) {
+  // `mode` ('ask' | 'comment', stable frame §3) asks for her own turn: no local
+  // shortcut, no shape, likes and world always. `avoid` (Something else) lists
+  // the says already shown, and skips the local shortcut that would repeat them.
+  async function produceChoices(text, context, signal, onChoice, { mode, avoid } = {}) {
     const began = clock();
-    const local = localChoices(text);
+    const local = mode || avoid ? null : localChoices(text);
     if (local) return { ...local, timings: { totalMs: Math.max(0, clock() - began) } };
     if (adapterRequested && !adapterUrl) throw fault(503, 'choices-unavailable');
-    if (!adapterUrl && !choicesCore.available) return { kind: 'fallback', choices: choiceList([
+    if (!adapterUrl && !choicesCore.available) return { kind: 'fallback', choices: choiceList(mode ? MODE_FALLBACK[mode] : [
       'Tell me more', "I'm not sure", 'Please say that again', "I don't want to answer",
-    ]), timings: { totalMs: Math.max(0, clock() - began) } };
+    ]), ...(mode ? { mode } : {}), timings: { totalMs: Math.max(0, clock() - began) } };
     try {
       let result;
-      const input = { text, ...(context && context.length ? { context } : {}) };
+      const shape = mode ? null : openShape(text), liked = shape || mode ? likes() : [];
+      const named = shape && /\bwho(?:m)?\b/i.test(text) ? people() : [];
+      // Her world goes with an open-ended question or a mode only, and only when
+      // it holds more than its Today line (a week, a book, people or likes).
+      const known = shape || mode ? worldDigest() : null, world = known && known.text.includes('\n') ? known : null;
+      const input = { text, ...(context && context.length ? { context } : {}), ...(shape ? { shape } : {}), ...(liked.length ? { likes: liked } : {}),
+        ...(named.length ? { people: named } : {}), ...(world ? { world: world.text } : {}),
+        ...(mode ? { mode } : {}), ...(avoid && avoid.length ? { avoid } : {}) };
       if (!adapterUrl) result = onChoice ? await choicesCore.generateStream(input, { signal, onChoice }) : await choicesCore.generate(input, { signal });
       else {
         const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal,
@@ -745,8 +862,12 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const rejected = items.filter(item => symbolRejected({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol })).length;
       return { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
-        choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol }))),
+        choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol, picture: item.picture }))),
         ...(rejected ? { symbolRejected: rejected } : {}),
+        ...(shape ? { shape } : {}), ...(mode ? { mode } : {}), ...(result.recallRejected === true ? { recallRejected: true } : {}),
+        ...(Number.isSafeInteger(result.commentDropped) && result.commentDropped > 0 && result.commentDropped <= 4 ? { commentDropped: result.commentDropped } : {}),
+        // The turn record keeps the world's size, never its text.
+        ...(world ? { world: { weeks: world.weeks, days: world.days, chars: world.chars } } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }
@@ -756,17 +877,24 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     if (!Array.isArray(value) || value.length > 8 || !value.every(x => cleanText(x, 500))) throw fault(400, 'invalid-context');
     return value.map(x => cleanText(x, 500));
   }
+  function cleanAvoid(value) {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length > 8 || !value.every(x => cleanText(x, 300))) throw fault(400, 'invalid-avoid');
+    return value.length ? value.map(x => cleanText(x, 300)) : undefined;
+  }
   async function generate(req, res) {
     const input = await readJson(req, limits.bodyBytes);
     const text = cleanText(input.text, 2000);
     if (!text) throw fault(400, 'invalid-text');
     const context = cleanContext(input.context);
-    if (requests.size >= limits.choices && !localChoices(text)) throw fault(429, 'choices-busy');
+    if (input.mode !== undefined && !MODES.includes(input.mode)) throw fault(400, 'invalid-mode');
+    const mode = input.mode, avoid = cleanAvoid(input.avoid);
+    if (requests.size >= limits.choices && (mode || avoid || !localChoices(text))) throw fault(429, 'choices-busy');
     const controller = new AbortController(); requests.add(controller);
     const cancel = () => { if (!res.writableEnded) controller.abort(); };
     res.once('close', cancel);
     const timeout = setTimeout(() => controller.abort(), limits.adapterMs); timeout.unref();
-    try { json(res, 200, await produceChoices(text, context, controller.signal)); }
+    try { json(res, 200, await produceChoices(text, context, controller.signal, undefined, { mode, avoid })); }
     finally { clearTimeout(timeout); requests.delete(controller); res.off('close', cancel); }
   }
 
@@ -792,7 +920,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function stageChoice(session, job, choice) {
     if (!liveJob(session, job)) return;
     const index = job.stagedCount++;
-    const [pick] = choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}) }]);
+    // A choice of a whole batch (a shortcut, the adapter) is already picked as part of
+    // its batch (a glyph, a person, the second of two names): it is staged as it is.
+    const picked = choice.glyph === true || Number.isSafeInteger(choice.symbolId) || typeof choice.picture?.src === 'string';
+    const [pick] = picked ? [choice] : choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}),
+      ...(typeof choice.picture === 'string' ? { picture: choice.picture } : {}) }]);
     emit(session, { type: 'choice-staged', generation: job.generation, ...windowOf(job), index, choice: { ...pick, id: `choice-${index + 1}` } });
     // The hub knows the picture before the page does: warm it now, behind the event.
     if (job.pictures && pick.symbolId) try { job.pictures.stage(pick.symbolId); } catch { /* decorative */ }
@@ -936,6 +1068,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       if (!commands.setVisible(body.visible)) throw fault(409, 'no-page');
       return json(res, 200, { ok: true });
     }
+    // What Chat knows this week, for the partner dialog's read-only preview.
+    if (req.method === 'GET' && routePath === '/world') return json(res, 200, worldDigest() || { text: '', weeks: 0, days: 0, chars: 0, about: [], week: [] });
     if (req.method === 'POST' && routePath === '/sessions') {
       await readBody(req, limits.bodyBytes);
       const session = startSession(); return json(res, 201, { id: session.id });
@@ -1084,4 +1218,4 @@ function createChatApi(options = {}) {
     close() { closed = true; inner.close(); commands.close(); },
   };
 }
-module.exports = { createChatApi, createCommands, loadChatEnvironment, ownRequest, turnByteLimit, DEFAULTS };
+module.exports = { createChatApi, createCommands, loadChatEnvironment, ownRequest, turnByteLimit, DEFAULTS, localChoices, alternativesOf, openShape };

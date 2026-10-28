@@ -231,7 +231,8 @@ Info
 
 ## Phase 4 — replacement batches (implementing)
 
-- [x] **T4.1** `controller.js`: `replace(choices)` stages a pending
+- [x] **T4.1** `controller.js`: `stageReplacement(choices)` (named `replace()`
+      until the 10/28 merge of the stable frame, decision 17) stages a pending
       replacement (a newer one supersedes it unseen, `timing('replacementSuperseded')`);
       `neutral()` in `'Your turn'` swaps it in; `select()` discards pending;
       sealed batches stay frozen (`Object.freeze`). Accept: `tests/chat-ui.test.mjs`
@@ -431,6 +432,16 @@ Info
     10/28). The browser profile remembers the grant from the first touch on
     Chat's microphone control; that touch is a rollout step per device (the
     home I-13 already has it from Chat use).
+17. Merged with the stable frame (master, 10/28): `controller.replace(choices,
+    expectedTurn)` is Something else's fresh batch and shows the moment it lands
+    (stable frame §3); the window's staged batch is `stageReplacement(choices)`,
+    with `swapReplacement()`/`dropReplacement()` unchanged, and her own request
+    drops a waiting window batch (a pick wins). The frame draws a batch by its
+    count (§1), so only a swapped-in window batch, whose choices carry `cell`,
+    stands in the four cells: chicken and fish keep their cells and pasta takes
+    a free one, and the swap still happens only at a neutral moment. A first
+    batch, and Something else's, draw as master draws them. The old screens are
+    pages now: a press closes an open page before it listens.
 
 ## Retrospective
 

@@ -58,7 +58,9 @@ function revealProbe() {
     }
   };
   const nativeFetch = window.fetch.bind(window);
-  window.fetch = async (...args) => { const r = await nativeFetch(...args); if (String(args[0]).includes('/chat/api/choices')) window.__sealed.push(now()); return r; };
+  // The made sets (Ask a question / Make a comment, spec 2026-10-28 §3) are asked for after a reveal: not a batch.
+  const made = init => { try { return !!JSON.parse(init?.body || '{}').mode; } catch { return false; } };
+  window.fetch = async (...args) => { const r = await nativeFetch(...args); if (String(args[0]).includes('/chat/api/choices') && !made(args[1])) window.__sealed.push(now()); return r; };
   document.addEventListener('DOMContentLoaded', () => {
     let last = '';
     new MutationObserver(() => {
@@ -221,7 +223,8 @@ async function turnsService(t, words) {
 function replyService() {
   const calls = [];
   const fetcher = async (url, init) => {
-    calls.push(JSON.parse(JSON.parse(init.body).input).question);
+    // The made sets (spec 2026-10-28 §3) go to the model too, after the reveal; only the replies are recorded here.
+    const data = JSON.parse(JSON.parse(init.body).input); if (!data.mode) calls.push(data.question);
     const text = JSON.stringify({ choices: [{ label: 'Play outside', say: 'Let us play outside.', symbol: 'chat' }, { label: 'Read', say: 'I want to read.', symbol: 'chat' }, { label: 'Not sure', say: 'I am not sure.', symbol: 'chat' }] });
     const events = []; for (let i = 0; i < text.length; i += 16) events.push({ type: 'response.output_text.delta', delta: text.slice(i, i + 16) });
     events.push({ type: 'response.completed', response: { usage: { input_tokens: 800, output_tokens: 50 } } });
@@ -252,7 +255,8 @@ test('a streamed turn end to end: partials heard so far, staged voices warm befo
   assert.ok(sealed[0] >= Math.max(...staged), 'the seal follows the last staged choice');
   assert.deepEqual(reveals.map(r => r.labels), [['Play outside', 'Read', 'Not sure']], 'one reveal per turn, never a partial batch');
   assert.ok(reveals[0].at - sealed[0] <= REVEAL_SLACK_MS, `revealed ${Math.round(reveals[0].at - sealed[0])} ms after the seal`);
-  assert.equal(f.requests.filter(line => line.startsWith('POST /chat/api/choices')).length, 0, 'the hub staged the replies; the page asked for none');
+  // The hub staged the replies; the page asked only for the two made sets, after the reveal (spec 2026-10-28 §3).
+  assert.equal(f.requests.filter(line => line.startsWith('POST /chat/api/choices')).length, 2, 'the hub staged the replies; the page asked only for the made sets');
   // Speculation ran on the stable partials; the last one matched the final and was kept (no request after it).
   assert.equal(reply.calls.at(-1), 'what should we do after lunch', 'the kept speculation was on the stable partial');
   for (const say of ['Let us play outside.', 'I want to read.', 'I am not sure.']) assert.ok(f.ttsTexts.includes(say), 'voice warmed for ' + say);
@@ -262,9 +266,10 @@ test('a streamed turn end to end: partials heard so far, staged voices warm befo
   assert.deepEqual(f.errors, []);
 });
 
-// The cell where the first reply lands ([1,0]): a waiting tile while replies prepare.
+// The cell where the first reply lands (the stable frame's top-left reply area,
+// public/chat/frame.js replyAreas(4)[0]): a waiting tile while replies prepare.
 const firstReplyCell = page => page.evaluate(() => {
-  const r = [...document.querySelectorAll('#grid .tile')].find(el => el.style.gridColumn === '2' && el.style.gridRow === '1').getBoundingClientRect();
+  const r = [...document.querySelectorAll('#grid .tile.waiting')].find(el => el.style.gridArea === '2 / 2 / 3 / 8').getBoundingClientRect();
   return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
 });
 // Slow the one-shot replies so the gaze is parked before they seal.

@@ -1,10 +1,11 @@
-import { createChatController, isPartnerTouch, cellOf } from './controller.js';
+import { createChatController, isPartnerTouch, cleanChoices, cellOf } from './controller.js';
 import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
 import { createChatStorage } from './storage.js';
 import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture } from './symbols.js';
 import { fitTile } from './tile-fit.js';
+import { GRID, fixedTiles, replyAreas, pageCells, paginate } from './frame.js';
 import { createTurnLog, observeMetrics, stageChoices } from './turnlog.js';
 import { mountDoorBar } from '/lib/doorbar.js';
 import { connectCommands } from './commands.js';
@@ -33,6 +34,14 @@ const bar = mountDoorBar($('app'), {
   onResume: () => autoPrepare(),
   onUnlock: () => autoPrepare(),
 });
+// The lock (mounted in the door bar by app-lock.js) sits left of the partner
+// controls, so Hold to ask is in the top right corner (spec 2026-10-28 §1).
+const placeLock = () => document.documentElement.style.setProperty('--strip-w', `${Math.ceil($('partnerStrip').getBoundingClientRect().width)}px`);
+placeLock();
+if (typeof ResizeObserver === 'function') new ResizeObserver(placeLock).observe($('partnerStrip'));
+// The frame's tracks come from frame.js (spec 2026-10-28 §1); chat.css sets the gap.
+$('grid').classList.add('frame');
+$('grid').style.gridTemplateColumns = GRID.columns; $('grid').style.gridTemplateRows = GRID.rows;
 const savedSettings = await persistence.hydrate();
 // Library pictures (spec 2026-10-27 §6); without the table the drawn pictures stay.
 // ?pictures=bw|emoji shows the black-and-white or emoji style for comparison.
@@ -52,7 +61,7 @@ const metrics = observeMetrics(createTurnMetrics({ storage: persistence.metricsS
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
 const AUDIO_POST_MS = 2000;
 let questionMetric = null, speechMetric = null, pendingSpeechMetric = null, pressMetric = null;
-let screen = 'chat', config = null, session = null, events = null, mic = null;
+let config = null, session = null, events = null, mic = null;
 let lifecycle = 0, sequence = 0, workerGeneration = -1, uploadEpoch = 0;
 let mode = 'blocked', starting = false, closing = false, holding = false, askTimer = null, finishedTurn = -1;
 let uploadChain = Promise.resolve(), queued = 0, sessionAbort = null, readyTimer = null;
@@ -89,14 +98,30 @@ let press = null, pressBusy = false, pickSent = Promise.resolve();
 const tones = createTones();
 const FRAMES_AFTER_TONE_MS = 200;
 
-const fixed = {
-  chat: ["Hi!", "What's up?", 'How are you?', 'Come sit with me.'],
-  reactions: ["That's funny!", 'I love that!', 'No way!', "That's not fair!"],
-  repair: ['Give me more time.', "That's not what I meant.", 'Ask me yes or no.', 'Let me try again.'],
-};
+// Before any question the middle shows the openers (spec 2026-10-28 §1).
+const OPENERS = ["Hi!", "What's up?", 'How are you?', 'Come sit with me.'];
+const SPOKEN = { yes: 'Yes.', no: 'No.', more: 'Tell me more.', else: 'Something else.' };
+// The stable frame's pages and modes (spec 2026-10-28 §2-3). `page` is the
+// open page (null | 'questions' | 'comments' | 'about'), `pageOffset` its paging;
+// `modeView` the middle swapped to a made set (null | 'ask' | 'comment');
+// `made` the current turn's two sets, asked for in the background after a reveal.
+let page = null, pageOffset = 0, modeView = null;
+let made = { turn: -1, ask: null, comment: null, aborts: [] }, again = null, echoing = false;
+const lists = { questions: [], comments: [], about: [] }, world = { about: [], week: [] };
+let listsVersion = 0;
+const LIST_FIELDS = [['questions', 'chatQuestions'], ['comments', 'chatComments'], ['about', 'chatAbout']];
+// One partner list from /settings: strings only; missing is empty (the hub adds the fields).
+function setList(key, value) {
+  lists[key] = Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim()) : [];
+  const box = $(LIST_FIELDS.find(([name]) => name === key)[1]);
+  if (box) box.value = lists[key].join('\n');
+  // Only an open page shows the lists: the frame itself never redraws for them.
+  listsVersion++;
+  if (appReady && page) renderGrid(controller.state);
+}
 
 function warmPhrases() {
-  voice.prefetch([...Object.values(fixed).flat(), 'Yes.', 'No.', 'Tell me more.', ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })));
+  voice.prefetch([...OPENERS, ...Object.values(SPOKEN), ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })));
 }
 // A press turn lives in the test-mode turn log only (production rows keep four kinds).
 const questionActive = () => metrics.isActive(questionMetric) || (questionMetric !== null && questionMetric === pressMetric && turnLog.tracking(questionMetric));
@@ -109,6 +134,8 @@ function timingEvent(name) {
     pendingSpeechMetric = questionActive() && speechMetric !== questionMetric ? questionMetric : metrics.begin('reply');
     metrics.mark(pendingSpeechMetric, 'selected');
   } else if (name === 'speechRequested') {
+    // The strip's repeat of the question is never her answer to it.
+    if (echoing) { echoing = false; pendingSpeechMetric = null; speechMetric = metrics.begin('fixed'); metrics.mark(speechMetric, 'selected'); return; }
     if (!pendingSpeechMetric && questionActive() && controller.state.phase === 'Your turn') pendingSpeechMetric = questionMetric;
     speechMetric = pendingSpeechMetric || metrics.begin('fixed'); pendingSpeechMetric = null;
     metrics.mark(speechMetric, 'selected');
@@ -159,7 +186,8 @@ const controller = createChatController({
     try { result = held ? await stagedBatch(held, signal) : await json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context }), signal }); }
     catch (error) { turnLog.error(timing, error.message); throw error; }
     metrics.observe(timing, { choicesServerMs: result.timings?.totalMs });
-    stagedMeta = { handle: timing, kind: result.kind, usage: result.usage, symbolRejected: result.symbolRejected, pictureWarm: result.pictureWarm };
+    stagedMeta = { handle: timing, kind: result.kind, usage: result.usage, symbolRejected: result.symbolRejected, pictureWarm: result.pictureWarm,
+      shape: result.shape, recallRejected: result.recallRejected, world: result.world };
     return result;
   },
   onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
@@ -195,7 +223,8 @@ const controller = createChatController({
     } catch (error) { metrics.end(timing, 'failed', 'speech'); void persistence.flush(); throw error; }
     if (completed === true && !signal.aborted && spoken === currentSpeech && mine === lifecycle) {
       metrics.end(timing, 'completed');
-      recentConversation = [...recentConversation, `Me: ${choice.say}`.slice(0, 500)].slice(-8);
+      // The strip says the partner's question again: those are not her words.
+      if (!choice.echo) recentConversation = [...recentConversation, `Me: ${choice.say}`.slice(0, 500)].slice(-8);
     } else metrics.end(timing, 'cancelled', 'interrupted');
     void persistence.flush();
     await canceled;
@@ -204,6 +233,8 @@ const controller = createChatController({
 
 fetch('/settings').then(r => r.json()).then(s => {
   testMode = s.chatTestMode === true; paintTestMode();
+  if (Array.isArray(s.chatLikes)) $('chatLikes').value = s.chatLikes.filter(item => typeof item === 'string').join('\n');
+  for (const [key, field] of LIST_FIELDS) setList(key, s[field]);
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
   window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
@@ -211,14 +242,18 @@ fetch('/settings').then(r => r.json()).then(s => {
 const REVEAL_SETTLE_MS = 250;
 let revealRender = false;
 const pictureOf = new WeakMap();
-function tile(label, type, action, position, say, pick = {}) {
+// One tile in the frame: `area` is its CSS grid-area (public/chat/frame.js).
+function tile(label, type, action, area, say, pick = {}) {
   const el = document.createElement(action ? 'button' : 'div');
   el.className = `tile ${type}${action ? ' dwell' : ''}`;
-  el.style.gridColumn = String(position[0] + 1); el.style.gridRow = String(position[1] + 1);
+  el.style.gridArea = area;
   if (action) { el.type = 'button'; el.addEventListener('click', action); }
   const text = document.createElement('span'); text.className = 'label'; text.textContent = label;
   el.appendChild(text);
-  if (hasVocabulary()) pictureOf.set(el, { label, type, say, symbol: pick.symbol, symbolId: pick.symbolId });
+  // A glyph (a letter or a number) is its own picture: tile-fit.js draws it big.
+  if (pick.glyph === true || pick.noPicture === true) return el;
+  type = type.split(' ')[0];
+  if (hasVocabulary()) pictureOf.set(el, { label, type, say, symbol: pick.symbol, symbolId: pick.symbolId, picture: pick.picture });
   else attachSymbol(el, { label, type, say });
   return el;
 }
@@ -239,55 +274,184 @@ function paintPictures(grid, turn) {
   if (byLabel.size || turn !== paintedReplies.turn) paintedReplies = { turn, byLabel };
   tiles.forEach((el, i) => attachPicture(el, plan[i], fitTile));
 }
-function go(next) { screen = next; gridKey = ''; renderGrid(controller.state); }
 function fitLabels() {
-  for (const el of $('grid').querySelectorAll('.tile:not(.rest)')) fitTile(el);
+  for (const el of $('grid').querySelectorAll('.tile')) fitTile(el);
+}
+const capturing = state => state.phase === 'Capturing question';
+const waitingForReplies = state => ['Capturing question', 'Preparing'].includes(state.phase);
+
+// ---- pages (spec 2026-10-28 §2) ----
+function pageItems(key) {
+  if (key === 'about') return [...stories.map(story => ({ label: story.label, say: story.say })),
+    ...[...lists.about, ...world.about, ...world.week].map(line => ({ label: line, say: line }))];
+  return (lists[key] || []).map(line => ({ label: line, say: line }));
+}
+function openPage(key) {
+  if (page === key) { closePage(); return; }
+  page = key; pageOffset = 0; modeView = null;
+  turnLog.content(questionMetric, { page: key });
+  if (key === 'about') void loadWorld();
+  gridKey = ''; renderGrid(controller.state);
+}
+function closePage() { page = null; pageOffset = 0; gridKey = ''; renderGrid(controller.state); }
+async function loadWorld() {
+  try {
+    const value = await json(`${API}/world`);
+    const lines = list => (Array.isArray(list) ? list.filter(line => typeof line === 'string' && line.trim()).map(line => line.trim()) : []);
+    const next = { about: lines(value.about), week: lines(value.week) };
+    if (JSON.stringify(next) === JSON.stringify(world)) return;
+    Object.assign(world, next); listsVersion++;
+    if (page === 'about') { gridKey = ''; renderGrid(controller.state); }
+  } catch { /* the saved stories and lists still show */ }
+}
+
+// ---- modes and Something else (spec 2026-10-28 §3) ----
+// Both made sets are asked for once a batch is revealed, never before it.
+function dropMade() {
+  for (const controllerAbort of made.aborts) controllerAbort.abort();
+  again?.abort(); again = null;
+  made = { turn: -1, ask: null, comment: null, aborts: [] }; modeView = null;
+}
+function requestMade(state) {
+  dropMade();
+  const turn = state.turn, text = state.question, context = recentConversation.slice(-8);
+  made.turn = turn;
+  for (const kind of ['ask', 'comment']) {
+    const abort = new AbortController(); made.aborts.push(abort);
+    // After the reveal's own frame: the reply on screen is never slowed by these.
+    setTimeout(() => { if (!abort.signal.aborted) ask(kind, abort); }, 0);
+  }
+  function ask(kind, abort) {
+    json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context, mode: kind }), signal: abort.signal }).then(result => {
+      if (made.turn !== turn || controller.state.turn !== turn) return;
+      const set = cleanChoices(result?.choices, `${kind}-${turn}`);
+      if (!set.length) return;
+      made[kind] = Object.freeze(set);
+      voice.prefetch(set);
+      if (modeView === kind) { revealRender = true; window.Dwell?.suppress(REVEAL_SETTLE_MS); gridKey = ''; renderGrid(controller.state); }
+    }).catch(() => { /* the mode tile keeps its waiting tiles; the replies still work */ });
+  }
+}
+function toggleMode(kind) {
+  if (!controller.state.choices.length) return;
+  modeView = modeView === kind ? null : kind;
+  if (modeView) turnLog.content(questionMetric, { mode: kind });
+  gridKey = ''; renderGrid(controller.state);
+}
+function selectMade(item) {
+  turnLog.content(questionMetric, { selected: item });
+  timingEvent('selected');
+  return controller.sayFixed(item.say);
+}
+function somethingElse() {
+  const state = controller.state, turn = state.turn, question = state.question;
+  const avoid = state.choices.map(choice => choice.say);
+  void controller.sayFixed(SPOKEN.else);
+  if (!question || !avoid.length) return;
+  turnLog.content(questionMetric, { again: true });
+  again?.abort(); const abort = again = new AbortController();
+  json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text: question, context: recentConversation.slice(-8), avoid }), signal: abort.signal }).then(result => {
+    if (again !== abort || controller.state.turn !== turn) return;
+    again = null;
+    const previous = modeView; modeView = null;
+    // The replaced batch redraws through the controller like any reveal (250 ms settle first).
+    if (!controller.replace(result?.choices, turn)) modeView = previous;
+  }).catch(() => { if (again === abort) again = null; });
+}
+
+// ---- the frame (spec 2026-10-28 §1) ----
+function stripTile(state) {
+  const area = fixedTiles().find(item => item.key === 'question').area;
+  if (capturing(state)) return tile(state.partial || '', 'question live', null, area, '', { noPicture: true });
+  if (state.question) {
+    const question = state.question;
+    return tile(question, 'question', () => { echoing = true; void controller.sayFixed(question, { echo: true }); }, area, '', { noPicture: true });
+  }
+  return tile('Ask me something', 'question empty', null, area, '', { noPicture: true });
+}
+// The live partial changes the strip's words in place; nothing else redraws.
+function paintStrip(state) {
+  const strip = $('grid').querySelector('.tile.question.live');
+  if (!strip) return;
+  const label = strip.querySelector('.label');
+  if (label.textContent !== (state.partial || '')) { label.textContent = state.partial || ''; fitTile(strip); }
+}
+function middle(state) {
+  if (page) {
+    const cells = pageCells(), { shown, more, next } = paginate(pageItems(page), pageOffset);
+    const out = shown.map((item, i) => tile(item.label, 'item', () => controller.sayFixed(item.say), cells[i], item.say));
+    if (more) out.push(tile('More', 'nav', () => { pageOffset = next; gridKey = ''; renderGrid(controller.state); }, cells[10], 'More'));
+    out.push(tile('Back', 'nav', closePage, cells[11], 'Back'));
+    return out;
+  }
+  const four = replyAreas(4);
+  if (modeView && state.choices.length) {
+    const set = made[modeView];
+    if (!set) return four.map(area => tile('', 'waiting', null, area));
+    const areas = replyAreas(set.length);
+    return set.map((item, i) => tile(item.label, 'made', () => selectMade(item), areas[i], item.say, item));
+  }
+  if (state.choices.length) {
+    // A stale tile (kept after a press) is picked in the turn it was drawn in.
+    const selectedTurn = state.stale ? state.staleTurn : state.turn;
+    // A press window's replacement keeps each unchanged reply in its cell (design
+    // 2026-10-27 §4.5): such a batch stands in the four cells, an empty cell a
+    // waiting tile. Every other batch takes the areas for its count (frame §1).
+    const placed = state.choices.some(item => Number.isInteger(item.cell));
+    const areas = replyAreas(placed ? 4 : state.choices.length), inCell = [];
+    state.choices.forEach((item, i) => { inCell[cellOf(item, i)] = item; });
+    return areas.map((area, i) => {
+      const item = inCell[i];
+      if (!item) return tile('', 'waiting', null, area);
+      // The turn log records a pick only once select accepts it.
+      const el = tile(item.label, 'response', () => controller.select(item.id, selectedTurn, picked => turnLog.content(questionMetric, { selected: picked })), area, item.say, item);
+      el.dataset.choiceId = item.id; el.dataset.cell = String(i);
+      return el;
+    });
+  }
+  if (waitingForReplies(state)) return four.map(area => tile('', 'waiting', null, area));
+  return OPENERS.map((say, i) => tile(say, 'static', () => controller.sayFixed(say), four[i], say));
 }
 let staleKey = '';
 function renderGrid(state) {
-  const key = `${screen}|${state.turn}|${state.choices.map(c => c.id).join(',')}|${state.phase === 'Capturing question' || state.phase === 'Preparing'}|${stories.length}`;
-  if (key === gridKey) return;
+  const key = [page, pageOffset, modeView, modeView && made[modeView] ? 'landed' : '', state.turn, state.choices.map(c => c.id).join(','),
+    capturing(state) ? 'capturing' : waitingForReplies(state) ? 'preparing' : '', state.question, page ? `${stories.length}.${listsVersion}` : ''].join('|');
+  if (key === gridKey) { paintStrip(state); return; }
   // The last turn's tiles, kept stale after a press, are the very tiles drawn:
   // a new turn number alone never redraws them under her gaze.
-  const shownKey = `${screen}|${state.choices.map(c => c.id).join(',')}|${stories.length}`;
+  const shownKey = state.choices.map(c => c.id).join(',');
   if (state.stale && gridKey && shownKey === staleKey) return;
   gridKey = key; staleKey = shownKey;
   window.Dwell?.suppress(revealRender ? REVEAL_SETTLE_MS : 600); revealRender = false;
   const grid = $('grid'); grid.replaceChildren();
-  grid.append(tile('yes', 'yes', () => controller.sayFixed('Yes.'), [0, 0]), tile('no', 'no', () => controller.sayFixed('No.'), [3, 0]));
-  grid.append(tile('', 'rest', null, [1, 1]), tile('', 'rest', null, [2, 1]));
-  const positions = [[1, 0], [2, 0], [0, 1], [3, 1]];
-  let words;
-  if (screen === 'news') words = stories;
-  else if (screen !== 'chat') words = (fixed[screen] || []).map(say => ({ label: say, say }));
-  else if (state.choices.length) words = state.choices;
-  else if (['Capturing question', 'Preparing'].includes(state.phase)) words = [];
-  else words = fixed.chat.map(say => ({ label: say, say }));
-  // A choice stands in its own cell (a replacement keeps chicken and fish where
-  // they were); a cell with no choice is an empty waiting tile.
-  const inCell = [];
-  words.forEach((word, i) => { inCell[cellOf(word, i)] = word; });
-  for (let i = 0; i < 4; i++) {
-    const item = inCell[i];
-    if (item) {
-      // A stale tile (kept after a press) is picked in the turn it was drawn in.
-      const selectedTurn = state.stale ? state.staleTurn : state.turn;
-      const el = tile(item.label, screen === 'chat' && state.choices.length ? 'response' : 'static', () => {
-        // The turn log records a pick only once select accepts it.
-        if (item.id) controller.select(item.id, selectedTurn, picked => turnLog.content(questionMetric, { selected: picked })); else controller.sayFixed(item.say);
-      }, positions[i], item.say, item);
-      if (item.id) el.dataset.choiceId = item.id;
-      grid.append(el);
-    } else grid.append(tile(screen === 'news' && i === 0 ? 'Your stories go here' : '', screen === 'news' ? 'emptyStory' : 'waiting', null, positions[i]));
+  const fixed = Object.fromEntries(fixedTiles().map(item => [item.key, item]));
+  // Fixed tiles first: they claim their pictures before any reply does.
+  grid.append(tile('yes', 'yes', () => controller.sayFixed(SPOKEN.yes), fixed.yes.area), stripTile(state),
+    tile('no', 'no', () => controller.sayFixed(SPOKEN.no), fixed.no.area));
+  for (const key of ['questions', 'comments', 'about']) {
+    const el = tile(fixed[key].label, `page${page === key ? ' on' : ''}`, () => openPage(key), fixed[key].area, fixed[key].label);
+    el.dataset.page = key; grid.append(el);
   }
-  const bottom = screen === 'chat'
-    ? [['Tell me more', () => controller.sayFixed('Tell me more.')], ['Reactions', () => go('reactions')], ['My news', () => go('news')], ['Help me say it', () => go('repair')]]
-    : [['Tell me more', () => controller.sayFixed('Tell me more.')], ['Reactions', () => go('reactions')], ['My news', () => go('news')], ['Back to Chat', () => go('chat')]];
-  bottom.forEach(([label, action], i) => grid.append(tile(label, i === 0 ? 'static' : 'route', action, [i, 2])));
+  if (!page) {
+    // Mode tiles are dwell targets only while this turn's replies are on screen (stale tiles are a finished turn's).
+    const replies = state.choices.length > 0 && !state.stale;
+    grid.append(tile(fixed.more.label, 'static', () => controller.sayFixed(SPOKEN.more), fixed.more.area, SPOKEN.more));
+    for (const key of ['ask', 'comment']) {
+      const el = tile(fixed[key].label, `mode${modeView === key ? ' on' : ''}${replies ? '' : ' off'}`, replies ? () => toggleMode(key) : null, fixed[key].area, fixed[key].label);
+      el.dataset.mode = key; grid.append(el);
+    }
+    grid.append(tile(fixed.else.label, 'static', somethingElse, fixed.else.area, SPOKEN.else));
+  }
+  grid.append(...middle(state));
   paintPictures(grid, state.turn);
   requestAnimationFrame(fitLabels);
 }
+// A new turn (a hold, a typed or heard question, a failure) closes a page and
+// drops the made sets; a revealed batch asks for both sets in the background.
+let shownTurn = 0;
 controller.subscribe(state => {
+  if (state.turn !== shownTurn) { shownTurn = state.turn; dropMade(); page = null; pageOffset = 0; }
+  if (state.choices.length && state.question && made.turn !== state.turn) requestMade(state);
   document.body.dataset.phase = state.phase;
   document.body.dataset.replacing = String(state.replacing);
   paintPhase(state);
@@ -319,7 +483,7 @@ let neutralTimer = null;
 // The last turn's tiles kept after a press (stale) clear at the same moment.
 function swapAtNeutral() {
   clearTimeout(neutralTimer);
-  if (screen !== 'chat' || !(controller.state.replacing || controller.state.stale)) return;
+  if (!(controller.state.replacing || controller.state.stale)) return;
   const el = pointerAt ? document.elementFromPoint(pointerAt.x, pointerAt.y) : null;
   if (el?.closest?.('#grid .tile:not(.rest)')) return;
   if (window.Dwell?.state?.().target != null) { neutralTimer = setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS); return; }
@@ -437,7 +601,7 @@ function stagingEvent(data) {
     turnLog.stagedOne(questionMetric, choice);
   } else if (data.type === 'batch-sealed') {
     record.sealed = { kind: data.kind, generated: data.generated, choices: data.choices, usage: data.usage, symbolRejected: data.symbolRejected,
-      pictureWarm: data.pictureWarm, timings: data.timings };
+      pictureWarm: data.pictureWarm, shape: data.shape, recallRejected: data.recallRejected, world: data.world, timings: data.timings };
     record.done?.();
   } else if (data.type === 'choices-error') {
     record.error = new Error('Replies are unavailable. Your phrases still work.');
@@ -607,8 +771,8 @@ async function askFromButton(command = {}) {
   try {
     await configReady;
     if (document.visibilityState !== 'visible') return;
-    // Chat shows first, whatever follows; a press never ends a session Chat prepared.
-    if (screen !== 'chat') go('chat');
+    // The replies show first, whatever follows (an open page closes); a press never ends a session Chat prepared.
+    if (page) closePage();
     if (!config?.runtime?.available || config.runtime.capabilities?.streaming !== true) { notice(STREAMING_LINE); return; }
     // Chat's own readiness path (no Start Chat): the session it prepared by
     // itself, or the one this press starts, as a hold with no live session does.
@@ -679,8 +843,8 @@ function windowSealed(data) {
   controller.prepare(question);
 }
 // A batch for a window whose earlier batch she can already see (design §4.5):
-// the sealed batch is handed to the controller as a replacement, which waits
-// for a neutral moment. A shown tile never changes before then; a newer seal
+// the sealed batch is staged in the controller (stageReplacement, never the
+// immediate replace() Something else uses) and waits for a neutral moment. A shown tile never changes before then; a newer seal
 // supersedes this one; a pick or a cancel drops it (closePressWindow).
 function replacementFor(data, question) {
   if (press.question) recentConversation = recentConversation.filter(line => line !== `Partner: ${press.question}`.slice(0, 500));
@@ -696,7 +860,7 @@ function replacementFor(data, question) {
   stagedBatch(record).then(result => {
     if (mine !== lifecycle || staging !== record) return;
     staging = null;
-    if (!controller.replace(result?.choices)) return;
+    if (!controller.stageReplacement(result?.choices)) return;
     diagnostic(`Question: ${question} (replies waiting for a neutral moment)`);
     setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS);
   }, error => {
@@ -743,6 +907,7 @@ async function beginAsk() {
   if (live ? !['Ready to ask', 'Your turn'].includes(controller.state.phase)
     : !config?.runtime?.available || !['Off', 'Ready to ask', 'Your turn'].includes(controller.state.phase)) return;
   holding = true; askPending = true; captureGeneration = null; questionSending = false;
+  dropMade(); page = null; pageOffset = 0; // a new question returns to the replies (spec 2026-10-28 §2)
   holdStartedAt = performance.now(); holdFrames = 0;
   const intent = ++captureIntent; pendingFrames = [];
   metrics.end(questionMetric, 'cancelled', 'superseded'); questionMetric = metrics.begin('hold');
@@ -919,7 +1084,7 @@ $('desktopAsk').addEventListener('blur', cancelAsk);
 $('partnerOpen').addEventListener('click', () => {
   // The dialog itself is not a gaze shield: remove underlying dwell targets.
   for (const el of $('grid').querySelectorAll('.dwell')) { el.classList.remove('dwell'); el.dataset.dwellDisabled = ''; }
-  $('partnerDialog').showModal(); renderTestPanel();
+  $('partnerDialog').showModal(); renderTestPanel(); void showWorld();
 });
 $('partnerDialog').addEventListener('close', () => { gridKey = ''; renderGrid(controller.state); });
 $('typedAsk').addEventListener('click', () => {
@@ -928,7 +1093,8 @@ $('typedAsk').addEventListener('click', () => {
   setMode('blocked'); uploadEpoch++; if (session) control('cancel').catch(() => {});
   metrics.end(questionMetric, 'cancelled', 'superseded'); questionMetric = metrics.begin('typed'); metrics.mark(questionMetric, 'transcript');
   turnLog.content(questionMetric, { transcript: text });
-  go('chat'); $('partnerDialog').close(); controller.prepare(text); $('typedQuestion').value = '';
+  dropMade(); page = null; pageOffset = 0;
+  $('partnerDialog').close(); controller.prepare(text); $('typedQuestion').value = '';
 });
 $('voicePreference').value = voice.getPreference();
 $('voicePreference').addEventListener('change', async e => {
@@ -1038,6 +1204,37 @@ $('exportTimings').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([metrics.exportJSON()], { type: 'application/json' }));
   const link = document.createElement('a'); link.href = url; link.download = 'chat-timings.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+// What Chat knows this week (plan "Her world as context"): the hub's digest of
+// this device's week packages, shelf, people and likes, shown read-only.
+async function showWorld() {
+  try {
+    const world = await json(`${API}/world`);
+    $('worldPreview').textContent = typeof world.text === 'string' && world.text ? world.text : 'Nothing yet.';
+  } catch { $('worldPreview').textContent = 'Not available right now.'; }
+}
+// What she likes (dad, 10/28): one per line in the partner dialog, saved to
+// this device's settings when the box is left; sent with open-ended questions.
+$('chatLikes').addEventListener('change', async () => {
+  const list = [...new Set($('chatLikes').value.split('\n').map(line => line.trim().slice(0, 30)).filter(Boolean))].slice(0, 12);
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatLikes: list }) });
+    if (!saved.ok) throw new Error();
+    $('chatLikesNote').textContent = list.length ? `Saved ${list.length} like${list.length === 1 ? '' : 's'} on this computer.` : 'Saved: no likes on this computer.';
+    void showWorld();
+  } catch { $('chatLikesNote').textContent = 'Likes were not saved. Try again.'; }
+});
+// Her pages (spec 2026-10-28 §2): one per line, up to twenty lines of forty
+// characters, saved to this device's settings when the box is left.
+for (const [key, field] of LIST_FIELDS) $(field).addEventListener('change', async () => {
+  const list = [...new Set($(field).value.split('\n').map(line => line.trim().slice(0, 40)).filter(Boolean))].slice(0, 20);
+  const note = $(`${field}Note`);
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: list }) });
+    if (!saved.ok) throw new Error();
+    setList(key, list);
+    note.textContent = list.length ? `Saved ${list.length} line${list.length === 1 ? '' : 's'} on this computer.` : 'Saved: nothing on this page on this computer.';
+  } catch { note.textContent = 'Not saved. Try again.'; }
 });
 $('saveStory').addEventListener('click', async () => {
   const label = $('storyLabel').value.trim(), say = $('storyMessage').value.trim();

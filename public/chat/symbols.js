@@ -104,7 +104,8 @@ function meaning(text) {
 }
 
 export function resolveSymbol({ label = '', type = '', say = '' } = {}) {
-  if (['rest', 'waiting', 'emptyStory'].includes(type)) return null;
+  // The question strip (spec 2026-10-28 §1) is the partner's words: never a picture.
+  if (['rest', 'waiting', 'emptyStory', 'question'].includes(type)) return null;
   if (type === 'yes' || type === 'no') return type;
   // Invalid label text never becomes an executable SVG attribute or a guessed
   // concept derived from partially stripped markup.
@@ -138,7 +139,7 @@ export function attachSymbol(tile, options = {}) {
 
 // ---- library pictures --------------------------------------------------------
 let library = null;
-const PICTURE_TYPES = new Set(['rest', 'waiting', 'emptyStory']);
+const PICTURE_TYPES = new Set(['rest', 'waiting', 'emptyStory', 'question']);
 // Drawing's shipped emoji stickers (MIT), reused by keyword as the backup.
 const EMOJI = {
   home: 'house', horse: 'horse', tree: 'tree', forest: 'tree', nature: 'tree', garden: 'tree', sun: 'sun', sunny: 'sun', hot: 'sun',
@@ -171,8 +172,16 @@ export async function loadVocabulary(fetcher = globalThis.fetch, url = '/chat/vo
 }
 export function hasVocabulary() { return !!library; }
 
-function conceptFor({ label = '', type = '', say = '', symbol, symbolId } = {}) {
+// One of the family's own people, from the hub's /characters/<slug>.png route only.
+const PERSON_SRC = /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/;
+function personFor(picture, symbol) {
+  return picture && typeof picture.src === 'string' && PERSON_SRC.test(picture.src)
+    ? { word: typeof symbol === 'string' && symbol.length <= 64 ? symbol : '', id: null, src: picture.src, person: true } : null;
+}
+function conceptFor({ label = '', type = '', say = '', symbol, symbolId, picture } = {}) {
   if (PICTURE_TYPES.has(type)) return null;
+  const person = type === 'response' || type === 'static' ? personFor(picture, symbol) : null;
+  if (person) return person;
   if (type === 'yes' || type === 'no') return library.byWord.get(type) || null;
   const picked = library.byId.get(Number(symbolId));
   if (picked && (!symbol || picked.word === symbol)) return picked;
@@ -212,6 +221,13 @@ export function planPictures(entries, { variant = 'color', keep = [] } = {}) {
     if (kept(index)) continue;
     const concept = conceptFor(entries[index]);
     if (!concept) continue;
+    // A person's own picture: shown once a page, in every style; on error the bubble.
+    if (concept.person) {
+      if (shown.has(concept.src)) continue;
+      shown.add(concept.src);
+      plan[index] = { word: concept.word, id: null, kind: 'person', src: concept.src, emoji: null, drawn: 'chat' };
+      continue;
+    }
     const options = [[concept.id, concept.word], [concept.altId, concept.word], [library.fallback.id, library.fallback.word]];
     const [id, word] = options.find(([candidate]) => candidate && !used.has(candidate)) || [];
     if (!id) continue;
@@ -248,7 +264,8 @@ export function attachPicture(tile, plan, onChange) {
     place(drawnPicture(plan.drawn, document)); tile.dataset.picture = 'drawn'; onChange?.(tile);
   };
   tile.classList.add('has-symbol');
-  tile.dataset.symbol = plan.word; tile.dataset.symbolId = String(plan.id);
+  tile.dataset.symbol = plan.word;
+  if (plan.id) tile.dataset.symbolId = String(plan.id);
   if (!plan.src) { drawn(); return tile.querySelector('.chat-symbol'); }
   const img = document.createElement('img');
   img.className = 'chat-symbol'; img.alt = ''; img.setAttribute('aria-hidden', 'true'); img.draggable = false; img.decoding = 'async';

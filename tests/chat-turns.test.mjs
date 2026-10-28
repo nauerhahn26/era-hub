@@ -10,7 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay } = require('../chat-turns.js');
+const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay, applyLikesSetting, chatLikes, DEFAULT_LIKES,
+  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT } = require('../chat-turns.js');
 const { initPool } = require('../pool.js');
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
@@ -383,4 +384,57 @@ test('a button-press turn (kind press): press, tone, listening, repeated utteran
   for (const stages of [[{ name: 'tone', ms: 1, text: 'no words on the tone' }], [{ name: 'pressed', ms: 1 }], [{ name: 'listening', ms: 1, text: 'x' }],
     [{ name: 'batchReplaced', ms: 1, text: 'x' }], [{ name: 'utteranceSealed', ms: 1, text: 'x'.repeat(2001) }]])
     assert.throws(() => validateTurn(turnRecord({ kind: 'press', mode: 'stream', stages })), e => e.code === 'invalid-turn', JSON.stringify(stages));
+});
+
+test('what she likes: a bounded list of short phrases, the generic default when absent, junk ignored', async t => {
+  const s = { dataDir: await directory(t) };
+  assert.deepEqual(DEFAULT_LIKES, ['play outside', 'draw', 'read a book', 'watch a show', 'play a game', 'listen to music', 'have a snack', 'see a friend']);
+  assert.deepEqual(chatLikes(s.dataDir), DEFAULT_LIKES, 'no app-settings file means the default');
+  await fs.writeFile(path.join(s.dataDir, 'app-settings.json'), JSON.stringify({ chatLikes: 'draw' }));
+  assert.deepEqual(chatLikes(s.dataDir), DEFAULT_LIKES, 'a stored value that is not a list means the default');
+  await fs.writeFile(path.join(s.dataDir, 'app-settings.json'), JSON.stringify({ chatLikes: ['swim', 'dance'] }));
+  assert.deepEqual(chatLikes(s.dataDir), ['swim', 'dance']);
+  assert.deepEqual(applyLikesSetting({ a: 1 }, { chatLikes: [' swim ', 'Dance', 'swim', 'dance'] }), { a: 1, chatLikes: ['swim', 'Dance'] }, 'trimmed, deduplicated ignoring case');
+  assert.deepEqual(applyLikesSetting({ chatLikes: ['x'] }, { chatLikes: [] }), { chatLikes: [] });
+  for (const junk of ['swim', [1], ['x'.repeat(31)], ['bad\u0007'], [''], Array.from({ length: 13 }, (_, i) => 'like ' + i), null, {}])
+    assert.deepEqual(applyLikesSetting({ chatLikes: ['x'] }, { chatLikes: junk }), { chatLikes: ['x'] }, JSON.stringify(junk));
+  assert.deepEqual(applyLikesSetting({ a: 1 }, {}), { a: 1 });
+  for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyLikesSetting({}, { chatLikes: ['swim'] }, site), {});
+  for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyLikesSetting({}, { chatLikes: ['swim'] }, site), { chatLikes: ['swim'] });
+});
+
+test('her lists (stable frame §2): questions, comments and about, generic defaults, each key cleaned on its own', async t => {
+  const dataDir = await directory(t);
+  assert.deepEqual(DEFAULT_QUESTIONS, ['How are you?', 'What are we doing today?', 'Did you have fun?', 'Can I have a turn?', "What's for dinner?",
+    'Where are we going?', 'Who is coming?', 'Can we play?', 'Is it time yet?', "What's that?"]);
+  assert.deepEqual(DEFAULT_COMMENTS, ["That's cool!", 'That sounds fun!', 'I love that!', 'No way!', 'Silly!', "I'm tired", "I'm hungry",
+    'Again, please', "I don't like that", 'Wait for me']);
+  assert.deepEqual(DEFAULT_ABOUT, ['I talk with my eyes', 'I love books', 'I like to draw', 'Ask me anything']);
+  const defaults = { chatQuestions: DEFAULT_QUESTIONS, chatComments: DEFAULT_COMMENTS, chatAbout: DEFAULT_ABOUT };
+  assert.deepEqual(chatLists(dataDir), defaults, 'no app-settings file means the defaults');
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatQuestions: 'x', chatComments: ['Yum!'], chatAbout: [] }));
+  assert.deepEqual(chatLists(dataDir), { chatQuestions: DEFAULT_QUESTIONS, chatComments: ['Yum!'], chatAbout: [] }, 'each key on its own');
+  const twenty = Array.from({ length: 20 }, (_, i) => 'item ' + i);
+  assert.deepEqual(applyListsSetting({ a: 1 }, { chatQuestions: [' Why? ', 'why?', 'How?'], chatAbout: twenty }),
+    { a: 1, chatQuestions: ['Why?', 'How?'], chatAbout: twenty }, 'trimmed, deduplicated ignoring case, twenty allowed');
+  assert.deepEqual(applyListsSetting({ chatComments: ['x'] }, { chatComments: ['y'.repeat(40)] }), { chatComments: ['y'.repeat(40)] });
+  for (const junk of ['Why?', [1], ['x'.repeat(41)], ['bad\u0007'], ['<b>'], [''], [...twenty, 'one more'], null, {}])
+    for (const key of ['chatQuestions', 'chatComments', 'chatAbout'])
+      assert.deepEqual(applyListsSetting({ [key]: ['x'] }, { [key]: junk }), { [key]: ['x'] }, key + ' ' + JSON.stringify(junk));
+  assert.deepEqual(applyListsSetting({ chatQuestions: ['x'] }, { chatQuestions: 7, chatComments: ['Wow'] }), { chatQuestions: ['x'], chatComments: ['Wow'] },
+    'a bad key never blocks a good one');
+  assert.deepEqual(applyListsSetting({ a: 1 }, {}), { a: 1 });
+  for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyListsSetting({}, { chatAbout: ['hi'] }, site), {});
+  for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyListsSetting({}, { chatAbout: ['hi'] }, site), { chatAbout: ['hi'] });
+});
+
+test('a turn record keeps the stable frame fields (§4): the mode she swapped to, the page she opened, Something else', () => {
+  const base = turnRecord().content;
+  for (const extra of [{ mode: 'ask' }, { mode: 'comment' }, { page: 'questions' }, { page: 'comments' }, { page: 'about' }, { again: true },
+    { mode: 'ask', page: 'about', again: true }]) {
+    const kept = validateTurn(turnRecord({ content: { ...base, ...extra } }));
+    assert.deepEqual(kept.content, { ...base, ...extra }, JSON.stringify(extra));
+  }
+  for (const extra of [{ mode: 'tell' }, { mode: 'one-shot' }, { mode: null }, { page: 'likes' }, { page: 7 }, { again: false }, { again: 'yes' }, { again: 1 }])
+    assert.throws(() => validateTurn(turnRecord({ content: { ...base, ...extra } })), e => e.status === 400 && e.code === 'invalid-turn', JSON.stringify(extra));
 });

@@ -65,7 +65,15 @@ const RECORD = shape({
   worker: shape(Object.fromEntries(WORKER.map(key => [key, key === 'firstPartialMs' || key === 'connectMs' ? nullable(num()) : num()]))),
   content: shape({ transcript: str(2000), partials: list(str(2000), 100), choiceKind: str(32), choices: list(choice, 6), symbolRejected: v => int(6)(v) && v > 0,
     pictureWarm: int(12),
-    selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100) }),
+    // An open-ended question's shape and whether the recall check threw the
+    // model's batch out (dad, 10/28): category words, never the likes.
+    shape: nullable(oneOf(['want', 'recall', 'feel', 'open'])), recallRejected: v => typeof v === 'boolean',
+    // Her world's size when it went with the question (plan "Her world as context"): never its text.
+    world: shape({ weeks: int(520), days: int(31), chars: int(6000) }, ['weeks', 'chars']),
+    selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100),
+    // The stable frame (spec 2026-10-28 §4): the mode she swapped the middle to,
+    // the page she opened, and Something else used in this turn.
+    mode: oneOf(['ask', 'comment']), page: oneOf(['questions', 'comments', 'about']), again: v => v === true }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),
@@ -93,6 +101,65 @@ function applyTestModeSetting(stored, incoming, fetchSite) {
   const next = { ...stored };
   if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
   if (typeof incoming?.chatTestMode === 'boolean') next.chatTestMode = incoming.chatTestMode;
+  return next;
+}
+// ---- what she likes (dad, 10/28): sent with an open-ended question only ----
+// Up to twelve short phrases, edited in Chat's partner dialog; a generic
+// default until a partner saves a list. The family's own words stay on the device.
+const DEFAULT_LIKES = Object.freeze(['play outside', 'draw', 'read a book', 'watch a show', 'play a game', 'listen to music', 'have a snack', 'see a friend']);
+// A clean list or null: every item a short visible phrase, duplicates dropped
+// ignoring case; one bad item refuses the whole list.
+function phraseList(value, maxItems, maxChars) {
+  if (!Array.isArray(value) || value.length > maxItems) return null;
+  const seen = new Set(), list = [];
+  for (const item of value) {
+    if (typeof item !== 'string') return null;
+    const text = item.trim();
+    if (!text || text.length > maxChars || CONTROL.test(text) || /[\u007f<>]/.test(text)) return null;
+    if (!seen.has(text.toLowerCase())) { seen.add(text.toLowerCase()); list.push(text); }
+  }
+  return list;
+}
+const likesList = value => phraseList(value, 12, 30);
+function chatLikes(dataDir) {
+  try {
+    const stored = likesList(JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')).chatLikes);
+    if (stored) return stored;
+  } catch { /* the default */ }
+  return [...DEFAULT_LIKES];
+}
+// The same door as the test-mode switch: only the hub's own pages or a tool.
+function applyLikesSetting(stored, incoming, fetchSite) {
+  const next = { ...stored };
+  if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
+  const list = incoming && Object.hasOwn(incoming, 'chatLikes') ? likesList(incoming.chatLikes) : null;
+  if (list) next.chatLikes = list;
+  return next;
+}
+// ---- her lists (stable frame spec 2026-10-28 §2): the rail's pages ----
+// My questions, My comments and About me, edited in the partner dialog one
+// item per line: up to twenty items of forty characters. Generic defaults;
+// family facts are entered on the device, never shipped.
+const DEFAULT_QUESTIONS = Object.freeze(['How are you?', 'What are we doing today?', 'Did you have fun?', 'Can I have a turn?', "What's for dinner?",
+  'Where are we going?', 'Who is coming?', 'Can we play?', 'Is it time yet?', "What's that?"]);
+const DEFAULT_COMMENTS = Object.freeze(["That's cool!", 'That sounds fun!', 'I love that!', 'No way!', 'Silly!', "I'm tired", "I'm hungry",
+  'Again, please', "I don't like that", 'Wait for me']);
+const DEFAULT_ABOUT = Object.freeze(['I talk with my eyes', 'I love books', 'I like to draw', 'Ask me anything']);
+const LISTS = Object.freeze({ chatQuestions: DEFAULT_QUESTIONS, chatComments: DEFAULT_COMMENTS, chatAbout: DEFAULT_ABOUT });
+const itemList = value => phraseList(value, 20, 40);
+function chatLists(dataDir) {
+  let stored = {};
+  try { stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')) || {}; } catch { /* the defaults */ }
+  return Object.fromEntries(Object.entries(LISTS).map(([key, fallback]) => [key, itemList(stored[key]) || [...fallback]]));
+}
+// The same door as the likes; each key moves on its own.
+function applyListsSetting(stored, incoming, fetchSite) {
+  const next = { ...stored };
+  if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
+  for (const key of Object.keys(LISTS)) {
+    const list = incoming && Object.hasOwn(incoming, key) ? itemList(incoming[key]) : null;
+    if (list) next[key] = list;
+  }
   return next;
 }
 // Day files and summaries use the device's local calendar day.
@@ -468,4 +535,5 @@ function createChatTurns(options = {}) {
   };
 }
 
-module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, localDay, wavFromPcm, STAGES };
+module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, applyLikesSetting, chatLikes, DEFAULT_LIKES,
+  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT, localDay, wavFromPcm, STAGES };

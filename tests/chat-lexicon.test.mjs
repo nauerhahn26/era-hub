@@ -47,8 +47,48 @@ test('the builder drops entries with no keyword, flagged entries, pronouns, plac
   assert.equal(lexicon.words.flagged, undefined);
   assert.equal(lexicon.words.me, undefined, 'a pronoun is never a picture');
   assert.equal(lexicon.words.germany, undefined, 'no place names');
-  assert.equal(lexicon.words.stop, undefined, 'verbs are not indexed: only things');
+  assert.equal(lexicon.words.stop, undefined, 'verbs are not things: they live in the actions map');
   assert.equal(lexicon.words.i, undefined);
+});
+
+test('the builder keeps a second map of actions, qualities and social words (keyword types 3-6) under the same rules', () => {
+  const lexicon = builder.buildLexicon(sample, { source: 'fixture', built: '2026-10-28' });
+  const { actions } = lexicon;
+  assert.equal(actions.stop, 7196, 'a verb');
+  assert.equal(actions.wait, 16697, 'the core AAC entry wins a shared verb');
+  assert.equal(actions.await, 8109);
+  assert.equal(actions.later, 32749, 'a descriptive word');
+  assert.equal(actions.hello, 6522, 'a social word'); assert.equal(actions.hi, 6522);
+  assert.equal(actions['i do not know'], 7180); assert.equal(actions['i dont know'], 7180, 'folded as the hub folds a label');
+  assert.equal(actions.weekend, 27329, 'a miscellaneous word');
+  assert.equal(actions.wave, 8208, 'the gesture is an action; the sea wave stays a thing');
+  assert.equal(lexicon.words.wave, 4706);
+  assert.equal(actions.chicken, undefined, 'things never enter the actions map');
+  assert.equal(lexicon.words.hello, undefined, 'actions never enter the things map');
+  // Simple verb forms, never over a real keyword.
+  assert.equal(actions.waits, 16697); assert.equal(actions.waiting, 16697);
+  assert.equal(actions.tells, 9692); assert.equal(actions.telling, 9692);
+  assert.equal(actions.makes, 11749); assert.equal(actions.making, 11749);
+  assert.equal(actions.laters, undefined, 'only verbs are inflected');
+  // The same drop rules: letters, pronouns, flagged pictures.
+  assert.equal(actions.b, undefined); assert.equal(actions['bee letter'], undefined);
+  assert.equal(actions.myself, undefined);
+  assert.equal(actions['flagged mood'], undefined);
+  for (const key of Object.keys(actions)) assert.match(key, /^[a-z0-9]+(?: [a-z0-9]+)*$/, key);
+  assert.equal(lexicon.actionCount, Object.keys(actions).length);
+  const family = id => Object.entries(lexicon.families).find(([, ids]) => ids.includes(id))?.[0];
+  assert.equal(family(27329), 'time', 'an action id has its family too, for the guard');
+});
+
+test('verb forms: -s, -es, -ies and -ing', () => {
+  assert.deepEqual(builder.verbForms('wait'), ['waits', 'waiting']);
+  assert.deepEqual(builder.verbForms('wash'), ['washes', 'washing']);
+  assert.deepEqual(builder.verbForms('cry'), ['cries', 'crying']);
+  assert.deepEqual(builder.verbForms('make'), ['makes', 'making']);
+  assert.deepEqual(builder.verbForms('see'), ['sees', 'seeing']);
+  assert.deepEqual(builder.verbForms('lie'), ['lies', 'lying']);
+  assert.deepEqual(builder.verbForms('go'), ['goes', 'going']);
+  assert.deepEqual(builder.verbForms('give up'), [], 'phrases are not inflected');
 });
 
 test('the builder records a coarse family per id for the picture guard: food, drink, weather, time', () => {
@@ -58,14 +98,14 @@ test('the builder records a coarse family per id for the picture guard: food, dr
   assert.equal(family(2296), 'drink', 'a beverage is a drink before it is food');
   assert.equal(family(3135), 'weather');
   assert.ok(!['food', 'drink', 'weather', 'time'].includes(family(6054)), 'a floor tile is none of the guarded families');
-  for (const list of Object.values(lexicon.families)) for (const id of list) assert.ok(Object.values(lexicon.words).includes(id), 'families name only indexed ids');
+  for (const list of Object.values(lexicon.families)) for (const id of list) assert.ok([...Object.values(lexicon.words), ...Object.values(lexicon.actions)].includes(id), 'families name only indexed ids');
 });
 
 test('the serialized index is compact JSON within the size budget, and an index over budget is refused', () => {
   const lexicon = builder.buildLexicon(sample, { source: 'fixture', built: '2026-10-28' });
   const text = builder.serializeLexicon(lexicon);
   assert.deepEqual(JSON.parse(text).words, lexicon.words);
-  assert.equal(builder.BUDGET_BYTES, 600 * 1024);
+  assert.equal(builder.BUDGET_BYTES, 1000 * 1024, 'the hub reads it, never the page: under 1 MB');
   assert.throws(() => builder.serializeLexicon(lexicon, { budget: 200 }), /budget/);
 });
 
@@ -93,11 +133,12 @@ test('the build fetches through the injected fetcher, writes the file and report
 
 test('the shipped index is words and numbers only, under budget, with its source and build date', () => {
   const bytes = fs.statSync(path.join(HUB, 'public', 'chat', 'lexicon.json')).size;
-  assert.ok(bytes <= 600 * 1024, `${bytes} bytes`);
+  assert.ok(bytes <= builder.BUDGET_BYTES, `${bytes} bytes`);
   assert.match(shipped.note, /words and pictogram ids only/i);
   assert.match(shipped.source, /^https:\/\//); assert.match(shipped.built, /^\d{4}-\d\d-\d\d$/);
   assert.ok(shipped.count > 10000, 'the library\'s thousands of things, not a sample');
-  for (const [word, id] of Object.entries(shipped.words)) {
+  assert.ok(shipped.actionCount > 3000 && Object.keys(shipped.actions).length === shipped.actionCount, 'and its thousands of actions');
+  for (const [word, id] of [...Object.entries(shipped.words), ...Object.entries(shipped.actions)]) {
     assert.match(word, /^[a-z0-9]+(?: [a-z0-9]+)*$/);
     assert.ok(Number.isSafeInteger(id) && id > 0);
   }
@@ -132,7 +173,7 @@ test('the curated vocabulary wins whenever it has the word: its ids were checked
   }
   assert.notEqual(vocabId('back'), lex('back'), 'the library\'s own "back" is the body part; the table keeps its arrow');
   assert.equal(pick('Chicken').symbolId, vocabId('chicken'));
-  assert.equal(pick('Pizza', { symbol: 'yummy' }).symbol, 'yummy', 'the model\'s vocabulary pick for a curated label stands');
+  assert.equal(pick('Pizza', { symbol: 'yummy' }).symbol, 'pizza', 'the label\'s own curated word beats the model\'s vocabulary pick');
 });
 
 test('several things in one label: the family picture, never one of them', () => {
@@ -268,4 +309,182 @@ test('Magna-Tiles is a toy: the curated blocks picture, never the library\'s flo
     assert.equal(choice.symbolId, vocabId('blocks'), label);
     assert.notEqual(choice.symbolId, lex('tiles'), label);
   }
+});
+
+// ---- the actions map: a picture for a reply that names no thing --------------
+
+const ACTIONS_FIXTURE = {
+  words: { paddle: 203, lasagna: 11, frost: 12 },
+  actions: { go: 101, later: 102, hurry: 103, sure: 104, lot: 105, learn: 106, clap: 107, shout: 108, whisper: 109, try: 110,
+    wiggle: 111, spin: 112, tickle: 113, snuggle: 114, late: 115, pretend: 116, celebrate: 117, silly: 118, paddle: 204, sunny: 119 },
+  families: { food: [11], weather: [12, 119], time: [102, 115] },
+};
+
+test('a label that names no thing takes the library picture of its action, quality or social word', () => {
+  pictures.setLexicon(ACTIONS_FIXTURE);
+  try {
+    // [label, the action word it shows]
+    const table = [
+      ['Go now', 'go'], ['Ever so late', 'late'], ['Hurry up', 'hurry'], ['Sure', 'sure'], ['A lot', 'lot'],
+      ['Learned things', 'learn'], ['Clap', 'clap'], ['Shout', 'shout'], ['Whisper it', 'whisper'], ['Keep trying', 'try'],
+      ['Wiggle', 'wiggle'], ['Spin around', 'spin'], ['Whispering', 'whisper'], ['Snuggle', 'snuggle'], ['Stay up late', 'late'],
+      ['Pretend', 'pretend'], ["Let's pretend!", 'pretend'], ['Wiggling', 'wiggle'], ['Keep going', 'go'], ['Clapping', 'clap'],
+    ];
+    for (const [label, word] of table) {
+      const choice = pick(label);
+      assert.equal(choice.symbolId, ACTIONS_FIXTURE.actions[word], `${label} → ${choice.symbol}`);
+      assert.notEqual(choice.symbol, 'chat', label);
+    }
+  } finally { pictures.setLexicon(null); }
+});
+
+test('actions come last: curated words and things first, an either/or and a negation keep their pictures', () => {
+  pictures.setLexicon(ACTIONS_FIXTURE);
+  try {
+    assert.equal(pick('Paddle').symbolId, 203, 'the thing before the action of the same word');
+    assert.equal(pick('Go swim').symbol, 'swim', 'a curated word still wins');
+    assert.equal(pick('Pizza now').symbol, 'pizza');
+    assert.equal(pick('Clap or shout').symbol, 'chat', 'an either/or in one tile stays the bubble');
+    assert.equal(pick("Don't shout", { say: "Please don't shout." }).symbol, 'chat', 'a negation never takes the action');
+    assert.equal(pick('Not really').symbol, 'chat');
+    assert.equal(pick('Hurry up', { symbol: 'happy' }).symbol, 'happy', 'the model\'s accepted vocabulary pick comes first');
+    assert.equal(pick('Hurry up', { symbol: 'chat' }).symbolId, 103, 'the model\'s bubble is no pick: the action still shows');
+    assert.equal(pick('Hmm', { say: 'Hmm, a big wiggle.' }).symbolId, 111, 'the say when the label has nothing');
+  } finally { pictures.setLexicon(null); }
+});
+
+// ---- the model names a picture in plain words ---------------------------------
+
+const PICTURE_FIXTURE = {
+  words: { 'magnifying glass': 301, clock: 302, frost: 12, umbrella: 305 },
+  actions: { shrug: 303, wave: 304, late: 115, sunny: 119 },
+  families: { weather: [12, 119, 305], time: [302, 115] },
+};
+
+test('the model\'s picture words resolve through the curated table, the things, then the actions', () => {
+  pictures.setLexicon(PICTURE_FIXTURE);
+  try {
+    assert.equal(pick('Hmm', { say: 'Hmm, let me think.', symbol: 'chat', picture: 'shrug' }).symbolId, 303, 'an action');
+    assert.equal(pick('Hmm', { say: 'Hmm.', picture: 'magnifying glass' }).symbolId, 301, 'a thing of two words');
+    assert.equal(pick('Hmm', { say: 'Hmm.', picture: 'tiny shrug' }).symbolId, 303, 'its head word when the whole is unknown');
+    assert.equal(pick('Hmm', { say: 'Hmm.', picture: 'clock' }).symbolId, vocabId('time'), 'a curated alternative word keeps its checked id');
+    assert.equal(pick('Hmm', { say: 'Hmm.', picture: 'hello' }).symbolId, vocabId('hello'), 'a curated word keeps its checked id');
+    assert.equal(pick('Ever so late', { picture: 'magnifying glass' }).symbolId, 301, 'before the label\'s own action word');
+    assert.equal(pick('Ever so late', { picture: 'zorbish' }).symbolId, 115, 'an unknown picture falls through to the action');
+    assert.equal(pick('Ever so late', { picture: 'one two three four' }).symbolId, 115, 'more than three words is no picture');
+    assert.equal(pick('Ever so late', { picture: 'chat' }).symbolId, 115, 'the bubble is no picture');
+  } finally { pictures.setLexicon(null); }
+});
+
+test('the model\'s picture comes after the label\'s own picks and is guarded like its symbol', () => {
+  pictures.setLexicon(PICTURE_FIXTURE);
+  try {
+    assert.equal(pick('Pizza', { picture: 'clock' }).symbol, 'pizza', 'a curated label');
+    assert.equal(pick('Hmm', { say: 'Hmm.', symbol: 'happy', picture: 'shrug' }).symbol, 'happy', 'an accepted vocabulary symbol');
+    assert.equal(pick('Give me a clue', { symbol: 'chat', picture: 'magnifying glass' }).symbol, 'clue', 'a label that is a curated word');
+    assert.equal(pick('Pizza at the park', { picture: 'frost' }).symbol, 'food', 'a label\'s own category');
+    // A drink-and-place label (no picture of its own) never shows a time or weather picture.
+    for (const picture of ['frost', 'clock', 'umbrella', 'sunny']) assert.equal(pick('Juice at the park', { picture }).symbol, 'chat', picture);
+    assert.equal(pick('Juice at the park', { picture: 'park' }).symbol, 'park', 'a picture of the label\'s own family stands');
+    // A negation keeps only a negative picture.
+    assert.equal(pick('Not later', { say: 'Not later.', picture: 'clock' }).symbol, 'chat');
+    assert.equal(pick('No clocks', { say: 'No clocks, thanks.', picture: 'clock' }).symbol, 'no');
+  } finally { pictures.setLexicon(null); }
+});
+
+test('the hub passes the model\'s picture words from the reply to the pick', async t => {
+  const http = await import('node:http');
+  const { createChatApi } = require('../chat-api.js');
+  pictures.setLexicon(PICTURE_FIXTURE);
+  const env = { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' };
+  const reply = { choices: [{ label: 'Hmm', say: 'Hmm, let me think.', symbol: 'chat', picture: 'magnifying glass' },
+    { label: 'Not sure', say: 'I am not sure.', symbol: 'not sure', picture: 'shrug' }] };
+  const api = createChatApi({ env, fetch: async () => new Response(JSON.stringify({ status: 'completed',
+    output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(reply) }] }] })) });
+  const server = http.createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); });
+  await new Promise(resolve => server.listen(0, 'localhost', resolve));
+  t.after(async () => { pictures.setLexicon(null); api.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const body = await (await fetch(`http://localhost:${server.address().port}/chat/api/choices`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'What should we look for next?' }) })).json();
+  assert.deepEqual(body.choices.map(choice => choice.symbolId), [301, vocabId('not sure')]);
+  assert.ok(body.choices.every(choice => choice.picture === undefined || typeof choice.picture === 'object'), 'the model\'s words never reach the page as a picture');
+  // The streamed path stages each choice through the same pick.
+  const source = fs.readFileSync(path.join(HUB, 'chat-api.js'), 'utf8');
+  assert.match(source.match(/function stageChoice[\s\S]*?\n  \}/)[0], /picture: choice\.picture/);
+});
+
+// ---- the family's own people pictures ------------------------------------------
+
+const PEOPLE = [{ slug: 'mom', word: 'Mom' }, { slug: 'dad', word: 'Dad' }, { slug: 'sam-2', word: 'Sam' },
+  { slug: 'grandma', word: 'Granny' }, { slug: 'old-friend', word: 'Lisa', retired: true }];
+const person = slug => ({ src: `/characters/${slug}.png`, kind: 'person' });
+
+test('a tile that is one of the family shows their own picture: their word, a kin word, "my" or "with" before it', () => {
+  pictures.setPeople(() => PEOPLE);
+  try {
+    for (const [label, slug, word] of [['Mom', 'mom', 'Mom'], ['mom', 'mom', 'Mom'], ['My mom', 'mom', 'Mom'], ['With Dad', 'dad', 'Dad'],
+      ['with my dad', 'dad', 'Dad'], ['Mommy', 'mom', 'Mom'], ['Mum', 'mom', 'Mom'], ['Daddy', 'dad', 'Dad'], ['Sam', 'sam-2', 'Sam'],
+      ['Grandma', 'grandma', 'Granny'], ['Nana', 'grandma', 'Granny']]) {
+      const choice = pick(label);
+      assert.deepEqual(choice.picture, person(slug), label);
+      assert.equal(choice.symbol, word, label);
+      assert.equal(choice.symbolId, undefined, `${label}: the person picture stands alone`);
+    }
+    assert.deepEqual(pick('Hmm', { say: 'Sam.' }).picture, person('sam-2'), 'the say, when the label has nothing');
+    assert.equal(pick('Play with Sam').picture, undefined, 'only a tile that is the person, not one that mentions them');
+    assert.equal(pick('Not Mom', { say: 'Not Mom.' }).picture, undefined, 'a negation is never the person');
+    assert.equal(pick('Grandpa').picture, undefined, 'a kin word the family library lacks keeps the library picture');
+    assert.equal(pick('Grandpa').symbol, 'grandpa');
+  } finally { pictures.setPeople(null); }
+});
+
+test('an unknown name is the friend picture, the second one people; a retired person is an unknown name', () => {
+  pictures.setPeople(() => PEOPLE);
+  try {
+    const choices = pictures.withSymbols(['Lisa', 'Jo', 'Mom', 'Sam'].map(label => ({ label, say: label })));
+    assert.deepEqual(choices.map(choice => choice.symbol), ['friend', 'people', 'Mom', 'Sam']);
+    assert.deepEqual(choices.map(choice => choice.picture?.src || choice.symbolId),
+      [vocabId('friend'), vocabId('people'), '/characters/mom.png', '/characters/sam-2.png']);
+    // Without a family library the two names still never share a picture.
+    pictures.setPeople(() => []);
+    const plain = pictures.withSymbols([{ label: 'Lisa', say: 'Lisa.' }, { label: 'Sam', say: 'Sam.' }]);
+    assert.deepEqual(plain.map(choice => choice.symbol), ['friend', 'people']);
+    // Ordinary one-word replies are never names.
+    for (const label of ['Sure', 'Maybe', 'Okay', 'Later', 'Nothing', 'Whatever', 'Yes', 'Pizza', 'Wait', 'Again'])
+      assert.ok(!['friend', 'people'].includes(pick(label).symbol), label);
+  } finally { pictures.setPeople(null); }
+});
+
+test('the people provider is asked once per batch, may fail, and is never loaded at require time', () => {
+  let asked = 0;
+  pictures.setPeople(() => { asked++; return PEOPLE; });
+  try {
+    pictures.withSymbols([{ label: 'Mom', say: 'Mom.' }, { label: 'Dad', say: 'Dad.' }, { label: 'Pizza', say: 'Pizza.' }]);
+    assert.equal(asked, 1);
+    pictures.setPeople(() => { throw Error('no library'); });
+    assert.equal(pick('Mom').symbol, 'mom', 'a failing provider leaves the library picture');
+    pictures.setPeople(() => [{ slug: '../x', word: 'Mom' }, { slug: 'ok', word: '<b>Dad</b>' }, null, { slug: 'fine' }]);
+    assert.equal(pick('Mom').picture, undefined, 'a slug outside the pattern is never a picture path');
+    assert.equal(pick('Dad').picture, undefined);
+  } finally { pictures.setPeople(null); }
+  const source = fs.readFileSync(path.join(HUB, 'chat-symbols.js'), 'utf8');
+  assert.ok(!/require\(['"]\.\/drawings/.test(source), 'chat-symbols never requires drawings.js');
+  const hub = fs.readFileSync(path.join(HUB, 'server.js'), 'utf8');
+  assert.match(hub, /setPeople\(\(\) => drawings\.charactersLibrary\(\)\.people\)/, 'the hub hands Chat its people library, lazily');
+});
+
+test('the label\'s own curated concept at its head beats the model\'s word; a label naming nothing curated keeps the model\'s', () => {
+  pictures.setLexicon(null);
+  const table = [
+    [{ label: 'Stay home', symbol: 'game' }, 'home'],
+    [{ label: 'Go outside', symbol: 'park' }, 'outside'],
+    [{ label: 'Something fun', symbol: 'game' }, 'game'],
+    [{ label: 'Go to the park', symbol: 'swim' }, 'park'],
+    [{ label: 'Eat pizza', symbol: 'yummy' }, 'pizza'],
+    [{ label: 'Play with the dog', symbol: 'play' }, 'dog'],
+    [{ label: 'Stay inside', symbol: 'game' }, 'home'],
+    [{ label: 'Hmm', symbol: 'game' }, 'game'],
+    [{ label: 'Not home', say: 'Not home.', symbol: 'game' }, 'chat'],
+  ];
+  for (const [choice, word] of table) assert.equal(pick(choice.label, choice).symbol, word, `${choice.label} / ${choice.symbol}`);
 });

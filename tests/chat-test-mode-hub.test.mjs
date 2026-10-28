@@ -25,6 +25,17 @@ async function freePort() {
 test('the hub keeps test mode off by default, moves it only by a real boolean from its own pages, and routes it before Chat', { timeout: 60000 }, async t => {
   const data = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-test-mode-hub-'));
   const port = await freePort(), base = `http://127.0.0.1:${port}`;
+  // One week package (generic content) for her world, this week's Monday.
+  const today = new Date(), monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (today.getDay() + 6) % 7);
+  const weekOf = `${monday.getFullYear()}-${pad2(monday.getMonth() + 1)}-${pad2(monday.getDate())}`;
+  await fs.mkdir(path.join(data, 'this-week', weekOf), { recursive: true });
+  await fs.writeFile(path.join(data, 'this-week', weekOf, 'manifest.json'), JSON.stringify({ week_of: weekOf, title: 'Magnets!', schema: 1,
+    topic: { science: 'magnets', hero: 'a famous inventor' }, watch: [], talk: [{ word: 'magnet', say: 'magnet', group: 'science', glyph: '🧲', symbol: null }] }));
+  // And the weekly builder's world.json beside it: about her and yesterday's note.
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  const yesterdayKey = `${yesterday.getFullYear()}-${pad2(yesterday.getMonth() + 1)}-${pad2(yesterday.getDate())}`;
+  await fs.writeFile(path.join(data, 'this-week', weekOf, 'world.json'), JSON.stringify({ schema: 1, generated_on: weekOf, week_of: weekOf,
+    about: ['She loves drawing animals.'], weeks: [], days: [{ date: yesterdayKey, mood: 'happy', activities: ['music'], moments: [], said: ['She wants to paint.'] }] }));
   const child = spawn(process.execPath, [path.join(HUB, 'server.js'), String(port)], { cwd: HUB, stdio: ['ignore', 'ignore', 'inherit'],
     env: { ...process.env, ERA_DATA_DIR: data, ERA_BIND: '127.0.0.1', ERA_DEVICE_ID: 'test-hub', ERA_CHAT_CONFIG_DISABLED: '1', ERA_POOL_DIR: '' } });
   t.after(async () => { child.kill('SIGKILL'); await fs.rm(data, { recursive: true, force: true }); });
@@ -60,4 +71,43 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.equal(await settings(), false);
   assert.equal((await post()).status, 404, 'off stops writing');
   assert.equal((await fs.readFile(path.join(data, 'logs', 'chat-turns', localDay() + '.jsonl'), 'utf8')).trim().split('\n').length, 1, 'and keeps what was written');
+
+  // What she likes (dad, 10/28): the generic default until a partner saves a
+  // list; junk leaves the stored list alone; another site cannot change it.
+  const likes = async () => (await (await fetch(base + '/settings')).json()).chatLikes;
+  const setLikes = (value, headers = {}) => fetch(base + '/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ chatLikes: value }) });
+  assert.deepEqual(await likes(), ['play outside', 'draw', 'read a book', 'watch a show', 'play a game', 'listen to music', 'have a snack', 'see a friend']);
+  assert.equal((await setLikes([' swim ', 'dance', 'swim', 'bake cookies'])).status, 204);
+  assert.deepEqual(await likes(), ['swim', 'dance', 'bake cookies'], 'trimmed and deduplicated');
+  for (const junk of ['swim', [1, 2], ['x'.repeat(31)], ['ok', 'bad\u0007'], Array(13).fill('a'), null, {}]) {
+    assert.equal((await setLikes(junk)).status, 204);
+    assert.deepEqual(await likes(), ['swim', 'dance', 'bake cookies'], JSON.stringify(junk));
+  }
+  assert.equal((await setLikes(['paint'], { 'Sec-Fetch-Site': 'cross-site' })).status, 204);
+  assert.deepEqual(await likes(), ['swim', 'dance', 'bake cookies'], 'a page on another site cannot change it');
+  assert.equal((await setLikes([])).status, 204);
+  assert.deepEqual(await likes(), [], 'an empty list is a real choice');
+
+  // Her lists (stable frame §2): generic defaults, saved per key, same door.
+  const lists = async () => { const all = await (await fetch(base + '/settings')).json(); return { q: all.chatQuestions, c: all.chatComments, a: all.chatAbout }; };
+  const setLists = (body, headers = {}) => fetch(base + '/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const before = await lists();
+  assert.equal(before.q.length, 10); assert.equal(before.q[0], 'How are you?');
+  assert.equal(before.c.length, 10); assert.equal(before.c[0], "That's cool!");
+  assert.deepEqual(before.a, ['I talk with my eyes', 'I love books', 'I like to draw', 'Ask me anything']);
+  assert.equal((await setLists({ chatQuestions: [' Why? ', 'why?'], chatAbout: ['I have a cat'] })).status, 204);
+  assert.deepEqual(await lists(), { q: ['Why?'], c: before.c, a: ['I have a cat'] });
+  assert.equal((await setLists({ chatComments: ['x'.repeat(41)], chatAbout: ['ok'] })).status, 204);
+  assert.deepEqual(await lists(), { q: ['Why?'], c: before.c, a: ['ok'] }, 'junk in one key leaves it alone');
+  assert.equal((await setLists({ chatQuestions: ['Hm?'] }, { 'Sec-Fetch-Site': 'cross-site' })).status, 204);
+  assert.deepEqual((await lists()).q, ['Why?'], 'a page on another site cannot change them');
+
+  // Her world (plan "Her world as context"): the hub's digest of the week
+  // package and the likes, served to its own pages for the partner dialog.
+  assert.equal((await setLikes(['swim'])).status, 204);
+  const world = await (await fetch(base + '/chat/api/world')).json();
+  assert.match(world.text, /^Today: \w+day, \w+ \d+\.\nAbout her: She loves drawing animals\.\nYesterday at school: happy; music\. She said on her device: She wants to paint\.\nThis week at school: "Magnets!"\. Science: magnets\. Hero of the week: a famous inventor\. Words: magnet\.\n/);
+  assert.match(world.text, /\nShe likes: swim\.$/);
+  assert.equal(world.weeks, 1); assert.equal(world.days, 1); assert.equal(world.chars, world.text.length);
+  assert.equal((await fetch(base + '/chat/api/world', { headers: { 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
 });

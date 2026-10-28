@@ -1223,7 +1223,7 @@
       ],
       "hub": "none",
       "ports": [],
-      "browsers": 3,
+      "browsers": 4,
       "heavy": false,
       "solo": false,
       "quiet": false,
@@ -1623,6 +1623,29 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-world.test.mjs",
+      "purpose": "Chat's her-world digest: week packages, the builder's world.json (about her, teachers' weekly lists, day notes of the last ten days) merged across folders, shelf, people and likes as plain lines labelled relative to today, newest first; broken folders, files and providers cost nothing; per-list caps, then a 6,000-character cap by whole lines that keeps the day notes longest; mtime and provider cache checked at most once a minute",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit with temp data folder",
+      "dependencies": [
+        "era-hub/chat-world.js"
+      ],
+      "resources": [
+        "temporary-data",
+        "provider-doubles",
+        "injected-clock"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-test-mode-payload.test.mjs",
       "purpose": "Chat test mode is off by default in what ships: no shipped file enables it, the installer seeds no settings, the payload copies the module and its guard refuses settings, prices, recordings or an enabled switch (any quoting, .mjs included)",
       "group": "chat",
@@ -1661,7 +1684,8 @@
         "era-hub/pool.js",
         "era-hub/chat-ws.js",
         "era-hub/chat-stream.js",
-        "era-hub/keepalive-fetch.js"
+        "era-hub/keepalive-fetch.js",
+        "era-hub/chat-world.js"
       ],
       "resources": [
         "own-hub",
@@ -4939,7 +4963,28 @@
       ],
       "hub": "none",
       "ports": [],
-      "browsers": 4,
+      "browsers": 7,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-frame.test.mjs",
+      "purpose": "Chat stable frame layout: the grid tracks, nine fixed tiles where the spec table puts them, the middle by reply count (four as two by two, three and two across, one whole), page cells of ten items with More and Back, and paging",
+      "group": "chat",
+      "lane": "linux",
+      "level": "pure layout unit",
+      "dependencies": [
+        "era-hub/public/chat/frame.js"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
       "heavy": false,
       "solo": false,
       "quiet": false,
@@ -4967,7 +5012,7 @@
       ],
       "hub": "own",
       "ports": [],
-      "browsers": 1,
+      "browsers": 2,
       "heavy": false,
       "solo": false,
       "quiet": false,

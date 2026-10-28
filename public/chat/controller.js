@@ -1,17 +1,24 @@
 // Pure session state. Displayed choices are immutable until a new explicit turn.
 // A sealed batch is shown the moment it arrives (spec 2026-10-27 §4): no gaze gate.
-// Within one button-press listening window a later batch is a replacement: a
-// new sealed batch swapped in whole at a neutral moment (design 2026-10-27
-// §4.5), never an edit of the shown one.
+// Two kinds of later batch exist for one shown batch, and they never mix:
+// - replace(): a fresh batch she asked for herself (Something else, stable
+//   frame 2026-10-28 §3), shown the moment it lands;
+// - stageReplacement(): a button-press window's later batch (design 2026-10-27
+//   §4.5), swapped in whole at a neutral moment, never an edit of the shown one.
 export const isPartnerTouch = e => e?.isTrusted === true && e.pointerType === 'touch';
 
-// The hub's choices, checked: at most four with words to say. The hub's
-// decorative picture pick (spec §6) rides along; it never changes the words.
-function cleanChoices(list, prefix) {
+// A batch as the page shows it: at most four, words required, the hub's picture fields checked.
+export function cleanChoices(list, prefix) {
   return (Array.isArray(list) ? list : []).filter(x => x && typeof x.label === 'string' && typeof x.say === 'string' && x.say.trim()).slice(0, 4)
     .map((x, i) => Object.freeze({ id: `${prefix}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600),
+      // The hub's decorative picture pick (spec §6) rides along; it never changes the words.
       ...(typeof x.symbol === 'string' && x.symbol.length <= 64 ? { symbol: x.symbol } : {}),
-      ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}) }));
+      ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}),
+      // A person's own picture, from the hub's /characters/ route only.
+      ...(x.picture && typeof x.picture.src === 'string' && /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/.test(x.picture.src)
+        ? { picture: Object.freeze({ src: x.picture.src, kind: 'person' }) } : {}),
+      // A letter or number tile the page draws big, with no picture.
+      ...(x.glyph === true ? { glyph: true } : {}) }));
 }
 
 // Position stability (design §4.5, plan decision 10): a label still in the
@@ -29,9 +36,9 @@ function place(shown, next) {
 }
 
 export function createChatController(deps = {}) {
-  let turn = 0, preparing = false, abort = null, speechAbort = null, utterance = 0;
-  // At most one replacement waits for a neutral moment; a newer one supersedes it unseen.
-  let replacement = null, batches = 0;
+  let turn = 0, batch = 0, preparing = false, abort = null, speechAbort = null, utterance = 0;
+  // At most one staged replacement waits for a neutral moment; a newer one supersedes it unseen.
+  let replacement = null;
   const listeners = new Set();
   // standby: no session is live, but a hold starts one (no Start Chat, 10/27 evening).
   // `stale`: the choices shown are a finished turn's, kept after a press until
@@ -88,7 +95,7 @@ export function createChatController(deps = {}) {
       try {
         const result = await deps.requestChoices?.({ text: question, signal: abort.signal });
         if (mine !== turn) return;
-        const clean = cleanChoices(result?.choices, `${mine}`);
+        const clean = cleanChoices(result?.choices, mine);
         if (!clean.length) throw new Error('No suggestions available. Your phrases still work.');
         const next = Object.freeze(clean);
         preparing = false;
@@ -109,14 +116,31 @@ export function createChatController(deps = {}) {
         await deps.onChoicesError?.();
       }
     },
-    // A batch for the same window while one is shown: staged, never drawn
-    // until swapReplacement(). Refused unless a batch is showing in 'Your turn'.
-    replace(choices) {
+    // A fresh batch for the same question (Something else, spec 2026-10-28 §3):
+    // only while that turn's replies are on screen; the ids are new. She asked
+    // for it with her own dwell, so it shows the moment it lands; a window's
+    // replacement still waiting is dropped with the batch it was to replace.
+    replace(choices, expectedTurn = turn) {
+      if (expectedTurn !== turn || !state.choices.length || state.stale || !['Your turn', 'Speaking'].includes(state.phase)) return false;
+      const next = Object.freeze(cleanChoices(choices, `${turn}.${++batch}`));
+      if (!next.length) return false;
+      replacement = null;
+      try { deps.prefetch?.(next); } catch { /* Warming never holds the reveal back. */ }
+      deps.beforeChoices?.();
+      patch({ choices: next });
+      return true;
+    },
+    // A batch for the same press window while one is shown (design 2026-10-27
+    // §4.5): staged, never drawn until swapReplacement(). Refused unless a
+    // batch is showing in 'Your turn'.
+    stageReplacement(choices) {
       if (state.phase !== 'Your turn' || !state.choices.length || state.stale) return false;
-      const clean = cleanChoices(choices, `${turn}.${++batches}`);
+      const clean = cleanChoices(choices, `${turn}.${++batch}`);
       if (!clean.length) return false;
       if (replacement) timing('replacementSuperseded');
       replacement = Object.freeze(clean);
+      // Warming is silent: the voices are ready by the time the swap shows them.
+      try { deps.prefetch?.(replacement); } catch { /* Warming never holds the swap back. */ }
       patch({});
       return true;
     },
@@ -146,7 +170,8 @@ export function createChatController(deps = {}) {
       timing('selected');
       return api.sayFixed(c.say);
     },
-    async sayFixed(text) {
+    // echo: the partner's own words said again (the question strip); speak() is told.
+    async sayFixed(text, { echo = false } = {}) {
       const mine = turn, spoken = ++utterance;
       replacement = null; // a pick wins: anything waiting to replace the shown batch is dropped
       speechAbort?.abort(); speechAbort = new AbortController();
@@ -154,7 +179,7 @@ export function createChatController(deps = {}) {
       timing('speechRequested');
       const back = state.choices.length && !state.stale ? 'Your turn' : idlePhase();
       patch({ phase: 'Speaking', error: '', hint: '' });
-      try { await deps.speak?.({ say: text }, { signal: speechAbort.signal }); }
+      try { await deps.speak?.(echo ? { say: text, echo: true } : { say: text }, { signal: speechAbort.signal }); }
       catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'
         ? 'Saved voice is unavailable. Choose Device voice in partner settings to use it instead. The words are still here.'
         : 'Sound unavailable. The words are still here.' }); }

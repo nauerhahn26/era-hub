@@ -70,7 +70,7 @@ function runtime({ ready = true, words = 'Would you like music or a story?', slo
   return child;
 }
 
-async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {}, reportUsage = false, fetch: fetcher, pictures } = {}) {
+async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {}, reportUsage = false, fetch: fetcher, pictures, world } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-stream-hub-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const keyterms = path.join(dir, 'keyterms.json');
@@ -82,7 +82,7 @@ async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {
     ERA_CHAT_STREAM_FALLBACK_MODEL: 'fallback-model', ERA_CHAT_STREAM_FALLBACK_TOKEN: 'fallback-secret-token' });
   const children = [];
   const api = createChatApi({ env: { ERA_CHAT_RUNTIME: 'scripted', ERA_CHAT_RUNTIME_ARGS: '[]', ...streamEnv, ...env }, limits, reportUsage: () => reportUsage,
-    spawn: () => { const child = runtime(runtimeOptions); children.push(child); return child; }, ...(fetcher ? { fetch: fetcher } : {}), ...(pictures ? { pictures } : {}) });
+    spawn: () => { const child = runtime(runtimeOptions); children.push(child); return child; }, ...(fetcher ? { fetch: fetcher } : {}), ...(pictures ? { pictures } : {}), ...(world ? { world } : {}) });
   const server = http.createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); });
   server.on('upgrade', (req, socket, head) => { if (!api.upgrade(req, socket, head)) socket.destroy(); });
   await new Promise(resolve => server.listen(0, 'localhost', resolve));
@@ -292,12 +292,28 @@ test('choices are staged by the hub one by one and sealed once; the page never a
   assert.deepEqual(sealed.choices.map(c => c.say), ['Let us play outside.', 'I want to read.', 'I am not sure.']);
   assert.ok(sealed.choices.every(c => typeof c.symbol === 'string'));
   assert.equal(sealed.kind, 'generated'); assert.equal(sealed.generation, s.generation);
-  assert.deepEqual(reply.calls[0].input, { question: OPEN, context: ['Me: I like books.'] });
+  assert.deepEqual(reply.calls[0].input, { question: OPEN, context: ['Me: I like books.'], shape: 'want' }, 'an open question carries its shape');
+  assert.equal(sealed.shape, 'want', 'the sealed batch carries the shape for the turn record');
   assert.equal(reply.calls[0].body.stream, true);
   assert.equal(reply.calls.length, 1); assert.equal(sealed.usage, undefined, 'usage only in test mode');
   await pause(60);
   assert.equal(s.events('batch-sealed').length, 1, 'sealed once');
   assert.ok(!JSON.stringify(s.seen).includes('reply-secret'));
+});
+
+test('an open question in a streaming session carries world to the reply core; the sealed batch carries its size only', async t => {
+  const service = await turnsService(t, { words: OPEN, partials: [] });
+  const reply = replyService();
+  const world = { text: 'Today: Wednesday, October 28.\nThis week at school: "Magnets!". Science: magnets.', weeks: 1, days: 2, chars: 80 };
+  const h = await hub(t, { services: [service], env: { ...replyEnv, ERA_CHAT_SPECULATE_MS: '0' }, fetch: reply.fetcher, world: () => world });
+  const s = await h.session();
+  await until(() => s.events('ready').length === 1);
+  await s.ask({ context: [] }); await raw(s, 3); await s.finish();
+  await until(() => s.events('batch-sealed').length === 1);
+  const sealed = s.events('batch-sealed')[0];
+  assert.equal(reply.calls[0].input.world, world.text);
+  assert.deepEqual(sealed.world, { weeks: 1, days: 2, chars: 80 });
+  assert.ok(!JSON.stringify(s.seen).includes('Magnets!'), 'the page never sees the text');
 });
 
 test('a stable partial starts a hidden speculative request; an equal final keeps it and nothing reached the page before', async t => {
@@ -348,6 +364,19 @@ test('shortcuts run on partials: an either/or is ready from the speculation with
   assert.equal(s.events('batch-sealed')[0].kind, 'alternatives');
   assert.deepEqual(s.events('batch-sealed')[0].choices.map(c => c.label), ['Music', 'A story']);
   assert.deepEqual(s.events('speculation').map(e => e.state), ['start', 'keep']);
+});
+
+test('a shortcut batch is staged as it was picked: two unknown names keep friend and people, a letter list stays glyphs', async t => {
+  for (const [words, expect] of [['Do you want to play with Lisa or Sam?', [['Lisa', 'friend', undefined], ['Sam', 'people', undefined]]],
+    ['Do you want A or B?', [['A', undefined, true], ['B', undefined, true]]]]) {
+    const service = await turnsService(t, { words });
+    const h = await hub(t, { services: [service], env: replyEnv, fetch: replyService().fetcher });
+    const s = await h.session();
+    await s.ask(); await raw(s, 3); await s.finish();
+    await until(() => s.events('batch-sealed').length === 1);
+    const staged = s.events('choice-staged').map(e => [e.choice.label, e.choice.symbol, e.choice.glyph]);
+    assert.deepEqual(staged, expect, words);
+  }
 });
 
 test('a new hold or a cancel drops the turn\'s choices: no staged or sealed event of an old generation ever arrives', async t => {

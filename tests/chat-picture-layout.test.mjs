@@ -1,9 +1,9 @@
 // Chat tiles by board law (spec 2026-10-27 §6; ux-contract §E 20; era-board
 // board-render.js): the picture BESIDE the word at 42% of the tile's width and
 // 82% of its height, a 74 px label target, the stacked layout for a long label
-// before any shrink, a 44 px floor marked data-font-reduced, the two black
-// rest cells and the yes/no tiles untouched, and no two tiles on a page
-// sharing a picture. Owned loopback fixtures only; pictures come from the
+// before any shrink, a 44 px floor marked data-font-reduced, the yes/no
+// tiles untouched, the question strip with no picture (the stable frame, spec
+// 2026-10-28), and no two tiles on a page sharing a picture. Owned loopback fixtures only; pictures come from the
 // page's own /symbol/<id> route, never from another host.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,27 +27,29 @@ const id = word => vocabulary.concepts.find(concept => concept.word === word).id
 
 test('page pictures are planned fixed tiles first and never repeat: alternate, then the bubble, then none', () => {
   assert.equal(symbols.setVocabulary(vocabulary), true);
+  // The stable frame's fixed tiles (spec 2026-10-28 §1), then four replies.
   const entries = [
-    { label: 'yes', type: 'yes' }, { label: 'no', type: 'no' }, { label: '', type: 'rest' }, { label: '', type: 'rest' },
+    { label: 'yes', type: 'yes' }, { label: '', type: 'question' }, { label: 'no', type: 'no' },
+    { label: 'My questions', type: 'page' }, { label: 'My comments', type: 'page' }, { label: 'About me', type: 'page' },
+    { label: 'Tell me more', type: 'static' }, { label: 'Ask a question', type: 'mode' }, { label: 'Make a comment', type: 'mode' }, { label: 'Something else', type: 'static' },
     { label: 'Yes', type: 'response', symbol: 'yes', symbolId: id('yes') },
     { label: 'Music', type: 'response', symbol: 'music', symbolId: id('music') },
     { label: 'Songs', type: 'response', symbol: 'music', symbolId: id('music') },
     { label: 'More songs', type: 'response', symbol: 'music', symbolId: id('music') },
-    { label: 'Tell me more', type: 'static' }, { label: 'Reactions', type: 'route' }, { label: 'My news', type: 'route' }, { label: 'Help me say it', type: 'route' },
   ];
   const plan = symbols.planPictures(entries);
-  assert.equal(plan[0].id, id('yes')); assert.equal(plan[1].id, id('no'));
-  assert.equal(plan[2], null); assert.equal(plan[3], null);
+  assert.equal(plan[0].id, id('yes')); assert.equal(plan[2].id, id('no'));
+  assert.equal(plan[1], null, 'the question strip never has a picture');
+  assert.deepEqual(plan.slice(3, 10).map(item => item.word), ['think', 'remember', 'me', 'more', 'question', 'tell', 'something else']);
   const yes = vocabulary.concepts.find(concept => concept.word === 'yes');
-  assert.equal(plan[4].id, yes.altId, 'a reply "Yes" yields the corner tile its picture and shows the alternate');
-  assert.equal(plan[5].id, id('music'));
-  assert.equal(plan[6].id, id('chat'), 'a second music reply falls back to the bubble picture');
-  assert.equal(plan[7], null, 'a third has no picture rather than a repeat');
-  assert.deepEqual(plan.slice(8).map(item => item.word), ['more', 'wow', 'news', 'help']);
+  assert.equal(plan[10].id, yes.altId, 'a reply "Yes" yields the corner tile its picture and shows the alternate');
+  assert.equal(plan[11].id, id('music'));
+  assert.equal(plan[12].id, id('chat'), 'a second music reply falls back to the bubble picture');
+  assert.equal(plan[13], null, 'a third has no picture rather than a repeat');
   const shown = plan.filter(Boolean).map(item => item.id);
   assert.equal(new Set(shown).size, shown.length);
-  assert.equal(symbols.planPictures(entries, { variant: 'bw' })[5].src, `/symbol/${id('music')}?color=false`);
-  assert.equal(symbols.planPictures(entries)[5].src, `/symbol/${id('music')}`);
+  assert.equal(symbols.planPictures(entries, { variant: 'bw' })[11].src, `/symbol/${id('music')}?color=false`);
+  assert.equal(symbols.planPictures(entries)[11].src, `/symbol/${id('music')}`);
   const emoji = symbols.planPictures([{ label: 'Home', type: 'response', symbol: 'home', symbolId: id('home') }, { label: 'Pizza', type: 'response', symbol: 'pizza', symbolId: id('pizza') }], { variant: 'emoji' });
   assert.equal(emoji[0].src, '/drawing/stickers/house.png'); assert.equal(emoji[0].kind, 'emoji');
   assert.equal(emoji[1].src, null); assert.equal(emoji[1].kind, 'drawn', 'no emoji for the concept: the drawn picture');
@@ -71,6 +73,21 @@ test('a replacement keeps each unchanged reply\'s picture; only new labels get p
   assert.equal(plan[7].id, id('music'), 'the new label is planned around the kept pictures');
   const shownIds = plan.filter(Boolean).map(item => item.id);
   assert.equal(new Set(shownIds).size, shownIds.length, 'still no repeat on the page');
+});
+
+test('a person picture from the hub shows that image, once a page, and keeps no emoji or drawn stand-in but the bubble', () => {
+  symbols.setVocabulary(vocabulary);
+  const person = (label, src) => ({ label, type: 'response', symbol: label, picture: { src, kind: 'person' } });
+  const plan = symbols.planPictures([person('Mom', '/characters/mom.png'), person('Mommy', '/characters/mom.png'),
+    { label: 'Sam', type: 'response', symbol: 'friend', symbolId: id('friend') }, person('Dad', '/characters/dad.png')]);
+  assert.deepEqual(plan[0], { word: 'Mom', id: null, kind: 'person', src: '/characters/mom.png', emoji: null, drawn: 'chat' });
+  assert.equal(plan[1], null, 'the same person twice on a page shows once');
+  assert.equal(plan[2].src, `/symbol/${id('friend')}`, 'the other tiles keep their library pictures');
+  assert.equal(plan[3].src, '/characters/dad.png');
+  for (const variant of ['bw', 'emoji']) assert.equal(symbols.planPictures([person('Mom', '/characters/mom.png')], { variant })[0].src, '/characters/mom.png', variant);
+  // Only the hub's own people route, a slug and .png: anything else is no person picture.
+  for (const src of ['https://elsewhere.example/mom.png', '/characters/../secret.png', '/characters/mom.json', '/symbol/1', '//x/characters/a.png', 7])
+    assert.notEqual(symbols.planPictures([person('Mom', src)])[0]?.kind, 'person', String(src));
 });
 
 test('fixed phrases and stories without a server pick use the curated table, then exact words, then the drawn guess', () => {
@@ -138,8 +155,9 @@ const measure = page => page.evaluate(() => new Promise(resolve => requestAnimat
     const contentHeight = box.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
     // Fits = no word cut inside the label's own box, and the label inside the tile's content box.
     const words = label?.getBoundingClientRect(), bottom = box.bottom - parseFloat(style.paddingBottom);
-    return { text: label?.textContent || '', type: [...tile.classList].find(name => ['yes', 'no', 'rest', 'response', 'static', 'route', 'waiting'].includes(name)),
+    return { text: label?.textContent || '', type: [...tile.classList].find(name => ['yes', 'no', 'question', 'page', 'mode', 'response', 'static', 'waiting', 'item', 'nav', 'made'].includes(name)),
       beside: tile.classList.contains('beside'), stacked: tile.classList.contains('stacked'), reduced: tile.dataset.fontReduced || null,
+      setAside: tile.classList.contains('picture-set-aside'),
       font: parseFloat(style.fontSize), width: box.width, height: box.height, background: style.backgroundColor,
       // the board's shares are of the tile's content box (board.css percentages inside the padding)
       contentWidth: tile.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), contentHeight,
@@ -177,9 +195,10 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
 
   function law(tiles, viewport) {
     const tag = tile => `${viewport}: "${tile.text}"`;
-    const rest = tiles.filter(tile => tile.type === 'rest');
-    assert.equal(rest.length, 2);
-    for (const tile of rest) { assert.equal(tile.background, 'rgb(0, 0, 0)'); assert.equal(tile.picture, null); }
+    assert.deepEqual(tiles.filter(tile => tile.type === 'page').map(tile => tile.text), ['My questions', 'My comments', 'About me']);
+    assert.deepEqual(tiles.filter(tile => ['static', 'mode'].includes(tile.type)).slice(0, 4).map(tile => tile.text), ['Tell me more', 'Ask a question', 'Make a comment', 'Something else']);
+    const strip = tiles.filter(tile => tile.type === 'question');
+    assert.equal(strip.length, 1); assert.equal(strip[0].picture, null, 'the question strip has no picture');
     assert.equal(tiles.find(tile => tile.type === 'yes').symbol, 'yes'); assert.equal(tiles.find(tile => tile.type === 'no').symbol, 'no');
     const shown = tiles.filter(tile => tile.picture).map(tile => tile.symbolId);
     assert.equal(new Set(shown).size, shown.length, `${viewport}: no two tiles share a picture (${shown})`);
@@ -189,6 +208,8 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
       assert.ok(tile.fits, `${tag(tile)} does not fit at ${tile.font}px`);
       if (tile.font < 74 - 0.5) assert.equal(tile.reduced, '1', `${tag(tile)} below 74 px must be marked`);
       else assert.equal(tile.reduced, null, tag(tile));
+      // Word integrity outranks the picture (tile-fit.js): a tile whose words fit only alone sets it aside.
+      if (tile.setAside) { assert.ok(!tile.beside && !tile.stacked, tag(tile)); continue; }
       assert.ok(tile.beside !== tile.stacked, tag(tile));
       if (tile.beside) {
         assert.ok(tile.text.length <= 16 && tile.width >= 190, tag(tile));
@@ -198,7 +219,9 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
         assert.ok(Math.abs(tile.picture.height / tile.contentHeight - 0.82) < 0.01, `${tag(tile)} picture is ${(tile.picture.height / tile.contentHeight).toFixed(3)} of the height`);
       }
     }
-    for (const tile of tiles.filter(tile => tile.picture && tile.text.length > 16)) assert.ok(tile.stacked, `${tag(tile)}: a long label stacks`);
+    for (const tile of tiles.filter(tile => tile.picture && tile.text.length > 16)) assert.ok(tile.stacked || tile.setAside, `${tag(tile)}: a long label stacks, or sets a speck picture aside`);
+    // A stacked picture is never a speck (coordinator review 10/28): at least 44 px tall, or set aside.
+    for (const tile of tiles.filter(tile => tile.stacked)) assert.ok(tile.picture.height >= 44 - 0.5, `${tag(tile)}: stacked picture ${tile.picture.height}px`);
   }
 
   for (const viewport of [{ width: 1600, height: 1000 }, { width: 1280, height: 800 }]) {
@@ -222,7 +245,7 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
     const responses = Object.fromEntries(tiles.filter(tile => tile.type === 'response').map(tile => [tile.text, tile]));
     assert.equal(Number(responses.Yes.symbolId), vocabulary.concepts.find(concept => concept.word === 'yes').altId, 'the reply "Yes" shows the alternate yes picture');
     assert.equal(Number(responses['That one'].symbolId), id('pizza'), 'the hub pick reaches the tile');
-    assert.ok(responses['Let me tell you another way'].stacked);
+    assert.ok(responses['Let me tell you another way'].stacked || responses['Let me tell you another way'].setAside, 'a long reply stacks, or sets a speck picture aside');
     assert.equal(responses['Tell me more'].symbolId === String(id('more')), false, 'the bottom row keeps "more"; the reply yields');
     if (viewport.width === 1600) assert.ok(responses['That one'].beside);
     if (viewport.width === 1280) assert.ok(tiles.some(tile => tile.reduced === '1'), 'the small board marks the labels it had to shrink');
@@ -292,8 +315,110 @@ test('the stacked-big preview profile keeps a real picture on a stacked tile; th
       fits: label.scrollWidth <= label.clientWidth + 1 && label.getBoundingClientRect().bottom <= tile.getBoundingClientRect().bottom };
   }, { moduleURL: `data:text/javascript;base64,${Buffer.from(fit).toString('base64')}`, profile });
   const law = await run(), big = await run('stacked-big');
-  assert.equal(law.layout, 'stacked'); assert.ok(law.share < 0.3, 'board law keeps the label first: ' + JSON.stringify(law));
+  // Board law keeps the label first; the picture it leaves would be a speck under 44 px, so it is set aside.
+  assert.equal(law.layout, 'plain', 'board law keeps the label first and sets the speck aside: ' + JSON.stringify(law));
   assert.equal(big.layout, 'stacked'); assert.ok(big.share >= 0.27, `picture ${big.share.toFixed(2)} of the height`);
   assert.ok(big.size >= 44 && big.fits, JSON.stringify(big));
   assert.equal(big.reduced, big.size < 74 ? '1' : null);
+});
+
+test('a one- or two-character label with no picture is a glyph: as big as 85% of the content height allows', async t => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.route('**/*', route => route.abort());
+  const css = (await fs.readFile(new URL('../public/chat/chat.css', import.meta.url), 'utf8')).replace(/^@import[^;]+;/m, '');
+  const fit = await fs.readFile(new URL('../public/chat/tile-fit.js', import.meta.url), 'utf8');
+  await page.setContent(`<style>${css}</style><main id="app"><div id="grid"></div></main>`);
+  const run = (text, { picture = false, type = 'response' } = {}) => page.evaluate(async ({ moduleURL, text, picture, type }) => {
+    const { fitTile } = await import(moduleURL);
+    const grid = document.querySelector('#grid'); grid.replaceChildren();
+    const tile = document.createElement('button'); tile.className = `tile ${type}${picture ? ' has-symbol' : ''}`;
+    tile.style.cssText = 'position:absolute;left:0;top:0;width:296px;height:219px';
+    const label = document.createElement('span'); label.className = 'label'; label.textContent = text;
+    if (picture) { const art = document.createElement('div'); art.className = 'chat-symbol'; tile.append(art); }
+    tile.append(label); grid.append(tile);
+    const out = fitTile(tile);
+    const style = getComputedStyle(tile), box = tile.getBoundingClientRect(), words = label.getBoundingClientRect();
+    const content = box.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    const result = { ...out, glyph: tile.dataset.glyph || null, reduced: tile.dataset.fontReduced || null, content, lineHeight: style.lineHeight,
+      fits: label.scrollWidth <= label.clientWidth + 1 && words.height <= content * 0.85 + 1 && words.bottom <= box.bottom - parseFloat(style.paddingBottom) + 1 };
+    // One step bigger would not fit.
+    tile.style.fontSize = `${out.size + 2}px`;
+    result.biggerFits = label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= content * 0.85 + 1;
+    // A refit as words clears the glyph mark.
+    label.textContent = 'Something longer'; fitTile(tile); result.after = tile.dataset.glyph || null;
+    return result;
+  }, { moduleURL: `data:text/javascript;base64,${Buffer.from(fit).toString('base64')}`, text, picture, type });
+  for (const text of ['A', '12']) {
+    const glyph = await run(text);
+    assert.equal(glyph.layout, 'glyph', text); assert.equal(glyph.glyph, '1', text);
+    assert.ok(glyph.size > 74 * 1.5 && glyph.size <= 74 * 3, `${text}: ${glyph.size}px`);
+    assert.equal(glyph.size % 2, 0); assert.ok(glyph.fits, JSON.stringify(glyph)); assert.equal(glyph.biggerFits, false, JSON.stringify(glyph));
+    assert.equal(glyph.reduced, null); assert.equal(glyph.after, null, 'words refit without the glyph mark');
+    assert.equal(parseFloat(glyph.lineHeight), glyph.size, 'line-height 1');
+  }
+  assert.notEqual((await run('ABC')).layout, 'glyph', 'three characters are words');
+  assert.notEqual((await run('A', { picture: true })).layout, 'glyph', 'a tile with a picture keeps board law');
+});
+
+test('on the page, letter replies from the hub show as big glyphs with no picture planned', { timeout: 60000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-layout-'));
+  const server = serve(scratch, []); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const replies = ['A', 'B', 'C', 'D'].map((label, i) => ({ id: `choice-${i + 1}`, label, say: label, glyph: true }));
+  await page.route('**/chat/api/choices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ kind: 'alternatives', choices: replies, timings: { totalMs: 1 } }) }));
+  await page.goto(base + '/chat/');
+  await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
+  await page.locator('#partnerOpen').click();
+  await page.locator('#testing > summary').click();
+  await page.locator('#typedQuestion').fill('Is the answer A, B, C, or D?');
+  await page.locator('#typedAsk').click();
+  await page.locator('.response').first().waitFor();
+  const tiles = await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(
+    [...document.querySelectorAll('#grid .tile.response')].map(tile => ({ text: tile.textContent.trim(), glyph: tile.dataset.glyph || null,
+      pictures: tile.querySelectorAll('.chat-symbol').length, symbol: tile.dataset.symbol || null, font: parseFloat(getComputedStyle(tile).fontSize) })))))));
+  assert.deepEqual(tiles.map(tile => tile.text), ['A', 'B', 'C', 'D']);
+  for (const tile of tiles) {
+    assert.equal(tile.glyph, '1', tile.text); assert.equal(tile.pictures, 0, tile.text); assert.equal(tile.symbol, null, tile.text);
+    assert.ok(tile.font > 74 * 1.5, `${tile.text}: ${tile.font}px`);
+  }
+});
+
+test('a stacked picture shorter than 44 px is a speck: it is set aside and the words refit plain; roomy tiles keep theirs', async t => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  await page.route('**/*', route => route.abort());
+  const css = (await fs.readFile(new URL('../public/chat/chat.css', import.meta.url), 'utf8')).replace(/^@import[^;]+;/m, '');
+  const fit = await fs.readFile(new URL('../public/chat/tile-fit.js', import.meta.url), 'utf8');
+  await page.setContent(`<style>${css}</style><main id="app"><div id="grid"></div></main>`);
+  const run = (text, width, height) => page.evaluate(async ({ moduleURL, text, width, height }) => {
+    const { fitTile } = await import(moduleURL);
+    const grid = document.querySelector('#grid'); grid.replaceChildren();
+    const tile = document.createElement('button'); tile.className = 'tile static has-symbol';
+    tile.style.cssText = `position:absolute;left:0;top:0;width:${width}px;height:${height}px`;
+    const picture = document.createElement('div'); picture.className = 'chat-symbol';
+    const label = document.createElement('span'); label.className = 'label'; label.textContent = text;
+    tile.append(picture, label); grid.append(tile);
+    const out = fitTile(tile);
+    return { ...out, setAside: tile.classList.contains('picture-set-aside'), stacked: tile.classList.contains('stacked'),
+      picture: getComputedStyle(picture).display === 'none' ? 0 : picture.getBoundingClientRect().height,
+      fits: label.scrollWidth <= label.clientWidth + 1 && label.getBoundingClientRect().bottom <= tile.getBoundingClientRect().bottom };
+  }, { moduleURL: `data:text/javascript;base64,${Buffer.from(fit).toString('base64')}`, text, width, height });
+  // The bottom row at 1920x1080 (three 1fr columns of a 0.62fr row): two lines leave a speck.
+  for (const text of ['Tell me more', 'Ask a question', 'Make a comment', 'Something else']) {
+    const out = await run(text, 330, 160);
+    assert.equal(out.setAside, true, `${text}: ${JSON.stringify(out)}`);
+    assert.equal(out.layout, 'plain'); assert.equal(out.stacked, false); assert.ok(out.size >= 44 && out.fits, JSON.stringify(out));
+  }
+  const reply = await run('What happens next?', 600, 230);
+  assert.ok(reply.layout === 'beside' || reply.setAside || reply.picture >= 44, `"What happens next?": ${JSON.stringify(reply)}`);
+  // A stacked tile with room keeps a picture of at least 44 px; beside still wins when it fits.
+  const roomy = await run('Something different', 480, 300);
+  assert.equal(roomy.layout, 'stacked'); assert.ok(roomy.picture >= 44, JSON.stringify(roomy));
+  assert.equal((await run('Music', 480, 300)).layout, 'beside');
 });

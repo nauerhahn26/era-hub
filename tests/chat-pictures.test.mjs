@@ -25,7 +25,11 @@ test('the strict choice schema requires a symbol drawn only from the vocabulary 
   } });
   await adapter.generate({ text: 'What would you like for dinner?' });
   const item = schema.properties.choices.items;
-  assert.deepEqual(item.required, ['label', 'say', 'symbol'], 'strict mode requires every property');
+  assert.deepEqual(item.required, ['label', 'say', 'symbol', 'picture'], 'strict mode requires every property');
+  assert.deepEqual(item.properties.picture, { type: 'string', minLength: 1, maxLength: 32 });
+  assert.match(instructions, /picture: one to three plain words naming a concrete thing, action or gesture/);
+  assert.match(instructions, /'shrug' for not sure, 'magnifying glass' for a clue, 'clock' for later, 'wave' for hello/);
+  assert.match(instructions, /for a person their role \(mom, dad, friend, teacher\)/);
   assert.equal(item.additionalProperties, false);
   const symbols = item.properties.symbol.enum;
   assert.ok(symbols.includes('chat'));
@@ -36,6 +40,20 @@ test('the strict choice schema requires a symbol drawn only from the vocabulary 
   assert.match(instructions, /symbol/i);
   assert.match(instructions, /never .*affirmative picture.*(refusal|negation)/i);
   assert.match(instructions, /"chat" when unsure/i);
+});
+
+test('the model\'s plain-words picture reaches the result; a malformed one is dropped and never costs the reply', async () => {
+  const adapter = createChoicesAdapter({ env, fetch: async () => response({ choices: [
+    { label: 'Maybe', say: 'Maybe.', symbol: 'chat', picture: 'shrug' },
+    { label: 'A clue', say: 'Can you give me a clue?', symbol: 'clue', picture: '  magnifying   glass ' },
+    { label: 'Later', say: 'Later, please.', symbol: 'chat', picture: 'a very long picture name here' },
+    { label: 'Hello', say: 'Hello!', symbol: 'hello', picture: '<b>wave</b>' }] }) });
+  const result = await adapter.generate({ text: 'Shall we look for it?' });
+  assert.deepEqual(result.choices.map(choice => choice.picture), ['shrug', 'magnifying glass', undefined, undefined]);
+  assert.deepEqual(result.choices.map(choice => choice.label), ['Maybe', 'A clue', 'Later', 'Hello'], 'labels and says are unchanged');
+  const extra = createChoicesAdapter({ env, fetch: async () => response({ choices: [
+    { label: 'A', say: 'A.', symbol: 'chat', picture: 'cat', colour: 'red' }, { label: 'B', say: 'B.', symbol: 'chat', picture: 'dog' }] }) });
+  await assert.rejects(extra.generate({ text: 'Which?' }), error => error.code === 'generation-invalid', 'other extra fields are still refused');
 });
 
 test('a valid model symbol reaches the result; an unknown or missing one falls back to the hub text guess', async () => {
@@ -92,7 +110,9 @@ test('the text guess finds one clear subject and stays neutral when there are tw
   assert.equal(guess('Music', 'Tell me a story.'), 'music');
   assert.equal(guess('Music or a story', ''), 'chat');
   assert.equal(guess('I like music and stories', ''), 'chat');
-  assert.equal(guess('A surprising thought', 'Something unusual.'), 'chat');
+  // A quality the library has is no longer the bubble (the actions map); a word it lacks still is.
+  assert.equal(guess('A surprising thought', 'Something unusual.'), 'surprising');
+  assert.equal(guess('A zorbish thought', 'Something zorbish.'), 'chat');
   assert.equal(guess('Grandma', 'I want to see Grandma.'), 'grandma');
   assert.equal(guess('Two dogs', ''), 'dog');
 });
@@ -111,11 +131,14 @@ test('shortcuts and guarded templates carry curated pictures with their ids', as
   assert.deepEqual(pairs(await ask('Hello!')).map(row => row[1]), ['hello', 'happy', 'feelings']);
   assert.deepEqual(pairs(await ask('Would you like music or a story?')).map(row => row[1]), ['music', 'book']);
   assert.deepEqual(pairs(await ask('Were you at school or at home?')).map(row => row[1]), ['clue', 'different', 'not now']);
+  // A recall batch that asserts a past activity is thrown out for the fixed repairs (since 10/28 the model is asked first).
+  const invented = new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text',
+    text: JSON.stringify({ choices: [{ label: 'The park', say: 'I went to the park.' }, { label: 'Fun', say: 'It was fun.' }] }) }] }] }));
+  const guarded = await createChoicesAdapter({ env, fetch: async () => invented }).generate({ text: 'What did you do last weekend?', shape: 'recall' });
+  assert.deepEqual(pictures.withSymbols(guarded.choices).map(choice => choice.symbol), ['clue', 'different', 'forget', 'not now']);
   const adapter = createChoicesAdapter({ env, fetch: () => { throw Error('guarded turns make no request'); } });
-  const guarded = await adapter.generate({ text: 'What did you do last weekend?' });
-  assert.deepEqual(pictures.withSymbols(guarded.choices).map(choice => choice.symbol), ['clue', 'different', 'not now']);
   const support = await adapter.generate({ text: 'I lost my drawing.' });
-  assert.deepEqual(pictures.withSymbols(support.choices).map(choice => choice.symbol), ['help', 'more', 'wait']);
+  assert.deepEqual(pictures.withSymbols(support.choices).map(choice => choice.symbol), ['help', 'tell', 'wait'], '"Tell me more" is telling, not more');
 });
 
 test('the warm list is every vocabulary picture once, alternates included', () => {
@@ -270,7 +293,7 @@ test('a model symbol from another concept family than the food label is rejected
   // Weather and time pictures never stand for a food or drink; other families and the same family stay the model's.
   assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'sunny' }), 'wine', 'the library\'s own picture of the word, never the weather');
   assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'tomorrow' }), 'pizza');
-  assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'yummy' }), 'yummy');
+  assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'yummy' }), 'pizza', 'the label\'s own curated thing beats the model\'s word');
   assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'drink' }), 'wine');
   assert.equal(pictures.pickSymbol({ label: 'Go to the park', say: 'Let us go to the park.', symbol: 'friday' }), 'park');
   assert.equal(pictures.pickSymbol({ label: 'Saturday', say: 'On Saturday.', symbol: 'saturday' }), 'saturday');
@@ -293,4 +316,68 @@ test('the hub counts rejected model symbols for test mode and the prompt says th
   assert.ok(result.choices.every(choice => choice.symbolId !== 37730), 'never the weekday picture');
   assert.equal(result.symbolRejected, 1);
   assert.match(instructions, /the symbol must name the thing in the label; a dish or food uses its food word or "food"/i);
+});
+
+test('reviewed tiles (10/28 contact sheet): draw, a show, a negated feeling, a speech bubble, something else', () => {
+  const pick = (label, say = label, extra = {}) => pictures.withSymbols([{ label, say, ...extra }])[0];
+  const id = word => byWord.get(word).id;
+  // 1. Drawing is a hand with a pencil; an action before a generic object keeps the action's picture.
+  assert.equal(pick('Draw', 'I want to draw.', { symbol: 'draw', picture: 'pencil' }).symbolId, 8088);
+  for (const [label, word] of [['Draw pictures', 'draw'], ['Draw a picture', 'draw'], ['Play together', 'play'], ['Watch a show', 'watch'],
+    ['Listen to music', 'listen'], ["Let's draw pictures", 'draw'], ['Watch a show together', 'watch']])
+    assert.equal(pick(label).symbol, word, label);
+  assert.equal(pick('Draw pictures', 'I want to draw pictures.', { symbol: 'draw', picture: 'crayon' }).symbol, 'draw');
+  assert.ok(['book', 'read'].includes(pick('Read a book', 'I want to read a book.', { symbol: 'book' }).symbol));
+  assert.equal(pick('Draw a dragon', 'I want to draw a dragon.').symbol === 'photo', false);
+  // 2. A show is the television; watching is watching television; showing someone is its own picture.
+  assert.equal(pick('A show', 'A show, please.', { symbol: 'video', picture: 'tv' }).symbolId, 25498);
+  assert.equal(pick('Watch a show', 'I want to watch a show.', { symbol: 'video', picture: 'television' }).symbolId, 28661);
+  assert.equal(pick('Watch', 'I want to watch.').symbolId, 28661);
+  assert.equal(pick('Show you', 'Can I show you?').symbolId, 11308);
+  // 3. A negated feeling the model named as another feeling keeps the model's feeling; "Not sad" is still not sad.
+  assert.equal(pick('Not so good', 'Not so good.', { symbol: 'sad', picture: 'sad face' }).symbol, 'sad');
+  assert.equal(pick('Not great', 'Not great.', { symbol: 'tired' }).symbol, 'tired');
+  assert.equal(pick('Not sad', "I'm not sad.", { symbol: 'sad' }).symbol, 'chat');
+  assert.equal(pick('Not so good', 'Not so good.', { symbol: 'pizza' }).symbol, 'chat', 'only a feeling passes the guard');
+  // 4. A speech bubble is talking, never soap bubbles.
+  for (const picture of ['speech bubble', 'bubble', 'bubbles', 'talk bubble'])
+    assert.notEqual(pick('Tell you more', 'I want to tell you more.', { symbol: 'chat', picture }).symbolId, 6945, picture);
+  assert.equal(pick('Tell you more', 'I want to tell you more.', { symbol: 'chat', picture: 'speech bubble' }).symbolId, id('tell'));
+  assert.equal(pick('Bubbles', 'Can we blow bubbles?').symbolId, 6945, 'a tile about bubbles keeps them');
+  // Something else is choosing among options, not the abstract "different".
+  assert.equal(pick('Something else', 'Something else.', { symbol: 'different' }).symbolId, 30510);
+  assert.equal(pick('Another way', 'Let me tell you another way.').symbol, 'different');
+});
+
+test('a full name never takes a thing\'s picture from one of its words: the model\'s picture, a person symbol, else people', () => {
+  const pick = (label, extra = {}) => pictures.withSymbols([{ label, say: label, ...extra }])[0];
+  const id = word => byWord.get(word).id;
+  // "rudolph" is a library word; a hero's full name is not the reindeer.
+  assert.notEqual(pick('Wilma Rudolph', { symbol: 'chat' }).symbol, 'rudolph');
+  assert.equal(pick('Wilma Rudolph', { symbol: 'chat' }).symbolId, id('people'), 'no picture words: the generic people picture');
+  const runner = pick('Wilma Rudolph', { symbol: 'chat', picture: 'runner' });
+  assert.notEqual(runner.symbol, 'rudolph'); assert.notEqual(runner.symbolId, id('people'), 'the model\'s picture words come first');
+  assert.equal(runner.symbolId, pictures.withSymbols([{ label: 'Runner', say: 'Runner', picture: 'runner' }])[0].symbolId);
+  assert.equal(pick('Wilma Rudolph', { symbol: 'girl' }).symbol, 'girl', 'then the model\'s symbol when it is a person word');
+  assert.equal(pick('Wilma Rudolph', { symbol: 'pizza' }).symbol, 'people', 'a thing symbol is not a person');
+  assert.equal(pick('Mary Jane Smith', { symbol: 'teacher' }).symbol, 'teacher', 'three words too');
+  // Kept: the model's picture of a famous player.
+  assert.equal(pick('Jackie Robinson', { symbol: 'chat', picture: 'baseball player' }).symbolId, 8609);
+  // The family's own people still show their own picture.
+  pictures.setPeople(() => [{ slug: 'aunt-sue', word: 'Aunt Sue' }]);
+  try { assert.deepEqual(pick('Aunt Sue').picture, { src: '/characters/aunt-sue.png', kind: 'person' }); } finally { pictures.setPeople(null); }
+  // Capitalised things are not names: every word is a known word.
+  for (const [label, symbol] of [['Hot Dog', 'hot dog'], ['Ice Cream', 'ice cream'], ['Play Outside', 'outside'], ['Positive Pumpkin', 'pumpkin']])
+    assert.equal(pick(label).symbol, symbol, label);
+});
+
+test('a label starting with Tell takes the tell picture; More alone keeps more', () => {
+  const pick = (label, say = label, extra = {}) => pictures.withSymbols([{ label, say, ...extra }])[0];
+  const id = word => byWord.get(word).id;
+  assert.equal(id('tell'), 5973); assert.equal(id('more'), 5508);
+  for (const [label, say, extra] of [['Tell me more', 'Tell me more.'], ['Tell you more', 'I want to tell you more.', { symbol: 'more' }],
+    ['Tell me more', 'Tell me more.', { symbol: 'more', picture: 'plus sign' }], ['Tell you', 'I want to tell you.'], ['Tell a story', 'Can I tell a story?']])
+    assert.equal(pick(label, say, extra).symbolId, 5973, label);
+  assert.equal(pick('More', 'More please.').symbolId, 5508);
+  assert.equal(pick('More please', 'More please.').symbolId, 5508);
 });

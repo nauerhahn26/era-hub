@@ -16,7 +16,7 @@ import { makeChatToneWav, assertContentFreeMetrics } from '../tests-vm/lib/chat-
 
 const require = createRequire(import.meta.url);
 const { createChatStore } = require('../chat-store.js');
-const { createChatTurns, testModeOn, applyTestModeSetting, validateTurn } = require('../chat-turns.js');
+const { createChatTurns, testModeOn, applyTestModeSetting, applyLikesSetting, chatLikes, DEFAULT_LIKES, validateTurn } = require('../chat-turns.js');
 const { initPool } = require('../pool.js');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -40,10 +40,11 @@ function serve(dataDir) {
       if (url.pathname === '/settings' && req.method === 'POST') {
         let text = ''; for await (const chunk of req) text += chunk;
         let saved = {}; try { saved = JSON.parse(await fs.readFile(settingsFile, 'utf8')); } catch {}
-        await fs.writeFile(settingsFile, JSON.stringify(applyTestModeSetting(saved, JSON.parse(text))));
+        const incoming = JSON.parse(text);
+        await fs.writeFile(settingsFile, JSON.stringify(applyLikesSetting(applyTestModeSetting(saved, incoming), incoming)));
         res.writeHead(204).end(); return;
       }
-      if (url.pathname === '/settings') return json({ dwellMs: 1200, pauseGoes: 'home', chatTestMode: testModeOn(dataDir) });
+      if (url.pathname === '/settings') return json({ dwellMs: 1200, pauseGoes: 'home', chatTestMode: testModeOn(dataDir), chatLikes: chatLikes(dataDir) });
       const relative = url.pathname === '/chat/' ? 'chat/index.html' : decodeURIComponent(url.pathname).slice(1);
       if (relative.split(/[\\/]/).some(part => part === '..') || !mime[path.extname(relative)]) { res.writeHead(404).end(); return; }
       const bytes = await fs.readFile(path.join(root, 'public', relative));
@@ -77,6 +78,7 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
     else if (url.pathname.endsWith('/control')) { const body = req.postDataJSON(); controls.push(body.type); if (body.type !== 'finish') generation++; result = { generation }; }
     else if (url.pathname.endsWith('/audio')) { uploads++; result = { seq: uploads }; }
     else if (url.pathname.endsWith('/choices')) result = generated;
+    else if (url.pathname.endsWith('/world')) { const text = 'Today: Wednesday, October 28.\nShe likes: ' + chatLikes(scratch).join(', ') + '.'; result = { text, weeks: 0, chars: text.length }; }
     else result = { ready: true, mode: 'paused' };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) }).catch(() => {});
   });
@@ -218,5 +220,29 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   await page.waitForFunction(() => document.querySelector('#testModeBanner').hidden);
   assert.equal(testModeOn(scratch), false);
   assert.equal(await page.locator('#testModePanel').isVisible(), false);
+
+  // What she likes (dad, 10/28): one per line, loaded from the settings, saved as a list when the box is left.
+  const likes = page.locator('#chatLikes');
+  assert.equal(await likes.getAttribute('maxlength'), '400');
+  assert.equal(await likes.inputValue(), DEFAULT_LIKES.join('\n'), 'the generic default until a partner saves a list');
+  const saves = [];
+  page.on('request', request => { if (new URL(request.url()).pathname === '/settings' && request.method() === 'POST') saves.push(request.postDataJSON()); });
+  await likes.fill('  swim \n\ndance\nbake cookies\n');
+  await likes.blur();
+  for (let i = 0; i < 100 && !saves.length; i++) await page.waitForTimeout(20);
+  assert.deepEqual(saves, [{ chatLikes: ['swim', 'dance', 'bake cookies'] }], 'trimmed, empty lines dropped');
+  for (let i = 0; i < 100 && chatLikes(scratch)[0] !== 'swim'; i++) await page.waitForTimeout(20);
+  assert.deepEqual(chatLikes(scratch), ['swim', 'dance', 'bake cookies']);
+  await page.waitForFunction(() => /Saved/.test(document.querySelector('#chatLikesNote').textContent));
+  // What Chat knows this week (plan "Her world as context"): read-only, filled when the dialog opens and after likes are saved.
+  assert.equal(await page.locator('#worldDetails summary').textContent(), 'What Chat knows this week');
+  await page.locator('#worldDetails summary').click();
+  await page.waitForFunction(() => /She likes: swim, dance, bake cookies\./.test(document.querySelector('#worldPreview').textContent));
+  assert.equal(await page.locator('#worldPreview').evaluate(el => el.tagName), 'PRE');
+  assert.equal(await page.locator('#worldPreview').evaluate(el => el.isContentEditable), false);
+  await page.locator('#partnerDialog .close').click();
+  await page.evaluate(() => { document.querySelector('#worldPreview').textContent = ''; });
+  await page.locator('#partnerOpen').click();
+  await page.waitForFunction(() => document.querySelector('#worldPreview').textContent.startsWith('Today: Wednesday, October 28.'));
   assert.deepEqual(errors, []); assert.equal(foreign, 0);
 });
