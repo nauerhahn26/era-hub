@@ -235,7 +235,7 @@ function lastQuestion(text, opener) {
 // the sentence or follows a comma, a colon or a stem word, so "a" the article
 // ("a cookie or a banana") is never a letter. Offered as glyphs: no picture.
 const GLYPH = String.raw`(?:[a-z]|\d{1,2})`;
-const GLYPH_LIST = new RegExp(String.raw`(?:^|[,:]\s*|\b(?:answer|one|it|is|be|was|pick|choose|between|either|want|like|need|prefer|rather|number|letter|or)\s+)` +
+const GLYPH_LIST = new RegExp(String.raw`(?:^|[,:]\s*|\b(?:answer|one|it|is|be|was|pick|choose|between|either|want|like|need|prefer|rather|number|letter|plan|option|options|choice|choices|group|team|door|box|card|or)\s+)` +
   String.raw`(${GLYPH}(?:\s*,\s*(?:or\s+)?${GLYPH}|\s+or\s+${GLYPH}){1,3})$`, 'i');
 function glyphChoices(text) {
   const match = GLYPH_LIST.exec(text);

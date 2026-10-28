@@ -835,6 +835,8 @@ test('a trailing list of letters or numbers becomes glyph tiles under any stem, 
     ['Which one, 1, 2 or 3?', ['1', '2', '3']],
     ['Pick one: 10, 20, or 30?', ['10', '20', '30']],
     ['Ellie, is the answer a, b, or c?', ['A', 'B', 'C']],
+    ['Would you like plan a or b?', ['A', 'B']],
+    ['Is it door 1 or 2?', ['1', '2']],
   ]) {
     const result = await ask(text);
     assert.equal(result.kind, 'alternatives', text);
