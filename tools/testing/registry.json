@@ -4695,6 +4695,27 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-frame.test.mjs",
+      "purpose": "Chat stable frame layout: the grid tracks, nine fixed tiles where the spec table puts them, the middle by reply count (four as two by two, three and two across, one whole), page cells of ten items with More and Back, and paging",
+      "group": "chat",
+      "lane": "linux",
+      "level": "pure layout unit",
+      "dependencies": [
+        "era-hub/public/chat/frame.js"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-pictures-offline.test.mjs",
       "purpose": "Enabling Chat pre-warms every vocabulary picture once from an owned fixture provider, a restart fetches nothing, the black-and-white variant passes through, and Chat tiles render from the cache with the provider gone and outside requests blocked",
       "group": "chat",
