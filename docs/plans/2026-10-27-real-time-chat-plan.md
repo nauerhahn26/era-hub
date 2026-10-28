@@ -369,5 +369,20 @@ library, and the likes list. Nothing new has to be published for this.
       record field.
 - [x] `chat-world.js`; wiring in server.js and chat-api.js; chat-choices.js
       instruction + input; partner dialog preview; spec §8 sentence.
-- [ ] Live check against the real model with the 10/26 week package, then
+- [x] Live check against the real model with the 10/26 week package, then
       gate, land, patch release.
+
+Built 10/28 15:00–16:30 UTC. The weekly builder gained `ellie world` (a
+`world.json` beside each week's manifest on Drive: the teacher's lists, the
+aide's daily notes, what she said on her device, about-her lines; medical,
+appointment, lost-item and hard-moment lines dropped) and a daily cron row;
+the first file reached the home device's mirror within twenty minutes. The
+hub's digest (6,000 characters, per-list caps, day notes kept longest) goes
+to the model with every open-ended question. Live sheet of twelve questions:
+"What was your favorite thing last week at school?" → Bats / Number 42 / Bat
+art; "What did you make with your big buddy?" → Positive pumpkin / Monsters /
+Twin projects; "What do you want to be for Halloween?" → Penny / A detective.
+Gate 192/0, landed 6dca68d, released v1.0.34. Open: a full name only beats a
+library word when the model names a picture; the fixed bottom-row "Tell me
+more" keeps the "more" picture; no school updates had arrived for this week
+yet, so the first digest is last week's.
