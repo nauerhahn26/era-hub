@@ -1,6 +1,6 @@
 # Button press to ask — plan (2026-10-28)
 
-Status: drafted 10/28 from the approved design; nothing built yet.
+Status: phases 0–5 BUILT 10/28 (≈85 commits), master v1.0.26–v1.0.31 merged in, gate green 202/0, VM leg B 13/13 with the buttons case; phase 6 (land, patch, rollout, dad's hardware steps) awaits dad's word.
 Design: [button press to ask](../specs/2026-10-27-button-press-to-ask-design.md)
 (approved; §5 choices are decided below under Decisions).
 Worktree `era-hub--wt-flic`, branch `feat/flic`, from master `0636956` (Chat
@@ -317,7 +317,7 @@ Info
       `tests/buttons-payload.test.mjs` asserts `tools/build-payload.sh` copies
       `buttons/EraButtons.cs` and the Chat test-mode guard still passes; the
       Chat test-mode and era-scan steps unchanged.
-- [ ] **T5.8** (written, not yet run: the case sits before "shut down" in leg B, the injector is `tests-vm/lib/sendkey.cs`; F13 is pressed from Home so the relaunch path is the one proved; an F14 between the two presses closes whatever the first ask opened; the W3 verdict is logged and written to `$VM_OUT/buttons-w3.json`; 10/28 run: the press reached the hub and relaunched, but the case re-attached DevTools to the old kiosk before the hub had closed it, so it now proves the relaunch by the guest's process list — exactly one kiosk browser, launched at `/chat/?ask=` — and a screenshot, then re-attaches to the new instance; the hub's relaunch now waits up to 5 s for the old kiosk's processes to be gone) Windows case (quiet profile) as a new `test()` in
+- [x] **T5.8** (written, not yet run: the case sits before "shut down" in leg B, the injector is `tests-vm/lib/sendkey.cs`; F13 is pressed from Home so the relaunch path is the one proved; an F14 between the two presses closes whatever the first ask opened; the W3 verdict is logged and written to `$VM_OUT/buttons-w3.json`; 10/28 run: the press reached the hub and relaunched, but the case re-attached DevTools to the old kiosk before the hub had closed it, so it now proves the relaunch by the guest's process list — exactly one kiosk browser, launched at `/chat/?ask=` — and a screenshot, then re-attaches to the new instance; the hub's relaunch now waits up to 5 s for the old kiosk's processes to be gone) Windows case (quiet profile) as a new `test()` in
       `tests-vm/leg-b-update.e2e.mjs` after the Chat case: enable Chat, wait
       for `/status.buttons.state === 'running'` and five registered keys;
       ship a 15-line C# `sendkey.cs` (compiled with the guest csc as
@@ -329,11 +329,11 @@ Info
       record `prompt` as the verdict. Verify: `bash tools/vm-e2e.sh <dist>
       --only b --profile quiet` (detached, sentinel). Guard: STOP and report
       if the policy verdict is `prompt`: the design's one-touch fallback then
-      becomes a rollout step, not a code change.
+      becomes a rollout step, not a code change. — RUN 10/28: leg B 13/13 on the quiet profile, F13 → relaunch at /chat/?ask=<nonce>, Ctrl+Alt+F9 → visible, listener compiled on the guest; microphone permission `prompt` on the pristine guest (decision 16).
 
 ## Phase 6 — gate, patch release, rollout (collaborating: dad and hardware)
 
-- [ ] **T6.1** Full gate: `setsid nohup bash tools/era-gate.sh >"$LOG" 2>&1 &
+- [x] **T6.1** Full gate: `setsid nohup bash tools/era-gate.sh >"$LOG" 2>&1 &
       echo $! >"$PIDFILE"; bash tools/gate-wait.sh "$(cat "$PIDFILE")"`.
       Accept: `== era-gate: N passed, 0 failed ==` and a stamp. Guard: no polling.
 - [ ] **T6.2** Land and cut: `bash $W land ~/new-era/era-hub flic`, then on
@@ -370,7 +370,7 @@ Info
       device (operator-managed `ai.env`, configuration only), `push-device.sh
       tablet …`, school at its next awake window; T6.3's curl on each.
 - [ ] **T6.8** Retrospective below; design §5 marked decided; memory note on
-      the policy verdict (W3) and the Flic pairing outcome.
+      the policy verdict (W3) and the Flic pairing outcome. — GREEN 10/28 03:55 UTC: 202 passed, 0 failed (stamp 46c033f…), after the merge of master v1.0.26–v1.0.31.
 
 ## Decisions (design §5 and the builder's calls)
 
