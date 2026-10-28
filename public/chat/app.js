@@ -85,16 +85,18 @@ const fixed = {
 function warmPhrases() {
   voice.prefetch([...Object.values(fixed).flat(), 'Yes.', 'No.', 'Tell me more.', ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })));
 }
+// A press turn lives in the test-mode turn log only (production rows keep four kinds).
+const questionActive = () => metrics.isActive(questionMetric) || (questionMetric !== null && questionMetric === pressMetric && turnLog.tracking(questionMetric));
 function timingEvent(name) {
   if (name === 'choicesReady' || name === 'revealed') {
     metrics.mark(questionMetric, name);
     if (name === 'revealed') turnLog.sample(questionMetric, 'reveal'); // never awaited: the reveal is not delayed
   }
   else if (name === 'selected') {
-    pendingSpeechMetric = metrics.isActive(questionMetric) && speechMetric !== questionMetric ? questionMetric : metrics.begin('reply');
+    pendingSpeechMetric = questionActive() && speechMetric !== questionMetric ? questionMetric : metrics.begin('reply');
     metrics.mark(pendingSpeechMetric, 'selected');
   } else if (name === 'speechRequested') {
-    if (!pendingSpeechMetric && metrics.isActive(questionMetric) && controller.state.phase === 'Your turn') pendingSpeechMetric = questionMetric;
+    if (!pendingSpeechMetric && questionActive() && controller.state.phase === 'Your turn') pendingSpeechMetric = questionMetric;
     speechMetric = pendingSpeechMetric || metrics.begin('fixed'); pendingSpeechMetric = null;
     metrics.mark(speechMetric, 'selected');
   }
@@ -160,13 +162,16 @@ const controller = createChatController({
   beforeChoices: () => { revealRender = true; window.Dwell?.suppress(REVEAL_SETTLE_MS); },
   async speak(choice, { signal }) {
     if (appLocked()) return;
+    // Her selection ends a listening window first (design §4.4: a pick wins):
+    // the hub hears `pick` before anything is spoken or cancelled.
+    if (press && !press.closed) pickSent = closePressWindow('pick') || Promise.resolve();
     const mine = lifecycle, spoken = ++currentSpeech;
     const timing = speechMetric;
     if (holding || askPending) metrics.end(questionMetric, 'cancelled', 'interrupted');
     captureIntent++; holding = false; askPending = false; pendingFrames = []; captureGeneration = null;
     clearTimeout(askTimer); $('ask').classList.remove('held'); mic?.cancel();
     setMode('blocked'); uploadEpoch++;
-    const canceled = session ? control('cancel').catch(() => null) : Promise.resolve();
+    const canceled = session ? pickSent.then(() => control('cancel')).catch(() => null) : Promise.resolve();
     if (signal.aborted || spoken !== currentSpeech) return;
     let completed;
     turnLog.content(timing, { spoken: choice.say });

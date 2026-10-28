@@ -301,3 +301,25 @@ test('the tones are drawn, not shipped: no audio files in the Chat page', async 
   const files = await fs.readdir(path.join(root, 'public', 'chat'));
   assert.deepEqual(files.filter(name => /\.(wav|mp3|ogg|m4a|aac|flac|opus|webm)$/i.test(name)), []);
 });
+
+// ---- T3.4 her pick ends the window ----
+
+test('her pick while the window listens: pick reaches the hub before anything speaks, the window closes, the tile is spoken', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'still listening after the first batch');
+  const plays = await f.page.evaluate(() => window.__plays);
+  await f.page.locator('.response', { hasText: 'Fish' }).click();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
+  await f.until(() => f.controls.includes('cancel'));
+  assert.ok(f.controls.indexOf('pick') >= 0 && f.controls.indexOf('pick') < f.controls.lastIndexOf('cancel'), f.controls.join(','));
+  await f.until(() => f.ttsTexts.some(entry => entry.text === 'Fish'));
+  await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
+  assert.equal(f.api.window(), null, 'the hub closed the window');
+  assert.deepEqual(await f.page.evaluate(() => window.__tones.map(({ from }) => from)), [660, 880]);
+  assert.deepEqual(f.errors, []);
+});

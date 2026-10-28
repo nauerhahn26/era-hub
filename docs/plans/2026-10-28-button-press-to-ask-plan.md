@@ -209,7 +209,7 @@ Info
       consecutive quiet frames after ≥ 2 energetic ones. Provider turn-end wins
       when it arrives first. Verify: unit test with synthetic PCM (tone then
       zeros). Guard: the ONNX model is not loaded in the hub process.
-- [ ] **T3.4** Second press and cancel reach the machine through
+- [x] **T3.4** (the pick is sent from `speak()`, so a fixed tile ends the window too; verified in chat-window-hub and chat-commands-browser) Second press and cancel reach the machine through
       `buttons.press` → `chatApi.window(sessionId).press()/cancel()`; pick:
       the page's `select` sends `control('pick')` before speaking. Verify:
       T3.2 suite. Guard: a pick always wins over a pending seal.
