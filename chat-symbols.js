@@ -406,6 +406,19 @@ function unknownName(label, l) {
   return true;
 }
 
+// A full name ("Wilma Rudolph", "Mary Jane Smith"): two or three capitalised
+// words, at least one of which names nothing the hub knows, that are not the
+// family's own person. One of its words is never the picture ("rudolph" is the
+// reindeer): the model's picture words, else its symbol when that is a person
+// word, else the generic people picture.
+const NAME_PERSONS = new Set(['girl', 'boy', 'friend', 'people', 'teacher']);
+function fullName(label, l) {
+  if (lexicon().words.size < NAME_INDEX_MIN) return false;
+  if (!/^[A-Z][a-z'’.-]*(?:\s+[A-Z][a-z'’.-]*){1,2}$/.test(String(label).trim()) || curated(l) || exactHit(l) || lexiconForm(l)) return false;
+  return words(l).some(word => !(KIN_GROUP.has(word) || STOP.has(word) || FUNCTION_WORDS.has(word) || NOT_NAMES.has(word) ||
+    exactHit(word) || lexiconForm(word) || actionForm(word)));
+}
+
 // "Draw pictures", "Play together", "Watch a show", "Listen to music": a label
 // whose first content word is one of these actions and whose rest is only a
 // generic object shows the action, not the object.
@@ -438,6 +451,14 @@ function choose({ label = '', say = '', symbol, picture } = {}, people = current
   const l = normal(label), s = normal(say);
   const known = personFor(l, people) || (!l || !conceptsIn(l).length && !lexiconForm(l) ? personFor(s, people) : null);
   if (known) return guardedPick(l, s, known);
+  // "Tell me more", "Tell you more": telling, never the abstract "more".
+  if (/^tell\b/.test(l) && vocabulary().byWord.has('tell')) return { word: 'tell' };
+  if (fullName(label, l)) {
+    const named = picturePick(picture, '');
+    if (named) return named;
+    const model = modelSymbol(symbol);
+    return { word: model && NAME_PERSONS.has(model) ? model : GENERIC.person };
+  }
   if (unknownName(label, l)) return { word: 'friend', name: true };
   // A curated phrase is reviewed for its own words; the other field is still guarded
   // ("I'm good" / "No thanks, I am good." is a refusal).
