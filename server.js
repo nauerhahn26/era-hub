@@ -567,8 +567,22 @@ const kioskLauncher = require("./kiosk-launch.js").createKioskLauncher({
   port: PORT, dir: __dirname, cdp: process.env.ERA_QA_CDP, closeKiosk, settle: settleKiosk,
   log: (m) => console.log("[buttons] " + m),
 });
+// The device listener that turns the buttons' keys into presses (design §4.1):
+// compiled from buttons/EraButtons.cs on the device, kept running as this
+// hub's child while Chat is on, and the browsers' microphone policy written
+// beside it (buttons.js createListener). ERA_BUTTONS_CSC / ERA_BUTTONS_REG are
+// the suites' stub compiler and stub reg.exe (as ERA_GAZE_CSC); unset off
+// Windows, the listener is "unsupported" and nothing runs.
+const buttonsListener = require("./buttons.js").createListener({
+  dir: path.join(__dirname, "buttons"), port: PORT, hubPid: process.pid,
+  csc: process.env.ERA_BUTTONS_CSC || null, reg: process.env.ERA_BUTTONS_REG || null,
+  enabled: () => loadEnabledApps().includes("chat"),
+  log: (m) => console.log("[buttons] " + m),
+});
+const BUTTONS_POLL_MS = Number(process.env.ERA_BUTTONS_POLL_MS) || 5000;
 const buttons = require("./buttons.js").createButtons({
   port: PORT, enabledChat: () => loadEnabledApps().includes("chat"), commands: chatApi.commands,
+  listener: buttonsListener,
   // the open listening window: a second press ends it, a cancel discards it
   window: () => chatApi.window(),
   // a relaunch closes every kiosk window, so whatever the talk door had paused is gone too
@@ -2140,6 +2154,7 @@ const server = http.createServer((req, res) => {
           appShortcut({ title: shortcuts.HOME_TITLE, path: "/home/" }, true);   // the home door
           if (!chosen.some(a => a.engine)) stopGaze();   // unticked: an engine already up must go
           reconcileApps();   // chosen-but-missing apps (the gaze engine) install now
+          buttonsListener.start().catch((e) => console.error("[buttons] " + e.message));   // and the button listener, now that a profile exists
         }
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch { res.writeHead(400).end(); }
@@ -3037,6 +3052,7 @@ const server = http.createServer((req, res) => {
           JSON.stringify({ enabled: APPS.map(a => a.id).filter(x => set.includes(x)) }, null, 2));
         appShortcut(app, enabled);   // Windows: desktop/start-menu .lnk follows the toggle
         if (app.id === "chat" && enabled) warmChatSymbols();
+        if (app.id === "chat") buttonsListener.tick().catch((e) => console.error("[buttons] " + e.message));   // the listener follows Chat at once
         if (app.engine && !enabled) stopGaze();
         // enabling an app whose files were never installed REALLY installs it
         if (enabled && !appInstalled(app) && !appInstalling[app.id]) {
@@ -3284,7 +3300,8 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && urlPath === "/buttons/press") {
     if (!updater.isLoopback(req.socket && req.socket.remoteAddress)) { res.writeHead(403).end(); return; }
     buttons.readBody(req).then((body) => buttons.press(body))
-      .then((r) => { res.writeHead(r.status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(r.status === 200 ? { ok: true, dispatch: r.dispatch } : { error: r.error })); });
+      .then((r) => { res.writeHead(r.status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(r.status === 200 ? { ok: true, dispatch: r.dispatch } : { error: r.error })); })
+      .catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });
     return;
   }
 
@@ -4214,9 +4231,15 @@ server.on("listening", () => {
     if (!HAS_PROFILE) { console.log("[apps] reconcile deferred until the wizard is answered"); return; }
     reconcileApps();
     reconcileBootShortcuts();
+    // the device button listener: compiled if its source changed (one compile
+    // at a time, inside buttons.js), then kept running while Chat is on. A
+    // failed compile is one log line; Chat itself never waits on it.
+    buttonsListener.start().catch((e) => console.error("[buttons] " + e.message));
   }, Number(process.env.ERA_RECONCILE_DELAY_MS) || 5000).unref();
   // and from here on, the engine is kept on its bus (gaze-supervisor.js)
   setInterval(() => { gazeSupervisor.tick(); }, GAZE_POLL_MS).unref();
+  // and the button listener alive (restarted on its backoff ladder)
+  setInterval(() => { buttonsListener.tick().catch((e) => console.error("[buttons] " + e.message)); }, BUTTONS_POLL_MS).unref();
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;
@@ -4227,5 +4250,5 @@ server.on("listening", () => {
 // The Chat page's held-question audio socket (spec 2026-10-27 §3.1). Every
 // other upgrade request is refused: the hub serves no other WebSocket.
 server.on("upgrade", (req, socket, head) => { if (!chatApi.upgrade(req, socket, head)) socket.destroy(); });
-server.on("close", () => { chatApi.close(); chatTurns.close(); });
+server.on("close", () => { chatApi.close(); chatTurns.close(); buttonsListener.stop(); });
 server.listen(PORT, BIND);

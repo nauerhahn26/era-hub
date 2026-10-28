@@ -171,17 +171,52 @@ test("/status.buttons: the listener fields (unsupported off Windows) and the las
   assert.ok(all.gaze, "the gaze keeper's status is still there");
 });
 
-test("the route is three lines: the loopback gate, the body, buttons.press; it is not in NOT_INTERACTION", () => {
+// The route's own text, as server.js has it (between its `{` and the `}` that
+// closes it), so a case can run exactly that code against stand-ins.
+function routeBlock() {
   const src = fs.readFileSync(path.join(HUB, "server.js"), "utf8");
   const at = src.indexOf('urlPath === "/buttons/press"');
   assert.ok(at > 0);
-  const body = src.slice(src.indexOf("{", at) + 1, src.indexOf("\n  }\n", at)).split("\n").map((l) => l.trim()).filter(Boolean);
-  assert.equal(body.length, 4, "gate, body + press, answer, return:\n" + body.join("\n"));
+  return src.slice(src.indexOf("{", at) + 1, src.indexOf("\n  }\n", at));
+}
+
+test("the route is the loopback gate, the body, buttons.press, the answer and a 500 for a throw; it is not in NOT_INTERACTION", () => {
+  const src = fs.readFileSync(path.join(HUB, "server.js"), "utf8");
+  const body = routeBlock().split("\n").map((l) => l.trim()).filter(Boolean);
+  assert.equal(body.length, 5, "gate, body + press, answer, catch, return:\n" + body.join("\n"));
   assert.match(body[0], /^if \(!updater\.isLoopback\(req\.socket && req\.socket\.remoteAddress\)\) \{ res\.writeHead\(403\)\.end\(\); return; \}$/);
   assert.match(body[1], /^buttons\.readBody\(req\)\.then\(\(body\) => buttons\.press\(body\)\)$/);
-  assert.equal(body[3], "return;");
+  assert.equal(body[3], ".catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });");
+  assert.equal(body[4], "return;");
   const notInteraction = /const NOT_INTERACTION = new Set\(\[([^\]]*)\]\)/.exec(src)[1];
   assert.ok(!notInteraction.includes("/buttons/press"));
+});
+
+// Review finding (phase 1): a press that threw left the request hanging, and
+// the device listener's 2 s timeout was the only thing that ended it. The
+// route's own code runs here against a buttons.press that throws (and one that
+// rejects): each is answered 500 at once, and the next press still works.
+test("a press that throws or rejects is answered 500, never left hanging", async () => {
+  const http = await import("node:http");
+  const route = new Function("req", "res", "buttons", "updater", routeBlock());
+  let mode = "throw";
+  const stand = {
+    readBody: (req) => { req.resume(); return Promise.resolve({ key: "F13" }); },
+    press: () => { if (mode === "throw") throw new Error("boom"); if (mode === "reject") return Promise.reject(new Error("boom")); return { status: 200, ok: true, dispatch: "visible" }; },
+  };
+  const server = http.createServer((req, res) => route(req, res, stand, { isLoopback: () => true }));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${server.address().port}/buttons/press`;
+  try {
+    for (const m of ["throw", "reject"]) {
+      mode = m;
+      const r = await fetch(url, { method: "POST", body: "{}", signal: AbortSignal.timeout(2000) });
+      assert.equal(r.status, 500, m);
+    }
+    mode = "ok";
+    const r = await fetch(url, { method: "POST", body: "{}", signal: AbortSignal.timeout(2000) });
+    assert.deepEqual(await r.json(), { ok: true, dispatch: "visible" });
+  } finally { await new Promise((r) => server.close(r)); }
 });
 
 test("hidden and no kiosk window to bring back: relaunch at once", async () => {

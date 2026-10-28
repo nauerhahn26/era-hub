@@ -271,15 +271,15 @@ Info
       Verify: `tests/buttons-payload.test.mjs`: the .cs is in the payload list,
       contains the five keys and no `powershell`; payload ships no `.ps1`.
       Guard: compile attempted on the VM in T5.8 before any device.
-- [ ] **T5.2** Compile/start in `buttons.js` mirroring `installGaze`: csc
+- [x] **T5.2** (the compile is async, not spawnSync, so the hub keeps answering; a source that failed is not compiled again until the next boot) Compile/start in `buttons.js` mirroring `installGaze`: csc
       `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo
       /target:winexe /platform:x64 /r:System.Windows.Forms.dll`, source hash in
       `buttons/EraButtons.exe.src-sha256` (content, not mtime), build to
       `.new.exe` and swap after stopping ours by path, failed compile keeps the
       old exe; seam `ERA_BUTTONS_CSC` for the stub compiler (as `ERA_GAZE_CSC`).
       Verify: `node --test tests/buttons-recompile.test.mjs` (shape of
-      `tests/gaze-recompile.test.mjs`; port 8495 reused only if 8494 suite does
-      not run them concurrently — else take 8496 after a suite-ports check).
+      `tests/gaze-recompile.test.mjs`; its hub takes a kernel-assigned port, so
+      it claims no fixed port: 8480+ is reserved and 8470 is buttons-press's).
 - [x] **T5.3** (`createListener` in buttons.js; the restart is polled by a 5 s hub tick, `ERA_BUTTONS_POLL_MS`; exit 3 reads "another listener holds the keys"; a stop on purpose is not counted as a restart) Keeper: the hub spawns the exe as its own child (`stdio:
       ['ignore','pipe','ignore']`, `windowsHide`), parses the registration
       line into `/status.buttons.keys`, restarts on exit with backoff 5/15/60/
@@ -305,7 +305,7 @@ Info
       `/status.buttons.micPolicy` (`written|failed|n/a`). Verify: unit test
       asserts the two argv arrays; no PowerShell. Guard: runs only when Chat is
       enabled; never on a non-win32 host.
-- [ ] **T5.6** Boot wiring in server.js: after `reconcileApps()`,
+- [x] **T5.6** (the one-compile guard is the listener's own `compiling` promise, not `appInstalling`; `compiling → running` is shown by `tests/buttons-recompile.test.mjs`, the stub's hub, not the T1.3 suite; the /setup answer and the Chat toggle also start or stop it; `/buttons/press` now answers 500 when a press throws, proved in `tests/buttons-press.test.mjs`) Boot wiring in server.js: after `reconcileApps()`,
       `buttons.start()`; `appInstalling`-style guard so a compile never runs
       twice; `/status` filled. Verify: T1.3 suite re-run shows `state` moving
       `compiling → running` with the stub. Guard: a compile failure logs once

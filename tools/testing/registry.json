@@ -3313,6 +3313,28 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/buttons-recompile.test.mjs",
+      "purpose": "A real hub compiles the device button listener with a stub csc: compiling then running with five keys, hash-guarded recompile and swap, a failed compile keeps the old exe and logs once, restart after an exit, Chat off stops it, reg.exe microphone policy at boot",
+      "group": "hub",
+      "lane": "linux",
+      "level": "hub process integration",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "resources": [
+        "own-hub",
+        "temporary-data"
+      ],
+      "hub": "own",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/lanes.test.mjs",
       "purpose": "The gate lane runner: longest-first order, solo/heavy/quiet/fixed-port (gaze engine bus included) exclusions, memory floor that never holds the last lane, one lane = the serial loop, results.jsonl, the gate tally, stop by pid",
       "group": "test-infrastructure",
