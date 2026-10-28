@@ -413,6 +413,62 @@ test('a replacement waits with no upper bound while her gaze rests on a tile, an
   assert.deepEqual(f.errors, []);
 });
 
+// ---- T4.4 replacement batches through the command stream ----
+
+// Every redraw of the board after the first reveal, with the dwell then in progress.
+const watchRedraws = page => page.evaluate(() => {
+  window.__redraws = [];
+  new MutationObserver(() => window.__redraws.push(window.Dwell.state().target)).observe(document.querySelector('#grid'), { childList: true });
+});
+
+test('a second utterance replaces the batch only after a neutral move', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: pastaLater });
+  await f.load(); await f.slowDwell();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  await f.lookAt('.response >> text=Fish');
+  await watchRedraws(f.page);
+  await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
+  await f.page.waitForTimeout(1000);
+  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1']], 'her gaze is on Fish: nothing moves');
+  assert.deepEqual(await f.page.evaluate(() => window.__redraws), [], 'not one redraw while she dwells');
+  // Her gaze leaves the board for the status line: no tile, and the dwell she left fades out first.
+  await f.lookAt('#phase');
+  await f.page.waitForFunction(() => document.body.dataset.replacing === 'false', null, { timeout: 5000 });
+  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1'], ['Pasta', '1', '2']]);
+  const redraws = await f.page.evaluate(() => window.__redraws);
+  assert.ok(redraws.length >= 1 && redraws.every(target => target === null), `every redraw with no dwell in progress: ${JSON.stringify(redraws)}`);
+  assert.deepEqual(await f.page.evaluate(() => [window.__plays, window.__speaks]), [0, 0], 'the swap speaks nothing');
+  assert.deepEqual(f.errors, []);
+});
+
+test('a pick during a pending replacement wins: the shown tile is spoken, the replacement is dropped, the window closes', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: pastaLater });
+  await f.load(); await f.slowDwell();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  await f.lookAt('.response >> text=Chicken');
+  await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
+  const plays = await f.page.evaluate(() => window.__plays);
+  await f.page.locator('.response', { hasText: 'Fish' }).click();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
+  assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'false', 'the replacement was dropped');
+  await f.until(() => f.ttsTexts.some(entry => entry.text === 'Fish'));
+  await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
+  await f.page.waitForTimeout(500);
+  assert.equal(await f.page.evaluate(() => window.__plays), plays + 1, 'one clip played: the picked tile, nothing after it');
+  assert.ok(f.controls.includes('pick'), f.controls.join(','));
+  await f.until(() => f.api.window() === null);
+  await f.restOnCentre();
+  await f.page.waitForTimeout(600);
+  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1']], 'the black centre brings nothing back');
+  assert.deepEqual(f.errors, []);
+});
+
 // ---- T4.5 the on-screen Hold to ask is inert while a window is open ----
 
 test('a partner touch on Hold to ask during a listening window does nothing: no hold, the session lives', { timeout: 60000 }, async t => {

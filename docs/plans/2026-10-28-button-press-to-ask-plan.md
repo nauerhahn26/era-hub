@@ -246,7 +246,7 @@ Info
       250 ms after the replacement arrives. Guard: a pointer resting on a tile
       waits with no upper bound (test asserts no swap after 5 s, then swap on
       leaving the tile).
-- [ ] **T4.4** Browser tests: "a second utterance replaces the batch only after
+- [x] **T4.4** Browser tests: "a second utterance replaces the batch only after
       a neutral move", "a pick during a pending replacement wins (spoken text =
       the shown tile, pending discarded, window closed)". Guard: in
       `chat-commands-browser`; the hold suites untouched.
