@@ -51,7 +51,9 @@ export function createChatController(deps = {}) {
             ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}),
             // A person's own picture, from the hub's /characters/ route only.
             ...(x.picture && typeof x.picture.src === 'string' && /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/.test(x.picture.src)
-              ? { picture: Object.freeze({ src: x.picture.src, kind: 'person' }) } : {}) }));
+              ? { picture: Object.freeze({ src: x.picture.src, kind: 'person' }) } : {}),
+            // A letter or number tile the page draws big, with no picture.
+            ...(x.glyph === true ? { glyph: true } : {}) }));
         if (!clean.length) throw new Error('No suggestions available. Your phrases still work.');
         const next = Object.freeze(clean);
         preparing = false;

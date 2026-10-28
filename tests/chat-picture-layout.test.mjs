@@ -295,3 +295,69 @@ test('the stacked-big preview profile keeps a real picture on a stacked tile; th
   assert.ok(big.size >= 44 && big.fits, JSON.stringify(big));
   assert.equal(big.reduced, big.size < 74 ? '1' : null);
 });
+
+test('a one- or two-character label with no picture is a glyph: as big as 85% of the content height allows', async t => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.route('**/*', route => route.abort());
+  const css = (await fs.readFile(new URL('../public/chat/chat.css', import.meta.url), 'utf8')).replace(/^@import[^;]+;/m, '');
+  const fit = await fs.readFile(new URL('../public/chat/tile-fit.js', import.meta.url), 'utf8');
+  await page.setContent(`<style>${css}</style><main id="app"><div id="grid"></div></main>`);
+  const run = (text, { picture = false, type = 'response' } = {}) => page.evaluate(async ({ moduleURL, text, picture, type }) => {
+    const { fitTile } = await import(moduleURL);
+    const grid = document.querySelector('#grid'); grid.replaceChildren();
+    const tile = document.createElement('button'); tile.className = `tile ${type}${picture ? ' has-symbol' : ''}`;
+    tile.style.cssText = 'position:absolute;left:0;top:0;width:296px;height:219px';
+    const label = document.createElement('span'); label.className = 'label'; label.textContent = text;
+    if (picture) { const art = document.createElement('div'); art.className = 'chat-symbol'; tile.append(art); }
+    tile.append(label); grid.append(tile);
+    const out = fitTile(tile);
+    const style = getComputedStyle(tile), box = tile.getBoundingClientRect(), words = label.getBoundingClientRect();
+    const content = box.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    const result = { ...out, glyph: tile.dataset.glyph || null, reduced: tile.dataset.fontReduced || null, content, lineHeight: style.lineHeight,
+      fits: label.scrollWidth <= label.clientWidth + 1 && words.height <= content * 0.85 + 1 && words.bottom <= box.bottom - parseFloat(style.paddingBottom) + 1 };
+    // One step bigger would not fit.
+    tile.style.fontSize = `${out.size + 2}px`;
+    result.biggerFits = label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= content * 0.85 + 1;
+    // A refit as words clears the glyph mark.
+    label.textContent = 'Something longer'; fitTile(tile); result.after = tile.dataset.glyph || null;
+    return result;
+  }, { moduleURL: `data:text/javascript;base64,${Buffer.from(fit).toString('base64')}`, text, picture, type });
+  for (const text of ['A', '12']) {
+    const glyph = await run(text);
+    assert.equal(glyph.layout, 'glyph', text); assert.equal(glyph.glyph, '1', text);
+    assert.ok(glyph.size > 74 * 1.5 && glyph.size <= 74 * 3, `${text}: ${glyph.size}px`);
+    assert.equal(glyph.size % 2, 0); assert.ok(glyph.fits, JSON.stringify(glyph)); assert.equal(glyph.biggerFits, false, JSON.stringify(glyph));
+    assert.equal(glyph.reduced, null); assert.equal(glyph.after, null, 'words refit without the glyph mark');
+    assert.equal(parseFloat(glyph.lineHeight), glyph.size, 'line-height 1');
+  }
+  assert.notEqual((await run('ABC')).layout, 'glyph', 'three characters are words');
+  assert.notEqual((await run('A', { picture: true })).layout, 'glyph', 'a tile with a picture keeps board law');
+});
+
+test('on the page, letter replies from the hub show as big glyphs with no picture planned', { timeout: 60000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-layout-'));
+  const server = serve(scratch, []); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const replies = ['A', 'B', 'C', 'D'].map((label, i) => ({ id: `choice-${i + 1}`, label, say: label, glyph: true }));
+  await page.route('**/chat/api/choices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ kind: 'alternatives', choices: replies, timings: { totalMs: 1 } }) }));
+  await page.goto(base + '/chat/');
+  await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
+  await page.locator('#partnerOpen').click();
+  await page.locator('#testing > summary').click();
+  await page.locator('#typedQuestion').fill('Is the answer A, B, C, or D?');
+  await page.locator('#typedAsk').click();
+  await page.locator('.response').first().waitFor();
+  const tiles = await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(
+    [...document.querySelectorAll('#grid .tile.response')].map(tile => ({ text: tile.textContent.trim(), glyph: tile.dataset.glyph || null,
+      pictures: tile.querySelectorAll('.chat-symbol').length, symbol: tile.dataset.symbol || null, font: parseFloat(getComputedStyle(tile).fontSize) })))))));
+  assert.deepEqual(tiles.map(tile => tile.text), ['A', 'B', 'C', 'D']);
+  for (const tile of tiles) {
+    assert.equal(tile.glyph, '1', tile.text); assert.equal(tile.pictures, 0, tile.text); assert.equal(tile.symbol, null, tile.text);
+    assert.ok(tile.font > 74 * 1.5, `${tile.text}: ${tile.font}px`);
+  }
+});

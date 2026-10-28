@@ -204,6 +204,8 @@ function tile(label, type, action, position, say, pick = {}) {
   if (action) { el.type = 'button'; el.addEventListener('click', action); }
   const text = document.createElement('span'); text.className = 'label'; text.textContent = label;
   el.appendChild(text);
+  // A glyph (a letter or a number) is its own picture: tile-fit.js draws it big.
+  if (pick.glyph === true) return el;
   if (hasVocabulary()) pictureOf.set(el, { label, type, say, symbol: pick.symbol, symbolId: pick.symbolId, picture: pick.picture });
   else attachSymbol(el, { label, type, say });
   return el;

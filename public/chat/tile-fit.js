@@ -11,7 +11,12 @@
 // default: a stacked picture keeps at least 30% of the height and the label
 // steps down toward 60 px before the 44 px floor.
 export const STACKED_BIG = Object.freeze({ labelShare: 0.70 });
-export const FIT = Object.freeze({ target: 74, floor: 44, iconShare: 0.42, iconShareMin: 0.30, besideMaxChars: 16, besideMinWidth: 190, stackedShares: [0.55, 0.80] });
+// A one- or two-character label with no picture (a letter or number reply) is
+// a GLYPH: the largest 2 px step from 3x the target that keeps it within 85%
+// of the content height, marked data-glyph="1" (line-height 1 in chat.css).
+// The yes/no corner tiles keep their own law.
+export const FIT = Object.freeze({ target: 74, floor: 44, iconShare: 0.42, iconShareMin: 0.30, besideMaxChars: 16, besideMinWidth: 190, stackedShares: [0.55, 0.80],
+  glyphMaxChars: 2, glyphScale: 3, glyphShare: 0.85 });
 
 function fits(tile, label, layout, share = 1) {
   const style = getComputedStyle(tile);
@@ -33,7 +38,7 @@ export function fitTile(tile, { profile } = {}) {
   const label = tile.querySelector('.label');
   if (!label || tile.classList.contains('rest')) return null;
   const picture = tile.querySelector('.chat-symbol');
-  tile.style.fontSize = ''; delete tile.dataset.fontReduced;
+  tile.style.fontSize = ''; delete tile.dataset.fontReduced; delete tile.dataset.glyph;
   tile.classList.remove('beside', 'stacked', 'picture-set-aside');
   picture?.style.removeProperty('--icon-w');
   const start = Math.max(FIT.target, parseFloat(getComputedStyle(tile).fontSize) || FIT.target);
@@ -42,6 +47,12 @@ export function fitTile(tile, { profile } = {}) {
     if (size < FIT.target) tile.dataset.fontReduced = '1';
     return { size, layout };
   };
+  const chars = [...(label.textContent || '').trim()].length;
+  if (!picture && chars >= 1 && chars <= FIT.glyphMaxChars && !tile.classList.contains('yes') && !tile.classList.contains('no')) {
+    tile.dataset.glyph = '1';
+    const size = shrink(tile, label, 'glyph', FIT.target * FIT.glyphScale, FIT.floor, FIT.glyphShare) ?? FIT.floor;
+    return done(size, 'glyph');
+  }
   if (!picture) {
     const size = shrink(tile, label, 'plain', start, FIT.target) ?? shrink(tile, label, 'plain', FIT.target - 2, FIT.floor) ?? FIT.floor;
     return done(size, 'plain');

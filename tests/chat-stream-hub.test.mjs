@@ -350,6 +350,19 @@ test('shortcuts run on partials: an either/or is ready from the speculation with
   assert.deepEqual(s.events('speculation').map(e => e.state), ['start', 'keep']);
 });
 
+test('a shortcut batch is staged as it was picked: two unknown names keep friend and people, a letter list stays glyphs', async t => {
+  for (const [words, expect] of [['Do you want to play with Lisa or Sam?', [['Lisa', 'friend', undefined], ['Sam', 'people', undefined]]],
+    ['Do you want A or B?', [['A', undefined, true], ['B', undefined, true]]]]) {
+    const service = await turnsService(t, { words });
+    const h = await hub(t, { services: [service], env: replyEnv, fetch: replyService().fetcher });
+    const s = await h.session();
+    await s.ask(); await raw(s, 3); await s.finish();
+    await until(() => s.events('batch-sealed').length === 1);
+    const staged = s.events('choice-staged').map(e => [e.choice.label, e.choice.symbol, e.choice.glyph]);
+    assert.deepEqual(staged, expect, words);
+  }
+});
+
 test('a new hold or a cancel drops the turn\'s choices: no staged or sealed event of an old generation ever arrives', async t => {
   const service = await turnsService(t, { words: OPEN, partials: [] });
   const reply = replyService({ gapMs: 30 });
