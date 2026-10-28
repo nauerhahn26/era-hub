@@ -298,3 +298,58 @@ So an open question gave her the thinnest board of all.
       and dialog field; spec §8 note that the history guard is now a check on
       the model's replies, not a bypass of the model.
 - [ ] Gate, land, patch release.
+
+- [x] Gate 191/0, landed; released v1.0.33 (the open-ended shapes, four
+      choices, likes, people for who-questions, recall check, pictures).
+
+## Her world as context (dad, 10/28 evening, second message)
+
+Dad: "the best would be that you take the context that you already know
+about Ellie. 'What was your favorite thing last week at school?' — you have
+access to what she learned last week at school: learning about bats, Jackie
+Robinson, reading books with my friends. I want the system built so it can
+take her global context, narrow the context, and give reasonable suggestions
+that are coherent."
+
+**What the device already holds.** Every week package the Drive mirror keeps
+(`<DATA>/this-week/<week_of>/manifest.json`: week_of, title, topic by subject
+including the hero, talk words by group, the watch list's titles, the play
+questions), every book on the shelf (title, weekOf, authored), the people
+library, and the likes list. Nothing new has to be published for this.
+
+**Design.**
+
+- `chat-world.js` builds a compact plain-text digest, the *world*, from the
+  device's data, newest first, with each week labelled relative to today
+  ("this week", "last week", "two weeks ago"): the week's title, its topics
+  by subject, its hero, its talk words, its video titles; the last four weeks
+  in full, older ones as a title line; the shelf's last eight book titles
+  with their week; the people; the likes; today's weekday and date. Capped
+  (about 2,500 characters), rebuilt when a source file changes (mtime), never
+  more than once a minute.
+- An open-ended question (any shape) sends `world` with the question. The
+  model is told: world is what the communicator's class is learning and what
+  she has, by week; for a question about school, a week, a book, a hero,
+  people or what she likes, draw the four choices from the part of world the
+  question points at (last week means the week marked last week), stated
+  plainly as things she could say ("Learning about shadows", "Wilma Rudolph",
+  "The Gruffalo"); world is known, not invented, so it may be stated; beyond
+  world the no-invented-facts rule stands.
+- The recall check accepts a reply that names something from world (a term of
+  four or more letters from the digest); an asserted activity with nothing
+  from world still throws the batch out.
+- The partner dialog shows "What Chat knows this week" (the digest, read-only)
+  under the likes box, so dad can see what the model was given.
+- Telemetry: the turn record carries `world: {weeks, chars}`; never the text.
+- Tests use fixture week manifests and a fixture shelf with generic content.
+
+**Tasks.**
+
+- [ ] Tests first: digest builder (labels, caps, mtime cache, missing data →
+      empty world), `world` in the model input for open shapes only, the
+      instruction text, recall check with world terms, dialog preview, turn
+      record field.
+- [ ] `chat-world.js`; wiring in server.js and chat-api.js; chat-choices.js
+      instruction + input; partner dialog preview; spec §8 sentence.
+- [ ] Live check against the real model with the 10/26 week package, then
+      gate, land, patch release.
