@@ -186,3 +186,50 @@ private `test-data/chat-voices/` on the operator host.
   school reachability (phase 4), and the deferred review nits (page buffers
   the whole voice clip on a miss; socket edge cases; retry on the reply
   service's concurrency limit).
+
+## Morning patch from dad's second live test (10/28)
+
+Dad, 10/28 night: "the snappiness is incredible." Three asks: (1) lists of
+people and of letters ("Mom, Dad, …" and "A, B, C, D") were handled badly;
+(2) pictures are "still often weak when they aren't simple objects";
+(3) the layout is not nailed yet — design choices to show her AAC specialist,
+nothing built.
+
+Evidence (device turn log, last ten holds): "Is the answer A, B, C, or D?" went
+to the reply model twice (once "Need the question / Give me clues / Not sure",
+once "A chicken / B fish / C park / D swim" invented from earlier turns); "Do you
+want to go outside and play, or …" lost its last word ("Go outside and");
+"play with Lisa or Sam" gave both names the bubble picture, so the second tile
+had none. Root causes: the local shortcut only knows "do you want … or …"
+stems; a verb clause's tail cut fires on a word after "and"; the word index was
+built from nouns and names only (verbs, qualities and social words dropped by
+design), so an action or a feeling has no library picture unless hand-curated;
+names are not things the index knows, while the hub already serves the
+family's own people pictures (the Drawing library at `/characters/`).
+
+Build (agents, test first; two sibling worktrees; gate; test push to the home
+device; land; release):
+
+- [ ] Shortcut rules (`chat-api.js`): a trailing list of 2–4 single letters or
+      numbers under any question stem ("Is the answer A, B, C, or D?", "A or
+      B?") offers the letters; a "who / which / what … X, Y, Z or W" question
+      offers the named list; a verb phrase keeps the words after "and"
+      ("Go outside and play"); a label never ends on "and", "or" or "with".
+- [ ] Letter tiles: a one- or two-character label takes the tile as a large
+      glyph (no picture), marked for the layout test.
+- [ ] Word index of actions, qualities and social words (`tools/chat-lexicon-
+      build.mjs`, second map in `lexicon.json`, budget raised); the picture
+      pick uses an action for a verb-led label whose object is not a thing.
+- [ ] Reply model names a picture in plain words (`picture`, 1–2 words) beside
+      the enum `symbol`; the hub resolves it against the whole index with the
+      family guard, after the label's own thing and before the text guess.
+- [ ] People: a label that is one of the family's people (the Drawing
+      characters library, family source first, generic second) shows that
+      person's own picture from `/characters/<slug>.png`; unknown names take
+      the friend picture; the page honours a picture source beside library ids
+      and never shows two tiles with one picture.
+- [ ] Contact sheet of real tiles for sixteen questions (device questions plus
+      abstract ones) reviewed by the overseer before the push.
+- [ ] Layout: a shareable page of four layout options drawn to the device's
+      scale with a real question, each with the case for and against through
+      her gaze, and the questions for the AAC specialist. No product code.
