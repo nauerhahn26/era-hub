@@ -123,8 +123,11 @@ test('staged replies show Replies ready while keeping the Preparing state and ne
   const source = await readFile(new URL('../public/chat/app.js', import.meta.url), 'utf8');
   const helper = source.match(/^function paintPhase\([\s\S]*?^\}/m)?.[0]; assert.ok(helper);
   const element = { textContent: '' }, state = { phase: 'Preparing', staged: true };
-  const context = vm.createContext({ $: () => element, controller: { state }, remoteStreaming: false, mode: 'blocked', questionSending: false });
+  const context = vm.createContext({ $: () => element, controller: { state }, remoteStreaming: false, mode: 'blocked', questionSending: false, press: null });
   vm.runInContext(helper, context); context.paintPhase();
   assert.equal(element.textContent, 'Replies ready'); assert.equal(state.phase, 'Preparing'); assert.equal(state.staged, true);
   context.paintPhase({ phase: 'Preparing', staged: false }); assert.equal(element.textContent, 'Preparing');
+  const pressed = vm.createContext({ $: () => element, controller: { state: { phase: 'Preparing', staged: false } }, remoteStreaming: false, mode: 'blocked', questionSending: false, press: { closed: false, listening: true } });
+  vm.runInContext(helper, pressed); pressed.paintPhase(); assert.equal(element.textContent, 'Listening');
+  pressed.press = { closed: false, listening: false }; pressed.paintPhase(); assert.equal(element.textContent, 'Starting to listen');
 });
