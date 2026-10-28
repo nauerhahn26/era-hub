@@ -143,7 +143,7 @@ Info
       failed}, lastPress:{at,key,action,dispatch}, restarts, lastError,
       micPolicy }` (states filled by phase 5; `unsupported` off Windows).
       Verify: `curl -s 127.0.0.1:8494/status | jq .buttons` in the T1.3 suite.
-- [ ] **T1.6** Register the four new suites: `node tools/testing/classify-suites.mjs`
+- [x] **T1.6** (five: chat-hold-path too; buttons-press holds `ports: [8470]`) Register the four new suites: `node tools/testing/classify-suites.mjs`
       then `node --test tests/suite-classes.test.mjs tests/suite-ports.test.mjs`.
       Guard: `ports: [8494, 8495]` on buttons-press only.
 
