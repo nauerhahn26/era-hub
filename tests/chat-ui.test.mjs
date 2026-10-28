@@ -264,3 +264,21 @@ test('a replacement needs a shown batch in Your turn; anything else is refused',
   c.replace(food('Pasta').choices); c.ask();
   assert.equal(c.state.replacing, false, 'a new turn drops it');
 });
+
+test('chicken and fish stay put when pasta arrives', async () => {
+  const c = await showing(['Chicken', 'Fish']);
+  c.replace(food('Pasta', 'Fish', 'Chicken').choices); c.neutral();
+  assert.deepEqual(cells(c), [['Chicken', 0], ['Fish', 1], ['Pasta', 2]]);
+});
+
+test('removed leaves an empty cell until the next replacement; new labels take free cells in order', async () => {
+  const c = await showing(['Chicken', 'Fish', 'Pasta']);
+  c.replace(food('Chicken', 'Pasta').choices); c.neutral();
+  assert.deepEqual(cells(c), [['Chicken', 0], ['Pasta', 2]], 'cell 1 is empty');
+  c.replace(food('Chicken', 'Soup', 'Pasta').choices); c.neutral();
+  assert.deepEqual(cells(c), [['Chicken', 0], ['Soup', 1], ['Pasta', 2]], 'the next replacement may fill it');
+  c.replace(food('Rice', 'Chicken', 'Pasta', 'Soup').choices); c.neutral();
+  assert.deepEqual(cells(c), [['Chicken', 0], ['Soup', 1], ['Pasta', 2], ['Rice', 3]]);
+  c.replace(food('Chicken', 'Bread').choices); c.neutral();
+  assert.deepEqual(cells(c), [['Chicken', 0], ['Bread', 1]], 'with no free cell left, a vacated one; the rest stay empty');
+});

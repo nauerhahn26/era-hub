@@ -1,4 +1,4 @@
-import { createChatController, isPartnerTouch } from './controller.js';
+import { createChatController, isPartnerTouch, cellOf } from './controller.js';
 import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
@@ -236,8 +236,12 @@ function renderGrid(state) {
   else if (state.choices.length) words = state.choices;
   else if (['Capturing question', 'Preparing'].includes(state.phase)) words = [];
   else words = fixed.chat.map(say => ({ label: say, say }));
+  // A choice stands in its own cell (a replacement keeps chicken and fish where
+  // they were); a cell with no choice is an empty waiting tile.
+  const inCell = [];
+  words.forEach((word, i) => { inCell[cellOf(word, i)] = word; });
   for (let i = 0; i < 4; i++) {
-    const item = words[i];
+    const item = inCell[i];
     if (item) {
       const selectedTurn = state.turn;
       const el = tile(item.label, screen === 'chat' && state.choices.length ? 'response' : 'static', () => {

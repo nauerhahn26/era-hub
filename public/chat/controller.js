@@ -12,6 +12,20 @@ function cleanChoices(list, prefix) {
       ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}) }));
 }
 
+// Position stability (design §4.5, plan decision 10): a label still in the
+// replacement keeps its cell; new labels take never-used cells first, then
+// cells a removed label left; a removed label's cell stays empty. A first
+// batch carries no cell: its choices stand in cells 0-3 in order.
+export const cellOf = (choice, index) => (Number.isInteger(choice?.cell) ? choice.cell : index);
+function place(shown, next) {
+  const key = label => label.trim().toLowerCase();
+  const was = new Map(shown.map((c, i) => [key(c.label), cellOf(c, i)]));
+  const used = new Set(shown.map(cellOf)), taken = new Set(), at = [];
+  next.forEach((c, i) => { const cell = was.get(key(c.label)); if (cell !== undefined && !taken.has(cell)) { taken.add(cell); at[i] = cell; } });
+  const open = [0, 1, 2, 3].filter(n => !used.has(n)).concat([0, 1, 2, 3].filter(n => used.has(n) && !taken.has(n)));
+  return Object.freeze(next.map((c, i) => Object.freeze({ ...c, cell: at[i] ?? open.shift() })).sort((a, b) => a.cell - b.cell));
+}
+
 export function createChatController(deps = {}) {
   let turn = 0, pending = null, abort = null, speechAbort = null, utterance = 0;
   // At most one replacement waits for a neutral moment; a newer one supersedes it unseen.
@@ -70,7 +84,7 @@ export function createChatController(deps = {}) {
     },
     neutral() {
       if (replacement && state.phase === 'Your turn') {
-        const next = replacement; replacement = null;
+        const next = place(state.choices, replacement); replacement = null;
         deps.beforeChoices?.();
         timing('replaced');
         patch({ choices: next });

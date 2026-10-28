@@ -234,7 +234,7 @@ Info
       sealed batches stay frozen (`Object.freeze`). Accept: `tests/chat-ui.test.mjs`
       gains tests for supersede, swap-only-on-neutral, pick-discards-pending.
       Guard: `prepare()`/first reveal behaviour unchanged (existing tests green).
-- [ ] **T4.2** Position stability: each choice carries `cell` 0-3; on swap an
+- [x] **T4.2** Position stability: each choice carries `cell` 0-3; on swap an
       unchanged label keeps its cell, new labels take free cells in order,
       removed labels leave `null` cells; `renderGrid` honours `cell` and draws
       an empty `waiting` tile in a vacated cell. Accept: unit test "chicken and
