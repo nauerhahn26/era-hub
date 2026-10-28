@@ -277,7 +277,7 @@ function localChoices(text) {
 function createFixedChatApi(options = {}, env = chatVariables(options.env === undefined ? process.env : options.env)) {
   const spawn = options.spawn || spawnProcess;
   // The reply service is reached over connections kept warm for the hub's
-  // lifetime (spec 2026-10-27 §3.3), and warmed at Start Chat and touch-down.
+  // lifetime (spec 2026-10-27 §3.3), and warmed at each session start and touch-down.
   const ownFetch = options.fetch ? null : createKeepAliveFetch();
   const fetcher = options.fetch || ownFetch;
   let warmedAt = -Infinity;

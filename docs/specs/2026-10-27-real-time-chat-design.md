@@ -65,13 +65,15 @@ benchmark alone.
 
 ### 3.1 Audio: one open channel, not one POST per frame
 
-- The page opens one WebSocket to the hub when Chat starts (`/chat/api/sessions/:id/audio`)
-  and keeps it for the session. Node 22 serves the upgrade in the hub with no
+- The page opens one WebSocket to the hub when a Chat session starts (`/chat/api/sessions/:id/audio`)
+  and keeps it for the session. Since 10/27 evening there is no Start Chat: the page
+  starts the session itself on load, on every return to the page, and from a hold
+  when no session is live (hold-button spec, amendment of 10/27 evening). Node 22 serves the upgrade in the hub with no
   new dependency; the browser already has the client. Frames go as binary
   PCM16 at 16 kHz, 20–100 ms each, in order, with the generation number.
 - The hub, not the browser, talks to the transcription service. Credentials
   never reach the page (installed-release spec). The hub holds one warm
-  connection to the service per Chat session, opened at Start Chat and kept
+  connection to the service per Chat session, opened at session start and kept
   alive between turns within the service's billing rules (some bill for open
   socket time; the hub closes an idle socket after a bounded quiet period and
   reopens it on touch-down, which costs one connect, measured).
@@ -193,11 +195,11 @@ benchmark alone.
   ownership and duplicate checks still judge the whole batch.
 - *Speech.* `voice.js`: staged choices and the selected words fetch at once
   (up to 6 in flight) beside the two-at-a-time warm-up; the hub voice is read
-  at Start Chat and every 10 minutes, not per say. `/tts` reads the saved
+  at each session start and every 10 minutes, not per say. `/tts` reads the saved
   voice's streaming endpoint and passes bytes on as they arrive, caching the
   clip only when complete (`tts-stream.js`); the reply and saved-voice services
   are reached over keep-alive connections for the hub's lifetime
-  (`keepalive-fetch.js`), the reply origin warmed at Start Chat and touch-down
+  (`keepalive-fetch.js`), the reply origin warmed at session start and touch-down
   (at most every 30 s).
 - *Telemetry* (stage names added to §5.1): `socketConnect`, `settled`,
   `speculativeStart/Keep/Discard`, `firstChoiceStaged`/`choiceStaged` per
@@ -514,7 +516,8 @@ More and Stop tiles use it. Chat will too.
 ## 8. Laws that do not move
 
 Immutable sealed batch; nothing speaks unless selected; capture stops during
-playback and on hide/leave/end; a cancelled or timed-out hold never submits;
+playback and on hide/leave/pause (no Start Chat or End since 10/27 evening: Chat
+prepares itself, leaving ends it); a cancelled or timed-out hold never submits;
 partner controls touch-only; no invented personal facts; refusal, repair,
 yes/no and stories available when the network fails; credentials only in the
 hub; production rows content-free; no vendor or model names in code or docs

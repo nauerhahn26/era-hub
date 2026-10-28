@@ -46,7 +46,7 @@ export function createChatVoice(options = {}) {
     cache.clear();
   }
   // The hub's voice is read once and refreshed every ten minutes (or on
-  // refresh(), at Start Chat), never once per say. A stale value is used while
+  // refresh(), at each Chat session start), never once per say. A stale value is used while
   // its refresh runs in the background.
   async function savedVoice() {
     if (voiceId && now() - voiceAt < limits.voiceRefreshMs) return voiceId;
@@ -209,7 +209,7 @@ export function createChatVoice(options = {}) {
         for (const item of choices.slice(0, 64)) if (typeof item?.say === 'string' && item.say.trim() && item.say.length <= 600) clip(item.say, false, urgent).catch(() => {});
       }).catch(() => {});
     },
-    // Read the hub's voice again before the next clip (Start Chat).
+    // Read the hub's voice again before the next clip (each Chat session start).
     refresh() { voiceAt = -Infinity; },
     dispose() { stop(); metadataEpoch++; metadataController?.abort(); metadata = null; metadataController = null; voiceId = null; voiceAt = -Infinity; clearClips(); },
   };
