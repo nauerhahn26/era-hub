@@ -61,8 +61,12 @@ function guardedChoices(data) {
 const RECALL_REPAIRS = [{ label: 'Give me a clue', say: 'Can you give me a clue?' },
   { label: 'Another way', say: 'Let me tell you another way.' }, { label: "I don't remember", say: "I don't remember.", symbol: 'forget' },
   { label: 'Not now', say: "I don't want to answer now." }];
+// A feeling is not an event: "I had fun", "I had a good time", "I did not
+// like it" pass; "I had pizza", "we had a party", "I did a puzzle" do not.
+const FEELING_HAD = String.raw`\s+(?:fun|a\s+(?:good|great|nice|bad|hard|long|fun|okay|ok)\s+(?:time|day|weekend|morning|one)|a\s+blast)\b`;
+const ASSERTED = new RegExp(String.raw`\b(?:i|we)\s+(?:also\s+)?(?:went|played|saw|had(?!${FEELING_HAD})|ate|made|watched|read|did(?!\s*(?:not\b|n['’]t))|visited|stayed|got|built|drew|swam|rode|took|was at|were at)\b`, 'i');
 function recallAsserted(choices) {
-  return choices.some(choice => /\b(?:i|we)\s+(?:also\s+)?(?:went|played|saw|had|ate|made|watched|read|did|visited|stayed|got|built|drew|swam|rode|took|was at|were at)\b/i.test(choice.say) ||
+  return choices.some(choice => ASSERTED.test(choice.say) ||
     /\b(?:it was at|we were at)\b/i.test(choice.say));
 }
 // Only a previously selected utterance with the same explicit time anchor

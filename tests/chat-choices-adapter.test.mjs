@@ -64,6 +64,13 @@ test('a recall question goes to the model with its shape; an asserted past activ
   }
   for (const say of ['We played tag.', 'I also saw a dog.', 'It was at the beach.', 'We were at grandma’s house.', 'I ate cake.'])
     assert.equal((await run({ choices: [{ label: 'One', say }, { label: 'Two', say: 'It was fun.' }] }, { text: 'What did you do?', shape: 'recall' })).recallRejected, true, say);
+  for (const say of ['I had pizza.', 'We had a party.', 'I did a puzzle.'])
+    assert.equal((await run({ choices: [{ label: 'One', say }, { label: 'Two', say: 'It was fun.' }] }, { text: 'What did you do?', shape: 'recall' })).recallRejected, true, say);
+  // A feeling is not an event: these pass the recall check.
+  for (const say of ['I had fun.', 'I had a good time.', 'I had a great day.', 'I did not like it.', "I didn't want to."]) {
+    const result = await run({ choices: [{ label: 'One', say }, { label: 'Two', say: 'Can you give me a clue?' }] }, { text: 'What did you do?', shape: 'recall' });
+    assert.equal(result.kind, 'generated', say); assert.equal('recallRejected' in result, false, say);
+  }
   const clean = { choices: [{ label: 'Fun', say: 'It was fun.' }, { label: 'Tell you', say: 'I want to tell you.' },
     { label: 'A clue', say: 'Can you give me a clue?' }, { label: 'Not now', say: 'Not now.' }] };
   const passed = await run(clean, { text: 'What did you do last weekend?', shape: 'recall' });
