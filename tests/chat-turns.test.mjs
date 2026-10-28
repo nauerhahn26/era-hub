@@ -11,7 +11,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay, applyLikesSetting, chatLikes, DEFAULT_LIKES,
-  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT } = require('../chat-turns.js');
+  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT, chatPrompt, applyPromptSetting } = require('../chat-turns.js');
 const { initPool } = require('../pool.js');
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
@@ -416,10 +416,30 @@ test('her lists (stable frame §2): questions, comments and about, generic defau
 test('a turn record keeps the stable frame fields (§4): the mode she swapped to, the page she opened, Something else', () => {
   const base = turnRecord().content;
   for (const extra of [{ mode: 'ask' }, { mode: 'comment' }, { page: 'questions' }, { page: 'comments' }, { page: 'about' }, { again: true },
-    { mode: 'ask', page: 'about', again: true }]) {
+    { mode: 'ask', page: 'about', again: true }, { prompted: true }]) {
     const kept = validateTurn(turnRecord({ content: { ...base, ...extra } }));
     assert.deepEqual(kept.content, { ...base, ...extra }, JSON.stringify(extra));
   }
-  for (const extra of [{ mode: 'tell' }, { mode: 'one-shot' }, { mode: null }, { page: 'likes' }, { page: 7 }, { again: false }, { again: 'yes' }, { again: 1 }])
+  for (const extra of [{ mode: 'tell' }, { mode: 'one-shot' }, { mode: null }, { page: 'likes' }, { page: 7 }, { again: false }, { again: 'yes' }, { again: 1 },
+    { prompted: false }, { prompted: 'yes' }, { prompted: 1 }])
     assert.throws(() => validateTurn(turnRecord({ content: { ...base, ...extra } })), e => e.status === 400 && e.code === 'invalid-turn', JSON.stringify(extra));
+});
+
+test('reading the options aloud (stable frame §6): the delay and the name, defaults, cleaned, same door', async t => {
+  const dataDir = await directory(t);
+  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 12000, chatName: 'Ellie' }, 'no app-settings file means the defaults');
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatPromptMs: 0, chatName: 7 }));
+  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 0, chatName: 'Ellie' }, 'off is a real choice; a bad name reads as the default');
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatPromptMs: 4000, chatName: "Mary-Jo O'Neil" }));
+  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 12000, chatName: "Mary-Jo O'Neil" });
+  for (const ms of [0, 5000, 15000, 30000]) assert.deepEqual(applyPromptSetting({ a: 1 }, { chatPromptMs: ms }), { a: 1, chatPromptMs: ms });
+  for (const ms of [1, 4999, 30001, 12000.5, '12000', null, -1, Infinity])
+    assert.deepEqual(applyPromptSetting({ chatPromptMs: 15000 }, { chatPromptMs: ms }), { chatPromptMs: 15000 }, JSON.stringify(ms));
+  assert.deepEqual(applyPromptSetting({}, { chatName: '  Sam  ' }), { chatName: 'Sam' }, 'trimmed');
+  assert.deepEqual(applyPromptSetting({}, { chatName: 'Zoë Ann' }), { chatName: 'Zoë Ann' }, 'letters beyond A to Z');
+  for (const name of ['', '   ', 'x'.repeat(25), 'Sam2', '<b>', 'Sam!', 'a\u0007', 7, null, ['Sam']])
+    assert.deepEqual(applyPromptSetting({ chatName: 'Sam' }, { chatName: name }), { chatName: 'Sam' }, JSON.stringify(name));
+  assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 7, chatName: 'Sam' }), { chatName: 'Sam' }, 'each key on its own');
+  for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 0, chatName: 'Sam' }, site), {});
+  for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 0 }, site), { chatPromptMs: 0 });
 });
