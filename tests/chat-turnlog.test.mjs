@@ -9,7 +9,13 @@ const load = async file => import(`data:text/javascript;base64,${Buffer.from(awa
 const { createTurnLog, observeMetrics, micLevel, stageChoices } = await load('../public/chat/turnlog.js');
 const { createTurnMetrics } = await load('../public/chat/metrics.js');
 const { validateTurn } = createRequire(import.meta.url)('../chat-turns.js');
-const flush = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
+// The log redraws on a setTimeout(0), which Node clamps to 1 ms: ten
+// setImmediate turns can finish before it fires, so flush also waits one real
+// timer (captured before any test mocks setTimeout). Timers of one duration
+// fire in the order they were set, so every redraw already scheduled runs first.
+const realTimeout = globalThis.setTimeout;
+const turns = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
+const flush = async () => { await turns(); await new Promise(resolve => realTimeout(resolve, 1)); await turns(); };
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
 function setup({ on = true, health = async at => ({ cpuBusy: 0.25, load1: null, freeMemBytes: 1e9, totalMemBytes: 8e9, eventLoopLagMs: 2, gaze: 'running', rtt: { transcription: 30, reply: null } }) } = {}) {
