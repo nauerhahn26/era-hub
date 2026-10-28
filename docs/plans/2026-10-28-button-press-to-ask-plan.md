@@ -139,7 +139,7 @@ Info
       from the bat text (as `start-hub-bat.test.mjs` does) and they match; off
       Windows the relaunch records `{would: args}` and resolves. Guard: never
       `cmd.exe`, never a `.ps1`; `tests/start-hub-bat.test.mjs` stays green.
-- [ ] **T1.5** `/status` gains `buttons: { state, pid, keys:{registered,
+- [x] **T1.5** `/status` gains `buttons: { state, pid, keys:{registered,
       failed}, lastPress:{at,key,action,dispatch}, restarts, lastError,
       micPolicy }` (states filled by phase 5; `unsupported` off Windows).
       Verify: `curl -s 127.0.0.1:8494/status | jq .buttons` in the T1.3 suite.

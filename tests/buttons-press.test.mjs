@@ -157,6 +157,20 @@ test("Chat turned off: 409 chat-off and nothing is relaunched", async () => {
   } finally { fs.writeFileSync(path.join(DATA, "apps.json"), JSON.stringify({ enabled: ["chat"] })); }
 });
 
+test("/status.buttons: the listener fields (unsupported off Windows) and the last press with its dispatch", async () => {
+  await press({ key: "F14", action: "cancel" });
+  const b = await status();
+  assert.deepEqual(Object.keys(b).sort(), ["keys", "lastError", "lastPress", "micPolicy", "pid", "restarts", "state"]);
+  assert.equal(b.state, "unsupported");
+  assert.equal(b.pid, null);
+  assert.deepEqual(b.keys, { registered: [], failed: [] });
+  assert.equal(b.restarts, 0); assert.equal(b.lastError, null); assert.equal(b.micPolicy, "n/a");
+  assert.deepEqual({ ...b.lastPress, at: undefined }, { at: undefined, key: "F14", action: "cancel", dispatch: "none" });
+  assert.ok(Date.now() - Date.parse(b.lastPress.at) < 5000);
+  const all = await (await fetch(`${BASE}/status`)).json();
+  assert.ok(all.gaze, "the gaze keeper's status is still there");
+});
+
 test("the route is three lines: the loopback gate, the body, buttons.press; it is not in NOT_INTERACTION", () => {
   const src = fs.readFileSync(path.join(HUB, "server.js"), "utf8");
   const at = src.indexOf('urlPath === "/buttons/press"');

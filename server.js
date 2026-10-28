@@ -3936,7 +3936,8 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ build: updater.runningBuild, pid: process.pid, uptimeMs: Math.round(process.uptime() * 1000),
-                             gaze: { ...gazeSupervisor.status(), pollMs: GAZE_POLL_MS, port: GAZE_PORT } }));
+                             gaze: { ...gazeSupervisor.status(), pollMs: GAZE_POLL_MS, port: GAZE_PORT },
+                             buttons: buttons.status() }));
     return;
   }
   // Settings' "Stop ERAgaze completely" and its way back. Through the hub, not
