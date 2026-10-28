@@ -282,3 +282,21 @@ test('removed leaves an empty cell until the next replacement; new labels take f
   c.replace(food('Chicken', 'Bread').choices); c.neutral();
   assert.deepEqual(cells(c), [['Chicken', 0], ['Bread', 1]], 'with no free cell left, a vacated one; the rest stay empty');
 });
+
+test('a press keeps the last turn\'s tiles, stale and never spoken, until clearStale(); a hold clears them at once (review fix)', async () => {
+  const c = await showing(['Chicken', 'Fish']);
+  c.ready();
+  const shown = c.state.choices;
+  c.ask({ keepShown: true });
+  assert.equal(c.state.phase, 'Capturing question', 'listening starts at once');
+  assert.equal(c.state.choices, shown, 'the shown tiles stay as they were');
+  assert.equal(c.state.stale, true);
+  assert.equal(await c.select(shown[0].id, c.state.turn), false, 'a stale tile is never spoken');
+  assert.equal(c.replace(food('Pasta').choices), false, 'a stale batch is not a window batch to replace');
+  assert.equal(c.clearStale(), true);
+  assert.deepEqual([c.state.choices.length, c.state.stale, c.state.phase], [0, false, 'Capturing question']);
+  assert.equal(c.clearStale(), false);
+  const d = await showing(['Chicken', 'Fish']);
+  d.ask();
+  assert.deepEqual([d.state.choices.length, d.state.stale], [0, false], 'the hold path is unchanged');
+});

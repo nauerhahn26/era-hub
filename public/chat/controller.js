@@ -31,7 +31,10 @@ export function createChatController(deps = {}) {
   // At most one replacement waits for a neutral moment; a newer one supersedes it unseen.
   let replacement = null, batches = 0;
   const listeners = new Set();
-  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, replacing: false, error: '', turn });
+  // `stale`: the choices shown are a finished turn's, kept after a press until
+  // a neutral moment (design §2: a tile never changes under her gaze). They are
+  // never spoken, and clearStale() (or a centre gaze, neutral()) removes them.
+  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, replacing: false, stale: false, error: '', turn });
   function timing(name) { try { deps.onTiming?.(name); } catch { /* Diagnostics never interrupt communication. */ } }
   function patch(p) { state = Object.freeze({ ...state, ...p, replacing: replacement !== null }); for (const fn of listeners) fn(state); }
   function invalidate() {
@@ -43,16 +46,24 @@ export function createChatController(deps = {}) {
     get state() { return state; },
     subscribe(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
     ready(wakeEnabled = false) { patch({ engineReady: true, wakeEnabled, phase: state.phase === 'Off' ? (wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.phase, error: '' }); },
-    ask() {
+    // keepShown (a press): the last turn's tiles stay, stale, until a neutral moment.
+    ask({ keepShown = false } = {}) {
       invalidate();
-      patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: Object.freeze([]), staged: false, error: '' });
+      const stale = (keepShown || state.stale) && state.choices.length > 0;
+      patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: stale ? state.choices : Object.freeze([]), stale, staged: false, error: '' });
+    },
+    clearStale() {
+      if (!state.stale) return false;
+      const phase = state.phase === 'Your turn' ? (state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off') : state.phase;
+      patch({ choices: Object.freeze([]), stale: false, phase });
+      return true;
     },
     partial(text) { if (state.phase === 'Capturing question') patch({ partial: String(text || '').slice(0, 600) }); },
     async prepare(text) {
       const question = String(text || '').trim().slice(0, 600);
       if (!question) { api.fail('No question heard. Try again, or use a phrase.'); return; }
       const mine = invalidate();
-      patch({ turn, phase: 'Preparing', question, partial: '', choices: Object.freeze([]), staged: false, error: '' });
+      patch({ turn, phase: 'Preparing', question, partial: '', choices: state.stale ? state.choices : Object.freeze([]), staged: false, error: '' });
       try {
         const result = await deps.requestChoices?.({ text: question, signal: abort.signal });
         if (mine !== turn) return;
@@ -74,7 +85,7 @@ export function createChatController(deps = {}) {
     // A batch for the same window while one is shown: staged, never drawn
     // until neutral(). Refused unless a batch is showing in 'Your turn'.
     replace(choices) {
-      if (state.phase !== 'Your turn' || !state.choices.length) return false;
+      if (state.phase !== 'Your turn' || !state.choices.length || state.stale) return false;
       const clean = cleanChoices(choices, `${turn}.${++batches}`);
       if (!clean.length) return false;
       if (replacement) timing('replacementSuperseded');
@@ -85,6 +96,7 @@ export function createChatController(deps = {}) {
     // A cancelled window: a replacement still waiting is dropped unseen.
     dropReplacement() { if (!replacement) return false; replacement = null; patch({}); return true; },
     neutral() {
+      api.clearStale();
       if (replacement && state.phase === 'Your turn') {
         const next = place(state.choices, replacement); replacement = null;
         deps.beforeChoices?.();
@@ -100,7 +112,7 @@ export function createChatController(deps = {}) {
       return true;
     },
     async select(id, expectedTurn = turn) {
-      if (expectedTurn !== turn || !['Your turn', 'Speaking'].includes(state.phase)) return false;
+      if (expectedTurn !== turn || state.stale || !['Your turn', 'Speaking'].includes(state.phase)) return false;
       const c = state.choices.find(x => x.id === id);
       if (!c) return false;
       timing('selected');
@@ -112,7 +124,7 @@ export function createChatController(deps = {}) {
       speechAbort?.abort(); speechAbort = new AbortController();
       deps.stopSpeech?.();
       timing('speechRequested');
-      const back = state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off';
+      const back = state.choices.length && !state.stale ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off';
       patch({ phase: 'Speaking', error: '' });
       try { await deps.speak?.({ say: text }, { signal: speechAbort.signal }); }
       catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'
@@ -127,17 +139,17 @@ export function createChatController(deps = {}) {
     idle() {
       if (!['Capturing question', 'Preparing'].includes(state.phase)) return false;
       invalidate();
-      patch({ turn, phase: state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off',
+      patch({ turn, phase: state.choices.length && !state.stale ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off',
         question: '', partial: '', staged: false, error: '' });
       return true;
     },
     fail(message) {
       invalidate();
-      patch({ turn, staged: false, engineReady: false, wakeEnabled: false, error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length ? 'Your turn' : 'Off' });
+      patch({ turn, staged: false, engineReady: false, wakeEnabled: false, error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length && !state.stale ? 'Your turn' : 'Off' });
     },
     stop() {
       invalidate();
-      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, error: '' });
+      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, stale: false, error: '' });
     },
   };
   return api;

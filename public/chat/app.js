@@ -231,10 +231,15 @@ function go(next) { screen = next; gridKey = ''; renderGrid(controller.state); }
 function fitLabels() {
   for (const el of $('grid').querySelectorAll('.tile:not(.rest)')) fitTile(el);
 }
+let staleKey = '';
 function renderGrid(state) {
   const key = `${screen}|${state.turn}|${state.choices.map(c => c.id).join(',')}|${state.phase === 'Capturing question' || state.phase === 'Preparing'}|${stories.length}`;
   if (key === gridKey) return;
-  gridKey = key;
+  // The last turn's tiles, kept stale after a press, are the very tiles drawn:
+  // a new turn number alone never redraws them under her gaze.
+  const shownKey = `${screen}|${state.choices.map(c => c.id).join(',')}|${stories.length}`;
+  if (state.stale && gridKey && shownKey === staleKey) return;
+  gridKey = key; staleKey = shownKey;
   window.Dwell?.suppress(revealRender ? REVEAL_SETTLE_MS : 600); revealRender = false;
   const grid = $('grid'); grid.replaceChildren();
   grid.append(tile('yes', 'yes', () => controller.sayFixed('Yes.'), [0, 0]), tile('no', 'no', () => controller.sayFixed('No.'), [3, 0]));
@@ -294,7 +299,7 @@ const restingInCentre = () => {
 document.addEventListener('pointermove', e => {
   // The partner's finger is not her gaze: only gaze and mouse pointers rest.
   if (e.pointerType !== 'touch') pointerAt = { x: e.clientX, y: e.clientY };
-  if (e.pointerType !== 'touch' && controller.state.replacing) swapAtNeutral();
+  if (e.pointerType !== 'touch' && (controller.state.replacing || controller.state.stale)) swapAtNeutral();
   if (screen !== 'chat' || !controller.state.staged) return;
   if (e.target.closest?.('.rest')) controller.neutral();
 }, { passive: true });
@@ -305,13 +310,15 @@ document.documentElement.addEventListener('pointerleave', e => { if (e.pointerTy
 // fading after she left a tile is looked at again shortly.
 const NEUTRAL_CHECK_MS = 250;
 let neutralTimer = null;
+// The last turn's tiles kept after a press (stale) clear at the same moment.
 function swapAtNeutral() {
   clearTimeout(neutralTimer);
-  if (screen !== 'chat' || !controller.state.replacing) return;
+  if (screen !== 'chat' || !(controller.state.replacing || controller.state.stale)) return;
   const el = pointerAt ? document.elementFromPoint(pointerAt.x, pointerAt.y) : null;
   if (el?.closest?.('#grid .tile:not(.rest)')) return;
   if (window.Dwell?.state?.().target != null) { neutralTimer = setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS); return; }
-  controller.neutral();
+  if (controller.state.stale) controller.clearStale();
+  else controller.neutral();
 }
 let wasStaged = false;
 controller.subscribe(state => {
@@ -576,7 +583,8 @@ async function openPressWindow(command) {
   turnLog.begin(questionMetric, 'press', { mode: 'stream', session, ago });
   pendingFrames = []; captureGeneration = null; finishedTurn = -1;
   press = { windowId: null, generation: null, listening: false, closed: false, seals: 0, question: '' };
-  setMode('opening'); uploadEpoch++; controller.ask();
+  // The last turn's tiles stay until a neutral moment; listening does not wait.
+  setMode('opening'); uploadEpoch++; controller.ask({ keepShown: true }); swapAtNeutral();
   let reply = null;
   try { reply = await control('window', { context: recentConversation.slice(-8) }); }
   catch { if (mine === lifecycle && intent === captureIntent) failSession('Listening could not start. Your phrases still work; press again.'); return; }
@@ -611,7 +619,7 @@ function windowSealed(data) {
   const question = String(data.windowText || '').trim().slice(0, 600);
   if (!question || !Number.isSafeInteger(data.seq)) return;
   turnLog.mark(questionMetric, 'utteranceSealed', { text: String(data.text || '').slice(0, 2000) });
-  const shown = controller.state.choices.length > 0;
+  const shown = controller.state.choices.length > 0 && !controller.state.stale;
   if (data.seq > 1 && shown) { replacementFor(data, question); return; }
   if (data.seq > 1) turnLog.mark(questionMetric, 'batchReplaced');
   // The earlier unseen question is replaced, not repeated, in the conversation so far.

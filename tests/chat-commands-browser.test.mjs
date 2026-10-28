@@ -509,6 +509,33 @@ test('a pick during a pending replacement wins: the shown tile is spoken, the re
   assert.deepEqual(f.errors, []);
 });
 
+test('a press while her gaze rests on a tile from the last turn: the tiles stay until her gaze leaves, then clear; listening starts at once (review fix)', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 4000 } });
+  await f.load(); await f.slowDwell();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 15000 });
+  const before = await f.shown();
+  assert.deepEqual(before, [['Chicken', '2', '1'], ['Fish', '3', '1']]);
+  await f.lookAt('.response >> text=Chicken');
+  await f.page.waitForFunction(() => window.Dwell.state().target != null, null, { timeout: 5000 });
+  await f.page.evaluate(() => { for (const el of document.querySelectorAll('#grid .tile')) el.__before = true; });
+  await watchRedraws(f.page);
+  f.ask();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
+  await f.page.waitForTimeout(1000);
+  assert.deepEqual(await f.shown(), before, 'her gaze is on Chicken: the last turn\'s tiles stay');
+  assert.deepEqual(await f.page.evaluate(() => window.__redraws), [], 'not one redraw while she dwells');
+  assert.equal(await f.page.evaluate(() => [...document.querySelectorAll('#grid .tile')].every(el => el.__before)), true, 'the same tiles, not redrawn copies');
+  await f.lookAt('#phase');
+  await f.page.waitForFunction(() => document.querySelectorAll('.response').length === 0, null, { timeout: 5000 });
+  const redraws = await f.page.evaluate(() => window.__redraws);
+  assert.ok(redraws.length >= 1 && redraws.every(target => target === null), `every redraw with no dwell in progress: ${JSON.stringify(redraws)}`);
+  assert.deepEqual(f.errors, []);
+});
+
 // ---- T4.5 the on-screen Hold to ask is inert while a window is open ----
 
 test('a partner touch on Hold to ask during a listening window does nothing: no hold, the session lives', { timeout: 60000 }, async t => {
