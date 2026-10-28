@@ -488,3 +488,21 @@ Hub (chat-turns, server, chat-world, chat-api, chat-choices, registry):
       (public/chat is copied whole; confirm frame.js rides).
 
 Then: gate detached, VM legs, land, release (patch), push both i13s + tablet.
+
+## Read the choices aloud when she does not answer (dad, 10/28 night — PROPOSED, his number pending)
+
+"If she doesn't respond after a certain amount of seconds, maybe 15, maybe 10,
+it should go through 'your choices are', and then highlight each one as it
+reads the option." Design notes for when he picks the number:
+- Timer starts at the reveal; any dwell progress, a selection, a page or mode
+  swap, or a new hold cancels it. The read-through never blocks a selection:
+  a dwell during it selects as usual and stops the reading.
+- "Your choices are:" then each reply label in spoken order, the tile lit
+  (same `on` style as a lit mode) while its clip plays; the clips are the ones
+  already warmed for the replies, so nothing new is fetched.
+- Open questions: the reading voice (her saved voice would sound like she
+  said "chicken" — a second, quieter device voice may be better); read once or
+  twice; whether YES/NO are read; the delay as a partner setting
+  (`chatPromptMs`: off / 10 / 15 / 20 s) so he can test both numbers.
+- Telemetry: the turn record gets `prompted: true` and whether a selection
+  followed, so the device-holds review can compare 10 s against 15 s.
