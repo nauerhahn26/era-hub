@@ -173,7 +173,7 @@ Info
       `NotAllowedError` → "Touch Start Chat once to allow the microphone", no
       tone; window closed with nothing said → "Didn't hear a question" for 4 s.
       Verify: same suite, three tests. Guard: wording as written here.
-- [ ] **T2.4** `public/chat/tones.js`: WebAudio oscillator, listening tone
+- [x] **T2.4** (tones.js landed with T2.2/T2.3, which needed it; "nothing spoken" = no play()/speak() during the window, and no /tts before the first seal — staged replies still warm their voices by design) `public/chat/tones.js`: WebAudio oscillator, listening tone
       660→880 Hz 180 ms, done tone 880→660 Hz 180 ms, gain 0.15, through the
       page's own `AudioContext` (the kiosk's `--autoplay-policy` flag applies;
       the fixture passes the same flag). Accept: a browser test counts two

@@ -272,3 +272,32 @@ test('nothing said: the window closes, "Didn\'t hear a question" for 4 s, nothin
   assert.equal(f.sessions(), 1);
   assert.deepEqual(f.errors, []);
 });
+
+// ---- T2.4 the tones ----
+
+test('two tones per window, rising then falling, and nothing is spoken while listening', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 6: [turn('do you want chicken or fish')], 7: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 1500 } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.page.waitForTimeout(300); // the fixed phrases' voices warm at load, before any press
+  f.ask();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
+  const toneAt = Date.now();
+  await f.page.waitForFunction(() => document.querySelector('#diagnostics').textContent.startsWith('Question:'), null, { timeout: 10000 });
+  assert.equal(f.ttsTexts.filter(entry => entry.at >= toneAt).length, 0, 'no voice is fetched between the tone and the first seal');
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 10000 });
+  await f.page.waitForFunction(() => window.__tones.length === 2, null, { timeout: 2000 });
+  const tones = await f.page.evaluate(() => window.__tones.map(({ from, to }) => [from, to]));
+  assert.deepEqual(tones, [[660, 880], [880, 660]], 'the listening tone, then the done tone');
+  assert.deepEqual(await f.page.evaluate(() => [window.__plays, window.__speaks]), [0, 0], 'nothing spoke during the window');
+  assert.equal(await f.page.locator('.response').count(), 0, 'the batch waits for her gaze in the black centre');
+  await f.restOnCentre();
+  await f.page.waitForSelector('.response', { timeout: 5000 });
+  assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Chicken', 'Fish']);
+  assert.deepEqual(await f.page.evaluate(() => [window.__plays, window.__speaks]), [0, 0], 'revealing speaks nothing');
+});
+
+test('the tones are drawn, not shipped: no audio files in the Chat page', async () => {
+  const files = await fs.readdir(path.join(root, 'public', 'chat'));
+  assert.deepEqual(files.filter(name => /\.(wav|mp3|ogg|m4a|aac|flac|opus|webm)$/i.test(name)), []);
+});
