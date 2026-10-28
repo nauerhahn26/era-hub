@@ -288,7 +288,7 @@ Info
       `node --test tests/buttons-keeper.test.mjs` with an injected clock
       (shape of `tests/gaze-supervisor.test.mjs`). Guard: the keeper never
       kills by name; `tests/suite-ports` kill-by-name scan stays green.
-- [ ] **T5.4** Settings → Connections → **Buttons** card: `<div class="card"
+- [x] **T5.4** (states said too: "Setting up the button listener…", "Starting…", "Listener not running: <last error>" as text, "No button listener on this computer (Windows only)", "<key> is held by another program"; `#connections/buttons` deep-links; repaint also on entering Connections) Settings → Connections → **Buttons** card: `<div class="card"
       id="buttons">` in `public/settings/index.html`, `put(original.buttons,
       'connections')` and a search row `['connections','buttons','Buttons',
       'Flic, button, press, ask, square']` in `settings-layout.js`; painted from

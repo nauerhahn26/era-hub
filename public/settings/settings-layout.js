@@ -32,7 +32,7 @@
     exit:byId('exit'), week:byId('weekVideos'), dwell:cardFor('dwellUp'),
     pencil:cardFor('pencilDwellUp'), settle:cardFor('settleUp'), feel:cardFor('feel'),
     grace:cardFor('grace'), ring:cardFor('ring'), volume:cardFor('deviceVolumeCap'),
-    music:cardFor('mvolUp'), lock:byId('lock'), pause:cardFor('paused')
+    music:cardFor('mvolUp'), lock:byId('lock'), pause:cardFor('paused'), buttons:byId('buttons')
   };
   const shell = node('div', {class:'settings-shell'});
   const sidebar = node('aside', {id:'settingsSidebar', class:'settings-sidebar', 'aria-label':'Settings navigation'});
@@ -110,6 +110,7 @@
   for (const key of ['dwell','pencil','settle','feel','grace','ring','pause']) put(original[key],'gaze','settings-'+key);
   for (const key of ['voice','volume','music']) put(original[key],'sound','settings-'+key);
   for (const key of ['drive','ai','moving','films']) put(original[key],'connections');
+  put(original.buttons,'connections');
   put(original.week,'media');
 
   const voiceSetup = byId('ttsKey')?.closest('.row')?.parentElement;
@@ -182,7 +183,7 @@
     weekVideos:['media','weekVideos'], lock:['apps','lock'], updates:['system','updates'],
     contentTiers:['books','contentTiers','setup']
   };
-  const connectionTargets = {drive:'integrations',ai:'ai',voice:'voiceConnection',email:'emailConnection',moving:'fal',films:'movies'};
+  const connectionTargets = {drive:'integrations',ai:'ai',voice:'voiceConnection',email:'emailConnection',moving:'fal',films:'movies',buttons:'buttons'};
   const searchIndex = [
     ['gaze','settings-dwell','Dwell time','Dwell, hold, selection timing'],
     ['gaze','settings-pencil','Alternative Pencil dwell time','Pencil, writing, letter selection'],
@@ -208,6 +209,7 @@
     ['connections','emailConnection','Writing email','Email, delivery, key, send'],
     ['connections','fal','Moving pages','Animation, video, book pages, key'],
     ['connections','movies','Films and shows','Film, movies, shows, posters, country, key'],
+    ['connections','buttons','Buttons','Flic, button, press, ask, square'],
     ['system','updates','Updates','Update, version, build, installed'],
     ['system','engineMaintenance','Stop eye gaze completely','Stop, shutdown, release, tracker, testing']
   ];

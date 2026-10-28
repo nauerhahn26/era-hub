@@ -325,6 +325,18 @@
     <div class="status" id="moviesKeyStatus"></div>
   </div>
 
+  <!-- Buttons (button press to ask, plan T5.4). A partner's button (a Flic in
+       keyboard mode, the I-13's Square button) is a key; the hub's listener
+       holds those keys and turns each press into "ask". This card says whether
+       the listener runs, which keys it holds, the last press, and the one-time
+       setup. Painted from /status.buttons every 5 s while Connections shows. -->
+  <div class="card" id="buttons">
+    <h2>🔘 Buttons</h2>
+    <p class="hint">A partner presses a button and Chat starts listening, with no touch on the screen. Press again to finish; hold to cancel.</p>
+    <div class="status" id="buttonsStatus"></div>
+    <p class="hint" id="buttonsSetup">Flic app: Keyboard mode, click &rarr; F13, hold &rarr; F14, double click empty; pair in Windows Bluetooth as a keyboard. Square button: Hardware Settings &rarr; Send Keyboard Key &rarr; Ctrl+Alt+F9, then restart the device.</p>
+  </div>
+
   <div class="card" id="exit">
     <h2>🚪 Where the door goes</h2>
     <p class="hint">Every app has a door in its corner. Choose what she lands on when she looks at it.</p>
@@ -1241,6 +1253,44 @@ function accPaint(s){
   el.innerHTML=parts.join(" &middot; ")+".";
 }
 aiProvPaint(); aiPaint(); setInterval(()=>{if(!document.hidden && ["connections","clothing"].includes(window.ERASettingsLayout?.section)) aiPaint();}, 5000);
+
+// ---- Buttons (plan T5.4): /status.buttons in a sentence. The keys the hub's
+// listener holds, with the three Ctrl+Alt keys said once ("Ctrl+Alt+F9/F10/F11");
+// the last press in this computer's own clock. Text only: lastError can carry
+// a compiler's words, and those are never markup.
+function buttonsKeys(list){
+  const groups=[];
+  for(const k of list||[]){
+    const cut=String(k).lastIndexOf("+"), head=cut>=0?k.slice(0,cut+1):"", tail=cut>=0?k.slice(cut+1):k;
+    const g=head&&groups.find(x=>x.head===head);
+    if(g) g.tails.push(tail); else groups.push({head,tails:[tail]});
+  }
+  return groups.map(g=>g.head+g.tails.join("/")).join(", ");
+}
+function buttonsLine(b){
+  if(!b) return "";
+  if(b.state==="unsupported") return "No button listener on this computer (Windows only).";
+  if(b.state==="off") return "Chat is off \u2014 the buttons do nothing until Chat is enabled";
+  if(b.state==="compiling") return "Setting up the button listener\u2026";
+  if(b.state==="starting") return "Starting the button listener\u2026";
+  if(b.state!=="running") return "Listener not running"+(b.lastError?": "+b.lastError:"")+(b.state==="restarting"?" \u00b7 trying again shortly":"");
+  const p=b.lastPress, at=p&&new Date(p.at);
+  const when=at&&!isNaN(at)?String(at.getHours()).padStart(2,"0")+":"+String(at.getMinutes()).padStart(2,"0"):"";
+  const parts=["Listener running"];
+  const held=buttonsKeys(b.keys&&b.keys.registered);
+  parts.push(held?"holds "+held:"holds no keys");
+  parts.push(p?"last press "+(when?when+" ":"")+p.key+" ("+p.action+")":"no press yet");
+  const refused=(b.keys&&b.keys.failed)||[];
+  if(refused.length) parts.push(buttonsKeys(refused)+(refused.length===1?" is":" are")+" held by another program");
+  return parts.join(" \u00b7 ");
+}
+async function buttonsPaint(){
+  const el=$("buttonsStatus"); if(!el) return;
+  try{ const s=await (await fetch("/status",{cache:"no-store"})).json(); el.textContent=buttonsLine(s&&s.buttons); }catch(e){}
+}
+buttonsPaint();
+setInterval(()=>{if(!document.hidden && window.ERASettingsLayout?.section==="connections") buttonsPaint();}, 5000);
+document.addEventListener("era-settings-section",e=>{if(e.detail&&e.detail.section==="connections") buttonsPaint();});
 
 // ---- Your books: /content/status turned into sentences (T2.10). The card
 // never shows a state name, a step name or a date stamp — a parent needs to
