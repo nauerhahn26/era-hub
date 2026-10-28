@@ -370,11 +370,21 @@ test("after the update: a button press reaches Chat through the device listener,
   assert.deepEqual(listening.keys.failed, [], "no other program holds a key on the pristine guest");
   assert.ok(Number.isInteger(listening.pid) && listening.pid > 0);
   assert.ok(vm.exists(vm.INSTDIR + "\\buttons\\EraButtons.exe"), "compiled on the guest from the shipped source");
-  assert.equal(listening.micPolicy, "written", "reg.exe wrote both browsers' AudioCaptureAllowedUrls");
+  // The policy write is RECORDED, never failed on (W3): a refusal is the
+  // finding, and the hotkey round trip below must still be proved.
+  console.log(`# microphone policy: ${listening.micPolicy}` + (listening.micPolicyError ? ` — ${listening.micPolicyError}` : ""));
   const policy = vm.bat("buttons-policy", [
     'reg query "HKCU\\Software\\Policies\\Microsoft\\Edge\\AudioCaptureAllowedUrls" /v 1',
     'reg query "HKCU\\Software\\Policies\\Google\\Chrome\\AudioCaptureAllowedUrls" /v 1'], { soft: true });
   console.log("# microphone policy as the ssh user reads it:\n" + policy);
+  // what the installed hub itself said (server.js logs to <data>\logs\hub.log)
+  const hubLog = () => {
+    const out = vm.bat("buttons-hub-log", [`findstr /l /c:"[buttons]" /c:"microphone policy" "${vm.INSTDIR}\\data\\logs\\hub.log"`], { soft: true }) || "";
+    console.log(out.split(/\r?\n/).filter((l) => l.trim()).map((l) => "# hub log: " + l).join("\n") || "# hub log: no [buttons] lines");
+  };
+  hubLog();
+  const w3 = { micPolicy: listening.micPolicy, micPolicyError: listening.micPolicyError ?? null, regQuery: policy, permission: null };
+  const writeW3 = () => fs.writeFileSync(path.join(vm.OUT, "buttons-w3.json"), JSON.stringify({ ...w3, at: new Date().toISOString() }, null, 2) + "\n");
 
   // The stand-in keyboard leaves nothing behind: its task and helper go at the end, pass or fail.
   try {
@@ -408,8 +418,7 @@ test("after the update: a button press reaches Chat through the device listener,
     assert.equal(new URL(page.url()).pathname, "/chat/", "a press lands on Chat");
     // W3: does the fresh kiosk profile have the microphone without a touch?
     const mic = await page.evaluate(() => navigator.permissions.query({ name: "microphone" }).then((s) => s.state)).catch((e) => "error: " + e.message);
-    const verdict = { mic, f13: f13.dispatch, micPolicy: listening.micPolicy, at: new Date().toISOString() };
-    fs.writeFileSync(path.join(vm.OUT, "buttons-w3.json"), JSON.stringify(verdict, null, 2) + "\n");
+    w3.permission = mic; w3.f13 = f13.dispatch;
     console.log(`# W3 verdict: microphone ${mic}` + (mic === "granted" ? " (the policy pre-grants it)" : " (STOP: the one-touch fallback becomes a rollout step; plan T5.8 guard)"));
     // a held Flic (F14) closes whatever the ask opened, so the next press starts afresh
     await new Promise((r) => setTimeout(r, 5000));
@@ -421,6 +430,10 @@ test("after the update: a button press reaches Chat through the device listener,
     await pressKey("F14", ["cancel", "none"]);
     vm.shot("buttons-after-square");
   } finally {
+    // the W3 record and the hub's own words, pass or fail
+    try { const b = buttons(); if (b) { w3.micPolicy = b.micPolicy; w3.micPolicyError = b.micPolicyError ?? null; } } catch {}
+    try { writeW3(); } catch (e) { console.log("# buttons-w3.json not written: " + e.message); }
+    try { hubLog(); } catch {}
     try { vm.bat("sendkey-cleanup", ["schtasks /delete /tn era-qa-sendkey /f >nul 2>&1",
       `del /f /q ${GUEST_HOME}\\sendkey.exe ${GUEST_HOME}\\sendkey.cs >nul 2>&1`, "echo cleaned"], { soft: true }); } catch {}
   }
