@@ -27,6 +27,8 @@ const DEFAULTS = Object.freeze({ sessions: 2, idleMs: 90000, lifetimeMs: 1800000
   // The window's own clock (design §4.4): one utterance, the silence that
   // closes the window, the window's cap; the machine is ticked this often.
   windowUtteranceMs: WINDOW_LIMITS.utteranceMs, windowSilenceMs: WINDOW_LIMITS.silenceMs, windowCapMs: WINDOW_LIMITS.capMs, windowTickMs: 100,
+  // A second press or the cap finalizes the utterance in flight; its final is waited for at most this long.
+  windowFinalMs: 2000,
   // The streaming transcription socket (§3.1): closed after this long idle
   // (null: 60 s for a connection-billed service, 5 min otherwise); the final
   // must arrive this long after release or the hold falls back to one-shot.
@@ -355,7 +357,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     if (session.closed) return;
     session.closed = true; sessions.delete(session.id);
     clearTimeout(session.killTimer);
-    if (session.window) { clearInterval(session.window.timer); session.window = null; }
+    if (session.window) { clearInterval(session.window.timer); clearTimeout(session.window.drainTimer); session.window = null; }
     if (session.events) session.events.end();
     if (session.socket) { session.socket.close(1001, 'session-ended'); session.socket = null; }
     abortChoices(session);
@@ -486,10 +488,12 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     });
     stream.on('settled', ({ text }) => {
       const clean = cleanText(text, 2000);
-      if (current() && clean) { emit(session, { type: 'settled', text: clean, generation: session.generation }); speculate(session, clean, true); }
+      if (current() && clean && !session.turn.window) { emit(session, { type: 'settled', text: clean, generation: session.generation }); speculate(session, clean, true); }
     });
     stream.on('final', ({ text, timings }) => {
-      if (!current() || session.turn.window) return;
+      if (!current()) return;
+      // A window is finalized only at a second press or its cap: the final ends the utterance in flight.
+      if (session.turn.window) { if (session.window?.draining) session.window.machine.end(cleanText(text, 2000)); return; }
       const turn = session.turn; turn.done = true; turn.pcm = null;
       const socketSeconds = stream.takeSocketSeconds();
       session.mode = 'paused';
@@ -506,7 +510,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       }
       if (session.turn && session.turn.mode === 'stream' && !session.turn.done && session.turn.transcriber === stream) {
         // A window has no one-shot fallback: it closes, and the partner can press again.
-        if (session.turn.window) { session.window?.machine.stop('error'); return; }
+        // While its final is awaited, the utterance in flight seals from the latest partial.
+        if (session.turn.window) { if (session.window?.draining) session.window.machine.end(); else session.window?.machine.stop('error'); return; }
         fallBack(session);
       }
     });
@@ -761,15 +766,19 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // machine (chat-window.js) seals each utterance that sounds complete, and each
   // seal runs the choice request on the whole window text. Frames feed the
   // hub's energy gate (the silence fallback); the machine is ticked for its
-  // deadlines. Closing cancels the stream turn and pauses capture; the last
-  // seal's batch still arrives (the generation is not advanced).
+  // deadlines. A second press or the cap with an utterance in flight finalizes
+  // the stream turn first (drain): its final, or the latest partial after
+  // windowFinalMs, seals that utterance, and only then the window closes.
+  // Closing cancels the stream turn and pauses capture; the last seal's batch
+  // still arrives (the generation is not advanced).
   function openWindow(session, context) {
     abortChoices(session); endStreamTurn(session);
     session.generation++; session.context = context; session.mode = 'capturing'; session.utteranceBytes = 0; session.turnBytes = 0;
     beginTurn(session, { window: true });
-    const win = { id: randomBytes(6).toString('hex'), generation: session.generation, gate: energyGate(), machine: null, timer: null };
+    const win = { id: randomBytes(6).toString('hex'), generation: session.generation, gate: energyGate(), machine: null, timer: null, draining: false, drainTimer: null };
     win.machine = createWindow({ clock, limits: { utteranceMs: limits.windowUtteranceMs, silenceMs: limits.windowSilenceMs, capMs: limits.windowCapMs },
-      seal: info => windowSeal(session, win, info), close: (reason, info) => windowClosed(session, win, reason, info) });
+      seal: info => windowSeal(session, win, info), close: (reason, info) => windowClosed(session, win, reason, info),
+      drain: () => windowDrain(session, win) });
     session.window = win;
     win.timer = setInterval(() => win.machine.tick(), limits.windowTickMs); win.timer.unref?.();
     emit(session, { type: 'window-open', windowId: win.id, generation: win.generation });
@@ -779,6 +788,15 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     const win = session.window;
     if (!win) return;
     for (const energetic of win.gate(pcm)) { if (session.window !== win) return; win.machine.speech(energetic); }
+  }
+  // Finalize the transcriber for the utterance in flight; the machine ends on
+  // its final (the 'final' handler) or on this deadline with the latest partial.
+  function windowDrain(session, win) {
+    const turn = session.turn;
+    if (session.window !== win || session.closed || !turn || !turn.window || turn.mode !== 'stream' || turn.done) { win.machine.end(); return; }
+    win.draining = true;
+    win.drainTimer = setTimeout(() => win.machine.end(), limits.windowFinalMs); win.drainTimer.unref?.();
+    turn.transcriber.finalize();
   }
   function windowSeal(session, win, { seq, text, windowText, reason }) {
     if (session.window !== win || session.closed) return;
@@ -801,7 +819,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   }
   function windowClosed(session, win, reason, { seals }) {
     if (session.window !== win) return;
-    clearInterval(win.timer); session.window = null;
+    clearInterval(win.timer); clearTimeout(win.drainTimer); win.draining = false; session.window = null;
     // Cancel, her pick and a failure discard whatever is still being made.
     if (['cancel', 'pick', 'error'].includes(reason)) abortChoices(session);
     else { const turn = session.turn; if (turn) { clearTimeout(turn.stableTimer); if (turn.speculation && !turn.speculation.attached) turn.speculation.controller.abort(); turn.speculation = null; } }

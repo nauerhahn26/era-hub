@@ -341,3 +341,42 @@ test('window turn, listen query: speech_final is a turn-end with the words since
   assert.deepEqual(events.filter(e => e.type === 'turn-end').map(e => e.text), ['do you want chicken or fish', 'or pasta please']);
   assert.deepEqual(service.connections[0].texts.filter(x => x.type !== 'KeepAlive'), [], 'no Finalize per utterance');
 });
+
+// A second press or the window's cap finalizes the window turn mid-utterance
+// (review fix): the utterance in flight lands in the final, which carries the
+// whole window text; an end of turn arriving while finalizing is no turn-end.
+test('window turn finalized mid-utterance: the final is the whole window text with the words that arrive after the finalize', async t => {
+  const service = await fake(t, conn => {
+    conn.send({ type: 'Begin', id: 'x', expires_at: 0 });
+    conn.onAudio = count => {
+      if (count === 2) conn.send(turn('Chicken or fish?', { end: true }));
+      if (count === 3) conn.send(turn('or pas', { order: 1 }));
+    };
+    conn.onText = value => {
+      if (value.type === 'ForceEndpoint') conn.send(turn('Or pasta?', { end: true, order: 1 }));
+      if (value.type === 'Terminate') { conn.send({ type: 'Termination', audio_duration_seconds: 1 }); setTimeout(() => conn.ws.close(1000), 5); }
+    };
+  });
+  const stream = transcriber(t, service), events = collectWindow(stream);
+  await stream.open(); stream.begin({ window: true });
+  for (let i = 0; i < 3; i++) { stream.sendPcm(frame()); await pause(10); }
+  await until(() => events.some(e => e.type === 'partial' && e.text.endsWith('or pas')));
+  stream.finalize();
+  await until(() => events.some(e => e.type === 'final'));
+  assert.equal(events.find(e => e.type === 'final').text, 'Chicken or fish? Or pasta?');
+  assert.deepEqual(events.filter(e => e.type === 'turn-end').map(e => e.text), ['Chicken or fish?'], 'the end of turn during the finalize is the final, not a turn-end');
+  const listen = await fake(t, conn => {
+    conn.onAudio = count => {
+      if (count === 1) conn.send({ ...results('chicken or fish', { final: true }), speech_final: true });
+      if (count === 2) conn.send(results('or pas'));
+    };
+    conn.onText = value => { if (value.type === 'Finalize') conn.send(results('or pasta', { final: true, fromFinalize: true })); };
+  });
+  const s2 = transcriber(t, listen, { protocol: 'ws-listen-query', model: 'listen-model' }), e2 = collectWindow(s2);
+  await s2.open(); s2.begin({ window: true });
+  for (let i = 0; i < 2; i++) { s2.sendPcm(frame()); await pause(10); }
+  await until(() => e2.some(e => e.type === 'partial' && e.text.endsWith('or pas')));
+  s2.finalize();
+  await until(() => e2.some(e => e.type === 'final'));
+  assert.equal(e2.find(e => e.type === 'final').text, 'chicken or fish or pasta');
+});

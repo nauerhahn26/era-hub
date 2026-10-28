@@ -30,7 +30,9 @@ const QUIET = Buffer.alloc(3200);
 
 // The turn-streaming fake service, scripted by frame count: `script` maps a
 // frame number to the messages sent when that frame arrives.
-async function turnsService(t, script = {}) {
+// `onTerminate` messages are sent when Terminate arrives, before Termination
+// (the final words of the utterance in flight); `silent` never answers it.
+async function turnsService(t, script = {}, { onTerminate = [], silent = false } = {}) {
   const connections = [];
   const server = http.createServer((req, res) => res.writeHead(404).end());
   server.on('upgrade', (req, socket, head) => {
@@ -41,7 +43,7 @@ async function turnsService(t, script = {}) {
     ws.on('message', (data, binary) => {
       if (binary) { conn.frames++; for (const message of script[conn.frames] || []) ws.send(JSON.stringify(message)); return; }
       const value = JSON.parse(data); conn.texts.push(value.type);
-      if (value.type === 'Terminate') { ws.send(JSON.stringify({ type: 'Termination' })); setTimeout(() => ws.close(1000), 5); }
+      if (value.type === 'Terminate' && !silent) { for (const message of onTerminate) ws.send(JSON.stringify(message)); ws.send(JSON.stringify({ type: 'Termination' })); setTimeout(() => ws.close(1000), 5); }
     });
     ws.on('close', () => { conn.closed = true; });
   });
@@ -193,6 +195,96 @@ test('the second press (buttons → api.window().press()) seals what was heard a
   await s.frames(3);
   await pause(50);
   assert.equal(service.connections[0].frames, heard, 'no frame reaches the service after the window closed');
+});
+
+test('a second press finalizes the utterance in flight: its final words (arriving after the press) seal as press, then the window closes, then its batch', async t => {
+  // Words before the press, no end of turn ever sent; the rest of the question arrives only at the finalize.
+  const service = await turnsService(t, { 2: [turn('do you want chicken')] }, { onTerminate: [turn('do you want chicken or fish')] });
+  const h = await hub(t, { service });
+  const s = await h.session();
+  const opened = await s.open();
+  await s.frames(4);
+  await until(() => s.events('partial').length === 1);
+  assert.equal(s.events('utterance-sealed').length, 0, 'nothing sealed before the press');
+  h.api.window().press();
+  await until(() => s.events('batch-sealed').length === 1);
+  assert.deepEqual(service.connections[0].texts, ['ForceEndpoint', 'Terminate'], 'the press finalized the transcriber');
+  const sealed = s.events('utterance-sealed');
+  assert.equal(sealed.length, 1);
+  assert.deepEqual([sealed[0].reason, sealed[0].seq, sealed[0].windowText, sealed[0].windowId], ['press', 1, 'do you want chicken or fish', opened.windowId]);
+  const closed = s.events('window-closed')[0];
+  assert.deepEqual([closed.reason, closed.seals], ['press', 1]);
+  const order = ['utterance-sealed', 'window-closed', 'batch-sealed'].map(type => s.seen.findIndex(e => e.type === type));
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'utterance-sealed, then window-closed, then batch-sealed');
+  const batch = s.events('batch-sealed')[0];
+  assert.deepEqual([batch.windowId, batch.seq, batch.generation], [opened.windowId, 1, opened.generation]);
+  assert.deepEqual(batch.choices.map(c => c.label), ['Chicken', 'Fish'], 'choices on the whole window text, final words included');
+  assert.equal(s.events('final').length, 0, 'a window final is never a hold final');
+  assert.equal(h.api.window(), null);
+});
+
+test('the finalize wait is bounded: a silent service still seals the latest partial and closes about 2 s after the press', async t => {
+  const service = await turnsService(t, { 2: [turn('is it lunch time')] }, { silent: true });
+  const h = await hub(t, { service });
+  const s = await h.session();
+  await s.open();
+  await s.frames(4);
+  await until(() => s.events('partial').length === 1);
+  const pressed = Date.now();
+  h.api.window().press();
+  await pause(1500);
+  assert.equal(s.events('window-closed').length, 0, 'still waiting for the final');
+  await until(() => s.events('window-closed').length === 1, 3000);
+  const waited = Date.now() - pressed;
+  assert.ok(waited >= 1900 && waited < 3000, `closed ${waited} ms after the press`);
+  assert.deepEqual(s.events('utterance-sealed').map(e => [e.reason, e.windowText]), [['press', 'is it lunch time']]);
+  assert.equal(s.events('window-closed')[0].reason, 'press');
+  await until(() => s.events('batch-sealed').length === 1);
+  // Speech but no words at all, and no final: the window closes with nothing sealed.
+  const mute = await turnsService(t, {}, { silent: true });
+  const h2 = await hub(t, { service: mute, limits: { windowFinalMs: 200 } });
+  const s2 = await h2.session();
+  await s2.open(); await s2.frames(4);
+  await until(() => mute.connections[0]?.frames >= 1);
+  h2.api.window().press();
+  await until(() => s2.events('window-closed').length === 1);
+  assert.deepEqual([s2.events('window-closed')[0].reason, s2.events('window-closed')[0].seals], ['press', 0]);
+  await pause(100);
+  assert.equal(s2.events('utterance-sealed').length + s2.events('batch-sealed').length, 0);
+});
+
+test('the 60 s cap finalizes the utterance in flight too: sealed as cap with its final words (cap shortened)', async t => {
+  const service = await turnsService(t, { 2: [turn('do you want')] }, { onTerminate: [turn('do you want a story')] });
+  const h = await hub(t, { service, limits: { windowCapMs: 400 } });
+  const s = await h.session();
+  await s.open();
+  s.frames(100, TONE, 5);
+  await until(() => s.events('window-closed').length === 1, 4000);
+  assert.deepEqual(s.events('utterance-sealed').map(e => [e.reason, e.windowText]), [['cap', 'do you want a story']]);
+  assert.deepEqual([s.events('window-closed')[0].reason, s.events('window-closed')[0].seals], ['cap', 1]);
+  await until(() => s.events('batch-sealed').length === 1);
+});
+
+test('the silence close and cancel seal nothing and never finalize the transcriber', async t => {
+  const service = await turnsService(t, { 2: [turn('chicken or fish', { end: true })] });
+  const h = await hub(t, { service, limits: { windowSilenceMs: 400 } });
+  const s = await h.session();
+  await s.open(); await s.frames(3);
+  await until(() => s.events('window-closed').length === 1, 3000);
+  assert.equal(s.events('window-closed')[0].reason, 'silence');
+  assert.deepEqual(s.events('utterance-sealed').map(e => e.reason), ['turn-end'], 'no seal at the silence close');
+  assert.ok(!service.connections[0].texts.includes('ForceEndpoint'));
+  const words = await turnsService(t, { 2: [turn('chicken or fish')] });
+  const h2 = await hub(t, { service: words });
+  const s2 = await h2.session();
+  await s2.open(); await s2.frames(4);
+  await until(() => s2.events('partial').length === 1);
+  h2.api.window().cancel();
+  await until(() => s2.events('window-closed').length === 1);
+  await pause(150);
+  assert.equal(s2.events('window-closed')[0].reason, 'cancel');
+  assert.equal(s2.events('utterance-sealed').length + s2.events('batch-sealed').length, 0, 'cancel: no seal and no batch');
+  assert.ok(!words.connections[0].texts.includes('ForceEndpoint'), 'cancel never finalizes');
 });
 
 test('cancel discards the window: no seal, no batch, nothing submitted', async t => {

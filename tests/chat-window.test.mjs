@@ -12,10 +12,10 @@ import fs from 'node:fs';
 const require = createRequire(import.meta.url);
 const { createWindow, energyGate, WINDOW_LIMITS } = require('../chat-window.js');
 
-function machine(limits = {}) {
+function machine(limits = {}, { drain } = {}) {
   let now = 1000;
   const seals = [], closes = [];
-  const w = createWindow({ clock: () => now, limits, seal: info => seals.push(info), close: (reason, info) => closes.push({ reason, ...info }) });
+  const w = createWindow({ clock: () => now, limits, seal: info => seals.push(info), close: (reason, info) => closes.push({ reason, ...info }), ...(drain ? { drain } : {}) });
   const at = ms => { now = 1000 + ms; w.tick(); };
   // n frames of 100 ms each: energetic or quiet, the clock moving with them.
   const frames = (n, energetic) => { for (let i = 0; i < n; i++) { now += 100; w.speech(energetic); } };
@@ -136,6 +136,16 @@ test('60 s since the press closes the window: cap', () => {
   m.at(60000);
   assert.equal(m.closes[0].reason, 'cap');
   assert.ok(m.seals.length >= 1, 'the words heard so far were sealed');
+  assert.equal(m.seals.at(-1).reason, 'cap', 'the utterance in flight at the cap seals with reason cap');
+});
+
+test('the 60 s cap with no utterance open closes without a seal', () => {
+  const m = machine();
+  m.frames(5, true); m.w.turnEnd('chicken or fish');
+  assert.equal(m.seals.length, 1);
+  m.at(60000);
+  assert.deepEqual(m.closes.map(c => [c.reason, c.seals]), [['cap', 1]]);
+  assert.equal(m.seals.length, 1, 'nothing new was heard: no second seal');
 });
 
 test('a second press seals what was heard and closes: press', () => {
@@ -144,6 +154,92 @@ test('a second press seals what was heard and closes: press', () => {
   m.w.press();
   assert.deepEqual(m.seals.map(s => [s.reason, s.windowText]), [['press', 'chicken or fish']]);
   assert.deepEqual(m.closes, [{ reason: 'press', seals: 1, windowText: 'chicken or fish' }]);
+});
+
+test('a second press with no utterance open (everything heard is sealed) closes without a seal', () => {
+  const m = machine();
+  m.frames(5, true); m.w.turnEnd('chicken or fish');
+  m.w.press();
+  assert.deepEqual(m.seals.map(s => s.reason), ['turn-end']);
+  assert.deepEqual(m.closes, [{ reason: 'press', seals: 1, windowText: 'chicken or fish' }]);
+  const empty = machine();
+  empty.w.press();
+  assert.deepEqual([empty.seals.length, empty.closes[0].reason, empty.closes[0].seals], [0, 'press', 0]);
+});
+
+test('with a drain hook, a press while an utterance is open waits for the final, then seals it (press) and closes (press)', () => {
+  const drained = [];
+  const m = machine({}, { drain: reason => drained.push(reason) });
+  m.frames(5, true); m.w.partial('chicken or');
+  assert.equal(m.w.pending, true, 'speech heard since the last seal');
+  m.w.press();
+  assert.deepEqual(drained, ['press']);
+  assert.equal(m.w.state, 'ending');
+  assert.deepEqual([m.seals.length, m.closes.length], [0, 0], 'nothing seals before the final arrives');
+  m.w.press(); m.frames(3, true); m.at(30000);
+  assert.deepEqual([drained.length, m.seals.length, m.closes.length], [1, 0, 0], 'a third press, frames and ticks wait too');
+  m.w.partial('chicken or fish');
+  m.w.end('chicken or fish please');
+  assert.deepEqual(m.seals, [{ seq: 1, text: 'chicken or fish please', windowText: 'chicken or fish please', reason: 'press' }]);
+  assert.deepEqual(m.closes, [{ reason: 'press', seals: 1, windowText: 'chicken or fish please' }]);
+  m.w.end('more'); assert.equal(m.seals.length, 1, 'end once');
+});
+
+test('with a drain hook: words in flight but energy only (no partial yet) still drain; a press with nothing open closes at once', () => {
+  const drained = [];
+  const m = machine({}, { drain: reason => drained.push(reason) });
+  m.frames(1, true); m.w.turnEnd('chicken or fish');
+  m.frames(3, true);
+  assert.equal(m.w.pending, true);
+  m.w.press();
+  assert.deepEqual(drained, ['press']);
+  m.w.end('chicken or fish or pasta');
+  assert.deepEqual(m.seals.map(s => [s.reason, s.text, s.windowText]), [['turn-end', 'chicken or fish', 'chicken or fish'], ['press', 'or pasta', 'chicken or fish or pasta']]);
+  const idle = machine({}, { drain: reason => drained.push(reason) });
+  idle.frames(1, true); idle.w.turnEnd('chicken or fish');
+  assert.equal(idle.w.pending, false);
+  idle.w.press();
+  assert.equal(drained.length, 1, 'no drain: nothing in flight');
+  assert.deepEqual(idle.closes.map(c => c.reason), ['press']);
+});
+
+test('with a drain hook: the final never comes, so end() seals the latest partial; nothing heard at all seals nothing', () => {
+  const m = machine({}, { drain: () => {} });
+  m.frames(5, true); m.w.partial('is it lunch');
+  m.w.press();
+  m.w.partial('is it lunch time');
+  m.w.end();
+  assert.deepEqual(m.seals.map(s => [s.reason, s.windowText]), [['press', 'is it lunch time']]);
+  assert.equal(m.closes[0].reason, 'press');
+  const quiet = machine({}, { drain: () => {} });
+  quiet.frames(5, true);
+  quiet.w.press();
+  assert.equal(quiet.w.state, 'ending');
+  quiet.w.end('');
+  assert.deepEqual([quiet.seals.length, quiet.closes[0].reason, quiet.closes[0].seals], [0, 'press', 0]);
+});
+
+test('with a drain hook: the 60 s cap drains the utterance in flight and seals it as cap', () => {
+  const drained = [];
+  const m = machine({}, { drain: reason => drained.push(reason) });
+  m.frames(5, true); m.w.partial('do you want');
+  m.at(60000);
+  assert.deepEqual(drained, ['cap']);
+  assert.equal(m.closes.length, 0);
+  m.w.end('do you want a story');
+  assert.deepEqual(m.seals.map(s => [s.reason, s.windowText]), [['cap', 'do you want a story']]);
+  assert.deepEqual(m.closes.map(c => c.reason), ['cap']);
+});
+
+test('with a drain hook: cancel or her pick while waiting for the final seals nothing', () => {
+  for (const how of ['cancel', 'pick']) {
+    const m = machine({}, { drain: () => {} });
+    m.frames(5, true); m.w.partial('chicken or fish');
+    m.w.press();
+    m.w[how]();
+    m.w.end('chicken or fish');
+    assert.deepEqual([m.seals.length, m.closes.map(c => c.reason)], [0, [how]], how);
+  }
 });
 
 test('cancel closes with no seal, whatever was heard', () => {

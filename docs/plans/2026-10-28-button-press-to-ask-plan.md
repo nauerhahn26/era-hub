@@ -368,6 +368,9 @@ Info
    `speech_final` (if present) are the provider signals; the 1.5 s fallback is
    the hub's energy gate (the worker's variance floor) over the window's frames,
    15 quiet 100 ms frames after ≥ 2 energetic ones; the provider wins when first.
+   A second press or the 60 s cap seals the utterance in flight (finalize, then
+   choices on the whole window text) before the window closes; silence and
+   cancel seal nothing; the final is waited for at most 2 s.
 2. Relaunch: `kiosk-launch.js` spawns the browser exe directly with
    start-hub.bat's flags (parity test), after `closeKiosk()` + 1 s, then
    `psSettleKiosk(6)` to foreground. Never cmd.exe, never a `.ps1`. Nonce =
