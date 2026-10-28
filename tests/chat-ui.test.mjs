@@ -202,3 +202,65 @@ test('a revealed choice keeps the hub picture word and id; anything else about t
     { id: `${c.state.turn}:1`, label: 'Odd', say: 'Odd.' }, { id: `${c.state.turn}:2`, label: 'Long', say: 'Long.' }]);
   assert.ok(Object.isFrozen(c.state.choices[0]));
 });
+
+// ---- replacement batches (design 2026-10-27 §4.5; plan T4.1-T4.2) ----
+const food = (...labels) => ({ choices: labels.map(label => ({ label, say: `${label}.` })) });
+async function showing(labels, deps = {}) {
+  const c = createChatController({ requestChoices: async () => food(...labels), ...deps });
+  await c.prepare('do you want chicken or fish'); c.neutral();
+  assert.equal(c.state.phase, 'Your turn');
+  return c;
+}
+const cells = c => c.state.choices.map(x => [x.label, x.cell ?? null]);
+
+test('a replacement waits for a neutral moment: the shown batch stays as it was until neutral()', async () => {
+  const c = await showing(['Chicken', 'Fish']);
+  const shown = c.state.choices;
+  assert.equal(c.replace(food('Chicken', 'Fish', 'Pasta').choices), true);
+  assert.equal(c.state.replacing, true);
+  assert.equal(c.state.choices, shown, 'nothing changes before the neutral moment');
+  assert.equal(c.state.phase, 'Your turn');
+  assert.equal(c.neutral(), true);
+  assert.equal(c.state.replacing, false);
+  assert.deepEqual(c.state.choices.map(x => x.label), ['Chicken', 'Fish', 'Pasta']);
+  assert.ok(Object.isFrozen(c.state.choices) && c.state.choices.every(Object.isFrozen), 'the swapped batch is sealed');
+  assert.ok(Object.isFrozen(shown) && shown.every(Object.isFrozen), 'the earlier batch was never touched');
+  assert.equal(new Set(c.state.choices.map(x => x.id)).size, 3);
+  assert.ok(c.state.choices.every(x => !shown.some(old => old.id === x.id)), 'a replacement is a new batch: new ids');
+  assert.equal(c.neutral(), false, 'one swap per replacement');
+});
+
+test('a newer replacement supersedes a pending one unseen', async () => {
+  const timings = [];
+  const c = await showing(['Chicken', 'Fish'], { onTiming: name => timings.push(name) });
+  c.replace(food('Chicken', 'Fish', 'Pasta').choices);
+  c.replace(food('Chicken', 'Fish', 'Soup').choices);
+  assert.equal(timings.filter(name => name === 'replacementSuperseded').length, 1);
+  assert.deepEqual(c.state.choices.map(x => x.label), ['Chicken', 'Fish']);
+  c.neutral();
+  assert.deepEqual(c.state.choices.map(x => x.label), ['Chicken', 'Fish', 'Soup'], 'pasta was never shown');
+  assert.equal(timings.at(-1), 'replaced');
+});
+
+test('her pick discards a pending replacement: the spoken tile is the shown one', async () => {
+  const spoken = [];
+  const c = await showing(['Chicken', 'Fish'], { speak: async choice => { spoken.push(choice.say); } });
+  c.replace(food('Pasta').choices);
+  await c.select(c.state.choices[1].id);
+  assert.deepEqual(spoken, ['Fish.']);
+  assert.equal(c.state.replacing, false);
+  assert.equal(c.neutral(), false);
+  assert.deepEqual(c.state.choices.map(x => x.label), ['Chicken', 'Fish']);
+});
+
+test('a replacement needs a shown batch in Your turn; anything else is refused', async () => {
+  const c = createChatController({ requestChoices: async () => food('Chicken') });
+  assert.equal(c.replace(food('Pasta').choices), false, 'nothing shown');
+  await c.prepare('question');
+  assert.equal(c.replace(food('Pasta').choices), false, 'staged, not yet revealed');
+  c.neutral();
+  assert.equal(c.replace([]), false, 'an empty batch');
+  assert.equal(c.replace([{ label: 'x' }]), false, 'nothing sayable');
+  c.replace(food('Pasta').choices); c.ask();
+  assert.equal(c.state.replacing, false, 'a new turn drops it');
+});

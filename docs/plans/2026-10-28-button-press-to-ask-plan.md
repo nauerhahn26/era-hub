@@ -228,7 +228,7 @@ Info
 
 ## Phase 4 — replacement batches (implementing)
 
-- [ ] **T4.1** `controller.js`: `replace(choices)` stages a pending
+- [x] **T4.1** `controller.js`: `replace(choices)` stages a pending
       replacement (a newer one supersedes it unseen, `timing('replacementSuperseded')`);
       `neutral()` in `'Your turn'` swaps it in; `select()` discards pending;
       sealed batches stay frozen (`Object.freeze`). Accept: `tests/chat-ui.test.mjs`

@@ -1,14 +1,27 @@
-// Pure session state. Displayed choices are immutable until a new explicit turn.
+// Pure session state. Displayed choices are immutable: within one listening
+// window a replacement batch is a new sealed batch, swapped in whole at a
+// neutral moment (design 2026-10-27 §4.5), never an edit of the shown one.
 export const isPartnerTouch = e => e?.isTrusted === true && e.pointerType === 'touch';
+
+// The hub's choices, checked: at most four with words to say. The hub's
+// decorative picture pick (spec §6) rides along; it never changes the words.
+function cleanChoices(list, prefix) {
+  return (Array.isArray(list) ? list : []).filter(x => x && typeof x.label === 'string' && typeof x.say === 'string' && x.say.trim()).slice(0, 4)
+    .map((x, i) => Object.freeze({ id: `${prefix}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600),
+      ...(typeof x.symbol === 'string' && x.symbol.length <= 64 ? { symbol: x.symbol } : {}),
+      ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}) }));
+}
 
 export function createChatController(deps = {}) {
   let turn = 0, pending = null, abort = null, speechAbort = null, utterance = 0;
+  // At most one replacement waits for a neutral moment; a newer one supersedes it unseen.
+  let replacement = null, batches = 0;
   const listeners = new Set();
-  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, error: '', turn });
+  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, replacing: false, error: '', turn });
   function timing(name) { try { deps.onTiming?.(name); } catch { /* Diagnostics never interrupt communication. */ } }
-  function patch(p) { state = Object.freeze({ ...state, ...p }); for (const fn of listeners) fn(state); }
+  function patch(p) { state = Object.freeze({ ...state, ...p, replacing: replacement !== null }); for (const fn of listeners) fn(state); }
   function invalidate() {
-    turn++; utterance++; abort?.abort(); speechAbort?.abort(); abort = new AbortController(); pending = null;
+    turn++; utterance++; abort?.abort(); speechAbort?.abort(); abort = new AbortController(); pending = null; replacement = null;
     deps.stopSpeech?.();
     return turn;
   }
@@ -29,11 +42,7 @@ export function createChatController(deps = {}) {
       try {
         const result = await deps.requestChoices?.({ text: question, signal: abort.signal });
         if (mine !== turn) return;
-        const clean = (result?.choices || []).filter(x => x && typeof x.label === 'string' && typeof x.say === 'string' && x.say.trim()).slice(0, 4)
-          .map((x, i) => Object.freeze({ id: `${mine}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600),
-            // The hub's decorative picture pick (spec §6) rides along; it never changes the words.
-            ...(typeof x.symbol === 'string' && x.symbol.length <= 64 ? { symbol: x.symbol } : {}),
-            ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}) }));
+        const clean = cleanChoices(result?.choices, `${mine}`);
         if (!clean.length) throw new Error('No suggestions available. Your phrases still work.');
         pending = Object.freeze(clean);
         timing('choicesReady');
@@ -48,7 +57,25 @@ export function createChatController(deps = {}) {
         await deps.onChoicesError?.();
       }
     },
+    // A batch for the same window while one is shown: staged, never drawn
+    // until neutral(). Refused unless a batch is showing in 'Your turn'.
+    replace(choices) {
+      if (state.phase !== 'Your turn' || !state.choices.length) return false;
+      const clean = cleanChoices(choices, `${turn}.${++batches}`);
+      if (!clean.length) return false;
+      if (replacement) timing('replacementSuperseded');
+      replacement = Object.freeze(clean);
+      patch({});
+      return true;
+    },
     neutral() {
+      if (replacement && state.phase === 'Your turn') {
+        const next = replacement; replacement = null;
+        deps.beforeChoices?.();
+        timing('replaced');
+        patch({ choices: next });
+        return true;
+      }
       if (!pending || state.phase !== 'Preparing') return false;
       const next = pending; pending = null;
       deps.beforeChoices?.();
@@ -65,6 +92,7 @@ export function createChatController(deps = {}) {
     },
     async sayFixed(text) {
       const mine = turn, spoken = ++utterance;
+      replacement = null; // a pick wins: anything waiting to replace the shown batch is dropped
       speechAbort?.abort(); speechAbort = new AbortController();
       deps.stopSpeech?.();
       timing('speechRequested');
