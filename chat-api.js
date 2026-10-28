@@ -417,7 +417,9 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const value = typeof options.world === 'function' ? options.world() : typeof options.world?.digest === 'function' ? options.world.digest() : null;
       if (!value || typeof value.text !== 'string' || value.text.length > 6000) return null;
       const count = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
-      return { text: value.text, weeks: count(value.weeks), days: count(value.days), chars: value.text.length };
+      // The About me page's lines (stable frame §2): clean short strings, six at most.
+      const lines = list => (Array.isArray(list) ? list : []).filter(item => typeof item === 'string' && item.trim() && item.length <= 300 && !/[\x00-\x1f<>]/.test(item)).slice(0, 6);
+      return { text: value.text, weeks: count(value.weeks), days: count(value.days), chars: value.text.length, about: lines(value.about), week: lines(value.week) };
     } catch { return null; }
   };
   // Two more than the HTTP route's own limit: a streaming session's speculative
@@ -869,7 +871,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     });
     if (req.method === 'POST' && routePath === '/choices') return generate(req, res);
     // What Chat knows this week, for the partner dialog's read-only preview.
-    if (req.method === 'GET' && routePath === '/world') return json(res, 200, worldDigest() || { text: '', weeks: 0, days: 0, chars: 0 });
+    if (req.method === 'GET' && routePath === '/world') return json(res, 200, worldDigest() || { text: '', weeks: 0, days: 0, chars: 0, about: [], week: [] });
     if (req.method === 'POST' && routePath === '/sessions') {
       await readBody(req, limits.bodyBytes);
       const session = startSession(); return json(res, 201, { id: session.id });

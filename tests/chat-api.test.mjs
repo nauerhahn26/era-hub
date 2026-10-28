@@ -1034,15 +1034,20 @@ test('the built-in reply core gets world in its model input for an open shape', 
 });
 
 test('GET /chat/api/world serves the digest for the partner dialog, to the hub\'s own pages only', async t => {
-  const s = await service(t, { world: { digest: () => WORLD } });
-  assert.deepEqual(await (await fetch(s.base + '/world')).json(), WORLD);
+  const lines = { about: ['She loves drawing animals.'], week: ['We are learning about magnets', 'Our hero is a famous inventor'] };
+  const s = await service(t, { world: { digest: () => ({ ...WORLD, ...lines }) } });
+  assert.deepEqual(await (await fetch(s.base + '/world')).json(), { ...WORLD, ...lines }, 'the about and week lines ride along (stable frame §2)');
+  const older = await service(t, { world: { digest: () => WORLD } });
+  assert.deepEqual(await (await fetch(older.base + '/world')).json(), { ...WORLD, about: [], week: [] }, 'a digest without them gives empty lists');
+  const junk = await service(t, { world: { digest: () => ({ ...WORLD, about: 'x', week: ['ok', 7, '', 'bad\u0007', 'y'.repeat(301)] }) } });
+  assert.deepEqual(await (await fetch(junk.base + '/world')).json(), { ...WORLD, about: [], week: ['ok'] }, 'only clean short strings');
   const status = await new Promise((resolve, reject) => {
     const request = http.request(s.base + '/world', { headers: { 'Sec-Fetch-Site': 'cross-site' } }, response => { response.resume(); resolve(response.statusCode); });
     request.on('error', reject); request.end();
   });
   assert.equal(status, 403);
   const none = await service(t);
-  assert.deepEqual(await (await fetch(none.base + '/world')).json(), { text: '', weeks: 0, days: 0, chars: 0 });
+  assert.deepEqual(await (await fetch(none.base + '/world')).json(), { text: '', weeks: 0, days: 0, chars: 0, about: [], week: [] });
   const broken = await service(t, { world: () => { throw Error('unreadable'); } });
-  assert.deepEqual(await (await fetch(broken.base + '/world')).json(), { text: '', weeks: 0, days: 0, chars: 0 });
+  assert.deepEqual(await (await fetch(broken.base + '/world')).json(), { text: '', weeks: 0, days: 0, chars: 0, about: [], week: [] });
 });
