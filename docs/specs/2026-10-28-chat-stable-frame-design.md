@@ -107,3 +107,29 @@ production mode.
   `week`, choices `mode` and `avoid` (chat-choices-adapter, chat-api), the
   fixed sets without a model, turn record fields (chat-turns validateTurn,
   chat-turnlog).
+
+## 6. Reading the options aloud (dad, 10/28 night)
+
+When a batch is revealed and she has not answered after a silence, the device
+reads the options: "<name>, your options are" in the saved voice (the one
+used for everything), then each reply label in spoken order at a natural
+cadence, the tile lit while its clip plays. The name is the device's
+`chatName` setting (default the one first name used in this software), so it
+works for anyone. The delay is the device's `chatPromptMs` setting, chosen in
+the partner dialog (off, 10, 12, 15 or 20 s; default 12 s).
+
+The timer starts at the reveal. It is cancelled by any dwell progress on a
+tile, a selection, a page or mode swap, a new hold, or the partner dialog
+opening. The reading never blocks her: a dwell during it selects as usual and
+stops the reading. YES and NO are not read. A batch is read at most once.
+The turn record (test mode) gains `content.prompted: true` when a reading
+started and keeps `selected` as usual, so prompted turns can be compared.
+
+## 7. Her gaze never ends a hold
+
+While the partner holds Hold to ask (from touch-down until the final
+transcript or the hold's end), no tile on the grid is a dwell target: a look
+at YES, a page or an old reply during the question cannot speak and cannot
+cancel the capture. The targets return when the hold ends. Today a selection
+during a hold cancels it (speak() ends the capture), which is what the
+partner saw as "I had to redo the question".
