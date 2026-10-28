@@ -1949,3 +1949,71 @@ test("device volume can rise above 45, decrease, switch Off, and retain its mode
     assert.deepEqual(writes.at(-1), { deviceEnabled: true, deviceCap: 25 });
   } finally { await ctx.close(); }
 });
+
+// ---- Connections → Buttons (button press to ask, plan T5.4) ----
+//
+// The device button listener's state, read from /status.buttons every 5 s
+// while Connections shows: running or not, which keys it holds (the three
+// Ctrl+Alt keys said once), the last press, Chat off said plainly, and the
+// one-time setup for the Flic app and the I-13's Square button. /status is
+// stubbed per test (the real hub here has no listener: it is Linux).
+function buttonsStatus(over = {}) {
+  return { state: "running", pid: 4321, keys: { registered: ["F13", "F14", "Ctrl+Alt+F9", "Ctrl+Alt+F10", "Ctrl+Alt+F11"], failed: [] },
+    lastPress: { at: "2026-10-28T18:04:30.000Z", key: "F13", action: "ask", dispatch: "visible" },
+    restarts: 0, lastError: null, ...over };
+}
+async function buttonsPage(payload) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, timezoneId: "UTC" });
+  await ctx.route("http://127.0.0.1:49155/**", r => r.abort());
+  const box = { buttons: payload, reads: 0 };
+  await ctx.route(u => u.port === String(PORT) && u.pathname === "/status", r => { box.reads++; return r.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify({ build: "x", pid: 1, uptimeMs: 1, gaze: {}, buttons: box.buttons }) }); });
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/settings/#connections`, { waitUntil: "load" });
+  await page.waitForFunction(() => Boolean(window.ERASettingsLayout));
+  return { ctx, page, box };
+}
+const buttonsLine = (page) => page.$eval("#buttonsStatus", el => el.textContent.replace(/\s+/g, " ").trim());
+
+test("the Buttons card says the listener runs, which keys it holds and the last press (T5.4)", async () => {
+  const { ctx, page } = await buttonsPage(buttonsStatus());
+  try {
+    assert.equal(await page.$eval("#buttons", el => el.closest(".settings-section")?.dataset.section), "connections");
+    assert.match(await page.$eval("#buttons h2", h => h.textContent), /Buttons/);
+    await page.waitForFunction(() => /Listener running/.test(document.getElementById("buttonsStatus").textContent));
+    assert.equal(await buttonsLine(page), "Listener running · holds F13, F14, Ctrl+Alt+F9/F10/F11 · last press 18:04 F13 (ask)");
+    const note = await page.$eval("#buttonsSetup", el => el.textContent.replace(/\s+/g, " ").trim());
+    assert.equal(note, "Flic app: Keyboard mode, click → F13, hold → F14, double click empty; pair in Windows Bluetooth as a keyboard. Square button: Hardware Settings → Send Keyboard Key → Ctrl+Alt+F9, then restart the device. The first time, touch Chat's microphone control once so the browser remembers the microphone for this device.");
+    assert.equal(await page.$("#buttonsMic"), null, "no microphone policy line: the hub does not write one (decision 16)");
+  } finally { await ctx.close(); }
+});
+
+test("Chat off, a key another program holds, no press yet, and a listener that cannot start each say so (T5.4)", async () => {
+  const { ctx, page, box } = await buttonsPage(buttonsStatus({ state: "off", pid: null, keys: { registered: [], failed: [] }, lastPress: null }));
+  try {
+    await page.waitForFunction(() => /Chat is off/.test(document.getElementById("buttonsStatus").textContent));
+    assert.equal(await buttonsLine(page), "Chat is off — the buttons do nothing until Chat is enabled.");
+    box.buttons = buttonsStatus({ keys: { registered: ["F14", "Ctrl+Alt+F9", "Ctrl+Alt+F10", "Ctrl+Alt+F11"], failed: ["F13"] }, lastPress: null });
+    await page.waitForFunction(() => /F13 is held by another program/.test(document.getElementById("buttonsStatus").textContent), null, { timeout: 8000 });
+    assert.equal(await buttonsLine(page), "Listener running · holds F14, Ctrl+Alt+F9/F10/F11 · no press yet · F13 is held by another program");
+    box.buttons = buttonsStatus({ state: "failed", pid: null, keys: { registered: [], failed: [] }, lastError: "compile failed: <b>CS1002</b>" });
+    await page.waitForFunction(() => /not running/.test(document.getElementById("buttonsStatus").textContent), null, { timeout: 8000 });
+    assert.match(await buttonsLine(page), /^Listener not running: compile failed: <b>CS1002<\/b>/);
+    assert.equal(await page.$$eval("#buttonsStatus b", els => els.length), 0, "the error is text, never markup");
+  } finally { await ctx.close(); }
+});
+
+test("the Buttons card repaints every 5 s while Connections shows, and not on another section (T5.4)", async () => {
+  const { ctx, page, box } = await buttonsPage(buttonsStatus({ state: "compiling", pid: null, keys: { registered: [], failed: [] }, lastPress: null }));
+  try {
+    await page.waitForFunction(() => /Setting up the button listener/.test(document.getElementById("buttonsStatus").textContent));
+    box.buttons = buttonsStatus();
+    await page.waitForFunction(() => /Listener running/.test(document.getElementById("buttonsStatus").textContent), null, { timeout: 7000 });
+    await page.evaluate(() => { location.hash = "gaze"; });
+    await page.waitForFunction(() => document.getElementById("settings-section-gaze")?.hidden === false);
+    await page.waitForTimeout(300);
+    const reads = box.reads;
+    await page.waitForTimeout(5600);
+    assert.equal(box.reads, reads, "no /status reads while another section shows");
+  } finally { await ctx.close(); }
+});

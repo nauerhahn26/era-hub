@@ -7,12 +7,16 @@
 //   const stream = createStreamTranscriber({ protocol, url, model, token, keyterms, query, idleCloseMs, ... })
 //   stream.open()          warm the socket (Start Chat); resolves with the connect ms
 //   stream.begin()         a hold starts (reconnects at touch-down when the socket was closed)
+//   stream.begin({ window: true })  a button-press listening window starts: the
+//                          service's end of turn is surfaced as 'turn-end' per
+//                          utterance and nothing is finalized until finalize()
 //   stream.sendPcm(pcm)    PCM16 16 kHz mono, in order; queued until the socket is open
 //   stream.finalize()      release: the hold's words are complete
 //   stream.cancel()        the hold is discarded; nothing of it is ever reported
 //   stream.close()         Chat ended
 //   events: 'partial' {text}, 'settled' {text}, 'final' {text, timings},
-//           'error' {code, beforeAudio}, 'socket' {warm, connectMs}
+//           'error' {code, beforeAudio}, 'socket' {warm, connectMs},
+//           'turn-end' {text} (window turns only: one utterance's words)
 //
 // ws-streaming-turns  settings in the query, the token in Authorization, binary
 //   PCM (every message 20-1000 ms of audio), `Turn` messages. Release sends
@@ -66,6 +70,7 @@ const PROTOCOLS = {
         if (message.end_of_turn && (message.turn_is_formatted || !formatted)) {
           state.turns.set(order, text); state.open = null;
           out.partial(joined());
+          if (!turn.finalizing) out.turnEnd(text);
           if (turn.finalizing) out.settled(joined());
           return;
         }
@@ -89,7 +94,7 @@ const PROTOCOLS = {
     close: [{ type: 'CloseStream' }],
     closesAfterTurn: false,
     keepAlive: { type: 'KeepAlive' },
-    state: () => ({ committed: [], interim: '' }),
+    state: () => ({ committed: [], interim: '', mark: 0 }),
     handle(s, turn, message, out) {
       if (message.type === 'Error' || message.type === 'FatalError') { out.error('service-error'); return; }
       if (message.type !== 'Results') return;
@@ -98,6 +103,13 @@ const PROTOCOLS = {
       const text = String((alternatives[0] && alternatives[0].transcript) || '').trim();
       if (message.is_final) { if (text) state.committed.push(text); state.interim = ''; } else state.interim = text;
       out.partial([...state.committed, state.interim].filter(Boolean).join(' '));
+      // speech_final is unverified for this shape: when it is absent no
+      // turn-end comes and the hub's silence fallback ends the utterance.
+      if (message.is_final && message.speech_final === true && !turn.finalizing) {
+        const words = state.committed.slice(state.mark).join(' ').trim();
+        state.mark = state.committed.length;
+        if (words) out.turnEnd(words);
+      }
       if (message.from_finalize && turn.finalizing) { const words = state.committed.join(' ').trim(); out.settled(words); out.final(words); }
     },
   },
@@ -267,16 +279,21 @@ class StreamTranscriber extends EventEmitter {
         turn.settledAt = this.clock(); this.emitSafe('settled', { text });
       },
       final: text => this.complete(turn, text),
+      // A window's utterance ended at the service. Hold turns never see it.
+      turnEnd: text => {
+        if (turn !== this.turn || turn.done || !turn.window || !text) return;
+        this.emitSafe('turn-end', { text });
+      },
       error: code => this.fail(turn, code),
     };
   }
-  begin() {
+  begin(options = {}) {
     if (this.closed) return;
     if (this.turn && !this.turn.done) this.cancel();
     clearTimeout(this.idleTimer); this.idleTimer = null;
     const turn = { began: this.clock(), queue: [], tail: Buffer.alloc(0), audioBytes: 0, sentAny: false, finalizing: false, finalizeAt: null,
       firstPartialAt: null, settledAt: null, shown: '', history: [], connectMs: null, done: false, ended: false, cancelled: false,
-      timer: null, protocol: this.protocol.state() };
+      timer: null, window: options.window === true, protocol: this.protocol.state() };
     this.turn = turn;
     if (this.state === 'open') { turn.connectMs = 0; this.emitSafe('socket', { warm: true, connectMs: 0 }); return; }
     this.open().then(connectMs => {

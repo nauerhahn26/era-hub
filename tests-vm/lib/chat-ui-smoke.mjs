@@ -266,6 +266,9 @@ export async function checkInstalledChatUI(page, options = {}) {
       // The partner dialog's read-only "What Chat knows this week" preview.
       if (request.method() === 'GET' && url.pathname === '/chat/api/world') return settleRoute(route.continue());
       if (['GET', 'PUT'].includes(request.method()) && url.pathname === '/chat/api/state') return settleRoute(route.continue());
+      // The page's command stream for the partner's button (design 2026-10-27 §4.2): open at load.
+      if (request.method() === 'GET' && url.pathname === '/chat/api/commands') return settleRoute(route.continue());
+      if (request.method() === 'POST' && url.pathname === '/chat/api/commands/visibility') return settleRoute(route.continue());
       if (request.method() === 'POST' && url.pathname === '/chat/api/sessions') requests.sessions++;
       if (request.method() === 'POST' && url.pathname === '/chat/api/choices') {
         let input; try { input = request.postDataJSON(); } catch {}

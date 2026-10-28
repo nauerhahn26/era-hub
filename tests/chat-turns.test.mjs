@@ -371,6 +371,21 @@ test('a streamed turn is stamped with the transcription setting it actually used
   assert.deepEqual(lines.map(line => line.models.transcription), ['stream-primary-z', 'stream-fallback-w', 'speech-model-y']);
 });
 
+test('a button-press turn (kind press): press, tone, listening, repeated utteranceSealed and batchReplaced, windowClosed with its reason', () => {
+  const record = turnRecord({ kind: 'press', mode: 'stream', setting: 'primary', stages: [
+    { name: 'press', ms: 0 }, { name: 'begin', ms: 420 }, { name: 'tone', ms: 900 }, { name: 'listening', ms: 1290 },
+    { name: 'firstPartial', ms: 1800, text: 'chicken' }, { name: 'utteranceSealed', ms: 3200, text: 'do you want chicken or fish' },
+    { name: 'transcript', ms: 3200 }, { name: 'batchSealed', ms: 3900 }, { name: 'revealed', ms: 3900 },
+    { name: 'utteranceSealed', ms: 5200, text: 'or pasta' }, { name: 'batchReplaced', ms: 5900 }, { name: 'batchReplaced', ms: 7100 },
+    { name: 'windowClosed', ms: 15200, text: 'silence' }, { name: 'selected', ms: 16000 }] });
+  assert.deepEqual(validateTurn(record), record);
+  for (const reason of ['silence', 'cap', 'press', 'cancel', 'pick', 'nothing-said', 'error'])
+    assert.equal(validateTurn(turnRecord({ kind: 'press', mode: 'stream', stages: [{ name: 'windowClosed', ms: 1, text: reason }] })).kind, 'press');
+  for (const stages of [[{ name: 'tone', ms: 1, text: 'no words on the tone' }], [{ name: 'pressed', ms: 1 }], [{ name: 'listening', ms: 1, text: 'x' }],
+    [{ name: 'batchReplaced', ms: 1, text: 'x' }], [{ name: 'utteranceSealed', ms: 1, text: 'x'.repeat(2001) }]])
+    assert.throws(() => validateTurn(turnRecord({ kind: 'press', mode: 'stream', stages })), e => e.code === 'invalid-turn', JSON.stringify(stages));
+});
+
 test('what she likes: a bounded list of short phrases, the generic default when absent, junk ignored', async t => {
   const s = { dataDir: await directory(t) };
   assert.deepEqual(DEFAULT_LIKES, ['play outside', 'draw', 'read a book', 'watch a show', 'play a game', 'listen to music', 'have a snack', 'see a friend']);
