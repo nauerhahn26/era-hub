@@ -112,11 +112,20 @@ function worldTerms(world) {
   return new Set(typeof world === 'string' ? wordsOf(world).map(word => word.replace(/'s$/, '')).filter(word => word.length >= 4 && !WORLD_STOP.has(word))
     .flatMap(forms) : []);
 }
-function recallAsserted(choices, world) {
+// One say that states a past activity, place or person world does not know.
+function assertsUnknown(world) {
   const terms = worldTerms(world);
   const known = say => terms.size > 0 && wordsOf(say).some(word => forms(word.replace(/'s$/, '')).some(form => terms.has(form)));
-  return choices.some(choice => (ASSERTED.test(choice.say) ||
-    /\b(?:it was at|we were at)\b/i.test(choice.say)) && !known(choice.say));
+  return choice => (ASSERTED.test(choice.say) || /\b(?:it was at|we were at)\b/i.test(choice.say)) && !known(choice.say);
+}
+function recallAsserted(choices, world) { return choices.some(assertsUnknown(world)); }
+// Make a comment (coordinator, 10/28): only the says that assert an unknown
+// past activity go; fewer than two left means the fixed comment set.
+const COMMENT_FIXED = ["That's cool!", "I'm not sure", 'I like that', 'No way!'].map(say => ({ label: say, say }));
+function commentChecked(data, choices) {
+  const kept = choices.filter(choice => !assertsUnknown(data.world)(choice));
+  if (kept.length < 2) return { choices: COMMENT_FIXED.map(choice => ({ ...choice })), rejected: true, dropped: 0 };
+  return { choices: kept, rejected: false, dropped: choices.length - kept.length };
 }
 // Only a previously selected utterance with the same explicit time anchor
 // may supply a personal fact. Partner assertions never become child facts.
@@ -256,12 +265,14 @@ function createChoicesAdapter(options = {}) {
     text: { format: { type: 'json_schema', name: 'choices', strict: true, schema: SCHEMA } } });
   const finished = (data, choices, usage, before) => {
     const guarded = changesOwnership(data, choices);
-    // A comment is checked like a recall reply: never an invented fact about her past.
-    const recall = !guarded && (data.shape === 'recall' || data.mode === 'comment') ? recallChecked(data, choices) : null;
+    // Never an invented fact about her past: a recall reply loses the whole
+    // batch to the repairs, a comment only the says that assert one.
+    const recall = guarded ? null : data.shape === 'recall' ? recallChecked(data, choices) : data.mode === 'comment' ? commentChecked(data, choices) : null;
     const rejected = !!recall?.rejected;
     return { ...(usage ? { usage } : {}), choices: guarded ? [{ label: 'Offer help', say: 'Can I help you?' }, { label: 'Tell me more', say: 'Tell me more.' },
       { label: 'A moment', say: 'I need a moment.' }] : recall ? recall.choices : choices,
       kind: guarded || rejected ? 'guarded' : 'generated', generated: !guarded && !rejected, ...(rejected ? { recallRejected: true } : {}),
+      ...(recall?.dropped ? { commentDropped: recall.dropped } : {}),
       timings: { totalMs: Math.round((clock() - before) * 100) / 100 } };
   };
   // One request at a time per controller: bounded concurrency, a timeout, and

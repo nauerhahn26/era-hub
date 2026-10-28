@@ -1117,3 +1117,12 @@ test('the built-in reply core gets mode, likes, world and avoid in its model inp
   assert.deepEqual(input, { question: 'Magnets stick to the fridge.', context: [], mode: 'comment', likes: ['draw'], world: WORLD.text, avoid: ['Wow!'] });
   assert.equal(result.kind, 'generated'); assert.equal(result.mode, 'comment');
 });
+
+test('a comment batch that lost a say to the recall check reports how many', async t => {
+  const s = await service(t, { env: { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' },
+    fetch: async () => new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
+      choices: [{ label: 'Zoo', say: 'I went to the zoo.' }, { label: 'Cool', say: "That's cool!" }, { label: 'Yum', say: 'Yum!' }] }) }] }] })) });
+  const result = await (await s.request('/choices', { text: 'We saw lions.', mode: 'comment' })).json();
+  assert.equal(result.kind, 'generated'); assert.equal(result.commentDropped, 1);
+  assert.deepEqual(result.choices.map(choice => choice.say), ["That's cool!", 'Yum!']);
+});

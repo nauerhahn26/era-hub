@@ -767,6 +767,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol, picture: item.picture }))),
         ...(rejected ? { symbolRejected: rejected } : {}),
         ...(shape ? { shape } : {}), ...(mode ? { mode } : {}), ...(result.recallRejected === true ? { recallRejected: true } : {}),
+        ...(Number.isSafeInteger(result.commentDropped) && result.commentDropped > 0 && result.commentDropped <= 4 ? { commentDropped: result.commentDropped } : {}),
         // The turn record keeps the world's size, never its text.
         ...(world ? { world: { weeks: world.weeks, days: world.days, chars: world.chars } } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),

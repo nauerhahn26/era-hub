@@ -344,9 +344,19 @@ test('a mode skips the partner-incident shortcut; comments get the recall check,
   const asked = await run(FOUR, { text: 'I made chicken.', mode: 'ask' });
   assert.equal(asked.kind, 'generated', 'the model is asked even when the partner talks about themself');
   const invented = { choices: [{ label: 'Zoo', say: 'I went to the zoo.' }, { label: 'Cool', say: "That's cool!" }, { label: 'Yum', say: 'Yum!' }, { label: 'No', say: 'No way!' }] };
+  // A comment drops only the says that assert an unknown past activity (coordinator, 10/28).
   const comment = await run(invented, { text: 'We saw lions.', mode: 'comment' });
-  assert.equal(comment.recallRejected, true); assert.equal(comment.kind, 'guarded');
-  assert.deepEqual(comment.choices.map(x => x.say), REPAIRS);
+  assert.equal(comment.kind, 'generated'); assert.equal(comment.generated, true); assert.equal(comment.commentDropped, 1);
+  assert.equal('recallRejected' in comment, false);
+  assert.deepEqual(comment.choices.map(x => x.say), ["That's cool!", 'Yum!', 'No way!']);
+  const mostly = { choices: [{ label: 'Zoo', say: 'I went to the zoo.' }, { label: 'Lions', say: 'I saw lions too.' }, { label: 'Cake', say: 'We ate cake.' }, { label: 'Cool', say: "That's cool!" }] };
+  const fixed = await run(mostly, { text: 'We saw lions.', mode: 'comment' });
+  assert.equal(fixed.kind, 'guarded'); assert.equal(fixed.generated, false); assert.equal(fixed.recallRejected, true);
+  assert.deepEqual(fixed.choices.map(x => x.say), ["That's cool!", "I'm not sure", 'I like that', 'No way!'], 'fewer than two left: the fixed comment set');
+  const clean = await run(FOUR, { text: 'We saw lions.', mode: 'comment' });
+  assert.equal('commentDropped' in clean, false, 'nothing dropped, nothing reported');
+  // Shape recall keeps the whole-batch swap.
+  assert.deepEqual((await run(invented, { text: 'What did you do?', shape: 'recall' })).choices.map(x => x.say), REPAIRS);
   const known = await run({ choices: [{ label: 'Magnets', say: 'I learned about magnets.' }, { label: 'Cool', say: "That's cool!" }] }, { text: 'Magnets are fun.', mode: 'comment', world: WORLD });
   assert.equal(known.kind, 'generated', 'world is known on a comment as on a recall');
   assert.equal((await run(invented, { text: 'We saw lions.', mode: 'ask' })).kind, 'generated', 'questions are not checked for recall');
