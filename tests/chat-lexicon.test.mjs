@@ -47,8 +47,48 @@ test('the builder drops entries with no keyword, flagged entries, pronouns, plac
   assert.equal(lexicon.words.flagged, undefined);
   assert.equal(lexicon.words.me, undefined, 'a pronoun is never a picture');
   assert.equal(lexicon.words.germany, undefined, 'no place names');
-  assert.equal(lexicon.words.stop, undefined, 'verbs are not indexed: only things');
+  assert.equal(lexicon.words.stop, undefined, 'verbs are not things: they live in the actions map');
   assert.equal(lexicon.words.i, undefined);
+});
+
+test('the builder keeps a second map of actions, qualities and social words (keyword types 3-6) under the same rules', () => {
+  const lexicon = builder.buildLexicon(sample, { source: 'fixture', built: '2026-10-28' });
+  const { actions } = lexicon;
+  assert.equal(actions.stop, 7196, 'a verb');
+  assert.equal(actions.wait, 16697, 'the core AAC entry wins a shared verb');
+  assert.equal(actions.await, 8109);
+  assert.equal(actions.later, 32749, 'a descriptive word');
+  assert.equal(actions.hello, 6522, 'a social word'); assert.equal(actions.hi, 6522);
+  assert.equal(actions['i do not know'], 7180); assert.equal(actions['i dont know'], 7180, 'folded as the hub folds a label');
+  assert.equal(actions.weekend, 27329, 'a miscellaneous word');
+  assert.equal(actions.wave, 8208, 'the gesture is an action; the sea wave stays a thing');
+  assert.equal(lexicon.words.wave, 4706);
+  assert.equal(actions.chicken, undefined, 'things never enter the actions map');
+  assert.equal(lexicon.words.hello, undefined, 'actions never enter the things map');
+  // Simple verb forms, never over a real keyword.
+  assert.equal(actions.waits, 16697); assert.equal(actions.waiting, 16697);
+  assert.equal(actions.tells, 9692); assert.equal(actions.telling, 9692);
+  assert.equal(actions.makes, 11749); assert.equal(actions.making, 11749);
+  assert.equal(actions.laters, undefined, 'only verbs are inflected');
+  // The same drop rules: letters, pronouns, flagged pictures.
+  assert.equal(actions.b, undefined); assert.equal(actions['bee letter'], undefined);
+  assert.equal(actions.myself, undefined);
+  assert.equal(actions['flagged mood'], undefined);
+  for (const key of Object.keys(actions)) assert.match(key, /^[a-z0-9]+(?: [a-z0-9]+)*$/, key);
+  assert.equal(lexicon.actionCount, Object.keys(actions).length);
+  const family = id => Object.entries(lexicon.families).find(([, ids]) => ids.includes(id))?.[0];
+  assert.equal(family(27329), 'time', 'an action id has its family too, for the guard');
+});
+
+test('verb forms: -s, -es, -ies and -ing', () => {
+  assert.deepEqual(builder.verbForms('wait'), ['waits', 'waiting']);
+  assert.deepEqual(builder.verbForms('wash'), ['washes', 'washing']);
+  assert.deepEqual(builder.verbForms('cry'), ['cries', 'crying']);
+  assert.deepEqual(builder.verbForms('make'), ['makes', 'making']);
+  assert.deepEqual(builder.verbForms('see'), ['sees', 'seeing']);
+  assert.deepEqual(builder.verbForms('lie'), ['lies', 'lying']);
+  assert.deepEqual(builder.verbForms('go'), ['goes', 'going']);
+  assert.deepEqual(builder.verbForms('give up'), [], 'phrases are not inflected');
 });
 
 test('the builder records a coarse family per id for the picture guard: food, drink, weather, time', () => {
@@ -58,14 +98,14 @@ test('the builder records a coarse family per id for the picture guard: food, dr
   assert.equal(family(2296), 'drink', 'a beverage is a drink before it is food');
   assert.equal(family(3135), 'weather');
   assert.ok(!['food', 'drink', 'weather', 'time'].includes(family(6054)), 'a floor tile is none of the guarded families');
-  for (const list of Object.values(lexicon.families)) for (const id of list) assert.ok(Object.values(lexicon.words).includes(id), 'families name only indexed ids');
+  for (const list of Object.values(lexicon.families)) for (const id of list) assert.ok([...Object.values(lexicon.words), ...Object.values(lexicon.actions)].includes(id), 'families name only indexed ids');
 });
 
 test('the serialized index is compact JSON within the size budget, and an index over budget is refused', () => {
   const lexicon = builder.buildLexicon(sample, { source: 'fixture', built: '2026-10-28' });
   const text = builder.serializeLexicon(lexicon);
   assert.deepEqual(JSON.parse(text).words, lexicon.words);
-  assert.equal(builder.BUDGET_BYTES, 600 * 1024);
+  assert.equal(builder.BUDGET_BYTES, 1000 * 1024, 'the hub reads it, never the page: under 1 MB');
   assert.throws(() => builder.serializeLexicon(lexicon, { budget: 200 }), /budget/);
 });
 
@@ -93,11 +133,12 @@ test('the build fetches through the injected fetcher, writes the file and report
 
 test('the shipped index is words and numbers only, under budget, with its source and build date', () => {
   const bytes = fs.statSync(path.join(HUB, 'public', 'chat', 'lexicon.json')).size;
-  assert.ok(bytes <= 600 * 1024, `${bytes} bytes`);
+  assert.ok(bytes <= builder.BUDGET_BYTES, `${bytes} bytes`);
   assert.match(shipped.note, /words and pictogram ids only/i);
   assert.match(shipped.source, /^https:\/\//); assert.match(shipped.built, /^\d{4}-\d\d-\d\d$/);
   assert.ok(shipped.count > 10000, 'the library\'s thousands of things, not a sample');
-  for (const [word, id] of Object.entries(shipped.words)) {
+  assert.ok(shipped.actionCount > 3000 && Object.keys(shipped.actions).length === shipped.actionCount, 'and its thousands of actions');
+  for (const [word, id] of [...Object.entries(shipped.words), ...Object.entries(shipped.actions)]) {
     assert.match(word, /^[a-z0-9]+(?: [a-z0-9]+)*$/);
     assert.ok(Number.isSafeInteger(id) && id > 0);
   }

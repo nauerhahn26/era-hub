@@ -429,5 +429,276 @@
     "type": 2
    }
   ]
+ },
+ {
+  "_id": 16697,
+  "aac": true,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "usual verbs",
+   "core vocabulary-communication"
+  ],
+  "tags": [
+   "usual verbs",
+   "core vocabulary-communication"
+  ],
+  "keywords": [
+   {
+    "keyword": "wait",
+    "type": 3
+   }
+  ]
+ },
+ {
+  "_id": 8109,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "usual verbs"
+  ],
+  "tags": [
+   "usual verbs"
+  ],
+  "keywords": [
+   {
+    "keyword": "wait",
+    "type": 3
+   },
+   {
+    "keyword": "await",
+    "type": 3
+   }
+  ]
+ },
+ {
+  "_id": 32749,
+  "aac": true,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "adverb of time",
+   "core vocabulary-time"
+  ],
+  "tags": [
+   "time",
+   "core vocabulary"
+  ],
+  "keywords": [
+   {
+    "keyword": "later",
+    "type": 4
+   }
+  ]
+ },
+ {
+  "_id": 6522,
+  "aac": true,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "courtesy",
+   "core vocabulary-social"
+  ],
+  "tags": [
+   "courtesy",
+   "core vocabulary-social"
+  ],
+  "keywords": [
+   {
+    "keyword": "hello",
+    "type": 5
+   },
+   {
+    "keyword": "hi",
+    "type": 5
+   }
+  ]
+ },
+ {
+  "_id": 7180,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "communication"
+  ],
+  "tags": [
+   "communication"
+  ],
+  "keywords": [
+   {
+    "keyword": "I do not know",
+    "type": 5
+   },
+   {
+    "keyword": "I don't know",
+    "type": 5
+   },
+   {
+    "keyword": "misunderstand",
+    "type": 3
+   }
+  ]
+ },
+ {
+  "_id": 27329,
+  "aac": true,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "leisure",
+   "core vocabulary-time"
+  ],
+  "tags": [
+   "time",
+   "calendar",
+   "core vocabulary"
+  ],
+  "keywords": [
+   {
+    "keyword": "weekend",
+    "type": 6
+   }
+  ]
+ },
+ {
+  "_id": 8208,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "usual verbs",
+   "social"
+  ],
+  "tags": [
+   "usual verbs",
+   "social"
+  ],
+  "keywords": [
+   {
+    "keyword": "wave",
+    "type": 3
+   },
+   {
+    "keyword": "to wave goodbye",
+    "type": 3
+   }
+  ]
+ },
+ {
+  "_id": 4706,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "sea"
+  ],
+  "tags": [
+   "sea"
+  ],
+  "keywords": [
+   {
+    "keyword": "wave",
+    "type": 2
+   }
+  ]
+ },
+ {
+  "_id": 9692,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "usual verbs"
+  ],
+  "tags": [
+   "usual verbs"
+  ],
+  "keywords": [
+   {
+    "keyword": "tell",
+    "type": 3
+   }
+  ]
+ },
+ {
+  "_id": 11749,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "usual verbs"
+  ],
+  "tags": [
+   "usual verbs"
+  ],
+  "keywords": [
+   {
+    "keyword": "make",
+    "type": 3
+   }
+  ]
+ },
+ {
+  "_id": 90001,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "letter",
+   "alphabet"
+  ],
+  "tags": [
+   "letter",
+   "alphabet"
+  ],
+  "keywords": [
+   {
+    "keyword": "b",
+    "type": 6
+   },
+   {
+    "keyword": "bee letter",
+    "type": 6
+   }
+  ]
+ },
+ {
+  "_id": 90002,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "personal pronoun"
+  ],
+  "tags": [
+   "personal pronoun"
+  ],
+  "keywords": [
+   {
+    "keyword": "myself",
+    "type": 6
+   }
+  ]
+ },
+ {
+  "_id": 90003,
+  "aac": false,
+  "sex": false,
+  "violence": true,
+  "categories": [
+   "miscellaneous"
+  ],
+  "tags": [
+   "miscellaneous"
+  ],
+  "keywords": [
+   {
+    "keyword": "flagged mood",
+    "type": 4
+   }
+  ]
  }
 ]
