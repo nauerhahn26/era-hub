@@ -84,5 +84,98 @@ test('the payload ships buttons.js and every hub module server.js loads, transit
     const file = queue.shift(); if (seen.has(file)) continue; seen.add(file);
     for (const [, name] of fs.readFileSync(path.join(hub, file), 'utf8').matchAll(/require\(["']\.\/([A-Za-z0-9._-]+\.js)["']\)/g)) queue.push(name);
   }
+  assert.ok(seen.has('buttons.js') && seen.has('kiosk-launch.js'), 'server.js loads buttons.js and kiosk-launch.js');
   for (const file of seen) assert.ok(copied.has(file), file + ' is copied into the payload');
+});
+
+// ---- the dispatcher (design §4.2; plan T1.3) ----
+test('Chat page connected and visible: ask is pushed on its stream, nothing else moves', async () => {
+  const commands = fakeCommands({ connected: true, visible: true }), kiosk = fakeKiosk(commands);
+  const { buttons } = make({ commands, kiosk, now: 777 });
+  assert.deepEqual(await buttons.press({ key: 'F13', action: 'ask' }), { status: 200, ok: true, dispatch: 'visible' });
+  assert.deepEqual(commands.pushed, [{ type: 'ask', pressAt: 777, key: 'F13' }]);
+  assert.equal(kiosk.foregrounds + kiosk.relaunches.length, 0);
+  assert.deepEqual(buttons.status().lastPress, { at: new Date(777).toISOString(), key: 'F13', action: 'ask', dispatch: 'visible' });
+});
+
+test('Chat page hidden: the kiosk is foregrounded, the page reports visible, then ask is pushed', async () => {
+  const commands = fakeCommands({ connected: true, visible: false }), kiosk = fakeKiosk(commands);
+  commands.visibleAfterForeground = true;
+  const { buttons } = make({ commands, kiosk });
+  assert.equal((await buttons.press({ key: 'Ctrl+Alt+F10' })).dispatch, 'foreground');
+  assert.equal(kiosk.foregrounds, 1); assert.equal(kiosk.relaunches.length, 0);
+  assert.deepEqual(commands.pushed.map(c => c.type), ['ask']);
+});
+
+test('Chat page hidden and never visible within the wait, or no window to foreground, or visibility unknown: relaunch', async () => {
+  for (const [visible, found] of [[false, true], [false, false], [null, true]]) {
+    const commands = fakeCommands({ connected: true, visible }), kiosk = fakeKiosk(commands, { found });
+    const { buttons } = make({ commands, kiosk });
+    assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'relaunch', JSON.stringify({ visible, found }));
+    assert.equal(kiosk.foregrounds, 1);
+    assert.equal(commands.pushed.length, 0, 'never pushed to a page that may be hidden');
+    assert.equal(kiosk.relaunches.length, 1);
+  }
+});
+
+test('no Chat page listening: a nonce is issued for the press and the kiosk relaunches at /chat/?ask=<nonce>', async () => {
+  const commands = fakeCommands(), kiosk = fakeKiosk(commands);
+  const { buttons } = make({ commands, kiosk, now: 4242 });
+  assert.deepEqual(await buttons.press({ key: 'Ctrl+Alt+F9', action: 'ask' }), { status: 200, ok: true, dispatch: 'relaunch' });
+  assert.equal(kiosk.foregrounds, 0);
+  assert.equal(commands.issued.length, 1);
+  assert.deepEqual(commands.issued[0], { nonce: commands.issued[0].nonce, pressAt: 4242, key: 'Ctrl+Alt+F9' });
+  assert.deepEqual(kiosk.relaunches, ['/chat/?ask=' + commands.issued[0].nonce]);
+});
+
+test('a second ask while the relaunch is still coming up does not relaunch again; once claimed, presses dispatch again', async () => {
+  const commands = fakeCommands(), kiosk = fakeKiosk(commands);
+  const { buttons } = make({ commands, kiosk });
+  await buttons.press({ key: 'F13' });
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'busy');
+  assert.equal(kiosk.relaunches.length, 1);
+  commands.claimed = true; commands.connected = true; commands.visible = true; // the page came up and took the nonce
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'visible');
+});
+
+test('cancel: with no window and nothing coming up, nothing; during a relaunch, the nonce is revoked', async () => {
+  const commands = fakeCommands(), kiosk = fakeKiosk(commands);
+  const { buttons } = make({ commands, kiosk });
+  assert.deepEqual(await buttons.press({ key: 'F14', action: 'cancel' }), { status: 200, ok: true, dispatch: 'none' });
+  assert.equal(commands.pushed.length + kiosk.relaunches.length + kiosk.foregrounds, 0);
+  await buttons.press({ key: 'F13' });
+  assert.equal((await buttons.press({ key: 'Ctrl+Alt+F11' })).dispatch, 'cancel');
+  assert.deepEqual(commands.revoked, [commands.issued[0].nonce]);
+  assert.equal((await buttons.press({ key: 'F14' })).dispatch, 'none');
+});
+
+test('a listening window open: ask is the second press (end), cancel discards it', async () => {
+  const commands = fakeCommands({ connected: true, visible: true }), kiosk = fakeKiosk(commands), calls = [];
+  const open = { press: () => calls.push('press'), cancel: () => calls.push('cancel') };
+  const { buttons } = make({ commands, kiosk, window: () => open });
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'end');
+  assert.equal((await buttons.press({ key: 'F14' })).dispatch, 'cancel');
+  assert.deepEqual(calls, ['press', 'cancel']);
+  assert.deepEqual(commands.pushed, [{ type: 'end' }, { type: 'cancel' }]);
+  assert.equal(kiosk.relaunches.length + kiosk.foregrounds, 0);
+});
+
+test('a relaunch that fails is logged, never thrown at the press', async () => {
+  const commands = fakeCommands();
+  const kiosk = { foreground: async () => false, relaunch: async () => { throw new Error('spawn EPERM'); } };
+  const { buttons, logs } = make({ commands, kiosk });
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'relaunch');
+  await new Promise(r => setImmediate(r));
+  assert.ok(logs.some(l => l.includes('spawn EPERM')), logs.join('\n'));
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'relaunch', 'nothing is coming up, so the next press tries again');
+});
+
+test('a relaunch that reports no browser frees the next press too', async () => {
+  const commands = fakeCommands();
+  const kiosk = { foreground: async () => false, relaunch: async () => ({ ok: false, reason: 'no-browser' }) };
+  const { buttons, logs } = make({ commands, kiosk });
+  await buttons.press({ key: 'F13' });
+  await new Promise(r => setImmediate(r));
+  assert.ok(logs.some(l => l.includes('no-browser')));
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'relaunch');
 });

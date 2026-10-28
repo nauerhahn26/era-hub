@@ -38,10 +38,47 @@ function createButtons(options = {}) {
   const log = options.log || (() => {});
   const clock = options.clock || Date.now;
   const platform = options.platform || process.platform;
+  const commands = options.commands;
+  const kiosk = options.kiosk || { foreground: async () => false, relaunch: async () => ({}) };
+  const openWindow = options.window || (() => null);
+  const visibleWaitMs = options.visibleWaitMs ?? 3000;
   let lastPress = null;
+  let coming = null;   // the nonce of a relaunch still coming up
 
-  async function dispatch(action, key, at) { // eslint-disable-line no-unused-vars
-    return 'none';
+  function relaunch(key, at) {
+    const nonce = commands.issue({ pressAt: at, key });
+    coming = nonce;
+    Promise.resolve().then(() => kiosk.relaunch('/chat/?ask=' + nonce))
+      .then(result => { if (result && result.ok === false) throw new Error(result.reason || 'not launched'); })
+      .catch(error => {
+        log('relaunch failed: ' + (error && error.message));
+        // Nothing is coming up: the next press may try again at once.
+        if (coming === nonce) { commands.revoke(nonce); coming = null; }
+      });
+    return 'relaunch';
+  }
+  async function dispatch(action, key, at) {
+    const window = openWindow();
+    if (coming && !commands.pending(coming)) coming = null;
+    if (action === 'cancel') {
+      if (window) { window.cancel(); commands.push({ type: 'cancel' }); return 'cancel'; }
+      if (coming) { commands.revoke(coming); coming = null; return 'cancel'; }
+      return 'none';
+    }
+    // A second press while a listening window is open ends it (design §4.4).
+    if (window) { window.press(); commands.push({ type: 'end' }); return 'end'; }
+    // The kiosk is already coming up for an earlier press: that press asks.
+    if (coming) return 'busy';
+    const ask = { type: 'ask', pressAt: at, key };
+    const page = commands.state();
+    if (page.connected && page.visible === true && commands.push(ask)) return 'visible';
+    if (page.connected) {
+      // Hidden behind TD Snap (the talk door) or not yet reported: bring the
+      // kiosk forward and wait for the page itself to say it can be seen; a
+      // hidden page refuses to start a session.
+      if (await kiosk.foreground() && await commands.waitVisible(visibleWaitMs) && commands.push(ask)) return 'foreground';
+    }
+    return relaunch(key, at);
   }
 
   async function press(body) {

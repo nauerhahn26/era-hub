@@ -542,6 +542,38 @@ function foregroundKiosk() {
 // same PowerShell and the same reason (dad 8/29).
 const minimizeKiosk = stepAsideFromKiosk;
 
+// Settle a kiosk the hub just launched itself (button press to ask): the same
+// SetWindowPos + foreground move as the first launch, waiting up to 30 s for
+// the window. Windows only; logged beside the other window moves.
+function settleKiosk() {
+  if (process.platform !== "win32") return Promise.resolve();
+  const { spawn } = require("child_process");
+  return new Promise((resolve) => {
+    try {
+      const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+      fs.writeSync(out, new Date().toISOString() + " settle (button relaunch)\n");
+      const c = spawn("powershell.exe", ["-NoProfile", "-Command", psWindowPrelude() + psSettleKiosk(6)],
+        { stdio: ["ignore", out, out], windowsHide: true });
+      c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} resolve(); });
+      c.on("error", () => resolve());
+      c.unref();
+    } catch { resolve(); }
+  });
+}
+// Button press to ask (design 2026-10-27 §4.2): the partner's button arrives
+// as POST /buttons/press from the device listener; buttons.js decides what a
+// press does. The relaunch is start-hub.bat's kiosk launch, from node.
+const kioskLauncher = require("./kiosk-launch.js").createKioskLauncher({
+  port: PORT, dir: __dirname, cdp: process.env.ERA_QA_CDP, closeKiosk, settle: settleKiosk,
+  log: (m) => console.log("[buttons] " + m),
+});
+const buttons = require("./buttons.js").createButtons({
+  port: PORT, enabledChat: () => loadEnabledApps().includes("chat"), commands: chatApi.commands,
+  // a relaunch closes every kiosk window, so whatever the talk door had paused is gone too
+  kiosk: { foreground: foregroundKiosk, relaunch: (open) => { paused = null; return kioskLauncher.relaunch(open); } },
+  log: (m) => console.log("[buttons] " + m),
+});
+
 // One-time stage-clearing at the very first boot after install (dad 9/1:
 // the welcome kiosk opened BEHIND the browser the family had just downloaded
 // with — "did anything happen?"). Windows won't let a background process
@@ -1636,8 +1668,11 @@ function doorGoes() {
 // Close our kiosk window(s) — the ones launched with the kiosk-profile
 // user-data-dir — via the one powershell spawn shape proven from the
 // detached production hub (see stepAsideFromKiosk). Windows only; logged.
+// Resolves when the sweep has run (the button relaunch waits for it; every
+// other caller fires and forgets).
 function closeKiosk() {
-  if (process.platform !== "win32") return;
+  if (process.platform !== "win32") return Promise.resolve();
+  return new Promise((resolve) => {
   const { spawn } = require("child_process");
   const ps =
     "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" +
@@ -1649,9 +1684,12 @@ function closeKiosk() {
     fs.writeSync(out, new Date().toISOString() + " kiosk-close\n");
     const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
       { stdio: ["ignore", out, out], windowsHide: true });
-    c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+    c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} resolve(); });
+    c.on("error", () => resolve());
     c.unref();
-  } catch {}
+    setTimeout(resolve, 8000).unref();   // never hold a relaunch on a wedged sweep
+  } catch { resolve(); }
+  });
 }
 
 // ---- the talk door's memory (dad 9/17, "pause to talk") --------------------
@@ -3237,6 +3275,14 @@ const server = http.createServer((req, res) => {
       }).catch(() => answer({ ok: false, saved: true, keyOk: null,
                               error: "could not reach fal", perClipPrice: price }));
     });
+    return;
+  }
+
+  // ---- the partner's button (design 2026-10-27 §4.2): loopback only, activity ----
+  if (req.method === "POST" && urlPath === "/buttons/press") {
+    if (!updater.isLoopback(req.socket && req.socket.remoteAddress)) { res.writeHead(403).end(); return; }
+    buttons.readBody(req).then((body) => buttons.press(body))
+      .then((r) => { res.writeHead(r.status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(r.status === 200 ? { ok: true, dispatch: r.dispatch } : { error: r.error })); });
     return;
   }
 

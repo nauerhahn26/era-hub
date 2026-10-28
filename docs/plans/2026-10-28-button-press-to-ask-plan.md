@@ -121,7 +121,7 @@ Info
       `crypto.randomBytes(8)`). Verify: `node --test tests/chat-commands.test.mjs`.
       Guard: a nonce replays once (reconnect with it → nothing); a request from a
       non-loopback peer → 403.
-- [ ] **T1.3** Dispatcher in `buttons.js` per design §4.2: visible → push
+- [x] **T1.3** (port 8470, both hubs in turn: suite-ports reserves 8480+) Dispatcher in `buttons.js` per design §4.2: visible → push
       `ask`; hidden → `foregroundKiosk()` then wait ≤3 s for the page's
       `visible` report, else relaunch; nobody listening → relaunch with nonce;
       Chat off → 409 `{error:'chat-off'}`; `cancel` with no window → `{ok:true,
