@@ -2002,6 +2002,21 @@ test("Chat off, a key another program holds, no press yet, and a listener that c
   } finally { await ctx.close(); }
 });
 
+test("a microphone policy that was not written is said in one line under the status, with reg's words as text (W3)", async () => {
+  const { ctx, page, box } = await buttonsPage(buttonsStatus({ micPolicy: "failed", micPolicyError: "ERROR: Access is <i>denied</i>." }));
+  try {
+    await page.waitForFunction(() => /Microphone policy not written/.test(document.getElementById("buttonsMic").textContent));
+    assert.equal(await page.$eval("#buttonsMic", el => el.textContent.replace(/\s+/g, " ").trim()), "Microphone policy not written: ERROR: Access is <i>denied</i>.");
+    assert.equal(await page.$eval("#buttonsMic", el => el.hidden), false);
+    assert.equal(await page.$$eval("#buttonsMic i", els => els.length), 0, "the error is text, never markup");
+    assert.equal(await page.$eval("#buttonsStatus", el => el.nextElementSibling && el.nextElementSibling.id), "buttonsMic", "right under the status");
+    assert.equal(await buttonsLine(page), "Listener running · holds F13, F14, Ctrl+Alt+F9/F10/F11 · last press 18:04 F13 (ask)");
+    box.buttons = buttonsStatus({ micPolicy: "written", micPolicyError: null });
+    await page.waitForFunction(() => document.getElementById("buttonsMic").hidden, null, { timeout: 8000 });
+    assert.equal(await page.$eval("#buttonsMic", el => el.textContent), "");
+  } finally { await ctx.close(); }
+});
+
 test("the Buttons card repaints every 5 s while Connections shows, and not on another section (T5.4)", async () => {
   const { ctx, page, box } = await buttonsPage(buttonsStatus({ state: "compiling", pid: null, keys: { registered: [], failed: [] }, lastPress: null }));
   try {
