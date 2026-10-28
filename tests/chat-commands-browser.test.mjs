@@ -596,6 +596,33 @@ test('a partner touch on Hold to ask during a listening window does nothing: no 
   assert.deepEqual(f.errors, []);
 });
 
+test('a trusted Space on the keyboard Ask during a listening window does nothing: no hold, the session lives (review fix)', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  assert.equal(await f.page.evaluate(() => document.body.dataset.phase), 'Your turn', 'the first batch shows; the window still listens');
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true');
+  await f.page.locator('#partnerOpen').click();
+  await f.page.locator('#testing summary').click();
+  assert.equal(await f.page.locator('#desktopAsk').isDisabled(), true, 'inert while the window is open');
+  await f.page.evaluate(() => document.querySelector('#desktopAsk').focus());
+  await f.page.keyboard.down('Space'); await f.page.waitForTimeout(300); await f.page.keyboard.up('Space');
+  await f.page.waitForTimeout(500);
+  assert.equal(f.controls.includes('ask'), false, 'no hold was sent');
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'the window still listens');
+  assert.notEqual(f.api.window(), null);
+  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'the session is still running');
+  assert.equal(f.requests.filter(line => /^DELETE \/chat\/api\/sessions\//.test(line)).length, 0, 'no session was closed');
+  // The second press ends the window; the keyboard Ask comes back.
+  f.api.window().press(); f.api.commands.push({ type: 'end' });
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
+  await f.page.waitForFunction(() => !document.querySelector('#desktopAsk').disabled, null, { timeout: 10000 });
+  assert.deepEqual(f.errors, []);
+});
+
 test('the second press ends the window: the done tone fires, the microphone closes, the batch stays', { timeout: 60000 }, async t => {
   const { createButtons } = require('../buttons.js');
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });

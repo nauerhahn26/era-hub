@@ -797,6 +797,10 @@ function paintAsk(state = controller.state) {
   const inert = windowOpen();
   $('ask').disabled = !session || !state.engineReady || inert;
   $('ask').style.pointerEvents = inert ? 'none' : '';
+  // The keyboard Ask (desktop testing) is inert too, and comes back at the close.
+  const keyboard = $('desktopAsk');
+  if (inert) { keyboard.disabled = true; keyboard.dataset.windowInert = 'true'; }
+  else if (keyboard.dataset.windowInert) { delete keyboard.dataset.windowInert; keyboard.disabled = false; }
 }
 controller.subscribe(state => paintAsk(state));
 function touchButton(el, down, up, cancel) {
