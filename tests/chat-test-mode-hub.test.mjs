@@ -88,6 +88,20 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.equal((await setLikes([])).status, 204);
   assert.deepEqual(await likes(), [], 'an empty list is a real choice');
 
+  // Her lists (stable frame §2): generic defaults, saved per key, same door.
+  const lists = async () => { const all = await (await fetch(base + '/settings')).json(); return { q: all.chatQuestions, c: all.chatComments, a: all.chatAbout }; };
+  const setLists = (body, headers = {}) => fetch(base + '/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const before = await lists();
+  assert.equal(before.q.length, 10); assert.equal(before.q[0], 'How are you?');
+  assert.equal(before.c.length, 10); assert.equal(before.c[0], "That's cool!");
+  assert.deepEqual(before.a, ['I talk with my eyes', 'I love books', 'I like to draw', 'Ask me anything']);
+  assert.equal((await setLists({ chatQuestions: [' Why? ', 'why?'], chatAbout: ['I have a cat'] })).status, 204);
+  assert.deepEqual(await lists(), { q: ['Why?'], c: before.c, a: ['I have a cat'] });
+  assert.equal((await setLists({ chatComments: ['x'.repeat(41)], chatAbout: ['ok'] })).status, 204);
+  assert.deepEqual(await lists(), { q: ['Why?'], c: before.c, a: ['ok'] }, 'junk in one key leaves it alone');
+  assert.equal((await setLists({ chatQuestions: ['Hm?'] }, { 'Sec-Fetch-Site': 'cross-site' })).status, 204);
+  assert.deepEqual((await lists()).q, ['Why?'], 'a page on another site cannot change them');
+
   // Her world (plan "Her world as context"): the hub's digest of the week
   // package and the likes, served to its own pages for the partner dialog.
   assert.equal((await setLikes(['swim'])).status, 204);

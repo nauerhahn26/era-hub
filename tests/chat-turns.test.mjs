@@ -10,7 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay, applyLikesSetting, chatLikes, DEFAULT_LIKES } = require('../chat-turns.js');
+const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay, applyLikesSetting, chatLikes, DEFAULT_LIKES,
+  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT } = require('../chat-turns.js');
 const { initPool } = require('../pool.js');
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
@@ -385,4 +386,29 @@ test('what she likes: a bounded list of short phrases, the generic default when 
   assert.deepEqual(applyLikesSetting({ a: 1 }, {}), { a: 1 });
   for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyLikesSetting({}, { chatLikes: ['swim'] }, site), {});
   for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyLikesSetting({}, { chatLikes: ['swim'] }, site), { chatLikes: ['swim'] });
+});
+
+test('her lists (stable frame §2): questions, comments and about, generic defaults, each key cleaned on its own', async t => {
+  const dataDir = await directory(t);
+  assert.deepEqual(DEFAULT_QUESTIONS, ['How are you?', 'What are we doing today?', 'Did you have fun?', 'Can I have a turn?', "What's for dinner?",
+    'Where are we going?', 'Who is coming?', 'Can we play?', 'Is it time yet?', "What's that?"]);
+  assert.deepEqual(DEFAULT_COMMENTS, ["That's cool!", 'That sounds fun!', 'I love that!', 'No way!', 'Silly!', "I'm tired", "I'm hungry",
+    'Again, please', "I don't like that", 'Wait for me']);
+  assert.deepEqual(DEFAULT_ABOUT, ['I talk with my eyes', 'I love books', 'I like to draw', 'Ask me anything']);
+  const defaults = { chatQuestions: DEFAULT_QUESTIONS, chatComments: DEFAULT_COMMENTS, chatAbout: DEFAULT_ABOUT };
+  assert.deepEqual(chatLists(dataDir), defaults, 'no app-settings file means the defaults');
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatQuestions: 'x', chatComments: ['Yum!'], chatAbout: [] }));
+  assert.deepEqual(chatLists(dataDir), { chatQuestions: DEFAULT_QUESTIONS, chatComments: ['Yum!'], chatAbout: [] }, 'each key on its own');
+  const twenty = Array.from({ length: 20 }, (_, i) => 'item ' + i);
+  assert.deepEqual(applyListsSetting({ a: 1 }, { chatQuestions: [' Why? ', 'why?', 'How?'], chatAbout: twenty }),
+    { a: 1, chatQuestions: ['Why?', 'How?'], chatAbout: twenty }, 'trimmed, deduplicated ignoring case, twenty allowed');
+  assert.deepEqual(applyListsSetting({ chatComments: ['x'] }, { chatComments: ['y'.repeat(40)] }), { chatComments: ['y'.repeat(40)] });
+  for (const junk of ['Why?', [1], ['x'.repeat(41)], ['bad\u0007'], ['<b>'], [''], [...twenty, 'one more'], null, {}])
+    for (const key of ['chatQuestions', 'chatComments', 'chatAbout'])
+      assert.deepEqual(applyListsSetting({ [key]: ['x'] }, { [key]: junk }), { [key]: ['x'] }, key + ' ' + JSON.stringify(junk));
+  assert.deepEqual(applyListsSetting({ chatQuestions: ['x'] }, { chatQuestions: 7, chatComments: ['Wow'] }), { chatQuestions: ['x'], chatComments: ['Wow'] },
+    'a bad key never blocks a good one');
+  assert.deepEqual(applyListsSetting({ a: 1 }, {}), { a: 1 });
+  for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyListsSetting({}, { chatAbout: ['hi'] }, site), {});
+  for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyListsSetting({}, { chatAbout: ['hi'] }, site), { chatAbout: ['hi'] });
 });
