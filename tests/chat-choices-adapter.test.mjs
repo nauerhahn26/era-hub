@@ -295,6 +295,11 @@ test('the recall check passes a reply that names something from world and still 
   const plural = WORLD + '\nYesterday at school: happy; Classmates said they enjoyed her party. She sat with her buddy near the boxes.';
   for (const say of ['I played with a classmate.', 'We played with buddies.', 'I made a box.', 'I saw my classmates.', 'I made magnet.', 'We played with a buddy.'])
     assert.equal((await run(say, plural)).kind, 'generated', say);
+  // The asserted-activity verbs are never terms: a note that she played lets a buddy through, never a dragon.
+  const played = WORLD + '\nYesterday at school: happy. She played with a buddy, went outside, saw a bird and made a card.';
+  assert.equal((await run('I played with a buddy.', played)).kind, 'generated');
+  for (const say of ['I played with a dragon.', 'We went to the moon.', 'I saw a ghost.', 'I made a robot.', 'We played.'])
+    assert.equal((await run(say, played)).recallRejected, true, say);
   for (const say of ['I played with a class.', 'I went to the zoo.'])
     assert.equal((await run(say, plural)).recallRejected, true, 'a different word never matches: ' + say);
   for (const say of ['I went to the park yesterday.', 'I saw it on my device.', 'We went to class.'])

@@ -83,6 +83,10 @@ const WORLD_STOP = new Set(['this', 'week', 'last', 'school', 'today', 'hero', '
   'what', 'have', 'they', 'were', 'when', 'your', 'some', 'more', 'into', 'just', 'like', 'very',
   // the scaffolding of world.json's lines (about her, the teachers' lists, day notes)
   'yesterday', 'class', 'worked', 'device', 'said', 'coming',
+  // the asserted-activity verbs themselves: a note that she played never lets any play through
+  'went', 'going', 'played', 'play', 'playing', 'have', 'made', 'make', 'watched', 'watch', 'read', 'visited', 'visit', 'stayed', 'stay',
+  'built', 'build', 'drew', 'draw', 'swam', 'swim', 'rode', 'ride', 'took', 'take', 'learned', 'learn', 'work', 'enjoyed', 'enjoy',
+  'wanted', 'want', 'shared', 'share', 'helped', 'help', 'asked', 'ask', 'looked', 'look', 'talked', 'talk', 'walked', 'walk',
   'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'january', 'february', 'march', 'april', 'june',
   'july', 'august', 'september', 'october', 'november', 'december']);
 const wordsOf = text => String(text).toLowerCase().replace(/[’]/g, "'").match(/[a-z][a-z']*/g) || [];
