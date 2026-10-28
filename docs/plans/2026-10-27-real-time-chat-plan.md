@@ -516,3 +516,19 @@ reads the option." Design notes for when he picks the number:
   (`chatPromptMs`: off / 10 / 15 / 20 s) so he can test both numbers.
 - Telemetry: the turn record gets `prompted: true` and whether a selection
   followed, so the device-holds review can compare 10 s against 15 s.
+
+## Read-aloud + hold guard built (10/28 night, after v1.0.35)
+- [x] P1 Her gaze never ends a hold: no dwell targets from touch-down to the
+      final transcript; speak() refuses during a hold (262e2aa).
+- [x] P2 Options read aloud after a silence: prompt.js, "<name>, your options
+      are", each label lit in order, cancelled by any dwell/selection/swap/
+      hold/dialog; partner dialog delay (off/10/12/15/20 s, default 12 s) and
+      name (a435ec5, d6162a8); hub settings chatPromptMs/chatName + prompted
+      turn field (d4be4fd); registry (d796c43). Gate 194/0.
+
+Follow-up for the wake-word phase (dad, 10/28): she should be able to select
+by dwell WHILE speech is being accepted. The lock exists because the hold is
+the turn boundary and her clip plays out of the device the microphone hears.
+Plan: keep tiles live during capture, drop microphone frames from her clip's
+start to its end plus a short tail, keep the capture open, append "Me:" to
+the ledger mid-question; the lock becomes a transition setting, then goes.
