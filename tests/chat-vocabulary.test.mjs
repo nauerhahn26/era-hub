@@ -79,3 +79,9 @@ test('the settings page carries the pictogram library credit its licence require
   assert.match(card, /non-commercial/i);
   assert.match(card, /Fluent Emoji.*MIT/);
 });
+
+test('reviewed ids: park is the playground with swings, slide and trees, never the verb "to park" (a car); playground has its own', () => {
+  assert.equal(words.get('park').id, 2859);
+  assert.equal(words.get('playground').id, 36145);
+  assert.ok(!concepts.some(concept => concept.id === 5379 || concept.altId === 5379), 'the parking picture is gone');
+});
