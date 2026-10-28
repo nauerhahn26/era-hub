@@ -223,6 +223,23 @@ function fixedFrame(page) {
       .map(node => ({ text: node.textContent.trim(), bounds: node.getBoundingClientRect().toJSON() })));
 }
 
+// A route the check no longer owns settles quietly: the page closed, or the
+// check unrouted while a request was in flight ("Route is already handled!",
+// v1.0.36 leg B, an unhandled rejection after the test had passed). Any other
+// failure still fails.
+const GONE = /already handled|has been closed|Target closed|context disposed|Request context disposed|Browser closed/i;
+export async function settleRoute(work) {
+  try { return await work; } catch (error) { if (GONE.test(String(error?.message || error))) return undefined; throw error; }
+}
+// GET /settings with the options reading off (chatPromptMs 0), the rest as the hub sent it.
+export async function rewriteSettingsRoute(route) {
+  return settleRoute((async () => {
+    const response = await route.fetch();
+    const body = await response.json().catch(() => null);
+    return body && typeof body === 'object' ? route.fulfill({ response, json: { ...body, chatPromptMs: 0 } }) : route.fulfill({ response });
+  })());
+}
+
 export async function checkInstalledChatUI(page, options = {}) {
   const timeout = options.timeout || 30000, originalURL = page.url();
   const base = new URL(options.baseURL || originalURL).origin;
@@ -234,39 +251,35 @@ export async function checkInstalledChatUI(page, options = {}) {
   let script;
   const routeHandler = async route => {
     const request = route.request(), url = new URL(request.url());
-    if (url.origin !== base) { requests.blocked++; return route.abort(); }
+    if (url.origin !== base) { requests.blocked++; return settleRoute(route.abort()); }
     if (url.pathname === '/voices') {
-      requests.voices++; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'configured' }) });
+      requests.voices++; return settleRoute(route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'configured' }) }));
     }
     if (url.pathname === '/tts') {
-      requests.clips++; return route.fulfill({ status: 200, contentType: 'audio/wav', body: wav });
+      requests.clips++; return settleRoute(route.fulfill({ status: 200, contentType: 'audio/wav', body: wav }));
     }
     // This check counts every clip played; the options read aloud after a silence
     // (spec 2026-10-28 §6, tests/chat-browser.test.mjs) are off for its page only.
-    if (url.pathname === '/settings' && request.method() === 'GET') {
-      const response = await route.fetch();
-      const body = await response.json().catch(() => null);
-      return body && typeof body === 'object' ? route.fulfill({ response, json: { ...body, chatPromptMs: 0 } }) : route.fulfill({ response });
-    }
+    if (url.pathname === '/settings' && request.method() === 'GET') return rewriteSettingsRoute(route);
     if (url.pathname.startsWith('/chat/api/')) {
-      if (request.method() === 'GET' && url.pathname === '/chat/api/config') return route.continue();
+      if (request.method() === 'GET' && url.pathname === '/chat/api/config') return settleRoute(route.continue());
       // The partner dialog's read-only "What Chat knows this week" preview.
-      if (request.method() === 'GET' && url.pathname === '/chat/api/world') return route.continue();
-      if (['GET', 'PUT'].includes(request.method()) && url.pathname === '/chat/api/state') return route.continue();
+      if (request.method() === 'GET' && url.pathname === '/chat/api/world') return settleRoute(route.continue());
+      if (['GET', 'PUT'].includes(request.method()) && url.pathname === '/chat/api/state') return settleRoute(route.continue());
       // The page's command stream for the partner's button (design 2026-10-27 §4.2): open at load.
-      if (request.method() === 'GET' && url.pathname === '/chat/api/commands') return route.continue();
-      if (request.method() === 'POST' && url.pathname === '/chat/api/commands/visibility') return route.continue();
+      if (request.method() === 'GET' && url.pathname === '/chat/api/commands') return settleRoute(route.continue());
+      if (request.method() === 'POST' && url.pathname === '/chat/api/commands/visibility') return settleRoute(route.continue());
       if (request.method() === 'POST' && url.pathname === '/chat/api/sessions') requests.sessions++;
       if (request.method() === 'POST' && url.pathname === '/chat/api/choices') {
         let input; try { input = request.postDataJSON(); } catch {}
-        if (input?.text === QUESTION && Array.isArray(input.context) && input.context.length === 0) { requests.choices++; return route.continue(); }
+        if (input?.text === QUESTION && Array.isArray(input.context) && input.context.length === 0) { requests.choices++; return settleRoute(route.continue()); }
         // The stable frame asks for both made sets once the batch is revealed (spec 2026-10-28 §3).
         if (input?.text === QUESTION && ['ask', 'comment'].includes(input.mode) && Array.isArray(input.context)
-          && input.context.length === 1 && input.context[0] === `Partner: ${QUESTION}`) { requests.modes++; return route.continue(); }
+          && input.context.length === 1 && input.context[0] === `Partner: ${QUESTION}`) { requests.modes++; return settleRoute(route.continue()); }
       }
-      requests.blocked++; return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unexpected-test-request"}' });
+      requests.blocked++; return settleRoute(route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unexpected-test-request"}' }));
     }
-    return route.continue();
+    return settleRoute(route.continue());
   };
   async function openPartner() {
     await page.locator('#partnerOpen').click({ timeout });
@@ -396,10 +409,10 @@ export async function checkRestoredChatState(page, expected, options = {}) {
   const originalURL = page.url(), cdp = await page.context().newCDPSession(page);
   const routeHandler = route => {
     const url = new URL(route.request().url());
-    if (url.origin !== base) return route.abort('blockedbyclient');
-    if (url.pathname === '/voices') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"enabled":true,"current":"configured"}' });
-    if (url.pathname === '/tts') return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() });
-    return route.continue();
+    if (url.origin !== base) return settleRoute(route.abort('blockedbyclient'));
+    if (url.pathname === '/voices') return settleRoute(route.fulfill({ status: 200, contentType: 'application/json', body: '{"enabled":true,"current":"configured"}' }));
+    if (url.pathname === '/tts') return settleRoute(route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }));
+    return settleRoute(route.continue());
   };
   let script;
   try {
