@@ -280,7 +280,7 @@ Info
       Verify: `node --test tests/buttons-recompile.test.mjs` (shape of
       `tests/gaze-recompile.test.mjs`; port 8495 reused only if 8494 suite does
       not run them concurrently — else take 8496 after a suite-ports check).
-- [ ] **T5.3** Keeper: the hub spawns the exe as its own child (`stdio:
+- [x] **T5.3** (`createListener` in buttons.js; the restart is polled by a 5 s hub tick, `ERA_BUTTONS_POLL_MS`; exit 3 reads "another listener holds the keys"; a stop on purpose is not counted as a restart) Keeper: the hub spawns the exe as its own child (`stdio:
       ['ignore','pipe','ignore']`, `windowsHide`), parses the registration
       line into `/status.buttons.keys`, restarts on exit with backoff 5/15/60/
       300 s, ladder reset after 10 min alive; `enabled` = win32 (or the seam)
@@ -300,7 +300,7 @@ Info
       Windows Bluetooth as a keyboard. Square button: Hardware Settings →
       Send Keyboard Key → Ctrl+Alt+F9, then restart the device." Verify:
       `node --test tests/settings-ui.test.mjs tests/settings-navigation.test.mjs`.
-- [ ] **T5.5** Microphone policy write at boot (W3): `reg.exe add <key>
+- [x] **T5.5** (unit in `tests/buttons-keeper.test.mjs`; `ERA_BUTTONS_REG` is the stub reg.exe seam, as `ERA_BUTTONS_CSC`; written once per boot, or when Chat is first turned on) Microphone policy write at boot (W3): `reg.exe add <key>
       /v 1 /t REG_SZ /d http://127.0.0.1:<port> /f` for both browsers, result in
       `/status.buttons.micPolicy` (`written|failed|n/a`). Verify: unit test
       asserts the two argv arrays; no PowerShell. Guard: runs only when Chat is

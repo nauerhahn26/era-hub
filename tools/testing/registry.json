@@ -3292,6 +3292,27 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/buttons-keeper.test.mjs",
+      "purpose": "The device button listener keeper: hash-guarded csc compile to .new.exe and swap, a failed compile keeps the old exe and logs once, child restarts on 5/15/60/300 s with a 10 minute reset, Chat off stops ours by path, the reg.exe microphone policy arguments",
+      "group": "hub",
+      "lane": "linux",
+      "level": "unit with injected clock and processes",
+      "dependencies": [
+        "era-hub/buttons.js"
+      ],
+      "resources": [
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/lanes.test.mjs",
       "purpose": "The gate lane runner: longest-first order, solo/heavy/quiet/fixed-port (gaze engine bus included) exclusions, memory floor that never holds the last lane, one lane = the serial loop, results.jsonl, the gate tally, stop by pid",
       "group": "test-infrastructure",
