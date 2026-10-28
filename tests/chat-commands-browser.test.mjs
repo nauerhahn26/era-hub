@@ -261,6 +261,44 @@ test('no stream settings: "Streaming speech is not set up on this device", no to
   assert.equal(f.sessions(), 0);
 });
 
+test('no stream settings while another screen shows: the press goes to Chat, then shows the line (review fix)', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { streaming: false });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.page.locator('.route', { hasText: 'Reactions' }).click();
+  await f.page.waitForFunction(() => [...document.querySelectorAll('.route')].some(el => el.textContent === 'Back to Chat'));
+  f.ask();
+  await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Streaming speech is not set up on this device', null, { timeout: 10000 });
+  assert.ok(await f.page.locator('.route', { hasText: 'Help me say it' }).count(), 'the Chat screen is showing');
+  assert.equal(await f.page.locator('.route', { hasText: 'Back to Chat' }).count(), 0);
+  assert.equal(f.sessions(), 0);
+  assert.deepEqual(f.errors, []);
+});
+
+test('a session started by touch without streaming speech: a press shows the line and leaves the session open (review fix)', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { streaming: false });
+  // The page is told streaming exists; the session it gets has none (a stream lost after load).
+  await f.page.route('**/chat/api/config', async route => {
+    const response = await route.fetch(); const body = await response.json();
+    body.runtime = { ...body.runtime, capabilities: { ...(body.runtime?.capabilities || {}), streaming: true } };
+    await route.fulfill({ response, json: body });
+  });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.press('#startChat'); await f.lift();
+  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 10000 });
+  f.ask();
+  await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Streaming speech is not set up on this device', null, { timeout: 10000 });
+  await f.page.waitForTimeout(500);
+  assert.equal(await f.page.locator('#phase').textContent(), 'Ready to ask', 'the session is still ready');
+  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'the session someone started is still running');
+  assert.equal(await f.page.locator('#endChat').isDisabled(), false);
+  assert.equal(f.requests.filter(line => /^DELETE \/chat\/api\/sessions\//.test(line)).length, 0, 'no session was closed');
+  assert.equal(f.sessions(), 1);
+  assert.equal(await f.page.evaluate(() => window.__tones.length), 0);
+  assert.deepEqual(f.errors, []);
+});
+
 test('microphone refused: "Touch Start Chat once to allow the microphone", no tone', { timeout: 60000 }, async t => {
   const f = await fixture(t, { deny: true });
   await f.load();

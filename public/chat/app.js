@@ -555,11 +555,13 @@ async function askFromButton(command = {}) {
   try {
     await configReady;
     if (document.visibilityState !== 'visible') return;
-    if (!config?.runtime?.available || config.runtime.capabilities?.streaming !== true) { notice(STREAMING_LINE); return; }
+    // Chat shows first, whatever follows; a press never ends a session someone started by touch.
     if (screen !== 'chat') go('chat');
-    if (!session && !await openSession({ denied: MICROPHONE_LINE })) return;
+    if (!config?.runtime?.available || config.runtime.capabilities?.streaming !== true) { notice(STREAMING_LINE); return; }
+    const opened = !session;
+    if (opened && !await openSession({ denied: MICROPHONE_LINE })) return;
     if (!await engineReadyWithin(20000) || !session) return;
-    if (!remoteStreaming) { await shutdown('close'); notice(STREAMING_LINE); return; }
+    if (!remoteStreaming) { if (opened) await shutdown('close'); notice(STREAMING_LINE); return; }
     if (holding || askPending || mode !== 'blocked' || !['Ready to ask', 'Your turn', 'Preparing'].includes(controller.state.phase)) return;
     await openPressWindow(command);
   } finally { pressBusy = false; }
