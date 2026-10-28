@@ -350,6 +350,8 @@ function picturePick(picture, l) {
   const named = normal(picture);
   if (!named || named.length > 32 || words(named).length > 3) return null;
   const labelled = category(l);
+  // A bubble in the model's picture words is a speech bubble: talking, never soap bubbles.
+  if (/\bbubbles?\b/.test(named)) return vocabulary().byWord.has('tell') ? { word: 'tell', family: null } : null;
   const forms = [named, ...words(named).reverse()].filter((form, index, all) => all.indexOf(form) === index && !FUNCTION_WORDS.has(form));
   for (const form of forms) {
     const curatedWord = exactHit(form)?.[1];
@@ -404,6 +406,22 @@ function unknownName(label, l) {
   return true;
 }
 
+// "Draw pictures", "Play together", "Watch a show", "Listen to music": a label
+// whose first content word is one of these actions and whose rest is only a
+// generic object shows the action, not the object.
+const ACTION_HEADS = new Set(['draw', 'play', 'read', 'watch', 'listen', 'eat', 'make', 'go']);
+const GENERIC_OBJECTS = new Set(['picture', 'pictures', 'together', 'book', 'books', 'show', 'shows', 'music']);
+const LEAD_IN = new Set(['i', 'we', 'lets', 'let', 'us', 'want', 'wanna', 'to', 'can', 'could', 'please', 'like', 'would', 'id', 'love']);
+function actionWithObject(l) {
+  const list = words(l);
+  let from = 0;
+  while (from < list.length && LEAD_IN.has(list[from])) from++;
+  const verb = list[from], rest = list.slice(from + 1).filter(word => !/^(?:a|an|the|some|my|to|with|at)$/.test(word));
+  if (!ACTION_HEADS.has(verb) || !rest.length || !rest.every(word => GENERIC_OBJECTS.has(word))) return null;
+  return vocabulary().byWord.has(verb) ? verb : null;
+}
+// Feelings a negated reply may still show when the model named them.
+const FEELINGS = new Set(['sad', 'tired', 'angry', 'scared', 'bored', 'sick', 'ok']);
 // Leading verbs a label's head phrase may follow, beyond the stop words.
 const LEADING = new Set(['stay', 'come', 'sit', 'stop', 'start', 'keep', 'have']);
 function headConcept(l) {
@@ -427,11 +445,17 @@ function choose({ label = '', say = '', symbol, picture } = {}, people = current
   if (curated(s)) return { word: NEGATION.test(s) ? curated(s) : negationGuard(l, '', curated(s)) };
   const lexical = lexiconChoice(label, l);
   if (lexical) return guardedPick(l, s, lexical);
+  // An action before a generic object is the action ("Draw pictures", "Watch a show").
+  const acting = NEGATION.test(l) ? null : actionWithObject(l);
+  if (acting) return { word: acting };
   // The label's own curated concept at its head ("Stay home", "Go to the park",
   // "Eat pizza") beats the model's word; a broad word ("Something fun") does not.
   const headed = NEGATION.test(l) ? null : headConcept(l);
   if (headed) return { word: negationGuard(l, s, headed) };
   const model = modelSymbol(symbol);
+  // A negated reply the model pictured as a feeling ("Not so good" → sad) keeps
+  // that feeling, unless the reply negates that very feeling ("Not sad").
+  if (model && FEELINGS.has(model) && NEGATION.test(`${l} ${s}`) && !conceptsIn(`${l} ${s}`).includes(model)) return { word: model };
   if (model && model !== FALLBACK && !rejects(l, model)) return { word: negationGuard(l, s, model) };
   // The label's own curated word or category, then the model's picture words,
   // then the text guess, then the label's action or quality, else the bubble.
