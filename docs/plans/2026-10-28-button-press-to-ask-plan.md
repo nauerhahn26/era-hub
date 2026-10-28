@@ -414,6 +414,15 @@ Info
     turns test mode on).
 14. A session's audio budget (19.2 MB) is about ten full 60 s windows; a later
     window then ends with audio-limit and a new session is needed.
+15. Master's v1.0.26-v1.0.31 (synced 10/28) are law for the press path: with
+    no Start Chat, `askFromButton` asks on the session Chat prepared by itself
+    through the same `prepare()` a hold uses (no second session start), and a
+    refused microphone reads "Touch Try again once to allow the microphone"
+    (master's touch-only Try again replaces Hold to ask); with replies shown the
+    moment a batch is sealed, a window's first batch shows at once (over any
+    stale tiles) and only replacement batches and stale tiles wait for the
+    neutral moment (`swapReplacement()`, design §4.5); the hold-path pin now
+    guards master's v1.0.31 `beginAsk`/`finishAsk`/`cancelAsk`.
 
 ## Retrospective
 

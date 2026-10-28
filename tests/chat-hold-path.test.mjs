@@ -3,6 +3,8 @@
 // and the line that binds them to the Ask button is hashed against a fixture
 // written once, before any button-press page work. To change these functions,
 // amend the design first, then rewrite the fixture in the same commit.
+// Since the 10/28 sync of master the fixture guards master's v1.0.31 hold path
+// (no Start Chat, a slipped hold keeps the session); the press path never edits it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -39,7 +41,7 @@ test('the pin notices a one-character change in any pinned piece', () => {
   const pinned = holdPathHash();
   for (const [from, to] of [["controller.ask(); finishedTurn = -1;", "controller.ask(); finishedTurn = -2;"],
     ["metrics.mark(timing, 'drained');", "metrics.mark(timing, 'drain');"],
-    ["mic?.cancel(); pendingFrames = [];", "mic?.cancel(); pendingFrames = [ ];"]]) {
+    ["dropHold({ reason: 'cancel', hint: HINT_SLIP });", "dropHold({ reason: 'cancel', hint: HINT_SHORT });"]]) {
     assert.ok(app.includes(from), from);
     assert.notEqual(holdPathHash(app.replace(from, to)), pinned, from);
   }
