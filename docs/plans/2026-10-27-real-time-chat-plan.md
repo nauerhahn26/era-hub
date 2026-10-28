@@ -386,3 +386,67 @@ Gate 192/0, landed 6dca68d, released v1.0.34. Open: a full name only beats a
 library word when the model names a picture; the fixed bottom-row "Tell me
 more" keeps the "more" picture; no school updates had arrived for this week
 yet, so the first digest is last week's.
+
+## A stable frame (dad, 10/28 night) — design map only, nothing built
+
+Dad set aside the earlier layout rules (black rest cells, YES/NO as full
+tiles, every fixed tile reply-sized). What he sees: places that never move,
+and a middle that belongs to the conversation.
+
+**The frame** (1920×1080, bar 90, grid rail + 12 middle columns, rows
+0.5 / 1 / 1 / 0.62, gap 10):
+
+- Top row: small YES (top left), the partner's question as quiet text
+  (never a tile, where her eyes can wait), small NO (top right).
+- Left rail, three pages that are hers: My questions, My comments, About me.
+- Bottom row: Tell me more (out), Ask a question (mode), Make a comment
+  (mode), Something else (out).
+- Middle: 2, 3 or 4 replies (2×2 / three across / two tall), spanning 6, 4
+  or 6 columns, so every count looks intended. Reply ≈ 1.6× today's tile
+  with four, 2.1× with three, 3.2× with two; pages 0.7×, bottom row 0.5×,
+  YES/NO 0.4×.
+
+**Static vs dynamic.** Static: YES, NO, the three pages, both outs, both
+mode tiles (nine tiles, same place on every turn, every device). Dynamic:
+the strip, the replies, and the four questions or four comments the model
+makes when she dwells a mode tile.
+
+**Dwell outcomes.** Reply/YES/NO: speak, screen stays until the next hold.
+Ask a question: middle swaps to four questions she could ask back about
+what was just said (e.g. "What kind of chicken?"); tile stays lit; dwell
+again returns the replies. Make a comment: same with four remarks ("I don't
+like sushi anymore"). Tell me more: speaks, nothing else changes. Something
+else: speaks and four fresh replies (as today). A page: middle + bottom row
+become the page (10 items, More, Back); YES/NO stay; Back or a new hold
+returns. Before any question the middle is empty but pages, YES and NO work,
+so she can open a conversation.
+
+**Content sources.** Replies: today's reply model with likes, people, world.
+Ask/Comment: two new reply shapes from the transcript, the replies shown,
+her likes and said lines; prefetched once replies land so the swap is
+instant; dropped on the next hold; recall check applies to comments. Pages:
+three lists in app settings edited in the partner dialog, seeded with
+first-grade sets; About me also reads the world digest's About and
+This-week lines (marked weekly), later the weekly builder writes an
+"about me" set into world.json.
+
+**Alternative considered:** two rails (pages left; NO, Ask, Comment, Tell
+me more, Something else right). Replies 1.9× / 3.8× but fixed tiles 0.4–0.5×
+and YES/NO 0.23×; "comments" labels hit the floor. Not recommended.
+
+**Software changes implied** (to scope with rae-flow:planning when dad says
+go): new chat grid + span rules by count; fit law for small fixed tiles
+(60 px floor, picture beside); lit state + Back; strip in the grid; three
+lists in settings + partner dialog editor + seeds; world.json about-me set
+(ellie-this-week); shapes 'ask' and 'comment' in chat-choices + prefetch;
+turn records gain mode/page/item; tests for grid by count, small-tile fit,
+lists API, both shapes, page round trip in the UI smoke leg.
+
+**Open questions for dad** (on the page): gap 10 px or none; longer dwell
+on page tiles (1.6 s); Tell me more = speak only or also a deeper reply
+set; 10 or 8 items per page; modes with no question on screen; the seed
+lists in her voice.
+
+Design page: Chat Stable Frame (private artifact, 10/28). Mock generator and
+renders in the session scratchpad (`layout/gen-frame.py`,
+`layout/frame-*.png`).
