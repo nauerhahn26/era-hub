@@ -381,6 +381,8 @@ function stagedBatch(record, signal) {
 function stagingEvent(data) {
   const record = staging;
   if (!record || data.generation !== record.generation || record.sealed || record.error) return;
+  // A window's batches answer one seal each: only the batch this record waits for.
+  if ((record.seq ?? null) !== (data.seq ?? null)) return;
   if (data.type === 'choice-staged') {
     const choice = data.choice;
     if (!choice || typeof choice.say !== 'string' || typeof choice.label !== 'string') return;
@@ -408,6 +410,7 @@ function receiveEvent(event) {
   // Voice activation is disabled for the hold-only pilot. An unsolicited wake
   // cannot change capture state OR poison a later turn's generation check.
   if (data.type === 'wake') return;
+  if (['window-open', 'utterance-sealed', 'window-closed'].includes(data.type) || (data.type === 'partial' && press?.generation === data.generation)) { windowEvent(data); return; }
   if (['choice-staged', 'batch-sealed', 'choices-error'].includes(data.type)) { stagingEvent(data); return; }
   if (['socket', 'settled', 'speculation'].includes(data.type)) {
     if (askPending || captureGeneration === null || data.generation !== captureGeneration) return;
@@ -550,6 +553,70 @@ async function openPressWindow(command) {
   setMode('capture'); press.listening = true; document.body.dataset.listening = 'true'; paintPhase();
   turnLog.mark(questionMetric, 'listening');
   notice('Listening. Ask the question; Chat stops listening when you stop talking.');
+}
+// The hub's window machine speaks through the session's events: words heard,
+// each sealed utterance (whose batch follows as choice-staged/batch-sealed with
+// the same seq), and the close.
+let heardTimer = null;
+function windowEvent(data) {
+  if (Number.isFinite(data.generation)) workerGeneration = Math.max(workerGeneration, data.generation);
+  if (!press || data.generation !== press.generation) return;
+  if (data.type === 'partial') {
+    if (press.closed) return;
+    if (controller.state.phase === 'Capturing question') controller.partial(data.text);
+    turnLog.partial(questionMetric, data.text);
+    diagnostic(`Heard so far: ${String(data.text || '').slice(0, 600)}`);
+  } else if (data.type === 'utterance-sealed') windowSealed(data);
+  else if (data.type === 'window-closed') closePressWindow(data.reason, data.seals);
+}
+function windowSealed(data) {
+  if (press.closed) return;
+  const question = String(data.windowText || '').trim().slice(0, 600);
+  if (!question || !Number.isSafeInteger(data.seq)) return;
+  turnLog.mark(questionMetric, 'utteranceSealed', { text: String(data.text || '').slice(0, 2000) });
+  const shown = controller.state.choices.length > 0;
+  if (data.seq > 1 && shown) {
+    // A replacement for a batch she can already see. Swapping it in at a
+    // neutral moment is plan phase 4; until then a shown tile never changes.
+    press.held = { seq: data.seq, question };
+    diagnostic(`Question: ${question} (held while the earlier replies show)`);
+    return;
+  }
+  if (data.seq > 1) turnLog.mark(questionMetric, 'batchReplaced');
+  // The earlier unseen question is replaced, not repeated, in the conversation so far.
+  if (press.question) recentConversation = recentConversation.filter(line => line !== `Partner: ${press.question}`.slice(0, 500));
+  press.seals = data.seq; press.question = question;
+  metrics.mark(questionMetric, 'transcript');
+  turnLog.content(questionMetric, { transcript: question });
+  staging = stagedChoices ? { generation: data.generation, seq: data.seq, text: question, choices: [], sealed: null, error: null, claimed: false, settled: false, done: null } : null;
+  diagnostic(`Question: ${question}`);
+  // Nothing is shown yet in this window (or the seal is the first): the
+  // batch is prepared and revealed by the existing rule.
+  controller.prepare(question);
+}
+// The window ended: at the hub (silence, cap, second press, cancel, nothing
+// said) or here (her pick). The microphone stops at once; the done tone plays.
+function closePressWindow(reason, seals = press?.seals || 0) {
+  if (!press || press.closed) return null;
+  press.closed = true; press.listening = false;
+  captureIntent++; pendingFrames = []; mic?.cancel(); setMode('blocked'); uploadEpoch++; captureGeneration = null;
+  turnLog.mark(questionMetric, 'windowClosed', { text: String(reason || 'closed') });
+  void tones.done();
+  if (reason === 'pick') return control('pick').catch(() => null);
+  if (!seals || reason === 'cancel') {
+    // Nothing to show, or a cancel: whatever was staged and unseen is dropped.
+    if (staging) { const record = staging; staging = null; record.error ||= Object.assign(new Error('Cancelled'), { name: 'AbortError' }); record.done?.(record.error); }
+    const idle = controller.idle();
+    if (!seals) metrics.end(questionMetric, 'cancelled', reason === 'cancel' ? 'cancel' : 'timeout');
+    if (reason === 'error') notice('Listening stopped. Your phrases still work; press again.');
+    else if (!seals && reason !== 'cancel') {
+      notice(NOTHING_HEARD_LINE);
+      clearTimeout(heardTimer);
+      heardTimer = setTimeout(() => { if ($('notice').textContent === NOTHING_HEARD_LINE) notice(controller.state.phase === 'Ready to ask' ? 'Hold to ask. Voice activation is off.' : ''); }, 4000);
+    } else if (idle) notice('');
+  }
+  paintPhase();
+  return null;
 }
 async function beginAsk() {
     if (appLocked()) return;

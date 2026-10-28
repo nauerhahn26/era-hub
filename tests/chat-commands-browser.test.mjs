@@ -226,3 +226,49 @@ test('an ask with a session already running goes straight to listening; a second
   assert.equal(f.sessions(), 1);
   assert.equal(f.controls.filter(type => type === 'window').length, 1);
 });
+
+// ---- T2.3 the partner's three lines ----
+
+test('no stream settings: "Streaming speech is not set up on this device", no tone, no microphone', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { streaming: false });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  f.ask();
+  await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Streaming speech is not set up on this device', null, { timeout: 10000 });
+  assert.equal(await f.page.evaluate(() => window.__tones.length), 0);
+  assert.equal(f.sessions(), 0);
+});
+
+test('microphone refused: "Touch Start Chat once to allow the microphone", no tone', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { deny: true });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  f.ask();
+  await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Touch Start Chat once to allow the microphone', null, { timeout: 10000 });
+  await f.page.waitForTimeout(300);
+  assert.equal(await f.page.evaluate(() => window.__tones.length), 0);
+  assert.equal(f.controls.includes('window'), false);
+});
+
+test('nothing said: the window closes, "Didn\'t hear a question" for 4 s, nothing submitted, Chat ready again', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { limits: { windowSilenceMs: 1500 } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  f.ask();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
+  await f.page.waitForFunction(() => document.querySelector('#notice').textContent === "Didn't hear a question", null, { timeout: 10000 });
+  const shownAt = Date.now();
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'false');
+  assert.equal(await f.page.locator('#phase').textContent(), 'Ready to ask');
+  assert.equal(f.requests.filter(line => line === 'POST /chat/api/choices').length, 0, 'nothing submitted');
+  const sent = f.service.connections.reduce((n, c) => n + c.frames, 0);
+  await f.page.waitForFunction(() => document.querySelector('#notice').textContent !== "Didn't hear a question", null, { timeout: 8000 });
+  const shown = Date.now() - shownAt;
+  assert.ok(shown >= 3500 && shown <= 5500, `shown ${shown} ms`);
+  assert.equal(f.service.connections.reduce((n, c) => n + c.frames, 0), sent, 'the microphone closed with the window');
+  // Ready for the next press at once, in the same session.
+  f.ask();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 10000 });
+  assert.equal(f.sessions(), 1);
+  assert.deepEqual(f.errors, []);
+});

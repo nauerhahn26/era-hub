@@ -167,7 +167,7 @@ Info
       Verify: same suite, test "an ask push starts a session with no touch".
       Guard: `startChat` must keep refusing while hidden; `askFromButton`
       does too (the hub foregrounds first).
-- [ ] **T2.3** Lines: no stream settings (`config.runtime` lacks
+- [x] **T2.3** (`/config` now says `streaming: true`, so no session is opened to find out; a window lost to a stream error says "Listening stopped…") Lines: no stream settings (`config.runtime` lacks
       `capabilities.streaming` / `ready.capabilities.remoteStreaming !== true`)
       → notice "Streaming speech is not set up on this device", no tone;
       `NotAllowedError` → "Touch Start Chat once to allow the microphone", no

@@ -77,6 +77,16 @@ export function createChatController(deps = {}) {
       if (mine === turn && spoken === utterance && state.phase === 'Speaking') patch({ phase: pending ? 'Preparing' : back });
       return true;
     },
+    // A listening window that ends with nothing to show (nothing said, or
+    // cancelled before a batch was revealed) goes back to where a turn starts:
+    // anything staged and unseen is dropped; nothing shown ever changes.
+    idle() {
+      if (!['Capturing question', 'Preparing'].includes(state.phase)) return false;
+      invalidate();
+      patch({ turn, phase: state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off',
+        question: '', partial: '', staged: false, error: '' });
+      return true;
+    },
     fail(message) {
       invalidate();
       patch({ turn, staged: false, engineReady: false, wakeEnabled: false, error: String(message || 'Live listening unavailable. Your phrases still work.'), phase: state.choices.length ? 'Your turn' : 'Off' });
