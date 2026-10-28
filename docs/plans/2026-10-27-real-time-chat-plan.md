@@ -489,6 +489,16 @@ Hub (chat-turns, server, chat-world, chat-api, chat-choices, registry):
 
 Then: gate detached, VM legs, land, release (patch), push both i13s + tablet.
 
+Outcome (10/28, 20:22–21:10 UTC): built by two agents in parallel (page +
+hub), gate 193/0 (one unrelated flaky suite), landed 8ef5329, released
+v1.0.35 (build 20261028.2053, VM leg B 12/0); pushed to the home I-13 over
+the tunnel before the release finished ("this is working great"), tablet and
+school by nudge/self-update. Review fixes on the way: stacked pictures under
+44 px are set aside (no specks); the registry's browser counts regenerated.
+Open: the seed lists in her voice (dad edits them in the partner dialog),
+better pictures for the fixed tiles and comments, modes with no question on
+screen, `commentDropped` not in the turn record.
+
 ## Read the choices aloud when she does not answer (dad, 10/28 night — PROPOSED, his number pending)
 
 "If she doesn't respond after a certain amount of seconds, maybe 15, maybe 10,
