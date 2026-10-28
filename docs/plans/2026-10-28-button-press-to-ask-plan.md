@@ -220,7 +220,7 @@ Info
       and `tests/chat-turnlog.test.mjs` accept the new rows and reject an
       unknown stage. Guard: TEXT_STAGES/MULTI extended explicitly; the record
       stays content-free when test mode is off.
-- [ ] **T3.6** Browser test: "a question with a pause inside it stays one
+- [x] **T3.6** (plus: real quiet seals through the hub gate; a second utterance replaces an unseen batch, and is held, never drawn, once a batch shows) Browser test: "a question with a pause inside it stays one
       utterance" (fake service holds end_of_turn; silence < 1.5 s), "a second
       utterance adds a batch" and "the done tone fires at close" in
       `tests/chat-commands-browser.test.mjs`. Guard: all through the command

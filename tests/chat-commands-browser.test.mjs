@@ -57,7 +57,20 @@ async function turnsService(t, script = {}) {
   return { url: `ws://127.0.0.1:${server.address().port}/v3/ws`, connections };
 }
 
-async function fixture(t, { script = {}, streaming = true, limits = {}, deny = false } = {}) {
+// A 16 kHz mono wav from [ms, tone?] segments: the fake microphone loops it.
+function segmentsWav(segments) {
+  const rate = 16000, samples = segments.reduce((n, [ms]) => n + Math.round(rate * ms / 1000), 0), wav = Buffer.alloc(44 + samples * 2);
+  wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
+  let i = 0;
+  for (const [ms, tone] of segments) for (let n = 0; n < Math.round(rate * ms / 1000); n++, i++)
+    wav.writeInt16LE(tone ? Math.round(Math.sin(i * Math.PI * 2 * 300 / rate) * 6000) : 0, 44 + i * 2);
+  return wav;
+}
+
+async function fixture(t, { script = {}, streaming = true, limits = {}, deny = false, audio = null } = {}) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-commands-browser-'));
   const store = createChatStore({ dataDir: scratch });
   const service = await turnsService(t, script);
@@ -90,7 +103,7 @@ async function fixture(t, { script = {}, streaming = true, limits = {}, deny = f
   server.on('upgrade', (req, socket, head) => { if (!api.upgrade(req, socket, head)) socket.destroy(); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const wav = path.join(scratch, 'microphone.wav'); await fs.writeFile(wav, makeChatToneWav());
+  const wav = path.join(scratch, 'microphone.wav'); await fs.writeFile(wav, audio || makeChatToneWav());
   const browser = await chromium.launch({ headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${wav}`, '--autoplay-policy=no-user-gesture-required'] });
   t.after(async () => { await browser.close(); api.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, hasTouch: true, permissions: ['microphone'] });
@@ -322,4 +335,83 @@ test('her pick while the window listens: pick reaches the hub before anything sp
   assert.equal(f.api.window(), null, 'the hub closed the window');
   assert.deepEqual(await f.page.evaluate(() => window.__tones.map(({ from }) => from)), [660, 880]);
   assert.deepEqual(f.errors, []);
+});
+
+// ---- T3.6 utterances, batches and the close, all through the command stream ----
+
+test('a question with a pause inside it stays one utterance: under 1.5 s of quiet never seals', { timeout: 60000 }, async t => {
+  // Speech 0.8 s, quiet 1.0 s, again and again; the service's end of turn comes only after the whole question.
+  const f = await fixture(t, { audio: segmentsWav([[800, true], [1000, false]]),
+    script: { 5: [turn('do you want')], 20: [turn('do you want chicken or fish')], 30: [turn('do you want chicken or fish', { end: true })] } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  f.ask();
+  await f.page.waitForFunction(() => document.querySelector('#diagnostics').textContent.startsWith('Question:'), null, { timeout: 20000 });
+  assert.equal(await f.page.locator('#diagnostics').textContent(), 'Question: do you want chicken or fish', 'one utterance: the pause did not cut the question');
+  await f.page.waitForTimeout(500);
+  assert.equal(f.api.window() !== null, true, 'still listening');
+});
+
+test('with no end of turn from the service, 1.5 s of real quiet after speech seals the utterance (the hub energy gate)', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { audio: segmentsWav([[1000, true], [6000, false]]),
+    script: { 3: [turn('is it time for lunch')], 8: [turn('is it time for lunch')] } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 20000 });
+  assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'sealed by the quiet, not by the window closing');
+});
+
+test('a second utterance before she has seen the first batch replaces it unseen: chicken, fish and pasta together', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })], 10: [turn('or pasta', { order: 1 })], 12: [turn('or pasta', { order: 1, end: true })] } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.page.mouse.move(5, 5); // her gaze is off the board: nothing is revealed yet
+  f.ask();
+  await f.page.waitForFunction(() => document.querySelector('#diagnostics').textContent === 'Question: do you want chicken or fish or pasta', null, { timeout: 15000 });
+  await f.page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'), null, { timeout: 10000 });
+  assert.equal(await f.page.locator('.response').count(), 0);
+  await f.restOnCentre();
+  await f.page.waitForSelector('.response', { timeout: 5000 });
+  assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Chicken', 'Fish', 'Pasta']);
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'still listening after both seals');
+});
+
+test('a second utterance after she sees the first batch never changes a shown tile (the swap is phase 4)', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })], 25: [turn('or pasta', { order: 1 })], 27: [turn('or pasta', { order: 1, end: true })] } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  const before = await f.page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.textContent, node.style.gridColumn, node.style.gridRow]));
+  await f.page.waitForFunction(() => document.querySelector('#diagnostics').textContent.includes('held while the earlier replies show'), null, { timeout: 15000 });
+  await f.page.waitForTimeout(400);
+  const after = await f.page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.textContent, node.style.gridColumn, node.style.gridRow]));
+  assert.deepEqual(after, before, 'chicken and fish did not move, and nothing appeared under her gaze');
+  assert.deepEqual(f.errors, []);
+});
+
+test('the second press ends the window: the done tone fires, the microphone closes, the batch stays', { timeout: 60000 }, async t => {
+  const { createButtons } = require('../buttons.js');
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
+  const buttons = createButtons({ enabledChat: () => true, commands: f.api.commands, window: () => f.api.window(),
+    kiosk: { foreground: async () => false, relaunch: async () => ({ ok: true }) } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  assert.equal((await buttons.press({ key: 'F13', action: 'ask' })).dispatch, 'visible');
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  assert.equal((await buttons.press({ key: 'F13', action: 'ask' })).dispatch, 'end', 'the second press');
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
+  await f.page.waitForFunction(() => window.__tones.length === 2, null, { timeout: 2000 });
+  assert.deepEqual(await f.page.evaluate(() => window.__tones.map(({ from, to }) => [from, to])), [[660, 880], [880, 660]]);
+  assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Chicken', 'Fish'], 'the last batch stays showing');
+  assert.equal(await f.page.locator('#phase').textContent(), 'Your turn');
+  const sent = f.service.connections.reduce((n, c) => n + c.frames, 0);
+  await f.page.waitForTimeout(500);
+  assert.equal(f.service.connections.reduce((n, c) => n + c.frames, 0), sent, 'no frame after the close');
+  assert.equal(await f.page.evaluate(() => window.__touches), 0);
 });
