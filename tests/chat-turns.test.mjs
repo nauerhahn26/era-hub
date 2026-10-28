@@ -412,3 +412,14 @@ test('her lists (stable frame §2): questions, comments and about, generic defau
   for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyListsSetting({}, { chatAbout: ['hi'] }, site), {});
   for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyListsSetting({}, { chatAbout: ['hi'] }, site), { chatAbout: ['hi'] });
 });
+
+test('a turn record keeps the stable frame fields (§4): the mode she swapped to, the page she opened, Something else', () => {
+  const base = turnRecord().content;
+  for (const extra of [{ mode: 'ask' }, { mode: 'comment' }, { page: 'questions' }, { page: 'comments' }, { page: 'about' }, { again: true },
+    { mode: 'ask', page: 'about', again: true }]) {
+    const kept = validateTurn(turnRecord({ content: { ...base, ...extra } }));
+    assert.deepEqual(kept.content, { ...base, ...extra }, JSON.stringify(extra));
+  }
+  for (const extra of [{ mode: 'tell' }, { mode: 'one-shot' }, { mode: null }, { page: 'likes' }, { page: 7 }, { again: false }, { again: 'yes' }, { again: 1 }])
+    assert.throws(() => validateTurn(turnRecord({ content: { ...base, ...extra } })), e => e.status === 400 && e.code === 'invalid-turn', JSON.stringify(extra));
+});
