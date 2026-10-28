@@ -78,6 +78,7 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
     else if (url.pathname.endsWith('/control')) { const body = req.postDataJSON(); controls.push(body.type); if (body.type !== 'finish') generation++; result = { generation }; }
     else if (url.pathname.endsWith('/audio')) { uploads++; result = { seq: uploads }; }
     else if (url.pathname.endsWith('/choices')) result = generated;
+    else if (url.pathname.endsWith('/world')) { const text = 'Today: Wednesday, October 28.\nShe likes: ' + chatLikes(scratch).join(', ') + '.'; result = { text, weeks: 0, chars: text.length }; }
     else result = { ready: true, mode: 'paused' };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) }).catch(() => {});
   });
@@ -233,5 +234,15 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   for (let i = 0; i < 100 && chatLikes(scratch)[0] !== 'swim'; i++) await page.waitForTimeout(20);
   assert.deepEqual(chatLikes(scratch), ['swim', 'dance', 'bake cookies']);
   await page.waitForFunction(() => /Saved/.test(document.querySelector('#chatLikesNote').textContent));
+  // What Chat knows this week (plan "Her world as context"): read-only, filled when the dialog opens and after likes are saved.
+  assert.equal(await page.locator('#worldDetails summary').textContent(), 'What Chat knows this week');
+  await page.locator('#worldDetails summary').click();
+  await page.waitForFunction(() => /She likes: swim, dance, bake cookies\./.test(document.querySelector('#worldPreview').textContent));
+  assert.equal(await page.locator('#worldPreview').evaluate(el => el.tagName), 'PRE');
+  assert.equal(await page.locator('#worldPreview').evaluate(el => el.isContentEditable), false);
+  await page.locator('#partnerDialog .close').click();
+  await page.evaluate(() => { document.querySelector('#worldPreview').textContent = ''; });
+  await page.locator('#partnerOpen').click();
+  await page.waitForFunction(() => document.querySelector('#worldPreview').textContent.startsWith('Today: Wednesday, October 28.'));
   assert.deepEqual(errors, []); assert.equal(foreign, 0);
 });
