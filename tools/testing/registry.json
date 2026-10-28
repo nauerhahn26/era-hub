@@ -1085,7 +1085,7 @@
       ],
       "hub": "none",
       "ports": [],
-      "browsers": 4,
+      "browsers": 5,
       "heavy": false,
       "solo": false,
       "quiet": false,
@@ -4702,6 +4702,27 @@
       "level": "pure layout unit",
       "dependencies": [
         "era-hub/public/chat/frame.js"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-prompt.test.mjs",
+      "purpose": "Chat reading the options aloud: the silence timer from the reveal, cancelled by dwell progress, a selection, a page or mode swap, a new hold or the partner dialog; the name first, then each reply label in order with its tile lit, YES and NO never read, a batch read at most once",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit",
+      "dependencies": [
+        "era-hub/public/chat/prompt.js"
       ],
       "resources": [
         "in-process"
