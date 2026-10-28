@@ -338,3 +338,18 @@ test('a dwell on an old tile while the window\'s batch is being prepared drops t
   assert.equal(c.state.phase, 'Ready to ask');
   assert.equal(c.neutral(), false, 'nothing is revealed later');
 });
+
+test('a pick is recorded only when select accepts it: onSelected runs before speech for an accepted pick, never for a refused one (review fix)', async () => {
+  const order = [];
+  const c = await showing(['Chicken', 'Fish'], { speak: async choice => { order.push(`spoke ${choice.say}`); } });
+  const shown = c.state.choices, tileTurn = c.state.turn;
+  assert.equal(await c.select(shown[0].id, tileTurn + 1, choice => order.push(`logged ${choice.label}`)), false, 'a pick from another turn is refused');
+  assert.equal(await c.select('nope', tileTurn, choice => order.push(`logged ${choice.label}`)), false, 'an unknown tile is refused');
+  assert.deepEqual(order, [], 'a refused pick is never recorded');
+  assert.equal(await c.select(shown[1].id, tileTurn, choice => order.push(`logged ${choice.label}`)), true);
+  assert.deepEqual(order, ['logged Fish', 'spoke Fish.']);
+  // The page hands the turn-log write to select, not before it.
+  const app = await readFile(new URL('../public/chat/app.js', import.meta.url), 'utf8');
+  assert.match(app, /controller\.select\(item\.id, selectedTurn, \w+ => turnLog\.content\(\w+, \{ selected: \w+ \}\)\)/);
+  assert.doesNotMatch(app, /turnLog\.content\(questionMetric, \{ selected: item \}\); controller\.select/);
+});

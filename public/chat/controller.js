@@ -114,7 +114,8 @@ export function createChatController(deps = {}) {
       patch({ choices: next, staged: false, phase: 'Your turn' });
       return true;
     },
-    async select(id, expectedTurn = turn) {
+    // onSelected(choice) runs only for an accepted pick, before anything speaks.
+    async select(id, expectedTurn = turn, onSelected) {
       // A still-shown old tile after a press (design §4.5, a pick wins): her
       // dwell speaks it; whatever the window was preparing is dropped unseen.
       const stalePick = state.stale && expectedTurn === state.staleTurn;
@@ -122,6 +123,7 @@ export function createChatController(deps = {}) {
       const c = state.choices.find(x => x.id === id);
       if (!c) return false;
       if (stalePick) { invalidate(); patch({ turn, question: '', partial: '', staged: false, error: '' }); }
+      onSelected?.(c);
       timing('selected');
       return api.sayFixed(c.say);
     },
