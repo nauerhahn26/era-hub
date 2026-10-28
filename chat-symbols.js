@@ -43,13 +43,17 @@ function vocabulary() {
 // pictures. Families (food, drink, weather, time, place, person) feed the guard.
 let lexiconTable = null;
 function compileLexicon(data) {
-  const words = new Map();
-  for (const [word, id] of Object.entries(data && typeof data.words === 'object' && data.words || {}))
-    if (Number.isSafeInteger(id) && id > 0 && normal(word) === word) words.set(word, id);
+  const map = key => {
+    const out = new Map();
+    for (const [word, id] of Object.entries(data && typeof data[key] === 'object' && data[key] || {}))
+      if (Number.isSafeInteger(id) && id > 0 && normal(word) === word) out.set(word, id);
+    return out;
+  };
+  const words = map('words'), actions = map('actions');
   const family = new Map();
   for (const [name, ids] of Object.entries(data && typeof data.families === 'object' && data.families || {}))
     if (Array.isArray(ids)) for (const id of ids) family.set(id, name);
-  return { words, family };
+  return { words, actions, family };
 }
 function lexicon() {
   if (lexiconTable) return lexiconTable;
@@ -76,6 +80,27 @@ function lexiconForm(form) {
   if (/[^s]s$/.test(form)) forms.push(form.replace(/s$/, ''));
   for (const candidate of forms) {
     const id = words.get(candidate);
+    if (id) return { word: candidate, id, family: family.get(id) || null };
+  }
+  return null;
+}
+// One form in the actions map, then its plain verb ("clapping" → clap,
+// "learned" → learn, "tries" → try).
+function actionForm(form) {
+  if (!form) return null;
+  const { actions, family } = lexicon();
+  const forms = [form];
+  if (/^[a-z]+$/.test(form)) {
+    const stem = form.replace(/(?:ing|ed)$/, '');
+    if (stem !== form && stem.length >= 2) {
+      forms.push(stem, stem + 'e');
+      if (/([^aeiou])\1$/.test(stem)) forms.push(stem.slice(0, -1));
+    }
+    if (/ied$|ies$/.test(form)) forms.push(form.slice(0, -3) + 'y');
+    if (/[^s]s$/.test(form)) forms.push(form.slice(0, -1));
+  }
+  for (const candidate of forms) {
+    const id = actions.get(candidate);
     if (id) return { word: candidate, id, family: family.get(id) || null };
   }
   return null;
@@ -285,22 +310,142 @@ function lexiconChoice(label, l) {
   const foodLabel = !!category(l) && [...category(l).families].some(family => family === 'food' || family === 'drink');
   return lexiconPick(l, { anyWord: !curatedIn(l).some(word => !BROAD.has(word)), foodLabel });
 }
+// ---- the actions layer ---------------------------------------------------
+// Words that are never the picture of a reply, even when nothing concrete is
+// named: articles, pronouns, helpers, prepositions, joining and polite words.
+// Unlike STOP, verbs, time words and qualities stay: "Hurry up" is hurry,
+// "Maybe later" is later.
+const FUNCTION_WORDS = new Set(['a', 'an', 'the', 'some', 'any', 'of', 'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'we', 'us', 'our',
+  'he', 'him', 'his', 'she', 'her', 'it', 'its', 'they', 'them', 'their', 'this', 'that', 'these', 'those', 'im', 'youre', 'ive', 'lets',
+  'let', 'thats', 'whats', 'theres', 'heres', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'do', 'does', 'did', 'have', 'has', 'had',
+  'can', 'could', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'wanna', 'gonna', 'keep', 'to', 'with', 'for', 'at', 'in',
+  'on', 'from', 'by', 'about', 'into', 'onto', 'up', 'down', 'out', 'off', 'around', 'and', 'or', 'but', 'so', 'then', 'than', 'too',
+  'also', 'not', 'no', 'yes', 'please', 'thanks', 'thank', 'what', 'which', 'who', 'where', 'when', 'why', 'how', 'something',
+  'anything', 'nothing', 'thing', 'things', 'one', 'ones', 'very', 'really', 'just', 'maybe', 'ok', 'okay',
+  // hedges, not qualities: "Kind of", "Pretty good"
+  'kind', 'kinda', 'sort', 'sorta', 'pretty', 'quite', 'bit']);
+// The library's picture of what a reply does or is, when it names no thing:
+// the whole label, then its head verb, then each other content word in order.
+function actionPick(text, { foodLabel = false } = {}) {
+  if (!text) return null;
+  const fits = hit => hit && !(foodLabel && GUARDED.has(hit.family));
+  const whole = text.replace(/^(?:(?:a|an|the|some|my|your|our)\s+)+/, '').replace(/\s+(?:please|thanks|thank you)$/, '');
+  if (words(whole).length > 1) { const hit = actionForm(whole); if (fits(hit)) return hit; }
+  for (const word of words(whole)) {
+    if (FUNCTION_WORDS.has(word)) continue;
+    const hit = actionForm(word);
+    if (fits(hit)) return hit;
+  }
+  return null;
+}
+// A label offering several concrete things, or an either/or, keeps the bubble.
+function ambiguous(l) { return /\bor\b/.test(l) || conceptsIn(l).filter(word => !BROAD.has(word)).length > 1; }
+function foodish(l) { const labelled = category(l); return !!labelled && [...labelled.families].some(family => family === 'food' || family === 'drink'); }
+
+// The model's picture words ("magnifying glass", "shrug", "clock"): the whole
+// words, then each word from the last, through the curated table, the things,
+// then the actions. A picture of another known family than the label's own
+// (a clock or the weather for a dish) is refused, as `rejects` refuses a symbol.
+function picturePick(picture, l) {
+  const named = normal(picture);
+  if (!named || named.length > 32 || words(named).length > 3) return null;
+  const labelled = category(l);
+  const forms = [named, ...words(named).reverse()].filter((form, index, all) => all.indexOf(form) === index && !FUNCTION_WORDS.has(form));
+  for (const form of forms) {
+    const curatedWord = exactHit(form)?.[1];
+    const hit = curatedWord && curatedWord !== FALLBACK && !STAND_INS.has(curatedWord) ? { word: curatedWord, family: FAMILY.get(curatedWord) || null }
+      : lexiconForm(form) || actionForm(form);
+    if (!hit) continue;
+    if (labelled && hit.family && !labelled.families.has(hit.family)) continue;
+    return hit;
+  }
+  return null;
+}
+const guardedPick = (l, s, hit) => { const word = negationGuard(l, s, hit.word); return word === hit.word ? hit : { word }; };
+
+// ---- the family's own people (the Drawing feature's library) ---------------
+// The hub hands over a provider (server.js: drawings.charactersLibrary().people),
+// asked once per batch of choices, never at require time. A tile that is one
+// of them (their word, or a kin word for theirs: "Mommy" for "Mom", with an
+// optional leading "my" or "with") shows their own picture.
+let peopleProvider = null;
+function setPeople(fn) { peopleProvider = typeof fn === 'function' ? fn : null; }
+const PERSON_SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
+function currentPeople() {
+  if (!peopleProvider) return [];
+  let list;
+  try { list = peopleProvider(); } catch { return []; }
+  return Array.isArray(list) ? list.filter(p => p && typeof p.slug === 'string' && PERSON_SLUG.test(p.slug) && typeof p.word === 'string'
+    && p.word.length <= 40 && !/[<>\x00-\x1f]/.test(p.word) && normal(p.word) && p.retired !== true) : [];
+}
+const KIN = [['mom', 'mum', 'mommy', 'mummy', 'mama', 'momma', 'mother'], ['dad', 'daddy', 'papa', 'dada', 'father'],
+  ['grandma', 'granny', 'nana', 'gran', 'grandmother'], ['grandpa', 'grandad', 'granddad', 'grampa', 'gramps', 'grandfather'],
+  ['sister', 'sis'], ['brother', 'bro'], ['baby'], ['friend'], ['teacher'], ['girl'], ['boy']];
+const KIN_GROUP = new Map(KIN.flatMap((group, index) => group.map(word => [word, index])));
+function personFor(text, people) {
+  const bare = text.replace(/^(?:with\s+)?(?:my\s+)?/, '');
+  if (!bare || !people.length) return null;
+  const kin = KIN_GROUP.get(bare);
+  const found = people.find(p => normal(p.word) === bare) || (kin !== undefined && people.find(p => KIN_GROUP.get(normal(p.word)) === kin));
+  return found ? { word: found.word, src: `/characters/${found.slug}.png`, kind: 'person' } : null;
+}
+// One-word replies that are never a name, though the library may lack them.
+const NOT_NAMES = new Set(['sure', 'okay', 'ok', 'fine', 'maybe', 'perhaps', 'later', 'nothing', 'whatever', 'never', 'always',
+  'sometimes', 'cool', 'great', 'awesome', 'yay', 'yep', 'yeah', 'yup', 'nope', 'nah', 'hmm', 'um', 'oops', 'wow', 'totally',
+  'definitely', 'absolutely', 'probably', 'really', 'seriously', 'exactly', 'everything', 'everyone', 'nobody', 'somebody',
+  'someone', 'anyone', 'neither', 'either', 'both', 'all', 'none', 'again', 'done', 'finished', 'ready', 'alright', 'thanks']);
+// A capitalised single word that names nothing the hub knows is a name. Only
+// with the library's whole index loaded: without it every dish would be a name.
+const NAME_INDEX_MIN = 1000;
+function unknownName(label, l) {
+  if (lexicon().words.size < NAME_INDEX_MIN) return false;
+  if (!/^[A-Z][a-z]{1,19}$/.test(String(label).trim()) || NOT_NAMES.has(l) || STOP.has(l) || FUNCTION_WORDS.has(l)) return false;
+  if (KIN_GROUP.has(l) || exactHit(l) || lexiconForm(l) || actionForm(l)) return false;
+  return true;
+}
+
+// Leading verbs a label's head phrase may follow, beyond the stop words.
+const LEADING = new Set(['stay', 'come', 'sit', 'stop', 'start', 'keep', 'have']);
+function headConcept(l) {
+  const list = words(l);
+  let from = 0;
+  while (from < list.length - 1 && (STOP.has(list[from]) || LEADING.has(list[from]))) from++;
+  const word = exact(list.slice(from).join(' '));
+  return word && word !== FALLBACK && !BROAD.has(word) ? word : null;
+}
+
 // The hub's pick: { word, id? }. A curated phrase, then the library's picture
 // for a thing the table lacks, then the model's symbol, then the text guess.
-function choose({ label = '', say = '', symbol } = {}) {
+function choose({ label = '', say = '', symbol, picture } = {}, people = currentPeople()) {
   const l = normal(label), s = normal(say);
+  const known = personFor(l, people) || (!l || !conceptsIn(l).length && !lexiconForm(l) ? personFor(s, people) : null);
+  if (known) return guardedPick(l, s, known);
+  if (unknownName(label, l)) return { word: 'friend', name: true };
   // A curated phrase is reviewed for its own words; the other field is still guarded
   // ("I'm good" / "No thanks, I am good." is a refusal).
   if (curated(l)) return { word: NEGATION.test(l) ? curated(l) : negationGuard('', s, curated(l)) };
   if (curated(s)) return { word: NEGATION.test(s) ? curated(s) : negationGuard(l, '', curated(s)) };
   const lexical = lexiconChoice(label, l);
-  if (lexical) {
-    const guarded = negationGuard(l, s, lexical.word);
-    return guarded === lexical.word ? lexical : { word: guarded };
-  }
+  if (lexical) return guardedPick(l, s, lexical);
+  // The label's own curated concept at its head ("Stay home", "Go to the park",
+  // "Eat pizza") beats the model's word; a broad word ("Something fun") does not.
+  const headed = NEGATION.test(l) ? null : headConcept(l);
+  if (headed) return { word: negationGuard(l, s, headed) };
   const model = modelSymbol(symbol);
-  const picked = model && !rejects(l, model) ? model : fromWords(l, s);
-  return { word: negationGuard(l, s, picked) };
+  if (model && model !== FALLBACK && !rejects(l, model)) return { word: negationGuard(l, s, model) };
+  // The label's own curated word or category, then the model's picture words,
+  // then the text guess, then the label's action or quality, else the bubble.
+  const labelled = exact(l) || category(l)?.word;
+  if (labelled && labelled !== FALLBACK) return { word: negationGuard(l, s, labelled) };
+  const named = picturePick(picture, l);
+  if (named) return guardedPick(l, s, named);
+  const guessed = labelled || guess(l) || guess(s);
+  if (guessed && guessed !== FALLBACK) return { word: negationGuard(l, s, guessed) };
+  if (!ambiguous(l)) {
+    const action = actionPick(l, { foodLabel: foodish(l) }) || (!guessed ? actionPick(s, { foodLabel: foodish(l) }) : null);
+    if (action) return guardedPick(l, s, action);
+  }
+  return { word: negationGuard(l, s, FALLBACK) };
 }
 function pickSymbol(choice = {}) { return choose(choice).word; }
 // True when the model named a picture the hub refused for the label's own
@@ -310,9 +455,17 @@ function symbolRejected({ label = '', say = '', symbol } = {}) {
   return !!model && !curated(l) && !curated(s) && rejects(l, model);
 }
 function withSymbols(choices) {
+  const people = currentPeople();
+  let names = 0;
   return choices.map(choice => {
-    const pick = choose(choice), id = pick.id || vocabulary().byWord.get(pick.word)?.id;
-    return { ...choice, symbol: pick.word, ...(id ? { symbolId: id } : {}) };
+    const pick = choose(choice, people);
+    // Two unknown names never share a picture: the first is a friend, the next people.
+    if (pick.name && names++) pick.word = GENERIC.person;
+    // The model's picture words are an input of the pick, never sent on to the page.
+    const { picture: _named, ...rest } = choice;
+    if (pick.kind === 'person') return { ...rest, symbol: pick.word, picture: { src: pick.src, kind: 'person' } };
+    const id = pick.id || vocabulary().byWord.get(pick.word)?.id;
+    return { ...rest, symbol: pick.word, ...(id ? { symbolId: id } : {}) };
   });
 }
 // The things a partner names while still speaking, for warming their pictures
@@ -336,7 +489,7 @@ function pictureCandidates(text, max = 6) {
     after = '';
     const head = phrase && headPhrase(normal(phrase));
     if (!head) continue;
-    const pick = choose({ label: head });
+    const pick = choose({ label: head }, []);
     const id = pick.id || vocabulary().byWord.get(pick.word)?.id;
     if (!id || pick.word === FALLBACK || seen.has(id)) continue;
     seen.add(id); found.push({ word: pick.word, id });
@@ -435,4 +588,4 @@ function createSymbolWarmer({ ids, isCached, fetchOne, delayMs = 250, maxFailure
 }
 
 module.exports = { symbolWords, pickSymbol, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal,
-  setLexicon, pictureCandidates, createPictureWarmer };
+  setLexicon, setPeople, pictureCandidates, createPictureWarmer };

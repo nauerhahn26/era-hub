@@ -129,10 +129,15 @@ function cleanText(value, cap) {
   return value.trim().replace(/\s+/g, ' ');
 }
 // Every choice leaves the hub with a decorative picture: { symbol, symbolId }.
+// A glyph choice (a letter or a number, spec §3) has no picture: the page
+// shows the character itself, big.
 function choiceList(items) {
-  return withSymbols(items.map((item, index) => typeof item === 'string' ?
+  const choices = items.map((item, index) => typeof item === 'string' ?
     { id: `choice-${index + 1}`, label: item, say: item } :
-    { id: `choice-${index + 1}`, label: item.label, say: item.say, ...(typeof item.symbol === 'string' ? { symbol: item.symbol } : {}) }));
+    { id: `choice-${index + 1}`, label: item.label, say: item.say, ...(item.glyph === true ? { glyph: true } : {
+      ...(typeof item.symbol === 'string' ? { symbol: item.symbol } : {}), ...(typeof item.picture === 'string' ? { picture: item.picture } : {}) }) });
+  const pictured = withSymbols(choices.filter(choice => !choice.glyph));
+  return choices.map(choice => choice.glyph ? choice : pictured.shift());
 }
 function safeTimings(value) {
   const result = {};
@@ -185,10 +190,15 @@ function alternativesOf(parts) {
       while (from < list.length - 1 && (PARTICLE.test(list[from]) || OBJECT.test(list[from]))) from++;
       from++;
     }
-    const cut = list.findIndex((word, i) => i >= from && TAIL.test(word));
+    // A clause word right after "and" (or "and then") is joined, not a clause:
+    // "go outside and play" stays whole.
+    const joined = i => /^and$/i.test(list[i - 1] || '') || (/^then$/i.test(list[i - 1] || '') && /^and$/i.test(list[i - 2] || ''));
+    const cut = list.findIndex((word, i) => i >= from && TAIL.test(word) && !joined(i));
     const kept = cut > 0 ? list.slice(0, cut) : list;
-    // Never a dangling "to", "the" or "a".
-    while (kept.length > 1 && (PARTICLE.test(kept.at(-1)) || OBJECT.test(kept.at(-1)))) kept.pop();
+    // Never a dangling "to", "the", "a", "and", "or" or "and then".
+    const dangling = () => PARTICLE.test(kept.at(-1)) || OBJECT.test(kept.at(-1)) || /^(?:and|or)$/i.test(kept.at(-1)) ||
+      (/^then$/i.test(kept.at(-1)) && /^and$/i.test(kept.at(-2) || ''));
+    while (kept.length > 1 && dangling()) kept.pop();
     return kept.join(' ');
   });
 }
@@ -220,6 +230,43 @@ function lastQuestion(text, opener) {
   if (opener.test(sentences[index - 1].trim())) index--;
   return sentences.slice(index).join('').trim();
 }
+// A trailing list of two to four single letters or numbers ("Is the answer A,
+// B, C, or D?", "A or B?", "Which one, 1, 2 or 3?"), under any stem or none.
+// Each item stands alone between commas, "or" and the end, and the list starts
+// the sentence or follows a comma, a colon or a stem word, so "a" the article
+// ("a cookie or a banana") is never a letter. Offered as glyphs: no picture.
+const GLYPH = String.raw`(?:[a-z]|\d{1,2})`;
+const GLYPH_LIST = new RegExp(String.raw`(?:^|[,:]\s*|\b(?:answer|one|it|is|be|was|pick|choose|between|either|want|like|need|prefer|rather|number|letter|plan|option|options|choice|choices|group|team|door|box|card|or)\s+)` +
+  String.raw`(${GLYPH}(?:\s*,\s*(?:or\s+)?${GLYPH}|\s+or\s+${GLYPH}){1,3})$`, 'i');
+function glyphChoices(text) {
+  const match = GLYPH_LIST.exec(text);
+  if (!match) return null;
+  const items = match[1].split(/\s*,\s*(?:or\s+)?|\s+or\s+/i).map(item => /^\d+$/.test(item) ? String(Number(item)) : item.toUpperCase());
+  if (items.length < 2 || items.length > 4 || new Set(items).size !== items.length) return null;
+  return { kind: 'alternatives', choices: choiceList(items.map(item => ({ label: item, say: item, glyph: true }))) };
+}
+// "Who do you want, Mom, Dad, Lisa, or Sam?", "Which one do you want: the red
+// one or the blue one?": a who / which / what question that ends, after a
+// comma or colon, in an either/or list of two to four short items (one to
+// three words, no question stem or auxiliary inside) offers those items.
+const NAMED_STEM = /^(?:who|whom|which|what)\b/i;
+const NAMED_STOP = /^(?:do|does|did|is|are|am|was|were|be|would|should|could|can|will|shall|may|might|must|want|wanna|need|like|prefer|have|has|had|to|you|we|it|if)$/i;
+function namedChoices(text) {
+  if (!NAMED_STEM.test(text)) return null;
+  for (const separator of text.matchAll(/[,:]/g)) {
+    const tail = text.slice(separator.index + 1).trim();
+    const ors = tail.split(/\s+or\s+/i);
+    if (ors.length < 2) continue;
+    const last = ors.pop().replace(/\s*,.*$/, '');
+    const items = [...ors.flatMap(part => part.replace(/\s*,\s*$/, '').split(/\s*,\s*/)), last].map(item => item.trim());
+    // The first separator after which every item is a short name decides:
+    // five or more of them is the model's, never a shorter tail of the list.
+    if (!items.every(item => item && item.length <= 30 && !/[.!?;:]/.test(item) && item.split(/\s+/).length <= 3 &&
+      !item.split(/\s+/).some(word => NAMED_STOP.test(word)))) continue;
+    return items.length >= 2 && items.length <= 4 ? { kind: 'alternatives', choices: choiceList(spokenAlternatives(items)) } : null;
+  }
+  return null;
+}
 const STEM = /^(?:or\s+)?(?:do you (?:want|need)(?: to)?|do you wanna|would you (?:like|prefer)(?: to)?|would you rather|should we|shall we|can we)\s+/i;
 const CHOICE_PROMPT = String.raw`(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|do you wanna|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)`;
 const OPENER = new RegExp(String.raw`^(?:(?:hey[\s,!.?:]+)?ellie[\s,!.?:]+)?` + CHOICE_PROMPT + String.raw`\s*[:,.!?]*$`, 'i');
@@ -234,7 +281,11 @@ function localChoices(text) {
   if (explicitAddress) trimmed = explicitAddress[1];
   else if (questionAddress && /^(?:(?:what|which|why|where|when|how|who|hi|hello|hey)\b|(?:do|does|did|can|could|would|will|have|has|had|shall|should|may|are|were)\s+(?:you|we)\b|(?:is|was)\s+(?:it|this|that|there)\b)/i.test(questionAddress[1]))
     trimmed = questionAddress[1];
+  const glyphs = glyphChoices(trimmed);
+  if (glyphs) return glyphs;
   if (/\bor\b/i.test(trimmed)) {
+    const named = namedChoices(trimmed);
+    if (named) return named;
     const prefix = new RegExp('^' + CHOICE_PROMPT + String.raw`\s*[:,.!?]?\s+`, 'i');
     // Unrecognised question forms need context and factual grounding. Splitting
     // them can turn half a question into the communicator's spoken answer.
@@ -647,7 +698,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const rejected = items.filter(item => symbolRejected({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol })).length;
       return { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
-        choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol }))),
+        choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol, picture: item.picture }))),
         ...(rejected ? { symbolRejected: rejected } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
@@ -692,7 +743,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function stageChoice(session, job, choice) {
     if (!liveJob(session, job)) return;
     const index = job.stagedCount++;
-    const [pick] = choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}) }]);
+    // A choice of a whole batch (a shortcut, the adapter) is already picked as part of
+    // its batch (a glyph, a person, the second of two names): it is staged as it is.
+    const picked = choice.glyph === true || Number.isSafeInteger(choice.symbolId) || typeof choice.picture?.src === 'string';
+    const [pick] = picked ? [choice] : choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}),
+      ...(typeof choice.picture === 'string' ? { picture: choice.picture } : {}) }]);
     emit(session, { type: 'choice-staged', generation: job.generation, index, choice: { ...pick, id: `choice-${index + 1}` } });
     // The hub knows the picture before the page does: warm it now, behind the event.
     if (job.pictures && pick.symbolId) try { job.pictures.stage(pick.symbolId); } catch { /* decorative */ }

@@ -146,3 +146,30 @@ test('with the provider gone and outside requests blocked, Chat tiles show cache
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });
+
+test('a reply tile that is one of the family shows their own picture; the other tiles keep their library pictures', { timeout: 60000 }, async () => {
+  // This hub has no family library of its own: the built-in people (Mom, Dad, ...) stand in.
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+    await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(base + '/chat/');
+    await page.locator('#partnerOpen').click();
+    await page.locator('#testing > summary').click();
+    await page.locator('#typedQuestion').fill('Do you want to play with Mom or Sam?');
+    await page.locator('#typedAsk').click();
+    await page.locator('.response').first().waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('.response img.chat-symbol')].length === 2
+      && [...document.querySelectorAll('.response img.chat-symbol')].every(img => img.complete && img.naturalWidth > 0));
+    const replies = await page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.querySelector('.label').textContent,
+      node.dataset.picture, new URL(node.querySelector('img.chat-symbol').src).pathname]));
+    assert.deepEqual(replies.map(row => row.slice(0, 2)), [['Mom', 'person'], ['Sam', 'library']]);
+    assert.equal(replies[0][2], '/characters/mom.png');
+    assert.match(replies[1][2], /^\/symbol\/\d+$/, 'an unknown name: the library\'s friend picture');
+    const others = await page.locator('#grid button.tile:not(.response) img.chat-symbol').evaluateAll(imgs => imgs.map(img => new URL(img.src).pathname));
+    assert.ok(others.length >= 4 && others.every(src => /^\/symbol\/\d+$/.test(src)), others.join(','));
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});

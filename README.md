@@ -30,7 +30,8 @@ The child deliberately selects what to say. Setup and validation are recorded in
 Chat's tile pictures come from the pictogram library's images, fetched by the
 hub at runtime into its cache, never stored here. `public/chat/vocabulary.json`
 is the hand-checked concept table; `public/chat/lexicon.json` is a generated
-word → pictogram id index of the library's English keyword list (words and
+word → pictogram id index of the library's English keyword list, one map of
+things and one of actions, qualities and social words (words and
 numbers only; source URL and build date inside the file), rebuilt with
 `node tools/chat-lexicon-build.mjs`.
 
