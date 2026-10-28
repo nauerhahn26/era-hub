@@ -244,3 +244,20 @@ test('a cancel while the hidden page is still being foregrounded aborts before t
   assert.equal((await first).dispatch, 'cancelled');
   assert.equal(kiosk.relaunches.length + commands.issued.length + commands.pushed.length, 0);
 });
+
+test('a relaunch whose page never connects holds presses busy for 7 s + 2 s only, then the next press dispatches afresh', async () => {
+  let now = 1000;
+  const commands = fakeCommands(), kiosk = fakeKiosk(commands);
+  const { buttons } = make({ commands, kiosk, clock: () => now });
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'relaunch');
+  now = 1000 + 9000;
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'busy', 'inside the relaunch budget');
+  now = 1000 + 9001;
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'relaunch', 'past the budget: a fresh relaunch');
+  assert.equal(kiosk.relaunches.length, 2);
+  assert.deepEqual(commands.revoked, [commands.issued[0].nonce], 'the stale nonce can never ask late');
+  // and a visible page that connects after a stale relaunch gets the push, never busy
+  now += 9001; commands.connected = true; commands.visible = true;
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'visible');
+  assert.deepEqual(commands.revoked, [commands.issued[0].nonce, commands.issued[1].nonce]);
+});

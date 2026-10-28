@@ -26,6 +26,9 @@
 const KEYS = Object.freeze({ 'F13': 'ask', 'Ctrl+Alt+F9': 'ask', 'Ctrl+Alt+F10': 'ask', 'F14': 'cancel', 'Ctrl+Alt+F11': 'cancel' });
 const BODY_BYTES = 1024;
 const ABORTED = Symbol('aborted');
+// A relaunched kiosk is up within the 7 s budget (design §4.2); 2 s more and a
+// page that never connected is not coming: the next press dispatches afresh.
+const COMING_MS = 7000 + 2000;
 
 // The press body: small JSON, anything else is null (and then a 400).
 function readBody(req, cap = BODY_BYTES) {
@@ -48,6 +51,7 @@ function createButtons(options = {}) {
   const visibleWaitMs = options.visibleWaitMs ?? 3000;
   let lastPress = null;
   let coming = null;   // the nonce of a relaunch still coming up
+  let comingAt = 0;    // when it was launched (the injected clock)
   // The one press being dispatched (foregrounding a hidden page, waiting for
   // it to be seen). A second press while it runs is `busy` (or `end` once a
   // window exists): two presses falling through to relaunch would close and
@@ -56,7 +60,7 @@ function createButtons(options = {}) {
 
   function relaunch(key, at) {
     const nonce = commands.issue({ pressAt: at, key });
-    coming = nonce;
+    coming = nonce; comingAt = clock();
     Promise.resolve().then(() => kiosk.relaunch('/chat/?ask=' + nonce))
       .then(result => { if (result && result.ok === false) throw new Error(result.reason || 'not launched'); })
       .catch(error => {
@@ -69,6 +73,9 @@ function createButtons(options = {}) {
   async function dispatch(action, key, at) {
     const window = openWindow();
     if (coming && !commands.pending(coming)) coming = null;
+    // Past the relaunch budget the page is not coming: revoke its nonce (it can
+    // never ask late) and stop answering busy.
+    if (coming && clock() - comingAt > COMING_MS) { commands.revoke(coming); coming = null; }
     if (action === 'cancel') {
       if (window) { window.cancel(); commands.push({ type: 'cancel' }); return 'cancel'; }
       if (inFlight || coming) {
