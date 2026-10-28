@@ -244,3 +244,57 @@ replies beside the rest with the question shown), published for dad to share
 with her AAC specialist; the decision is theirs, nothing built. Still open:
 the model's picture only decides when nothing else does; "Wave" is a sea wave
 (things before actions); a name that is also a word shows the thing.
+
+## Open-ended questions (dad, 10/28 evening)
+
+Dad: "build some logic to handle open-ended questions like 'what do you want
+to do today' or 'how was your weekend', and give her four options in those
+open-ended scenarios: identify the open-ended question, then create options
+using the model."
+
+**As built before this.** "How was your weekend?" and every "what did you
+do…" question never reached the model: `guardedChoices` answered with three
+fixed repairs (clue, another way, not now). Every other open question went to
+the model with "2 to 4, normally 3", tilted toward uncertainty and refusal.
+So an open question gave her the thinnest board of all.
+
+**Design.**
+
+- The hub classifies a question that has no local answer (not yes/no, not a
+  spoken, named or letter list) into an open shape and passes it to the model
+  as `shape`: `want` (what do you want / would you like / what should we / what
+  are we doing / what do you want to do, eat, play, watch…), `recall` (what
+  did you do, where did you go, what happened, tell me about your day), `feel`
+  (how are you, how was your…, how do you feel, did you like it), `open`
+  (any other who/what/where/when/why/how/which/tell-me question). A statement
+  or anything else keeps today's behaviour (no shape).
+- An open shape asks the model for exactly four choices, each a real reply
+  she could pick, genuinely different, concrete and short, in the register of
+  a seven-year-old; at most one of the four is a repair (not sure, tell me
+  more, another way) and never two. `want` draws on the family's own list of
+  what she likes (below) plus the question's own domain; `feel` offers a
+  spread (good, so-so, not good, plus one that says more); `recall` offers how
+  it was and a wish to tell, never an event; `open` is the model's call.
+- No invented facts stays law. For `recall` the hub checks every reply: a say
+  that asserts a past activity ("I went", "we played", "I saw", "I had", "I
+  ate", "I made", "I watched"…) throws the batch out and the four fixed
+  repairs stand (clue, another way, I don't remember, I don't want to say).
+  A confirmed earlier utterance with the same time anchor still goes first
+  and the model's list is trimmed to three behind it.
+- "What she likes": `chatLikes` in app-settings.json, up to twelve short
+  phrases, edited in the partner dialog (a textarea, one per line), with a
+  generic default (play outside, draw, read a book, watch a show, play a
+  game, music, a snack, see a friend). Family values stay on the device.
+- Telemetry: the turn record carries `shape` and whether the recall check
+  threw a batch out.
+
+**Tasks.**
+
+- [ ] Tests first: shape classifier (hub), the four-choice instruction and
+      `shape` + `likes` in the model input, recall check, confirmed-quote
+      rule, settings round trip, partner dialog textarea, turn record field.
+- [ ] Classifier in chat-api.js; model instructions and input in
+      chat-choices.js; recall check; chatLikes setting (chat-turns.js style)
+      and dialog field; spec §8 note that the history guard is now a check on
+      the model's replies, not a bypass of the model.
+- [ ] Gate, land, patch release.
