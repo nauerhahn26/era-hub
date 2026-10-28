@@ -23,7 +23,7 @@ const { ownRequest, loadChatEnvironment } = require('./chat-api.js');
 const PREFIX = '/chat/api';
 const LIMITS = Object.freeze({ bodyBytes: 65536, audioBytes: 480000, audioTurns: 200, dayBytes: 16777216,
   recent: 10, summaryTurns: 500, rttTtlMs: 30000, rttTimeoutMs: 2000, cpuSampleMs: 200, lagIntervalMs: 100, lagWindow: 50 });
-const KINDS = ['hold', 'typed', 'fixed', 'reply'];
+const KINDS = ['hold', 'typed', 'fixed', 'reply', 'press'];
 const MODES = ['one-shot', 'stream', 'local', 'typed', 'none'];
 const OUTCOMES = ['completed', 'cancelled', 'failed'];
 const REASONS = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
@@ -32,8 +32,12 @@ const REASONS = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'tim
 // the speculative marks are reserved for the streaming pipeline (phase 2).
 const STAGES = ['begin', 'release', 'drained', 'finishSent', 'finishAck', 'transcript', 'choicesReady', 'revealed', 'selected',
   'playbackStart', 'playbackEnd', 'socketConnect', 'firstPartial', 'partial', 'speculativeStart', 'speculativeKeep',
-  'speculativeDiscard', 'firstChoiceStaged', 'choiceStaged', 'batchSealed', 'firstAudio', 'settled'];
-const TEXT_STAGES = new Set(['firstPartial', 'partial', 'firstChoiceStaged', 'choiceStaged']);
+  'speculativeDiscard', 'firstChoiceStaged', 'choiceStaged', 'batchSealed', 'firstAudio', 'settled',
+  // A button press (design 2026-10-27 §4.2-§4.4, plan decision 8): the press at
+  // the hub (stage 0), the listening tone, listening, each sealed utterance
+  // (its words), each replacement batch, and the window's close (its reason).
+  'press', 'tone', 'listening', 'utteranceSealed', 'batchReplaced', 'windowClosed'];
+const TEXT_STAGES = new Set(['firstPartial', 'partial', 'firstChoiceStaged', 'choiceStaged', 'utteranceSealed', 'windowClosed']);
 const WORKER = ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs', 'choicesServerMs', 'connectMs', 'settledMs', 'wordsSettledMs'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;

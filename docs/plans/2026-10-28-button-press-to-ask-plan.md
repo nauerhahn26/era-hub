@@ -213,7 +213,7 @@ Info
       `buttons.press` → `chatApi.window(sessionId).press()/cancel()`; pick:
       the page's `select` sends `control('pick')` before speaking. Verify:
       T3.2 suite. Guard: a pick always wins over a pending seal.
-- [ ] **T3.5** Latency stages: `pressAt` travels in the `ask` command; the
+- [x] **T3.5** (the page records the hub's seals/close as stages; a press is stage 0 at `pressAt` when under 60 s old; press turns never enter the production rows) Latency stages: `pressAt` travels in the `ask` command; the
       page marks `press` (from pressAt), `tone`, `listening`; the hub marks
       `utteranceSealed` (MULTI, text), `batchReplaced` (MULTI), `windowClosed`
       (text = reason). New turn kind `press`. Accept: `tests/chat-turns.test.mjs`

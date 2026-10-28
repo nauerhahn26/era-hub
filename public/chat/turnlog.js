@@ -5,7 +5,7 @@
 // its full timeline, usage, device health and (for a released hold) its audio,
 // and post them to the hub's /chat/api/turns route at the turn's end.
 const TURNS = '/chat/api/turns';
-const MULTI = new Set(['partial', 'choiceStaged', 'speculativeStart', 'speculativeDiscard']);
+const MULTI = new Set(['partial', 'choiceStaged', 'speculativeStart', 'speculativeDiscard', 'utteranceSealed', 'batchReplaced']);
 const WORKER = ['audioMs', 'captureWallMs', 'activityMs', 'cloudMs', 'firstPartialMs', 'finalDecodeMs', 'turnMs', 'finalizeMs', 'choicesServerMs', 'connectMs', 'settledMs', 'wordsSettledMs'];
 const LIMITS = { audioBytes: 480000, partials: 100, stages: 300, recent: 10, healthWaitMs: 1500, bodyBytes: 60000 };
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g;
@@ -108,6 +108,11 @@ export function createTurnLog(options = {}) {
         reply: null, voice: null, fetchedChars: 0, socketSeconds: null, keytermsFired: null, health: {}, healthPending: new Set(), audio: [], audioBytes: 0,
         mic: { peakRms: 0, clipped: 0, frames: 0 }, partials: 0, submitted: false, outcome: null, reason: null, error: '' };
       turns.set(handle, turn); latest = handle;
+      // A button press counts from the press at the hub (`ago` ms before this
+      // page heard it, same machine clock): the press is stage 0.
+      if (kind === 'press' && Number.isFinite(extra.ago) && extra.ago >= 0 && extra.ago <= 60000) {
+        turn.began -= extra.ago; turn.marks.add('press'); turn.stages.push({ name: 'press', ms: 0 });
+      }
       push(turn, 'begin'); api.set(handle, extra); notify();
     },
     tracking(handle) { return turns.has(handle); },
@@ -120,7 +125,7 @@ export function createTurnLog(options = {}) {
     mark(handle, stage, extra = {}) {
       const turn = turns.get(handle); if (!turn || (!MULTI.has(stage) && turn.marks.has(stage))) return;
       if (stage === 'revealed') { turn.marks.add('batchSealed'); push(turn, 'batchSealed'); }
-      turn.marks.add(stage); push(turn, stage, extra);
+      turn.marks.add(stage); push(turn, stage, typeof extra.text === 'string' ? { ...extra, text: text(extra.text, 2000) } : extra);
       if (stage === 'finishSent') turn.submitted = true;
       if (stage === 'playbackStart' && !turn.marks.has('firstAudio')) { turn.marks.add('firstAudio'); push(turn, 'firstAudio'); }
       notify();
