@@ -217,6 +217,14 @@ test('a revealed choice keeps the hub picture word and id; anything else about t
   assert.ok(Object.isFrozen(c.state.choices[0]));
 });
 
+test('a glyph choice (a letter or a number) keeps its glyph mark; nothing else claims one', async () => {
+  const c = createChatController({ requestChoices: async () => ({ choices: [
+    { label: 'A', say: 'A', glyph: true }, { label: 'B', say: 'B', glyph: 'yes' }] }) });
+  await c.prepare('Is it A or B?');
+  assert.deepEqual(c.state.choices.map(x => ({ ...x })), [
+    { id: `${c.state.turn}:0`, label: 'A', say: 'A', glyph: true }, { id: `${c.state.turn}:1`, label: 'B', say: 'B' }]);
+});
+
 test('a dropped hold returns to Ready to ask with a partner hint, keeps the engine ready, and the next hold clears the hint', async () => {
   let stops = 0;
   const c = createChatController({ speak: async () => {}, stopSpeech: () => { stops++; } });
