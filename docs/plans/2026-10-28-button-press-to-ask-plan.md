@@ -95,7 +95,7 @@ Info
       when `session.turn.window` is set; `turnBytes` unchanged for holds.
       Verify: `node --test tests/chat-api.test.mjs`. Guard: a hold still hits
       `audio-limit` at 512000.
-- [ ] **T0.3** Pin the touch path: `tests/chat-hold-path.test.mjs` hashes the
+- [x] **T0.3** Pin the touch path: `tests/chat-hold-path.test.mjs` hashes the
       text of `beginAsk`, `finishAsk`, `cancelAsk` and the
       `touchButton($('ask'), beginAsk, finishAsk, cancelAsk)` line in
       `public/chat/app.js` against `tests/fixtures/chat-hold-path.sha256`.
