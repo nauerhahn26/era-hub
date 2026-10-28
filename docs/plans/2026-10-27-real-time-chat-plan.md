@@ -290,10 +290,10 @@ So an open question gave her the thinnest board of all.
 
 **Tasks.**
 
-- [ ] Tests first: shape classifier (hub), the four-choice instruction and
+- [x] Tests first: shape classifier (hub), the four-choice instruction and
       `shape` + `likes` in the model input, recall check, confirmed-quote
       rule, settings round trip, partner dialog textarea, turn record field.
-- [ ] Classifier in chat-api.js; model instructions and input in
+- [x] Classifier in chat-api.js; model instructions and input in
       chat-choices.js; recall check; chatLikes setting (chat-turns.js style)
       and dialog field; spec §8 note that the history guard is now a check on
       the model's replies, not a bypass of the model.
