@@ -73,9 +73,9 @@ Info
   `tools/vm-e2e.sh` (`leg-b-update.e2e.mjs`), so the Windows case is a new
   `test()` there, not a registered suite. New `tests/*.test.mjs` suites are
   registered by `node tools/testing/classify-suites.mjs`.
-- I6 Ports 8494/8495 have no claim in any of the five repos' `tests/`,
+- I6 Port 8470 has no claim in any of the five repos' `tests/`,
   `tests-vm/`, `tools/` (checked 10/28; `tests/suite-ports.test.mjs` is the
-  arbiter). 8480+ is the scratch band but 8486-8491 are already suite ports.
+  arbiter) (8494/8495 sit in the reserved 8480+ scratch and tunnel band that `suite-ports` refuses, and 8470 was the free suite port on 10/28); the two hubs of the suite run one after the other on it.
 - I7 `chat-turns.js` KINDS/STAGES/TEXT_STAGES and `turnlog.js` MULTI are
   closed sets: new stages are schema changes with tests (T3.6).
 - I8 `window.Dwell.state()` (era-core `dwell.js` 380) exposes `target` and
@@ -127,10 +127,11 @@ Info
       Chat off → 409 `{error:'chat-off'}`; `cancel` with no window → `{ok:true,
       dispatch:'none'}`; `ask` while a window is open → `end` (second press).
       Verify: `node --test tests/buttons-press.test.mjs` (real hub child on
-      8494, second hub on 8495 with `ERA_FAKE_KIOSK_WINDOW=0`, as
+      8470, then a second hub on 8470 with `ERA_FAKE_KIOSK_WINDOW=0`, as
       `tests/kiosk-pause.test.mjs`). Guard: the `/buttons/press` route in
       server.js is three lines (loopback gate, body, `buttons.press`); logic
-      lives in buttons.js. STOP if 8494/8495 fail `suite-ports`: pick again.
+      lives in buttons.js. STOP if 8470 fails `suite-ports`: pick again
+      (8494/8495 were dropped: they sit in the reserved 8480+ band).
 - [x] **T1.4** `kiosk-launch.js`: `kioskArgs(open, { port, dir })` and
       `findBrowser()` with the exact flags and browser order of start-hub.bat's
       kiosk line; `relaunchKiosk(path)` = `closeKiosk()` → 1 s → `spawn(exe,
@@ -142,10 +143,12 @@ Info
 - [x] **T1.5** `/status` gains `buttons: { state, pid, keys:{registered,
       failed}, lastPress:{at,key,action,dispatch}, restarts, lastError,
       micPolicy }` (states filled by phase 5; `unsupported` off Windows).
-      Verify: `curl -s 127.0.0.1:8494/status | jq .buttons` in the T1.3 suite.
+      Verify: `curl -s 127.0.0.1:8470/status | jq .buttons` in the T1.3 suite
+      (8470, not 8494: the 8480+ band is reserved).
 - [x] **T1.6** (five: chat-hold-path too; buttons-press holds `ports: [8470]`) Register the four new suites: `node tools/testing/classify-suites.mjs`
       then `node --test tests/suite-classes.test.mjs tests/suite-ports.test.mjs`.
-      Guard: `ports: [8494, 8495]` on buttons-press only.
+      Guard: `ports: [8470]` on buttons-press only (8494/8495 sit in the
+      reserved 8480+ band).
 
 ## Phase 2 — page: ask from a push or a nonce, no touch (implementing)
 
@@ -371,7 +374,9 @@ Info
    16 hex chars, 30 s TTL, spent on first claim; the page strips the query.
 3. Hidden page: `foregroundKiosk()` then ≤ 3 s for the page's `visible` report;
    else relaunch. Visibility is reported by the page over
-   `POST /chat/api/commands/visibility`.
+   `POST /chat/api/commands/visibility`. A cancel during a pending relaunch
+   revokes the nonce and aborts the relaunch; a cancel after the relaunch has
+   spawned leaves Chat open idle.
 4. Listener supervision: a child of the hub (not detached) restarted on exit
    with 5/15/60/300 s backoff; named mutex for single instance; exits when the
    hub pid is gone; stopped by path when Chat is turned off. Not the bus-probe
@@ -391,8 +396,8 @@ Info
    audio may be heard. Recorded as allowed by the design's non-goal.
 10. Position stability: `cell` 0-3 on each choice; removed choices leave an
     empty `waiting` tile until the next replacement.
-11. Ports 8494/8495 for the new hub suites (8496 if a third hub is needed),
-    confirmed by `suite-ports` before the first run.
+11. Port 8470 for the new hub suites, its two hubs run one after the other,
+    confirmed by `suite-ports` before the first run (8494/8495 sit in the reserved 8480+ scratch and tunnel band that `suite-ports` refuses, and 8470 was the free suite port on 10/28).
 12. The hub keeps `/buttons/press` as activity (not in `NOT_INTERACTION`).
 
 ## Retrospective
