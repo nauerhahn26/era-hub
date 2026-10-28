@@ -202,7 +202,9 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
         assert.ok(Math.abs(tile.picture.height / tile.contentHeight - 0.82) < 0.01, `${tag(tile)} picture is ${(tile.picture.height / tile.contentHeight).toFixed(3)} of the height`);
       }
     }
-    for (const tile of tiles.filter(tile => tile.picture && tile.text.length > 16)) assert.ok(tile.stacked, `${tag(tile)}: a long label stacks`);
+    for (const tile of tiles.filter(tile => tile.picture && tile.text.length > 16)) assert.ok(tile.stacked || tile.setAside, `${tag(tile)}: a long label stacks, or sets a speck picture aside`);
+    // A stacked picture is never a speck (coordinator review 10/28): at least 44 px tall, or set aside.
+    for (const tile of tiles.filter(tile => tile.stacked)) assert.ok(tile.picture.height >= 44 - 0.5, `${tag(tile)}: stacked picture ${tile.picture.height}px`);
   }
 
   for (const viewport of [{ width: 1600, height: 1000 }, { width: 1280, height: 800 }]) {
@@ -226,7 +228,7 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
     const responses = Object.fromEntries(tiles.filter(tile => tile.type === 'response').map(tile => [tile.text, tile]));
     assert.equal(Number(responses.Yes.symbolId), vocabulary.concepts.find(concept => concept.word === 'yes').altId, 'the reply "Yes" shows the alternate yes picture');
     assert.equal(Number(responses['That one'].symbolId), id('pizza'), 'the hub pick reaches the tile');
-    assert.ok(responses['Let me tell you another way'].stacked);
+    assert.ok(responses['Let me tell you another way'].stacked || responses['Let me tell you another way'].setAside, 'a long reply stacks, or sets a speck picture aside');
     assert.equal(responses['Tell me more'].symbolId === String(id('more')), false, 'the bottom row keeps "more"; the reply yields');
     if (viewport.width === 1600) assert.ok(responses['That one'].beside);
     if (viewport.width === 1280) assert.ok(tiles.some(tile => tile.reduced === '1'), 'the small board marks the labels it had to shrink');
@@ -296,7 +298,8 @@ test('the stacked-big preview profile keeps a real picture on a stacked tile; th
       fits: label.scrollWidth <= label.clientWidth + 1 && label.getBoundingClientRect().bottom <= tile.getBoundingClientRect().bottom };
   }, { moduleURL: `data:text/javascript;base64,${Buffer.from(fit).toString('base64')}`, profile });
   const law = await run(), big = await run('stacked-big');
-  assert.equal(law.layout, 'stacked'); assert.ok(law.share < 0.3, 'board law keeps the label first: ' + JSON.stringify(law));
+  // Board law keeps the label first; the picture it leaves would be a speck under 44 px, so it is set aside.
+  assert.equal(law.layout, 'plain', 'board law keeps the label first and sets the speck aside: ' + JSON.stringify(law));
   assert.equal(big.layout, 'stacked'); assert.ok(big.share >= 0.27, `picture ${big.share.toFixed(2)} of the height`);
   assert.ok(big.size >= 44 && big.fits, JSON.stringify(big));
   assert.equal(big.reduced, big.size < 74 ? '1' : null);
@@ -366,4 +369,39 @@ test('on the page, letter replies from the hub show as big glyphs with no pictur
     assert.equal(tile.glyph, '1', tile.text); assert.equal(tile.pictures, 0, tile.text); assert.equal(tile.symbol, null, tile.text);
     assert.ok(tile.font > 74 * 1.5, `${tile.text}: ${tile.font}px`);
   }
+});
+
+test('a stacked picture shorter than 44 px is a speck: it is set aside and the words refit plain; roomy tiles keep theirs', async t => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  await page.route('**/*', route => route.abort());
+  const css = (await fs.readFile(new URL('../public/chat/chat.css', import.meta.url), 'utf8')).replace(/^@import[^;]+;/m, '');
+  const fit = await fs.readFile(new URL('../public/chat/tile-fit.js', import.meta.url), 'utf8');
+  await page.setContent(`<style>${css}</style><main id="app"><div id="grid"></div></main>`);
+  const run = (text, width, height) => page.evaluate(async ({ moduleURL, text, width, height }) => {
+    const { fitTile } = await import(moduleURL);
+    const grid = document.querySelector('#grid'); grid.replaceChildren();
+    const tile = document.createElement('button'); tile.className = 'tile static has-symbol';
+    tile.style.cssText = `position:absolute;left:0;top:0;width:${width}px;height:${height}px`;
+    const picture = document.createElement('div'); picture.className = 'chat-symbol';
+    const label = document.createElement('span'); label.className = 'label'; label.textContent = text;
+    tile.append(picture, label); grid.append(tile);
+    const out = fitTile(tile);
+    return { ...out, setAside: tile.classList.contains('picture-set-aside'), stacked: tile.classList.contains('stacked'),
+      picture: getComputedStyle(picture).display === 'none' ? 0 : picture.getBoundingClientRect().height,
+      fits: label.scrollWidth <= label.clientWidth + 1 && label.getBoundingClientRect().bottom <= tile.getBoundingClientRect().bottom };
+  }, { moduleURL: `data:text/javascript;base64,${Buffer.from(fit).toString('base64')}`, text, width, height });
+  // The bottom row at 1920x1080 (three 1fr columns of a 0.62fr row): two lines leave a speck.
+  for (const text of ['Tell me more', 'Ask a question', 'Make a comment', 'Something else']) {
+    const out = await run(text, 330, 160);
+    assert.equal(out.setAside, true, `${text}: ${JSON.stringify(out)}`);
+    assert.equal(out.layout, 'plain'); assert.equal(out.stacked, false); assert.ok(out.size >= 44 && out.fits, JSON.stringify(out));
+  }
+  const reply = await run('What happens next?', 600, 230);
+  assert.ok(reply.layout === 'beside' || reply.setAside || reply.picture >= 44, `"What happens next?": ${JSON.stringify(reply)}`);
+  // A stacked tile with room keeps a picture of at least 44 px; beside still wins when it fits.
+  const roomy = await run('Something different', 480, 300);
+  assert.equal(roomy.layout, 'stacked'); assert.ok(roomy.picture >= 44, JSON.stringify(roomy));
+  assert.equal((await run('Music', 480, 300)).layout, 'beside');
 });

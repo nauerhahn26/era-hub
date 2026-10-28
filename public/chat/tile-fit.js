@@ -5,7 +5,8 @@
 // above, words below) before any shrink; only a stacked label that cannot fit
 // at 74 px shrinks, to the 44 px floor, and is marked data-font-reduced="1".
 // Word integrity outranks the picture: when even 44 px cannot fit, the picture
-// is set aside and the words keep the whole tile.
+// is set aside and the words keep the whole tile. A stacked picture that would
+// render under 44 px tall (a speck) is set aside the same way.
 // Stacked labels may take 55% of the height, then 80% (board-render.js applyFit tiers).
 // The "stacked-big" profile is a preview candidate for the maintainer, not the
 // default: a stacked picture keeps at least 30% of the height and the label
@@ -19,7 +20,7 @@ export const STACKED_BIG = Object.freeze({ labelShare: 0.70 });
 // her vocabulary: it starts at 52 px and may step down to 24 px to stay whole.
 export const STRIP = Object.freeze({ start: 52, floor: 24 });
 export const FIT = Object.freeze({ target: 74, floor: 44, iconShare: 0.42, iconShareMin: 0.30, besideMaxChars: 16, besideMinWidth: 190, stackedShares: [0.55, 0.80],
-  glyphMaxChars: 2, glyphScale: 3, glyphShare: 0.85 });
+  glyphMaxChars: 2, glyphScale: 3, glyphShare: 0.85, minPicture: 44 });
 
 function fits(tile, label, layout, share = 1) {
   const style = getComputedStyle(tile);
@@ -76,20 +77,24 @@ export function fitTile(tile, { profile } = {}) {
     tile.classList.remove('beside');
   }
   tile.classList.add('stacked');
+  // A stacked picture shorter than FIT.minPicture is a speck that reads worse
+  // than none (coordinator review 10/28, 1920x1080): it is set aside below.
+  let size = null;
   if (profile === 'stacked-big') {
     // The label never takes more than 70%: sizes step down through 60 px to the floor.
-    const size = shrink(tile, label, 'stacked', start, FIT.floor, STACKED_BIG.labelShare);
-    if (size) return done(size, 'stacked');
+    size = shrink(tile, label, 'stacked', start, FIT.floor, STACKED_BIG.labelShare);
   } else {
     // Every height share at the 74 px target first; only the last share shrinks below it.
     for (const share of FIT.stackedShares) {
-      const size = shrink(tile, label, 'stacked', start, FIT.target, share);
-      if (size) return done(size, 'stacked');
+      size = shrink(tile, label, 'stacked', start, FIT.target, share);
+      if (size) break;
     }
     const last = FIT.stackedShares[FIT.stackedShares.length - 1];
-    const size = shrink(tile, label, 'stacked', FIT.target - 2, FIT.floor, last);
-    if (size) return done(size, 'stacked');
+    if (!size) size = shrink(tile, label, 'stacked', FIT.target - 2, FIT.floor, last);
   }
+  const kept = size && picture.getBoundingClientRect().height >= FIT.minPicture ? done(size, 'stacked') : null;
+  if (kept) return kept;
+  tile.style.fontSize = ''; delete tile.dataset.fontReduced;
   tile.classList.remove('stacked'); tile.classList.add('picture-set-aside');
   return done(shrink(tile, label, 'plain', start, FIT.floor) ?? FIT.floor, 'plain');
 }
