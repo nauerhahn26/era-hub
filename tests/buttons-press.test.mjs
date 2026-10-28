@@ -7,10 +7,10 @@
 // route is loopback only and counts as activity.
 //
 // Shape of kiosk-pause.test.mjs: a real hub child, then the same port again
-// with ERA_FAKE_KIOSK_WINDOW=0 ("no kiosk window to bring back") bound to
-// 0.0.0.0 so a press from this machine's own LAN address proves the gate. That
-// hub runs with ERA_NO_UPDATE=1 and off Windows a press only logs, so being
-// reachable for those seconds changes nothing on this machine.
+// with ERA_FAKE_KIOSK_WINDOW=0 ("no kiosk window to bring back"). Both hubs
+// bind 127.0.0.1 only: the loopback gate is proved by a unit test of
+// updater.isLoopback with an address from the documentation range plus the
+// route's shape, so no hub in this suite is ever reachable off this machine.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -184,9 +184,9 @@ test("the route is three lines: the loopback gate, the body, buttons.press; it i
   assert.ok(!notInteraction.includes("/buttons/press"));
 });
 
-test("hidden and no kiosk window to bring back: relaunch at once; a press from the LAN is refused", async (t) => {
+test("hidden and no kiosk window to bring back: relaunch at once", async () => {
   await stopHub();
-  hub = startHub(dataDir("b", ["chat"]), { ERA_FAKE_KIOSK_WINDOW: "0", ERA_BIND: "0.0.0.0" });
+  hub = startHub(dataDir("b", ["chat"]), { ERA_FAKE_KIOSK_WINDOW: "0" });
   await waitUp();
   const p = await page("?visible=0");
   const started = Date.now();
@@ -194,18 +194,16 @@ test("hidden and no kiosk window to bring back: relaunch at once; a press from t
   assert.ok(Date.now() - started < 2500, "no 3 s wait when there is no window to foreground");
   assert.equal(p.events.length, 0);
   await closePages();
+});
 
-  const lan = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === "IPv4" && !i.internal).map((i) => i.address);
-  const ip = lan.find((a) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a)) || lan[0];
-  if (!ip) { t.diagnostic("no non-internal IPv4: the LAN leg is skipped"); return; }
-  const presses = relaunchNonces().length;
-  const r = await press({ key: "F13", action: "ask" }, `http://${ip}:${PORT}`);
-  assert.equal(r.status, 403, "a press from another machine never reaches the dispatcher");
-  const spoof = await press({ key: "F13" }, `http://${ip}:${PORT}`).then((x) => x.status);
-  assert.equal(spoof, 403);
-  const forwarded = await fetch(`http://${ip}:${PORT}/buttons/press`, { method: "POST",
-    headers: { "Content-Type": "application/json", "X-Forwarded-For": "127.0.0.1", Host: `127.0.0.1:${PORT}` }, body: '{"key":"F13"}' });
-  assert.equal(forwarded.status, 403, "headers never buy their way in");
-  await pause(100);
-  assert.equal(relaunchNonces().length, presses);
+test("the loopback gate: an address off this machine is refused, whatever headers it sends; no hub in this suite binds beyond 127.0.0.1", async () => {
+  const { createRequire } = await import("node:module");
+  const updater = createRequire(import.meta.url)("../update.js");
+  // the route asks updater.isLoopback about the socket's address and nothing else (pinned above)
+  for (const addr of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) assert.equal(updater.isLoopback(addr), true, addr);
+  for (const addr of ["192.0.2.10", "::ffff:192.0.2.10", "2001:db8::10", "127.0.0.1 ", "", undefined, null])
+    assert.equal(updater.isLoopback(addr), false, String(addr));
+  const src = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+  assert.doesNotMatch(src, new RegExp("ERA_BIND: \"(?!127\\.0\\.0\\.1\")"), "a test hub never listens past loopback");
+  assert.ok(!src.includes(["0", "0", "0", "0"].join(".")), "nothing here binds the any-address");
 });
