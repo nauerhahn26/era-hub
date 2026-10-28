@@ -102,6 +102,18 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.equal((await setLists({ chatQuestions: ['Hm?'] }, { 'Sec-Fetch-Site': 'cross-site' })).status, 204);
   assert.deepEqual((await lists()).q, ['Why?'], 'a page on another site cannot change them');
 
+  // Reading the options aloud (stable frame §6): the delay and the name.
+  const prompt = async () => { const all = await (await fetch(base + '/settings')).json(); return [all.chatPromptMs, all.chatName]; };
+  assert.deepEqual(await prompt(), [12000, 'Ellie']);
+  assert.equal((await setLists({ chatPromptMs: 0, chatName: ' Sam ' })).status, 204);
+  assert.deepEqual(await prompt(), [0, 'Sam']);
+  assert.equal((await setLists({ chatPromptMs: 4000, chatName: 'Sam<' })).status, 204);
+  assert.deepEqual(await prompt(), [0, 'Sam'], 'junk leaves them alone');
+  assert.equal((await setLists({ chatPromptMs: 20000, chatName: 'Max' }, { 'Sec-Fetch-Site': 'cross-site' })).status, 204);
+  assert.deepEqual(await prompt(), [0, 'Sam'], 'a page on another site cannot change them');
+  assert.equal((await setLists({ chatPromptMs: 15000 })).status, 204);
+  assert.deepEqual(await prompt(), [15000, 'Sam']);
+
   // Her world (plan "Her world as context"): the hub's digest of the week
   // package and the likes, served to its own pages for the partner dialog.
   assert.equal((await setLikes(['swim'])).status, 204);
