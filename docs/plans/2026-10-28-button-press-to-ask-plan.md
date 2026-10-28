@@ -310,7 +310,7 @@ Info
       twice; `/status` filled. Verify: T1.3 suite re-run shows `state` moving
       `compiling → running` with the stub. Guard: a compile failure logs once
       and leaves Chat working.
-- [ ] **T5.7** Payload guard: `tests/start-hub-bat.test.mjs` unchanged;
+- [x] **T5.7** (the suite landed with T5.1, whose Verify it is: build-payload's copy, the five keys against buttons.js KEYS, no `powershell`, no started program or written file, no `.ps1`; start-hub-bat, chat-test-mode-payload and era-scan-parity unchanged and green) Payload guard: `tests/start-hub-bat.test.mjs` unchanged;
       `tests/buttons-payload.test.mjs` asserts `tools/build-payload.sh` copies
       `buttons/EraButtons.cs` and the Chat test-mode guard still passes; the
       Chat test-mode and era-scan steps unchanged.
