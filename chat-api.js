@@ -409,6 +409,17 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   const likes = () => listFrom(options.likes, 30);
   // The family's own names (the Drawing library's people), for a who question only.
   const people = () => listFrom(options.people, 20);
+  // Her world (chat-world.js): the device's digest of week packages, shelf,
+  // people and likes; `world` is the object from createWorld or a provider of
+  // { text, weeks, chars }. Anything unreadable is no world at all.
+  const worldDigest = () => {
+    try {
+      const value = typeof options.world === 'function' ? options.world() : typeof options.world?.digest === 'function' ? options.world.digest() : null;
+      if (!value || typeof value.text !== 'string' || value.text.length > 3000) return null;
+      const count = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
+      return { text: value.text, weeks: count(value.weeks), chars: value.text.length };
+    } catch { return null; }
+  };
   // Two more than the HTTP route's own limit: a streaming session's speculative
   // request and its fresh one may overlap for a moment while one aborts.
   const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices + 2, timeoutMs: Math.min(limits.adapterMs, 12000) } });
@@ -714,8 +725,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       let result;
       const shape = openShape(text), liked = shape ? likes() : [];
       const named = shape && /\bwho(?:m)?\b/i.test(text) ? people() : [];
+      // Her world goes with an open-ended question only, and only when it holds
+      // more than its Today line (a week, a book, people or likes).
+      const known = shape ? worldDigest() : null, world = known && known.text.includes('\n') ? known : null;
       const input = { text, ...(context && context.length ? { context } : {}), ...(shape ? { shape } : {}), ...(liked.length ? { likes: liked } : {}),
-        ...(named.length ? { people: named } : {}) };
+        ...(named.length ? { people: named } : {}), ...(world ? { world: world.text } : {}) };
       if (!adapterUrl) result = onChoice ? await choicesCore.generateStream(input, { signal, onChoice }) : await choicesCore.generate(input, { signal });
       else {
         const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal,
@@ -743,6 +757,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol, picture: item.picture }))),
         ...(rejected ? { symbolRejected: rejected } : {}),
         ...(shape ? { shape } : {}), ...(result.recallRejected === true ? { recallRejected: true } : {}),
+        // The turn record keeps the world's size, never its text.
+        ...(world ? { world: { weeks: world.weeks, chars: world.chars } } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }
@@ -852,6 +868,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       choices: { available: true, kind: adapterRequested ? 'adapter' : choicesCore.available ? 'built-in' : 'local', generated: adapterRequested ? !!adapterUrl : choicesCore.available },
     });
     if (req.method === 'POST' && routePath === '/choices') return generate(req, res);
+    // What Chat knows this week, for the partner dialog's read-only preview.
+    if (req.method === 'GET' && routePath === '/world') return json(res, 200, worldDigest() || { text: '', weeks: 0, chars: 0 });
     if (req.method === 'POST' && routePath === '/sessions') {
       await readBody(req, limits.bodyBytes);
       const session = startSession(); return json(res, 201, { id: session.id });

@@ -70,7 +70,7 @@ function runtime({ ready = true, words = 'Would you like music or a story?', slo
   return child;
 }
 
-async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {}, reportUsage = false, fetch: fetcher, pictures } = {}) {
+async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {}, reportUsage = false, fetch: fetcher, pictures, world } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-stream-hub-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const keyterms = path.join(dir, 'keyterms.json');
@@ -82,7 +82,7 @@ async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {
     ERA_CHAT_STREAM_FALLBACK_MODEL: 'fallback-model', ERA_CHAT_STREAM_FALLBACK_TOKEN: 'fallback-secret-token' });
   const children = [];
   const api = createChatApi({ env: { ERA_CHAT_RUNTIME: 'scripted', ERA_CHAT_RUNTIME_ARGS: '[]', ...streamEnv, ...env }, limits, reportUsage: () => reportUsage,
-    spawn: () => { const child = runtime(runtimeOptions); children.push(child); return child; }, ...(fetcher ? { fetch: fetcher } : {}), ...(pictures ? { pictures } : {}) });
+    spawn: () => { const child = runtime(runtimeOptions); children.push(child); return child; }, ...(fetcher ? { fetch: fetcher } : {}), ...(pictures ? { pictures } : {}), ...(world ? { world } : {}) });
   const server = http.createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); });
   server.on('upgrade', (req, socket, head) => { if (!api.upgrade(req, socket, head)) socket.destroy(); });
   await new Promise(resolve => server.listen(0, 'localhost', resolve));
@@ -299,6 +299,21 @@ test('choices are staged by the hub one by one and sealed once; the page never a
   await pause(60);
   assert.equal(s.events('batch-sealed').length, 1, 'sealed once');
   assert.ok(!JSON.stringify(s.seen).includes('reply-secret'));
+});
+
+test('an open question in a streaming session carries world to the reply core; the sealed batch carries its size only', async t => {
+  const service = await turnsService(t, { words: OPEN, partials: [] });
+  const reply = replyService();
+  const world = { text: 'Today: Wednesday, October 28.\nThis week at school: "Magnets!". Science: magnets.', weeks: 1, chars: 80 };
+  const h = await hub(t, { services: [service], env: { ...replyEnv, ERA_CHAT_SPECULATE_MS: '0' }, fetch: reply.fetcher, world: () => world });
+  const s = await h.session();
+  await until(() => s.events('ready').length === 1);
+  await s.ask({ context: [] }); await raw(s, 3); await s.finish();
+  await until(() => s.events('batch-sealed').length === 1);
+  const sealed = s.events('batch-sealed')[0];
+  assert.equal(reply.calls[0].input.world, world.text);
+  assert.deepEqual(sealed.world, { weeks: 1, chars: 80 });
+  assert.ok(!JSON.stringify(s.seen).includes('Magnets!'), 'the page never sees the text');
 });
 
 test('a stable partial starts a hidden speculative request; an equal final keeps it and nothing reached the page before', async t => {
