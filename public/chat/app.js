@@ -653,6 +653,7 @@ function closePressWindow(reason, seals = press?.seals || 0) {
   captureIntent++; pendingFrames = []; mic?.cancel(); setMode('blocked'); uploadEpoch++; captureGeneration = null;
   turnLog.mark(questionMetric, 'windowClosed', { text: String(reason || 'closed') });
   void tones.done();
+  paintAsk();
   // A pick wins: a replacement still in the making is dropped with it.
   if (reason === 'pick') { dropStaging(); return control('pick').catch(() => null); }
   if (!seals || reason === 'cancel') {
@@ -765,7 +766,17 @@ async function failSession(message, reason = 'connection') {
   controller.fail(message); await shutdown('cancel', true);
 }
 
-controller.subscribe(state => { $('ask').disabled = !session || !state.engineReady; });
+// While a listening window is open the hub answers a hold with 409: the
+// partner's Hold to ask is inert for the window's lifetime and comes back when
+// the window closes. Chrome still delivers pointer events to a disabled
+// button, so the button also stops taking pointers (the touch lands nowhere).
+const windowOpen = () => press !== null && !press.closed;
+function paintAsk(state = controller.state) {
+  const inert = windowOpen();
+  $('ask').disabled = !session || !state.engineReady || inert;
+  $('ask').style.pointerEvents = inert ? 'none' : '';
+}
+controller.subscribe(state => paintAsk(state));
 function touchButton(el, down, up, cancel) {
   let pointer = null;
   el.addEventListener('pointerdown', e => {

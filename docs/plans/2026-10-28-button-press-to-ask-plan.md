@@ -250,6 +250,13 @@ Info
       a neutral move", "a pick during a pending replacement wins (spoken text =
       the shown tile, pending discarded, window closed)". Guard: in
       `chat-commands-browser`; the hold suites untouched.
+- [x] **T4.5** The on-screen Hold to ask is inert while a listening window is
+      open (a partner touch would send `control('ask')`, the hub answers 409,
+      and `beginAsk` ends the session): `paintAsk()` sets `disabled` and
+      `pointer-events: none` for the window's lifetime (Chrome still delivers
+      pointer events to a disabled button) and restores both at the close; the
+      pinned hold functions are untouched. Accept: `chat-commands-browser`
+      "a partner touch on Hold to ask during a listening window does nothing".
 
 ## Phase 5 — device button listener (collaborating: Windows, hotkeys, policy)
 

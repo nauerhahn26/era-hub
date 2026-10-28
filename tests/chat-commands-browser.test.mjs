@@ -413,6 +413,31 @@ test('a replacement waits with no upper bound while her gaze rests on a tile, an
   assert.deepEqual(f.errors, []);
 });
 
+// ---- T4.5 the on-screen Hold to ask is inert while a window is open ----
+
+test('a partner touch on Hold to ask during a listening window does nothing: no hold, the session lives', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true');
+  assert.equal(await f.page.locator('#ask').isDisabled(), true, 'inert while the window is open');
+  await f.press('#ask'); await f.page.waitForTimeout(300); await f.lift();
+  await f.page.waitForTimeout(500);
+  assert.equal(f.controls.includes('ask'), false, 'no hold was sent');
+  assert.equal(f.controls.includes('cancel'), false);
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'the window still listens');
+  assert.notEqual(f.api.window(), null);
+  assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Chicken', 'Fish']);
+  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'the session is still running');
+  await f.page.locator('.response', { hasText: 'Fish' }).click();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
+  await f.page.waitForFunction(() => !document.querySelector('#ask').disabled, null, { timeout: 10000 });
+  assert.deepEqual(f.errors, []);
+});
+
 test('the second press ends the window: the done tone fires, the microphone closes, the batch stays', { timeout: 60000 }, async t => {
   const { createButtons } = require('../buttons.js');
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
