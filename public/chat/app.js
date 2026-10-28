@@ -99,6 +99,7 @@ const SPOKEN = { yes: 'Yes.', no: 'No.', more: 'Tell me more.', else: 'Something
 // `made` the current turn's two sets, asked for in the background after a reveal.
 let page = null, pageOffset = 0, modeView = null;
 let made = { turn: -1, ask: null, comment: null, aborts: [] }, again = null, echoing = false;
+let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
 const lists = { questions: [], comments: [], about: [] }, world = { about: [], week: [] };
 let listsVersion = 0;
 const LIST_FIELDS = [['questions', 'chatQuestions'], ['comments', 'chatComments'], ['about', 'chatAbout']];
@@ -151,7 +152,23 @@ function paintPhase(state = controller.state) {
 function setMode(value) {
   mode = value; document.body.dataset.listening = 'false';
   document.body.dataset.capturing = String(['opening', 'capture'].includes(value));
-  paintPhase();
+  paintPhase(); syncHoldLock();
+}
+// Her gaze never ends a hold (spec 2026-10-28 §7): from touch-down until the
+// hold ends no grid tile is a dwell target; they return when it ends.
+// After release the question is still being sent and transcribed (phase
+// Capturing question) until the final transcript: still the partner's.
+const holdActive = () => holding || askPending || ['opening', 'capture', 'draining'].includes(mode) || controller.state.phase === 'Capturing question';
+let gridLocked = false;
+function syncHoldLock() {
+  const now = holdActive();
+  if (now && !gridLocked) {
+    gridLocked = true; reader?.cancel();
+    for (const el of $('grid').querySelectorAll('.tile')) { el.classList.remove('dwell'); if (el.tagName === 'BUTTON') el.dataset.dwellDisabled = ''; }
+  } else if (!now && gridLocked) {
+    gridLocked = false;
+    if (!$('partnerDialog').open) { gridKey = ''; renderGrid(controller.state); }
+  }
 }
 async function control(type, extra = {}) {
   if (!session) return null;
@@ -191,6 +208,8 @@ const controller = createChatController({
   beforeChoices: () => { revealRender = true; window.Dwell?.suppress(REVEAL_SETTLE_MS); },
   async speak(choice, { signal }) {
     if (appLocked()) return;
+    // A second guard: nothing she selects ends the partner's hold (spec 2026-10-28 §7).
+    if (holdActive()) return;
     const mine = lifecycle, spoken = ++currentSpeech;
     const timing = speechMetric;
     if (holding || askPending) metrics.end(questionMetric, 'cancelled', 'interrupted');
@@ -231,9 +250,12 @@ const pictureOf = new WeakMap();
 // One tile in the frame: `area` is its CSS grid-area (public/chat/frame.js).
 function tile(label, type, action, area, say, pick = {}) {
   const el = document.createElement(action ? 'button' : 'div');
-  el.className = `tile ${type}${action ? ' dwell' : ''}`;
+  // While the partner holds, no tile is a dwell target (spec 2026-10-28 §7).
+  const locked = action && holdActive();
+  el.className = `tile ${type}${action && !locked ? ' dwell' : ''}`;
+  if (locked) el.dataset.dwellDisabled = '';
   el.style.gridArea = area;
-  if (action) { el.type = 'button'; el.addEventListener('click', action); }
+  if (action) { el.type = 'button'; el.addEventListener('click', () => { if (!holdActive()) action(); }); }
   const text = document.createElement('span'); text.className = 'label'; text.textContent = label;
   el.appendChild(text);
   // A glyph (a letter or a number) is its own picture: tile-fit.js draws it big.
@@ -617,6 +639,7 @@ function paintAsk() {
   const waiting = !held && (!config || !!preparation || closing);
   ask.textContent = waiting && config?.runtime?.available !== false ? 'Preparing…' : 'Hold to ask';
   ask.disabled = micRefused || !appReady || !config?.runtime?.available || waiting;
+  syncHoldLock();
 }
 const autoPrepare = () => { if (appReady && !micPaused) void prepare(); };
 // Chat prepares itself (no Start Chat, maintainer 10/27 evening): microphone,

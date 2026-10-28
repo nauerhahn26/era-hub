@@ -186,6 +186,25 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   assert.ok(againBody.context.includes(`Partner: ${QUESTION}`) && againBody.context.includes('Me: Music'));
   assert.equal(againBody.context.some(line => line === `Me: ${QUESTION}`), false, 'the strip\'s repeat is not her words');
   await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Your turn'); // "Something else." has finished
+  // Her gaze never ends a hold (spec 2026-10-28 §7): from touch-down to the final
+  // transcript no grid tile is a dwell target, and a click on one speaks nothing.
+  const controlsBefore = controls.length, yesClips = spokenTexts.filter(text => text === 'Yes.').length;
+  await down('#ask');
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Capturing question');
+  assert.equal(await page.locator('#grid .dwell').count(), 0, 'no dwell targets while the partner holds');
+  assert.equal(await page.locator('#grid button.tile:not([data-dwell-disabled])').count(), 0);
+  await page.evaluate(() => document.querySelector('#grid .tile.yes').click());
+  await page.waitForTimeout(450);
+  assert.equal(await page.locator('#phase').textContent(), 'Capturing question', 'a look at YES does not end the hold');
+  assert.equal(controls.slice(controlsBefore).includes('cancel'), false, 'the capture was not cancelled');
+  assert.equal(spokenTexts.filter(text => text === 'Yes.').length, yesClips, 'YES said nothing');
+  const finishedBefore = controls.filter(type => type === 'finish').length;
+  await up();
+  for (let i = 0; i < 100 && controls.filter(type => type === 'finish').length === finishedBefore; i++) await page.waitForTimeout(20);
+  assert.equal(await page.locator('#grid .dwell').count(), 0, 'still none until the final transcript');
+  await page.evaluate(generation => window.__timingEvents.onmessage({ data: JSON.stringify({ type: 'final', generation, text: 'Would you like music or a story?' }) }), generation);
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Your turn' && document.querySelectorAll('#grid .response.dwell').length === 2);
+  assert.ok(await page.locator('#grid .tile.yes.dwell').count() === 1, 'the dwell targets are back');
   const finishes = controls.filter(type => type === 'finish').length;
   // A cancelled touch drops only that hold: Ready to ask again on the same session, nothing submitted.
   await down('#ask'); await page.waitForTimeout(120); await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
