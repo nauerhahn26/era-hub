@@ -342,6 +342,15 @@ library, and the likes list. Nothing new has to be published for this.
   under the likes box, so dad can see what the model was given.
 - Telemetry: the turn record carries `world: {weeks, chars}`; never the text.
 - Tests use fixture week manifests and a fixture shelf with generic content.
+- Since the coordinator's follow-up (10/28): the weekly builder also
+  publishes `world.json` (schema 1) beside each manifest: `about` her, the
+  teachers' weekly lists (`asked`, `worked_on`) and day notes (mood,
+  activities, moments, what she said on her device). The digest merges every
+  folder's file (about from the newest, weeks by start, days by date), places
+  About her, the world weeks and the last ten days' notes after the Today
+  line, and caps at 4,000 characters (oldest days go first, then worked_on
+  lists, then the package order). The turn record carries `days` beside
+  `weeks` and `chars`.
 
 **Tasks.**
 
