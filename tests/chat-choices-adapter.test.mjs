@@ -291,6 +291,12 @@ test('the recall check passes a reply that names something from world and still 
   const notes = WORLD + '\nLast week at school (her teacher\'s list): a leaf collage; a song about seasons.\nLast week her class worked on: counting by fives.\nYesterday at school: happy; speech, buddies. She said on her device: She wants to paint.';
   for (const say of ['I made a leaf collage.', 'We did buddies.', 'We went to speech.'])
     assert.equal((await run(say, notes)).kind, 'generated', say);
+  // A word matches a term with or without a plural ending: classmates and classmate, buddies and buddy, boxes and box.
+  const plural = WORLD + '\nYesterday at school: happy; Classmates said they enjoyed her party. She sat with her buddy near the boxes.';
+  for (const say of ['I played with a classmate.', 'We played with buddies.', 'I made a box.', 'I saw my classmates.', 'I made magnet.', 'We played with a buddy.'])
+    assert.equal((await run(say, plural)).kind, 'generated', say);
+  for (const say of ['I played with a class.', 'I went to the zoo.'])
+    assert.equal((await run(say, plural)).recallRejected, true, 'a different word never matches: ' + say);
   for (const say of ['I went to the park yesterday.', 'I saw it on my device.', 'We went to class.'])
     assert.equal((await run(say, notes)).recallRejected, true, say);
 });

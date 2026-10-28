@@ -86,12 +86,21 @@ const WORLD_STOP = new Set(['this', 'week', 'last', 'school', 'today', 'hero', '
   'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'january', 'february', 'march', 'april', 'june',
   'july', 'august', 'september', 'october', 'november', 'december']);
 const wordsOf = text => String(text).toLowerCase().replace(/[’]/g, "'").match(/[a-z][a-z']*/g) || [];
+// A word and its singular forms: classmates/classmate, buddies/buddy, boxes/box.
+function forms(word) {
+  const out = [word];
+  if (/ies$/.test(word)) out.push(word.slice(0, -3) + 'y');
+  if (/es$/.test(word)) out.push(word.slice(0, -2));
+  if (/[^s]s$/.test(word)) out.push(word.slice(0, -1));
+  return out;
+}
 function worldTerms(world) {
-  return new Set(typeof world === 'string' ? wordsOf(world).map(word => word.replace(/'s$/, '')).filter(word => word.length >= 4 && !WORLD_STOP.has(word)) : []);
+  return new Set(typeof world === 'string' ? wordsOf(world).map(word => word.replace(/'s$/, '')).filter(word => word.length >= 4 && !WORLD_STOP.has(word))
+    .flatMap(forms) : []);
 }
 function recallAsserted(choices, world) {
   const terms = worldTerms(world);
-  const known = say => terms.size > 0 && wordsOf(say).some(word => terms.has(word) || terms.has(word.replace(/'s$/, '')));
+  const known = say => terms.size > 0 && wordsOf(say).some(word => forms(word.replace(/'s$/, '')).some(form => terms.has(form)));
   return choices.some(choice => (ASSERTED.test(choice.say) ||
     /\b(?:it was at|we were at)\b/i.test(choice.say)) && !known(choice.say));
 }
