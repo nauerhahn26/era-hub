@@ -409,6 +409,11 @@ Info
 11. Port 8470 for the new hub suites, its two hubs run one after the other,
     confirmed by `suite-ports` before the first run (8494/8495 sit in the reserved 8480+ scratch and tunnel band that `suite-ports` refuses, and 8470 was the free suite port on 10/28).
 12. The hub keeps `/buttons/press` as activity (not in `NOT_INTERACTION`).
+13. Press turns are recorded in the test-mode turn log only; the content-free
+    production timing rows keep their four kinds (a partner testing a press
+    turns test mode on).
+14. A session's audio budget (19.2 MB) is about ten full 60 s windows; a later
+    window then ends with audio-limit and a new session is needed.
 
 ## Retrospective
 
