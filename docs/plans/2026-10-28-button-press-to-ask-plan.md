@@ -112,7 +112,7 @@ Info
       registry. Accept: exports `KEYS` = F13, Ctrl+Alt+F9, Ctrl+Alt+F10 → ask;
       F14, Ctrl+Alt+F11 → cancel. Verify: `node --test tests/buttons.test.mjs`
       (unit, no hub). Guard: tests first; unknown key → 400.
-- [ ] **T1.2** Command stream: `GET /chat/api/commands[?nonce=]` SSE in
+- [x] **T1.2** Command stream: `GET /chat/api/commands[?nonce=]` SSE in
       chat-api (ownRequest-gated), `: connected`, `ping` every 15 s, one
       subscriber (a newer connection replaces the older with `{type:'replaced'}`);
       `POST /chat/api/commands/visibility {visible}` from the page. Events:

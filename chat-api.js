@@ -1,6 +1,6 @@
 // Ephemeral Chat sessions. Audio and transcripts are never written to disk.
 'use strict';
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomBytes } = require('node:crypto');
 const { spawn: spawnProcess } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -26,10 +26,77 @@ const DEFAULTS = Object.freeze({ sessions: 2, idleMs: 90000, lifetimeMs: 1800000
   // The streaming transcription socket (§3.1): closed after this long idle
   // (null: 60 s for a connection-billed service, 5 min otherwise); the final
   // must arrive this long after release or the hold falls back to one-shot.
-  streamIdleMs: null, streamFinalMs: 4000, streamKeepAliveMs: 5000 });
+  streamIdleMs: null, streamFinalMs: 4000, streamKeepAliveMs: 5000,
+  // The page's command stream (button press to ask, design 2026-10-27 §4.2).
+  commandPingMs: 15000, commandNonceMs: 30000 });
 const FRAME_HEADER = 8;
 // The byte budget of the current turn: a listening window's, or one hold's.
 function turnByteLimit(turn, limits) { return turn && turn.window === true ? limits.windowBytes : limits.turnBytes; }
+
+// The Chat page's command stream (button press to ask, design 2026-10-27 §4.2):
+// one subscriber, the page, connected from load and before any session. The
+// hub pushes {type:'ask', pressAt, key, nonce?}, {type:'end'} and
+// {type:'cancel'}; a newer connection replaces the older ({type:'replaced'}).
+// A relaunched kiosk opens /chat/?ask=<nonce>: the page connects with that
+// nonce and the press is replayed as `ask` once (30 s, then gone). The page
+// reports its visibility at connect (?visible=0|1) and on every change. It
+// lives outside the per-configuration API so a configuration reload never
+// drops the page's stream.
+function createCommands(options = {}) {
+  const clock = options.clock || Date.now;
+  const pingMs = options.pingMs ?? DEFAULTS.commandPingMs, nonceMs = options.nonceMs ?? DEFAULTS.commandNonceMs;
+  const nonces = new Map(), waiters = new Set();
+  let subscriber = null;
+  const write = (sub, value) => { try { sub.res.write('data: ' + JSON.stringify(value) + '\n\n'); return true; } catch { return false; } };
+  const sweepNonces = () => { const now = clock(); for (const [nonce, entry] of nonces) if (now - entry.issuedAt > nonceMs) nonces.delete(nonce); };
+  const settleWaiters = () => { if (!subscriber || subscriber.visible !== true) return; for (const waiter of [...waiters]) waiter(true); };
+  function drop(sub) {
+    clearInterval(sub.ping);
+    if (subscriber === sub) subscriber = null;
+  }
+  return {
+    connect(res, { nonce = null, visible = null } = {}) {
+      if (subscriber) { const old = subscriber; write(old, { type: 'replaced' }); drop(old); try { old.res.end(); } catch {} }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+      res.write(': connected\n\n');
+      const sub = { res, visible: typeof visible === 'boolean' ? visible : null, ping: null };
+      subscriber = sub;
+      if (pingMs > 0) { sub.ping = setInterval(() => write(sub, { type: 'ping' }), pingMs); sub.ping.unref?.(); }
+      res.once('close', () => drop(sub));
+      sweepNonces();
+      const entry = typeof nonce === 'string' && nonces.get(nonce);
+      if (entry) { nonces.delete(nonce); write(sub, { type: 'ask', pressAt: entry.pressAt, key: entry.key, nonce }); }
+      settleWaiters();
+    },
+    push(command) { return subscriber ? write(subscriber, command) : false; },
+    issue({ pressAt, key }) {
+      sweepNonces();
+      const nonce = randomBytes(8).toString('hex');
+      nonces.set(nonce, { pressAt, key, issuedAt: clock() });
+      return nonce;
+    },
+    pending(nonce) { sweepNonces(); return nonces.has(nonce); },
+    revoke(nonce) { nonces.delete(nonce); },
+    setVisible(visible) {
+      if (!subscriber) return false;
+      subscriber.visible = visible; settleWaiters(); return true;
+    },
+    state() { return { connected: !!subscriber, visible: subscriber ? subscriber.visible : null }; },
+    waitVisible(ms) {
+      if (subscriber && subscriber.visible === true) return Promise.resolve(true);
+      return new Promise(resolve => {
+        const timer = setTimeout(() => done(false), ms);
+        const done = value => { clearTimeout(timer); waiters.delete(done); resolve(value); };
+        waiters.add(done);
+      });
+    },
+    close() {
+      for (const waiter of [...waiters]) waiter(false);
+      if (subscriber) { const sub = subscriber; drop(sub); try { sub.res.end(); } catch {} }
+      nonces.clear();
+    },
+  };
+}
 
 function chatVariables(env) {
   const result = {};
@@ -235,6 +302,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   }
   const clock = options.clock || Date.now;
   const limits = { ...DEFAULTS, ...options.limits };
+  const ownCommands = !options.commands;
+  const commands = options.commands || createCommands({ clock, pingMs: limits.commandPingMs, nonceMs: limits.commandNonceMs });
   const sessions = new Map(), requests = new Set();
   let runtimeArgs = null, closed = false, activeRoutes = 0;
   try {
@@ -676,6 +745,17 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       choices: { available: true, kind: adapterRequested ? 'adapter' : choicesCore.available ? 'built-in' : 'local', generated: adapterRequested ? !!adapterUrl : choicesCore.available },
     });
     if (req.method === 'POST' && routePath === '/choices') return generate(req, res);
+    if (req.method === 'GET' && routePath === '/commands') {
+      const visible = url.searchParams.get('visible');
+      commands.connect(res, { nonce: url.searchParams.get('nonce'), visible: visible === '1' ? true : visible === '0' ? false : null });
+      return;
+    }
+    if (req.method === 'POST' && routePath === '/commands/visibility') {
+      const body = await readJson(req, limits.bodyBytes);
+      if (typeof body.visible !== 'boolean') throw fault(400, 'invalid-visibility');
+      if (!commands.setVisible(body.visible)) throw fault(409, 'no-page');
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'POST' && routePath === '/sessions') {
       await readBody(req, limits.bodyBytes);
       const session = startSession(); return json(res, 201, { id: session.id });
@@ -764,8 +844,9 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     },
     upgrade,
     sweep,
+    commands,
     isIdle() { return sessions.size === 0 && requests.size === 0 && activeRoutes === 0; },
-    close() { closed = true; clearInterval(timer); for (const session of sessions.values()) dispose(session); for (const request of requests) request.abort(); choicesCore.close(); ownFetch?.close(); },
+    close() { closed = true; if (ownCommands) commands.close(); clearInterval(timer); for (const session of sessions.values()) dispose(session); for (const request of requests) request.abort(); choicesCore.close(); ownFetch?.close(); },
   };
 }
 
@@ -775,6 +856,10 @@ function createChatApi(options = {}) {
   const load = () => loadChatEnvironment({ env: options.env, file: options.configPath });
   const stamp = env => JSON.stringify(Object.keys(env).sort().map(key => [key, env[key]]));
   const initial = load();
+  // One command stream for the hub's lifetime: a reload replaces the API inside, never the page's stream.
+  const limits = { ...DEFAULTS, ...options.limits };
+  const commands = options.commands || createCommands({ clock: options.clock, pingMs: limits.commandPingMs, nonceMs: limits.commandNonceMs });
+  options = { ...options, commands };
   let fingerprint = stamp(initial), inner = createFixedChatApi(options, initial), closed = false;
   return {
     handle(req, res) {
@@ -795,7 +880,8 @@ function createChatApi(options = {}) {
     },
     upgrade(req, socket, head) { return inner.upgrade(req, socket, head); },
     sweep() { inner.sweep(); },
-    close() { closed = true; inner.close(); },
+    commands,
+    close() { closed = true; inner.close(); commands.close(); },
   };
 }
-module.exports = { createChatApi, loadChatEnvironment, ownRequest, turnByteLimit, DEFAULTS };
+module.exports = { createChatApi, createCommands, loadChatEnvironment, ownRequest, turnByteLimit, DEFAULTS };
