@@ -191,6 +191,7 @@ const controller = createChatController({
 
 fetch('/settings').then(r => r.json()).then(s => {
   testMode = s.chatTestMode === true; paintTestMode();
+  if (Array.isArray(s.chatLikes)) $('chatLikes').value = s.chatLikes.filter(item => typeof item === 'string').join('\n');
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
   window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
@@ -816,6 +817,16 @@ $('exportTimings').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([metrics.exportJSON()], { type: 'application/json' }));
   const link = document.createElement('a'); link.href = url; link.download = 'chat-timings.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+// What she likes (dad, 10/28): one per line in the partner dialog, saved to
+// this device's settings when the box is left; sent with open-ended questions.
+$('chatLikes').addEventListener('change', async () => {
+  const list = [...new Set($('chatLikes').value.split('\n').map(line => line.trim().slice(0, 30)).filter(Boolean))].slice(0, 12);
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatLikes: list }) });
+    if (!saved.ok) throw new Error();
+    $('chatLikesNote').textContent = list.length ? `Saved ${list.length} like${list.length === 1 ? '' : 's'} on this computer.` : 'Saved: no likes on this computer.';
+  } catch { $('chatLikesNote').textContent = 'Likes were not saved. Try again.'; }
 });
 $('saveStory').addEventListener('click', async () => {
   const label = $('storyLabel').value.trim(), say = $('storyMessage').value.trim();
