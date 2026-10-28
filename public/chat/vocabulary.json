@@ -53,7 +53,12 @@
     "im tired": "tired",
     "i dont want to answer": "no",
     "i dont want to answer now": "not now",
-    "my earlier words": "remember"
+    "my earlier words": "remember",
+    "my questions": "think",
+    "my comments": "remember",
+    "about me": "me",
+    "ask a question": "question",
+    "make a comment": "tell"
   },
   "concepts": [
     {"word":"yes","id":5584,"alt":["yeah","yep","agree"],"altId":5583},

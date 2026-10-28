@@ -15,6 +15,9 @@ export const STACKED_BIG = Object.freeze({ labelShare: 0.70 });
 // a GLYPH: the largest 2 px step from 3x the target that keeps it within 85%
 // of the content height, marked data-glyph="1" (line-height 1 in chat.css).
 // The yes/no corner tiles keep their own law.
+// The question strip (spec 2026-10-28 §1) is the partner's words in grey, not
+// her vocabulary: it starts at 52 px and may step down to 24 px to stay whole.
+export const STRIP = Object.freeze({ start: 52, floor: 24 });
 export const FIT = Object.freeze({ target: 74, floor: 44, iconShare: 0.42, iconShareMin: 0.30, besideMaxChars: 16, besideMinWidth: 190, stackedShares: [0.55, 0.80],
   glyphMaxChars: 2, glyphScale: 3, glyphShare: 0.85 });
 
@@ -47,6 +50,11 @@ export function fitTile(tile, { profile } = {}) {
     if (size < FIT.target) tile.dataset.fontReduced = '1';
     return { size, layout };
   };
+  if (tile.classList.contains('question')) {
+    const size = shrink(tile, label, 'plain', STRIP.start, STRIP.floor) ?? STRIP.floor;
+    tile.style.fontSize = `${size}px`;
+    return { size, layout: 'strip' };
+  }
   const chars = [...(label.textContent || '').trim()].length;
   if (!picture && chars >= 1 && chars <= FIT.glyphMaxChars && !tile.classList.contains('yes') && !tile.classList.contains('no')) {
     tile.dataset.glyph = '1';

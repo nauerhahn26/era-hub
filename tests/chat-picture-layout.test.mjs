@@ -1,9 +1,9 @@
 // Chat tiles by board law (spec 2026-10-27 §6; ux-contract §E 20; era-board
 // board-render.js): the picture BESIDE the word at 42% of the tile's width and
 // 82% of its height, a 74 px label target, the stacked layout for a long label
-// before any shrink, a 44 px floor marked data-font-reduced, the two black
-// rest cells and the yes/no tiles untouched, and no two tiles on a page
-// sharing a picture. Owned loopback fixtures only; pictures come from the
+// before any shrink, a 44 px floor marked data-font-reduced, the yes/no
+// tiles untouched, the question strip with no picture (the stable frame, spec
+// 2026-10-28), and no two tiles on a page sharing a picture. Owned loopback fixtures only; pictures come from the
 // page's own /symbol/<id> route, never from another host.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,27 +27,29 @@ const id = word => vocabulary.concepts.find(concept => concept.word === word).id
 
 test('page pictures are planned fixed tiles first and never repeat: alternate, then the bubble, then none', () => {
   assert.equal(symbols.setVocabulary(vocabulary), true);
+  // The stable frame's fixed tiles (spec 2026-10-28 §1), then four replies.
   const entries = [
-    { label: 'yes', type: 'yes' }, { label: 'no', type: 'no' }, { label: '', type: 'rest' }, { label: '', type: 'rest' },
+    { label: 'yes', type: 'yes' }, { label: '', type: 'question' }, { label: 'no', type: 'no' },
+    { label: 'My questions', type: 'page' }, { label: 'My comments', type: 'page' }, { label: 'About me', type: 'page' },
+    { label: 'Tell me more', type: 'static' }, { label: 'Ask a question', type: 'mode' }, { label: 'Make a comment', type: 'mode' }, { label: 'Something else', type: 'static' },
     { label: 'Yes', type: 'response', symbol: 'yes', symbolId: id('yes') },
     { label: 'Music', type: 'response', symbol: 'music', symbolId: id('music') },
     { label: 'Songs', type: 'response', symbol: 'music', symbolId: id('music') },
     { label: 'More songs', type: 'response', symbol: 'music', symbolId: id('music') },
-    { label: 'Tell me more', type: 'static' }, { label: 'Reactions', type: 'route' }, { label: 'My news', type: 'route' }, { label: 'Help me say it', type: 'route' },
   ];
   const plan = symbols.planPictures(entries);
-  assert.equal(plan[0].id, id('yes')); assert.equal(plan[1].id, id('no'));
-  assert.equal(plan[2], null); assert.equal(plan[3], null);
+  assert.equal(plan[0].id, id('yes')); assert.equal(plan[2].id, id('no'));
+  assert.equal(plan[1], null, 'the question strip never has a picture');
+  assert.deepEqual(plan.slice(3, 10).map(item => item.word), ['think', 'remember', 'me', 'more', 'question', 'tell', 'something else']);
   const yes = vocabulary.concepts.find(concept => concept.word === 'yes');
-  assert.equal(plan[4].id, yes.altId, 'a reply "Yes" yields the corner tile its picture and shows the alternate');
-  assert.equal(plan[5].id, id('music'));
-  assert.equal(plan[6].id, id('chat'), 'a second music reply falls back to the bubble picture');
-  assert.equal(plan[7], null, 'a third has no picture rather than a repeat');
-  assert.deepEqual(plan.slice(8).map(item => item.word), ['more', 'wow', 'news', 'help']);
+  assert.equal(plan[10].id, yes.altId, 'a reply "Yes" yields the corner tile its picture and shows the alternate');
+  assert.equal(plan[11].id, id('music'));
+  assert.equal(plan[12].id, id('chat'), 'a second music reply falls back to the bubble picture');
+  assert.equal(plan[13], null, 'a third has no picture rather than a repeat');
   const shown = plan.filter(Boolean).map(item => item.id);
   assert.equal(new Set(shown).size, shown.length);
-  assert.equal(symbols.planPictures(entries, { variant: 'bw' })[5].src, `/symbol/${id('music')}?color=false`);
-  assert.equal(symbols.planPictures(entries)[5].src, `/symbol/${id('music')}`);
+  assert.equal(symbols.planPictures(entries, { variant: 'bw' })[11].src, `/symbol/${id('music')}?color=false`);
+  assert.equal(symbols.planPictures(entries)[11].src, `/symbol/${id('music')}`);
   const emoji = symbols.planPictures([{ label: 'Home', type: 'response', symbol: 'home', symbolId: id('home') }, { label: 'Pizza', type: 'response', symbol: 'pizza', symbolId: id('pizza') }], { variant: 'emoji' });
   assert.equal(emoji[0].src, '/drawing/stickers/house.png'); assert.equal(emoji[0].kind, 'emoji');
   assert.equal(emoji[1].src, null); assert.equal(emoji[1].kind, 'drawn', 'no emoji for the concept: the drawn picture');
@@ -136,8 +138,9 @@ const measure = page => page.evaluate(() => new Promise(resolve => requestAnimat
     const contentHeight = box.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
     // Fits = no word cut inside the label's own box, and the label inside the tile's content box.
     const words = label?.getBoundingClientRect(), bottom = box.bottom - parseFloat(style.paddingBottom);
-    return { text: label?.textContent || '', type: [...tile.classList].find(name => ['yes', 'no', 'rest', 'response', 'static', 'route', 'waiting'].includes(name)),
+    return { text: label?.textContent || '', type: [...tile.classList].find(name => ['yes', 'no', 'question', 'page', 'mode', 'response', 'static', 'waiting', 'item', 'nav', 'made'].includes(name)),
       beside: tile.classList.contains('beside'), stacked: tile.classList.contains('stacked'), reduced: tile.dataset.fontReduced || null,
+      setAside: tile.classList.contains('picture-set-aside'),
       font: parseFloat(style.fontSize), width: box.width, height: box.height, background: style.backgroundColor,
       // the board's shares are of the tile's content box (board.css percentages inside the padding)
       contentWidth: tile.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), contentHeight,
@@ -175,9 +178,10 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
 
   function law(tiles, viewport) {
     const tag = tile => `${viewport}: "${tile.text}"`;
-    const rest = tiles.filter(tile => tile.type === 'rest');
-    assert.equal(rest.length, 2);
-    for (const tile of rest) { assert.equal(tile.background, 'rgb(0, 0, 0)'); assert.equal(tile.picture, null); }
+    assert.deepEqual(tiles.filter(tile => tile.type === 'page').map(tile => tile.text), ['My questions', 'My comments', 'About me']);
+    assert.deepEqual(tiles.filter(tile => ['static', 'mode'].includes(tile.type)).slice(0, 4).map(tile => tile.text), ['Tell me more', 'Ask a question', 'Make a comment', 'Something else']);
+    const strip = tiles.filter(tile => tile.type === 'question');
+    assert.equal(strip.length, 1); assert.equal(strip[0].picture, null, 'the question strip has no picture');
     assert.equal(tiles.find(tile => tile.type === 'yes').symbol, 'yes'); assert.equal(tiles.find(tile => tile.type === 'no').symbol, 'no');
     const shown = tiles.filter(tile => tile.picture).map(tile => tile.symbolId);
     assert.equal(new Set(shown).size, shown.length, `${viewport}: no two tiles share a picture (${shown})`);
@@ -187,6 +191,8 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
       assert.ok(tile.fits, `${tag(tile)} does not fit at ${tile.font}px`);
       if (tile.font < 74 - 0.5) assert.equal(tile.reduced, '1', `${tag(tile)} below 74 px must be marked`);
       else assert.equal(tile.reduced, null, tag(tile));
+      // Word integrity outranks the picture (tile-fit.js): a tile whose words fit only alone sets it aside.
+      if (tile.setAside) { assert.ok(!tile.beside && !tile.stacked, tag(tile)); continue; }
       assert.ok(tile.beside !== tile.stacked, tag(tile));
       if (tile.beside) {
         assert.ok(tile.text.length <= 16 && tile.width >= 190, tag(tile));

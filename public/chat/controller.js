@@ -3,7 +3,7 @@
 export const isPartnerTouch = e => e?.isTrusted === true && e.pointerType === 'touch';
 
 // A batch as the page shows it: at most four, words required, the hub's picture fields checked.
-function cleanChoices(list, prefix) {
+export function cleanChoices(list, prefix) {
   return (Array.isArray(list) ? list : []).filter(x => x && typeof x.label === 'string' && typeof x.say === 'string' && x.say.trim()).slice(0, 4)
     .map((x, i) => Object.freeze({ id: `${prefix}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600),
       // The hub's decorative picture pick (spec §6) rides along; it never changes the words.
