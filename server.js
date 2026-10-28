@@ -27,7 +27,10 @@ const { createChatTurns, applyTestModeSetting, applyLikesSetting, testModeOn, ch
 // SYMBOLS_CACHE and the fetch are read when a hold asks, not here.
 // What she likes (dad, 10/28) goes with an open-ended question to the reply
 // model, read from app-settings.json when a question asks.
+// A who question also carries the family's own names: the Drawing library's
+// people still on her board (the list chat-symbols.setPeople pictures).
 const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA), likes: () => chatLikes(DATA),
+  people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
   pictures: { isCached: (id) => fs.existsSync(path.join(SYMBOLS_CACHE, id + ".png")),
               fetchOne: (id, { signal }) => fetchSymbolToCache(String(id), { signal }) } });
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,

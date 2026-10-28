@@ -11,6 +11,7 @@ import os from 'node:os';
 
 const require = createRequire(import.meta.url);
 const { createChatApi, openShape, localChoices } = require('../chat-api.js');
+const pictures = require('../chat-symbols.js');
 
 function runtime() {
   const child = new EventEmitter();
@@ -949,4 +950,36 @@ test('a built-in recall reply that asserts an activity reaches the page as the f
   assert.equal(result.kind, 'guarded'); assert.equal(result.generated, false);
   assert.equal(result.shape, 'recall'); assert.equal(result.recallRejected, true);
   assert.deepEqual(result.choices.map(choice => choice.say), ['Can you give me a clue?', 'Let me tell you another way.', "I don't remember.", "I don't want to answer now."]);
+});
+
+test('a who question sends the family\'s names to the adapter; other questions and a missing or broken provider send none', async t => {
+  const seen = [];
+  const reply = async (_, options) => { seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'Mom', say: 'Mom' }, { label: 'Sam', say: 'Sam' }] })); };
+  const env = { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' };
+  const s = await service(t, { people: () => ['Mom', 'Sam', 'x'.repeat(21), 3, ...Array.from({ length: 15 }, (_, i) => 'Name' + i)], env, fetch: reply });
+  await s.request('/choices', { text: 'Who do you want to sit with?' });
+  assert.equal(seen.at(-1).shape, 'open');
+  assert.deepEqual(seen.at(-1).people, ['Mom', 'Sam', ...Array.from({ length: 10 }, (_, i) => 'Name' + i)], 'cleaned and capped at twelve');
+  await s.request('/choices', { text: 'What do you want to do today?' });
+  assert.equal('people' in seen.at(-1), false);
+  await s.request('/choices', { text: 'I saw who did it.' });
+  assert.equal('people' in seen.at(-1), false, 'a statement has no shape');
+  const none = await service(t, { env, fetch: reply });
+  await none.request('/choices', { text: 'Who do you want to sit with?' });
+  assert.equal('people' in seen.at(-1), false, 'no provider, no names');
+  const broken = await service(t, { people: () => { throw Error('unreadable'); }, env, fetch: reply });
+  const result = await (await broken.request('/choices', { text: 'Who do you want to sit with?' })).json();
+  assert.equal('people' in seen.at(-1), false); assert.equal(result.choices.length, 2, 'a broken provider costs only the list');
+});
+
+test('a name the model returns keeps its words and shows that person\'s own picture', async t => {
+  pictures.setPeople(() => [{ slug: 'mom', word: 'Mom' }, { slug: 'sam-2', word: 'Sam' }]);
+  t.after(() => pictures.setPeople(null));
+  const s = await service(t, { people: () => ['Mom', 'Sam'], env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' },
+    fetch: async () => new Response(JSON.stringify({ choices: [{ label: 'Sam', say: 'Sam, please.' }, { label: 'Mom', say: 'Mom' },
+      { label: 'Not sure', say: "I'm not sure." }] })) });
+  const result = await (await s.request('/choices', { text: 'Who do you want to sit with?' })).json();
+  assert.deepEqual(result.choices.map(c => [c.label, c.say]), [['Sam', 'Sam, please.'], ['Mom', 'Mom'], ['Not sure', "I'm not sure."]], 'no name is stripped');
+  assert.deepEqual(result.choices.slice(0, 2).map(c => c.picture), [{ src: '/characters/sam-2.png', kind: 'person' }, { src: '/characters/mom.png', kind: 'person' }]);
 });

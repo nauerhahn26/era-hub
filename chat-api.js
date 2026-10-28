@@ -399,12 +399,16 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   const reportUsage = () => { try { return options.reportUsage?.() === true; } catch { return false; } };
   // What she likes (the device's chatLikes setting): sent with an open-ended
   // question only, read when a question asks; an unreadable list costs nothing.
-  const likes = () => {
+  const listFrom = (provider, max) => {
     try {
-      const list = options.likes?.();
-      return Array.isArray(list) ? list.filter(item => typeof item === 'string' && item.trim() && item.length <= 30).slice(0, 12) : [];
+      const list = provider?.();
+      return Array.isArray(list) ? list.filter(item => typeof item === 'string' && item.trim() && item.trim().length <= max && !/[\x00-\x1f<>]/.test(item))
+        .map(item => item.trim()).slice(0, 12) : [];
     } catch { return []; }
   };
+  const likes = () => listFrom(options.likes, 30);
+  // The family's own names (the Drawing library's people), for a who question only.
+  const people = () => listFrom(options.people, 20);
   // Two more than the HTTP route's own limit: a streaming session's speculative
   // request and its fresh one may overlap for a moment while one aborts.
   const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices + 2, timeoutMs: Math.min(limits.adapterMs, 12000) } });
@@ -709,7 +713,9 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     try {
       let result;
       const shape = openShape(text), liked = shape ? likes() : [];
-      const input = { text, ...(context && context.length ? { context } : {}), ...(shape ? { shape } : {}), ...(liked.length ? { likes: liked } : {}) };
+      const named = shape && /\bwho(?:m)?\b/i.test(text) ? people() : [];
+      const input = { text, ...(context && context.length ? { context } : {}), ...(shape ? { shape } : {}), ...(liked.length ? { likes: liked } : {}),
+        ...(named.length ? { people: named } : {}) };
       if (!adapterUrl) result = onChoice ? await choicesCore.generateStream(input, { signal, onChoice }) : await choicesCore.generate(input, { signal });
       else {
         const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal,

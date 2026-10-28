@@ -223,3 +223,27 @@ test('a generated batch reports the reply model\'s token usage and the configure
   const guarded = await createChoicesAdapter({ env, fetch: () => { throw Error('must not call'); } }).generate({ text: 'I lost my drawing. What now?' });
   assert.equal('usage' in guarded, false, 'the partner-incident guard makes no paid call and reports no usage');
 });
+
+test('recall asks for a spread, not four repairs; the repair limit names recall as its exception', async () => {
+  let body;
+  await createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } }).generate({ text: 'What next?' });
+  assert.match(body.instructions, /Shape recall: a spread of two about how it felt \(such as 'It was fun', 'It was okay', 'Not so good'\), one wish to tell \('I want to tell you' or 'Let me tell you another way'\), and one asking for a clue or not now; never state a past activity, place or person as a fact\./);
+  assert.match(body.instructions, /At most one of the four is a repair \(not sure, tell me more, another way\), never two, except for shape recall, where a clue and another way may both appear\./);
+  assert.match(body.instructions, /people: the family's own names; when the question asks who, most of the four choices are names from people \(a name alone as the label, 'Mom' as the say is fine\), with at most one other choice\./);
+});
+
+test('the family\'s names go to the model only with an open who question, cleaned and capped', async () => {
+  let body;
+  const adapter = createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } });
+  const input = () => JSON.parse(body.input);
+  await adapter.generate({ text: 'Who do you want to sit with?', shape: 'want', people: ['Mom', ' Dad ', 'x'.repeat(21), 7, '<b>', 'Sam'] });
+  assert.deepEqual(input().people, ['Mom', 'Dad', 'Sam']);
+  await adapter.generate({ text: 'Whom shall we call?', shape: 'want', people: Array.from({ length: 20 }, (_, i) => 'Name' + i) });
+  assert.equal(input().people.length, 12);
+  await adapter.generate({ text: 'What do you want to do today?', shape: 'want', people: ['Mom'] });
+  assert.equal('people' in input(), false, 'not a who question');
+  await adapter.generate({ text: 'Who is coming?', people: ['Mom'] });
+  assert.equal('people' in input(), false, 'no shape, no names');
+  await adapter.generate({ text: 'Who is coming?', shape: 'open', people: 'Mom' });
+  assert.equal('people' in input(), false, 'a non-list is dropped');
+});
