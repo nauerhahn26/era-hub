@@ -332,3 +332,21 @@ test('her world\'s size, never its text, is in the record, and the hub schema bo
   t2.wrapped.end(h2, 'completed'); await flush();
   assert.equal('world' in JSON.parse(t2.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
 });
+
+test('the stable frame\'s uses are in the record: the mode she swapped to, the page she opened, Something else (spec 2026-10-28 §4)', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  s.log.content(h, { mode: 'ask' }); s.log.content(h, { page: 'about' }); s.log.content(h, { again: true });
+  s.log.content(h, { mode: 'comment' }); // the last swap wins
+  s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.mode, 'comment'); assert.equal(record.content.page, 'about'); assert.equal(record.content.again, true);
+  const t = setup(), h2 = t.wrapped.begin('typed');
+  t.log.content(h2, { mode: 'shout', page: 'diary', again: 'yes' });
+  t.log.content(h2, { mode: 7, page: null, again: false });
+  t.wrapped.end(h2, 'completed'); await flush();
+  const plain = JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body).content;
+  for (const key of ['mode', 'page', 'again']) assert.equal(key in plain, false, key);
+  const off = setup({ on: false }), h3 = off.wrapped.begin('typed');
+  off.log.content(h3, { mode: 'ask', page: 'questions', again: true }); off.wrapped.end(h3, 'completed'); await flush();
+  assert.equal(off.requests.length, 0, 'nothing is written in production mode');
+});
