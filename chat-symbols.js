@@ -37,6 +37,50 @@ function vocabulary() {
     patterns: forms.map(([form, word]) => [new RegExp(`\\b${form.replace(/ /g, '\\s+')}s?\\b`), word, form]) };
   return table;
 }
+// The lexicon (spec §6, "Lexicon"): the library's own word → id index for the
+// things the curated table lacks ("lasagna", "tacos"). Read on first use; an
+// install without public/chat/lexicon.json warns once and keeps the table's
+// pictures. Families (food, drink, weather, time, place, person) feed the guard.
+let lexiconTable = null;
+function compileLexicon(data) {
+  const words = new Map();
+  for (const [word, id] of Object.entries(data && typeof data.words === 'object' && data.words || {}))
+    if (Number.isSafeInteger(id) && id > 0 && normal(word) === word) words.set(word, id);
+  const family = new Map();
+  for (const [name, ids] of Object.entries(data && typeof data.families === 'object' && data.families || {}))
+    if (Array.isArray(ids)) for (const id of ids) family.set(id, name);
+  return { words, family };
+}
+function lexicon() {
+  if (lexiconTable) return lexiconTable;
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(path.join(__dirname, 'public', 'chat', 'lexicon.json'), 'utf8'));
+    if (!data || !data.words || typeof data.words !== 'object') throw new Error('unexpected shape');
+  } catch (error) {
+    console.error('[chat] picture lexicon unavailable (' + (error.code || error.message) + '): replies use the vocabulary pictures only until public/chat/lexicon.json is restored');
+    data = null;
+  }
+  lexiconTable = compileLexicon(data);
+  return lexiconTable;
+}
+// Tools and tests may load another table; null reads the shipped file again.
+function setLexicon(data) { lexiconTable = data ? compileLexicon(data) : null; }
+// One form of the label in the lexicon, then its singular ("tacos" → "taco").
+function lexiconForm(form) {
+  if (!form) return null;
+  const { words, family } = lexicon();
+  const forms = [form];
+  if (/ies$/.test(form)) forms.push(form.replace(/ies$/, 'y'));
+  if (/(?:ches|shes|xes|ses|zes|oes)$/.test(form)) forms.push(form.replace(/es$/, ''));
+  if (/[^s]s$/.test(form)) forms.push(form.replace(/s$/, ''));
+  for (const candidate of forms) {
+    const id = words.get(candidate);
+    if (id) return { word: candidate, id, family: family.get(id) || null };
+  }
+  return null;
+}
+
 // Broad words never erase a clear subject: "I am happy to play music" is music.
 const BROAD = new Set(['me', 'you', 'want', 'need', 'like', 'love', 'happy', 'sad', 'tired', 'good', 'fun', 'play', 'go', 'look',
   'more', 'now', 'today', 'time', 'day', 'friend', 'family', 'people', 'please', 'ok', 'make', 'give', 'tell', 'think', 'know',
@@ -99,11 +143,11 @@ function guess(text) {
   return found.length === 1 ? found[0] : found.length ? FALLBACK : null;
 }
 // The whole label is one concept's word or alternative word ("Spaghetti", "The teacher").
-function exact(text) {
+function exactHit(text) {
   const { patterns } = vocabulary(), bare = text.replace(/^(?:a|an|the|some)\s+/, '');
-  const hit = patterns.find(([, , form]) => form === bare || form + 's' === bare || form + 'es' === bare);
-  return hit ? hit[1] : null;
+  return patterns.find(([, , form]) => form === bare || form + 's' === bare || form + 'es' === bare) || null;
 }
+function exact(text) { return exactHit(text)?.[1] || null; }
 // The label's food, drink, place or person category: every concrete thing it
 // names is in those families. Returns the families named and the picture.
 function category(text) {
@@ -131,16 +175,134 @@ function negationGuard(label, say, word) {
   if (REFUSAL.test(label) || REFUSAL.test(say)) return 'no';
   return FALLBACK;
 }
-function pickSymbol({ label = '', say = '', symbol } = {}) {
+// ---- the lexicon layer ----------------------------------------------------
+// Words that never name the thing on a tile: articles, pronouns, helpers,
+// prepositions, politeness, time words and the broad words.
+const STOP = new Set(['a', 'an', 'the', 'some', 'any', 'more', 'another', 'lots', 'lot', 'bit', 'of',
+  'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'we', 'us', 'our', 'he', 'him', 'his', 'she', 'her', 'it', 'its', 'they', 'them', 'their',
+  'this', 'that', 'these', 'those', 'im', 'youre', 'theyre', 'ive', 'weve', 'lets', 'let', 'thats', 'whats', 'theres', 'heres',
+  'am', 'is', 'are', 'was', 'were', 'be', 'been', 'do', 'does', 'did', 'have', 'has', 'had', 'can', 'could', 'will', 'would', 'shall',
+  'should', 'may', 'might', 'must', 'wanna', 'gonna', 'dont', 'doesnt', 'didnt', 'cant', 'wont', 'isnt', 'arent',
+  'want', 'like', 'love', 'need', 'eat', 'drink', 'play', 'go', 'get', 'make', 'see', 'watch', 'read', 'ride', 'visit', 'buy', 'find',
+  'choose', 'sing', 'wash', 'try', 'cook', 'bake', 'build', 'draw', 'take', 'give', 'bring', 'put', 'look', 'listen', 'pick', 'prefer', 'rather',
+  'to', 'with', 'for', 'at', 'in', 'on', 'from', 'after', 'before', 'by', 'about', 'into', 'onto', 'over', 'under', 'up', 'down', 'out', 'off',
+  'and', 'or', 'but', 'so', 'then', 'than', 'too', 'also', 'not', 'no', 'yes', 'please', 'thanks', 'thank',
+  'now', 'today', 'tonight', 'tomorrow', 'yesterday', 'later', 'soon', 'first', 'next', 'again',
+  'what', 'which', 'who', 'where', 'when', 'why', 'how', 'something', 'anything', 'nothing', 'thing', 'things', 'one', 'ones',
+  'very', 'really', 'just', 'maybe', 'ok', 'okay', 'either', 'both',
+  // placeholders that name no thing: "My choice" says nothing a picture can show
+  'choice', 'idea', 'turn', 'answer', 'favorite', 'favourite', 'way', 'stuff', 'kind', 'sort', 'type', 'option', 'plan',
+  'question', 'thought', 'guess', 'mind', 'word', 'words', 'bit', 'same', 'different', 'other', 'else', ...BROAD]);
+const GUARDED = new Set(['time', 'weather']);
+// Curated concepts filed as stand-ins ("sushi" under food for want of a
+// picture) yield to the library's own picture of the word.
+const STAND_INS = new Set(['food', 'drink']);
+const words = text => text ? text.split(' ').filter(Boolean) : [];
+// The thing a label names: after "of" ("a slice of lasagna"), past the leading
+// helpers and verbs ("play with", "eat"), up to the next helper ("for dinner").
+function headPhrase(text) {
+  let list = words(text);
+  const of = list.lastIndexOf('of');
+  if (of >= 0 && of < list.length - 1) list = list.slice(of + 1);
+  let from = 0;
+  while (from < list.length && STOP.has(list[from])) from++;
+  list = list.slice(from);
+  const cut = list.findIndex((word, index) => index > 0 && STOP.has(word));
+  return (cut > 0 ? list.slice(0, cut) : list).join(' ');
+}
+// Curated concepts in the text, each with the form that named it.
+function formsIn(text) {
+  const found = [];
+  if (!text) return found;
+  let rest = ` ${text} `;
+  for (const [pattern, word, form] of vocabulary().patterns) {
+    if (!pattern.test(rest)) continue;
+    found.push({ word, standIn: STAND_INS.has(word) && form !== word });
+    rest = rest.replace(pattern, ' ');
+  }
+  return found;
+}
+const curatedIn = text => formsIn(text).filter(hit => !hit.standIn).map(hit => hit.word);
+// The library's picture for a label with no curated thing at its head: the
+// whole label, the head phrase, its last word, then (only when no curated
+// thing is named anywhere) each other word, never a time or weather word.
+// A time or weather picture never stands for a food or drink label.
+function lexiconPick(text, { anyWord = false, foodLabel = false } = {}) {
+  const head = headPhrase(text);
+  const whole = text.replace(/^(?:(?:a|an|the|some|my|your|our)\s+)+/, '').replace(/\s+(?:please|thanks|thank you)$/, '');
+  const fits = hit => hit && !(foodLabel && GUARDED.has(hit.family));
+  for (const form of [whole, head, words(head).at(-1)]) {
+    if (!form || words(form).every(word => STOP.has(word))) continue;
+    const hit = lexiconForm(form);
+    if (fits(hit)) return hit;
+  }
+  if (!anyWord) return null;
+  for (const word of words(text)) {
+    if (STOP.has(word)) continue;
+    const hit = lexiconForm(word);
+    if (hit && !GUARDED.has(hit.family)) return hit;
+  }
+  return null;
+}
+// One part of a coordinated label: its curated concept or its library picture.
+function thingOf(part) {
+  const own = curatedIn(part).filter(word => !BROAD.has(word));
+  if (own.length === 1) return { family: FAMILY.get(own[0]) || null, lexical: false };
+  if (own.length > 1) return null;
+  const hit = lexiconPick(part);
+  return hit ? { family: hit.family, lexical: true } : null;
+}
+// Several things in one label ("Lasagna and salad") show their family's
+// picture; an either/or of two things shows the bubble. Only labels that need
+// the lexicon take this path; the rest keep the curated category rule.
+function coordinated(label, l) {
+  if (!/\b(?:and|or)\b|,|&|\+/.test(label)) return null;
+  const either = /\bor\b/.test(l);
+  const parts = String(label).split(/\s*(?:,|&|\+|\band\b|\bor\b|\bplus\b)\s*/i).map(normal).filter(Boolean);
+  if (parts.length < 2) return null;
+  const things = parts.map(thingOf);
+  if (!things.some(thing => thing && thing.lexical)) return null;
+  let known = things.filter(Boolean);
+  if (known.length < 2) return null;
+  if (either) return { word: FALLBACK };
+  const families = new Set(known.map(thing => thing.family));
+  if (families.has('food') || families.has('drink')) known = known.filter(thing => !GUARDED.has(thing.family));
+  const left = new Set(known.map(thing => thing.family));
+  if (left.size && [...left].every(family => family === 'food' || family === 'drink')) return { word: left.has('food') ? 'food' : 'drink' };
+  if (left.size === 1 && left.has('person')) return { word: GENERIC.person };
+  return { word: FALLBACK };
+}
+function lexiconChoice(label, l) {
+  const named = exactHit(l);
+  if (!l || (named && !(STAND_INS.has(named[1]) && named[2] !== named[1]))) return null;
+  const whole = words(l).every(word => STOP.has(word)) ? null : lexiconForm(l);
+  if (whole && formsIn(l).every(hit => hit.standIn)) return whole;
+  const several = coordinated(label, l);
+  if (several) return several;
+  if (/\b(?:and|or)\b/.test(l)) return null;
+  const head = headPhrase(l);
+  if (formsIn(head).some(hit => !hit.standIn) || (!head && curatedIn(l).length)) return null;
+  const foodLabel = !!category(l) && [...category(l).families].some(family => family === 'food' || family === 'drink');
+  return lexiconPick(l, { anyWord: !curatedIn(l).some(word => !BROAD.has(word)), foodLabel });
+}
+// The hub's pick: { word, id? }. A curated phrase, then the library's picture
+// for a thing the table lacks, then the model's symbol, then the text guess.
+function choose({ label = '', say = '', symbol } = {}) {
   const l = normal(label), s = normal(say);
   // A curated phrase is reviewed for its own words; the other field is still guarded
   // ("I'm good" / "No thanks, I am good." is a refusal).
-  if (curated(l)) return NEGATION.test(l) ? curated(l) : negationGuard('', s, curated(l));
-  if (curated(s)) return NEGATION.test(s) ? curated(s) : negationGuard(l, '', curated(s));
+  if (curated(l)) return { word: NEGATION.test(l) ? curated(l) : negationGuard('', s, curated(l)) };
+  if (curated(s)) return { word: NEGATION.test(s) ? curated(s) : negationGuard(l, '', curated(s)) };
+  const lexical = lexiconChoice(label, l);
+  if (lexical) {
+    const guarded = negationGuard(l, s, lexical.word);
+    return guarded === lexical.word ? lexical : { word: guarded };
+  }
   const model = modelSymbol(symbol);
   const picked = model && !rejects(l, model) ? model : fromWords(l, s);
-  return negationGuard(l, s, picked);
+  return { word: negationGuard(l, s, picked) };
 }
+function pickSymbol(choice = {}) { return choose(choice).word; }
 // True when the model named a picture the hub refused for the label's own
 // (test mode counts these; the words are never changed).
 function symbolRejected({ label = '', say = '', symbol } = {}) {
@@ -149,9 +311,90 @@ function symbolRejected({ label = '', say = '', symbol } = {}) {
 }
 function withSymbols(choices) {
   return choices.map(choice => {
-    const symbol = pickSymbol(choice), id = vocabulary().byWord.get(symbol)?.id;
-    return { ...choice, symbol, ...(id ? { symbolId: id } : {}) };
+    const pick = choose(choice), id = pick.id || vocabulary().byWord.get(pick.word)?.id;
+    return { ...choice, symbol: pick.word, ...(id ? { symbolId: id } : {}) };
   });
+}
+// The things a partner names while still speaking, for warming their pictures
+// (spec §6): what follows "or", "and" or a comma, and what follows want, like,
+// eat, have, play with, go to. At most six, each with its picture id.
+const TRIGGER = /\b(?:want(?: to)?|wanna|like|love|need|eat|have|play with|go to)\b/gi;
+function pictureCandidates(text, max = 6) {
+  const found = [], seen = new Set();
+  if (typeof text !== 'string' || text.length > 2000) return found;
+  const pieces = text.split(/([,.;!?]|\bor\b|\band\b)/i);
+  let after = '';
+  for (const piece of pieces) {
+    if (found.length >= max) break;
+    if (/^(?:[,.;!?]|or|and)$/i.test(piece.trim()) && piece.trim()) { after = piece.trim().toLowerCase(); continue; }
+    let phrase = null;
+    TRIGGER.lastIndex = 0;
+    let match, last = null;
+    while ((match = TRIGGER.exec(piece))) last = match;
+    if (last) phrase = piece.slice(last.index + last[0].length);
+    else if ([',', 'or', 'and'].includes(after)) phrase = piece;
+    after = '';
+    const head = phrase && headPhrase(normal(phrase));
+    if (!head) continue;
+    const pick = choose({ label: head });
+    const id = pick.id || vocabulary().byWord.get(pick.word)?.id;
+    if (!id || pick.word === FALLBACK || seen.has(id)) continue;
+    seen.add(id); found.push({ word: pick.word, id });
+  }
+  return found;
+}
+// Warming the pictures of one hold into the hub's cache, in the background:
+// at most `perHold` fetches for what the partner says, deduplicated, `concurrent`
+// at a time across the hub, each given up after `timeoutMs`. A staged choice's
+// picture goes to the front and is not counted against the six. Adding never
+// waits; nothing in the reply path awaits a fetch.
+function createPictureWarmer({ isCached, fetchOne, perHold = 6, concurrent = 2, timeoutMs = 3000, queueCap = 24 } = {}) {
+  const queue = [], pending = new Set();
+  let active = 0;
+  function pump() {
+    while (active < concurrent && queue.length) {
+      const id = queue.shift(), controller = new AbortController();
+      active++;
+      let timer;
+      const limit = new Promise(resolve => { timer = setTimeout(() => { controller.abort(); resolve(false); }, timeoutMs); timer.unref?.(); });
+      Promise.race([Promise.resolve().then(() => fetchOne(id, { signal: controller.signal })), limit]).catch(() => false)
+        .finally(() => { clearTimeout(timer); active--; pending.delete(id); pump(); });
+    }
+  }
+  function enqueue(id, first) {
+    let cached = false;
+    try { cached = !!isCached(id); } catch { cached = false; }
+    if (cached || pending.has(id)) return false;
+    pending.add(id);
+    if (first) queue.unshift(id); else queue.push(id);
+    while (queue.length > queueCap) pending.delete(queue.pop());
+    // Started on the next turn: the caller's event is already out.
+    queueMicrotask(pump);
+    return true;
+  }
+  return {
+    hold() {
+      const seen = new Set();
+      let count = 0, spoken = 0;
+      const valid = id => Number.isSafeInteger(id) && id > 0 && !seen.has(id);
+      return {
+        add(id) {
+          if (!valid(id) || spoken >= perHold) return false;
+          seen.add(id);
+          if (!enqueue(id, false)) return false;
+          spoken++; count++; return true;
+        },
+        stage(id) {
+          if (!valid(id)) return false;
+          seen.add(id);
+          if (!enqueue(id, true)) return false;
+          count++; return true;
+        },
+        get count() { return count; },
+      };
+    },
+    get active() { return active; },
+  };
 }
 function vocabularyIds() {
   const ids = [];
@@ -191,4 +434,5 @@ function createSymbolWarmer({ ids, isCached, fetchOne, delayMs = 250, maxFailure
   };
 }
 
-module.exports = { symbolWords, pickSymbol, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal };
+module.exports = { symbolWords, pickSymbol, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal,
+  setLexicon, pictureCandidates, createPictureWarmer };

@@ -1,0 +1,433 @@
+[
+ {
+  "_id": 9051,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "gastronomy",
+   "traditional dish"
+  ],
+  "tags": [
+   "feeding",
+   "food",
+   "gastronomy",
+   "traditional dish"
+  ],
+  "keywords": [
+   {
+    "keyword": "lasagne",
+    "type": 2,
+    "plural": "lasagnes"
+   },
+   {
+    "keyword": "lasagna",
+    "type": 2,
+    "plural": "lasagnas"
+   }
+  ]
+ },
+ {
+  "_id": 2404,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "omnivorous",
+   "bird",
+   "oviparous",
+   "terrestrial animal",
+   "cattle farming",
+   "domestic animal"
+  ],
+  "tags": [
+   "animal",
+   "omnivorous",
+   "vertebrate",
+   "bird",
+   "oviparous",
+   "terrestrial animal",
+   "work",
+   "primary sector",
+   "cattle farming",
+   "domestic"
+  ],
+  "keywords": [
+   {
+    "keyword": "chicken",
+    "type": 2,
+    "plural": "chickens"
+   },
+   {
+    "keyword": "rooster",
+    "type": 2,
+    "plural": "roosters"
+   }
+  ]
+ },
+ {
+  "_id": 2533,
+  "aac": true,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "herbivorous",
+   "bird",
+   "oviparous",
+   "terrestrial animal",
+   "cattle farming",
+   "domestic animal",
+   "core vocabulary-living being",
+   "core vocabulary-work"
+  ],
+  "tags": [
+   "animal",
+   "herbivorous",
+   "vertebrate",
+   "bird",
+   "oviparous",
+   "terrestrial animal",
+   "work",
+   "primary sector",
+   "cattle farming",
+   "domestic",
+   "core vocabulary"
+  ],
+  "keywords": [
+   {
+    "keyword": "chicken",
+    "type": 2,
+    "plural": "chickens"
+   },
+   {
+    "keyword": "chick",
+    "type": 2,
+    "plural": "chicks"
+   }
+  ]
+ },
+ {
+  "_id": 4952,
+  "aac": true,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "meat",
+   "core vocabulary-feeding",
+   "gastronomy"
+  ],
+  "tags": [
+   "feeding",
+   "food",
+   "animal-based food",
+   "meat",
+   "core vocabulary",
+   "gastronomy"
+  ],
+  "keywords": [
+   {
+    "keyword": "chicken",
+    "type": 2,
+    "plural": "chickens"
+   },
+   {
+    "keyword": "roast chicken",
+    "type": 2,
+    "plural": "roast chickens"
+   },
+   {
+    "keyword": "spit-roast chicken",
+    "type": 2,
+    "plural": "spit-roast chickens"
+   },
+   {
+    "keyword": "grilled chicken",
+    "type": 2,
+    "plural": "grilled chickens"
+   }
+  ]
+ },
+ {
+  "_id": 2527,
+  "aac": true,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "traditional dish",
+   "core vocabulary-feeding"
+  ],
+  "tags": [
+   "feeding",
+   "food",
+   "gastronomy",
+   "traditional dish",
+   "core vocabulary"
+  ],
+  "keywords": [
+   {
+    "keyword": "pizza",
+    "type": 2,
+    "plural": "pizzas"
+   }
+  ]
+ },
+ {
+  "_id": 3135,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "atmospheric phenomena",
+   "christmas",
+   "winter"
+  ],
+  "tags": [
+   "meteorology",
+   "atmospheric phenomena",
+   "event",
+   "popular event",
+   "christmas",
+   "winter"
+  ],
+  "keywords": [
+   {
+    "keyword": "snow",
+    "type": 2
+   },
+   {
+    "keyword": "snowfall",
+    "type": 2
+   }
+  ]
+ },
+ {
+  "_id": 2617,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "pronoun",
+   "personal pronoun"
+  ],
+  "tags": [
+   "communication",
+   "language",
+   "pronoun",
+   "personal pronoun"
+  ],
+  "keywords": [
+   {
+    "keyword": "I",
+    "type": 1
+   },
+   {
+    "keyword": "me",
+    "type": 1
+   },
+   {
+    "keyword": "for me",
+    "type": 1
+   }
+  ]
+ },
+ {
+  "_id": 7196,
+  "aac": true,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "usual verbs",
+   "road safety",
+   "core vocabulary-communication",
+   "physical exercise"
+  ],
+  "tags": [
+   "communication",
+   "language",
+   "verb",
+   "usual verbs",
+   "movement",
+   "traffic",
+   "road safety",
+   "core vocabulary",
+   "leisure",
+   "sport",
+   "physical exercise"
+  ],
+  "keywords": [
+   {
+    "keyword": "stop",
+    "type": 3
+   }
+  ]
+ },
+ {
+  "_id": 2296,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "beverage",
+   "core vocabulary-feeding"
+  ],
+  "tags": [
+   "feeding",
+   "food",
+   "beverage",
+   "core vocabulary"
+  ],
+  "keywords": [
+   {
+    "keyword": "coffee",
+    "type": 2,
+    "plural": "coffees"
+   }
+  ]
+ },
+ {
+  "_id": 6054,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "architectural element",
+   "construction"
+  ],
+  "tags": [
+   "architecture",
+   "building",
+   "architectural element",
+   "work",
+   "secondary sector",
+   "construction"
+  ],
+  "keywords": [
+   {
+    "keyword": "floor tile",
+    "type": 2,
+    "plural": "floor tiles"
+   },
+   {
+    "keyword": "tile",
+    "type": 2,
+    "plural": "tiles"
+   }
+  ]
+ },
+ {
+  "_id": 24968,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "construction"
+  ],
+  "tags": [
+   "work",
+   "secondary sector",
+   "construction"
+  ],
+  "keywords": [
+   {
+    "keyword": "tiling",
+    "type": 2
+   },
+   {
+    "keyword": "tiles",
+    "type": 2
+   }
+  ]
+ },
+ {
+  "_id": 38993,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "traditional dish"
+  ],
+  "tags": [
+   "feeding",
+   "food",
+   "gastronomy",
+   "traditional dish"
+  ],
+  "keywords": [
+   {
+    "keyword": "sushi",
+    "type": 2
+   }
+  ]
+ },
+ {
+  "_id": 99998,
+  "aac": true,
+  "sex": true,
+  "violence": false,
+  "categories": [
+   "miscellaneous"
+  ],
+  "tags": [
+   "object"
+  ],
+  "keywords": [
+   {
+    "keyword": "flagged thing",
+    "type": 2
+   }
+  ]
+ },
+ {
+  "_id": 8011,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "flag",
+   "country"
+  ],
+  "tags": [
+   "geography",
+   "political geography",
+   "flag",
+   "country"
+  ],
+  "keywords": [
+   {
+    "keyword": "Germany",
+    "type": 1
+   }
+  ]
+ },
+ {
+  "_id": 99999,
+  "aac": false,
+  "sex": false,
+  "violence": false,
+  "categories": [
+   "object"
+  ],
+  "tags": [
+   "object"
+  ],
+  "keywords": []
+ },
+ {
+  "_id": 99997,
+  "aac": false,
+  "sex": false,
+  "violence": true,
+  "categories": [
+   "miscellaneous"
+  ],
+  "tags": [
+   "object"
+  ],
+  "keywords": [
+   {
+    "keyword": "flagged act",
+    "type": 2
+   }
+  ]
+ }
+]

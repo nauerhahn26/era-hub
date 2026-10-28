@@ -27,6 +27,12 @@ Prepared phrases work without cloud configuration. Configured speech uses the
 installed Node runtime and sends a held question for transcription after release.
 The child deliberately selects what to say. Setup and validation are recorded in
 [the installed Chat plan](docs/plans/2026-10-25-chat-installed-release.md).
+Chat's tile pictures come from the pictogram library's images, fetched by the
+hub at runtime into its cache, never stored here. `public/chat/vocabulary.json`
+is the hand-checked concept table; `public/chat/lexicon.json` is a generated
+word → pictogram id index of the library's English keyword list (words and
+numbers only; source URL and build date inside the file), rebuilt with
+`node tools/chat-lexicon-build.mjs`.
 
 License: MPL-2.0.
 
