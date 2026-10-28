@@ -406,7 +406,7 @@ Info
    audio may be heard. Recorded as allowed by the design's non-goal.
 10. Position stability: `cell` 0-3 on each choice; removed choices leave an
     empty `waiting` tile until the next replacement.
-11. Port 8470 for the new hub suites, its two hubs run one after the other,
+11. (phase 5: `tests/buttons-recompile.test.mjs` takes a kernel-assigned port and claims none; `buttons-keeper` and `buttons-payload` bind nothing) Port 8470 for the new hub suites, its two hubs run one after the other,
     confirmed by `suite-ports` before the first run (8494/8495 sit in the reserved 8480+ scratch and tunnel band that `suite-ports` refuses, and 8470 was the free suite port on 10/28).
 12. The hub keeps `/buttons/press` as activity (not in `NOT_INTERACTION`).
 13. Press turns are recorded in the test-mode turn log only; the content-free
