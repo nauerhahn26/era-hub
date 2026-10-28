@@ -323,3 +323,28 @@ test('a hold still works after a window, and its budget is the hold budget', asy
   await s.frames(6);
   await until(() => s.events('error').some(e => e.error === 'audio-limit'));
 });
+
+test('the buttons dispatcher reaches the window: a second F13 is `end` (press), F14 is `cancel`', async t => {
+  const { createButtons } = require('../buttons.js');
+  const service = await turnsService(t, { 2: [turn('chicken or fish')] });
+  const h = await hub(t, { service });
+  const buttons = createButtons({ enabledChat: () => true, commands: h.api.commands, window: () => h.api.window(),
+    kiosk: { foreground: async () => false, relaunch: async () => ({ ok: true }) } });
+  const s = await h.session();
+  await s.open(); await s.frames(3);
+  await until(() => s.events('partial').length === 1);
+  assert.deepEqual(await buttons.press({ key: 'F13', action: 'ask' }), { status: 200, ok: true, dispatch: 'end' });
+  await until(() => s.events('window-closed').length === 1);
+  assert.equal(s.events('window-closed')[0].reason, 'press');
+  await s.open(); await s.frames(2);
+  assert.equal((await buttons.press({ key: 'F14', action: 'cancel' })).dispatch, 'cancel');
+  await until(() => s.events('window-closed').length === 2);
+  assert.equal(s.events('window-closed')[1].reason, 'cancel');
+  assert.equal((await buttons.press({ key: 'F14', action: 'cancel' })).dispatch, 'none', 'no window: nothing to cancel');
+});
+
+test('server.js hands the dispatcher the Chat API window', async () => {
+  const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
+  const call = source.slice(source.indexOf('require("./buttons.js").createButtons('));
+  assert.match(call.slice(0, call.indexOf('});')), /window: \(\) => chatApi\.window\(\)/);
+});

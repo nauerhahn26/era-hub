@@ -569,6 +569,8 @@ const kioskLauncher = require("./kiosk-launch.js").createKioskLauncher({
 });
 const buttons = require("./buttons.js").createButtons({
   port: PORT, enabledChat: () => loadEnabledApps().includes("chat"), commands: chatApi.commands,
+  // the open listening window: a second press ends it, a cancel discards it
+  window: () => chatApi.window(),
   // a relaunch closes every kiosk window, so whatever the talk door had paused is gone too
   kiosk: { foreground: foregroundKiosk, relaunch: (open) => { paused = null; return kioskLauncher.relaunch(open); } },
   log: (m) => console.log("[buttons] " + m),
