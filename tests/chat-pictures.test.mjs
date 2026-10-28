@@ -131,9 +131,12 @@ test('shortcuts and guarded templates carry curated pictures with their ids', as
   assert.deepEqual(pairs(await ask('Hello!')).map(row => row[1]), ['hello', 'happy', 'feelings']);
   assert.deepEqual(pairs(await ask('Would you like music or a story?')).map(row => row[1]), ['music', 'book']);
   assert.deepEqual(pairs(await ask('Were you at school or at home?')).map(row => row[1]), ['clue', 'different', 'not now']);
+  // A recall batch that asserts a past activity is thrown out for the fixed repairs (since 10/28 the model is asked first).
+  const invented = new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text',
+    text: JSON.stringify({ choices: [{ label: 'The park', say: 'I went to the park.' }, { label: 'Fun', say: 'It was fun.' }] }) }] }] }));
+  const guarded = await createChoicesAdapter({ env, fetch: async () => invented }).generate({ text: 'What did you do last weekend?', shape: 'recall' });
+  assert.deepEqual(pictures.withSymbols(guarded.choices).map(choice => choice.symbol), ['clue', 'different', 'forget', 'not now']);
   const adapter = createChoicesAdapter({ env, fetch: () => { throw Error('guarded turns make no request'); } });
-  const guarded = await adapter.generate({ text: 'What did you do last weekend?' });
-  assert.deepEqual(pictures.withSymbols(guarded.choices).map(choice => choice.symbol), ['clue', 'different', 'not now']);
   const support = await adapter.generate({ text: 'I lost my drawing.' });
   assert.deepEqual(pictures.withSymbols(support.choices).map(choice => choice.symbol), ['help', 'more', 'wait']);
 });
