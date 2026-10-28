@@ -29,10 +29,10 @@ function fakeKiosk(commands, { found = true } = {}) {
     relaunch: async open => { k.relaunches.push(open); return { would: [open] }; } };
   return k;
 }
-function make({ chat = true, commands = fakeCommands(), kiosk, window = () => null, now = 1000 } = {}) {
+function make({ chat = true, commands = fakeCommands(), kiosk, window = () => null, now = 1000, clock = () => now, visibleWaitMs = 50 } = {}) {
   const logs = [];
   const buttons = createButtons({ port: 8377, enabledChat: () => chat, commands, kiosk: kiosk || fakeKiosk(commands), window,
-    log: m => logs.push(m), clock: () => now, platform: 'linux', visibleWaitMs: 50 });
+    log: m => logs.push(m), clock, platform: 'linux', visibleWaitMs });
   return { buttons, commands, logs };
 }
 
@@ -178,4 +178,69 @@ test('a relaunch that reports no browser frees the next press too', async () => 
   await new Promise(r => setImmediate(r));
   assert.ok(logs.some(l => l.includes('no-browser')));
   assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'relaunch');
+});
+
+// ---- review fixes: one dispatch in flight, a bounded relaunch ----
+// A hidden page whose wait the test controls: waitVisible resolves only when
+// the test says so, or after its ms like the real stream.
+function hiddenPage() {
+  const commands = fakeCommands({ connected: true, visible: false });
+  commands.waits = 0;
+  commands.waitVisible = ms => new Promise(resolve => { commands.waits++; commands.release = resolve; setTimeout(() => resolve(false), ms); });
+  return commands;
+}
+
+test('two presses while a hidden page is being foregrounded: one dispatch in flight, exactly one relaunch', async () => {
+  const commands = hiddenPage(), kiosk = fakeKiosk(commands);
+  const { buttons } = make({ commands, kiosk, visibleWaitMs: 60 });
+  const [a, b] = await Promise.all([buttons.press({ key: 'F13' }), buttons.press({ key: 'F13' })]);
+  assert.deepEqual([a.dispatch, b.dispatch], ['relaunch', 'busy']);
+  assert.equal(kiosk.foregrounds, 1, 'the second press never foregrounds again');
+  assert.equal(kiosk.relaunches.length, 1, 'one close-then-spawn on the one profile');
+  assert.equal(commands.issued.length, 1);
+});
+
+test('a press during the foreground wait ends an open window instead of waiting', async () => {
+  const commands = hiddenPage(), kiosk = fakeKiosk(commands), calls = [];
+  let open = null;
+  const { buttons } = make({ commands, kiosk, visibleWaitMs: 60, window: () => open });
+  const first = buttons.press({ key: 'F13' });
+  await new Promise(r => setImmediate(r));
+  open = { press: () => calls.push('press'), cancel: () => calls.push('cancel') };
+  assert.equal((await buttons.press({ key: 'F13' })).dispatch, 'end');
+  open = null;
+  await first;
+  assert.deepEqual(calls, ['press']);
+});
+
+test('a cancel during the foreground wait aborts it: no relaunch, no nonce, the press resolves at once', async () => {
+  const commands = hiddenPage(), kiosk = fakeKiosk(commands);
+  const { buttons } = make({ commands, kiosk, visibleWaitMs: 5000 });
+  const started = Date.now();
+  const first = buttons.press({ key: 'F13' });
+  await new Promise(r => setImmediate(r));
+  assert.equal(commands.waits, 1, 'the press is waiting for the page');
+  assert.equal((await buttons.press({ key: 'F14' })).dispatch, 'cancel');
+  assert.equal((await first).dispatch, 'cancelled');
+  assert.ok(Date.now() - started < 1000, 'the cancelled press does not sit out the wait');
+  commands.release(true);
+  await new Promise(r => setImmediate(r));
+  assert.equal(kiosk.relaunches.length, 0);
+  assert.equal(commands.issued.length, 0);
+  assert.equal(commands.pushed.length, 0);
+  assert.equal((await buttons.press({ key: 'F14' })).dispatch, 'none', 'nothing is left in flight');
+});
+
+test('a cancel while the hidden page is still being foregrounded aborts before the wait', async () => {
+  const commands = fakeCommands({ connected: true, visible: false });
+  let found;
+  const kiosk = { foregrounds: 0, relaunches: [], foreground: () => { kiosk.foregrounds++; return new Promise(r => { found = r; }); },
+    relaunch: async open => { kiosk.relaunches.push(open); return {}; } };
+  const { buttons } = make({ commands, kiosk });
+  const first = buttons.press({ key: 'F13' });
+  await new Promise(r => setImmediate(r));
+  assert.equal((await buttons.press({ key: 'F14' })).dispatch, 'cancel');
+  found(true);
+  assert.equal((await first).dispatch, 'cancelled');
+  assert.equal(kiosk.relaunches.length + commands.issued.length + commands.pushed.length, 0);
 });

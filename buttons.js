@@ -11,7 +11,10 @@
 //                                            page to say it is visible, push
 //   ask, no Chat page listening              relaunch the kiosk at /chat/?ask=<nonce>
 //   ask while a listening window is open     the second press: end the window
-//   cancel                                   close an open window, else nothing
+//   ask while another press is in flight     busy (one dispatch per hub)
+//   cancel                                   close an open window, else abort a
+//                                            press still in flight and revoke
+//                                            its nonce, else nothing
 //   Chat turned off                          409, nothing happens
 //
 // Every dependency is injected (the command stream lives in chat-api.js, the
@@ -22,6 +25,7 @@
 // The keys the device listener holds (design §4.1, §6). Fixed in this release.
 const KEYS = Object.freeze({ 'F13': 'ask', 'Ctrl+Alt+F9': 'ask', 'Ctrl+Alt+F10': 'ask', 'F14': 'cancel', 'Ctrl+Alt+F11': 'cancel' });
 const BODY_BYTES = 1024;
+const ABORTED = Symbol('aborted');
 
 // The press body: small JSON, anything else is null (and then a 400).
 function readBody(req, cap = BODY_BYTES) {
@@ -44,6 +48,11 @@ function createButtons(options = {}) {
   const visibleWaitMs = options.visibleWaitMs ?? 3000;
   let lastPress = null;
   let coming = null;   // the nonce of a relaunch still coming up
+  // The one press being dispatched (foregrounding a hidden page, waiting for
+  // it to be seen). A second press while it runs is `busy` (or `end` once a
+  // window exists): two presses falling through to relaunch would close and
+  // spawn twice on one profile. A cancel aborts it before any relaunch.
+  let inFlight = null;
 
   function relaunch(key, at) {
     const nonce = commands.issue({ pressAt: at, key });
@@ -62,23 +71,39 @@ function createButtons(options = {}) {
     if (coming && !commands.pending(coming)) coming = null;
     if (action === 'cancel') {
       if (window) { window.cancel(); commands.push({ type: 'cancel' }); return 'cancel'; }
-      if (coming) { commands.revoke(coming); coming = null; return 'cancel'; }
+      if (inFlight || coming) {
+        if (inFlight) inFlight.abort();
+        if (coming) { commands.revoke(coming); coming = null; }
+        return 'cancel';
+      }
       return 'none';
     }
     // A second press while a listening window is open ends it (design §4.4).
     if (window) { window.press(); commands.push({ type: 'end' }); return 'end'; }
-    // The kiosk is already coming up for an earlier press: that press asks.
-    if (coming) return 'busy';
+    // An earlier press is still being dispatched, or the kiosk is already
+    // coming up for it: that press asks.
+    if (inFlight || coming) return 'busy';
     const ask = { type: 'ask', pressAt: at, key };
     const page = commands.state();
     if (page.connected && page.visible === true && commands.push(ask)) return 'visible';
-    if (page.connected) {
-      // Hidden behind TD Snap (the talk door) or not yet reported: bring the
-      // kiosk forward and wait for the page itself to say it can be seen; a
-      // hidden page refuses to start a session.
-      if (await kiosk.foreground() && await commands.waitVisible(visibleWaitMs) && commands.push(ask)) return 'foreground';
+    if (!page.connected) return relaunch(key, at);
+    // Hidden behind TD Snap (the talk door) or not yet reported: bring the
+    // kiosk forward and wait for the page itself to say it can be seen; a
+    // hidden page refuses to start a session. A cancel meanwhile ends the wait
+    // at once and nothing is relaunched.
+    let abort;
+    const aborted = new Promise(resolve => { abort = () => resolve(ABORTED); });
+    const flight = inFlight = { abort };
+    try {
+      const found = await Promise.race([kiosk.foreground(), aborted]);
+      if (found === ABORTED) return 'cancelled';
+      const seen = found && await Promise.race([commands.waitVisible(visibleWaitMs), aborted]);
+      if (seen === ABORTED) return 'cancelled';
+      if (seen && commands.push(ask)) return 'foreground';
+      return relaunch(key, at);
+    } finally {
+      if (inFlight === flight) inFlight = null;
     }
-    return relaunch(key, at);
   }
 
   async function press(body) {
