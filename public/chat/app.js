@@ -1,4 +1,4 @@
-import { createChatController, isPartnerTouch, cleanChoices } from './controller.js';
+import { createChatController, isPartnerTouch, cleanChoices, cellOf } from './controller.js';
 import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
@@ -9,6 +9,8 @@ import { GRID, fixedTiles, replyAreas, pageCells, paginate } from './frame.js';
 import { createOptionsReader } from './prompt.js';
 import { createTurnLog, observeMetrics, stageChoices } from './turnlog.js';
 import { mountDoorBar } from '/lib/doorbar.js';
+import { connectCommands } from './commands.js';
+import { createTones } from './tones.js';
 
 const $ = id => document.getElementById(id);
 const API = '/chat/api';
@@ -59,7 +61,7 @@ const voice = createChatVoice({ storage: persistence.voiceStorage,
 const metrics = observeMetrics(createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 }), turnLog);
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
 const AUDIO_POST_MS = 2000;
-let questionMetric = null, speechMetric = null, pendingSpeechMetric = null;
+let questionMetric = null, speechMetric = null, pendingSpeechMetric = null, pressMetric = null;
 let config = null, session = null, events = null, mic = null;
 let lifecycle = 0, sequence = 0, workerGeneration = -1, uploadEpoch = 0;
 let mode = 'blocked', starting = false, closing = false, holding = false, askTimer = null, finishedTurn = -1;
@@ -90,6 +92,13 @@ let stagedChoices = false, staging = null;
 const STAGING_MS = 20000;
 const SOCKET_BUFFER_LIMIT = 256000;
 let stories = savedSettings.stories;
+// A button-press listening window (design 2026-10-27 §4.3-§4.4): `press` is the
+// window this page opened, from the control reply until it closes. The hub's
+// window machine decides when it ends; the page listens, shows, and plays the tones.
+let press = null, pressBusy = false, pickSent = Promise.resolve();
+const windowOpen = () => press !== null && !press.closed;
+const tones = createTones();
+const FRAMES_AFTER_TONE_MS = 200;
 
 // Before any question the middle shows the openers (spec 2026-10-28 §1).
 const OPENERS = ["Hi!", "What's up?", 'How are you?', 'Come sit with me.'];
@@ -121,18 +130,20 @@ function setList(key, value) {
 function warmPhrases() {
   voice.prefetch([...OPENERS, ...Object.values(SPOKEN), ...(promptMs > 0 ? [promptPrefix()] : []), ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })));
 }
+// A press turn lives in the test-mode turn log only (production rows keep four kinds).
+const questionActive = () => metrics.isActive(questionMetric) || (questionMetric !== null && questionMetric === pressMetric && turnLog.tracking(questionMetric));
 function timingEvent(name) {
   if (name === 'choicesReady' || name === 'revealed') {
     metrics.mark(questionMetric, name);
     if (name === 'revealed') turnLog.sample(questionMetric, 'reveal'); // never awaited: the reveal is not delayed
   }
   else if (name === 'selected') {
-    pendingSpeechMetric = metrics.isActive(questionMetric) && speechMetric !== questionMetric ? questionMetric : metrics.begin('reply');
+    pendingSpeechMetric = questionActive() && speechMetric !== questionMetric ? questionMetric : metrics.begin('reply');
     metrics.mark(pendingSpeechMetric, 'selected');
   } else if (name === 'speechRequested') {
     // The strip's repeat of the question is never her answer to it.
     if (echoing) { echoing = false; pendingSpeechMetric = null; speechMetric = metrics.begin('fixed'); metrics.mark(speechMetric, 'selected'); return; }
-    if (!pendingSpeechMetric && metrics.isActive(questionMetric) && controller.state.phase === 'Your turn') pendingSpeechMetric = questionMetric;
+    if (!pendingSpeechMetric && questionActive() && controller.state.phase === 'Your turn') pendingSpeechMetric = questionMetric;
     speechMetric = pendingSpeechMetric || metrics.begin('fixed'); pendingSpeechMetric = null;
     metrics.mark(speechMetric, 'selected');
   }
@@ -152,6 +163,7 @@ async function json(url, options = {}) {
 }
 const notice = text => { $('notice').textContent = text || ''; };
 function paintPhase(state = controller.state) {
+  if (press && !press.closed) { $('phase').textContent = press.listening ? 'Listening' : 'Starting to listen'; return; }
   $('phase').textContent = state.phase === 'Capturing question' && ((remoteStreaming && mode !== 'opening') || questionSending) ? 'Sending question' : state.phase;
 }
 function setMode(value) {
@@ -163,7 +175,10 @@ function setMode(value) {
 // hold ends no grid tile is a dwell target; they return when it ends.
 // After release the question is still being sent and transcribed (phase
 // Capturing question) until the final transcript: still the partner's.
-const holdActive = () => holding || askPending || ['opening', 'capture', 'draining'].includes(mode) || controller.state.phase === 'Capturing question';
+// A button-press listening window is not a hold (design 2026-10-27 §4.4): her pick
+// ends it, so its tiles stay dwell targets; its close is not a hold's end either.
+const pressing = () => press !== null && (!press.closed || press.closing === true);
+const holdActive = () => !pressing() && (holding || askPending || ['opening', 'capture', 'draining'].includes(mode) || controller.state.phase === 'Capturing question');
 let gridLocked = false;
 function syncHoldLock() {
   const now = holdActive();
@@ -215,6 +230,9 @@ const controller = createChatController({
   beforeChoices: () => { revealRender = true; window.Dwell?.suppress(REVEAL_SETTLE_MS); },
   async speak(choice, { signal }) {
     if (appLocked()) return;
+    // Her selection ends a listening window first (design §4.4: a pick wins):
+    // the hub hears `pick` before anything is spoken or cancelled.
+    if (press && !press.closed) pickSent = closePressWindow('pick') || Promise.resolve();
     // A second guard: nothing she selects ends the partner's hold (spec 2026-10-28 §7).
     if (holdActive()) return;
     const mine = lifecycle, spoken = ++currentSpeech;
@@ -223,7 +241,7 @@ const controller = createChatController({
     captureIntent++; holding = false; askPending = false; pendingFrames = []; captureGeneration = null;
     clearTimeout(askTimer); $('ask').classList.remove('held'); mic?.cancel();
     setMode('blocked'); uploadEpoch++;
-    const canceled = session ? control('cancel').catch(() => null) : Promise.resolve();
+    const canceled = session ? pickSent.then(() => control('cancel')).catch(() => null) : Promise.resolve();
     if (signal.aborted || spoken !== currentSpeech) return;
     let completed;
     turnLog.content(timing, { spoken: choice.say });
@@ -261,8 +279,10 @@ reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
   light: item => tileFor(item)?.classList.add('on'), unlight: item => tileFor(item)?.classList.remove('on'),
   onStart: () => turnLog.content(questionMetric, { prompted: true }) });
 // Armed when a batch of replies is on screen and hers (not openers, a page, a made set).
+// Nothing is spoken while a press window listens (design 2026-10-27 §4.6; the
+// microphone is open): the batch showing at the window's close arms then.
 function armReading(state) {
-  if (state.phase !== 'Your turn' || !state.choices.length || page || modeView || holdActive() || $('partnerDialog').open) return;
+  if (state.phase !== 'Your turn' || !state.choices.length || page || modeView || holdActive() || windowOpen() || $('partnerDialog').open) return;
   void reader.armed({ id: state.choices.map(choice => choice.id).join(','), items: state.choices.map(choice => ({ id: choice.id, label: choice.label })) });
 }
 // Any dwell progress or selection on a tile stops the reading at once.
@@ -301,10 +321,20 @@ function tile(label, type, action, area, say, pick = {}) {
   return el;
 }
 // Pictures are planned for the whole page at once so no two tiles share one.
-function paintPictures(grid) {
+// Within one turn a reply whose label is unchanged keeps its picture as well
+// as its cell (design §4.5): only new labels get pictures planned.
+let paintedReplies = { turn: -1, byLabel: new Map() };
+const replyKey = entry => entry.type === 'response' ? String(entry.label).trim().toLowerCase() : null;
+function paintPictures(grid, turn) {
   if (!hasVocabulary()) return;
   const tiles = [...grid.children];
-  const plan = planPictures(tiles.map(el => pictureOf.get(el) || { type: 'rest' }), { variant: pictureVariant });
+  const entries = tiles.map(el => pictureOf.get(el) || { type: 'rest' });
+  const before = turn === paintedReplies.turn ? paintedReplies.byLabel : new Map();
+  const keep = entries.map(entry => { const key = replyKey(entry); return key !== null && before.has(key) ? before.get(key) : undefined; });
+  const plan = planPictures(entries, { variant: pictureVariant, keep });
+  const byLabel = new Map();
+  entries.forEach((entry, i) => { const key = replyKey(entry); if (key !== null) byLabel.set(key, plan[i]); });
+  if (byLabel.size || turn !== paintedReplies.turn) paintedReplies = { turn, byLabel };
   tiles.forEach((el, i) => attachPicture(el, plan[i], fitTile));
 }
 function fitLabels() {
@@ -427,21 +457,36 @@ function middle(state) {
     return set.map((item, i) => tile(item.label, 'made', () => selectMade(item), areas[i], item.say, item));
   }
   if (state.choices.length) {
-    const areas = replyAreas(state.choices.length), selectedTurn = state.turn;
-    return state.choices.map((item, i) => {
-      const el = tile(item.label, 'response', () => { turnLog.content(questionMetric, { selected: item }); controller.select(item.id, selectedTurn); }, areas[i], item.say, item);
-      el.dataset.choiceId = item.id;
+    // A stale tile (kept after a press) is picked in the turn it was drawn in.
+    const selectedTurn = state.stale ? state.staleTurn : state.turn;
+    // A press window's replacement keeps each unchanged reply in its cell (design
+    // 2026-10-27 §4.5): such a batch stands in the four cells, an empty cell a
+    // waiting tile. Every other batch takes the areas for its count (frame §1).
+    const placed = state.choices.some(item => Number.isInteger(item.cell));
+    const areas = replyAreas(placed ? 4 : state.choices.length), inCell = [];
+    state.choices.forEach((item, i) => { inCell[cellOf(item, i)] = item; });
+    return areas.map((area, i) => {
+      const item = inCell[i];
+      if (!item) return tile('', 'waiting', null, area);
+      // The turn log records a pick only once select accepts it.
+      const el = tile(item.label, 'response', () => controller.select(item.id, selectedTurn, picked => turnLog.content(questionMetric, { selected: picked })), area, item.say, item);
+      el.dataset.choiceId = item.id; el.dataset.cell = String(i);
       return el;
     });
   }
   if (waitingForReplies(state)) return four.map(area => tile('', 'waiting', null, area));
   return OPENERS.map((say, i) => tile(say, 'static', () => controller.sayFixed(say), four[i], say));
 }
+let staleKey = '';
 function renderGrid(state) {
   const key = [page, pageOffset, modeView, modeView && made[modeView] ? 'landed' : '', state.turn, state.choices.map(c => c.id).join(','),
     capturing(state) ? 'capturing' : waitingForReplies(state) ? 'preparing' : '', state.question, page ? `${stories.length}.${listsVersion}` : ''].join('|');
   if (key === gridKey) { paintStrip(state); return; }
-  gridKey = key;
+  // The last turn's tiles, kept stale after a press, are the very tiles drawn:
+  // a new turn number alone never redraws them under her gaze.
+  const shownKey = state.choices.map(c => c.id).join(',');
+  if (state.stale && gridKey && shownKey === staleKey) return;
+  gridKey = key; staleKey = shownKey;
   window.Dwell?.suppress(revealRender ? REVEAL_SETTLE_MS : 600); revealRender = false;
   const grid = $('grid'); grid.replaceChildren();
   const fixed = Object.fromEntries(fixedTiles().map(item => [item.key, item]));
@@ -453,7 +498,8 @@ function renderGrid(state) {
     el.dataset.page = key; grid.append(el);
   }
   if (!page) {
-    const replies = state.choices.length > 0;
+    // Mode tiles are dwell targets only while this turn's replies are on screen (stale tiles are a finished turn's).
+    const replies = state.choices.length > 0 && !state.stale;
     grid.append(tile(fixed.more.label, 'static', () => controller.sayFixed(SPOKEN.more), fixed.more.area, SPOKEN.more));
     for (const key of ['ask', 'comment']) {
       const el = tile(fixed[key].label, `mode${modeView === key ? ' on' : ''}${replies ? '' : ' off'}`, replies ? () => toggleMode(key) : null, fixed[key].area, fixed[key].label);
@@ -462,7 +508,7 @@ function renderGrid(state) {
     grid.append(tile(fixed.else.label, 'static', somethingElse, fixed.else.area, SPOKEN.else));
   }
   grid.append(...middle(state));
-  paintPictures(grid);
+  paintPictures(grid, state.turn);
   requestAnimationFrame(fitLabels);
 }
 // A new turn (a hold, a typed or heard question, a failure) closes a page and
@@ -472,6 +518,7 @@ controller.subscribe(state => {
   if (state.turn !== shownTurn) { shownTurn = state.turn; dropMade(); page = null; pageOffset = 0; }
   if (state.choices.length && state.question && made.turn !== state.turn) requestMade(state);
   document.body.dataset.phase = state.phase;
+  document.body.dataset.replacing = String(state.replacing);
   paintPhase(state);
   document.body.dataset.ready = String(state.engineReady && ['Ready to ask', 'Your turn'].includes(state.phase));
   if (state.error) notice(state.error);
@@ -481,6 +528,34 @@ controller.subscribe(state => {
   renderGrid(state);
   armReading(state);
 });
+
+// A sealed first batch shows at once (spec 2026-10-27 §4, "show replies,
+// don't get cute with the gate"). Only a button-press window's replacement
+// batch, and the last turn's tiles kept after a press, wait for a neutral
+// moment (design 2026-10-27 §4.5: a shown tile never changes under a gaze).
+let pointerAt = null;
+document.addEventListener('pointermove', e => {
+  // The partner's finger is not her gaze: only gaze and mouse pointers rest.
+  if (e.pointerType !== 'touch') pointerAt = { x: e.clientX, y: e.clientY };
+  if (e.pointerType !== 'touch' && (controller.state.replacing || controller.state.stale)) swapAtNeutral();
+}, { passive: true });
+document.documentElement.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') { pointerAt = null; swapAtNeutral(); } });
+// A replacement's neutral moment (design §4.5): her gaze on no tile but the
+// black rest cells, and no dwell filling or fading anywhere. Gaze on a tile
+// waits with no upper bound (the next move off it looks again); a dwell still
+// fading after she left a tile is looked at again shortly.
+const NEUTRAL_CHECK_MS = 250;
+let neutralTimer = null;
+// The last turn's tiles kept after a press (stale) clear at the same moment.
+function swapAtNeutral() {
+  clearTimeout(neutralTimer);
+  if (!(controller.state.replacing || controller.state.stale)) return;
+  const el = pointerAt ? document.elementFromPoint(pointerAt.x, pointerAt.y) : null;
+  if (el?.closest?.('#grid .tile:not(.rest)')) return;
+  if (window.Dwell?.state?.().target != null) { neutralTimer = setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS); return; }
+  if (controller.state.stale) controller.clearStale();
+  else controller.swapReplacement();
+}
 
 function sendFrame(bytes) {
   if (!session && mode !== 'opening') return;
@@ -581,6 +656,8 @@ function stagedBatch(record, signal) {
 function stagingEvent(data) {
   const record = staging;
   if (!record || data.generation !== record.generation || record.sealed || record.error) return;
+  // A window's batches answer one seal each: only the batch this record waits for.
+  if ((record.seq ?? null) !== (data.seq ?? null)) return;
   if (data.type === 'choice-staged') {
     const choice = data.choice;
     if (!choice || typeof choice.say !== 'string' || typeof choice.label !== 'string') return;
@@ -610,6 +687,7 @@ function receiveEvent(event) {
   // Voice activation is disabled for the hold-only pilot. An unsolicited wake
   // cannot change capture state OR poison a later turn's generation check.
   if (data.type === 'wake') return;
+  if (['window-open', 'utterance-sealed', 'window-closed'].includes(data.type) || (data.type === 'partial' && press?.generation === data.generation)) { windowEvent(data); return; }
   if (['choice-staged', 'batch-sealed', 'choices-error'].includes(data.type)) { stagingEvent(data); return; }
   if (['socket', 'settled', 'speculation'].includes(data.type)) {
     if (askPending || captureGeneration === null || data.generation !== captureGeneration) return;
@@ -671,12 +749,21 @@ function deferred() { let resolve; const promise = new Promise(done => { resolve
 // Ask reads Preparing… while Chat gets ready by itself, Hold to ask once it is
 // (or once a hold can start a session itself). A refused microphone puts a
 // touch-only Try again in its place.
+// While a button-press listening window is open the hub answers a hold with
+// 409: Hold to ask is inert for the window's lifetime and comes back when the
+// window closes. Chrome still delivers pointer events to a disabled button, so
+// the button also stops taking pointers (the touch lands nowhere).
 function paintAsk() {
-  const ask = $('ask'), held = holding || askPending || mode !== 'blocked';
+  const ask = $('ask'), held = holding || askPending || mode !== 'blocked', inert = windowOpen();
   ask.hidden = micRefused; $('retryChat').hidden = !micRefused;
   const waiting = !held && (!config || !!preparation || closing);
   ask.textContent = waiting && config?.runtime?.available !== false ? 'Preparing…' : 'Hold to ask';
-  ask.disabled = micRefused || !appReady || !config?.runtime?.available || waiting;
+  ask.disabled = micRefused || !appReady || !config?.runtime?.available || waiting || inert;
+  ask.style.pointerEvents = inert ? 'none' : '';
+  // The keyboard Ask (desktop testing) is inert too, and comes back at the close.
+  const keyboard = $('desktopAsk');
+  if (inert) { keyboard.disabled = true; keyboard.dataset.windowInert = 'true'; }
+  else if (keyboard.dataset.windowInert) { delete keyboard.dataset.windowInert; keyboard.disabled = false; }
   syncHoldLock();
 }
 const autoPrepare = () => { if (appReady && !micPaused) void prepare(); };
@@ -732,6 +819,161 @@ async function openSession(forHold) {
   } finally {
     if (mine === lifecycle) starting = false;
   }
+}
+// ---- the partner's button (design 2026-10-27 §4.3-§4.6) ----
+// An `ask` from the hub does what a hold does, with no touch: Chat's own
+// prepared session (or one it starts), a listening window at the hub, the listening tone, then
+// frames 200 ms after the tone has ended (the tone is never transcribed).
+const STREAMING_LINE = 'Streaming speech is not set up on this device';
+// A refused microphone: master's touch-only Try again (it replaces Hold to ask) grants it.
+const MICROPHONE_LINE = 'Touch Try again once to allow the microphone';
+const NOTHING_HEARD_LINE = "Didn't hear a question";
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function askFromButton(command = {}) {
+  if (appLocked() || document.visibilityState !== 'visible') return;
+  // One press at a time: a second press while listening is the hub's to end.
+  if (pressBusy || (press && !press.closed)) return;
+  pressBusy = true;
+  try {
+    await configReady;
+    if (document.visibilityState !== 'visible') return;
+    // The replies show first, whatever follows (an open page closes); a press never ends a session Chat prepared.
+    if (page) closePage();
+    if (!config?.runtime?.available || config.runtime.capabilities?.streaming !== true) { notice(STREAMING_LINE); return; }
+    // Chat's own readiness path (no Start Chat): the session it prepared by
+    // itself, or the one this press starts, as a hold with no live session does.
+    if (!await prepare({ forHold: true }) || !session) { if (micRefused) notice(MICROPHONE_LINE); return; }
+    if (!remoteStreaming) { notice(STREAMING_LINE); return; }
+    if (holding || askPending || mode !== 'blocked' || !['Ready to ask', 'Your turn', 'Preparing'].includes(controller.state.phase)) return;
+    await openPressWindow(command);
+  } finally { pressBusy = false; }
+}
+async function openPressWindow(command) {
+  const mine = lifecycle, intent = ++captureIntent;
+  metrics.end(questionMetric, 'cancelled', 'superseded');
+  // A press is recorded in the test-mode turn log only (kind `press`); the
+  // content-free production rows keep their four kinds.
+  questionMetric = {}; pressMetric = questionMetric;
+  const ago = Number.isFinite(command.pressAt) ? Date.now() - command.pressAt : null;
+  turnLog.begin(questionMetric, 'press', { mode: 'stream', session, ago });
+  pendingFrames = []; captureGeneration = null; finishedTurn = -1;
+  press = { windowId: null, generation: null, listening: false, closed: false, seals: 0, question: '' };
+  // The last turn's tiles stay until a neutral moment; listening does not wait.
+  setMode('opening'); uploadEpoch++; controller.ask({ keepShown: true }); swapAtNeutral();
+  let reply = null;
+  try { reply = await control('window', { context: recentConversation.slice(-8) }); }
+  catch { if (mine === lifecycle && intent === captureIntent) failSession('Listening could not start. Your phrases still work; press again.'); return; }
+  if (!reply || mine !== lifecycle || intent !== captureIntent || !press || press.closed) return;
+  press.windowId = reply.windowId; press.generation = reply.generation; captureGeneration = reply.generation;
+  turnLog.mark(questionMetric, 'tone');
+  await tones.listening();
+  await pause(FRAMES_AFTER_TONE_MS);
+  if (mine !== lifecycle || intent !== captureIntent || !press || press.closed) return;
+  if (!mic?.begin()) { failSession('The microphone is not ready. Your phrases still work; press again.'); return; }
+  setMode('capture'); press.listening = true; document.body.dataset.listening = 'true'; paintPhase();
+  turnLog.mark(questionMetric, 'listening');
+  notice('Listening. Ask the question; Chat stops listening when you stop talking.');
+}
+// The hub's window machine speaks through the session's events: words heard,
+// each sealed utterance (whose batch follows as choice-staged/batch-sealed with
+// the same seq), and the close.
+let heardTimer = null;
+function windowEvent(data) {
+  if (Number.isFinite(data.generation)) workerGeneration = Math.max(workerGeneration, data.generation);
+  if (!press || data.generation !== press.generation) return;
+  if (data.type === 'partial') {
+    if (press.closed) return;
+    if (controller.state.phase === 'Capturing question') controller.partial(data.text);
+    turnLog.partial(questionMetric, data.text);
+    diagnostic(`Heard so far: ${String(data.text || '').slice(0, 600)}`);
+  } else if (data.type === 'utterance-sealed') windowSealed(data);
+  else if (data.type === 'window-closed') closePressWindow(data.reason, data.seals);
+}
+function windowSealed(data) {
+  if (press.closed) return;
+  const question = String(data.windowText || '').trim().slice(0, 600);
+  if (!question || !Number.isSafeInteger(data.seq)) return;
+  turnLog.mark(questionMetric, 'utteranceSealed', { text: String(data.text || '').slice(0, 2000) });
+  const shown = controller.state.choices.length > 0 && !controller.state.stale;
+  if (data.seq > 1 && shown) { replacementFor(data, question); return; }
+  if (data.seq > 1) turnLog.mark(questionMetric, 'batchReplaced');
+  // The earlier unseen question is replaced, not repeated, in the conversation so far.
+  if (press.question) recentConversation = recentConversation.filter(line => line !== `Partner: ${press.question}`.slice(0, 500));
+  press.seals = data.seq; press.question = question;
+  metrics.mark(questionMetric, 'transcript');
+  turnLog.content(questionMetric, { transcript: question });
+  staging = stagedChoices ? { generation: data.generation, seq: data.seq, text: question, choices: [], sealed: null, error: null, claimed: false, settled: false, done: null } : null;
+  diagnostic(`Question: ${question}`);
+  // Nothing of this window is shown yet: the batch shows the moment it is
+  // sealed, as every first batch does (spec 2026-10-27 §4).
+  controller.prepare(question);
+}
+// A batch for a window whose earlier batch she can already see (design §4.5):
+// the sealed batch is staged in the controller (stageReplacement, never the
+// immediate replace() Something else uses) and waits for a neutral moment. A shown tile never changes before then; a newer seal
+// supersedes this one; a pick or a cancel drops it (closePressWindow).
+function replacementFor(data, question) {
+  if (press.question) recentConversation = recentConversation.filter(line => line !== `Partner: ${press.question}`.slice(0, 500));
+  recentConversation = [...recentConversation, `Partner: ${question}`.slice(0, 500)].slice(-8);
+  press.seals = data.seq; press.question = question;
+  turnLog.content(questionMetric, { transcript: question });
+  diagnostic(`Question: ${question}`);
+  dropStaging();
+  // Without hub staging there is no sealed batch for this seal: the shown replies stay.
+  if (!stagedChoices) return;
+  const mine = lifecycle, record = { generation: data.generation, seq: data.seq, text: question, choices: [], sealed: null, error: null, claimed: true, settled: false, done: null };
+  staging = record;
+  stagedBatch(record).then(result => {
+    if (mine !== lifecycle || staging !== record) return;
+    staging = null;
+    if (!controller.stageReplacement(result?.choices)) return;
+    diagnostic(`Question: ${question} (replies waiting for a neutral moment)`);
+    setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS);
+  }, error => {
+    if (mine !== lifecycle || staging !== record) return;
+    staging = null;
+    if (error?.name !== 'AbortError') diagnostic(`Question: ${question} (new replies unavailable; the shown replies stay)`);
+  });
+}
+function dropStaging() {
+  if (!staging) return;
+  const record = staging; staging = null;
+  record.error ||= Object.assign(new Error('Cancelled'), { name: 'AbortError' }); record.done?.(record.error);
+}
+// The window ended: at the hub (silence, cap, second press, cancel, nothing
+// said) or here (her pick). The microphone stops at once; the done tone plays.
+function closePressWindow(reason, seals = press?.seals || 0) {
+  if (!press || press.closed) return null;
+  const closing = press;
+  closing.closed = true; closing.listening = false; closing.closing = true;
+  try { return closeWindow(reason, seals); }
+  finally {
+    closing.closing = false; syncHoldLock();
+    // The reading of her options (spec 2026-10-28 §6) counts from here for the batch now showing.
+    armReading(controller.state);
+  }
+}
+function closeWindow(reason, seals) {
+  captureIntent++; pendingFrames = []; mic?.cancel(); setMode('blocked'); uploadEpoch++; captureGeneration = null;
+  turnLog.mark(questionMetric, 'windowClosed', { text: String(reason || 'closed') });
+  void tones.done();
+  paintAsk();
+  // A pick wins: a replacement still in the making is dropped with it.
+  if (reason === 'pick') { dropStaging(); return control('pick').catch(() => null); }
+  if (!seals || reason === 'cancel') {
+    // Nothing to show, or a cancel: whatever was staged and unseen is dropped.
+    dropStaging(); controller.dropReplacement();
+    const idle = controller.idle();
+    if (!seals) metrics.end(questionMetric, 'cancelled', reason === 'cancel' ? 'cancel' : 'timeout');
+    if (reason === 'error') notice('Listening stopped. Your phrases still work; press again.');
+    else if (!seals && reason !== 'cancel') {
+      notice(NOTHING_HEARD_LINE);
+      clearTimeout(heardTimer);
+      heardTimer = setTimeout(() => { if ($('notice').textContent === NOTHING_HEARD_LINE) notice(controller.state.phase === 'Ready to ask' ? 'Hold to ask. Voice activation is off.' : ''); }, 4000);
+    } else if (idle) notice('');
+  }
+  paintPhase();
+  return null;
 }
 async function beginAsk() {
     if (appLocked()) return;
@@ -865,6 +1107,8 @@ async function shutdown(type = 'close', preserveAnswers = false) {
   closing = true;
   recentConversation = [];
   captureIntent++; pendingFrames = [];
+  if (press) press.closed = true;
+  press = null;
   setMode('blocked'); holding = false; askPending = false; captureGeneration = null; questionSending = false;
   clearTimeout(askTimer);
   endSession(type);
@@ -1110,7 +1354,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('pageshow', () => autoPrepare());
 window.addEventListener('pagehide', () => shutdown('close'));
 window.addEventListener('resize', () => { window.Dwell?.suppress(600); fitLabels(); });
-json(`${API}/config`).then(value => {
+const configReady = json(`${API}/config`).then(value => {
   config = value;
   $('engineNote').textContent = value.runtime?.available
     ? (value.runtime.kind === 'built-in' ? 'Cloud speech is set up. Chat gets the microphone ready by itself; wait for Ready to ask.' : 'Speech is set up. Chat gets the microphone ready by itself; wait for Ready to ask.')
@@ -1122,3 +1366,5 @@ document.body.dataset.storageReady = 'true';
 for (const id of ['desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = false;
 paintAsk();
 if (persistence.status().state === 'unsaved' || persistence.status().state === 'conflict') notice(storageStatus.textContent);
+// The partner's button (design 2026-10-27 §4.2): the hub's command stream, open before any session.
+connectCommands({ onCommand: command => { if (command.type === 'ask') void askFromButton(command); } });

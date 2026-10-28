@@ -102,6 +102,10 @@ test('settings search finds named controls and never searches private input valu
     assert.equal(await page.locator('#settingsSearchResults a').count(),0);
     await page.getByRole('searchbox',{name:'Search settings'}).fill('weather');
     await page.locator('#settingsSearchResults a').first().click(); await current(page,'clothing');
+    await page.getByRole('searchbox',{name:'Search settings'}).fill('flic');
+    assert.equal(await page.locator('#settingsSearchResults a').first().textContent().then(t => /Buttons/.test(t)), true);
+    await page.locator('#settingsSearchResults a').first().click(); await current(page,'connections');
+    assert.equal(await page.locator('#buttons').isVisible(), true);
   } finally { await context.close(); }
 });
 
@@ -117,6 +121,7 @@ test('mixed forms have one authoritative home and named contextual links', async
     assert.equal(await sectionOf('picksStatus'),'clothing');
     assert.equal(await sectionOf('stopBtn'),'system');
     assert.equal(await sectionOf('paused'),'gaze');
+    assert.equal(await sectionOf('buttons'),'connections');
     assert.equal(await page.locator('#aiKey').count(),1);
   } finally { await context.close(); }
 });

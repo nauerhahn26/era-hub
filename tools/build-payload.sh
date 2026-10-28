@@ -26,8 +26,8 @@ RELEASE=0
 if [ "${1:-}" = "--with-node" ] || [ "${2:-}" = "--with-node" ]; then RELEASE=1; fi
 
 rm -rf "$OUT"; mkdir -p "$OUT/public"
-cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/outfit-cache.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/music-pictures.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/gaze-supervisor.js" "$HUB/keepalive-fetch.js" "$HUB/tts-stream.js" "$HUB/predict-model.json" "$OUT/"
-cp "$HUB/chat-api.js" "$HUB/chat-ws.js" "$HUB/chat-stream.js" "$HUB/chat-choices.js" "$HUB/chat-symbols.js" "$HUB/chat-speech-worker.js" "$HUB/chat-store.js" "$HUB/chat-turns.js" "$HUB/chat-world.js" "$OUT/"
+cp "$HUB/server.js" "$HUB/predict.js" "$HUB/pool.js" "$HUB/update.js" "$HUB/packs.js" "$HUB/drive.js" "$HUB/clothing.js" "$HUB/clothing-worker.js" "$HUB/clothing-photos.js" "$HUB/clothing-rank.js" "$HUB/clothing-log.js" "$HUB/outfit-cache.js" "$HUB/device-id.js" "$HUB/content.js" "$HUB/content-worker.js" "$HUB/content-store.js" "$HUB/content-gather.js" "$HUB/content-ingest.js" "$HUB/content-imprint.js" "$HUB/content-narrate.js" "$HUB/content-providers.js" "$HUB/content-publish.js" "$HUB/content-animate.js" "$HUB/music-add.js" "$HUB/music-pictures.js" "$HUB/movies-add.js" "$HUB/movies-lookup.js" "$HUB/words.js" "$HUB/segment.js" "$HUB/slug.js" "$HUB/books-index.js" "$HUB/erabook.js" "$HUB/books-share.js" "$HUB/books-shelf.js" "$HUB/drawings.js" "$HUB/this-week.js" "$HUB/this-week-fetch.js" "$HUB/image-orient.js" "$HUB/image-util.js" "$HUB/ai-config.js" "$HUB/notify.js" "$HUB/shortcuts.js" "$HUB/gaze-supervisor.js" "$HUB/buttons.js" "$HUB/kiosk-launch.js" "$HUB/keepalive-fetch.js" "$HUB/tts-stream.js" "$HUB/predict-model.json" "$OUT/"
+cp "$HUB/chat-api.js" "$HUB/chat-ws.js" "$HUB/chat-stream.js" "$HUB/chat-window.js" "$HUB/chat-choices.js" "$HUB/chat-symbols.js" "$HUB/chat-speech-worker.js" "$HUB/chat-store.js" "$HUB/chat-turns.js" "$HUB/chat-world.js" "$OUT/"
 # every local require of the hub's modules must resolve INSIDE the payload —
 # a module added to the repo but not to the list above shipped a hub that
 # died on its first line (packs.js, caught by the VM e2e 9/3, never by the
@@ -125,6 +125,11 @@ cp "$(sib era-making-words)/content/lessons.json" "$OUT/public/lessons.json"
 # never redistribute Tobii's binaries.
 mkdir -p "$OUT/gaze"
 cp "$(sib era-gaze)/device/ERAgaze.cs" "$OUT/gaze/ERAgaze.cs"
+# The device button listener's SOURCE (button press to ask, design 2026-10-27
+# §4.1): the hub compiles it on the device with the same csc and keeps it
+# running while Chat is on (buttons.js). Source only, like the engine.
+mkdir -p "$OUT/buttons"
+cp "$HUB/buttons/EraButtons.cs" "$OUT/buttons/EraButtons.cs"
 cp -r "$(sib era-pencil)/app" "$OUT/public/pencil"
 cp -r "$(sib era-board)/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"

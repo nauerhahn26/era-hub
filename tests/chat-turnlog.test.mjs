@@ -9,7 +9,13 @@ const load = async file => import(`data:text/javascript;base64,${Buffer.from(awa
 const { createTurnLog, observeMetrics, micLevel, stageChoices } = await load('../public/chat/turnlog.js');
 const { createTurnMetrics } = await load('../public/chat/metrics.js');
 const { validateTurn } = createRequire(import.meta.url)('../chat-turns.js');
-const flush = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
+// The log redraws on a setTimeout(0), which Node clamps to 1 ms: ten
+// setImmediate turns can finish before it fires, so flush also waits one real
+// timer (captured before any test mocks setTimeout). Timers of one duration
+// fire in the order they were set, so every redraw already scheduled runs first.
+const realTimeout = globalThis.setTimeout;
+const turns = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
+const flush = async () => { await turns(); await new Promise(resolve => realTimeout(resolve, 1)); await turns(); };
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
 function setup({ on = true, health = async at => ({ cpuBusy: 0.25, load1: null, freeMemBytes: 1e9, totalMemBytes: 8e9, eventLoopLagMs: 2, gaze: 'running', rtt: { transcription: 30, reply: null } }) } = {}) {
@@ -246,6 +252,32 @@ test('a streamed turn records the phase-2 marks: socket, settled, speculation, e
   assert.equal(record.mode, 'stream'); assert.equal(record.setting, 'fallback');
   assert.equal(record.usage.socketSeconds, 41.5); assert.equal(record.content.keytermsFired, 2); assert.equal(record.content.keyterms, null, 'counts only, never the words');
   assert.equal(record.worker.connectMs, 0); assert.equal(record.worker.settledMs, 120);
+});
+
+test('a press turn: the press is stage 0 (from the hub\'s pressAt), repeated seals and replacements are kept, the record is accepted; off records nothing', async () => {
+  const s = setup(), h = {};
+  s.log.begin(h, 'press', { mode: 'stream', session: '9b2c1a7e-1111-4222-8333-944455556666', ago: 420 });
+  s.tick(480); s.log.mark(h, 'tone'); s.tick(390); s.log.mark(h, 'listening'); s.log.mark(h, 'listening');
+  s.tick(1000); s.log.mark(h, 'utteranceSealed', { text: 'do you want chicken or fish' });
+  s.tick(700); s.log.mark(h, 'revealed');
+  s.tick(1000); s.log.mark(h, 'utteranceSealed', { text: 'or pasta' }); s.log.mark(h, 'batchReplaced');
+  s.tick(500); s.log.mark(h, 'batchReplaced');
+  s.tick(10000); s.log.mark(h, 'windowClosed', { text: 'silence' }); s.log.mark(h, 'windowClosed', { text: 'again' });
+  s.log.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.deepEqual(validateTurn(record), record);
+  assert.equal(record.kind, 'press'); assert.equal(record.mode, 'stream');
+  assert.deepEqual(record.stages.map(x => [x.name, x.ms, x.text]), [['press', 0, undefined], ['begin', 420, undefined], ['tone', 900, undefined], ['listening', 1290, undefined],
+    ['utteranceSealed', 2290, 'do you want chicken or fish'], ['batchSealed', 2990, undefined], ['revealed', 2990, undefined],
+    ['utteranceSealed', 3990, 'or pasta'], ['batchReplaced', 3990, undefined], ['batchReplaced', 4490, undefined], ['windowClosed', 14490, 'silence']]);
+  // A press with no hub time (or a stale one) starts at the page's own begin.
+  const t = {}; s.log.begin(t, 'press', { ago: 999999 }); s.log.end(t, 'cancelled', 'timeout'); await flush();
+  const late = JSON.parse(s.requests.filter(r => r.url === '/chat/api/turns').at(-1).init.body);
+  assert.deepEqual(late.stages.map(x => x.name), ['begin']);
+  const off = setup({ on: false }), o = {};
+  off.log.begin(o, 'press', { ago: 10 }); off.log.mark(o, 'utteranceSealed', { text: 'private words' }); off.log.end(o, 'completed'); await flush();
+  assert.equal(off.requests.length, 0); assert.deepEqual(off.log.recent(), []);
+  assert.deepEqual(off.metrics.snapshot().turns, [], 'a press never enters the production rows');
 });
 
 test('a batch whose model pictures the hub rejected records the count only, and the hub schema accepts it', async () => {

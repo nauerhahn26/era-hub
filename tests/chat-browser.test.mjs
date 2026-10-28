@@ -84,7 +84,8 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   const controls = [], uploaded = [], choiceBodies = [], spokenTexts = []; let generation = 0, sequence = 0, stalled = false, releaseUpload, sessionPosts = 0;
   await page.addInitScript(() => {
     window.__eventSources = 0;
-    window.EventSource = class { constructor() { window.__timingEvents = this; window.__eventSources++; } close() { this.closed = true; } };
+    // The command stream (the partner's button) is a second EventSource opened at load; only session streams count.
+    window.EventSource = class { constructor(url) { if (!String(url).includes('/chat/api/commands')) { window.__timingEvents = this; window.__eventSources++; } } close() { this.closed = true; } };
   });
   await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
   await page.route('**/tts', route => { try { spokenTexts.push(route.request().postDataJSON().text); } catch {} return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }); });

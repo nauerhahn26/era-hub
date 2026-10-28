@@ -565,6 +565,53 @@ function foregroundKiosk() {
 // same PowerShell and the same reason (dad 8/29).
 const minimizeKiosk = stepAsideFromKiosk;
 
+// Settle a kiosk the hub just launched itself (button press to ask): the same
+// SetWindowPos + foreground move as the first launch, waiting up to 30 s for
+// the window. Windows only; logged beside the other window moves.
+function settleKiosk() {
+  if (process.platform !== "win32") return Promise.resolve();
+  const { spawn } = require("child_process");
+  return new Promise((resolve) => {
+    try {
+      const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
+      fs.writeSync(out, new Date().toISOString() + " settle (button relaunch)\n");
+      const c = spawn("powershell.exe", ["-NoProfile", "-Command", psWindowPrelude() + psSettleKiosk(6)],
+        { stdio: ["ignore", out, out], windowsHide: true });
+      c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} resolve(); });
+      c.on("error", () => resolve());
+      c.unref();
+    } catch { resolve(); }
+  });
+}
+// Button press to ask (design 2026-10-27 §4.2): the partner's button arrives
+// as POST /buttons/press from the device listener; buttons.js decides what a
+// press does. The relaunch is start-hub.bat's kiosk launch, from node.
+const kioskLauncher = require("./kiosk-launch.js").createKioskLauncher({
+  port: PORT, dir: __dirname, cdp: process.env.ERA_QA_CDP, closeKiosk, kioskGone, settle: settleKiosk,
+  log: (m) => console.log("[buttons] " + m),
+});
+// The device listener that turns the buttons' keys into presses (design §4.1):
+// compiled from buttons/EraButtons.cs on the device, kept running as this
+// hub's child while Chat is on (buttons.js createListener). ERA_BUTTONS_CSC is
+// the suites' stub compiler (as ERA_GAZE_CSC); unset off Windows, the
+// listener is "unsupported" and nothing runs.
+const buttonsListener = require("./buttons.js").createListener({
+  dir: path.join(__dirname, "buttons"), port: PORT, hubPid: process.pid,
+  csc: process.env.ERA_BUTTONS_CSC || null,
+  enabled: () => loadEnabledApps().includes("chat"),
+  log: (m) => console.log("[buttons] " + m),
+});
+const BUTTONS_POLL_MS = Number(process.env.ERA_BUTTONS_POLL_MS) || 5000;
+const buttons = require("./buttons.js").createButtons({
+  port: PORT, enabledChat: () => loadEnabledApps().includes("chat"), commands: chatApi.commands,
+  listener: buttonsListener,
+  // the open listening window: a second press ends it, a cancel discards it
+  window: () => chatApi.window(),
+  // a relaunch closes every kiosk window, so whatever the talk door had paused is gone too
+  kiosk: { foreground: foregroundKiosk, relaunch: (open) => { paused = null; return kioskLauncher.relaunch(open); } },
+  log: (m) => console.log("[buttons] " + m),
+});
+
 // One-time stage-clearing at the very first boot after install (dad 9/1:
 // the welcome kiosk opened BEHIND the browser the family had just downloaded
 // with — "did anything happen?"). Windows won't let a background process
@@ -1665,8 +1712,11 @@ function doorGoes() {
 // Close our kiosk window(s) — the ones launched with the kiosk-profile
 // user-data-dir — via the one powershell spawn shape proven from the
 // detached production hub (see stepAsideFromKiosk). Windows only; logged.
+// Resolves when the sweep has run (the button relaunch waits for it; every
+// other caller fires and forgets).
 function closeKiosk() {
-  if (process.platform !== "win32") return;
+  if (process.platform !== "win32") return Promise.resolve();
+  return new Promise((resolve) => {
   const { spawn } = require("child_process");
   const ps =
     "Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" +
@@ -1678,9 +1728,34 @@ function closeKiosk() {
     fs.writeSync(out, new Date().toISOString() + " kiosk-close\n");
     const c = spawn("powershell.exe", ["-NoProfile", "-Command", ps],
       { stdio: ["ignore", out, out], windowsHide: true });
-    c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} });
+    c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} resolve(); });
+    c.on("error", () => resolve());
     c.unref();
-  } catch {}
+    setTimeout(resolve, 8000).unref();   // never hold a relaunch on a wedged sweep
+  } catch { resolve(); }
+  });
+}
+
+// Are our kiosk's processes all gone? The button relaunch polls this after
+// closeKiosk: a browser started while the old one still holds the profile
+// joins it instead of starting a kiosk (VM 10/28). Resolves true (none left),
+// false (some still running) or null (the list could not be read). Same
+// spawn shape and quoting law as closeKiosk.
+function kioskGone() {
+  if (process.platform !== "win32") return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const ps =
+      "if (@(Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" +
+      " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
+      "Where-Object { $_.CommandLine -like '*kiosk-profile*' }).Count -eq 0) { 'gone' } else { 'alive' }";
+    try {
+      require("child_process").execFile("powershell.exe", ["-NoProfile", "-Command", ps],
+        { windowsHide: true, timeout: 10000, encoding: "utf8" }, (error, stdout) => {
+          const out = String(stdout || "");
+          resolve(/\bgone\b/.test(out) ? true : /\balive\b/.test(out) ? false : null);
+        });
+    } catch { resolve(null); }
+  });
 }
 
 // ---- the talk door's memory (dad 9/17, "pause to talk") --------------------
@@ -2141,6 +2216,7 @@ const server = http.createServer((req, res) => {
           appShortcut({ title: shortcuts.HOME_TITLE, path: "/home/" }, true);   // the home door
           if (!chosen.some(a => a.engine)) stopGaze();   // unticked: an engine already up must go
           reconcileApps();   // chosen-but-missing apps (the gaze engine) install now
+          buttonsListener.start().catch((e) => console.error("[buttons] " + e.message));   // and the button listener, now that a profile exists
         }
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch { res.writeHead(400).end(); }
@@ -3038,6 +3114,7 @@ const server = http.createServer((req, res) => {
           JSON.stringify({ enabled: APPS.map(a => a.id).filter(x => set.includes(x)) }, null, 2));
         appShortcut(app, enabled);   // Windows: desktop/start-menu .lnk follows the toggle
         if (app.id === "chat" && enabled) warmChatSymbols();
+        if (app.id === "chat") buttonsListener.tick().catch((e) => console.error("[buttons] " + e.message));   // the listener follows Chat at once
         if (app.engine && !enabled) stopGaze();
         // enabling an app whose files were never installed REALLY installs it
         if (enabled && !appInstalled(app) && !appInstalling[app.id]) {
@@ -3278,6 +3355,15 @@ const server = http.createServer((req, res) => {
       }).catch(() => answer({ ok: false, saved: true, keyOk: null,
                               error: "could not reach fal", perClipPrice: price }));
     });
+    return;
+  }
+
+  // ---- the partner's button (design 2026-10-27 §4.2): loopback only, activity ----
+  if (req.method === "POST" && urlPath === "/buttons/press") {
+    if (!updater.isLoopback(req.socket && req.socket.remoteAddress)) { res.writeHead(403).end(); return; }
+    buttons.readBody(req).then((body) => buttons.press(body))
+      .then((r) => { res.writeHead(r.status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(r.status === 200 ? { ok: true, dispatch: r.dispatch } : { error: r.error })); })
+      .catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });
     return;
   }
 
@@ -3931,7 +4017,8 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ build: updater.runningBuild, pid: process.pid, uptimeMs: Math.round(process.uptime() * 1000),
-                             gaze: { ...gazeSupervisor.status(), pollMs: GAZE_POLL_MS, port: GAZE_PORT } }));
+                             gaze: { ...gazeSupervisor.status(), pollMs: GAZE_POLL_MS, port: GAZE_PORT },
+                             buttons: buttons.status() }));
     return;
   }
   // Settings' "Stop ERAgaze completely" and its way back. Through the hub, not
@@ -4206,9 +4293,15 @@ server.on("listening", () => {
     if (!HAS_PROFILE) { console.log("[apps] reconcile deferred until the wizard is answered"); return; }
     reconcileApps();
     reconcileBootShortcuts();
+    // the device button listener: compiled if its source changed (one compile
+    // at a time, inside buttons.js), then kept running while Chat is on. A
+    // failed compile is one log line; Chat itself never waits on it.
+    buttonsListener.start().catch((e) => console.error("[buttons] " + e.message));
   }, Number(process.env.ERA_RECONCILE_DELAY_MS) || 5000).unref();
   // and from here on, the engine is kept on its bus (gaze-supervisor.js)
   setInterval(() => { gazeSupervisor.tick(); }, GAZE_POLL_MS).unref();
+  // and the button listener alive (restarted on its backoff ladder)
+  setInterval(() => { buttonsListener.tick().catch((e) => console.error("[buttons] " + e.message)); }, BUTTONS_POLL_MS).unref();
   // Pre-warm the outfit symbol set in the background (non-blocking, best-effort).
   for (const name of PREWARM) {
     if (fs.existsSync(path.join(SYMBOLS_CACHE, name + ".png"))) continue;
@@ -4219,5 +4312,5 @@ server.on("listening", () => {
 // The Chat page's held-question audio socket (spec 2026-10-27 §3.1). Every
 // other upgrade request is refused: the hub serves no other WebSocket.
 server.on("upgrade", (req, socket, head) => { if (!chatApi.upgrade(req, socket, head)) socket.destroy(); });
-server.on("close", () => { chatApi.close(); chatTurns.close(); });
+server.on("close", () => { chatApi.close(); chatTurns.close(); buttonsListener.stop(); });
 server.listen(PORT, BIND);

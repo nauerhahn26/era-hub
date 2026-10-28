@@ -58,6 +58,23 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   for (const item of symbols.planPictures(entries).filter(Boolean)) assert.match(item.src, /^\/symbol\/\d+(\?color=false)?$/, 'never another host');
 });
 
+test('a replacement keeps each unchanged reply\'s picture; only new labels get pictures planned (review fix)', () => {
+  assert.equal(symbols.setVocabulary(vocabulary), true);
+  const reply = (label, word) => ({ label, type: 'response', symbol: word, symbolId: id(word) });
+  const fixedTiles = [{ label: 'yes', type: 'yes' }, { label: 'no', type: 'no' }, { label: '', type: 'rest' }, { label: '', type: 'rest' }];
+  const first = symbols.planPictures([...fixedTiles, reply('Music', 'music'), reply('Songs', 'music'), reply('More songs', 'music'), { label: '', type: 'waiting' }]);
+  assert.deepEqual(first.slice(4, 7).map(item => item && item.id), [id('music'), id('chat'), null]);
+  // Music is removed (its cell stays empty); Songs and More songs stay; Dance is new.
+  const next = [...fixedTiles, { label: '', type: 'waiting' }, reply('Songs', 'music'), reply('More songs', 'music'), reply('Dance', 'music')];
+  const keep = [undefined, undefined, undefined, undefined, undefined, first[5], first[6], undefined];
+  const plan = symbols.planPictures(next, { keep });
+  assert.equal(plan[5], first[5], 'Songs keeps the bubble picture it had');
+  assert.equal(plan[6], null, 'More songs keeps having no picture');
+  assert.equal(plan[7].id, id('music'), 'the new label is planned around the kept pictures');
+  const shownIds = plan.filter(Boolean).map(item => item.id);
+  assert.equal(new Set(shownIds).size, shownIds.length, 'still no repeat on the page');
+});
+
 test('a person picture from the hub shows that image, once a page, and keeps no emoji or drawn stand-in but the bubble', () => {
   symbols.setVocabulary(vocabulary);
   const person = (label, src) => ({ label, type: 'response', symbol: label, picture: { src, kind: 'person' } });

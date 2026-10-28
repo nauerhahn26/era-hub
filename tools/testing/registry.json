@@ -976,6 +976,144 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-hold-path.test.mjs",
+      "purpose": "The touch Hold to ask path stays as shipped: beginAsk, finishAsk, cancelAsk and the Ask binding pinned to a fixture",
+      "group": "chat",
+      "lane": "linux",
+      "level": "source contract and payload guard",
+      "dependencies": [
+        "era-hub/public/chat/app.js",
+        "era-hub/tests/fixtures/chat-hold-path.sha256"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-commands.test.mjs",
+      "purpose": "The Chat page command stream: one subscriber, ask nonce replayed once, visibility reports, local-only, survives a configuration reload",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/update.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-window.test.mjs",
+      "purpose": "The button-press listening window machine with an injected clock: end of turn and 1.5 s quiet seal, 15 s utterance cap, 10 s silence, 60 s cap, second press, cancel, pick, nothing said; the ported energy gate",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit + static contract",
+      "dependencies": [
+        "era-hub/chat-window.js",
+        "era-hub/chat-api.js"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-window-hub.test.mjs",
+      "purpose": "Listening windows through the hub Chat module: one stream turn kept open, seals on the whole window text as batch-sealed {windowId, seq}, energy-gate fallback, press/cancel/pick/silence/cap/nothing-said closes, window guards, the buttons dispatcher reaching the window",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP/WebSocket module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-window.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/buttons.js",
+        "era-hub/server.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "synthetic-runtime-children",
+        "fetch-doubles",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-commands-browser.test.mjs",
+      "purpose": "Real Chat page asked from the partner's button: command stream at load, nonce claimed once, ask with no touch, the three partner lines, two drawn tones, her pick ends the window, a pause stays one utterance, quiet seals, a second utterance, the second press",
+      "group": "chat",
+      "lane": "linux",
+      "level": "browser application integration",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/chat-api.js",
+        "era-hub/chat-window.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-store.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/buttons.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "synthetic-microphone-wav",
+        "real-audio-worklet",
+        "cdp-touch-events",
+        "synthetic-runtime-children",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-choices-stream.test.mjs",
       "purpose": "Streamed structured choices: incremental parser, fast-tier field, each choice handed over before the reply ends, whole-batch post-checks, cancel",
       "group": "chat",
@@ -3081,6 +3219,144 @@
       "browsers": 0,
       "heavy": false,
       "solo": true,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/buttons.test.mjs",
+      "purpose": "Button press keys, press validation and the press dispatcher with an injected command stream and kiosk",
+      "group": "hub",
+      "lane": "linux",
+      "level": "unit + static contract",
+      "dependencies": [
+        "era-hub/buttons.js",
+        "era-hub/kiosk-launch.js",
+        "era-hub/server.js",
+        "era-hub/*.js",
+        "era-hub/tools/build-payload.sh"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/kiosk-launch.test.mjs",
+      "purpose": "The hub kiosk relaunch keeps start-hub.bat flags and browser order, spawns the browser directly, records only off Windows",
+      "group": "hub",
+      "lane": "linux",
+      "level": "unit + static contract",
+      "dependencies": [
+        "era-hub/kiosk-launch.js",
+        "era-hub/tools/build-payload.sh"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/buttons-press.test.mjs",
+      "purpose": "POST /buttons/press on a real hub: visible, hidden and relaunch dispatch, nonce once, chat-off, loopback gate, activity and status",
+      "group": "hub",
+      "lane": "linux",
+      "level": "hub process integration",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "resources": [
+        "own-hub",
+        "fixed-ports",
+        "temporary-data"
+      ],
+      "hub": "own",
+      "ports": [
+        8470
+      ],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/buttons-payload.test.mjs",
+      "purpose": "The device button listener ships as C# source in the payload buttons/ folder: five keys, hotkey ids, loopback press, single instance, no PowerShell, no .ps1",
+      "group": "hub",
+      "lane": "linux",
+      "level": "static contract",
+      "dependencies": [
+        "era-hub/buttons/EraButtons.cs",
+        "era-hub/buttons.js",
+        "era-hub/tools/build-payload.sh"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/buttons-keeper.test.mjs",
+      "purpose": "The device button listener keeper: hash-guarded csc compile to .new.exe and swap, a failed compile keeps the old exe and logs once, child restarts on 5/15/60/300 s with a 10 minute reset, Chat off stops ours by path, the reg.exe microphone policy arguments",
+      "group": "hub",
+      "lane": "linux",
+      "level": "unit with injected clock and processes",
+      "dependencies": [
+        "era-hub/buttons.js"
+      ],
+      "resources": [
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/buttons-recompile.test.mjs",
+      "purpose": "A real hub compiles the device button listener with a stub csc: compiling then running with five keys, hash-guarded recompile and swap, a failed compile keeps the old exe and logs once, restart after an exit, Chat off stops it, reg.exe microphone policy at boot",
+      "group": "hub",
+      "lane": "linux",
+      "level": "hub process integration",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "resources": [
+        "own-hub",
+        "temporary-data"
+      ],
+      "hub": "own",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
       "quiet": false,
       "retry": false,
       "owner": ""

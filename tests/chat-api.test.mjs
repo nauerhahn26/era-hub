@@ -714,6 +714,50 @@ test('either/or shortcuts keep the alternatives and drop a trailing clause or a 
   assert.deepEqual(await labels('Would you like to read a book or play outside?'), ['Read a book', 'Play outside']);
 });
 
+// Button press to ask (plan T0.2, preflight B1): a listening window carries up
+// to 60 s, so a windowed turn has its own byte budget; a hold keeps 512000.
+test('a windowed turn gets windowBytes (2 000 000 by default); a hold keeps turnBytes 512000', () => {
+  const { DEFAULTS, turnByteLimit } = require('../chat-api.js');
+  assert.equal(DEFAULTS.turnBytes, 512000);
+  assert.equal(DEFAULTS.windowBytes, 2000000);
+  assert.equal(turnByteLimit({ mode: 'stream', window: true }, DEFAULTS), 2000000);
+  assert.equal(turnByteLimit({ mode: 'stream' }, DEFAULTS), 512000);
+  assert.equal(turnByteLimit({ mode: 'one-shot', window: false }, DEFAULTS), 512000);
+  assert.equal(turnByteLimit(null, DEFAULTS), 512000);
+  assert.equal(turnByteLimit({ window: true }, { ...DEFAULTS, windowBytes: 9000 }), 9000);
+});
+
+test('with the default limits a hold still stops with audio-limit past 512000 bytes', async t => {
+  const { connectWebSocket } = require('../chat-ws.js');
+  const children = [];
+  const api = createChatApi({ env: configured, spawn: () => { const child = runtime(); children.push(child); return child; } });
+  const server = http.createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); });
+  server.on('upgrade', (req, socket, head) => { if (!api.upgrade(req, socket, head)) socket.destroy(); });
+  await new Promise(resolve => server.listen(0, 'localhost', resolve));
+  const port = server.address().port, origin = `http://localhost:${port}`, base = origin + '/chat/api';
+  let ws;
+  t.after(async () => { ws?.terminate(); api.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const post = (url, body) => fetch(base + url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const { id } = await (await fetch(base + '/sessions', { method: 'POST' })).json();
+  children[0].stdout.write(JSON.stringify({ type: 'ready', capabilities: { remoteFinal: true } }) + '\n');
+  const seen = [];
+  const response = await fetch(`${base}/sessions/${id}/events`);
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  t.after(() => reader.cancel().catch(() => {}));
+  (async () => { let pending = ''; try { while (true) { const { value, done } = await reader.read(); if (done) break; pending += decoder.decode(value, { stream: true });
+    let cut; while ((cut = pending.indexOf('\n\n')) >= 0) { const block = pending.slice(0, cut); pending = pending.slice(cut + 2); if (block.startsWith('data: ')) seen.push(JSON.parse(block.slice(6))); } } } catch {} })();
+  ws = await connectWebSocket(`ws://localhost:${port}/chat/api/sessions/${id}/audio`, { headers: { Origin: origin } });
+  const { generation } = await (await post(`/sessions/${id}/control`, { type: 'ask' })).json();
+  const frame = seq => { const b = Buffer.alloc(8 + 32000, 1); b.writeUInt32LE(generation, 0); b.writeUInt32LE(seq, 4); return b; };
+  for (let seq = 0; seq < 16; seq++) ws.send(frame(seq)); // 512000 bytes exactly: within budget
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(seen.some(event => event.type === 'error'), false, '512000 bytes is within a hold');
+  ws.send(frame(16));
+  const end = Date.now() + 2000;
+  while (!seen.some(event => event.type === 'error') && Date.now() < end) await new Promise(r => setTimeout(r, 5));
+  assert.deepEqual(seen.filter(event => event.type === 'error').map(event => event.error), ['audio-limit']);
+});
+
 test('either/or lists of two to four alternatives give one clean tile each, in every list shape', async t => {
   const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
   const ask = async text => (await (await s.request('/choices', { text })).json());
