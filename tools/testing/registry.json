@@ -1485,6 +1485,29 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-world.test.mjs",
+      "purpose": "Chat's her-world digest: week packages, shelf, people and likes as plain lines labelled relative to today, newest first; broken folders and providers cost nothing; capped at 2,500 characters by whole lines; mtime and provider cache checked at most once a minute",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit with temp data folder",
+      "dependencies": [
+        "era-hub/chat-world.js"
+      ],
+      "resources": [
+        "temporary-data",
+        "provider-doubles",
+        "injected-clock"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-test-mode-payload.test.mjs",
       "purpose": "Chat test mode is off by default in what ships: no shipped file enables it, the installer seeds no settings, the payload copies the module and its guard refuses settings, prices, recordings or an enabled switch (any quoting, .mjs included)",
       "group": "chat",
@@ -1523,7 +1546,8 @@
         "era-hub/pool.js",
         "era-hub/chat-ws.js",
         "era-hub/chat-stream.js",
-        "era-hub/keepalive-fetch.js"
+        "era-hub/keepalive-fetch.js",
+        "era-hub/chat-world.js"
       ],
       "resources": [
         "own-hub",
