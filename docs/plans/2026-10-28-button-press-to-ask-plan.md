@@ -106,7 +106,7 @@ Info
 
 ## Phase 1 — hub: command stream, `/buttons/press`, dispatcher (implementing)
 
-- [ ] **T1.1** `buttons.js` (new hub module, shipped in build-payload's module
+- [x] **T1.1** `buttons.js` (new hub module, shipped in build-payload's module
       list): `createButtons({ port, enabledChat, kiosk, log, clock })` with
       `press({key, action})` → `{ ok, dispatch }` and the command stream
       registry. Accept: exports `KEYS` = F13, Ctrl+Alt+F9, Ctrl+Alt+F10 → ask;
