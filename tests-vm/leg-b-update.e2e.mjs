@@ -8,6 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as vm from "./lib/vm.mjs";
 import { checkInstalledChatUI, checkRestoredChatState } from "./lib/chat-ui-smoke.mjs";
@@ -347,6 +348,76 @@ test("after the update: Chat state survives closing the whole kiosk and restarti
   await restart();
   await checkRestoredChatState(page, cleared, { timeout: 60000 });
   console.log("# installed Chat durability: full kiosk and hub restarted twice; state restored from the installed data file and UI clears remained cleared");
+});
+
+// Button press to ask (design 2026-10-27 §4.1, §4.3; plan T5.8). The updated
+// hub compiles buttons/EraButtons.cs with the guest's own csc and keeps it
+// running while Chat is on (enabled above). A partner's button is a keyboard
+// to Windows, so a 20-line SendInput helper (lib/sendkey.cs), run in the
+// interactive desktop where the hotkeys live, stands in for it: F13 must reach
+// /buttons/press and bring Chat up at /chat/, and Ctrl+Alt+F9 (the I-13's
+// Square button) must do the same. W3: whether the kiosk honours the per-user
+// microphone policy the hub wrote is RECORDED (granted | prompt), never failed
+// on: a `prompt` makes the design's one-touch fallback a rollout step.
+test("after the update: a button press reaches Chat through the device listener, F13 and Ctrl+Alt+F9", { timeout: 900000 }, async () => {
+  const ALL = ["F13", "F14", "Ctrl+Alt+F9", "Ctrl+Alt+F10", "Ctrl+Alt+F11"];
+  const buttons = () => vm.hubGet("/status")?.buttons;
+  const listening = await vm.waitFor(() => { const b = buttons(); return b && b.state === "running" && b.keys.registered.length === 5 && b; },
+    { timeout: 300000, every: 3000, what: "the button listener to compile and hold its five keys" })
+    .catch((e) => { throw new Error(e.message + " — /status.buttons: " + JSON.stringify(buttons())); });
+  console.log("# button listener: " + JSON.stringify(listening));
+  assert.deepEqual([...listening.keys.registered].sort(), [...ALL].sort());
+  assert.deepEqual(listening.keys.failed, [], "no other program holds a key on the pristine guest");
+  assert.ok(Number.isInteger(listening.pid) && listening.pid > 0);
+  assert.ok(vm.exists(vm.INSTDIR + "\\buttons\\EraButtons.exe"), "compiled on the guest from the shipped source");
+  assert.equal(listening.micPolicy, "written", "reg.exe wrote both browsers' AudioCaptureAllowedUrls");
+  const policy = vm.bat("buttons-policy", [
+    'reg query "HKCU\\Software\\Policies\\Microsoft\\Edge\\AudioCaptureAllowedUrls" /v 1',
+    'reg query "HKCU\\Software\\Policies\\Google\\Chrome\\AudioCaptureAllowedUrls" /v 1'], { soft: true });
+  console.log("# microphone policy as the ssh user reads it:\n" + policy);
+
+  vm.ship(fileURLToPath(new URL("lib/sendkey.cs", import.meta.url)));
+  const built = vm.bat("sendkey-build", [`if exist ${GUEST_HOME}\\sendkey.exe del ${GUEST_HOME}\\sendkey.exe`,
+    `C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /target:winexe /out:${GUEST_HOME}\\sendkey.exe ${GUEST_HOME}\\sendkey.cs`,
+    `if exist ${GUEST_HOME}\\sendkey.exe (echo SENDKEY_BUILT=1) else (echo SENDKEY_BUILT=0)`], { soft: true, timeout: 180000 });
+  assert.match(built, /SENDKEY_BUILT=1/, "sendkey.exe did not build in the guest: " + built);
+  // one chord from the desktop session; resolves with the press the hub recorded
+  async function pressKey(key, accept) {
+    const before = buttons()?.lastPress?.at || "";
+    vm.interactive("sendkey", [], { tr: `${GUEST_HOME}\\sendkey.exe ${key}` });
+    const p = await vm.waitFor(() => { const lp = buttons()?.lastPress; return lp && lp.key === key && lp.at !== before && lp; },
+      { timeout: 60000, every: 1000, what: key + " to reach /buttons/press" });
+    console.log(`# ${key}: ${JSON.stringify(p)}`);
+    assert.ok(accept.includes(p.dispatch), `${key} dispatched ${p.dispatch}, wanted one of ${accept.join("/")}`);
+    return p;
+  }
+  // the kiosk shows its kiosk tab; Chat is reached by the press or was there already
+  async function chatPage() {
+    try { await browser?.close(); } catch {}
+    ({ browser, page } = await vm.kiosk());
+    await vm.waitFor(() => new URL(page.url()).pathname === "/chat/" && { ok: 1 }, { timeout: 120000, every: 1000, what: "the kiosk at /chat/ (now " + page.url() + ")" });
+  }
+
+  // From Home no Chat page listens: F13 relaunches the kiosk at /chat/?ask=<nonce>.
+  await vm.home(page);
+  const f13 = await pressKey("F13", ["relaunch", "visible"]);
+  await chatPage();
+  vm.shot("buttons-after-f13");
+  assert.equal(new URL(page.url()).pathname, "/chat/", "a press lands on Chat");
+  // W3: does the fresh kiosk profile have the microphone without a touch?
+  const mic = await page.evaluate(() => navigator.permissions.query({ name: "microphone" }).then((s) => s.state)).catch((e) => "error: " + e.message);
+  const verdict = { mic, f13: f13.dispatch, micPolicy: listening.micPolicy, at: new Date().toISOString() };
+  fs.writeFileSync(path.join(vm.OUT, "buttons-w3.json"), JSON.stringify(verdict, null, 2) + "\n");
+  console.log(`# W3 verdict: microphone ${mic}` + (mic === "granted" ? " (the policy pre-grants it)" : " (STOP: the one-touch fallback becomes a rollout step; plan T5.8 guard)"));
+  // a held Flic (F14) closes whatever the ask opened, so the next press starts afresh
+  await new Promise((r) => setTimeout(r, 5000));
+  await pressKey("F14", ["cancel", "none"]);
+  // the Square button's key, with Chat on the screen
+  const square = await pressKey("Ctrl+Alt+F9", ["visible", "foreground", "relaunch"]);
+  if (square.dispatch === "relaunch") await chatPage();
+  assert.equal(new URL(page.url()).pathname, "/chat/");
+  await pressKey("F14", ["cancel", "none"]);
+  vm.shot("buttons-after-square");
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {

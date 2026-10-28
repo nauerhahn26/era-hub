@@ -314,7 +314,7 @@ Info
       `tests/buttons-payload.test.mjs` asserts `tools/build-payload.sh` copies
       `buttons/EraButtons.cs` and the Chat test-mode guard still passes; the
       Chat test-mode and era-scan steps unchanged.
-- [ ] **T5.8** Windows case (quiet profile) as a new `test()` in
+- [ ] **T5.8** (written, not yet run: the case sits before "shut down" in leg B, the injector is `tests-vm/lib/sendkey.cs`; F13 is pressed from Home so the relaunch path is the one proved; an F14 between the two presses closes whatever the first ask opened; the W3 verdict is logged and written to `$VM_OUT/buttons-w3.json`) Windows case (quiet profile) as a new `test()` in
       `tests-vm/leg-b-update.e2e.mjs` after the Chat case: enable Chat, wait
       for `/status.buttons.state === 'running'` and five registered keys;
       ship a 15-line C# `sendkey.cs` (compiled with the guest csc as
