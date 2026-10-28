@@ -294,3 +294,62 @@ test('Chat stories, explicit voice and numeric timings survive a fresh browser a
       numericTimingRowsRestored: prepared.restartState.timings.length, clearSurvivedRestart: true, foreignRequests }, null, 2));
   }
 });
+
+test('her pages: lists from settings, ten a page with More and Back, the lit rail tile closes, About me puts stories first, the dialog saves the lists', { timeout: 60000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-pages-'));
+  const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+  const page = await context.newPage(), errors = [], saved = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const questions = Array.from({ length: 13 }, (_, i) => `Question ${i + 1}?`);
+  await page.route('**/settings', route => {
+    if (route.request().method() === 'POST') { saved.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatQuestions: questions, chatComments: ['That is cool!'], chatAbout: ['I like swings.', 7] }) });
+  });
+  await page.route('**/chat/api/world', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ text: '', about: ['I am in first grade.'], week: ['This week: magnets.'] }) }));
+  // A saved story, through the real store, before the page loads.
+  await page.goto(base + '/');
+  await page.evaluate(async () => {
+    const state = await (await fetch('/chat/api/state')).json();
+    await fetch('/chat/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 1, expectedRevision: state.revision, patch: { stories: [{ label: 'Our trip', say: 'We went to the zoo.' }] } }) });
+  });
+  await page.goto(base + '/chat/'); await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
+  await page.waitForFunction(() => document.querySelector('#chatQuestions').value.split('\n').length === 13);
+  // The door bar's right end (spec 2026-10-28 §1): lock, partner settings, Hold to ask in the corner.
+  await page.locator('#stripLock').waitFor();
+  const bar = await page.evaluate(() => ['#stripLock', '#partnerOpen', '#ask'].map(id => document.querySelector(id).getBoundingClientRect().toJSON()));
+  assert.ok(bar[0].right <= bar[1].left && bar[1].right <= bar[2].left, `lock, •••, Hold to ask from left to right: ${JSON.stringify(bar.map(box => [box.left, box.right]))}`);
+  assert.ok(1600 - bar[2].right <= 16, `Hold to ask is in the top right corner (${1600 - bar[2].right} px from the edge)`);
+  const items = () => page.locator('#grid .tile.item .label').allTextContents();
+  const navs = () => page.locator('#grid .tile.nav .label').allTextContents();
+  await page.locator('#grid .tile.page[data-page="questions"]').click();
+  assert.deepEqual(await items(), questions.slice(0, 10)); assert.deepEqual(await navs(), ['More', 'Back']);
+  assert.equal(await page.locator('#grid .tile.page.on').getAttribute('data-page'), 'questions');
+  assert.equal(await page.locator('#grid .tile.mode').count(), 0, 'the page takes the bottom row too');
+  assert.equal(await page.locator('#grid .tile.page').count(), 3); assert.equal(await page.locator('#grid .tile.yes, #grid .tile.no, #grid .tile.question').count(), 3);
+  await page.locator('#grid .tile.nav', { hasText: 'More' }).click();
+  assert.deepEqual(await items(), questions.slice(10)); assert.deepEqual(await navs(), ['Back']);
+  await page.locator('#grid .tile.page.on').click(); // the lit tile closes the page
+  await page.locator('#grid .tile.page.on').waitFor({ state: 'detached' });
+  assert.deepEqual(await page.locator('#grid .tile.static .label').allTextContents(), ['Tell me more', 'Something else', "Hi!", "What's up?", 'How are you?', 'Come sit with me.']);
+  await page.locator('#grid .tile.page[data-page="about"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.item').length === 4);
+  assert.deepEqual(await items(), ['Our trip', 'I like swings.', 'I am in first grade.', 'This week: magnets.'], 'stories, then her lines, then the world');
+  await page.locator('#grid .tile.nav', { hasText: 'Back' }).click();
+  await page.locator('#grid .tile.page.on').waitFor({ state: 'detached' });
+  await page.locator('#grid .tile.page[data-page="comments"]').click();
+  assert.deepEqual(await items(), ['That is cool!']);
+  // The partner dialog: one per line, twenty lines of forty characters at most.
+  await page.locator('#partnerOpen').click();
+  const lines = [...Array.from({ length: 24 }, (_, i) => `Comment ${i}`), 'x'.repeat(60)];
+  await page.locator('#chatComments').fill(lines.join('\n')); await page.locator('#chatComments').blur();
+  await page.waitForFunction(() => document.querySelector('#chatCommentsNote').textContent.startsWith('Saved 20'));
+  assert.deepEqual(saved.at(-1), { chatComments: lines.slice(0, 20) });
+  await page.locator('#partnerDialog form button').click();
+  assert.deepEqual(await items(), lines.slice(0, 10), 'the open page shows the saved list');
+  assert.deepEqual(errors, []);
+});
