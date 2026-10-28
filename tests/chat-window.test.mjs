@@ -101,6 +101,38 @@ test('an utterance is capped at 15 s: sealed, and listening continues', () => {
   assert.equal(m.w.state, 'open');
 });
 
+test('speech under the energy floor: the 15 s utterance cap starts from the first new words (review fix)', () => {
+  const m = machine();
+  // Soft speech: every frame is quiet to the energy gate, yet words keep coming.
+  for (let k = 0; k < 150; k++) { m.frames(1, false); if (k % 5 === 0) m.w.partial('and then we went to the park ' + k); }
+  assert.equal(m.seals.length, 0, '14.9 s since the first words, new words every 0.5 s');
+  m.frames(1, false);
+  assert.equal(m.seals.length, 1, 'the cap fires though no frame was energetic');
+  assert.equal(m.seals[0].reason, 'cap');
+  assert.equal(m.w.state, 'open');
+});
+
+test('speech under the energy floor: 1.5 s with no new words seals the utterance (review fix)', () => {
+  const m = machine();
+  m.frames(3, false); m.w.partial('would you');
+  m.frames(5, false); m.w.partial('would you like music');
+  m.frames(14, false);
+  assert.equal(m.seals.length, 0, '1.4 s since the last new words');
+  m.frames(1, false);
+  assert.deepEqual(m.seals, [{ seq: 1, text: 'would you like music', windowText: 'would you like music', reason: 'silence' }]);
+  assert.equal(m.w.state, 'open');
+});
+
+test('speech under the energy floor with ticks only: the quiet seal uses the time of the last new words (review fix)', () => {
+  const m = machine();
+  m.at(2000); m.w.partial('chicken or fish');
+  m.at(3400);
+  assert.equal(m.seals.length, 0);
+  m.at(3500);
+  assert.equal(m.seals.length, 1);
+  assert.equal(m.seals[0].reason, 'silence');
+});
+
 test('10 s without new words after the last seal closes the window: silence', () => {
   const m = machine();
   m.w.partial('chicken or fish'); m.w.turnEnd('chicken or fish');

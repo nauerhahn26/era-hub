@@ -17,9 +17,10 @@
 // An utterance "sounds complete" when the streaming service says its turn
 // ended (turnEnd), or, when no such signal comes, after 15 quiet 100 ms frames
 // (1.5 s) following at least 2 energetic ones (the energy gate below, the
-// speech worker's own floor). Whichever comes first seals; the same words
-// never seal twice. One utterance is capped at 15 s: at the cap it seals and
-// listening goes on.
+// speech worker's own floor), or, when speech stays under that floor while
+// words arrive, after 1.5 s with no new words. Whichever comes first seals; the same words
+// never seal twice. One utterance is capped at 15 s from its first energetic frame or its
+// first words, whichever comes first: at the cap it seals and listening goes on.
 //
 // "Words" are the service's running text for the whole window (partials are
 // cumulative inside one window turn). The window's 10 s silence counts words,
@@ -40,6 +41,7 @@
 'use strict';
 
 const WINDOW_LIMITS = Object.freeze({ quietFrames: 15, speechFrames: 2, utteranceMs: 15000, silenceMs: 10000, capMs: 60000 });
+const FRAME_MS = 100;
 const normalized = text => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim();
 const clean = text => typeof text === 'string' ? text.trim().replace(/\s+/g, ' ') : '';
 
@@ -71,6 +73,9 @@ function createWindow({ clock = Date.now, limits = {}, seal = () => {}, close = 
     const now = clock();
     if (now - openedAt >= L.capMs) { endUtterance('cap'); return; }
     if (utterance.startedAt !== null && now - utterance.startedAt >= L.utteranceMs) { trySeal('cap'); resetUtterance(); }
+    // Speech under the energy floor while words still arrive: no quiet frames
+    // follow energetic ones, so 1.5 s with no new words is the quiet instead.
+    else if (utterance.energetic < L.speechFrames && unsealed() && now - lastWordsAt >= L.quietFrames * FRAME_MS) trySeal('silence');
     if (now - lastWordsAt >= L.silenceMs) {
       const any = trySeal('close') || seq > 0;
       finish(any ? 'silence' : 'nothing-said');
@@ -79,6 +84,8 @@ function createWindow({ clock = Date.now, limits = {}, seal = () => {}, close = 
   function heardWords(text) {
     if (!text || text === heard) return false;
     heard = text; lastWordsAt = clock();
+    // The utterance clock starts on its first words as well as its first energetic frame.
+    if (state === 'open' && utterance.startedAt === null && unsealed()) utterance.startedAt = lastWordsAt;
     return true;
   }
   // Speech since the last seal: unsealed words, or speech frames whose words
