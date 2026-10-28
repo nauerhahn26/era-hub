@@ -156,7 +156,7 @@ export function createTurnLog(options = {}) {
       if (recallRejected === true) turn.content.recallRejected = true; else delete turn.content.recallRejected;
       // Her world's size when it went with the question: counts, never the text.
       const count = (n, max) => Number.isSafeInteger(n) && n >= 0 && n <= max;
-      if (world && count(world.weeks, 520) && count(world.chars, 4000) && (world.days === undefined || count(world.days, 31)))
+      if (world && count(world.weeks, 520) && count(world.chars, 6000) && (world.days === undefined || count(world.days, 31)))
         turn.content.world = { weeks: world.weeks, ...(world.days === undefined ? {} : { days: world.days }), chars: world.chars };
       else delete turn.content.world;
       if (usage && ['inputTokens', 'cachedTokens', 'outputTokens'].every(key => Number.isSafeInteger(usage[key]) && usage[key] >= 0))

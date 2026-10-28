@@ -175,14 +175,14 @@ test('HTTP adapter rejects cross-origin traffic, caps payloads and closes pendin
   assert.ok(!JSON.stringify(health).includes('private-value'));
   const request = (body, headers = {}) => fetch(base + '/choices', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
   assert.equal((await request({ text: 'What next?' }, { Origin: 'https://elsewhere.example' })).status, 403);
-  assert.equal((await request({ text: 'x'.repeat(17000) })).status, 413);
+  assert.equal((await request({ text: 'x'.repeat(33000) })).status, 413);
   assert.equal((await fetch(base + '/choices', { method: 'POST', body: 'text=data' })).status, 415);
   const result = await request({ text: 'What next?' });
   assert.equal(result.status, 200);
   assert.deepEqual((await result.json()).choices, choices);
   assert.equal(calls, 1);
   // A full question with a full context and a world at the digest cap still fits.
-  const full = await request({ text: 'W'.repeat(2000), context: Array(8).fill('Me: ' + 'c'.repeat(496)), shape: 'open', world: 'Today: x.\n' + 'w'.repeat(3990) });
+  const full = await request({ text: 'W'.repeat(2000), context: Array(8).fill('Me: ' + 'c'.repeat(496)), shape: 'open', world: 'Today: x.\n' + 'w'.repeat(5990) });
   assert.equal(full.status, 200); assert.equal(calls, 2);
   assert.equal(adapterPort({}), 8385);
   assert.throws(() => adapterPort({ ERA_CHAT_TEXT_PORT: String(8300 + 77) }));
@@ -269,12 +269,12 @@ test('world reaches the model with an open-ended question, newlines kept; anythi
   assert.equal(input().world, WORLD);
   await adapter.generate({ text: 'What was your favourite thing at school?', world: WORLD });
   assert.equal('world' in input(), false, 'no shape, no world');
-  for (const junk of [7, '', '   ', 'x'.repeat(4001), 'Today: x.\tTab', 'Today: <b>x</b>', 'Today: x.\u0000', ['Today']]) {
+  for (const junk of [7, '', '   ', 'x'.repeat(6001), 'Today: x.\tTab', 'Today: <b>x</b>', 'Today: x.\u0000', ['Today']]) {
     await adapter.generate({ text: 'What did you learn?', shape: 'open', world: junk });
     assert.equal('world' in input(), false, JSON.stringify(junk).slice(0, 40));
   }
-  await adapter.generate({ text: 'What did you learn?', shape: 'open', world: 'x\n'.repeat(2000) });
-  assert.equal(input().world.length, 3999, 'up to the digest cap of 4,000, trimmed');
+  await adapter.generate({ text: 'What did you learn?', shape: 'open', world: 'x\n'.repeat(3000) });
+  assert.equal(input().world.length, 5999, 'up to the digest cap of 6,000, trimmed');
 });
 
 test('the recall check passes a reply that names something from world and still throws out an activity world never mentions', async () => {
@@ -288,7 +288,7 @@ test('the recall check passes a reply that names something from world and still 
   for (const say of ['I went to the zoo.', 'We watched a movie this week.', 'I learned about school.', 'Last week I saw a friend.'])
     assert.equal((await run(say, WORLD)).recallRejected, true, 'stop words and words outside world never pass: ' + say);
   // The day notes and teachers' lists from world.json grow the terms; their scaffolding does not.
-  const notes = WORLD + '\nLast week at school she did: a leaf collage; a song about seasons.\nLast week her class worked on: counting by fives.\nYesterday at school: happy; speech, buddies. She said on her device: She wants to paint.';
+  const notes = WORLD + '\nLast week at school (her teacher\'s list): a leaf collage; a song about seasons.\nLast week her class worked on: counting by fives.\nYesterday at school: happy; speech, buddies. She said on her device: She wants to paint.';
   for (const say of ['I made a leaf collage.', 'We did buddies.', 'We went to speech.'])
     assert.equal((await run(say, notes)).kind, 'generated', say);
   for (const say of ['I went to the park yesterday.', 'I saw it on my device.', 'We went to class.'])

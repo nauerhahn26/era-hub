@@ -21,7 +21,7 @@ const SCHEMA = { type: 'object', properties: { choices: { type: 'array', minItem
 required: ['choices'], additionalProperties: false };
 const SYMBOLS = new Set(SCHEMA.properties.choices.items.properties.symbol.enum);
 const SHAPES = ['want', 'recall', 'feel', 'open'];
-const DEFAULTS = { inputBytes: 16384, outputBytes: 65536, timeoutMs: 12000, concurrent: 2 };
+const DEFAULTS = { inputBytes: 32768, outputBytes: 65536, timeoutMs: 12000, concurrent: 2 };
 function failure(code, status = 502) { return Object.assign(new Error(code), { code, status }); }
 function clean(value, length) {
   if (typeof value !== 'string' || !value.trim() || value.length > length || /[\x00-\x08\x0b-\x1f<>]/.test(value)) return null;
@@ -52,7 +52,7 @@ function inputData(input) {
   }
   // Her world (chat-world.js): the device's own digest, newlines between its
   // lines and nothing else outside plain text; only with an open-ended question.
-  if (data.shape && typeof input.world === 'string' && input.world.trim() && input.world.length <= 4000 &&
+  if (data.shape && typeof input.world === 'string' && input.world.trim() && input.world.length <= 6000 &&
     !/[\x00-\x09\x0b-\x1f\x7f<>]/.test(input.world)) data.world = input.world.trim();
   return data;
 }

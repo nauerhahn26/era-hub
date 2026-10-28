@@ -318,14 +318,14 @@ test('an open-ended question\'s shape and a thrown-out recall batch are category
 test('her world\'s size, never its text, is in the record, and the hub schema bounds it', async () => {
   const s = setup(), h = s.wrapped.begin('typed');
   const choices = [{ id: '1:0', label: 'Magnets', say: 'Learning about magnets.', symbol: 'chat', symbolId: 6531 }];
-  stageChoices(s.log, h, choices, { kind: 'generated', shape: 'open', world: { weeks: 2, days: 3, chars: 3900, text: 'Magnets!' } }, choice => choice.symbol);
+  stageChoices(s.log, h, choices, { kind: 'generated', shape: 'open', world: { weeks: 2, days: 3, chars: 5900, text: 'Magnets!' } }, choice => choice.symbol);
   s.wrapped.mark(h, 'selected'); s.wrapped.end(h, 'completed'); await flush();
   const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
-  assert.deepEqual(record.content.world, { weeks: 2, days: 3, chars: 3900 });
+  assert.deepEqual(record.content.world, { weeks: 2, days: 3, chars: 5900 });
   assert.ok(!JSON.stringify(record).includes('Magnets!'), 'the text never goes in a record');
   assert.deepEqual(validateTurn(record), record);
   assert.deepEqual(validateTurn({ ...record, content: { ...record.content, world: { weeks: 1, chars: 10 } } }).content.world, { weeks: 1, chars: 10 }, 'days may be absent');
-  for (const world of [{ weeks: 2 }, { weeks: -1, chars: 1 }, { weeks: 1, chars: 4001 }, { weeks: 1, days: -1, chars: 5 }, { weeks: 1, days: 32, chars: 5 }, { weeks: 1, chars: 10, text: 'x' }, 'Magnets'])
+  for (const world of [{ weeks: 2 }, { weeks: -1, chars: 1 }, { weeks: 1, chars: 6001 }, { weeks: 1, days: -1, chars: 5 }, { weeks: 1, days: 32, chars: 5 }, { weeks: 1, chars: 10, text: 'x' }, 'Magnets'])
     assert.throws(() => validateTurn({ ...record, content: { ...record.content, world } }), /invalid-turn/, JSON.stringify(world));
   const t2 = setup(), h2 = t2.wrapped.begin('typed');
   stageChoices(t2.log, h2, choices, { kind: 'generated', world: { weeks: 'two', chars: 5 } }, choice => choice.symbol);

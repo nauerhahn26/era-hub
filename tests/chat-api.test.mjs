@@ -1014,7 +1014,7 @@ test('an open question sends world to the adapter; a statement, an alternatives 
   assert.deepEqual((await (await shelf.request('/choices', { text: 'Which book is best?' })).json()).world, { weeks: 0, days: 0, chars: 62 }, 'a provider without days counts none');
   assert.match(seen.at(-1).world, /Moon Song/);
   // A broken provider costs the world, never the reply.
-  for (const world of [() => { throw Error('unreadable'); }, () => ({ text: 7 }), () => ({ text: 'Today: x.\n' + 'y'.repeat(4000), weeks: 1 }), { digest: () => null }, 'text']) {
+  for (const world of [() => { throw Error('unreadable'); }, () => ({ text: 7 }), () => ({ text: 'Today: x.\n' + 'y'.repeat(6000), weeks: 1 }), { digest: () => null }, 'text']) {
     const broken = await service(t, { world, env, fetch: reply });
     const result = await (await broken.request('/choices', { text: 'What was your favourite thing at school?' })).json();
     assert.equal(result.choices.length, 2); assert.equal('world' in seen.at(-1), false); assert.equal('world' in result, false);

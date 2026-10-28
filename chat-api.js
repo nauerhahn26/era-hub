@@ -415,7 +415,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   const worldDigest = () => {
     try {
       const value = typeof options.world === 'function' ? options.world() : typeof options.world?.digest === 'function' ? options.world.digest() : null;
-      if (!value || typeof value.text !== 'string' || value.text.length > 4000) return null;
+      if (!value || typeof value.text !== 'string' || value.text.length > 6000) return null;
       const count = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
       return { text: value.text, weeks: count(value.weeks), days: count(value.days), chars: value.text.length };
     } catch { return null; }

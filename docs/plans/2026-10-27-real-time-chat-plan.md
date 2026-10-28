@@ -351,6 +351,15 @@ library, and the likes list. Nothing new has to be published for this.
   line, and caps at 4,000 characters (oldest days go first, then worked_on
   lists, then the package order). The turn record carries `days` beside
   `weeks` and `chars`.
+- After the live run with the real 10/26 package (10/28: the trim dropped
+  every day line, the most valuable part): per-list caps come first (About
+  320 characters of whole sentences; the teacher's list 8 x 110; worked on
+  5 x 90; a day's moments 3 x 120 and said 2 x 140; package Words 10 and
+  Videos 3; two weeks ago the teacher's list only; older world weeks
+  dropped), the cap is 6,000 characters, and the trim takes worked_on
+  lists, package videos, the two-weeks-ago list, days older than seven,
+  older package weeks, books beyond four, and only then the newest days.
+  The teacher's list reads "Last week at school (her teacher's list): …".
 
 **Tasks.**
 
