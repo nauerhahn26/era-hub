@@ -193,12 +193,18 @@ function drawnFor(word) { return shapes[DRAWN[word] || word] ? DRAWN[word] || wo
 // then replies claim pictures, so a reply never takes a picture from a tile
 // whose place she has learned. A repeat takes the concept's alternate
 // picture, then the bubble; when both are taken the tile shows its words alone.
-export function planPictures(entries, { variant = 'color' } = {}) {
+// `keep[i]`, when not undefined, is the picture (or null) tile i already shows:
+// a replacement's unchanged reply keeps it, and the rest are planned around it.
+export function planPictures(entries, { variant = 'color', keep = [] } = {}) {
   if (!library) return entries.map(() => null);
   const rank = entry => entry.type === 'yes' || entry.type === 'no' ? 0 : entry.type === 'route' ? 1 : entry.type === 'response' ? 3 : 2;
   const order = entries.map((entry, index) => index).sort((a, b) => rank(entries[a]) - rank(entries[b]) || a - b);
   const used = new Set(), shown = new Set(), plan = entries.map(() => null);
+  const kept = index => keep[index] !== undefined;
+  const lookOf = item => item.kind === 'emoji' ? item.emoji : item.kind === 'drawn' ? 'drawn:' + item.drawn : item.id;
+  entries.forEach((entry, index) => { if (!kept(index)) return; plan[index] = keep[index]; if (keep[index]) { used.add(keep[index].id); shown.add(lookOf(keep[index])); } });
   for (const index of order) {
+    if (kept(index)) continue;
     const concept = conceptFor(entries[index]);
     if (!concept) continue;
     const options = [[concept.id, concept.word], [concept.altId, concept.word], [library.fallback.id, library.fallback.word]];

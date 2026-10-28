@@ -211,10 +211,20 @@ function tile(label, type, action, position, say, pick = {}) {
   return el;
 }
 // Pictures are planned for the whole page at once so no two tiles share one.
-function paintPictures(grid) {
+// Within one turn a reply whose label is unchanged keeps its picture as well
+// as its cell (design §4.5): only new labels get pictures planned.
+let paintedReplies = { turn: -1, byLabel: new Map() };
+const replyKey = entry => entry.type === 'response' ? String(entry.label).trim().toLowerCase() : null;
+function paintPictures(grid, turn) {
   if (!hasVocabulary()) return;
   const tiles = [...grid.children];
-  const plan = planPictures(tiles.map(el => pictureOf.get(el) || { type: 'rest' }), { variant: pictureVariant });
+  const entries = tiles.map(el => pictureOf.get(el) || { type: 'rest' });
+  const before = turn === paintedReplies.turn ? paintedReplies.byLabel : new Map();
+  const keep = entries.map(entry => { const key = replyKey(entry); return key !== null && before.has(key) ? before.get(key) : undefined; });
+  const plan = planPictures(entries, { variant: pictureVariant, keep });
+  const byLabel = new Map();
+  entries.forEach((entry, i) => { const key = replyKey(entry); if (key !== null) byLabel.set(key, plan[i]); });
+  if (byLabel.size || turn !== paintedReplies.turn) paintedReplies = { turn, byLabel };
   tiles.forEach((el, i) => attachPicture(el, plan[i], fitTile));
 }
 function go(next) { screen = next; gridKey = ''; renderGrid(controller.state); }
@@ -255,7 +265,7 @@ function renderGrid(state) {
     ? [['Tell me more', () => controller.sayFixed('Tell me more.')], ['Reactions', () => go('reactions')], ['My news', () => go('news')], ['Help me say it', () => go('repair')]]
     : [['Tell me more', () => controller.sayFixed('Tell me more.')], ['Reactions', () => go('reactions')], ['My news', () => go('news')], ['Back to Chat', () => go('chat')]];
   bottom.forEach(([label, action], i) => grid.append(tile(label, i === 0 ? 'static' : 'route', action, [i, 2])));
-  paintPictures(grid);
+  paintPictures(grid, state.turn);
   requestAnimationFrame(fitLabels);
 }
 controller.subscribe(state => {
