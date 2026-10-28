@@ -1023,6 +1023,94 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-window.test.mjs",
+      "purpose": "The button-press listening window machine with an injected clock: end of turn and 1.5 s quiet seal, 15 s utterance cap, 10 s silence, 60 s cap, second press, cancel, pick, nothing said; the ported energy gate",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit + static contract",
+      "dependencies": [
+        "era-hub/chat-window.js",
+        "era-hub/chat-api.js"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-window-hub.test.mjs",
+      "purpose": "Listening windows through the hub Chat module: one stream turn kept open, seals on the whole window text as batch-sealed {windowId, seq}, energy-gate fallback, press/cancel/pick/silence/cap/nothing-said closes, window guards, the buttons dispatcher reaching the window",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP/WebSocket module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-window.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/buttons.js",
+        "era-hub/server.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "synthetic-runtime-children",
+        "fetch-doubles",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-commands-browser.test.mjs",
+      "purpose": "Real Chat page asked from the partner's button: command stream at load, nonce claimed once, ask with no touch, the three partner lines, two drawn tones, her pick ends the window, a pause stays one utterance, quiet seals, a second utterance, the second press",
+      "group": "chat",
+      "lane": "linux",
+      "level": "browser application integration",
+      "dependencies": [
+        "era-hub/public/chat/**",
+        "era-hub/chat-api.js",
+        "era-hub/chat-window.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/chat-store.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/buttons.js"
+      ],
+      "resources": [
+        "chromium",
+        "owned-loopback-services",
+        "synthetic-microphone-wav",
+        "real-audio-worklet",
+        "cdp-touch-events",
+        "synthetic-runtime-children",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-choices-stream.test.mjs",
       "purpose": "Streamed structured choices: incremental parser, fast-tier field, each choice handed over before the reply ends, whole-batch post-checks, cancel",
       "group": "chat",
