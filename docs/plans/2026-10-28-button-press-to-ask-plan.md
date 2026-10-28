@@ -152,7 +152,7 @@ Info
 
 ## Phase 2 — page: ask from a push or a nonce, no touch (implementing)
 
-- [ ] **T2.1** `public/chat/commands.js`: opens `EventSource('/chat/api/commands'
+- [x] **T2.1** (a `replaced` page closes its stream; reconnects re-report visibility) `public/chat/commands.js`: opens `EventSource('/chat/api/commands'
       + nonce)` at load (before any session), reports visibility on
       `visibilitychange`, strips `?ask=` with `history.replaceState` once
       claimed. Verify: `node --test tests/chat-commands-browser.test.mjs`

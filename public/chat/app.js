@@ -7,6 +7,7 @@ import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPicture
 import { fitTile } from './tile-fit.js';
 import { createTurnLog, observeMetrics, stageChoices } from './turnlog.js';
 import { mountDoorBar } from '/lib/doorbar.js';
+import { connectCommands } from './commands.js';
 
 const $ = id => document.getElementById(id);
 const API = '/chat/api';
@@ -448,6 +449,8 @@ function receiveEvent(event) {
   }
 }
 
+// Button press to ask (design 2026-10-27 §4.3): filled in by plan T2.2.
+async function askFromButton() {}
 async function startChat() {
     if (appLocked()) return;
   if (starting || closing || session || document.visibilityState !== 'visible') return;
@@ -743,3 +746,5 @@ appReady = true;
 document.body.dataset.storageReady = 'true';
 for (const id of ['startChat', 'desktopStart', 'desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = false;
 if (persistence.status().state === 'unsaved' || persistence.status().state === 'conflict') notice(storageStatus.textContent);
+// The partner's button (design 2026-10-27 §4.2): the hub's command stream, open before any session.
+connectCommands({ onCommand: command => { if (command.type === 'ask') void askFromButton(command); } });
