@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeChatToneWav, assertContentFreeMetrics, makeChatStateDiagnostic, waitForChatState, assertChatTilesFit } from './lib/chat-ui-smoke.mjs';
+import { makeChatToneWav, assertContentFreeMetrics, makeChatStateDiagnostic, waitForChatState, assertChatTilesFit, settleRoute, rewriteSettingsRoute } from './lib/chat-ui-smoke.mjs';
 
 test('Chat UI audio fixture is a small valid PCM WAV with real samples', () => {
   const wav = makeChatToneWav();
@@ -109,4 +109,38 @@ test('Chat fit diagnostics are bounded: long labels are cut and a missing animat
     assert.match(error.message, /no animation frame/);
     return true;
   });
+});
+
+// v1.0.36 leg B: a /settings request still in flight when the check unrouted
+// rejected route.fulfill with "Route is already handled!" after the test ended.
+const raced = message => Object.assign(new Error(message), { name: 'Error' });
+function fakeRoute({ fetchError, fulfillError, body = { dwellMs: 1200, chatPromptMs: 12000, chatName: 'Sam' } } = {}) {
+  const calls = [];
+  const response = { json: async () => body };
+  return { calls, route: {
+    fetch: async () => { calls.push('fetch'); if (fetchError) throw raced(fetchError); return response; },
+    fulfill: async options => { calls.push(['fulfill', options]); if (fulfillError) throw raced(fulfillError); },
+    continue: async () => { calls.push('continue'); if (fulfillError) throw raced(fulfillError); },
+  } };
+}
+
+test('the smoke check turns the options reading off for its own page: /settings is answered with chatPromptMs 0', async () => {
+  const { route, calls } = fakeRoute();
+  await rewriteSettingsRoute(route);
+  assert.equal(calls[0], 'fetch');
+  assert.deepEqual(calls[1][1].json, { dwellMs: 1200, chatPromptMs: 0, chatName: 'Sam' });
+});
+
+test('a route the check no longer owns (already handled, page or browser closed) settles quietly; anything else still fails', async () => {
+  for (const message of ['route.fulfill: Route is already handled!', 'route.fetch: Target page, context or browser has been closed', 'route.continue: Request context disposed.']) {
+    for (const where of ['fetchError', 'fulfillError']) {
+      const { route } = fakeRoute({ [where]: message });
+      await assert.doesNotReject(rewriteSettingsRoute(route), `${where}: ${message}`);
+    }
+    await assert.doesNotReject(settleRoute(Promise.reject(raced(message))), message);
+  }
+  const { route } = fakeRoute({ body: null });
+  await rewriteSettingsRoute(route);
+  await assert.rejects(settleRoute(Promise.reject(raced('route.fulfill: something else broke'))), /something else broke/);
+  assert.equal(await settleRoute(Promise.resolve(7)), 7);
 });
