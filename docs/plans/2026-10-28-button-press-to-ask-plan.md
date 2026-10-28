@@ -158,7 +158,7 @@ Info
       claimed. Verify: `node --test tests/chat-commands-browser.test.mjs`
       (Playwright fixture copied from `tests/chat-stream-browser.test.mjs`:
       fake audio device, CDP touch). Guard: a reload after the claim never asks.
-- [ ] **T2.2** `askFromButton(cmd)` in `app.js`: a new function beside
+- [x] **T2.2** (press turns live in the test-mode turn log only; the page's second EventSource needed the chat-browser, chat-test-mode-browser and chat-ui-smoke fixtures to tell the two apart) `askFromButton(cmd)` in `app.js`: a new function beside
       `startChat`/`beginAsk` (those stay untouched, T0.3): if no session →
       `startChat` body factored into `openSession()` that both call; when
       `engineReady` → `control('window', {context})`, then tone, then

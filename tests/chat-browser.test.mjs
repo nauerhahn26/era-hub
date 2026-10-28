@@ -83,7 +83,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   // This second pass owns a simulated recognizer with the real capture graph.
   const controls = [], uploaded = []; let generation = 0, sequence = 0, stalled = false, releaseUpload;
   await page.addInitScript(() => {
-    window.EventSource = class { constructor() { window.__timingEvents = this; } close() { this.closed = true; } };
+    window.EventSource = class { constructor(url) { if (!String(url).includes('/chat/api/commands')) window.__timingEvents = this; } close() { this.closed = true; } };
   });
   await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
   await page.route('**/tts', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }));

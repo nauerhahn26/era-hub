@@ -66,7 +66,7 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   await context.route(url => url.origin !== base, route => { foreign++; return route.abort('blockedbyclient'); });
   const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
   const controls = []; let generation = 0, uploads = 0;
-  await page.addInitScript(() => { window.EventSource = class { constructor() { window.__events = this; } close() { this.closed = true; } }; });
+  await page.addInitScript(() => { window.EventSource = class { constructor(url) { if (!String(url).includes('/chat/api/commands')) window.__events = this; } close() { this.closed = true; } }; });
   await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
   await page.route('**/tts', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }));
   await page.route('**/chat/api/**', async route => {

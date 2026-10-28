@@ -8,6 +8,7 @@ import { fitTile } from './tile-fit.js';
 import { createTurnLog, observeMetrics, stageChoices } from './turnlog.js';
 import { mountDoorBar } from '/lib/doorbar.js';
 import { connectCommands } from './commands.js';
+import { createTones } from './tones.js';
 
 const $ = id => document.getElementById(id);
 const API = '/chat/api';
@@ -49,7 +50,7 @@ const voice = createChatVoice({ storage: persistence.voiceStorage,
 const metrics = observeMetrics(createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 }), turnLog);
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
 const AUDIO_POST_MS = 2000;
-let questionMetric = null, speechMetric = null, pendingSpeechMetric = null;
+let questionMetric = null, speechMetric = null, pendingSpeechMetric = null, pressMetric = null;
 let screen = 'chat', config = null, session = null, events = null, mic = null;
 let lifecycle = 0, sequence = 0, workerGeneration = -1, uploadEpoch = 0;
 let mode = 'blocked', starting = false, closing = false, holding = false, askTimer = null, finishedTurn = -1;
@@ -68,6 +69,12 @@ let stagedChoices = false, staging = null;
 const STAGING_MS = 20000;
 const SOCKET_BUFFER_LIMIT = 256000;
 let stories = savedSettings.stories;
+// A button-press listening window (design 2026-10-27 §4.3-§4.4): `press` is the
+// window this page opened, from the control reply until it closes. The hub's
+// window machine decides when it ends; the page listens, shows, and plays the tones.
+let press = null, pressBusy = false, pickSent = Promise.resolve();
+const tones = createTones();
+const FRAMES_AFTER_TONE_MS = 200;
 
 const fixed = {
   chat: ["Hi!", "What's up?", 'How are you?', 'Come sit with me.'],
@@ -107,6 +114,7 @@ async function json(url, options = {}) {
 }
 const notice = text => { $('notice').textContent = text || ''; };
 function paintPhase(state = controller.state) {
+  if (press && !press.closed) { $('phase').textContent = press.listening ? 'Listening' : 'Starting to listen'; return; }
   $('phase').textContent = state.staged && state.phase === 'Preparing' ? 'Replies ready'
     : state.phase === 'Capturing question' && ((remoteStreaming && mode !== 'opening') || questionSending) ? 'Sending question' : state.phase;
 }
@@ -449,12 +457,16 @@ function receiveEvent(event) {
   }
 }
 
-// Button press to ask (design 2026-10-27 §4.3): filled in by plan T2.2.
-async function askFromButton() {}
 async function startChat() {
     if (appLocked()) return;
   if (starting || closing || session || document.visibilityState !== 'visible') return;
-  if (!config?.runtime?.available) { controller.fail('Speech is not set up. Prepared phrases and stories still work.'); return; }
+  await openSession();
+}
+// The session start Start Chat and the partner's button share: microphone,
+// session, events, then the hub says when speech is ready. True when a
+// session was opened. `denied` is the line shown when the microphone is refused.
+async function openSession({ denied = 'Microphone permission was not granted. Your phrases still work.' } = {}) {
+  if (!config?.runtime?.available) { controller.fail('Speech is not set up. Prepared phrases and stories still work.'); return false; }
   starting = true; const mine = ++lifecycle; sessionAbort = new AbortController();
   $('startChat').disabled = true; notice('Starting the microphone…');
   try {
@@ -471,11 +483,73 @@ async function startChat() {
     events.onerror = () => { if (mine === lifecycle) failSession('The speech connection closed. Your phrases still work.'); };
     readyTimer = setTimeout(() => failSession('Speech did not become ready. Your phrases still work.'), 20000);
     $('endChat').disabled = false; notice('Waiting for speech to become ready…');
+    return true;
   } catch (e) {
-    if (mine === lifecycle) { await shutdown('close'); controller.fail(e.name === 'NotAllowedError' ? 'Microphone permission was not granted. Your phrases still work.' : e.message); }
+    if (mine === lifecycle) { await shutdown('close'); controller.fail(e.name === 'NotAllowedError' ? denied : e.message); }
+    return false;
   } finally {
     if (mine === lifecycle) { starting = false; $('startChat').disabled = !!session; }
   }
+}
+// ---- the partner's button (design 2026-10-27 §4.3-§4.6) ----
+// An `ask` from the hub does what Start Chat and a hold do, with no touch:
+// session if needed, a listening window at the hub, the listening tone, then
+// frames 200 ms after the tone has ended (the tone is never transcribed).
+const STREAMING_LINE = 'Streaming speech is not set up on this device';
+const MICROPHONE_LINE = 'Touch Start Chat once to allow the microphone';
+const NOTHING_HEARD_LINE = "Didn't hear a question";
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+function engineReadyWithin(ms) {
+  if (controller.state.engineReady) return Promise.resolve(true);
+  const mine = lifecycle;
+  return new Promise(resolve => {
+    let off = null;
+    const done = value => { clearTimeout(timer); off?.(); resolve(value); };
+    const timer = setTimeout(() => done(false), ms);
+    off = controller.subscribe(state => { if (state.engineReady) queueMicrotask(() => done(true)); else if (mine !== lifecycle) queueMicrotask(() => done(false)); });
+  });
+}
+async function askFromButton(command = {}) {
+  if (appLocked() || document.visibilityState !== 'visible') return;
+  // One press at a time: a second press while listening is the hub's to end.
+  if (pressBusy || (press && !press.closed) || starting || closing) return;
+  pressBusy = true;
+  try {
+    await configReady;
+    if (document.visibilityState !== 'visible') return;
+    if (!config?.runtime?.available || config.runtime.capabilities?.streaming !== true) { notice(STREAMING_LINE); return; }
+    if (screen !== 'chat') go('chat');
+    if (!session && !await openSession({ denied: MICROPHONE_LINE })) return;
+    if (!await engineReadyWithin(20000) || !session) return;
+    if (!remoteStreaming) { await shutdown('close'); notice(STREAMING_LINE); return; }
+    if (holding || askPending || mode !== 'blocked' || !['Ready to ask', 'Your turn', 'Preparing'].includes(controller.state.phase)) return;
+    await openPressWindow(command);
+  } finally { pressBusy = false; }
+}
+async function openPressWindow(command) {
+  const mine = lifecycle, intent = ++captureIntent;
+  metrics.end(questionMetric, 'cancelled', 'superseded');
+  // A press is recorded in the test-mode turn log only (kind `press`); the
+  // content-free production rows keep their four kinds.
+  questionMetric = {}; pressMetric = questionMetric;
+  const ago = Number.isFinite(command.pressAt) ? Date.now() - command.pressAt : null;
+  turnLog.begin(questionMetric, 'press', { mode: 'stream', session, ago });
+  pendingFrames = []; captureGeneration = null; finishedTurn = -1;
+  press = { windowId: null, generation: null, listening: false, closed: false, seals: 0, question: '' };
+  setMode('opening'); uploadEpoch++; controller.ask();
+  let reply = null;
+  try { reply = await control('window', { context: recentConversation.slice(-8) }); }
+  catch { if (mine === lifecycle && intent === captureIntent) failSession('Listening could not start. Your phrases still work; press again.'); return; }
+  if (!reply || mine !== lifecycle || intent !== captureIntent || !press || press.closed) return;
+  press.windowId = reply.windowId; press.generation = reply.generation; captureGeneration = reply.generation;
+  turnLog.mark(questionMetric, 'tone');
+  await tones.listening();
+  await pause(FRAMES_AFTER_TONE_MS);
+  if (mine !== lifecycle || intent !== captureIntent || !press || press.closed) return;
+  if (!mic?.begin()) { failSession('The microphone is not ready. Start Chat again.'); return; }
+  setMode('capture'); press.listening = true; document.body.dataset.listening = 'true'; paintPhase();
+  turnLog.mark(questionMetric, 'listening');
+  notice('Listening. Ask the question; Chat stops listening when you stop talking.');
 }
 async function beginAsk() {
     if (appLocked()) return;
@@ -546,6 +620,8 @@ async function shutdown(type = 'close', preserveAnswers = false) {
   const mine = lifecycle; closing = true;
   recentConversation = [];
   captureIntent++; pendingFrames = [];
+  if (press) press.closed = true;
+  press = null;
   setMode('blocked'); starting = false; holding = false; askPending = false; captureGeneration = null;
   remoteFinal = false; remoteStreaming = false; questionSending = false; stagedChoices = false;
   if (staging) { const record = staging; staging = null; record.error ||= new Error('Chat is off.'); record.done?.(record.error); }
@@ -736,7 +812,7 @@ $('clearStories').addEventListener('click', async () => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') shutdown('pause'); });
 window.addEventListener('pagehide', () => shutdown('close'));
 window.addEventListener('resize', () => { window.Dwell?.suppress(600); fitLabels(); });
-json(`${API}/config`).then(value => {
+const configReady = json(`${API}/config`).then(value => {
   config = value;
   $('engineNote').textContent = value.runtime?.available
     ? (value.runtime.kind === 'built-in' ? 'Cloud speech is set up. Start Chat to check the microphone, then wait for Ready to ask.' : 'Speech is set up. Start Chat to check the microphone, then wait for Ready to ask.')

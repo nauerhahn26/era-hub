@@ -111,6 +111,10 @@ async function fixture(t, { script = {}, streaming = true, limits = {}, deny = f
     HTMLMediaElement.prototype.play = function () { window.__plays++; return play.call(this); };
     if (window.speechSynthesis) { const speak = speechSynthesis.speak.bind(speechSynthesis); speechSynthesis.speak = u => { window.__speaks++; return speak(u); }; }
     for (const type of ['touchstart', 'pointerdown']) addEventListener(type, e => { if (e.pointerType === 'touch' || type === 'touchstart') window.__touches++; }, true);
+    // When listening began, and the frames the page sent after it.
+    document.addEventListener('DOMContentLoaded', () => new MutationObserver(() => {
+      if (document.body.dataset.listening === 'true' && window.__listeningAt === undefined) window.__listeningAt = performance.now();
+    }).observe(document.body, { attributes: true, attributeFilter: ['data-listening'] }));
     if (deny) navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
   }, { deny });
   const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
@@ -155,11 +159,13 @@ test('a relaunch nonce in ?ask= is claimed once and stripped from the address; a
   await f.load('?ask=' + nonce);
   await f.until(() => f.page.evaluate(() => !location.search.includes('ask=')));
   assert.equal(f.api.commands.pending(nonce), false, 'the hub spent the nonce');
+  await f.until(() => f.sessions() === 1);
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
   await f.page.reload();
   await f.page.waitForFunction(() => document.body.dataset.storageReady === 'true');
   await f.until(() => f.api.commands.state().connected);
   await f.page.waitForTimeout(800);
-  assert.equal(f.sessions(), 0, 'the reload did not ask again');
+  assert.equal(f.sessions(), 1, 'the reload did not ask again');
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'false');
 });
 
@@ -172,4 +178,51 @@ test('a newer page replaces this one on the stream: this one stops listening for
   await other.body.cancel();
   await f.page.waitForTimeout(1500);
   assert.equal(f.api.commands.state().connected, false, 'the replaced page did not reconnect and fight');
+});
+
+// ---- T2.2 ask from the button ----
+
+test('an ask push starts a session with no touch: microphone, session, window, tone, then frames 200 ms after the tone', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  assert.equal(f.sessions(), 0);
+  f.ask();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
+  assert.equal(await f.page.locator('#phase').textContent(), 'Listening');
+  assert.equal(f.sessions(), 1);
+  assert.ok(f.controls.includes('window'), 'the page opened a listening window');
+  assert.equal(f.controls.includes('ask'), false, 'never a hold');
+  await f.until(() => f.service.connections.some(c => c.frames > 2));
+  const timing = await f.page.evaluate(() => ({ tone: window.__tones[0], listeningAt: window.__listeningAt, touches: window.__touches }));
+  assert.equal(timing.touches, 0, 'no touch anywhere');
+  assert.deepEqual([timing.tone.from, timing.tone.to], [660, 880], 'the rising listening tone');
+  assert.ok(timing.listeningAt - timing.tone.at >= 360, `frames began ${Math.round(timing.listeningAt - timing.tone.at)} ms after the tone started (180 ms tone + 200 ms)`);
+  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'the session is the one Start Chat would have made');
+  assert.deepEqual(f.errors, []);
+});
+
+test('a hidden page refuses an ask, as Start Chat does', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await f.until(() => f.api.commands.state().visible === false);
+  f.ask();
+  await f.page.waitForTimeout(1000);
+  assert.equal(f.sessions(), 0);
+  assert.equal(await f.page.evaluate(() => window.__tones.length), 0);
+});
+
+test('an ask with a session already running goes straight to listening; a second ask while listening is ignored by the page', { timeout: 60000 }, async t => {
+  const f = await fixture(t);
+  await f.load();
+  await f.press('#startChat'); await f.lift();
+  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 10000 });
+  f.ask();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 10000 });
+  f.ask();
+  await f.page.waitForTimeout(500);
+  assert.equal(f.sessions(), 1);
+  assert.equal(f.controls.filter(type => type === 'window').length, 1);
 });

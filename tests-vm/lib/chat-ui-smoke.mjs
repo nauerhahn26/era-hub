@@ -234,6 +234,9 @@ export async function checkInstalledChatUI(page, options = {}) {
     if (url.pathname.startsWith('/chat/api/')) {
       if (request.method() === 'GET' && url.pathname === '/chat/api/config') return route.continue();
       if (['GET', 'PUT'].includes(request.method()) && url.pathname === '/chat/api/state') return route.continue();
+      // The page's command stream for the partner's button (design 2026-10-27 §4.2): open at load.
+      if (request.method() === 'GET' && url.pathname === '/chat/api/commands') return route.continue();
+      if (request.method() === 'POST' && url.pathname === '/chat/api/commands/visibility') return route.continue();
       if (request.method() === 'POST' && url.pathname === '/chat/api/choices') {
         let input; try { input = request.postDataJSON(); } catch {}
         if (input?.text === QUESTION && Array.isArray(input.context) && input.context.length === 0) { requests.choices++; return route.continue(); }
