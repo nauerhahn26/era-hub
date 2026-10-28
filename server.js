@@ -19,13 +19,18 @@ if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
 // Chat test mode (spec 2026-10-27 §5): a separate route and schema, off by default.
-const { createChatTurns, applyTestModeSetting, testModeOn } = require("./chat-turns.js");
+const { createChatTurns, applyTestModeSetting, applyLikesSetting, testModeOn, chatLikes, DEFAULT_LIKES } = require("./chat-turns.js");
 // The reply usage (model id, token counts) reaches the page only while this
 // device's test-mode switch is on. DATA is read when a request asks, not here.
 // Pictures the partner names while speaking, and each staged choice's picture,
 // are warmed into the symbol cache in the background (spec §6, lexicon layer).
 // SYMBOLS_CACHE and the fetch are read when a hold asks, not here.
-const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA),
+// What she likes (dad, 10/28) goes with an open-ended question to the reply
+// model, read from app-settings.json when a question asks.
+// A who question also carries the family's own names: the Drawing library's
+// people still on her board (the list chat-symbols.setPeople pictures).
+const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA), likes: () => chatLikes(DATA),
+  people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
   pictures: { isCached: (id) => fs.existsSync(path.join(SYMBOLS_CACHE, id + ".png")),
               fetchOne: (id, { signal }) => fetchSymbolToCache(String(id), { signal }) } });
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
@@ -1893,6 +1898,7 @@ const server = http.createServer((req, res) => {
               lockMinutes: 45, lockPasscodeHash: "",
               downloadWeekVideos: true,   // this device fetches the week's videos (spec 2026-10-12 §3.2)
               chatTestMode: false,        // Chat test mode: one device's explicit choice (spec 2026-10-27 §5)
+              chatLikes: [...DEFAULT_LIKES], // what she likes, for open-ended Chat questions (dad, 10/28)
               voiceId: loadTtsCfg().voiceId,
               childName: PROFILE.childName || "friend", hasProfile: HAS_PROFILE,
               personalWords: [] };
@@ -2058,6 +2064,9 @@ const server = http.createServer((req, res) => {
         // A page on another site steering the browser never moves it (the
         // Sec-Fetch-Site rule of ownDoor above); the Chat page and tools do.
         s = applyTestModeSetting(s, inc, req.headers["sec-fetch-site"]);
+        // What she likes (dad, 10/28): a list of up to twelve short phrases,
+        // through the same door; anything else leaves the stored list alone.
+        s = applyLikesSetting(s, inc, req.headers["sec-fetch-site"]);
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // A new window makes the cached weather an answer to the old question,
         // and today's board a board for the wrong hours: throw the cache away

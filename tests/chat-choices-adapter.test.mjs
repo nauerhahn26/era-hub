@@ -47,22 +47,73 @@ test('request validation rejects excess context or invalid text before a paid ca
     await assert.rejects(adapter.generate(input), /invalid/);
 });
 
-test('unknown personal history uses honest grounded repairs without a generation request', async () => {
-  let calls = 0;
-  const adapter = createChoicesAdapter({ env, fetch: async () => { calls++; return response({ choices }); } });
-  for (const input of [{ text: 'What did you do last weekend?' },
-    { text: 'What happened in your book?', context: ['Me: I read a book about a dragon.'] },
-    { text: 'What was your favourite part?', context: ['Me: I read a book about a dragon.'] },
-    { text: 'What did you do last weekend?', context: ['Partner: You played outside.'] }]) {
-    const result = await adapter.generate(input);
+const REPAIRS = ['Can you give me a clue?', 'Let me tell you another way.', "I don't remember.", "I don't want to answer now."];
+test('a recall question goes to the model with its shape; an asserted past activity throws the batch out for the fixed repairs', async () => {
+  const bodies = [];
+  const run = (value, input) => createChoicesAdapter({ env, fetch: async (_, options) => { bodies.push(JSON.parse(options.body)); return response(value); } }).generate(input);
+  const invented = { choices: [{ label: 'The park', say: 'I went to the park.' }, { label: 'Fun', say: 'It was fun.' }, { label: 'Not now', say: 'Not now.' }] };
+  for (const input of [{ text: 'What did you do last weekend?', shape: 'recall' },
+    { text: 'What happened in your book?', shape: 'recall', context: ['Me: I read a book about a dragon.'] },
+    { text: 'What did you do last weekend?', shape: 'recall', context: ['Partner: You played outside.'] }]) {
+    const result = await run(invented, input);
+    assert.equal(JSON.parse(bodies.at(-1).input).shape, 'recall', 'the request carries the shape');
     assert.equal(result.kind, 'guarded');
     assert.equal(result.generated, false);
-    assert.ok(result.choices.some(x => /clue|remember|another way/.test(x.say)));
-    assert.ok(result.choices.every(x => !/played|dragon.*fire|visited|chores|treasure/.test(x.say)));
+    assert.equal(result.recallRejected, true);
+    assert.deepEqual(result.choices.map(x => x.say), REPAIRS);
   }
-  const known = await adapter.generate({ text: 'What did you do last weekend?', context: ['Me: Last weekend I read a book.'] });
-  assert.ok(known.choices.some(x => x.say === 'Last weekend I read a book.'));
-  assert.equal(calls, 0);
+  for (const say of ['We played tag.', 'I also saw a dog.', 'It was at the beach.', 'We were at grandma’s house.', 'I ate cake.'])
+    assert.equal((await run({ choices: [{ label: 'One', say }, { label: 'Two', say: 'It was fun.' }] }, { text: 'What did you do?', shape: 'recall' })).recallRejected, true, say);
+  for (const say of ['I had pizza.', 'We had a party.', 'I did a puzzle.'])
+    assert.equal((await run({ choices: [{ label: 'One', say }, { label: 'Two', say: 'It was fun.' }] }, { text: 'What did you do?', shape: 'recall' })).recallRejected, true, say);
+  // A feeling is not an event: these pass the recall check.
+  for (const say of ['I had fun.', 'I had a good time.', 'I had a great day.', 'I did not like it.', "I didn't want to."]) {
+    const result = await run({ choices: [{ label: 'One', say }, { label: 'Two', say: 'Can you give me a clue?' }] }, { text: 'What did you do?', shape: 'recall' });
+    assert.equal(result.kind, 'generated', say); assert.equal('recallRejected' in result, false, say);
+  }
+  const clean = { choices: [{ label: 'Fun', say: 'It was fun.' }, { label: 'Tell you', say: 'I want to tell you.' },
+    { label: 'A clue', say: 'Can you give me a clue?' }, { label: 'Not now', say: 'Not now.' }] };
+  const passed = await run(clean, { text: 'What did you do last weekend?', shape: 'recall' });
+  assert.equal(passed.kind, 'generated');
+  assert.equal(passed.generated, true);
+  assert.equal('recallRejected' in passed, false);
+  assert.deepEqual(passed.choices.map(x => x.say), clean.choices.map(x => x.say));
+  // Without the recall shape the same words are not checked: a proposal may say "we played".
+  assert.equal((await run(invented, { text: 'What next?' })).kind, 'generated');
+});
+
+test('a confirmed earlier utterance with the same time anchor goes first and three model choices stay behind it', async () => {
+  const clean = { choices: [{ label: 'Fun', say: 'It was fun.' }, { label: 'Tell you', say: 'I want to tell you.' },
+    { label: 'A clue', say: 'Can you give me a clue?' }, { label: 'Not now', say: 'Not now.' }] };
+  const adapter = createChoicesAdapter({ env, fetch: async () => response(clean) });
+  const known = await adapter.generate({ text: 'What did you do last weekend?', shape: 'recall', context: ['Me: Last weekend I read a book.'] });
+  assert.deepEqual(known.choices.map(x => x.say), ['Last weekend I read a book.', 'It was fun.', 'I want to tell you.', 'Can you give me a clue?']);
+  assert.equal(known.choices[0].label, 'My earlier words');
+  const other = await adapter.generate({ text: 'What did you do yesterday?', shape: 'recall', context: ['Me: Last weekend I read a book.'] });
+  assert.equal(other.choices.length, 4, 'a different anchor quotes nothing');
+  assert.ok(!other.choices.some(x => x.say === 'Last weekend I read a book.'));
+  const rejected = await createChoicesAdapter({ env, fetch: async () => response({ choices: [{ label: 'Zoo', say: 'We went to the zoo.' }, { label: 'Fun', say: 'It was fun.' }] }) })
+    .generate({ text: 'What did you do last weekend?', shape: 'recall', context: ['Me: Last weekend I read a book.'] });
+  assert.equal(rejected.recallRejected, true);
+  assert.deepEqual(rejected.choices.map(x => x.say), ['Last weekend I read a book.', ...REPAIRS.slice(0, 3)]);
+});
+
+test('an open shape and the device likes reach the model; four are asked for, three are accepted', async () => {
+  let body;
+  const three = { choices: [{ label: 'Draw', say: 'I want to draw.' }, { label: 'Outside', say: 'Let us play outside.' }, { label: 'A show', say: 'I want to watch a show.' }] };
+  const adapter = createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response(three); } });
+  const result = await adapter.generate({ text: 'What do you want to do today?', shape: 'want', likes: ['draw', 'play outside', 'x'.repeat(31), 7, 'watch a show'] });
+  assert.deepEqual(JSON.parse(body.input), { question: 'What do you want to do today?', context: [], shape: 'want', likes: ['draw', 'play outside', 'watch a show'] });
+  assert.match(body.instructions, /Do not invent/i);
+  assert.match(body.instructions, /exactly four/i);
+  assert.equal(result.kind, 'generated');
+  assert.equal(result.choices.length, 3);
+  for (const junk of ['wonder', 7, null]) {
+    await adapter.generate({ text: 'What next?', shape: junk, likes: 'draw' });
+    assert.deepEqual(JSON.parse(body.input), { question: 'What next?', context: [] }, 'an unknown shape and a non-list of likes are dropped');
+  }
+  await adapter.generate({ text: 'What next?', shape: 'open', likes: Array.from({ length: 20 }, (_, i) => 'like ' + i) });
+  assert.equal(JSON.parse(body.input).likes.length, 12);
 });
 
 test('partner feelings and possessions never become unsupported first-person child claims', async () => {
@@ -164,6 +215,35 @@ test('a generated batch reports the reply model\'s token usage and the configure
     const adapter = createChoicesAdapter({ env, fetch: async () => withUsage({ choices }, usage) });
     assert.equal('usage' in await adapter.generate({ text: 'What next?' }), false, 'no usage is reported when the service gave none we can trust');
   }
-  const guarded = await createChoicesAdapter({ env, fetch: () => { throw Error('must not call'); } }).generate({ text: 'What did you do last weekend?' });
-  assert.equal('usage' in guarded, false, 'no paid call, no usage');
+  // A recall question is a paid call now; its usage is reported even when the batch is thrown out.
+  const recall = await createChoicesAdapter({ env, fetch: async () => withUsage({ choices: [{ label: 'Park', say: 'I went to the park.' }, choices[1]] }, { input_tokens: 10, output_tokens: 5 }) })
+    .generate({ text: 'What did you do last weekend?', shape: 'recall' });
+  assert.equal(recall.recallRejected, true);
+  assert.deepEqual(recall.usage, { model: 'configured', inputTokens: 10, cachedTokens: 0, outputTokens: 5 });
+  const guarded = await createChoicesAdapter({ env, fetch: () => { throw Error('must not call'); } }).generate({ text: 'I lost my drawing. What now?' });
+  assert.equal('usage' in guarded, false, 'the partner-incident guard makes no paid call and reports no usage');
+});
+
+test('recall asks for a spread, not four repairs; the repair limit names recall as its exception', async () => {
+  let body;
+  await createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } }).generate({ text: 'What next?' });
+  assert.match(body.instructions, /Shape recall: a spread of two about how it felt \(such as 'It was fun', 'It was okay', 'Not so good'\), one wish to tell \('I want to tell you' or 'Let me tell you another way'\), and one asking for a clue or not now; never state a past activity, place or person as a fact\./);
+  assert.match(body.instructions, /At most one of the four is a repair \(not sure, tell me more, another way\), never two, except for shape recall, where a clue and another way may both appear\./);
+  assert.match(body.instructions, /people: the family's own names; when the question asks who, most of the four choices are names from people \(a name alone as the label, 'Mom' as the say is fine\), with at most one other choice\./);
+});
+
+test('the family\'s names go to the model only with an open who question, cleaned and capped', async () => {
+  let body;
+  const adapter = createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } });
+  const input = () => JSON.parse(body.input);
+  await adapter.generate({ text: 'Who do you want to sit with?', shape: 'want', people: ['Mom', ' Dad ', 'x'.repeat(21), 7, '<b>', 'Sam'] });
+  assert.deepEqual(input().people, ['Mom', 'Dad', 'Sam']);
+  await adapter.generate({ text: 'Whom shall we call?', shape: 'want', people: Array.from({ length: 20 }, (_, i) => 'Name' + i) });
+  assert.equal(input().people.length, 12);
+  await adapter.generate({ text: 'What do you want to do today?', shape: 'want', people: ['Mom'] });
+  assert.equal('people' in input(), false, 'not a who question');
+  await adapter.generate({ text: 'Who is coming?', people: ['Mom'] });
+  assert.equal('people' in input(), false, 'no shape, no names');
+  await adapter.generate({ text: 'Who is coming?', shape: 'open', people: 'Mom' });
+  assert.equal('people' in input(), false, 'a non-list is dropped');
 });

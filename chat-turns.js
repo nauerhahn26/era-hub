@@ -61,6 +61,9 @@ const RECORD = shape({
   worker: shape(Object.fromEntries(WORKER.map(key => [key, key === 'firstPartialMs' || key === 'connectMs' ? nullable(num()) : num()]))),
   content: shape({ transcript: str(2000), partials: list(str(2000), 100), choiceKind: str(32), choices: list(choice, 6), symbolRejected: v => int(6)(v) && v > 0,
     pictureWarm: int(12),
+    // An open-ended question's shape and whether the recall check threw the
+    // model's batch out (dad, 10/28): category words, never the likes.
+    shape: nullable(oneOf(['want', 'recall', 'feel', 'open'])), recallRejected: v => typeof v === 'boolean',
     selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100) }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
@@ -89,6 +92,36 @@ function applyTestModeSetting(stored, incoming, fetchSite) {
   const next = { ...stored };
   if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
   if (typeof incoming?.chatTestMode === 'boolean') next.chatTestMode = incoming.chatTestMode;
+  return next;
+}
+// ---- what she likes (dad, 10/28): sent with an open-ended question only ----
+// Up to twelve short phrases, edited in Chat's partner dialog; a generic
+// default until a partner saves a list. The family's own words stay on the device.
+const DEFAULT_LIKES = Object.freeze(['play outside', 'draw', 'read a book', 'watch a show', 'play a game', 'listen to music', 'have a snack', 'see a friend']);
+function likesList(value) {
+  if (!Array.isArray(value) || value.length > 12) return null;
+  const seen = new Set(), list = [];
+  for (const item of value) {
+    if (typeof item !== 'string') return null;
+    const text = item.trim();
+    if (!text || text.length > 30 || CONTROL.test(text) || /[\u007f<>]/.test(text)) return null;
+    if (!seen.has(text.toLowerCase())) { seen.add(text.toLowerCase()); list.push(text); }
+  }
+  return list;
+}
+function chatLikes(dataDir) {
+  try {
+    const stored = likesList(JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')).chatLikes);
+    if (stored) return stored;
+  } catch { /* the default */ }
+  return [...DEFAULT_LIKES];
+}
+// The same door as the test-mode switch: only the hub's own pages or a tool.
+function applyLikesSetting(stored, incoming, fetchSite) {
+  const next = { ...stored };
+  if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
+  const list = incoming && Object.hasOwn(incoming, 'chatLikes') ? likesList(incoming.chatLikes) : null;
+  if (list) next.chatLikes = list;
   return next;
 }
 // Day files and summaries use the device's local calendar day.
@@ -464,4 +497,4 @@ function createChatTurns(options = {}) {
   };
 }
 
-module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, localDay, wavFromPcm, STAGES };
+module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, applyLikesSetting, chatLikes, DEFAULT_LIKES, localDay, wavFromPcm, STAGES };

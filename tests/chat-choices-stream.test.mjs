@@ -91,3 +91,17 @@ test('cancelling a streamed request aborts it and reports cancelled', async () =
   await assert.rejects(working, error => error.code === 'generation-cancelled');
   assert.equal(signal.aborted, true);
 });
+
+test('a streamed recall batch that asserts a past activity is sealed as the four fixed repairs', async () => {
+  const invented = { choices: [{ label: 'The park', say: 'I went to the park.', symbol: 'chat' }, { label: 'Fun', say: 'It was fun.', symbol: 'chat' }, { label: 'Not now', say: 'Not now.', symbol: 'chat' }] };
+  let body;
+  const adapter = createChoicesAdapter({ env, fetch: async (url, init) => { body = JSON.parse(init.body); const s = streamed(); for (const e of deltas(JSON.stringify(invented))) s.push(e); s.push(completed); s.end(); return s.response; } });
+  const seen = [];
+  const result = await adapter.generateStream({ text: 'What did you do last weekend?', shape: 'recall' }, { onChoice: c => seen.push(c) });
+  assert.equal(JSON.parse(body.input).shape, 'recall');
+  assert.equal(seen.length, 3, 'staged as they came; only the sealed batch is ever shown');
+  assert.equal(result.kind, 'guarded'); assert.equal(result.generated, false); assert.equal(result.recallRejected, true);
+  assert.deepEqual(result.choices.map(c => c.say), ['Can you give me a clue?', 'Let me tell you another way.', "I don't remember.", "I don't want to answer now."]);
+  assert.deepEqual(result.usage, { model: 'reply-model', inputTokens: 900, cachedTokens: 0, outputTokens: 60 });
+  assert.ok(Number.isFinite(result.timings.firstChoiceMs));
+});

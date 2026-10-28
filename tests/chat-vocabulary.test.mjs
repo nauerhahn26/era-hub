@@ -85,3 +85,14 @@ test('reviewed ids: park is the playground with swings, slide and trees, never t
   assert.equal(words.get('playground').id, 36145);
   assert.ok(!concepts.some(concept => concept.id === 5379 || concept.altId === 5379), 'the parking picture is gone');
 });
+
+test('reviewed ids 10/28: draw is a pencil on paper, a show is the television, watch is watching it, something else is choosing', () => {
+  assert.equal(words.get('draw').id, 8088, 'never 5506, hands cutting paper');
+  assert.equal(words.get('show').id, 25498, 'never 11308, a person holding up a ball');
+  assert.equal(words.get('watch').id, 28661);
+  assert.equal(words.get('point').id, 11308, 'showing someone keeps the holding-up picture');
+  assert.ok(words.get('point').alt.includes('show you'));
+  assert.equal(words.get('something else').id, 30510);
+  assert.equal(words.get('something else').tone, 'negative', 'a decline-ish choice, like "different"');
+  assert.ok(!words.get('different').alt.includes('something else'));
+});

@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay } = require('../chat-turns.js');
+const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay, applyLikesSetting, chatLikes, DEFAULT_LIKES } = require('../chat-turns.js');
 const { initPool } = require('../pool.js');
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
@@ -368,4 +368,21 @@ test('a streamed turn is stamped with the transcription setting it actually used
   assert.equal((await s.post({ ...turnRecord(), id: '0f8fad5b-d9cb-469f-a165-70867728950d', mode: 'stream', setting: 'other' })).status, 400);
   const lines = (await fs.readFile(path.join(s.logDir, day() + '.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   assert.deepEqual(lines.map(line => line.models.transcription), ['stream-primary-z', 'stream-fallback-w', 'speech-model-y']);
+});
+
+test('what she likes: a bounded list of short phrases, the generic default when absent, junk ignored', async t => {
+  const s = { dataDir: await directory(t) };
+  assert.deepEqual(DEFAULT_LIKES, ['play outside', 'draw', 'read a book', 'watch a show', 'play a game', 'listen to music', 'have a snack', 'see a friend']);
+  assert.deepEqual(chatLikes(s.dataDir), DEFAULT_LIKES, 'no app-settings file means the default');
+  await fs.writeFile(path.join(s.dataDir, 'app-settings.json'), JSON.stringify({ chatLikes: 'draw' }));
+  assert.deepEqual(chatLikes(s.dataDir), DEFAULT_LIKES, 'a stored value that is not a list means the default');
+  await fs.writeFile(path.join(s.dataDir, 'app-settings.json'), JSON.stringify({ chatLikes: ['swim', 'dance'] }));
+  assert.deepEqual(chatLikes(s.dataDir), ['swim', 'dance']);
+  assert.deepEqual(applyLikesSetting({ a: 1 }, { chatLikes: [' swim ', 'Dance', 'swim', 'dance'] }), { a: 1, chatLikes: ['swim', 'Dance'] }, 'trimmed, deduplicated ignoring case');
+  assert.deepEqual(applyLikesSetting({ chatLikes: ['x'] }, { chatLikes: [] }), { chatLikes: [] });
+  for (const junk of ['swim', [1], ['x'.repeat(31)], ['bad\u0007'], [''], Array.from({ length: 13 }, (_, i) => 'like ' + i), null, {}])
+    assert.deepEqual(applyLikesSetting({ chatLikes: ['x'] }, { chatLikes: junk }), { chatLikes: ['x'] }, JSON.stringify(junk));
+  assert.deepEqual(applyLikesSetting({ a: 1 }, {}), { a: 1 });
+  for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyLikesSetting({}, { chatLikes: ['swim'] }, site), {});
+  for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyLikesSetting({}, { chatLikes: ['swim'] }, site), { chatLikes: ['swim'] });
 });

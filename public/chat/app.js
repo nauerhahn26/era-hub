@@ -148,7 +148,8 @@ const controller = createChatController({
     try { result = held ? await stagedBatch(held, signal) : await json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context }), signal }); }
     catch (error) { turnLog.error(timing, error.message); throw error; }
     metrics.observe(timing, { choicesServerMs: result.timings?.totalMs });
-    stagedMeta = { handle: timing, kind: result.kind, usage: result.usage, symbolRejected: result.symbolRejected, pictureWarm: result.pictureWarm };
+    stagedMeta = { handle: timing, kind: result.kind, usage: result.usage, symbolRejected: result.symbolRejected, pictureWarm: result.pictureWarm,
+      shape: result.shape, recallRejected: result.recallRejected };
     return result;
   },
   onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
@@ -190,6 +191,7 @@ const controller = createChatController({
 
 fetch('/settings').then(r => r.json()).then(s => {
   testMode = s.chatTestMode === true; paintTestMode();
+  if (Array.isArray(s.chatLikes)) $('chatLikes').value = s.chatLikes.filter(item => typeof item === 'string').join('\n');
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
   window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
@@ -373,7 +375,7 @@ function stagingEvent(data) {
     turnLog.stagedOne(questionMetric, choice);
   } else if (data.type === 'batch-sealed') {
     record.sealed = { kind: data.kind, generated: data.generated, choices: data.choices, usage: data.usage, symbolRejected: data.symbolRejected,
-      pictureWarm: data.pictureWarm, timings: data.timings };
+      pictureWarm: data.pictureWarm, shape: data.shape, recallRejected: data.recallRejected, timings: data.timings };
     record.done?.();
   } else if (data.type === 'choices-error') {
     record.error = new Error('Replies are unavailable. Your phrases still work.');
@@ -815,6 +817,16 @@ $('exportTimings').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([metrics.exportJSON()], { type: 'application/json' }));
   const link = document.createElement('a'); link.href = url; link.download = 'chat-timings.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+// What she likes (dad, 10/28): one per line in the partner dialog, saved to
+// this device's settings when the box is left; sent with open-ended questions.
+$('chatLikes').addEventListener('change', async () => {
+  const list = [...new Set($('chatLikes').value.split('\n').map(line => line.trim().slice(0, 30)).filter(Boolean))].slice(0, 12);
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatLikes: list }) });
+    if (!saved.ok) throw new Error();
+    $('chatLikesNote').textContent = list.length ? `Saved ${list.length} like${list.length === 1 ? '' : 's'} on this computer.` : 'Saved: no likes on this computer.';
+  } catch { $('chatLikesNote').textContent = 'Likes were not saved. Try again.'; }
 });
 $('saveStory').addEventListener('click', async () => {
   const label = $('storyLabel').value.trim(), say = $('storyMessage').value.trim();

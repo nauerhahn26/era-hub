@@ -10,7 +10,8 @@ import path from 'node:path';
 import os from 'node:os';
 
 const require = createRequire(import.meta.url);
-const { createChatApi } = require('../chat-api.js');
+const { createChatApi, openShape, localChoices } = require('../chat-api.js');
+const pictures = require('../chat-symbols.js');
 
 function runtime() {
   const child = new EventEmitter();
@@ -470,7 +471,7 @@ test('addressed wh questions retain their complete text and context for the adap
     const text = `${address} what should we talk about next?`;
     const result = await (await s.request('/choices', { text, context })).json();
     assert.equal(result.kind, 'adapter', address);
-    assert.deepEqual(seen.at(-1), { text, context });
+    assert.deepEqual(seen.at(-1), { text, context, shape: 'want' });
   }
   assert.equal(seen.length, 4);
 });
@@ -535,7 +536,7 @@ test('configured adapter handles open questions, validates output and never expo
       calls++;
       assert.equal(url, 'https://adapter.example/choices');
       assert.equal(options.headers.Authorization, 'Bearer private-value');
-      assert.deepEqual(JSON.parse(options.body), { text: 'What happened today?', context: ['We talked about a game.'] });
+      assert.deepEqual(JSON.parse(options.body), { text: 'What happened today?', context: ['We talked about a game.'], shape: 'recall' });
       return new Response(JSON.stringify({ choices: [{ label: 'A game', say: 'We played a game.' }, { label: 'Reading', say: 'We read a story.' }] }));
     } });
   const result = await (await s.request('/choices', { text: 'What happened today?', context: ['We talked about a game.'] })).json();
@@ -551,7 +552,7 @@ test('configured text generation works in process without a standalone adapter',
     fetch: async (url, options) => {
       calls++; assert.equal(url, 'https://text.example/responses');
       assert.equal(options.headers.Authorization, 'Bearer private-value');
-      assert.deepEqual(JSON.parse(JSON.parse(options.body).input), { question: 'What shall we talk about?', context: ['Me: Space.'] });
+      assert.deepEqual(JSON.parse(JSON.parse(options.body).input), { question: 'What shall we talk about?', context: ['Me: Space.'], shape: 'want' });
       return new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
         choices: [{ label: 'Space', say: 'We could talk about space.' }, { label: 'Something else', say: 'Let us choose something else.' }],
       }) }] }] }));
@@ -892,4 +893,93 @@ test('a clause word right after "and" never cuts an alternative, and none ends o
   assert.deepEqual(await labels('Do you want to go outside and play with dad, or stay inside?'), ['Go outside and play', 'Stay inside']);
   for (const text of ['Do you want to go outside and play, or do you want to stay inside?', 'Do you want to go to the park and then, or stay home?'])
     for (const label of await labels(text)) assert.doesNotMatch(label, /\b(?:and|or|with|then)$/i, text);
+});
+
+test('an open-ended question is classified into a shape; local shortcuts and statements have none', () => {
+  const cases = {
+    'What do you want to do today?': 'want', 'what do you want for lunch': 'want', 'Where should we go?': 'want',
+    'Ellie, what would you like to play?': 'want', 'Hey Ellie, what game should we play?': 'want', 'What are we going to make?': 'want',
+    'How was your weekend?': 'feel', 'how are you': 'feel', 'How are you feeling today?': 'feel', 'How was your lesson?': 'feel',
+    'How do you feel?': 'feel', 'How was it?': 'feel',
+    'What did you do last weekend?': 'recall', 'Tell me about your day.': 'recall', 'What happened?': 'recall',
+    'Where did you go?': 'recall', 'What was your favourite part?': 'recall', 'Ellie what did you see?': 'recall',
+    'Why is the sky blue?': 'open', 'Who is your best friend?': 'open', 'Tell me a joke.': 'open', 'Describe your picture.': 'open',
+    'What about the dog?': 'open', 'Which color is best?': 'open',
+    'It is raining.': null, 'Do you want pizza or pasta?': null, 'Did you go to the park or the pool?': null, 'I got a new puppy.': null,
+    "Ellie's drawing was funny.": null,
+  };
+  for (const [text, shape] of Object.entries(cases)) assert.equal(openShape(text), shape, text);
+  // Local shortcuts win before any shape is used: these never reach the model.
+  for (const text of ['Do you want pizza or pasta?', 'Did you go to the park or the pool?', 'Did you like it?', 'How are you?'])
+    assert.ok(localChoices(text), text);
+});
+
+test('an open question sends its shape and the device likes to the adapter; a statement sends neither; the result carries the shape', async t => {
+  const seen = [];
+  const likes = ['draw', 'play outside'];
+  const s = await service(t, { likes: () => likes, env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'Draw', say: 'I want to draw.' }, { label: 'Outside', say: 'Let us play outside.' }] }));
+  } });
+  const open = await (await s.request('/choices', { text: 'What do you want to do today?' })).json();
+  assert.deepEqual(seen.at(-1), { text: 'What do you want to do today?', shape: 'want', likes });
+  assert.equal(open.shape, 'want');
+  const statement = await (await s.request('/choices', { text: 'I got a new puppy.' })).json();
+  assert.deepEqual(seen.at(-1), { text: 'I got a new puppy.' });
+  assert.equal('shape' in statement, false);
+  const local = await (await s.request('/choices', { text: 'Do you want pizza or pasta?' })).json();
+  assert.equal(local.kind, 'alternatives'); assert.equal('shape' in local, false); assert.equal(seen.length, 2);
+  // A provider that throws or returns junk costs the likes, never the reply.
+  const broken = await service(t, { likes: () => { throw Error('unreadable'); }, env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'Good', say: 'I feel good.' }, { label: 'Tired', say: 'I am tired.' }] }));
+  } });
+  const feel = await (await broken.request('/choices', { text: 'How was your weekend?' })).json();
+  assert.deepEqual(seen.at(-1), { text: 'How was your weekend?', shape: 'feel' });
+  assert.equal(feel.shape, 'feel');
+});
+
+test('a built-in recall reply that asserts an activity reaches the page as the fixed repairs with the shape and recallRejected', async t => {
+  let input;
+  const s = await service(t, { likes: () => ['draw'], env: { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' },
+    fetch: async (_, options) => { input = JSON.parse(JSON.parse(options.body).input);
+      return new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
+        choices: [{ label: 'Zoo', say: 'We went to the zoo.' }, { label: 'Fun', say: 'It was fun.' }] }) }] }] })); } });
+  const result = await (await s.request('/choices', { text: 'What did you do last weekend?' })).json();
+  assert.deepEqual(input, { question: 'What did you do last weekend?', context: [], shape: 'recall', likes: ['draw'] });
+  assert.equal(result.kind, 'guarded'); assert.equal(result.generated, false);
+  assert.equal(result.shape, 'recall'); assert.equal(result.recallRejected, true);
+  assert.deepEqual(result.choices.map(choice => choice.say), ['Can you give me a clue?', 'Let me tell you another way.', "I don't remember.", "I don't want to answer now."]);
+});
+
+test('a who question sends the family\'s names to the adapter; other questions and a missing or broken provider send none', async t => {
+  const seen = [];
+  const reply = async (_, options) => { seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'Mom', say: 'Mom' }, { label: 'Sam', say: 'Sam' }] })); };
+  const env = { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' };
+  const s = await service(t, { people: () => ['Mom', 'Sam', 'x'.repeat(21), 3, ...Array.from({ length: 15 }, (_, i) => 'Name' + i)], env, fetch: reply });
+  await s.request('/choices', { text: 'Who do you want to sit with?' });
+  assert.equal(seen.at(-1).shape, 'open');
+  assert.deepEqual(seen.at(-1).people, ['Mom', 'Sam', ...Array.from({ length: 10 }, (_, i) => 'Name' + i)], 'cleaned and capped at twelve');
+  await s.request('/choices', { text: 'What do you want to do today?' });
+  assert.equal('people' in seen.at(-1), false);
+  await s.request('/choices', { text: 'I saw who did it.' });
+  assert.equal('people' in seen.at(-1), false, 'a statement has no shape');
+  const none = await service(t, { env, fetch: reply });
+  await none.request('/choices', { text: 'Who do you want to sit with?' });
+  assert.equal('people' in seen.at(-1), false, 'no provider, no names');
+  const broken = await service(t, { people: () => { throw Error('unreadable'); }, env, fetch: reply });
+  const result = await (await broken.request('/choices', { text: 'Who do you want to sit with?' })).json();
+  assert.equal('people' in seen.at(-1), false); assert.equal(result.choices.length, 2, 'a broken provider costs only the list');
+});
+
+test('a name the model returns keeps its words and shows that person\'s own picture', async t => {
+  pictures.setPeople(() => [{ slug: 'mom', word: 'Mom' }, { slug: 'sam-2', word: 'Sam' }]);
+  t.after(() => pictures.setPeople(null));
+  const s = await service(t, { people: () => ['Mom', 'Sam'], env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' },
+    fetch: async () => new Response(JSON.stringify({ choices: [{ label: 'Sam', say: 'Sam, please.' }, { label: 'Mom', say: 'Mom' },
+      { label: 'Not sure', say: "I'm not sure." }] })) });
+  const result = await (await s.request('/choices', { text: 'Who do you want to sit with?' })).json();
+  assert.deepEqual(result.choices.map(c => [c.label, c.say]), [['Sam', 'Sam, please.'], ['Mom', 'Mom'], ['Not sure', "I'm not sure."]], 'no name is stripped');
+  assert.deepEqual(result.choices.slice(0, 2).map(c => c.picture), [{ src: '/characters/sam-2.png', kind: 'person' }, { src: '/characters/mom.png', kind: 'person' }]);
 });

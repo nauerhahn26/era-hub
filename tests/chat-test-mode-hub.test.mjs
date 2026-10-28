@@ -60,4 +60,20 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.equal(await settings(), false);
   assert.equal((await post()).status, 404, 'off stops writing');
   assert.equal((await fs.readFile(path.join(data, 'logs', 'chat-turns', localDay() + '.jsonl'), 'utf8')).trim().split('\n').length, 1, 'and keeps what was written');
+
+  // What she likes (dad, 10/28): the generic default until a partner saves a
+  // list; junk leaves the stored list alone; another site cannot change it.
+  const likes = async () => (await (await fetch(base + '/settings')).json()).chatLikes;
+  const setLikes = (value, headers = {}) => fetch(base + '/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ chatLikes: value }) });
+  assert.deepEqual(await likes(), ['play outside', 'draw', 'read a book', 'watch a show', 'play a game', 'listen to music', 'have a snack', 'see a friend']);
+  assert.equal((await setLikes([' swim ', 'dance', 'swim', 'bake cookies'])).status, 204);
+  assert.deepEqual(await likes(), ['swim', 'dance', 'bake cookies'], 'trimmed and deduplicated');
+  for (const junk of ['swim', [1, 2], ['x'.repeat(31)], ['ok', 'bad\u0007'], Array(13).fill('a'), null, {}]) {
+    assert.equal((await setLikes(junk)).status, 204);
+    assert.deepEqual(await likes(), ['swim', 'dance', 'bake cookies'], JSON.stringify(junk));
+  }
+  assert.equal((await setLikes(['paint'], { 'Sec-Fetch-Site': 'cross-site' })).status, 204);
+  assert.deepEqual(await likes(), ['swim', 'dance', 'bake cookies'], 'a page on another site cannot change it');
+  assert.equal((await setLikes([])).status, 204);
+  assert.deepEqual(await likes(), [], 'an empty list is a real choice');
 });
