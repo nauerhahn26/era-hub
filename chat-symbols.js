@@ -342,29 +342,50 @@ function actionPick(text, { foodLabel = false } = {}) {
 function ambiguous(l) { return /\bor\b/.test(l) || conceptsIn(l).filter(word => !BROAD.has(word)).length > 1; }
 function foodish(l) { const labelled = category(l); return !!labelled && [...labelled.families].some(family => family === 'food' || family === 'drink'); }
 
+// The model's picture words ("magnifying glass", "shrug", "clock"): the whole
+// words, then each word from the last, through the curated table, the things,
+// then the actions. A picture of another known family than the label's own
+// (a clock or the weather for a dish) is refused, as `rejects` refuses a symbol.
+function picturePick(picture, l) {
+  const named = normal(picture);
+  if (!named || named.length > 32 || words(named).length > 3) return null;
+  const labelled = category(l);
+  const forms = [named, ...words(named).reverse()].filter((form, index, all) => all.indexOf(form) === index && !FUNCTION_WORDS.has(form));
+  for (const form of forms) {
+    const curatedWord = exactHit(form)?.[1];
+    const hit = curatedWord && curatedWord !== FALLBACK && !STAND_INS.has(curatedWord) ? { word: curatedWord, family: FAMILY.get(curatedWord) || null }
+      : lexiconForm(form) || actionForm(form);
+    if (!hit) continue;
+    if (labelled && hit.family && !labelled.families.has(hit.family)) continue;
+    return hit;
+  }
+  return null;
+}
+const guardedPick = (l, s, hit) => { const word = negationGuard(l, s, hit.word); return word === hit.word ? hit : { word }; };
+
 // The hub's pick: { word, id? }. A curated phrase, then the library's picture
 // for a thing the table lacks, then the model's symbol, then the text guess.
-function choose({ label = '', say = '', symbol } = {}) {
+function choose({ label = '', say = '', symbol, picture } = {}) {
   const l = normal(label), s = normal(say);
   // A curated phrase is reviewed for its own words; the other field is still guarded
   // ("I'm good" / "No thanks, I am good." is a refusal).
   if (curated(l)) return { word: NEGATION.test(l) ? curated(l) : negationGuard('', s, curated(l)) };
   if (curated(s)) return { word: NEGATION.test(s) ? curated(s) : negationGuard(l, '', curated(s)) };
   const lexical = lexiconChoice(label, l);
-  if (lexical) {
-    const guarded = negationGuard(l, s, lexical.word);
-    return guarded === lexical.word ? lexical : { word: guarded };
-  }
+  if (lexical) return guardedPick(l, s, lexical);
   const model = modelSymbol(symbol);
   if (model && model !== FALLBACK && !rejects(l, model)) return { word: negationGuard(l, s, model) };
-  const own = exact(l) || category(l)?.word || guess(l) || guess(s);
-  if (own && own !== FALLBACK) return { word: negationGuard(l, s, own) };
+  // The label's own curated word or category, then the model's picture words,
+  // then the text guess, then the label's action or quality, else the bubble.
+  const labelled = exact(l) || category(l)?.word;
+  if (labelled && labelled !== FALLBACK) return { word: negationGuard(l, s, labelled) };
+  const named = picturePick(picture, l);
+  if (named) return guardedPick(l, s, named);
+  const guessed = labelled || guess(l) || guess(s);
+  if (guessed && guessed !== FALLBACK) return { word: negationGuard(l, s, guessed) };
   if (!ambiguous(l)) {
-    const action = actionPick(l, { foodLabel: foodish(l) }) || (!own ? actionPick(s, { foodLabel: foodish(l) }) : null);
-    if (action) {
-      const guarded = negationGuard(l, s, action.word);
-      return guarded === action.word ? action : { word: guarded };
-    }
+    const action = actionPick(l, { foodLabel: foodish(l) }) || (!guessed ? actionPick(s, { foodLabel: foodish(l) }) : null);
+    if (action) return guardedPick(l, s, action);
   }
   return { word: negationGuard(l, s, FALLBACK) };
 }
@@ -378,7 +399,9 @@ function symbolRejected({ label = '', say = '', symbol } = {}) {
 function withSymbols(choices) {
   return choices.map(choice => {
     const pick = choose(choice), id = pick.id || vocabulary().byWord.get(pick.word)?.id;
-    return { ...choice, symbol: pick.word, ...(id ? { symbolId: id } : {}) };
+    // The model's picture words are an input of the pick, never sent on to the page.
+    const { picture: _named, ...rest } = choice;
+    return { ...rest, symbol: pick.word, ...(id ? { symbolId: id } : {}) };
   });
 }
 // The things a partner names while still speaking, for warming their pictures

@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createChoicesAdapter, createChoiceStream } = require('../chat-choices.js');
 const env = { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'reply-model', ERA_CHAT_TEXT_TOKEN: 'private-value' };
-const reply = { choices: [{ label: 'Music', say: 'Music, please.', symbol: 'music' }, { label: 'A story', say: 'A story, please.', symbol: 'book' }, { label: 'Not sure', say: 'I am not sure.', symbol: 'chat' }] };
+const reply = { choices: [{ label: 'Music', say: 'Music, please.', symbol: 'music', picture: 'headphones' }, { label: 'A story', say: 'A story, please.', symbol: 'book' }, { label: 'Not sure', say: 'I am not sure.', symbol: 'chat', picture: 'shrug' }] };
 
 // A streamed reply the test releases piece by piece.
 function streamed(events) {
@@ -47,6 +47,8 @@ test('streaming asks for a stream on the fast tier and hands each choice over be
   stream.push(completed); stream.end();
   const result = await working;
   assert.deepEqual(seen.map(c => c.label), ['Music', 'A story', 'Not sure']);
+  assert.deepEqual(seen.map(c => c.picture), ['headphones', undefined, 'shrug'], 'each staged choice carries the model\'s picture words');
+  assert.deepEqual(result.choices.map(c => c.picture), ['headphones', undefined, 'shrug']);
   assert.deepEqual(result.choices.map(c => c.say), reply.choices.map(c => c.say));
   assert.equal(result.kind, 'generated'); assert.equal(result.generated, true);
   assert.deepEqual(result.usage, { model: 'reply-model', inputTokens: 900, cachedTokens: 0, outputTokens: 60 });

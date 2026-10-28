@@ -352,3 +352,63 @@ test('actions come last: curated words and things first, an either/or and a nega
     assert.equal(pick('Hmm', { say: 'Hmm, a big wiggle.' }).symbolId, 111, 'the say when the label has nothing');
   } finally { pictures.setLexicon(null); }
 });
+
+// ---- the model names a picture in plain words ---------------------------------
+
+const PICTURE_FIXTURE = {
+  words: { 'magnifying glass': 301, clock: 302, frost: 12, umbrella: 305 },
+  actions: { shrug: 303, wave: 304, late: 115, sunny: 119 },
+  families: { weather: [12, 119, 305], time: [302, 115] },
+};
+
+test('the model\'s picture words resolve through the curated table, the things, then the actions', () => {
+  pictures.setLexicon(PICTURE_FIXTURE);
+  try {
+    assert.equal(pick('Hmm', { say: 'Hmm, let me think.', symbol: 'chat', picture: 'shrug' }).symbolId, 303, 'an action');
+    assert.equal(pick('Hmm', { say: 'Hmm.', picture: 'magnifying glass' }).symbolId, 301, 'a thing of two words');
+    assert.equal(pick('Hmm', { say: 'Hmm.', picture: 'tiny shrug' }).symbolId, 303, 'its head word when the whole is unknown');
+    assert.equal(pick('Hmm', { say: 'Hmm.', picture: 'clock' }).symbolId, vocabId('time'), 'a curated alternative word keeps its checked id');
+    assert.equal(pick('Hmm', { say: 'Hmm.', picture: 'hello' }).symbolId, vocabId('hello'), 'a curated word keeps its checked id');
+    assert.equal(pick('Ever so late', { picture: 'magnifying glass' }).symbolId, 301, 'before the label\'s own action word');
+    assert.equal(pick('Ever so late', { picture: 'zorbish' }).symbolId, 115, 'an unknown picture falls through to the action');
+    assert.equal(pick('Ever so late', { picture: 'one two three four' }).symbolId, 115, 'more than three words is no picture');
+    assert.equal(pick('Ever so late', { picture: 'chat' }).symbolId, 115, 'the bubble is no picture');
+  } finally { pictures.setLexicon(null); }
+});
+
+test('the model\'s picture comes after the label\'s own picks and is guarded like its symbol', () => {
+  pictures.setLexicon(PICTURE_FIXTURE);
+  try {
+    assert.equal(pick('Pizza', { picture: 'clock' }).symbol, 'pizza', 'a curated label');
+    assert.equal(pick('Hmm', { say: 'Hmm.', symbol: 'happy', picture: 'shrug' }).symbol, 'happy', 'an accepted vocabulary symbol');
+    assert.equal(pick('Give me a clue', { symbol: 'chat', picture: 'magnifying glass' }).symbol, 'clue', 'a label that is a curated word');
+    assert.equal(pick('Pizza at the park', { picture: 'frost' }).symbol, 'food', 'a label\'s own category');
+    // A drink-and-place label (no picture of its own) never shows a time or weather picture.
+    for (const picture of ['frost', 'clock', 'umbrella', 'sunny']) assert.equal(pick('Juice at the park', { picture }).symbol, 'chat', picture);
+    assert.equal(pick('Juice at the park', { picture: 'park' }).symbol, 'park', 'a picture of the label\'s own family stands');
+    // A negation keeps only a negative picture.
+    assert.equal(pick('Not later', { say: 'Not later.', picture: 'clock' }).symbol, 'chat');
+    assert.equal(pick('No clocks', { say: 'No clocks, thanks.', picture: 'clock' }).symbol, 'no');
+  } finally { pictures.setLexicon(null); }
+});
+
+test('the hub passes the model\'s picture words from the reply to the pick', async t => {
+  const http = await import('node:http');
+  const { createChatApi } = require('../chat-api.js');
+  pictures.setLexicon(PICTURE_FIXTURE);
+  const env = { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' };
+  const reply = { choices: [{ label: 'Hmm', say: 'Hmm, let me think.', symbol: 'chat', picture: 'magnifying glass' },
+    { label: 'Not sure', say: 'I am not sure.', symbol: 'not sure', picture: 'shrug' }] };
+  const api = createChatApi({ env, fetch: async () => new Response(JSON.stringify({ status: 'completed',
+    output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(reply) }] }] })) });
+  const server = http.createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); });
+  await new Promise(resolve => server.listen(0, 'localhost', resolve));
+  t.after(async () => { pictures.setLexicon(null); api.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const body = await (await fetch(`http://localhost:${server.address().port}/chat/api/choices`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'What should we look for next?' }) })).json();
+  assert.deepEqual(body.choices.map(choice => choice.symbolId), [301, vocabId('not sure')]);
+  assert.ok(body.choices.every(choice => choice.picture === undefined || typeof choice.picture === 'object'), 'the model\'s words never reach the page as a picture');
+  // The streamed path stages each choice through the same pick.
+  const source = fs.readFileSync(path.join(HUB, 'chat-api.js'), 'utf8');
+  assert.match(source.match(/function stageChoice[\s\S]*?\n  \}/)[0], /picture: choice\.picture/);
+});

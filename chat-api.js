@@ -132,7 +132,8 @@ function cleanText(value, cap) {
 function choiceList(items) {
   return withSymbols(items.map((item, index) => typeof item === 'string' ?
     { id: `choice-${index + 1}`, label: item, say: item } :
-    { id: `choice-${index + 1}`, label: item.label, say: item.say, ...(typeof item.symbol === 'string' ? { symbol: item.symbol } : {}) }));
+    { id: `choice-${index + 1}`, label: item.label, say: item.say, ...(typeof item.symbol === 'string' ? { symbol: item.symbol } : {}),
+      ...(typeof item.picture === 'string' ? { picture: item.picture } : {}) }));
 }
 function safeTimings(value) {
   const result = {};
@@ -647,7 +648,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const rejected = items.filter(item => symbolRejected({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol })).length;
       return { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
-        choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol }))),
+        choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol, picture: item.picture }))),
         ...(rejected ? { symbolRejected: rejected } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
@@ -692,7 +693,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function stageChoice(session, job, choice) {
     if (!liveJob(session, job)) return;
     const index = job.stagedCount++;
-    const [pick] = choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}) }]);
+    const [pick] = choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}),
+      ...(typeof choice.picture === 'string' ? { picture: choice.picture } : {}) }]);
     emit(session, { type: 'choice-staged', generation: job.generation, index, choice: { ...pick, id: `choice-${index + 1}` } });
     // The hub knows the picture before the page does: warm it now, behind the event.
     if (job.pictures && pick.symbolId) try { job.pictures.stage(pick.symbolId); } catch { /* decorative */ }
