@@ -585,6 +585,8 @@ hub; production rows content-free; no vendor or model names in code or docs
 
 Since 10/28 the history guard is a check on the model's replies for a recall question (an asserted past activity throws the batch out for the fixed repairs), not a bypass of the model; every open-ended question gets four choices.
 
+Her world (the device's week packages, shelf, people and likes) is known context the model may state; it is sent with open-ended questions only.
+
 ## 9. Phase 0 evidence (10/27, host-paced)
 
 Tools: `tools/chat-bakeoff.py` (transcription, five wire protocols, real-time

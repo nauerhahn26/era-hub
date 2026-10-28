@@ -345,11 +345,11 @@ library, and the likes list. Nothing new has to be published for this.
 
 **Tasks.**
 
-- [ ] Tests first: digest builder (labels, caps, mtime cache, missing data →
+- [x] Tests first: digest builder (labels, caps, mtime cache, missing data →
       empty world), `world` in the model input for open shapes only, the
       instruction text, recall check with world terms, dialog preview, turn
       record field.
-- [ ] `chat-world.js`; wiring in server.js and chat-api.js; chat-choices.js
+- [x] `chat-world.js`; wiring in server.js and chat-api.js; chat-choices.js
       instruction + input; partner dialog preview; spec §8 sentence.
 - [ ] Live check against the real model with the 10/26 week package, then
       gate, land, patch release.
