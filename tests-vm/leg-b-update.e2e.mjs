@@ -376,48 +376,54 @@ test("after the update: a button press reaches Chat through the device listener,
     'reg query "HKCU\\Software\\Policies\\Google\\Chrome\\AudioCaptureAllowedUrls" /v 1'], { soft: true });
   console.log("# microphone policy as the ssh user reads it:\n" + policy);
 
-  vm.ship(fileURLToPath(new URL("lib/sendkey.cs", import.meta.url)));
-  const built = vm.bat("sendkey-build", [`if exist ${GUEST_HOME}\\sendkey.exe del ${GUEST_HOME}\\sendkey.exe`,
-    `C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /target:winexe /out:${GUEST_HOME}\\sendkey.exe ${GUEST_HOME}\\sendkey.cs`,
-    `if exist ${GUEST_HOME}\\sendkey.exe (echo SENDKEY_BUILT=1) else (echo SENDKEY_BUILT=0)`], { soft: true, timeout: 180000 });
-  assert.match(built, /SENDKEY_BUILT=1/, "sendkey.exe did not build in the guest: " + built);
-  // one chord from the desktop session; resolves with the press the hub recorded
-  async function pressKey(key, accept) {
-    const before = buttons()?.lastPress?.at || "";
-    vm.interactive("sendkey", [], { tr: `${GUEST_HOME}\\sendkey.exe ${key}` });
-    const p = await vm.waitFor(() => { const lp = buttons()?.lastPress; return lp && lp.key === key && lp.at !== before && lp; },
-      { timeout: 60000, every: 1000, what: key + " to reach /buttons/press" });
-    console.log(`# ${key}: ${JSON.stringify(p)}`);
-    assert.ok(accept.includes(p.dispatch), `${key} dispatched ${p.dispatch}, wanted one of ${accept.join("/")}`);
-    return p;
-  }
-  // the kiosk shows its kiosk tab; Chat is reached by the press or was there already
-  async function chatPage() {
-    try { await browser?.close(); } catch {}
-    ({ browser, page } = await vm.kiosk());
-    await vm.waitFor(() => new URL(page.url()).pathname === "/chat/" && { ok: 1 }, { timeout: 120000, every: 1000, what: "the kiosk at /chat/ (now " + page.url() + ")" });
-  }
+  // The stand-in keyboard leaves nothing behind: its task and helper go at the end, pass or fail.
+  try {
+    vm.ship(fileURLToPath(new URL("lib/sendkey.cs", import.meta.url)));
+    const built = vm.bat("sendkey-build", [`if exist ${GUEST_HOME}\\sendkey.exe del ${GUEST_HOME}\\sendkey.exe`,
+      `C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /target:winexe /out:${GUEST_HOME}\\sendkey.exe ${GUEST_HOME}\\sendkey.cs`,
+      `if exist ${GUEST_HOME}\\sendkey.exe (echo SENDKEY_BUILT=1) else (echo SENDKEY_BUILT=0)`], { soft: true, timeout: 180000 });
+    assert.match(built, /SENDKEY_BUILT=1/, "sendkey.exe did not build in the guest: " + built);
+    // one chord from the desktop session; resolves with the press the hub recorded
+    async function pressKey(key, accept) {
+      const before = buttons()?.lastPress?.at || "";
+      vm.interactive("sendkey", [], { tr: `${GUEST_HOME}\\sendkey.exe ${key}` });
+      const p = await vm.waitFor(() => { const lp = buttons()?.lastPress; return lp && lp.key === key && lp.at !== before && lp; },
+        { timeout: 60000, every: 1000, what: key + " to reach /buttons/press" });
+      console.log(`# ${key}: ${JSON.stringify(p)}`);
+      assert.ok(accept.includes(p.dispatch), `${key} dispatched ${p.dispatch}, wanted one of ${accept.join("/")}`);
+      return p;
+    }
+    // the kiosk shows its kiosk tab; Chat is reached by the press or was there already
+    async function chatPage() {
+      try { await browser?.close(); } catch {}
+      ({ browser, page } = await vm.kiosk());
+      await vm.waitFor(() => new URL(page.url()).pathname === "/chat/" && { ok: 1 }, { timeout: 120000, every: 1000, what: "the kiosk at /chat/ (now " + page.url() + ")" });
+    }
 
-  // From Home no Chat page listens: F13 relaunches the kiosk at /chat/?ask=<nonce>.
-  await vm.home(page);
-  const f13 = await pressKey("F13", ["relaunch", "visible"]);
-  await chatPage();
-  vm.shot("buttons-after-f13");
-  assert.equal(new URL(page.url()).pathname, "/chat/", "a press lands on Chat");
-  // W3: does the fresh kiosk profile have the microphone without a touch?
-  const mic = await page.evaluate(() => navigator.permissions.query({ name: "microphone" }).then((s) => s.state)).catch((e) => "error: " + e.message);
-  const verdict = { mic, f13: f13.dispatch, micPolicy: listening.micPolicy, at: new Date().toISOString() };
-  fs.writeFileSync(path.join(vm.OUT, "buttons-w3.json"), JSON.stringify(verdict, null, 2) + "\n");
-  console.log(`# W3 verdict: microphone ${mic}` + (mic === "granted" ? " (the policy pre-grants it)" : " (STOP: the one-touch fallback becomes a rollout step; plan T5.8 guard)"));
-  // a held Flic (F14) closes whatever the ask opened, so the next press starts afresh
-  await new Promise((r) => setTimeout(r, 5000));
-  await pressKey("F14", ["cancel", "none"]);
-  // the Square button's key, with Chat on the screen
-  const square = await pressKey("Ctrl+Alt+F9", ["visible", "foreground", "relaunch"]);
-  if (square.dispatch === "relaunch") await chatPage();
-  assert.equal(new URL(page.url()).pathname, "/chat/");
-  await pressKey("F14", ["cancel", "none"]);
-  vm.shot("buttons-after-square");
+    // From Home no Chat page listens: F13 relaunches the kiosk at /chat/?ask=<nonce>.
+    await vm.home(page);
+    const f13 = await pressKey("F13", ["relaunch", "visible"]);
+    await chatPage();
+    vm.shot("buttons-after-f13");
+    assert.equal(new URL(page.url()).pathname, "/chat/", "a press lands on Chat");
+    // W3: does the fresh kiosk profile have the microphone without a touch?
+    const mic = await page.evaluate(() => navigator.permissions.query({ name: "microphone" }).then((s) => s.state)).catch((e) => "error: " + e.message);
+    const verdict = { mic, f13: f13.dispatch, micPolicy: listening.micPolicy, at: new Date().toISOString() };
+    fs.writeFileSync(path.join(vm.OUT, "buttons-w3.json"), JSON.stringify(verdict, null, 2) + "\n");
+    console.log(`# W3 verdict: microphone ${mic}` + (mic === "granted" ? " (the policy pre-grants it)" : " (STOP: the one-touch fallback becomes a rollout step; plan T5.8 guard)"));
+    // a held Flic (F14) closes whatever the ask opened, so the next press starts afresh
+    await new Promise((r) => setTimeout(r, 5000));
+    await pressKey("F14", ["cancel", "none"]);
+    // the Square button's key, with Chat on the screen
+    const square = await pressKey("Ctrl+Alt+F9", ["visible", "foreground", "relaunch"]);
+    if (square.dispatch === "relaunch") await chatPage();
+    assert.equal(new URL(page.url()).pathname, "/chat/");
+    await pressKey("F14", ["cancel", "none"]);
+    vm.shot("buttons-after-square");
+  } finally {
+    try { vm.bat("sendkey-cleanup", ["schtasks /delete /tn era-qa-sendkey /f >nul 2>&1",
+      `del /f /q ${GUEST_HOME}\\sendkey.exe ${GUEST_HOME}\\sendkey.cs >nul 2>&1`, "echo cleaned"], { soft: true }); } catch {}
+  }
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {
