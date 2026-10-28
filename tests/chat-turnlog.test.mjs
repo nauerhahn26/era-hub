@@ -294,3 +294,23 @@ test('a hold let go too soon is cancelled with reason "short" in the timing row 
   assert.deepEqual(validateTurn(record), record);
   assert.equal(s.metrics.snapshot().turns.at(-1).reason, 'short');
 });
+
+test('an open-ended question\'s shape and a thrown-out recall batch are category words in the record, and the hub schema bounds them', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  const choices = [{ id: '1:0', label: 'Give me a clue', say: 'Can you give me a clue?', symbol: 'clue', symbolId: 6531 }];
+  stageChoices(s.log, h, choices, { kind: 'guarded', shape: 'recall', recallRejected: true, likes: ['draw'] }, choice => choice.symbol);
+  s.wrapped.mark(h, 'selected'); s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.shape, 'recall');
+  assert.equal(record.content.recallRejected, true);
+  assert.ok(!JSON.stringify(record).includes('draw'), 'the likes never go in a record');
+  assert.deepEqual(validateTurn(record), record);
+  assert.deepEqual(validateTurn({ ...record, content: { ...record.content, shape: null } }).content.shape, null);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, shape: 'wonder' } }), /invalid-turn/);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, recallRejected: 'yes' } }), /invalid-turn/);
+  const t2 = setup(), h2 = t2.wrapped.begin('typed');
+  stageChoices(t2.log, h2, choices, { kind: 'generated', shape: 'wonder', recallRejected: 'yes' }, choice => choice.symbol);
+  t2.wrapped.end(h2, 'completed'); await flush();
+  const plain = JSON.parse(t2.requests.find(r => r.url === '/chat/api/turns').init.body).content;
+  assert.equal('shape' in plain, false); assert.equal('recallRejected' in plain, false);
+});

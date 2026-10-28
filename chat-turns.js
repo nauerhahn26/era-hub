@@ -61,6 +61,9 @@ const RECORD = shape({
   worker: shape(Object.fromEntries(WORKER.map(key => [key, key === 'firstPartialMs' || key === 'connectMs' ? nullable(num()) : num()]))),
   content: shape({ transcript: str(2000), partials: list(str(2000), 100), choiceKind: str(32), choices: list(choice, 6), symbolRejected: v => int(6)(v) && v > 0,
     pictureWarm: int(12),
+    // An open-ended question's shape and whether the recall check threw the
+    // model's batch out (dad, 10/28): category words, never the likes.
+    shape: nullable(oneOf(['want', 'recall', 'feel', 'open'])), recallRejected: v => typeof v === 'boolean',
     selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100) }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),

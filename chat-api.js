@@ -270,7 +270,9 @@ function namedChoices(text) {
 const STEM = /^(?:or\s+)?(?:do you (?:want|need)(?: to)?|do you wanna|would you (?:like|prefer)(?: to)?|would you rather|should we|shall we|can we)\s+/i;
 const CHOICE_PROMPT = String.raw`(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|do you wanna|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)`;
 const OPENER = new RegExp(String.raw`^(?:(?:hey[\s,!.?:]+)?ellie[\s,!.?:]+)?` + CHOICE_PROMPT + String.raw`\s*[:,.!?]*$`, 'i');
-function localChoices(text) {
+// The question as the shortcuts read it: the last question sentence (with its
+// opener), no closing punctuation, and no leading wake address.
+function addressed(text) {
   let trimmed = lastQuestion(text, OPENER).replace(/[?.!]+$/, '').trim();
   const explicitAddress = /^hey[\s,!.?:]+ellie[\s,!.?:]+(.+)$/i.exec(trimmed) ||
     /^ellie\s*[,!.?:]+\s*(.+)$/i.exec(trimmed);
@@ -281,6 +283,31 @@ function localChoices(text) {
   if (explicitAddress) trimmed = explicitAddress[1];
   else if (questionAddress && /^(?:(?:what|which|why|where|when|how|who|hi|hello|hey)\b|(?:do|does|did|can|could|would|will|have|has|had|shall|should|may|are|were)\s+(?:you|we)\b|(?:is|was)\s+(?:it|this|that|there)\b)/i.test(questionAddress[1]))
     trimmed = questionAddress[1];
+  return trimmed;
+}
+// An open-ended question's shape (dad, 10/28): what the model is asked for
+// when no shortcut answers. want: something to do, eat, play; feel: how she
+// is or how it was; recall: what she did (checked, never invented); open: any
+// other question word or "tell me". A statement has no shape. Only consulted
+// after localChoices has found nothing.
+const WANT = [/\b(?:what|which|where)\b.*\b(?:do you want|would you like|do you feel like|should we|shall we|are we (?:going to|gonna)|do you wanna|you want to)\b/,
+  /\bwhat (?:do you want|would you like|should we|shall we) to (?:do|play|eat|watch|read|make|have|wear)\b/,
+  /\bwhat do you want for (?:lunch|dinner|breakfast|snack)\b/, /\bwhat (?:game|book|show|song) (?:do you want|should we)\b/];
+const FEEL = [/^how are you\b/, /\bhow was your \w+/, /\bhow do you feel\b/, /\bhow was it\b/, /\bdid you (?:like|enjoy) \w+/];
+const RECALL = [/\b(?:what|where|who|when|how)\b.*\b(?:did you|have you|were you|you do|you went|you see)\b/, /\bwhat happened\b/,
+  /\bwhat was your (?:favourite|favorite) part\b/, /\btell me about your (?:day|weekend|holiday|birthday|book|story|trip)\b/];
+const OPEN = /^(?:who|what|where|when|why|how|which|tell me|tell us|say|describe|what about)\b/;
+function openShape(text) {
+  if (typeof text !== 'string') return null;
+  const question = addressed(text).toLowerCase().replace(/[’]/g, "'").replace(/[?.!,;:]+$/, '').trim();
+  if (!question) return null;
+  if (WANT.some(pattern => pattern.test(question))) return 'want';
+  if (FEEL.some(pattern => pattern.test(question))) return 'feel';
+  if (RECALL.some(pattern => pattern.test(question))) return 'recall';
+  return OPEN.test(question) ? 'open' : null;
+}
+function localChoices(text) {
+  let trimmed = addressed(text);
   const glyphs = glyphChoices(trimmed);
   if (glyphs) return glyphs;
   if (/\bor\b/i.test(trimmed)) {
@@ -370,6 +397,14 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   const adapterUrl = transportUrl(env.ERA_CHAT_CHOICES_URL);
   // Chat test mode only (spec 2026-10-27 §5): the model id and token counts reach the page while the switch is on.
   const reportUsage = () => { try { return options.reportUsage?.() === true; } catch { return false; } };
+  // What she likes (the device's chatLikes setting): sent with an open-ended
+  // question only, read when a question asks; an unreadable list costs nothing.
+  const likes = () => {
+    try {
+      const list = options.likes?.();
+      return Array.isArray(list) ? list.filter(item => typeof item === 'string' && item.trim() && item.length <= 30).slice(0, 12) : [];
+    } catch { return []; }
+  };
   // Two more than the HTTP route's own limit: a streaming session's speculative
   // request and its fresh one may overlap for a moment while one aborts.
   const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices + 2, timeoutMs: Math.min(limits.adapterMs, 12000) } });
@@ -673,7 +708,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     ]), timings: { totalMs: Math.max(0, clock() - began) } };
     try {
       let result;
-      const input = { text, ...(context && context.length ? { context } : {}) };
+      const shape = openShape(text), liked = shape ? likes() : [];
+      const input = { text, ...(context && context.length ? { context } : {}), ...(shape ? { shape } : {}), ...(liked.length ? { likes: liked } : {}) };
       if (!adapterUrl) result = onChoice ? await choicesCore.generateStream(input, { signal, onChoice }) : await choicesCore.generate(input, { signal });
       else {
         const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal,
@@ -700,6 +736,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
         choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol, picture: item.picture }))),
         ...(rejected ? { symbolRejected: rejected } : {}),
+        ...(shape ? { shape } : {}), ...(result.recallRejected === true ? { recallRejected: true } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }
@@ -931,4 +968,4 @@ function createChatApi(options = {}) {
     close() { closed = true; inner.close(); },
   };
 }
-module.exports = { createChatApi, loadChatEnvironment, ownRequest };
+module.exports = { createChatApi, loadChatEnvironment, ownRequest, localChoices, alternativesOf, openShape };

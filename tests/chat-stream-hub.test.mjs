@@ -292,7 +292,8 @@ test('choices are staged by the hub one by one and sealed once; the page never a
   assert.deepEqual(sealed.choices.map(c => c.say), ['Let us play outside.', 'I want to read.', 'I am not sure.']);
   assert.ok(sealed.choices.every(c => typeof c.symbol === 'string'));
   assert.equal(sealed.kind, 'generated'); assert.equal(sealed.generation, s.generation);
-  assert.deepEqual(reply.calls[0].input, { question: OPEN, context: ['Me: I like books.'] });
+  assert.deepEqual(reply.calls[0].input, { question: OPEN, context: ['Me: I like books.'], shape: 'want' }, 'an open question carries its shape');
+  assert.equal(sealed.shape, 'want', 'the sealed batch carries the shape for the turn record');
   assert.equal(reply.calls[0].body.stream, true);
   assert.equal(reply.calls.length, 1); assert.equal(sealed.usage, undefined, 'usage only in test mode');
   await pause(60);
