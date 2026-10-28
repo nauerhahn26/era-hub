@@ -128,6 +128,10 @@ function cleanText(value, cap) {
   if (typeof value !== 'string' || !value.trim() || value.length > cap || /[\x00-\x08\x0b-\x1f<>]/.test(value)) return null;
   return value.trim().replace(/\s+/g, ' ');
 }
+// Ask a question / Make a comment without a reply model (stable frame §3).
+const MODES = ['ask', 'comment'];
+const MODE_FALLBACK = Object.freeze({ ask: ['Why?', 'What do you mean?', 'Can you tell me more?', 'What happens next?'],
+  comment: ["That's cool!", "I'm not sure", 'I like that', 'No way!'] });
 // Every choice leaves the hub with a decorative picture: { symbol, symbolId }.
 // A glyph choice (a letter or a number, spec §3) has no picture: the page
 // shows the character itself, big.
@@ -417,7 +421,9 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const value = typeof options.world === 'function' ? options.world() : typeof options.world?.digest === 'function' ? options.world.digest() : null;
       if (!value || typeof value.text !== 'string' || value.text.length > 6000) return null;
       const count = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
-      return { text: value.text, weeks: count(value.weeks), days: count(value.days), chars: value.text.length };
+      // The About me page's lines (stable frame §2): clean short strings, six at most.
+      const lines = list => (Array.isArray(list) ? list : []).filter(item => typeof item === 'string' && item.trim() && item.length <= 300 && !/[\x00-\x1f<>]/.test(item)).slice(0, 6);
+      return { text: value.text, weeks: count(value.weeks), days: count(value.days), chars: value.text.length, about: lines(value.about), week: lines(value.week) };
     } catch { return null; }
   };
   // Two more than the HTTP route's own limit: a streaming session's speculative
@@ -713,23 +719,27 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // The one choice path: local shortcuts first, then the external adapter or
   // the built-in reply core (streamed when `onChoice` listens), then the
   // published post-checks. Returns the page's body; throws a fault.
-  async function produceChoices(text, context, signal, onChoice) {
+  // `mode` ('ask' | 'comment', stable frame §3) asks for her own turn: no local
+  // shortcut, no shape, likes and world always. `avoid` (Something else) lists
+  // the says already shown, and skips the local shortcut that would repeat them.
+  async function produceChoices(text, context, signal, onChoice, { mode, avoid } = {}) {
     const began = clock();
-    const local = localChoices(text);
+    const local = mode || avoid ? null : localChoices(text);
     if (local) return { ...local, timings: { totalMs: Math.max(0, clock() - began) } };
     if (adapterRequested && !adapterUrl) throw fault(503, 'choices-unavailable');
-    if (!adapterUrl && !choicesCore.available) return { kind: 'fallback', choices: choiceList([
+    if (!adapterUrl && !choicesCore.available) return { kind: 'fallback', choices: choiceList(mode ? MODE_FALLBACK[mode] : [
       'Tell me more', "I'm not sure", 'Please say that again', "I don't want to answer",
-    ]), timings: { totalMs: Math.max(0, clock() - began) } };
+    ]), ...(mode ? { mode } : {}), timings: { totalMs: Math.max(0, clock() - began) } };
     try {
       let result;
-      const shape = openShape(text), liked = shape ? likes() : [];
+      const shape = mode ? null : openShape(text), liked = shape || mode ? likes() : [];
       const named = shape && /\bwho(?:m)?\b/i.test(text) ? people() : [];
-      // Her world goes with an open-ended question only, and only when it holds
-      // more than its Today line (a week, a book, people or likes).
-      const known = shape ? worldDigest() : null, world = known && known.text.includes('\n') ? known : null;
+      // Her world goes with an open-ended question or a mode only, and only when
+      // it holds more than its Today line (a week, a book, people or likes).
+      const known = shape || mode ? worldDigest() : null, world = known && known.text.includes('\n') ? known : null;
       const input = { text, ...(context && context.length ? { context } : {}), ...(shape ? { shape } : {}), ...(liked.length ? { likes: liked } : {}),
-        ...(named.length ? { people: named } : {}), ...(world ? { world: world.text } : {}) };
+        ...(named.length ? { people: named } : {}), ...(world ? { world: world.text } : {}),
+        ...(mode ? { mode } : {}), ...(avoid && avoid.length ? { avoid } : {}) };
       if (!adapterUrl) result = onChoice ? await choicesCore.generateStream(input, { signal, onChoice }) : await choicesCore.generate(input, { signal });
       else {
         const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal,
@@ -756,7 +766,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
         choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol, picture: item.picture }))),
         ...(rejected ? { symbolRejected: rejected } : {}),
-        ...(shape ? { shape } : {}), ...(result.recallRejected === true ? { recallRejected: true } : {}),
+        ...(shape ? { shape } : {}), ...(mode ? { mode } : {}), ...(result.recallRejected === true ? { recallRejected: true } : {}),
+        ...(Number.isSafeInteger(result.commentDropped) && result.commentDropped > 0 && result.commentDropped <= 4 ? { commentDropped: result.commentDropped } : {}),
         // The turn record keeps the world's size, never its text.
         ...(world ? { world: { weeks: world.weeks, days: world.days, chars: world.chars } } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
@@ -768,17 +779,24 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     if (!Array.isArray(value) || value.length > 8 || !value.every(x => cleanText(x, 500))) throw fault(400, 'invalid-context');
     return value.map(x => cleanText(x, 500));
   }
+  function cleanAvoid(value) {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length > 8 || !value.every(x => cleanText(x, 300))) throw fault(400, 'invalid-avoid');
+    return value.length ? value.map(x => cleanText(x, 300)) : undefined;
+  }
   async function generate(req, res) {
     const input = await readJson(req, limits.bodyBytes);
     const text = cleanText(input.text, 2000);
     if (!text) throw fault(400, 'invalid-text');
     const context = cleanContext(input.context);
-    if (requests.size >= limits.choices && !localChoices(text)) throw fault(429, 'choices-busy');
+    if (input.mode !== undefined && !MODES.includes(input.mode)) throw fault(400, 'invalid-mode');
+    const mode = input.mode, avoid = cleanAvoid(input.avoid);
+    if (requests.size >= limits.choices && (mode || avoid || !localChoices(text))) throw fault(429, 'choices-busy');
     const controller = new AbortController(); requests.add(controller);
     const cancel = () => { if (!res.writableEnded) controller.abort(); };
     res.once('close', cancel);
     const timeout = setTimeout(() => controller.abort(), limits.adapterMs); timeout.unref();
-    try { json(res, 200, await produceChoices(text, context, controller.signal)); }
+    try { json(res, 200, await produceChoices(text, context, controller.signal, undefined, { mode, avoid })); }
     finally { clearTimeout(timeout); requests.delete(controller); res.off('close', cancel); }
   }
 
@@ -869,7 +887,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     });
     if (req.method === 'POST' && routePath === '/choices') return generate(req, res);
     // What Chat knows this week, for the partner dialog's read-only preview.
-    if (req.method === 'GET' && routePath === '/world') return json(res, 200, worldDigest() || { text: '', weeks: 0, days: 0, chars: 0 });
+    if (req.method === 'GET' && routePath === '/world') return json(res, 200, worldDigest() || { text: '', weeks: 0, days: 0, chars: 0, about: [], week: [] });
     if (req.method === 'POST' && routePath === '/sessions') {
       await readBody(req, limits.bodyBytes);
       const session = startSession(); return json(res, 201, { id: session.id });

@@ -177,6 +177,10 @@ export function createTurnLog(options = {}) {
       if (typeof patch.transcript === 'string') turn.content.transcript = text(patch.transcript, 2000);
       if (typeof patch.spoken === 'string') turn.content.spoken = text(patch.spoken, 600);
       if ('selected' in patch) turn.content.selected = cleanChoice(patch.selected);
+      // The stable frame (spec 2026-10-28 §4): the middle swapped to a mode, a page opened, Something else used.
+      if (['ask', 'comment'].includes(patch.mode)) turn.content.mode = patch.mode;
+      if (['questions', 'comments', 'about'].includes(patch.page)) turn.content.page = patch.page;
+      if (patch.again === true) turn.content.again = true;
       notify();
     },
     worker(handle, timings) {

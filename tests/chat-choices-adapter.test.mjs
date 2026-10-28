@@ -305,3 +305,61 @@ test('the recall check passes a reply that names something from world and still 
   for (const say of ['I went to the park yesterday.', 'I saw it on my device.', 'We went to class.'])
     assert.equal((await run(say, notes)).recallRejected, true, say);
 });
+
+// Ask a question / Make a comment (stable frame §3): her own turn, not an answer.
+const FOUR = { choices: [{ label: 'What kind?', say: 'What kind of chicken?' }, { label: 'Rice too?', say: 'Can I have rice too?' },
+  { label: 'Who made it?', say: 'Who made it?' }, { label: 'When?', say: 'When do we eat?' }] };
+
+test('the instructions keep their text and add the modes and avoid', async () => {
+  let body;
+  await createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } }).generate({ text: 'What next?' });
+  assert.match(body.instructions, /^Offer possible spoken replies for a seven-year-old communicator/);
+  assert.match(body.instructions, /World is known, not invented, so it may be stated; beyond world the rules against invented facts stand\.\n/);
+  assert.ok(body.instructions.endsWith("mode: when the data has mode, the communicator is not answering the question; she asked for her own turn. mode ask: return exactly four questions she could ask Partner back about what Partner just said and the conversation so far (context), concrete and each different, in a seven-year-old's words, such as 'What kind of chicken?' or 'Can I have rice too?'; none is a repair. mode comment: return exactly four remarks she could make about what was just said, a spread of views (liking, not liking, a wish, a feeling), drawing on likes and world when they fit, in her words, such as 'I don't like sushi anymore'; never an invented fact about her past; at most one is a repair. avoid: replies already shown and declined; offer four that differ from every one of them in meaning."));
+});
+
+test('a mode reaches the model with likes and world whatever the shape, the shape dropped; avoid is cleaned and capped', async () => {
+  let body;
+  const adapter = createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response(FOUR); } });
+  const input = () => JSON.parse(body.input);
+  const result = await adapter.generate({ text: "We're having chicken for dinner.", context: ['Partner: Hi.', 'Me: Hi!'], mode: 'ask', shape: 'want',
+    likes: ['draw', 'music'], world: WORLD, avoid: ['Yum!', 'I like chicken.'] });
+  assert.deepEqual(input(), { question: "We're having chicken for dinner.", context: ['Partner: Hi.', 'Me: Hi!'], mode: 'ask', likes: ['draw', 'music'],
+    world: WORLD, avoid: ['Yum!', 'I like chicken.'] });
+  assert.equal(result.kind, 'generated'); assert.equal(result.choices.length, 4);
+  await adapter.generate({ text: 'Look at this.', mode: 'comment', likes: Array.from({ length: 20 }, (_, i) => 'like ' + i), world: WORLD });
+  assert.equal(input().mode, 'comment'); assert.equal(input().likes.length, 12); assert.equal(input().world, WORLD); assert.equal('avoid' in input(), false);
+  for (const junk of ['tell', 'ASK', 7, null]) {
+    await adapter.generate({ text: 'Look at this.', mode: junk, world: WORLD });
+    assert.deepEqual(input(), { question: 'Look at this.', context: [] }, 'an unknown mode is dropped, and world with it: ' + JSON.stringify(junk));
+  }
+  await adapter.generate({ text: 'What next?', avoid: ['One', 7, '', 'x'.repeat(181), 'bad <b>', ...Array.from({ length: 10 }, (_, i) => 'Say ' + i)] });
+  assert.deepEqual(input().avoid, ['One', 'Say 0', 'Say 1', 'Say 2', 'Say 3', 'Say 4', 'Say 5', 'Say 6'], 'clean strings of 180 or fewer, eight at most');
+  await adapter.generate({ text: 'What next?', avoid: 'Yes' });
+  assert.equal('avoid' in input(), false, 'not a list: no avoid');
+});
+
+test('a mode skips the partner-incident shortcut; comments get the recall check, questions do not; ownership still holds', async () => {
+  const run = (value, input) => createChoicesAdapter({ env, fetch: async () => response(value) }).generate(input);
+  const asked = await run(FOUR, { text: 'I made chicken.', mode: 'ask' });
+  assert.equal(asked.kind, 'generated', 'the model is asked even when the partner talks about themself');
+  const invented = { choices: [{ label: 'Zoo', say: 'I went to the zoo.' }, { label: 'Cool', say: "That's cool!" }, { label: 'Yum', say: 'Yum!' }, { label: 'No', say: 'No way!' }] };
+  // A comment drops only the says that assert an unknown past activity (coordinator, 10/28).
+  const comment = await run(invented, { text: 'We saw lions.', mode: 'comment' });
+  assert.equal(comment.kind, 'generated'); assert.equal(comment.generated, true); assert.equal(comment.commentDropped, 1);
+  assert.equal('recallRejected' in comment, false);
+  assert.deepEqual(comment.choices.map(x => x.say), ["That's cool!", 'Yum!', 'No way!']);
+  const mostly = { choices: [{ label: 'Zoo', say: 'I went to the zoo.' }, { label: 'Lions', say: 'I saw lions too.' }, { label: 'Cake', say: 'We ate cake.' }, { label: 'Cool', say: "That's cool!" }] };
+  const fixed = await run(mostly, { text: 'We saw lions.', mode: 'comment' });
+  assert.equal(fixed.kind, 'guarded'); assert.equal(fixed.generated, false); assert.equal(fixed.recallRejected, true);
+  assert.deepEqual(fixed.choices.map(x => x.say), ["That's cool!", "I'm not sure", 'I like that', 'No way!'], 'fewer than two left: the fixed comment set');
+  const clean = await run(FOUR, { text: 'We saw lions.', mode: 'comment' });
+  assert.equal('commentDropped' in clean, false, 'nothing dropped, nothing reported');
+  // Shape recall keeps the whole-batch swap.
+  assert.deepEqual((await run(invented, { text: 'What did you do?', shape: 'recall' })).choices.map(x => x.say), REPAIRS);
+  const known = await run({ choices: [{ label: 'Magnets', say: 'I learned about magnets.' }, { label: 'Cool', say: "That's cool!" }] }, { text: 'Magnets are fun.', mode: 'comment', world: WORLD });
+  assert.equal(known.kind, 'generated', 'world is known on a comment as on a recall');
+  assert.equal((await run(invented, { text: 'We saw lions.', mode: 'ask' })).kind, 'generated', 'questions are not checked for recall');
+  const owned = await run({ choices: [{ label: 'Mine', say: 'I lost my drawing too.' }, { label: 'Look', say: 'Where did you look?' }] }, { text: 'I lost my drawing.', mode: 'ask' });
+  assert.equal(owned.kind, 'guarded', 'ownership is never changed');
+});

@@ -15,9 +15,9 @@
   <main id="app">
     <div id="sessionStatus" role="status"><span id="statusDot"></span><span id="phase">Off</span></div>
     <div id="partnerStrip" aria-label="Conversation partner controls">
+      <button id="partnerOpen" type="button" aria-label="Partner settings">•••</button>
       <button id="ask" type="button" disabled>Preparing…</button>
       <button id="retryChat" type="button" hidden>Try again</button>
-      <button id="partnerOpen" type="button" aria-label="Partner settings">•••</button>
     </div>
     <section id="grid" aria-label="Chat words"></section>
     <div id="notice" role="status"></div>
@@ -31,12 +31,22 @@
     <p><button id="pauseMic" type="button">Pause microphone</button> Closes the microphone while Chat stays open. The next hold on Ask turns it back on.</p>
     <label>Voice <select id="voicePreference"><option value="saved">Saved voice</option><option value="local">Device voice (choose explicitly)</option></select></label>
     <section class="partnerSection">
-      <h2>My news</h2>
-      <p>Add a real story together. A short label can speak a longer message. Stories stay on this browser.</p>
+      <h2>My stories</h2>
+      <p>Add a real story together. Stories come first on her About me page. A short label can speak a longer message. Stories stay on this browser.</p>
       <label>Button label <input id="storyLabel" maxlength="55" placeholder="A short title"></label>
       <label>What the button says <textarea id="storyMessage" rows="3" maxlength="600" placeholder="The words she wants to share"></textarea></label>
       <button id="saveStory" type="button">Add story</button><button id="clearStories" type="button">Clear saved stories</button>
       <p id="storyNote"></p>
+    </section>
+    <section class="partnerSection" id="pagesSection">
+      <h2>Her pages</h2>
+      <p>What My questions, My comments and About me show on her screen, after her stories. One per line, up to twenty short lines. Saved on this computer when you leave the box.</p>
+      <label>My questions <textarea id="chatQuestions" rows="4" maxlength="900" placeholder="What did you do today?"></textarea></label>
+      <p id="chatQuestionsNote" role="status"></p>
+      <label>My comments <textarea id="chatComments" rows="4" maxlength="900" placeholder="That sounds fun!"></textarea></label>
+      <p id="chatCommentsNote" role="status"></p>
+      <label>About me <textarea id="chatAbout" rows="4" maxlength="900" placeholder="I love music."></textarea></label>
+      <p id="chatAboutNote" role="status"></p>
     </section>
     <section class="partnerSection" id="testModeSection">
       <h2>Test mode</h2>

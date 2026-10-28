@@ -81,13 +81,13 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   const report = await checkInstalledChatUI(page, { baseURL: base }); assert.equal(report.ok, true);
   // The shared installed-UI helper restores its routes/storage after its test.
   // This second pass owns a simulated recognizer with the real capture graph.
-  const controls = [], uploaded = []; let generation = 0, sequence = 0, stalled = false, releaseUpload, sessionPosts = 0;
+  const controls = [], uploaded = [], choiceBodies = [], spokenTexts = []; let generation = 0, sequence = 0, stalled = false, releaseUpload, sessionPosts = 0;
   await page.addInitScript(() => {
     window.__eventSources = 0;
     window.EventSource = class { constructor() { window.__timingEvents = this; window.__eventSources++; } close() { this.closed = true; } };
   });
   await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
-  await page.route('**/tts', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }));
+  await page.route('**/tts', route => { try { spokenTexts.push(route.request().postDataJSON().text); } catch {} return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }); });
   await page.route('**/chat/api/**', async route => {
     const req = route.request(), url = new URL(req.url()); let result = {};
     if (url.pathname === '/chat/api/state') return route.continue();
@@ -100,7 +100,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
       assert.equal(Number(url.searchParams.get('seq')), sequence); sequence++;
       uploaded.push(req.postDataBuffer().length); result = { seq: sequence };
       if (stalled) await new Promise(resolve => { releaseUpload = resolve; });
-    } else if (url.pathname.endsWith('/choices')) result = alternatives;
+    } else if (url.pathname.endsWith('/choices')) { choiceBodies.push(req.postDataJSON()); result = alternatives; }
     else result = { ready: true, mode: 'paused' };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) }).catch(() => {});
   });
@@ -141,11 +141,15 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   assert.equal(JSON.stringify(stored).includes('private-browser-session'), false); assert.equal(JSON.stringify(stored).includes('music'), false);
   for (const size of [{ width: 1280, height: 800 }, { width: 1600, height: 1000 }]) {
     await page.setViewportSize(size); await page.waitForTimeout(50);
-    assert.equal(await page.locator('.rest .chat-symbol').count(), 0); assert.equal(await page.locator('.response .chat-symbol').count(), 2);
-    const bad = await page.locator('.tile:not(.rest):not(.waiting) .label').evaluateAll(labels => labels.filter(label => {
+    assert.equal(await page.locator('.tile.rest').count(), 0, 'the stable frame has no rest cells');
+    assert.equal(await page.locator('.response .chat-symbol').count(), 2); assert.equal(await page.locator('.tile.question .chat-symbol').count(), 0);
+    // The strip is the partner's words in grey: whole, at its own smaller size (public/chat/tile-fit.js STRIP).
+    assert.equal(await page.locator('.tile.question .label').evaluate(label => label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= label.parentElement.clientHeight), true);
+    const bad = await page.locator('.tile:not(.waiting):not(.question) .label').evaluateAll(labels => labels.filter(label => {
       const tile = label.parentElement, style = getComputedStyle(tile), icon = tile.querySelector('.chat-symbol');
       // A picture beside the words takes width, not height (public/chat/tile-fit.js).
-      const art = icon && !tile.classList.contains('beside') ? icon.getBoundingClientRect().height + (parseFloat(style.rowGap) || 0) : 0;
+      // A picture set aside for the words (tile-fit.js) takes nothing.
+      const art = icon && getComputedStyle(icon).display !== 'none' && !tile.classList.contains('beside') ? icon.getBoundingClientRect().height + (parseFloat(style.rowGap) || 0) : 0;
       const height = tile.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - art;
       return parseFloat(style.fontSize) < 44 || label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > label.clientHeight + 1 || label.getBoundingClientRect().height > height + 1;
     }).map(label => label.textContent));
@@ -154,6 +158,34 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     await page.screenshot({ path: path.join(scratch, screenshot) });
     if (artifacts) await fs.copyFile(path.join(scratch, screenshot), path.join(artifacts, screenshot));
   }
+  // The stable frame (spec 2026-10-28): nine fixed tiles, the strip speaks the
+  // question again (never logged as her words), a mode swap and back, Something else.
+  assert.deepEqual(await page.locator('#grid .tile.page .label').allTextContents(), ['My questions', 'My comments', 'About me']);
+  assert.deepEqual(await page.locator('#grid .tile.mode .label').allTextContents(), ['Ask a question', 'Make a comment']);
+  assert.deepEqual(await page.locator('#grid .tile.static .label').allTextContents(), ['Tell me more', 'Something else']);
+  for (let i = 0; i < 100 && choiceBodies.filter(body => body.mode).length < 2; i++) await page.waitForTimeout(20);
+  const QUESTION = 'Would you like music or a story?';
+  const modeBodies = choiceBodies.filter(body => body.mode);
+  assert.deepEqual(modeBodies.map(body => body.mode).sort(), ['ask', 'comment'], 'both sets are asked for once the batch is revealed');
+  for (const body of modeBodies) { assert.equal(body.text, QUESTION); assert.deepEqual(body.context, [`Partner: ${QUESTION}`]); }
+  assert.equal(await page.locator('.tile.question.dwell .label').textContent(), QUESTION);
+  await page.locator('.tile.question').click();
+  for (let i = 0; i < 100 && !spokenTexts.includes(QUESTION); i++) await page.waitForTimeout(20);
+  assert.ok(spokenTexts.includes(QUESTION), 'the strip speaks the question');
+  await page.locator('.tile.mode[data-mode="ask"]').click();
+  await page.waitForSelector('.tile.made');
+  assert.equal(await page.locator('.tile.made').count(), 2); assert.equal(await page.locator('.response').count(), 0);
+  assert.equal(await page.locator('.tile.mode[data-mode="ask"]').evaluate(el => el.classList.contains('on')), true, 'the mode tile is lit');
+  await page.locator('.tile.mode[data-mode="ask"]').click();
+  await page.waitForSelector('.response'); assert.equal(await page.locator('.tile.made').count(), 0, 'the lit tile returns the replies');
+  const shownIds = await page.locator('.response').evaluateAll(nodes => nodes.map(node => node.dataset.choiceId));
+  await page.locator('.tile.static', { hasText: 'Something else' }).click();
+  await page.waitForFunction(ids => [...document.querySelectorAll('.response')].length === 2 && [...document.querySelectorAll('.response')].every(node => !ids.includes(node.dataset.choiceId)), shownIds);
+  const againBody = choiceBodies.find(body => Array.isArray(body.avoid));
+  assert.deepEqual(againBody.avoid, ['Music', 'A story']); assert.equal(againBody.text, QUESTION);
+  assert.ok(againBody.context.includes(`Partner: ${QUESTION}`) && againBody.context.includes('Me: Music'));
+  assert.equal(againBody.context.some(line => line === `Me: ${QUESTION}`), false, 'the strip\'s repeat is not her words');
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Your turn'); // "Something else." has finished
   const finishes = controls.filter(type => type === 'finish').length;
   // A cancelled touch drops only that hold: Ready to ask again on the same session, nothing submitted.
   await down('#ask'); await page.waitForTimeout(120); await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
@@ -261,4 +293,63 @@ test('Chat stories, explicit voice and numeric timings survive a fresh browser a
       browserProcesses: 3, storeInstances: 3, explicitVoiceRestored: true, storyRestored: true,
       numericTimingRowsRestored: prepared.restartState.timings.length, clearSurvivedRestart: true, foreignRequests }, null, 2));
   }
+});
+
+test('her pages: lists from settings, ten a page with More and Back, the lit rail tile closes, About me puts stories first, the dialog saves the lists', { timeout: 60000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-pages-'));
+  const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+  const page = await context.newPage(), errors = [], saved = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const questions = Array.from({ length: 13 }, (_, i) => `Question ${i + 1}?`);
+  await page.route('**/settings', route => {
+    if (route.request().method() === 'POST') { saved.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatQuestions: questions, chatComments: ['That is cool!'], chatAbout: ['I like swings.', 7] }) });
+  });
+  await page.route('**/chat/api/world', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ text: '', about: ['I am in first grade.'], week: ['This week: magnets.'] }) }));
+  // A saved story, through the real store, before the page loads.
+  await page.goto(base + '/');
+  await page.evaluate(async () => {
+    const state = await (await fetch('/chat/api/state')).json();
+    await fetch('/chat/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 1, expectedRevision: state.revision, patch: { stories: [{ label: 'Our trip', say: 'We went to the zoo.' }] } }) });
+  });
+  await page.goto(base + '/chat/'); await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
+  await page.waitForFunction(() => document.querySelector('#chatQuestions').value.split('\n').length === 13);
+  // The door bar's right end (spec 2026-10-28 §1): lock, partner settings, Hold to ask in the corner.
+  await page.locator('#stripLock').waitFor();
+  const bar = await page.evaluate(() => ['#stripLock', '#partnerOpen', '#ask'].map(id => document.querySelector(id).getBoundingClientRect().toJSON()));
+  assert.ok(bar[0].right <= bar[1].left && bar[1].right <= bar[2].left, `lock, •••, Hold to ask from left to right: ${JSON.stringify(bar.map(box => [box.left, box.right]))}`);
+  assert.ok(1600 - bar[2].right <= 16, `Hold to ask is in the top right corner (${1600 - bar[2].right} px from the edge)`);
+  const items = () => page.locator('#grid .tile.item .label').allTextContents();
+  const navs = () => page.locator('#grid .tile.nav .label').allTextContents();
+  await page.locator('#grid .tile.page[data-page="questions"]').click();
+  assert.deepEqual(await items(), questions.slice(0, 10)); assert.deepEqual(await navs(), ['More', 'Back']);
+  assert.equal(await page.locator('#grid .tile.page.on').getAttribute('data-page'), 'questions');
+  assert.equal(await page.locator('#grid .tile.mode').count(), 0, 'the page takes the bottom row too');
+  assert.equal(await page.locator('#grid .tile.page').count(), 3); assert.equal(await page.locator('#grid .tile.yes, #grid .tile.no, #grid .tile.question').count(), 3);
+  await page.locator('#grid .tile.nav', { hasText: 'More' }).click();
+  assert.deepEqual(await items(), questions.slice(10)); assert.deepEqual(await navs(), ['Back']);
+  await page.locator('#grid .tile.page.on').click(); // the lit tile closes the page
+  await page.locator('#grid .tile.page.on').waitFor({ state: 'detached' });
+  assert.deepEqual(await page.locator('#grid .tile.static .label').allTextContents(), ['Tell me more', 'Something else', "Hi!", "What's up?", 'How are you?', 'Come sit with me.']);
+  await page.locator('#grid .tile.page[data-page="about"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.item').length === 4);
+  assert.deepEqual(await items(), ['Our trip', 'I like swings.', 'I am in first grade.', 'This week: magnets.'], 'stories, then her lines, then the world');
+  await page.locator('#grid .tile.nav', { hasText: 'Back' }).click();
+  await page.locator('#grid .tile.page.on').waitFor({ state: 'detached' });
+  await page.locator('#grid .tile.page[data-page="comments"]').click();
+  assert.deepEqual(await items(), ['That is cool!']);
+  // The partner dialog: one per line, twenty lines of forty characters at most.
+  await page.locator('#partnerOpen').click();
+  const lines = [...Array.from({ length: 24 }, (_, i) => `Comment ${i}`), 'x'.repeat(60)];
+  await page.locator('#chatComments').fill(lines.join('\n')); await page.locator('#chatComments').blur();
+  await page.waitForFunction(() => document.querySelector('#chatCommentsNote').textContent.startsWith('Saved 20'));
+  assert.deepEqual(saved.at(-1), { chatComments: lines.slice(0, 20) });
+  await page.locator('#partnerDialog form button').click();
+  assert.deepEqual(await items(), lines.slice(0, 10), 'the open page shows the saved list');
+  assert.deepEqual(errors, []);
 });

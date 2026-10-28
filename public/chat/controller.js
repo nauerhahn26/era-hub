@@ -2,8 +2,22 @@
 // A sealed batch is shown the moment it arrives (spec 2026-10-27 §4): no gaze gate.
 export const isPartnerTouch = e => e?.isTrusted === true && e.pointerType === 'touch';
 
+// A batch as the page shows it: at most four, words required, the hub's picture fields checked.
+export function cleanChoices(list, prefix) {
+  return (Array.isArray(list) ? list : []).filter(x => x && typeof x.label === 'string' && typeof x.say === 'string' && x.say.trim()).slice(0, 4)
+    .map((x, i) => Object.freeze({ id: `${prefix}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600),
+      // The hub's decorative picture pick (spec §6) rides along; it never changes the words.
+      ...(typeof x.symbol === 'string' && x.symbol.length <= 64 ? { symbol: x.symbol } : {}),
+      ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}),
+      // A person's own picture, from the hub's /characters/ route only.
+      ...(x.picture && typeof x.picture.src === 'string' && /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/.test(x.picture.src)
+        ? { picture: Object.freeze({ src: x.picture.src, kind: 'person' }) } : {}),
+      // A letter or number tile the page draws big, with no picture.
+      ...(x.glyph === true ? { glyph: true } : {}) }));
+}
+
 export function createChatController(deps = {}) {
-  let turn = 0, preparing = false, abort = null, speechAbort = null, utterance = 0;
+  let turn = 0, batch = 0, preparing = false, abort = null, speechAbort = null, utterance = 0;
   const listeners = new Set();
   // standby: no session is live, but a hold starts one (no Start Chat, 10/27 evening).
   let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, standby: false, question: '', partial: '', choices: Object.freeze([]), error: '', hint: '', turn });
@@ -44,16 +58,7 @@ export function createChatController(deps = {}) {
       try {
         const result = await deps.requestChoices?.({ text: question, signal: abort.signal });
         if (mine !== turn) return;
-        const clean = (result?.choices || []).filter(x => x && typeof x.label === 'string' && typeof x.say === 'string' && x.say.trim()).slice(0, 4)
-          .map((x, i) => Object.freeze({ id: `${mine}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600),
-            // The hub's decorative picture pick (spec §6) rides along; it never changes the words.
-            ...(typeof x.symbol === 'string' && x.symbol.length <= 64 ? { symbol: x.symbol } : {}),
-            ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}),
-            // A person's own picture, from the hub's /characters/ route only.
-            ...(x.picture && typeof x.picture.src === 'string' && /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/.test(x.picture.src)
-              ? { picture: Object.freeze({ src: x.picture.src, kind: 'person' }) } : {}),
-            // A letter or number tile the page draws big, with no picture.
-            ...(x.glyph === true ? { glyph: true } : {}) }));
+        const clean = cleanChoices(result?.choices, mine);
         if (!clean.length) throw new Error('No suggestions available. Your phrases still work.');
         const next = Object.freeze(clean);
         preparing = false;
@@ -74,6 +79,17 @@ export function createChatController(deps = {}) {
         await deps.onChoicesError?.();
       }
     },
+    // A fresh batch for the same question (Something else, spec 2026-10-28 §3):
+    // only while that turn's replies are on screen; the ids are new.
+    replace(choices, expectedTurn = turn) {
+      if (expectedTurn !== turn || !state.choices.length || !['Your turn', 'Speaking'].includes(state.phase)) return false;
+      const next = Object.freeze(cleanChoices(choices, `${turn}.${++batch}`));
+      if (!next.length) return false;
+      try { deps.prefetch?.(next); } catch { /* Warming never holds the reveal back. */ }
+      deps.beforeChoices?.();
+      patch({ choices: next });
+      return true;
+    },
     async select(id, expectedTurn = turn) {
       if (expectedTurn !== turn || !['Your turn', 'Speaking'].includes(state.phase)) return false;
       const c = state.choices.find(x => x.id === id);
@@ -81,14 +97,15 @@ export function createChatController(deps = {}) {
       timing('selected');
       return api.sayFixed(c.say);
     },
-    async sayFixed(text) {
+    // echo: the partner's own words said again (the question strip); speak() is told.
+    async sayFixed(text, { echo = false } = {}) {
       const mine = turn, spoken = ++utterance;
       speechAbort?.abort(); speechAbort = new AbortController();
       deps.stopSpeech?.();
       timing('speechRequested');
       const back = state.choices.length ? 'Your turn' : state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.standby ? 'Ready to ask' : 'Off';
       patch({ phase: 'Speaking', error: '', hint: '' });
-      try { await deps.speak?.({ say: text }, { signal: speechAbort.signal }); }
+      try { await deps.speak?.(echo ? { say: text, echo: true } : { say: text }, { signal: speechAbort.signal }); }
       catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'
         ? 'Saved voice is unavailable. Choose Device voice in partner settings to use it instead. The words are still here.'
         : 'Sound unavailable. The words are still here.' }); }

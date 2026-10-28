@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
-const CAP = 6000, DAYS_BACK = 10, RECENT_DAYS = 7, CHECK_MS = 60000, FULL_WEEKS = 4, BOOKS = 8, BOOKS_KEPT = 4, PEOPLE = 12, LIKES = 12, WORDS = 10, VIDEOS = 3;
+const CAP = 6000, DAYS_BACK = 10, RECENT_DAYS = 7, CHECK_MS = 60000, FULL_WEEKS = 4, BOOKS = 8, BOOKS_KEPT = 4, PEOPLE = 12, LIKES = 12, WORDS = 10, VIDEOS = 3, LINES = 6;
 // Per-list caps, applied before the global cap so long lists never crowd out the days.
 const ABOUT_CHARS = 320, ASKED = [8, 110], WORKED = [5, 90], MOMENTS = [3, 120], SAID = [2, 140];
 const DAY_MS = 86400000;
@@ -149,6 +149,26 @@ function weekParts(week, label) {
   return { head, facts, videos: videos.length ? `Videos: ${videos.join('; ')}.` : '' };
 }
 
+// A topic in a sentence: "Magnets" reads "magnets"; a topic with another
+// capital after its first letter ("Abraham Lincoln", "The USA") reads as a
+// name and stays as given.
+const inSentence = text => /^[A-Z][^A-Z]*$/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+// This week's package as first-person lines for About me (stable frame §2):
+// one per subject topic, the hero, the first video; at most six, the hero and
+// the video always kept. Older weeks give nothing.
+function weekLines(week) {
+  if (!week) return [];
+  const m = week.manifest, topic = m.topic && typeof m.topic === 'object' && !Array.isArray(m.topic) ? m.topic : {};
+  const extras = [];
+  const hero = field(topic.hero, 120);
+  if (hero) extras.push(`Our hero is ${hero}`);
+  const video = (Array.isArray(m.watch) ? m.watch : []).map(item => field(item && item.title, 100)).find(Boolean);
+  if (video) extras.push(`We are watching ${video}`);
+  const topics = Object.entries(topic).filter(([key]) => key !== 'hero').map(([, value]) => field(value, 120)).filter(Boolean)
+    .map(text => `We are learning about ${inSentence(text)}`);
+  return [...topics.slice(0, LINES - extras.length), ...extras];
+}
+
 function build({ weeks, worlds, books, people, likes, today }) {
   const thisMonday = monday(today);
   const ago = day => Math.round((thisMonday - monday(day)) / (7 * DAY_MS));
@@ -228,7 +248,8 @@ function build({ weeks, worlds, books, people, likes, today }) {
   // Last resort: drop lines from the end, never the Today line, never mid-line.
   while (lines.length > 1 && size(lines) > CAP) lines.pop();
   const text = lines.map(line => line.text).join('\n');
-  return { text, weeks: lines.filter(line => line.kind === 'week').length, days: lines.filter(line => line.kind === 'day').length, chars: text.length };
+  return { text, weeks: lines.filter(line => line.kind === 'week').length, days: lines.filter(line => line.kind === 'day').length, chars: text.length,
+    about: world.about.slice(0, LINES), week: weekLines(weeks.find(week => ago(week.day) === 0)) };
 }
 
 function createWorld({ dataDir, books, people, likes, now = Date.now } = {}) {

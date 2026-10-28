@@ -104,7 +104,8 @@ function meaning(text) {
 }
 
 export function resolveSymbol({ label = '', type = '', say = '' } = {}) {
-  if (['rest', 'waiting', 'emptyStory'].includes(type)) return null;
+  // The question strip (spec 2026-10-28 §1) is the partner's words: never a picture.
+  if (['rest', 'waiting', 'emptyStory', 'question'].includes(type)) return null;
   if (type === 'yes' || type === 'no') return type;
   // Invalid label text never becomes an executable SVG attribute or a guessed
   // concept derived from partially stripped markup.
@@ -138,7 +139,7 @@ export function attachSymbol(tile, options = {}) {
 
 // ---- library pictures --------------------------------------------------------
 let library = null;
-const PICTURE_TYPES = new Set(['rest', 'waiting', 'emptyStory']);
+const PICTURE_TYPES = new Set(['rest', 'waiting', 'emptyStory', 'question']);
 // Drawing's shipped emoji stickers (MIT), reused by keyword as the backup.
 const EMOJI = {
   home: 'house', horse: 'horse', tree: 'tree', forest: 'tree', nature: 'tree', garden: 'tree', sun: 'sun', sunny: 'sun', hot: 'sun',

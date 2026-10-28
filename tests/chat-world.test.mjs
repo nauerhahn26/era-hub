@@ -93,7 +93,7 @@ test('nothing on the device gives only the Today line and no weeks; broken provi
   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
   const boom = () => { throw Error('unreadable'); };
   const digest = createWorld({ dataDir, books: boom, people: () => 'Mom', likes: () => [], now: () => NOW }).digest();
-  assert.deepEqual(digest, { text: 'Today: Wednesday, October 28.', weeks: 0, days: 0, chars: 29 });
+  assert.deepEqual(digest, { text: 'Today: Wednesday, October 28.', weeks: 0, days: 0, chars: 29, about: [], week: [] });
   assert.equal(createWorld({ dataDir: path.join(dataDir, 'missing'), now: () => NOW }).digest().weeks, 0);
 });
 
@@ -186,7 +186,8 @@ test('world.json files are merged across folders, newest first, and placed after
   assert.equal(digest.weeks, 2, 'weeks counts the week packages');
   // A world.json alone, with no manifest beside it, still counts.
   const alone = fixture(t, {}, { '2026-10-26': { schema: 1, days: [{ date: '2026-10-28', activities: ['recess'], said: ['Hello there'] }] } });
-  assert.deepEqual(createWorld({ dataDir: alone, now: () => NOW }).digest(), { text: 'Today: Wednesday, October 28.\nToday at school: recess. She said on her device: Hello there.', weeks: 0, days: 1, chars: 91 });
+  assert.deepEqual(createWorld({ dataDir: alone, now: () => NOW }).digest(), { text: 'Today: Wednesday, October 28.\nToday at school: recess. She said on her device: Hello there.', weeks: 0, days: 1, chars: 91,
+    about: [], week: [] });
 });
 
 test('a day older than last week is named by its date; a world week three or more weeks back is dropped', t => {
@@ -289,4 +290,25 @@ test('the cache: rebuilt when a manifest or a provider list changes, never more 
   likes = ['draw', 'swim'];
   clock += 61000;
   assert.match(world.digest().text, /She likes: draw, swim\./);
+});
+
+test('about and week (stable frame §2): her about sentences, and first-person lines from this week\'s package only', t => {
+  const dataDir = fixture(t, { '2026-10-26': THIS, '2026-10-19': LAST }, { '2026-10-26': WORLD_NEW });
+  const digest = createWorld({ dataDir, now: () => NOW }).digest();
+  assert.deepEqual(digest.about, ['She loves drawing animals.', 'She likes music with a beat.']);
+  assert.deepEqual(digest.week, ['We are learning about magnets', 'We are learning about community helpers', 'We are learning about long a words',
+    'We are learning about counting by tens', 'Our hero is a famous inventor', 'We are watching Magnets for Kids | Science Show']);
+  // A capitalised topic is lowered unless it reads as a name; at most six lines, the hero and the video kept.
+  const many = week('2026-10-26', 'Many', { science: 'Magnets', social_studies: 'Abraham Lincoln', phonics: 'The USA', math: 'shapes', art: 'colors',
+    music: 'drums', hero: 'Grace Hopper' }, [], ['A show']);
+  const lines = createWorld({ dataDir: fixture(t, { '2026-10-26': many }), now: () => NOW }).digest().week;
+  assert.deepEqual(lines, ['We are learning about magnets', 'We are learning about Abraham Lincoln', 'We are learning about The USA',
+    'We are learning about shapes', 'Our hero is Grace Hopper', 'We are watching A show']);
+  // Nothing from older weeks: last week's package alone gives no week lines; six about sentences at most.
+  const old = createWorld({ dataDir: fixture(t, { '2026-10-19': LAST }, { '2026-10-19': { schema: 1, about: ['One.', 'Two.', 'Three.', 'Four.', 'Five.', 'Six.', 'Seven.'] } }),
+    now: () => NOW }).digest();
+  assert.deepEqual(old.week, []);
+  assert.deepEqual(old.about, ['One.', 'Two.', 'Three.', 'Four.', 'Five.', 'Six.']);
+  const bare = createWorld({ dataDir: fixture(t, { '2026-10-26': week('2026-10-26', 'Bare', { hero: '' }) }), now: () => NOW }).digest();
+  assert.deepEqual(bare.week, [], 'no topics, no hero, no videos: no lines');
 });

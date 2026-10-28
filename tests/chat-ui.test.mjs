@@ -262,3 +262,36 @@ test('a quietly ended session stands by at Ready to ask; a dropped hold there ke
   shown.ready(); await shown.prepare('Do you want to?'); shown.standby();
   assert.equal(shown.state.phase, 'Your turn'); assert.equal(shown.state.choices.length, 1);
 });
+
+test('replace swaps the current turn\'s replies for a fresh batch (Something else), with new ids, the settle first, and only for that turn', async () => {
+  const order = [], prefetched = [];
+  const c = createChatController({ requestChoices: async () => ({ choices: [choice('one'), choice('two')] }),
+    beforeChoices: () => order.push('settle'), prefetch: next => prefetched.push(next.map(x => x.label)) });
+  await c.prepare('a question');
+  const turn = c.state.turn, before = c.state.choices.map(x => x.id);
+  order.length = 0;
+  assert.equal(c.replace([choice('three'), { label: 'bad' }, choice('four'), choice('five'), choice('six'), choice('seven')], turn), true);
+  assert.deepEqual(c.state.choices.map(x => x.label), ['three', 'four', 'five', 'six'], 'cleaned like a batch: at most four');
+  assert.equal(c.state.question, 'a question'); assert.equal(c.state.turn, turn); assert.equal(c.state.phase, 'Your turn');
+  assert.ok(c.state.choices.every(x => !before.includes(x.id)), 'a replaced batch never reuses an id');
+  assert.ok(Object.isFrozen(c.state.choices));
+  assert.deepEqual(order, ['settle']); assert.deepEqual(prefetched.at(-1), ['three', 'four', 'five', 'six']);
+  // The new batch selects like any other.
+  let spoken = ''; const d = createChatController({ requestChoices: async () => ({ choices: [choice('a')] }), speak: async x => { spoken = x.say; } });
+  await d.prepare('q'); d.replace([choice('b')], d.state.turn);
+  assert.equal(await d.select(d.state.choices[0].id), true); assert.equal(spoken, 'b');
+  // A late batch for an older turn, an empty batch, or no turn of replies changes nothing.
+  assert.equal(c.replace([choice('late')], turn - 1), false);
+  assert.equal(c.replace([], turn), false);
+  c.ask();
+  assert.equal(c.replace([choice('late')], turn), false);
+  assert.equal(c.replace([choice('late')], c.state.turn), false, 'nothing to replace while capturing');
+  assert.equal(c.state.choices.length, 0);
+});
+
+test('sayFixed passes an echo mark through to speak so the strip\'s repeat of the question is not her words', async () => {
+  const said = [];
+  const c = createChatController({ speak: async x => { said.push(x); } });
+  await c.sayFixed('Yes.'); await c.sayFixed('What did you eat?', { echo: true });
+  assert.deepEqual(said, [{ say: 'Yes.' }, { say: 'What did you eat?', echo: true }]);
+});
