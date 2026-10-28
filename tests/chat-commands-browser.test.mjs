@@ -536,6 +536,41 @@ test('a press while her gaze rests on a tile from the last turn: the tiles stay 
   assert.deepEqual(f.errors, []);
 });
 
+test('a dwell that completes on an old tile after a press speaks it as her pick: the window closes as a pick, nothing waits to replace it (review fix)', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 4000 } });
+  await f.load(); await f.slowDwell();
+  await f.until(() => f.api.commands.state().connected);
+  await f.restOnCentre();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 });
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 15000 });
+  await f.lookAt('.response >> text=Fish');
+  await f.page.waitForFunction(() => window.Dwell.state().target != null, null, { timeout: 5000 });
+  // The session's events as the page receives them.
+  const events = [], cdp = await f.page.context().newCDPSession(f.page);
+  await cdp.send('Network.enable');
+  cdp.on('Network.eventSourceMessageReceived', ({ data }) => { try { events.push(JSON.parse(data)); } catch { /* not an event */ } });
+  f.ask();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
+  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1']], 'the old tiles still show under her gaze');
+  const plays = await f.page.evaluate(() => window.__plays);
+  const pickAt = f.controls.length;
+  // Her dwell on Fish completes now.
+  await f.page.evaluate(() => window.Dwell.setMs(300));
+  await f.until(() => f.ttsTexts.some(entry => entry.text === 'Fish'));
+  await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
+  assert.ok(f.controls.slice(pickAt).includes('pick'), `the window closed as a pick: ${f.controls.slice(pickAt).join(',')}`);
+  await f.until(() => f.api.window() === null);
+  await f.until(() => events.some(e => e.type === 'window-closed'));
+  assert.deepEqual(events.filter(e => e.type === 'window-closed').map(e => e.reason), ['pick'], 'window-closed {reason: pick}');
+  assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'false', 'no replacement pending');
+  await f.page.waitForTimeout(1500);
+  assert.notEqual(await f.page.locator('#phase').textContent(), 'Preparing', 'nothing of the window waits to be revealed');
+  assert.equal(await f.page.evaluate(() => window.__plays), plays + 1, 'one clip: the picked tile');
+  assert.deepEqual(f.errors, []);
+});
+
 // ---- T4.5 the on-screen Hold to ask is inert while a window is open ----
 
 test('a partner touch on Hold to ask during a listening window does nothing: no hold, the session lives', { timeout: 60000 }, async t => {

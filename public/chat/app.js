@@ -258,7 +258,8 @@ function renderGrid(state) {
   for (let i = 0; i < 4; i++) {
     const item = inCell[i];
     if (item) {
-      const selectedTurn = state.turn;
+      // A stale tile (kept after a press) is picked in the turn it was drawn in.
+      const selectedTurn = state.stale ? state.staleTurn : state.turn;
       const el = tile(item.label, screen === 'chat' && state.choices.length ? 'response' : 'static', () => {
         if (item.id) { turnLog.content(questionMetric, { selected: item }); controller.select(item.id, selectedTurn); } else controller.sayFixed(item.say);
       }, positions[i], item.say, item);

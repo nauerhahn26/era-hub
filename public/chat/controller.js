@@ -32,9 +32,11 @@ export function createChatController(deps = {}) {
   let replacement = null, batches = 0;
   const listeners = new Set();
   // `stale`: the choices shown are a finished turn's, kept after a press until
-  // a neutral moment (design §2: a tile never changes under her gaze). They are
-  // never spoken, and clearStale() (or a centre gaze, neutral()) removes them.
-  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, replacing: false, stale: false, error: '', turn });
+  // a neutral moment (design §2: a tile never changes under her gaze);
+  // clearStale() (or a centre gaze, neutral()) removes them. `staleTurn` is the
+  // turn they were drawn in: a dwell completed on one of them is her pick and
+  // speaks it (select with that turn), ending the press window as any pick does.
+  let state = Object.freeze({ phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, replacing: false, stale: false, staleTurn: null, error: '', turn });
   function timing(name) { try { deps.onTiming?.(name); } catch { /* Diagnostics never interrupt communication. */ } }
   function patch(p) { state = Object.freeze({ ...state, ...p, replacing: replacement !== null }); for (const fn of listeners) fn(state); }
   function invalidate() {
@@ -48,14 +50,15 @@ export function createChatController(deps = {}) {
     ready(wakeEnabled = false) { patch({ engineReady: true, wakeEnabled, phase: state.phase === 'Off' ? (wakeEnabled ? 'Local wake listening' : 'Ready to ask') : state.phase, error: '' }); },
     // keepShown (a press): the last turn's tiles stay, stale, until a neutral moment.
     ask({ keepShown = false } = {}) {
+      const drawnIn = state.stale ? state.staleTurn : turn;
       invalidate();
       const stale = (keepShown || state.stale) && state.choices.length > 0;
-      patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: stale ? state.choices : Object.freeze([]), stale, staged: false, error: '' });
+      patch({ turn, phase: 'Capturing question', question: '', partial: '', choices: stale ? state.choices : Object.freeze([]), stale, staleTurn: stale ? drawnIn : null, staged: false, error: '' });
     },
     clearStale() {
       if (!state.stale) return false;
       const phase = state.phase === 'Your turn' ? (state.engineReady ? (state.wakeEnabled ? 'Local wake listening' : 'Ready to ask') : 'Off') : state.phase;
-      patch({ choices: Object.freeze([]), stale: false, phase });
+      patch({ choices: Object.freeze([]), stale: false, staleTurn: null, phase });
       return true;
     },
     partial(text) { if (state.phase === 'Capturing question') patch({ partial: String(text || '').slice(0, 600) }); },
@@ -112,9 +115,13 @@ export function createChatController(deps = {}) {
       return true;
     },
     async select(id, expectedTurn = turn) {
-      if (expectedTurn !== turn || state.stale || !['Your turn', 'Speaking'].includes(state.phase)) return false;
+      // A still-shown old tile after a press (design §4.5, a pick wins): her
+      // dwell speaks it; whatever the window was preparing is dropped unseen.
+      const stalePick = state.stale && expectedTurn === state.staleTurn;
+      if (!stalePick && (expectedTurn !== turn || state.stale || !['Your turn', 'Speaking'].includes(state.phase))) return false;
       const c = state.choices.find(x => x.id === id);
       if (!c) return false;
+      if (stalePick) { invalidate(); patch({ turn, question: '', partial: '', staged: false, error: '' }); }
       timing('selected');
       return api.sayFixed(c.say);
     },
@@ -149,7 +156,7 @@ export function createChatController(deps = {}) {
     },
     stop() {
       invalidate();
-      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, stale: false, error: '' });
+      patch({ turn, phase: 'Off', engineReady: false, wakeEnabled: false, question: '', partial: '', choices: Object.freeze([]), staged: false, stale: false, staleTurn: null, error: '' });
     },
   };
   return api;

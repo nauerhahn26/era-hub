@@ -291,7 +291,7 @@ test('a press keeps the last turn\'s tiles, stale and never spoken, until clearS
   assert.equal(c.state.phase, 'Capturing question', 'listening starts at once');
   assert.equal(c.state.choices, shown, 'the shown tiles stay as they were');
   assert.equal(c.state.stale, true);
-  assert.equal(await c.select(shown[0].id, c.state.turn), false, 'a stale tile is never spoken');
+  assert.equal(await c.select(shown[0].id, c.state.turn), false, 'a stale tile is never spoken under a later turn');
   assert.equal(c.replace(food('Pasta').choices), false, 'a stale batch is not a window batch to replace');
   assert.equal(c.clearStale(), true);
   assert.deepEqual([c.state.choices.length, c.state.stale, c.state.phase], [0, false, 'Capturing question']);
@@ -299,4 +299,42 @@ test('a press keeps the last turn\'s tiles, stale and never spoken, until clearS
   const d = await showing(['Chicken', 'Fish']);
   d.ask();
   assert.deepEqual([d.state.choices.length, d.state.stale], [0, false], 'the hold path is unchanged');
+});
+
+test('a completed dwell on a still-shown old tile after a press speaks it through the pick path; the window\'s own batch is dropped (review fix)', async () => {
+  const spoken = [];
+  const c = await showing(['Chicken', 'Fish'], { speak: async choice => { spoken.push(choice.say); } });
+  c.ready();
+  const shown = c.state.choices, tileTurn = c.state.turn;
+  // The press: listening starts at once, the old tiles stay stale.
+  c.ask({ keepShown: true });
+  assert.equal(c.state.stale, true);
+  assert.equal(c.state.staleTurn, tileTurn, 'the stale tiles remember the turn they were drawn in');
+  assert.equal(await c.select(shown[1].id, c.state.turn), false, 'a later turn never speaks a stale tile');
+  assert.equal(await c.select(shown[1].id, tileTurn), true, 'her dwell on the old tile speaks it');
+  assert.deepEqual(spoken, ['Fish.']);
+  assert.equal(c.state.phase, 'Ready to ask', 'nothing of the window is pending after the pick');
+  assert.deepEqual([c.state.staged, c.state.replacing], [false, false]);
+  assert.equal(c.state.choices, shown, 'the old tiles are not redrawn by the pick');
+  assert.equal(c.neutral(), false, 'nothing waits to be revealed');
+});
+
+test('a dwell on an old tile while the window\'s batch is being prepared drops that batch unseen (review fix)', async () => {
+  const spoken = [];
+  let calls = 0, aborted = false;
+  const c = createChatController({ speak: async choice => { spoken.push(choice.say); },
+    requestChoices: ({ signal }) => (++calls === 1 ? Promise.resolve(food('Chicken', 'Fish'))
+      : new Promise((resolve, reject) => signal.addEventListener('abort', () => { aborted = true; reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }))) });
+  await c.prepare('do you want chicken or fish'); c.neutral(); c.ready();
+  const shown = c.state.choices, tileTurn = c.state.turn;
+  c.ask({ keepShown: true });
+  const preparing = c.prepare('or pasta');
+  assert.equal(c.state.phase, 'Preparing');
+  assert.equal(await c.select(shown[0].id, tileTurn), true);
+  await preparing;
+  assert.equal(aborted, true, 'the window\'s request was cancelled');
+  assert.deepEqual(spoken, ['Chicken.']);
+  assert.equal(c.state.error, '', 'no failure from the dropped request');
+  assert.equal(c.state.phase, 'Ready to ask');
+  assert.equal(c.neutral(), false, 'nothing is revealed later');
 });
