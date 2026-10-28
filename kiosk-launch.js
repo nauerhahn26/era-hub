@@ -60,7 +60,10 @@ function createKioskLauncher(options = {}) {
       // running browser and drops out of kiosk (start-hub.bat, dad 9/6).
       await closeKiosk();
       await wait(1000);
-      const child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true });
+      // No windowsHide: the browser has no console to hide, and the flag can
+      // start the kiosk hidden, where settleKiosk (MainWindowHandle -ne 0)
+      // never finds it.
+      const child = spawn(exe, args, { detached: true, stdio: 'ignore' });
       child.on?.('error', error => log('relaunch: ' + error.message));
       child.unref();
     } catch (error) {

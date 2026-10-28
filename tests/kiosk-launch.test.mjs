@@ -78,7 +78,7 @@ test('off Windows the relaunch records {would: args} and resolves, touching noth
   assert.equal(touched, 0);
 });
 
-test('on Windows: close our kiosk, wait 1 s, spawn the browser exe detached and hidden, then settle it in front', async () => {
+test('on Windows: close our kiosk, wait 1 s, spawn the browser exe detached (never windowsHide: the kiosk must start shown), then settle it in front', async () => {
   const steps = [];
   const child = { unref: () => steps.push('unref'), on: () => {} };
   const launcher = createKioskLauncher({ port: 8377, dir: DIR, platform: 'win32', exists: file => file === BROWSERS.at(-1),
@@ -89,7 +89,7 @@ test('on Windows: close our kiosk, wait 1 s, spawn the browser exe detached and 
   const spawned = steps[2];
   assert.equal(spawned.exe, BROWSERS.at(-1));
   assert.deepEqual(spawned.args, kioskArgs('/chat/?ask=0123456789abcdef', { port: 8377, dir: DIR }));
-  assert.deepEqual(spawned.options, { detached: true, stdio: 'ignore', windowsHide: true });
+  assert.deepEqual(spawned.options, { detached: true, stdio: 'ignore' }, 'windowsHide can start the kiosk hidden, and settleKiosk only finds a shown window');
   assert.deepEqual(steps.slice(3), ['unref', 'settle']);
   assert.equal(result.ok, true); assert.equal(result.exe, BROWSERS.at(-1));
 });
