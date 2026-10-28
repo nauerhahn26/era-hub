@@ -185,11 +185,15 @@ On `ask` the page does what "Start Chat" does today with no touch: microphone,
 session, worker warm-up, then straight into listening when ready. The tone
 plays when listening actually starts, not at the press.
 
-Microphone permission is the one thing a page cannot grant itself. Decided:
-the hub pre-grants it for its own origin by writing the browser's per-user
-audio-capture allow-list policy for `http://127.0.0.1:<port>` at boot (both
-Chrome and Edge keys, written with `reg.exe`, no PowerShell, no admin). If
-permission is still missing when a press arrives, Chat shows one plain line
+Microphone permission is the one thing a page cannot grant itself. First
+decided: the hub pre-grants it by writing the browser's per-user
+audio-capture allow-list policy. AMENDED 10/28 after the VM run: that key
+(`HKCU\Software\Policies\...`) is admin-protected and the hub runs
+unelevated ("Access is denied"), so the hub does not write it. The mechanism
+is the browser profile remembering the grant from the first touch on Chat's
+microphone control; that one touch is a rollout step per device (the home
+I-13 already has it from Chat use). If permission is still missing when a
+press arrives, Chat shows one plain line
 naming its touch-only control ("Touch Try again once to allow the
 microphone" since v1.0.31, where Chat gets ready by itself and has no Start
 Chat), plays no tone, and the press is otherwise wasted; after that one
