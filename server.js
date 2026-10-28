@@ -569,7 +569,7 @@ function settleKiosk() {
 // as POST /buttons/press from the device listener; buttons.js decides what a
 // press does. The relaunch is start-hub.bat's kiosk launch, from node.
 const kioskLauncher = require("./kiosk-launch.js").createKioskLauncher({
-  port: PORT, dir: __dirname, cdp: process.env.ERA_QA_CDP, closeKiosk, settle: settleKiosk,
+  port: PORT, dir: __dirname, cdp: process.env.ERA_QA_CDP, closeKiosk, kioskGone, settle: settleKiosk,
   log: (m) => console.log("[buttons] " + m),
 });
 // The device listener that turns the buttons' keys into presses (design §4.1):
@@ -1716,6 +1716,28 @@ function closeKiosk() {
     c.unref();
     setTimeout(resolve, 8000).unref();   // never hold a relaunch on a wedged sweep
   } catch { resolve(); }
+  });
+}
+
+// Are our kiosk's processes all gone? The button relaunch polls this after
+// closeKiosk: a browser started while the old one still holds the profile
+// joins it instead of starting a kiosk (VM 10/28). Resolves true (none left),
+// false (some still running) or null (the list could not be read). Same
+// spawn shape and quoting law as closeKiosk.
+function kioskGone() {
+  if (process.platform !== "win32") return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const ps =
+      "if (@(Get-CimInstance Win32_Process -Filter 'Name=" + "''" + "chrome.exe" + "''" +
+      " or Name=" + "''" + "msedge.exe" + "''" + "' | " +
+      "Where-Object { $_.CommandLine -like '*kiosk-profile*' }).Count -eq 0) { 'gone' } else { 'alive' }";
+    try {
+      require("child_process").execFile("powershell.exe", ["-NoProfile", "-Command", ps],
+        { windowsHide: true, timeout: 10000, encoding: "utf8" }, (error, stdout) => {
+          const out = String(stdout || "");
+          resolve(/\bgone\b/.test(out) ? true : /\balive\b/.test(out) ? false : null);
+        });
+    } catch { resolve(null); }
   });
 }
 

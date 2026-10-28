@@ -7,7 +7,9 @@
 // The browser exe is spawned directly: a relaunch through the command shell
 // was refused under Defender ("spawn EPERM", update.js), and the payload ships
 // no PowerShell files. Closing the old kiosk and settling the new window in
-// front are the hub's existing helpers (closeKiosk, psSettleKiosk), injected.
+// front are the hub's existing helpers (closeKiosk, psSettleKiosk), injected,
+// as is kioskGone (the process list read by the profile marker): the spawn
+// waits until the old kiosk's processes are gone, up to 5 s.
 // Off Windows there is no window: the relaunch records {would: args}.
 'use strict';
 const fs = require('node:fs');
@@ -39,6 +41,13 @@ function kioskArgs(open, { port, dir, cdp } = {}) {
   return args;
 }
 
+// A browser started on a profile the dying kiosk still holds joins that
+// instance (the single-instance hand-off) instead of starting a kiosk, so the
+// spawn waits for the old processes to be gone; past the budget it is logged
+// and the spawn goes ahead anyway.
+const GONE_MS = 5000;
+const POLL_MS = 250;
+
 function createKioskLauncher(options = {}) {
   const { port, dir, cdp } = options;
   const platform = options.platform || process.platform;
@@ -48,7 +57,26 @@ function createKioskLauncher(options = {}) {
   const settle = options.settle || (async () => {});
   const wait = options.wait || (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const log = options.log || (() => {});
+  const now = options.now || Date.now;
+  // true = no kiosk process left, false = some still running, null = unknown
+  const kioskGone = options.kioskGone || null;
   let last = null;
+
+  async function oldKioskGone() {
+    const t0 = now();
+    for (;;) {
+      let gone = null;
+      if (kioskGone) { try { gone = await kioskGone(); } catch { gone = null; } }
+      if (gone === true) return;
+      if (gone !== false) {
+        if (kioskGone) log('relaunch: cannot list the kiosk processes; pausing 1 s');
+        await wait(1000);
+        return;
+      }
+      if (now() - t0 >= GONE_MS) { log('relaunch: the old kiosk is still running after 5 s; launching anyway'); return; }
+      await wait(POLL_MS);
+    }
+  }
 
   async function relaunch(open) {
     const args = kioskArgs(open, { port, dir, cdp });
@@ -59,7 +87,7 @@ function createKioskLauncher(options = {}) {
       // The old kiosk goes first: a second launch on the same profile joins the
       // running browser and drops out of kiosk (start-hub.bat, dad 9/6).
       await closeKiosk();
-      await wait(1000);
+      await oldKioskGone();
       // No windowsHide: the browser has no console to hide, and the flag can
       // start the kiosk hidden, where settleKiosk (MainWindowHandle -ne 0)
       // never finds it.
@@ -77,4 +105,4 @@ function createKioskLauncher(options = {}) {
   return { relaunch, last: () => last };
 }
 
-module.exports = { kioskArgs, findBrowser, createKioskLauncher, BROWSERS };
+module.exports = { kioskArgs, findBrowser, createKioskLauncher, BROWSERS, GONE_MS, POLL_MS };

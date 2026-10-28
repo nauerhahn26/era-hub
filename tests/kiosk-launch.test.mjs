@@ -78,20 +78,51 @@ test('off Windows the relaunch records {would: args} and resolves, touching noth
   assert.equal(touched, 0);
 });
 
-test('on Windows: close our kiosk, wait 1 s, spawn the browser exe detached (never windowsHide: the kiosk must start shown), then settle it in front', async () => {
+// A fake clock the injected wait advances: the poll's 5 s budget is real time.
+function clock() { let t = 0; return { now: () => t, wait: async ms => { t += ms; } }; }
+
+test('on Windows: close our kiosk, wait until its processes are gone, spawn the browser exe detached (never windowsHide: the kiosk must start shown), then settle it in front', async () => {
   const steps = [];
+  const c = clock();
   const child = { unref: () => steps.push('unref'), on: () => {} };
+  let probes = 0;
   const launcher = createKioskLauncher({ port: 8377, dir: DIR, platform: 'win32', exists: file => file === BROWSERS.at(-1),
-    closeKiosk: async () => { steps.push('close'); }, wait: async ms => { steps.push('wait ' + ms); },
+    closeKiosk: async () => { steps.push('close'); }, now: c.now, wait: async ms => { steps.push('wait ' + ms); await c.wait(ms); },
+    kioskGone: async () => { steps.push('probe'); return ++probes >= 3; },
     spawn: (exe, args, options) => { steps.push({ exe, args, options }); return child; }, settle: async () => { steps.push('settle'); } });
   const result = await launcher.relaunch('/chat/?ask=0123456789abcdef');
-  assert.deepEqual(steps.slice(0, 2), ['close', 'wait 1000']);
-  const spawned = steps[2];
+  assert.deepEqual(steps.slice(0, 6), ['close', 'probe', 'wait 250', 'probe', 'wait 250', 'probe'],
+    'a second launch on a profile still held by the dying kiosk joins it instead of starting a kiosk: the spawn waits for the old processes to go');
+  const spawned = steps[6];
   assert.equal(spawned.exe, BROWSERS.at(-1));
   assert.deepEqual(spawned.args, kioskArgs('/chat/?ask=0123456789abcdef', { port: 8377, dir: DIR }));
   assert.deepEqual(spawned.options, { detached: true, stdio: 'ignore' }, 'windowsHide can start the kiosk hidden, and settleKiosk only finds a shown window');
-  assert.deepEqual(steps.slice(3), ['unref', 'settle']);
+  assert.deepEqual(steps.slice(7), ['unref', 'settle']);
   assert.equal(result.ok, true); assert.equal(result.exe, BROWSERS.at(-1));
+});
+
+test('an old kiosk that will not die is logged after 5 s and the new one is still spawned', async () => {
+  const c = clock(); const logs = []; let probes = 0, spawned = 0;
+  const launcher = createKioskLauncher({ port: 8377, dir: DIR, platform: 'win32', exists: () => true, closeKiosk: async () => {},
+    now: c.now, wait: c.wait, kioskGone: async () => { probes++; return false; }, log: m => logs.push(m),
+    spawn: () => { spawned++; return { unref() {}, on() {} }; } });
+  assert.equal((await launcher.relaunch('/chat/')).ok, true);
+  assert.equal(spawned, 1);
+  assert.equal(c.now(), 5000, 'the budget is 5 s, no more');
+  assert.equal(probes, 21);
+  assert.ok(logs.some(m => /still running after 5 s/.test(m)), logs.join(' | '));
+});
+
+test('a process list that cannot be read falls back to the old 1 s pause, logged', async () => {
+  for (const kioskGone of [async () => null, async () => { throw new Error('powershell gone'); }, undefined]) {
+    const steps = []; const logs = [];
+    const launcher = createKioskLauncher({ port: 8377, dir: DIR, platform: 'win32', exists: () => true, closeKiosk: async () => steps.push('close'),
+      wait: async ms => steps.push('wait ' + ms), kioskGone, log: m => logs.push(m),
+      spawn: () => { steps.push('spawn'); return { unref() {}, on() {} }; } });
+    await launcher.relaunch('/chat/');
+    assert.deepEqual(steps, ['close', 'wait 1000', 'spawn']);
+    if (kioskGone) assert.ok(logs.some(m => /cannot list/.test(m)), logs.join(' | '));
+  }
 });
 
 test('on Windows with no browser nothing is closed or spawned', async () => {

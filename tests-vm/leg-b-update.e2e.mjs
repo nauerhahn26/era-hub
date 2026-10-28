@@ -356,9 +356,16 @@ test("after the update: Chat state survives closing the whole kiosk and restarti
 // to Windows, so a 20-line SendInput helper (lib/sendkey.cs), run in the
 // interactive desktop where the hotkeys live, stands in for it: F13 must reach
 // /buttons/press and bring Chat up at /chat/, and Ctrl+Alt+F9 (the I-13's
-// Square button) must do the same. W3: whether the kiosk honours the per-user
-// microphone policy the hub wrote is RECORDED (granted | prompt), never failed
-// on: a `prompt` makes the design's one-touch fallback a rollout step.
+// Square button) must do the same.
+// A relaunch REPLACES the kiosk: the hub closes the start-hub.bat kiosk (the
+// kiosk-profile marker) and spawns its own. The press is recorded the moment
+// the relaunch is fired, while the old kiosk still stands, so a DevTools
+// session attached then lands on the old window and keeps its last URL after
+// that window dies (VM 10/28: "now /home/" for 120 s). The proof is the way
+// production sees it: the guest's process list holds exactly one kiosk
+// browser, launched at /chat/?ask=, and the screen shows it. Only then is
+// DevTools re-attached, to the new instance (the hub carries the QA launcher's
+// ERA_QA_CDP onto its own kiosk line, kiosk-launch.js).
 test("after the update: a button press reaches Chat through the device listener, F13 and Ctrl+Alt+F9", { timeout: 900000 }, async () => {
   const ALL = ["F13", "F14", "Ctrl+Alt+F9", "Ctrl+Alt+F10", "Ctrl+Alt+F11"];
   const buttons = () => vm.hubGet("/status")?.buttons;
@@ -370,21 +377,43 @@ test("after the update: a button press reaches Chat through the device listener,
   assert.deepEqual(listening.keys.failed, [], "no other program holds a key on the pristine guest");
   assert.ok(Number.isInteger(listening.pid) && listening.pid > 0);
   assert.ok(vm.exists(vm.INSTDIR + "\\buttons\\EraButtons.exe"), "compiled on the guest from the shipped source");
-  // The policy write is RECORDED, never failed on (W3): a refusal is the
-  // finding, and the hotkey round trip below must still be proved.
-  console.log(`# microphone policy: ${listening.micPolicy}` + (listening.micPolicyError ? ` — ${listening.micPolicyError}` : ""));
-  const policy = vm.bat("buttons-policy", [
-    'reg query "HKCU\\Software\\Policies\\Microsoft\\Edge\\AudioCaptureAllowedUrls" /v 1',
-    'reg query "HKCU\\Software\\Policies\\Google\\Chrome\\AudioCaptureAllowedUrls" /v 1'], { soft: true });
-  console.log("# microphone policy as the ssh user reads it:\n" + policy);
   // what the installed hub itself said (server.js logs to <data>\logs\hub.log)
   const hubLog = () => {
-    const out = vm.bat("buttons-hub-log", [`findstr /l /c:"[buttons]" /c:"microphone policy" "${vm.INSTDIR}\\data\\logs\\hub.log"`], { soft: true }) || "";
+    const out = vm.bat("buttons-hub-log", [`findstr /l /c:"[buttons]" "${vm.INSTDIR}\\data\\logs\\hub.log"`], { soft: true }) || "";
     console.log(out.split(/\r?\n/).filter((l) => l.trim()).map((l) => "# hub log: " + l).join("\n") || "# hub log: no [buttons] lines");
   };
   hubLog();
-  const w3 = { micPolicy: listening.micPolicy, micPolicyError: listening.micPolicyError ?? null, regQuery: policy, permission: null };
+  // W3 closed 10/28 (the hub cannot write the policy unelevated): the record
+  // keeps only whether the relaunched kiosk has the microphone without a touch
+  const w3 = { permission: null };
   const writeW3 = () => fs.writeFileSync(path.join(vm.OUT, "buttons-w3.json"), JSON.stringify({ ...w3, at: new Date().toISOString() }, null, 2) + "\n");
+
+  // the kiosk browsers on the guest: main processes only (no --type= child),
+  // found by the same marker the hub's closeKiosk uses
+  const kioskBrowsers = () => {
+    const out = vm.bat("buttons-kiosk-procs", [
+      `powershell -NoProfile -Command "$k = @(Get-CimInstance Win32_Process -Filter 'Name=''msedge.exe'' or Name=''chrome.exe''' | Where-Object { $_.CommandLine -like '*kiosk-profile*' -and $_.CommandLine -notlike '*--type=*' }); @{ count = $k.Count; lines = @($k | ForEach-Object { [string]$_.CommandLine }) } | ConvertTo-Json -Compress"`,
+    ], { soft: true }) || "";
+    const line = out.split(/\r?\n/).find((l) => l.startsWith("{"));
+    return line ? JSON.parse(line) : null;
+  };
+  // after a relaunch: exactly one kiosk, on /chat/?ask=; the screen shows it;
+  // then DevTools re-attaches to that NEW instance when it carries the port
+  async function relaunchedKiosk(shotName) {
+    let seen = null;
+    const k = await vm.waitFor(() => { seen = kioskBrowsers(); return seen && seen.count === 1 && /\/chat\/\?ask=[0-9a-f]+/.test(seen.lines[0]) && seen; },
+      { timeout: 90000, every: 2000, what: "exactly one kiosk browser launched at /chat/?ask=" })
+      .catch((e) => { throw new Error(e.message + " — kiosk browsers: " + JSON.stringify(seen)); });
+    console.log("# relaunched kiosk: " + k.lines[0]);
+    await new Promise((r) => setTimeout(r, 3000));   // the window is drawn, then shot
+    vm.shot(shotName);
+    try { await browser?.close(); } catch {}
+    browser = null; page = null;
+    if (!/--remote-debugging-port=\d+/.test(k.lines[0])) { console.log("# relaunched kiosk has no DevTools port: checked by its process line only"); return; }
+    ({ browser, page } = await vm.kiosk());
+    await vm.waitFor(() => new URL(page.url()).pathname === "/chat/" && { ok: 1 }, { timeout: 120000, every: 1000, what: "the relaunched kiosk's tab at /chat/" })
+      .catch((e) => { throw new Error(e.message + " (now " + page.url() + ")"); });
+  }
 
   // The stand-in keyboard leaves nothing behind: its task and helper go at the end, pass or fail.
   try {
@@ -403,35 +432,32 @@ test("after the update: a button press reaches Chat through the device listener,
       assert.ok(accept.includes(p.dispatch), `${key} dispatched ${p.dispatch}, wanted one of ${accept.join("/")}`);
       return p;
     }
-    // the kiosk shows its kiosk tab; Chat is reached by the press or was there already
-    async function chatPage() {
-      try { await browser?.close(); } catch {}
-      ({ browser, page } = await vm.kiosk());
-      await vm.waitFor(() => new URL(page.url()).pathname === "/chat/" && { ok: 1 }, { timeout: 120000, every: 1000, what: "the kiosk at /chat/ (now " + page.url() + ")" });
-    }
 
     // From Home no Chat page listens: F13 relaunches the kiosk at /chat/?ask=<nonce>.
     await vm.home(page);
+    console.log("# kiosk browsers before the press: " + JSON.stringify(kioskBrowsers()));
     const f13 = await pressKey("F13", ["relaunch", "visible"]);
-    await chatPage();
-    vm.shot("buttons-after-f13");
-    assert.equal(new URL(page.url()).pathname, "/chat/", "a press lands on Chat");
-    // W3: does the fresh kiosk profile have the microphone without a touch?
-    const mic = await page.evaluate(() => navigator.permissions.query({ name: "microphone" }).then((s) => s.state)).catch((e) => "error: " + e.message);
-    w3.permission = mic; w3.f13 = f13.dispatch;
-    console.log(`# W3 verdict: microphone ${mic}` + (mic === "granted" ? " (the policy pre-grants it)" : " (STOP: the one-touch fallback becomes a rollout step; plan T5.8 guard)"));
+    w3.f13 = f13.dispatch;
+    if (f13.dispatch === "relaunch") await relaunchedKiosk("chat-after-press");
+    else vm.shot("chat-after-press");
+    if (page) {
+      assert.equal(new URL(page.url()).pathname, "/chat/", "a press lands on Chat");
+      // does the relaunched kiosk have the microphone without a touch?
+      w3.permission = await page.evaluate(() => navigator.permissions.query({ name: "microphone" }).then((s) => s.state)).catch((e) => "error: " + e.message);
+      console.log(`# microphone in the relaunched kiosk: ${w3.permission}`);
+    }
     // a held Flic (F14) closes whatever the ask opened, so the next press starts afresh
     await new Promise((r) => setTimeout(r, 5000));
     await pressKey("F14", ["cancel", "none"]);
     // the Square button's key, with Chat on the screen
     const square = await pressKey("Ctrl+Alt+F9", ["visible", "foreground", "relaunch"]);
-    if (square.dispatch === "relaunch") await chatPage();
-    assert.equal(new URL(page.url()).pathname, "/chat/");
+    if (square.dispatch === "relaunch") await relaunchedKiosk("chat-after-square-relaunch");
+    if (page) assert.equal(new URL(page.url()).pathname, "/chat/");
+    else { const k = kioskBrowsers(); assert.ok(k?.count === 1 && /\/chat\//.test(k.lines[0]), "the one kiosk is Chat — " + JSON.stringify(k)); }
     await pressKey("F14", ["cancel", "none"]);
     vm.shot("buttons-after-square");
   } finally {
     // the W3 record and the hub's own words, pass or fail
-    try { const b = buttons(); if (b) { w3.micPolicy = b.micPolicy; w3.micPolicyError = b.micPolicyError ?? null; } } catch {}
     try { writeW3(); } catch (e) { console.log("# buttons-w3.json not written: " + e.message); }
     try { hubLog(); } catch {}
     try { vm.bat("sendkey-cleanup", ["schtasks /delete /tn era-qa-sendkey /f >nul 2>&1",
