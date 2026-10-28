@@ -19,7 +19,7 @@ if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
 // Chat test mode (spec 2026-10-27 §5): a separate route and schema, off by default.
-const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSetting, testModeOn, chatLikes, chatLists } = require("./chat-turns.js");
+const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSetting, applyPromptSetting, testModeOn, chatLikes, chatLists, chatPrompt } = require("./chat-turns.js");
 // The reply usage (model id, token counts) reaches the page only while this
 // device's test-mode switch is on. DATA is read when a request asks, not here.
 // Pictures the partner names while speaking, and each staged choice's picture,
@@ -1995,6 +1995,7 @@ const server = http.createServer((req, res) => {
     try { s = { ...s, ...JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")) }; } catch {}
     s.voiceId = loadTtsCfg().voiceId;
     Object.assign(s, chatLists(DATA)); // a hand-edited list that is not clean reads as its default
+    Object.assign(s, chatPrompt(DATA)); // chatPromptMs and chatName (stable frame §6), the same way
     s.responseVoiceSpeed = responseVoiceSpeed();
     // the pool device id: the name the presence receiver files this hub under
     // (spec 2026-10-20 §4.5), so the operator can tell which file is whose
@@ -2157,6 +2158,8 @@ const server = http.createServer((req, res) => {
         // Her lists (stable frame §2): each of chatQuestions, chatComments and
         // chatAbout on its own, through the same door.
         s = applyListsSetting(s, inc, req.headers["sec-fetch-site"]);
+        // Reading the options aloud (stable frame §6): the delay and the name.
+        s = applyPromptSetting(s, inc, req.headers["sec-fetch-site"]);
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // A new window makes the cached weather an answer to the old question,
         // and today's board a board for the wrong hours: throw the cache away

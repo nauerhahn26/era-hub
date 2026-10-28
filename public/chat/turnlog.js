@@ -186,6 +186,7 @@ export function createTurnLog(options = {}) {
       if (['ask', 'comment'].includes(patch.mode)) turn.content.mode = patch.mode;
       if (['questions', 'comments', 'about'].includes(patch.page)) turn.content.page = patch.page;
       if (patch.again === true) turn.content.again = true;
+      if (patch.prompted === true) turn.content.prompted = true; // the options were read aloud (§6)
       notify();
     },
     worker(handle, timings) {

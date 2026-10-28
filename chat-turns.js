@@ -73,7 +73,9 @@ const RECORD = shape({
     selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100),
     // The stable frame (spec 2026-10-28 §4): the mode she swapped the middle to,
     // the page she opened, and Something else used in this turn.
-    mode: oneOf(['ask', 'comment']), page: oneOf(['questions', 'comments', 'about']), again: v => v === true }),
+    mode: oneOf(['ask', 'comment']), page: oneOf(['questions', 'comments', 'about']), again: v => v === true,
+    // The options were read aloud after a silence (§6).
+    prompted: v => v === true }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),
@@ -160,6 +162,32 @@ function applyListsSetting(stored, incoming, fetchSite) {
     const list = incoming && Object.hasOwn(incoming, key) ? itemList(incoming[key]) : null;
     if (list) next[key] = list;
   }
+  return next;
+}
+// ---- reading the options aloud (stable frame spec 2026-10-28 §6) ----
+// chatPromptMs: the silence after a reveal before the device reads the
+// options (0 = off, else 5-30 s). chatName: the name it says first; the
+// default is the one first name this software carries.
+const DEFAULT_PROMPT = Object.freeze({ chatPromptMs: 12000, chatName: 'Ellie' });
+const promptMs = value => Number.isSafeInteger(value) && (value === 0 || (value >= 5000 && value <= 30000)) ? value : null;
+function promptName(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text.length >= 1 && text.length <= 24 && /^[\p{L}' ’-]+$/u.test(text) && /\p{L}/u.test(text) ? text : null;
+}
+function chatPrompt(dataDir) {
+  let stored = {};
+  try { stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')) || {}; } catch { /* the defaults */ }
+  return { chatPromptMs: promptMs(stored.chatPromptMs) ?? DEFAULT_PROMPT.chatPromptMs, chatName: promptName(stored.chatName) ?? DEFAULT_PROMPT.chatName };
+}
+// The same door as the lists; each key moves on its own.
+function applyPromptSetting(stored, incoming, fetchSite) {
+  const next = { ...stored };
+  if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
+  const ms = incoming && Object.hasOwn(incoming, 'chatPromptMs') ? promptMs(incoming.chatPromptMs) : null;
+  if (ms !== null) next.chatPromptMs = ms;
+  const name = incoming && Object.hasOwn(incoming, 'chatName') ? promptName(incoming.chatName) : null;
+  if (name !== null) next.chatName = name;
   return next;
 }
 // Day files and summaries use the device's local calendar day.
@@ -536,4 +564,5 @@ function createChatTurns(options = {}) {
 }
 
 module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, applyLikesSetting, chatLikes, DEFAULT_LIKES,
-  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT, localDay, wavFromPcm, STAGES };
+  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT,
+  chatPrompt, applyPromptSetting, localDay, wavFromPcm, STAGES };

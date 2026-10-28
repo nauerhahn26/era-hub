@@ -241,6 +241,13 @@ export async function checkInstalledChatUI(page, options = {}) {
     if (url.pathname === '/tts') {
       requests.clips++; return route.fulfill({ status: 200, contentType: 'audio/wav', body: wav });
     }
+    // This check counts every clip played; the options read aloud after a silence
+    // (spec 2026-10-28 §6, tests/chat-browser.test.mjs) are off for its page only.
+    if (url.pathname === '/settings' && request.method() === 'GET') {
+      const response = await route.fetch();
+      const body = await response.json().catch(() => null);
+      return body && typeof body === 'object' ? route.fulfill({ response, json: { ...body, chatPromptMs: 0 } }) : route.fulfill({ response });
+    }
     if (url.pathname.startsWith('/chat/api/')) {
       if (request.method() === 'GET' && url.pathname === '/chat/api/config') return route.continue();
       // The partner dialog's read-only "What Chat knows this week" preview.

@@ -488,3 +488,47 @@ Hub (chat-turns, server, chat-world, chat-api, chat-choices, registry):
       (public/chat is copied whole; confirm frame.js rides).
 
 Then: gate detached, VM legs, land, release (patch), push both i13s + tablet.
+
+Outcome (10/28, 20:22–21:10 UTC): built by two agents in parallel (page +
+hub), gate 193/0 (one unrelated flaky suite), landed 8ef5329, released
+v1.0.35 (build 20261028.2053, VM leg B 12/0); pushed to the home I-13 over
+the tunnel before the release finished ("this is working great"), tablet and
+school by nudge/self-update. Review fixes on the way: stacked pictures under
+44 px are set aside (no specks); the registry's browser counts regenerated.
+Open: the seed lists in her voice (dad edits them in the partner dialog),
+better pictures for the fixed tiles and comments, modes with no question on
+screen, `commentDropped` not in the turn record.
+
+## Read the choices aloud when she does not answer (dad, 10/28 night — PROPOSED, his number pending)
+
+"If she doesn't respond after a certain amount of seconds, maybe 15, maybe 10,
+it should go through 'your choices are', and then highlight each one as it
+reads the option." Design notes for when he picks the number:
+- Timer starts at the reveal; any dwell progress, a selection, a page or mode
+  swap, or a new hold cancels it. The read-through never blocks a selection:
+  a dwell during it selects as usual and stops the reading.
+- "Your choices are:" then each reply label in spoken order, the tile lit
+  (same `on` style as a lit mode) while its clip plays; the clips are the ones
+  already warmed for the replies, so nothing new is fetched.
+- Open questions: the reading voice (her saved voice would sound like she
+  said "chicken" — a second, quieter device voice may be better); read once or
+  twice; whether YES/NO are read; the delay as a partner setting
+  (`chatPromptMs`: off / 10 / 15 / 20 s) so he can test both numbers.
+- Telemetry: the turn record gets `prompted: true` and whether a selection
+  followed, so the device-holds review can compare 10 s against 15 s.
+
+## Read-aloud + hold guard built (10/28 night, after v1.0.35)
+- [x] P1 Her gaze never ends a hold: no dwell targets from touch-down to the
+      final transcript; speak() refuses during a hold (262e2aa).
+- [x] P2 Options read aloud after a silence: prompt.js, "<name>, your options
+      are", each label lit in order, cancelled by any dwell/selection/swap/
+      hold/dialog; partner dialog delay (off/10/12/15/20 s, default 12 s) and
+      name (a435ec5, d6162a8); hub settings chatPromptMs/chatName + prompted
+      turn field (d4be4fd); registry (d796c43). Gate 194/0.
+
+Follow-up for the wake-word phase (dad, 10/28): she should be able to select
+by dwell WHILE speech is being accepted. The lock exists because the hold is
+the turn boundary and her clip plays out of the device the microphone hears.
+Plan: keep tiles live during capture, drop microphone frames from her clip's
+start to its end plus a short tail, keep the capture open, append "Me:" to
+the ledger mid-question; the lock becomes a transition setting, then goes.

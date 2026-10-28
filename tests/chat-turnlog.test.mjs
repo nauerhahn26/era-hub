@@ -382,3 +382,15 @@ test('the stable frame\'s uses are in the record: the mode she swapped to, the p
   off.log.content(h3, { mode: 'ask', page: 'questions', again: true }); off.wrapped.end(h3, 'completed'); await flush();
   assert.equal(off.requests.length, 0, 'nothing is written in production mode');
 });
+
+test('a turn whose options were read aloud is marked prompted (spec 2026-10-28 §6); nothing else marks it', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  s.log.content(h, { prompted: true }); s.log.content(h, { selected: { id: '1:0', label: 'Fish', say: 'Fish' } });
+  s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.prompted, true); assert.equal(record.content.selected.label, 'Fish');
+  const t = setup(), h2 = t.wrapped.begin('typed');
+  t.log.content(h2, { prompted: 'yes' }); t.log.content(h2, { prompted: false });
+  t.wrapped.end(h2, 'completed'); await flush();
+  assert.equal('prompted' in JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
+});

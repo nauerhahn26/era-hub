@@ -77,7 +77,7 @@ function segmentsWav(segments) {
   return wav;
 }
 
-async function fixture(t, { script = {}, streaming = true, limits = {}, deny = false, audio = null } = {}) {
+async function fixture(t, { script = {}, streaming = true, limits = {}, deny = false, audio = null, settings = {} } = {}) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-commands-browser-'));
   const store = createChatStore({ dataDir: scratch });
   const service = await turnsService(t, script);
@@ -98,7 +98,7 @@ async function fixture(t, { script = {}, streaming = true, limits = {}, deny = f
       if (store.handle(req, res) || api.handle(req, res)) return;
       const url = new URL(req.url, 'http://localhost');
       const json = value => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
-      if (url.pathname === '/settings') return json({ dwellMs: 1200, pauseGoes: 'home', chatTestMode: false });
+      if (url.pathname === '/settings') return json({ dwellMs: 1200, pauseGoes: 'home', chatTestMode: false, ...settings });
       if (url.pathname === '/voices') return json({ enabled: true, current: 'synthetic-saved' });
       if (url.pathname === '/tts') { let body = ''; for await (const chunk of req) body += chunk; ttsTexts.push({ text: JSON.parse(body).text, at: Date.now() }); res.writeHead(200, { 'Content-Type': 'audio/wav' }); res.end(makeChatToneWav()); return; }
       const relative = url.pathname === '/chat/' ? 'chat/index.html' : decodeURIComponent(url.pathname).slice(1);
@@ -661,4 +661,83 @@ test('the second press ends the window: the done tone fires, the microphone clos
   await f.page.waitForTimeout(500);
   assert.equal(f.service.connections.reduce((n, c) => n + c.frames, 0), sent, 'no frame after the close');
   assert.equal(await f.page.evaluate(() => window.__touches), 0);
+});
+
+// ---- the stable frame's read-aloud and hold guard meet the press window (merge 10/28) ----
+
+const lunch = { audio: segmentsWav([[1000, true], [6000, false]]), script: { 3: [turn('is it time for lunch')], 8: [turn('is it time for lunch')] } };
+const litLabels = page => page.locator('.tile.response.on .label').allTextContents();
+
+test('her options are not read while a window listens; the reading counts from the close, for the batch then showing', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { ...lunch, limits: { windowSilenceMs: 2500 }, settings: { chatPromptMs: 800, chatName: '' } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.page.waitForTimeout(300); // the prefix clip warms at load
+  await f.restOffTiles();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 20000 });
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'the window still listens after the first batch');
+  const before = await f.page.evaluate(() => window.__plays);
+  await f.page.waitForTimeout(1500);
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'still listening past the prompt delay');
+  assert.equal(await f.page.evaluate(() => window.__plays), before, 'nothing is spoken while the microphone is open');
+  assert.deepEqual(await litLabels(f.page), [], 'no tile lit by a reading');
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 10000 });
+  const closedAt = Date.now();
+  await f.page.waitForFunction(n => window.__plays > n, before, { timeout: 5000 });
+  assert.ok(Date.now() - closedAt >= 600, `the reading began ${Date.now() - closedAt} ms after the close: the delay counted from the close`);
+  await f.page.waitForFunction(() => document.querySelector('.tile.response.on'), null, { timeout: 5000 });
+  assert.ok(['Yes', 'No', "I'm not sure", 'Please say that again'].includes((await litLabels(f.page))[0]), 'each option lights while it is read');
+  assert.equal(f.api.window(), null, 'the hub had closed the window before anything was spoken');
+  assert.deepEqual(f.errors, []);
+});
+
+test('a press cancels a reading in progress: the lit tile goes out, nothing more plays, listening starts', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { ...lunch, limits: { windowSilenceMs: 2500 }, settings: { chatPromptMs: 500, chatName: '' } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  await f.page.waitForTimeout(300);
+  await f.restOffTiles();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 20000 });
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 10000 });
+  await f.page.waitForFunction(() => document.querySelector('.tile.response.on'), null, { timeout: 5000 });
+  f.ask();
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 10000 });
+  await f.page.waitForFunction(() => !document.querySelector('.tile.response.on'), null, { timeout: 2000 });
+  const plays = await f.page.evaluate(() => window.__plays);
+  await f.page.waitForTimeout(1500);
+  assert.equal(await f.page.evaluate(() => window.__plays), plays, 'the reading stopped at the press');
+  assert.deepEqual(await litLabels(f.page), []);
+  assert.equal(await f.page.locator('.response').count(), 0, 'her gaze was on no tile: the press\'s neutral moment cleared the last turn\'s tiles at once');
+  assert.deepEqual(f.errors, []);
+});
+
+test('the window is not a hold: its tiles stay dwell targets and her pick speaks; a swapped-in replacement after the close is read as a fresh batch', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: pastaLater, limits: { windowSilenceMs: 2500 }, settings: { chatPromptMs: 500, chatName: '' } });
+  await f.load(); await f.slowDwell();
+  await f.until(() => f.api.commands.state().connected);
+  await f.page.waitForTimeout(300);
+  await f.restOffTiles();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
+  assert.equal(await f.page.evaluate(() => [...document.querySelectorAll('#grid .tile.response')].every(el => el.classList.contains('dwell') && el.dataset.dwellDisabled === undefined)), true,
+    'the window\'s replies are dwell targets while it listens (a hold would lock them)');
+  assert.equal(await f.page.evaluate(() => document.querySelector('#grid .tile.yes').classList.contains('dwell')), true, 'yes too');
+  await f.lookAt('.response >> text=Chicken');
+  await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
+  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 10000 });
+  assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'true', 'pasta still waits after the close: her gaze is on Chicken');
+  const plays = await f.page.evaluate(() => window.__plays);
+  await f.page.waitForTimeout(1200);
+  assert.equal(await f.page.evaluate(() => window.__plays), plays, 'her dwell on Chicken keeps the reading off');
+  await f.restOffTiles();
+  await f.page.waitForFunction(() => document.body.dataset.replacing === 'false', null, { timeout: 5000 });
+  assert.deepEqual(await f.shown(), byCell('Chicken', 'Fish', 'Pasta'));
+  await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
+  await f.page.waitForFunction(() => document.querySelector('.tile.response.on'), null, { timeout: 5000 });
+  const lit = [];
+  for (let i = 0; i < 30 && !lit.includes('Pasta'); i++) { lit.push(...await litLabels(f.page)); await f.page.waitForTimeout(100); }
+  assert.ok(lit.includes('Pasta'), `the swapped-in batch is the one read: ${JSON.stringify([...new Set(lit)])}`);
+  assert.deepEqual(f.errors, []);
 });
