@@ -247,3 +247,41 @@ test('the family\'s names go to the model only with an open who question, cleane
   await adapter.generate({ text: 'Who is coming?', shape: 'open', people: 'Mom' });
   assert.equal('people' in input(), false, 'a non-list is dropped');
 });
+
+// Her world (plan "Her world as context", 10/28): known facts from the device's
+// week packages, shelf, people and likes, sent with an open-ended question.
+const WORLD = 'Today: Wednesday, October 28.\nThis week at school: "Magnets!". Science: magnets. Hero of the week: a famous inventor. Words: magnet, pull, push.\nShe likes: draw, music.';
+
+test('the instructions say world is known context the model may state, drawn from the part the question points at', async () => {
+  let body;
+  await createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } }).generate({ text: 'What next?' });
+  assert.match(body.instructions, /world: what the communicator's class is learning week by week, the books on her shelf, her people and what she likes, known facts from her family and school\. For an open-ended question about school, a week, a lesson, a book, a hero, people or what she likes, draw the four choices from the part of world the question points at \(last week means the week marked Last week; a favourite thing at school means that week's topics, words and videos\), stated plainly as things she could say, such as 'Learning about shadows', 'Wilma Rudolph', 'The Gruffalo'\. World is known, not invented, so it may be stated; beyond world the rules against invented facts stand\./);
+});
+
+test('world reaches the model with an open-ended question, newlines kept; anything else is dropped', async () => {
+  let body;
+  const adapter = createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } });
+  const input = () => JSON.parse(body.input);
+  await adapter.generate({ text: 'What was your favourite thing at school?', shape: 'open', world: WORLD });
+  assert.equal(input().world, WORLD);
+  await adapter.generate({ text: 'What was your favourite thing at school?', world: WORLD });
+  assert.equal('world' in input(), false, 'no shape, no world');
+  for (const junk of [7, '', '   ', 'x'.repeat(3001), 'Today: x.\tTab', 'Today: <b>x</b>', 'Today: x.\u0000', ['Today']]) {
+    await adapter.generate({ text: 'What did you learn?', shape: 'open', world: junk });
+    assert.equal('world' in input(), false, JSON.stringify(junk).slice(0, 40));
+  }
+  await adapter.generate({ text: 'What did you learn?', shape: 'open', world: 'x'.repeat(3000) });
+  assert.equal(input().world.length, 3000);
+});
+
+test('the recall check passes a reply that names something from world and still throws out an activity world never mentions', async () => {
+  const run = (say, world) => createChoicesAdapter({ env, fetch: async () => response({ choices: [{ label: 'One', say }, { label: 'Two', say: 'It was fun.' }] }) })
+    .generate({ text: 'What did you learn at school last week?', shape: 'recall', ...(world ? { world } : {}) });
+  for (const say of ['I learned about magnets.', 'We read about magnets.', 'I saw a famous inventor.', 'We played push and pull.']) {
+    const passed = await run(say, WORLD);
+    assert.equal(passed.kind, 'generated', say); assert.equal('recallRejected' in passed, false, say);
+    assert.equal((await run(say)).recallRejected, true, 'without world the same words are thrown out: ' + say);
+  }
+  for (const say of ['I went to the zoo.', 'We watched a movie this week.', 'I learned about school.', 'Last week I saw a friend.'])
+    assert.equal((await run(say, WORLD)).recallRejected, true, 'stop words and words outside world never pass: ' + say);
+});
