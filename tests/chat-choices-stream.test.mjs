@@ -105,3 +105,19 @@ test('a streamed recall batch that asserts a past activity is sealed as the four
   assert.deepEqual(result.usage, { model: 'reply-model', inputTokens: 900, cachedTokens: 0, outputTokens: 60 });
   assert.ok(Number.isFinite(result.timings.firstChoiceMs));
 });
+
+test('a streamed recall batch that names something from world is kept; world travels in the streamed request', async () => {
+  const world = 'Today: Wednesday, October 28.\nLast week at school: "Magnets!". Science: magnets. Words: magnet, pull, push.';
+  const known = { choices: [{ label: 'Magnets', say: 'I learned about magnets.', symbol: 'chat' }, { label: 'Fun', say: 'It was fun.', symbol: 'chat' }, { label: 'Not now', say: 'Not now.', symbol: 'chat' }] };
+  const run = async (value, input) => {
+    let body;
+    const adapter = createChoicesAdapter({ env, fetch: async (url, init) => { body = JSON.parse(init.body); const s = streamed(); for (const e of deltas(JSON.stringify(value))) s.push(e); s.push(completed); s.end(); return s.response; } });
+    return { result: await adapter.generateStream(input, { onChoice: () => {} }), input: JSON.parse(body.input) };
+  };
+  const kept = await run(known, { text: 'What did you learn last week?', shape: 'recall', world });
+  assert.equal(kept.input.world, world);
+  assert.equal(kept.result.kind, 'generated'); assert.equal('recallRejected' in kept.result, false);
+  assert.deepEqual(kept.result.choices.map(c => c.say), known.choices.map(c => c.say));
+  const zoo = { choices: [{ label: 'Zoo', say: 'I went to the zoo.', symbol: 'chat' }, { label: 'Fun', say: 'It was fun.', symbol: 'chat' }] };
+  assert.equal((await run(zoo, { text: 'What did you learn last week?', shape: 'recall', world })).result.recallRejected, true);
+});

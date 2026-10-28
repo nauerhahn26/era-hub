@@ -50,6 +50,10 @@
       <p>Used when a question is open, like what do you want to do today. One per line, up to twelve short phrases. Saved on this computer when you leave the box.</p>
       <label>Likes <textarea id="chatLikes" rows="4" maxlength="400" placeholder="play outside"></textarea></label>
       <p id="chatLikesNote" role="status"></p>
+      <details id="worldDetails"><summary>What Chat knows this week</summary>
+        <p>What goes with an open question: this device's week packages, books, people and likes. Read only.</p>
+        <pre id="worldPreview"></pre>
+      </details>
     </section>
     <details class="partnerSection" id="testing"><summary>Desktop testing and diagnostics</summary>
       <p>These controls test suggestions and input handling. A typed question does not test microphone recognition.</p>

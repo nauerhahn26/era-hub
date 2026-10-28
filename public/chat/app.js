@@ -149,7 +149,7 @@ const controller = createChatController({
     catch (error) { turnLog.error(timing, error.message); throw error; }
     metrics.observe(timing, { choicesServerMs: result.timings?.totalMs });
     stagedMeta = { handle: timing, kind: result.kind, usage: result.usage, symbolRejected: result.symbolRejected, pictureWarm: result.pictureWarm,
-      shape: result.shape, recallRejected: result.recallRejected };
+      shape: result.shape, recallRejected: result.recallRejected, world: result.world };
     return result;
   },
   onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
@@ -375,7 +375,7 @@ function stagingEvent(data) {
     turnLog.stagedOne(questionMetric, choice);
   } else if (data.type === 'batch-sealed') {
     record.sealed = { kind: data.kind, generated: data.generated, choices: data.choices, usage: data.usage, symbolRejected: data.symbolRejected,
-      pictureWarm: data.pictureWarm, shape: data.shape, recallRejected: data.recallRejected, timings: data.timings };
+      pictureWarm: data.pictureWarm, shape: data.shape, recallRejected: data.recallRejected, world: data.world, timings: data.timings };
     record.done?.();
   } else if (data.type === 'choices-error') {
     record.error = new Error('Replies are unavailable. Your phrases still work.');
@@ -698,7 +698,7 @@ $('desktopAsk').addEventListener('blur', cancelAsk);
 $('partnerOpen').addEventListener('click', () => {
   // The dialog itself is not a gaze shield: remove underlying dwell targets.
   for (const el of $('grid').querySelectorAll('.dwell')) { el.classList.remove('dwell'); el.dataset.dwellDisabled = ''; }
-  $('partnerDialog').showModal(); renderTestPanel();
+  $('partnerDialog').showModal(); renderTestPanel(); void showWorld();
 });
 $('partnerDialog').addEventListener('close', () => { gridKey = ''; renderGrid(controller.state); });
 $('typedAsk').addEventListener('click', () => {
@@ -818,6 +818,14 @@ $('exportTimings').addEventListener('click', () => {
   const link = document.createElement('a'); link.href = url; link.download = 'chat-timings.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+// What Chat knows this week (plan "Her world as context"): the hub's digest of
+// this device's week packages, shelf, people and likes, shown read-only.
+async function showWorld() {
+  try {
+    const world = await json(`${API}/world`);
+    $('worldPreview').textContent = typeof world.text === 'string' && world.text ? world.text : 'Nothing yet.';
+  } catch { $('worldPreview').textContent = 'Not available right now.'; }
+}
 // What she likes (dad, 10/28): one per line in the partner dialog, saved to
 // this device's settings when the box is left; sent with open-ended questions.
 $('chatLikes').addEventListener('change', async () => {
@@ -826,6 +834,7 @@ $('chatLikes').addEventListener('change', async () => {
     const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatLikes: list }) });
     if (!saved.ok) throw new Error();
     $('chatLikesNote').textContent = list.length ? `Saved ${list.length} like${list.length === 1 ? '' : 's'} on this computer.` : 'Saved: no likes on this computer.';
+    void showWorld();
   } catch { $('chatLikesNote').textContent = 'Likes were not saved. Try again.'; }
 });
 $('saveStory').addEventListener('click', async () => {

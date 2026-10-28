@@ -235,6 +235,8 @@ export async function checkInstalledChatUI(page, options = {}) {
     }
     if (url.pathname.startsWith('/chat/api/')) {
       if (request.method() === 'GET' && url.pathname === '/chat/api/config') return route.continue();
+      // The partner dialog's read-only "What Chat knows this week" preview.
+      if (request.method() === 'GET' && url.pathname === '/chat/api/world') return route.continue();
       if (['GET', 'PUT'].includes(request.method()) && url.pathname === '/chat/api/state') return route.continue();
       if (request.method() === 'POST' && url.pathname === '/chat/api/sessions') requests.sessions++;
       if (request.method() === 'POST' && url.pathname === '/chat/api/choices') {

@@ -175,12 +175,15 @@ test('HTTP adapter rejects cross-origin traffic, caps payloads and closes pendin
   assert.ok(!JSON.stringify(health).includes('private-value'));
   const request = (body, headers = {}) => fetch(base + '/choices', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
   assert.equal((await request({ text: 'What next?' }, { Origin: 'https://elsewhere.example' })).status, 403);
-  assert.equal((await request({ text: 'x'.repeat(9000) })).status, 413);
+  assert.equal((await request({ text: 'x'.repeat(33000) })).status, 413);
   assert.equal((await fetch(base + '/choices', { method: 'POST', body: 'text=data' })).status, 415);
   const result = await request({ text: 'What next?' });
   assert.equal(result.status, 200);
   assert.deepEqual((await result.json()).choices, choices);
   assert.equal(calls, 1);
+  // A full question with a full context and a world at the digest cap still fits.
+  const full = await request({ text: 'W'.repeat(2000), context: Array(8).fill('Me: ' + 'c'.repeat(496)), shape: 'open', world: 'Today: x.\n' + 'w'.repeat(5990) });
+  assert.equal(full.status, 200); assert.equal(calls, 2);
   assert.equal(adapterPort({}), 8385);
   assert.throws(() => adapterPort({ ERA_CHAT_TEXT_PORT: String(8300 + 77) }));
 });
@@ -246,4 +249,59 @@ test('the family\'s names go to the model only with an open who question, cleane
   assert.equal('people' in input(), false, 'no shape, no names');
   await adapter.generate({ text: 'Who is coming?', shape: 'open', people: 'Mom' });
   assert.equal('people' in input(), false, 'a non-list is dropped');
+});
+
+// Her world (plan "Her world as context", 10/28): known facts from the device's
+// week packages, shelf, people and likes, sent with an open-ended question.
+const WORLD = 'Today: Wednesday, October 28.\nThis week at school: "Magnets!". Science: magnets. Hero of the week: a famous inventor. Words: magnet, pull, push.\nShe likes: draw, music.';
+
+test('the instructions say world is known context the model may state, drawn from the part the question points at', async () => {
+  let body;
+  await createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } }).generate({ text: 'What next?' });
+  assert.match(body.instructions, /world: what the communicator's class is learning week by week, the books on her shelf, her people and what she likes, known facts from her family and school\. For an open-ended question about school, a week, a lesson, a book, a hero, people or what she likes, draw the four choices from the part of world the question points at \(last week means the week marked Last week; a favourite thing at school means that week's topics, words and videos\), stated plainly as things she could say, such as 'Learning about shadows', 'Wilma Rudolph', 'The Gruffalo'\. World is known, not invented, so it may be stated; beyond world the rules against invented facts stand\./);
+});
+
+test('world reaches the model with an open-ended question, newlines kept; anything else is dropped', async () => {
+  let body;
+  const adapter = createChoicesAdapter({ env, fetch: async (_, options) => { body = JSON.parse(options.body); return response({ choices }); } });
+  const input = () => JSON.parse(body.input);
+  await adapter.generate({ text: 'What was your favourite thing at school?', shape: 'open', world: WORLD });
+  assert.equal(input().world, WORLD);
+  await adapter.generate({ text: 'What was your favourite thing at school?', world: WORLD });
+  assert.equal('world' in input(), false, 'no shape, no world');
+  for (const junk of [7, '', '   ', 'x'.repeat(6001), 'Today: x.\tTab', 'Today: <b>x</b>', 'Today: x.\u0000', ['Today']]) {
+    await adapter.generate({ text: 'What did you learn?', shape: 'open', world: junk });
+    assert.equal('world' in input(), false, JSON.stringify(junk).slice(0, 40));
+  }
+  await adapter.generate({ text: 'What did you learn?', shape: 'open', world: 'x\n'.repeat(3000) });
+  assert.equal(input().world.length, 5999, 'up to the digest cap of 6,000, trimmed');
+});
+
+test('the recall check passes a reply that names something from world and still throws out an activity world never mentions', async () => {
+  const run = (say, world) => createChoicesAdapter({ env, fetch: async () => response({ choices: [{ label: 'One', say }, { label: 'Two', say: 'It was fun.' }] }) })
+    .generate({ text: 'What did you learn at school last week?', shape: 'recall', ...(world ? { world } : {}) });
+  for (const say of ['I learned about magnets.', 'We read about magnets.', 'I saw a famous inventor.', 'We played push and pull.']) {
+    const passed = await run(say, WORLD);
+    assert.equal(passed.kind, 'generated', say); assert.equal('recallRejected' in passed, false, say);
+    assert.equal((await run(say)).recallRejected, true, 'without world the same words are thrown out: ' + say);
+  }
+  for (const say of ['I went to the zoo.', 'We watched a movie this week.', 'I learned about school.', 'Last week I saw a friend.'])
+    assert.equal((await run(say, WORLD)).recallRejected, true, 'stop words and words outside world never pass: ' + say);
+  // The day notes and teachers' lists from world.json grow the terms; their scaffolding does not.
+  const notes = WORLD + '\nLast week at school (her teacher\'s list): a leaf collage; a song about seasons.\nLast week her class worked on: counting by fives.\nYesterday at school: happy; speech, buddies. She said on her device: She wants to paint.';
+  for (const say of ['I made a leaf collage.', 'We did buddies.', 'We went to speech.'])
+    assert.equal((await run(say, notes)).kind, 'generated', say);
+  // A word matches a term with or without a plural ending: classmates and classmate, buddies and buddy, boxes and box.
+  const plural = WORLD + '\nYesterday at school: happy; Classmates said they enjoyed her party. She sat with her buddy near the boxes.';
+  for (const say of ['I played with a classmate.', 'We played with buddies.', 'I made a box.', 'I saw my classmates.', 'I made magnet.', 'We played with a buddy.'])
+    assert.equal((await run(say, plural)).kind, 'generated', say);
+  // The asserted-activity verbs are never terms: a note that she played lets a buddy through, never a dragon.
+  const played = WORLD + '\nYesterday at school: happy. She played with a buddy, went outside, saw a bird and made a card.';
+  assert.equal((await run('I played with a buddy.', played)).kind, 'generated');
+  for (const say of ['I played with a dragon.', 'We went to the moon.', 'I saw a ghost.', 'I made a robot.', 'We played.'])
+    assert.equal((await run(say, played)).recallRejected, true, say);
+  for (const say of ['I played with a class.', 'I went to the zoo.'])
+    assert.equal((await run(say, plural)).recallRejected, true, 'a different word never matches: ' + say);
+  for (const say of ['I went to the park yesterday.', 'I saw it on my device.', 'We went to class.'])
+    assert.equal((await run(say, notes)).recallRejected, true, say);
 });

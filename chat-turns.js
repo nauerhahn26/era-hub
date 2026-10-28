@@ -64,6 +64,8 @@ const RECORD = shape({
     // An open-ended question's shape and whether the recall check threw the
     // model's batch out (dad, 10/28): category words, never the likes.
     shape: nullable(oneOf(['want', 'recall', 'feel', 'open'])), recallRejected: v => typeof v === 'boolean',
+    // Her world's size when it went with the question (plan "Her world as context"): never its text.
+    world: shape({ weeks: int(520), days: int(31), chars: int(6000) }, ['weeks', 'chars']),
     selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100) }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),

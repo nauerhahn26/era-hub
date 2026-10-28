@@ -138,7 +138,7 @@ test('shortcuts and guarded templates carry curated pictures with their ids', as
   assert.deepEqual(pictures.withSymbols(guarded.choices).map(choice => choice.symbol), ['clue', 'different', 'forget', 'not now']);
   const adapter = createChoicesAdapter({ env, fetch: () => { throw Error('guarded turns make no request'); } });
   const support = await adapter.generate({ text: 'I lost my drawing.' });
-  assert.deepEqual(pictures.withSymbols(support.choices).map(choice => choice.symbol), ['help', 'more', 'wait']);
+  assert.deepEqual(pictures.withSymbols(support.choices).map(choice => choice.symbol), ['help', 'tell', 'wait'], '"Tell me more" is telling, not more');
 });
 
 test('the warm list is every vocabulary picture once, alternates included', () => {
@@ -347,4 +347,37 @@ test('reviewed tiles (10/28 contact sheet): draw, a show, a negated feeling, a s
   // Something else is choosing among options, not the abstract "different".
   assert.equal(pick('Something else', 'Something else.', { symbol: 'different' }).symbolId, 30510);
   assert.equal(pick('Another way', 'Let me tell you another way.').symbol, 'different');
+});
+
+test('a full name never takes a thing\'s picture from one of its words: the model\'s picture, a person symbol, else people', () => {
+  const pick = (label, extra = {}) => pictures.withSymbols([{ label, say: label, ...extra }])[0];
+  const id = word => byWord.get(word).id;
+  // "rudolph" is a library word; a hero's full name is not the reindeer.
+  assert.notEqual(pick('Wilma Rudolph', { symbol: 'chat' }).symbol, 'rudolph');
+  assert.equal(pick('Wilma Rudolph', { symbol: 'chat' }).symbolId, id('people'), 'no picture words: the generic people picture');
+  const runner = pick('Wilma Rudolph', { symbol: 'chat', picture: 'runner' });
+  assert.notEqual(runner.symbol, 'rudolph'); assert.notEqual(runner.symbolId, id('people'), 'the model\'s picture words come first');
+  assert.equal(runner.symbolId, pictures.withSymbols([{ label: 'Runner', say: 'Runner', picture: 'runner' }])[0].symbolId);
+  assert.equal(pick('Wilma Rudolph', { symbol: 'girl' }).symbol, 'girl', 'then the model\'s symbol when it is a person word');
+  assert.equal(pick('Wilma Rudolph', { symbol: 'pizza' }).symbol, 'people', 'a thing symbol is not a person');
+  assert.equal(pick('Mary Jane Smith', { symbol: 'teacher' }).symbol, 'teacher', 'three words too');
+  // Kept: the model's picture of a famous player.
+  assert.equal(pick('Jackie Robinson', { symbol: 'chat', picture: 'baseball player' }).symbolId, 8609);
+  // The family's own people still show their own picture.
+  pictures.setPeople(() => [{ slug: 'aunt-sue', word: 'Aunt Sue' }]);
+  try { assert.deepEqual(pick('Aunt Sue').picture, { src: '/characters/aunt-sue.png', kind: 'person' }); } finally { pictures.setPeople(null); }
+  // Capitalised things are not names: every word is a known word.
+  for (const [label, symbol] of [['Hot Dog', 'hot dog'], ['Ice Cream', 'ice cream'], ['Play Outside', 'outside'], ['Positive Pumpkin', 'pumpkin']])
+    assert.equal(pick(label).symbol, symbol, label);
+});
+
+test('a label starting with Tell takes the tell picture; More alone keeps more', () => {
+  const pick = (label, say = label, extra = {}) => pictures.withSymbols([{ label, say, ...extra }])[0];
+  const id = word => byWord.get(word).id;
+  assert.equal(id('tell'), 5973); assert.equal(id('more'), 5508);
+  for (const [label, say, extra] of [['Tell me more', 'Tell me more.'], ['Tell you more', 'I want to tell you more.', { symbol: 'more' }],
+    ['Tell me more', 'Tell me more.', { symbol: 'more', picture: 'plus sign' }], ['Tell you', 'I want to tell you.'], ['Tell a story', 'Can I tell a story?']])
+    assert.equal(pick(label, say, extra).symbolId, 5973, label);
+  assert.equal(pick('More', 'More please.').symbolId, 5508);
+  assert.equal(pick('More please', 'More please.').symbolId, 5508);
 });

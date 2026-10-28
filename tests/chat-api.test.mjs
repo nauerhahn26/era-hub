@@ -983,3 +983,66 @@ test('a name the model returns keeps its words and shows that person\'s own pict
   assert.deepEqual(result.choices.map(c => [c.label, c.say]), [['Sam', 'Sam, please.'], ['Mom', 'Mom'], ['Not sure', "I'm not sure."]], 'no name is stripped');
   assert.deepEqual(result.choices.slice(0, 2).map(c => c.picture), [{ src: '/characters/sam-2.png', kind: 'person' }, { src: '/characters/mom.png', kind: 'person' }]);
 });
+
+// Her world (plan "Her world as context", 10/28): the device's digest goes with
+// an open-ended question only; the page learns its size, never its text.
+const WORLD = { text: 'Today: Wednesday, October 28.\nThis week at school: "Magnets!". Science: magnets.', weeks: 1, days: 1, chars: 80 };
+
+test('an open question sends world to the adapter; a statement, an alternatives question and a bare Today line send none; the result carries its size', async t => {
+  const seen = [];
+  const env = { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' };
+  const reply = async (_, options) => { seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'Magnets', say: 'Learning about magnets.' }, { label: 'Not sure', say: "I'm not sure." }] })); };
+  let calls = 0;
+  const s = await service(t, { world: { digest: () => { calls++; return WORLD; } }, env, fetch: reply });
+  const open = await (await s.request('/choices', { text: 'What was your favourite thing at school?' })).json();
+  assert.deepEqual(seen.at(-1), { text: 'What was your favourite thing at school?', shape: 'open', world: WORLD.text });
+  assert.deepEqual(open.world, { weeks: 1, days: 1, chars: 80 });
+  assert.ok(!JSON.stringify(open).includes('Magnets!'), 'never the text');
+  const statement = await (await s.request('/choices', { text: 'I got a new puppy.' })).json();
+  assert.deepEqual(seen.at(-1), { text: 'I got a new puppy.' });
+  assert.equal('world' in statement, false);
+  const local = await (await s.request('/choices', { text: 'Do you want magnets or music?' })).json();
+  assert.equal(local.kind, 'alternatives'); assert.equal('world' in local, false); assert.equal(seen.length, 2);
+  assert.equal(calls, 1, 'the digest is asked for an open question only');
+  // A provider function works the same; nothing but the Today line sends nothing.
+  const bare = await service(t, { world: () => ({ text: 'Today: Wednesday, October 28.', weeks: 0, chars: 29 }), env, fetch: reply });
+  const plain = await (await bare.request('/choices', { text: 'What was your favourite thing at school?' })).json();
+  assert.equal('world' in seen.at(-1), false); assert.equal('world' in plain, false);
+  // A shelf or people with no week still counts as world.
+  const shelf = await service(t, { world: () => ({ text: 'Today: Wednesday, October 28.\nBooks on her shelf: "Moon Song".', weeks: 0, chars: 62 }), env, fetch: reply });
+  assert.deepEqual((await (await shelf.request('/choices', { text: 'Which book is best?' })).json()).world, { weeks: 0, days: 0, chars: 62 }, 'a provider without days counts none');
+  assert.match(seen.at(-1).world, /Moon Song/);
+  // A broken provider costs the world, never the reply.
+  for (const world of [() => { throw Error('unreadable'); }, () => ({ text: 7 }), () => ({ text: 'Today: x.\n' + 'y'.repeat(6000), weeks: 1 }), { digest: () => null }, 'text']) {
+    const broken = await service(t, { world, env, fetch: reply });
+    const result = await (await broken.request('/choices', { text: 'What was your favourite thing at school?' })).json();
+    assert.equal(result.choices.length, 2); assert.equal('world' in seen.at(-1), false); assert.equal('world' in result, false);
+  }
+});
+
+test('the built-in reply core gets world in its model input for an open shape', async t => {
+  let input;
+  const s = await service(t, { world: () => WORLD, env: { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' },
+    fetch: async (_, options) => { input = JSON.parse(JSON.parse(options.body).input);
+      return new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
+        choices: [{ label: 'Magnets', say: 'I learned about magnets.' }, { label: 'Fun', say: 'It was fun.' }] }) }] }] })); } });
+  const result = await (await s.request('/choices', { text: 'What did you learn at school this week?' })).json();
+  assert.equal(input.shape, 'recall'); assert.equal(input.world, WORLD.text);
+  assert.equal(result.kind, 'generated', 'a reply naming world passes the recall check');
+  assert.deepEqual(result.world, { weeks: 1, days: 1, chars: 80 });
+});
+
+test('GET /chat/api/world serves the digest for the partner dialog, to the hub\'s own pages only', async t => {
+  const s = await service(t, { world: { digest: () => WORLD } });
+  assert.deepEqual(await (await fetch(s.base + '/world')).json(), WORLD);
+  const status = await new Promise((resolve, reject) => {
+    const request = http.request(s.base + '/world', { headers: { 'Sec-Fetch-Site': 'cross-site' } }, response => { response.resume(); resolve(response.statusCode); });
+    request.on('error', reject); request.end();
+  });
+  assert.equal(status, 403);
+  const none = await service(t);
+  assert.deepEqual(await (await fetch(none.base + '/world')).json(), { text: '', weeks: 0, days: 0, chars: 0 });
+  const broken = await service(t, { world: () => { throw Error('unreadable'); } });
+  assert.deepEqual(await (await fetch(broken.base + '/world')).json(), { text: '', weeks: 0, days: 0, chars: 0 });
+});
