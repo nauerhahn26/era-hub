@@ -183,7 +183,7 @@ Info
 
 ## Phase 3 — hub window state machine (implementing; W2 is the one judgment call)
 
-- [ ] **T3.1** `chat-window.js`: `createWindow({ clock, limits, seal, close })`
+- [x] **T3.1** (window silence counts words, not energy; seals on press/cap/silence take unsealed words first) `chat-window.js`: `createWindow({ clock, limits, seal, close })`
       pure machine; inputs `speech(frameEnergetic)`, `turnEnd(text)`,
       `partial(text)`, `press()`, `cancel()`, `pick()`; constants 1.5 s
       utterance silence, 15 s utterance cap, 10 s window silence, 60 s cap.
