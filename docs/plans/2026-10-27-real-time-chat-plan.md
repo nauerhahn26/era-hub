@@ -450,3 +450,41 @@ lists in her voice.
 Design page: Chat Stable Frame (private artifact, 10/28). Mock generator and
 renders in the session scratchpad (`layout/gen-frame.py`,
 `layout/frame-*.png`).
+
+## The stable frame: build (dad, 10/28 night, "go for it")
+
+Three more decisions with the go: the question strip speaks the question
+again on dwell; the lock button moves left of Hold to ask so Hold to ask is
+in the top right corner; Ask a question / Make a comment are context aware
+over the whole conversation (the ledger is the seam for an always-on
+listener later). Icons stay as they are for now (prototype).
+
+Spec: `docs/specs/2026-10-28-chat-stable-frame-design.md`. Two builders in
+this worktree, test first, each committing only its own files.
+
+Page (public/chat, tests/chat-browser, tests-vm smoke):
+- [ ] F1 `frame.js` pure layout: areas by reply count (4/3/2/1), the nine
+      fixed tiles, page cells (10 + More + Back) and paging — `tests/chat-frame.test.mjs`.
+- [ ] F2 renderGrid on the frame: strip (dwell speaks the question, partial
+      while capturing, "Ask me something" when empty), rail, bottom row,
+      replies by count, openers before a question, waiting tiles — chat.css.
+- [ ] F3 Pages: open/lit/Back/More; About me = stories + chatAbout + world
+      about/week lines; lists from /settings; partner dialog textareas.
+- [ ] F4 Modes: prefetch both sets after reveal, swap/lit/back, waiting
+      tiles until landed, dropped on a hold; Something else re-asks with avoid.
+- [ ] F5 Lock left of •••, Hold to ask in the corner.
+- [ ] F6 Telemetry fields in the turn log (mode, page, again); browser tests
+      and the VM smoke helper updated (no rest cells; My news → About me).
+
+Hub (chat-turns, server, chat-world, chat-api, chat-choices, registry):
+- [ ] H1 Settings lists chatQuestions/chatComments/chatAbout (defaults,
+      clean, GET/POST /settings) — chat-turns + server tests.
+- [ ] H2 World `about` and `week` lines on digest() and GET /chat/api/world — chat-world tests.
+- [ ] H3 Choices `mode` and `avoid`: inputData, instructions, fixed sets
+      without a model, recall check on comments, produceChoices/generate
+      pass-through, world always with a mode — chat-choices-adapter + chat-api tests.
+- [ ] H4 validateTurn accepts content.mode/page/again — chat-turns tests.
+- [ ] H5 Registry entries (new suite, new source file) and build-payload
+      (public/chat is copied whole; confirm frame.js rides).
+
+Then: gate detached, VM legs, land, release (patch), push both i13s + tablet.
