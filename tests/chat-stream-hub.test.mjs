@@ -304,7 +304,7 @@ test('choices are staged by the hub one by one and sealed once; the page never a
 test('an open question in a streaming session carries world to the reply core; the sealed batch carries its size only', async t => {
   const service = await turnsService(t, { words: OPEN, partials: [] });
   const reply = replyService();
-  const world = { text: 'Today: Wednesday, October 28.\nThis week at school: "Magnets!". Science: magnets.', weeks: 1, chars: 80 };
+  const world = { text: 'Today: Wednesday, October 28.\nThis week at school: "Magnets!". Science: magnets.', weeks: 1, days: 2, chars: 80 };
   const h = await hub(t, { services: [service], env: { ...replyEnv, ERA_CHAT_SPECULATE_MS: '0' }, fetch: reply.fetcher, world: () => world });
   const s = await h.session();
   await until(() => s.events('ready').length === 1);
@@ -312,7 +312,7 @@ test('an open question in a streaming session carries world to the reply core; t
   await until(() => s.events('batch-sealed').length === 1);
   const sealed = s.events('batch-sealed')[0];
   assert.equal(reply.calls[0].input.world, world.text);
-  assert.deepEqual(sealed.world, { weeks: 1, chars: 80 });
+  assert.deepEqual(sealed.world, { weeks: 1, days: 2, chars: 80 });
   assert.ok(!JSON.stringify(s.seen).includes('Magnets!'), 'the page never sees the text');
 });
 

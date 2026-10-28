@@ -415,9 +415,9 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   const worldDigest = () => {
     try {
       const value = typeof options.world === 'function' ? options.world() : typeof options.world?.digest === 'function' ? options.world.digest() : null;
-      if (!value || typeof value.text !== 'string' || value.text.length > 3000) return null;
+      if (!value || typeof value.text !== 'string' || value.text.length > 4000) return null;
       const count = n => Number.isSafeInteger(n) && n >= 0 ? n : 0;
-      return { text: value.text, weeks: count(value.weeks), chars: value.text.length };
+      return { text: value.text, weeks: count(value.weeks), days: count(value.days), chars: value.text.length };
     } catch { return null; }
   };
   // Two more than the HTTP route's own limit: a streaming session's speculative
@@ -758,7 +758,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         ...(rejected ? { symbolRejected: rejected } : {}),
         ...(shape ? { shape } : {}), ...(result.recallRejected === true ? { recallRejected: true } : {}),
         // The turn record keeps the world's size, never its text.
-        ...(world ? { world: { weeks: world.weeks, chars: world.chars } } : {}),
+        ...(world ? { world: { weeks: world.weeks, days: world.days, chars: world.chars } } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }
@@ -869,7 +869,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     });
     if (req.method === 'POST' && routePath === '/choices') return generate(req, res);
     // What Chat knows this week, for the partner dialog's read-only preview.
-    if (req.method === 'GET' && routePath === '/world') return json(res, 200, worldDigest() || { text: '', weeks: 0, chars: 0 });
+    if (req.method === 'GET' && routePath === '/world') return json(res, 200, worldDigest() || { text: '', weeks: 0, days: 0, chars: 0 });
     if (req.method === 'POST' && routePath === '/sessions') {
       await readBody(req, limits.bodyBytes);
       const session = startSession(); return json(res, 201, { id: session.id });

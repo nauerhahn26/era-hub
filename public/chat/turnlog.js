@@ -154,9 +154,10 @@ export function createTurnLog(options = {}) {
       // An open question's shape and the recall check's verdict (dad, 10/28): category words only.
       if (['want', 'recall', 'feel', 'open'].includes(shape)) turn.content.shape = shape; else delete turn.content.shape;
       if (recallRejected === true) turn.content.recallRejected = true; else delete turn.content.recallRejected;
-      // Her world's size when it went with the question: two counts, never the text.
+      // Her world's size when it went with the question: counts, never the text.
       const count = (n, max) => Number.isSafeInteger(n) && n >= 0 && n <= max;
-      if (world && count(world.weeks, 520) && count(world.chars, 3000)) turn.content.world = { weeks: world.weeks, chars: world.chars };
+      if (world && count(world.weeks, 520) && count(world.chars, 4000) && (world.days === undefined || count(world.days, 31)))
+        turn.content.world = { weeks: world.weeks, ...(world.days === undefined ? {} : { days: world.days }), chars: world.chars };
       else delete turn.content.world;
       if (usage && ['inputTokens', 'cachedTokens', 'outputTokens'].every(key => Number.isSafeInteger(usage[key]) && usage[key] >= 0))
         turn.reply = { model: typeof usage.model === 'string' ? usage.model.slice(0, 128) : null, inputTokens: usage.inputTokens, cachedTokens: usage.cachedTokens, outputTokens: usage.outputTokens };

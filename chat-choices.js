@@ -21,7 +21,7 @@ const SCHEMA = { type: 'object', properties: { choices: { type: 'array', minItem
 required: ['choices'], additionalProperties: false };
 const SYMBOLS = new Set(SCHEMA.properties.choices.items.properties.symbol.enum);
 const SHAPES = ['want', 'recall', 'feel', 'open'];
-const DEFAULTS = { inputBytes: 8192, outputBytes: 65536, timeoutMs: 12000, concurrent: 2 };
+const DEFAULTS = { inputBytes: 16384, outputBytes: 65536, timeoutMs: 12000, concurrent: 2 };
 function failure(code, status = 502) { return Object.assign(new Error(code), { code, status }); }
 function clean(value, length) {
   if (typeof value !== 'string' || !value.trim() || value.length > length || /[\x00-\x08\x0b-\x1f<>]/.test(value)) return null;
@@ -52,7 +52,7 @@ function inputData(input) {
   }
   // Her world (chat-world.js): the device's own digest, newlines between its
   // lines and nothing else outside plain text; only with an open-ended question.
-  if (data.shape && typeof input.world === 'string' && input.world.trim() && input.world.length <= 3000 &&
+  if (data.shape && typeof input.world === 'string' && input.world.trim() && input.world.length <= 4000 &&
     !/[\x00-\x09\x0b-\x1f\x7f<>]/.test(input.world)) data.world = input.world.trim();
   return data;
 }
@@ -81,6 +81,8 @@ const ASSERTED = new RegExp(String.raw`\b(?:i|we)\s+(?:also\s+)?(?:went|learned|
 const WORLD_STOP = new Set(['this', 'week', 'last', 'school', 'today', 'hero', 'words', 'videos', 'books', 'shelf', 'people', 'likes',
   'earlier', 'about', 'with', 'that', 'from', "week's", 'science', 'social', 'studies', 'phonics', 'math', 'weeks', 'three', 'there',
   'what', 'have', 'they', 'were', 'when', 'your', 'some', 'more', 'into', 'just', 'like', 'very',
+  // the scaffolding of world.json's lines (about her, the teachers' lists, day notes)
+  'yesterday', 'class', 'worked', 'device', 'said', 'coming',
   'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'january', 'february', 'march', 'april', 'june',
   'july', 'august', 'september', 'october', 'november', 'december']);
 const wordsOf = text => String(text).toLowerCase().replace(/[’]/g, "'").match(/[a-z][a-z']*/g) || [];
