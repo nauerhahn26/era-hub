@@ -60,6 +60,7 @@ const RECORD = shape({
   stages: list(stage, 300),
   worker: shape(Object.fromEntries(WORKER.map(key => [key, key === 'firstPartialMs' || key === 'connectMs' ? nullable(num()) : num()]))),
   content: shape({ transcript: str(2000), partials: list(str(2000), 100), choiceKind: str(32), choices: list(choice, 6), symbolRejected: v => int(6)(v) && v > 0,
+    pictureWarm: int(12),
     selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100) }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),

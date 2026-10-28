@@ -68,6 +68,22 @@ test('fixed phrases and stories without a server pick use the curated table, the
   assert.equal(word({ label: 'Hello', type: 'waiting' }), undefined);
 });
 
+test('a hub lexicon pick the vocabulary lacks keeps its own picture from /symbol/<id>; a failed load falls to the drawn bubble', () => {
+  symbols.setVocabulary(vocabulary);
+  // The hub's withSymbols for "Lasagna": the library's picture through the lexicon layer.
+  const [lasagna] = withSymbols([{ label: 'Lasagna', say: 'Lasagna, please.' }]);
+  assert.ok(!vocabulary.concepts.some(concept => concept.id === lasagna.symbolId), 'an id outside the curated table');
+  const plan = symbols.planPictures([{ label: 'Lasagna', type: 'response', symbol: lasagna.symbol, symbolId: lasagna.symbolId },
+    { label: 'Lasagne', type: 'response', symbol: lasagna.symbol, symbolId: lasagna.symbolId }]);
+  assert.equal(plan[0].id, lasagna.symbolId); assert.equal(plan[0].word, lasagna.symbol);
+  assert.equal(plan[0].src, `/symbol/${lasagna.symbolId}`, 'the hub\'s own route, never another host');
+  assert.equal(plan[0].emoji, null); assert.equal(plan[0].drawn, 'chat', 'offline: the bubble, as for any picture that cannot load');
+  assert.equal(plan[1].id, id('chat'), 'a repeat on one page takes the bubble');
+  // A symbol id the hub did not pair with a lexicon word is still ignored.
+  assert.equal(symbols.planPictures([{ label: 'Music', type: 'response', symbol: 'music', symbolId: 999999 }])[0].id, id('music'));
+  assert.equal(symbols.planPictures([{ label: 'Lasagna', type: 'response', symbol: 'lasagna' }])[0].id, id('chat'), 'no id, no library picture');
+});
+
 function png(size) {
   const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
   const crc = bytes => { let c = 0xffffffff; for (const b of bytes) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };

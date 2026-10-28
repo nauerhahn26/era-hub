@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { isLoopback } = require('./update.js');
 const { createChoicesAdapter } = require('./chat-choices.js');
-const { withSymbols, symbolRejected } = require('./chat-symbols.js');
+const { withSymbols, symbolRejected, pictureCandidates, createPictureWarmer } = require('./chat-symbols.js');
 const { acceptWebSocket, refuseUpgrade } = require('./chat-ws.js');
 const { createStreamTranscriber, streamSettings, loadKeyterms, keytermsFired } = require('./chat-stream.js');
 const { createKeepAliveFetch } = require('./keepalive-fetch.js');
@@ -322,6 +322,20 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // Two more than the HTTP route's own limit: a streaming session's speculative
   // request and its fresh one may overlap for a moment while one aborts.
   const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices + 2, timeoutMs: Math.min(limits.adapterMs, 12000) } });
+  // Pictures warmed while the partner speaks (spec §6): the things a partial
+  // names and each staged choice's picture go into the hub's symbol cache in
+  // the background, so the reveal's <img> usually finds them there. Nothing in
+  // the reply path waits for a fetch.
+  const warmer = options.pictures && typeof options.pictures.fetchOne === 'function'
+    ? createPictureWarmer({ isCached: options.pictures.isCached || (() => false), fetchOne: options.pictures.fetchOne }) : null;
+  function warmSpoken(session, text) {
+    const turn = session.turn;
+    if (!warmer || !turn || turn.generation !== session.generation) return;
+    try {
+      turn.pictures = turn.pictures || warmer.hold();
+      for (const candidate of pictureCandidates(text)) turn.pictures.add(candidate.id);
+    } catch { /* A picture never holds a turn back. */ }
+  }
   const speculateMs = (() => { const value = Number(env.ERA_CHAT_SPECULATE_MS ?? 300); return Number.isFinite(value) && value >= 0 && value <= 5000 ? value : 300; })();
 
   function emit(session, event) {
@@ -423,7 +437,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
           if (event.type === 'final') { session.mode = 'paused'; if (session.turn) session.turn.done = true; }
           emit(session, { type: event.type, text, generation: session.generation,
             ...(event.type === 'final' ? { timings: safeTimings(event.timings), ...(session.staged ? { mode: 'one-shot' } : {}) } : {}) });
-          if (event.type === 'final') choicesForFinal(session, text);
+          if (event.type === 'final') choicesForFinal(session, text); else warmSpoken(session, text);
         }
       }
     });
@@ -455,11 +469,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     stream.on('socket', value => { if (current()) emit(session, { type: 'socket', warm: value.warm, connectMs: value.connectMs, generation: session.generation }); });
     stream.on('partial', ({ text }) => {
       const clean = cleanText(text, 2000);
-      if (current() && clean && ['capturing', 'finishing'].includes(session.mode)) { emit(session, { type: 'partial', text: clean, generation: session.generation }); speculate(session, clean, false); }
+      if (current() && clean && ['capturing', 'finishing'].includes(session.mode)) { emit(session, { type: 'partial', text: clean, generation: session.generation }); speculate(session, clean, false); warmSpoken(session, clean); }
     });
     stream.on('settled', ({ text }) => {
       const clean = cleanText(text, 2000);
-      if (current() && clean) { emit(session, { type: 'settled', text: clean, generation: session.generation }); speculate(session, clean, true); }
+      if (current() && clean) { emit(session, { type: 'settled', text: clean, generation: session.generation }); speculate(session, clean, true); warmSpoken(session, clean); }
     });
     stream.on('final', ({ text, timings }) => {
       if (!current()) return;
@@ -511,7 +525,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function beginTurn(session) {
     endStreamTurn(session);
     const stream = session.stream;
-    session.turn = { generation: session.generation, mode: stream ? 'stream' : 'one-shot', transcriber: stream, pcm: [], released: false, done: false };
+    session.turn = { generation: session.generation, mode: stream ? 'stream' : 'one-shot', transcriber: stream, pcm: [], released: false, done: false,
+      pictures: warmer ? warmer.hold() : null };
     if (stream) stream.begin();
   }
   function acceptPcm(session, pcm) {
@@ -663,8 +678,10 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // completes and the checked batch is sealed once; a newer generation drops it.
   const normalized = text => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim();
   function runChoices(session, text) {
+    const turn = session.turn && session.turn.generation === session.generation ? session.turn : null;
     const job = { text, norm: normalized(text), generation: session.generation, controller: new AbortController(), staged: [],
-      stagedCount: 0, result: null, error: null, done: false, attached: false, sealed: false };
+      stagedCount: 0, result: null, error: null, done: false, attached: false, sealed: false,
+      pictures: turn && turn.pictures || (warmer ? warmer.hold() : null) };
     const timeout = setTimeout(() => job.controller.abort(), limits.adapterMs); timeout.unref?.();
     produceChoices(text, session.context, job.controller.signal, choice => { job.staged.push(choice); if (job.attached) stageChoice(session, job, choice); })
       .then(result => { job.result = result; }, error => { job.error = error; })
@@ -677,6 +694,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     const index = job.stagedCount++;
     const [pick] = choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}) }]);
     emit(session, { type: 'choice-staged', generation: job.generation, index, choice: { ...pick, id: `choice-${index + 1}` } });
+    // The hub knows the picture before the page does: warm it now, behind the event.
+    if (job.pictures && pick.symbolId) try { job.pictures.stage(pick.symbolId); } catch { /* decorative */ }
   }
   function sealChoices(session, job) {
     if (!liveJob(session, job)) return;
@@ -684,7 +703,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     // A batch that arrived whole (a shortcut, the adapter) stages each choice now.
     if (!job.stagedCount) for (const choice of job.result.choices) stageChoice(session, job, choice);
     job.sealed = true;
-    emit(session, { type: 'batch-sealed', generation: job.generation, ...job.result });
+    emit(session, { type: 'batch-sealed', generation: job.generation, ...job.result,
+      ...(reportUsage() && job.pictures ? { pictureWarm: Math.min(job.pictures.count, 12) } : {}) });
   }
   function attachChoices(session, job) {
     session.choiceJob = job; job.attached = true;

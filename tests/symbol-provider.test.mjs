@@ -12,7 +12,7 @@ const constants = ['ARASAAC_API', 'ARASAAC_IMG'].map(name => {
   assert.ok(found, `symbol endpoint ${name} is defined`);
   return found[0];
 }).join('\n');
-const lookup = source.match(/^async function fetchSymbolToCache\(name\) \{[\s\S]*?\n\}/m)?.[0];
+const lookup = source.match(/^async function fetchSymbolToCache\(name(?:, \{ signal \} = \{\})?\) \{[\s\S]*?\n\}/m)?.[0];
 assert.ok(lookup, 'production symbol cache function is available');
 
 function setup(t, hits = [{ _id: 41 }]) {

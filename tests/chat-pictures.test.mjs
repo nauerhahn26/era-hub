@@ -247,14 +247,15 @@ test('the payload ships the vocabulary with the Chat page', () => {
 test('shortcut food, drink, place and person tiles get their own concept, else the category concept, never a part-word match', () => {
   const pick = label => pictures.pickSymbol({ label, say: label });
   for (const [label, word] of [['Spaghetti', 'pasta'], ['Chicken', 'chicken'], ['Meatballs', 'meat'], ['Beef', 'meat'],
-    ['Wine', 'drink'], ['Sushi', 'food'], ['Mushrooms', 'food'], ['Juice', 'juice'], ['Water', 'water'],
+    ['Wine', 'wine'], ['Sushi', 'sushi'], ['Mushrooms', 'mushrooms'], ['Juice', 'juice'], ['Water', 'water'],
     ['Chicken and rice', 'food'], ['Beef and mushrooms', 'food'], ['Juice and milk', 'drink'],
     ['Park', 'park'], ['Library', 'library'], ['Stay inside', 'home'], ['Go outside', 'outside'],
     ['Mom', 'mom'], ['Dad', 'dad'], ['The teacher', 'teacher']])
     assert.equal(pick(label), word, label);
   // Never a partial-word or prefix match: "Meatballs" is not "me", "Carpet" is not "car".
   for (const label of ['Carpet', 'Mondays meeting room', 'Pineapple tart']) assert.notEqual(pick(label), label.toLowerCase().slice(0, 3), label);
-  assert.equal(pick('Carpet'), 'chat');
+  // The library knows the whole word (the lexicon layer, spec §6): the carpet, never the car.
+  assert.equal(pick('Carpet'), 'carpet');
 });
 
 test('a model symbol from another concept family than the food label is rejected for the category picture (recorded batch)', () => {
@@ -267,10 +268,10 @@ test('a model symbol from another concept family than the food label is rejected
   assert.equal(placed[2].symbolId, byWord.get('food').id);
   assert.deepEqual(recorded.map(pictures.symbolRejected), [false, false, true]);
   // Weather and time pictures never stand for a food or drink; other families and the same family stay the model's.
-  assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'sunny' }), 'drink');
+  assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'sunny' }), 'wine', 'the library\'s own picture of the word, never the weather');
   assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'tomorrow' }), 'pizza');
   assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'yummy' }), 'yummy');
-  assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'drink' }), 'drink');
+  assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'drink' }), 'wine');
   assert.equal(pictures.pickSymbol({ label: 'Go to the park', say: 'Let us go to the park.', symbol: 'friday' }), 'park');
   assert.equal(pictures.pickSymbol({ label: 'Saturday', say: 'On Saturday.', symbol: 'saturday' }), 'saturday');
   assert.equal(pictures.symbolRejected({ label: 'Saturday', say: 'On Saturday.', symbol: 'saturday' }), false);
