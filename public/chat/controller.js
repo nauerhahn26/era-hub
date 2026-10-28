@@ -82,6 +82,8 @@ export function createChatController(deps = {}) {
       patch({});
       return true;
     },
+    // A cancelled window: a replacement still waiting is dropped unseen.
+    dropReplacement() { if (!replacement) return false; replacement = null; patch({}); return true; },
     neutral() {
       if (replacement && state.phase === 'Your turn') {
         const next = place(state.choices, replacement); replacement = null;

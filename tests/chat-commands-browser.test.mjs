@@ -148,7 +148,16 @@ async function fixture(t, { script = {}, streaming = true, limits = {}, deny = f
     await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
   }
   const sessions = () => requests.filter(line => line === 'POST /chat/api/sessions').length;
-  return { page, base, api, service, requests, controls, ttsTexts, errors, press, lift, load, until, ask, restOnCentre, sessions };
+  // Her gaze resting on one spot: the mouse at an element's centre.
+  async function lookAt(selector) {
+    const box = await page.locator(selector).first().boundingBox(); assert.ok(box, selector);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  }
+  // A dwell that never completes inside a test: a gaze on a tile fills it and never picks it.
+  const slowDwell = () => page.evaluate(() => { const set = window.Dwell.set; window.Dwell.set = o => set({ ...o, ms: 600000 }); set({ ms: 600000 }); });
+  // Each shown reply: [label, grid column, grid row].
+  const shown = () => page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.textContent, node.style.gridColumn, node.style.gridRow]));
+  return { page, base, api, service, requests, controls, ttsTexts, errors, press, lift, load, until, ask, restOnCentre, sessions, lookAt, slowDwell, shown };
 }
 
 // ---- T2.1 the command stream ----
@@ -379,18 +388,28 @@ test('a second utterance before she has seen the first batch replaces it unseen:
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'still listening after both seals');
 });
 
-test('a second utterance after she sees the first batch never changes a shown tile (the swap is phase 4)', { timeout: 60000 }, async t => {
-  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })], 25: [turn('or pasta', { order: 1 })], 27: [turn('or pasta', { order: 1, end: true })] } });
-  await f.load();
+// ---- T4.3 the neutral moment ----
+
+const pastaLater = { 4: [turn('do you want chicken or fish', { end: true })], 25: [turn('or pasta', { order: 1 })], 27: [turn('or pasta', { order: 1, end: true })] };
+
+test('a replacement waits with no upper bound while her gaze rests on a tile, and swaps when it leaves for the black centre', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: pastaLater });
+  await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
   await f.restOnCentre();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 });
-  const before = await f.page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.textContent, node.style.gridColumn, node.style.gridRow]));
-  await f.page.waitForFunction(() => document.querySelector('#diagnostics').textContent.includes('held while the earlier replies show'), null, { timeout: 15000 });
-  await f.page.waitForTimeout(400);
-  const after = await f.page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.textContent, node.style.gridColumn, node.style.gridRow]));
-  assert.deepEqual(after, before, 'chicken and fish did not move, and nothing appeared under her gaze');
+  const before = await f.shown();
+  assert.deepEqual(before, [['Chicken', '2', '1'], ['Fish', '3', '1']]);
+  await f.lookAt('.response >> text=Chicken');
+  await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
+  assert.notEqual(await f.page.evaluate(() => window.Dwell.state().target), null, 'a dwell is filling Chicken');
+  await f.page.waitForTimeout(5000);
+  assert.deepEqual(await f.shown(), before, 'five seconds on a tile: nothing changed or appeared');
+  assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'true', 'still waiting');
+  await f.restOnCentre();
+  await f.page.waitForFunction(() => document.body.dataset.replacing === 'false', null, { timeout: 5000 });
+  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1'], ['Pasta', '1', '2']], 'chicken and fish stayed put; pasta took a free cell');
   assert.deepEqual(f.errors, []);
 });
 

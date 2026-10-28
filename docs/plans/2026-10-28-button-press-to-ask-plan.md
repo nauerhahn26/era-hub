@@ -240,7 +240,7 @@ Info
       an empty `waiting` tile in a vacated cell. Accept: unit test "chicken and
       fish stay put when pasta arrives"; "removed leaves an empty cell".
       Guard: the four `positions` in `renderGrid` stay the cell table.
-- [ ] **T4.3** Neutral moment in `app.js`: pending replacement swaps when the
+- [x] **T4.3** Neutral moment in `app.js`: pending replacement swaps when the
       gaze/mouse pointer is in `.rest`, or is on no `.tile:not(.rest)` and
       `window.Dwell?.state().target == null`; checked on `pointermove` and once
       250 ms after the replacement arrives. Guard: a pointer resting on a tile

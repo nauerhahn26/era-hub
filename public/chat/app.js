@@ -260,6 +260,7 @@ function renderGrid(state) {
 }
 controller.subscribe(state => {
   document.body.dataset.phase = state.phase;
+  document.body.dataset.replacing = String(state.replacing);
   paintPhase(state);
   document.body.dataset.ready = String(state.engineReady && ['Ready to ask', 'Your turn'].includes(state.phase));
   if (state.error) notice(state.error);
@@ -283,10 +284,25 @@ const restingInCentre = () => {
 document.addEventListener('pointermove', e => {
   // The partner's finger is not her gaze: only gaze and mouse pointers rest.
   if (e.pointerType !== 'touch') pointerAt = { x: e.clientX, y: e.clientY };
+  if (e.pointerType !== 'touch' && controller.state.replacing) swapAtNeutral();
   if (screen !== 'chat' || !controller.state.staged) return;
   if (e.target.closest?.('.rest')) controller.neutral();
 }, { passive: true });
-document.documentElement.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') pointerAt = null; });
+document.documentElement.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') { pointerAt = null; swapAtNeutral(); } });
+// A replacement's neutral moment (design §4.5): her gaze on no tile but the
+// black rest cells, and no dwell filling or fading anywhere. Gaze on a tile
+// waits with no upper bound (the next move off it looks again); a dwell still
+// fading after she left a tile is looked at again shortly.
+const NEUTRAL_CHECK_MS = 250;
+let neutralTimer = null;
+function swapAtNeutral() {
+  clearTimeout(neutralTimer);
+  if (screen !== 'chat' || !controller.state.replacing) return;
+  const el = pointerAt ? document.elementFromPoint(pointerAt.x, pointerAt.y) : null;
+  if (el?.closest?.('#grid .tile:not(.rest)')) return;
+  if (window.Dwell?.state?.().target != null) { neutralTimer = setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS); return; }
+  controller.neutral();
+}
 let wasStaged = false;
 controller.subscribe(state => {
   const sealed = state.staged && !wasStaged; wasStaged = state.staged;
@@ -584,13 +600,7 @@ function windowSealed(data) {
   if (!question || !Number.isSafeInteger(data.seq)) return;
   turnLog.mark(questionMetric, 'utteranceSealed', { text: String(data.text || '').slice(0, 2000) });
   const shown = controller.state.choices.length > 0;
-  if (data.seq > 1 && shown) {
-    // A replacement for a batch she can already see. Swapping it in at a
-    // neutral moment is plan phase 4; until then a shown tile never changes.
-    press.held = { seq: data.seq, question };
-    diagnostic(`Question: ${question} (held while the earlier replies show)`);
-    return;
-  }
+  if (data.seq > 1 && shown) { replacementFor(data, question); return; }
   if (data.seq > 1) turnLog.mark(questionMetric, 'batchReplaced');
   // The earlier unseen question is replaced, not repeated, in the conversation so far.
   if (press.question) recentConversation = recentConversation.filter(line => line !== `Partner: ${press.question}`.slice(0, 500));
@@ -603,6 +613,38 @@ function windowSealed(data) {
   // batch is prepared and revealed by the existing rule.
   controller.prepare(question);
 }
+// A batch for a window whose earlier batch she can already see (design §4.5):
+// the sealed batch is handed to the controller as a replacement, which waits
+// for a neutral moment. A shown tile never changes before then; a newer seal
+// supersedes this one; a pick or a cancel drops it (closePressWindow).
+function replacementFor(data, question) {
+  if (press.question) recentConversation = recentConversation.filter(line => line !== `Partner: ${press.question}`.slice(0, 500));
+  recentConversation = [...recentConversation, `Partner: ${question}`.slice(0, 500)].slice(-8);
+  press.seals = data.seq; press.question = question;
+  turnLog.content(questionMetric, { transcript: question });
+  diagnostic(`Question: ${question}`);
+  dropStaging();
+  // Without hub staging there is no sealed batch for this seal: the shown replies stay.
+  if (!stagedChoices) return;
+  const mine = lifecycle, record = { generation: data.generation, seq: data.seq, text: question, choices: [], sealed: null, error: null, claimed: true, settled: false, done: null };
+  staging = record;
+  stagedBatch(record).then(result => {
+    if (mine !== lifecycle || staging !== record) return;
+    staging = null;
+    if (!controller.replace(result?.choices)) return;
+    diagnostic(`Question: ${question} (replies waiting for a neutral moment)`);
+    setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS);
+  }, error => {
+    if (mine !== lifecycle || staging !== record) return;
+    staging = null;
+    if (error?.name !== 'AbortError') diagnostic(`Question: ${question} (new replies unavailable; the shown replies stay)`);
+  });
+}
+function dropStaging() {
+  if (!staging) return;
+  const record = staging; staging = null;
+  record.error ||= Object.assign(new Error('Cancelled'), { name: 'AbortError' }); record.done?.(record.error);
+}
 // The window ended: at the hub (silence, cap, second press, cancel, nothing
 // said) or here (her pick). The microphone stops at once; the done tone plays.
 function closePressWindow(reason, seals = press?.seals || 0) {
@@ -611,10 +653,11 @@ function closePressWindow(reason, seals = press?.seals || 0) {
   captureIntent++; pendingFrames = []; mic?.cancel(); setMode('blocked'); uploadEpoch++; captureGeneration = null;
   turnLog.mark(questionMetric, 'windowClosed', { text: String(reason || 'closed') });
   void tones.done();
-  if (reason === 'pick') return control('pick').catch(() => null);
+  // A pick wins: a replacement still in the making is dropped with it.
+  if (reason === 'pick') { dropStaging(); return control('pick').catch(() => null); }
   if (!seals || reason === 'cancel') {
     // Nothing to show, or a cancel: whatever was staged and unseen is dropped.
-    if (staging) { const record = staging; staging = null; record.error ||= Object.assign(new Error('Cancelled'), { name: 'AbortError' }); record.done?.(record.error); }
+    dropStaging(); controller.dropReplacement();
     const idle = controller.idle();
     if (!seals) metrics.end(questionMetric, 'cancelled', reason === 'cancel' ? 'cancel' : 'timeout');
     if (reason === 'error') notice('Listening stopped. Your phrases still work; press again.');
