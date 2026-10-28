@@ -412,3 +412,63 @@ test('the hub passes the model\'s picture words from the reply to the pick', asy
   const source = fs.readFileSync(path.join(HUB, 'chat-api.js'), 'utf8');
   assert.match(source.match(/function stageChoice[\s\S]*?\n  \}/)[0], /picture: choice\.picture/);
 });
+
+// ---- the family's own people pictures ------------------------------------------
+
+const PEOPLE = [{ slug: 'mom', word: 'Mom' }, { slug: 'dad', word: 'Dad' }, { slug: 'sam-2', word: 'Sam' },
+  { slug: 'grandma', word: 'Granny' }, { slug: 'old-friend', word: 'Lisa', retired: true }];
+const person = slug => ({ src: `/characters/${slug}.png`, kind: 'person' });
+
+test('a tile that is one of the family shows their own picture: their word, a kin word, "my" or "with" before it', () => {
+  pictures.setPeople(() => PEOPLE);
+  try {
+    for (const [label, slug, word] of [['Mom', 'mom', 'Mom'], ['mom', 'mom', 'Mom'], ['My mom', 'mom', 'Mom'], ['With Dad', 'dad', 'Dad'],
+      ['with my dad', 'dad', 'Dad'], ['Mommy', 'mom', 'Mom'], ['Mum', 'mom', 'Mom'], ['Daddy', 'dad', 'Dad'], ['Sam', 'sam-2', 'Sam'],
+      ['Grandma', 'grandma', 'Granny'], ['Nana', 'grandma', 'Granny']]) {
+      const choice = pick(label);
+      assert.deepEqual(choice.picture, person(slug), label);
+      assert.equal(choice.symbol, word, label);
+      assert.equal(choice.symbolId, undefined, `${label}: the person picture stands alone`);
+    }
+    assert.deepEqual(pick('Hmm', { say: 'Sam.' }).picture, person('sam-2'), 'the say, when the label has nothing');
+    assert.equal(pick('Play with Sam').picture, undefined, 'only a tile that is the person, not one that mentions them');
+    assert.equal(pick('Not Mom', { say: 'Not Mom.' }).picture, undefined, 'a negation is never the person');
+    assert.equal(pick('Grandpa').picture, undefined, 'a kin word the family library lacks keeps the library picture');
+    assert.equal(pick('Grandpa').symbol, 'grandpa');
+  } finally { pictures.setPeople(null); }
+});
+
+test('an unknown name is the friend picture, the second one people; a retired person is an unknown name', () => {
+  pictures.setPeople(() => PEOPLE);
+  try {
+    const choices = pictures.withSymbols(['Lisa', 'Jo', 'Mom', 'Sam'].map(label => ({ label, say: label })));
+    assert.deepEqual(choices.map(choice => choice.symbol), ['friend', 'people', 'Mom', 'Sam']);
+    assert.deepEqual(choices.map(choice => choice.picture?.src || choice.symbolId),
+      [vocabId('friend'), vocabId('people'), '/characters/mom.png', '/characters/sam-2.png']);
+    // Without a family library the two names still never share a picture.
+    pictures.setPeople(() => []);
+    const plain = pictures.withSymbols([{ label: 'Lisa', say: 'Lisa.' }, { label: 'Sam', say: 'Sam.' }]);
+    assert.deepEqual(plain.map(choice => choice.symbol), ['friend', 'people']);
+    // Ordinary one-word replies are never names.
+    for (const label of ['Sure', 'Maybe', 'Okay', 'Later', 'Nothing', 'Whatever', 'Yes', 'Pizza', 'Wait', 'Again'])
+      assert.ok(!['friend', 'people'].includes(pick(label).symbol), label);
+  } finally { pictures.setPeople(null); }
+});
+
+test('the people provider is asked once per batch, may fail, and is never loaded at require time', () => {
+  let asked = 0;
+  pictures.setPeople(() => { asked++; return PEOPLE; });
+  try {
+    pictures.withSymbols([{ label: 'Mom', say: 'Mom.' }, { label: 'Dad', say: 'Dad.' }, { label: 'Pizza', say: 'Pizza.' }]);
+    assert.equal(asked, 1);
+    pictures.setPeople(() => { throw Error('no library'); });
+    assert.equal(pick('Mom').symbol, 'mom', 'a failing provider leaves the library picture');
+    pictures.setPeople(() => [{ slug: '../x', word: 'Mom' }, { slug: 'ok', word: '<b>Dad</b>' }, null, { slug: 'fine' }]);
+    assert.equal(pick('Mom').picture, undefined, 'a slug outside the pattern is never a picture path');
+    assert.equal(pick('Dad').picture, undefined);
+  } finally { pictures.setPeople(null); }
+  const source = fs.readFileSync(path.join(HUB, 'chat-symbols.js'), 'utf8');
+  assert.ok(!/require\(['"]\.\/drawings/.test(source), 'chat-symbols never requires drawings.js');
+  const hub = fs.readFileSync(path.join(HUB, 'server.js'), 'utf8');
+  assert.match(hub, /setPeople\(\(\) => drawings\.charactersLibrary\(\)\.people\)/, 'the hub hands Chat its people library, lazily');
+});

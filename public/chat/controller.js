@@ -48,7 +48,10 @@ export function createChatController(deps = {}) {
           .map((x, i) => Object.freeze({ id: `${mine}:${i}`, label: x.label.slice(0, 100), say: x.say.slice(0, 600),
             // The hub's decorative picture pick (spec §6) rides along; it never changes the words.
             ...(typeof x.symbol === 'string' && x.symbol.length <= 64 ? { symbol: x.symbol } : {}),
-            ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}) }));
+            ...(Number.isSafeInteger(x.symbolId) && x.symbolId > 0 ? { symbolId: x.symbolId } : {}),
+            // A person's own picture, from the hub's /characters/ route only.
+            ...(x.picture && typeof x.picture.src === 'string' && /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/.test(x.picture.src)
+              ? { picture: Object.freeze({ src: x.picture.src, kind: 'person' }) } : {}) }));
         if (!clean.length) throw new Error('No suggestions available. Your phrases still work.');
         const next = Object.freeze(clean);
         preparing = false;

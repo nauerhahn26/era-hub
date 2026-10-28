@@ -44,6 +44,9 @@ const booksIndex_ = require("./books-index.js");
 const booksShare = require("./books-share.js");
 const booksShelf = require("./books-shelf.js");
 const drawings = require("./drawings.js");   // Drawing's pictures (spec 2026-09-30 §4-§5)
+// A Chat tile that is one of the family shows their own picture (/characters/<slug>.png);
+// the library is read when a batch of choices asks, never here.
+require("./chat-symbols.js").setPeople(() => drawings.charactersLibrary().people);
 const aiConfig = require("./ai-config.js");
 // For baseFor alone: the provider's real base, or the ERA_AI_URL stand-in.
 const contentProviders = require("./content-providers.js");

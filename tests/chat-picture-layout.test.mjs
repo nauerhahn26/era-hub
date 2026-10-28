@@ -56,6 +56,21 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   for (const item of symbols.planPictures(entries).filter(Boolean)) assert.match(item.src, /^\/symbol\/\d+(\?color=false)?$/, 'never another host');
 });
 
+test('a person picture from the hub shows that image, once a page, and keeps no emoji or drawn stand-in but the bubble', () => {
+  symbols.setVocabulary(vocabulary);
+  const person = (label, src) => ({ label, type: 'response', symbol: label, picture: { src, kind: 'person' } });
+  const plan = symbols.planPictures([person('Mom', '/characters/mom.png'), person('Mommy', '/characters/mom.png'),
+    { label: 'Sam', type: 'response', symbol: 'friend', symbolId: id('friend') }, person('Dad', '/characters/dad.png')]);
+  assert.deepEqual(plan[0], { word: 'Mom', id: null, kind: 'person', src: '/characters/mom.png', emoji: null, drawn: 'chat' });
+  assert.equal(plan[1], null, 'the same person twice on a page shows once');
+  assert.equal(plan[2].src, `/symbol/${id('friend')}`, 'the other tiles keep their library pictures');
+  assert.equal(plan[3].src, '/characters/dad.png');
+  for (const variant of ['bw', 'emoji']) assert.equal(symbols.planPictures([person('Mom', '/characters/mom.png')], { variant })[0].src, '/characters/mom.png', variant);
+  // Only the hub's own people route, a slug and .png: anything else is no person picture.
+  for (const src of ['https://elsewhere.example/mom.png', '/characters/../secret.png', '/characters/mom.json', '/symbol/1', '//x/characters/a.png', 7])
+    assert.notEqual(symbols.planPictures([person('Mom', src)])[0]?.kind, 'person', String(src));
+});
+
 test('fixed phrases and stories without a server pick use the curated table, then exact words, then the drawn guess', () => {
   symbols.setVocabulary(vocabulary);
   const word = options => symbols.planPictures([options])[0]?.word;
