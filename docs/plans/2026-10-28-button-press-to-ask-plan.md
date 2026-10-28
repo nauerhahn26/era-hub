@@ -91,7 +91,7 @@ Info
       absent → never, the silence fallback covers it). Verify:
       `node --test tests/chat-stream.test.mjs`. Guard: tests first; existing
       hold behaviour byte for byte (every current test stays green).
-- [ ] **T0.2** `chat-api.js`: `windowBytes` limit (default 2 000 000) applied
+- [x] **T0.2** `chat-api.js`: `windowBytes` limit (default 2 000 000) applied
       when `session.turn.window` is set; `turnBytes` unchanged for holds.
       Verify: `node --test tests/chat-api.test.mjs`. Guard: a hold still hits
       `audio-limit` at 512000.

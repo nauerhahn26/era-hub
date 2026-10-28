@@ -20,11 +20,16 @@ const DEFAULTS = Object.freeze({ sessions: 2, idleMs: 90000, lifetimeMs: 1800000
   // The audio socket (spec 2026-10-27 §3.1): one hold may carry 16 s of PCM16
   // at 16 kHz (the page stops at 15 s); finish waits this long for frames.
   turnBytes: 512000, drainMs: 2000,
+  // A button-press listening window (design 2026-10-27 §4.4) holds up to 60 s:
+  // ~62 s of PCM16; the hub, not the page, caps each utterance.
+  windowBytes: 2000000,
   // The streaming transcription socket (§3.1): closed after this long idle
   // (null: 60 s for a connection-billed service, 5 min otherwise); the final
   // must arrive this long after release or the hold falls back to one-shot.
   streamIdleMs: null, streamFinalMs: 4000, streamKeepAliveMs: 5000 });
 const FRAME_HEADER = 8;
+// The byte budget of the current turn: a listening window's, or one hold's.
+function turnByteLimit(turn, limits) { return turn && turn.window === true ? limits.windowBytes : limits.turnBytes; }
 
 function chatVariables(env) {
   const result = {};
@@ -509,7 +514,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       // Another generation's frame, or any frame outside a hold, is dropped here.
       if (generation !== session.generation || session.mode !== 'capturing') return;
       const pcm = data.subarray(FRAME_HEADER);
-      if (session.bytes + pcm.length > limits.sessionBytes || session.turnBytes + pcm.length > limits.turnBytes) { cancelTurn(session, 'audio-limit'); return; }
+      if (session.bytes + pcm.length > limits.sessionBytes || session.turnBytes + pcm.length > turnByteLimit(session.turn, limits)) { cancelTurn(session, 'audio-limit'); return; }
       session.bytes += pcm.length; session.turnBytes += pcm.length;
       acceptPcm(session, pcm);
     });
@@ -793,4 +798,4 @@ function createChatApi(options = {}) {
     close() { closed = true; inner.close(); },
   };
 }
-module.exports = { createChatApi, loadChatEnvironment, ownRequest };
+module.exports = { createChatApi, loadChatEnvironment, ownRequest, turnByteLimit, DEFAULTS };
