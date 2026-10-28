@@ -176,6 +176,11 @@ function conceptFor({ label = '', type = '', say = '', symbol, symbolId } = {}) 
   if (type === 'yes' || type === 'no') return library.byWord.get(type) || null;
   const picked = library.byId.get(Number(symbolId));
   if (picked && (!symbol || picked.word === symbol)) return picked;
+  // A library picture the hub chose from its word index (spec §6): an id paired
+  // with a word the table lacks ("lasagna") is shown as a concept of its own,
+  // from /symbol/<id> like every other; offline it falls to the drawn bubble.
+  if (Number.isSafeInteger(Number(symbolId)) && Number(symbolId) > 0 && typeof symbol === 'string' && symbol &&
+    symbol.length <= 64 && !library.byWord.has(symbol)) return { word: symbol, id: Number(symbolId) };
   if (typeof symbol === 'string' && library.byWord.has(symbol)) return library.byWord.get(symbol);
   const title = normal(label), spoken = normal(say);
   const word = library.phrases.get(title) || library.phrases.get(spoken) ||

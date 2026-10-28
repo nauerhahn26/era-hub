@@ -955,7 +955,10 @@
         "era-hub/chat-stream.js",
         "era-hub/chat-choices.js",
         "era-hub/chat-ws.js",
-        "era-hub/keepalive-fetch.js"
+        "era-hub/keepalive-fetch.js",
+        "era-hub/chat-symbols.js",
+        "era-hub/public/chat/lexicon.json",
+        "era-hub/public/chat/vocabulary.json"
       ],
       "resources": [
         "owned-loopback-services",
@@ -4869,12 +4872,44 @@
         "era-hub/tools/chat-preview.mjs",
         "era-hub/chat-ws.js",
         "era-hub/chat-stream.js",
-        "era-hub/keepalive-fetch.js"
+        "era-hub/keepalive-fetch.js",
+        "era-hub/public/chat/lexicon.json"
       ],
       "resources": [
         "owned-loopback-services"
       ],
       "hub": "own",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-lexicon.test.mjs",
+      "purpose": "Chat lexicon layer: the library keyword list trimmed to a word to id index on a fixture (plural forms, core AAC wins, flagged and place entries dropped, families, size budget), the shipped index, curated vocabulary first, head-noun and coordinated labels, the family and negation guards, partial-transcript picture candidates and the bounded background warmer",
+      "group": "chat",
+      "lane": "linux",
+      "level": "module unit and data contract",
+      "dependencies": [
+        "era-hub/chat-symbols.js",
+        "era-hub/tools/chat-lexicon-build.mjs",
+        "era-hub/public/chat/lexicon.json",
+        "era-hub/public/chat/vocabulary.json",
+        "era-hub/tests/fixtures/chat-lexicon-sample.json",
+        "era-hub/server.js",
+        "era-hub/README.md",
+        "era-hub/public/chat/app.js",
+        "era-hub/public/chat/symbols.js",
+        "era-hub/public/chat/controller.js",
+        "era-hub/public/chat/turnlog.js"
+      ],
+      "resources": [
+        "temporary-data"
+      ],
+      "hub": "none",
       "ports": [],
       "browsers": 0,
       "heavy": false,

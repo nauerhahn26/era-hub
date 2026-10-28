@@ -16,7 +16,7 @@ const FIELDS = new Set(['version', 'retention', 'turns', 'summary', 'counts', 'g
   'p95MinimumSamples', 'kind', 'status', 'reason', 'timings', 'open', 'completed', 'cancelled', 'failed',
   'hold', 'typed', 'fixed', 'reply', 'samples', 'medianMs', 'p95Ms', ...DURATIONS]);
 const CATEGORIES = new Set(['hold', 'typed', 'fixed', 'reply', 'open', 'completed', 'cancelled', 'failed',
-  'cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices',
+  'cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices',
   'speech', 'connection', 'other']);
 
 export function makeChatToneWav() {
@@ -52,7 +52,7 @@ export function assertContentFreeMetrics(value) {
 }
 
 export function makeChatStateDiagnostic(state, ui = {}) {
-  const reasons = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
+  const reasons = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
   const rows = Array.isArray(state?.value?.timings) ? state.value.timings.slice(-40) : [];
   const backendRows = rows.filter(row => row && ['hold', 'typed', 'fixed', 'reply'].includes(row.kind) && ['open', 'completed', 'cancelled', 'failed'].includes(row.status)).map(row => ({
     kind: row.kind, status: row.status,
@@ -144,7 +144,9 @@ function installInstrumentation(origin) {
     return nativePlay.apply(this, args);
   };
   if (window.speechSynthesis) speechSynthesis.speak = () => { state.deviceCalls++; throw new Error('Unexpected device voice in saved voice check'); };
-  if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => { state.microphoneCalls++; return Promise.reject(new Error('This check uses a typed question')); };
+  // Chat asks for the microphone by itself when it opens (no Start Chat since
+  // 10/27 evening); this check refuses as a partner refusing the browser prompt would.
+  if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => { state.microphoneCalls++; return Promise.reject(new DOMException('This check uses a typed question', 'NotAllowedError')); };
   const blobs = new Map(), nativeURL = URL.createObjectURL;
   URL.createObjectURL = function (blob) {
     const url = nativeURL.call(URL, blob);
@@ -219,7 +221,7 @@ export async function checkInstalledChatUI(page, options = {}) {
   assert.equal(new URL(originalURL).origin, base, 'the UI check starts on the hub origin');
   const savedStorage = await page.evaluate(keys => Object.fromEntries(keys.map(key => [key, localStorage.getItem(key)])), STORAGE_KEYS);
   const savedState = await readChatState(page);
-  const wav = makeChatToneWav(), requests = { voices: 0, clips: 0, choices: 0, blocked: 0 };
+  const wav = makeChatToneWav(), requests = { voices: 0, clips: 0, choices: 0, blocked: 0, sessions: 0 };
   const cdp = await page.context().newCDPSession(page);
   let script;
   const routeHandler = async route => {
@@ -237,6 +239,7 @@ export async function checkInstalledChatUI(page, options = {}) {
       // The page's command stream for the partner's button (design 2026-10-27 §4.2): open at load.
       if (request.method() === 'GET' && url.pathname === '/chat/api/commands') return route.continue();
       if (request.method() === 'POST' && url.pathname === '/chat/api/commands/visibility') return route.continue();
+      if (request.method() === 'POST' && url.pathname === '/chat/api/sessions') requests.sessions++;
       if (request.method() === 'POST' && url.pathname === '/chat/api/choices') {
         let input; try { input = request.postDataJSON(); } catch {}
         if (input?.text === QUESTION && Array.isArray(input.context) && input.context.length === 0) { requests.choices++; return route.continue(); }
@@ -291,16 +294,11 @@ export async function checkInstalledChatUI(page, options = {}) {
 
     await openPartner(); await page.locator('#testing > summary').click({ timeout });
     await page.locator('#typedQuestion').fill(QUESTION, { timeout });
-    // The pointer stays off the black centre (spec 2026-10-27 §4: a pointer
-    // already resting there when the batch seals reveals it at once).
-    await page.mouse.move(0, 0);
+    // The sealed batch shows at once, wherever the pointer is (spec 2026-10-27
+    // §4, 10/27 evening): no parking and no move into the black centre.
     await page.locator('#typedAsk').focus({ timeout }); await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.querySelector('#notice')?.textContent.includes('Replies ready'), null, { timeout });
-    assert.equal(await page.locator('.response').count(), 0, 'ready replies remain hidden before a move into the black centre');
-    assert.equal((await audio()).playCalls, 0, 'preparing replies cannot play their cached audio');
-    const rest = await page.locator('.tile.rest').first().boundingBox(); assert.ok(rest);
-    await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
     await page.locator('.response').first().waitFor({ state: 'visible', timeout });
+    assert.equal(await page.locator('.response').count(), 2);
     assert.deepEqual((await page.locator('.response .label').allTextContents()).map(text => text.trim()), ['Music', 'A story']);
     assert.equal(await page.getByRole('button', { name: 'Music', exact: true }).getAttribute('data-symbol'), 'music');
     assert.equal(await page.getByRole('button', { name: 'A story', exact: true }).getAttribute('data-symbol'), 'book');
@@ -316,8 +314,10 @@ export async function checkInstalledChatUI(page, options = {}) {
     await page.getByRole('button', { name: 'Music', exact: true }).click({ timeout });
     await page.waitForFunction(() => window.__chatUISmoke.ended === 1 || document.querySelector('#notice')?.textContent.includes('unavailable'), null, { timeout });
     const actualAudio = await audio();
-    assert.deepEqual(actualAudio, { playCalls: 1, playing: 1, ended: 1, deviceCalls: 0, microphoneCalls: 0, nativeAudio: true },
+    const { microphoneCalls, ...played } = actualAudio;
+    assert.deepEqual(played, { playCalls: 1, playing: 1, ended: 1, deviceCalls: 0, nativeAudio: true },
       'a deliberate selection plays the real saved clip to completion without device speech');
+    assert.equal(requests.sessions, 0, 'with the microphone refused, Chat opens no audio session');
     const completedState = await waitForChatState(page, value => value.timings.length === 1 && value.timings[0].status === 'completed', timeout);
     await openPartner(); await page.locator('#turnTimings > summary').click({ timeout });
     await page.locator('#exportTimings').click({ timeout });
@@ -348,7 +348,7 @@ export async function checkInstalledChatUI(page, options = {}) {
     }
     return { ok: true, evidence: 'Typed local alternatives; service audio mocked; native browser playback observed. No microphone or recognition accuracy test.',
       symbols: true, restUnchanged: true, savedDefaultAndPersistence: true, exportContentFree: true, fit, typedTurn,
-      exportedTurns: savedMetrics.turns.length, actualAudio, microphoneCalls: actualAudio.microphoneCalls, ...(restartState ? { restartState } : {}) };
+      exportedTurns: savedMetrics.turns.length, actualAudio: played, microphoneCalls, audioSessions: requests.sessions, ...(restartState ? { restartState } : {}) };
   } finally {
     if (script) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: script });
     try {

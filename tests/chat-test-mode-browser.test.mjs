@@ -93,24 +93,23 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   const paths = []; page.on('request', request => paths.push(new URL(request.url()).pathname));
   const finishes = () => controls.filter(type => type === 'finish').length;
   async function heldTurn() {
-    if (!(await page.evaluate(() => window.__events && !window.__events.closed))) {
-      await page.waitForFunction(() => !document.querySelector('#startChat').disabled); await touch('#startChat'); await lift();
+    // No Start Chat: the page opened its session by itself; the simulated recognizer says ready.
+    if (await page.locator('#ask').isDisabled()) {
       await page.waitForFunction(() => window.__events && !window.__events.closed);
       await page.evaluate(() => window.__events.onmessage({ data: JSON.stringify({ type: 'ready', capabilities: { remoteFinal: true } }) }));
-      await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask');
+      await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask' && !document.querySelector('#ask').disabled);
     }
     const asks = controls.filter(type => type === 'ask').length, before = finishes();
     await touch('#ask');
     for (let i = 0; i < 100 && controls.filter(type => type === 'ask').length === asks; i++) await page.waitForTimeout(20);
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(250); // past the 400 ms floor: a shorter hold is a slip, never a question
     await page.evaluate(g => window.__events.onmessage({ data: JSON.stringify({ type: 'partial', generation: g, text: 'would you like' }) }), generation);
-    await page.waitForTimeout(150); await lift();
+    await page.waitForTimeout(250); await lift();
     for (let i = 0; i < 100 && finishes() === before; i++) await page.waitForTimeout(20);
     assert.equal(finishes(), before + 1);
     await page.evaluate(([g, text]) => window.__events.onmessage({ data: JSON.stringify({ type: 'final', generation: g, text,
       timings: { activityMs: 3, cloudMs: 30, finalDecodeMs: 33, audioMs: 240, captureWallMs: 260, turnMs: 41 } }) }), [generation, QUESTION]);
-    await page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'));
-    const rest = await page.locator('.rest').first().boundingBox(); await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
+    // Shown at once, wherever the gaze is (spec §4): no move into the centre.
     await page.waitForSelector('.response'); await page.locator('.response').first().click();
   }
   const completedHolds = async () => {
@@ -163,6 +162,9 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   const at = name => record.stages.find(stage => stage.name === name).ms;
   for (const [a, b] of [['release', 'transcript'], ['transcript', 'choicesReady'], ['choicesReady', 'batchSealed'], ['batchSealed', 'revealed'], ['revealed', 'selected'], ['selected', 'playbackStart'], ['playbackStart', 'playbackEnd']])
     assert.ok(at(a) <= at(b), `${a} before ${b}`);
+  // No gaze wait: the reveal follows the sealed batch within the 250 ms settle.
+  for (const sealedMark of ['choicesReady', 'batchSealed'])
+    assert.ok(at('revealed') - at(sealedMark) <= 300, `revealed ${at('revealed') - at(sealedMark)} ms after ${sealedMark}`);
   assert.equal(record.stages.find(stage => stage.name === 'partial').text, 'would you like');
   assert.deepEqual(record.stages.filter(stage => stage.name === 'choiceStaged').map(stage => stage.text), ['Music', 'A story']);
   assert.equal(record.mode, 'one-shot'); assert.equal(record.session, 'a1b2c3d4-0000-4000-8000-000000000001');

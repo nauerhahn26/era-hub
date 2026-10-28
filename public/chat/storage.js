@@ -3,7 +3,7 @@ const ROUTE = '/chat/api/state';
 const KEYS = { voicePreference: 'chat:voicePreference', stories: 'chat:stories', timings: 'chat:timings:v1' };
 const KINDS = ['hold', 'typed', 'fixed', 'reply'];
 const STATUSES = ['open', 'completed', 'cancelled', 'failed'];
-const REASONS = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
+const REASONS = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
 const DURATIONS = new Set(['holdMs', 'releaseToDrainedMs', 'drainToFinishSentMs', 'finishRoundTripMs', 'finishToTranscriptMs', 'releaseToTranscriptMs', 'transcriptToChoicesMs', 'choicesToRevealMs', 'revealToSelectMs', 'selectionToPlaybackMs', 'playbackMs', 'releaseToPlaybackMs', 'workerActivityMs', 'workerCloudMs', 'workerFinalMs', 'audioMs', 'choicesServerMs', 'totalMs']);
 const clone = value => JSON.parse(JSON.stringify(value));
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);

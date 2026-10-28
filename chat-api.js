@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { isLoopback } = require('./update.js');
 const { createChoicesAdapter } = require('./chat-choices.js');
-const { withSymbols } = require('./chat-symbols.js');
+const { withSymbols, symbolRejected, pictureCandidates, createPictureWarmer } = require('./chat-symbols.js');
 const { acceptWebSocket, refuseUpgrade } = require('./chat-ws.js');
 const { createStreamTranscriber, streamSettings, loadKeyterms, keytermsFired } = require('./chat-stream.js');
 const { createKeepAliveFetch } = require('./keepalive-fetch.js');
@@ -235,27 +235,74 @@ function cleanUsage(value) {
 // A leading verb only the first alternative carries is shared and dropped (with
 // a following preposition); in every alternative a clause or time word after
 // its first word ends it.
-const SHARED_VERB = /^(?:eat|drink|have|play|go|read|watch|listen|sing|do|make|see|visit|wear|sit|take|get|draw|paint|build|write|run|swim|ride|dance|cook|bake)$/i;
+const SHARED_VERB = /^(?:eat|drink|have|play|go|read|watch|listen|sing|do|make|see|visit|wear|sit|take|get|draw|paint|build|write|run|swim|ride|dance|cook|bake|stay|come|sleep|rest|walk|jump|climb)$/i;
 const OBJECT = /^(?:a|an|the|some|my|your|this|that|these|those)$/i;
 const PARTICLE = /^(?:with|to|for|at|in|on)$/i;
 const TAIL = /^(?:to|for|at|in|on|with|from|after|before|tonight|today|tomorrow|now|later|first|next|please|because|so|when|feed|feeds|help|helps|read|reads|play|plays|take|takes|come|comes|bring|brings|sit|sits)$/i;
 function alternativesOf(parts) {
   const words = parts.map(part => part.trim().split(/\s+/).filter(Boolean));
+  let shared = false;
   if (words.length >= 2 && words[0].length > 1 && SHARED_VERB.test(words[0][0]) && words.slice(1).every(w => w.length && !SHARED_VERB.test(w[0]))) {
     // Shared only when what follows the verb is the same kind of thing as the
     // other alternatives (as long, and not the verb's own object: "play a
     // game or draw pictures" offers two activities).
     let rest = words[0].slice(1);
     if (rest.length > 1 && PARTICLE.test(rest[0])) rest = rest.slice(1);
-    if (!OBJECT.test(rest[0]) && words.slice(1).every(w => w.length === rest.length)) words[0] = rest;
+    // A leading article or possessive is parallel only when every other
+    // alternative starts with the same one ("play with my X or my Y").
+    const parallel = !OBJECT.test(rest[0]) || words.slice(1).every(w => w[0].toLowerCase() === rest[0].toLowerCase());
+    if (parallel && words.slice(1).every(w => w.length === rest.length)) { words[0] = rest; shared = true; }
   }
-  return words.map(list => {
-    const cut = list.findIndex((word, index) => index > 0 && TAIL.test(word));
-    return (cut > 0 ? list.slice(0, cut) : list).join(' ');
+  return words.map((list, index) => {
+    // A verb phrase keeps its verb, a preposition and article right after it,
+    // and its object: "go to the park so we can run" is "go to the park",
+    // "go outside to play" is "go outside". Elsewhere a clause or time word
+    // after the first word ends the alternative.
+    let from = 1;
+    if (!(shared && index === 0) && list.length > 1 && SHARED_VERB.test(list[0])) {
+      while (from < list.length - 1 && (PARTICLE.test(list[from]) || OBJECT.test(list[from]))) from++;
+      from++;
+    }
+    const cut = list.findIndex((word, i) => i >= from && TAIL.test(word));
+    const kept = cut > 0 ? list.slice(0, cut) : list;
+    // Never a dangling "to", "the" or "a".
+    while (kept.length > 1 && (PARTICLE.test(kept.at(-1)) || OBJECT.test(kept.at(-1)))) kept.pop();
+    return kept.join(' ');
   });
 }
+// The partner's "my" is the communicator's "your" (and the other way round):
+// she never claims the partner's things. A leading possessive or article that
+// every alternative shares leaves the labels ("my dinosaurs or my blocks" is
+// Dinosaurs / Blocks); the say keeps a flipped possessive ("Your dinosaurs").
+function spokenAlternatives(parts) {
+  const capital = text => text[0].toUpperCase() + text.slice(1);
+  const flip = text => text.replace(/\b(my|your)\b/gi, word => /^my$/i.test(word) ? 'your' : 'my');
+  const lists = parts.map(part => part.split(' '));
+  const lead = lists[0][0].toLowerCase();
+  const shared = OBJECT.test(lead) && lists.every(list => list.length > 1 && list[0].toLowerCase() === lead);
+  return lists.map(list => {
+    if (!shared) { const text = capital(flip(list.join(' '))); return { label: text, say: text }; }
+    const rest = flip(list.slice(1).join(' '));
+    return { label: capital(rest), say: /^(?:my|your)$/.test(lead) ? capital(flip(lead) + ' ' + rest) : capital(rest) };
+  });
+}
+// A partner who restarts ("You want chicken and fruit? Chicken and rice.
+// Meatballs or beef and mushrooms?") is read from the last question sentence
+// on, together with an opener sentence just before it ("What do you like?
+// Music or a story?"). Words after that question still count: they may refuse.
+function lastQuestion(text, opener) {
+  const sentences = text.match(/[^.?!]+[.?!]*\s*/g) || [text];
+  let index = -1;
+  sentences.forEach((sentence, i) => { if (/\?\s*$/.test(sentence)) index = i; });
+  if (index <= 0) return text;
+  if (opener.test(sentences[index - 1].trim())) index--;
+  return sentences.slice(index).join('').trim();
+}
+const STEM = /^(?:or\s+)?(?:do you (?:want|need)(?: to)?|do you wanna|would you (?:like|prefer)(?: to)?|would you rather|should we|shall we|can we)\s+/i;
+const CHOICE_PROMPT = String.raw`(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|do you wanna|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)`;
+const OPENER = new RegExp(String.raw`^(?:(?:hey[\s,!.?:]+)?ellie[\s,!.?:]+)?` + CHOICE_PROMPT + String.raw`\s*[:,.!?]*$`, 'i');
 function localChoices(text) {
-  let trimmed = text.replace(/[?.!]+$/, '').trim();
+  let trimmed = lastQuestion(text, OPENER).replace(/[?.!]+$/, '').trim();
   const explicitAddress = /^hey[\s,!.?:]+ellie[\s,!.?:]+(.+)$/i.exec(trimmed) ||
     /^ellie\s*[,!.?:]+\s*(.+)$/i.exec(trimmed);
   const questionAddress = /^ellie\s+(.+)$/i.exec(trimmed);
@@ -266,20 +313,33 @@ function localChoices(text) {
   else if (questionAddress && /^(?:(?:what|which|why|where|when|how|who|hi|hello|hey)\b|(?:do|does|did|can|could|would|will|have|has|had|shall|should|may|are|were)\s+(?:you|we)\b|(?:is|was)\s+(?:it|this|that|there)\b)/i.test(questionAddress[1]))
     trimmed = questionAddress[1];
   if (/\bor\b/i.test(trimmed)) {
-    const prefix = /^(?:(?:would|do) you (?:like|want|prefer|choose)(?: to)?|would you rather|(?:shall|should|can|could|would) we|(?:which|what) (?:would|do) you (?:like|want|prefer|choose)(?: to)?|is it)\s*[:,.!?]?\s+/i;
+    const prefix = new RegExp('^' + CHOICE_PROMPT + String.raw`\s*[:,.!?]?\s+`, 'i');
     // Unrecognised question forms need context and factual grounding. Splitting
     // them can turn half a question into the communicator's spoken answer.
-    if (!prefix.test(trimmed)) {
+    // "Are you hot or are you cold?": a stem that pairs every alternative.
+    const paired = /^(is it|are you)\s+/i.exec(trimmed)?.[1].toLowerCase();
+    const pairedStem = paired && new RegExp(String.raw`^${paired}\s+`, 'i');
+    const later = trimmed.split(/\s+or\s+/i).slice(1);
+    const everyPaired = !!paired && later.every(part => pairedStem.test(part.replace(/^[\s,]+/, '')));
+    if (paired && !everyPaired && later.some(part => pairedStem.test(part))) return null;
+    if (!prefix.test(trimmed) && !(paired === 'are you' && everyPaired)) {
       if (/^(?:did|have|had|were|was)\s+you\b/i.test(trimmed))
         return { kind: 'guarded', generated: false, choices: choiceList([
           'Can you give me a clue?', 'Let me tell you another way.', "I don't want to answer now.",
         ]) };
       return null;
     }
-    const stripped = trimmed.replace(prefix, '');
-    const parts = alternativesOf(stripped.split(/\s+or\s+/i));
+    const stripped = (paired === 'are you' && everyPaired ? trimmed.replace(pairedStem, '') : trimmed.replace(prefix, '')).replace(/^either\s+/i, '');
+    // "A, B, or C", "A, B or C", "A or B or C": commas list alternatives only
+    // before the last "or"; after it a comma starts a clause ("dad, to help").
+    const ors = stripped.split(/\s+or\s+/i), last = ors.pop().replace(/\s*,.*$/, '');
+    // A question stem repeated in a later alternative ("…, or do you want to
+    // stay inside?") is not part of what is offered.
+    const unstem = part => part.replace(STEM, '').replace(everyPaired ? pairedStem : /^$/, '');
+    const parts = alternativesOf([...ors.flatMap(part => part.replace(/\s*,\s*$/, '').split(/\s*,\s*/)), last]
+      .map(part => unstem(part.replace(/[,;:]+$/, '').trim())));
     if (parts.length >= 2 && parts.length <= 4 && parts.every(p => p.length > 0 && p.length <= 55 && !/[.!?;:]/.test(p))) {
-      return { kind: 'alternatives', choices: choiceList(parts.map(p => p[0].toUpperCase() + p.slice(1))) };
+      return { kind: 'alternatives', choices: choiceList(spokenAlternatives(parts)) };
     }
     return null;
   }
@@ -295,7 +355,7 @@ function localChoices(text) {
 function createFixedChatApi(options = {}, env = chatVariables(options.env === undefined ? process.env : options.env)) {
   const spawn = options.spawn || spawnProcess;
   // The reply service is reached over connections kept warm for the hub's
-  // lifetime (spec 2026-10-27 §3.3), and warmed at Start Chat and touch-down.
+  // lifetime (spec 2026-10-27 §3.3), and warmed at each session start and touch-down.
   const ownFetch = options.fetch ? null : createKeepAliveFetch();
   const fetcher = options.fetch || ownFetch;
   let warmedAt = -Infinity;
@@ -342,6 +402,20 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // Two more than the HTTP route's own limit: a streaming session's speculative
   // request and its fresh one may overlap for a moment while one aborts.
   const choicesCore = createChoicesAdapter({ env, fetch: fetcher, limits: { concurrent: limits.choices + 2, timeoutMs: Math.min(limits.adapterMs, 12000) } });
+  // Pictures warmed while the partner speaks (spec §6): the things a partial
+  // names and each staged choice's picture go into the hub's symbol cache in
+  // the background, so the reveal's <img> usually finds them there. Nothing in
+  // the reply path waits for a fetch.
+  const warmer = options.pictures && typeof options.pictures.fetchOne === 'function'
+    ? createPictureWarmer({ isCached: options.pictures.isCached || (() => false), fetchOne: options.pictures.fetchOne }) : null;
+  function warmSpoken(session, text) {
+    const turn = session.turn;
+    if (!warmer || !turn || turn.generation !== session.generation) return;
+    try {
+      turn.pictures = turn.pictures || warmer.hold();
+      for (const candidate of pictureCandidates(text)) turn.pictures.add(candidate.id);
+    } catch { /* A picture never holds a turn back. */ }
+  }
   const speculateMs = (() => { const value = Number(env.ERA_CHAT_SPECULATE_MS ?? 300); return Number.isFinite(value) && value >= 0 && value <= 5000 ? value : 300; })();
 
   function emit(session, event) {
@@ -444,7 +518,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
           if (event.type === 'final') { session.mode = 'paused'; if (session.turn) session.turn.done = true; }
           emit(session, { type: event.type, text, generation: session.generation,
             ...(event.type === 'final' ? { timings: safeTimings(event.timings), ...(session.staged ? { mode: 'one-shot' } : {}) } : {}) });
-          if (event.type === 'final') choicesForFinal(session, text);
+          if (event.type === 'final') choicesForFinal(session, text); else warmSpoken(session, text);
         }
       }
     });
@@ -477,7 +551,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     stream.on('partial', ({ text }) => {
       const clean = cleanText(text, 2000);
       if (current() && clean && ['capturing', 'finishing'].includes(session.mode)) {
-        emit(session, { type: 'partial', text: clean, generation: session.generation }); speculate(session, clean, false);
+        emit(session, { type: 'partial', text: clean, generation: session.generation }); speculate(session, clean, false); warmSpoken(session, clean);
         if (session.turn.window && session.window) session.window.machine.partial(clean);
       }
     });
@@ -488,7 +562,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     });
     stream.on('settled', ({ text }) => {
       const clean = cleanText(text, 2000);
-      if (current() && clean && !session.turn.window) { emit(session, { type: 'settled', text: clean, generation: session.generation }); speculate(session, clean, true); }
+      if (current() && clean && !session.turn.window) { emit(session, { type: 'settled', text: clean, generation: session.generation }); speculate(session, clean, true); warmSpoken(session, clean); }
     });
     stream.on('final', ({ text, timings }) => {
       if (!current()) return;
@@ -547,7 +621,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function beginTurn(session, { window = false } = {}) {
     endStreamTurn(session);
     const stream = session.stream;
-    session.turn = { generation: session.generation, mode: stream ? 'stream' : 'one-shot', transcriber: stream, pcm: [], released: false, done: false, window };
+    session.turn = { generation: session.generation, mode: stream ? 'stream' : 'one-shot', transcriber: stream, pcm: [], released: false, done: false, window,
+      pictures: warmer ? warmer.hold() : null };
     if (stream) stream.begin({ window });
   }
   function acceptPcm(session, pcm) {
@@ -666,9 +741,12 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const unique = new Set(items.map(item => cleanText(item.say, 300).toLowerCase()));
       if (unique.size !== items.length) throw fault(502, 'choices-invalid');
       if (signal.aborted) throw fault(502, 'choices-unavailable');
+      // How many model pictures the hub refused for the label's own (test mode counts them).
+      const rejected = items.filter(item => symbolRejected({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol })).length;
       return { kind: ['guarded', 'generated'].includes(result.kind) ? result.kind : 'adapter',
         ...(['guarded', 'generated'].includes(result.kind) ? { generated: result.kind === 'generated' && result.generated === true } : {}),
         choices: choiceList(items.map(item => ({ label: cleanText(item.label, 60), say: cleanText(item.say, 300), symbol: item.symbol }))),
+        ...(rejected ? { symbolRejected: rejected } : {}),
         ...(!adapterUrl && reportUsage() && cleanUsage(result.usage) ? { usage: cleanUsage(result.usage) } : {}),
         timings: { totalMs: Math.max(0, clock() - began), ...(Number.isFinite(result.timings?.firstChoiceMs) ? { firstChoiceMs: result.timings.firstChoiceMs } : {}) } };
     } catch (error) { throw error.status ? error : fault(502, 'choices-unavailable'); }
@@ -698,8 +776,10 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // completes and the checked batch is sealed once; a newer generation drops it.
   const normalized = text => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim();
   function runChoices(session, text) {
+    const turn = session.turn && session.turn.generation === session.generation ? session.turn : null;
     const job = { text, norm: normalized(text), generation: session.generation, controller: new AbortController(), staged: [],
-      stagedCount: 0, result: null, error: null, done: false, attached: false, sealed: false };
+      stagedCount: 0, result: null, error: null, done: false, attached: false, sealed: false,
+      pictures: turn && turn.pictures || (warmer ? warmer.hold() : null) };
     const timeout = setTimeout(() => job.controller.abort(), limits.adapterMs); timeout.unref?.();
     produceChoices(text, session.context, job.controller.signal, choice => { job.staged.push(choice); if (job.attached) stageChoice(session, job, choice); })
       .then(result => { job.result = result; }, error => { job.error = error; })
@@ -714,6 +794,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     const index = job.stagedCount++;
     const [pick] = choiceList([{ label: choice.label, say: choice.say, ...(typeof choice.symbol === 'string' ? { symbol: choice.symbol } : {}) }]);
     emit(session, { type: 'choice-staged', generation: job.generation, ...windowOf(job), index, choice: { ...pick, id: `choice-${index + 1}` } });
+    // The hub knows the picture before the page does: warm it now, behind the event.
+    if (job.pictures && pick.symbolId) try { job.pictures.stage(pick.symbolId); } catch { /* decorative */ }
   }
   function sealChoices(session, job) {
     if (!liveJob(session, job)) return;
@@ -721,7 +803,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     // A batch that arrived whole (a shortcut, the adapter) stages each choice now.
     if (!job.stagedCount) for (const choice of job.result.choices) stageChoice(session, job, choice);
     job.sealed = true;
-    emit(session, { type: 'batch-sealed', generation: job.generation, ...windowOf(job), ...job.result });
+    emit(session, { type: 'batch-sealed', generation: job.generation, ...windowOf(job), ...job.result,
+      ...(reportUsage() && job.pictures ? { pictureWarm: Math.min(job.pictures.count, 12) } : {}) });
   }
   function attachChoices(session, job) {
     session.choiceJob = job; job.attached = true;

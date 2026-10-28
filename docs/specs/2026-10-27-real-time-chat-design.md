@@ -54,7 +54,7 @@ Measured on the home device, over at least 20 real partner turns, in test mode
 | Release → all choices staged | 1.2 s | 2.0 s |
 | With speculation on partials, choices ready at release | often | — |
 | Selection → first audio | 0.15 s | 0.4 s |
-| Staged → selectable (the reveal gate) | bounded by Ellie, see §4 | — |
+| Sealed → shown and selectable (the reveal) | 0.25 s settle, no gaze wait, see §4 | 0.3 s |
 
 Quality takes precedence over speed (prototype spec §Evaluation). A faster
 transcript that changes the question is a failure, so the transcription choice
@@ -65,13 +65,15 @@ benchmark alone.
 
 ### 3.1 Audio: one open channel, not one POST per frame
 
-- The page opens one WebSocket to the hub when Chat starts (`/chat/api/sessions/:id/audio`)
-  and keeps it for the session. Node 22 serves the upgrade in the hub with no
+- The page opens one WebSocket to the hub when a Chat session starts (`/chat/api/sessions/:id/audio`)
+  and keeps it for the session. Since 10/27 evening there is no Start Chat: the page
+  starts the session itself on load, on every return to the page, and from a hold
+  when no session is live (hold-button spec, amendment of 10/27 evening). Node 22 serves the upgrade in the hub with no
   new dependency; the browser already has the client. Frames go as binary
   PCM16 at 16 kHz, 20–100 ms each, in order, with the generation number.
 - The hub, not the browser, talks to the transcription service. Credentials
   never reach the page (installed-release spec). The hub holds one warm
-  connection to the service per Chat session, opened at Start Chat and kept
+  connection to the service per Chat session, opened at session start and kept
   alive between turns within the service's billing rules (some bill for open
   socket time; the hub closes an idle socket after a bounded quiet period and
   reopens it on touch-down, which costs one connect, measured).
@@ -193,11 +195,11 @@ benchmark alone.
   ownership and duplicate checks still judge the whole batch.
 - *Speech.* `voice.js`: staged choices and the selected words fetch at once
   (up to 6 in flight) beside the two-at-a-time warm-up; the hub voice is read
-  at Start Chat and every 10 minutes, not per say. `/tts` reads the saved
+  at each session start and every 10 minutes, not per say. `/tts` reads the saved
   voice's streaming endpoint and passes bytes on as they arrive, caching the
   clip only when complete (`tts-stream.js`); the reply and saved-voice services
   are reached over keep-alive connections for the hub's lifetime
-  (`keepalive-fetch.js`), the reply origin warmed at Start Chat and touch-down
+  (`keepalive-fetch.js`), the reply origin warmed at session start and touch-down
   (at most every 30 s).
 - *Telemetry* (stage names added to §5.1): `socketConnect`, `settled`,
   `speculativeStart/Keep/Discard`, `firstChoiceStaged`/`choiceStaged` per
@@ -213,26 +215,33 @@ benchmark alone.
   choice staged 436 / 984; → all staged 478 / 1061; speculation kept 26/26.
   Fallback listen service, 5 turns: 143 / 161, 145 / 164, 147 / 165.
 
-## 4. The reveal gate (dad's decision)
+## 4. The reveal (dad's decision, amended 10/27 evening)
 
-The fresh-movement rule exists so a batch never lands under a gaze that is
-already dwelling (nothing selects by accident). Today it costs an unbounded wait
-plus 600 ms. Options, with the recommended one first:
+**Rule (10/27 evening), in dad's words: "show replies, don't get cute with the
+gate."** A batch is revealed the moment it is sealed: the hub's
+`batch-sealed` event on a streamed turn, or the one-shot path's choices ready.
+There is no neutral-boundary wait of any kind, whether her gaze is on a tile
+cell, on the black centre, or off the screen.
 
-1. **Resting counts.** A gaze already inside the black centre when the batch
-   seals is the neutral boundary; no fresh move is required. Suppress drops to
-   the contract's 250 ms redraw settle. A gaze on a tile cell when the batch
-   seals still waits for a move into the centre.
-2. Keep the fresh move, shorten the suppress to 250 ms.
-3. Keep everything as published.
+- The reveal redraw suppresses dwell for the contract's 250 ms settle
+  (`Dwell.suppress(250)`), set before the new tiles land, so nothing under her
+  gaze can arm or select during the settle.
+- One reveal per turn. Streamed choices stage invisibly (their voices warm);
+  the hub seals once, when the reply stream ends, and the page shows the whole
+  sealed batch. A slow stream never shows a partial batch. A choice arriving
+  after the seal is dropped. Partials never touch tiles; speculative batches
+  never show.
+- The sealed batch is immutable once shown; the reveal speaks nothing. A batch
+  sealed while a fixed phrase plays is shown at once and the phrase keeps
+  playing; the turn becomes "Your turn" when it ends.
+- The two black centre cells stay black rest cells, with no picture and no
+  action. Dwell stays the partner's setting (default 1200 ms).
 
-Dwell stays the partner's setting (default 1200 ms).
-
-**Built (phase 2, 10/27): option 1.** The page remembers where the last gaze
-or mouse pointer rested (a partner's finger never counts). When a batch seals
-with that point on a black centre cell, it is revealed at once; on any tile
-cell, it waits for a move into the centre, as before. The reveal redraw
-suppresses dwell for 250 ms instead of 600.
+**History.** v1.0.24 and earlier required a fresh gaze movement into the black
+centre plus a 600 ms suppress. The phase 2 variant ("resting counts": a gaze
+already resting in the centre when the batch sealed revealed it at once; a
+gaze on a tile cell still waited for a move into the centre; 250 ms settle)
+lived only in v1.0.25. Both are retired by the rule above.
 
 ## 5. Telemetry: a test mode that records everything, off by default
 
@@ -491,6 +500,66 @@ More and Stop tiles use it. Chat will too.
   keeps 30%, stepping down through 60 px to the 44 px floor. The maintainer
   picks.
 
+**The lexicon layer (10/28).** The maintainer, live on the device: "Why can't
+something like lasagna grab an appropriate image?" The 389 curated concepts
+cover her board, not every dish a partner offers; the library has about 13,900
+pictures, lasagna, tacos and burritos among them. The constraints above all
+stand: no image request in the reply path, the reveal immediate (§4), offline
+still a picture or the bubble, the artwork out of the repo, the curated table
+first.
+
+- *Index* `public/chat/lexicon.json`, generated by
+  `node tools/chat-lexicon-build.mjs` from the library's English keyword list
+  (`ERA_SYMBOL_INDEX_URL`, else the host of `ERA_SYMBOL_SEARCH_URL` +
+  `/api/pictograms/all/en`; 7.6 MB in): every lowercased, accent-folded keyword
+  and plural form of a *thing* (common nouns and names; no verbs, pronouns,
+  letters or place names; pictures flagged sexual or violent dropped) → one
+  id, plus a coarse family per id (food, drink, weather, time, person, place)
+  from the library's tags. A word several pictures share goes to the core AAC
+  one, then a "core vocabulary" category, then the entry whose first keyword
+  it is, then one with a family, then the oldest id. Words and numbers only —
+  data about the library, which may ship; the source URL and build date are in
+  the file. 18,706 words, 388 kB (budget 600 kB, refused above it). The hub
+  reads it on first use; without it, it warns once and keeps the table's
+  pictures.
+- *Hub pick* becomes: curated phrase → **lexicon** → the model's symbol → the
+  text guess → "chat". The lexicon is asked only when the curated table names
+  nothing at the label's head: the whole label, then its head phrase (after
+  "of"; past articles, possessives, helpers and leading verbs such as "eat",
+  "play with"; up to the next helper — "Lasagna for dinner" is lasagna), then
+  that phrase's last word, then — only when no curated thing is named anywhere
+  in the label — each other word, never a time or weather word. Whole words
+  only, with a plural fallback ("Tacos" → taco); never a word inside a word.
+  Curated alternates that were stand-ins for a missing picture (food's
+  sushi/taco/burrito/mushroom/dumpling…, drink's wine/soda/coffee…) yield to
+  the library's own picture of the word; every other curated word wins
+  ("Stop", "Back", weekdays keep their hand-checked ids). A label naming
+  several things ("Lasagna and salad", "Beef and mushrooms") shows the family
+  picture (food, drink, people) or the bubble; an either/or of two things is
+  the bubble. The family guard applies as for a model pick: a time or weather
+  hit never stands for a food or drink label. The negation guard runs last,
+  unchanged. Probes 10/28: "Lasagna" → the library's lasagna (9051); "Pizza" →
+  the curated pizza; "Chicken and rice" → food; "Magna-Tiles" (a brand the
+  library lacks) → its head noun, the library's floor tile (6054) — correct the
+  table by hand if the maintainer wants a toy picture there.
+- *Page.* A choice whose `symbolId` is outside the table and whose `symbol` is
+  a word the table lacks is shown as its own concept from `/symbol/<id>`; on
+  error it falls to the drawn bubble (no emoji for it). The page never loads
+  the index.
+- *Warm while the partner speaks.* On each partial and settled transcript the
+  hub takes the things after "or", "and" or a comma and after want, like,
+  love, need, eat, have, play with, go to, resolves each through vocabulary
+  and lexicon, and fetches the missing ones into `data/symbols-cache` in the
+  background: at most 6 per hold, deduplicated, 2 at once across the hub, each
+  abandoned after 3 s (the fetch is aborted), written whole under a temporary
+  name and renamed. Each staged choice's picture is warmed as it is staged
+  (first in the queue, not counted against the 6), so a model-picked lexicon
+  id is usually cached by the reveal. Nothing in the reply path awaits a
+  fetch: `choice-staged` and `batch-sealed` go out as before, and a cache miss
+  at the reveal is today's on-demand fetch (online) or the page's fallback
+  (offline). Test mode only: `batch-sealed` carries `pictureWarm`, the count
+  of pictures the hold sent for (0–12), recorded as `content.pictureWarm`.
+
 ## 7. Local and school
 
 - No recognition model ships today; only the activity model, on a single
@@ -507,7 +576,8 @@ More and Stop tiles use it. Chat will too.
 ## 8. Laws that do not move
 
 Immutable sealed batch; nothing speaks unless selected; capture stops during
-playback and on hide/leave/end; a cancelled or timed-out hold never submits;
+playback and on hide/leave/pause (no Start Chat or End since 10/27 evening: Chat
+prepares itself, leaving ends it); a cancelled or timed-out hold never submits;
 partner controls touch-only; no invented personal facts; refusal, repair,
 yes/no and stories available when the network fails; credentials only in the
 hub; production rows content-free; no vendor or model names in code or docs

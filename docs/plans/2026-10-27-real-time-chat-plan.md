@@ -122,7 +122,7 @@ Built 10/27 in `era-hub--wt-real-time-chat-pictures` (spec §6 "Decided shapes")
    published reply model streamed on the fast tier. Trial accounts created
    10/27 (keys in the private bake-off env file); production keys and the
    fast tier are dad's to fund.
-2. **Reveal gate.** Resting in the black centre counts; 250 ms settle.
+2. **Reveal gate.** Dad 10/27 evening: "show replies, don't get cute with the gate" — the batch shows the moment it is sealed, 250 ms settle only (v1.0.26); the "resting counts" variant lived only in v1.0.25.
 3. **Test mode content.** Transcripts, choices and the turn's audio kept on
    the device while on; text lines sync to Drive; banner; off by default.
 4. **Pictogram library.** The AAC library the hub already uses, fetched at
@@ -132,6 +132,35 @@ Built 10/27 in `era-hub--wt-real-time-chat-pictures` (spec §6 "Decided shapes")
 
 Open for dad: correct the 26 draft references; fund or drop the
 token-streaming trial; a teacher's and a child's voice clips when possible.
+
+## Same-night patches from dad's live test (10/27 evening → 10/28)
+
+Dad tested v1.0.25 on the home device with test mode on: "looks much better.
+Responsiveness is very good." Device numbers: release → final about 1.1–1.2 s
+(the primary service's turn-close), choices shown within 5 ms of the final
+(speculation kept on every turn). Each patch below gated 190+/0, was pushed to
+the home device, then landed and published:
+
+- v1.0.26 — replies show the moment the batch is sealed ("show replies, don't
+  get cute with the gate").
+- v1.0.27 — lists of three or four alternatives; dish pictures by category;
+  a model symbol from the wrong family is rejected (a "beef mushrooms" tile
+  had worn a weekday).
+- v1.0.28 — a repeated question stem ("…, or do you want to stay inside?")
+  never becomes a tile.
+- v1.0.29 — a slipped or too-short hold returns to Ready to ask instead of
+  ending the session (every slip had demanded Start Chat again); her tiles
+  never say the partner's "my".
+- v1.0.30 — no Start Chat: the page prepares itself, a hold starts a session
+  ("one more unnecessary step").
+- v1.0.31 — the library's full word index ships with the page so any known
+  word gets its picture ("lasagna"); pictures named in partials are warmed in
+  the background.
+
+Fast path used for each: sibling worktree → commit → gate → `build-dist.sh
+--patch` → `push-device.sh i13` → merge → land → `release.sh --patch`.
+Dad's recordings and the device's hold audio live in the family repo's
+private `test-data/chat-voices/` on the operator host.
 
 ## Retrospective (10/27, same day)
 

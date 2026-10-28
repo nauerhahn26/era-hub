@@ -81,9 +81,11 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   const report = await checkInstalledChatUI(page, { baseURL: base }); assert.equal(report.ok, true);
   // The shared installed-UI helper restores its routes/storage after its test.
   // This second pass owns a simulated recognizer with the real capture graph.
-  const controls = [], uploaded = []; let generation = 0, sequence = 0, stalled = false, releaseUpload;
+  const controls = [], uploaded = []; let generation = 0, sequence = 0, stalled = false, releaseUpload, sessionPosts = 0;
   await page.addInitScript(() => {
-    window.EventSource = class { constructor(url) { if (!String(url).includes('/chat/api/commands')) window.__timingEvents = this; } close() { this.closed = true; } };
+    window.__eventSources = 0;
+    // The command stream (the partner's button) is a second EventSource opened at load; only session streams count.
+    window.EventSource = class { constructor(url) { if (!String(url).includes('/chat/api/commands')) { window.__timingEvents = this; window.__eventSources++; } } close() { this.closed = true; } };
   });
   await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
   await page.route('**/tts', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }));
@@ -91,7 +93,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     const req = route.request(), url = new URL(req.url()); let result = {};
     if (url.pathname === '/chat/api/state') return route.continue();
     if (url.pathname.endsWith('/config')) result = { runtime: { available: true, kind: 'built-in' }, choices: { available: true } };
-    else if (url.pathname.endsWith('/sessions') && req.method() === 'POST') { generation = 0; sequence = 0; result = { id: 'private-browser-session' }; }
+    else if (url.pathname.endsWith('/sessions') && req.method() === 'POST') { sessionPosts++; generation = 0; sequence = 0; result = { id: 'private-browser-session' }; }
     else if (url.pathname.endsWith('/control')) {
       const body = req.postDataJSON(); controls.push(body.type); if (body.type !== 'finish') generation++;
       result = { generation };
@@ -110,31 +112,30 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
   }
   const up = () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  async function start() {
-    await page.waitForFunction(() => !document.querySelector('#startChat').disabled); await down('#startChat'); await up();
+  // No Start Chat: the page opened its session by itself; the simulated recognizer says ready.
+  async function ready() {
     await page.waitForFunction(() => window.__timingEvents && !window.__timingEvents.closed);
     await page.evaluate(() => window.__timingEvents.onmessage({ data: JSON.stringify({ type: 'ready', capabilities: { remoteFinal: true } }) }));
-    await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask');
+    await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask' && !document.querySelector('#ask').disabled);
   }
   async function finishHold() {
     const before = controls.filter(type => type === 'finish').length;
-    await down('#ask'); await page.waitForTimeout(240); await up();
+    await down('#ask'); await page.waitForTimeout(450); await up(); // a hold under 400 ms is a slip, never a question
     for (let i = 0; i < 100 && controls.filter(type => type === 'finish').length === before; i++) await page.waitForTimeout(20);
     assert.equal(controls.filter(type => type === 'finish').length, before + 1);
   }
-  await start(); await page.waitForTimeout(150); assert.equal(uploaded.length, 0, 'ready state sends no audio');
+  assert.equal(await page.locator('#startChat').count(), 0, 'there is no Start Chat');
+  await ready(); await page.waitForTimeout(150); assert.equal(uploaded.length, 0, 'ready state sends no audio');
+  assert.equal(sessionPosts, 1, 'the page opened one session with no partner action');
   await finishHold(); assert.ok(uploaded.length > 0); assert.equal(controls.includes('arm'), false);
   await page.evaluate(generation => window.__timingEvents.onmessage({ data: JSON.stringify({ type: 'final', generation, text: 'Would you like music or a story?', timings: { activityMs: 3, cloudMs: 30, finalDecodeMs: 33, audioMs: 240 } }) }), generation);
-  await page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'));
-  assert.equal(await page.locator('#phase').textContent(), 'Replies ready');
-  assert.equal(await page.locator('.response').count(), 0, 'completed replies still require a fresh neutral movement');
-  let state = await waitForChatState(page, value => value.timings.some(row => row.kind === 'hold' && Number.isFinite(row.timings.transcriptToChoicesMs)));
-  let stored = { version: 1, retention: 40, turns: state.value.timings };
-  const held = stored.turns.find(row => row.kind === 'hold'); assert.ok(held.timings.transcriptToChoicesMs >= 0, JSON.stringify(stored.turns)); assert.equal(held.timings.choicesToRevealMs, undefined);
-  const rest = await page.locator('.rest').first().boundingBox(); await page.mouse.move(0, 0); await page.mouse.move(rest.x + rest.width / 2, rest.y + rest.height / 2);
-  await page.waitForSelector('.response'); await page.locator('.response').first().click();
-  state = await waitForChatState(page, value => value.timings.some(row => row.kind === 'hold' && row.status === 'completed'));
-  stored = { version: 1, retention: 40, turns: state.value.timings }; assertContentFreeMetrics(stored);
+  // The sealed batch shows at once, with no gaze move (spec §4, 10/27 evening).
+  await page.waitForSelector('.response', { timeout: 5000 });
+  assert.equal(await page.locator('#phase').textContent(), 'Your turn');
+  assert.equal(await page.locator('.response').count(), 2);
+  await page.locator('.response').first().click();
+  let state = await waitForChatState(page, value => value.timings.some(row => row.kind === 'hold' && row.status === 'completed'));
+  let stored = { version: 1, retention: 40, turns: state.value.timings }; assertContentFreeMetrics(stored);
   const completed = stored.turns.find(row => row.kind === 'hold' && row.status === 'completed');
   for (const name of ['releaseToDrainedMs', 'finishRoundTripMs', 'releaseToTranscriptMs', 'transcriptToChoicesMs', 'choicesToRevealMs', 'revealToSelectMs', 'selectionToPlaybackMs', 'playbackMs']) assert.ok(Number.isFinite(completed.timings[name]), name);
   assert.equal(completed.timings.workerActivityMs, 3); assert.equal(completed.timings.workerCloudMs, 30);
@@ -155,13 +156,27 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
     if (artifacts) await fs.copyFile(path.join(scratch, screenshot), path.join(artifacts, screenshot));
   }
   const finishes = controls.filter(type => type === 'finish').length;
+  // A cancelled touch drops only that hold: Ready to ask again on the same session, nothing submitted.
   await down('#ask'); await page.waitForTimeout(120); await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
-  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Off'); assert.equal(controls.filter(type => type === 'finish').length, finishes);
-  await start(); stalled = true; await down('#ask');
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask'); assert.equal(controls.filter(type => type === 'finish').length, finishes);
+  assert.equal(sessionPosts, 1, 'the session stays on');
+  stalled = true; await down('#ask');
   for (let i = 0; i < 100 && !releaseUpload; i++) await page.waitForTimeout(20);
-  assert.ok(releaseUpload); await up(); await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Off', null, { timeout: 6000 });
+  assert.ok(releaseUpload); await page.waitForTimeout(450); await up(); // a real hold (past 400 ms) whose upload stalls
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Off', null, { timeout: 6000 });
   stalled = false; releaseUpload(); assert.equal(controls.filter(type => type === 'finish').length, finishes);
-  await start(); await finishHold(); assert.equal(controls.filter(type => type === 'finish').length, finishes + 1);
+  // The failure ended the session; the next hold starts one by itself. Its audio
+  // waits on the device until the new session is ready, then is submitted whole.
+  const sources = await page.evaluate(() => window.__eventSources), sentBefore = uploaded.length;
+  await down('#ask');
+  await page.waitForFunction(n => window.__eventSources === n + 1, sources);
+  await page.waitForTimeout(250);
+  assert.equal(uploaded.length, sentBefore, 'nothing leaves the device before the new session is ready');
+  await page.evaluate(() => window.__timingEvents.onmessage({ data: JSON.stringify({ type: 'ready', capabilities: { remoteFinal: true } }) }));
+  await page.waitForTimeout(300); await up();
+  for (let i = 0; i < 100 && controls.filter(type => type === 'finish').length === finishes; i++) await page.waitForTimeout(20);
+  assert.equal(controls.filter(type => type === 'finish').length, finishes + 1); assert.equal(sessionPosts, 2);
+  assert.ok(uploaded.length - sentBefore >= 4, `the frames held before the session was ready were submitted (${uploaded.length - sentBefore})`);
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
   state = await waitForChatState(page, value => value.timings.some(row => row.status === 'cancelled' && row.reason === 'closed'));
   stored = { version: 1, retention: 40, turns: state.value.timings }; assertContentFreeMetrics(stored);
@@ -200,7 +215,8 @@ test('the whole Chat UI recovers one completed turn after a committed timing ack
   await page.goto(base + '/');
   const report = await checkInstalledChatUI(page, { baseURL: base, timeout: 7000 });
   assert.equal(report.ok, true); assert.equal(report.typedTurn.status, 'completed');
-  assert.deepEqual(report.actualAudio, { playCalls: 1, playing: 1, ended: 1, deviceCalls: 0, microphoneCalls: 0, nativeAudio: true });
+  assert.deepEqual(report.actualAudio, { playCalls: 1, playing: 1, ended: 1, deviceCalls: 0, nativeAudio: true });
+  assert.equal(report.audioSessions, 0, 'the refused microphone opened no audio session');
   assert.equal(delayed, true); assert.equal(timingAckAbandoned, true, 'the real store committed before the browser acknowledgement timed out');
   assert.equal(voiceAckAbandoned, false, 'voice changes receive their client acknowledgement before navigation');
   assert.deepEqual(errors, []); assert.equal(foreign, 0);

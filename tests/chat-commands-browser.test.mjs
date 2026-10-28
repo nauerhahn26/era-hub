@@ -1,8 +1,9 @@
 // The real Chat page asked from the partner's button (design 2026-10-27
 // §4.2-§4.6; plan T2.1-T2.4, T3.4-T3.6). The page opens the hub's command
 // stream at load, before any session; an `ask` pushed on it (or replayed from
-// a relaunch's ?ask=<nonce>) starts Chat with no touch at all: microphone,
-// session, a listening window, a listening tone, then frames. The hub's window
+// a relaunch's ?ask=<nonce>) asks with no touch at all: the session Chat
+// prepared by itself (no Start Chat since v1.0.30) or one the press starts, a
+// listening window, a listening tone, then frames. The hub's window
 // machine seals utterances into batches and closes the window; the page plays
 // the done tone. Every service is an owned loopback fixture on an ephemeral
 // port (fixture shape of chat-stream-browser.test.mjs): a scripted recognizer
@@ -156,18 +157,23 @@ async function fixture(t, { script = {}, streaming = true, limits = {}, deny = f
   // A dwell that never completes inside a test: a gaze on a tile fills it and never picks it.
   const slowDwell = () => page.evaluate(() => { const set = window.Dwell.set; window.Dwell.set = o => set({ ...o, ms: 600000 }); set({ ms: 600000 }); });
   // Each shown reply: [label, grid column, grid row].
+  // A sealed batch shows at once behind a 250 ms dwell settle (spec 2026-10-27 §4): a gaze that
+  // lands inside the settle starts no dwell until it moves again, so a test looks after it.
+  const settled = () => page.waitForTimeout(400);
   const shown = () => page.locator('.response').evaluateAll(nodes => nodes.map(node => [node.textContent, node.style.gridColumn, node.style.gridRow]));
-  return { page, base, api, service, requests, controls, ttsTexts, errors, press, lift, load, until, ask, restOnCentre, sessions, lookAt, slowDwell, shown };
+  return { page, base, api, service, requests, controls, ttsTexts, errors, press, lift, load, until, ask, restOnCentre, sessions, lookAt, slowDwell, settled, shown };
 }
 
 // ---- T2.1 the command stream ----
 
-test('the page opens the command stream at load, before any session, and reports its visibility', { timeout: 60000 }, async t => {
+test('the page opens the command stream at load and reports its visibility; Chat\'s own preparation opens no window', { timeout: 60000 }, async t => {
   const f = await fixture(t);
   await f.load();
   await f.until(() => f.api.commands.state().connected);
   assert.deepEqual(f.api.commands.state(), { connected: true, visible: true });
-  assert.equal(f.sessions(), 0, 'no session, no microphone, before a press');
+  await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 10000 });
+  assert.equal(f.controls.includes('window'), false, 'no listening window before a press');
+  assert.equal(await f.page.evaluate(() => window.__tones.length), 0, 'no tone before a press');
   await f.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
   await f.until(() => f.api.commands.state().visible === false);
   await f.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
@@ -187,7 +193,7 @@ test('a relaunch nonce in ?ask= is claimed once and stripped from the address; a
   await f.page.waitForFunction(() => document.body.dataset.storageReady === 'true');
   await f.until(() => f.api.commands.state().connected);
   await f.page.waitForTimeout(800);
-  assert.equal(f.sessions(), 1, 'the reload did not ask again');
+  assert.equal(f.controls.filter(type => type === 'window').length, 1, 'the reload did not ask again');
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'false');
 });
 
@@ -204,11 +210,10 @@ test('a newer page replaces this one on the stream: this one stops listening for
 
 // ---- T2.2 ask from the button ----
 
-test('an ask push starts a session with no touch: microphone, session, window, tone, then frames 200 ms after the tone', { timeout: 60000 }, async t => {
+test('an ask push asks with no touch on the session Chat prepared by itself: window, tone, then frames 200 ms after the tone', { timeout: 60000 }, async t => {
   const f = await fixture(t);
   await f.load();
   await f.until(() => f.api.commands.state().connected);
-  assert.equal(f.sessions(), 0);
   f.ask();
   await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
   assert.equal(await f.page.locator('#phase').textContent(), 'Listening');
@@ -220,26 +225,27 @@ test('an ask push starts a session with no touch: microphone, session, window, t
   assert.equal(timing.touches, 0, 'no touch anywhere');
   assert.deepEqual([timing.tone.from, timing.tone.to], [660, 880], 'the rising listening tone');
   assert.ok(timing.listeningAt - timing.tone.at >= 360, `frames began ${Math.round(timing.listeningAt - timing.tone.at)} ms after the tone started (180 ms tone + 200 ms)`);
-  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'the session is the one Start Chat would have made');
+  assert.equal(f.sessions(), 1, 'the press used Chat\'s own readiness path: one session, never a second');
   assert.deepEqual(f.errors, []);
 });
 
-test('a hidden page refuses an ask, as Start Chat does', { timeout: 60000 }, async t => {
+test('a hidden page refuses an ask, as Chat\'s own preparation does', { timeout: 60000 }, async t => {
   const f = await fixture(t);
   await f.load();
   await f.until(() => f.api.commands.state().connected);
   await f.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
   await f.until(() => f.api.commands.state().visible === false);
+  const sessions = f.sessions();
   f.ask();
   await f.page.waitForTimeout(1000);
-  assert.equal(f.sessions(), 0);
+  assert.equal(f.sessions(), sessions, 'no session started while hidden');
+  assert.equal(f.controls.includes('window'), false);
   assert.equal(await f.page.evaluate(() => window.__tones.length), 0);
 });
 
 test('an ask with a session already running goes straight to listening; a second ask while listening is ignored by the page', { timeout: 60000 }, async t => {
   const f = await fixture(t);
   await f.load();
-  await f.press('#startChat'); await f.lift();
   await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 10000 });
   f.ask();
   await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 10000 });
@@ -251,14 +257,15 @@ test('an ask with a session already running goes straight to listening; a second
 
 // ---- T2.3 the partner's three lines ----
 
-test('no stream settings: "Streaming speech is not set up on this device", no tone, no microphone', { timeout: 60000 }, async t => {
+test('no stream settings: "Streaming speech is not set up on this device", no tone, no window', { timeout: 60000 }, async t => {
   const f = await fixture(t, { streaming: false });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
   f.ask();
   await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Streaming speech is not set up on this device', null, { timeout: 10000 });
   assert.equal(await f.page.evaluate(() => window.__tones.length), 0);
-  assert.equal(f.sessions(), 0);
+  assert.equal(f.controls.includes('window'), false);
+  assert.ok(f.sessions() <= 1, 'at most the session Chat prepared by itself');
 });
 
 test('no stream settings while another screen shows: the press goes to Chat, then shows the line (review fix)', { timeout: 60000 }, async t => {
@@ -271,11 +278,11 @@ test('no stream settings while another screen shows: the press goes to Chat, the
   await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Streaming speech is not set up on this device', null, { timeout: 10000 });
   assert.ok(await f.page.locator('.route', { hasText: 'Help me say it' }).count(), 'the Chat screen is showing');
   assert.equal(await f.page.locator('.route', { hasText: 'Back to Chat' }).count(), 0);
-  assert.equal(f.sessions(), 0);
+  assert.equal(f.controls.includes('window'), false);
   assert.deepEqual(f.errors, []);
 });
 
-test('a session started by touch without streaming speech: a press shows the line and leaves the session open (review fix)', { timeout: 60000 }, async t => {
+test('a session Chat prepared by itself without streaming speech: a press shows the line and leaves the session open (review fix)', { timeout: 60000 }, async t => {
   const f = await fixture(t, { streaming: false });
   // The page is told streaming exists; the session it gets has none (a stream lost after load).
   await f.page.route('**/chat/api/config', async route => {
@@ -285,27 +292,26 @@ test('a session started by touch without streaming speech: a press shows the lin
   });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
-  await f.press('#startChat'); await f.lift();
   await f.page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask', null, { timeout: 10000 });
   f.ask();
   await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Streaming speech is not set up on this device', null, { timeout: 10000 });
   await f.page.waitForTimeout(500);
   assert.equal(await f.page.locator('#phase').textContent(), 'Ready to ask', 'the session is still ready');
-  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'the session someone started is still running');
-  assert.equal(await f.page.locator('#endChat').isDisabled(), false);
+  assert.equal(await f.page.locator('#ask').isDisabled(), false, 'Hold to ask still works');
   assert.equal(f.requests.filter(line => /^DELETE \/chat\/api\/sessions\//.test(line)).length, 0, 'no session was closed');
   assert.equal(f.sessions(), 1);
   assert.equal(await f.page.evaluate(() => window.__tones.length), 0);
   assert.deepEqual(f.errors, []);
 });
 
-test('microphone refused: "Touch Start Chat once to allow the microphone", no tone', { timeout: 60000 }, async t => {
+test('microphone refused: "Touch Try again once to allow the microphone", no tone', { timeout: 60000 }, async t => {
   const f = await fixture(t, { deny: true });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
   f.ask();
-  await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Touch Start Chat once to allow the microphone', null, { timeout: 10000 });
+  await f.page.waitForFunction(() => document.querySelector('#notice').textContent === 'Touch Try again once to allow the microphone', null, { timeout: 10000 });
   await f.page.waitForTimeout(300);
+  assert.equal(await f.page.locator('#retryChat').isVisible(), true, 'the line names the button that shows');
   assert.equal(await f.page.evaluate(() => window.__tones.length), 0);
   assert.equal(f.controls.includes('window'), false);
 });
@@ -352,9 +358,7 @@ test('two tones per window, rising then falling, and nothing is spoken while lis
   const tones = await f.page.evaluate(() => window.__tones.map(({ from, to }) => [from, to]));
   assert.deepEqual(tones, [[660, 880], [880, 660]], 'the listening tone, then the done tone');
   assert.deepEqual(await f.page.evaluate(() => [window.__plays, window.__speaks]), [0, 0], 'nothing spoke during the window');
-  assert.equal(await f.page.locator('.response').count(), 0, 'the batch waits for her gaze in the black centre');
-  await f.restOnCentre();
-  await f.page.waitForSelector('.response', { timeout: 5000 });
+  // The first batch showed the moment it was sealed, with no gaze move (spec 2026-10-27 §4).
   assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Chicken', 'Fish']);
   assert.deepEqual(await f.page.evaluate(() => [window.__plays, window.__speaks]), [0, 0], 'revealing speaks nothing');
 });
@@ -413,19 +417,19 @@ test('with no end of turn from the service, 1.5 s of real quiet after speech sea
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'sealed by the quiet, not by the window closing');
 });
 
-test('a second utterance before she has seen the first batch replaces it unseen: chicken, fish and pasta together', { timeout: 60000 }, async t => {
+test('the first batch shows at once wherever her gaze is; a second utterance is a replacement that swaps in at a neutral moment: chicken, fish and pasta', { timeout: 60000 }, async t => {
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })], 10: [turn('or pasta', { order: 1 })], 12: [turn('or pasta', { order: 1, end: true })] } });
-  await f.load();
+  await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
-  await f.page.mouse.move(5, 5); // her gaze is off the board: nothing is revealed yet
+  await f.page.mouse.move(5, 5); // her gaze is off the board
   f.ask();
-  await f.page.waitForFunction(() => document.querySelector('#diagnostics').textContent === 'Question: do you want chicken or fish or pasta', null, { timeout: 15000 });
-  await f.page.waitForFunction(() => document.querySelector('#notice').textContent.includes('Replies ready'), null, { timeout: 10000 });
-  assert.equal(await f.page.locator('.response').count(), 0);
-  await f.restOnCentre();
-  await f.page.waitForSelector('.response', { timeout: 5000 });
-  assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Chicken', 'Fish', 'Pasta']);
+  await f.page.waitForFunction(() => document.querySelectorAll('.response').length === 2, null, { timeout: 15000 });
+  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1']], 'the first batch, at once, with no gaze move');
+  // Her gaze off every tile is a neutral moment: the replacement swaps in by itself.
+  await f.page.waitForFunction(() => document.querySelectorAll('.response').length === 3, null, { timeout: 15000 });
+  assert.deepEqual(await f.shown(), [['Chicken', '2', '1'], ['Fish', '3', '1'], ['Pasta', '1', '2']], 'chicken and fish stayed put');
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'still listening after both seals');
+  assert.deepEqual(f.errors, []);
 });
 
 // ---- T4.3 the neutral moment ----
@@ -438,7 +442,7 @@ test('a replacement waits with no upper bound while her gaze rests on a tile, an
   await f.until(() => f.api.commands.state().connected);
   await f.restOnCentre();
   f.ask();
-  await f.page.waitForSelector('.response', { timeout: 15000 });
+  await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
   const before = await f.shown();
   assert.deepEqual(before, [['Chicken', '2', '1'], ['Fish', '3', '1']]);
   await f.lookAt('.response >> text=Chicken');
@@ -467,7 +471,7 @@ test('a second utterance replaces the batch only after a neutral move', { timeou
   await f.until(() => f.api.commands.state().connected);
   await f.restOnCentre();
   f.ask();
-  await f.page.waitForSelector('.response', { timeout: 15000 });
+  await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
   await f.lookAt('.response >> text=Fish');
   await watchRedraws(f.page);
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
@@ -490,7 +494,7 @@ test('a pick during a pending replacement wins: the shown tile is spoken, the re
   await f.until(() => f.api.commands.state().connected);
   await f.restOnCentre();
   f.ask();
-  await f.page.waitForSelector('.response', { timeout: 15000 });
+  await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
   await f.lookAt('.response >> text=Chicken');
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
   const plays = await f.page.evaluate(() => window.__plays);
@@ -510,7 +514,8 @@ test('a pick during a pending replacement wins: the shown tile is spoken, the re
 });
 
 test('a press while her gaze rests on a tile from the last turn: the tiles stay until her gaze leaves, then clear; listening starts at once (review fix)', { timeout: 60000 }, async t => {
-  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 4000 } });
+  const script = { 4: [turn('do you want chicken or fish', { end: true })] };
+  const f = await fixture(t, { script, limits: { windowSilenceMs: 4000 } });
   await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
   await f.restOnCentre();
@@ -523,6 +528,8 @@ test('a press while her gaze rests on a tile from the last turn: the tiles stay 
   await f.page.waitForFunction(() => window.Dwell.state().target != null, null, { timeout: 5000 });
   await f.page.evaluate(() => { for (const el of document.querySelectorAll('#grid .tile')) el.__before = true; });
   await watchRedraws(f.page);
+  // The second window hears no question: a first batch it sealed would show at once over the old tiles (spec §4).
+  delete script[4];
   f.ask();
   await f.page.waitForFunction(() => document.body.dataset.listening === 'true', null, { timeout: 15000 });
   await f.page.waitForTimeout(1000);
@@ -589,7 +596,8 @@ test('a partner touch on Hold to ask during a listening window does nothing: no 
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'the window still listens');
   assert.notEqual(f.api.window(), null);
   assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Chicken', 'Fish']);
-  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'the session is still running');
+  assert.equal(f.sessions(), 1, 'the session is still running');
+  assert.equal(f.requests.filter(line => /^DELETE \/chat\/api\/sessions\//.test(line)).length, 0, 'no session was closed');
   await f.page.locator('.response', { hasText: 'Fish' }).click();
   await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
   await f.page.waitForFunction(() => !document.querySelector('#ask').disabled, null, { timeout: 10000 });
@@ -614,7 +622,7 @@ test('a trusted Space on the keyboard Ask during a listening window does nothing
   assert.equal(f.controls.includes('ask'), false, 'no hold was sent');
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'the window still listens');
   assert.notEqual(f.api.window(), null);
-  assert.equal(await f.page.locator('#startChat').isDisabled(), true, 'the session is still running');
+  assert.equal(f.sessions(), 1, 'the session is still running');
   assert.equal(f.requests.filter(line => /^DELETE \/chat\/api\/sessions\//.test(line)).length, 0, 'no session was closed');
   // The second press ends the window; the keyboard Ask comes back.
   f.api.window().press(); f.api.commands.push({ type: 'end' });

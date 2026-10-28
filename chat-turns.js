@@ -26,7 +26,7 @@ const LIMITS = Object.freeze({ bodyBytes: 65536, audioBytes: 480000, audioTurns:
 const KINDS = ['hold', 'typed', 'fixed', 'reply', 'press'];
 const MODES = ['one-shot', 'stream', 'local', 'typed', 'none'];
 const OUTCOMES = ['completed', 'cancelled', 'failed'];
-const REASONS = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
+const REASONS = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
 // Every v1.0.20 timing mark plus the spec §5 additions. "transcript" is the
 // final transcript's arrival and "finishSent" the finalize; socketConnect and
 // the speculative marks are reserved for the streaming pipeline (phase 2).
@@ -63,7 +63,8 @@ const RECORD = shape({
   startedAt: str(30, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/), outcome: oneOf(OUTCOMES), reason: oneOf(REASONS), error: str(300),
   stages: list(stage, 300),
   worker: shape(Object.fromEntries(WORKER.map(key => [key, key === 'firstPartialMs' || key === 'connectMs' ? nullable(num()) : num()]))),
-  content: shape({ transcript: str(2000), partials: list(str(2000), 100), choiceKind: str(32), choices: list(choice, 6),
+  content: shape({ transcript: str(2000), partials: list(str(2000), 100), choiceKind: str(32), choices: list(choice, 6), symbolRejected: v => int(6)(v) && v > 0,
+    pictureWarm: int(12),
     selected: nullable(choice), spoken: str(600), keyterms: nullable(list(str(64), 100)), keytermsFired: int(100) }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),

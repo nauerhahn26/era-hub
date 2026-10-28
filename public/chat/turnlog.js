@@ -140,7 +140,7 @@ export function createTurnLog(options = {}) {
       turn.content.partials = [...(turn.content.partials || []), words].slice(-limits.partials);
       notify();
     },
-    staged(handle, choices, { kind, usage } = {}) {
+    staged(handle, choices, { kind, usage, symbolRejected, pictureWarm } = {}) {
       const turn = turns.get(handle); if (!turn || !Array.isArray(choices)) return;
       const clean = choices.map(cleanChoice).filter(Boolean).slice(0, 6);
       // A streamed batch was marked choice by choice as it staged.
@@ -150,6 +150,12 @@ export function createTurnLog(options = {}) {
       });
       turn.content.choices = clean;
       if (typeof kind === 'string') turn.content.choiceKind = kind.slice(0, 32);
+      // Model pictures the hub refused for the label's own: a count, never the words.
+      if (Number.isSafeInteger(symbolRejected) && symbolRejected > 0 && symbolRejected <= 6) turn.content.symbolRejected = symbolRejected;
+      else delete turn.content.symbolRejected;
+      // Pictures the hub warmed into its cache for this hold (spec §6): a count only.
+      if (Number.isSafeInteger(pictureWarm) && pictureWarm >= 0 && pictureWarm <= 12) turn.content.pictureWarm = pictureWarm;
+      else delete turn.content.pictureWarm;
       if (usage && ['inputTokens', 'cachedTokens', 'outputTokens'].every(key => Number.isSafeInteger(usage[key]) && usage[key] >= 0))
         turn.reply = { model: typeof usage.model === 'string' ? usage.model.slice(0, 128) : null, inputTokens: usage.inputTokens, cachedTokens: usage.cachedTokens, outputTokens: usage.outputTokens };
       notify();
@@ -214,7 +220,7 @@ export function createTurnLog(options = {}) {
       const turn = turns.get(handle); if (!turn || !['completed', 'cancelled', 'failed'].includes(outcome)) return;
       turns.delete(handle); if (latest === handle) latest = null;
       turn.outcome = outcome;
-      if (outcome !== 'completed') turn.reason = ['cancel', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'].includes(reason) ? reason : 'other';
+      if (outcome !== 'completed') turn.reason = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'].includes(reason) ? reason : 'other';
       void send(turn);
     },
     live() {

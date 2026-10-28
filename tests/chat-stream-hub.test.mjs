@@ -70,7 +70,7 @@ function runtime({ ready = true, words = 'Would you like music or a story?', slo
   return child;
 }
 
-async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {}, reportUsage = false, fetch: fetcher } = {}) {
+async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {}, reportUsage = false, fetch: fetcher, pictures } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-stream-hub-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const keyterms = path.join(dir, 'keyterms.json');
@@ -82,7 +82,7 @@ async function hub(t, { services = [], env = {}, limits = {}, runtimeOptions = {
     ERA_CHAT_STREAM_FALLBACK_MODEL: 'fallback-model', ERA_CHAT_STREAM_FALLBACK_TOKEN: 'fallback-secret-token' });
   const children = [];
   const api = createChatApi({ env: { ERA_CHAT_RUNTIME: 'scripted', ERA_CHAT_RUNTIME_ARGS: '[]', ...streamEnv, ...env }, limits, reportUsage: () => reportUsage,
-    spawn: () => { const child = runtime(runtimeOptions); children.push(child); return child; }, ...(fetcher ? { fetch: fetcher } : {}) });
+    spawn: () => { const child = runtime(runtimeOptions); children.push(child); return child; }, ...(fetcher ? { fetch: fetcher } : {}), ...(pictures ? { pictures } : {}) });
   const server = http.createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); });
   server.on('upgrade', (req, socket, head) => { if (!api.upgrade(req, socket, head)) socket.destroy(); });
   await new Promise(resolve => server.listen(0, 'localhost', resolve));
@@ -400,4 +400,74 @@ test('a long hold that falls back late is replayed with back-pressure: a slow re
   assert.deepEqual(s.events('error'), []);
   assert.equal(s.events('final')[0].mode, 'one-shot');
   assert.equal(s.child.audioBytes, 140 * 3200);
+});
+
+// ---- pictures warmed while the partner speaks (spec 2026-10-27 §6, lexicon layer) ----
+const lexicon = JSON.parse(await fs.readFile(new URL('../public/chat/lexicon.json', import.meta.url), 'utf8')).words;
+// The symbol provider as the hub sees it: a cache check and a fetch that, here, never finishes.
+// The curated vocabulary is pre-warmed at enable (spec §6), so its pictures are cached.
+const vocabularyCached = new Set(require('../chat-symbols.js').vocabularyIds().map(Number));
+function stuckProvider() {
+  const calls = [];
+  return { calls, pictures: { isCached: id => vocabularyCached.has(id), fetchOne: (id, { signal }) => { calls.push({ id, at: Date.now(), signal }); return new Promise(() => {}); } } };
+}
+
+test('the things named in a partial are warmed into the picture cache before release; a stuck provider never delays the batch', async t => {
+  const words = 'Would you like lasagna or tacos?';
+  const service = await turnsService(t, { words, partials: [[2, 'would you like lasagna'], [3, 'would you like lasagna or tacos']] });
+  const provider = stuckProvider();
+  const h = await hub(t, { services: [service], pictures: provider.pictures, reportUsage: true });
+  const s = await h.session();
+  await s.ask(); await raw(s, 4);
+  await until(() => provider.calls.length === 2);
+  assert.deepEqual(provider.calls.map(call => call.id), [lexicon.lasagna, lexicon.tacos]);
+  assert.equal(s.events('final').length, 0, 'warmed while she is still listening');
+  const released = Date.now();
+  await s.finish();
+  await until(() => s.events('batch-sealed').length === 1);
+  assert.ok(Date.now() - released < 1500, `sealed ${Date.now() - released} ms after release with both fetches still hanging`);
+  const sealed = s.events('batch-sealed')[0];
+  assert.deepEqual(sealed.choices.map(choice => choice.symbolId), [lexicon.lasagna, lexicon.tacos]);
+  assert.equal(sealed.pictureWarm, 2, 'test mode counts the pictures this hold warmed');
+  await pause(30);
+  assert.equal(provider.calls.length, 2, 'the staged choices name the same pictures: never fetched twice');
+});
+
+test('a staged choice\'s picture is warmed as it is staged; the count reaches test mode only', async t => {
+  const service = await turnsService(t, { words: OPEN, partials: [] });
+  const reply = replyService({ answers: { [OPEN]: { choices: [{ label: 'Burritos', say: 'Burritos, please.', symbol: 'food' },
+    { label: 'Pizza', say: 'Pizza, please.', symbol: 'pizza' }, { label: 'Not sure', say: 'I am not sure.', symbol: 'not sure' }] } } });
+  const cached = new Set();
+  const calls = [];
+  const pictures = { isCached: id => cached.has(id), fetchOne: async id => { calls.push(id); cached.add(id); return true; } };
+  const h = await hub(t, { services: [service], env: { ...replyEnv, ERA_CHAT_SPECULATE_MS: '0' }, fetch: reply.fetcher, pictures });
+  const s = await h.session();
+  await s.ask(); await raw(s, 3); await s.finish();
+  await until(() => s.events('batch-sealed').length === 1);
+  await until(() => calls.length >= 3);
+  assert.deepEqual(calls.slice(0, 1), [lexicon.burrito], 'the first staged choice warms first');
+  assert.equal(new Set(calls).size, calls.length);
+  assert.equal(s.events('batch-sealed')[0].pictureWarm, undefined, 'outside test mode the batch carries no count');
+  // The next hold names the same picture: cached, nothing fetched.
+  const before = calls.length;
+  await s.ask(); await raw(s, 3); await s.finish();
+  await until(() => s.events('batch-sealed').length === 2);
+  await pause(30);
+  assert.equal(calls.length, before);
+});
+
+test('warming is bounded per hold: at most six fetches, two at a time, whatever the partner lists', async t => {
+  const list = 'would you like lasagna, tacos, burritos, sushi, pancakes, waffles, muffins, noodles, dumplings or pretzels';
+  const service = await turnsService(t, { words: 'Okay.', partials: [[2, list]] });
+  const provider = stuckProvider();
+  const h = await hub(t, { services: [service], pictures: provider.pictures, reportUsage: true });
+  const s = await h.session();
+  await s.ask(); await raw(s, 4);
+  await until(() => provider.calls.length === 2);
+  await pause(60);
+  assert.equal(provider.calls.length, 2, 'two at once while both hang');
+  await s.finish();
+  await until(() => s.events('batch-sealed').length === 1);
+  const counted = s.events('batch-sealed')[0].pictureWarm;
+  assert.ok(counted >= 2 && counted <= 6, `counted ${counted}`);
 });

@@ -304,7 +304,7 @@ test("after the update: Chat pictures, private timing export and deliberately se
   assert.equal(report.actualAudio.playing, 1);
   assert.equal(report.actualAudio.ended, 1);
   assert.equal(report.actualAudio.deviceCalls, 0);
-  assert.equal(report.microphoneCalls, 0);
+  assert.equal(report.audioSessions, 0); // Chat asks for the microphone by itself; the check refuses it
   console.log("# installed Chat UI: " + JSON.stringify(report));
 });
 

@@ -79,7 +79,7 @@ test('malformed or content-bearing stored rows are sanitized and storage failure
 test('controller emits timing-only events only for current ready/reveal/valid selection', async () => {
   const events = [], c = createChatController({ requestChoices: async () => ({ choices: [{ label: 'private label', say: 'private answer' }] }), speak: async () => true, onTiming: name => events.push(name) });
   await c.prepare('private question');
-  assert.deepEqual(events, ['choicesReady']); assert.equal(c.neutral(), true);
+  assert.deepEqual(events, ['choicesReady', 'revealed']);
   assert.equal(await c.select('old-invalid-id'), false); await c.select(c.state.choices[0].id);
   assert.deepEqual(events, ['choicesReady', 'revealed', 'selected', 'speechRequested']);
   assert.equal(JSON.stringify(events).includes('private'), false);
@@ -104,7 +104,7 @@ test('an explicit speech retry clears the obsolete saved-voice error and preserv
   let attempt = 0;
   const c = createChatController({ requestChoices: async () => ({ choices: [{ label: 'an answer', say: 'an answer' }] }),
     speak: async () => { if (!attempt++) throw Object.assign(new Error('private error'), { code: 'saved-voice-unavailable' }); return true; } });
-  await c.prepare('a question'); c.neutral(); const choices = c.state.choices;
+  await c.prepare('a question'); const choices = c.state.choices;
   await c.select(choices[0].id); assert.match(c.state.error, /choose device voice/i);
   await c.select(choices[0].id); assert.equal(c.state.error, ''); assert.equal(c.state.choices, choices);
 });
@@ -119,15 +119,17 @@ test('local audio drain has a real deadline and clears its timer on success or f
   await assert.rejects(context.waitForAudioDrain(Promise.reject(new Error('upload failed')), 1000), /upload failed/);
 });
 
-test('staged replies show Replies ready while keeping the Preparing state and neutral gate', async () => {
+test('Preparing paints as Preparing: there is no hidden "Replies ready" batch to look for', async () => {
   const source = await readFile(new URL('../public/chat/app.js', import.meta.url), 'utf8');
   const helper = source.match(/^function paintPhase\([\s\S]*?^\}/m)?.[0]; assert.ok(helper);
-  const element = { textContent: '' }, state = { phase: 'Preparing', staged: true };
+  const element = { textContent: '' }, state = { phase: 'Preparing' };
   const context = vm.createContext({ $: () => element, controller: { state }, remoteStreaming: false, mode: 'blocked', questionSending: false, press: null });
   vm.runInContext(helper, context); context.paintPhase();
-  assert.equal(element.textContent, 'Replies ready'); assert.equal(state.phase, 'Preparing'); assert.equal(state.staged, true);
-  context.paintPhase({ phase: 'Preparing', staged: false }); assert.equal(element.textContent, 'Preparing');
-  const pressed = vm.createContext({ $: () => element, controller: { state: { phase: 'Preparing', staged: false } }, remoteStreaming: false, mode: 'blocked', questionSending: false, press: { closed: false, listening: true } });
+  assert.equal(element.textContent, 'Preparing');
+  context.paintPhase({ phase: 'Preparing', staged: true }); assert.equal(element.textContent, 'Preparing');
+  assert.equal(/Replies ready|black space/.test(source), false, 'no staged-batch wording remains');
+  // A button-press window paints its own phase while it is open.
+  const pressed = vm.createContext({ $: () => element, controller: { state: { phase: 'Preparing' } }, remoteStreaming: false, mode: 'blocked', questionSending: false, press: { closed: false, listening: true } });
   vm.runInContext(helper, pressed); pressed.paintPhase(); assert.equal(element.textContent, 'Listening');
   pressed.press = { closed: false, listening: false }; pressed.paintPhase(); assert.equal(element.textContent, 'Starting to listen');
 });

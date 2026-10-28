@@ -273,3 +273,50 @@ test('a press turn: the press is stage 0 (from the hub\'s pressAt), repeated sea
   assert.equal(off.requests.length, 0); assert.deepEqual(off.log.recent(), []);
   assert.deepEqual(off.metrics.snapshot().turns, [], 'a press never enters the production rows');
 });
+
+test('a batch whose model pictures the hub rejected records the count only, and the hub schema accepts it', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  const choices = [{ id: '1:0', label: 'Meatballs', say: 'Meatballs, please.', symbol: 'meat', symbolId: 2316 },
+    { id: '1:1', label: 'Beef mushrooms', say: 'Beef and mushrooms, please.', symbol: 'food', symbolId: 4610 }];
+  stageChoices(s.log, h, choices, { kind: 'generated', symbolRejected: 1 }, choice => choice.symbol);
+  s.wrapped.mark(h, 'selected'); s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.symbolRejected, 1);
+  assert.deepEqual(validateTurn(record), record);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, symbolRejected: 'monday' } }), /invalid-turn/);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, symbolRejected: 7 } }), /invalid-turn/);
+  // No rejection, no field.
+  const t2 = setup(), h2 = t2.wrapped.begin('typed');
+  stageChoices(t2.log, h2, choices, { kind: 'generated', symbolRejected: 0 }, choice => choice.symbol);
+  t2.wrapped.end(h2, 'completed'); await flush();
+  assert.equal('symbolRejected' in JSON.parse(t2.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
+});
+
+test('the pictures the hub warmed for a hold are a count in the record, and the hub schema bounds it', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  const choices = [{ id: '1:0', label: 'Lasagna', say: 'Lasagna, please.', symbol: 'lasagna', symbolId: 9051 }];
+  stageChoices(s.log, h, choices, { kind: 'alternatives', pictureWarm: 3 }, choice => choice.symbol);
+  s.wrapped.mark(h, 'selected'); s.wrapped.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.pictureWarm, 3);
+  assert.deepEqual(validateTurn(record), record);
+  assert.deepEqual(validateTurn({ ...record, content: { ...record.content, pictureWarm: 0 } }).content.pictureWarm, 0);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, pictureWarm: 13 } }), /invalid-turn/);
+  assert.throws(() => validateTurn({ ...record, content: { ...record.content, pictureWarm: 'lasagna' } }), /invalid-turn/);
+  const t2 = setup(), h2 = t2.wrapped.begin('typed');
+  stageChoices(t2.log, h2, choices, { kind: 'alternatives', pictureWarm: 'lasagna' }, choice => choice.symbol);
+  t2.wrapped.end(h2, 'completed'); await flush();
+  assert.equal('pictureWarm' in JSON.parse(t2.requests.find(r => r.url === '/chat/api/turns').init.body).content, false, 'never anything but a count');
+});
+
+// A hold let go too soon (under 400 ms, or before any audio) is cancelled with its own reason, "short",
+// in the production timing row and the test-mode record alike; the hub schema accepts it.
+test('a hold let go too soon is cancelled with reason "short" in the timing row and the posted record', async () => {
+  const s = setup(), m = s.wrapped;
+  const h = m.begin('hold'); s.log.set(h, { mode: 'stream', session: '9b2c1a7e-1111-4222-8333-944455556666' }); s.tick(241);
+  m.end(h, 'cancelled', 'short'); await flush();
+  const record = s.requests.filter(r => r.url === '/chat/api/turns').map(r => JSON.parse(r.init.body))[0];
+  assert.equal(record.outcome, 'cancelled'); assert.equal(record.reason, 'short');
+  assert.deepEqual(validateTurn(record), record);
+  assert.equal(s.metrics.snapshot().turns.at(-1).reason, 'short');
+});

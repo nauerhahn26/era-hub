@@ -756,3 +756,113 @@ test('with the default limits a hold still stops with audio-limit past 512000 by
   while (!seen.some(event => event.type === 'error') && Date.now() < end) await new Promise(r => setTimeout(r, 5));
   assert.deepEqual(seen.filter(event => event.type === 'error').map(event => event.error), ['audio-limit']);
 });
+
+test('either/or lists of two to four alternatives give one clean tile each, in every list shape', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const ask = async text => (await (await s.request('/choices', { text })).json());
+  for (const [text, expected] of [
+    ['Do you want chicken, sushi, or wine?', ['Chicken', 'Sushi', 'Wine']],
+    ['Do you want chicken, sushi or wine?', ['Chicken', 'Sushi', 'Wine']],
+    ['Do you want chicken or sushi or wine?', ['Chicken', 'Sushi', 'Wine']],
+    ['Would you like juice, milk, water, or tea?', ['Juice', 'Milk', 'Water', 'Tea']],
+    ['Do you want either juice or water?', ['Juice', 'Water']],
+    ['Would you like either pizza, pasta, or soup?', ['Pizza', 'Pasta', 'Soup']],
+    ['Do you want mom, dad, or the teacher to help you?', ['Mom', 'Dad', 'The teacher']],
+    ['Would you like chicken and rice, sushi, or pasta tonight?', ['Chicken and rice', 'Sushi', 'Pasta']],
+  ]) {
+    const result = await ask(text);
+    assert.equal(result.kind, 'alternatives', text);
+    assert.deepEqual(result.choices.map(choice => choice.label), expected, text);
+    assert.ok(result.choices.every(choice => !/[,.;:!?]$/.test(choice.say)), text);
+  }
+});
+
+test('more than four alternatives, or a restart whose last question is not a recognised choice prompt, go to the model', async t => {
+  const seen = [];
+  const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body).text);
+    return new Response(JSON.stringify({ choices: [{ label: 'Meatballs', say: 'Meatballs, please.' }, { label: 'Beef', say: 'Beef and mushrooms.' }] }));
+  } });
+  for (const text of ['Do you want chicken, sushi, pizza, pasta, or soup?',
+    'You want chicken and fruit? Chicken and rice. Meatballs or beef and mushrooms?']) {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'adapter', text);
+    assert.equal(seen.at(-1), text, 'the model still receives the whole transcript');
+  }
+});
+
+test('when the partner restarts, the shortcut reads only the last question sentence', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const ask = async text => (await (await s.request('/choices', { text })).json());
+  const first = await ask('Do you want chicken and fruit? Hmm, okay. Do you want meatballs or beef and mushrooms?');
+  assert.equal(first.kind, 'alternatives');
+  assert.deepEqual(first.choices.map(choice => choice.label), ['Meatballs', 'Beef and mushrooms']);
+  const second = await ask('Would you like juice or water? Sorry. Do you want chicken, sushi, or wine?');
+  assert.deepEqual(second.choices.map(choice => choice.label), ['Chicken', 'Sushi', 'Wine']);
+  const third = await ask('Do you want pizza or pasta? No wait. Are you hungry?');
+  assert.equal(third.kind, 'yes-no');
+});
+
+test('two verb-phrase alternatives keep each head verb and its object, never a purpose clause or a dangling "to"', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const ask = async text => (await (await s.request('/choices', { text })).json()).choices;
+  const labels = async text => (await ask(text)).map(choice => choice.label);
+  assert.deepEqual(await labels('Do you want to go outside to play or stay inside?'), ['Go outside', 'Stay inside']);
+  assert.deepEqual(await labels('Do you want to play outside or read a book?'), ['Play outside', 'Read a book']);
+  assert.deepEqual(await labels('Do you want to go to the park or stay home?'), ['Go to the park', 'Stay home']);
+  assert.deepEqual(await labels('Do you want to watch a video or draw?'), ['Watch a video', 'Draw']);
+  assert.deepEqual(await labels('Would you like to go to the park so we can run or stay home?'), ['Go to the park', 'Stay home']);
+  for (const text of ['Do you want to go outside to play or stay inside?', 'Do you want to go to the park or stay home?'])
+    for (const choice of await ask(text)) assert.doesNotMatch(choice.label, /\b(?:to|so|the|a)$/i, text);
+  const pictures = (await ask('Do you want to go outside to play or stay inside?')).map(choice => choice.symbol);
+  assert.deepEqual(pictures, ['outside', 'home']);
+});
+
+test('a question stem repeated in a later alternative is stripped before the alternatives are cleaned', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const labels = async text => {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'alternatives', text);
+    return result.choices.map(choice => choice.label);
+  };
+  assert.deepEqual(await labels('Do you want to go outside to play, or do you want to stay inside?'), ['Go outside', 'Stay inside']);
+  assert.deepEqual(await labels('Would you like to read a book, or would you rather play outside?'), ['Read a book', 'Play outside']);
+  assert.deepEqual(await labels('Should we go to the park, or should we stay home?'), ['Go to the park', 'Stay home']);
+  assert.deepEqual(await labels('Do you want juice, or do you want milk?'), ['Juice', 'Milk']);
+  assert.deepEqual(await labels('Is it hot or is it cold?'), ['Hot', 'Cold']);
+  assert.deepEqual(await labels('Are you hot or are you cold?'), ['Hot', 'Cold']);
+  assert.deepEqual(await labels('Do you wanna draw, or do you need to rest?'), ['Draw', 'Rest']);
+  assert.deepEqual(await labels('Shall we sing, or can we dance?'), ['Sing', 'Dance']);
+});
+
+test('"is it" and "are you" are stripped only when every alternative carries one', async t => {
+  const seen = [];
+  const s = await service(t, { env: { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' }, fetch: async (_, options) => {
+    seen.push(JSON.parse(options.body).text);
+    return new Response(JSON.stringify({ choices: [{ label: 'Hungry', say: 'I am hungry.' }, { label: 'Thirsty', say: 'I am thirsty.' }] }));
+  } });
+  const result = await (await s.request('/choices', { text: 'Are you hungry or thirsty?' })).json();
+  assert.equal(result.kind, 'adapter');
+  const mixed = await (await s.request('/choices', { text: 'Is it hot or cold or is it windy?' })).json();
+  assert.ok(mixed.choices.every(choice => !/^Is it\b/i.test(choice.label)), 'never a tile that repeats the stem');
+});
+
+test('a verb phrase only the first alternative carries is shared when the rest parallels, and a shared leading possessive or article leaves the labels', async t => {
+  const s = await service(t, { env: {}, fetch: () => { throw Error('unexpected request'); } });
+  const ask = async text => {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'alternatives', text);
+    return result.choices.map(choice => [choice.label, choice.say]);
+  };
+  // The partner's "my" is her "your": she never claims the partner's things.
+  assert.deepEqual(await ask('Do you want to play with my dinosaurs or my Magna-Tiles?'),
+    [['Dinosaurs', 'Your dinosaurs'], ['Magna-Tiles', 'Your Magna-Tiles']]);
+  assert.deepEqual(await ask('Do you want to read the dinosaur book or the truck book?'), [['Dinosaur book', 'Dinosaur book'], ['Truck book', 'Truck book']]);
+  assert.deepEqual(await ask('Do you want to go to the park or the beach?'), [['Park', 'Park'], ['Beach', 'Beach']]);
+  assert.deepEqual(await ask('Would you like my apple or my pear?'), [['Apple', 'Your apple'], ['Pear', 'Your pear']]);
+  assert.deepEqual(await ask('Do you want to play with mom or dad?'), [['Mom', 'Mom'], ['Dad', 'Dad']]);
+  // Not shared by every alternative: the words stay, the ownership still flips.
+  assert.deepEqual(await ask('Do you want my apple or a pear?'), [['Your apple', 'Your apple'], ['A pear', 'A pear']]);
+  assert.deepEqual(await ask('Would you like music or a story?'), [['Music', 'Music'], ['A story', 'A story']]);
+  assert.deepEqual(await ask('Shall we play a game or draw pictures?'), [['Play a game', 'Play a game'], ['Draw pictures', 'Draw pictures']]);
+});

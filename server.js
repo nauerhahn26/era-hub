@@ -22,7 +22,12 @@ const clothing = require("./clothing");
 const { createChatTurns, applyTestModeSetting, testModeOn } = require("./chat-turns.js");
 // The reply usage (model id, token counts) reaches the page only while this
 // device's test-mode switch is on. DATA is read when a request asks, not here.
-const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA) });
+// Pictures the partner names while speaking, and each staged choice's picture,
+// are warmed into the symbol cache in the background (spec §6, lexicon layer).
+// SYMBOLS_CACHE and the fetch are read when a hold asks, not here.
+const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA),
+  pictures: { isCached: (id) => fs.existsSync(path.join(SYMBOLS_CACHE, id + ".png")),
+              fetchOne: (id, { signal }) => fetchSymbolToCache(String(id), { signal }) } });
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
 // the worker's whitelist, the pools and this hub's edit door all read it, so a
 // word cannot be a category here and a stranger three files away.
@@ -1285,7 +1290,10 @@ function serveMoviesRecipe(req, res) {
 
 // Fetch one symbol PNG from ARASAAC into the disk cache. Returns the file path
 // on success, null on any failure (never throws).
-async function fetchSymbolToCache(name) {
+// `signal` lets a background warm give up (Chat's 3 s bound); the file is
+// written whole under a temporary name and renamed, so a page request racing
+// a warm never reads half a picture.
+async function fetchSymbolToCache(name, { signal } = {}) {
   const file = path.join(SYMBOLS_CACHE, name + ".png");
   try {
     let id;
@@ -1293,19 +1301,22 @@ async function fetchSymbolToCache(name) {
       id = name;   // exact ARASAAC pictogram id (recipes pin one when bestsearch
                    // guesses wrong — "stop" finds a bus stop; 8289 IS the stop sign)
     } else {
-      const r = await fetch(ARASAAC_API + encodeURIComponent(name));
+      const r = await fetch(ARASAAC_API + encodeURIComponent(name), { signal });
       if (!r.ok) return null;
       const hits = await r.json();
       if (!Array.isArray(hits) || !hits.length) return null;
       id = hits[0]._id;
     }
-    const img = await fetch(ARASAAC_IMG.replace(/\{id\}/g, String(id)));
+    const img = await fetch(ARASAAC_IMG.replace(/\{id\}/g, String(id)), { signal });
     if (!img.ok) return null;
     const buf = Buffer.from(await img.arrayBuffer());
-    fs.writeFileSync(file, buf);
+    const part = file + "." + process.pid + "-" + Math.random().toString(36).slice(2) + ".part";
+    fs.writeFileSync(part, buf);
+    fs.renameSync(part, file);
     return file;
   } catch (e) {
-    console.error("[symbol] lookup failed for '" + name + "': " + e.message);
+    // A background warm that ran out of time is not a failure worth a line.
+    if (!(signal && signal.aborted)) console.error("[symbol] lookup failed for '" + name + "': " + e.message);
     return null;
   }
 }
