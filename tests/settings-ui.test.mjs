@@ -1991,7 +1991,7 @@ test("Chat off, a key another program holds, no press yet, and a listener that c
   const { ctx, page, box } = await buttonsPage(buttonsStatus({ state: "off", pid: null, keys: { registered: [], failed: [] }, lastPress: null }));
   try {
     await page.waitForFunction(() => /Chat is off/.test(document.getElementById("buttonsStatus").textContent));
-    assert.equal(await buttonsLine(page), "Chat is off — the buttons do nothing until Chat is enabled");
+    assert.equal(await buttonsLine(page), "Chat is off — the buttons do nothing until Chat is enabled.");
     box.buttons = buttonsStatus({ keys: { registered: ["F14", "Ctrl+Alt+F9", "Ctrl+Alt+F10", "Ctrl+Alt+F11"], failed: ["F13"] }, lastPress: null });
     await page.waitForFunction(() => /F13 is held by another program/.test(document.getElementById("buttonsStatus").textContent), null, { timeout: 8000 });
     assert.equal(await buttonsLine(page), "Listener running · holds F14, Ctrl+Alt+F9/F10/F11 · no press yet · F13 is held by another program");

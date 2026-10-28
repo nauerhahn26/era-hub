@@ -1270,7 +1270,7 @@ function buttonsKeys(list){
 function buttonsLine(b){
   if(!b) return "";
   if(b.state==="unsupported") return "No button listener on this computer (Windows only).";
-  if(b.state==="off") return "Chat is off \u2014 the buttons do nothing until Chat is enabled";
+  if(b.state==="off") return "Chat is off \u2014 the buttons do nothing until Chat is enabled.";
   if(b.state==="compiling") return "Setting up the button listener\u2026";
   if(b.state==="starting") return "Starting the button listener\u2026";
   if(b.state!=="running") return "Listener not running"+(b.lastError?": "+b.lastError:"")+(b.state==="restarting"?" \u00b7 trying again shortly":"");
