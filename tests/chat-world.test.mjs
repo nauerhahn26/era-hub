@@ -115,44 +115,35 @@ test('no control characters, angle brackets or double quotes inside a field surv
   assert.equal(lines[2], 'Books on her shelf: "Book i\'x\'/i".');
 });
 
-test('the text is capped at 4,000 characters: older weeks go first, then video titles, then books beyond four; never mid-line', t => {
-  const videos = Array.from({ length: 8 }, (_, i) => 'A long video title number ' + i + ' about magnets and more magnets, with a longer subtitle');
+test('package lists are capped: ten words and three videos a week', t => {
+  const dataDir = fixture(t, { '2026-10-26': week('2026-10-26', 'Week 1', { science: 'magnets' },
+    Array.from({ length: 14 }, (_, i) => 'word' + i), Array.from({ length: 6 }, (_, i) => 'Video ' + i)) });
+  const line = createWorld({ dataDir, now: () => NOW }).digest().text.split('\n')[1];
+  assert.equal(line, 'This week at school: "Week 1". Science: magnets. Words: ' + Array.from({ length: 10 }, (_, i) => 'word' + i).join(', ') + '. Videos: Video 0; Video 1; Video 2.');
+});
+
+test('the package order under the 6,000 cap: video lists go first (oldest week first), then older weeks, then books beyond four; never mid-line', t => {
+  const topic = n => 'a very long topic description that goes on and on about subject number ' + n + ' for the whole class this week';
   const weeks = {};
-  for (const [i, day] of ['2026-10-26', '2026-10-19', '2026-10-12', '2026-10-05', '2026-09-28', '2026-09-21', '2026-09-14'].entries())
-    weeks[day] = week(day, 'Week ' + (i + 1), { science: 'science topic ' + i, social_studies: 'social topic ' + i, hero: 'hero ' + i },
-      ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', ...Array.from({ length: 14 }, (_, j) => 'extraword' + j)], videos);
+  for (const [i, day] of ['2026-10-26', '2026-10-19', '2026-10-12', '2026-10-05', '2026-09-28', '2026-09-21'].entries())
+    weeks[day] = week(day, 'Week ' + (i + 1), Object.fromEntries(['science', 'social_studies', 'phonics', 'math', 'art', 'music', 'reading', 'writing', 'spelling', 'history', 'geography', 'hero'].map((k, j) => [k, topic(j)])),
+      Array.from({ length: 10 }, (_, j) => 'wordnumber' + j), Array.from({ length: 3 }, (_, j) => 'A long video title number ' + j + ' about the topic of this week and more'));
   const dataDir = fixture(t, weeks);
-  const books = Array.from({ length: 10 }, (_, i) => ({ title: 'Book number ' + i, weekOf: '2026-10-26', publishedAt: new Date(Date.UTC(2026, 9, 26, i)).toISOString() }));
+  const books = Array.from({ length: 10 }, (_, i) => ({ title: 'A book with a rather long title, volume ' + i + ' of the series', weekOf: '2026-10-26', publishedAt: new Date(Date.UTC(2026, 9, 26, i)).toISOString() }));
   const { text, chars, weeks: count } = createWorld({ dataDir, books: () => books, people: () => PEOPLE, likes: () => LIKES, now: () => NOW }).digest();
-  assert.ok(chars <= 4000, String(chars)); assert.equal(chars, text.length);
+  assert.ok(chars <= 6000, String(chars)); assert.equal(chars, text.length);
   const lines = text.split('\n');
   assert.equal(lines[0], 'Today: Wednesday, October 28.');
   assert.ok(lines.every(line => line.endsWith('.')), 'whole lines only');
-  assert.ok(!text.includes('Earlier week'), 'the oldest week lines went first');
-  assert.equal(count, 4);
-  assert.match(lines[1], /^This week at school: "Week 1"\..*Words: alpha.*Videos: A long video/, 'this week keeps its videos');
-  assert.doesNotMatch(lines[4], /Videos:/, 'the oldest full week lost its videos first');
-  assert.match(lines[4], /^Three weeks ago at school: "Week 4"\..*Words: alpha/);
+  assert.ok(!text.includes('Videos:'), 'every video list went first');
+  assert.ok(!text.includes('Earlier week'), 'then the older week lines');
+  assert.match(lines[1], /^This week at school: "Week 1"\..*Words: wordnumber0/);
+  assert.ok(!text.includes('Three weeks ago at school'), 'then the oldest full week');
+  assert.ok(text.includes('Two weeks ago at school'));
+  assert.equal(count, 3);
   const shelf = lines.find(line => line.startsWith('Books on her shelf: '));
-  assert.equal(shelf.match(/"Book number \d"/g).length, 8, 'eight books, newest first');
-  assert.ok(shelf.startsWith('Books on her shelf: "Book number 9" (this week)'));
+  assert.equal(shelf.match(/"A book/g).length, 8, 'books beyond four go only after the older weeks');
   assert.ok(lines.some(line => line.startsWith('People: ')) && lines.some(line => line.startsWith('She likes: ')));
-
-  // Long topics with no videos: the books beyond four go before a whole week does.
-  const topic = n => 'a very long topic description that goes on and on about subject number ' + n + ' for the class';
-  const heavy = {};
-  for (const [i, day] of ['2026-10-26', '2026-10-19', '2026-10-12', '2026-10-05'].entries())
-    heavy[day] = week(day, 'Week ' + (i + 1), { science: topic(1), social_studies: topic(2), phonics: topic(3), math: topic(4),
-      art: topic(5), music: topic(6), reading: topic(7) }, Array.from({ length: 24 }, (_, j) => 'wordnumber' + j));
-  const heavyDir = fixture(t, heavy);
-  const longBooks = Array.from({ length: 8 }, (_, i) => ({ title: 'A book with a rather long title, volume ' + i + ' of the series', weekOf: '2026-10-19' }));
-  const capped = createWorld({ dataDir: heavyDir, books: () => longBooks, now: () => NOW }).digest();
-  assert.ok(capped.chars <= 4000, String(capped.chars));
-  const heavyLines = capped.text.split('\n');
-  assert.equal(heavyLines.find(line => line.startsWith('Books on her shelf: ')).match(/"A book/g).length, 4);
-  assert.ok(capped.text.includes('Two weeks ago at school'));
-  assert.ok(!capped.text.includes('Three weeks ago at school'), 'then the oldest full week');
-  assert.equal(capped.weeks, 3);
 });
 
 // world.json (schema 1), published by the weekly builder beside each manifest:
@@ -168,7 +159,8 @@ const WORLD_NEW = { schema: 1, generated_on: '2026-10-27', week_of: '2026-10-26'
   ] };
 const WORLD_OLD = { schema: 1, generated_on: '2026-10-20', week_of: '2026-10-19',
   about: ['An older line about her.'],
-  weeks: [{ start: '2026-10-19', asked: ['a stale list'] }, { start: '2026-10-12', end: '2026-10-16', asked: ['a pumpkin poem'], worked_on: [] }, { start: 'soon', asked: ['x'] }, 7],
+  weeks: [{ start: '2026-10-19', asked: ['a stale list'] }, { start: '2026-10-12', end: '2026-10-16', asked: ['a pumpkin poem'], worked_on: ['never printed two weeks back'] },
+    { start: '2026-10-05', asked: ['three weeks back is dropped'] }, { start: 'soon', asked: ['x'] }, 7],
   days: [{ date: '2026-10-27', mood: 'sad', activities: ['stale'] }, { date: '2026-10-20', mood: null, activities: ['library'], moments: [], said: [] },
     { date: 'bad', mood: 'x' }, null, { date: '2026-10-21', mood: 7, activities: 'speech', moments: [3] }] };
 
@@ -179,9 +171,9 @@ test('world.json files are merged across folders, newest first, and placed after
   assert.deepEqual(digest.text.split('\n'), [
     'Today: Wednesday, October 28.',
     'About her: She loves drawing animals. She likes music with a beat.',
-    'Last week at school she did: a leaf collage; a song about seasons.',
+    "Last week at school (her teacher's list): a leaf collage; a song about seasons.",
     'Last week her class worked on: counting by fives; read-alouds about fall.',
-    'Two weeks ago at school she did: a pumpkin poem.',
+    "Two weeks ago at school (her teacher's list): a pumpkin poem.",
     'Yesterday at school: happy, calm; speech, buddies; Classmates liked her drawing. She said on her device: She wants to paint a rainbow.',
     'Monday at school: music.',
     'Last Thursday at school: tired; She rested after lunch.',
@@ -197,15 +189,67 @@ test('world.json files are merged across folders, newest first, and placed after
   assert.deepEqual(createWorld({ dataDir: alone, now: () => NOW }).digest(), { text: 'Today: Wednesday, October 28.\nToday at school: recess. She said on her device: Hello there.', weeks: 0, days: 1, chars: 91 });
 });
 
-test('a day older than last week is named by its date; a world week beyond three weeks by its Monday', t => {
+test('a day older than last week is named by its date; a world week three or more weeks back is dropped', t => {
   const sunday = NOW + 4 * 86400000;   // Sunday, November 1
-  const dataDir = fixture(t, {}, { '2026-10-26': { schema: 1, weeks: [{ start: '2026-10-05', asked: ['a long ago list'] }],
+  const dataDir = fixture(t, {}, { '2026-10-26': { schema: 1, weeks: [{ start: '2026-10-05', asked: ['a long ago list'] }, { start: '2026-10-19', asked: ['a recent list'], worked_on: ['shapes'] }],
     days: [{ date: '2026-10-23', activities: ['gym'] }, { date: '2026-10-24', activities: ['art'] }] } });
   const lines = createWorld({ dataDir, now: () => sunday }).digest().text.split('\n');
-  assert.deepEqual(lines.slice(1), ['Three weeks ago at school she did: a long ago list.', 'Last Saturday at school: art.', 'Last Friday at school: gym.']);
+  assert.deepEqual(lines.slice(1), ["Last week at school (her teacher's list): a recent list.", 'Last week her class worked on: shapes.', 'Last Saturday at school: art.', 'Last Friday at school: gym.']);
   const monday = createWorld({ dataDir, now: () => sunday + 86400000 }).digest();   // Monday, November 2
-  assert.deepEqual(monday.text.split('\n').slice(1), ['October 5 week at school she did: a long ago list.', 'October 24 at school: art.']);
+  assert.deepEqual(monday.text.split('\n').slice(1), ["Two weeks ago at school (her teacher's list): a recent list.", 'October 24 at school: art.']);
   assert.equal(monday.days, 1, 'ten days back at most');
+});
+
+test('per-list caps: about 320 characters of whole sentences, eight asked, five worked on, three moments, two said; cut at a boundary, never mid-word', t => {
+  const about = ['She loves fashion: outfits, colours, noticing people\'s clothes and hair, and she will tell you about it.',
+    'She enjoys music with a strong beat and dancing in her chair with friends at recess.', 'She likes stories about animals, especially cats and horses and the ocean.',
+    'She laughs when grown-ups make silly voices.', 'Another sentence that would go past the limit if it were kept in full here.'];
+  const asked = Array.from({ length: 11 }, (_, i) => 'Item ' + i + ' about a book report diorama. She made a box with a forest scene and three paper animals and a river of foil');
+  const worked = ['fall mini lessons with read-alouds, then partner reading in small groups, and a chart about how leaves change color',
+    'counting by fives', 'shapes', 'letters', 'sounds', 'never shown'];
+  const moments = ['One.', 'Two.', 'Three.', 'Four.'];
+  const said = ['First thing.', 'Second thing.', 'Third thing.'];
+  const dataDir = fixture(t, {}, { '2026-10-26': { schema: 1, about, weeks: [{ start: '2026-10-19', asked, worked_on: worked }],
+    days: [{ date: '2026-10-27', mood: 'happy', activities: ['speech'], moments, said }, { date: '2026-10-26', moments: ['Fine.', 'x'.repeat(130) + ' end.'] }] } });
+  const lines = createWorld({ dataDir, now: () => NOW }).digest().text.split('\n');
+  const aboutLine = lines.find(line => line.startsWith('About her: '));
+  assert.equal(aboutLine, 'About her: ' + about.slice(0, 4).join(' '), 'whole sentences up to 320 characters');
+  assert.ok(aboutLine.length - 'About her: '.length <= 320);
+  const askedLine = lines.find(line => line.startsWith("Last week at school (her teacher's list): ")).slice("Last week at school (her teacher's list): ".length);
+  const items = askedLine.replace(/\.$/, '').split('; ');
+  assert.equal(items.length, 8);
+  for (const item of items) { assert.ok(item.length <= 110, item); assert.match(item, /^Item \d+ about a book report diorama$/, 'cut at the sentence boundary'); }
+  const workedLine = lines.find(line => line.startsWith('Last week her class worked on: '));
+  assert.equal(workedLine, 'Last week her class worked on: fall mini lessons with read-alouds, then partner reading in small groups; counting by fives; shapes; letters; sounds.');
+  assert.equal(lines.find(line => line.startsWith('Yesterday')), 'Yesterday at school: happy; speech; One. Two. Three. She said on her device: First thing. Second thing.');
+  assert.equal(lines.find(line => line.startsWith('Monday')), 'Monday at school: Fine.', 'a moment with no word boundary inside 120 characters is left out, never split');
+});
+
+test('a real-sized week keeps at least five day lines: the long lists go before the days under the 6,000 cap', t => {
+  const long = (what, n, size) => Array.from({ length: n }, (_, i) => (what + ' ' + i + ' ').padEnd(size, 'and more about it ').trim());
+  const days = Array.from({ length: 10 }, (_, i) => { const d = new Date(Date.UTC(2026, 9, 28 - i)); return { date: d.toISOString().slice(0, 10), mood: 'happy, calm',
+    activities: ['speech', 'music', 'buddies', 'library'], moments: long('a moment about day ' + i, 6, 200), said: long('she said on day ' + i, 4, 200) }; });
+  const worldFile = { schema: 1, about: long('She loves a thing number', 6, 150).map(x => x + '.'),
+    weeks: [{ start: '2026-10-19', asked: long('a teacher asked item', 12, 150), worked_on: long('a worked on item', 10, 150) },
+      { start: '2026-10-12', asked: long('an older asked item', 12, 150), worked_on: long('an older worked item', 10, 150) }], days };
+  const topic = n => 'a long topic description about subject number ' + n + ' for the class this week, with details';
+  const weeks = {};
+  for (const [i, day] of ['2026-10-26', '2026-10-19', '2026-10-12', '2026-10-05', '2026-09-28', '2026-09-21'].entries())
+    weeks[day] = week(day, 'Week ' + (i + 1), Object.fromEntries(['science', 'social_studies', 'phonics', 'math', 'hero'].map((k, j) => [k, topic(j)])),
+      Array.from({ length: 24 }, (_, j) => 'wordnumber' + j), Array.from({ length: 8 }, (_, j) => 'A long video title number ' + j + ' about the topic of the week'));
+  const dataDir = fixture(t, weeks, { '2026-10-26': worldFile });
+  const books = Array.from({ length: 8 }, (_, i) => ({ title: 'Book number ' + i, weekOf: '2026-10-19' }));
+  const { text, chars, days: dayCount } = createWorld({ dataDir, books: () => books, people: () => PEOPLE, likes: () => LIKES, now: () => NOW }).digest();
+  assert.ok(chars <= 6000, String(chars));
+  assert.ok(dayCount >= 5, 'at least five day lines: ' + dayCount);
+  assert.match(text, /\nToday at school: happy, calm/);
+  assert.match(text, /\nYesterday at school: /);
+  assert.match(text, /\nAbout her: /);
+  assert.match(text, /\nLast week at school \(her teacher's list\): /, 'the newest teacher list stays');
+  assert.doesNotMatch(text, /her class worked on/, 'worked_on lists went first');
+  assert.doesNotMatch(text, /Videos: /, 'then the package video lists');
+  assert.doesNotMatch(text, /Two weeks ago at school \(her teacher's list\)/, 'then the Two weeks ago line');
+  assert.match(text, /\nThis week at school: "Week 1"/);
 });
 
 test('world.json changes are picked up by the minute cache like the manifests', t => {
@@ -218,39 +262,6 @@ test('world.json changes are picked up by the minute cache like the manifests', 
   const later = new Date(Date.now() + 5000); fs.utimesSync(file, later, later);
   clock += 61000;
   assert.match(world.digest().text, /About her: Second line\./);
-});
-
-test('over 4,000 characters the oldest days go first, then the world weeks\' worked_on lists, then the package order', t => {
-  const moments = n => ['A long moment about the day number ' + n + ' that goes on for a while and says what happened in class.',
-    'Another long moment about day ' + n + ' with friends and teachers and a song and a game at recess time.'];
-  const days = Array.from({ length: 10 }, (_, i) => { const d = new Date(Date.UTC(2026, 9, 28 - i)); return { date: d.toISOString().slice(0, 10), mood: 'happy', activities: ['speech', 'music'], moments: moments(i) }; });
-  const worked = n => Array.from({ length: 6 }, (_, j) => 'a long worked on item number ' + j + ' for week ' + n + ' about many things');
-  const worldFile = { schema: 1, about: ['She loves drawing animals.'],
-    weeks: [{ start: '2026-10-19', asked: ['a leaf collage'], worked_on: worked(1) }, { start: '2026-10-12', asked: ['a pumpkin poem'], worked_on: worked(2) }], days };
-  const weeks = {};
-  for (const [i, day] of ['2026-10-26', '2026-10-19', '2026-10-12', '2026-10-05', '2026-09-28', '2026-09-21'].entries())
-    weeks[day] = week(day, 'Week ' + (i + 1), { science: 'science topic ' + i, social_studies: 'social topic ' + i, hero: 'hero ' + i },
-      ['alpha', 'beta', 'gamma'], Array.from({ length: 6 }, (_, j) => 'A video title ' + j + ' about the topic of the week'));
-  const dataDir = fixture(t, weeks, { '2026-10-26': worldFile });
-  const { text, chars, days: dayCount } = createWorld({ dataDir, now: () => NOW }).digest();
-  assert.ok(chars <= 4000, String(chars));
-  assert.ok(dayCount > 0 && dayCount < 10, String(dayCount));
-  assert.match(text, /\nToday at school: happy/, 'the newest day stays');
-  assert.doesNotMatch(text, /October 19 at school|Last Monday at school/, 'the oldest day went first');
-  assert.match(text, /Last week her class worked on: /, 'worked_on stays while days can go');
-  assert.match(text, /Earlier week \(September 21\)/, 'the package lines are untouched');
-
-  // With more weight than the days can give back, worked_on goes next, oldest first, before any package line.
-  const long = n => Array.from({ length: 12 }, (_, j) => 'a very long worked on item number ' + j + ' for the week of ' + n + ' about many things in class and at home and more');
-  const heavy = { ...worldFile, weeks: worldFile.weeks.map(w => ({ ...w, worked_on: long(w.start) })) };
-  const heavyDir = fixture(t, weeks, { '2026-10-26': heavy });
-  const capped = createWorld({ dataDir: heavyDir, now: () => NOW }).digest();
-  assert.ok(capped.chars <= 4000, String(capped.chars));
-  assert.equal(capped.days, 0);
-  assert.doesNotMatch(capped.text, /Two weeks ago her class worked on/, 'the oldest worked_on list went first');
-  assert.match(capped.text, /Last week her class worked on: /);
-  assert.match(capped.text, /Two weeks ago at school she did: a pumpkin poem\./, 'the asked list stays');
-  assert.match(capped.text, /Earlier week \(September 28\)/);
 });
 
 test('the cache: rebuilt when a manifest or a provider list changes, never more than once a minute, identical otherwise', t => {

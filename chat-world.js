@@ -16,7 +16,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
-const CAP = 4000, DAYS_BACK = 10, CHECK_MS = 60000, FULL_WEEKS = 4, BOOKS = 8, BOOKS_KEPT = 4, PEOPLE = 12, LIKES = 12, WORDS = 24, VIDEOS = 8;
+const CAP = 6000, DAYS_BACK = 10, RECENT_DAYS = 7, CHECK_MS = 60000, FULL_WEEKS = 4, BOOKS = 8, BOOKS_KEPT = 4, PEOPLE = 12, LIKES = 12, WORDS = 10, VIDEOS = 3;
+// Per-list caps, applied before the global cap so long lists never crowd out the days.
+const ABOUT_CHARS = 320, ASKED = [8, 110], WORKED = [5, 90], MOMENTS = [3, 120], SAID = [2, 140];
 const DAY_MS = 86400000;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -29,6 +31,18 @@ function field(value, max) {
   const text = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/[<>]/g, '').replace(/["“”]/g, "'")
     .replace(/\s+/g, ' ').trim();
   return text.length > max ? text.slice(0, max).replace(/\s+\S*$/, '').trim() || text.slice(0, max) : text;
+}
+// A field cut to `max` characters at a sentence or clause boundary when one
+// falls late enough, else at a word boundary; never mid-word (a single word
+// longer than `max` is nothing).
+function clip(value, max) {
+  const text = field(value, 1000);
+  if (text.length <= max) return text;
+  const head = text.slice(0, max + 1);
+  let cut = -1;
+  for (const match of head.matchAll(/[.!?;:,](?=\s)/g)) if (match.index >= max / 4 && match.index < max) cut = match.index;
+  const out = cut >= 0 ? head.slice(0, cut) : head.slice(0, head.lastIndexOf(' ') > 0 ? head.lastIndexOf(' ') : 0);
+  return out.replace(/[\s.,;:!?-]+$/, '').trim();
 }
 // A date string's calendar day as UTC midnight milliseconds (null if unreadable).
 function dayOf(value) {
@@ -80,28 +94,40 @@ function readWeeks(dataDir) {
 }
 
 // A list of short strings from a world.json field; anything else is nothing.
-const strings = (value, max, count) => (Array.isArray(value) ? value : []).map(item => field(item, max)).filter(Boolean).slice(0, count);
+const strings = (value, max, count) => (Array.isArray(value) ? value : []).map(item => clip(item, max)).filter(Boolean).slice(0, count);
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const sentence = text => /[.!?]$/.test(text) ? text : text + '.';
+// About her: whole sentences, in order, up to 320 characters in all.
+function aboutOf(value) {
+  const sentences = (Array.isArray(value) ? value : []).map(line => field(line, 1000)).filter(Boolean)
+    .flatMap(line => line.split(/(?<=[.!?])\s+/)).map(text => sentence(text.trim())).filter(text => text.length > 1);
+  const out = [];
+  for (const text of sentences) {
+    if ([...out, text].join(' ').length > ABOUT_CHARS) break;
+    out.push(text);
+  }
+  if (!out.length && sentences.length) { const first = clip(sentences[0], ABOUT_CHARS - 1); if (first) out.push(sentence(first)); }
+  return out;
+}
 // The world.json files merged, newest folder first: `about` from the newest
 // file that has one, weeks by start and days by date (the newest file wins).
 function mergeWorlds(worlds) {
   let about = [];
   const weeks = new Map(), days = new Map();
   for (const world of worlds) {
-    if (!about.length) about = strings(world.about, 200, 6);
+    if (!about.length) about = aboutOf(world.about);
     for (const week of Array.isArray(world.weeks) ? world.weeks : []) {
       if (!week || typeof week !== 'object' || typeof week.start !== 'string' || !ISO_DAY.test(week.start)) continue;
       const day = dayOf(week.start);
       if (day === null || weeks.has(day)) continue;
-      weeks.set(day, { day, asked: strings(week.asked, 120, 12), worked: strings(week.worked_on, 120, 12) });
+      weeks.set(day, { day, asked: strings(week.asked, ...ASKED.slice().reverse()), worked: strings(week.worked_on, ...WORKED.slice().reverse()) });
     }
     for (const item of Array.isArray(world.days) ? world.days : []) {
       if (!item || typeof item !== 'object' || typeof item.date !== 'string' || !ISO_DAY.test(item.date)) continue;
       const day = dayOf(item.date);
       if (day === null || days.has(day)) continue;
-      days.set(day, { day, mood: field(item.mood, 60), activities: strings(item.activities, 40, 10),
-        moments: strings(item.moments, 200, 6), said: strings(item.said, 200, 6) });
+      days.set(day, { day, mood: clip(item.mood, 60), activities: strings(item.activities, 40, 10),
+        moments: strings(item.moments, MOMENTS[1], MOMENTS[0]), said: strings(item.said, SAID[1], SAID[0]) });
     }
   }
   const newest = (a, b) => b.day - a.day;
@@ -137,13 +163,17 @@ function build({ weeks, worlds, books, people, likes, today }) {
     return monthDay(day);
   };
   const world = mergeWorlds(worlds);
-  const worldWeeks = world.weeks.map(week => ({ label: label(week.day), asked: week.asked, worked: week.worked, showWorked: true }));
+  // The teachers' weekly lists: this week and last week in full, two weeks ago
+  // its list alone, anything older (or not yet begun) left out.
+  const worldWeeks = world.weeks.filter(week => ago(week.day) >= 0 && ago(week.day) <= 2)
+    .map(week => ({ label: label(week.day), asked: week.asked, worked: ago(week.day) <= 1 ? week.worked : [], showWorked: true, twoBack: ago(week.day) === 2, show: true }));
   // Day notes from the last ten days, newest first; a day with nothing to say is no line.
   const dayLines = world.days.filter(day => today - day.day >= 0 && today - day.day < DAYS_BACK * DAY_MS).map(day => {
-    const parts = [day.mood, day.activities.join(', '), day.moments.join(' ')].filter(Boolean);
-    const said = day.said.length ? `She said on her device: ${sentence(day.said.join(' '))}` : '';
+    const parts = [day.mood, day.activities.join(', '), day.moments.map(sentence).join(' ')].filter(Boolean);
+    const said = day.said.length ? `She said on her device: ${day.said.map(sentence).join(' ')}` : '';
     if (!parts.length && !said) return null;
-    return parts.length ? `${dayLabel(day.day)} at school: ${sentence(parts.join('; '))}${said ? ' ' + said : ''}` : `${dayLabel(day.day)}: ${said}`;
+    return { back: Math.round((today - day.day) / DAY_MS), show: true,
+      text: parts.length ? `${dayLabel(day.day)} at school: ${sentence(parts.join('; '))}${said ? ' ' + said : ''}` : `${dayLabel(day.day)}: ${said}` };
   }).filter(Boolean);
   const full = weeks.slice(0, FULL_WEEKS).map(week => ({ ...weekParts(week, label(week.day)), showVideos: true }));
   const earlier = weeks.slice(FULL_WEEKS).map(week => {
@@ -160,16 +190,16 @@ function build({ weeks, worlds, books, people, likes, today }) {
   const liked = likes.map(like => field(like, 30)).filter(Boolean).slice(0, LIKES);
   const d = new Date(today);
   const head = `Today: ${DAYS[d.getUTCDay()]}, ${monthDay(today)}.`;
-  let fullCount = full.length, earlierCount = earlier.length, bookCount = shelf.length, dayCount = dayLines.length;
+  let fullCount = full.length, earlierCount = earlier.length, bookCount = shelf.length;
   // Lines with their kind, so the counts follow what the cap kept.
   const compose = () => {
     const lines = [{ kind: 'today', text: head }];
     if (world.about.length) lines.push({ kind: 'about', text: `About her: ${world.about.map(sentence).join(' ')}` });
-    for (const week of worldWeeks) {
-      if (week.asked.length) lines.push({ kind: 'world-week', text: `${week.label} at school she did: ${sentence(week.asked.join('; '))}` });
+    for (const week of worldWeeks.filter(week => week.show)) {
+      if (week.asked.length) lines.push({ kind: 'world-week', text: `${week.label} at school (her teacher's list): ${sentence(week.asked.join('; '))}` });
       if (week.showWorked && week.worked.length) lines.push({ kind: 'world-week', text: `${week.label} her class worked on: ${sentence(week.worked.join('; '))}` });
     }
-    for (const text of dayLines.slice(0, dayCount)) lines.push({ kind: 'day', text });
+    for (const day of dayLines.filter(day => day.show)) lines.push({ kind: 'day', text: day.text });
     for (const week of full.slice(0, fullCount))
       lines.push({ kind: 'week', text: [week.head, ...week.facts, ...(week.showVideos && week.videos ? [week.videos] : [])].join(' ') });
     for (const text of earlier.slice(0, earlierCount)) lines.push({ kind: 'week', text });
@@ -179,17 +209,22 @@ function build({ weeks, worlds, books, people, likes, today }) {
     return lines;
   };
   const size = lines => lines.reduce((sum, line) => sum + line.text.length, 0) + lines.length - 1;
-  // The cap, whole lines only: the oldest days first, then the world weeks'
-  // worked_on lists (oldest first), then the oldest package week lines, then
-  // video titles (oldest week first), then books beyond four, then whole
-  // package weeks (oldest first).
+  // The cap, whole lines only (the coordinator's order, 10/28: the days are
+  // the most valuable part): the world weeks' worked_on lists (oldest week
+  // first), then the package video lists (oldest week first), then the Two
+  // weeks ago list, then days older than seven days (oldest first), then the
+  // package lines for older weeks (oldest first, the newest week stays), then
+  // books beyond four, then the newest days (oldest first) as the last resort.
   let lines = compose();
-  while (size(lines) > CAP && dayCount > 0) { dayCount--; lines = compose(); }
-  for (let i = worldWeeks.length - 1; size(lines) > CAP && i >= 0; i--) { worldWeeks[i].showWorked = false; lines = compose(); }
-  while (size(lines) > CAP && earlierCount > 0) { earlierCount--; lines = compose(); }
-  for (let i = fullCount - 1; size(lines) > CAP && i >= 0; i--) { full[i].showVideos = false; lines = compose(); }
-  while (size(lines) > CAP && bookCount > BOOKS_KEPT) { bookCount--; lines = compose(); }
-  while (size(lines) > CAP && fullCount > 1) { fullCount--; lines = compose(); }
+  const over = () => size(lines) > CAP;
+  for (let i = worldWeeks.length - 1; over() && i >= 0; i--) { worldWeeks[i].showWorked = false; lines = compose(); }
+  for (let i = fullCount - 1; over() && i >= 0; i--) { full[i].showVideos = false; lines = compose(); }
+  for (const week of worldWeeks) if (over() && week.twoBack) { week.show = false; lines = compose(); }
+  for (let i = dayLines.length - 1; over() && i >= 0; i--) if (dayLines[i].back > RECENT_DAYS) { dayLines[i].show = false; lines = compose(); }
+  while (over() && earlierCount > 0) { earlierCount--; lines = compose(); }
+  while (over() && fullCount > 1) { fullCount--; lines = compose(); }
+  while (over() && bookCount > BOOKS_KEPT) { bookCount--; lines = compose(); }
+  for (let i = dayLines.length - 1; over() && i >= 0; i--) if (dayLines[i].show) { dayLines[i].show = false; lines = compose(); }
   // Last resort: drop lines from the end, never the Today line, never mid-line.
   while (lines.length > 1 && size(lines) > CAP) lines.pop();
   const text = lines.map(line => line.text).join('\n');
