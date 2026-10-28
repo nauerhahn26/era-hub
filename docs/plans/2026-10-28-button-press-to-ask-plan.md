@@ -131,7 +131,7 @@ Info
       `tests/kiosk-pause.test.mjs`). Guard: the `/buttons/press` route in
       server.js is three lines (loopback gate, body, `buttons.press`); logic
       lives in buttons.js. STOP if 8494/8495 fail `suite-ports`: pick again.
-- [ ] **T1.4** `kiosk-launch.js`: `kioskArgs(open, { port, dir })` and
+- [x] **T1.4** `kiosk-launch.js`: `kioskArgs(open, { port, dir })` and
       `findBrowser()` with the exact flags and browser order of start-hub.bat's
       kiosk line; `relaunchKiosk(path)` = `closeKiosk()` → 1 s → `spawn(exe,
       args, {detached, stdio:'ignore', windowsHide})` → `psSettleKiosk(6)`
