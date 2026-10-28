@@ -3269,6 +3269,29 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/buttons-payload.test.mjs",
+      "purpose": "The device button listener ships as C# source in the payload buttons/ folder: five keys, hotkey ids, loopback press, single instance, no PowerShell, no .ps1",
+      "group": "hub",
+      "lane": "linux",
+      "level": "static contract",
+      "dependencies": [
+        "era-hub/buttons/EraButtons.cs",
+        "era-hub/buttons.js",
+        "era-hub/tools/build-payload.sh"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/lanes.test.mjs",
       "purpose": "The gate lane runner: longest-first order, solo/heavy/quiet/fixed-port (gaze engine bus included) exclusions, memory floor that never holds the last lane, one lane = the serial loop, results.jsonl, the gate tally, stop by pid",
       "group": "test-infrastructure",

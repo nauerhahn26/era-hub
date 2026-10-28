@@ -260,7 +260,7 @@ Info
 
 ## Phase 5 — device button listener (collaborating: Windows, hotkeys, policy)
 
-- [ ] **T5.1** `buttons/EraButtons.cs` (hub repo, shipped by build-payload.sh
+- [x] **T5.1** (the .cs is C# 5 for the Framework csc; not compiled here, T5.8 compiles it on the VM) `buttons/EraButtons.cs` (hub repo, shipped by build-payload.sh
       to `$OUT/buttons/`): WinForms message-only window, `RegisterHotKey` ids
       1-5 for F13, F14, Ctrl+Alt+F9/F10/F11 with `MOD_NOREPEAT`; on `WM_HOTKEY`
       `POST http://127.0.0.1:<port>/buttons/press {"key","action"}` (2 s

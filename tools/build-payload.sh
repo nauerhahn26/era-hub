@@ -125,6 +125,11 @@ cp "$(sib era-making-words)/content/lessons.json" "$OUT/public/lessons.json"
 # never redistribute Tobii's binaries.
 mkdir -p "$OUT/gaze"
 cp "$(sib era-gaze)/device/ERAgaze.cs" "$OUT/gaze/ERAgaze.cs"
+# The device button listener's SOURCE (button press to ask, design 2026-10-27
+# §4.1): the hub compiles it on the device with the same csc and keeps it
+# running while Chat is on (buttons.js). Source only, like the engine.
+mkdir -p "$OUT/buttons"
+cp "$HUB/buttons/EraButtons.cs" "$OUT/buttons/EraButtons.cs"
 cp -r "$(sib era-pencil)/app" "$OUT/public/pencil"
 cp -r "$(sib era-board)/app" "$OUT/public/board"
 cp -r "$HUB/public/settings" "$OUT/public/settings"
