@@ -92,7 +92,9 @@ test('the text guess finds one clear subject and stays neutral when there are tw
   assert.equal(guess('Music', 'Tell me a story.'), 'music');
   assert.equal(guess('Music or a story', ''), 'chat');
   assert.equal(guess('I like music and stories', ''), 'chat');
-  assert.equal(guess('A surprising thought', 'Something unusual.'), 'chat');
+  // A quality the library has is no longer the bubble (the actions map); a word it lacks still is.
+  assert.equal(guess('A surprising thought', 'Something unusual.'), 'surprising');
+  assert.equal(guess('A zorbish thought', 'Something zorbish.'), 'chat');
   assert.equal(guess('Grandma', 'I want to see Grandma.'), 'grandma');
   assert.equal(guess('Two dogs', ''), 'dog');
 });

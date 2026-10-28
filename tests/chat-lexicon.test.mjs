@@ -310,3 +310,45 @@ test('Magna-Tiles is a toy: the curated blocks picture, never the library\'s flo
     assert.notEqual(choice.symbolId, lex('tiles'), label);
   }
 });
+
+// ---- the actions map: a picture for a reply that names no thing --------------
+
+const ACTIONS_FIXTURE = {
+  words: { paddle: 203, lasagna: 11, frost: 12 },
+  actions: { go: 101, later: 102, hurry: 103, sure: 104, lot: 105, learn: 106, clap: 107, shout: 108, whisper: 109, try: 110,
+    wiggle: 111, spin: 112, tickle: 113, snuggle: 114, late: 115, pretend: 116, celebrate: 117, silly: 118, paddle: 204, sunny: 119 },
+  families: { food: [11], weather: [12, 119], time: [102, 115] },
+};
+
+test('a label that names no thing takes the library picture of its action, quality or social word', () => {
+  pictures.setLexicon(ACTIONS_FIXTURE);
+  try {
+    // [label, the action word it shows]
+    const table = [
+      ['Go now', 'go'], ['Ever so late', 'late'], ['Hurry up', 'hurry'], ['Sure', 'sure'], ['A lot', 'lot'],
+      ['Learned things', 'learn'], ['Clap', 'clap'], ['Shout', 'shout'], ['Whisper it', 'whisper'], ['Keep trying', 'try'],
+      ['Wiggle', 'wiggle'], ['Spin around', 'spin'], ['Whispering', 'whisper'], ['Snuggle', 'snuggle'], ['Stay up late', 'late'],
+      ['Pretend', 'pretend'], ["Let's pretend!", 'pretend'], ['Wiggling', 'wiggle'], ['Keep going', 'go'], ['Clapping', 'clap'],
+    ];
+    for (const [label, word] of table) {
+      const choice = pick(label);
+      assert.equal(choice.symbolId, ACTIONS_FIXTURE.actions[word], `${label} → ${choice.symbol}`);
+      assert.notEqual(choice.symbol, 'chat', label);
+    }
+  } finally { pictures.setLexicon(null); }
+});
+
+test('actions come last: curated words and things first, an either/or and a negation keep their pictures', () => {
+  pictures.setLexicon(ACTIONS_FIXTURE);
+  try {
+    assert.equal(pick('Paddle').symbolId, 203, 'the thing before the action of the same word');
+    assert.equal(pick('Go swim').symbol, 'swim', 'a curated word still wins');
+    assert.equal(pick('Pizza now').symbol, 'pizza');
+    assert.equal(pick('Clap or shout').symbol, 'chat', 'an either/or in one tile stays the bubble');
+    assert.equal(pick("Don't shout", { say: "Please don't shout." }).symbol, 'chat', 'a negation never takes the action');
+    assert.equal(pick('Not really').symbol, 'chat');
+    assert.equal(pick('Hurry up', { symbol: 'happy' }).symbol, 'happy', 'the model\'s accepted vocabulary pick comes first');
+    assert.equal(pick('Hurry up', { symbol: 'chat' }).symbolId, 103, 'the model\'s bubble is no pick: the action still shows');
+    assert.equal(pick('Hmm', { say: 'Hmm, a big wiggle.' }).symbolId, 111, 'the say when the label has nothing');
+  } finally { pictures.setLexicon(null); }
+});

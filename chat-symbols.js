@@ -43,13 +43,17 @@ function vocabulary() {
 // pictures. Families (food, drink, weather, time, place, person) feed the guard.
 let lexiconTable = null;
 function compileLexicon(data) {
-  const words = new Map();
-  for (const [word, id] of Object.entries(data && typeof data.words === 'object' && data.words || {}))
-    if (Number.isSafeInteger(id) && id > 0 && normal(word) === word) words.set(word, id);
+  const map = key => {
+    const out = new Map();
+    for (const [word, id] of Object.entries(data && typeof data[key] === 'object' && data[key] || {}))
+      if (Number.isSafeInteger(id) && id > 0 && normal(word) === word) out.set(word, id);
+    return out;
+  };
+  const words = map('words'), actions = map('actions');
   const family = new Map();
   for (const [name, ids] of Object.entries(data && typeof data.families === 'object' && data.families || {}))
     if (Array.isArray(ids)) for (const id of ids) family.set(id, name);
-  return { words, family };
+  return { words, actions, family };
 }
 function lexicon() {
   if (lexiconTable) return lexiconTable;
@@ -76,6 +80,27 @@ function lexiconForm(form) {
   if (/[^s]s$/.test(form)) forms.push(form.replace(/s$/, ''));
   for (const candidate of forms) {
     const id = words.get(candidate);
+    if (id) return { word: candidate, id, family: family.get(id) || null };
+  }
+  return null;
+}
+// One form in the actions map, then its plain verb ("clapping" → clap,
+// "learned" → learn, "tries" → try).
+function actionForm(form) {
+  if (!form) return null;
+  const { actions, family } = lexicon();
+  const forms = [form];
+  if (/^[a-z]+$/.test(form)) {
+    const stem = form.replace(/(?:ing|ed)$/, '');
+    if (stem !== form && stem.length >= 2) {
+      forms.push(stem, stem + 'e');
+      if (/([^aeiou])\1$/.test(stem)) forms.push(stem.slice(0, -1));
+    }
+    if (/ied$|ies$/.test(form)) forms.push(form.slice(0, -3) + 'y');
+    if (/[^s]s$/.test(form)) forms.push(form.slice(0, -1));
+  }
+  for (const candidate of forms) {
+    const id = actions.get(candidate);
     if (id) return { word: candidate, id, family: family.get(id) || null };
   }
   return null;
@@ -285,6 +310,38 @@ function lexiconChoice(label, l) {
   const foodLabel = !!category(l) && [...category(l).families].some(family => family === 'food' || family === 'drink');
   return lexiconPick(l, { anyWord: !curatedIn(l).some(word => !BROAD.has(word)), foodLabel });
 }
+// ---- the actions layer ---------------------------------------------------
+// Words that are never the picture of a reply, even when nothing concrete is
+// named: articles, pronouns, helpers, prepositions, joining and polite words.
+// Unlike STOP, verbs, time words and qualities stay: "Hurry up" is hurry,
+// "Maybe later" is later.
+const FUNCTION_WORDS = new Set(['a', 'an', 'the', 'some', 'any', 'of', 'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'we', 'us', 'our',
+  'he', 'him', 'his', 'she', 'her', 'it', 'its', 'they', 'them', 'their', 'this', 'that', 'these', 'those', 'im', 'youre', 'ive', 'lets',
+  'let', 'thats', 'whats', 'theres', 'heres', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'do', 'does', 'did', 'have', 'has', 'had',
+  'can', 'could', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'wanna', 'gonna', 'keep', 'to', 'with', 'for', 'at', 'in',
+  'on', 'from', 'by', 'about', 'into', 'onto', 'up', 'down', 'out', 'off', 'around', 'and', 'or', 'but', 'so', 'then', 'than', 'too',
+  'also', 'not', 'no', 'yes', 'please', 'thanks', 'thank', 'what', 'which', 'who', 'where', 'when', 'why', 'how', 'something',
+  'anything', 'nothing', 'thing', 'things', 'one', 'ones', 'very', 'really', 'just', 'maybe', 'ok', 'okay',
+  // hedges, not qualities: "Kind of", "Pretty good"
+  'kind', 'kinda', 'sort', 'sorta', 'pretty', 'quite', 'bit']);
+// The library's picture of what a reply does or is, when it names no thing:
+// the whole label, then its head verb, then each other content word in order.
+function actionPick(text, { foodLabel = false } = {}) {
+  if (!text) return null;
+  const fits = hit => hit && !(foodLabel && GUARDED.has(hit.family));
+  const whole = text.replace(/^(?:(?:a|an|the|some|my|your|our)\s+)+/, '').replace(/\s+(?:please|thanks|thank you)$/, '');
+  if (words(whole).length > 1) { const hit = actionForm(whole); if (fits(hit)) return hit; }
+  for (const word of words(whole)) {
+    if (FUNCTION_WORDS.has(word)) continue;
+    const hit = actionForm(word);
+    if (fits(hit)) return hit;
+  }
+  return null;
+}
+// A label offering several concrete things, or an either/or, keeps the bubble.
+function ambiguous(l) { return /\bor\b/.test(l) || conceptsIn(l).filter(word => !BROAD.has(word)).length > 1; }
+function foodish(l) { const labelled = category(l); return !!labelled && [...labelled.families].some(family => family === 'food' || family === 'drink'); }
+
 // The hub's pick: { word, id? }. A curated phrase, then the library's picture
 // for a thing the table lacks, then the model's symbol, then the text guess.
 function choose({ label = '', say = '', symbol } = {}) {
@@ -299,8 +356,17 @@ function choose({ label = '', say = '', symbol } = {}) {
     return guarded === lexical.word ? lexical : { word: guarded };
   }
   const model = modelSymbol(symbol);
-  const picked = model && !rejects(l, model) ? model : fromWords(l, s);
-  return { word: negationGuard(l, s, picked) };
+  if (model && model !== FALLBACK && !rejects(l, model)) return { word: negationGuard(l, s, model) };
+  const own = exact(l) || category(l)?.word || guess(l) || guess(s);
+  if (own && own !== FALLBACK) return { word: negationGuard(l, s, own) };
+  if (!ambiguous(l)) {
+    const action = actionPick(l, { foodLabel: foodish(l) }) || (!own ? actionPick(s, { foodLabel: foodish(l) }) : null);
+    if (action) {
+      const guarded = negationGuard(l, s, action.word);
+      return guarded === action.word ? action : { word: guarded };
+    }
+  }
+  return { word: negationGuard(l, s, FALLBACK) };
 }
 function pickSymbol(choice = {}) { return choose(choice).word; }
 // True when the model named a picture the hub refused for the label's own
