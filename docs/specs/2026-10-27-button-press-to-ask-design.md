@@ -189,9 +189,11 @@ Microphone permission is the one thing a page cannot grant itself. Decided:
 the hub pre-grants it for its own origin by writing the browser's per-user
 audio-capture allow-list policy for `http://127.0.0.1:<port>` at boot (both
 Chrome and Edge keys, written with `reg.exe`, no PowerShell, no admin). If
-permission is still missing when a press arrives, Chat shows one plain line,
-"Touch Start Chat once to allow the microphone", plays no tone, and the
-press is otherwise wasted; after that one touch, presses work. The builder
+permission is still missing when a press arrives, Chat shows one plain line
+naming its touch-only control ("Touch Try again once to allow the
+microphone" since v1.0.31, where Chat gets ready by itself and has no Start
+Chat), plays no tone, and the press is otherwise wasted; after that one
+touch, presses work. The builder
 verifies the kiosk profile keeps the grant across restarts.
 
 ### 4.4 The listening window
@@ -235,8 +237,10 @@ Today a shown batch is immutable and cannot be replaced until a new turn.
 This design adds a **replacement batch** inside one window, with these rules:
 
 - A sealed batch is still immutable; a replacement is a new sealed batch.
-- The first batch is revealed by the existing rule: a fresh move into the
-  black centre, or gaze already resting there when it seals.
+- The first batch is revealed by Chat's current rule. AMENDED 10/28 at the
+  merge of v1.0.26–v1.0.31: replies show the moment the batch is sealed,
+  behind the 250 ms page-settle dwell pause, replacing any tiles left from an
+  earlier turn; the "fresh move into the black centre" rule is gone from Chat.
 - A replacement is swapped in only at a **neutral moment**: her gaze is in a
   black rest cell, or is not inside any tile and no dwell is in progress. If
   her gaze is on a tile, the replacement waits until it leaves. There is no
