@@ -272,3 +272,72 @@ test('the payload ships every hub module the Chat API loads, transitively', asyn
   }
   for (const file of seen) assert.ok(copied.has(file), file + ' is copied into the payload');
 });
+
+// Button press to ask (design 2026-10-27 §4.4, plan T0.1): a window turn spans
+// several utterances. The service's own end of turn is surfaced as 'turn-end'
+// and nothing is finalized or terminated per utterance.
+function collectWindow(stream) {
+  const events = collect(stream);
+  stream.on('turn-end', value => events.push({ type: 'turn-end', ...value }));
+  return events;
+}
+function windowTurnsScript(conn) {
+  conn.send({ type: 'Begin', id: 'x', expires_at: 0 });
+  conn.onAudio = count => {
+    if (count === 2) conn.send(turn('do you want chicken'));
+    if (count === 3) conn.send(turn('Do you want chicken or fish?', { end: true }));
+    if (count === 5) conn.send(turn('or pasta', { order: 1 }));
+    if (count === 6) conn.send(turn('Or pasta?', { end: true, order: 1 }));
+  };
+  conn.onText = value => {
+    if (value.type === 'Terminate') { conn.send({ type: 'Termination', audio_duration_seconds: 1 }); setTimeout(() => conn.ws.close(1000), 5); }
+  };
+}
+
+test('window turn, turn streaming: each end of turn is a turn-end with that utterance, the socket stays open, finalize joins them', async t => {
+  const service = await fake(t, windowTurnsScript);
+  const stream = transcriber(t, service), events = collectWindow(stream);
+  await stream.open();
+  stream.begin({ window: true });
+  for (let i = 0; i < 3; i++) { stream.sendPcm(frame()); await pause(10); }
+  await until(() => events.some(e => e.type === 'turn-end'));
+  assert.deepEqual(events.filter(e => e.type === 'turn-end').map(e => e.text), ['Do you want chicken or fish?']);
+  assert.deepEqual(service.connections[0].texts, [], 'nothing finalized or terminated per utterance');
+  assert.equal(events.some(e => ['settled', 'final'].includes(e.type)), false);
+  for (let i = 0; i < 3; i++) { stream.sendPcm(frame()); await pause(10); }
+  await until(() => events.filter(e => e.type === 'turn-end').length === 2);
+  assert.equal(events.filter(e => e.type === 'turn-end')[1].text, 'Or pasta?');
+  assert.equal(service.connections[0].closed, false);
+  assert.equal(service.connections.length, 1, 'one socket for the whole window');
+  stream.finalize();
+  await until(() => events.some(e => e.type === 'final'));
+  assert.equal(events.find(e => e.type === 'final').text, 'Do you want chicken or fish? Or pasta?');
+});
+
+test('a hold turn never emits turn-end (hold behaviour unchanged)', async t => {
+  const service = await fake(t, windowTurnsScript);
+  const stream = transcriber(t, service), events = collectWindow(stream);
+  await stream.open(); stream.begin();
+  for (let i = 0; i < 6; i++) { stream.sendPcm(frame()); await pause(10); }
+  await until(() => events.filter(e => e.type === 'partial').length >= 3);
+  await pause(30);
+  assert.equal(events.some(e => e.type === 'turn-end'), false);
+});
+
+test('window turn, listen query: speech_final is a turn-end with the words since the last one; without it, never', async t => {
+  const service = await fake(t, conn => {
+    conn.onAudio = count => {
+      if (count === 1) conn.send({ ...results('do you want', { final: true }), speech_final: false });
+      if (count === 2) conn.send({ ...results('chicken or fish', { final: true }), speech_final: true });
+      if (count === 3) conn.send({ ...results('or pasta', { final: true }), speech_final: undefined });
+      if (count === 4) conn.send({ ...results('please', { final: true }), speech_final: true });
+    };
+    conn.onText = value => { if (value.type === 'Finalize') conn.send(results('', { final: true, fromFinalize: true })); };
+  });
+  const stream = transcriber(t, service, { protocol: 'ws-listen-query', model: 'listen-model' }), events = collectWindow(stream);
+  await stream.open(); stream.begin({ window: true });
+  for (let i = 0; i < 4; i++) { stream.sendPcm(frame()); await pause(10); }
+  await until(() => events.filter(e => e.type === 'turn-end').length === 2);
+  assert.deepEqual(events.filter(e => e.type === 'turn-end').map(e => e.text), ['do you want chicken or fish', 'or pasta please']);
+  assert.deepEqual(service.connections[0].texts.filter(x => x.type !== 'KeepAlive'), [], 'no Finalize per utterance');
+});

@@ -83,7 +83,7 @@ Info
 
 ## Phase 0 — preflight fixes and pins (implementing)
 
-- [ ] **T0.1** `chat-stream.js`: add `turnEnd` to the outlet and a
+- [x] **T0.1** `chat-stream.js`: add `turnEnd` to the outlet and a
       `window: true` turn option under which `finalize()` is never implied by a
       turn end and `closesAfterTurn` sockets are not terminated per utterance.
       Accept: `ws-streaming-turns` emits `'turn-end' {text}` on `end_of_turn`;
