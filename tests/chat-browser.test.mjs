@@ -372,3 +372,65 @@ test('her pages: lists from settings, ten a page with More and Back, the lit rai
   assert.deepEqual(await items(), lines.slice(0, 10), 'the open page shows the saved list');
   assert.deepEqual(errors, []);
 });
+
+test('after a silence the options are read aloud: the name, then each label with its tile lit; a selection mid-reading stops it (spec 2026-10-28 §6)', { timeout: 60000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-prompt-'));
+  const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required'] });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+  const page = await context.newPage(), errors = [], clips = [], saved = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    window.__lit = []; window.__plays = 0;
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (...args) { window.__plays++; return play.apply(this, args); };
+    document.addEventListener('DOMContentLoaded', () => new MutationObserver(records => {
+      for (const record of records) if (record.target.matches?.('.tile.response.on') && !record.oldValue?.split(' ').includes('on')) window.__lit.push(record.target.textContent.trim());
+    }).observe(document.querySelector('#grid'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true }));
+  });
+  await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
+  await page.route('**/tts', route => { clips.push(route.request().postDataJSON().text); return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }); });
+  await page.route('**/settings', route => {
+    if (route.request().method() === 'POST') { saved.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatPromptMs: 1000, chatName: 'Sam' }) });
+  });
+  await page.goto(base + '/chat/'); await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
+  await page.waitForFunction(() => document.querySelector('#chatName').value === 'Sam');
+  assert.equal(await page.locator('#chatPrompt').inputValue(), '1000', 'an unlisted delay from the hub is kept as is');
+  // The mouse stays on the door bar: no dwell progress on a tile.
+  async function ask() {
+    await page.locator('#partnerOpen').click();
+    if (!(await page.locator('#testing').evaluate(el => el.open))) await page.locator('#testing > summary').click();
+    await page.locator('#typedQuestion').fill('Would you like music or a story?');
+    await page.locator('#typedAsk').focus(); await page.keyboard.press('Enter');
+    await page.locator('.response').first().waitFor();
+  }
+  await ask();
+  const playsAtReveal = await page.evaluate(() => window.__plays);
+  assert.equal(playsAtReveal, 0, 'the reveal itself speaks nothing');
+  await page.waitForFunction(() => window.__lit.length === 2 && !document.querySelector('#grid .response.on'), null, { timeout: 15000 });
+  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story'], 'each reply lit in spoken order');
+  assert.equal(await page.evaluate(() => window.__plays), 3, 'the name, then each label');
+  assert.ok(clips.includes('Sam, your options are') && clips.includes('Music') && clips.includes('A story'));
+  await page.waitForTimeout(2500);
+  assert.equal(await page.evaluate(() => window.__plays), 3, 'a batch is read at most once');
+  // A new batch: a selection mid-reading stops it at once.
+  await page.evaluate(() => { window.__lit = []; window.__plays = 0; });
+  await ask();
+  await page.waitForFunction(() => window.__lit.length === 1, null, { timeout: 15000 });
+  await page.locator('#grid .tile.response', { hasText: 'A story' }).dispatchEvent('click');
+  await page.waitForTimeout(1500);
+  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music'], 'the reading stopped at the selection');
+  assert.equal(await page.locator('#grid .response.on').count(), 0, 'no tile is left lit');
+  // The partner dialog: Off / 10 / 12 / 15 / 20 s and her name, saved to the device.
+  await page.locator('#partnerOpen').click();
+  await page.locator('#chatPrompt').selectOption('15000');
+  await page.locator('#chatName').fill('Alex'); await page.locator('#chatName').blur();
+  await page.waitForFunction(() => document.querySelector('#chatPromptNote').textContent.startsWith('Saved'));
+  assert.deepEqual(saved, [{ chatPromptMs: 15000 }, { chatName: 'Alex' }]);
+  assert.deepEqual(await page.locator('#chatPrompt option').evaluateAll(options => options.map(option => option.value)).then(values => values.filter(value => value !== '1000')), ['0', '10000', '12000', '15000', '20000']);
+  assert.deepEqual(errors, []);
+});

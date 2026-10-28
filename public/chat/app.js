@@ -6,6 +6,7 @@ import { createChatStorage } from './storage.js';
 import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture } from './symbols.js';
 import { fitTile } from './tile-fit.js';
 import { GRID, fixedTiles, replyAreas, pageCells, paginate } from './frame.js';
+import { createOptionsReader } from './prompt.js';
 import { createTurnLog, observeMetrics, stageChoices } from './turnlog.js';
 import { mountDoorBar } from '/lib/doorbar.js';
 
@@ -100,6 +101,10 @@ const SPOKEN = { yes: 'Yes.', no: 'No.', more: 'Tell me more.', else: 'Something
 let page = null, pageOffset = 0, modeView = null;
 let made = { turn: -1, ask: null, comment: null, aborts: [] }, again = null, echoing = false;
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
+// Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
+// and her name, from /settings (chatPromptMs, chatName).
+let promptMs = 0, herName = '';
+const promptPrefix = () => (herName ? `${herName}, your options are` : 'Your options are');
 const lists = { questions: [], comments: [], about: [] }, world = { about: [], week: [] };
 let listsVersion = 0;
 const LIST_FIELDS = [['questions', 'chatQuestions'], ['comments', 'chatComments'], ['about', 'chatAbout']];
@@ -114,7 +119,7 @@ function setList(key, value) {
 }
 
 function warmPhrases() {
-  voice.prefetch([...OPENERS, ...Object.values(SPOKEN), ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })));
+  voice.prefetch([...OPENERS, ...Object.values(SPOKEN), ...(promptMs > 0 ? [promptPrefix()] : []), ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })));
 }
 function timingEvent(name) {
   if (name === 'choicesReady' || name === 'revealed') {
@@ -197,9 +202,11 @@ const controller = createChatController({
     return result;
   },
   onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
-  stopSpeech: () => { currentSpeech++; metrics.end(speechMetric, 'cancelled', 'interrupted'); speechMetric = null; voice.stop(); },
+  stopSpeech: () => { reader?.cancel(); currentSpeech++; metrics.end(speechMetric, 'cancelled', 'interrupted'); speechMetric = null; voice.stop(); },
   prefetch: choices => {
     voice.prefetch(choices);
+    // The reading says each label; warm the ones that differ from their words.
+    if (promptMs > 0) voice.prefetch(choices.filter(choice => choice.label !== choice.say).map(choice => ({ say: choice.label })));
     // Test mode only, after the real work, and never able to throw into prepare().
     if (stagedMeta?.handle === questionMetric) stageChoices(turnLog, questionMetric, choices, stagedMeta,
       choice => choice.symbol || resolveSymbol({ label: choice.label, type: 'response', say: choice.say }));
@@ -236,10 +243,38 @@ const controller = createChatController({
   },
 });
 
+// ---- reading the options aloud (spec 2026-10-28 §6) ----
+function setPrompt(ms, name) {
+  if (ms !== undefined) {
+    const value = Number(ms);
+    promptMs = Number.isFinite(value) && value >= 0 && value <= 60000 ? Math.round(value) : 0;
+    const select = $('chatPrompt');
+    if (![...select.options].some(option => option.value === String(promptMs))) select.append(new Option(`${Math.round(promptMs / 100) / 10} seconds`, String(promptMs)));
+    select.value = String(promptMs);
+  }
+  if (name !== undefined) { herName = typeof name === 'string' ? name.trim().slice(0, 24) : ''; $('chatName').value = herName; }
+  if (promptMs > 0) voice.prefetch([{ say: promptPrefix() }]);
+}
+const tileFor = item => $('grid').querySelector(`.tile.response[data-choice-id="${CSS.escape(item.id)}"]`);
+reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
+  speak: (text, signal) => voice.say(text, { signal }),
+  light: item => tileFor(item)?.classList.add('on'), unlight: item => tileFor(item)?.classList.remove('on'),
+  onStart: () => turnLog.content(questionMetric, { prompted: true }) });
+// Armed when a batch of replies is on screen and hers (not openers, a page, a made set).
+function armReading(state) {
+  if (state.phase !== 'Your turn' || !state.choices.length || page || modeView || holdActive() || $('partnerDialog').open) return;
+  void reader.armed({ id: state.choices.map(choice => choice.id).join(','), items: state.choices.map(choice => ({ id: choice.id, label: choice.label })) });
+}
+// Any dwell progress or selection on a tile stops the reading at once.
+$('grid').addEventListener('dwell:activate', () => reader.cancel());
+new MutationObserver(() => { if (reader.reading && $('grid').querySelector('.dwell-active')) reader.cancel(); })
+  .observe($('grid'), { subtree: true, attributes: true, attributeFilter: ['class'] });
+
 fetch('/settings').then(r => r.json()).then(s => {
   testMode = s.chatTestMode === true; paintTestMode();
   if (Array.isArray(s.chatLikes)) $('chatLikes').value = s.chatLikes.filter(item => typeof item === 'string').join('\n');
   for (const [key, field] of LIST_FIELDS) setList(key, s[field]);
+  setPrompt(s.chatPromptMs, s.chatName);
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
   window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
@@ -285,6 +320,7 @@ function pageItems(key) {
   return (lists[key] || []).map(line => ({ label: line, say: line }));
 }
 function openPage(key) {
+  reader.cancel();
   if (page === key) { closePage(); return; }
   page = key; pageOffset = 0; modeView = null;
   turnLog.content(questionMetric, { page: key });
@@ -332,6 +368,7 @@ function requestMade(state) {
 }
 function toggleMode(kind) {
   if (!controller.state.choices.length) return;
+  reader.cancel();
   modeView = modeView === kind ? null : kind;
   if (modeView) turnLog.content(questionMetric, { mode: kind });
   gridKey = ''; renderGrid(controller.state);
@@ -442,6 +479,7 @@ controller.subscribe(state => {
   else if (state.phase === 'Ready to ask') notice(state.hint || 'Hold to ask. Voice activation is off.');
   else if (state.phase === 'Your turn') notice('');
   renderGrid(state);
+  armReading(state);
 });
 
 function sendFrame(bytes) {
@@ -875,6 +913,7 @@ for (const [id, down, up] of [['desktopAsk', beginAsk, finishAsk]]) {
 }
 $('desktopAsk').addEventListener('blur', cancelAsk);
 $('partnerOpen').addEventListener('click', () => {
+  reader.cancel();
   // The dialog itself is not a gaze shield: remove underlying dwell targets.
   for (const el of $('grid').querySelectorAll('.dwell')) { el.classList.remove('dwell'); el.dataset.dwellDisabled = ''; }
   $('partnerDialog').showModal(); renderTestPanel(); void showWorld();
@@ -886,7 +925,7 @@ $('typedAsk').addEventListener('click', () => {
   setMode('blocked'); uploadEpoch++; if (session) control('cancel').catch(() => {});
   metrics.end(questionMetric, 'cancelled', 'superseded'); questionMetric = metrics.begin('typed'); metrics.mark(questionMetric, 'transcript');
   turnLog.content(questionMetric, { transcript: text });
-  dropMade(); page = null; pageOffset = 0;
+  dropMade(); page = null; pageOffset = 0; reader.cancel();
   $('partnerDialog').close(); controller.prepare(text); $('typedQuestion').value = '';
 });
 $('voicePreference').value = voice.getPreference();
@@ -1028,6 +1067,24 @@ for (const [key, field] of LIST_FIELDS) $(field).addEventListener('change', asyn
     setList(key, list);
     note.textContent = list.length ? `Saved ${list.length} line${list.length === 1 ? '' : 's'} on this computer.` : 'Saved: nothing on this page on this computer.';
   } catch { note.textContent = 'Not saved. Try again.'; }
+});
+$('chatPrompt').addEventListener('change', async () => {
+  const value = Number($('chatPrompt').value);
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatPromptMs: value }) });
+    if (!saved.ok) throw new Error();
+    setPrompt(value);
+    $('chatPromptNote').textContent = value ? `Saved: her options are read after ${value / 1000} seconds.` : 'Saved: her options are not read aloud.';
+  } catch { $('chatPromptNote').textContent = 'Not saved. Try again.'; }
+});
+$('chatName').addEventListener('change', async () => {
+  const name = $('chatName').value.trim().slice(0, 24);
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatName: name }) });
+    if (!saved.ok) throw new Error();
+    setPrompt(undefined, name);
+    $('chatNameNote').textContent = name ? `Saved: "${name}, your options are".` : 'Saved: "Your options are".';
+  } catch { $('chatNameNote').textContent = 'Not saved. Try again.'; }
 });
 $('saveStory').addEventListener('click', async () => {
   const label = $('storyLabel').value.trim(), say = $('storyMessage').value.trim();
