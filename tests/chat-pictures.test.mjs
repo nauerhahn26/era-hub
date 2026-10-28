@@ -290,7 +290,7 @@ test('a model symbol from another concept family than the food label is rejected
   // Weather and time pictures never stand for a food or drink; other families and the same family stay the model's.
   assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'sunny' }), 'wine', 'the library\'s own picture of the word, never the weather');
   assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'tomorrow' }), 'pizza');
-  assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'yummy' }), 'yummy');
+  assert.equal(pictures.pickSymbol({ label: 'Pizza', say: 'Pizza, please.', symbol: 'yummy' }), 'pizza', 'the label\'s own curated thing beats the model\'s word');
   assert.equal(pictures.pickSymbol({ label: 'Wine', say: 'Wine, please.', symbol: 'drink' }), 'wine');
   assert.equal(pictures.pickSymbol({ label: 'Go to the park', say: 'Let us go to the park.', symbol: 'friday' }), 'park');
   assert.equal(pictures.pickSymbol({ label: 'Saturday', say: 'On Saturday.', symbol: 'saturday' }), 'saturday');

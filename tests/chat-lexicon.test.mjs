@@ -173,7 +173,7 @@ test('the curated vocabulary wins whenever it has the word: its ids were checked
   }
   assert.notEqual(vocabId('back'), lex('back'), 'the library\'s own "back" is the body part; the table keeps its arrow');
   assert.equal(pick('Chicken').symbolId, vocabId('chicken'));
-  assert.equal(pick('Pizza', { symbol: 'yummy' }).symbol, 'yummy', 'the model\'s vocabulary pick for a curated label stands');
+  assert.equal(pick('Pizza', { symbol: 'yummy' }).symbol, 'pizza', 'the label\'s own curated word beats the model\'s vocabulary pick');
 });
 
 test('several things in one label: the family picture, never one of them', () => {
@@ -471,4 +471,20 @@ test('the people provider is asked once per batch, may fail, and is never loaded
   assert.ok(!/require\(['"]\.\/drawings/.test(source), 'chat-symbols never requires drawings.js');
   const hub = fs.readFileSync(path.join(HUB, 'server.js'), 'utf8');
   assert.match(hub, /setPeople\(\(\) => drawings\.charactersLibrary\(\)\.people\)/, 'the hub hands Chat its people library, lazily');
+});
+
+test('the label\'s own curated concept at its head beats the model\'s word; a label naming nothing curated keeps the model\'s', () => {
+  pictures.setLexicon(null);
+  const table = [
+    [{ label: 'Stay home', symbol: 'game' }, 'home'],
+    [{ label: 'Go outside', symbol: 'park' }, 'outside'],
+    [{ label: 'Something fun', symbol: 'game' }, 'game'],
+    [{ label: 'Go to the park', symbol: 'swim' }, 'park'],
+    [{ label: 'Eat pizza', symbol: 'yummy' }, 'pizza'],
+    [{ label: 'Play with the dog', symbol: 'play' }, 'dog'],
+    [{ label: 'Stay inside', symbol: 'game' }, 'home'],
+    [{ label: 'Hmm', symbol: 'game' }, 'game'],
+    [{ label: 'Not home', say: 'Not home.', symbol: 'game' }, 'chat'],
+  ];
+  for (const [choice, word] of table) assert.equal(pick(choice.label, choice).symbol, word, `${choice.label} / ${choice.symbol}`);
 });

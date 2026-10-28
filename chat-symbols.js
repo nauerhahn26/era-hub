@@ -404,6 +404,16 @@ function unknownName(label, l) {
   return true;
 }
 
+// Leading verbs a label's head phrase may follow, beyond the stop words.
+const LEADING = new Set(['stay', 'come', 'sit', 'stop', 'start', 'keep', 'have']);
+function headConcept(l) {
+  const list = words(l);
+  let from = 0;
+  while (from < list.length - 1 && (STOP.has(list[from]) || LEADING.has(list[from]))) from++;
+  const word = exact(list.slice(from).join(' '));
+  return word && word !== FALLBACK && !BROAD.has(word) ? word : null;
+}
+
 // The hub's pick: { word, id? }. A curated phrase, then the library's picture
 // for a thing the table lacks, then the model's symbol, then the text guess.
 function choose({ label = '', say = '', symbol, picture } = {}, people = currentPeople()) {
@@ -417,6 +427,10 @@ function choose({ label = '', say = '', symbol, picture } = {}, people = current
   if (curated(s)) return { word: NEGATION.test(s) ? curated(s) : negationGuard(l, '', curated(s)) };
   const lexical = lexiconChoice(label, l);
   if (lexical) return guardedPick(l, s, lexical);
+  // The label's own curated concept at its head ("Stay home", "Go to the park",
+  // "Eat pizza") beats the model's word; a broad word ("Something fun") does not.
+  const headed = NEGATION.test(l) ? null : headConcept(l);
+  if (headed) return { word: negationGuard(l, s, headed) };
   const model = modelSymbol(symbol);
   if (model && model !== FALLBACK && !rejects(l, model)) return { word: negationGuard(l, s, model) };
   // The label's own curated word or category, then the model's picture words,
