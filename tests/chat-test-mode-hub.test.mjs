@@ -25,6 +25,12 @@ async function freePort() {
 test('the hub keeps test mode off by default, moves it only by a real boolean from its own pages, and routes it before Chat', { timeout: 60000 }, async t => {
   const data = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-test-mode-hub-'));
   const port = await freePort(), base = `http://127.0.0.1:${port}`;
+  // One week package (generic content) for her world, this week's Monday.
+  const today = new Date(), monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (today.getDay() + 6) % 7);
+  const weekOf = `${monday.getFullYear()}-${pad2(monday.getMonth() + 1)}-${pad2(monday.getDate())}`;
+  await fs.mkdir(path.join(data, 'this-week', weekOf), { recursive: true });
+  await fs.writeFile(path.join(data, 'this-week', weekOf, 'manifest.json'), JSON.stringify({ week_of: weekOf, title: 'Magnets!', schema: 1,
+    topic: { science: 'magnets', hero: 'a famous inventor' }, watch: [], talk: [{ word: 'magnet', say: 'magnet', group: 'science', glyph: '🧲', symbol: null }] }));
   const child = spawn(process.execPath, [path.join(HUB, 'server.js'), String(port)], { cwd: HUB, stdio: ['ignore', 'ignore', 'inherit'],
     env: { ...process.env, ERA_DATA_DIR: data, ERA_BIND: '127.0.0.1', ERA_DEVICE_ID: 'test-hub', ERA_CHAT_CONFIG_DISABLED: '1', ERA_POOL_DIR: '' } });
   t.after(async () => { child.kill('SIGKILL'); await fs.rm(data, { recursive: true, force: true }); });
@@ -76,4 +82,13 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.deepEqual(await likes(), ['swim', 'dance', 'bake cookies'], 'a page on another site cannot change it');
   assert.equal((await setLikes([])).status, 204);
   assert.deepEqual(await likes(), [], 'an empty list is a real choice');
+
+  // Her world (plan "Her world as context"): the hub's digest of the week
+  // package and the likes, served to its own pages for the partner dialog.
+  assert.equal((await setLikes(['swim'])).status, 204);
+  const world = await (await fetch(base + '/chat/api/world')).json();
+  assert.match(world.text, /^Today: \w+day, \w+ \d+\.\nThis week at school: "Magnets!"\. Science: magnets\. Hero of the week: a famous inventor\. Words: magnet\.\n/);
+  assert.match(world.text, /\nShe likes: swim\.$/);
+  assert.equal(world.weeks, 1); assert.equal(world.chars, world.text.length);
+  assert.equal((await fetch(base + '/chat/api/world', { headers: { 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
 });

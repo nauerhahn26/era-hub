@@ -31,6 +31,8 @@ const { createChatTurns, applyTestModeSetting, applyLikesSetting, testModeOn, ch
 // people still on her board (the list chat-symbols.setPeople pictures).
 const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA), likes: () => chatLikes(DATA),
   people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
+  // Her world (chat-world.js): built below once DATA exists, read when an open question asks.
+  world: () => chatWorld.digest(),
   pictures: { isCached: (id) => fs.existsSync(path.join(SYMBOLS_CACHE, id + ".png")),
               fetchOne: (id, { signal }) => fetchSymbolToCache(String(id), { signal }) } });
 // CATEGORIES/OCCASIONS are the ONE list (accessories spec §3.1): the prompt,
@@ -64,6 +66,14 @@ const BIND = process.env.ERA_BIND || "127.0.0.1";
 const PUB = path.join(__dirname, "public");
 const DATA = process.env.ERA_DATA_DIR || path.join(__dirname, "data");
 const chatStore = require("./chat-store.js").createChatStore({ dataDir: DATA });
+// Her world for open-ended Chat questions (plan "Her world as context", dad 10/28):
+// the week packages under DATA/this-week, the shelf, the people and the likes.
+// Every provider is read lazily (booksIndex and drawings are wired further down)
+// and the digest looks at them at most once a minute.
+const chatWorld = require("./chat-world.js").createWorld({ dataDir: DATA,
+  books: () => booksIndex().map((b) => ({ title: b.title, weekOf: b.weekOf, publishedAt: b.publishedAt })),
+  people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
+  likes: () => chatLikes(DATA) });
 const LOGS = path.join(DATA, "logs");
 const TTS_CACHE = path.join(DATA, "tts-cache");
 const GAMES_STATE = path.join(DATA, "games", "state.json");
