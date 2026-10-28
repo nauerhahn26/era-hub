@@ -71,7 +71,7 @@ test('the action may be left out: the key decides it', async () => {
 test('status: the listener fields, unsupported off Windows, nothing pressed yet', () => {
   const { buttons } = make();
   assert.deepEqual(buttons.status(), { state: 'unsupported', pid: null, keys: { registered: [], failed: [] }, lastPress: null,
-    restarts: 0, lastError: null, micPolicy: 'n/a', micPolicyError: null });
+    restarts: 0, lastError: null });
 });
 
 test('the payload ships buttons.js and every hub module server.js loads, transitively', async () => {

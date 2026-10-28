@@ -334,8 +334,7 @@
     <h2>🔘 Buttons</h2>
     <p class="hint">A partner presses a button and Chat starts listening, with no touch on the screen. Press again to finish; hold to cancel.</p>
     <div class="status" id="buttonsStatus"></div>
-    <div class="status" id="buttonsMic" hidden></div>
-    <p class="hint" id="buttonsSetup">Flic app: Keyboard mode, click &rarr; F13, hold &rarr; F14, double click empty; pair in Windows Bluetooth as a keyboard. Square button: Hardware Settings &rarr; Send Keyboard Key &rarr; Ctrl+Alt+F9, then restart the device.</p>
+    <p class="hint" id="buttonsSetup">Flic app: Keyboard mode, click &rarr; F13, hold &rarr; F14, double click empty; pair in Windows Bluetooth as a keyboard. Square button: Hardware Settings &rarr; Send Keyboard Key &rarr; Ctrl+Alt+F9, then restart the device. The first time, touch Chat's microphone control once so the browser remembers the microphone for this device.</p>
   </div>
 
   <div class="card" id="exit">
@@ -1290,9 +1289,6 @@ async function buttonsPaint(){
   try{
     const s=await (await fetch("/status",{cache:"no-store"})).json(), b=s&&s.buttons;
     el.textContent=buttonsLine(b);
-    // the browsers' microphone allow-list (design §4.3): said only when reg refused it
-    const mic=$("buttonsMic");
-    if(mic){ const bad=b&&b.micPolicy==="failed"; mic.textContent=bad?"Microphone policy not written: "+(b.micPolicyError||"no reason given"):""; mic.hidden=!bad; }
   }catch(e){}
 }
 buttonsPaint();

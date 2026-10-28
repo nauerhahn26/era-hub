@@ -574,13 +574,12 @@ const kioskLauncher = require("./kiosk-launch.js").createKioskLauncher({
 });
 // The device listener that turns the buttons' keys into presses (design §4.1):
 // compiled from buttons/EraButtons.cs on the device, kept running as this
-// hub's child while Chat is on, and the browsers' microphone policy written
-// beside it (buttons.js createListener). ERA_BUTTONS_CSC / ERA_BUTTONS_REG are
-// the suites' stub compiler and stub reg.exe (as ERA_GAZE_CSC); unset off
-// Windows, the listener is "unsupported" and nothing runs.
+// hub's child while Chat is on (buttons.js createListener). ERA_BUTTONS_CSC is
+// the suites' stub compiler (as ERA_GAZE_CSC); unset off Windows, the
+// listener is "unsupported" and nothing runs.
 const buttonsListener = require("./buttons.js").createListener({
   dir: path.join(__dirname, "buttons"), port: PORT, hubPid: process.pid,
-  csc: process.env.ERA_BUTTONS_CSC || null, reg: process.env.ERA_BUTTONS_REG || null,
+  csc: process.env.ERA_BUTTONS_CSC || null,
   enabled: () => loadEnabledApps().includes("chat"),
   log: (m) => console.log("[buttons] " + m),
 });

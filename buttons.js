@@ -135,16 +135,15 @@ function createButtons(options = {}) {
   // listener at all.
   function status() {
     const listener = options.listener ? options.listener.status()
-      : { state: platform === 'win32' ? 'stopped' : 'unsupported', pid: null, keys: { registered: [], failed: [] }, restarts: 0, lastError: null, micPolicy: 'n/a', micPolicyError: null };
+      : { state: platform === 'win32' ? 'stopped' : 'unsupported', pid: null, keys: { registered: [], failed: [] }, restarts: 0, lastError: null };
     return { state: listener.state, pid: listener.pid, keys: listener.keys,
-      lastPress: lastPress && { ...lastPress }, restarts: listener.restarts, lastError: listener.lastError,
-      micPolicy: listener.micPolicy, micPolicyError: listener.micPolicyError ?? null };
+      lastPress: lastPress && { ...lastPress }, restarts: listener.restarts, lastError: listener.lastError };
   }
 
   return { press, status, readBody };
 }
 
-// ---- the device listener (design §4.1, §4.3; plan T5.2, T5.3, T5.5) ----
+// ---- the device listener (design §4.1, §4.3; plan T5.2, T5.3) ----
 //
 // buttons/EraButtons.cs ships as source and is compiled on the device with
 // Windows' own csc, exactly as the gaze engine is (server.js installGaze): the
@@ -160,30 +159,18 @@ function createButtons(options = {}) {
 // It runs only while Chat is on: Chat turned off stops our child, then ours by
 // path. The listener itself leaves when the hub's pid is gone.
 //
-// The microphone (decision 6, W3): a press must start Chat without a touch,
-// and only a policy can pre-grant the microphone. Both browsers' per-user
-// AudioCaptureAllowedUrls get value 1 = this hub's origin, written with
-// reg.exe once per boot while Chat is on. Whether an unmanaged machine honours
-// it is the VM case's verdict; the one-touch line on the page stands either way.
+// The microphone (decision 16): the hub does not pre-grant it. The browsers'
+// AudioCaptureAllowedUrls policy lives under HKCU\Software\Policies, which
+// is admin-protected, and the hub runs unelevated ("Access is denied" on the
+// VM, 10/28). The kiosk profile remembers the grant from the first touch on
+// Chat's microphone control, a rollout step per device.
 const CSC = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
 const BACKOFF_MS = Object.freeze([5000, 15000, 60000, 300000]);
 const HEALTHY_MS = 10 * 60 * 1000;
-const POLICY_KEYS = Object.freeze([
-  'HKCU\\Software\\Policies\\Google\\Chrome\\AudioCaptureAllowedUrls',
-  'HKCU\\Software\\Policies\\Microsoft\\Edge\\AudioCaptureAllowedUrls',
-]);
 const FILES = Object.freeze({ source: 'EraButtons.cs', exe: 'EraButtons.exe', next: 'EraButtons.new.exe', hash: 'EraButtons.exe.src-sha256' });
 
 function cscArgs(out, source) {
   return ['/nologo', '/target:winexe', '/platform:x64', '/out:' + out, '/r:System.Windows.Forms.dll', source];
-}
-// reg.exe by its full path: never whatever a PATH lookup finds first.
-const REG = 'C:\\Windows\\System32\\reg.exe';
-// A refused policy write is tried once more this long after (a profile not yet
-// loaded at boot is a plausible cause), then left alone until the next boot.
-const POLICY_RETRY_MS = 30 * 1000;
-function micPolicyArgs(port) {
-  return POLICY_KEYS.map(key => ['add', key, '/v', '1', '/t', 'REG_SZ', '/d', 'http://127.0.0.1:' + port, '/f']);
 }
 // The listener's start line, or null: two arrays of known key names.
 function parseRegistration(line) {
@@ -233,8 +220,6 @@ function createListener(options = {}) {
   // suites run the whole path elsewhere, as ERA_GAZE_CSC does for the engine.
   const supported = platform === 'win32' || !!options.csc;
   const cscCmd = options.csc || CSC;
-  const canPolicy = platform === 'win32' || !!options.reg;
-  const regCmd = options.reg || REG;
   const source = path.join(dir, FILES.source), exe = path.join(dir, FILES.exe);
   const next = path.join(dir, FILES.next), hashFile = path.join(dir, FILES.hash);
   const empty = () => ({ registered: [], failed: [] });
@@ -243,33 +228,12 @@ function createListener(options = {}) {
   let state = supported ? 'stopped' : 'unsupported';
   let child = null, pid = null, keys = empty(), startedAt = 0;
   let restarts = 0, step = 0, nextAt = 0, lastError = null;
-  let micPolicy = 'n/a', micPolicyError = null, policyWriting = null, policyFailedAt = 0, policyRetried = false;
   let compiling = null, failedHash = null;
 
   const sourceHash = () => crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
   function needsCompile() {
     if (!fs.existsSync(exe)) return true;
     try { return fs.readFileSync(hashFile, 'utf8').trim() !== sourceHash(); } catch { return true; }
-  }
-
-  function writePolicy() {
-    if (!canPolicy) return policyWriting;
-    // one retry, POLICY_RETRY_MS after a refusal; then the refusal stands
-    if (policyWriting && micPolicy === 'failed' && !policyRetried && now() - policyFailedAt >= POLICY_RETRY_MS) {
-      policyRetried = true; policyWriting = null;
-      log('microphone policy: trying once more');
-    }
-    if (policyWriting) return policyWriting;
-    policyWriting = Promise.all(micPolicyArgs(port).map(args => Promise.resolve(run(regCmd, args, { timeout: 20000 }))
-      .catch(error => ({ status: 1, stdout: '', stderr: '', error }))))
-      .then(results => {
-        const bad = results.find(r => r.status !== 0);
-        micPolicy = bad ? 'failed' : 'written';
-        micPolicyError = bad ? ((String(bad.stdout || '') + String(bad.stderr || '')).trim() || (bad.error && bad.error.message) || 'status ' + bad.status).replace(/\s+/g, ' ').trim().slice(0, 200) : null;
-        if (bad) { policyFailedAt = now(); log('microphone policy not written: ' + micPolicyError); }
-        else log('microphone policy written for http://127.0.0.1:' + port);
-      });
-    return policyWriting;
   }
 
   async function compile() {
@@ -367,11 +331,10 @@ function createListener(options = {}) {
       if (!compiling) state = 'off';
       return;
     }
-    writePolicy();
     if (compiling) return compiling;
     if (child) {
       if (now() - startedAt >= healthyMs) step = 0;
-      return policyWriting;
+      return;
     }
     if (fs.existsSync(source) && needsCompile() && sourceHash() !== failedHash) {
       compiling = (async () => { state = 'compiling'; await compile(); })()
@@ -384,14 +347,13 @@ function createListener(options = {}) {
       else if (now() < nextAt) state = 'restarting';
       else spawnChild();
     }
-    if (policyWriting) await policyWriting;
   }
   function start() { started = true; return tick(); }
   function stop() { started = false; stopChild(); if (supported) state = 'stopped'; }
   function status() {
-    return { state, pid, keys: { registered: [...keys.registered], failed: [...keys.failed] }, restarts, lastError, micPolicy, micPolicyError };
+    return { state, pid, keys: { registered: [...keys.registered], failed: [...keys.failed] }, restarts, lastError };
   }
   return { start, tick, stop, status, compile, paths: { source, exe, next, hash: hashFile } };
 }
 
-module.exports = { createButtons, KEYS, readBody, createListener, cscArgs, micPolicyArgs, parseRegistration, stopScript, CSC, REG, POLICY_RETRY_MS, BACKOFF_MS, HEALTHY_MS, POLICY_KEYS };
+module.exports = { createButtons, KEYS, readBody, createListener, cscArgs, parseRegistration, stopScript, CSC, BACKOFF_MS, HEALTHY_MS };

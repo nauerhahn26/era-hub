@@ -2,8 +2,7 @@
 // listener (button press to ask, design 2026-10-27 §4.1; plan T5.2, T5.6),
 // shaped like gaze-recompile.test.mjs. A real hub runs from a copy of the
 // payload's modules with buttons/EraButtons.cs beside them; csc is stubbed
-// through ERA_BUTTONS_CSC and reg.exe through ERA_BUTTONS_REG (the seams that
-// let the Windows-only path run here). The stub's "exe" is a shell script that
+// through ERA_BUTTONS_CSC (the seam that lets the Windows-only path run here). The stub's "exe" is a shell script that
 // prints the listener's registration line and leaves when the hub's pid is
 // gone, as the real one does.
 //
@@ -30,9 +29,7 @@ const SRC = path.join(DIR, "EraButtons.cs");
 const EXE = path.join(DIR, "EraButtons.exe");
 const HASH = path.join(DIR, "EraButtons.exe.src-sha256");
 const CALLS = path.join(TMP, "csc-calls.log");
-const REG_CALLS = path.join(TMP, "reg-calls.log");
 const CSC = path.join(TMP, "csc-stub.sh");
-const REG = path.join(TMP, "reg-stub.sh");
 const LISTENER = path.join(TMP, "listener-stub.sh");
 const ALL = ["F13", "F14", "Ctrl+Alt+F9", "Ctrl+Alt+F10", "Ctrl+Alt+F11"];
 let PORT, BASE, child, log = "";
@@ -66,7 +63,7 @@ function boot() {
            ERA_UPDATE_URL: "http://127.0.0.1:9", ERA_GEO_URL: "http://127.0.0.1:9/geo", ERA_WEATHER_URL: "http://127.0.0.1:9",
            ERA_SYMBOL_SEARCH_URL: "http://127.0.0.1:9/", ERA_SYMBOL_IMAGE_URL: "http://127.0.0.1:9/{id}",
            ERA_RECONCILE_DELAY_MS: "300", ERA_BUTTONS_POLL_MS: "200",
-           ERA_BUTTONS_CSC: CSC, ERA_BUTTONS_REG: REG },
+           ERA_BUTTONS_CSC: CSC },
   });
   child.stdout.on("data", (d) => { log += d; });
   child.stderr.on("data", (d) => { log += d; });
@@ -112,10 +109,7 @@ sleep 0.6
 if grep -q BROKEN "$src"; then echo "EraButtons.cs(1,1): error CS1002: ; expected"; exit 1; fi
 { cat "${LISTENER}"; sed 's/^/# /' "$src"; } > "$out"; chmod +x "$out"
 `);
-  fs.writeFileSync(REG, `#!/bin/sh
-echo "$*" >> "${REG_CALLS}"
-`);
-  for (const f of [CSC, REG, LISTENER]) fs.chmodSync(f, 0o755);
+  for (const f of [CSC, LISTENER]) fs.chmodSync(f, 0o755);
 });
 after(async () => { await stop(); fs.rmSync(TMP, { recursive: true, force: true }); });
 
@@ -135,12 +129,10 @@ test("(a) a fresh install compiles the listener, records the source hash, and /s
   assert.match(log, /\[buttons\] listener running: holds F13, F14, Ctrl\+Alt\+F9, Ctrl\+Alt\+F10, Ctrl\+Alt\+F11/, log);
 });
 
-test("(a2) the microphone policy is written for both browsers at boot, as reg.exe add", async () => {
-  await until(async () => (await status()).micPolicy === "written", 5000, "micPolicy written");
-  assert.deepEqual(lines(REG_CALLS), [
-    `add HKCU\\Software\\Policies\\Google\\Chrome\\AudioCaptureAllowedUrls /v 1 /t REG_SZ /d http://127.0.0.1:${PORT} /f`,
-    `add HKCU\\Software\\Policies\\Microsoft\\Edge\\AudioCaptureAllowedUrls /v 1 /t REG_SZ /d http://127.0.0.1:${PORT} /f`,
-  ]);
+test("(a2) no microphone policy is written (decision 16): /status.buttons has no policy field and the hub says nothing of one", async () => {
+  const s = await status();
+  assert.ok(!("micPolicy" in s) && !("micPolicyError" in s), JSON.stringify(s));
+  assert.doesNotMatch(log, /policy/i, log);
 });
 
 test("(b) a listener that dies is started again on its ladder, and /status counts it", async () => {

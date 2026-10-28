@@ -49,6 +49,9 @@ Warning
   whether an unmanaged Windows machine honours HKCU policies for this key is
   **unverified** on Linux. T5.6 writes both; the VM case T5.8 proves or
   disproves it; the design's "touch Start Chat once" line is the fallback.
+  **Resolved 10/28:** the hub cannot write `HKCU\Software\Policies`
+  unelevated (VM: `ERROR: Access is denied.`), so the write is dropped
+  (decision 16).
 - W4 `RegisterHotKey` works only in the interactive desktop session that the
   hub's child inherits. The hub must be the Startup-link hub in her session
   (the 10/19 boot pass); a hub started from the ssh user (school lessons)
@@ -300,7 +303,7 @@ Info
       Windows Bluetooth as a keyboard. Square button: Hardware Settings →
       Send Keyboard Key → Ctrl+Alt+F9, then restart the device." Verify:
       `node --test tests/settings-ui.test.mjs tests/settings-navigation.test.mjs`.
-- [x] **T5.5** (unit in `tests/buttons-keeper.test.mjs`; `ERA_BUTTONS_REG` is the stub reg.exe seam, as `ERA_BUTTONS_CSC`; written once per boot, or when Chat is first turned on) Microphone policy write at boot (W3): `reg.exe add <key>
+- [x] **T5.5** (removed: policy write impossible unelevated (VM 10/28); `writePolicy`, its retry, `/status.buttons.micPolicy*`, the Settings line and `ERA_BUTTONS_REG` are gone, decision 16) Microphone policy write at boot (W3): `reg.exe add <key>
       /v 1 /t REG_SZ /d http://127.0.0.1:<port> /f` for both browsers, result in
       `/status.buttons.micPolicy` (`written|failed|n/a`). Verify: unit test
       asserts the two argv arrays; no PowerShell. Guard: runs only when Chat is
@@ -314,7 +317,7 @@ Info
       `tests/buttons-payload.test.mjs` asserts `tools/build-payload.sh` copies
       `buttons/EraButtons.cs` and the Chat test-mode guard still passes; the
       Chat test-mode and era-scan steps unchanged.
-- [ ] **T5.8** (written, not yet run: the case sits before "shut down" in leg B, the injector is `tests-vm/lib/sendkey.cs`; F13 is pressed from Home so the relaunch path is the one proved; an F14 between the two presses closes whatever the first ask opened; the W3 verdict is logged and written to `$VM_OUT/buttons-w3.json`) Windows case (quiet profile) as a new `test()` in
+- [ ] **T5.8** (written, not yet run: the case sits before "shut down" in leg B, the injector is `tests-vm/lib/sendkey.cs`; F13 is pressed from Home so the relaunch path is the one proved; an F14 between the two presses closes whatever the first ask opened; the W3 verdict is logged and written to `$VM_OUT/buttons-w3.json`; 10/28 run: the press reached the hub and relaunched, but the case re-attached DevTools to the old kiosk before the hub had closed it, so it now proves the relaunch by the guest's process list — exactly one kiosk browser, launched at `/chat/?ask=` — and a screenshot, then re-attaches to the new instance; the hub's relaunch now waits up to 5 s for the old kiosk's processes to be gone) Windows case (quiet profile) as a new `test()` in
       `tests-vm/leg-b-update.e2e.mjs` after the Chat case: enable Chat, wait
       for `/status.buttons.state === 'running'` and five registered keys;
       ship a 15-line C# `sendkey.cs` (compiled with the guest csc as
@@ -423,6 +426,11 @@ Info
     stale tiles) and only replacement batches and stale tiles wait for the
     neutral moment (`swapReplacement()`, design §4.5); the hold-path pin now
     guards master's v1.0.31 `beginAsk`/`finishAsk`/`cancelAsk`.
+16. The hub does not pre-grant the microphone: HKCU\Software\Policies is
+    admin-protected and the hub runs unelevated (Access is denied on the VM,
+    10/28). The browser profile remembers the grant from the first touch on
+    Chat's microphone control; that touch is a rollout step per device (the
+    home I-13 already has it from Chat use).
 
 ## Retrospective
 

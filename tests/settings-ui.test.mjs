@@ -1960,7 +1960,7 @@ test("device volume can rise above 45, decrease, switch Off, and retain its mode
 function buttonsStatus(over = {}) {
   return { state: "running", pid: 4321, keys: { registered: ["F13", "F14", "Ctrl+Alt+F9", "Ctrl+Alt+F10", "Ctrl+Alt+F11"], failed: [] },
     lastPress: { at: "2026-10-28T18:04:30.000Z", key: "F13", action: "ask", dispatch: "visible" },
-    restarts: 0, lastError: null, micPolicy: "written", ...over };
+    restarts: 0, lastError: null, ...over };
 }
 async function buttonsPage(payload) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, timezoneId: "UTC" });
@@ -1983,7 +1983,8 @@ test("the Buttons card says the listener runs, which keys it holds and the last 
     await page.waitForFunction(() => /Listener running/.test(document.getElementById("buttonsStatus").textContent));
     assert.equal(await buttonsLine(page), "Listener running · holds F13, F14, Ctrl+Alt+F9/F10/F11 · last press 18:04 F13 (ask)");
     const note = await page.$eval("#buttonsSetup", el => el.textContent.replace(/\s+/g, " ").trim());
-    assert.equal(note, "Flic app: Keyboard mode, click → F13, hold → F14, double click empty; pair in Windows Bluetooth as a keyboard. Square button: Hardware Settings → Send Keyboard Key → Ctrl+Alt+F9, then restart the device.");
+    assert.equal(note, "Flic app: Keyboard mode, click → F13, hold → F14, double click empty; pair in Windows Bluetooth as a keyboard. Square button: Hardware Settings → Send Keyboard Key → Ctrl+Alt+F9, then restart the device. The first time, touch Chat's microphone control once so the browser remembers the microphone for this device.");
+    assert.equal(await page.$("#buttonsMic"), null, "no microphone policy line: the hub does not write one (decision 16)");
   } finally { await ctx.close(); }
 });
 
@@ -1999,21 +2000,6 @@ test("Chat off, a key another program holds, no press yet, and a listener that c
     await page.waitForFunction(() => /not running/.test(document.getElementById("buttonsStatus").textContent), null, { timeout: 8000 });
     assert.match(await buttonsLine(page), /^Listener not running: compile failed: <b>CS1002<\/b>/);
     assert.equal(await page.$$eval("#buttonsStatus b", els => els.length), 0, "the error is text, never markup");
-  } finally { await ctx.close(); }
-});
-
-test("a microphone policy that was not written is said in one line under the status, with reg's words as text (W3)", async () => {
-  const { ctx, page, box } = await buttonsPage(buttonsStatus({ micPolicy: "failed", micPolicyError: "ERROR: Access is <i>denied</i>." }));
-  try {
-    await page.waitForFunction(() => /Microphone policy not written/.test(document.getElementById("buttonsMic").textContent));
-    assert.equal(await page.$eval("#buttonsMic", el => el.textContent.replace(/\s+/g, " ").trim()), "Microphone policy not written: ERROR: Access is <i>denied</i>.");
-    assert.equal(await page.$eval("#buttonsMic", el => el.hidden), false);
-    assert.equal(await page.$$eval("#buttonsMic i", els => els.length), 0, "the error is text, never markup");
-    assert.equal(await page.$eval("#buttonsStatus", el => el.nextElementSibling && el.nextElementSibling.id), "buttonsMic", "right under the status");
-    assert.equal(await buttonsLine(page), "Listener running · holds F13, F14, Ctrl+Alt+F9/F10/F11 · last press 18:04 F13 (ask)");
-    box.buttons = buttonsStatus({ micPolicy: "written", micPolicyError: null });
-    await page.waitForFunction(() => document.getElementById("buttonsMic").hidden, null, { timeout: 8000 });
-    assert.equal(await page.$eval("#buttonsMic", el => el.textContent), "");
   } finally { await ctx.close(); }
 });
 
