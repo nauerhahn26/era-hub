@@ -193,7 +193,7 @@ Info
       `cap`; second press closes `press`; cancel closes `cancel` with no seal;
       pick closes `pick`; nothing said closes `nothing-said` with zero seals.
       Guard: tests first; the machine never touches sockets or the page.
-- [ ] **T3.2** Wire it in chat-api: control type `window` begins a stream turn
+- [x] **T3.2** (also `/config` reports `streaming: true`; a lost stream closes the window `error`, no one-shot fallback) Wire it in chat-api: control type `window` begins a stream turn
       with `window: true` (B1 limit, B2 socket kept), `session.window` runs the
       machine; each seal runs `runChoices(session, windowText)` (whole window
       text) and the sealed batch is emitted as `batch-sealed {windowId, seq}`
@@ -203,7 +203,7 @@ Info
       Verify: `node --test tests/chat-window-hub.test.mjs` (fake streaming
       service from `tests/chat-stream-hub.test.mjs`). Guard: a `finish` or
       `ask` control on a windowed session → 409 `window-open`.
-- [ ] **T3.3** Silence fallback (W2): `chat-window.js` exports `energyGate()`
+- [x] **T3.3** Silence fallback (W2): `chat-window.js` exports `energyGate()`
       ported from the worker's `measure` (100 ms frames, variance ≥ .003²);
       chat-api feeds every accepted window frame to it; "1.5 s silence" = 15
       consecutive quiet frames after ≥ 2 energetic ones. Provider turn-end wins
