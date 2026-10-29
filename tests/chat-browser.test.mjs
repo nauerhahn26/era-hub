@@ -503,3 +503,136 @@ test('Back in the door bar: twice the door wide a quarter door right of it; it c
   assert.equal(await page.locator('#grid .response.dwell').count(), 2);
   assert.deepEqual(errors, []);
 });
+
+// The hub's ear (spec 2026-10-28 §8, chat-api.js W1) as this fixture speaks it:
+// the control replies, the ear's events and the audio socket are this test's own.
+test('Listen for <name>: the switch streams room audio as an ear, a wake utterance reveals replies, her clips are never heard, a hold still works, off closes it', { timeout: 90000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-wake-'));
+  const wav = path.join(scratch, 'microphone.wav'); await fs.writeFile(wav, makeChatToneWav());
+  const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${wav}`, '--autoplay-policy=no-user-gesture-required'] });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, hasTouch: true, permissions: ['microphone'] });
+  await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+  const page = await context.newPage(), errors = [], controls = [], saved = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    window.__frames = []; window.__clips = [];
+    window.EventSource = class { constructor(url) { if (String(url).includes('/sessions/')) window.__events = this; } close() { this.closed = true; } };
+    window.WebSocket = class {
+      static OPEN = 1;
+      constructor() { this.readyState = 0; this.bufferedAmount = 0; window.__socket = this; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 10); }
+      send(buffer) { const view = new DataView(buffer); window.__frames.push({ gen: view.getUint32(0, true), seq: view.getUint32(4, true), at: performance.now() }); }
+      close() { this.readyState = 3; }
+    };
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (...args) {
+      const clip = { start: performance.now(), end: null }; window.__clips.push(clip);
+      this.addEventListener('ended', () => { clip.end = performance.now(); }, { once: true });
+      return play.apply(this, args);
+    };
+  });
+  let generation = 10;
+  const EAR = 7;
+  await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
+  await page.route('**/tts', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }));
+  await page.route('**/settings', route => {
+    if (route.request().method() === 'POST') { saved.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatName: 'Ellie', chatWakeMode: false, chatPromptMs: 0 }) });
+  });
+  await page.route('**/chat/api/**', async route => {
+    const req = route.request(), url = new URL(req.url()); let result = {};
+    if (url.pathname === '/chat/api/state') return route.continue();
+    if (url.pathname.endsWith('/config')) result = { runtime: { available: true, kind: 'built-in', capabilities: { streaming: true, wake: true } }, choices: { available: true } };
+    else if (url.pathname.endsWith('/sessions') && req.method() === 'POST') result = { id: 'wake-session' };
+    else if (url.pathname.endsWith('/control')) {
+      const body = req.postDataJSON(); controls.push(body);
+      result = body.type === 'window' && body.ear === true ? { ok: true, generation: EAR, earId: 'ear-1' } : body.type === 'window' ? { ok: true, generation }
+        : body.type === 'finish' ? { generation } : body.type === 'cancel' ? { ok: true, generation: EAR } : { generation: ++generation };
+    } else if (url.pathname.endsWith('/choices')) result = { kind: 'alternatives', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] };
+    else result = {};
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) }).catch(() => {});
+  });
+  await page.goto(base + '/chat/'); await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
+  await page.waitForFunction(() => window.__events);
+  await page.evaluate(() => window.__events.onmessage({ data: JSON.stringify({ type: 'ready', capabilities: { remoteStreaming: true, audioSocket: true, stagedChoices: true } }) }));
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask');
+  const cdp = await context.newCDPSession(page);
+  const touch = async (selector, ms = 60) => {
+    const box = await page.locator(selector).boundingBox(); assert.ok(box, selector);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
+    await page.waitForTimeout(ms); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  const emit = data => page.evaluate(value => window.__events.onmessage({ data: JSON.stringify(value) }), data);
+  const earFrames = () => page.evaluate(ear => window.__frames.filter(frame => frame.gen === ear).length, EAR);
+  // The switch: in the partner strip left of the lock, off by default, enabled with a wake-capable runtime.
+  const toggle = page.locator('#wakeToggle');
+  assert.equal((await toggle.textContent()).trim(), 'Listen for Ellie: off'); assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+  assert.equal(await toggle.isDisabled(), false);
+  const [wakeBox, lockBox] = await page.evaluate(() => ['#wakeToggle', '#stripLock'].map(id => document.querySelector(id).getBoundingClientRect().toJSON()));
+  assert.ok(wakeBox.right <= lockBox.left, 'the switch is left of the lock');
+  await page.waitForTimeout(200); assert.equal(await earFrames(), 0); assert.equal(await page.locator('#wakeBanner').isVisible(), false);
+  await toggle.click(); assert.equal(await toggle.getAttribute('aria-pressed'), 'false', 'a mouse or gaze click does not switch it');
+  // On: the ear opens and frames flow with no hold.
+  await touch('#wakeToggle');
+  await page.waitForFunction(() => document.querySelector('#wakeToggle').getAttribute('aria-pressed') === 'true');
+  assert.deepEqual(saved.at(-1), { chatWakeMode: true });
+  for (let i = 0; i < 100 && !controls.some(body => body.type === 'window' && body.ear === true); i++) await page.waitForTimeout(20);
+  assert.ok(controls.some(body => body.type === 'window' && body.ear === true), 'the ear is asked for');
+  await page.waitForFunction(ear => window.__frames.filter(frame => frame.gen === ear).length >= 5, EAR, { timeout: 5000 });
+  assert.equal((await toggle.textContent()).trim(), 'Listen for Ellie: on');
+  assert.equal(await page.locator('#phase').textContent(), 'Listening for Ellie');
+  assert.equal(await page.locator('#wakeBanner').isVisible(), true);
+  assert.match(await page.locator('#wakeBanner').textContent(), /room audio/i);
+  assert.ok(await page.locator('#grid .tile.yes.dwell').count() === 1, 'tiles stay live in ear mode');
+  // A wake utterance: its staged batch reveals through the window path, the strip shows the question.
+  await emit({ type: 'ear', state: 'listening', earId: 'ear-1', generation: EAR });
+  await emit({ type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-1', seq: 1, text: 'music or a story?', windowText: 'music or a story?', generation: EAR });
+  await emit({ type: 'choice-staged', generation: EAR, windowId: 'w-other', seq: 1, index: 0, choice: { label: 'Wrong', say: 'Wrong' } });
+  await emit({ type: 'batch-sealed', generation: EAR, windowId: 'w-1', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
+  await page.waitForSelector('#grid .response');
+  assert.equal(await page.locator('#grid .tile.question .label').textContent(), 'music or a story?');
+  // Her clip is never heard: no frames while it plays and for 400 ms after.
+  await page.locator('#grid .response', { hasText: 'Music' }).click();
+  await page.waitForFunction(() => window.__clips.length && window.__clips.at(-1).end, null, { timeout: 5000 });
+  await page.waitForTimeout(900);
+  const gate = await page.evaluate(ear => { const clip = window.__clips.at(-1); const ears = window.__frames.filter(frame => frame.gen === ear);
+    return { during: ears.filter(frame => frame.at > clip.start && frame.at < clip.end + 380).length, after: ears.filter(frame => frame.at > clip.end + 420).length }; }, EAR);
+  assert.equal(gate.during, 0, 'no ear frames while her clip plays or within 400 ms of its end');
+  assert.ok(gate.after > 0, 'the ear resumes after the gap');
+  const refresh = controls.filter(body => body.type === 'window' && body.ear === true).at(-1);
+  assert.ok(controls.filter(body => body.type === 'window' && body.ear === true).length >= 2 && refresh.context.includes('Me: Music'), 'after her pick the ear gets the conversation so far');
+  // A hold with the ear on: the hold's frames are the hold's; the ear resumes after the final.
+  await touch('#ask', 600);
+  for (let i = 0; i < 100 && !controls.some(body => body.type === 'finish'); i++) await page.waitForTimeout(20);
+  const ask = controls.filter(body => body.type === 'ask').length;
+  assert.equal(ask, 1, 'the hold asked as today');
+  const holdGen = generation; // the ask's generation (finish keeps it)
+  assert.ok(await page.evaluate(ear => window.__frames.some(frame => frame.gen !== ear), EAR), 'the hold sent its own frames');
+  await emit({ type: 'ear', state: 'off', reason: 'hold', earId: 'ear-1', generation: holdGen });
+  await emit({ type: 'final', generation: holdGen, text: 'Would you like music or a story?' });
+  await emit({ type: 'batch-sealed', generation: holdGen, kind: 'generated', choices: [{ label: 'Tea', say: 'Tea' }, { label: 'Milk', say: 'Milk' }] });
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Your turn');
+  // The hub resumes the ear itself, under the session's new generation.
+  await emit({ type: 'ear', state: 'listening', resumed: true, earId: 'ear-1', generation: holdGen });
+  const resumedAt = await page.evaluate(() => performance.now());
+  await page.waitForTimeout(600);
+  assert.ok(await page.evaluate(({ gen, at }) => window.__frames.filter(frame => frame.gen === gen && frame.at > at).length, { gen: holdGen, at: resumedAt }) > 0, 'the ear resumes after the final, with the generation it was given');
+  // A stream error closes the ear at the hub; with the switch still on the page opens it again.
+  const opens = controls.filter(body => body.type === 'window' && body.ear === true).length;
+  await emit({ type: 'ear', state: 'off', reason: 'error', earId: 'ear-1', generation: holdGen });
+  for (let i = 0; i < 150 && controls.filter(body => body.type === 'window' && body.ear === true).length === opens; i++) await page.waitForTimeout(20);
+  assert.equal(controls.filter(body => body.type === 'window' && body.ear === true).length, opens + 1, 'the ear is opened again');
+  await page.waitForFunction(() => document.body.dataset.ear === 'on');
+  // Off: the ear closes and nothing more is sent.
+  await touch('#wakeToggle');
+  await page.waitForFunction(() => document.querySelector('#wakeToggle').getAttribute('aria-pressed') === 'false');
+  assert.deepEqual(saved.at(-1), { chatWakeMode: false });
+  assert.ok(controls.some(body => body.type === 'window' && body.ear === false), 'the ear is closed');
+  await emit({ type: 'ear', state: 'off', reason: 'off', earId: 'ear-1', generation: holdGen });
+  await page.waitForTimeout(200); const stopped = await page.evaluate(() => window.__frames.length); await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(() => window.__frames.length), stopped, 'no frames once the ear is off');
+  assert.equal(await page.locator('#wakeBanner').isVisible(), false);
+  assert.deepEqual(errors, []);
+});

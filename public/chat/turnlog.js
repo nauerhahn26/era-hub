@@ -118,7 +118,7 @@ export function createTurnLog(options = {}) {
     tracking(handle) { return turns.has(handle); },
     set(handle, { mode, session, setting } = {}) {
       const turn = turns.get(handle); if (!turn) return;
-      if (['one-shot', 'stream', 'local', 'typed', 'none'].includes(mode)) turn.mode = mode;
+      if (['one-shot', 'stream', 'local', 'typed', 'none', 'wake'].includes(mode)) turn.mode = mode;
       if (['primary', 'fallback'].includes(setting)) turn.setting = setting;
       if (typeof session === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(session)) turn.session = session;
     },
@@ -188,6 +188,7 @@ export function createTurnLog(options = {}) {
       if (patch.again === true) turn.content.again = true;
       if (patch.prompted === true) turn.content.prompted = true; // the options were read aloud (§6)
       if (patch.back === true) turn.content.back = true; // Back was used (maintainer 10/29)
+      if (patch.wake === true) turn.content.wake = true; // a wake-word question (§8)
       notify();
     },
     worker(handle, timings) {

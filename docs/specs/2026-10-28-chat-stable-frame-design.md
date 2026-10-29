@@ -133,3 +133,33 @@ at YES, a page or an old reply during the question cannot speak and cannot
 cancel the capture. The targets return when the hold ends. Today a selection
 during a hold cancels it (speak() ends the capture), which is what the
 partner saw as "I had to redo the question".
+
+## 8. Wake word: "Listen for <name>" (dad, 10/29)
+
+A partner-touch switch at the top of Chat, in the partner strip left of the
+lock: "Listen for Ellie" (the name is `chatName`), off by default, saved per
+device as `chatWakeMode` in app-settings and restored on load. While it is on
+the page keeps the microphone open and streams every frame to the hub over
+the audio socket as an "ear": one listening window (chat-window.js) that
+never closes on silence or cap, in which an utterance is sealed only when it
+contains the wake name (the name's words, case-insensitive, with "elly" and
+"ellie's" counted); the question is the utterance's words after the name, and
+when the name stood alone ("Ellie?") the next utterance within 8 s is the
+question. A sealed utterance goes through the same staged choices as a button
+window (`utterance-sealed`, `choice-staged`, `batch-sealed`, with
+`windowId`), and the page reveals the batch as today. The ear keeps listening
+after each question; a new wake cancels a reply still being prepared, like a
+new hold.
+
+The partner's hold still works with the ear on: a hold pauses the ear (its
+frames become the hold's) and the ear resumes after the final. Her own clips:
+while a clip plays, and for 400 ms after, the page sends no frames, so the
+service never hears her; tiles stay live in ear mode (no hold, no lock). The
+status reads "Listening for Ellie" with the dot lit; a banner says that room
+audio is sent for transcription while the switch is on. The switch is
+disabled, with a note, when no streaming runtime is configured
+(`/chat/api/config` capabilities.wake). Turning it off closes the window and
+the microphone returns to hold-only. Test mode records a wake turn with
+`mode: 'wake'` and the question's audio from the wake name on, never the
+room before it. Nothing of the room before a wake is kept or sent beyond the
+transcription service's live stream.

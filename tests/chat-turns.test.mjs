@@ -11,7 +11,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay, applyLikesSetting, chatLikes, DEFAULT_LIKES,
-  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT, chatPrompt, applyPromptSetting } = require('../chat-turns.js');
+  chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT, chatPrompt, applyPromptSetting,
+  chatWake, applyWakeSetting } = require('../chat-turns.js');
 const { initPool } = require('../pool.js');
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
@@ -431,12 +432,12 @@ test('her lists (stable frame §2): questions, comments and about, generic defau
 test('a turn record keeps the stable frame fields (§4): the mode she swapped to, the page she opened, Something else', () => {
   const base = turnRecord().content;
   for (const extra of [{ mode: 'ask' }, { mode: 'comment' }, { page: 'questions' }, { page: 'comments' }, { page: 'about' }, { again: true },
-    { mode: 'ask', page: 'about', again: true }, { prompted: true }, { back: true }]) {
+    { mode: 'ask', page: 'about', again: true }, { prompted: true }, { back: true }, { wake: true }]) {
     const kept = validateTurn(turnRecord({ content: { ...base, ...extra } }));
     assert.deepEqual(kept.content, { ...base, ...extra }, JSON.stringify(extra));
   }
   for (const extra of [{ mode: 'tell' }, { mode: 'one-shot' }, { mode: null }, { page: 'likes' }, { page: 7 }, { again: false }, { again: 'yes' }, { again: 1 },
-    { prompted: false }, { prompted: 'yes' }, { prompted: 1 }, { back: false }, { back: 'yes' }, { back: 1 }])
+    { prompted: false }, { prompted: 'yes' }, { prompted: 1 }, { back: false }, { back: 'yes' }, { back: 1 }, { wake: false }, { wake: 'yes' }])
     assert.throws(() => validateTurn(turnRecord({ content: { ...base, ...extra } })), e => e.status === 400 && e.code === 'invalid-turn', JSON.stringify(extra));
 });
 
@@ -457,4 +458,21 @@ test('reading the options aloud (stable frame §6): the delay and the name, defa
   assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 7, chatName: 'Sam' }), { chatName: 'Sam' }, 'each key on its own');
   for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 0, chatName: 'Sam' }, site), {});
   for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 0 }, site), { chatPromptMs: 0 });
+});
+
+test('the wake word (stable frame §8): chatWakeMode off by default, only a boolean moves it, same door; a wake turn record', async t => {
+  const dataDir = await directory(t);
+  assert.deepEqual(chatWake(dataDir), { chatWakeMode: false });
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatWakeMode: 'true' }));
+  assert.deepEqual(chatWake(dataDir), { chatWakeMode: false }, 'only a real boolean');
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatWakeMode: true }));
+  assert.deepEqual(chatWake(dataDir), { chatWakeMode: true });
+  assert.deepEqual(applyWakeSetting({ a: 1 }, { chatWakeMode: true }), { a: 1, chatWakeMode: true });
+  assert.deepEqual(applyWakeSetting({ chatWakeMode: true }, { chatWakeMode: false }), { chatWakeMode: false });
+  for (const junk of ['true', 1, null, {}]) assert.deepEqual(applyWakeSetting({ chatWakeMode: true }, { chatWakeMode: junk }), { chatWakeMode: true }, JSON.stringify(junk));
+  assert.deepEqual(applyWakeSetting({ a: 1 }, {}), { a: 1 });
+  for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyWakeSetting({}, { chatWakeMode: true }, site), {});
+  for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyWakeSetting({}, { chatWakeMode: true }, site), { chatWakeMode: true });
+  const record = validateTurn(turnRecord({ mode: 'wake', content: { ...turnRecord().content, wake: true } }));
+  assert.equal(record.mode, 'wake'); assert.equal(record.content.wake, true);
 });

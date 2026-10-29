@@ -1079,6 +1079,37 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-ear-hub.test.mjs",
+      "purpose": "The wake word ear through the hub: an ear window never closes on silence or cap, seals only utterances holding the device wake name (the question after the name, a bare name makes the next utterance the question), drops everything else unseen and unasked, pauses for a hold and resumes after, rolls its stream turn, and config advertises wake with streaming",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP/WebSocket module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-window.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/buttons.js",
+        "era-hub/server.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "synthetic-runtime-children",
+        "fetch-doubles",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-commands-browser.test.mjs",
       "purpose": "Real Chat page asked from the partner's button: command stream at load, nonce claimed once, ask with no touch, the three partner lines, two drawn tones, her pick ends the window, a pause stays one utterance, quiet seals, a second utterance, the second press",
       "group": "chat",
@@ -1223,7 +1254,7 @@
       ],
       "hub": "none",
       "ports": [],
-      "browsers": 6,
+      "browsers": 7,
       "heavy": false,
       "solo": false,
       "quiet": false,

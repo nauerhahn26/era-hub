@@ -113,6 +113,8 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.deepEqual(await prompt(), [0, 'Sam'], 'a page on another site cannot change them');
   assert.equal((await setLists({ chatPromptMs: 15000 })).status, 204);
   assert.deepEqual(await prompt(), [15000, 'Sam']);
+  // The wake name is the device's chatName (stable frame §8).
+  assert.equal((await (await fetch(base + '/chat/api/config')).json()).wakeName, 'Sam');
 
   // The curated voices (maintainer, 10/29): Hope first, the default for a device with no voice chosen.
   const VOICES = [{ id: 'cVd39cx0VtXNC13y5Y7z', name: 'Hope — young and warm' }, { id: 'cgSgspJ2msm6clMCkdW9', name: 'Jessica — playful American' },
@@ -126,6 +128,16 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.equal((await setVoice(VOICES[1].id)).status, 204); assert.equal((await voices()).current, VOICES[1].id);
   assert.equal((await setVoice(VOICES[0].id)).status, 204, 'the new voice is accepted'); assert.equal((await voices()).current, VOICES[0].id);
   assert.equal((await setVoice('not-a-curated-voice')).status, 400);
+
+  // The wake word (stable frame §8): off until a partner turns it on on this device.
+  const wake = async () => (await (await fetch(base + '/settings')).json()).chatWakeMode;
+  assert.equal(await wake(), false);
+  assert.equal((await setLists({ chatWakeMode: true }, { 'Sec-Fetch-Site': 'cross-site' })).status, 204);
+  assert.equal(await wake(), false, 'a page on another site cannot turn it on');
+  assert.equal((await setLists({ chatWakeMode: 'yes' })).status, 204);
+  assert.equal(await wake(), false);
+  assert.equal((await setLists({ chatWakeMode: true })).status, 204);
+  assert.equal(await wake(), true);
 
   // Her world (plan "Her world as context"): the hub's digest of the week
   // package and the likes, served to its own pages for the partner dialog.

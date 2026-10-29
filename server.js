@@ -19,7 +19,7 @@ if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
 // Chat test mode (spec 2026-10-27 §5): a separate route and schema, off by default.
-const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSetting, applyPromptSetting, testModeOn, chatLikes, chatLists, chatPrompt } = require("./chat-turns.js");
+const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSetting, applyPromptSetting, applyWakeSetting, testModeOn, chatLikes, chatLists, chatPrompt, chatWake } = require("./chat-turns.js");
 // The reply usage (model id, token counts) reaches the page only while this
 // device's test-mode switch is on. DATA is read when a request asks, not here.
 // Pictures the partner names while speaking, and each staged choice's picture,
@@ -30,6 +30,7 @@ const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSett
 // A who question also carries the family's own names: the Drawing library's
 // people still on her board (the list chat-symbols.setPeople pictures).
 const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA), likes: () => chatLikes(DATA),
+  name: () => chatPrompt(DATA).chatName, // the wake name (stable frame §8)
   people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
   // Her world (chat-world.js): built below once DATA exists, read when an open question asks.
   world: () => chatWorld.digest(),
@@ -1997,6 +1998,7 @@ const server = http.createServer((req, res) => {
     s.voiceId = loadTtsCfg().voiceId;
     Object.assign(s, chatLists(DATA)); // a hand-edited list that is not clean reads as its default
     Object.assign(s, chatPrompt(DATA)); // chatPromptMs and chatName (stable frame §6), the same way
+    Object.assign(s, chatWake(DATA)); // chatWakeMode (stable frame §8): off unless this device chose it
     s.responseVoiceSpeed = responseVoiceSpeed();
     // the pool device id: the name the presence receiver files this hub under
     // (spec 2026-10-20 §4.5), so the operator can tell which file is whose
@@ -2161,6 +2163,8 @@ const server = http.createServer((req, res) => {
         s = applyListsSetting(s, inc, req.headers["sec-fetch-site"]);
         // Reading the options aloud (stable frame §6): the delay and the name.
         s = applyPromptSetting(s, inc, req.headers["sec-fetch-site"]);
+        // The wake word (stable frame §8): only a real boolean, through the same door.
+        s = applyWakeSetting(s, inc, req.headers["sec-fetch-site"]);
         fs.writeFileSync(path.join(DATA, "app-settings.json"), JSON.stringify(s, null, 2));
         // A new window makes the cached weather an answer to the old question,
         // and today's board a board for the wrong hours: throw the cache away

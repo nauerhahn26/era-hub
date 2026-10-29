@@ -561,3 +561,46 @@ test('a hold waits on the device for a session start for about 3 s at most, then
   await f.page.waitForSelector('.response', { timeout: 10000 });
   assert.deepEqual(f.errors, []);
 });
+
+// Listen for <name> (stable frame §8) against the real hub module: an ear
+// service that hears the wake name in the room once enough frames arrived.
+async function earService(t, words, atFrame = 6) {
+  const connections = [];
+  const server = http.createServer((req, res) => res.writeHead(404).end());
+  server.on('upgrade', (req, socket, head) => {
+    const ws = acceptWebSocket(req, socket, head), conn = { frames: 0, ws }; connections.push(conn);
+    ws.send(JSON.stringify({ type: 'Begin' }));
+    ws.on('message', (data, binary) => {
+      if (binary) { conn.frames++; if (conn.frames === atFrame) ws.send(JSON.stringify({ type: 'Turn', turn_order: 0, end_of_turn: true, turn_is_formatted: true, transcript: words })); return; }
+      const value = JSON.parse(data);
+      if (value.type === 'Terminate') { ws.send(JSON.stringify({ type: 'Termination' })); setTimeout(() => ws.close(1000), 5); }
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { for (const c of connections) c.ws.terminate(); server.closeAllConnections?.(); await new Promise(resolve => server.close(resolve)); });
+  return { url: `ws://127.0.0.1:${server.address().port}/v3/ws`, connections };
+}
+
+test('Listen for Ellie through the real hub: the switch opens the ear, room frames flow with no hold, a wake question reveals its replies, off stops the frames', { timeout: 60000 }, async t => {
+  const service = await earService(t, 'Ellie, would you like music or a story?'), reply = replyService();
+  const f = await fixture(t, { env: { ERA_CHAT_STREAM_PROTOCOL: 'ws-streaming-turns', ERA_CHAT_STREAM_URL: service.url, ERA_CHAT_STREAM_MODEL: 'stream-model',
+    ERA_CHAT_STREAM_TOKEN: 'stream-secret', ERA_CHAT_SPECULATE_MS: '0',
+    ERA_CHAT_TEXT_URL: 'https://reply.invalid/responses', ERA_CHAT_TEXT_MODEL: 'reply-model', ERA_CHAT_TEXT_TOKEN: 'reply-secret' }, apiOptions: { fetch: reply.fetcher } });
+  await f.start();
+  const toggle = f.page.locator('#wakeToggle');
+  assert.equal(await toggle.isDisabled(), false, 'the hub offers the wake word'); assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+  await f.page.waitForTimeout(200); assert.equal(f.sockets[0].sent, 0, 'nothing is sent with the switch off');
+  await f.press('#wakeToggle'); await f.page.waitForTimeout(60); await f.lift();
+  await f.page.waitForFunction(() => document.body.dataset.ear === 'on', null, { timeout: 10000 });
+  assert.match(await f.page.locator('#phase').textContent(), /^Listening for /);
+  await f.page.waitForSelector('#grid .response', { timeout: 15000 });
+  assert.ok(f.sockets[0].sent >= 6, 'room frames flowed with no hold');
+  // An either-or question: the hub's own alternatives answer it.
+  assert.deepEqual(await f.page.locator('#grid .response .label').allTextContents(), ['Music', 'A story']);
+  assert.match(await f.page.locator('#grid .tile.question .label').textContent(), /music or a story/i, 'the strip shows the question after her name');
+  await f.press('#wakeToggle'); await f.page.waitForTimeout(60); await f.lift();
+  await f.page.waitForFunction(() => document.body.dataset.ear === 'off', null, { timeout: 10000 });
+  await f.page.waitForTimeout(300); const sent = f.sockets[0].sent; await f.page.waitForTimeout(600);
+  assert.equal(f.sockets[0].sent, sent, 'no frames once the switch is off');
+  assert.deepEqual(f.errors, []);
+});

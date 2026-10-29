@@ -532,3 +532,32 @@ the turn boundary and her clip plays out of the device the microphone hears.
 Plan: keep tiles live during capture, drop microphone frames from her clip's
 start to its end plus a short tail, keep the capture open, append "Me:" to
 the ledger mid-question; the lock becomes a transition setting, then goes.
+
+## Back button + her voice (dad, 10/29 early) — LANDED af7d985, v1.0.37
+- [x] Back in the chat door bar right of the door, twice its width, a quarter
+      door apart, status shifted right; closes a page or lit mode, else restores
+      the previous batch (stack of 8 per session); dimmed when nothing to go
+      back to; locked during a hold; `content.back` in turn records (67fa77f,
+      1d7e290, df17704). The page Back cell stays for now.
+- [x] Her voice: dad auditioned 11 library voices and chose Hope (young and
+      warm); first in CURATED_VOICES and the narration default (715dd04,
+      0c1a61e); set directly in tts-config.json on the home I-13 and tablet.
+Known: a batch brought back by Back counts as new, so a silence reads it
+aloud again. Gate 205/0; v1.0.37 pushed to the home I-13 before publishing.
+
+## Wake word (dad, 10/29: "add Ellie as a wake word, a mode you can turn on at the top of chat")
+
+Spec §8 of the stable-frame design. Built on the button's listening window
+(chat-window.js, control type 'window', utterance-sealed → staged choices).
+- [ ] W1 Hub: control `{type:'window', ear:true}` opens an ear window with no
+      silence/cap close; utterances sealed only on the wake name (name words
+      from `chatName`; strip the name; bare name → next utterance within 8 s);
+      `ear` state events; a hold pauses/resumes the ear; `chatWakeMode` in
+      settings; config capabilities.wake; validateTurn mode 'wake'. Tests with
+      the fake streaming service fixtures (chat-stream-hub / chat-audio-socket).
+- [ ] W2 Page: the switch in the partner strip (touch-only, persisted),
+      continuous frames with the clip gate (400 ms tail), tiles live in ear
+      mode, 'Listening for <name>' phase + banner, wake turns through the
+      existing window reveal path, disabled when the runtime has no streaming.
+      Browser tests on the stream fixture; VM smoke unaffected (off by default).
+- [ ] W3 Gate, land, release, push.
