@@ -231,12 +231,12 @@ const GONE = /already handled|has been closed|Target closed|context disposed|Req
 export async function settleRoute(work) {
   try { return await work; } catch (error) { if (GONE.test(String(error?.message || error))) return undefined; throw error; }
 }
-// GET /settings with the options reading off (chatPromptMs 0), the rest as the hub sent it.
+// GET /settings with the options reading and the ear off (chatPromptMs 0, chatWakeMode false), the rest as the hub sent it.
 export async function rewriteSettingsRoute(route) {
   return settleRoute((async () => {
     const response = await route.fetch();
     const body = await response.json().catch(() => null);
-    return body && typeof body === 'object' ? route.fulfill({ response, json: { ...body, chatPromptMs: 0 } }) : route.fulfill({ response });
+    return body && typeof body === 'object' ? route.fulfill({ response, json: { ...body, chatPromptMs: 0, chatWakeMode: false } }) : route.fulfill({ response });
   })());
 }
 
@@ -303,6 +303,10 @@ export async function checkInstalledChatUI(page, options = {}) {
     const warmed = page.waitForResponse(response => new URL(response.url()).pathname === '/tts', { timeout });
     await openChat(); await warmed;
     assert.equal(await page.locator('#voicePreference').inputValue(), 'saved', 'saved voice is the default');
+    // Listen for <name> (spec 2026-10-28 §8): the switch is there and off; this check never streams the room.
+    assert.equal(await page.locator('#wakeToggle').count(), 1, 'the listening switch is in the partner strip');
+    assert.equal(await page.locator('#wakeToggle').getAttribute('aria-pressed'), 'false', 'listening for her name is off');
+    assert.equal(await page.locator('#wakeBanner').isVisible(), false);
     assert.equal((await audio()).playCalls, 0, 'warming prepared phrases cannot play audio');
     await openPartner(); await page.locator('#voicePreference').selectOption('local', { timeout });
     await waitForVoiceSaved(page, timeout);
