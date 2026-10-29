@@ -198,10 +198,12 @@ async function json(url, options = {}) {
 const notice = text => { $('notice').textContent = text || ''; };
 function paintPhase(state = controller.state) {
   if (press && !press.closed) { $('phase').textContent = press.listening ? 'Listening' : 'Starting to listen'; return; }
-  if (ear && state.phase === 'Ready to ask') { $('phase').textContent = `Listening for ${herName || config?.wakeName || 'her name'}`; return; }
+  if (typeof ear !== 'undefined' && ear && state.phase === 'Ready to ask') { $('phase').textContent = `Listening for ${herName || config?.wakeName || 'her name'}`; return; }
   $('phase').textContent = state.phase === 'Capturing question' && ((remoteStreaming && mode !== 'opening') || questionSending) ? 'Sending question' : state.phase;
 }
 function setMode(value) {
+  // A hold or a press opening: the ear's collection gives way, so these frames are theirs (spec 2026-10-28 §8).
+  if (value === 'opening' && mode !== 'opening' && typeof ear !== 'undefined' && ear) mic?.cancel();
   mode = value; document.body.dataset.listening = 'false';
   document.body.dataset.capturing = String(['opening', 'capture'].includes(value));
   paintPhase(); syncHoldLock(); earTick();
@@ -938,7 +940,6 @@ async function openPressWindow(command) {
   await tones.listening();
   await pause(FRAMES_AFTER_TONE_MS);
   if (mine !== lifecycle || intent !== captureIntent || !press || press.closed) return;
-  if (ear) mic?.cancel();
   if (!mic?.begin()) { failSession('The microphone is not ready. Your phrases still work; press again.'); return; }
   setMode('capture'); press.listening = true; document.body.dataset.listening = 'true'; paintPhase();
   turnLog.mark(questionMetric, 'listening');
@@ -1171,7 +1172,6 @@ async function beginAsk() {
   if (!live) controller.standby();
   controller.ask(); finishedTurn = -1; $('ask').classList.add('held');
   const questionTurn = controller.state.turn;
-  if (ear) mic?.cancel(); // the ear's collection gives way: these frames are the hold's (§8)
   if (live) { if (!mic?.begin()) { failSession('The microphone is not ready. Hold Ask to try again.'); return; } }
   else mic?.begin(); // an open microphone collects at once; one still opening, as soon as it opens
   clearTimeout(askTimer);
