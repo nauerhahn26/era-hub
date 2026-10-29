@@ -163,3 +163,25 @@ the microphone returns to hold-only. Test mode records a wake turn with
 `mode: 'wake'` and the question's audio from the wake name on, never the
 room before it. Nothing of the room before a wake is kept or sent beyond the
 transcription service's live stream.
+
+## 9. Her eyes never touch the voice (dad, 10/29, after testing the wake word)
+
+"Whether you're holding the button, using the clicking button or the square,
+or saying Ellie to activate, her eyes don't interfere with how the voice is
+processing. The voice continues processing even with her eyes activating
+buttons or interrupting things."
+
+- During a hold: no tile is a dwell target (§7); nothing she does reaches
+  the capture.
+- With the ear open or a button window open: a selection plays its clip and
+  nothing else. It does not stop the microphone, does not change the capture
+  mode, sends the hub no cancel and no pick. A button window ends only on its
+  own clock or the second press; her pick no longer ends it (this replaces
+  design 2026-10-27 §4.4 "a pick wins").
+- Her own clip is kept out of the stream by echo cancellation on the
+  microphone track and by sending silence in place of the frames while the
+  clip plays (plus 150 ms), so the service's timeline stays continuous and the
+  partner's words before and after the clip are kept.
+- Considered and not needed: a grace period after the hold's release. The
+  hold already locks her targets, and the streaming service starts the reply
+  before release.
