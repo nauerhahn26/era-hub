@@ -75,7 +75,7 @@ const RECORD = shape({
     // the page she opened, and Something else used in this turn.
     mode: oneOf(['ask', 'comment']), page: oneOf(['questions', 'comments', 'about']), again: v => v === true,
     // The options were read aloud after a silence (§6).
-    prompted: v => v === true }),
+    prompted: v => v === true, back: v => v === true }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),
