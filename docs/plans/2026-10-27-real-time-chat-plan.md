@@ -532,3 +532,15 @@ the turn boundary and her clip plays out of the device the microphone hears.
 Plan: keep tiles live during capture, drop microphone frames from her clip's
 start to its end plus a short tail, keep the capture open, append "Me:" to
 the ledger mid-question; the lock becomes a transition setting, then goes.
+
+## Back button + her voice (dad, 10/29 early) — LANDED af7d985, v1.0.37
+- [x] Back in the chat door bar right of the door, twice its width, a quarter
+      door apart, status shifted right; closes a page or lit mode, else restores
+      the previous batch (stack of 8 per session); dimmed when nothing to go
+      back to; locked during a hold; `content.back` in turn records (67fa77f,
+      1d7e290, df17704). The page Back cell stays for now.
+- [x] Her voice: dad auditioned 11 library voices and chose Hope (young and
+      warm); first in CURATED_VOICES and the narration default (715dd04,
+      0c1a61e); set directly in tts-config.json on the home I-13 and tablet.
+Known: a batch brought back by Back counts as new, so a silence reads it
+aloud again. Gate 205/0; v1.0.37 pushed to the home I-13 before publishing.
