@@ -193,6 +193,7 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   await down('#ask');
   await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Capturing question');
   assert.equal(await page.locator('#grid .dwell').count(), 0, 'no dwell targets while the partner holds');
+  assert.equal(await page.locator('#back.dwell').count(), 0, 'Back is locked like the grid during a hold');
   assert.equal(await page.locator('#grid button.tile:not([data-dwell-disabled])').count(), 0);
   await page.evaluate(() => document.querySelector('#grid .tile.yes').click());
   await page.waitForTimeout(450);
@@ -433,5 +434,72 @@ test('after a silence the options are read aloud: the name, then each label with
   await page.waitForFunction(() => document.querySelector('#chatPromptNote').textContent.startsWith('Saved'));
   assert.deepEqual(saved, [{ chatPromptMs: 15000 }, { chatName: 'Alex' }]);
   assert.deepEqual(await page.locator('#chatPrompt option').evaluateAll(options => options.map(option => option.value)).then(values => values.filter(value => value !== '1000')), ['0', '10000', '12000', '15000', '20000']);
+  assert.deepEqual(errors, []);
+});
+
+test('Back in the door bar: twice the door wide a quarter door right of it; it closes a page, then a mode, then brings back earlier batches (maintainer 10/29)', { timeout: 60000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-back-'));
+  const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+  const page = await context.newPage(), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const batch = labels => ({ kind: 'alternatives', choices: labels.map(label => ({ label, say: label })) });
+  await page.route('**/chat/api/choices', route => {
+    const body = route.request().postDataJSON();
+    const result = body.mode ? batch([`${body.mode} one`, `${body.mode} two`]) : body.avoid ? batch(['Pizza', 'Pasta']) : /lunch/.test(body.text) ? batch(['Tea', 'Milk']) : batch(['Music', 'A story']);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) });
+  });
+  await page.goto(base + '/chat/'); await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
+  for (const size of [{ width: 1600, height: 1000 }, { width: 1280, height: 800 }, { width: 1920, height: 1080 }]) {
+    await page.setViewportSize(size); await page.waitForTimeout(100);
+    const [door, back, status] = await page.evaluate(() => ['#barDoor', '#back', '#sessionStatus'].map(id => document.querySelector(id).getBoundingClientRect().toJSON()));
+    const tag = `${size.width}x${size.height}`;
+    assert.ok(Math.abs(back.width - 2 * door.width) <= 2, `${tag}: Back is twice the door wide (${back.width} vs ${door.width})`);
+    assert.ok(Math.abs(back.left - door.right - door.width / 4) <= 2, `${tag}: a quarter of the door between them (${back.left - door.right})`);
+    assert.ok(Math.abs(back.top - door.top) <= 1 && Math.abs(back.height - door.height) <= 1, `${tag}: the door's height`);
+    assert.ok(Math.abs(status.left - back.right - door.width / 4) <= 2, `${tag}: the status follows Back at the same gap (${status.left - back.right})`);
+  }
+  assert.equal(await page.locator('#back .label').textContent(), 'Back');
+  assert.equal(await page.locator('#back').evaluate(el => getComputedStyle(el).borderRadius), await page.locator('#barDoor').evaluate(el => getComputedStyle(el).borderRadius));
+  const backOn = () => page.locator('#back').evaluate(el => el.classList.contains('dwell') && !el.classList.contains('off') && !('dwellDisabled' in el.dataset));
+  assert.equal(await backOn(), false, 'nothing to go back to: dimmed, not a dwell target');
+  assert.equal(await page.locator('#back').getAttribute('data-dwell-ms'), await page.locator('#barDoor').getAttribute('data-dwell-ms'), 'the door\'s dwell');
+  const replies = () => page.locator('#grid .response .label').allTextContents();
+  async function ask(text) {
+    await page.locator('#partnerOpen').click();
+    if (!(await page.locator('#testing').evaluate(el => el.open))) await page.locator('#testing > summary').click();
+    await page.locator('#typedQuestion').fill(text); await page.locator('#typedAsk').click();
+    await page.locator('.response').first().waitFor();
+  }
+  await ask('Would you like music or a story?');
+  assert.deepEqual(await replies(), ['Music', 'A story']); assert.equal(await backOn(), false);
+  // A page, then a lit mode: Back returns to the replies.
+  await page.locator('#grid .tile.page[data-page="about"]').click();
+  assert.equal(await backOn(), true);
+  await page.locator('#back').click();
+  await page.locator('#grid .tile.page.on').waitFor({ state: 'detached' }); assert.deepEqual(await replies(), ['Music', 'A story']);
+  await page.locator('#grid .tile.mode[data-mode="ask"]').click(); await page.locator('#grid .tile.made').first().waitFor();
+  await page.locator('#back').click();
+  await page.locator('#grid .response').first().waitFor(); assert.equal(await page.locator('#grid .tile.mode.on').count(), 0);
+  assert.equal(await backOn(), false, 'the first batch has nothing behind it');
+  // Something else, then a new question: Back walks the batches back, with their questions.
+  await page.locator('#grid .tile.static', { hasText: 'Something else' }).click();
+  await page.waitForFunction(() => document.querySelector('#grid .response .label')?.textContent === 'Pizza');
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Your turn');
+  await ask('What about lunch?');
+  assert.deepEqual(await replies(), ['Tea', 'Milk']); assert.equal(await backOn(), true);
+  await page.locator('#back').click();
+  await page.waitForFunction(() => document.querySelector('#grid .response .label')?.textContent === 'Pizza');
+  assert.equal(await page.locator('#grid .tile.question .label').textContent(), 'Would you like music or a story?', 'the earlier question comes back with its replies');
+  await page.locator('#back').click();
+  await page.waitForFunction(() => document.querySelector('#grid .response .label')?.textContent === 'Music');
+  assert.deepEqual(await replies(), ['Music', 'A story']);
+  assert.equal(await backOn(), false, 'nothing further back');
+  // The restored replies select as usual.
+  assert.equal(await page.locator('#grid .response.dwell').count(), 2);
   assert.deepEqual(errors, []);
 });

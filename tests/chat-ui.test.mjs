@@ -489,3 +489,22 @@ test('sayFixed passes an echo mark through to speak so the strip\'s repeat of th
   await c.sayFixed('Yes.'); await c.sayFixed('What did you eat?', { echo: true });
   assert.deepEqual(said, [{ say: 'Yes.' }, { say: 'What did you eat?', echo: true }]);
 });
+
+test('restore brings a kept batch back as a new turn: its question and replies, new ids, the settle first, Your turn', async () => {
+  const order = []; let stops = 0;
+  const c = createChatController({ requestChoices: async () => ({ choices: [choice('now')] }), beforeChoices: () => order.push('settle'), stopSpeech: () => { stops++; } });
+  await c.prepare('the second question');
+  const before = c.state.turn, ids = c.state.choices.map(x => x.id);
+  order.length = 0;
+  assert.equal(c.restore({ question: 'the first question', choices: [choice('one'), { label: 'bad' }, choice('two')] }), true);
+  assert.ok(c.state.turn > before, 'a new turn: older selections and replies cannot land on it');
+  assert.equal(c.state.question, 'the first question'); assert.equal(c.state.phase, 'Your turn');
+  assert.deepEqual(c.state.choices.map(x => x.label), ['one', 'two']);
+  assert.ok(c.state.choices.every(x => !ids.includes(x.id)));
+  assert.deepEqual(order, ['settle']); assert.ok(stops >= 1, 'speech stops');
+  let spoken = ''; const d = createChatController({ speak: async x => { spoken = x.say; } });
+  assert.equal(d.restore({ question: 'q', choices: [choice('x')] }), true);
+  assert.equal(await d.select(d.state.choices[0].id), true); assert.equal(spoken, 'x');
+  assert.equal(c.restore({ question: 'q', choices: [] }), false, 'nothing to restore');
+  c.ask(); assert.equal(c.restore({ question: 'q', choices: [choice('x')] }), false, 'never while a question is captured');
+});

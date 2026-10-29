@@ -5,7 +5,7 @@ import { createTurnMetrics } from './metrics.js';
 import { createChatStorage } from './storage.js';
 import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture } from './symbols.js';
 import { fitTile } from './tile-fit.js';
-import { GRID, fixedTiles, replyAreas, pageCells, paginate } from './frame.js';
+import { GRID, fixedTiles, replyAreas, pageCells, paginate, BAR_BACK, backTarget, createBackStack } from './frame.js';
 import { createOptionsReader } from './prompt.js';
 import { createTurnLog, observeMetrics, stageChoices } from './turnlog.js';
 import { mountDoorBar } from '/lib/doorbar.js';
@@ -35,6 +35,22 @@ const bar = mountDoorBar($('app'), {
   onResume: () => autoPrepare(),
   onUnlock: () => autoPrepare(),
 });
+// Back (maintainer 10/29): in the door bar right of the door, twice its width
+// with a quarter of its width between; the session status follows at that gap.
+const backButton = document.createElement('button');
+backButton.type = 'button'; backButton.id = 'back'; backButton.className = 'bardoor barback off';
+backButton.setAttribute('aria-label', 'Back'); backButton.dataset.dwellDisabled = '';
+backButton.dataset.dwellMs = bar.doorBtn.dataset.dwellMs;
+{ const label = document.createElement('span'); label.className = 'label'; label.textContent = 'Back'; backButton.append(label); }
+bar.doorBtn.insertAdjacentElement('afterend', backButton);
+function placeBack() {
+  const door = bar.doorBtn.getBoundingClientRect(), gap = door.width * BAR_BACK.gapOfDoor;
+  backButton.style.width = `${door.width * BAR_BACK.widthOfDoor}px`; backButton.style.marginLeft = `${gap}px`;
+  $('sessionStatus').style.left = `${backButton.getBoundingClientRect().right + gap}px`;
+}
+placeBack();
+if (typeof ResizeObserver === 'function') new ResizeObserver(placeBack).observe(bar.doorBtn);
+window.addEventListener('resize', placeBack);
 // The lock (mounted in the door bar by app-lock.js) sits left of the partner
 // controls, so Hold to ask is in the top right corner (spec 2026-10-28 §1).
 const placeLock = () => document.documentElement.style.setProperty('--strip-w', `${Math.ceil($('partnerStrip').getBoundingClientRect().width)}px`);
@@ -48,6 +64,9 @@ const savedSettings = await persistence.hydrate();
 // ?pictures=bw|emoji shows the black-and-white or emoji style for comparison.
 await loadVocabulary();
 const pictureVariant = ['bw', 'emoji'].find(name => name === new URLSearchParams(location.search).get('pictures')) || 'color';
+// Back's picture: the library's "back" by the same resolution as the tiles (the drawn arrow offline).
+if (hasVocabulary()) attachPicture(backButton, planPictures([{ label: 'Back', type: 'nav' }], { variant: pictureVariant })[0]);
+else attachSymbol(backButton, { label: 'Back', type: 'nav' });
 // Test mode (spec 2026-10-27 §5): a separate record per turn while this
 // device's switch is on. The production rows below are written exactly as
 // before and stay content-free in both modes.
@@ -109,6 +128,9 @@ const SPOKEN = { yes: 'Yes.', no: 'No.', more: 'Tell me more.', else: 'Something
 // `made` the current turn's two sets, asked for in the background after a reveal.
 let page = null, pageOffset = 0, modeView = null;
 let made = { turn: -1, ask: null, comment: null, aborts: [] }, again = null, echoing = false;
+// The batches this session showed before the one on screen (Back restores them).
+const backStack = createBackStack(8);
+let shownChoices = [], shownQuestion = '', restoring = false;
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
 // Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
 // and her name, from /settings (chatPromptMs, chatName).
@@ -183,7 +205,7 @@ let gridLocked = false;
 function syncHoldLock() {
   const now = holdActive();
   if (now && !gridLocked) {
-    gridLocked = true; reader?.cancel();
+    gridLocked = true; reader?.cancel(); paintBack(controller.state);
     for (const el of $('grid').querySelectorAll('.tile')) { el.classList.remove('dwell'); if (el.tagName === 'BUTTON') el.dataset.dwellDisabled = ''; }
   } else if (!now && gridLocked) {
     gridLocked = false;
@@ -296,7 +318,7 @@ fetch('/settings').then(r => r.json()).then(s => {
   for (const [key, field] of LIST_FIELDS) setList(key, s[field]);
   setPrompt(s.chatPromptMs, s.chatName);
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
-  window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
+  window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); backButton.dataset.dwellMs = bar.doorBtn.dataset.dwellMs; bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
 
 const REVEAL_SETTLE_MS = 250;
@@ -478,9 +500,31 @@ function middle(state) {
   return OPENERS.map((say, i) => tile(say, 'static', () => controller.sayFixed(say), four[i], say));
 }
 let staleKey = '';
+// ---- Back (maintainer 10/29) ----
+function backNow(state = controller.state) {
+  return backTarget({ page, mode: modeView, holding: holdActive(),
+    previous: backStack.size > 0 && !['Capturing question', 'Preparing'].includes(state.phase) });
+}
+function paintBack(state) {
+  const live = !!backNow(state);
+  backButton.classList.toggle('dwell', live); backButton.classList.toggle('off', !live);
+  if (live) delete backButton.dataset.dwellDisabled; else backButton.dataset.dwellDisabled = '';
+}
+backButton.addEventListener('click', () => {
+  const target = backNow();
+  if (!target) return;
+  reader?.cancel();
+  turnLog.content(questionMetric, { back: true });
+  if (target === 'page') { closePage(); return; }
+  if (target === 'mode') { modeView = null; gridKey = ''; renderGrid(controller.state); return; }
+  const batch = backStack.pop();
+  restoring = true;
+  try { if (!controller.restore(batch)) paintBack(controller.state); } finally { restoring = false; }
+});
 function renderGrid(state) {
   const key = [page, pageOffset, modeView, modeView && made[modeView] ? 'landed' : '', state.turn, state.choices.map(c => c.id).join(','),
     capturing(state) ? 'capturing' : waitingForReplies(state) ? 'preparing' : '', state.question, page ? `${stories.length}.${listsVersion}` : ''].join('|');
+  paintBack(state);
   if (key === gridKey) { paintStrip(state); return; }
   // The last turn's tiles, kept stale after a press, are the very tiles drawn:
   // a new turn number alone never redraws them under her gaze.
@@ -515,6 +559,11 @@ function renderGrid(state) {
 // drops the made sets; a revealed batch asks for both sets in the background.
 let shownTurn = 0;
 controller.subscribe(state => {
+  // A batch leaving the screen (a new question, Something else) is kept for Back.
+  if (state.choices !== shownChoices) {
+    if (shownChoices.length && !restoring) backStack.push({ question: shownQuestion, choices: shownChoices });
+    shownChoices = state.choices; if (state.choices.length) shownQuestion = state.question;
+  }
   if (state.turn !== shownTurn) { shownTurn = state.turn; dropMade(); page = null; pageOffset = 0; }
   if (state.choices.length && state.question && made.turn !== state.turn) requestMade(state);
   document.body.dataset.phase = state.phase;
@@ -1114,6 +1163,7 @@ async function shutdown(type = 'close', preserveAnswers = false) {
   endSession(type);
   const mine = lifecycle;
   if (!preserveAnswers) controller.stop();
+  backStack.clear(); paintBack(controller.state); // Back's batches are this session's only
   const oldMic = mic; mic = null;
   const done = closed = Promise.resolve(oldMic?.stop()).catch(() => {});
   await done;

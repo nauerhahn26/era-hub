@@ -32,7 +32,7 @@ const VISION_PROVIDERS = ["anthropic", "openai", "google"];
 const DEFAULT_VISION_PROVIDER = "google";
 // Same voice the Voice card offers first (CURATED_VOICES[0] in server.js), so
 // a family that saved a key but never picked a voice still gets narration.
-const DEFAULT_VOICE_ID = "cgSgspJ2msm6clMCkdW9";
+const DEFAULT_VOICE_ID = "cVd39cx0VtXNC13y5Y7z";
 // And the same MODEL the Voice card defaults to — server.js's loadTtsCfg()
 // starts every card at eleven_flash_v2_5, and the board's chat has been speaking
 // in it since the card existed. This role carried no model at all until now, so

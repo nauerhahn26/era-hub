@@ -425,10 +425,10 @@ export async function checkRestoredChatState(page, expected, options = {}) {
     // About me (spec 2026-10-28 §2): the saved stories first, then the device's lines; Back closes it.
     await page.getByRole('button', { name: 'About me', exact: true }).click({ timeout });
     await page.locator('#grid .tile.page.on[data-page="about"]').waitFor({ state: 'visible', timeout });
-    await page.getByRole('button', { name: 'Back', exact: true }).waitFor({ state: 'visible', timeout });
+    await page.locator('#grid').getByRole('button', { name: 'Back', exact: true }).waitFor({ state: 'visible', timeout });
     const items = await page.locator('#grid .tile.item .label').allTextContents();
     assert.deepEqual(items.slice(0, expected.stories.length), expected.stories.map(story => story.label), 'the saved stories come first');
-    await page.getByRole('button', { name: 'Back', exact: true }).click({ timeout });
+    await page.locator('#grid').getByRole('button', { name: 'Back', exact: true }).click({ timeout });
     await page.locator('#grid .tile.page.on').waitFor({ state: 'detached', timeout });
     await page.locator('#partnerOpen').click({ timeout });
     await page.locator('#turnTimings > summary').click({ timeout });

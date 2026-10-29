@@ -187,6 +187,7 @@ export function createTurnLog(options = {}) {
       if (['questions', 'comments', 'about'].includes(patch.page)) turn.content.page = patch.page;
       if (patch.again === true) turn.content.again = true;
       if (patch.prompted === true) turn.content.prompted = true; // the options were read aloud (§6)
+      if (patch.back === true) turn.content.back = true; // Back was used (maintainer 10/29)
       notify();
     },
     worker(handle, timings) {

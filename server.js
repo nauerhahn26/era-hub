@@ -1373,6 +1373,7 @@ async function serveSymbol(res, name, bw = false) {
 // Key: put ELEVENLABS_API_KEY=... in tts-config.json ("apiKey") or the environment.
 const TTS_CFG_PATH = path.join(DATA, "tts-config.json");
 const CURATED_VOICES = [
+  { id: "cVd39cx0VtXNC13y5Y7z", name: "Hope — young and warm" }, // the default since 10/29 (the maintainer's choice)
   { id: "cgSgspJ2msm6clMCkdW9", name: "Jessica — playful American" },
   { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah — soft & warm" },
   { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel — calm narrator" },
