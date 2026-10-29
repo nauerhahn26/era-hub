@@ -549,15 +549,24 @@ aloud again. Gate 205/0; v1.0.37 pushed to the home I-13 before publishing.
 
 Spec §8 of the stable-frame design. Built on the button's listening window
 (chat-window.js, control type 'window', utterance-sealed → staged choices).
-- [ ] W1 Hub: control `{type:'window', ear:true}` opens an ear window with no
+- [x] W1 Hub: control `{type:'window', ear:true}` opens an ear window with no
       silence/cap close; utterances sealed only on the wake name (name words
       from `chatName`; strip the name; bare name → next utterance within 8 s);
       `ear` state events; a hold pauses/resumes the ear; `chatWakeMode` in
       settings; config capabilities.wake; validateTurn mode 'wake'. Tests with
       the fake streaming service fixtures (chat-stream-hub / chat-audio-socket).
-- [ ] W2 Page: the switch in the partner strip (touch-only, persisted),
+- [x] W2 Page: the switch in the partner strip (touch-only, persisted),
       continuous frames with the clip gate (400 ms tail), tiles live in ear
       mode, 'Listening for <name>' phase + banner, wake turns through the
       existing window reveal path, disabled when the runtime has no streaming.
       Browser tests on the stream fixture; VM smoke unaffected (off by default).
 - [ ] W3 Gate, land, release, push.
+Outcome (10/29 02:00–03:00 UTC): hub ear window (f2efa18, d19dc61,
+abedc7e; 12-test suite chat-ear-hub), page switch + clip gate + live tiles
+(829e3e4, dfc935f, 9142d74, 202c9b4: the hold path stays byte-identical, the
+ear gives way in setMode). Gate 206/0, landed 47ff137, released v1.0.38.
+Tablet got the private chat settings (it had none since the 9/14 wipe).
+Open: the 400 ms clip gate and the name's recognition at room distance are
+unverified against the real service; an on-device wake detector is the later
+upgrade if the service misses the name; a dropped service connection turns
+the ear off with reason 'error' and the page re-opens it.

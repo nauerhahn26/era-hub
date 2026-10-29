@@ -83,7 +83,7 @@ const turnLog = createTurnLog({ enabled: () => testMode,
 const voice = createChatVoice({ storage: persistence.voiceStorage,
   // Characters are charged to the turn whose choices or spoken words they are; warming the fixed phrases is no turn's.
   onFetch: (chars, words) => { turnLog.fetched(speechMetric, chars, words) || turnLog.fetched(questionMetric, chars, words); } });
-// Her own clips are never heard by the ear: no frames while one plays and for 400 ms after (§8).
+// Her own clips are never heard: while one plays and for 150 ms after, the ear and a press window send silence (§8, maintainer 10/29).
 { const say = voice.say; voice.say = async (...args) => { clipsPlaying++; try { return await say(...args); } finally { clipsPlaying--; gateUntil = performance.now() + EAR_TAIL_MS; } }; }
 const metrics = observeMetrics(createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 }), turnLog);
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
@@ -122,7 +122,7 @@ let stories = savedSettings.stories;
 // A button-press listening window (design 2026-10-27 §4.3-§4.4): `press` is the
 // window this page opened, from the control reply until it closes. The hub's
 // window machine decides when it ends; the page listens, shows, and plays the tones.
-let press = null, pressBusy = false, pickSent = Promise.resolve();
+let press = null, pressBusy = false;
 const windowOpen = () => press !== null && !press.closed;
 const tones = createTones();
 const FRAMES_AFTER_TONE_MS = 200;
@@ -142,7 +142,7 @@ let shownChoices = [], shownQuestion = '', restoring = false;
 // Listen for <name> (spec 2026-10-28 §8): the device's switch, the hub's ear
 // window ({ generation, windowId }), and the gate that keeps her clips unheard.
 let wakeMode = false, ear = null, earStarting = null, clipsPlaying = 0, gateUntil = 0, wakeBusy = false;
-const EAR_TAIL_MS = 400;
+const EAR_TAIL_MS = 150;
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
 // Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
 // and her name, from /settings (chatPromptMs, chatName).
@@ -267,18 +267,23 @@ const controller = createChatController({
   beforeChoices: () => { revealRender = true; window.Dwell?.suppress(REVEAL_SETTLE_MS); },
   async speak(choice, { signal }) {
     if (appLocked()) return;
-    // Her selection ends a listening window first (design §4.4: a pick wins):
-    // the hub hears `pick` before anything is spoken or cancelled.
-    if (press && !press.closed) pickSent = closePressWindow('pick') || Promise.resolve();
     // A second guard: nothing she selects ends the partner's hold (spec 2026-10-28 §7).
     if (holdActive()) return;
+    // Her eyes never interfere with how the voice is processed (maintainer 10/29,
+    // over design 2026-10-27 §4.4): with the ear or a press window open her pick
+    // plays its clip and nothing touches capture: no cancel, no pick, no close.
+    // (The controller has already dropped a replacement waiting under her tile.)
+    const listening = !!ear || (!!press && !press.closed);
     const mine = lifecycle, spoken = ++currentSpeech;
     const timing = speechMetric;
-    if (holding || askPending) metrics.end(questionMetric, 'cancelled', 'interrupted');
-    captureIntent++; holding = false; askPending = false; pendingFrames = []; captureGeneration = null;
-    clearTimeout(askTimer); $('ask').classList.remove('held'); mic?.cancel();
-    setMode('blocked'); uploadEpoch++;
-    const canceled = session ? pickSent.then(() => control('cancel')).catch(() => null) : Promise.resolve();
+    let canceled = Promise.resolve();
+    if (!listening) {
+      if (holding || askPending) metrics.end(questionMetric, 'cancelled', 'interrupted');
+      captureIntent++; holding = false; askPending = false; pendingFrames = []; captureGeneration = null;
+      clearTimeout(askTimer); $('ask').classList.remove('held'); mic?.cancel();
+      setMode('blocked'); uploadEpoch++;
+      canceled = session ? control('cancel').catch(() => null) : Promise.resolve();
+    }
     if (signal.aborted || spoken !== currentSpeech) return;
     let completed;
     turnLog.content(timing, { spoken: choice.say });
@@ -624,6 +629,9 @@ function swapAtNeutral() {
 }
 
 function sendFrame(bytes) {
+  // Her own clip is never heard by the ear or a press window: silence goes in
+  // its place, so the stream's timeline stays continuous (maintainer 10/29).
+  if ((ear || (press && !press.closed)) && clipGated()) bytes = new ArrayBuffer(bytes.byteLength);
   if (earFrame(bytes)) return;
   if (!session && mode !== 'opening') return;
   if (holding && ['opening', 'capture'].includes(mode)) holdFrames++;
@@ -1085,10 +1093,10 @@ function stopEar() {
 const earIdle = () => !!ear && !ear.paused && !!mic && !holding && !askPending && mode === 'blocked' && !(press && !press.closed) && controller.state.phase !== 'Capturing question';
 // Between holds and windows the ear collects every frame (begin is a no-op while collecting).
 function earTick() { if (earIdle()) mic.begin(); }
-// An ear frame: the ear's generation, the socket's sequence; dropped while her clip plays and for 400 ms after.
+// An ear frame: the ear's generation, the socket's sequence (silence while her clip plays, see sendFrame).
+const clipGated = () => clipsPlaying > 0 || performance.now() < gateUntil;
 function earFrame(bytes) {
   if (!earIdle()) return false;
-  if (clipsPlaying > 0 || performance.now() < gateUntil) return true;
   if (!audioSocket || audioSocket.readyState !== WebSocket.OPEN || audioSocket.bufferedAmount > SOCKET_BUFFER_LIMIT) return true;
   const frame = new Uint8Array(8 + bytes.byteLength), header = new DataView(frame.buffer);
   header.setUint32(0, ear.generation, true); header.setUint32(4, socketSeq++, true);

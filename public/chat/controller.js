@@ -173,13 +173,13 @@ export function createChatController(deps = {}) {
     },
     // onSelected(choice) runs only for an accepted pick, before anything speaks.
     async select(id, expectedTurn = turn, onSelected) {
-      // A still-shown old tile after a press (design §4.5, a pick wins): her
-      // dwell speaks it; whatever the window was preparing is dropped unseen.
+      // A still-shown old tile after a press (design §4.5): her dwell speaks it.
+      // Her eyes never interfere with how the voice is processed (maintainer
+      // 10/29, over design §4.4): whatever the window is preparing goes on.
       const stalePick = state.stale && expectedTurn === state.staleTurn;
       if (!stalePick && (expectedTurn !== turn || state.stale || !['Your turn', 'Speaking'].includes(state.phase))) return false;
       const c = state.choices.find(x => x.id === id);
       if (!c) return false;
-      if (stalePick) { invalidate(); patch({ turn, question: '', partial: '', error: '' }); }
       onSelected?.(c);
       timing('selected');
       return api.sayFixed(c.say);
@@ -191,7 +191,8 @@ export function createChatController(deps = {}) {
       speechAbort?.abort(); speechAbort = new AbortController();
       deps.stopSpeech?.();
       timing('speechRequested');
-      const back = state.choices.length && !state.stale ? 'Your turn' : idlePhase();
+      // A listening window keeps listening while she speaks (maintainer 10/29).
+      const back = state.phase === 'Capturing question' ? 'Capturing question' : state.choices.length && !state.stale ? 'Your turn' : idlePhase();
       patch({ phase: 'Speaking', error: '', hint: '' });
       try { await deps.speak?.(echo ? { say: text, echo: true } : { say: text }, { signal: speechAbort.signal }); }
       catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'
