@@ -114,6 +114,19 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.equal((await setLists({ chatPromptMs: 15000 })).status, 204);
   assert.deepEqual(await prompt(), [15000, 'Sam']);
 
+  // The curated voices (maintainer, 10/29): Hope first, the default for a device with no voice chosen.
+  const VOICES = [{ id: 'cVd39cx0VtXNC13y5Y7z', name: 'Hope — young and warm' }, { id: 'cgSgspJ2msm6clMCkdW9', name: 'Jessica — playful American' },
+    { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah — soft & warm' }, { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel — calm narrator' },
+    { id: 'XrExE9yKIg1WjnnlVkGX', name: 'Matilda — friendly' }, { id: 'pFZP5JQG7iQjIQuC4Bku', name: 'Lily — warm British' }];
+  const voices = async () => (await fetch(base + '/voices')).json();
+  const before0 = await voices();
+  assert.deepEqual(before0.voices, VOICES); assert.equal(before0.current, VOICES[0].id, 'Hope is the default voice');
+  assert.equal((await (await fetch(base + '/settings')).json()).voiceId, VOICES[0].id);
+  const setVoice = voiceId => fetch(base + '/voice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voiceId }) });
+  assert.equal((await setVoice(VOICES[1].id)).status, 204); assert.equal((await voices()).current, VOICES[1].id);
+  assert.equal((await setVoice(VOICES[0].id)).status, 204, 'the new voice is accepted'); assert.equal((await voices()).current, VOICES[0].id);
+  assert.equal((await setVoice('not-a-curated-voice')).status, 400);
+
   // Her world (plan "Her world as context"): the hub's digest of the week
   // package and the likes, served to its own pages for the partner dialog.
   assert.equal((await setLikes(['swim'])).status, 204);
