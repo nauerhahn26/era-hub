@@ -1223,7 +1223,7 @@
       ],
       "hub": "none",
       "ports": [],
-      "browsers": 5,
+      "browsers": 6,
       "heavy": false,
       "solo": false,
       "quiet": false,
