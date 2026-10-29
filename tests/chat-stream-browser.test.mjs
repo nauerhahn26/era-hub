@@ -564,14 +564,20 @@ test('a hold waits on the device for a session start for about 3 s at most, then
 
 // Listen for <name> (stable frame §8) against the real hub module: an ear
 // service that hears the wake name in the room once enough frames arrived.
-async function earService(t, words, atFrame = 6) {
+async function earService(t, words, atFrame = 6, later = {}) {
   const connections = [];
   const server = http.createServer((req, res) => res.writeHead(404).end());
   server.on('upgrade', (req, socket, head) => {
     const ws = acceptWebSocket(req, socket, head), conn = { frames: 0, ws }; connections.push(conn);
     ws.send(JSON.stringify({ type: 'Begin' }));
     ws.on('message', (data, binary) => {
-      if (binary) { conn.frames++; if (conn.frames === atFrame) ws.send(JSON.stringify({ type: 'Turn', turn_order: 0, end_of_turn: true, turn_is_formatted: true, transcript: words })); return; }
+      if (binary) {
+        conn.frames++;
+        if (conn.frames === atFrame) ws.send(JSON.stringify({ type: 'Turn', turn_order: 0, end_of_turn: true, turn_is_formatted: true, transcript: words }));
+        const next = later[conn.frames];
+        if (next) ws.send(JSON.stringify({ type: 'Turn', turn_order: 1, end_of_turn: next.end, turn_is_formatted: next.end, transcript: next.text }));
+        return;
+      }
       const value = JSON.parse(data);
       if (value.type === 'Terminate') { ws.send(JSON.stringify({ type: 'Termination' })); setTimeout(() => ws.close(1000), 5); }
     });
@@ -582,10 +588,20 @@ async function earService(t, words, atFrame = 6) {
 }
 
 test('Listen for Ellie through the real hub: the switch opens the ear, room frames flow with no hold, a wake question reveals its replies, off stops the frames', { timeout: 60000 }, async t => {
-  const service = await earService(t, 'Ellie, would you like music or a story?'), reply = replyService();
+  // A second wake question is under way (partials from frame 14) when she picks; it seals at frame 40.
+  const service = await earService(t, 'Ellie, would you like music or a story?', 6,
+    { 14: { text: 'Ellie what did', end: false }, 40: { text: 'Ellie, what did you eat today?', end: true } }), reply = replyService();
   const f = await fixture(t, { env: { ERA_CHAT_STREAM_PROTOCOL: 'ws-streaming-turns', ERA_CHAT_STREAM_URL: service.url, ERA_CHAT_STREAM_MODEL: 'stream-model',
     ERA_CHAT_STREAM_TOKEN: 'stream-secret', ERA_CHAT_SPECULATE_MS: '0',
     ERA_CHAT_TEXT_URL: 'https://reply.invalid/responses', ERA_CHAT_TEXT_MODEL: 'reply-model', ERA_CHAT_TEXT_TOKEN: 'reply-secret' }, apiOptions: { fetch: reply.fetcher } });
+  // Every control the page sends, and every frame on the socket (generation, silent or not).
+  const controls = [], frames = [];
+  f.page.on('request', request => { if (/\/control$/.test(request.url())) controls.push(request.postDataJSON()); });
+  f.page.on('websocket', ws => ws.on('framesent', ({ payload }) => {
+    if (typeof payload === 'string') return;
+    const bytes = Buffer.from(payload);
+    frames.push({ gen: bytes.readUInt32LE(0), at: Date.now(), silent: bytes.subarray(8).every(byte => byte === 0) });
+  }));
   await f.start();
   const toggle = f.page.locator('#wakeToggle');
   assert.equal(await toggle.isDisabled(), false, 'the hub offers the wake word'); assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
@@ -598,6 +614,17 @@ test('Listen for Ellie through the real hub: the switch opens the ear, room fram
   // An either-or question: the hub's own alternatives answer it.
   assert.deepEqual(await f.page.locator('#grid .response .label').allTextContents(), ['Music', 'A story']);
   assert.match(await f.page.locator('#grid .tile.question .label').textContent(), /music or a story/i, 'the strip shows the question after her name');
+  // Her pick mid-utterance (maintainer 10/29): no cancel, no pick; the frames keep flowing under the same generation, silence while her clip plays.
+  const atPick = controls.length, framesAtPick = frames.length, generation = frames.at(-1).gen;
+  await f.page.locator('#grid .response', { hasText: 'Music' }).click();
+  await f.page.waitForFunction(() => document.querySelector('#grid .tile.question .label')?.textContent.includes('eat'), null, { timeout: 15000 });
+  assert.deepEqual(controls.slice(atPick).filter(body => ['cancel', 'pick'].includes(body.type)), [], 'her pick touched nothing of capture');
+  const since = frames.slice(framesAtPick);
+  assert.ok(since.length >= 10 && since.every(frame => frame.gen === generation), 'the frames kept flowing under the same generation');
+  assert.ok(since.some(frame => frame.silent), 'silence went out while her clip played');
+  assert.ok(f.ttsTexts.includes('Music'), 'her pick was spoken');
+  await f.page.waitForSelector('#grid .response >> text=Play outside', { timeout: 15000 });
+  assert.deepEqual(await f.page.locator('#grid .response .label').allTextContents(), ['Play outside', 'Read', 'Not sure'], 'the wake question sealed after her pick still reveals');
   await f.press('#wakeToggle'); await f.page.waitForTimeout(60); await f.lift();
   await f.page.waitForFunction(() => document.body.dataset.ear === 'off', null, { timeout: 10000 });
   await f.page.waitForTimeout(300); const sent = f.sockets[0].sent; await f.page.waitForTimeout(600);

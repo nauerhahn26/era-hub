@@ -523,7 +523,8 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
     window.WebSocket = class {
       static OPEN = 1;
       constructor() { this.readyState = 0; this.bufferedAmount = 0; window.__socket = this; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 10); }
-      send(buffer) { const view = new DataView(buffer); window.__frames.push({ gen: view.getUint32(0, true), seq: view.getUint32(4, true), at: performance.now() }); }
+      send(buffer) { const view = new DataView(buffer), pcm = new Uint8Array(buffer, 8);
+        window.__frames.push({ gen: view.getUint32(0, true), seq: view.getUint32(4, true), at: performance.now(), silent: pcm.every(byte => byte === 0) }); }
       close() { this.readyState = 3; }
     };
     const play = HTMLMediaElement.prototype.play;
@@ -593,14 +594,19 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
   await emit({ type: 'batch-sealed', generation: EAR, windowId: 'w-1', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
   await page.waitForSelector('#grid .response');
   assert.equal(await page.locator('#grid .tile.question .label').textContent(), 'music or a story?');
-  // Her clip is never heard: no frames while it plays and for 400 ms after.
+  // Her clip is never heard: silence in its place while it plays and for 150 ms
+  // after, and her pick touches nothing of capture (maintainer 10/29).
+  const controlsAtPick = controls.length;
   await page.locator('#grid .response', { hasText: 'Music' }).click();
   await page.waitForFunction(() => window.__clips.length && window.__clips.at(-1).end, null, { timeout: 5000 });
   await page.waitForTimeout(900);
   const gate = await page.evaluate(ear => { const clip = window.__clips.at(-1); const ears = window.__frames.filter(frame => frame.gen === ear);
-    return { during: ears.filter(frame => frame.at > clip.start && frame.at < clip.end + 380).length, after: ears.filter(frame => frame.at > clip.end + 420).length }; }, EAR);
-  assert.equal(gate.during, 0, 'no ear frames while her clip plays or within 400 ms of its end');
-  assert.ok(gate.after > 0, 'the ear resumes after the gap');
+    const during = ears.filter(frame => frame.at > clip.start && frame.at < clip.end + 130);
+    return { during: during.length, loud: during.filter(frame => !frame.silent).length, after: ears.filter(frame => frame.at > clip.end + 200 && !frame.silent).length }; }, EAR);
+  assert.ok(gate.during > 0, 'the stream stays continuous while her clip plays');
+  assert.equal(gate.loud, 0, 'only silence while her clip plays and within 150 ms of its end');
+  assert.ok(gate.after > 0, 'the room is heard again after the gap');
+  assert.deepEqual(controls.slice(controlsAtPick).filter(body => ['cancel', 'pick'].includes(body.type)), [], 'her pick sends no cancel and no pick');
   const refresh = controls.filter(body => body.type === 'window' && body.ear === true).at(-1);
   assert.ok(controls.filter(body => body.type === 'window' && body.ear === true).length >= 2 && refresh.context.includes('Me: Music'), 'after her pick the ear gets the conversation so far');
   // A hold with the ear on: the hold's frames are the hold's; the ear resumes after the final.
