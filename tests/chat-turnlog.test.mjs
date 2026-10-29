@@ -394,3 +394,12 @@ test('a turn whose options were read aloud is marked prompted (spec 2026-10-28 Â
   t.wrapped.end(h2, 'completed'); await flush();
   assert.equal('prompted' in JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
 });
+
+test('a turn where Back was used is marked back (maintainer 10/29); nothing else marks it', async () => {
+  const s = setup(), h = s.wrapped.begin('typed');
+  s.log.content(h, { back: true }); s.wrapped.end(h, 'completed'); await flush();
+  assert.equal(JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body).content.back, true);
+  const t = setup(), h2 = t.wrapped.begin('typed');
+  t.log.content(h2, { back: 'yes' }); t.wrapped.end(h2, 'completed'); await flush();
+  assert.equal('back' in JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
+});

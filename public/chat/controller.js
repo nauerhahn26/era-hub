@@ -157,6 +157,20 @@ export function createChatController(deps = {}) {
       patch({ choices: next });
       return true;
     },
+    // Back (maintainer 10/29): an earlier batch of this session returns as a new
+    // turn, its question and replies with new ids; never while a question is captured.
+    restore(batch) {
+      if (['Capturing question', 'Preparing'].includes(state.phase)) return false;
+      const next = cleanChoices(batch?.choices, `${turn + 1}.r`);
+      if (!next.length) return false;
+      const question = String(batch?.question || '').trim().slice(0, 600);
+      invalidate();
+      const frozen = Object.freeze(next);
+      try { deps.prefetch?.(frozen); } catch { /* Warming never holds the reveal back. */ }
+      deps.beforeChoices?.();
+      patch({ turn, phase: 'Your turn', question, partial: '', choices: frozen, replacing: false, stale: false, staleTurn: null, error: '', hint: '' });
+      return true;
+    },
     // onSelected(choice) runs only for an accepted pick, before anything speaks.
     async select(id, expectedTurn = turn, onSelected) {
       // A still-shown old tile after a press (design §4.5, a pick wins): her
