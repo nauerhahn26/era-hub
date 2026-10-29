@@ -30,6 +30,7 @@ const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSett
 // A who question also carries the family's own names: the Drawing library's
 // people still on her board (the list chat-symbols.setPeople pictures).
 const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA), likes: () => chatLikes(DATA),
+  name: () => chatPrompt(DATA).chatName, // the wake name (stable frame §8)
   people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
   // Her world (chat-world.js): built below once DATA exists, read when an open question asks.
   world: () => chatWorld.digest(),

@@ -11,7 +11,7 @@ const { withSymbols, symbolRejected, pictureCandidates, createPictureWarmer } = 
 const { acceptWebSocket, refuseUpgrade } = require('./chat-ws.js');
 const { createStreamTranscriber, streamSettings, loadKeyterms, keytermsFired } = require('./chat-stream.js');
 const { createKeepAliveFetch } = require('./keepalive-fetch.js');
-const { createWindow, energyGate, WINDOW_LIMITS } = require('./chat-window.js');
+const { createWindow, energyGate, wakeQuestion, WINDOW_LIMITS } = require('./chat-window.js');
 
 const PREFIX = '/chat/api';
 const DEFAULTS = Object.freeze({ sessions: 2, idleMs: 90000, lifetimeMs: 1800000,
@@ -29,6 +29,10 @@ const DEFAULTS = Object.freeze({ sessions: 2, idleMs: 90000, lifetimeMs: 1800000
   windowUtteranceMs: WINDOW_LIMITS.utteranceMs, windowSilenceMs: WINDOW_LIMITS.silenceMs, windowCapMs: WINDOW_LIMITS.capMs, windowTickMs: 100,
   // A second press or the cap finalizes the utterance in flight; its final is waited for at most this long.
   windowFinalMs: 2000,
+  // The wake word's ear (stable frame §8): its stream turn starts afresh after
+  // a seal once it is this old (the service's running text never grows without
+  // bound); a bare wake name makes the next utterance within earWakeMs the question.
+  earRollMs: 60000, earWakeMs: 8000,
   // The streaming transcription socket (§3.1): closed after this long idle
   // (null: 60 s for a connection-billed service, 5 min otherwise); the final
   // must arrive this long after release or the hold falls back to one-shot.
@@ -491,6 +495,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     } catch { return []; }
   };
   const likes = () => listFrom(options.likes, 30);
+  // The wake name (stable frame §8): the device's chatName, 'Ellie' by default.
+  const wakeName = () => {
+    try { const value = typeof options.name === 'function' ? options.name() : options.name; return typeof value === 'string' && value.trim() && value.length <= 40 ? value.trim() : 'Ellie'; }
+    catch { return 'Ellie'; }
+  };
   // The family's own names (the Drawing library's people), for a who question only.
   const people = () => listFrom(options.people, 20);
   // Her world (chat-world.js): the device's digest of week packages, shelf,
@@ -539,6 +548,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     session.closed = true; sessions.delete(session.id);
     clearTimeout(session.killTimer);
     if (session.window) { clearInterval(session.window.timer); clearTimeout(session.window.drainTimer); session.window = null; }
+    session.ear = null;
     if (session.events) session.events.end();
     if (session.socket) { session.socket.close(1001, 'session-ended'); session.socket = null; }
     abortChoices(session);
@@ -583,7 +593,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     const session = { id: randomUUID(), child, created: clock(), touched: clock(), generation: 0,
       mode: 'paused', seq: 0, bytes: 0, utteranceBytes: 0, uploading: false, events: null, runtimeReady: false, closed: false,
       socket: null, socketSeq: 0, turnBytes: 0, frameWaiters: new Set(), stream: null, streamIndex: 0, turn: null, keyterms: [],
-      staged: streams.length > 0, context: [], choiceJob: null, window: null };
+      staged: streams.length > 0, context: [], choiceJob: null, window: null, ear: null, controlling: false };
     sessions.set(session.id, session);
     if (streams.length) { session.keyterms = loadKeyterms(env.ERA_CHAT_STREAM_KEYTERMS); startStream(session, 0); }
     warmReply();
@@ -614,6 +624,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         } else if (event.type === 'error') {
           session.mode = 'paused';
           emit(session, { type: 'error', error: (event.error || event.message) === 'no_speech' ? 'no-speech' : 'runtime-error', generation: session.generation });
+          resumeEar(session);
         } else if (event.type === 'wake') {
           if (session.mode !== 'armed') continue;
           session.mode = 'capturing'; session.utteranceBytes = 0;
@@ -621,11 +632,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         } else {
           if (!['capturing', 'finishing'].includes(session.mode)) continue;
           const text = cleanText(event.text, 2000);
-          if (!text) { if (event.type === 'final') { session.mode = 'paused'; emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); } continue; }
+          if (!text) { if (event.type === 'final') { session.mode = 'paused'; emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); resumeEar(session); } continue; }
           if (event.type === 'final') { session.mode = 'paused'; if (session.turn) session.turn.done = true; }
           emit(session, { type: event.type, text, generation: session.generation,
             ...(event.type === 'final' ? { timings: safeTimings(event.timings), ...(session.staged ? { mode: 'one-shot' } : {}) } : {}) });
-          if (event.type === 'final') choicesForFinal(session, text); else warmSpoken(session, text);
+          if (event.type === 'final') { choicesForFinal(session, text); resumeEar(session); } else warmSpoken(session, text);
         }
       }
     });
@@ -640,7 +651,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function sweep() {
     const now = clock();
     for (const session of sessions.values())
-      if (now - session.touched > limits.idleMs || now - session.created > limits.lifetimeMs) dispose(session);
+      // An ear listens for as long as the partner leaves it on: its frames keep it from idling, and no lifetime ends it.
+      if (now - session.touched > limits.idleMs || (now - session.created > limits.lifetimeMs && !session.ear)) dispose(session);
   }
   const timer = setInterval(sweep, Math.min(limits.idleMs, 10000)); timer.unref();
 
@@ -657,6 +669,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     stream.on('socket', value => { if (current()) emit(session, { type: 'socket', warm: value.warm, connectMs: value.connectMs, generation: session.generation }); });
     stream.on('partial', ({ text }) => {
       const clean = cleanText(text, 2000);
+      // The ear's running words are the room's: only its machine hears them, never the page or a reply request.
+      if (current() && clean && session.turn.ear) { session.window?.machine.partial(clean); return; }
       if (current() && clean && ['capturing', 'finishing'].includes(session.mode)) {
         emit(session, { type: 'partial', text: clean, generation: session.generation }); speculate(session, clean, false); warmSpoken(session, clean);
         if (session.turn.window && session.window) session.window.machine.partial(clean);
@@ -679,10 +693,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const socketSeconds = stream.takeSocketSeconds();
       session.mode = 'paused';
       const clean = cleanText(text, 2000);
-      if (!clean) { emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); return; }
+      if (!clean) { emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); resumeEar(session); return; }
       emit(session, { type: 'final', text: clean, generation: session.generation, mode: 'stream', setting: index === 0 ? 'primary' : 'fallback', timings: safeTimings(timings),
         ...(reportUsage() ? { usage: { socketSeconds, keytermsFired: keytermsFired(clean, session.keyterms) } } : {}) });
       choicesForFinal(session, clean);
+      resumeEar(session);
     });
     stream.on('error', ({ code, beforeAudio }) => {
       if (code === 'open-failed' && beforeAudio && streams[index + 1] && session.stream === stream) {
@@ -753,6 +768,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     session.generation++; session.mode = 'paused'; session.turnBytes = 0;
     write(session, { type: 'cancel' }).catch(() => {});
     if (error && active) emit(session, { type: 'error', error, generation: session.generation });
+    resumeEar(session);
   }
   function forwardPcm(session, pcm) {
     write(session, { type: 'audio', pcm: pcm.toString('base64') }).catch(error => {
@@ -775,7 +791,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function attachSocket(session, ws) {
     session.socket = ws; session.socketSeq = 0;
     const broken = (code, reason) => {
-      if (session.socket === ws) { session.socket = null; if (['capturing', 'finishing'].includes(session.mode)) cancelTurn(session); }
+      if (session.socket === ws) { session.socket = null; closeEar(session, 'socket'); if (['capturing', 'finishing'].includes(session.mode)) cancelTurn(session); }
       ws.close(code, reason);
     };
     ws.on('message', (data, binary) => {
@@ -789,13 +805,17 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       // Another generation's frame, or any frame outside a hold, is dropped here.
       if (generation !== session.generation || session.mode !== 'capturing') return;
       const pcm = data.subarray(FRAME_HEADER);
-      if (session.bytes + pcm.length > limits.sessionBytes || session.turnBytes + pcm.length > turnByteLimit(session.turn, limits)) { cancelTurn(session, 'audio-limit'); return; }
-      session.bytes += pcm.length; session.turnBytes += pcm.length;
+      // The ear's frames are the room's for as long as it listens: no hold or window budget applies.
+      if (!session.window?.ear) {
+        if (session.bytes + pcm.length > limits.sessionBytes || session.turnBytes + pcm.length > turnByteLimit(session.turn, limits)) { cancelTurn(session, 'audio-limit'); return; }
+        session.bytes += pcm.length; session.turnBytes += pcm.length;
+      }
       acceptPcm(session, pcm);
     });
     ws.on('close', () => {
       if (session.socket !== ws) return;
       session.socket = null;
+      closeEar(session, 'socket');
       if (['capturing', 'finishing'].includes(session.mode)) cancelTurn(session);
     });
   }
@@ -1041,10 +1061,151 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     if (session.turn && session.turn.window) endStreamTurn(session);
     session.mode = 'paused'; session.turnBytes = 0;
     emit(session, { type: 'window-closed', windowId: win.id, reason, seals, generation: win.generation });
+    resumeEar(session);
   }
   function openWindowOf() {
-    for (const session of sessions.values()) if (session.window && !session.closed) return session.window;
+    // An ear is never pressed: the button's second press and cancel belong to a button window.
+    for (const session of sessions.values()) if (session.window && !session.window.ear && !session.closed) return session.window;
     return null;
+  }
+
+  // ---- the wake word's ear (stable frame design 2026-10-28 §8) ----
+  // One listening window that never closes on silence or cap (its utterance
+  // cap stays). Every utterance it seals is checked for the wake name: a match
+  // is a question, sealed as `utterance-sealed {ear: true}` with its own
+  // windowId and seq 1, and goes through the staged choices like a button
+  // window's first batch; anything else is dropped here, never emitted, never
+  // asked of the reply model. A hold or a button window pauses the ear (its
+  // frames are theirs) and it resumes after, in the generation it left off at.
+  function startEarTurn(session, ear) {
+    endStreamTurn(session);
+    session.mode = 'capturing'; session.turnBytes = 0; session.utteranceBytes = 0;
+    beginTurn(session, { window: true });
+    session.turn.ear = true;
+    const win = { id: ear.id, ear, generation: session.generation, gate: energyGate(), machine: null, timer: null, draining: false, drainTimer: null, startedAt: clock() };
+    win.machine = createWindow({ clock, limits: { utteranceMs: limits.windowUtteranceMs, silenceMs: Infinity, capMs: Infinity },
+      seal: info => earSeal(session, win, info), close: reason => { if (session.window === win) closeEar(session, reason); } });
+    session.window = win;
+    win.timer = setInterval(() => win.machine.tick(), limits.windowTickMs); win.timer.unref?.();
+    return win;
+  }
+  function openEar(session, context) {
+    abortChoices(session); endStreamTurn(session);
+    session.generation++; session.context = context;
+    const ear = { id: randomBytes(6).toString('hex'), paused: false, pendingAt: null };
+    session.ear = ear;
+    startEarTurn(session, ear);
+    emit(session, { type: 'ear', state: 'listening', earId: ear.id, generation: session.generation });
+    return ear;
+  }
+  function pauseEar(session, reason) {
+    const win = session.window;
+    if (!win || !win.ear) return;
+    clearInterval(win.timer); session.window = null; win.ear.paused = true; win.ear.pendingAt = null;
+    if (session.turn && session.turn.ear) endStreamTurn(session);
+    emit(session, { type: 'ear', state: 'off', reason, earId: win.ear.id, generation: session.generation });
+  }
+  function resumeEar(session) {
+    const ear = session.ear;
+    if (!ear || !ear.paused || session.window || session.closed || session.controlling || ['capturing', 'finishing'].includes(session.mode)) return;
+    ear.paused = false;
+    startEarTurn(session, ear);
+    emit(session, { type: 'ear', state: 'listening', earId: ear.id, generation: session.generation, resumed: true });
+  }
+  function closeEar(session, reason) {
+    const ear = session.ear;
+    if (!ear) return;
+    session.ear = null;
+    const win = session.window && session.window.ear ? session.window : null;
+    if (win) {
+      clearInterval(win.timer); session.window = null;
+      if (session.turn && session.turn.ear) endStreamTurn(session);
+      session.mode = 'paused'; session.turnBytes = 0;
+    }
+    emit(session, { type: 'ear', state: 'off', reason, earId: ear.id, generation: session.generation });
+  }
+  function earSeal(session, win, { text, reason }) {
+    if (session.window !== win || session.closed) return;
+    const ear = win.ear, now = clock();
+    const found = wakeQuestion(text, wakeName());
+    let question = null;
+    if (found && found.question) question = found.question;
+    else if (found) ear.pendingAt = now;
+    else if (ear.pendingAt !== null && now - ear.pendingAt <= limits.earWakeMs) question = cleanText(text, 2000);
+    if (question) {
+      ear.pendingAt = null;
+      const id = randomBytes(6).toString('hex');
+      emit(session, { type: 'utterance-sealed', windowId: id, earId: ear.id, ear: true, seq: 1, text: question, windowText: question, reason, generation: session.generation });
+      // A new wake supersedes a reply still in the making, as a new hold does.
+      const previous = session.choiceJob;
+      if (previous && !previous.sealed) previous.controller.abort();
+      const job = runChoices(session, question);
+      job.window = { id, seq: 1 };
+      attachChoices(session, job);
+    }
+    // An old stream turn starts afresh between utterances (bounded memory at
+    // the service and here); the ear itself never closes for it.
+    if (now - win.startedAt >= limits.earRollMs) setImmediate(() => {
+      if (session.window !== win || session.closed || win.machine.pending) return;
+      clearInterval(win.timer); session.window = null;
+      startEarTurn(session, ear);
+    });
+  }
+
+  // One control for a session (the hold's and the button window's), with the
+  // ear paused for a hold or a press and closed by pause, arm or close.
+  async function control(session, body, res) {
+    if (session.window?.ear) {
+      if (body.type === 'ask' || body.type === 'window') pauseEar(session, body.type === 'ask' ? 'hold' : 'press');
+      // Her pick and a cancel leave the ear listening; a cancel drops a reply still in the making.
+      else if (body.type === 'pick') return json(res, 200, { ok: true, generation: session.generation });
+      else if (body.type === 'cancel') { abortChoices(session); return json(res, 200, { ok: true, generation: session.generation }); }
+      else if (body.type === 'finish') throw fault(409, 'capture-inactive');
+      else closeEar(session, body.type);
+    } else if (session.ear && ['pause', 'arm', 'close'].includes(body.type)) closeEar(session, body.type);
+    // A listening window is ended by a press, a cancel, her pick or its own
+    // clock; a hold's controls never finish or restart it (plan T3.2).
+    if (session.window && ['ask', 'finish', 'window'].includes(body.type)) throw fault(409, 'window-open');
+    if (body.type === 'pick') { session.window?.machine.pick(); return json(res, 200, { ok: true, generation: session.generation }); }
+    if (body.type === 'window') {
+      if (!session.stream) throw fault(409, 'stream-unavailable');
+      const context = cleanContext(body.context) || [];
+      const win = openWindow(session, context);
+      warmReply();
+      // The recognizer hears the new generation and drops anything older.
+      await write(session, { type: 'cancel' });
+      return json(res, 200, { ok: true, generation: session.generation, windowId: win.id });
+    }
+    if (session.window) session.window.machine.cancel();
+    if (body.type === 'close') { dispose(session); return json(res, 200, { closed: true }); }
+    if (body.type === 'finish' && body.seq !== undefined) {
+      if (!Number.isSafeInteger(body.seq) || body.seq < 0) throw fault(400, 'invalid-control');
+      // The page's frames travel on the socket, this request on another
+      // connection: finish waits for every frame the page says it sent.
+      const generation = session.generation;
+      try { await waitForFrames(session, body.seq); }
+      catch (error) { if (generation === session.generation) cancelTurn(session); throw error; }
+      if (session.closed || generation !== session.generation) throw fault(409, 'capture-inactive');
+    }
+    // A hold the hub already ended (cancelled, failed, over budget) is never finished.
+    if (body.type === 'finish' && session.mode !== 'capturing') throw fault(409, 'capture-inactive');
+    const context = body.type === 'ask' ? cleanContext(body.context) || [] : null;
+    if (body.type !== 'finish') { abortChoices(session); endStreamTurn(session); session.generation++; }
+    if (context) session.context = context;
+    session.mode = body.type === 'ask' ? 'capturing' : body.type === 'arm' && body.enabled ? 'armed' : body.type === 'finish' ? 'finishing' : 'paused';
+    if (body.type !== 'finish') { session.utteranceBytes = 0; session.turnBytes = 0; }
+    if (body.type === 'ask') { beginTurn(session); warmReply(); }
+    if (body.type === 'finish' && session.turn && session.turn.generation === session.generation) {
+      session.turn.released = true;
+      if (session.turn.mode === 'stream' && !session.turn.done) {
+        // Release finalizes the stream; the recognizer's own capture is left unused.
+        session.turn.transcriber.finalize();
+        return json(res, 200, { ok: true, generation: session.generation });
+      }
+      if (session.turn.chain) { queueWrite(session, session.turn, { type: 'finish' }); return json(res, 200, { ok: true, generation: session.generation }); }
+    }
+    await write(session, { type: body.type, ...(body.type === 'arm' ? { enabled: body.enabled } : {}) });
+    return json(res, 200, { ok: true, generation: session.generation });
   }
 
   async function route(req, res, url) {
@@ -1052,8 +1213,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     if (!ownRequest(req)) throw fault(403, 'local-only');
     const routePath = url.pathname.slice(PREFIX.length);
     if (req.method === 'GET' && routePath === '/config') return json(res, 200, {
-      wakeName: 'Ellie', runtime: { available: !!runtimeAvailable, configured: !!runtimeConfigured, kind: runtimeKind,
-        status: runtimeAvailable ? 'configured' : runtimeConfigured ? 'unavailable' : 'unconfigured', capabilities: { wake: null, streaming: streams.length ? true : null } },
+      wakeName: wakeName(), runtime: { available: !!runtimeAvailable, configured: !!runtimeConfigured, kind: runtimeKind,
+        status: runtimeAvailable ? 'configured' : runtimeConfigured ? 'unavailable' : 'unconfigured', capabilities: { wake: streams.length > 0, streaming: streams.length ? true : null } },
       choices: { available: true, kind: adapterRequested ? 'adapter' : choicesCore.available ? 'built-in' : 'local', generated: adapterRequested ? !!adapterUrl : choicesCore.available },
     });
     if (req.method === 'POST' && routePath === '/choices') return generate(req, res);
@@ -1091,50 +1252,24 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     if (req.method === 'POST' && match[2] === 'control') {
       const body = await readJson(req, limits.bodyBytes);
       if (!['arm', 'ask', 'finish', 'cancel', 'pause', 'close', 'window', 'pick'].includes(body.type) ||
-        (body.type === 'arm' && typeof body.enabled !== 'boolean')) throw fault(400, 'invalid-control');
-      // A listening window is ended by a press, a cancel, her pick or its own
-      // clock; a hold's controls never finish or restart it (plan T3.2).
-      if (session.window && ['ask', 'finish', 'window'].includes(body.type)) throw fault(409, 'window-open');
-      if (body.type === 'pick') { session.window?.machine.pick(); return json(res, 200, { ok: true, generation: session.generation }); }
-      if (body.type === 'window') {
+        (body.type === 'arm' && typeof body.enabled !== 'boolean') ||
+        (body.type === 'window' && body.ear !== undefined && typeof body.ear !== 'boolean')) throw fault(400, 'invalid-control');
+      // The wake word's ear (stable frame §8): on with ear:true, off with ear:false.
+      if (body.type === 'window' && body.ear !== undefined) {
+        if (!body.ear) { closeEar(session, 'off'); return json(res, 200, { ok: true, generation: session.generation }); }
         if (!session.stream) throw fault(409, 'stream-unavailable');
-        const context = cleanContext(body.context) || [];
-        const win = openWindow(session, context);
+        if (session.window && !session.window.ear) throw fault(409, 'window-open');
+        const context = cleanContext(body.context);
+        // Already on: the same ear; a context brings the conversation so far up to date.
+        if (session.ear) { if (context) session.context = context; return json(res, 200, { ok: true, generation: session.generation, earId: session.ear.id }); }
+        const ear = openEar(session, context || []);
         warmReply();
-        // The recognizer hears the new generation and drops anything older.
         await write(session, { type: 'cancel' });
-        return json(res, 200, { ok: true, generation: session.generation, windowId: win.id });
+        return json(res, 200, { ok: true, generation: session.generation, earId: ear.id });
       }
-      if (session.window) session.window.machine.cancel();
-      if (body.type === 'close') { dispose(session); return json(res, 200, { closed: true }); }
-      if (body.type === 'finish' && body.seq !== undefined) {
-        if (!Number.isSafeInteger(body.seq) || body.seq < 0) throw fault(400, 'invalid-control');
-        // The page's frames travel on the socket, this request on another
-        // connection: finish waits for every frame the page says it sent.
-        const generation = session.generation;
-        try { await waitForFrames(session, body.seq); }
-        catch (error) { if (generation === session.generation) cancelTurn(session); throw error; }
-        if (session.closed || generation !== session.generation) throw fault(409, 'capture-inactive');
-      }
-      // A hold the hub already ended (cancelled, failed, over budget) is never finished.
-      if (body.type === 'finish' && session.mode !== 'capturing') throw fault(409, 'capture-inactive');
-      const context = body.type === 'ask' ? cleanContext(body.context) || [] : null;
-      if (body.type !== 'finish') { abortChoices(session); endStreamTurn(session); session.generation++; }
-      if (context) session.context = context;
-      session.mode = body.type === 'ask' ? 'capturing' : body.type === 'arm' && body.enabled ? 'armed' : body.type === 'finish' ? 'finishing' : 'paused';
-      if (body.type !== 'finish') { session.utteranceBytes = 0; session.turnBytes = 0; }
-      if (body.type === 'ask') { beginTurn(session); warmReply(); }
-      if (body.type === 'finish' && session.turn && session.turn.generation === session.generation) {
-        session.turn.released = true;
-        if (session.turn.mode === 'stream' && !session.turn.done) {
-          // Release finalizes the stream; the recognizer's own capture is left unused.
-          session.turn.transcriber.finalize();
-          return json(res, 200, { ok: true, generation: session.generation });
-        }
-        if (session.turn.chain) { queueWrite(session, session.turn, { type: 'finish' }); return json(res, 200, { ok: true, generation: session.generation }); }
-      }
-      await write(session, { type: body.type, ...(body.type === 'arm' ? { enabled: body.enabled } : {}) });
-      return json(res, 200, { ok: true, generation: session.generation });
+      session.controlling = true;
+      try { return await control(session, body, res); }
+      finally { session.controlling = false; resumeEar(session); }
     }
     if (req.method === 'POST' && match[2] === 'audio') {
       if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('application/octet-stream')) throw fault(415, 'pcm-required');

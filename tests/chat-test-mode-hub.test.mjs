@@ -113,6 +113,8 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.deepEqual(await prompt(), [0, 'Sam'], 'a page on another site cannot change them');
   assert.equal((await setLists({ chatPromptMs: 15000 })).status, 204);
   assert.deepEqual(await prompt(), [15000, 'Sam']);
+  // The wake name is the device's chatName (stable frame §8).
+  assert.equal((await (await fetch(base + '/chat/api/config')).json()).wakeName, 'Sam');
 
   // The curated voices (maintainer, 10/29): Hope first, the default for a device with no voice chosen.
   const VOICES = [{ id: 'cVd39cx0VtXNC13y5Y7z', name: 'Hope — young and warm' }, { id: 'cgSgspJ2msm6clMCkdW9', name: 'Jessica — playful American' },
