@@ -403,3 +403,15 @@ test('a turn where Back was used is marked back (maintainer 10/29); nothing else
   t.log.content(h2, { back: 'yes' }); t.wrapped.end(h2, 'completed'); await flush();
   assert.equal('back' in JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
 });
+
+test('a wake-word turn is recorded with mode wake and content.wake (spec 2026-10-28 §8)', async () => {
+  const s = setup(), h = {};
+  s.log.begin(h, 'press', { mode: 'wake', session: '9b2c1a7e-1111-4222-8333-944455556666' });
+  s.log.content(h, { transcript: 'music or a story?', wake: true }); s.log.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.kind, 'press'); assert.equal(record.mode, 'wake'); assert.equal(record.content.wake, true);
+  const t = setup(), h2 = {};
+  t.log.begin(h2, 'press', { mode: 'room' }); t.log.content(h2, { wake: 'yes' }); t.log.end(h2, 'completed'); await flush();
+  const plain = JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.notEqual(plain.mode, 'room'); assert.equal('wake' in plain.content, false);
+});
