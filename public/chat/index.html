@@ -15,12 +15,15 @@
   <main id="app">
     <div id="sessionStatus" role="status"><span id="statusDot"></span><span id="phase">Off</span></div>
     <div id="partnerStrip" aria-label="Conversation partner controls">
+      <button id="wakeToggle" type="button" aria-pressed="false" disabled>Listen: off</button>
+      <span id="lockSlot" aria-hidden="true"></span>
       <button id="partnerOpen" type="button" aria-label="Partner settings">•••</button>
       <button id="ask" type="button" disabled>Preparing…</button>
       <button id="retryChat" type="button" hidden>Try again</button>
     </div>
     <section id="grid" aria-label="Chat words"></section>
     <div id="notice" role="status"></div>
+    <div id="wakeBanner" role="status" hidden>Room audio is sent for transcription while listening is on</div>
     <div id="testModeBanner" role="status" hidden>Test mode: this computer is recording Chat turns</div>
   </main>
   <dialog id="partnerDialog" aria-labelledby="partnerTitle">
