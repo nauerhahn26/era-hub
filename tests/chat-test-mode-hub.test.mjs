@@ -127,6 +127,16 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.equal((await setVoice(VOICES[0].id)).status, 204, 'the new voice is accepted'); assert.equal((await voices()).current, VOICES[0].id);
   assert.equal((await setVoice('not-a-curated-voice')).status, 400);
 
+  // The wake word (stable frame §8): off until a partner turns it on on this device.
+  const wake = async () => (await (await fetch(base + '/settings')).json()).chatWakeMode;
+  assert.equal(await wake(), false);
+  assert.equal((await setLists({ chatWakeMode: true }, { 'Sec-Fetch-Site': 'cross-site' })).status, 204);
+  assert.equal(await wake(), false, 'a page on another site cannot turn it on');
+  assert.equal((await setLists({ chatWakeMode: 'yes' })).status, 204);
+  assert.equal(await wake(), false);
+  assert.equal((await setLists({ chatWakeMode: true })).status, 204);
+  assert.equal(await wake(), true);
+
   // Her world (plan "Her world as context"): the hub's digest of the week
   // package and the likes, served to its own pages for the partner dialog.
   assert.equal((await setLikes(['swim'])).status, 204);

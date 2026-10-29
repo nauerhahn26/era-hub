@@ -24,7 +24,7 @@ const PREFIX = '/chat/api';
 const LIMITS = Object.freeze({ bodyBytes: 65536, audioBytes: 480000, audioTurns: 200, dayBytes: 16777216,
   recent: 10, summaryTurns: 500, rttTtlMs: 30000, rttTimeoutMs: 2000, cpuSampleMs: 200, lagIntervalMs: 100, lagWindow: 50 });
 const KINDS = ['hold', 'typed', 'fixed', 'reply', 'press'];
-const MODES = ['one-shot', 'stream', 'local', 'typed', 'none'];
+const MODES = ['one-shot', 'stream', 'local', 'typed', 'none', 'wake'];
 const OUTCOMES = ['completed', 'cancelled', 'failed'];
 const REASONS = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
 // Every v1.0.20 timing mark plus the spec §5 additions. "transcript" is the
@@ -75,7 +75,9 @@ const RECORD = shape({
     // the page she opened, and Something else used in this turn.
     mode: oneOf(['ask', 'comment']), page: oneOf(['questions', 'comments', 'about']), again: v => v === true,
     // The options were read aloud after a silence (§6).
-    prompted: v => v === true, back: v => v === true }),
+    prompted: v => v === true, back: v => v === true,
+    // A question heard by the wake word (§8).
+    wake: v => v === true }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),
@@ -188,6 +190,18 @@ function applyPromptSetting(stored, incoming, fetchSite) {
   if (ms !== null) next.chatPromptMs = ms;
   const name = incoming && Object.hasOwn(incoming, 'chatName') ? promptName(incoming.chatName) : null;
   if (name !== null) next.chatName = name;
+  return next;
+}
+// ---- the wake word (stable frame spec 2026-10-28 §8) ----
+// chatWakeMode: "Listen for <name>", one device's explicit choice, off when absent.
+function chatWake(dataDir) {
+  try { return { chatWakeMode: JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')).chatWakeMode === true }; }
+  catch { return { chatWakeMode: false }; }
+}
+function applyWakeSetting(stored, incoming, fetchSite) {
+  const next = { ...stored };
+  if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
+  if (typeof incoming?.chatWakeMode === 'boolean') next.chatWakeMode = incoming.chatWakeMode;
   return next;
 }
 // Day files and summaries use the device's local calendar day.
@@ -565,4 +579,4 @@ function createChatTurns(options = {}) {
 
 module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, applyLikesSetting, chatLikes, DEFAULT_LIKES,
   chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT,
-  chatPrompt, applyPromptSetting, localDay, wavFromPcm, STAGES };
+  chatPrompt, applyPromptSetting, chatWake, applyWakeSetting, localDay, wavFromPcm, STAGES };
