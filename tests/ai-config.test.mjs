@@ -136,7 +136,7 @@ test("a key not verified yet still counts (server.js's own enabled rule)", () =>
   const r = aiRoles(dir);
   assert.equal(r.elevenlabs.apiKey, TKEY);
   // no voice chosen yet -> the same default voice the Voice card shows first
-  assert.equal(r.elevenlabs.voiceId, "cgSgspJ2msm6clMCkdW9");
+  assert.equal(r.elevenlabs.voiceId, "cVd39cx0VtXNC13y5Y7z");
   // and the same model it shows first (server.js loadTtsCfg). The role used to
   // carry no model at all, so the narrate step fell through to a default of its
   // own and the 3-page run of 9/4 recorded eleven_multilingual_v2 for a family
