@@ -105,7 +105,7 @@ gaze-move (§6).
   alpha), scales to 768 px, and writes `<Drive>/characters/<slug>.png` +
   updates `characters.json`. Dad approves each cut-out before it is written
   (`approved_by_dad`, the character-consistency rule). The roster to start:
-  ellie, mom, dad, aidan, saba, savta, jonah, grammy — dad extends by editing
+  her, mom, dad, siblings and grandparents by their family names — dad extends by editing
   the json. This spec fixes the file contract only; the tool is its own
   (private) task.
 - **Behaviour**: a person is a sticker with `zone: "ground"`, `scale` from the
