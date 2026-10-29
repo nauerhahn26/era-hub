@@ -29,3 +29,6 @@ dialog{background:#f8faf9;color:#17272e;border:0;border-radius:20px;max-width:72
 @media(max-width:1350px){#partnerStrip{gap:5px}#partnerStrip button{padding:7px 9px;font-size:14px;min-height:40px}#sessionStatus{font-size:20px;max-width:28%}.tile{padding:12px}#notice{font-size:11px;max-width:38vw}}
 @media(max-height:850px){.tile.has-symbol{padding-block:10px;gap:6px}}
 @media(max-height:650px){.tile,.tile.has-symbol{padding:8px}#partnerStrip button{min-height:32px;padding:5px 8px}#sessionStatus{font-size:18px}}
+/* Back in the door bar (maintainer 10/29): the door's look; width and gap from app.js (frame.js BAR_BACK). */
+.msgbar > #back{flex:0 0 auto;gap:10px;padding:0 10px;font:700 calc(var(--bar-inner,60px) * .42)/1 Arial,Helvetica,sans-serif;color:#fff;overflow:hidden}
+.msgbar > #back .chat-symbol{height:72%;width:auto;max-width:40%;flex:none}.msgbar > #back.off{opacity:.4;cursor:default}
