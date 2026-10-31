@@ -371,9 +371,12 @@ test('a pick is recorded only when select accepts it: onSelected runs before spe
   assert.deepEqual(order, [], 'a refused pick is never recorded');
   assert.equal(await c.select(shown[1].id, tileTurn, choice => order.push(`logged ${choice.label}`)), true);
   assert.deepEqual(order, ['logged Fish', 'spoke Fish.']);
+  // The words on the tile now (a Yes or No answered in full, spec 2026-10-28 §11) are what she says.
+  assert.equal(await c.select(shown[0].id, tileTurn, choice => order.push(`logged ${choice.label}`), 'Yes, chicken please'), true);
+  assert.deepEqual(order.slice(2), ['logged Chicken', 'spoke Yes, chicken please']);
   // The page hands the turn-log write to select, not before it.
   const app = await readFile(new URL('../public/chat/app.js', import.meta.url), 'utf8');
-  assert.match(app, /controller\.select\(item\.id, selectedTurn, \w+ => turnLog\.content\(\w+, \{ selected: \w+ \}\)\)/);
+  assert.match(app, /controller\.select\(item\.id, selectedTurn, \w+ => \{[^}]*turnLog\.content\(questionMetric, \{ selected: /);
   assert.doesNotMatch(app, /turnLog\.content\(questionMetric, \{ selected: item \}\); controller\.select/);
 });
 

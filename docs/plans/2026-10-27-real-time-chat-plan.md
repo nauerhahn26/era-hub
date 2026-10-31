@@ -642,7 +642,7 @@ And a question lost in Listen mode (13:08–13:23 PT) that no record explains.
       for the full answers (`chat-choices.js` shape yes-no → {yes, no, feeling});
       `yes-no-answered` event; abort rules as for choices; a feeling word must
       be in the vocabulary table or is dropped.
-- [ ] Y3 page: middle Yes/No take label + say + merged picture (feeling picture,
+- [x] Y3 page: middle Yes/No take label + say + merged picture (feeling picture,
       head badge); corners speak the phrase; selection wins; Clear/Back/new
       question reset; read-aloud uses the phrases; `content.answered`.
 - [ ] E1 ear records (kind 'ear') from the hub while test mode is on; page gate

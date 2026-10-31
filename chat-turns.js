@@ -77,7 +77,9 @@ const RECORD = shape({
     // The options were read aloud after a silence (§6).
     prompted: v => v === true, back: v => v === true,
     // A question heard by the wake word (§8).
-    wake: v => v === true }),
+    wake: v => v === true,
+    // Yes and No in full were on screen when she chose (stable frame §11).
+    answered: v => v === true }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),

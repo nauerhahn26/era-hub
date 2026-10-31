@@ -862,3 +862,97 @@ test('the ear turns itself off when idle: a gentle status line, no countdown, th
   assert.notEqual(await phase(), 'Listening is off. Touch Listen for Ellie to turn it on');
   assert.deepEqual(f.errors, []);
 });
+
+test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with the feeling\'s picture and a head badge, the corners speak them, her pick wins, Clear/Back/Something else/a new question put the plain Yes and No back, the record says answered', { timeout: 90000 }, async t => {
+  const f = await earFixture(t, { chatTestMode: true });
+  const vocabulary = await fs.readFile(path.join(root, 'public/chat/vocabulary.json'));
+  // A one-pixel PNG for every library picture: the page's own /symbol/<id> route.
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const records = [];
+  await f.context.route('**/chat/vocabulary.json', route => route.fulfill({ status: 200, contentType: 'application/json', body: vocabulary }));
+  await f.context.route('**/symbol/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: png }));
+  await f.context.route('**/chat/api/turns', route => { try { const body = route.request().postDataJSON(); if (body) records.push(body); } catch {} return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); });
+  const page = await f.open();
+  const YES_NO = [{ label: 'Yes', say: 'Yes.', symbol: 'yes', symbolId: 5583 }, { label: 'No', say: 'No.', symbol: 'no', symbolId: 5525 },
+    { label: "I'm not sure", say: "I'm not sure.", symbol: 'not sure', symbolId: 11696 }, { label: 'Please say that again', say: 'Please say that again.', symbol: 'say again' }];
+  async function ask(id, text) {
+    await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: id, seq: 1, text, windowText: text, generation: f.EAR });
+    await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: id, seq: 1, kind: 'yes-no', choices: YES_NO });
+    await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response').length === 4 && document.querySelector('#grid .tile.response .label').textContent === 'Yes');
+  }
+  const answer = (id, feeling = 'hungry', words = ["Yes, I'm hungry", "No, I'm not hungry"]) => ({ type: 'yes-no-answered', generation: f.EAR, windowId: id, seq: 1, feeling,
+    yes: { label: words[0], say: words[0], ...(feeling ? { symbol: feeling, symbolId: 4962 } : {}) }, no: { label: words[1], say: words[1], ...(feeling ? { symbol: feeling, symbolId: 4962 } : {}) } });
+  const labels = () => page.locator('#grid .tile.response .label').allTextContents();
+  const reply = label => page.locator('#grid .tile.response', { hasText: label }).first();
+  const tileOf = side => page.evaluate(side => { const el = [...document.querySelectorAll('#grid .tile.response')][side === 'yes' ? 0 : 1];
+    const badge = el.querySelector('.chat-badge'), picture = el.querySelector('.chat-symbol');
+    const box = picture?.getBoundingClientRect(), mark = badge?.getBoundingClientRect();
+    return { label: el.querySelector('.label').textContent, symbolId: el.dataset.symbolId, badge: badge ? { src: badge.getAttribute('src'), side: badge.dataset.side,
+      shown: getComputedStyle(badge).display !== 'none', smaller: mark.width < box.width * 0.75, overlaps: mark.left < box.right && mark.right > box.left && mark.top < box.bottom && mark.bottom > box.top } : null }; }, side);
+  // What she said: each speech turn's record (test mode) holds its words; clips may come from the warm cache.
+  const saidCount = () => records.filter(record => record.content?.spoken).length;
+  const lastSpoken = async text => { const before = saidCount(); for (let i = 0; i < 200 && saidCount() === before; i++) await page.waitForTimeout(20);
+    assert.equal(records.filter(record => record.content?.spoken).at(-1)?.content.spoken, text); };
+
+  await ask('w-1', 'are you hungry?');
+  const cornerBefore = await page.locator('#grid .tile.yes').evaluate(el => [el.querySelector('.label').textContent, el.dataset.symbolId]);
+  assert.deepEqual(cornerBefore, ['yes', '5583'], 'the corner shows the nodding head');
+  assert.equal((await tileOf('yes')).symbolId, '5583', 'the plain Yes reply shows the nodding head too');
+  // Another question's answers change nothing; this question's change only the Yes and No, in place.
+  await f.emit(page, answer('w-other'));
+  await page.waitForTimeout(100);
+  assert.deepEqual(await labels(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  const kept = await page.evaluate(() => { window.__kept = [...document.querySelectorAll('#grid .tile')]; return window.__kept.length; });
+  await f.emit(page, answer('w-1'));
+  await page.waitForFunction(() => document.querySelector('#grid .tile.response .label').textContent === "Yes, I'm hungry");
+  assert.deepEqual(await labels(), ["Yes, I'm hungry", "No, I'm not hungry", "I'm not sure", 'Please say that again']);
+  assert.ok(await page.evaluate(n => document.querySelectorAll('#grid .tile').length === n && window.__kept.every(el => el.isConnected), kept), 'no tile was redrawn');
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .chat-badge')].every(img => img.complete));
+  const yes = await tileOf('yes'), no = await tileOf('no');
+  assert.equal(yes.symbolId, '4962'); assert.equal(no.symbolId, '4962', 'both show the feeling');
+  assert.deepEqual([yes.badge.src, yes.badge.side, no.badge.src, no.badge.side], ['/symbol/5583', 'yes', '/symbol/5525', 'no'], 'the heads as badges');
+  assert.ok(yes.badge.shown && yes.badge.smaller && yes.badge.overlaps, `a small badge on the picture: ${JSON.stringify(yes.badge)}`);
+  assert.deepEqual(await page.locator('#grid .tile.yes').evaluate(el => [el.querySelector('.label').textContent, el.dataset.symbolId]), cornerBefore, 'the corner keeps its look');
+  // The corners speak the phrase; the middle Yes speaks and records it.
+  await page.locator('#grid .tile.no').click(); await lastSpoken("No, I'm not hungry");
+  await reply("Yes, I'm hungry").click(); await lastSpoken("Yes, I'm hungry");
+  // A new question: plain Yes and No; the first turn's record says answered, with the words she chose.
+  await ask('w-2', 'is it raining?');
+  const question = () => records.find(record => record.content?.transcript === 'are you hungry?');
+  for (let i = 0; i < 100 && !question(); i++) await page.waitForTimeout(20);
+  assert.equal(question().content.answered, true); assert.equal(question().content.selected.label, "Yes, I'm hungry");
+  // Her pick wins: answers after it change nothing; the corner says plain Yes.
+  await reply('No').click(); await lastSpoken('No.');
+  await f.emit(page, answer('w-2', null, ["Yes, it's raining", "No, it isn't"]));
+  await page.waitForTimeout(150);
+  assert.deepEqual(await labels(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  await page.locator('#grid .tile.yes').click(); await lastSpoken('Yes.');
+  // Without a feeling the head stays the picture, with no badge; Clear puts the plain set back.
+  await ask('w-3', 'do you like dogs?');
+  await f.emit(page, answer('w-3', null, ['Yes, I like dogs', "No, I don't"]));
+  await page.waitForFunction(() => document.querySelector('#grid .tile.response .label').textContent === 'Yes, I like dogs');
+  const plainYes = await tileOf('yes');
+  assert.equal(plainYes.symbolId, '5583'); assert.equal(plainYes.badge, null);
+  const touch = async selector => { const cdp = await f.context.newCDPSession(page), box = await page.locator(selector).boundingBox();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
+    await page.waitForTimeout(60); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); };
+  const drops = () => f.controls.filter(body => body.type === 'drop').length;
+  await touch('#clearQuestion');
+  await page.waitForFunction(() => !document.querySelector('#grid .tile.response'));
+  assert.equal(drops(), 0, 'the answers had landed: nothing to drop at the hub');
+  await page.locator('#grid .tile.yes').click(); await lastSpoken('Yes.');
+  // Back: the earlier batch returns plain.
+  await page.locator('#back').click();
+  await page.waitForFunction(() => document.querySelector('#grid .tile.response .label')?.textContent === 'Yes');
+  assert.deepEqual(await labels(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  // Something else while the answers are still coming: the hub is told to drop them, and late ones change nothing.
+  await ask('w-4', 'are you tired?');
+  await page.locator('#grid .tile.static', { hasText: 'Something else' }).click();
+  for (let i = 0; i < 100 && !drops(); i++) await page.waitForTimeout(20);
+  assert.equal(drops(), 1, 'Something else drops the answers still coming');
+  await page.waitForFunction(() => document.querySelector('#grid .tile.response .label')?.textContent === 'Music');
+  await f.emit(page, answer('w-4', 'tired', ["Yes, I'm tired", "No, I'm not tired"]));
+  await page.waitForTimeout(150);
+  assert.deepEqual(await labels(), ['Music', 'A story']);
+  assert.deepEqual(f.errors, []);
+});

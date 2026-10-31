@@ -181,7 +181,9 @@ export function createChatController(deps = {}) {
       return true;
     },
     // onSelected(choice) runs only for an accepted pick, before anything speaks.
-    async select(id, expectedTurn = turn, onSelected) {
+    // `say`, when given, is the words on the tile now (a Yes or No answered in
+    // full, spec 2026-10-28 §11) in place of the batch's own.
+    async select(id, expectedTurn = turn, onSelected, say) {
       // A still-shown old tile after a press (design §4.5): her dwell speaks it.
       // Her eyes never interfere with how the voice is processed (maintainer
       // 10/29, over design §4.4): whatever the window is preparing goes on.
@@ -191,7 +193,7 @@ export function createChatController(deps = {}) {
       if (!c) return false;
       onSelected?.(c);
       timing('selected');
-      return api.sayFixed(c.say);
+      return api.sayFixed(typeof say === 'string' && say.trim() ? say.slice(0, 600) : c.say);
     },
     // echo: the partner's own words said again (the question strip); speak() is told.
     async sayFixed(text, { echo = false } = {}) {

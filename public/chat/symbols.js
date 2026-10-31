@@ -230,7 +230,9 @@ export function planPictures(entries, { variant = 'color', keep = [] } = {}) {
     }
     // Yes and No are her boards' pair (spec 2026-10-28 §11): the nodding and the
     // shaking head stand on the corner and on a Yes or No reply alike.
-    const pair = (concept.word === 'yes' || concept.word === 'no') && concept === library.byWord.get(concept.word);
+    // A Yes or No answered in full shows the feeling on both replies (§11), each with its head badge.
+    const pair = ((concept.word === 'yes' || concept.word === 'no') && concept === library.byWord.get(concept.word)) ||
+      entries[index].badge === 'yes' || entries[index].badge === 'no';
     const options = [[concept.id, concept.word], [concept.altId, concept.word], [library.fallback.id, library.fallback.word]];
     const [id, word] = pair ? [concept.id, concept.word] : options.find(([candidate]) => candidate && !used.has(candidate)) || [];
     if (!id) continue;
@@ -279,4 +281,35 @@ export function attachPicture(tile, plan, onChange) {
   });
   img.src = plan.src;
   return place(img);
+}
+
+// Yes and No in full (spec 2026-10-28 §11): the nodding or the shaking head as a
+// small badge on the feeling's picture, "merged when it can be". `side` null removes it.
+export function attachBadge(tile, side, variant = 'color') {
+  tile.querySelector('.chat-badge')?.remove();
+  if (side !== 'yes' && side !== 'no' || !library) return null;
+  const document = tile.ownerDocument, concept = library.byWord.get(side);
+  const drawn = () => { const svg = drawnPicture(side, document); svg.setAttribute('class', 'chat-badge'); return svg; };
+  let badge;
+  if (variant === 'emoji' || !concept) badge = drawn();
+  else {
+    badge = document.createElement('img');
+    badge.className = 'chat-badge'; badge.alt = ''; badge.setAttribute('aria-hidden', 'true'); badge.draggable = false; badge.decoding = 'async';
+    badge.addEventListener('error', () => { const svg = drawn(); badge.replaceWith(svg); placeBadge(tile); }, { once: true });
+    badge.src = sourceFor(concept.id, variant);
+  }
+  badge.dataset.side = side;
+  tile.appendChild(badge);
+  return badge;
+}
+// The badge sits on the lower right corner of the picture as drawn (object-fit:
+// contain draws a square), half its side: about a quarter of the picture.
+export function placeBadge(tile) {
+  const badge = tile.querySelector('.chat-badge'), picture = tile.querySelector('.chat-symbol');
+  if (!badge) return;
+  if (!picture || tile.classList.contains('picture-set-aside')) { badge.style.display = 'none'; return; }
+  const box = tile.getBoundingClientRect(), drawn = picture.getBoundingClientRect();
+  const side = Math.min(drawn.width, drawn.height), size = Math.round(side / 2);
+  const left = drawn.left + (drawn.width + side) / 2 - size * 0.85 - box.left, top = drawn.top + (drawn.height + side) / 2 - size * 0.85 - box.top;
+  Object.assign(badge.style, { display: '', width: `${size}px`, height: `${size}px`, left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
 }
