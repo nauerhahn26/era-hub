@@ -383,6 +383,24 @@ const FEEL = [/^how are you\b/, /\bhow was your \w+/, /\bhow do you feel\b/, /\b
 const RECALL = [/\b(?:what|where|who|when|how)\b.*\b(?:did you|have you|were you|you do|you went|you see)\b/, /\bwhat happened\b/,
   /\bwhat was your (?:favourite|favorite) part\b/, /\btell me about your (?:day|weekend|holiday|birthday|book|story|trip)\b/];
 const OPEN = /^(?:who|what|where|when|why|how|which|tell me|tell us|say|describe|what about)\b/;
+// Several questions at once (home device, 10/31): "do you want water? Do you
+// want to wait? Do you want something else?" is a list of alternatives, never a
+// yes/no on its first clause. Two or more question marks or yes/no stems, or a
+// long utterance whose yes/no clause is only part of it.
+const YES_NO_STEM = /\b(?:do you want|do you wanna|would you like|do you|are you|is it|is that|can you|could you|would you|will you|should we|can we|are we)\b/gi;
+// A partner who restarts ("No wait.", "Sorry.", "Hmm, okay.") means the last question only.
+const RESTART = /\b(?:no wait|sorry|actually|never mind|nevermind|scratch that|i mean|hmm,? okay|let me ask again)\b/i;
+// Two or more question sentences with no restart between them; a bare choice
+// prompt ("What do you like? Music or a story?") only opens the one question.
+const questionsInRow = text => typeof text === 'string' && !RESTART.test(text) &&
+  (text.match(/[^.?!]+[.?!]*/g) || []).filter(part => /\?\s*$/.test(part) && !OPENER.test(part.trim())).length >= 2;
+function severalQuestions(text) {
+  if (typeof text !== 'string' || RESTART.test(text)) return false;
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  if ((text.match(/\?/g) || []).length >= 2 || (text.match(YES_NO_STEM) || []).length >= 2) return true;
+  const clause = addressed(text).split(/\s+/).filter(Boolean).length;
+  return words > 12 && clause < words;
+}
 function openShape(text) {
   if (typeof text !== 'string') return null;
   const question = addressed(text).toLowerCase().replace(/[’]/g, "'").replace(/[?.!,;:]+$/, '').trim();
@@ -390,13 +408,16 @@ function openShape(text) {
   if (WANT.some(pattern => pattern.test(question))) return 'want';
   if (FEEL.some(pattern => pattern.test(question))) return 'feel';
   if (RECALL.some(pattern => pattern.test(question))) return 'recall';
-  return OPEN.test(question) ? 'open' : null;
+  return OPEN.test(question) || severalQuestions(text) ? 'open' : null;
 }
 function localChoices(text) {
   let trimmed = addressed(text);
   const glyphs = glyphChoices(trimmed);
   if (glyphs) return glyphs;
   if (/\bor\b/i.test(trimmed)) {
+    // Questions in a row ("Do you want water? Do you want to wait, or …?") are
+    // one list for the model; the last question's halves alone would drop the first.
+    if (questionsInRow(text)) return null;
     const named = namedChoices(trimmed);
     if (named) return named;
     const prefix = new RegExp('^' + CHOICE_PROMPT + String.raw`\s*[:,.!?]?\s+`, 'i');
@@ -429,7 +450,7 @@ function localChoices(text) {
     }
     return null;
   }
-  if (/^(?:is|are|was|were|do|does|did|can|could|would|will|have|has|should|may)\b/i.test(trimmed))
+  if (/^(?:is|are|was|were|do|does|did|can|could|would|will|have|has|should|may)\b/i.test(trimmed) && !severalQuestions(text))
     return { kind: 'yes-no', choices: choiceList(['Yes', 'No', "I'm not sure", 'Please say that again']) };
   if (/^(hi|hello|hey)(?:\b|!)/i.test(trimmed))
     return { kind: 'comments', choices: choiceList(['Hello!', "It's good to see you", 'How are you?']) };

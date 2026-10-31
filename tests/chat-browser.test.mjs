@@ -642,3 +642,121 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
   assert.equal(await page.locator('#wakeBanner').isVisible(), false);
   assert.deepEqual(errors, []);
 });
+
+// ---- her own audio is never heard by the ear (10/31 turn record: the read-aloud's
+// "Ellie, your options are" came back as a wake question) ----
+// One browser context, every route at the context, so a second Chat page shares it.
+async function earFixture(t, settings = {}) {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-ear-gate-'));
+  const wav = path.join(scratch, 'microphone.wav'); await fs.writeFile(wav, makeChatToneWav());
+  const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${wav}`, '--autoplay-policy=no-user-gesture-required'] });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, hasTouch: true, permissions: ['microphone'] });
+  const controls = [], errors = [], EAR = 7;
+  await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+  await context.addInitScript(() => {
+    window.__frames = []; window.__clips = [];
+    window.EventSource = class { constructor(url) { if (String(url).includes('/sessions/')) window.__events = this; } close() { this.closed = true; } };
+    window.WebSocket = class {
+      static OPEN = 1;
+      constructor() { this.readyState = 0; this.bufferedAmount = 0; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 10); }
+      send(buffer) { const view = new DataView(buffer), pcm = new Uint8Array(buffer, 8);
+        window.__frames.push({ gen: view.getUint32(0, true), at: performance.timeOrigin + performance.now(), silent: pcm.every(byte => byte === 0) }); }
+      close() { this.readyState = 3; }
+    };
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (...args) {
+      const clip = { start: performance.timeOrigin + performance.now(), end: null }; window.__clips.push(clip);
+      this.addEventListener('ended', () => { clip.end = performance.timeOrigin + performance.now(); }, { once: true });
+      return play.apply(this, args);
+    };
+  });
+  await context.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
+  await context.route('**/tts', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }));
+  await context.route('**/settings', route => {
+    if (route.request().method() === 'POST') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatName: 'Ellie', chatWakeMode: true, chatPromptMs: 0, ...settings }) });
+  });
+  await context.route('**/chat/api/**', async route => {
+    const req = route.request(), url = new URL(req.url()); let result = {};
+    if (url.pathname === '/chat/api/state') return route.continue();
+    if (url.pathname.endsWith('/config')) result = { runtime: { available: true, kind: 'built-in', capabilities: { streaming: true, wake: true } }, choices: { available: true } };
+    else if (url.pathname.endsWith('/sessions') && req.method() === 'POST') result = { id: 'gate-session' };
+    else if (url.pathname.endsWith('/control')) { const body = req.postDataJSON(); controls.push(body); result = { ok: true, generation: EAR, earId: 'ear-1' }; }
+    else if (url.pathname.endsWith('/choices')) result = { kind: 'alternatives', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) }).catch(() => {});
+  });
+  async function open({ ear = true } = {}) {
+    const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
+    await page.goto(base + '/chat/'); await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
+    await page.waitForFunction(() => window.__events);
+    await page.evaluate(() => window.__events.onmessage({ data: JSON.stringify({ type: 'ready', capabilities: { remoteStreaming: true, audioSocket: true, stagedChoices: true } }) }));
+    if (ear) {
+      await page.waitForFunction(() => document.body.dataset.ear === 'on', null, { timeout: 5000 });
+      await page.waitForFunction(ear => window.__frames.filter(frame => frame.gen === ear && !frame.silent).length >= 3, EAR, { timeout: 5000 });
+    }
+    return page;
+  }
+  const emit = (page, data) => page.evaluate(value => window.__events.onmessage({ data: JSON.stringify(value) }), data);
+  // The ear frames sent in [from, to] (epoch ms), and how many carried sound.
+  const heard = (page, from, to) => page.evaluate(({ ear, from, to }) => { const frames = window.__frames.filter(frame => frame.gen === ear && frame.at > from && frame.at < to);
+    return { frames: frames.length, loud: frames.filter(frame => !frame.silent).length }; }, { ear: EAR, from, to });
+  return { context, controls, errors, EAR, open, emit, heard };
+}
+
+test('the read-aloud is never heard by the ear: only silence goes out while the name and each option play', { timeout: 90000 }, async t => {
+  const f = await earFixture(t, { chatPromptMs: 800 });
+  const page = await f.open();
+  await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-1', seq: 1, text: 'music or a story?', windowText: 'music or a story?', generation: f.EAR });
+  await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: 'w-1', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
+  await page.waitForSelector('#grid .response');
+  await page.waitForFunction(() => window.__clips.length >= 3 && window.__clips.every(clip => clip.end), null, { timeout: 15000 });
+  await page.waitForTimeout(800);
+  const clips = await page.evaluate(() => window.__clips);
+  assert.equal(clips.length, 3, 'the name, then each option');
+  for (const clip of clips) {
+    const during = await f.heard(page, clip.start, clip.end + 130);
+    assert.ok(during.frames > 0 && during.loud === 0, `only silence while the read-aloud plays: ${JSON.stringify(during)}`);
+  }
+  assert.ok((await f.heard(page, clips.at(-1).end + 600, Date.now() + 1000)).loud > 0, 'the room is heard again after the reading');
+  assert.deepEqual(f.controls.filter(body => ['cancel', 'pick'].includes(body.type)), [], 'the reading touches nothing of capture');
+  assert.deepEqual(f.errors, []);
+});
+
+test('a device voice whose end event comes early is still never heard: the ear sends silence while the device is speaking', { timeout: 90000 }, async t => {
+  const f = await earFixture(t);
+  // A device voice that reports its end at once but keeps speaking for a second (the kiosk's voices can).
+  await f.context.addInitScript(() => {
+    const synth = { speaking: false, pending: false, paused: false, getVoices: () => [], cancel() { synth.speaking = false; }, pause() {}, resume() {},
+      speak(utterance) { synth.speaking = true; window.__synth = { start: performance.timeOrigin + performance.now() };
+        setTimeout(() => utterance.onstart?.(), 5); setTimeout(() => utterance.onend?.(), 20);
+        setTimeout(() => { synth.speaking = false; window.__synth.end = performance.timeOrigin + performance.now(); }, 1000); } };
+    Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true });
+    window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+  });
+  const page = await f.open();
+  await page.locator('#partnerOpen').click(); await page.locator('#voicePreference').selectOption('local');
+  await page.locator('#partnerDialog form button').click();
+  await page.locator('#grid .tile.static', { hasText: 'Hi!' }).click();
+  await page.waitForFunction(() => window.__synth?.end, null, { timeout: 5000 });
+  await page.waitForTimeout(500);
+  const synth = await page.evaluate(() => window.__synth);
+  const during = await f.heard(page, synth.start, synth.end + 100);
+  assert.ok(during.frames > 0 && during.loud === 0, `only silence while the device voice speaks: ${JSON.stringify(during)}`);
+  assert.deepEqual(f.errors, []);
+});
+
+test('another Chat page speaking is never heard either: the ear sends silence while any Chat page plays her voice', { timeout: 90000 }, async t => {
+  const f = await earFixture(t);
+  const ear = await f.open();
+  const other = await f.open({ ear: false });
+  await other.locator('#grid .tile.static', { hasText: 'Hi!' }).click();
+  await other.waitForFunction(() => window.__clips.length && window.__clips.at(-1).end, null, { timeout: 5000 });
+  await ear.waitForTimeout(500);
+  const clip = await other.evaluate(() => window.__clips.at(-1));
+  const during = await f.heard(ear, clip.start, clip.end + 130);
+  assert.ok(during.frames > 0 && during.loud === 0, `only silence while another Chat page speaks: ${JSON.stringify(during)}`);
+  assert.deepEqual(f.errors, []);
+});

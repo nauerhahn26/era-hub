@@ -570,3 +570,12 @@ Open: the 400 ms clip gate and the name's recognition at room distance are
 unverified against the real service; an on-device wake detector is the later
 upgrade if the service misses the name; a dropped service connection turns
 the ear off with reason 'error' and the page re-opens it.
+
+## Her eyes never touch the voice (dad, 10/29 night) — LANDED ee7ab22, v1.0.39
+Spec §9. In ear or press mode a selection plays its clip and nothing else
+(no mic cancel, no capture mode change, no hub cancel, no pick; a press
+window ends on its own clock or the second press); replacement batches still
+never swap under the tile she chose; her clip goes out as silence with a
+150 ms tail so the stream timeline stays continuous (182e439, e553aaa).
+Gate 206/0. Unverified on a device: whether echo cancellation plus silence
+keeps her clip out of the transcript at room volume.

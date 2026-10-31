@@ -83,8 +83,24 @@ const turnLog = createTurnLog({ enabled: () => testMode,
 const voice = createChatVoice({ storage: persistence.voiceStorage,
   // Characters are charged to the turn whose choices or spoken words they are; warming the fixed phrases is no turn's.
   onFetch: (chars, words) => { turnLog.fetched(speechMetric, chars, words) || turnLog.fetched(questionMetric, chars, words); } });
-// Her own clips are never heard: while one plays and for 150 ms after, the ear and a press window send silence (§8, maintainer 10/29).
-{ const say = voice.say; voice.say = async (...args) => { clipsPlaying++; try { return await say(...args); } finally { clipsPlaying--; gateUntil = performance.now() + EAR_TAIL_MS; } }; }
+// Her own voice is never heard: while anything of this page plays, and for the
+// tail after it, the ear and a press window send silence (§8, maintainer 10/29).
+// Every path counts (10/31 turn record: the read-aloud prefix came back as a
+// wake question): each voice.say from the request, each media element from
+// 'playing' to its end, the device voice for as long as it is speaking (its
+// end event can come early), the press tones, and any other Chat page's audio.
+{ const say = voice.say; voice.say = async (...args) => { audioStarted(); try { return await say(...args); } finally { audioEnded(); } }; }
+{
+  const play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function (...args) {
+    if (!gatedMedia.has(this)) {
+      gatedMedia.add(this); let on = false;
+      this.addEventListener('playing', () => { if (!on) { on = true; audioStarted(); } });
+      for (const type of ['ended', 'pause', 'error', 'emptied']) this.addEventListener(type, () => { if (on) { on = false; audioEnded(); } });
+    }
+    return play.apply(this, args);
+  };
+}
 const metrics = observeMetrics(createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 }), turnLog);
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
 const AUDIO_POST_MS = 2000;
@@ -125,6 +141,8 @@ let stories = savedSettings.stories;
 let press = null, pressBusy = false;
 const windowOpen = () => press !== null && !press.closed;
 const tones = createTones();
+// The press tones are the page's audio too: the ear and a press window never hear them (§8).
+for (const kind of ['listening', 'done']) { const tone = tones[kind]; tones[kind] = async () => { audioStarted(); try { return await tone(); } finally { audioEnded(); } }; }
 const FRAMES_AFTER_TONE_MS = 200;
 
 // Before any question the middle shows the openers (spec 2026-10-28 §1).
@@ -142,7 +160,24 @@ let shownChoices = [], shownQuestion = '', restoring = false;
 // Listen for <name> (spec 2026-10-28 §8): the device's switch, the hub's ear
 // window ({ generation, windowId }), and the gate that keeps her clips unheard.
 let wakeMode = false, ear = null, earStarting = null, clipsPlaying = 0, gateUntil = 0, wakeBusy = false;
-const EAR_TAIL_MS = 150;
+const EAR_TAIL_MS = 150, gatedMedia = new WeakSet();
+// The tail covers the device's own audio path too: what plays reaches the
+// speaker, and the microphone's frames reach this page, a little late.
+const tailMs = () => EAR_TAIL_MS + Math.min(500, Math.round(mic?.latencyMs?.() || 0));
+function audioStarted() { clipsPlaying++; audioChannel?.postMessage({ from: PAGE_ID, playing: true }); }
+function audioEnded() {
+  clipsPlaying = Math.max(0, clipsPlaying - 1);
+  gateUntil = Math.max(gateUntil, performance.now() + tailMs());
+  if (!clipsPlaying) audioChannel?.postMessage({ from: PAGE_ID, playing: false, tailMs: tailMs() });
+}
+// Another Chat page on this device (a relaunched kiosk, a second tab) plays her voice too.
+const PAGE_ID = Math.random().toString(36).slice(2), othersUntil = new Map();
+const audioChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('era-chat-audio') : null;
+if (audioChannel) audioChannel.onmessage = ({ data }) => {
+  if (!data || data.from === PAGE_ID || typeof data.from !== 'string') return;
+  // A page that stops answering mid-clip frees the ear after 30 s at most.
+  othersUntil.set(data.from, performance.now() + (data.playing ? 30000 : Math.min(1000, Number(data.tailMs) || EAR_TAIL_MS)));
+};
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
 // Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
 // and her name, from /settings (chatPromptMs, chatName).
@@ -1094,7 +1129,12 @@ const earIdle = () => !!ear && !ear.paused && !!mic && !holding && !askPending &
 // Between holds and windows the ear collects every frame (begin is a no-op while collecting).
 function earTick() { if (earIdle()) mic.begin(); }
 // An ear frame: the ear's generation, the socket's sequence (silence while her clip plays, see sendFrame).
-const clipGated = () => clipsPlaying > 0 || performance.now() < gateUntil;
+const clipGated = () => {
+  const now = performance.now();
+  // The device voice: gated while it speaks, and for the tail after it stops.
+  if (globalThis.speechSynthesis?.speaking === true) gateUntil = Math.max(gateUntil, now + tailMs());
+  return clipsPlaying > 0 || now < gateUntil || [...othersUntil.values()].some(until => until > now);
+};
 function earFrame(bytes) {
   if (!earIdle()) return false;
   if (!audioSocket || audioSocket.readyState !== WebSocket.OPEN || audioSocket.bufferedAmount > SOCKET_BUFFER_LIMIT) return true;
