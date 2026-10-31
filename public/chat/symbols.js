@@ -229,8 +229,8 @@ export function planPictures(entries, { variant = 'color', keep = [] } = {}) {
       continue;
     }
     // Yes and No are her boards' pair (spec 2026-10-28 §11): the nodding and the
-    // shaking head stand on the corner and on a Yes or No reply alike.
-    // A Yes or No answered in full shows the feeling on both replies (§11), each with its head badge.
+    // shaking head stand on the corner and on a Yes or No reply alike; a Yes or
+    // No answered in full shows the feeling on both replies, each with its head badge.
     const pair = ((concept.word === 'yes' || concept.word === 'no') && concept === library.byWord.get(concept.word)) ||
       entries[index].badge === 'yes' || entries[index].badge === 'no';
     const options = [[concept.id, concept.word], [concept.altId, concept.word], [library.fallback.id, library.fallback.word]];
@@ -289,7 +289,7 @@ export function attachBadge(tile, side, variant = 'color') {
   tile.querySelector('.chat-badge')?.remove();
   if (side !== 'yes' && side !== 'no' || !library) return null;
   const document = tile.ownerDocument, concept = library.byWord.get(side);
-  const drawn = () => { const svg = drawnPicture(side, document); svg.setAttribute('class', 'chat-badge'); return svg; };
+  const drawn = () => { const svg = drawnPicture(side, document); svg.setAttribute('class', 'chat-badge'); svg.dataset.side = side; return svg; };
   let badge;
   if (variant === 'emoji' || !concept) badge = drawn();
   else {
