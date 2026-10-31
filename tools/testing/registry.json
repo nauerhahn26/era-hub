@@ -62,28 +62,6 @@
   ],
   "suites": [
     {
-      "id": "era-board:tests/board-arrange.test.mjs",
-      "purpose": "Touch-only music reorder, drag nonactivation, pagination, errors and saved/pending status",
-      "group": "board",
-      "dependencies": [
-        "era-board/**"
-      ],
-      "lane": "linux",
-      "resources": [
-        "shared-hub",
-        "browser"
-      ],
-      "level": "browser integration",
-      "hub": "shared-reader",
-      "ports": [],
-      "browsers": 8,
-      "heavy": false,
-      "solo": false,
-      "quiet": false,
-      "retry": false,
-      "owner": ""
-    },
-    {
       "id": "era-board:tests/board-clothing-coach.test.mjs",
       "purpose": "Wardrobe setup and in-progress/retry explanations",
       "group": "board",
@@ -298,7 +276,7 @@
       "level": "browser integration",
       "hub": "shared-reader",
       "ports": [],
-      "browsers": 4,
+      "browsers": 8,
       "heavy": false,
       "solo": false,
       "quiet": false,
@@ -5098,7 +5076,6 @@
       "id": "era-hub:tests/invariants.mjs",
       "purpose": "Shared measured access audit helper; changing it requires the complete gate",
       "consumers": [
-        "era-board:tests/board-arrange.test.mjs",
         "era-board:tests/board-clothing-coach.test.mjs",
         "era-board:tests/board-clothing-visuals.test.mjs",
         "era-board:tests/board-content-note.test.mjs",
@@ -5262,7 +5239,6 @@
       "id": "era-hub:tests/synthetic-wardrobe.mjs",
       "purpose": "Synthetic clothing test data generator; consumers remain conservatively complete",
       "consumers": [
-        "era-board:tests/board-arrange.test.mjs",
         "era-board:tests/board-clothing-coach.test.mjs",
         "era-board:tests/board-clothing-visuals.test.mjs",
         "era-board:tests/board-content-note.test.mjs",
