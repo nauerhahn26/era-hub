@@ -159,6 +159,8 @@ const backStack = createBackStack(8);
 let shownChoices = [], shownQuestion = '', restoring = false, clearing = false;
 // Listen for <name> (spec 2026-10-28 §8): the device's switch, the hub's ear
 // window ({ generation, windowId }), and the gate that keeps her clips unheard.
+// earNotice: the ear's gentle status line (spec §10): an auto-off warning, or the line after it turned itself off.
+let earNotice = '';
 let wakeMode = false, ear = null, earStarting = null, clipsPlaying = 0, gateUntil = 0, wakeBusy = false;
 const EAR_TAIL_MS = 150, gatedMedia = new WeakSet();
 // The tail covers the device's own audio path too: what plays reaches the
@@ -233,10 +235,13 @@ async function json(url, options = {}) {
 const notice = text => { $('notice').textContent = text || ''; };
 function paintPhase(state = controller.state) {
   if (press && !press.closed) { $('phase').textContent = press.listening ? 'Listening' : 'Starting to listen'; return; }
+  if (typeof earNotice === 'string' && earNotice && ['Ready to ask', 'Your turn', 'Off'].includes(state.phase)) { $('phase').textContent = earNotice; return; }
   if (typeof ear !== 'undefined' && ear && state.phase === 'Ready to ask') { $('phase').textContent = `Listening for ${herName || config?.wakeName || 'her name'}`; return; }
   $('phase').textContent = state.phase === 'Capturing question' && ((remoteStreaming && mode !== 'opening') || questionSending) ? 'Sending question' : state.phase;
 }
 function setMode(value) {
+  // A hold or a press: the partner is here, so the ear's notice goes (spec 2026-10-28 §10).
+  if (value === 'opening' && typeof earNotice === 'string') earNotice = '';
   // A hold or a press opening: the ear's collection gives way, so these frames are theirs (spec 2026-10-28 §8).
   if (value === 'opening' && mode !== 'opening' && typeof ear !== 'undefined' && ear) mic?.cancel();
   mode = value; document.body.dataset.listening = 'false';
@@ -1116,8 +1121,6 @@ function paintWake() {
   toggle.setAttribute('aria-pressed', String(wakeMode));
   toggle.disabled = wakeBusy || !wakeAvailable();
   toggle.title = wakeAvailable() ? '' : 'Listening for her name needs streaming speech set up on this device.';
-  $('wakeBanner').textContent = `Listening for ${name}: room audio is sent for transcription while this is on.`;
-  $('wakeBanner').hidden = !ear;
   document.body.dataset.ear = ear ? 'on' : 'off';
   paintPhase();
 }
@@ -1173,6 +1176,18 @@ function earEvent(data) {
       generation: Number.isFinite(data.generation) ? data.generation : ear?.generation };
     paintWake(); earTick(); return;
   }
+  // Auto-off (spec 2026-10-28 §10): a gentle line, no countdown.
+  if (data.state === 'warning') {
+    const minutes = Math.max(1, Math.round((Number(data.remainingMs) || 60000) / 60000));
+    earNotice = `Listening turns off in ${minutes} minute${minutes === 1 ? '' : 's'}`; paintPhase(); return;
+  }
+  if (data.state === 'off' && data.reason === 'idle') {
+    // The hub turned the switch off too: the page never re-opens an idle ear.
+    wakeMode = false; const was = ear; ear = null;
+    if (was && !holding && !askPending && mode === 'blocked' && !(press && !press.closed)) mic?.cancel();
+    earNotice = `Listening is off. Touch Listen for ${herName || config?.wakeName || 'her name'} to turn it on`;
+    paintWake(); return;
+  }
   if (data.state !== 'off' || !ear) return;
   // A hold or a press pauses the ear; the hub resumes it itself afterwards.
   if (['hold', 'press'].includes(data.reason)) { ear.paused = true; return; }
@@ -1194,6 +1209,7 @@ function earSealed(data) {
   const question = String(data.windowText || '').trim().slice(0, 600);
   if (!question || !Number.isSafeInteger(data.seq)) return;
   if (holding || askPending || (press && !press.closed)) return; // the partner's own question goes first
+  earNotice = ''; // a wake restarts the partner's 30 minutes
   reader?.cancel(); dropStaging();
   metrics.end(questionMetric, 'cancelled', 'superseded');
   // Test mode only (kind press, mode wake): ear turns never enter the production rows.
@@ -1209,7 +1225,7 @@ function earSealed(data) {
 }
 async function toggleWake() {
   if (wakeBusy || !wakeAvailable()) return;
-  wakeBusy = true; paintWake();
+  wakeBusy = true; earNotice = ''; paintWake();
   const next = !wakeMode;
   try {
     const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatWakeMode: next }) });
@@ -1438,7 +1454,7 @@ metrics.subscribe(value => {
 });
 // ---- test mode: the partner's switch, the banner, the live panel ----
 function paintTestMode() {
-  $('testModeBanner').hidden = !testMode; $('testModePanel').hidden = !testMode;
+  $('testModePanel').hidden = !testMode;
   $('testModeToggle').textContent = testMode ? 'Turn off test mode' : 'Turn on test mode';
   $('testModeToggle').setAttribute('aria-pressed', String(testMode));
   if (testMode) refreshTestSummary();
