@@ -927,10 +927,18 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   await page.waitForTimeout(150);
   assert.deepEqual(await labels(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
   await page.locator('#grid .tile.yes').click(); await lastSpoken('Yes.');
+  // A bare Yes and No (one word each) is no answer in full: nothing changes and the record does not say answered.
+  await ask('w-bare', 'is your tummy okay?');
+  await f.emit(page, answer('w-bare', null, ['Yes', 'No.']));
+  await page.waitForTimeout(150);
+  await page.locator('#grid .tile.yes').click(); await lastSpoken('Yes.');
   // Without a feeling the head stays the picture, with no badge; Clear puts the plain set back.
   await ask('w-3', 'do you like dogs?');
   await f.emit(page, answer('w-3', null, ['Yes, I like dogs', "No, I don't"]));
   await page.waitForFunction(() => document.querySelector('#grid .tile.response .label').textContent === 'Yes, I like dogs');
+  const bare = () => records.find(record => record.content?.transcript === 'is your tummy okay?');
+  for (let i = 0; i < 100 && !bare(); i++) await page.waitForTimeout(20);
+  assert.equal('answered' in bare().content, false, 'a bare Yes/No never counts as answered');
   const plainYes = await tileOf('yes');
   assert.equal(plainYes.symbolId, '5583'); assert.equal(plainYes.badge, null);
   const touch = async selector => { const cdp = await f.context.newCDPSession(page), box = await page.locator(selector).boundingBox();

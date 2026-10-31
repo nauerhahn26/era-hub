@@ -392,7 +392,10 @@ test('yes and no in full are checked strictly: Yes/No first, six words, her word
     { yes: 'Yes, I am very very angry today', no: 'No', feeling: 'none' }, { yes: '', no: 'No', feeling: 'none' }, { yes: 'Yes <b>', no: 'No', feeling: 'none' },
     { yes: 'Yes', no: 'No', feeling: 'none', extra: 1 }, { yes: 'Yes', feeling: 'none' }, { choices: [] }])
     await assert.rejects(run(bad), /invalid/, JSON.stringify(bad));
-  const plain = await run({ yes: 'Yes.', no: 'No.', feeling: 'none' });
-  assert.deepEqual([plain.yes, plain.no], ['Yes.', 'No.']);
+  // A bare Yes or No is no answer in full (home device, 'Is your tummy okay?'): both must be more than one word.
+  for (const bare of [{ yes: 'Yes.', no: 'No.', feeling: 'none' }, { yes: 'Yes', no: "No, it isn't", feeling: 'none' }, { yes: "Yes, it's okay", no: 'No!', feeling: 'none' }])
+    await assert.rejects(run(bare), /invalid/, JSON.stringify(bare));
+  const two = await run({ yes: 'Yes, please.', no: 'No, thanks.', feeling: 'none' });
+  assert.deepEqual([two.yes, two.no], ['Yes, please.', 'No, thanks.']);
   await assert.rejects(createChoicesAdapter({ env: {}, fetch: () => { throw Error('must not call'); } }).answerYesNo({ text: 'Are you angry?' }), /unavailable/);
 });

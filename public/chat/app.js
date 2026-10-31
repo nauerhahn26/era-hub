@@ -579,8 +579,10 @@ function sayCorner(side) {
   if (full) turnLog.content(questionMetric, { answered: true });
   return controller.sayFixed(full ? full.say : SPOKEN[side]);
 }
+// An answer in full is more than one word: a bare "Yes" or "No" changes nothing and is never `answered`.
+const moreThanOneWord = text => (String(text).match(/[A-Za-z0-9'’]+/g) || []).length >= 2;
 function answerPhrase(value) {
-  if (!value || typeof value.label !== 'string' || typeof value.say !== 'string' || !value.label.trim() || !value.say.trim()) return null;
+  if (!value || typeof value.label !== 'string' || typeof value.say !== 'string' || !moreThanOneWord(value.label) || !moreThanOneWord(value.say)) return null;
   return { label: value.label.slice(0, 100), say: value.say.slice(0, 600),
     ...(typeof value.symbol === 'string' && value.symbol.length <= 64 ? { symbol: value.symbol } : {}),
     ...(Number.isSafeInteger(value.symbolId) && value.symbolId > 0 ? { symbolId: value.symbolId } : {}) };
