@@ -19,7 +19,7 @@ if (updater.applyStagedAtBoot(PORT)) return;
 const drive = require("./drive");
 const clothing = require("./clothing");
 // Chat test mode (spec 2026-10-27 §5): a separate route and schema, off by default.
-const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSetting, applyPromptSetting, applyWakeSetting, testModeOn, chatLikes, chatLists, chatPrompt, chatWake } = require("./chat-turns.js");
+const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSetting, applyPromptSetting, applyWakeSetting, testModeOn, chatLikes, chatLists, chatPrompt, chatWake, wakeModeOff } = require("./chat-turns.js");
 // The reply usage (model id, token counts) reaches the page only while this
 // device's test-mode switch is on. DATA is read when a request asks, not here.
 // Pictures the partner names while speaking, and each staged choice's picture,
@@ -31,6 +31,8 @@ const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSett
 // people still on her board (the list chat-symbols.setPeople pictures).
 const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA), likes: () => chatLikes(DATA),
   name: () => chatPrompt(DATA).chatName, // the wake name (stable frame §8)
+  // The ear's cost (§10): its idle time, and the saved switch turned off when it goes idle.
+  wakeIdleMs: () => chatWake(DATA).chatWakeIdleMs, onWakeIdle: () => wakeModeOff(DATA),
   people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
   // Her world (chat-world.js): built below once DATA exists, read when an open question asks.
   world: () => chatWorld.digest(),

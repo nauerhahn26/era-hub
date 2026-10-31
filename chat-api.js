@@ -516,6 +516,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     } catch { return []; }
   };
   const likes = () => listFrom(options.likes, 30);
+  // The ear's idle time (§10): it turns itself off after this long without a wake, hold or press.
+  const wakeIdleMs = () => {
+    try { const value = typeof options.wakeIdleMs === 'function' ? options.wakeIdleMs() : options.wakeIdleMs; return Number.isSafeInteger(value) && value > 0 ? value : 1800000; }
+    catch { return 1800000; }
+  };
   // The wake name (stable frame §8): the device's chatName, 'Ellie' by default.
   const wakeName = () => {
     try { const value = typeof options.name === 'function' ? options.name() : options.name; return typeof value === 'string' && value.trim() && value.length <= 40 ? value.trim() : 'Ellie'; }
@@ -1107,13 +1112,29 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     win.machine = createWindow({ clock, limits: { utteranceMs: limits.windowUtteranceMs, silenceMs: Infinity, capMs: Infinity },
       seal: info => earSeal(session, win, info), close: reason => { if (session.window === win) closeEar(session, reason); } });
     session.window = win;
-    win.timer = setInterval(() => win.machine.tick(), limits.windowTickMs); win.timer.unref?.();
+    win.timer = setInterval(() => { win.machine.tick(); if (session.window === win) earTick(session, ear); }, limits.windowTickMs); win.timer.unref?.();
     return win;
+  }
+  // Auto-off (§10): warnings at two minutes and one minute left, then off as
+  // idle; the hub saves the switch off (onWakeIdle) so a reload does not reopen it.
+  function earActive(ear) { ear.activeAt = clock(); ear.warned = []; }
+  function earTick(session, ear) {
+    const remaining = wakeIdleMs() - (clock() - ear.activeAt);
+    if (remaining <= 0) {
+      closeEar(session, 'idle');
+      try { options.onWakeIdle?.(); } catch { /* the page's switch still reads off */ }
+      return;
+    }
+    for (const mark of [120000, 60000]) if (remaining <= mark && !ear.warned.includes(mark)) {
+      ear.warned.push(mark);
+      if (remaining > mark - 60000) emit(session, { type: 'ear', state: 'warning', remainingMs: mark, earId: ear.id, generation: session.generation });
+    }
   }
   function openEar(session, context) {
     abortChoices(session); endStreamTurn(session);
     session.generation++; session.context = context;
-    const ear = { id: randomBytes(6).toString('hex'), paused: false, pendingAt: null };
+    const ear = { id: randomBytes(6).toString('hex'), paused: false, pendingAt: null, activeAt: 0, warned: [] };
+    earActive(ear);
     session.ear = ear;
     startEarTurn(session, ear);
     emit(session, { type: 'ear', state: 'listening', earId: ear.id, generation: session.generation });
@@ -1122,14 +1143,14 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function pauseEar(session, reason) {
     const win = session.window;
     if (!win || !win.ear) return;
-    clearInterval(win.timer); session.window = null; win.ear.paused = true; win.ear.pendingAt = null;
+    clearInterval(win.timer); session.window = null; win.ear.paused = true; win.ear.pendingAt = null; earActive(win.ear);
     if (session.turn && session.turn.ear) endStreamTurn(session);
     emit(session, { type: 'ear', state: 'off', reason, earId: win.ear.id, generation: session.generation });
   }
   function resumeEar(session) {
     const ear = session.ear;
     if (!ear || !ear.paused || session.window || session.closed || session.controlling || ['capturing', 'finishing'].includes(session.mode)) return;
-    ear.paused = false;
+    ear.paused = false; earActive(ear);
     startEarTurn(session, ear);
     emit(session, { type: 'ear', state: 'listening', earId: ear.id, generation: session.generation, resumed: true });
   }
@@ -1154,7 +1175,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     else if (found) ear.pendingAt = now;
     else if (ear.pendingAt !== null && now - ear.pendingAt <= limits.earWakeMs) question = cleanText(text, 2000);
     if (question) {
-      ear.pendingAt = null;
+      ear.pendingAt = null; earActive(ear);
       const id = randomBytes(6).toString('hex');
       emit(session, { type: 'utterance-sealed', windowId: id, earId: ear.id, ear: true, seq: 1, text: question, windowText: question, reason, generation: session.generation });
       // A new wake supersedes a reply still in the making, as a new hold does.
