@@ -185,3 +185,25 @@ buttons or interrupting things."
 - Considered and not needed: a grace period after the hold's release. The
   hold already locks her targets, and the streaming service starts the reply
   before release.
+
+## 10. The ear's cost: auto-off, quiet notices, two tiers (dad, 10/31)
+
+- Auto-off: the ear closes after 30 minutes without a wake (`chatWakeIdleMs`,
+  default 1,800,000). No countdown. The status line at the top says, gently,
+  "Listening turns off in 2 minutes", then "… in 1 minute", then "Listening
+  is off. Touch Listen for <name> to turn it on"; the switch reads off. The
+  partner's 30 minutes restart with every wake, hold or press.
+- No recording notices. The test-mode banner and the "room audio is sent for
+  transcription" banner are gone from the Chat page; the lit dot and
+  "Listening for <name>" are the signal. Test mode itself stays a quiet switch
+  in the partner dialog (its records are how the maintainer reads a session).
+- Two tiers. The ear may listen on a cheaper stream profile
+  (`ERA_CHAT_STREAM_EAR_MODEL` in the private settings; unset, the ear uses
+  the main stream). The hub keeps a rolling buffer of the last 10 s of the
+  ear's audio. On a wake it opens the main (engagement) stream, replays the
+  buffer from just before the wake name, then forwards live frames; the
+  engagement stream handles everything, further wakes included, until two
+  minutes pass without a wake (`chatEngageMs`), when the ear tier resumes
+  alone. A button press or a hold always goes to the main stream, as today.
+  Later: an on-device wake detector in the ear slot (nothing leaves the
+  device until the name is heard).
