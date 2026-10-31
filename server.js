@@ -33,6 +33,7 @@ const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => test
   name: () => chatPrompt(DATA).chatName, // the wake name (stable frame §8)
   // The ear's cost (§10): its idle time, and the saved switch turned off when it goes idle.
   wakeIdleMs: () => chatWake(DATA).chatWakeIdleMs, onWakeIdle: () => wakeModeOff(DATA),
+  engageMs: () => chatWake(DATA).chatEngageMs, // the two tiers: how long the main stream stays on after a wake
   people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
   // Her world (chat-world.js): built below once DATA exists, read when an open question asks.
   world: () => chatWorld.digest(),
