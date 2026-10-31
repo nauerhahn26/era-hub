@@ -19,13 +19,16 @@
 // differently on every device.
 "use strict";
 
+// `icon` rides above the word on the rail, the Book Reader's rail idiom
+// (public/reader/index.html: ◀ Back, ♥ Favorites, …).
 const SECTIONS = [
-  { key: "fav", label: "Favorites", say: "favorites" },
-  { key: "new", label: "New", say: "new songs" },
-  { key: "top-hits", label: "Top hits", say: "top hits" },
-  { key: "disney", label: "Disney", say: "disney" },
-  { key: "all", label: "All", say: "all songs" },
+  { key: "fav", label: "Favorites", say: "favorites", icon: "♥" },
+  { key: "new", label: "New", say: "new songs", icon: "⭐" },
+  { key: "top-hits", label: "Top hits", say: "top hits", icon: "🎤" },
+  { key: "disney", label: "Disney", say: "disney", icon: "🏰" },
+  { key: "all", label: "All", say: "all songs", icon: "🎵" },
 ];
+const BACK_ICON = "◀";
 const CATEGORIES = ["top-hits", "disney"];
 
 // songs: [{id, rank, addedMs, category}] — addedMs a number for a dated song,
@@ -55,4 +58,4 @@ function sectionOrders(songs, scores) {
   };
 }
 
-module.exports = { SECTIONS, CATEGORIES, sectionOrders };
+module.exports = { SECTIONS, CATEGORIES, BACK_ICON, sectionOrders };

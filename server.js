@@ -974,11 +974,11 @@ function serveRecipe(req, res) {
 // file mtime (client IDB cache key). ETag = manifest stat + RECIPE_REV +
 // pictures + order (bump the rev when this generator's OUTPUT changes without
 // a manifest change, or boards keep their 304 cache).
-const { SECTIONS: SONG_SECTIONS, CATEGORIES: SONG_CATEGORIES, sectionOrders } = require("./music-sections.js");
+const { SECTIONS: SONG_SECTIONS, CATEGORIES: SONG_CATEGORIES, BACK_ICON: SONG_BACK_ICON, sectionOrders } = require("./music-sections.js");
 const { openMusicLog } = require("./music-log.js");
 const SONG_CELLS = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
 const CLIP_MS = 40000;
-const RECIPE_REV = 6;
+const RECIPE_REV = 7;
 const STOP_SYMBOL = "8289";   // exact ARASAAC id: the red STOP sign (bestsearch "stop" = a bus stop)
 const FULL_SYMBOL = "music";  // sheet-music notes (verified via /symbol/music)
 // The play log, opened per use: the Drive folder can be chosen or adopted at
@@ -1029,9 +1029,9 @@ function songsRecipe() {
     const pages = pagesOf(sec.key);
     for (let p = 0; p < pages; p++) {
       const rail = [
-        { label: "Back", say: "back", type: "back",
+        { label: "Back", say: "back", type: "back", icon: SONG_BACK_ICON,
           ...(p > 0 ? { load: sectionPage(sec.key, p - 1) } : { disabled: true }) },
-        ...SONG_SECTIONS.map(x => ({ label: x.label, say: x.say, type: "category",
+        ...SONG_SECTIONS.map(x => ({ label: x.label, say: x.say, type: "category", icon: x.icon,
           load: sectionPage(x.key, 0), ...(x.key === sec.key ? { current: true } : {}) })),
       ];
       const buttons = orders[sec.key].slice(p * per, (p + 1) * per)
