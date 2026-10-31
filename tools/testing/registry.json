@@ -3615,6 +3615,27 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/music-log.test.mjs",
+      "purpose": "Song pick scores, section order and the shared cross-device play log",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data"
+      ],
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/music-pictures.test.mjs",
       "purpose": "Storyboard decoding, distinct safe frames and screening refusal",
       "group": "hub",
@@ -5186,6 +5207,7 @@
         "era-hub:tests/movies-lookup.test.mjs",
         "era-hub:tests/movies.test.mjs",
         "era-hub:tests/music-add.test.mjs",
+        "era-hub:tests/music-log.test.mjs",
         "era-hub:tests/music-pictures.test.mjs",
         "era-hub:tests/music.test.mjs",
         "era-hub:tests/packs.test.mjs",
@@ -5350,6 +5372,7 @@
         "era-hub:tests/movies-lookup.test.mjs",
         "era-hub:tests/movies.test.mjs",
         "era-hub:tests/music-add.test.mjs",
+        "era-hub:tests/music-log.test.mjs",
         "era-hub:tests/music-pictures.test.mjs",
         "era-hub:tests/music.test.mjs",
         "era-hub:tests/packs.test.mjs",

@@ -405,6 +405,28 @@ test("local mode: .era is mirrored, byte-compared, and never pruned", async () =
   assert.ok(fs.existsSync(path.join(D, rel)), "the shared log is nobody's to prune");
 });
 
+// The songs board's shared play log (music-log.js, spec 2026-10-31) rides the
+// same rail under music/, which is a TRUE mirror since 9/4: a song deleted in
+// Drive leaves the shelf, but the log beside it is never the prune's.
+test("local mode: music/.era is mirrored and never pruned when a song leaves", async () => {
+  const D = path.join(TMP, "data-music-era"), S = path.join(TMP, "My Drive", "Music Era Content");
+  const rel = path.join("music", ".era", "plays", "dev-b", "2026-10-31.jsonl");
+  fs.mkdirSync(path.join(S, "music", ".era", "plays", "dev-b"), { recursive: true });
+  fs.writeFileSync(path.join(S, "music", "manifest.json"), JSON.stringify({ schemaVersion: 1, songs: [] }));
+  fs.writeFileSync(path.join(S, "music", "tune.m4a"), "tune");
+  fs.writeFileSync(path.join(S, rel), JSON.stringify({ t: "2026-10-31T09:00:00Z", song: "tune", action: "play" }) + "\n");
+  fs.mkdirSync(D, { recursive: true });
+  fs.writeFileSync(path.join(D, "drive.json"), JSON.stringify({ mode: "local", folderPath: S }));
+  drive.start(D);
+
+  await drive.sync();
+  assert.ok(fs.existsSync(path.join(D, rel)), "another device's plays reached this one");
+  fs.rmSync(path.join(S, "music", "tune.m4a"));
+  const r = await drive.sync();
+  assert.equal(r.removed, 1, "the song that left Drive left the shelf");
+  assert.ok(fs.existsSync(path.join(D, rel)), "the shared play log is nobody's to prune");
+});
+
 test("API mode: a .era file that changed without changing size is downloaded again", async () => {
   const D = path.join(TMP, "data-era-api");
   const body1 = JSON.stringify({ t: "2026-09-01T09:00:00Z", kind: "yes", combo: ["item_aaaa"] }) + "\n";
