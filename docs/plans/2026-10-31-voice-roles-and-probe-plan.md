@@ -27,48 +27,67 @@ is a link to era-core's file; the gate runs with
 
 ## Task B — hub: voice roles in `/tts`, config, `/voices`, `/settings`, builder role, Settings card
 
-- [ ] `tests/chat-voice-stream.test.mjs` (real hub case): `/tts` with no
+- [x] `tests/chat-voice-stream.test.mjs` (real hub case): `/tts` with no
       `voice` asks the stand-in for `voiceId`; `voice: "helper"` asks for
       `helperVoiceId` (and for Jessica when the file has none); `voice:
       "x"` is 400; the two clips cache under different files.
-- [ ] `tests/settings-ui.test.mjs`: `/voices` carries `helper`; `/settings`
+- [x] `tests/settings-ui.test.mjs`: `/voices` carries `helper`; `/settings`
       round-trips `helperVoiceId`, refuses a non-curated id; the card shows
       "Her voice" and "Helper voice" rows and a helper pick posts
       `helperVoiceId`.
-- [ ] `tests/ai-config.test.mjs`: `elevenRole().voiceId` is
+- [x] `tests/ai-config.test.mjs`: `elevenRole().voiceId` is
       `helperVoiceId`, default Jessica.
-- [ ] `server.js`: `DEFAULT_HELPER_VOICE_ID`, Hope first in
+- [x] `server.js`: `DEFAULT_HELPER_VOICE_ID`, Hope first in
       `CURATED_VOICES`, `loadTtsCfg` fills `helperVoiceId`, `streamTts(cfg,
       text, res, role)`, `/tts` role parsing, `/voices` `helper`,
       `/settings` GET/POST `helperVoiceId`.
-- [ ] `ai-config.js` `elevenRole`.
-- [ ] `public/settings/index.html`: two rows, two previews with roles, hint
+- [x] `ai-config.js` `elevenRole`.
+- [x] `public/settings/index.html`: two rows, two previews with roles, hint
       text says which voice does what.
-- [ ] Affected suites green (`node tools/test-suite.mjs plan --base master`).
+- [x] Affected suites green (`node tools/test-suite.mjs plan --base master`).
 
 ## Task C — Chat: her pick in her voice, everything else in the helper voice
 
-- [ ] `tests/chat-voice.test.mjs`: `say(text, { role: "her" })` posts
+- [x] `tests/chat-voice.test.mjs`: `say(text, { role: "her" })` posts
       `voice: "her"`; `role: "helper"` posts `helper`; default role is
       `her`; same text under two roles is two `/tts` requests and two cache
       entries; `prefetch(items, { role })` carries it; a changed `helper` id
       from `/voices` clears clips.
-- [ ] A browser suite that stubs `/tts` (chat-browser or
+- [x] A browser suite that stubs `/tts` (chat-browser or
       chat-test-mode-browser): her pick carries `her`; the echo, "your
       options are" and each label carry `helper`.
-- [ ] `public/chat/voice.js`, `public/chat/app.js` per spec §3.3.
-- [ ] Affected chat suites green.
+- [x] `public/chat/voice.js`, `public/chat/app.js` per spec §3.3.
+- [x] Affected chat suites green.
 
 ## Task D — overseer: review, gate, docs
 
-- [ ] Review each task's diff against the spec.
-- [ ] Full gate detached with `ERA_WT_SUFFIX=--wt-elevenlabs-voice-timing`,
-      one `tools/gate-wait.sh` call.
-- [ ] Retrospective below; `docs/dev-flow.md` untouched unless the rail
+- [x] Review each task's diff against the spec (2e37b08 core; 7f00ec7, 61627b8, 42bfc39 hub).
+- [x] Full gate detached with `ERA_WT_SUFFIX=--wt-elevenlabs-voice-timing`,
+      one `tools/gate-wait.sh` call — 207 passed, 0 failed (run 2026-10-31T19-11-06Z).
+- [x] Retrospective below; `docs/dev-flow.md` untouched unless the rail
       changed.
-- [ ] Land era-core, then era-hub, in one sitting; patch build; push to the
-      home I-13 and tablet on the maintainer's word; release on his word.
+- [x] Landed era-core 62abdf7, era-hub c88f99e (10/31); v1.0.43 patch dist built
+      from the worktree.
+- [ ] Push to the home I-13 and tablet on the maintainer's word; release on his word.
 
 ## Retrospective
 
-(filled in when the work lands)
+- The 10/26 speech-ready fix was right about the race and wrong about the
+  probe's length: a probe that plays its sample to the end is bounded by the
+  clip, not by the network, and the before-video question is the longest
+  sample any app passes. Tests that drive `init()` with a stubbed Audio whose
+  `play()` ends on the next microtask could never see it. A probe should
+  prove the service with the cheapest thing that proves it.
+- The content-narrate suite pinned her voice reading books by naming
+  `voiceId` in a fixture; the role split made that assertion wrong on
+  purpose. Fixture renamed, assertion kept.
+- Master moved twice under the branch (Hope first in the curated list and
+  the key-role default; the retired board-arrange registry entry). Keeping
+  the Hope line byte-identical to the sibling commit made that merge a
+  no-op; the narration default was the one real conflict and the spec
+  decided it (helper, not her).
+- `node --test tests/` on this node treats the folder as one file; use
+  `tests/*.test.mjs`. `tools/test-suite.mjs plan` refuses while the
+  registry names a suite master retired; sync first.
+- Parked: the Sort it sentence the hub composes, the window glyph the
+  device font lacks, and the auditor the maintainer asked for.
