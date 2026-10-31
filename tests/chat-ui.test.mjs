@@ -511,3 +511,25 @@ test('restore brings a kept batch back as a new turn: its question and replies, 
   assert.equal(c.restore({ question: 'q', choices: [] }), false, 'nothing to restore');
   c.ask(); assert.equal(c.restore({ question: 'q', choices: [choice('x')] }), false, 'never while a question is captured');
 });
+
+test('clear drops the current turn: no question, no replies, a new turn, speech and a reply in the making stopped; the engine stays (maintainer 10/31)', async () => {
+  let stops = 0, signal;
+  const c = createChatController({ requestChoices: async () => food('Chicken', 'Fish'), stopSpeech: () => { stops++; } });
+  c.ready();
+  await c.prepare('do you want chicken or fish');
+  const before = c.state.turn, stopped = stops;
+  assert.equal(c.clear(), true);
+  assert.deepEqual([c.state.question, c.state.choices.length, c.state.phase, c.state.engineReady], ['', 0, 'Ready to ask', true]);
+  assert.ok(c.state.turn > before, 'a new turn: a late selection or batch for the cleared one cannot land');
+  assert.ok(stops > stopped, 'speech stops');
+  assert.equal(c.clear(), false, 'nothing left to clear');
+  // A reply still in the making is dropped unseen.
+  const d = createChatController({ requestChoices: ({ signal: s }) => { signal = s; return new Promise(() => {}); } });
+  d.ready(); void d.prepare('a question');
+  assert.equal(d.clear(), false, 'never while a question is being prepared (the page keeps Clear off then)');
+  d.ask(); assert.equal(d.clear(), false, 'never while a question is captured');
+  assert.equal(signal.aborted, true);
+  // With no engine it returns to Off.
+  const e = createChatController({ requestChoices: async () => food('Tea') });
+  await e.prepare('tea?'); assert.equal(e.clear(), true); assert.equal(e.state.phase, 'Off');
+});

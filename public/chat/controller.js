@@ -171,6 +171,15 @@ export function createChatController(deps = {}) {
       patch({ turn, phase: 'Your turn', question, partial: '', choices: frozen, replacing: false, stale: false, staleTurn: null, error: '', hint: '' });
       return true;
     },
+    // The partner's Clear (maintainer 10/31): the current turn goes, question and
+    // replies, as a new turn; never while a question is captured or prepared.
+    clear() {
+      if (['Capturing question', 'Preparing'].includes(state.phase)) return false;
+      if (!state.question && !state.choices.length) return false;
+      invalidate();
+      patch({ turn, phase: idlePhase(), question: '', partial: '', choices: Object.freeze([]), stale: false, staleTurn: null, error: '', hint: '' });
+      return true;
+    },
     // onSelected(choice) runs only for an accepted pick, before anything speaks.
     async select(id, expectedTurn = turn, onSelected) {
       // A still-shown old tile after a press (design §4.5): her dwell speaks it.
