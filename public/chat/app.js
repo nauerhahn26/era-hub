@@ -466,7 +466,7 @@ function paintPictures(grid, turn) {
   if (byLabel.size || turn !== paintedReplies.turn) paintedReplies = { turn, byLabel };
   tiles.forEach((el, i) => { attachPicture(el, plan[i], fit); attachBadge(el, plan[i] ? entries[i].badge : null, pictureVariant); });
 }
-// A tile's words and picture by board law, then a Yes/No head badge on its picture (§11).
+// A tile's words and picture by board law, then a Yes/No check-mark or cross badge on its picture (§11).
 function fit(el) { fitTile(el); placeBadge(el); }
 function fitLabels() {
   for (const el of $('grid').querySelectorAll('.tile')) fit(el);
@@ -564,7 +564,8 @@ function somethingElse() {
 const answersOn = (state = controller.state) => !!answered && answered.turn === state.turn && !state.stale &&
   answered.ids === state.choices.map(choice => choice.id).join(',');
 // A reply as it shows now: the batch's own, or a Yes or No in full with the
-// feeling's picture and the head badge (without a feeling the head stays).
+// feeling's picture and the check-mark or cross badge (without a feeling the
+// check mark or the cross stays).
 function shownReply(item) {
   if (!answersOn()) return item;
   const label = String(item.label || '').trim().toLowerCase().replace(/[.!]+$/, '');

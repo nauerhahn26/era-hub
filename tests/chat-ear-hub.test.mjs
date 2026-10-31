@@ -401,7 +401,7 @@ test('a yes-or-no question: the local set is sealed at once, then the answers in
   assert.ok(s.seen.indexOf(answer) > s.seen.indexOf(batch));
 });
 
-test('the answers in full: no feeling keeps the heads; a question that is not yes-or-no asks for none; a new wake or a drop aborts them', async t => {
+test('the answers in full: no feeling keeps the check mark and the cross; a question that is not yes-or-no asks for none; a new wake or a drop aborts them', async t => {
   const service = await turnsService(t, { 2: [ENDED('Ellie, is it raining')], 4: [ENDED('Ellie, what do you want for lunch', 1)], 6: [ENDED('Ellie, do you like dogs', 2)] });
   const model = answerService({ value: { yes: "Yes, it's raining", no: "No, it isn't", feeling: 'none' }, hold: true });
   const h = await hub(t, { service, env: REPLY_ENV, fetch: model.fetcher });

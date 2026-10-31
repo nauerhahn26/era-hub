@@ -863,7 +863,7 @@ test('the ear turns itself off when idle: a gentle status line, no countdown, th
   assert.deepEqual(f.errors, []);
 });
 
-test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with the feeling\'s picture and a head badge, the corners speak them, her pick wins, Clear/Back/Something else/a new question put the plain Yes and No back, the record says answered', { timeout: 90000 }, async t => {
+test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with the feeling\'s picture and a check-mark or cross badge, the corners speak them, her pick wins, Clear/Back/Something else/a new question put the plain Yes and No back, the record says answered', { timeout: 90000 }, async t => {
   const f = await earFixture(t, { chatTestMode: true });
   const vocabulary = await fs.readFile(path.join(root, 'public/chat/vocabulary.json'));
   // A one-pixel PNG for every library picture: the page's own /symbol/<id> route.
@@ -873,7 +873,7 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   await f.context.route('**/symbol/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: png }));
   await f.context.route('**/chat/api/turns', route => { try { const body = route.request().postDataJSON(); if (body) records.push(body); } catch {} return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); });
   const page = await f.open();
-  const YES_NO = [{ label: 'Yes', say: 'Yes.', symbol: 'yes', symbolId: 5583 }, { label: 'No', say: 'No.', symbol: 'no', symbolId: 5525 },
+  const YES_NO = [{ label: 'Yes', say: 'Yes.', symbol: 'yes', symbolId: 5584 }, { label: 'No', say: 'No.', symbol: 'no', symbolId: 5526 },
     { label: "I'm not sure", say: "I'm not sure.", symbol: 'not sure', symbolId: 11696 }, { label: 'Please say that again', say: 'Please say that again.', symbol: 'say again' }];
   async function ask(id, text) {
     await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: id, seq: 1, text, windowText: text, generation: f.EAR });
@@ -896,8 +896,8 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
 
   await ask('w-1', 'are you hungry?');
   const cornerBefore = await page.locator('#grid .tile.yes').evaluate(el => [el.querySelector('.label').textContent, el.dataset.symbolId]);
-  assert.deepEqual(cornerBefore, ['yes', '5583'], 'the corner shows the nodding head');
-  assert.equal((await tileOf('yes')).symbolId, '5583', 'the plain Yes reply shows the nodding head too');
+  assert.deepEqual(cornerBefore, ['yes', '5584'], 'the corner shows the check mark');
+  assert.equal((await tileOf('yes')).symbolId, '5584', 'the plain Yes reply shows the check mark too');
   // Another question's answers change nothing; this question's change only the Yes and No, in place.
   await f.emit(page, answer('w-other'));
   await page.waitForTimeout(100);
@@ -910,7 +910,7 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   await page.waitForFunction(() => [...document.querySelectorAll('#grid .chat-badge')].every(img => img.complete));
   const yes = await tileOf('yes'), no = await tileOf('no');
   assert.equal(yes.symbolId, '4962'); assert.equal(no.symbolId, '4962', 'both show the feeling');
-  assert.deepEqual([yes.badge.src, yes.badge.side, no.badge.src, no.badge.side], ['/symbol/5583', 'yes', '/symbol/5525', 'no'], 'the heads as badges');
+  assert.deepEqual([yes.badge.src, yes.badge.side, no.badge.src, no.badge.side], ['/symbol/5584', 'yes', '/symbol/5526', 'no'], 'the check mark and the cross as badges');
   assert.ok(yes.badge.shown && yes.badge.smaller && yes.badge.overlaps, `a small badge on the picture: ${JSON.stringify(yes.badge)}`);
   assert.deepEqual(await page.locator('#grid .tile.yes').evaluate(el => [el.querySelector('.label').textContent, el.dataset.symbolId]), cornerBefore, 'the corner keeps its look');
   // The corners speak the phrase; the middle Yes speaks and records it.
@@ -932,7 +932,7 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   await f.emit(page, answer('w-bare', null, ['Yes', 'No.']));
   await page.waitForTimeout(150);
   await page.locator('#grid .tile.yes').click(); await lastSpoken('Yes.');
-  // Without a feeling the head stays the picture, with no badge; Clear puts the plain set back.
+  // Without a feeling the check mark stays the picture, with no badge; Clear puts the plain set back.
   await ask('w-3', 'do you like dogs?');
   await f.emit(page, answer('w-3', null, ['Yes, I like dogs', "No, I don't"]));
   await page.waitForFunction(() => document.querySelector('#grid .tile.response .label').textContent === 'Yes, I like dogs');
@@ -940,7 +940,7 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   for (let i = 0; i < 100 && !bare(); i++) await page.waitForTimeout(20);
   assert.equal('answered' in bare().content, false, 'a bare Yes/No never counts as answered');
   const plainYes = await tileOf('yes');
-  assert.equal(plainYes.symbolId, '5583'); assert.equal(plainYes.badge, null);
+  assert.equal(plainYes.symbolId, '5584'); assert.equal(plainYes.badge, null);
   const touch = async selector => { const cdp = await f.context.newCDPSession(page), box = await page.locator(selector).boundingBox();
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
     await page.waitForTimeout(60); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); };

@@ -218,7 +218,7 @@ function parseYesNo(response, feelings) {
   if (!result || typeof result !== 'object' || Object.keys(result).some(key => !['yes', 'no', 'feeling'].includes(key))) throw failure('generation-invalid');
   const yes = fullAnswer(result.yes, 'yes'), no = fullAnswer(result.no, 'no');
   if (!yes || !no) throw failure('generation-invalid');
-  // A feeling outside the list (or none) is no feeling: the heads stay the pictures.
+  // A feeling outside the list (or none) is no feeling: the check mark and the cross stay the pictures.
   return { yes, no, feeling: typeof result.feeling === 'string' && feelings.includes(result.feeling) ? result.feeling : null };
 }
 
