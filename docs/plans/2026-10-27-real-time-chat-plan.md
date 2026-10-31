@@ -645,6 +645,6 @@ And a question lost in Listen mode (13:08–13:23 PT) that no record explains.
 - [x] Y3 page: middle Yes/No take label + say + merged picture (feeling picture,
       head badge); corners speak the phrase; selection wins; Clear/Back/new
       question reset; read-aloud uses the phrases; `content.answered`.
-- [ ] E1 ear records (kind 'ear') from the hub while test mode is on; page gate
+- [x] E1 ear records (kind 'ear') from the hub while test mode is on; page gate
       periods via `control {type:'gate'}`; diagnostics box shows the last twelve.
-- [ ] Tests first for each; registry regenerated if browser launch counts change.
+- [x] Tests first for each; registry regenerated if browser launch counts change.

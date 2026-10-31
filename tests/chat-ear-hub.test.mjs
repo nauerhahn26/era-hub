@@ -450,3 +450,61 @@ test('the answers in full are aborted by a new question, a cancel and a close, a
   await pause(50);
   assert.equal(q.events('yes-no-answered').length, 0, 'no reply model: the local set alone');
 });
+
+// ---- What the ear heard (spec 2026-10-28 §12, plan E1) ----
+// Every ear event reaches the hub's `onEar` (server.js: the chat-turns writer,
+// which keeps them only while test mode is on): each turn's words and tier,
+// each seal and what the wake rule found, pause/resume/off with reasons, a lost
+// socket, and the page's gate periods (`control {type:'gate'}`).
+const earOf = records => (...events) => records.filter(record => events.includes(record.event));
+test('ear records: each turn and seal with what the wake rule found, pause and resume with reasons, off; the page\'s gate', async t => {
+  const service = await turnsService(t, { 2: [ENDED('what time is it')], 4: [ENDED('Ellie, are you hungry', 1)] }, { onTerminate: [ENDED('would you like a story')] });
+  const records = [], ear = earOf(records);
+  let now = 1000000;
+  const h = await hub(t, { service, clock: () => now, extra: { onEar: record => { records.push(record); } } });
+  const s = await h.session();
+  const opened = await s.open({ ear: true });
+  await s.frames(5);
+  await until(() => s.events('utterance-sealed').length === 1);
+  assert.deepEqual(ear('turn').map(r => [r.tier, r.text]), [['main', 'what time is it'], ['main', 'Ellie, are you hungry']]);
+  assert.deepEqual(ear('seal').map(r => [r.text, r.wake, r.question]), [['what time is it', 'none', undefined], ['Ellie, are you hungry', 'question', 'are you hungry']]);
+  assert.ok(records.every(r => r.earId === opened.earId && r.at === now), 'the ear and the hub\'s clock on every line');
+  // The page's gate: recorded, nothing else changes; a bad one is refused.
+  assert.equal((await s.control('gate', { on: true, at: 1234.5 })).status, 200);
+  assert.equal((await s.control('gate', { on: false, at: 1300, source: 'other' })).status, 200);
+  for (const bad of [{ on: 'yes', at: 1 }, { on: true }, { on: true, at: 1, source: 'tab' }]) assert.equal((await s.control('gate', bad)).status, 400, JSON.stringify(bad));
+  assert.deepEqual(ear('gate').map(r => [r.on, r.source, r.pageAt]), [[true, 'page', 1234.5], [false, 'other', 1300]]);
+  assert.equal(s.events('ear').length, 1, 'the gate never pauses the ear');
+  // A hold pauses it; the final resumes it; the switch turns it off.
+  s.generation = (await (await s.control('ask', { context: [] })).json()).generation;
+  await s.frames(1);
+  assert.equal((await s.control('finish', { seq: s.sent() })).status, 200);
+  await until(() => ear('resume').length === 1);
+  assert.deepEqual([ear('pause')[0].reason, ear('resume')[0].reason], ['hold', 'final']);
+  assert.equal((await s.control('window', { ear: false })).status, 200);
+  assert.deepEqual(ear('off').map(r => r.reason), ['off']);
+  const before = records.length;
+  assert.equal((await s.control('gate', { on: true, at: 2000 })).status, 200);
+  assert.equal(records.length, before, 'no ear, no gate line');
+  assert.ok(records.every(r => Object.keys(r).every(key => ['event', 'at', 'earId', 'tier', 'text', 'wake', 'question', 'reason', 'replayedMs', 'on', 'source', 'pageAt'].includes(key))));
+});
+
+test('ear records: a bare name is found as a name; a lost socket is recorded and the ear is off; a broken writer never touches the ear', async t => {
+  const service = await turnsService(t, { 2: [ENDED('hey ellie')] });
+  const records = [], ear = earOf(records);
+  const h = await hub(t, { service, extra: { onEar: record => { records.push(record); throw new Error('disk full'); } } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  await s.frames(3);
+  await until(() => ear('seal').length === 1);
+  assert.deepEqual([ear('seal')[0].wake, ear('seal')[0].question], ['name', undefined]);
+  s.ws.terminate();
+  await until(() => ear('off').length === 1);
+  assert.deepEqual([ear('socket').length, ear('off')[0].reason], [1, 'socket']);
+  assert.ok(records.indexOf(ear('socket')[0]) < records.indexOf(ear('off')[0]));
+});
+
+test('server.js sends the ear\'s lines to the chat-turns writer', async () => {
+  const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /onEar: \(record\) => chatTurns\.ear\(record\)/);
+});

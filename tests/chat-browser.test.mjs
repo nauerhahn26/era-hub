@@ -956,3 +956,37 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   assert.deepEqual(await labels(), ['Music', 'A story']);
   assert.deepEqual(f.errors, []);
 });
+
+test('what the ear heard (spec 2026-10-28 §12): her clips are gate periods sent to the hub while the ear listens, read-aloud gaps merged; the diagnostics box shows the last twelve ear lines', { timeout: 90000 }, async t => {
+  const f = await earFixture(t);
+  const page = await f.open();
+  const gates = () => f.controls.filter(body => body.type === 'gate');
+  await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-1', seq: 1, text: 'music or a story?', windowText: 'music or a story?', generation: f.EAR });
+  await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: 'w-1', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
+  await page.waitForSelector('#grid .response');
+  assert.equal(gates().length, 0, 'nothing plays: no gate');
+  await page.locator('#grid .response', { hasText: 'Music' }).click();
+  for (let i = 0; i < 150 && gates().length < 2; i++) await page.waitForTimeout(20);
+  const [on, off] = gates();
+  assert.deepEqual([on.on, off.on, on.source, off.source], [true, false, undefined, undefined], 'one period: on at the clip, off after it');
+  assert.ok(Number.isFinite(on.at) && off.at > on.at);
+  // Two clips a moment apart (the reading's gap) are one period.
+  await page.locator('#grid .tile.yes').click();
+  await page.waitForTimeout(150);
+  await page.locator('#grid .tile.no').click();
+  for (let i = 0; i < 200 && gates().length < 4; i++) await page.waitForTimeout(20);
+  await page.waitForTimeout(800);
+  assert.equal(gates().length, 4, `merged: ${JSON.stringify(gates().map(g => g.on))}`);
+  // Another Chat page's voice is the other gate.
+  await page.evaluate(() => { const channel = new BroadcastChannel('era-chat-audio'); channel.postMessage({ from: 'other-page', playing: true });
+    setTimeout(() => channel.postMessage({ from: 'other-page', playing: false, tailMs: 100 }), 200); });
+  for (let i = 0; i < 150 && gates().length < 6; i++) await page.waitForTimeout(20);
+  assert.deepEqual(gates().slice(4).map(g => [g.on, g.source]), [[true, 'other'], [false, 'other']]);
+  // The diagnostics box: the ear's lines, twelve at most, newest last.
+  for (let i = 0; i < 14; i++) await f.emit(page, { type: 'ear', state: 'tier', tier: i % 2 ? 'main' : 'ear', earId: 'ear-1', generation: f.EAR });
+  const box = await page.locator('#diagnostics').textContent();
+  const lines = box.split('\n').filter(line => / ear /.test(line));
+  assert.equal(lines.length, 12, box);
+  assert.match(lines.at(-1), /^\d\d:\d\d:\d\d ear tier main$/);
+  assert.deepEqual(f.errors, []);
+});

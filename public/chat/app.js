@@ -170,11 +170,13 @@ const EAR_TAIL_MS = 150, gatedMedia = new WeakSet();
 // The tail covers the device's own audio path too: what plays reaches the
 // speaker, and the microphone's frames reach this page, a little late.
 const tailMs = () => EAR_TAIL_MS + Math.min(500, Math.round(mic?.latencyMs?.() || 0));
-function audioStarted() { clipsPlaying++; audioChannel?.postMessage({ from: PAGE_ID, playing: true }); }
+function audioStarted() { clipsPlaying++; audioChannel?.postMessage({ from: PAGE_ID, playing: true }); if (clipsPlaying === 1) gateMark('page', true); }
 function audioEnded() {
+  const was = clipsPlaying;
   clipsPlaying = Math.max(0, clipsPlaying - 1);
   gateUntil = Math.max(gateUntil, performance.now() + tailMs());
   if (!clipsPlaying) audioChannel?.postMessage({ from: PAGE_ID, playing: false, tailMs: tailMs() });
+  if (was && !clipsPlaying) gateMark('page', false);
 }
 // Another Chat page on this device (a relaunched kiosk, a second tab) plays her voice too.
 const PAGE_ID = Math.random().toString(36).slice(2), othersUntil = new Map();
@@ -183,7 +185,40 @@ if (audioChannel) audioChannel.onmessage = ({ data }) => {
   if (!data || data.from === PAGE_ID || typeof data.from !== 'string') return;
   // A page that stops answering mid-clip frees the ear after 30 s at most.
   othersUntil.set(data.from, performance.now() + (data.playing ? 30000 : Math.min(1000, Number(data.tailMs) || EAR_TAIL_MS)));
+  gateMark('other', data.playing === true);
 };
+// ---- what the ear heard (spec 2026-10-28 §12) ----
+// The gate's periods go to the hub as `control {type:'gate'}` while the ear
+// listens: on with the first clip, off when the last ends; an off followed by
+// an on within GATE_MERGE_MS (the reading's gaps, one clip cutting another) is
+// one period. `other`: another Chat page playing her voice.
+const GATE_MERGE_MS = 500;
+const gates = { page: { on: false, timer: null }, other: { on: false, timer: null } };
+function gateMark(source, on) {
+  const gate = gates[source];
+  if (on) {
+    if (gate.timer) { clearTimeout(gate.timer); gate.timer = null; return; }
+    if (!gate.on) { gate.on = true; sendGate(source, true); }
+    return;
+  }
+  if (!gate.on || gate.timer) return;
+  gate.timer = setTimeout(() => { gate.timer = null; gate.on = false; sendGate(source, false); }, GATE_MERGE_MS);
+}
+function sendGate(source, on) {
+  if (!ear || !session) return;
+  earLine(`gate ${on ? 'on' : 'off'}${source === 'other' ? ' (another page)' : ''}`);
+  void control('gate', { on, at: Math.round(performance.now() * 10) / 10, ...(source === 'other' ? { source } : {}) }).catch(() => null);
+}
+// The partner dialog's diagnostics box: the current line, then the last twelve ear lines.
+const earLines = [];
+let diagnosticLine = '';
+function earLine(text) {
+  const at = new Date(), two = n => String(n).padStart(2, '0');
+  earLines.push(`${two(at.getHours())}:${two(at.getMinutes())}:${two(at.getSeconds())} ear ${String(text).slice(0, 200)}`);
+  if (earLines.length > 12) earLines.shift();
+  paintDiagnostics();
+}
+function paintDiagnostics() { const box = document.getElementById('diagnostics'); if (box) box.textContent = [diagnosticLine, ...earLines].filter(Boolean).join('\n'); }
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
 // Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
 // and her name, from /settings (chatPromptMs, chatName).
@@ -282,7 +317,7 @@ async function control(type, extra = {}) {
   if (Number.isFinite(reply.generation)) workerGeneration = Math.max(workerGeneration, reply.generation);
   return reply;
 }
-function diagnostic(text) { $('diagnostics').textContent = text; }
+function diagnostic(text) { diagnosticLine = text; paintDiagnostics(); }
 
 const controller = createChatController({
   onTiming: timingEvent,
@@ -1257,6 +1292,9 @@ function earFrame(bytes) {
 // The hub's ear events (chat-api.js): listening (also resumed after a hold, with
 // the generation to send frames under), off with a reason, and a wake question.
 function earEvent(data) {
+  earLine(data.type === 'utterance-sealed' ? `question: ${String(data.windowText || '').slice(0, 120)}`
+    : data.state === 'tier' ? `tier ${data.tier}` : data.state === 'warning' ? `turns off in ${Math.round((Number(data.remainingMs) || 0) / 60000)} min`
+      : `${data.state}${data.reason ? ` (${data.reason})` : ''}${data.resumed ? ' (resumed)' : ''}`);
   if (data.type === 'utterance-sealed') { if (ear) earSealed(data); return; }
   if (data.state === 'listening') {
     if (!ear && !wakeMode) return;
