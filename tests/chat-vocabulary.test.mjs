@@ -37,11 +37,16 @@ test('the core conversation, feeling, family-role, day and weather words are pre
   assert.equal(vocabulary.fallback, 'chat', '"chat" is the no-clear-picture concept');
 });
 
-// Spec 2026-10-28 §11: Yes and No show her boards' pair, the nodding head and
-// the shaking head; the check mark and the cross are no longer used for them.
-test('yes and no are the nodding and the shaking head, and nothing shows the check mark or the cross', () => {
-  assert.equal(words.get('yes').id, 5583); assert.equal(words.get('no').id, 5525);
-  for (const concept of concepts) for (const id of [concept.id, concept.altId]) assert.ok(id !== 5584 && id !== 5526, concept.word);
+// Spec 2026-10-28 §11: Yes and No show her boards' pair, the green check mark
+// and the red cross, as TD Snap does; the yes/no heads are not used, and no
+// other concept shows the check mark or the cross.
+test('yes and no are the check mark and the cross, alone, and nothing shows the heads', () => {
+  assert.equal(words.get('yes').id, 5584); assert.equal(words.get('no').id, 5526);
+  assert.equal(words.get('yes').altId, undefined); assert.equal(words.get('no').altId, undefined);
+  for (const concept of concepts) for (const id of [concept.id, concept.altId]) {
+    assert.ok(id !== 5583 && id !== 5525, concept.word);
+    if (concept.word !== 'yes' && concept.word !== 'no') assert.ok(id !== 5584 && id !== 5526, concept.word);
+  }
 });
 
 test('every curated phrase names a concept in the table, covering the fixed Chat phrases and routes', () => {

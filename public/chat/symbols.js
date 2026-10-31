@@ -228,9 +228,9 @@ export function planPictures(entries, { variant = 'color', keep = [] } = {}) {
       plan[index] = { word: concept.word, id: null, kind: 'person', src: concept.src, emoji: null, drawn: 'chat' };
       continue;
     }
-    // Yes and No are her boards' pair (spec 2026-10-28 §11): the nodding and the
-    // shaking head stand on the corner and on a Yes or No reply alike; a Yes or
-    // No answered in full shows the feeling on both replies, each with its head badge.
+    // Yes and No are her boards' pair (spec 2026-10-28 §11): the green check mark
+    // and the red cross stand on the corner and on a Yes or No reply alike; a Yes or
+    // No answered in full shows the feeling on both replies, each with its check-mark or cross badge.
     const pair = ((concept.word === 'yes' || concept.word === 'no') && concept === library.byWord.get(concept.word)) ||
       entries[index].badge === 'yes' || entries[index].badge === 'no';
     const options = [[concept.id, concept.word], [concept.altId, concept.word], [library.fallback.id, library.fallback.word]];
@@ -283,7 +283,7 @@ export function attachPicture(tile, plan, onChange) {
   return place(img);
 }
 
-// Yes and No in full (spec 2026-10-28 §11): the nodding or the shaking head as a
+// Yes and No in full (spec 2026-10-28 §11): the check mark or the cross as a
 // small badge on the feeling's picture, "merged when it can be". `side` null removes it.
 export function attachBadge(tile, side, variant = 'color') {
   tile.querySelector('.chat-badge')?.remove();
