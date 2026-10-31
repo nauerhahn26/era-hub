@@ -402,6 +402,90 @@ test("a voice key ElevenLabs rejects never shows 'Premium voices active' (bug 14
   await ctx.close();
 });
 
+// ---- Two voices (spec 2026-10-31 §3.2) ----
+//
+// Her voice speaks what she says; the helper voice speaks everything else
+// (questions, choices read aloud, games, books). Both are picks from the same
+// curated list and both live in tts-config.json; a pick outside the list is
+// ignored the way a stray voiceId always has been.
+const HOPE = "cVd39cx0VtXNC13y5Y7z", JESSICA = "cgSgspJ2msm6clMCkdW9", SARAH = "EXAVITQu4vr4xnSDxMaL";
+function withTtsCfg(body) {
+  const file = path.join(TMP, "tts-config.json");
+  const saved = fs.existsSync(file) ? fs.readFileSync(file) : null;
+  fs.writeFileSync(file, JSON.stringify(body));
+  return () => { if (saved) fs.writeFileSync(file, saved); else fs.rmSync(file, { force: true }); };
+}
+
+test("/voices and /settings carry the helper voice beside hers; /settings saves a curated helper pick only", async () => {
+  const restore = withTtsCfg({ apiKey: GOOD_KEY, voiceId: HOPE, keyOk: true });
+  const file = path.join(TMP, "tts-config.json");
+  const post = body => fetch(BASE + "/settings", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    let v = await (await fetch(`${BASE}/voices`)).json();
+    assert.equal(v.current, HOPE);
+    assert.equal(v.helper, JESSICA, "no helper chosen is Jessica");
+    assert.ok(v.voices.some(x => x.id === HOPE), "her voice is a legal pick");
+    assert.equal(v.voices[0].id, HOPE, "Hope is first in the curated list");
+    let s = await (await fetch(`${BASE}/settings`)).json();
+    assert.equal(s.voiceId, HOPE);
+    assert.equal(s.helperVoiceId, JESSICA);
+
+    assert.equal((await post({ helperVoiceId: SARAH })).status, 204);
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).helperVoiceId, SARAH);
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).voiceId, HOPE, "her voice is untouched");
+    assert.equal((await (await fetch(`${BASE}/voices`)).json()).helper, SARAH);
+    assert.equal((await (await fetch(`${BASE}/settings`)).json()).helperVoiceId, SARAH);
+
+    const before = fs.readFileSync(file, "utf8");
+    for (const bad of ["not-a-curated-voice", 7, ""]) {
+      assert.equal((await post({ helperVoiceId: bad })).status, 204, "ignored like a stray voiceId");
+      assert.equal(fs.readFileSync(file, "utf8"), before, `helperVoiceId ${JSON.stringify(bad)} leaves the file alone`);
+    }
+  } finally { restore(); }
+});
+
+test("the Voice card shows a Her voice row and a Helper voice row; each pick saves its own role and previews in it", async () => {
+  const restore = withTtsCfg({ apiKey: GOOD_KEY, voiceId: HOPE, keyOk: true });
+  const { ctx, page } = await settingsPage(null, { fragment: "sound" });
+  const writes = [], spoken = [];
+  await ctx.route("**/settings", route => {
+    if (route.request().method() === "POST") writes.push(route.request().postDataJSON());
+    return route.continue();
+  });
+  await ctx.route("**/tts", route => {
+    spoken.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: "audio/mpeg", body: "" });
+  });
+  try {
+    await page.waitForFunction(() => document.querySelectorAll("#voices .voice").length > 0
+      && document.querySelectorAll("#helperVoices .voice").length > 0);
+    const card = await page.textContent("#voice");
+    assert.match(card, /Her voice/);
+    assert.match(card, /Helper voice/);
+    assert.doesNotMatch(card, /The voice that talks to your child in Making Words and The Pencil/);
+    assert.match(await page.textContent("#voices .voice.sel"), /Hope/);
+    assert.match(await page.textContent("#helperVoices .voice.sel"), /Jessica/);
+
+    await page.locator("#helperVoices .voice", { hasText: "Sarah" }).click();
+    await page.waitForFunction(() => /Sarah/.test(document.querySelector("#helperVoices .voice.sel")?.textContent || ""));
+    for (let i = 0; i < 50 && !spoken.length; i++) await new Promise(r => setTimeout(r, 20));
+    assert.deepEqual(writes, [{ helperVoiceId: SARAH }]);
+    assert.equal(spoken.length, 1);
+    assert.equal(spoken[0].voice, "helper");
+    assert.match(spoken[0].text, /I can be your helper voice\./);
+    assert.match(await page.textContent("#voices .voice.sel"), /Hope/, "a helper pick leaves her row alone");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(TMP, "tts-config.json"), "utf8")).helperVoiceId, SARAH);
+
+    await page.locator("#voices .voice", { hasText: "Matilda" }).click();
+    await page.waitForFunction(() => /Matilda/.test(document.querySelector("#voices .voice.sel")?.textContent || ""));
+    for (let i = 0; i < 50 && spoken.length < 2; i++) await new Promise(r => setTimeout(r, 20));
+    assert.deepEqual(writes[1], { voiceId: "XrExE9yKIg1WjnnlVkGX" });
+    assert.deepEqual(spoken[1], { text: "Hi! This is my voice.", voice: "her" });
+    assert.match(await page.textContent("#helperVoices .voice.sel"), /Sarah/, "a pick of hers leaves the helper row alone");
+  } finally { await ctx.close(); restore(); }
+});
+
 // ---- AI helper key card (T7.6 bug 6, VM QA 9/5) ----
 //
 // The bug was a WORDING bug: a Google key with a character missing sat under

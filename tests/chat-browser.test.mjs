@@ -81,14 +81,14 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   const report = await checkInstalledChatUI(page, { baseURL: base }); assert.equal(report.ok, true);
   // The shared installed-UI helper restores its routes/storage after its test.
   // This second pass owns a simulated recognizer with the real capture graph.
-  const controls = [], uploaded = [], choiceBodies = [], spokenTexts = []; let generation = 0, sequence = 0, stalled = false, releaseUpload, sessionPosts = 0;
+  const controls = [], uploaded = [], choiceBodies = [], spokenTexts = [], clipRoles = []; let generation = 0, sequence = 0, stalled = false, releaseUpload, sessionPosts = 0;
   await page.addInitScript(() => {
     window.__eventSources = 0;
     // The command stream (the partner's button) is a second EventSource opened at load; only session streams count.
     window.EventSource = class { constructor(url) { if (!String(url).includes('/chat/api/commands')) { window.__timingEvents = this; window.__eventSources++; } } close() { this.closed = true; } };
   });
   await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
-  await page.route('**/tts', route => { try { spokenTexts.push(route.request().postDataJSON().text); } catch {} return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }); });
+  await page.route('**/tts', route => { try { const body = route.request().postDataJSON(); spokenTexts.push(body.text); clipRoles.push([body.text, body.voice]); } catch {} return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }); });
   await page.route('**/chat/api/**', async route => {
     const req = route.request(), url = new URL(req.url()); let result = {};
     if (url.pathname === '/chat/api/state') return route.continue();
@@ -173,6 +173,11 @@ test('combined Chat page validates icons, deliberate saved playback, timing priv
   await page.locator('.tile.question').click();
   for (let i = 0; i < 100 && !spokenTexts.includes(QUESTION); i++) await page.waitForTimeout(20);
   assert.ok(spokenTexts.includes(QUESTION), 'the strip speaks the question');
+  // Two voices (spec 2026-10-31 §3.3): her picks in hers, the partner's question in the helper's.
+  const rolesOf = text => [...new Set(clipRoles.filter(([said]) => said === text).map(([, role]) => role))];
+  assert.deepEqual(rolesOf(QUESTION), ['helper'], 'the echoed question is the helper voice');
+  for (const choice of alternatives.choices) assert.deepEqual(rolesOf(choice.say), ['her'], `her pick "${choice.say}" is her voice`);
+  for (const opener of ['Hi!', 'Yes.', 'No.']) assert.deepEqual(rolesOf(opener), ['her'], `her word "${opener}" is her voice`);
   await page.locator('.tile.mode[data-mode="ask"]').click();
   await page.waitForSelector('.tile.made');
   assert.equal(await page.locator('.tile.made').count(), 2); assert.equal(await page.locator('.response').count(), 0);
@@ -383,7 +388,7 @@ test('after a silence the options are read aloud: the name, then each label with
   t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
-  const page = await context.newPage(), errors = [], clips = [], saved = [];
+  const page = await context.newPage(), errors = [], clips = [], saved = [], roles = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
     window.__lit = []; window.__plays = 0;
@@ -394,7 +399,7 @@ test('after a silence the options are read aloud: the name, then each label with
     }).observe(document.querySelector('#grid'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true }));
   });
   await page.route('**/voices', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, current: 'synthetic-saved' }) }));
-  await page.route('**/tts', route => { clips.push(route.request().postDataJSON().text); return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }); });
+  await page.route('**/tts', route => { const body = route.request().postDataJSON(); clips.push(body.text); roles.push([body.text, body.voice]); return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }); });
   await page.route('**/settings', route => {
     if (route.request().method() === 'POST') { saved.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatPromptMs: 1000, chatName: 'Sam' }) });
@@ -417,6 +422,11 @@ test('after a silence the options are read aloud: the name, then each label with
   assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story'], 'each reply lit in spoken order');
   assert.equal(await page.evaluate(() => window.__plays), 3, 'the name, then each label');
   assert.ok(clips.includes('Sam, your options are') && clips.includes('Music') && clips.includes('A story'));
+  // The reading is the helper voice; each label is also her pick's words, so
+  // the same text is two clips, one per voice (spec 2026-10-31 §3.3).
+  const rolesOf = text => [...new Set(roles.filter(([said]) => said === text).map(([, role]) => role))].sort();
+  assert.deepEqual(rolesOf('Sam, your options are'), ['helper']);
+  for (const label of ['Music', 'A story']) assert.deepEqual(rolesOf(label), ['helper', 'her'], `"${label}": read by the helper, warmed as her pick`);
   await page.waitForTimeout(2500);
   assert.equal(await page.evaluate(() => window.__plays), 3, 'a batch is read at most once');
   // A new batch: a selection mid-reading stops it at once.

@@ -123,6 +123,59 @@ test('the real hub /tts asks the saved-voice service\'s streaming endpoint and a
   assert.match(seen[0], /^\/v1\/text-to-speech\/[A-Za-z0-9]+\/stream\?output_format=/);
 });
 
+// Two voice roles (spec 2026-10-31 §3.2): her chosen words speak in her voice
+// (voiceId), everything else in the helper voice (helperVoiceId, Jessica when
+// the file has none). The role picks the id for the service URL AND the cache
+// key, so one sentence in two voices is two clips; a role the hub does not know
+// is refused before anything is asked of the voice service.
+test('the real hub /tts speaks her words in her voice and everything else in the helper voice, cached apart', { timeout: 60000 }, async t => {
+  const { spawn } = await import('node:child_process');
+  const HOPE = 'cVd39cx0VtXNC13y5Y7z', JESSICA = 'cgSgspJ2msm6clMCkdW9', SARAH = 'EXAVITQu4vr4xnSDxMaL';
+  const seen = [];
+  const voice = await upstream(t, async (req, res) => { for await (const _ of req); seen.push(req.url); res.writeHead(200, { 'Content-Type': 'audio/mpeg' }); res.end(req.url.split('/')[3]); });
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'era-tts-roles-'));
+  t.after(() => fs.rm(data, { recursive: true, force: true }));
+  const cfgFile = path.join(data, 'tts-config.json');
+  await fs.writeFile(cfgFile, JSON.stringify({ apiKey: 'stand-in-voice-key', voiceId: HOPE, keyOk: true }));
+  const probe = http.createServer(); await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+  const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
+  const hub = new URL('../', import.meta.url).pathname;
+  const child = spawn(process.execPath, [path.join(hub, 'server.js'), String(port)], { cwd: hub, stdio: ['ignore', 'ignore', 'inherit'],
+    env: { ...process.env, ERA_DATA_DIR: data, ERA_BIND: '127.0.0.1', ERA_DEVICE_ID: 'tts-roles', ERA_CHAT_CONFIG_DISABLED: '1', ERA_POOL_DIR: '', ERA_ELEVEN_URL: voice.url } });
+  t.after(() => child.kill('SIGKILL'));
+  let up = false;
+  for (let i = 0; i < 150 && !up; i++) { try { up = (await fetch(`http://127.0.0.1:${port}/version`)).ok; } catch { await pause(100); } }
+  assert.ok(up);
+  const post = body => fetch(`http://127.0.0.1:${port}/tts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const say = async body => { const r = await post(body); assert.equal(r.status, 200); return Buffer.from(await r.arrayBuffer()).toString(); };
+  const clips = async () => (await fs.readdir(path.join(data, 'tts-cache')).catch(() => [])).filter(f => f.endsWith('.mp3')).sort();
+  const settled = async n => { for (let i = 0; i < 100 && (await clips()).length < n; i++) await pause(20); return clips(); };
+  const text = 'Which one is the dog?';
+
+  assert.equal(await say({ text }), HOPE, 'no role is her voice');
+  assert.equal(seen.at(-1).split('?')[0], `/v1/text-to-speech/${HOPE}/stream`);
+  assert.equal(await say({ text, voice: 'her' }), HOPE);
+  assert.equal(seen.length, 1, 'her role is the same clip as no role');
+  assert.equal(await say({ text, voice: 'helper' }), JESSICA, 'the helper is Jessica when the file names none');
+  assert.equal(seen.at(-1).split('?')[0], `/v1/text-to-speech/${JESSICA}/stream`);
+  assert.equal(seen.length, 2);
+  const two = await settled(2);
+  assert.equal(two.length, 2, 'one sentence in two voices is two cached clips');
+  assert.equal(await say({ text, voice: 'helper' }), JESSICA);
+  assert.equal(seen.length, 2, 'the helper clip came from its own cache file');
+
+  const before = seen.length;
+  for (const bad of ['x', 'HER', '', 7, null]) assert.equal((await post({ text, voice: bad })).status, 400, `voice ${JSON.stringify(bad)} is refused`);
+  assert.equal(seen.length, before, 'a refused role never reaches the voice service');
+
+  await fs.writeFile(cfgFile, JSON.stringify({ apiKey: 'stand-in-voice-key', voiceId: HOPE, helperVoiceId: SARAH, keyOk: true }));
+  assert.equal(await say({ text, voice: 'helper' }), SARAH, 'the chosen helper voice is the one asked for');
+  assert.equal(seen.at(-1).split('?')[0], `/v1/text-to-speech/${SARAH}/stream`);
+  assert.equal((await settled(3)).length, 3);
+  assert.equal(await say({ text }), HOPE);
+  assert.equal(seen.length, before + 1, 'her clip is untouched by the helper change');
+});
+
 test('error answers never jam the keep-alive pool: nine refusals in a row, then the tenth request still goes through', { timeout: 20000 }, async t => {
   let n = 0;
   const up = await upstream(t, async (req, res) => { for await (const _ of req); n++; if (n <= 9) { res.writeHead(429, { 'Content-Type': 'application/json' }); res.end('{"error":"busy"}'); return; } res.writeHead(200); res.end('ok'); });

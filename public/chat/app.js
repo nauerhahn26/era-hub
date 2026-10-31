@@ -198,8 +198,11 @@ function setList(key, value) {
   if (appReady && page) renderGrid(controller.state);
 }
 
+// Two voices (spec 2026-10-31 §3.3): what she says is "her"; the options
+// reading, its labels and the partner's question echoed back are "helper".
 function warmPhrases() {
-  voice.prefetch([...OPENERS, ...Object.values(SPOKEN), ...(promptMs > 0 ? [promptPrefix()] : []), ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })));
+  voice.prefetch([...OPENERS, ...Object.values(SPOKEN), ...stories.map(story => story.say), ...controller.state.choices.map(choice => choice.say)].map(say => ({ say })), { role: 'her' });
+  if (promptMs > 0) voice.prefetch([{ say: promptPrefix() }], { role: 'helper' });
 }
 // A press turn lives in the test-mode turn log only (production rows keep four kinds).
 const questionActive = () => metrics.isActive(questionMetric) || (questionMetric !== null && questionMetric === pressMetric && turnLog.tracking(questionMetric));
@@ -296,9 +299,10 @@ const controller = createChatController({
   onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
   stopSpeech: () => { reader?.cancel(); currentSpeech++; metrics.end(speechMetric, 'cancelled', 'interrupted'); speechMetric = null; voice.stop(); },
   prefetch: choices => {
-    voice.prefetch(choices);
-    // The reading says each label; warm the ones that differ from their words.
-    if (promptMs > 0) voice.prefetch(choices.filter(choice => choice.label !== choice.say).map(choice => ({ say: choice.label })));
+    voice.prefetch(choices, { role: 'her' });
+    // The reading says each label in the helper voice: a label equal to her
+    // words is still its own clip, so every label is warmed.
+    if (promptMs > 0) voice.prefetch(choices.map(choice => ({ say: choice.label })), { role: 'helper' });
     // Test mode only, after the real work, and never able to throw into prepare().
     if (stagedMeta?.handle === questionMetric) stageChoices(turnLog, questionMetric, choices, stagedMeta,
       choice => choice.symbol || resolveSymbol({ label: choice.label, type: 'response', say: choice.say }));
@@ -328,7 +332,8 @@ const controller = createChatController({
     let completed;
     turnLog.content(timing, { spoken: choice.say });
     try {
-      completed = await voice.say(choice.say, { signal, onClip: value => turnLog.usage(timing, { voice: value }),
+      // Her pick is her voice; the strip's echo of the partner's question is the helper's.
+      completed = await voice.say(choice.say, { role: choice.echo ? 'helper' : 'her', signal, onClip: value => turnLog.usage(timing, { voice: value }),
         onStart: () => { if (!signal.aborted && spoken === currentSpeech && mine === lifecycle) metrics.mark(timing, 'playbackStart'); },
         onEnd: () => { if (!signal.aborted && spoken === currentSpeech && mine === lifecycle) metrics.mark(timing, 'playbackEnd'); },
       });
@@ -353,11 +358,11 @@ function setPrompt(ms, name) {
     select.value = String(promptMs);
   }
   if (name !== undefined) { herName = typeof name === 'string' ? name.trim().slice(0, 24) : ''; $('chatName').value = herName; paintWake(); }
-  if (promptMs > 0) voice.prefetch([{ say: promptPrefix() }]);
+  if (promptMs > 0) voice.prefetch([{ say: promptPrefix() }], { role: 'helper' });
 }
 const tileFor = item => $('grid').querySelector(`.tile.response[data-choice-id="${CSS.escape(item.id)}"]`);
 reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
-  speak: (text, signal) => voice.say(text, { signal }),
+  speak: (text, signal) => voice.say(text, { role: 'helper', signal }),
   light: item => tileFor(item)?.classList.add('on'), unlight: item => tileFor(item)?.classList.remove('on'),
   onStart: () => turnLog.content(questionMetric, { prompted: true }) });
 // Armed when a batch of replies is on screen and hers (not openers, a page, a made set).
@@ -475,7 +480,7 @@ function requestMade(state) {
       const set = cleanChoices(result?.choices, `${kind}-${turn}`);
       if (!set.length) return;
       made[kind] = Object.freeze(set);
-      voice.prefetch(set);
+      voice.prefetch(set, { role: 'her' });
       if (modeView === kind) { revealRender = true; window.Dwell?.suppress(REVEAL_SETTLE_MS); gridKey = ''; renderGrid(controller.state); }
     }).catch(() => { /* the mode tile keeps its waiting tiles; the replies still work */ });
   }
@@ -798,7 +803,7 @@ function stagingEvent(data) {
     if (!choice || typeof choice.say !== 'string' || typeof choice.label !== 'string') return;
     record.choices.push(choice);
     // Invisible: the clip warms now so the voice is ready before she looks.
-    voice.prefetch([choice], { urgent: true });
+    voice.prefetch([choice], { role: 'her', urgent: true });
     turnLog.stagedOne(questionMetric, choice);
   } else if (data.type === 'batch-sealed') {
     record.sealed = { kind: data.kind, generated: data.generated, choices: data.choices, usage: data.usage, symbolRejected: data.symbolRejected,
