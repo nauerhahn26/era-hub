@@ -156,7 +156,7 @@ let page = null, pageOffset = 0, modeView = null;
 let made = { turn: -1, ask: null, comment: null, aborts: [] }, again = null, echoing = false;
 // The batches this session showed before the one on screen (Back restores them).
 const backStack = createBackStack(8);
-let shownChoices = [], shownQuestion = '', restoring = false;
+let shownChoices = [], shownQuestion = '', restoring = false, clearing = false;
 // Listen for <name> (spec 2026-10-28 §8): the device's switch, the hub's ear
 // window ({ generation, windowId }), and the gate that keeps her clips unheard.
 let wakeMode = false, ear = null, earStarting = null, clipsPlaying = 0, gateUntil = 0, wakeBusy = false;
@@ -255,7 +255,7 @@ let gridLocked = false;
 function syncHoldLock() {
   const now = holdActive();
   if (now && !gridLocked) {
-    gridLocked = true; reader?.cancel(); paintBack(controller.state);
+    gridLocked = true; reader?.cancel(); paintBack(controller.state); paintClear(controller.state);
     for (const el of $('grid').querySelectorAll('.tile')) { el.classList.remove('dwell'); if (el.tagName === 'BUTTON') el.dataset.dwellDisabled = ''; }
   } else if (!now && gridLocked) {
     gridLocked = false;
@@ -562,6 +562,25 @@ function backNow(state = controller.state) {
   return backTarget({ page, mode: modeView, holding: holdActive(),
     previous: backStack.size > 0 && !['Capturing question', 'Preparing'].includes(state.phase) });
 }
+// ---- the partner's Clear (maintainer 10/31) ----
+// The current turn goes: question, replies, made sets, a page or a lit mode.
+// The session, the ear, a press window, the ledger and Back's batches stay.
+function clearAvailable(state = controller.state) {
+  if (holdActive() || ['Capturing question', 'Preparing'].includes(state.phase)) return false;
+  return !!(state.question || state.choices.length || page || modeView);
+}
+function paintClear(state) { $('clearQuestion').disabled = !clearAvailable(state); }
+function clearQuestion() {
+  if (!clearAvailable()) return;
+  reader?.cancel(); dropMade(); page = null; pageOffset = 0;
+  const state = controller.state;
+  if (state.question || state.choices.length) {
+    metrics.end(questionMetric, 'cancelled', 'superseded');
+    clearing = true;
+    try { controller.clear(); } finally { clearing = false; }
+  }
+  gridKey = ''; renderGrid(controller.state);
+}
 function paintBack(state) {
   const live = !!backNow(state);
   backButton.classList.toggle('dwell', live); backButton.classList.toggle('off', !live);
@@ -581,7 +600,7 @@ backButton.addEventListener('click', () => {
 function renderGrid(state) {
   const key = [page, pageOffset, modeView, modeView && made[modeView] ? 'landed' : '', state.turn, state.choices.map(c => c.id).join(','),
     capturing(state) ? 'capturing' : waitingForReplies(state) ? 'preparing' : '', state.question, page ? `${stories.length}.${listsVersion}` : ''].join('|');
-  paintBack(state);
+  paintBack(state); paintClear(state);
   if (key === gridKey) { paintStrip(state); return; }
   // The last turn's tiles, kept stale after a press, are the very tiles drawn:
   // a new turn number alone never redraws them under her gaze.
@@ -618,7 +637,7 @@ let shownTurn = 0;
 controller.subscribe(state => {
   // A batch leaving the screen (a new question, Something else) is kept for Back.
   if (state.choices !== shownChoices) {
-    if (shownChoices.length && !restoring) backStack.push({ question: shownQuestion, choices: shownChoices });
+    if (shownChoices.length && !restoring && !clearing) backStack.push({ question: shownQuestion, choices: shownChoices });
     shownChoices = state.choices; if (state.choices.length) shownQuestion = state.question;
   }
   if (state.turn !== shownTurn) { shownTurn = state.turn; dropMade(); page = null; pageOffset = 0; }
@@ -1467,6 +1486,7 @@ function partnerAction(el, action) {
   el.addEventListener('keydown', e => { if (e.isTrusted && (e.code === 'Space' || e.code === 'Enter') && !e.repeat) { e.preventDefault(); action(); } });
 }
 partnerAction($('wakeToggle'), () => { void toggleWake(); });
+partnerAction($('clearQuestion'), clearQuestion);
 // Pause microphone: closes capture and the session while Chat stays open; the next hold prepares again.
 partnerAction($('pauseMic'), () => {
   micPaused = true;
