@@ -952,32 +952,49 @@ function serveRecipe(req, res) {
 }
 
 // ---- Songs Board recipe: GENERATED from <DATA>/music/manifest.json ----
-// v2 (dad's 8/24 feedback round). GRID pages: 3x4, 7 song doors per page in
-// rank order at the learned cells, center rests unpinned, More bottom-left,
-// back (big <- glyph) top-left on later pages — NO Stop and NO exit tile on
-// the grid (playback only happens inside a song page, so leaving it IS stop;
-// the msgbar door remains the app exit). Each song door opens its SONG PAGE:
-// the cover hero fills three quarters (row/col spans), far-right column =
-// back arrow / Stop / Full song, with no empty cells on a song page.
-// Default play is a CLIP_MS clip (school: scratch the itch, not the day);
-// "Full song" un-caps the running clip (or replays full) — deliberate extra
-// effort by design. Per-song `v` = audio file mtime (client IDB cache key).
-// ETag = manifest stat + RECIPE_REV (bump the rev when this generator's
-// OUTPUT changes without a manifest change, or boards keep their 304 cache).
-// page 1 has no chrome tiles at the corners (v3, dad 8/24): 9 songs. Later
-// pages keep (1,1) for back but use the (3,4) corner too (dad r4): 8 songs.
-const SONG_CELLS_P1 = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
-const SONG_CELLS_PN = [[1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
+// v3 (spec 2026-10-31, the book shelf's shape): every grid page is a 3x4 grid
+// beside a RAIL of six tiles — Back, Favorites, New, Top hits, Disney, All —
+// carried as the board's `rail` and drawn by era-board's renderer. Back is one
+// page back in the section (disabled on page 1); a section tile opens that
+// section's page 1, and the current one is lit (`current`). Nine songs a page
+// at SONG_CELLS; [2,2]/[2,3] always black; More at [3,1] when the section has
+// more than one page, looping to page 1 on the last. No Stop and no exit tile
+// on the grid (leaving the song page IS stop; the bar's door is the exit).
+// Each song door opens its SONG PAGE: the cover hero fills three quarters,
+// far-right column = Back / Stop / Full song. Its Back carries `return:true`
+// (the board pops back to the section page she came from) and a `load` to the
+// song's page in All for a page opened directly.
+// ORDER (music-sections.js): pick scores from music-log.js — this device's
+// pool plus every other device's shared lines — ties newest added first, then
+// the old `rank`. It is fixed when the recipe is BUILT: the board never
+// re-fetches while she is on a page, and its watcher ignores the ETag's order
+// part (`~o<hash>`), so a pick never reshuffles a board on screen. A reopened
+// board does a fresh GET and gets the new order.
+// Default play is a CLIP_MS clip; "Full song" un-caps it. Per-song `v` = audio
+// file mtime (client IDB cache key). ETag = manifest stat + RECIPE_REV +
+// pictures + order (bump the rev when this generator's OUTPUT changes without
+// a manifest change, or boards keep their 304 cache).
+const { SECTIONS: SONG_SECTIONS, CATEGORIES: SONG_CATEGORIES, sectionOrders } = require("./music-sections.js");
+const { openMusicLog } = require("./music-log.js");
+const SONG_CELLS = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
 const CLIP_MS = 40000;
-const RECIPE_REV = 5;
+const RECIPE_REV = 6;
 const STOP_SYMBOL = "8289";   // exact ARASAAC id: the red STOP sign (bestsearch "stop" = a bus stop)
 const FULL_SYMBOL = "music";  // sheet-music notes (verified via /symbol/music)
+// The play log, opened per use: the Drive folder can be chosen or adopted at
+// any time, and opening is free (music-log.js keeps its parse cache itself).
+function musicLog() {
+  const st = drive.status();
+  return openMusicLog({ dataDir: DATA, poolRoot: pool.root, deviceId: DEVICE_ID,
+    driveFolder: st.mode === "local" && st.folderPath ? st.folderPath : null });
+}
 // Only complete local sets reach the child; manifest paths are never URLs.
 function songPictures(song) {
   if (!Array.isArray(song.pictures) || song.pictures.length !== 10 || new Set(song.pictures).size !== 10) return [];
   return song.pictures.every(n => typeof n === "string" && /^[a-z0-9-]+-frame-[a-f0-9]{16}-[0-9]{2}\.jpg$/.test(n) &&
     fs.existsSync(path.join(MUSIC_DIR, n))) ? song.pictures.map(n => "music/" + n) : [];
 }
+const sectionPage = (key, p) => "songs-" + key + (p > 0 ? "-" + (p + 1) : "");
 function songsRecipe() {
   const mp = path.join(MUSIC_DIR, "manifest.json");
   const st = fs.statSync(mp);                    // throws -> caller 404s
@@ -988,62 +1005,72 @@ function songsRecipe() {
       let v = 0;
       try { v = Math.floor(fs.statSync(path.join(MUSIC_DIR, s.audio)).mtimeMs); }
       catch { return null; }                     // audio file missing: skip the song
-      return { ...s, v };
+      // addedAt is written on add. An older song has none and stays undated
+      // (music-sections.js orders it by rank): never its audio mtime, which is
+      // when the mirror copied the file to THIS device.
+      const added = Date.parse(s.addedAt);
+      return { ...s, v, addedMs: Number.isFinite(added) ? added : null,
+               category: SONG_CATEGORIES.includes(s.category) ? s.category : null };
     })
-    .filter(Boolean)
-    .sort((a, b) => (a.rank || 0) - (b.rank || 0));
-  const perP1 = SONG_CELLS_P1.length, perPN = SONG_CELLS_PN.length;
-  const pages = songs.length <= perP1 ? 1 : 1 + Math.ceil((songs.length - perP1) / perPN);
+    .filter(Boolean);
+  const byId = new Map(songs.map(s => [s.id, s]));
+  let scores = new Map();
+  try { scores = musicLog().scores(); } catch { /* rule 3 of music-log.js: order by added time */ }
+  const orders = sectionOrders(songs, scores);
+  const root = orders.fav.length ? sectionPage("fav", 0) : sectionPage("all", 0);
+  const per = SONG_CELLS.length;
+  const pagesOf = (key) => Math.max(1, Math.ceil(orders[key].length / per));
+  const songDoor = (s, row, col) => ({ label: s.title, say: s.title, type: "song", song_id: s.id,
+    audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
+    image: s.cover ? "music/" + s.cover : songPictures(s)[0],
+    load: "song-" + s.id, duration: s.duration || 0, row, col });
   const boards = [];
-  for (let p = 0; p < pages; p++) {
-    const id = p === 0 ? "songs" : "songs-" + (p + 1);
-    const cells = p === 0 ? SONG_CELLS_P1 : SONG_CELLS_PN;
-    const from = p === 0 ? 0 : perP1 + (p - 1) * perPN;
-    const buttons = [];
-    if (p > 0) {
-      buttons.push({ label: "Back", say: "back", type: "back", glyph: "←",
-                     load: p === 1 ? "songs" : "songs-" + p, row: 1, col: 1 });
+  for (const sec of SONG_SECTIONS) {
+    const pages = pagesOf(sec.key);
+    for (let p = 0; p < pages; p++) {
+      const rail = [
+        { label: "Back", say: "back", type: "back",
+          ...(p > 0 ? { load: sectionPage(sec.key, p - 1) } : { disabled: true }) },
+        ...SONG_SECTIONS.map(x => ({ label: x.label, say: x.say, type: "category",
+          load: sectionPage(x.key, 0), ...(x.key === sec.key ? { current: true } : {}) })),
+      ];
+      const buttons = orders[sec.key].slice(p * per, (p + 1) * per)
+        .map((id, i) => songDoor(byId.get(id), SONG_CELLS[i][0], SONG_CELLS[i][1]));
+      if (pages > 1)   // exactly the outfit board's More (teal control + ARASAAC "more")
+        buttons.push({ label: "More", type: "control", symbol: "more",
+                       load: sectionPage(sec.key, (p + 1) % pages), row: 3, col: 1 });
+      boards.push({ id: sectionPage(sec.key, p), name: "What do I want to hear?", rows: 3, columns: 4,
+                    section: sec.key, page: p + 1, pages, rail, buttons });
     }
-    songs.slice(from, from + cells.length).forEach((s, i) => {
-      const [row, col] = cells[i];
-      buttons.push({ label: s.title, say: s.title, type: "song", song_id: s.id,
-                     audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
-                     image: s.cover ? "music/" + s.cover : songPictures(s)[0],
-                     load: "song-" + s.id,
-                     duration: s.duration || 0, row, col });
-    });
-    if (p < pages - 1)   // exactly the outfit board's More (teal control + ARASAAC "more")
-      buttons.push({ label: "More", type: "control", symbol: "more",
-                     load: "songs-" + (p + 2), row: 3, col: 1 });
-    boards.push({ id, name: "What do I want to hear?", rows: 3, columns: 4, buttons });
   }
   // One page per song: image fills three columns; controls fill column four.
-  songs.forEach((s, i) => {
-    const gridPage = i < perP1 ? "songs"
-                   : "songs-" + (Math.floor((i - perP1) / perPN) + 2);
+  for (const s of songs) {
+    const at = orders.all.indexOf(s.id);
     boards.push({
       id: "song-" + s.id, name: s.title, rows: 3, columns: 4,
       buttons: [
         { label: s.title, say: s.title, type: "song", song_id: s.id,
           audio: "music/" + s.audio, v: s.v, clip_ms: CLIP_MS,
           image: s.cover ? "music/" + s.cover : songPictures(s)[0],
-          pictures: songPictures(s),
+          pictures: songPictures(s), category: s.category,
           duration: s.duration || 0, row: 1, col: 1, row_span: 3, col_span: 3 },
-        { label: "Back", say: "back", type: "back", glyph: "←",
-          load: gridPage, row: 1, col: 4 },
+        { label: "Back", say: "back", type: "back", glyph: "←", return: true,
+          load: sectionPage("all", Math.max(0, Math.floor(at / per))), row: 1, col: 4 },
         { label: "Stop", say: "stop", type: "stop", symbol: STOP_SYMBOL, row: 2, col: 4 },
         { label: "Full song", say: "full song", type: "full", song_id: s.id,
           symbol: FULL_SYMBOL,
           audio: "music/" + s.audio, v: s.v, row: 3, col: 4 },
       ],
     });
-  });
+  }
+  const hash = (v) => crypto.createHash("sha256").update(JSON.stringify(v)).digest("hex").slice(0, 12);
   return {
-    recipe: { locale: "en-US", root: "songs", home_label: "Songs", boards },
-    // The manifest can arrive before its frames during a content mirror.
+    recipe: { locale: "en-US", root, home_label: "Songs", boards },
+    // The manifest can arrive before its frames during a content mirror. The
+    // order part comes LAST so the board's watcher can strip it (board.js).
     etag: '"' + Math.floor(st.mtimeMs) + "-" + st.size + "-r" + RECIPE_REV + "-p" +
-      crypto.createHash("sha256").update(JSON.stringify(boards.filter(b => b.id.startsWith("song-"))
-        .map(b => b.buttons[0].pictures))).digest("hex").slice(0, 12) + '"',
+      hash(boards.filter(b => b.id.startsWith("song-")).map(b => b.buttons[0].pictures)) +
+      "~o" + hash([root, orders]) + '"',
   };
 }
 function serveSongsRecipe(req, res) {
@@ -2402,17 +2429,24 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  // ---- songs board events: play/stop/end -> family pool (usage visibility) ----
+  // ---- songs board events -> family pool + the shared play log (usage order) ----
   if (req.method === "POST" && req.url === "/music-event") {
     let body = "";
     req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
     req.on("end", () => {
       try {
-        const { songId, action } = JSON.parse(body);
-        const ok = ["play", "stop", "end", "full"].includes(action) &&
-          typeof songId === "string" && /^[a-z0-9-]{1,64}$/.test(songId);
+        const { songId, action, fresh } = JSON.parse(body);
+        // clip = the 40-second clip ran out; done = the song ended naturally
+        // (spec 2026-10-31). An older board says "end" for both; it is kept
+        // and scores as neither. fresh = Full song from silence (a new pick).
+        const ok = ["play", "stop", "end", "full", "clip", "done"].includes(action) &&
+          typeof songId === "string" && /^[a-z0-9-]{1,64}$/.test(songId) &&
+          (fresh === undefined || (fresh === true && action === "full"));
         if (!ok) { res.writeHead(400).end(); return; }
-        pool.append("music-" + action, { songId });
+        // The shared log FIRST: its first write copies this device's pool
+        // history, which must not yet hold the event being recorded.
+        try { musicLog().record({ song: songId, action, fresh }); } catch { /* never load-bearing */ }
+        pool.append("music-" + action, fresh ? { songId, fresh: true } : { songId });
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch { res.writeHead(400).end(); }
     });
@@ -2571,16 +2605,14 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  // ⇅ Arrange: the whole running order in one POST (spec §6 "Arrange").
-  // Answers when the manifest is written and mirrored — it is one small file,
-  // so the strip can wait and know the tiles moved. A partial or unknown id is
-  // a 400 that changed nothing (music-add.js order()).
-  if (req.method === "POST" && req.url === "/music/order") {
+  // A song's section (spec 2026-10-31): the parent sheet's Top hits / Disney /
+  // neither. Answers when the manifest is written and mirrored — one small
+  // file, so the sheet can wait and know the board has it. ownDoor: only this
+  // hub's own pages write the family's song list.
+  if (req.method === "POST" && req.url === "/music/category") {
     if (!ownDoor(req, res)) return;
     let body = "";
-    // A whole library of ids: a slug is at most 64 characters, so 64 KB is
-    // hundreds of songs and still nothing a sheet could use to fill memory.
-    req.on("data", c => { body += c; if (body.length > 65536) req.destroy(); });
+    req.on("data", c => { body += c; if (body.length > 4096) req.destroy(); });
     req.on("end", () => {
       let parsed;
       try { parsed = JSON.parse(body); }
@@ -2589,12 +2621,12 @@ const server = http.createServer((req, res) => {
            .end(JSON.stringify({ error: "bad-request", message: "Our Era Comms could not read that request." }));
         return;
       }
-      musicAdd.order(parsed).then(out => {
+      musicAdd.setCategory(parsed).then(out => {
         if (out.error) {
-          // 400 = the strip sent an order that cannot be applied to what is on
-          // the shelf; 409 = the hub cannot do it yet (no Drive folder, no
-          // songs, a song still downloading).
-          const mine = ["bad-ids", "unknown-song", "incomplete"].includes(out.error);
+          // 400 = the sheet sent something that cannot apply; 409 = the hub
+          // cannot do it yet (no Drive folder, a song still downloading, a
+          // song list it cannot read).
+          const mine = ["bad-id", "bad-category", "unknown-song"].includes(out.error);
           res.writeHead(mine ? 400 : 409, { "Content-Type": "application/json" });
           res.end(JSON.stringify(out));
           return;
@@ -2602,11 +2634,9 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(out));
       }).catch(() => {
-        // A failed write left the old order in place (writeAtomic never opens
-        // the target), so say so rather than leaving a spinner turning.
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "write-failed",
-                                 message: "Our Era Comms could not save the new order. Try again." }));
+                                 message: "Our Era Comms could not save that. Try again." }));
       });
     });
     return;

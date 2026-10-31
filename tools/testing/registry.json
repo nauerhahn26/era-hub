@@ -62,28 +62,6 @@
   ],
   "suites": [
     {
-      "id": "era-board:tests/board-arrange.test.mjs",
-      "purpose": "Touch-only music reorder, drag nonactivation, pagination, errors and saved/pending status",
-      "group": "board",
-      "dependencies": [
-        "era-board/**"
-      ],
-      "lane": "linux",
-      "resources": [
-        "shared-hub",
-        "browser"
-      ],
-      "level": "browser integration",
-      "hub": "shared-reader",
-      "ports": [],
-      "browsers": 8,
-      "heavy": false,
-      "solo": false,
-      "quiet": false,
-      "retry": false,
-      "owner": ""
-    },
-    {
       "id": "era-board:tests/board-clothing-coach.test.mjs",
       "purpose": "Wardrobe setup and in-progress/retry explanations",
       "group": "board",
@@ -298,7 +276,7 @@
       "level": "browser integration",
       "hub": "shared-reader",
       "ports": [],
-      "browsers": 4,
+      "browsers": 8,
       "heavy": false,
       "solo": false,
       "quiet": false,
@@ -3646,6 +3624,27 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/music-log.test.mjs",
+      "purpose": "Song pick scores, section order and the shared cross-device play log",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data"
+      ],
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/music-pictures.test.mjs",
       "purpose": "Storyboard decoding, distinct safe frames and screening refusal",
       "group": "hub",
@@ -5108,7 +5107,6 @@
       "id": "era-hub:tests/invariants.mjs",
       "purpose": "Shared measured access audit helper; changing it requires the complete gate",
       "consumers": [
-        "era-board:tests/board-arrange.test.mjs",
         "era-board:tests/board-clothing-coach.test.mjs",
         "era-board:tests/board-clothing-visuals.test.mjs",
         "era-board:tests/board-content-note.test.mjs",
@@ -5217,6 +5215,7 @@
         "era-hub:tests/movies-lookup.test.mjs",
         "era-hub:tests/movies.test.mjs",
         "era-hub:tests/music-add.test.mjs",
+        "era-hub:tests/music-log.test.mjs",
         "era-hub:tests/music-pictures.test.mjs",
         "era-hub:tests/music.test.mjs",
         "era-hub:tests/packs.test.mjs",
@@ -5271,7 +5270,6 @@
       "id": "era-hub:tests/synthetic-wardrobe.mjs",
       "purpose": "Synthetic clothing test data generator; consumers remain conservatively complete",
       "consumers": [
-        "era-board:tests/board-arrange.test.mjs",
         "era-board:tests/board-clothing-coach.test.mjs",
         "era-board:tests/board-clothing-visuals.test.mjs",
         "era-board:tests/board-content-note.test.mjs",
@@ -5381,6 +5379,7 @@
         "era-hub:tests/movies-lookup.test.mjs",
         "era-hub:tests/movies.test.mjs",
         "era-hub:tests/music-add.test.mjs",
+        "era-hub:tests/music-log.test.mjs",
         "era-hub:tests/music-pictures.test.mjs",
         "era-hub:tests/music.test.mjs",
         "era-hub:tests/packs.test.mjs",
