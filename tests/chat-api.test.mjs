@@ -1170,3 +1170,37 @@ test('a comment batch that lost a say to the recall check reports how many', asy
   assert.equal(result.kind, 'generated'); assert.equal(result.commentDropped, 1);
   assert.deepEqual(result.choices.map(choice => choice.say), ["That's cool!", 'Yum!']);
 });
+
+// Several short questions in a row (home device, 10/31): never the yes/no set on the first clause.
+test('several questions in a row go to the model as an open question; a single short yes/no question keeps the shortcut', async t => {
+  const seen = [];
+  const env = { ERA_CHAT_CHOICES_URL: 'https://adapter.example/choices' };
+  const s = await service(t, { env, fetch: async (_, options) => { seen.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ choices: [{ label: 'Water', say: 'Water, please.' }, { label: 'Wait', say: 'I want to wait.' }, { label: 'Something else', say: 'Something else.' }] })); } });
+  for (const text of ['do you want water? Do you want to wait? Do you want something else?', 'do you want yogurt? Do you want, uh, French toast?',
+    'We are almost home now and I was wondering about a snack. Do you want some juice?']) {
+    assert.equal(localChoices(text), null, text);
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'adapter', text);
+    assert.deepEqual(seen.at(-1), { text, shape: 'open' }, 'an open question for the model: ' + text);
+  }
+  for (const text of ['Are you being silly?', 'Is it your burp?', 'Do you want juice?', 'Ellie, can you show me?',
+    'Do you want to go outside and play in the leaves with your friends before it gets dark tonight?', 'Do you want pizza or pasta? No wait. Are you hungry?']) {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'yes-no', text);
+  }
+  // The "or" form is unchanged: the alternatives shortcut reads its last question, as before.
+  const before = seen.length;
+  const or = await (await s.request('/choices', { text: 'Do you want water? Do you want to wait, or do you want something else?' })).json();
+  assert.equal(or.kind, 'alternatives'); assert.deepEqual(or.choices.map(choice => choice.label), ['Wait', 'Something else']);
+  assert.equal(seen.length, before, 'no model request');
+});
+
+test('the instructions say several short questions in a row are alternatives', async () => {
+  const { createChoicesAdapter } = require('../chat-choices.js');
+  let body;
+  await createChoicesAdapter({ env: { ERA_CHAT_TEXT_URL: 'https://text.example/responses', ERA_CHAT_TEXT_MODEL: 'configured', ERA_CHAT_TEXT_TOKEN: 'private-value' },
+    fetch: async (_, options) => { body = JSON.parse(options.body); return new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text',
+      text: JSON.stringify({ choices: [{ label: 'A', say: 'A.' }, { label: 'B', say: 'B.' }] }) }] }] })); } }).generate({ text: 'What next?' });
+  assert.match(body.instructions, /When the partner asks several short questions in a row, each is an alternative; offer each as a choice plus something else\./);
+});
