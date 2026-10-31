@@ -174,4 +174,35 @@ function energyGate({ frameSamples = 1600, floor = .003 } = {}) {
   };
 }
 
-module.exports = { createWindow, energyGate, WINDOW_LIMITS };
+// The wake word (stable frame design 2026-10-28 §8): does this utterance hold
+// the wake name, and what is the question? The name's words match whole words
+// in any case, a possessive ("Ellie's") counts, and "elly" is heard as "ellie".
+// The question is the words after the name; with nothing after it, the words
+// before it once a greeting ("hey", "okay") is set aside. { question: '' }
+// is a bare name (the next utterance is the question); null is no wake at all.
+const WAKE_ALIASES = Object.freeze({ ellie: ['elly'] });
+const GREETING = /^(?:hey|hi|hello|okay|ok|oh|so|um|uh|and|now)$/;
+const TOKEN = /[\p{L}\p{N}]+(?:['’][\p{L}]+)*/gu;
+function wakeQuestion(text, name) {
+  if (typeof text !== 'string' || typeof name !== 'string') return null;
+  const words = name.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const tokens = [...text.matchAll(TOKEN)].map(match => ({ start: match.index, end: match.index + match[0].length,
+    word: match[0].toLowerCase().replace(/’/g, "'").replace(/'s$/, '') }));
+  const fits = (token, word) => token.word === word || (WAKE_ALIASES[word] || []).includes(token.word);
+  for (let i = 0; i + words.length <= tokens.length; i++) {
+    if (!words.every((word, k) => fits(tokens[i + k], word))) continue;
+    const end = tokens[i + words.length - 1].end;
+    const after = text.slice(end).replace(/^[\s,.;:!?—–-]+/u, '').trim();
+    if (/\p{L}/u.test(after)) return { question: after };
+    const before = tokens.slice(0, i);
+    let first = 0;
+    while (first < before.length && GREETING.test(before[first].word)) first++;
+    if (first === before.length) return { question: '' };
+    const asked = text.slice(before[first].start, tokens[i].start).replace(/[\s,.;:—–-]+$/u, '').trim();
+    return { question: asked + (/\?/.test(text.slice(end)) && !/[.!?]$/.test(asked) ? '?' : '') };
+  }
+  return null;
+}
+
+module.exports = { createWindow, energyGate, wakeQuestion, WINDOW_LIMITS };

@@ -133,3 +133,77 @@ at YES, a page or an old reply during the question cannot speak and cannot
 cancel the capture. The targets return when the hold ends. Today a selection
 during a hold cancels it (speak() ends the capture), which is what the
 partner saw as "I had to redo the question".
+
+## 8. Wake word: "Listen for <name>" (dad, 10/29)
+
+A partner-touch switch at the top of Chat, in the partner strip left of the
+lock: "Listen for Ellie" (the name is `chatName`), off by default, saved per
+device as `chatWakeMode` in app-settings and restored on load. While it is on
+the page keeps the microphone open and streams every frame to the hub over
+the audio socket as an "ear": one listening window (chat-window.js) that
+never closes on silence or cap, in which an utterance is sealed only when it
+contains the wake name (the name's words, case-insensitive, with "elly" and
+"ellie's" counted); the question is the utterance's words after the name, and
+when the name stood alone ("Ellie?") the next utterance within 8 s is the
+question. A sealed utterance goes through the same staged choices as a button
+window (`utterance-sealed`, `choice-staged`, `batch-sealed`, with
+`windowId`), and the page reveals the batch as today. The ear keeps listening
+after each question; a new wake cancels a reply still being prepared, like a
+new hold.
+
+The partner's hold still works with the ear on: a hold pauses the ear (its
+frames become the hold's) and the ear resumes after the final. Her own clips:
+while a clip plays, and for 400 ms after, the page sends no frames, so the
+service never hears her; tiles stay live in ear mode (no hold, no lock). The
+status reads "Listening for Ellie" with the dot lit; a banner says that room
+audio is sent for transcription while the switch is on. The switch is
+disabled, with a note, when no streaming runtime is configured
+(`/chat/api/config` capabilities.wake). Turning it off closes the window and
+the microphone returns to hold-only. Test mode records a wake turn with
+`mode: 'wake'` and the question's audio from the wake name on, never the
+room before it. Nothing of the room before a wake is kept or sent beyond the
+transcription service's live stream.
+
+## 9. Her eyes never touch the voice (dad, 10/29, after testing the wake word)
+
+"Whether you're holding the button, using the clicking button or the square,
+or saying Ellie to activate, her eyes don't interfere with how the voice is
+processing. The voice continues processing even with her eyes activating
+buttons or interrupting things."
+
+- During a hold: no tile is a dwell target (§7); nothing she does reaches
+  the capture.
+- With the ear open or a button window open: a selection plays its clip and
+  nothing else. It does not stop the microphone, does not change the capture
+  mode, sends the hub no cancel and no pick. A button window ends only on its
+  own clock or the second press; her pick no longer ends it (this replaces
+  design 2026-10-27 §4.4 "a pick wins").
+- Her own clip is kept out of the stream by echo cancellation on the
+  microphone track and by sending silence in place of the frames while the
+  clip plays (plus 150 ms), so the service's timeline stays continuous and the
+  partner's words before and after the clip are kept.
+- Considered and not needed: a grace period after the hold's release. The
+  hold already locks her targets, and the streaming service starts the reply
+  before release.
+
+## 10. The ear's cost: auto-off, quiet notices, two tiers (dad, 10/31)
+
+- Auto-off: the ear closes after 30 minutes without a wake (`chatWakeIdleMs`,
+  default 1,800,000). No countdown. The status line at the top says, gently,
+  "Listening turns off in 2 minutes", then "… in 1 minute", then "Listening
+  is off. Touch Listen for <name> to turn it on"; the switch reads off. The
+  partner's 30 minutes restart with every wake, hold or press.
+- No recording notices. The test-mode banner and the "room audio is sent for
+  transcription" banner are gone from the Chat page; the lit dot and
+  "Listening for <name>" are the signal. Test mode itself stays a quiet switch
+  in the partner dialog (its records are how the maintainer reads a session).
+- Two tiers. The ear may listen on a cheaper stream profile
+  (`ERA_CHAT_STREAM_EAR_MODEL` in the private settings; unset, the ear uses
+  the main stream). The hub keeps a rolling buffer of the last 10 s of the
+  ear's audio. On a wake it opens the main (engagement) stream, replays the
+  buffer from just before the wake name, then forwards live frames; the
+  engagement stream handles everything, further wakes included, until two
+  minutes pass without a wake (`chatEngageMs`), when the ear tier resumes
+  alone. A button press or a hold always goes to the main stream, as today.
+  Later: an on-device wake detector in the ear slot (nothing leaves the
+  device until the name is heard).

@@ -157,15 +157,38 @@ export function createChatController(deps = {}) {
       patch({ choices: next });
       return true;
     },
+    // Back (maintainer 10/29): an earlier batch of this session returns as a new
+    // turn, its question and replies with new ids; never while a question is captured.
+    restore(batch) {
+      if (['Capturing question', 'Preparing'].includes(state.phase)) return false;
+      const next = cleanChoices(batch?.choices, `${turn + 1}.r`);
+      if (!next.length) return false;
+      const question = String(batch?.question || '').trim().slice(0, 600);
+      invalidate();
+      const frozen = Object.freeze(next);
+      try { deps.prefetch?.(frozen); } catch { /* Warming never holds the reveal back. */ }
+      deps.beforeChoices?.();
+      patch({ turn, phase: 'Your turn', question, partial: '', choices: frozen, replacing: false, stale: false, staleTurn: null, error: '', hint: '' });
+      return true;
+    },
+    // The partner's Clear (maintainer 10/31): the current turn goes, question and
+    // replies, as a new turn; never while a question is captured or prepared.
+    clear() {
+      if (['Capturing question', 'Preparing'].includes(state.phase)) return false;
+      if (!state.question && !state.choices.length) return false;
+      invalidate();
+      patch({ turn, phase: idlePhase(), question: '', partial: '', choices: Object.freeze([]), stale: false, staleTurn: null, error: '', hint: '' });
+      return true;
+    },
     // onSelected(choice) runs only for an accepted pick, before anything speaks.
     async select(id, expectedTurn = turn, onSelected) {
-      // A still-shown old tile after a press (design §4.5, a pick wins): her
-      // dwell speaks it; whatever the window was preparing is dropped unseen.
+      // A still-shown old tile after a press (design §4.5): her dwell speaks it.
+      // Her eyes never interfere with how the voice is processed (maintainer
+      // 10/29, over design §4.4): whatever the window is preparing goes on.
       const stalePick = state.stale && expectedTurn === state.staleTurn;
       if (!stalePick && (expectedTurn !== turn || state.stale || !['Your turn', 'Speaking'].includes(state.phase))) return false;
       const c = state.choices.find(x => x.id === id);
       if (!c) return false;
-      if (stalePick) { invalidate(); patch({ turn, question: '', partial: '', error: '' }); }
       onSelected?.(c);
       timing('selected');
       return api.sayFixed(c.say);
@@ -177,7 +200,8 @@ export function createChatController(deps = {}) {
       speechAbort?.abort(); speechAbort = new AbortController();
       deps.stopSpeech?.();
       timing('speechRequested');
-      const back = state.choices.length && !state.stale ? 'Your turn' : idlePhase();
+      // A listening window keeps listening while she speaks (maintainer 10/29).
+      const back = state.phase === 'Capturing question' ? 'Capturing question' : state.choices.length && !state.stale ? 'Your turn' : idlePhase();
       patch({ phase: 'Speaking', error: '', hint: '' });
       try { await deps.speak?.(echo ? { say: text, echo: true } : { say: text }, { signal: speechAbort.signal }); }
       catch (error) { if (mine === turn && spoken === utterance) patch({ error: error?.code === 'saved-voice-unavailable'

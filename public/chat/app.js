@@ -5,7 +5,7 @@ import { createTurnMetrics } from './metrics.js';
 import { createChatStorage } from './storage.js';
 import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture } from './symbols.js';
 import { fitTile } from './tile-fit.js';
-import { GRID, fixedTiles, replyAreas, pageCells, paginate } from './frame.js';
+import { GRID, fixedTiles, replyAreas, pageCells, paginate, BAR_BACK, backTarget, createBackStack } from './frame.js';
 import { createOptionsReader } from './prompt.js';
 import { createTurnLog, observeMetrics, stageChoices } from './turnlog.js';
 import { mountDoorBar } from '/lib/doorbar.js';
@@ -35,9 +35,31 @@ const bar = mountDoorBar($('app'), {
   onResume: () => autoPrepare(),
   onUnlock: () => autoPrepare(),
 });
+// Back (maintainer 10/29): in the door bar right of the door, twice its width
+// with a quarter of its width between; the session status follows at that gap.
+const backButton = document.createElement('button');
+backButton.type = 'button'; backButton.id = 'back'; backButton.className = 'bardoor barback off';
+backButton.setAttribute('aria-label', 'Back'); backButton.dataset.dwellDisabled = '';
+backButton.dataset.dwellMs = bar.doorBtn.dataset.dwellMs;
+{ const label = document.createElement('span'); label.className = 'label'; label.textContent = 'Back'; backButton.append(label); }
+bar.doorBtn.insertAdjacentElement('afterend', backButton);
+function placeBack() {
+  const door = bar.doorBtn.getBoundingClientRect(), gap = door.width * BAR_BACK.gapOfDoor;
+  backButton.style.width = `${door.width * BAR_BACK.widthOfDoor}px`; backButton.style.marginLeft = `${gap}px`;
+  $('sessionStatus').style.left = `${backButton.getBoundingClientRect().right + gap}px`;
+}
+placeBack();
+if (typeof ResizeObserver === 'function') new ResizeObserver(placeBack).observe(bar.doorBtn);
+window.addEventListener('resize', placeBack); window.addEventListener('resize', () => placeLock());
 // The lock (mounted in the door bar by app-lock.js) sits left of the partner
 // controls, so Hold to ask is in the top right corner (spec 2026-10-28 §1).
-const placeLock = () => document.documentElement.style.setProperty('--strip-w', `${Math.ceil($('partnerStrip').getBoundingClientRect().width)}px`);
+// The lock sits over its slot in the strip (Listen for <name>, the lock, •••, Hold to ask).
+const placeLock = () => {
+  const root = document.documentElement.style, lock = $('stripLock');
+  root.setProperty('--strip-w', `${Math.ceil($('partnerStrip').getBoundingClientRect().width)}px`);
+  if (lock) root.setProperty('--lock-w', `${Math.ceil(lock.getBoundingClientRect().width)}px`);
+  root.setProperty('--lock-right', `${Math.max(0, innerWidth - $('lockSlot').getBoundingClientRect().right)}px`);
+};
 placeLock();
 if (typeof ResizeObserver === 'function') new ResizeObserver(placeLock).observe($('partnerStrip'));
 // The frame's tracks come from frame.js (spec 2026-10-28 §1); chat.css sets the gap.
@@ -48,6 +70,9 @@ const savedSettings = await persistence.hydrate();
 // ?pictures=bw|emoji shows the black-and-white or emoji style for comparison.
 await loadVocabulary();
 const pictureVariant = ['bw', 'emoji'].find(name => name === new URLSearchParams(location.search).get('pictures')) || 'color';
+// Back's picture: the library's "back" by the same resolution as the tiles (the drawn arrow offline).
+if (hasVocabulary()) attachPicture(backButton, planPictures([{ label: 'Back', type: 'nav' }], { variant: pictureVariant })[0]);
+else attachSymbol(backButton, { label: 'Back', type: 'nav' });
 // Test mode (spec 2026-10-27 §5): a separate record per turn while this
 // device's switch is on. The production rows below are written exactly as
 // before and stay content-free in both modes.
@@ -58,6 +83,24 @@ const turnLog = createTurnLog({ enabled: () => testMode,
 const voice = createChatVoice({ storage: persistence.voiceStorage,
   // Characters are charged to the turn whose choices or spoken words they are; warming the fixed phrases is no turn's.
   onFetch: (chars, words) => { turnLog.fetched(speechMetric, chars, words) || turnLog.fetched(questionMetric, chars, words); } });
+// Her own voice is never heard: while anything of this page plays, and for the
+// tail after it, the ear and a press window send silence (§8, maintainer 10/29).
+// Every path counts (10/31 turn record: the read-aloud prefix came back as a
+// wake question): each voice.say from the request, each media element from
+// 'playing' to its end, the device voice for as long as it is speaking (its
+// end event can come early), the press tones, and any other Chat page's audio.
+{ const say = voice.say; voice.say = async (...args) => { audioStarted(); try { return await say(...args); } finally { audioEnded(); } }; }
+{
+  const play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function (...args) {
+    if (!gatedMedia.has(this)) {
+      gatedMedia.add(this); let on = false;
+      this.addEventListener('playing', () => { if (!on) { on = true; audioStarted(); } });
+      for (const type of ['ended', 'pause', 'error', 'emptied']) this.addEventListener(type, () => { if (on) { on = false; audioEnded(); } });
+    }
+    return play.apply(this, args);
+  };
+}
 const metrics = observeMetrics(createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 }), turnLog);
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
 const AUDIO_POST_MS = 2000;
@@ -95,9 +138,11 @@ let stories = savedSettings.stories;
 // A button-press listening window (design 2026-10-27 §4.3-§4.4): `press` is the
 // window this page opened, from the control reply until it closes. The hub's
 // window machine decides when it ends; the page listens, shows, and plays the tones.
-let press = null, pressBusy = false, pickSent = Promise.resolve();
+let press = null, pressBusy = false;
 const windowOpen = () => press !== null && !press.closed;
 const tones = createTones();
+// The press tones are the page's audio too: the ear and a press window never hear them (§8).
+for (const kind of ['listening', 'done']) { const tone = tones[kind]; tones[kind] = async () => { audioStarted(); try { return await tone(); } finally { audioEnded(); } }; }
 const FRAMES_AFTER_TONE_MS = 200;
 
 // Before any question the middle shows the openers (spec 2026-10-28 §1).
@@ -109,6 +154,32 @@ const SPOKEN = { yes: 'Yes.', no: 'No.', more: 'Tell me more.', else: 'Something
 // `made` the current turn's two sets, asked for in the background after a reveal.
 let page = null, pageOffset = 0, modeView = null;
 let made = { turn: -1, ask: null, comment: null, aborts: [] }, again = null, echoing = false;
+// The batches this session showed before the one on screen (Back restores them).
+const backStack = createBackStack(8);
+let shownChoices = [], shownQuestion = '', restoring = false, clearing = false;
+// Listen for <name> (spec 2026-10-28 §8): the device's switch, the hub's ear
+// window ({ generation, windowId }), and the gate that keeps her clips unheard.
+// earNotice: the ear's gentle status line (spec §10): an auto-off warning, or the line after it turned itself off.
+let earNotice = '';
+let wakeMode = false, ear = null, earStarting = null, clipsPlaying = 0, gateUntil = 0, wakeBusy = false;
+const EAR_TAIL_MS = 150, gatedMedia = new WeakSet();
+// The tail covers the device's own audio path too: what plays reaches the
+// speaker, and the microphone's frames reach this page, a little late.
+const tailMs = () => EAR_TAIL_MS + Math.min(500, Math.round(mic?.latencyMs?.() || 0));
+function audioStarted() { clipsPlaying++; audioChannel?.postMessage({ from: PAGE_ID, playing: true }); }
+function audioEnded() {
+  clipsPlaying = Math.max(0, clipsPlaying - 1);
+  gateUntil = Math.max(gateUntil, performance.now() + tailMs());
+  if (!clipsPlaying) audioChannel?.postMessage({ from: PAGE_ID, playing: false, tailMs: tailMs() });
+}
+// Another Chat page on this device (a relaunched kiosk, a second tab) plays her voice too.
+const PAGE_ID = Math.random().toString(36).slice(2), othersUntil = new Map();
+const audioChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('era-chat-audio') : null;
+if (audioChannel) audioChannel.onmessage = ({ data }) => {
+  if (!data || data.from === PAGE_ID || typeof data.from !== 'string') return;
+  // A page that stops answering mid-clip frees the ear after 30 s at most.
+  othersUntil.set(data.from, performance.now() + (data.playing ? 30000 : Math.min(1000, Number(data.tailMs) || EAR_TAIL_MS)));
+};
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
 // Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
 // and her name, from /settings (chatPromptMs, chatName).
@@ -167,12 +238,18 @@ async function json(url, options = {}) {
 const notice = text => { $('notice').textContent = text || ''; };
 function paintPhase(state = controller.state) {
   if (press && !press.closed) { $('phase').textContent = press.listening ? 'Listening' : 'Starting to listen'; return; }
+  if (typeof earNotice === 'string' && earNotice && ['Ready to ask', 'Your turn', 'Off'].includes(state.phase)) { $('phase').textContent = earNotice; return; }
+  if (typeof ear !== 'undefined' && ear && state.phase === 'Ready to ask') { $('phase').textContent = `Listening for ${herName || config?.wakeName || 'her name'}`; return; }
   $('phase').textContent = state.phase === 'Capturing question' && ((remoteStreaming && mode !== 'opening') || questionSending) ? 'Sending question' : state.phase;
 }
 function setMode(value) {
+  // A hold or a press: the partner is here, so the ear's notice goes (spec 2026-10-28 §10).
+  if (value === 'opening' && typeof earNotice === 'string') earNotice = '';
+  // A hold or a press opening: the ear's collection gives way, so these frames are theirs (spec 2026-10-28 §8).
+  if (value === 'opening' && mode !== 'opening' && typeof ear !== 'undefined' && ear) mic?.cancel();
   mode = value; document.body.dataset.listening = 'false';
   document.body.dataset.capturing = String(['opening', 'capture'].includes(value));
-  paintPhase(); syncHoldLock();
+  paintPhase(); syncHoldLock(); earTick();
 }
 // Her gaze never ends a hold (spec 2026-10-28 §7): from touch-down until the
 // hold ends no grid tile is a dwell target; they return when it ends.
@@ -186,7 +263,7 @@ let gridLocked = false;
 function syncHoldLock() {
   const now = holdActive();
   if (now && !gridLocked) {
-    gridLocked = true; reader?.cancel();
+    gridLocked = true; reader?.cancel(); paintBack(controller.state); paintClear(controller.state);
     for (const el of $('grid').querySelectorAll('.tile')) { el.classList.remove('dwell'); if (el.tagName === 'BUTTON') el.dataset.dwellDisabled = ''; }
   } else if (!now && gridLocked) {
     gridLocked = false;
@@ -234,18 +311,23 @@ const controller = createChatController({
   beforeChoices: () => { revealRender = true; window.Dwell?.suppress(REVEAL_SETTLE_MS); },
   async speak(choice, { signal }) {
     if (appLocked()) return;
-    // Her selection ends a listening window first (design §4.4: a pick wins):
-    // the hub hears `pick` before anything is spoken or cancelled.
-    if (press && !press.closed) pickSent = closePressWindow('pick') || Promise.resolve();
     // A second guard: nothing she selects ends the partner's hold (spec 2026-10-28 §7).
     if (holdActive()) return;
+    // Her eyes never interfere with how the voice is processed (maintainer 10/29,
+    // over design 2026-10-27 §4.4): with the ear or a press window open her pick
+    // plays its clip and nothing touches capture: no cancel, no pick, no close.
+    // (The controller has already dropped a replacement waiting under her tile.)
+    const listening = !!ear || (!!press && !press.closed);
     const mine = lifecycle, spoken = ++currentSpeech;
     const timing = speechMetric;
-    if (holding || askPending) metrics.end(questionMetric, 'cancelled', 'interrupted');
-    captureIntent++; holding = false; askPending = false; pendingFrames = []; captureGeneration = null;
-    clearTimeout(askTimer); $('ask').classList.remove('held'); mic?.cancel();
-    setMode('blocked'); uploadEpoch++;
-    const canceled = session ? pickSent.then(() => control('cancel')).catch(() => null) : Promise.resolve();
+    let canceled = Promise.resolve();
+    if (!listening) {
+      if (holding || askPending) metrics.end(questionMetric, 'cancelled', 'interrupted');
+      captureIntent++; holding = false; askPending = false; pendingFrames = []; captureGeneration = null;
+      clearTimeout(askTimer); $('ask').classList.remove('held'); mic?.cancel();
+      setMode('blocked'); uploadEpoch++;
+      canceled = session ? control('cancel').catch(() => null) : Promise.resolve();
+    }
     if (signal.aborted || spoken !== currentSpeech) return;
     let completed;
     turnLog.content(timing, { spoken: choice.say });
@@ -259,7 +341,7 @@ const controller = createChatController({
     if (completed === true && !signal.aborted && spoken === currentSpeech && mine === lifecycle) {
       metrics.end(timing, 'completed');
       // The strip says the partner's question again: those are not her words.
-      if (!choice.echo) recentConversation = [...recentConversation, `Me: ${choice.say}`.slice(0, 500)].slice(-8);
+      if (!choice.echo) { recentConversation = [...recentConversation, `Me: ${choice.say}`.slice(0, 500)].slice(-8); refreshEar(); }
     } else metrics.end(timing, 'cancelled', 'interrupted');
     void persistence.flush();
     await canceled;
@@ -275,7 +357,7 @@ function setPrompt(ms, name) {
     if (![...select.options].some(option => option.value === String(promptMs))) select.append(new Option(`${Math.round(promptMs / 100) / 10} seconds`, String(promptMs)));
     select.value = String(promptMs);
   }
-  if (name !== undefined) { herName = typeof name === 'string' ? name.trim().slice(0, 24) : ''; $('chatName').value = herName; }
+  if (name !== undefined) { herName = typeof name === 'string' ? name.trim().slice(0, 24) : ''; $('chatName').value = herName; paintWake(); }
   if (promptMs > 0) voice.prefetch([{ say: promptPrefix() }], { role: 'helper' });
 }
 const tileFor = item => $('grid').querySelector(`.tile.response[data-choice-id="${CSS.escape(item.id)}"]`);
@@ -300,8 +382,10 @@ fetch('/settings').then(r => r.json()).then(s => {
   if (Array.isArray(s.chatLikes)) $('chatLikes').value = s.chatLikes.filter(item => typeof item === 'string').join('\n');
   for (const [key, field] of LIST_FIELDS) setList(key, s[field]);
   setPrompt(s.chatPromptMs, s.chatName);
+  if (typeof s.chatWakeMode === 'boolean') wakeMode = s.chatWakeMode;
+  paintWake(); if (wakeMode) void startEar();
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
-  window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); bar.setPause(s.pauseGoes === 'tdsnap');
+  window.Dwell?.set({ ms: dwell }); bar.setDwell(dwell); backButton.dataset.dwellMs = bar.doorBtn.dataset.dwellMs; bar.setPause(s.pauseGoes === 'tdsnap');
 }).catch(() => {});
 
 const REVEAL_SETTLE_MS = 250;
@@ -483,9 +567,50 @@ function middle(state) {
   return OPENERS.map((say, i) => tile(say, 'static', () => controller.sayFixed(say), four[i], say));
 }
 let staleKey = '';
+// ---- Back (maintainer 10/29) ----
+function backNow(state = controller.state) {
+  return backTarget({ page, mode: modeView, holding: holdActive(),
+    previous: backStack.size > 0 && !['Capturing question', 'Preparing'].includes(state.phase) });
+}
+// ---- the partner's Clear (maintainer 10/31) ----
+// The current turn goes: question, replies, made sets, a page or a lit mode.
+// The session, the ear, a press window, the ledger and Back's batches stay.
+function clearAvailable(state = controller.state) {
+  if (holdActive() || ['Capturing question', 'Preparing'].includes(state.phase)) return false;
+  return !!(state.question || state.choices.length || page || modeView);
+}
+function paintClear(state) { $('clearQuestion').disabled = !clearAvailable(state); }
+function clearQuestion() {
+  if (!clearAvailable()) return;
+  reader?.cancel(); dropMade(); page = null; pageOffset = 0;
+  const state = controller.state;
+  if (state.question || state.choices.length) {
+    metrics.end(questionMetric, 'cancelled', 'superseded');
+    clearing = true;
+    try { controller.clear(); } finally { clearing = false; }
+  }
+  gridKey = ''; renderGrid(controller.state);
+}
+function paintBack(state) {
+  const live = !!backNow(state);
+  backButton.classList.toggle('dwell', live); backButton.classList.toggle('off', !live);
+  if (live) delete backButton.dataset.dwellDisabled; else backButton.dataset.dwellDisabled = '';
+}
+backButton.addEventListener('click', () => {
+  const target = backNow();
+  if (!target) return;
+  reader?.cancel();
+  turnLog.content(questionMetric, { back: true });
+  if (target === 'page') { closePage(); return; }
+  if (target === 'mode') { modeView = null; gridKey = ''; renderGrid(controller.state); return; }
+  const batch = backStack.pop();
+  restoring = true;
+  try { if (!controller.restore(batch)) paintBack(controller.state); } finally { restoring = false; }
+});
 function renderGrid(state) {
   const key = [page, pageOffset, modeView, modeView && made[modeView] ? 'landed' : '', state.turn, state.choices.map(c => c.id).join(','),
     capturing(state) ? 'capturing' : waitingForReplies(state) ? 'preparing' : '', state.question, page ? `${stories.length}.${listsVersion}` : ''].join('|');
+  paintBack(state); paintClear(state);
   if (key === gridKey) { paintStrip(state); return; }
   // The last turn's tiles, kept stale after a press, are the very tiles drawn:
   // a new turn number alone never redraws them under her gaze.
@@ -520,6 +645,11 @@ function renderGrid(state) {
 // drops the made sets; a revealed batch asks for both sets in the background.
 let shownTurn = 0;
 controller.subscribe(state => {
+  // A batch leaving the screen (a new question, Something else) is kept for Back.
+  if (state.choices !== shownChoices) {
+    if (shownChoices.length && !restoring && !clearing) backStack.push({ question: shownQuestion, choices: shownChoices });
+    shownChoices = state.choices; if (state.choices.length) shownQuestion = state.question;
+  }
   if (state.turn !== shownTurn) { shownTurn = state.turn; dropMade(); page = null; pageOffset = 0; }
   if (state.choices.length && state.question && made.turn !== state.turn) requestMade(state);
   document.body.dataset.phase = state.phase;
@@ -563,6 +693,10 @@ function swapAtNeutral() {
 }
 
 function sendFrame(bytes) {
+  // Her own clip is never heard by the ear or a press window: silence goes in
+  // its place, so the stream's timeline stays continuous (maintainer 10/29).
+  if ((ear || (press && !press.closed)) && clipGated()) bytes = new ArrayBuffer(bytes.byteLength);
+  if (earFrame(bytes)) return;
   if (!session && mode !== 'opening') return;
   if (holding && ['opening', 'capture'].includes(mode)) holdFrames++;
   turnLog.audio(questionMetric, bytes);
@@ -663,6 +797,7 @@ function stagingEvent(data) {
   if (!record || data.generation !== record.generation || record.sealed || record.error) return;
   // A window's batches answer one seal each: only the batch this record waits for.
   if ((record.seq ?? null) !== (data.seq ?? null)) return;
+  if (record.windowId && data.windowId !== record.windowId) return;
   if (data.type === 'choice-staged') {
     const choice = data.choice;
     if (!choice || typeof choice.say !== 'string' || typeof choice.label !== 'string') return;
@@ -686,12 +821,15 @@ function announceReady() {
         : 'Question recognition also stays on this device.');
   controller.ready();
   readyGate?.resolve(true); readyGate = null; paintAsk();
+  if (wakeMode) void startEar();
 }
 function receiveEvent(event) {
   let data; try { data = JSON.parse(event.data); } catch { return; }
   // Voice activation is disabled for the hold-only pilot. An unsolicited wake
   // cannot change capture state OR poison a later turn's generation check.
   if (data.type === 'wake') return;
+  // The ear's own events (spec 2026-10-28 §8), before any generation bookkeeping.
+  if (data.type === 'ear' || (data.type === 'utterance-sealed' && data.ear === true)) { earEvent(data); return; }
   if (['window-open', 'utterance-sealed', 'window-closed'].includes(data.type) || (data.type === 'partial' && press?.generation === data.generation)) { windowEvent(data); return; }
   if (['choice-staged', 'batch-sealed', 'choices-error'].includes(data.type)) { stagingEvent(data); return; }
   if (['socket', 'settled', 'speculation'].includes(data.type)) {
@@ -769,7 +907,7 @@ function paintAsk() {
   const keyboard = $('desktopAsk');
   if (inert) { keyboard.disabled = true; keyboard.dataset.windowInert = 'true'; }
   else if (keyboard.dataset.windowInert) { delete keyboard.dataset.windowInert; keyboard.disabled = false; }
-  syncHoldLock();
+  syncHoldLock(); earTick();
 }
 const autoPrepare = () => { if (appReady && !micPaused) void prepare(); };
 // Chat prepares itself (no Start Chat, maintainer 10/27 evening): microphone,
@@ -980,6 +1118,129 @@ function closeWindow(reason, seals) {
   paintPhase();
   return null;
 }
+// ---- Listen for <name> (spec 2026-10-28 §8) ----
+const wakeAvailable = () => config?.runtime?.capabilities?.wake === true;
+function paintWake() {
+  const name = herName || config?.wakeName || 'her name', toggle = $('wakeToggle');
+  toggle.textContent = `Listen for ${name}: ${wakeMode ? 'on' : 'off'}`;
+  toggle.setAttribute('aria-pressed', String(wakeMode));
+  toggle.disabled = wakeBusy || !wakeAvailable();
+  toggle.title = wakeAvailable() ? '' : 'Listening for her name needs streaming speech set up on this device.';
+  document.body.dataset.ear = ear ? 'on' : 'off';
+  paintPhase();
+}
+// Opens the hub's ear on the prepared session (one start at a time).
+function startEar() {
+  if (earStarting) return earStarting;
+  earStarting = (async () => {
+    if (!wakeMode || ear || !wakeAvailable() || appLocked() || document.visibilityState !== 'visible') return;
+    if (!session && !await prepare()) return;
+    if (!session || !wakeMode || ear || !remoteStreaming || !audioSocket) return;
+    const mine = lifecycle;
+    let reply = null;
+    try { reply = await control('window', { ear: true, context: recentConversation.slice(-8) }); } catch { reply = null; }
+    if (!reply || mine !== lifecycle || !session || !Number.isFinite(reply.generation)) return;
+    if (!wakeMode) { control('window', { ear: false }).catch(() => null); return; }
+    ear = { generation: reply.generation, earId: reply.earId ?? null, paused: false };
+    paintWake(); earTick();
+  })().finally(() => { earStarting = null; });
+  return earStarting;
+}
+function stopEar() {
+  const was = ear; ear = null;
+  if (was && session) control('window', { ear: false }).catch(() => null);
+  if (was && !holding && !askPending && mode === 'blocked' && !(press && !press.closed)) mic?.cancel();
+  paintWake();
+}
+const earIdle = () => !!ear && !ear.paused && !!mic && !holding && !askPending && mode === 'blocked' && !(press && !press.closed) && controller.state.phase !== 'Capturing question';
+// Between holds and windows the ear collects every frame (begin is a no-op while collecting).
+function earTick() { if (earIdle()) mic.begin(); }
+// An ear frame: the ear's generation, the socket's sequence (silence while her clip plays, see sendFrame).
+const clipGated = () => {
+  const now = performance.now();
+  // The device voice: gated while it speaks, and for the tail after it stops.
+  if (globalThis.speechSynthesis?.speaking === true) gateUntil = Math.max(gateUntil, now + tailMs());
+  return clipsPlaying > 0 || now < gateUntil || [...othersUntil.values()].some(until => until > now);
+};
+function earFrame(bytes) {
+  if (!earIdle()) return false;
+  if (!audioSocket || audioSocket.readyState !== WebSocket.OPEN || audioSocket.bufferedAmount > SOCKET_BUFFER_LIMIT) return true;
+  const frame = new Uint8Array(8 + bytes.byteLength), header = new DataView(frame.buffer);
+  header.setUint32(0, ear.generation, true); header.setUint32(4, socketSeq++, true);
+  frame.set(new Uint8Array(bytes), 8);
+  audioSocket.send(frame.buffer);
+  return true;
+}
+// The hub's ear events (chat-api.js): listening (also resumed after a hold, with
+// the generation to send frames under), off with a reason, and a wake question.
+function earEvent(data) {
+  if (data.type === 'utterance-sealed') { if (ear) earSealed(data); return; }
+  if (data.state === 'listening') {
+    if (!ear && !wakeMode) return;
+    ear = { ...(ear || {}), earId: data.earId ?? ear?.earId ?? null, paused: false,
+      generation: Number.isFinite(data.generation) ? data.generation : ear?.generation };
+    paintWake(); earTick(); return;
+  }
+  // Auto-off (spec 2026-10-28 §10): a gentle line, no countdown.
+  if (data.state === 'warning') {
+    const minutes = Math.max(1, Math.round((Number(data.remainingMs) || 60000) / 60000));
+    earNotice = `Listening turns off in ${minutes} minute${minutes === 1 ? '' : 's'}`; paintPhase(); return;
+  }
+  if (data.state === 'off' && data.reason === 'idle') {
+    // The hub turned the switch off too: the page never re-opens an idle ear.
+    wakeMode = false; const was = ear; ear = null;
+    if (was && !holding && !askPending && mode === 'blocked' && !(press && !press.closed)) mic?.cancel();
+    earNotice = `Listening is off. Touch Listen for ${herName || config?.wakeName || 'her name'} to turn it on`;
+    paintWake(); return;
+  }
+  if (data.state !== 'off' || !ear) return;
+  // A hold or a press pauses the ear; the hub resumes it itself afterwards.
+  if (['hold', 'press'].includes(data.reason)) { ear.paused = true; return; }
+  ear = null;
+  if (!holding && !askPending && mode === 'blocked' && !(press && !press.closed)) mic?.cancel();
+  paintWake();
+  // A lost socket or a stream error: the switch is still on, so the ear opens again once Chat is prepared.
+  if (wakeMode && ['socket', 'error'].includes(data.reason)) setTimeout(() => { if (wakeMode && !ear) void startEar(); }, 1000);
+}
+// After her pick the conversation so far goes to the ear again (the same ear is returned).
+function refreshEar() {
+  if (!ear || !session) return;
+  control('window', { ear: true, context: recentConversation.slice(-8) }).then(reply => {
+    if (ear && Number.isFinite(reply?.generation)) ear.generation = reply.generation;
+  }).catch(() => null);
+}
+// A wake utterance: a new question, through the window reveal path (staged choices, sealed batch).
+function earSealed(data) {
+  const question = String(data.windowText || '').trim().slice(0, 600);
+  if (!question || !Number.isSafeInteger(data.seq)) return;
+  if (holding || askPending || (press && !press.closed)) return; // the partner's own question goes first
+  earNotice = ''; // a wake restarts the partner's 30 minutes
+  reader?.cancel(); dropStaging();
+  metrics.end(questionMetric, 'cancelled', 'superseded');
+  // Test mode only (kind press, mode wake): ear turns never enter the production rows.
+  questionMetric = {};
+  turnLog.begin(questionMetric, 'press', { mode: 'wake', session });
+  turnLog.content(questionMetric, { transcript: question, wake: true });
+  turnLog.mark(questionMetric, 'utteranceSealed', { text: String(data.text || '').slice(0, 2000) });
+  // Each wake question is a new first batch, keyed by its windowId.
+  staging = stagedChoices ? { generation: data.generation, seq: data.seq, windowId: data.windowId ?? null, text: question, choices: [], sealed: null, error: null, claimed: false, settled: false, done: null } : null;
+  diagnostic(`Question: ${question}`);
+  dropMade(); page = null; pageOffset = 0;
+  controller.prepare(question);
+}
+async function toggleWake() {
+  if (wakeBusy || !wakeAvailable()) return;
+  wakeBusy = true; earNotice = ''; paintWake();
+  const next = !wakeMode;
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatWakeMode: next }) });
+    if (!saved.ok) throw new Error();
+    wakeMode = next;
+  } catch { notice('Listening was not changed. Try again.'); }
+  finally { wakeBusy = false; }
+  if (wakeMode) void startEar(); else stopEar();
+  paintWake();
+}
 async function beginAsk() {
     if (appLocked()) return;
   if (holding || askPending || mode === 'draining' || closing || micRefused) return;
@@ -1085,6 +1346,7 @@ function dropHold({ outcome = 'cancelled', reason, hint, tellHub = true }) {
 // Ends the hub session only; the held question and the microphone are the caller's.
 function endSession(type = 'close') {
   const id = session; session = null; lifecycle++; uploadEpoch++; starting = false;
+  if (ear) { ear = null; paintWake(); } // the ear ends with its session
   remoteFinal = false; remoteStreaming = false; stagedChoices = false;
   if (staging) { const record = staging; staging = null; record.error ||= new Error('Chat is off.'); record.done?.(record.error); }
   clearTimeout(readyTimer); clearTimeout(heartbeat); heartbeat = null; sessionAbort?.abort();
@@ -1103,6 +1365,7 @@ function endSession(type = 'close') {
 function sessionLost(message) {
   if (holding || askPending || mode !== 'blocked' || controller.state.phase === 'Capturing question' || !controller.state.engineReady) { failSession(message); return; }
   endSession('close'); controller.standby(); paintAsk();
+  if (wakeMode) setTimeout(() => { if (wakeMode && !session) void startEar(); }, 1000);
 }
 // Closes everything: the session, the held question and the microphone (end, pause, hide, leave, failure).
 async function shutdown(type = 'close', preserveAnswers = false) {
@@ -1119,6 +1382,7 @@ async function shutdown(type = 'close', preserveAnswers = false) {
   endSession(type);
   const mine = lifecycle;
   if (!preserveAnswers) controller.stop();
+  backStack.clear(); paintBack(controller.state); // Back's batches are this session's only
   const oldMic = mic; mic = null;
   const done = closed = Promise.resolve(oldMic?.stop()).catch(() => {});
   await done;
@@ -1195,7 +1459,7 @@ metrics.subscribe(value => {
 });
 // ---- test mode: the partner's switch, the banner, the live panel ----
 function paintTestMode() {
-  $('testModeBanner').hidden = !testMode; $('testModePanel').hidden = !testMode;
+  $('testModePanel').hidden = !testMode;
   $('testModeToggle').textContent = testMode ? 'Turn off test mode' : 'Turn on test mode';
   $('testModeToggle').setAttribute('aria-pressed', String(testMode));
   if (testMode) refreshTestSummary();
@@ -1242,6 +1506,8 @@ function partnerAction(el, action) {
   touchButton(el, null, action);
   el.addEventListener('keydown', e => { if (e.isTrusted && (e.code === 'Space' || e.code === 'Enter') && !e.repeat) { e.preventDefault(); action(); } });
 }
+partnerAction($('wakeToggle'), () => { void toggleWake(); });
+partnerAction($('clearQuestion'), clearQuestion);
 // Pause microphone: closes capture and the session while Chat stays open; the next hold prepares again.
 partnerAction($('pauseMic'), () => {
   micPaused = true;
@@ -1364,8 +1630,9 @@ const configReady = json(`${API}/config`).then(value => {
   $('engineNote').textContent = value.runtime?.available
     ? (value.runtime.kind === 'built-in' ? 'Cloud speech is set up. Chat gets the microphone ready by itself; wait for Ready to ask.' : 'Speech is set up. Chat gets the microphone ready by itself; wait for Ready to ask.')
     : 'Speech is not set up on this computer. Prepared phrases and stories work. A maintainer can finish speech setup.';
-  paintAsk(); autoPrepare();
-}).catch(() => { config = { runtime: { available: false } }; $('engineNote').textContent = 'Speech is unavailable. Prepared phrases and stories work.'; paintAsk(); });
+  paintAsk(); autoPrepare(); paintWake();
+  if (wakeMode) void startEar();
+}).catch(() => { config = { runtime: { available: false } }; $('engineNote').textContent = 'Speech is unavailable. Prepared phrases and stories work.'; paintAsk(); paintWake(); });
 appReady = true;
 document.body.dataset.storageReady = 'true';
 for (const id of ['desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = false;

@@ -128,7 +128,7 @@ test('the smoke check turns the options reading off for its own page: /settings 
   const { route, calls } = fakeRoute();
   await rewriteSettingsRoute(route);
   assert.equal(calls[0], 'fetch');
-  assert.deepEqual(calls[1][1].json, { dwellMs: 1200, chatPromptMs: 0, chatName: 'Sam' });
+  assert.deepEqual(calls[1][1].json, { dwellMs: 1200, chatPromptMs: 0, chatName: 'Sam', chatWakeMode: false });
 });
 
 test('a route the check no longer owns (already handled, page or browser closed) settles quietly; anything else still fails', async () => {

@@ -60,7 +60,7 @@ const fixed = new Map([
   ['yes', 'yes'], ['no', 'no'], ['hi', 'hello'], ['hello', 'hello'], ['hey', 'hello'],
   ['whats up', 'chat'], ['how are you', 'feelings'], ['come sit with me', 'sit'],
   ['tell me more', 'more'], ['reactions', 'reactions'], ['my news', 'news'],
-  ['help me say it', 'repair'], ['back to chat', 'back'], ['thats funny', 'laugh'],
+  ['help me say it', 'repair'], ['back to chat', 'back'], ['back', 'back'], ['thats funny', 'laugh'],
   ['i love that', 'love'], ['no way', 'surprised'], ['thats not fair', 'unfair'],
   ['give me more time', 'time'], ['i need a moment', 'time'], ['a moment', 'time'],
   ['thats not what i meant', 'clarify'], ['ask me yes or no', 'yes-no'],

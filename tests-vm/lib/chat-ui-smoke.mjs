@@ -231,12 +231,12 @@ const GONE = /already handled|has been closed|Target closed|context disposed|Req
 export async function settleRoute(work) {
   try { return await work; } catch (error) { if (GONE.test(String(error?.message || error))) return undefined; throw error; }
 }
-// GET /settings with the options reading off (chatPromptMs 0), the rest as the hub sent it.
+// GET /settings with the options reading and the ear off (chatPromptMs 0, chatWakeMode false), the rest as the hub sent it.
 export async function rewriteSettingsRoute(route) {
   return settleRoute((async () => {
     const response = await route.fetch();
     const body = await response.json().catch(() => null);
-    return body && typeof body === 'object' ? route.fulfill({ response, json: { ...body, chatPromptMs: 0 } }) : route.fulfill({ response });
+    return body && typeof body === 'object' ? route.fulfill({ response, json: { ...body, chatPromptMs: 0, chatWakeMode: false } }) : route.fulfill({ response });
   })());
 }
 
@@ -303,6 +303,16 @@ export async function checkInstalledChatUI(page, options = {}) {
     const warmed = page.waitForResponse(response => new URL(response.url()).pathname === '/tts', { timeout });
     await openChat(); await warmed;
     assert.equal(await page.locator('#voicePreference').inputValue(), 'saved', 'saved voice is the default');
+    // Listen for <name> (spec 2026-10-28 §8): the switch is there and off; this check never streams the room.
+    assert.equal(await page.locator('#wakeToggle').count(), 1, 'the listening switch is in the partner strip');
+    assert.equal(await page.locator('#wakeToggle').getAttribute('aria-pressed'), 'false', 'listening for her name is off');
+    // No recording notices on the page (spec 2026-10-28 §10).
+    assert.equal(await page.locator('#wakeBanner, #testModeBanner').count(), 0, 'no banners on the Chat page');
+    // The partner's Clear (maintainer 10/31): left of the switch, off with nothing to clear.
+    assert.equal(await page.locator('#partnerStrip #clearQuestion').count(), 1, 'Clear is in the partner strip');
+    assert.equal(await page.locator('#clearQuestion').isDisabled(), true, 'nothing to clear on a fresh Chat');
+    const [clearBox, wakeBox] = await page.evaluate(() => ['#clearQuestion', '#wakeToggle'].map(id => document.querySelector(id).getBoundingClientRect().toJSON()));
+    assert.ok(clearBox.right <= wakeBox.left, 'Clear is left of the listening switch');
     assert.equal((await audio()).playCalls, 0, 'warming prepared phrases cannot play audio');
     await openPartner(); await page.locator('#voicePreference').selectOption('local', { timeout });
     await waitForVoiceSaved(page, timeout);
@@ -425,10 +435,10 @@ export async function checkRestoredChatState(page, expected, options = {}) {
     // About me (spec 2026-10-28 §2): the saved stories first, then the device's lines; Back closes it.
     await page.getByRole('button', { name: 'About me', exact: true }).click({ timeout });
     await page.locator('#grid .tile.page.on[data-page="about"]').waitFor({ state: 'visible', timeout });
-    await page.getByRole('button', { name: 'Back', exact: true }).waitFor({ state: 'visible', timeout });
+    await page.locator('#grid').getByRole('button', { name: 'Back', exact: true }).waitFor({ state: 'visible', timeout });
     const items = await page.locator('#grid .tile.item .label').allTextContents();
     assert.deepEqual(items.slice(0, expected.stories.length), expected.stories.map(story => story.label), 'the saved stories come first');
-    await page.getByRole('button', { name: 'Back', exact: true }).click({ timeout });
+    await page.locator('#grid').getByRole('button', { name: 'Back', exact: true }).click({ timeout });
     await page.locator('#grid .tile.page.on').waitFor({ state: 'detached', timeout });
     await page.locator('#partnerOpen').click({ timeout });
     await page.locator('#turnTimings > summary').click({ timeout });

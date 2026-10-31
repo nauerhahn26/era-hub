@@ -62,28 +62,6 @@
   ],
   "suites": [
     {
-      "id": "era-board:tests/board-arrange.test.mjs",
-      "purpose": "Touch-only music reorder, drag nonactivation, pagination, errors and saved/pending status",
-      "group": "board",
-      "dependencies": [
-        "era-board/**"
-      ],
-      "lane": "linux",
-      "resources": [
-        "shared-hub",
-        "browser"
-      ],
-      "level": "browser integration",
-      "hub": "shared-reader",
-      "ports": [],
-      "browsers": 8,
-      "heavy": false,
-      "solo": false,
-      "quiet": false,
-      "retry": false,
-      "owner": ""
-    },
-    {
       "id": "era-board:tests/board-clothing-coach.test.mjs",
       "purpose": "Wardrobe setup and in-progress/retry explanations",
       "group": "board",
@@ -298,7 +276,7 @@
       "level": "browser integration",
       "hub": "shared-reader",
       "ports": [],
-      "browsers": 4,
+      "browsers": 8,
       "heavy": false,
       "solo": false,
       "quiet": false,
@@ -1079,6 +1057,68 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-ear-hub.test.mjs",
+      "purpose": "The wake word ear through the hub: an ear window never closes on silence or cap, seals only utterances holding the device wake name (the question after the name, a bare name makes the next utterance the question), drops everything else unseen and unasked, pauses for a hold and resumes after, rolls its stream turn, and config advertises wake with streaming",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP/WebSocket module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-window.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/buttons.js",
+        "era-hub/server.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "synthetic-runtime-children",
+        "fetch-doubles",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/chat-ear-tier-hub.test.mjs",
+      "purpose": "The ear two tiers through the hub: the ear stream profile listens with a 10 s rolling buffer, a wake opens the main stream with the replay from 1.5 s before the wake then live frames, the main stream seals until the engagement time passes without a wake, a hold always uses the main stream, and an unset ear profile changes nothing",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP/WebSocket module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-window.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/buttons.js",
+        "era-hub/server.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "synthetic-runtime-children",
+        "fetch-doubles",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-commands-browser.test.mjs",
       "purpose": "Real Chat page asked from the partner's button: command stream at load, nonce claimed once, ask with no touch, the three partner lines, two drawn tones, her pick ends the window, a pause stays one utterance, quiet seals, a second utterance, the second press",
       "group": "chat",
@@ -1223,7 +1263,7 @@
       ],
       "hub": "none",
       "ports": [],
-      "browsers": 5,
+      "browsers": 8,
       "heavy": false,
       "solo": false,
       "quiet": false,
@@ -3584,6 +3624,27 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/music-log.test.mjs",
+      "purpose": "Song pick scores, section order and the shared cross-device play log",
+      "group": "hub",
+      "dependencies": [
+        "era-hub/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data"
+      ],
+      "level": "module unit/local filesystem",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/music-pictures.test.mjs",
       "purpose": "Storyboard decoding, distinct safe frames and screening refusal",
       "group": "hub",
@@ -5046,7 +5107,6 @@
       "id": "era-hub:tests/invariants.mjs",
       "purpose": "Shared measured access audit helper; changing it requires the complete gate",
       "consumers": [
-        "era-board:tests/board-arrange.test.mjs",
         "era-board:tests/board-clothing-coach.test.mjs",
         "era-board:tests/board-clothing-visuals.test.mjs",
         "era-board:tests/board-content-note.test.mjs",
@@ -5155,6 +5215,7 @@
         "era-hub:tests/movies-lookup.test.mjs",
         "era-hub:tests/movies.test.mjs",
         "era-hub:tests/music-add.test.mjs",
+        "era-hub:tests/music-log.test.mjs",
         "era-hub:tests/music-pictures.test.mjs",
         "era-hub:tests/music.test.mjs",
         "era-hub:tests/packs.test.mjs",
@@ -5209,7 +5270,6 @@
       "id": "era-hub:tests/synthetic-wardrobe.mjs",
       "purpose": "Synthetic clothing test data generator; consumers remain conservatively complete",
       "consumers": [
-        "era-board:tests/board-arrange.test.mjs",
         "era-board:tests/board-clothing-coach.test.mjs",
         "era-board:tests/board-clothing-visuals.test.mjs",
         "era-board:tests/board-content-note.test.mjs",
@@ -5319,6 +5379,7 @@
         "era-hub:tests/movies-lookup.test.mjs",
         "era-hub:tests/movies.test.mjs",
         "era-hub:tests/music-add.test.mjs",
+        "era-hub:tests/music-log.test.mjs",
         "era-hub:tests/music-pictures.test.mjs",
         "era-hub:tests/music.test.mjs",
         "era-hub:tests/packs.test.mjs",

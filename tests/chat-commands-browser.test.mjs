@@ -378,9 +378,12 @@ test('the tones are drawn, not shipped: no audio files in the Chat page', async 
   assert.deepEqual(files.filter(name => /\.(wav|mp3|ogg|m4a|aac|flac|opus|webm)$/i.test(name)), []);
 });
 
-// ---- T3.4 her pick ends the window ----
+// ---- T3.4 her pick while the window listens ----
+// The maintainer's rule (10/29), over design 2026-10-27 §4.4: her eyes never
+// interfere with how the voice is processed. Her pick speaks the tile and
+// nothing else: no pick, no cancel, the window listens on to its own close.
 
-test('her pick while the window listens: pick reaches the hub before anything speaks, the window closes, the tile is spoken', { timeout: 60000 }, async t => {
+test('her pick while the window listens speaks the tile and touches nothing of capture: no pick, no cancel, the window stays open (maintainer 10/29)', { timeout: 60000 }, async t => {
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] } });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
@@ -388,15 +391,33 @@ test('her pick while the window listens: pick reaches the hub before anything sp
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 15000 });
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'still listening after the first batch');
-  const plays = await f.page.evaluate(() => window.__plays);
+  const plays = await f.page.evaluate(() => window.__plays), atPick = f.controls.length;
   await f.page.locator('.response', { hasText: 'Fish' }).click();
-  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
-  await f.until(() => f.controls.includes('cancel'));
-  assert.ok(f.controls.indexOf('pick') >= 0 && f.controls.indexOf('pick') < f.controls.lastIndexOf('cancel'), f.controls.join(','));
   await f.until(() => f.ttsTexts.some(entry => entry.text === 'Fish'));
   await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
-  assert.equal(f.api.window(), null, 'the hub closed the window');
-  assert.deepEqual(await f.page.evaluate(() => window.__tones.map(({ from }) => from)), [660, 880]);
+  assert.deepEqual(f.controls.slice(atPick).filter(type => ['pick', 'cancel'].includes(type)), [], f.controls.join(','));
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'the window still listens');
+  assert.notEqual(f.api.window(), null, 'the hub window is still open');
+  assert.deepEqual(f.errors, []);
+});
+
+test('a selection during an open press window seals no utterance and brings no replacement batch: her clip goes out as silence (maintainer 10/29)', { timeout: 60000 }, async t => {
+  const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 6000 } });
+  await f.load();
+  await f.until(() => f.api.commands.state().connected);
+  const events = [], cdp = await f.page.context().newCDPSession(f.page);
+  await cdp.send('Network.enable');
+  cdp.on('Network.eventSourceMessageReceived', ({ data }) => { try { events.push(JSON.parse(data)); } catch { /* not an event */ } });
+  await f.restOffTiles();
+  f.ask();
+  await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
+  await f.page.locator('.response', { hasText: 'Chicken' }).click();
+  await f.until(() => f.ttsTexts.some(entry => entry.text === 'Chicken'));
+  await f.page.waitForTimeout(2500);
+  assert.deepEqual(events.filter(e => e.type === 'utterance-sealed').map(e => e.seq), [1], 'only the partner\'s question was sealed');
+  assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'false', 'no replacement batch waits');
+  assert.deepEqual(await f.shown(), twoByCount('Chicken', 'Fish'), 'the batch she chose from stays');
+  assert.equal(events.some(e => e.type === 'window-closed' && e.reason === 'pick'), false);
   assert.deepEqual(f.errors, []);
 });
 
@@ -498,7 +519,7 @@ test('a second utterance replaces the batch only after a neutral move', { timeou
   assert.deepEqual(f.errors, []);
 });
 
-test('a pick during a pending replacement wins: the shown tile is spoken, the replacement is dropped, the window closes', { timeout: 60000 }, async t => {
+test('a pick during a pending replacement: the shown tile is spoken and the replacement waiting under it is dropped; the window listens on (maintainer 10/29)', { timeout: 60000 }, async t => {
   const f = await fixture(t, { script: pastaLater });
   await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
@@ -507,16 +528,16 @@ test('a pick during a pending replacement wins: the shown tile is spoken, the re
   await f.page.waitForSelector('.response', { timeout: 15000 }); await f.settled();
   await f.lookAt('.response >> text=Chicken');
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'true', null, { timeout: 15000 });
-  const plays = await f.page.evaluate(() => window.__plays);
+  const plays = await f.page.evaluate(() => window.__plays), atPick = f.controls.length;
   await f.page.locator('.response', { hasText: 'Fish' }).click();
-  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
-  assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'false', 'the replacement was dropped');
+  await f.page.waitForFunction(() => document.body.dataset.replacing === 'false', null, { timeout: 5000 });
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'the window listens on');
   await f.until(() => f.ttsTexts.some(entry => entry.text === 'Fish'));
   await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
   await f.page.waitForTimeout(500);
   assert.equal(await f.page.evaluate(() => window.__plays), plays + 1, 'one clip played: the picked tile, nothing after it');
-  assert.ok(f.controls.includes('pick'), f.controls.join(','));
-  await f.until(() => f.api.window() === null);
+  assert.deepEqual(f.controls.slice(atPick).filter(type => ['pick', 'cancel'].includes(type)), [], f.controls.join(','));
+  await f.until(() => f.api.window() === null, 15000); // the window ends on its own clock
   await f.restOffTiles();
   await f.page.waitForTimeout(600);
   assert.deepEqual(await f.shown(), twoByCount('Chicken', 'Fish'), 'a neutral moment brings nothing back');
@@ -553,7 +574,7 @@ test('a press while her gaze rests on a tile from the last turn: the tiles stay 
   assert.deepEqual(f.errors, []);
 });
 
-test('a dwell that completes on an old tile after a press speaks it as her pick: the window closes as a pick, nothing waits to replace it (review fix)', { timeout: 60000 }, async t => {
+test('a dwell that completes on an old tile after a press speaks it; the window keeps listening and closes on its own clock, never as a pick (maintainer 10/29)', { timeout: 60000 }, async t => {
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 4000 } });
   await f.load(); await f.slowDwell();
   await f.until(() => f.api.commands.state().connected);
@@ -576,14 +597,11 @@ test('a dwell that completes on an old tile after a press speaks it as her pick:
   await f.page.evaluate(() => window.Dwell.setMs(300));
   await f.until(() => f.ttsTexts.some(entry => entry.text === 'Fish'));
   await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
-  await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
-  assert.ok(f.controls.slice(pickAt).includes('pick'), `the window closed as a pick: ${f.controls.slice(pickAt).join(',')}`);
-  await f.until(() => f.api.window() === null);
-  await f.until(() => events.some(e => e.type === 'window-closed'));
-  assert.deepEqual(events.filter(e => e.type === 'window-closed').map(e => e.reason), ['pick'], 'window-closed {reason: pick}');
+  assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'the window still listens after her pick');
+  assert.deepEqual(f.controls.slice(pickAt).filter(type => ['pick', 'cancel'].includes(type)), [], f.controls.slice(pickAt).join(','));
+  await f.until(() => events.some(e => e.type === 'window-closed'), 15000);
+  assert.equal(events.some(e => e.type === 'window-closed' && e.reason === 'pick'), false, 'the window never closes as a pick');
   assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'false', 'no replacement pending');
-  await f.page.waitForTimeout(1500);
-  assert.notEqual(await f.page.locator('#phase').textContent(), 'Preparing', 'nothing of the window waits to be revealed');
   assert.equal(await f.page.evaluate(() => window.__plays), plays + 1, 'one clip: the picked tile');
   assert.deepEqual(f.errors, []);
 });
@@ -608,7 +626,11 @@ test('a partner touch on Hold to ask during a listening window does nothing: no 
   assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Chicken', 'Fish']);
   assert.equal(f.sessions(), 1, 'the session is still running');
   assert.equal(f.requests.filter(line => /^DELETE \/chat\/api\/sessions\//.test(line)).length, 0, 'no session was closed');
-  await f.page.locator('.response', { hasText: 'Fish' }).click();
+  // The second press ends the window (her pick no longer does, maintainer 10/29); Hold to ask comes back.
+  const { createButtons } = require('../buttons.js');
+  const buttons = createButtons({ enabledChat: () => true, commands: f.api.commands, window: () => f.api.window(),
+    kiosk: { foreground: async () => false, relaunch: async () => ({ ok: true }) } });
+  assert.equal((await buttons.press({ key: 'F13', action: 'ask' })).dispatch, 'end', 'the second press');
   await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 5000 });
   await f.page.waitForFunction(() => !document.querySelector('#ask').disabled, null, { timeout: 10000 });
   assert.deepEqual(f.errors, []);

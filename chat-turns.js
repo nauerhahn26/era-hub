@@ -24,7 +24,7 @@ const PREFIX = '/chat/api';
 const LIMITS = Object.freeze({ bodyBytes: 65536, audioBytes: 480000, audioTurns: 200, dayBytes: 16777216,
   recent: 10, summaryTurns: 500, rttTtlMs: 30000, rttTimeoutMs: 2000, cpuSampleMs: 200, lagIntervalMs: 100, lagWindow: 50 });
 const KINDS = ['hold', 'typed', 'fixed', 'reply', 'press'];
-const MODES = ['one-shot', 'stream', 'local', 'typed', 'none'];
+const MODES = ['one-shot', 'stream', 'local', 'typed', 'none', 'wake'];
 const OUTCOMES = ['completed', 'cancelled', 'failed'];
 const REASONS = ['cancel', 'short', 'closed', 'interrupted', 'superseded', 'reload', 'timeout', 'capture', 'recognition', 'choices', 'speech', 'connection', 'other'];
 // Every v1.0.20 timing mark plus the spec §5 additions. "transcript" is the
@@ -75,7 +75,9 @@ const RECORD = shape({
     // the page she opened, and Something else used in this turn.
     mode: oneOf(['ask', 'comment']), page: oneOf(['questions', 'comments', 'about']), again: v => v === true,
     // The options were read aloud after a silence (§6).
-    prompted: v => v === true }),
+    prompted: v => v === true, back: v => v === true,
+    // A question heard by the wake word (§8).
+    wake: v => v === true }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),
@@ -189,6 +191,35 @@ function applyPromptSetting(stored, incoming, fetchSite) {
   const name = incoming && Object.hasOwn(incoming, 'chatName') ? promptName(incoming.chatName) : null;
   if (name !== null) next.chatName = name;
   return next;
+}
+// ---- the wake word (stable frame spec 2026-10-28 §8) ----
+// chatWakeMode: "Listen for <name>", one device's explicit choice, off when absent.
+// chatWakeIdleMs: the ear turns itself off after this long without a wake
+// (5 min to 2 h, default 30 min, §10); chatEngageMs: how long the engagement
+// stream stays on after a wake before the ear tier listens alone (30 s to 10 min).
+const WAKE_RANGES = Object.freeze({ chatWakeIdleMs: [300000, 7200000, 1800000], chatEngageMs: [30000, 600000, 120000] });
+const inRange = (value, [low, high]) => Number.isSafeInteger(value) && value >= low && value <= high;
+function chatWake(dataDir) {
+  let stored = {};
+  try { stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')) || {}; } catch { /* the defaults */ }
+  return { chatWakeMode: stored.chatWakeMode === true,
+    ...Object.fromEntries(Object.entries(WAKE_RANGES).map(([key, range]) => [key, inRange(stored[key], range) ? stored[key] : range[2]])) };
+}
+function applyWakeSetting(stored, incoming, fetchSite) {
+  const next = { ...stored };
+  if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
+  if (typeof incoming?.chatWakeMode === 'boolean') next.chatWakeMode = incoming.chatWakeMode;
+  for (const [key, range] of Object.entries(WAKE_RANGES)) if (incoming && inRange(incoming[key], range)) next[key] = incoming[key];
+  return next;
+}
+// The ear turned itself off (idle): the switch is saved off so a reload does not reopen it.
+function wakeModeOff(dataDir) {
+  const file = path.join(dataDir, 'app-settings.json');
+  let stored = {};
+  try { stored = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { /* a fresh file */ }
+  if (stored.chatWakeMode === false) return;
+  stored.chatWakeMode = false;
+  try { fs.writeFileSync(file, JSON.stringify(stored, null, 2)); } catch { /* the page's switch still reads off */ }
 }
 // Day files and summaries use the device's local calendar day.
 const two = n => String(n).padStart(2, '0');
@@ -565,4 +596,4 @@ function createChatTurns(options = {}) {
 
 module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, applyLikesSetting, chatLikes, DEFAULT_LIKES,
   chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT,
-  chatPrompt, applyPromptSetting, localDay, wavFromPcm, STAGES };
+  chatPrompt, applyPromptSetting, chatWake, applyWakeSetting, wakeModeOff, localDay, wavFromPcm, STAGES };

@@ -120,7 +120,8 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   };
 
   // OFF: a whole held turn records nothing and never asks for health.
-  assert.equal(await page.locator('#testModeBanner').isVisible(), false);
+  // No recording notice on the Chat page (spec 2026-10-28 §10): the switch in the partner dialog is the only sign.
+  assert.equal(await page.locator('#testModeBanner').count(), 0, 'no test-mode banner on the page');
   await heldTurn();
   for (let i = 0; i < 200 && await completedHolds() < 1; i++) await page.waitForTimeout(50);
   assert.equal(await completedHolds(), 1, 'the turn completed');
@@ -136,9 +137,10 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   await page.locator('#testModeToggle').click(); await page.waitForTimeout(200);
   assert.equal(testModeOn(scratch), false, 'only a partner touch turns test mode on');
   await touch('#testModeToggle'); await lift();
-  await page.waitForFunction(() => !document.querySelector('#testModeBanner').hidden);
+  await page.waitForFunction(() => document.querySelector('#testModeToggle').getAttribute('aria-pressed') === 'true');
   assert.equal(testModeOn(scratch), true);
-  assert.equal(await page.locator('#testModeBanner').textContent(), 'Test mode: this computer is recording Chat turns');
+  assert.equal(await page.locator('#testModeBanner').count(), 0, 'still no banner while on');
+  assert.equal(await page.locator('#testModeSection h2').textContent(), 'Session records');
   assert.match(await page.locator('#testModeToggle').textContent(), /Turn off test mode/);
   await page.locator('#partnerDialog .close').click();
   const settled = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -217,7 +219,7 @@ test('test mode: touch switch, banner, one held turn recorded in full, productio
   assert.deepEqual(pool.readMerged({ kind: 'chat-turn' }), [], 'this device\'s pool copies are stripped too');
   assert.equal(await fs.stat(path.join(scratch, 'logs', 'chat-turns', 'audio')).then(() => true, () => false), false);
   await touch('#testModeToggle'); await lift();
-  await page.waitForFunction(() => document.querySelector('#testModeBanner').hidden);
+  await page.waitForFunction(() => document.querySelector('#testModeToggle').getAttribute('aria-pressed') === 'false');
   assert.equal(testModeOn(scratch), false);
   assert.equal(await page.locator('#testModePanel').isVisible(), false);
 

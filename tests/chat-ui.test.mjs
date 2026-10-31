@@ -321,7 +321,9 @@ test('a press keeps the last turn\'s tiles, stale and never spoken, until clearS
   assert.deepEqual([d.state.choices.length, d.state.stale], [0, false], 'the hold path is unchanged');
 });
 
-test('a completed dwell on a still-shown old tile after a press speaks it through the pick path; the window\'s own batch is dropped (review fix)', async () => {
+// The maintainer's rule (10/29), over design 2026-10-27 §4.4: her eyes never
+// interfere with how the voice is processed. A pick speaks; the window listens on.
+test('a completed dwell on a still-shown old tile after a press speaks it; the window keeps listening (maintainer 10/29)', async () => {
   const spoken = [];
   const c = await showing(['Chicken', 'Fish'], { speak: async choice => { spoken.push(choice.say); } });
   c.ready();
@@ -333,18 +335,19 @@ test('a completed dwell on a still-shown old tile after a press speaks it throug
   assert.equal(await c.select(shown[1].id, c.state.turn), false, 'a later turn never speaks a stale tile');
   assert.equal(await c.select(shown[1].id, tileTurn), true, 'her dwell on the old tile speaks it');
   assert.deepEqual(spoken, ['Fish.']);
-  assert.equal(c.state.phase, 'Ready to ask', 'nothing of the window is pending after the pick');
+  assert.equal(c.state.phase, 'Capturing question', 'the window is still listening after the pick');
   assert.equal(c.state.replacing, false);
   assert.equal(c.state.choices, shown, 'the old tiles are not redrawn by the pick');
   assert.equal(c.swapReplacement(), false, 'nothing waits to be swapped in');
 });
 
-test('a dwell on an old tile while the window\'s batch is being prepared drops that batch unseen (review fix)', async () => {
+test('a dwell on an old tile while the window\'s batch is being prepared speaks and leaves that batch alone; it still shows (maintainer 10/29)', async () => {
   const spoken = [];
   let calls = 0, aborted = false;
   const c = createChatController({ speak: async choice => { spoken.push(choice.say); },
     requestChoices: ({ signal }) => (++calls === 1 ? Promise.resolve(food('Chicken', 'Fish'))
-      : new Promise((resolve, reject) => signal.addEventListener('abort', () => { aborted = true; reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }))) });
+      : new Promise((resolve, reject) => { signal.addEventListener('abort', () => { aborted = true; reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); });
+        setTimeout(() => resolve(food('Pasta', 'Rice')), 20); })) });
   await c.prepare('do you want chicken or fish'); c.ready();
   const shown = c.state.choices, tileTurn = c.state.turn;
   c.ask({ keepShown: true });
@@ -352,11 +355,11 @@ test('a dwell on an old tile while the window\'s batch is being prepared drops t
   assert.equal(c.state.phase, 'Preparing');
   assert.equal(await c.select(shown[0].id, tileTurn), true);
   await preparing;
-  assert.equal(aborted, true, 'the window\'s request was cancelled');
+  assert.equal(aborted, false, 'the window\'s request goes on');
   assert.deepEqual(spoken, ['Chicken.']);
-  assert.equal(c.state.error, '', 'no failure from the dropped request');
-  assert.equal(c.state.phase, 'Ready to ask');
-  assert.equal(c.swapReplacement(), false, 'nothing is swapped in later');
+  assert.equal(c.state.error, '');
+  assert.deepEqual(c.state.choices.map(x => x.label), ['Pasta', 'Rice'], 'the window\'s batch still shows');
+  assert.equal(c.state.phase, 'Your turn');
 });
 
 test('a pick is recorded only when select accepts it: onSelected runs before speech for an accepted pick, never for a refused one (review fix)', async () => {
@@ -488,4 +491,45 @@ test('sayFixed passes an echo mark through to speak so the strip\'s repeat of th
   const c = createChatController({ speak: async x => { said.push(x); } });
   await c.sayFixed('Yes.'); await c.sayFixed('What did you eat?', { echo: true });
   assert.deepEqual(said, [{ say: 'Yes.' }, { say: 'What did you eat?', echo: true }]);
+});
+
+test('restore brings a kept batch back as a new turn: its question and replies, new ids, the settle first, Your turn', async () => {
+  const order = []; let stops = 0;
+  const c = createChatController({ requestChoices: async () => ({ choices: [choice('now')] }), beforeChoices: () => order.push('settle'), stopSpeech: () => { stops++; } });
+  await c.prepare('the second question');
+  const before = c.state.turn, ids = c.state.choices.map(x => x.id);
+  order.length = 0;
+  assert.equal(c.restore({ question: 'the first question', choices: [choice('one'), { label: 'bad' }, choice('two')] }), true);
+  assert.ok(c.state.turn > before, 'a new turn: older selections and replies cannot land on it');
+  assert.equal(c.state.question, 'the first question'); assert.equal(c.state.phase, 'Your turn');
+  assert.deepEqual(c.state.choices.map(x => x.label), ['one', 'two']);
+  assert.ok(c.state.choices.every(x => !ids.includes(x.id)));
+  assert.deepEqual(order, ['settle']); assert.ok(stops >= 1, 'speech stops');
+  let spoken = ''; const d = createChatController({ speak: async x => { spoken = x.say; } });
+  assert.equal(d.restore({ question: 'q', choices: [choice('x')] }), true);
+  assert.equal(await d.select(d.state.choices[0].id), true); assert.equal(spoken, 'x');
+  assert.equal(c.restore({ question: 'q', choices: [] }), false, 'nothing to restore');
+  c.ask(); assert.equal(c.restore({ question: 'q', choices: [choice('x')] }), false, 'never while a question is captured');
+});
+
+test('clear drops the current turn: no question, no replies, a new turn, speech and a reply in the making stopped; the engine stays (maintainer 10/31)', async () => {
+  let stops = 0, signal;
+  const c = createChatController({ requestChoices: async () => food('Chicken', 'Fish'), stopSpeech: () => { stops++; } });
+  c.ready();
+  await c.prepare('do you want chicken or fish');
+  const before = c.state.turn, stopped = stops;
+  assert.equal(c.clear(), true);
+  assert.deepEqual([c.state.question, c.state.choices.length, c.state.phase, c.state.engineReady], ['', 0, 'Ready to ask', true]);
+  assert.ok(c.state.turn > before, 'a new turn: a late selection or batch for the cleared one cannot land');
+  assert.ok(stops > stopped, 'speech stops');
+  assert.equal(c.clear(), false, 'nothing left to clear');
+  // A reply still in the making is dropped unseen.
+  const d = createChatController({ requestChoices: ({ signal: s }) => { signal = s; return new Promise(() => {}); } });
+  d.ready(); void d.prepare('a question');
+  assert.equal(d.clear(), false, 'never while a question is being prepared (the page keeps Clear off then)');
+  d.ask(); assert.equal(d.clear(), false, 'never while a question is captured');
+  assert.equal(signal.aborted, true);
+  // With no engine it returns to Off.
+  const e = createChatController({ requestChoices: async () => food('Tea') });
+  await e.prepare('tea?'); assert.equal(e.clear(), true); assert.equal(e.state.phase, 'Off');
 });

@@ -49,3 +49,30 @@ export function paginate(items, offset = 0) {
   const more = start + PAGE_SIZE < list.length;
   return { shown, more, next: more ? start + PAGE_SIZE : 0 };
 }
+
+// Back in the door bar (maintainer, 10/29): right of the door, twice its width,
+// a quarter of its width between them; the session status follows at the same gap.
+export const BAR_BACK = Object.freeze({ widthOfDoor: 2, gapOfDoor: 0.25 });
+
+// What Back does now: close a page, then a lit mode, then restore the previous
+// batch of this session. Nothing during a hold or with nothing behind (dimmed).
+export function backTarget({ page = null, mode = null, previous = false, holding = false } = {}) {
+  if (holding) return null;
+  if (page) return 'page';
+  if (mode) return 'mode';
+  return previous ? 'restore' : null;
+}
+
+// The batches this session showed before the one on screen, newest last.
+export function createBackStack(limit = 8) {
+  let items = [];
+  return {
+    push(batch) {
+      if (!batch || !Array.isArray(batch.choices) || !batch.choices.length) return;
+      items = [...items, { question: String(batch.question || ''), choices: batch.choices.map(choice => ({ ...choice })) }].slice(-limit);
+    },
+    pop() { return items.length ? items.pop() : null; },
+    clear() { items = []; },
+    get size() { return items.length; },
+  };
+}

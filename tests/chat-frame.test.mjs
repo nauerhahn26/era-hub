@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../public/chat/frame.js', import.meta.url), 'utf8');
-const { GRID, fixedTiles, replyAreas, pageCells, paginate, PAGE_SIZE } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { GRID, fixedTiles, replyAreas, pageCells, paginate, PAGE_SIZE, createBackStack, backTarget, BAR_BACK } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 // "row-start / col-start / row-end / col-end" → the cells it covers.
 function cells(area) {
@@ -75,4 +75,29 @@ test('paging shows ten items, More while more remain, and wraps back to the star
   assert.deepEqual(paginate([], 0), { shown: [], more: false, next: 0 });
   assert.deepEqual(paginate(items, 99), paginate(items, 0), 'an offset past the end starts again');
   assert.deepEqual(paginate(items, -3), paginate(items, 0));
+});
+
+test('Back sits in the door bar: twice the door wide, a quarter of the door between them (maintainer, 10/29)', () => {
+  assert.deepEqual(BAR_BACK, { widthOfDoor: 2, gapOfDoor: 0.25 });
+});
+
+test('Back closes a page first, then a lit mode, then restores the previous batch; nothing during a hold or with nothing behind', () => {
+  assert.equal(backTarget({ page: 'about', mode: 'ask', previous: true }), 'page');
+  assert.equal(backTarget({ page: null, mode: 'ask', previous: true }), 'mode');
+  assert.equal(backTarget({ page: null, mode: null, previous: true }), 'restore');
+  assert.equal(backTarget({ page: null, mode: null, previous: false }), null, 'dimmed: nothing to go back to');
+  assert.equal(backTarget({ page: 'about', mode: null, previous: true, holding: true }), null, 'locked during a hold');
+});
+
+test('the back stack keeps the last batches of this session, newest first, bounded, and clears', () => {
+  const stack = createBackStack(3), batch = n => ({ question: `q${n}`, choices: [{ label: `a${n}`, say: `a${n}` }] });
+  assert.equal(stack.size, 0); assert.equal(stack.pop(), null);
+  for (const n of [1, 2, 3, 4]) stack.push(batch(n));
+  assert.equal(stack.size, 3, 'bounded: the oldest falls off');
+  stack.push({ question: 'empty', choices: [] }); stack.push(null);
+  assert.equal(stack.size, 3, 'a batch with no replies is never kept');
+  assert.equal(stack.pop().question, 'q4'); assert.equal(stack.pop().question, 'q3');
+  assert.equal(stack.size, 1); stack.clear(); assert.equal(stack.size, 0); assert.equal(stack.pop(), null);
+  const kept = batch(9); stack.push(kept); kept.choices.push({ label: 'later', say: 'later' });
+  assert.equal(stack.pop().choices.length, 1, 'a kept batch is a copy');
 });

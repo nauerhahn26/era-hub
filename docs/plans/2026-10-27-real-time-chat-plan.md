@@ -532,3 +532,66 @@ the turn boundary and her clip plays out of the device the microphone hears.
 Plan: keep tiles live during capture, drop microphone frames from her clip's
 start to its end plus a short tail, keep the capture open, append "Me:" to
 the ledger mid-question; the lock becomes a transition setting, then goes.
+
+## Back button + her voice (dad, 10/29 early) — LANDED af7d985, v1.0.37
+- [x] Back in the chat door bar right of the door, twice its width, a quarter
+      door apart, status shifted right; closes a page or lit mode, else restores
+      the previous batch (stack of 8 per session); dimmed when nothing to go
+      back to; locked during a hold; `content.back` in turn records (67fa77f,
+      1d7e290, df17704). The page Back cell stays for now.
+- [x] Her voice: dad auditioned 11 library voices and chose Hope (young and
+      warm); first in CURATED_VOICES and the narration default (715dd04,
+      0c1a61e); set directly in tts-config.json on the home I-13 and tablet.
+Known: a batch brought back by Back counts as new, so a silence reads it
+aloud again. Gate 205/0; v1.0.37 pushed to the home I-13 before publishing.
+
+## Wake word (dad, 10/29: "add Ellie as a wake word, a mode you can turn on at the top of chat")
+
+Spec §8 of the stable-frame design. Built on the button's listening window
+(chat-window.js, control type 'window', utterance-sealed → staged choices).
+- [x] W1 Hub: control `{type:'window', ear:true}` opens an ear window with no
+      silence/cap close; utterances sealed only on the wake name (name words
+      from `chatName`; strip the name; bare name → next utterance within 8 s);
+      `ear` state events; a hold pauses/resumes the ear; `chatWakeMode` in
+      settings; config capabilities.wake; validateTurn mode 'wake'. Tests with
+      the fake streaming service fixtures (chat-stream-hub / chat-audio-socket).
+- [x] W2 Page: the switch in the partner strip (touch-only, persisted),
+      continuous frames with the clip gate (400 ms tail), tiles live in ear
+      mode, 'Listening for <name>' phase + banner, wake turns through the
+      existing window reveal path, disabled when the runtime has no streaming.
+      Browser tests on the stream fixture; VM smoke unaffected (off by default).
+- [ ] W3 Gate, land, release, push.
+Outcome (10/29 02:00–03:00 UTC): hub ear window (f2efa18, d19dc61,
+abedc7e; 12-test suite chat-ear-hub), page switch + clip gate + live tiles
+(829e3e4, dfc935f, 9142d74, 202c9b4: the hold path stays byte-identical, the
+ear gives way in setMode). Gate 206/0, landed 47ff137, released v1.0.38.
+Tablet got the private chat settings (it had none since the 9/14 wipe).
+Open: the 400 ms clip gate and the name's recognition at room distance are
+unverified against the real service; an on-device wake detector is the later
+upgrade if the service misses the name; a dropped service connection turns
+the ear off with reason 'error' and the page re-opens it.
+
+## Her eyes never touch the voice (dad, 10/29 night) — LANDED ee7ab22, v1.0.39
+Spec §9. In ear or press mode a selection plays its clip and nothing else
+(no mic cancel, no capture mode change, no hub cancel, no pick; a press
+window ends on its own clock or the second press); replacement batches still
+never swap under the tile she chose; her clip goes out as silence with a
+150 ms tail so the stream timeline stays continuous (182e439, e553aaa).
+Gate 206/0. Unverified on a device: whether echo cancellation plus silence
+keeps her clip out of the transcript at room volume.
+
+## Runs of questions + her voice on every playback path (10/31) — LANDED 5be802b, v1.0.40
+From the home device's 10/31 records: "do you want water? Do you want to
+wait? Do you want something else?" and "do you want yogurt? Do you want,
+uh, French toast?" got the local yes/no set because the shortcut matched the
+first clause; the either/or shortcut likewise read only the last clause.
+Now an utterance with two or more question sentences goes to the model as
+shape open (instruction: a run of short questions is a list of alternatives);
+a single yes/no or either/or question stays local; the restart exception
+("No wait. …") stays (dfaf3e0, 0a56fc0). A wake record at 16:17 held the
+device's own read-aloud ("I'm asking, so your options are"): the gate now
+covers every media element while it plays, a device voice while it speaks,
+the press tones and other Chat pages (broadcast channel), with a tail that
+adds the device's audio latency (088748f); the exact bypass on the device
+was not reproduced (device-voice early end or a second Chat page are the
+candidates). Gate 206/0.

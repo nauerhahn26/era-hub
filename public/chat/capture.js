@@ -41,6 +41,12 @@ export function createMicrophone({ onFrame, onError }) {
       resampler = createPCM16Resampler(context.sampleRate, b => { if (active) onFrame(b); });
       node.port.postMessage({ type: 'capture', turn: captureTurn }); return true;
     },
+    // The device's own audio path, in ms: output (what plays reaches the speaker
+    // late) and input (the microphone's samples reach the page late). 0 when unknown.
+    latencyMs() {
+      const seconds = (context?.baseLatency || 0) + (context?.outputLatency || 0) + (stream?.getAudioTracks?.()[0]?.getSettings?.().latency || 0);
+      return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+    },
     cancel() { captureTurn++; collecting = false; resampler = null; flushed?.(); flushed = null; node?.port.postMessage({ type: 'cancel' }); },
     flush() { return new Promise((resolve, reject) => {
       if (!active || !node || !collecting) { resolve(); return; }

@@ -3,8 +3,9 @@
 // SYNTHETIC music overlay (tiny PCM WAVs + 1x1 JPEG covers — never her real
 // songs). Proves: /music/ jail (range streaming, immutable media, no-cache
 // manifest, escape 403, bad ext 404), the GENERATED /recipes/songs.json
-// (rank order, page layout + frozen anchors, pagination, ETag/304/HEAD),
-// POST /music-event -> family pool, and the degraded law (no music dir ->
+// (spec 2026-10-31: a rail of sections beside a 3x4 grid, usage order from
+// the pick scores, pagination, ETag/304/HEAD with an order part), POST
+// /music-event -> family pool, and the degraded law (no music dir ->
 // 404 recipe with the server alive).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -71,8 +72,17 @@ before(async () => {
     fs.writeFileSync(path.join(music, `song-${i}.jpg`), JPEG);
     songs.push({ id: `song-${i}`, title: `Song ${i}`, audio: `song-${i}.wav`,
                  cover: `song-${i}.jpg`, duration: 30 + i,
-                 source: "https://example.invalid/" + i, rank: i });
+                 source: "https://example.invalid/" + i, rank: i,
+                 // song-11 and song-12 have no addedAt: they count as older
+                 // than every dated song, the higher rank newer — whatever
+                 // their audio files' times say (set below, opposite way round)
+                 ...(i < N - 1 ? { addedAt: `2026-09-${String(i).padStart(2, "0")}T12:00:00.000Z` } : {}),
+                 ...(i <= 3 ? { category: "top-hits" } : i === 4 ? { category: "disney" } : {}) });
   }
+  songs[5].category = "jazz";   // not a category the board knows: no section
+  // the mirror's copy time differs per device: make song-11's audio the newer file
+  fs.utimesSync(path.join(music, "song-12.wav"), new Date("2026-01-01T00:00:00Z"), new Date("2026-01-01T00:00:00Z"));
+  fs.utimesSync(path.join(music, "song-11.wav"), new Date("2026-10-30T00:00:00Z"), new Date("2026-10-30T00:00:00Z"));
   const pictures = Array.from({ length: 10 }, (_, i) => `song-1-frame-0123456789abcdef-${String(i).padStart(2, "0")}.jpg`);
   for (const name of pictures) fs.writeFileSync(path.join(music, name), JPEG);
   songs[0].pictures = pictures;
@@ -126,52 +136,79 @@ function btnAt(board, row, col) {
   return board.buttons.find(b => b.row === row && b.col === col) || null;
 }
 
-test("GET /recipes/songs.json v3: 9-song page 1 (corner cells are songs) + a page per song", async () => {
+const CELLS = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
+const RAIL = ["Back", "Favorites", "New", "Top hits", "Disney", "All"];
+const songsAt = (board) => CELLS.map(([r, c]) => btnAt(board, r, c)).filter(b => b && b.type === "song").map(b => b.song_id);
+const recipeNow = async () => (await fetch(`${BASE}/recipes/songs.json`)).json();
+const boardOf = (recipe, id) => recipe.boards.find(b => b.id === id);
+// with nothing played every score is 0, so every score-ordered section is in
+// added order: the dated songs newest first (10..1), then the undated ones by
+// rank, higher first (12, 11) — never by their audio files' times
+const BY_ADDED = [...Array.from({ length: N - 2 }, (_, i) => `song-${N - 2 - i}`), "song-12", "song-11"];
+
+test("GET /recipes/songs.json: a rail of sections beside a 3x4 grid, nine songs a page", async () => {
   const r = await fetch(`${BASE}/recipes/songs.json`);
   assert.equal(r.status, 200);
   assert.equal(r.headers.get("cache-control"), "no-cache");
   assert.ok(r.headers.get("etag"), "has an ETag");
   const recipe = await r.json();
-  assert.equal(recipe.root, "songs");
-  assert.equal(recipe.boards.length, 2 + N, "2 grid pages + one page per song");
-  const p1 = recipe.boards[0];
-  assert.equal(p1.id, "songs");
-  assert.equal(p1.rows, 3); assert.equal(p1.columns, 4);
+  assert.equal(recipe.root, "songs-all", "nothing played yet: Music opens on All");
+  const ids = recipe.boards.map(b => b.id);
+  for (const id of ["songs-fav", "songs-new", "songs-new-2", "songs-top-hits", "songs-disney", "songs-all", "songs-all-2"])
+    assert.ok(ids.includes(id), id + " exists");
+  assert.ok(!ids.includes("songs-new-3") && !ids.includes("songs-top-hits-2"), "no empty extra pages");
+  assert.equal(recipe.boards.length, 7 + N, "seven section pages + one page per song");
 
-  // no chrome tiles beyond More: no Stop/exit anywhere on the grid
-  assert.ok(!p1.buttons.some(b => b.type === "stop" || b.type === "exit"));
+  const p1 = boardOf(recipe, "songs-all");
+  assert.equal(p1.rows, 3); assert.equal(p1.columns, 4);
+  assert.deepEqual(p1.rail.map(b => b.label), RAIL, "rail top to bottom");
+  const [back, ...sections] = p1.rail;
+  assert.equal(back.type, "back");
+  assert.equal(back.disabled, true, "Back is dimmed on page 1");
+  assert.equal(back.load, undefined, "…and goes nowhere");
+  assert.deepEqual(sections.map(b => b.load), ["songs-fav", "songs-new", "songs-top-hits", "songs-disney", "songs-all"],
+    "a section opens its page 1");
+  assert.deepEqual(sections.filter(b => b.current).map(b => b.label), ["All"], "the current section is lit");
+  assert.ok(sections.every(b => b.type === "category"));
+
+  assert.ok(!p1.buttons.some(b => b.type === "stop" || b.type === "exit" || b.type === "back"),
+    "the grid holds songs and More only");
+  assert.equal(btnAt(p1, 2, 2), null, "centre stays black");
+  assert.equal(btnAt(p1, 2, 3), null, "centre stays black");
   const more = btnAt(p1, 3, 1);
   assert.equal(more.type, "control", "More matches the outfit board (teal control)");
-  assert.equal(more.symbol, "more", "with the outfit board's ARASAAC more image");
-  assert.equal(more.load, "songs-2");
+  assert.equal(more.symbol, "more");
+  assert.equal(more.load, "songs-all-2");
+  assert.deepEqual(songsAt(p1), BY_ADDED.slice(0, 9), "nine songs in the spec's cell order");
+  const first = btnAt(p1, 1, 1);
+  assert.equal(first.load, `song-${first.song_id}`, "a song tile opens its page");
+  assert.equal(first.audio, `music/${first.song_id}.wav`);
+  assert.equal(first.image, `music/${first.song_id}.jpg`);
+  assert.equal(first.clip_ms, 40000, "default 40s clip");
+  assert.ok(Number.isFinite(first.v) && first.v > 0, "song carries a cache version");
 
-  // center rest cells stay unpinned (renderer fills them black)
-  assert.equal(btnAt(p1, 2, 2), null);
-  assert.equal(btnAt(p1, 2, 3), null);
+  const p2 = boardOf(recipe, "songs-all-2");
+  assert.equal(p2.rail[0].load, "songs-all", "Back is one page back in the same section");
+  assert.ok(!p2.rail[0].disabled);
+  assert.equal(btnAt(p2, 3, 1).load, "songs-all", "More on the last page loops to page 1");
+  assert.deepEqual(songsAt(p2), BY_ADDED.slice(9), "the rest of the section");
+  assert.equal(btnAt(p2, 1, 4), null, "a short page leaves its unfilled cells black");
+});
 
-  // v3: ranks 1-9 in reading order, INCLUDING the (1,1) and (3,4) corners
-  const cells = [[1, 1], [1, 2], [1, 3], [1, 4], [2, 1], [2, 4], [3, 2], [3, 3], [3, 4]];
-  cells.forEach(([row, col], i) => {
-    const b = btnAt(p1, row, col);
-    assert.equal(b.type, "song", `song tile at (${row},${col})`);
-    assert.equal(b.song_id, `song-${i + 1}`, `rank ${i + 1} at (${row},${col})`);
-    assert.equal(b.load, `song-song-${i + 1}`, "song tile opens its page");
-    assert.equal(b.audio, `music/song-${i + 1}.wav`);
-    assert.equal(b.image, `music/song-${i + 1}.jpg`);
-    assert.equal(b.clip_ms, 40000, "default 40s clip");
-    assert.ok(Number.isFinite(b.v) && b.v > 0, "song carries a cache version");
-  });
-
-  const p2 = recipe.boards[1];
-  assert.equal(p2.id, "songs-2");
-  const back = btnAt(p2, 1, 1);
-  assert.equal(back.type, "back", "page 2 back anchor top-left");
-  assert.equal(back.glyph, "←", "back is the big left arrow, not a symbol");
-  assert.equal(back.label, "Back", "arrow AND the word (dad r3)");
-  assert.equal(back.symbol, undefined);
-  assert.equal(back.load, "songs");
-  assert.equal(btnAt(p2, 1, 2).song_id, "song-10", "rank 10 opens page 2");
-  assert.equal(btnAt(p2, 3, 1), null, "no More on the last page");
+test("sections: categories, New by added time, an empty section is one black page", async () => {
+  const recipe = await recipeNow();
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-top-hits")), ["song-3", "song-2", "song-1"]);
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-disney")), ["song-4"]);
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-new")), BY_ADDED.slice(0, 9), "newest added first");
+  const fav = boardOf(recipe, "songs-fav");
+  assert.deepEqual(fav.buttons, [], "nothing played: Favorites is all black");
+  assert.equal(btnAt(fav, 3, 1), null, "one page: no More");
+  assert.deepEqual(fav.rail.filter(b => b.current).map(b => b.label), ["Favorites"]);
+  for (const id of ["songs-top-hits", "songs-disney"])
+    assert.equal(btnAt(boardOf(recipe, id), 3, 1), null, id + " has one page and no More");
+  // song-6's unknown category puts it in no category section
+  for (const id of ["songs-top-hits", "songs-disney"])
+    assert.ok(!songsAt(boardOf(recipe, id)).includes("song-6"));
 });
 
 test("picture arrival invalidates the recipe even when the manifest did not change", async () => {
@@ -194,23 +231,27 @@ test("picture arrival invalidates the recipe even when the manifest did not chan
 });
 
 test("song pages: hero spans three quarters; controls fill the far-right column", async () => {
-  const recipe = await (await fetch(`${BASE}/recipes/songs.json`)).json();
+  const recipe = await recipeNow();
   const sp = recipe.boards.find(b => b.id === "song-song-1");
   assert.ok(sp, "song page exists");
   assert.equal(sp.rows, 3); assert.equal(sp.columns, 4);
+  assert.equal(sp.rail, undefined, "the song page has no rail");
   const hero = btnAt(sp, 1, 1);
   assert.equal(hero.type, "song");
   assert.equal(hero.row_span, 3); assert.equal(hero.col_span, 3);
   assert.equal(hero.load, undefined, "hero replays; it is not a door");
   assert.equal(hero.clip_ms, 40000);
+  assert.equal(hero.category, "top-hits", "the parent sheet can show the song's section");
   assert.equal(hero.pictures.length, 10, "complete set of video stills included");
   assert.ok(hero.pictures.every(p => p.startsWith("music/song-1-frame-")));
+  assert.equal(btnAt(recipe.boards.find(b => b.id === "song-song-6"), 1, 1).category, null, "an unknown category is none");
   const invalid = recipe.boards.find(b => b.id === "song-song-2");
   assert.deepEqual(btnAt(invalid, 1, 1).pictures, [], "invalid or incomplete sets stay off the child page");
   const back = btnAt(sp, 1, 4);
   assert.equal(back.type, "back"); assert.equal(back.glyph, "←");
   assert.equal(back.label, "Back", "arrow AND the word (dad r3)");
-  assert.equal(back.load, "songs", "rank 1's page returns to grid page 1");
+  assert.equal(back.return, true, "Back returns to the section page she came from");
+  assert.equal(back.load, "songs-all-2", "…or, opened directly, to its page in All (song-1 is on All's page 2)");
   const stop = btnAt(sp, 2, 4);
   assert.equal(stop.type, "stop");
   assert.equal(stop.symbol, "8289", "Stop wears the exact-id STOP-sign pictogram");
@@ -220,9 +261,7 @@ test("song pages: hero spans three quarters; controls fill the far-right column"
   assert.equal(full.song_id, "song-1");
   assert.ok(full.audio && full.v, "Full song can start playback on its own");
   assert.equal(sp.buttons.reduce((n, b) => n + (b.row_span || 1) * (b.col_span || 1), 0), 12, "every cell covered");
-  // a page-TWO song's back door returns to grid page 2 (rank 10 with v3 paging)
-  const sp10 = recipe.boards.find(b => b.id === "song-song-10");
-  assert.equal(btnAt(sp10, 1, 4).load, "songs-2");
+  assert.equal(btnAt(recipe.boards.find(b => b.id === "song-song-10"), 1, 4).load, "songs-all");
 });
 
 test("musicVolCap: /settings round-trip with clamping (default 100)", async () => {
@@ -281,6 +320,47 @@ test("songs.json ETag changes when the manifest changes", async () => {
   assert.notEqual(r2.headers.get("etag"), etag1, "manifest mtime moves the ETag");
 });
 
+const event = (body) => fetch(`${BASE}/music-event`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+test("plays reorder the sections on the next build, and only the ETag's order part moves", async () => {
+  const r1 = await fetch(`${BASE}/recipes/songs.json`);
+  const etag1 = r1.headers.get("etag");
+  assert.match(etag1, /~o[0-9a-f]+"$/, "the ETag ends in an order part the board can tell apart");
+  // song-5: one partial pick. song-3: a pick made full by Full song. song-2:
+  // a pick that ended naturally while capped. song-7: the clip ran out, then
+  // Stop — partial.
+  for (const b of [{ songId: "song-5", action: "play" }, { songId: "song-5", action: "clip" },
+                   { songId: "song-3", action: "play" }, { songId: "song-3", action: "full" },
+                   { songId: "song-2", action: "play" }, { songId: "song-2", action: "done" },
+                   { songId: "song-7", action: "play" }, { songId: "song-7", action: "clip" },
+                   { songId: "song-7", action: "stop" }])
+    assert.equal((await event(b)).status, 204);
+  const r2 = await fetch(`${BASE}/recipes/songs.json`, { headers: { "If-None-Match": etag1 } });
+  assert.equal(r2.status, 200, "a reopened board gets the new order");
+  const etag2 = r2.headers.get("etag");
+  assert.equal(etag2.replace(/~o[0-9a-f]+"$/, ""), etag1.replace(/~o[0-9a-f]+"$/, ""),
+    "the content part is unchanged: a board on screen does not reload for a score");
+  assert.notEqual(etag2, etag1);
+  const recipe = await r2.json();
+  assert.equal(recipe.root, "songs-fav", "once she has favorites, Music opens on them");
+  // scores 3,3,1,1: ties newest added first (song-3 09-03 before song-2 09-02; song-7 before song-5)
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-fav")), ["song-3", "song-2", "song-7", "song-5"]);
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-all")).slice(0, 5), ["song-3", "song-2", "song-7", "song-5", "song-10"]);
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-top-hits")), ["song-3", "song-2", "song-1"]);
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-new")), BY_ADDED.slice(0, 9), "New never reorders by score");
+  const r3 = await fetch(`${BASE}/recipes/songs.json`, { headers: { "If-None-Match": etag2 } });
+  assert.equal(r3.status, 304, "nothing moved since: 304");
+});
+
+test("Full song from silence is a full pick of its own", async () => {
+  const before = songsAt(boardOf(await recipeNow(), "songs-fav"));
+  assert.equal((await event({ songId: "song-9", action: "full", fresh: true })).status, 204);
+  const after = songsAt(boardOf(await recipeNow(), "songs-fav"));
+  assert.notDeepEqual(after, before);
+  assert.deepEqual(after.slice(0, 3), ["song-9", "song-3", "song-2"], "score 3, newest added of the three");
+});
+
 test("/music media: Accept-Ranges + immutable + exact bytes; Range 206/416", async () => {
   const full = await fetch(`${BASE}/music/song-1.wav`);
   assert.equal(full.status, 200);
@@ -316,15 +396,15 @@ test("/music jail: escapes 403 with no leak; disallowed ext 404", async () => {
   assert.equal(r.status, 404);
 });
 
-test("POST /music-event: valid play/stop/end/full -> 204 + pool append; junk -> 400", async () => {
-  for (const action of ["play", "stop", "end", "full"]) {
+test("POST /music-event: valid play/stop/end/full/clip/done -> 204 + pool append; junk -> 400", async () => {
+  for (const action of ["play", "stop", "end", "full", "clip", "done"]) {
     const r = await fetch(`${BASE}/music-event`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ songId: "song-1", action }),
     });
     assert.equal(r.status, 204, `${action} accepted`);
   }
-  for (const body of [{}, { songId: "song-1", action: "shuffle" },
+  for (const body of [{}, { songId: "song-1", action: "shuffle" }, { songId: "song-1", action: "full", fresh: "yes" },
                       { songId: "../evil", action: "play" }, { action: "play" }]) {
     const r = await fetch(`${BASE}/music-event`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -336,9 +416,11 @@ test("POST /music-event: valid play/stop/end/full -> 204 + pool append; junk -> 
   const poolFile = path.join(TMP, "pool", "events", "test-dev", day + ".jsonl");
   const lines = fs.readFileSync(poolFile, "utf8").trim().split("\n").map(l => JSON.parse(l));
   const kinds = lines.map(l => l.kind);
-  for (const k of ["music-play", "music-stop", "music-end", "music-full"])
+  for (const k of ["music-play", "music-stop", "music-end", "music-full", "music-clip", "music-done"])
     assert.ok(kinds.includes(k), `pool has ${k}`);
-  assert.equal(lines.find(l => l.kind === "music-play").songId, "song-1");
+  assert.equal(lines.find(l => l.kind === "music-play").songId, "song-5");
+  assert.equal(lines.find(l => l.kind === "music-full" && l.fresh === true).songId, "song-9",
+    "a Full song from silence keeps its fresh mark in the pool");
 });
 
 test("LAW: no music dir -> songs.json 404 and the server stays alive", async () => {
