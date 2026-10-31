@@ -1088,6 +1088,37 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-ear-tier-hub.test.mjs",
+      "purpose": "The ear two tiers through the hub: the ear stream profile listens with a 10 s rolling buffer, a wake opens the main stream with the replay from 1.5 s before the wake then live frames, the main stream seals until the engagement time passes without a wake, a hold always uses the main stream, and an unset ear profile changes nothing",
+      "group": "chat",
+      "lane": "linux",
+      "level": "HTTP/WebSocket module integration",
+      "dependencies": [
+        "era-hub/chat-api.js",
+        "era-hub/chat-window.js",
+        "era-hub/chat-stream.js",
+        "era-hub/chat-choices.js",
+        "era-hub/chat-ws.js",
+        "era-hub/keepalive-fetch.js",
+        "era-hub/buttons.js",
+        "era-hub/server.js"
+      ],
+      "resources": [
+        "owned-loopback-services",
+        "synthetic-runtime-children",
+        "fetch-doubles",
+        "temporary-data"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-commands-browser.test.mjs",
       "purpose": "Real Chat page asked from the partner's button: command stream at load, nonce claimed once, ask with no touch, the three partner lines, two drawn tones, her pick ends the window, a pause stays one utterance, quiet seals, a second utterance, the second press",
       "group": "chat",

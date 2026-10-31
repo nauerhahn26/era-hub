@@ -24,8 +24,6 @@
     </div>
     <section id="grid" aria-label="Chat words"></section>
     <div id="notice" role="status"></div>
-    <div id="wakeBanner" role="status" hidden>Room audio is sent for transcription while listening is on</div>
-    <div id="testModeBanner" role="status" hidden>Test mode: this computer is recording Chat turns</div>
   </main>
   <dialog id="partnerDialog" aria-labelledby="partnerTitle">
     <form method="dialog"><button class="close" aria-label="Close partner settings">Close</button></form>
@@ -58,8 +56,8 @@
       <p id="chatNameNote" role="status"></p>
     </section>
     <section class="partnerSection" id="testModeSection">
-      <h2>Test mode</h2>
-      <p>Off unless a partner turns it on here. While on, this computer keeps each Chat turn's words, timings and held-question audio for testing, and copies the words and timings to the family data folder. Turning it off stops recording and keeps what was recorded.</p>
+      <h2>Session records</h2>
+      <p>While this is on, this computer keeps each Chat turn's words, timings and question audio (copying the words and timings to the family data folder) until you delete them.</p>
       <button id="testModeToggle" type="button" aria-pressed="false">Turn on test mode</button>
       <button id="deleteRecordings" type="button">Delete test recordings</button>
       <p id="testModeNote" role="status"></p>

@@ -501,6 +501,10 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // Streaming transcription (spec 2026-10-27 §3): rides on the one-shot
   // recognizer, which stays the fallback for any hold the stream cannot finish.
   const streams = runtimeAvailable ? streamSettings(env) : [];
+  // The ear's own stream profile (§10): the main stream's settings with the
+  // private ERA_CHAT_STREAM_EAR_MODEL; unset, the ear listens on the main stream.
+  const earModel = typeof env.ERA_CHAT_STREAM_EAR_MODEL === 'string' ? env.ERA_CHAT_STREAM_EAR_MODEL.trim() : '';
+  const earProfile = streams.length && earModel && earModel.length <= 128 && !/[\x00-\x1f]/.test(earModel) ? { ...streams[0], model: earModel } : null;
   const streamConnect = options.streamConnect;
   const adapterRequested = typeof env.ERA_CHAT_CHOICES_URL === 'string' && !!env.ERA_CHAT_CHOICES_URL.trim();
   const adapterUrl = transportUrl(env.ERA_CHAT_CHOICES_URL);
@@ -516,6 +520,16 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     } catch { return []; }
   };
   const likes = () => listFrom(options.likes, 30);
+  // The ear's idle time (§10): it turns itself off after this long without a wake, hold or press.
+  const wakeIdleMs = () => {
+    try { const value = typeof options.wakeIdleMs === 'function' ? options.wakeIdleMs() : options.wakeIdleMs; return Number.isSafeInteger(value) && value > 0 ? value : 1800000; }
+    catch { return 1800000; }
+  };
+  // How long the engagement stream stays on after a wake (§10).
+  const engageMs = () => {
+    try { const value = typeof options.engageMs === 'function' ? options.engageMs() : options.engageMs; return Number.isSafeInteger(value) && value > 0 ? value : 120000; }
+    catch { return 120000; }
+  };
   // The wake name (stable frame §8): the device's chatName, 'Ellie' by default.
   const wakeName = () => {
     try { const value = typeof options.name === 'function' ? options.name() : options.name; return typeof value === 'string' && value.trim() && value.length <= 40 ? value.trim() : 'Ellie'; }
@@ -569,7 +583,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     session.closed = true; sessions.delete(session.id);
     clearTimeout(session.killTimer);
     if (session.window) { clearInterval(session.window.timer); clearTimeout(session.window.drainTimer); session.window = null; }
-    session.ear = null;
+    session.ear = null; session.ring = [];
+    if (session.earStream) { session.earStream.close(); session.earStream = null; }
     if (session.events) session.events.end();
     if (session.socket) { session.socket.close(1001, 'session-ended'); session.socket = null; }
     abortChoices(session);
@@ -614,7 +629,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     const session = { id: randomUUID(), child, created: clock(), touched: clock(), generation: 0,
       mode: 'paused', seq: 0, bytes: 0, utteranceBytes: 0, uploading: false, events: null, runtimeReady: false, closed: false,
       socket: null, socketSeq: 0, turnBytes: 0, frameWaiters: new Set(), stream: null, streamIndex: 0, turn: null, keyterms: [],
-      staged: streams.length > 0, context: [], choiceJob: null, window: null, ear: null, controlling: false };
+      staged: streams.length > 0, context: [], choiceJob: null, window: null, ear: null, controlling: false, earStream: null, ring: [] };
     sessions.set(session.id, session);
     if (streams.length) { session.keyterms = loadKeyterms(env.ERA_CHAT_STREAM_KEYTERMS); startStream(session, 0); }
     warmReply();
@@ -686,7 +701,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       idleCloseMs: limits.streamIdleMs ?? (settings.billing === 'connection' ? 60000 : 300000),
       finalTimeoutMs: limits.streamFinalMs, keepAliveMs: limits.streamKeepAliveMs });
     session.stream = stream;
-    const current = () => session.stream === stream && session.turn && session.turn.mode === 'stream' && !session.turn.done && session.turn.generation === session.generation;
+    const current = () => session.stream === stream && session.turn && session.turn.transcriber === stream && session.turn.mode === 'stream' && !session.turn.done && session.turn.generation === session.generation;
     stream.on('socket', value => { if (current()) emit(session, { type: 'socket', warm: value.warm, connectMs: value.connectMs, generation: session.generation }); });
     stream.on('partial', ({ text }) => {
       const clean = cleanText(text, 2000);
@@ -758,7 +773,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   }
   function endStreamTurn(session) {
     const turn = session.turn;
-    if (turn && turn.mode === 'stream' && !turn.done && session.stream) { turn.done = true; session.stream.cancel(); }
+    if (turn && turn.mode === 'stream' && !turn.done && turn.transcriber) { turn.done = true; turn.transcriber.cancel(); }
     session.turn = null;
   }
   function beginTurn(session, { window = false } = {}) {
@@ -772,7 +787,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     const turn = session.turn;
     if (turn && turn.chain && turn.generation === session.generation) { queueWrite(session, turn, { type: 'audio', pcm: pcm.toString('base64') }); return; }
     if (turn && turn.mode === 'stream' && !turn.done && turn.generation === session.generation) {
-      if (turn.window) { turn.transcriber.sendPcm(pcm); feedWindow(session, pcm); return; }
+      if (turn.window) { if (turn.earTier) keepRing(session, pcm); turn.transcriber.sendPcm(pcm); feedWindow(session, pcm); return; }
       turn.pcm.push(Buffer.from(pcm)); turn.transcriber.sendPcm(pcm); return;
     }
     forwardPcm(session, pcm);
@@ -1101,42 +1116,79 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function startEarTurn(session, ear) {
     endStreamTurn(session);
     session.mode = 'capturing'; session.turnBytes = 0; session.utteranceBytes = 0;
-    beginTurn(session, { window: true });
+    ear.utteranceAt = null;
+    if (earProfile && ear.tier === 'ear') {
+      // The ear tier: its own stream, and the rolling buffer a wake replays.
+      const stream = earStreamOf(session);
+      session.turn = { generation: session.generation, mode: 'stream', transcriber: stream, pcm: [], released: false, done: false, window: true, earTier: true,
+        pictures: warmer ? warmer.hold() : null };
+      stream.begin({ window: true });
+    } else beginTurn(session, { window: true });
     session.turn.ear = true;
     const win = { id: ear.id, ear, generation: session.generation, gate: energyGate(), machine: null, timer: null, draining: false, drainTimer: null, startedAt: clock() };
     win.machine = createWindow({ clock, limits: { utteranceMs: limits.windowUtteranceMs, silenceMs: Infinity, capMs: Infinity },
       seal: info => earSeal(session, win, info), close: reason => { if (session.window === win) closeEar(session, reason); } });
     session.window = win;
-    win.timer = setInterval(() => win.machine.tick(), limits.windowTickMs); win.timer.unref?.();
+    win.timer = setInterval(() => { win.machine.tick(); if (session.window === win) earTick(session, ear); }, limits.windowTickMs); win.timer.unref?.();
     return win;
+  }
+  // Auto-off (§10): warnings at two minutes and one minute left, then off as
+  // idle; the hub saves the switch off (onWakeIdle) so a reload does not reopen it.
+  function earActive(ear) { ear.activeAt = clock(); ear.warned = []; }
+  function earTick(session, ear) {
+    // Two tiers (§10): engaged, the main stream listens until chatEngageMs
+    // passes without a wake (and nothing is mid-utterance, 15 s at most past
+    // that), then the ear tier listens alone again.
+    const win = session.window;
+    if (earProfile && ear.tier === 'main' && win && win.ear === ear) {
+      const quiet = clock() - ear.wakeAt;
+      if (quiet >= engageMs() && (!win.machine.pending || quiet >= engageMs() + 15000)) {
+        clearInterval(win.timer); session.window = null;
+        ear.tier = 'ear'; session.ring = [];
+        startEarTurn(session, ear);
+        emit(session, { type: 'ear', state: 'tier', tier: 'ear', earId: ear.id, generation: session.generation });
+        return;
+      }
+    }
+    const remaining = wakeIdleMs() - (clock() - ear.activeAt);
+    if (remaining <= 0) {
+      closeEar(session, 'idle');
+      try { options.onWakeIdle?.(); } catch { /* the page's switch still reads off */ }
+      return;
+    }
+    for (const mark of [120000, 60000]) if (remaining <= mark && !ear.warned.includes(mark)) {
+      ear.warned.push(mark);
+      if (remaining > mark - 60000) emit(session, { type: 'ear', state: 'warning', remainingMs: mark, earId: ear.id, generation: session.generation });
+    }
   }
   function openEar(session, context) {
     abortChoices(session); endStreamTurn(session);
     session.generation++; session.context = context;
-    const ear = { id: randomBytes(6).toString('hex'), paused: false, pendingAt: null };
-    session.ear = ear;
+    const ear = { id: randomBytes(6).toString('hex'), paused: false, pendingAt: null, activeAt: 0, warned: [], tier: earProfile ? 'ear' : 'main', wakeAt: 0, utteranceAt: null };
+    earActive(ear);
+    session.ear = ear; session.ring = [];
     startEarTurn(session, ear);
-    emit(session, { type: 'ear', state: 'listening', earId: ear.id, generation: session.generation });
+    emit(session, { type: 'ear', state: 'listening', tier: ear.tier, earId: ear.id, generation: session.generation });
     return ear;
   }
   function pauseEar(session, reason) {
     const win = session.window;
     if (!win || !win.ear) return;
-    clearInterval(win.timer); session.window = null; win.ear.paused = true; win.ear.pendingAt = null;
+    clearInterval(win.timer); session.window = null; win.ear.paused = true; win.ear.pendingAt = null; earActive(win.ear);
     if (session.turn && session.turn.ear) endStreamTurn(session);
     emit(session, { type: 'ear', state: 'off', reason, earId: win.ear.id, generation: session.generation });
   }
   function resumeEar(session) {
     const ear = session.ear;
     if (!ear || !ear.paused || session.window || session.closed || session.controlling || ['capturing', 'finishing'].includes(session.mode)) return;
-    ear.paused = false;
+    ear.paused = false; earActive(ear);
     startEarTurn(session, ear);
-    emit(session, { type: 'ear', state: 'listening', earId: ear.id, generation: session.generation, resumed: true });
+    emit(session, { type: 'ear', state: 'listening', tier: ear.tier, earId: ear.id, generation: session.generation, resumed: true });
   }
   function closeEar(session, reason) {
     const ear = session.ear;
     if (!ear) return;
-    session.ear = null;
+    session.ear = null; session.ring = [];
     const win = session.window && session.window.ear ? session.window : null;
     if (win) {
       clearInterval(win.timer); session.window = null;
@@ -1145,16 +1197,64 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     }
     emit(session, { type: 'ear', state: 'off', reason, earId: ear.id, generation: session.generation });
   }
+  // The ear tier's own stream: its words feed the ear's machine only.
+  function earStreamOf(session) {
+    if (session.earStream) return session.earStream;
+    const stream = createStreamTranscriber({ ...earProfile, keyterms: session.keyterms, connect: streamConnect,
+      idleCloseMs: limits.streamIdleMs ?? (earProfile.billing === 'connection' ? 60000 : 300000),
+      finalTimeoutMs: limits.streamFinalMs, keepAliveMs: limits.streamKeepAliveMs });
+    session.earStream = stream;
+    const live = () => session.earStream === stream && session.turn && session.turn.transcriber === stream && !session.turn.done && session.window?.ear;
+    stream.on('partial', ({ text }) => {
+      const clean = cleanText(text, 2000);
+      if (!live() || !clean) return;
+      if (session.ear && session.ear.utteranceAt === null) session.ear.utteranceAt = clock();
+      session.window.machine.partial(clean);
+    });
+    stream.on('turn-end', ({ text }) => { const clean = cleanText(text, 2000); if (live() && clean) session.window.machine.turnEnd(clean); });
+    stream.on('error', () => { if (live()) closeEar(session, 'error'); });
+    return stream;
+  }
+  // The last 10 s of the ear tier's audio, for the replay at a wake.
+  function keepRing(session, pcm) {
+    const now = clock();
+    session.ring.push({ at: now, pcm: Buffer.from(pcm) });
+    while (session.ring.length && now - session.ring[0].at > 10000) session.ring.shift();
+  }
+  // A wake on the ear tier: the main stream takes over, hearing the audio from
+  // 1.5 s before the wake utterance's first words (10 s at most), then live.
+  function engage(session, win, ear) {
+    const now = clock(), from = Math.max(now - 10000, (ear.utteranceAt ?? now) - 1500);
+    const replay = session.ring.filter(entry => entry.at >= from).map(entry => entry.pcm);
+    session.ring = [];
+    clearInterval(win.timer); session.window = null;
+    ear.tier = 'main'; ear.wakeAt = now; earActive(ear);
+    startEarTurn(session, ear);
+    emit(session, { type: 'ear', state: 'tier', tier: 'main', earId: ear.id, generation: session.generation });
+    for (const pcm of replay) acceptPcm(session, pcm);
+  }
   function earSeal(session, win, { text, reason }) {
     if (session.window !== win || session.closed) return;
     const ear = win.ear, now = clock();
     const found = wakeQuestion(text, wakeName());
+    if (earProfile && ear.tier === 'ear') {
+      // The ear tier only wakes the main stream; the question is sealed there.
+      if (found) { engage(session, win, ear); return; }
+      ear.utteranceAt = null;
+      if (now - win.startedAt >= limits.earRollMs) setImmediate(() => {
+        if (session.window !== win || session.closed || win.machine.pending) return;
+        clearInterval(win.timer); session.window = null;
+        startEarTurn(session, ear);
+      });
+      return;
+    }
+    if (found) ear.wakeAt = now;
     let question = null;
     if (found && found.question) question = found.question;
     else if (found) ear.pendingAt = now;
     else if (ear.pendingAt !== null && now - ear.pendingAt <= limits.earWakeMs) question = cleanText(text, 2000);
     if (question) {
-      ear.pendingAt = null;
+      ear.pendingAt = null; earActive(ear);
       const id = randomBytes(6).toString('hex');
       emit(session, { type: 'utterance-sealed', windowId: id, earId: ear.id, ear: true, seq: 1, text: question, windowText: question, reason, generation: session.generation });
       // A new wake supersedes a reply still in the making, as a new hold does.
@@ -1235,7 +1335,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     const routePath = url.pathname.slice(PREFIX.length);
     if (req.method === 'GET' && routePath === '/config') return json(res, 200, {
       wakeName: wakeName(), runtime: { available: !!runtimeAvailable, configured: !!runtimeConfigured, kind: runtimeKind,
-        status: runtimeAvailable ? 'configured' : runtimeConfigured ? 'unavailable' : 'unconfigured', capabilities: { wake: streams.length > 0, streaming: streams.length ? true : null } },
+        status: runtimeAvailable ? 'configured' : runtimeConfigured ? 'unavailable' : 'unconfigured', capabilities: { wake: streams.length > 0, streaming: streams.length ? true : null, earTier: earProfile ? 'ear' : 'main' } },
       choices: { available: true, kind: adapterRequested ? 'adapter' : choicesCore.available ? 'built-in' : 'local', generated: adapterRequested ? !!adapterUrl : choicesCore.available },
     });
     if (req.method === 'POST' && routePath === '/choices') return generate(req, res);

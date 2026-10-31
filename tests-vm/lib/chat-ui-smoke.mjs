@@ -306,7 +306,8 @@ export async function checkInstalledChatUI(page, options = {}) {
     // Listen for <name> (spec 2026-10-28 §8): the switch is there and off; this check never streams the room.
     assert.equal(await page.locator('#wakeToggle').count(), 1, 'the listening switch is in the partner strip');
     assert.equal(await page.locator('#wakeToggle').getAttribute('aria-pressed'), 'false', 'listening for her name is off');
-    assert.equal(await page.locator('#wakeBanner').isVisible(), false);
+    // No recording notices on the page (spec 2026-10-28 §10).
+    assert.equal(await page.locator('#wakeBanner, #testModeBanner').count(), 0, 'no banners on the Chat page');
     // The partner's Clear (maintainer 10/31): left of the switch, off with nothing to clear.
     assert.equal(await page.locator('#partnerStrip #clearQuestion').count(), 1, 'Clear is in the partner strip');
     assert.equal(await page.locator('#clearQuestion').isDisabled(), true, 'nothing to clear on a fresh Chat');

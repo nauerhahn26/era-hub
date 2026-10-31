@@ -61,14 +61,14 @@ function runtime() {
   return child;
 }
 
-async function hub(t, { service, limits = {}, env = {}, fetch: fetcher, name, clock } = {}) {
+async function hub(t, { service, limits = {}, env = {}, fetch: fetcher, name, clock, extra = {} } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-ear-hub-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const streamEnv = service ? { ERA_CHAT_STREAM_PROTOCOL: 'ws-streaming-turns', ERA_CHAT_STREAM_URL: service.url, ERA_CHAT_STREAM_MODEL: 'stream-model',
     ERA_CHAT_STREAM_TOKEN: 'stream-secret-token', ERA_CHAT_STREAM_BILLING: 'connection' } : {};
   const children = [];
   const api = createChatApi({ env: { ERA_CHAT_RUNTIME: 'scripted', ERA_CHAT_RUNTIME_ARGS: '[]', ERA_CHAT_SPECULATE_MS: '0', ...streamEnv, ...env }, limits,
-    spawn: () => { const child = runtime(); children.push(child); return child; }, ...(fetcher ? { fetch: fetcher } : {}), ...(name ? { name } : {}), ...(clock ? { clock } : {}) });
+    spawn: () => { const child = runtime(); children.push(child); return child; }, ...(fetcher ? { fetch: fetcher } : {}), ...(name ? { name } : {}), ...(clock ? { clock } : {}), ...extra });
   const server = http.createServer((req, res) => { if (!api.handle(req, res)) res.writeHead(404).end(); });
   server.on('upgrade', (req, socket, head) => { if (!api.upgrade(req, socket, head)) socket.destroy(); });
   await new Promise(resolve => server.listen(0, 'localhost', resolve));
@@ -309,4 +309,42 @@ test('the ear guards: it needs streaming; a second ear open is the same ear; a l
   s.ws.terminate();
   await until(() => s.events('ear').some(e => e.state === 'off'));
   assert.equal(s.events('ear').find(e => e.state === 'off').reason, 'socket');
+});
+
+test('auto-off (§10): warnings at two minutes and one minute left, off as idle after the idle time; a wake or a hold restarts the clock', async t => {
+  let now = 5000000, offs = 0;
+  const service = await turnsService(t, { 2: [ENDED('Ellie, do you want tea')] }, { onTerminate: [ENDED('would you like a story')] });
+  const h = await hub(t, { service, clock: () => now, limits: { windowTickMs: 10 }, extra: { wakeIdleMs: () => 300000, onWakeIdle: () => { offs++; } } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  const ear = state => s.events('ear').filter(e => e.state === state);
+  now += 179000; await pause(60);
+  assert.equal(ear('warning').length, 0);
+  now += 1000; await until(() => ear('warning').length === 1);
+  assert.equal(ear('warning')[0].remainingMs, 120000);
+  now += 60000; await until(() => ear('warning').length === 2);
+  assert.equal(ear('warning')[1].remainingMs, 60000);
+  // A wake restarts the clock: nothing more until two minutes before the new end.
+  await s.frames(3);
+  await until(() => s.events('utterance-sealed').length === 1);
+  now += 170000; await pause(60);
+  assert.equal(ear('warning').length, 2, 'the clock restarted at the wake');
+  // So does a hold (and its resume).
+  s.generation = (await (await s.control('ask')).json()).generation;
+  await s.frames(1);
+  await s.control('finish', { seq: s.sent() });
+  await until(() => ear('listening').length === 2);
+  now += 170000; await pause(60);
+  assert.equal(ear('warning').length, 2, 'the clock restarted at the hold');
+  now += 10000; await until(() => ear('warning').length === 3);
+  now += 120000; await until(() => ear('off').some(e => e.reason === 'idle'));
+  assert.equal(offs, 1, 'the hub saves the switch off');
+  await pause(60);
+  assert.equal(ear('off').filter(e => e.reason === 'idle').length, 1);
+});
+
+test('server.js turns the saved switch off when the ear goes idle', async () => {
+  const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /onWakeIdle: \(\) => wakeModeOff\(DATA\)/);
+  assert.match(source, /wakeIdleMs: \(\) => chatWake\(DATA\)\.chatWakeIdleMs/);
 });

@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createChatTurns, validateTurn, estimateCost, summarize, testModeOn, applyTestModeSetting, localDay, applyLikesSetting, chatLikes, DEFAULT_LIKES,
   chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT, chatPrompt, applyPromptSetting,
-  chatWake, applyWakeSetting } = require('../chat-turns.js');
+  chatWake, applyWakeSetting, wakeModeOff } = require('../chat-turns.js');
 const { initPool } = require('../pool.js');
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
@@ -462,11 +462,12 @@ test('reading the options aloud (stable frame §6): the delay and the name, defa
 
 test('the wake word (stable frame §8): chatWakeMode off by default, only a boolean moves it, same door; a wake turn record', async t => {
   const dataDir = await directory(t);
-  assert.deepEqual(chatWake(dataDir), { chatWakeMode: false });
+  const D = { chatWakeIdleMs: 1800000, chatEngageMs: 120000 };
+  assert.deepEqual(chatWake(dataDir), { chatWakeMode: false, ...D });
   await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatWakeMode: 'true' }));
-  assert.deepEqual(chatWake(dataDir), { chatWakeMode: false }, 'only a real boolean');
+  assert.deepEqual(chatWake(dataDir), { chatWakeMode: false, ...D }, 'only a real boolean');
   await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatWakeMode: true }));
-  assert.deepEqual(chatWake(dataDir), { chatWakeMode: true });
+  assert.deepEqual(chatWake(dataDir), { chatWakeMode: true, ...D });
   assert.deepEqual(applyWakeSetting({ a: 1 }, { chatWakeMode: true }), { a: 1, chatWakeMode: true });
   assert.deepEqual(applyWakeSetting({ chatWakeMode: true }, { chatWakeMode: false }), { chatWakeMode: false });
   for (const junk of ['true', 1, null, {}]) assert.deepEqual(applyWakeSetting({ chatWakeMode: true }, { chatWakeMode: junk }), { chatWakeMode: true }, JSON.stringify(junk));
@@ -475,4 +476,21 @@ test('the wake word (stable frame §8): chatWakeMode off by default, only a bool
   for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyWakeSetting({}, { chatWakeMode: true }, site), { chatWakeMode: true });
   const record = validateTurn(turnRecord({ mode: 'wake', content: { ...turnRecord().content, wake: true } }));
   assert.equal(record.mode, 'wake'); assert.equal(record.content.wake, true);
+});
+
+test('the ear\'s cost (stable frame §10): the idle and engagement times, bounded; the idle off writes the switch off', async t => {
+  const dataDir = await directory(t);
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatWakeMode: true, chatWakeIdleMs: 299999, chatEngageMs: 'x', other: 1 }));
+  assert.deepEqual(chatWake(dataDir), { chatWakeMode: true, chatWakeIdleMs: 1800000, chatEngageMs: 120000 }, 'out of range reads as the default');
+  for (const ms of [300000, 900000, 7200000]) assert.deepEqual(applyWakeSetting({}, { chatWakeIdleMs: ms }), { chatWakeIdleMs: ms });
+  for (const ms of [299999, 7200001, 1800000.5, '1800000', null]) assert.deepEqual(applyWakeSetting({ chatWakeIdleMs: 600000 }, { chatWakeIdleMs: ms }), { chatWakeIdleMs: 600000 }, JSON.stringify(ms));
+  for (const ms of [30000, 120000, 600000]) assert.deepEqual(applyWakeSetting({}, { chatEngageMs: ms }), { chatEngageMs: ms });
+  for (const ms of [29999, 600001, 1.5, '120000']) assert.deepEqual(applyWakeSetting({ chatEngageMs: 60000 }, { chatEngageMs: ms }), { chatEngageMs: 60000 }, JSON.stringify(ms));
+  assert.deepEqual(applyWakeSetting({}, { chatWakeIdleMs: 600000 }, 'cross-site'), {});
+  wakeModeOff(dataDir);
+  const stored = JSON.parse(await fs.readFile(path.join(dataDir, 'app-settings.json'), 'utf8'));
+  assert.deepEqual(stored, { chatWakeMode: false, chatWakeIdleMs: 299999, chatEngageMs: 'x', other: 1 }, 'only the switch moves');
+  const empty = await directory(t);
+  wakeModeOff(empty);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(empty, 'app-settings.json'), 'utf8')), { chatWakeMode: false });
 });

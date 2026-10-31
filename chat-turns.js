@@ -194,15 +194,32 @@ function applyPromptSetting(stored, incoming, fetchSite) {
 }
 // ---- the wake word (stable frame spec 2026-10-28 §8) ----
 // chatWakeMode: "Listen for <name>", one device's explicit choice, off when absent.
+// chatWakeIdleMs: the ear turns itself off after this long without a wake
+// (5 min to 2 h, default 30 min, §10); chatEngageMs: how long the engagement
+// stream stays on after a wake before the ear tier listens alone (30 s to 10 min).
+const WAKE_RANGES = Object.freeze({ chatWakeIdleMs: [300000, 7200000, 1800000], chatEngageMs: [30000, 600000, 120000] });
+const inRange = (value, [low, high]) => Number.isSafeInteger(value) && value >= low && value <= high;
 function chatWake(dataDir) {
-  try { return { chatWakeMode: JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')).chatWakeMode === true }; }
-  catch { return { chatWakeMode: false }; }
+  let stored = {};
+  try { stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')) || {}; } catch { /* the defaults */ }
+  return { chatWakeMode: stored.chatWakeMode === true,
+    ...Object.fromEntries(Object.entries(WAKE_RANGES).map(([key, range]) => [key, inRange(stored[key], range) ? stored[key] : range[2]])) };
 }
 function applyWakeSetting(stored, incoming, fetchSite) {
   const next = { ...stored };
   if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
   if (typeof incoming?.chatWakeMode === 'boolean') next.chatWakeMode = incoming.chatWakeMode;
+  for (const [key, range] of Object.entries(WAKE_RANGES)) if (incoming && inRange(incoming[key], range)) next[key] = incoming[key];
   return next;
+}
+// The ear turned itself off (idle): the switch is saved off so a reload does not reopen it.
+function wakeModeOff(dataDir) {
+  const file = path.join(dataDir, 'app-settings.json');
+  let stored = {};
+  try { stored = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { /* a fresh file */ }
+  if (stored.chatWakeMode === false) return;
+  stored.chatWakeMode = false;
+  try { fs.writeFileSync(file, JSON.stringify(stored, null, 2)); } catch { /* the page's switch still reads off */ }
 }
 // Day files and summaries use the device's local calendar day.
 const two = n => String(n).padStart(2, '0');
@@ -579,4 +596,4 @@ function createChatTurns(options = {}) {
 
 module.exports = { createChatTurns, validateTurn, estimateCost, summarize, stageTimes, testModeOn, applyTestModeSetting, applyLikesSetting, chatLikes, DEFAULT_LIKES,
   chatLists, applyListsSetting, DEFAULT_QUESTIONS, DEFAULT_COMMENTS, DEFAULT_ABOUT,
-  chatPrompt, applyPromptSetting, chatWake, applyWakeSetting, localDay, wavFromPcm, STAGES };
+  chatPrompt, applyPromptSetting, chatWake, applyWakeSetting, wakeModeOff, localDay, wavFromPcm, STAGES };
