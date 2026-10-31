@@ -636,14 +636,16 @@ Dad: "the icons should be the same yes, no icons we use on TD Snap … yes with
 an angry face … the yes would not just say yes, it would say yes, I'm angry …
 if it takes a second to load, it's like, where's the yes or no context?"
 And a question lost in Listen mode (13:08–13:23 PT) that no record explains.
-- [x] Y1 vocabulary ids: yes 5583, no 5525 (badge-able); the corner and middle
-      yes/no pictures follow (symbols.js already routes yes/no by word).
+- [x] Y1 vocabulary ids: yes 5584 (check mark), no 5526 (cross), as on her
+      boards; the corner and middle yes/no pictures follow (symbols.js already
+      routes yes/no by word). The first cut (ab6db30) guessed the nodding and
+      shaking heads; dad 10/31 night: "it should be the check mark and the X".
 - [x] Y2 hub: a yes-or-no question runs the local set at once AND a model job
       for the full answers (`chat-choices.js` shape yes-no → {yes, no, feeling});
       `yes-no-answered` event; abort rules as for choices; a feeling word must
       be in the vocabulary table or is dropped.
 - [x] Y3 page: middle Yes/No take label + say + merged picture (feeling picture,
-      head badge); corners speak the phrase; selection wins; Clear/Back/new
+      check/cross badge); corners speak the phrase; selection wins; Clear/Back/new
       question reset; read-aloud uses the phrases; `content.answered`.
 - [x] E1 ear records (kind 'ear') from the hub while test mode is on; page gate
       periods via `control {type:'gate'}`; diagnostics box shows the last twelve.

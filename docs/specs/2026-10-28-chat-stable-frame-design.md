@@ -210,11 +210,12 @@ buttons or interrupting things."
 
 ## 11. Yes and No: her boards' pictures, and the answer in full (dad, 10/31 evening)
 
-- Pictures. Yes and No show the pictures her other boards use: the nodding
-  head (library id 5583) and the shaking head (5525), the pair TD Snap draws
-  for yes and no. They stand on the corner tiles and on any Yes or No reply
-  in the middle. The check mark and the cross (5584, 5526) are no longer used
-  for yes and no. Only the ids in `public/chat/vocabulary.json` change.
+- Pictures. Yes and No show the pictures her TD Snap boards use: the green
+  check mark (library id 5584) and the red cross (5526). They stand on the
+  corner tiles and on any Yes or No reply in the middle. The nodding and
+  shaking heads (5583, 5525) are not used for yes and no (dad, 10/31 night:
+  "it should be the check mark and the X"; the heads were a wrong guess earlier
+  that evening). Only the ids in `public/chat/vocabulary.json` say which.
 - The answer in full. For a yes-or-no question the local set still shows at
   once (Yes, No, I'm not sure, Please say that again): nothing waits for a
   model. In parallel the hub asks the reply model for the two answers in her
@@ -224,8 +225,8 @@ buttons or interrupting things."
   When it arrives (`yes-no-answered` on the session's events, generation and
   window as for choices) the Yes and No replies in the middle take the full
   phrase as label and words; their picture becomes the feeling's picture with
-  the nodding or shaking head as a small badge in a corner ("merge it when it
-  can be"); without a feeling word the head stays. The corner tiles keep their
+  the check mark or the cross as a small badge in a corner ("merge it when it
+  can be"); without a feeling word the check mark or cross stays. The corner tiles keep their
   look and their short labels and SPEAK the full phrase while this question is
   open. Nothing changes under a reply she has already chosen (the selection
   wins), and Clear, Back and a new question put the plain Yes and No back.
