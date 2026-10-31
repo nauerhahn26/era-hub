@@ -228,14 +228,17 @@ export function planPictures(entries, { variant = 'color', keep = [] } = {}) {
       plan[index] = { word: concept.word, id: null, kind: 'person', src: concept.src, emoji: null, drawn: 'chat' };
       continue;
     }
+    // Yes and No are her boards' pair (spec 2026-10-28 §11): the nodding and the
+    // shaking head stand on the corner and on a Yes or No reply alike.
+    const pair = (concept.word === 'yes' || concept.word === 'no') && concept === library.byWord.get(concept.word);
     const options = [[concept.id, concept.word], [concept.altId, concept.word], [library.fallback.id, library.fallback.word]];
-    const [id, word] = options.find(([candidate]) => candidate && !used.has(candidate)) || [];
+    const [id, word] = pair ? [concept.id, concept.word] : options.find(([candidate]) => candidate && !used.has(candidate)) || [];
     if (!id) continue;
     const emoji = emojiFor(word);
     const kind = variant === 'emoji' ? (emoji ? 'emoji' : 'drawn') : 'library';
     // The emoji style shows stickers and drawings, which repeat across concepts.
     const look = kind === 'emoji' ? emoji : kind === 'drawn' ? 'drawn:' + drawnFor(word) : id;
-    if (shown.has(look)) continue;
+    if (shown.has(look) && !pair) continue;
     used.add(id); shown.add(look);
     plan[index] = { word, id, kind, src: kind === 'library' ? sourceFor(id, variant) : kind === 'emoji' ? emoji : null, emoji, drawn: drawnFor(word) };
   }

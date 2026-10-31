@@ -636,7 +636,7 @@ Dad: "the icons should be the same yes, no icons we use on TD Snap … yes with
 an angry face … the yes would not just say yes, it would say yes, I'm angry …
 if it takes a second to load, it's like, where's the yes or no context?"
 And a question lost in Listen mode (13:08–13:23 PT) that no record explains.
-- [ ] Y1 vocabulary ids: yes 5583, no 5525 (badge-able); the corner and middle
+- [x] Y1 vocabulary ids: yes 5583, no 5525 (badge-able); the corner and middle
       yes/no pictures follow (symbols.js already routes yes/no by word).
 - [ ] Y2 hub: a yes-or-no question runs the local set at once AND a model job
       for the full answers (`chat-choices.js` shape yes-no → {yes, no, feeling});
