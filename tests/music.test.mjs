@@ -162,6 +162,8 @@ test("GET /recipes/songs.json: a rail of sections beside a 3x4 grid, nine songs 
   const p1 = boardOf(recipe, "songs-all");
   assert.equal(p1.rows, 3); assert.equal(p1.columns, 4);
   assert.deepEqual(p1.rail.map(b => b.label), RAIL, "rail top to bottom");
+  // the Book Reader's rail idiom: an icon above each word (its ◀ and ♥ reused)
+  assert.deepEqual(p1.rail.map(b => b.icon), ["◀", "♥", "⭐", "🎤", "🏰", "🎵"], "each rail tile has its icon");
   const [back, ...sections] = p1.rail;
   assert.equal(back.type, "back");
   assert.equal(back.disabled, true, "Back is dimmed on page 1");
