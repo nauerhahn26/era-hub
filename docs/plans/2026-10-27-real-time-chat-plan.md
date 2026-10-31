@@ -615,3 +615,18 @@ hence auto-off. Private price table written on both devices
 (chat-prices.json) so the session panel shows cost per day.
 Next: an on-device wake detector in the ear slot (zero idle cost; needs an
 "Ellie" model trained from samples; dad's family recordings = validation).
+Measured (10/31 evening, scratch hub against the real streaming service, 36
+wake/press trials, 0 misses): the ear tier adds ≈0.6–0.8 s to the FIRST
+question after a quiet spell when the name and the question come in one
+breath (end of speech → sealed 1.1–1.2 s vs 0.42 s on the single tier): the
+cheap tier's own end-of-turn (≈0.5 s), a cold main socket (≈120 ms; the main
+stream closes after 60 s idle) and the replay's re-transcription (≈0.45 s).
+"Ellie, [pause] juice or water?" costs nothing extra (the bare name engages
+the main stream during the pause). Within the engagement window: no penalty
+(0.42 s vs 0.52 s). Holds and presses: untouched. The cheap tier caught
+"Ellie" 12/12. Also seen: a question without the name is dropped even while
+engaged (§8's rule, unchanged by the tiers). Possible trims if the first wake
+feels slow: keep the main socket warm while the ear is on (saves ≈120 ms), or
+engage on the ear's first partial that carries the name instead of its
+end-of-turn (saves ≈0.5 s, costs a few seconds of main-stream time per false
+start).
